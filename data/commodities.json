@@ -1,0 +1,1766 @@
+[
+  {
+    "code": "000102",
+    "description": "Berries nos, non-frozen",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000104",
+    "description": "Blueberries, raspberries, non-frozen, berries",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000106",
+    "description": "Cherries, non-frozen, berries",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000108",
+    "description": "Cranberries, non-frozen, berries",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000112",
+    "description": "Strawberries, non-frozen, berries",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000201",
+    "description": "Alcoholic beverages, nos",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "000202",
+    "description": "Beer, beverages",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "000203",
+    "description": "Beverages, softdrink",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "000204",
+    "description": "Wine, beverages bottled",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "000205",
+    "description": "Wine, beverages, bulk",
+    "gradeCode": "S",
+    "gradeName": "Flexi"
+  },
+  {
+    "code": "000302",
+    "description": "Animal fodder, pet food, non-frozen",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "000306",
+    "description": "Fish meal, non-frozen",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "000402",
+    "description": "Butter, fats, oils, non-frozen",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000403",
+    "description": "Cheese, fresh, grated or powdered, non-frozen",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000406",
+    "description": "Dairy products, non-frozen, nos",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000410",
+    "description": "Honey, non-frozen",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000412",
+    "description": "Margarine, non-frozen",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000414",
+    "description": "Milk, cream, yogurt, non-frozen",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000503",
+    "description": "Albacore, longfinned, non-frozen, fish",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "000504",
+    "description": "Albacore, non-frozen, fish",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "000510",
+    "description": "Cod fish, non-frozen, fish",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "000514",
+    "description": "Cod roe, non-frozen, fish",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "000519",
+    "description": "Fish fillet, dried, salted",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "000521",
+    "description": "Fish fillets, non-frozen",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "000523",
+    "description": "Fish roe, non-frozen",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "000526",
+    "description": "Fish, anchovies, oyster, non-frozen",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "000544",
+    "description": "Salmon, non-frozen, fish",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "000547",
+    "description": "Sardines, non-frozen, fish",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "000549",
+    "description": "Skipjack, non-frozen, fish",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "000555",
+    "description": "Tuna, yellowfin, non-frozen, fish",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "000565",
+    "description": "Horse Mackerel",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "0006",
+    "description": "Foodstuff",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000602",
+    "description": "Apple concentrate, apple juice, non-frozen, foodstuff",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000604",
+    "description": "Chocolate, non-frozen, foodstuff",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000605",
+    "description": "Cocoa beans, foodstuff",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000606",
+    "description": "Cocoa butter, foodstuff",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000607",
+    "description": "Cocoa powder, foodstuff",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000608",
+    "description": "Confectionery, candy, foodstuff",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000609",
+    "description": "Food preparations, foodstuff",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000610",
+    "description": "Foodstuff, nos, frozen",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000611",
+    "description": "Foodstuff, nos, non-frozen",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000614",
+    "description": "Jam, jelly, marmalade, non-frozen, foodstuff",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000616",
+    "description": "Juice, concentrate, nos, non-frozen, foodstuff",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "000617",
+    "description": "Lactose, gums, foodstuff",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000619",
+    "description": "Orange juice, non-frozen, foodstuff",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000621",
+    "description": "Pastry, bread, cake, non-frozen, foodstuff",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000624",
+    "description": "Provisions, food additives, vitamins, foodstuff",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000626",
+    "description": "Sauce, non-frozen, foodstuff",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "000628",
+    "description": "Soups, broth, non-frozen, foodstuff",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "000629",
+    "description": "Sugar, syrup, foodstuff",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "000631",
+    "description": "Vegetable juice, non-frozen, foodstuff",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "000632",
+    "description": "Vegetables, preserved, canned, non-frozen, foodstuff",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "000634",
+    "description": "Vinegar, foodstuff",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000635",
+    "description": "Yeast, foodstuff",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000638",
+    "description": "Bulk liquids, non-frozen",
+    "gradeCode": "S",
+    "gradeName": "Flexi"
+  },
+  {
+    "code": "000702",
+    "description": "Apples, non-frozen, fruit",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "000704",
+    "description": "Apricot, non-frozen, fruit",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "000708",
+    "description": "Bananas, non-frozen, fruit",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "000710",
+    "description": "Carambolas, starfruits, durians, feijoas, jackfruit, kumquats, persimmon, passion fruit",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "000711",
+    "description": "Chestnuts, non-frozen",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000713",
+    "description": "Citrus various, orange, non-frozen, fruit",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000715",
+    "description": "Clementine, mandarins, tangerines, non-frozen, fruit",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000716",
+    "description": "Coconuts, brazil nuts, cashew nuts",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000718",
+    "description": "Dates, non-frozen, fruit",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000721",
+    "description": "Fruits, nuts, dried, non-frozen",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000724",
+    "description": "Grapefruit, non-frozen, fruit",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000726",
+    "description": "Grapes, non-frozen, fruit",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000728",
+    "description": "Guavas, mangoes, mangosteen, non-frozen, fruit",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000732",
+    "description": "Lemons, lime, non-frozen, fruit",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000738",
+    "description": "Peaches, nectarines, non-frozen, fruit",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000740",
+    "description": "Pears, quinces, non-frozen, fruit",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000742",
+    "description": "Pineapples, non-frozen, fruit",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000744",
+    "description": "Plums, sloes, non-frozen, fruit",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000745",
+    "description": "Walnuts",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000747",
+    "description": "Watermelons, non-frozen, fruit",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000748",
+    "description": "Industrial Citrus",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000751",
+    "description": "Plantains, non-frozen, fruit",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000761",
+    "description": "Fruits, nuts, industrial, non-frozen",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000808",
+    "description": "Meat, nos, non-frozen",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000810",
+    "description": "Pork, swine, non-frozen, meat",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000901",
+    "description": "Animal fats, animal oils, lards",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "000902",
+    "description": "Fish fats, fish oils, non-frozen",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "000903",
+    "description": "Palm oil",
+    "gradeCode": "S",
+    "gradeName": "Flexi"
+  },
+  {
+    "code": "0010",
+    "description": "Seeds, beans, cereals and flour",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "001001",
+    "description": "Cereals, pop corn, wheat, corn, rye, oats, rice",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "001002",
+    "description": "Flour all kinds",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "001004",
+    "description": "Malt",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "001007",
+    "description": "Peel of melon or citrus, non-frozen",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "001008",
+    "description": "Seeds, grains, industrial plants, medicinal plants",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "001009",
+    "description": "Seeds, sesame seeds",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "001010",
+    "description": "Soy, soybeans, non-frozen",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "001011",
+    "description": "Spices",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "001012",
+    "description": "Peanuts",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "001013",
+    "description": "Seed meal",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "001015",
+    "description": "Ginger, non-frozen",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "001108",
+    "description": "Crab, canned, preserved, non-frozen, shellfish",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "001110",
+    "description": "Crab, nos, non-frozen, shellfish",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "001112",
+    "description": "Cuttle fish, non-frozen, shellfish",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "0012",
+    "description": "Tea and coffee",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "001204",
+    "description": "Black fermented tea in packings >3kg, non-frozen",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "001206",
+    "description": "Coffee extracts, non-frozen",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "001208",
+    "description": "Coffee, non-roasted, non-frozen",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "001209",
+    "description": "Coffee, roasted, non-frozen",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "001212",
+    "description": "Tea, bags, non-frozen",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "001214",
+    "description": "Tea, loose, non-frozen",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "001302",
+    "description": "Artichokes, non-frozen, vegetables",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "001304",
+    "description": "Asparagus, non-frozen, vegetables",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "001306",
+    "description": "Aubergine, eggplant, non-frozen, vegetables",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "001308",
+    "description": "Beans, non-frozen, vegetables",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "001310",
+    "description": "Beetroot, red beet, celeriac, radishes, non-frozen, vegetables",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "001313",
+    "description": "Broccoli, cauliflower, frozen, vegetables",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "001326",
+    "description": "Corn, baby, non-frozen, vegetables",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "001328",
+    "description": "Cucumber, non-frozen, vegetables",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "001332",
+    "description": "French fries, IQF, non-frozen, vegetables",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "001335",
+    "description": "Garlic dried, non-frozen, vegetables",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "001345",
+    "description": "Mushrooms, non-frozen, vegetables",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "001347",
+    "description": "Onion, non-frozen, starvent, vegetables",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "001349",
+    "description": "Onions, non-frozen, vegetables",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "001351",
+    "description": "Peas, non-frozen, vegetables",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "001353",
+    "description": "Peppers capsicum, non-frozen, vegetables",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "001355",
+    "description": "Potatoes, non-frozen, vegetables",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "001361",
+    "description": "Sweet potatoes, non-frozen, vegetables",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "001363",
+    "description": "Sweetcorn, non-frozen, vegetables",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "001365",
+    "description": "Tomatoes, non-frozen, vegetables",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "001366",
+    "description": "Vegetable materials, vegetable products",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "001368",
+    "description": "Vegetable saps, extracts, non-frozen, vegetables",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "001370",
+    "description": "Vegetables, nos, non-frozen, vegetables",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "0014",
+    "description": "Appliances and kitchenware",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "001402",
+    "description": "Computers, computer parts, new",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "001403",
+    "description": "Computers, computer parts, used",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "001404",
+    "description": "Electronics, electronic appliances, audio, video equipment, new (no batteries)",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "001405",
+    "description": "Electronics, electronic appliances, audio, video equipment, used (no batteries)",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "001406",
+    "description": "Handtools",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "001407",
+    "description": "Kitchen and restaurant utilities, appliance, cookware, cutlery",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "001408",
+    "description": "Machinery or mechanical appliances, new",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "001409",
+    "description": "Machinery or mechanical appliances, old",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "001410",
+    "description": "Photo conductor",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "001411",
+    "description": "Starches, glue",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "001412",
+    "description": "White goods",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "001413",
+    "description": "Electronics with lithium batteries, new",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "001414",
+    "description": "Electronics with non-lithium batteries",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "001501",
+    "description": "Art, antiques, collectors' pieces",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "001601",
+    "description": "Calcium hypochlorite",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "001602",
+    "description": "Chemical products, nos",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "001604",
+    "description": "Cyanide, cyanide products",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "001605",
+    "description": "Helium, liquid or gas",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "001607",
+    "description": "Inorganic chemicals, nos",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "001611",
+    "description": "Vanadium oxides, hydroxides",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "001614",
+    "description": "Calcium products, not calcium hypochlorite",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "001615",
+    "description": "Organic chemicals, non-frozen",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "001616",
+    "description": "Iron II Sulphate",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "001701",
+    "description": "Cork, articles of cork",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "001801",
+    "description": "Diplomatic Cargo",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "001901",
+    "description": "Fertilizers",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "002001",
+    "description": "Furniture, nos",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "002002",
+    "description": "Lamps, lighting fixtures",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "002003",
+    "description": "Patio furniture",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "002004",
+    "description": "Seats, convertible into beds",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "0021",
+    "description": "Hides, fur, leather and skin",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "002102",
+    "description": "Handbags, leather, trunks, suitcase, briefcase, wallets",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "002103",
+    "description": "Leather accessories",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "002104",
+    "description": "Raw hides, skins, dry",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "002105",
+    "description": "Raw hides, skins, wet",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "0022",
+    "description": "Household goods",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "002201",
+    "description": "Household goods, personal effects, not for resale",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "002301",
+    "description": "Aluminium, aluminium articles, per unit weight <2 tons",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "002302",
+    "description": "Base metals, base metal articles, per unit weight <2 tons",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "002303",
+    "description": "Construction and building material, insulation, metal",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "002304",
+    "description": "Copper, copper articles, metal",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "002305",
+    "description": "Copper, refined, metal",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "002306",
+    "description": "Empty tanks, containers, metal, cleaned",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "002307",
+    "description": "Household articles of iron and steel",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "002308",
+    "description": "Iron, steel, iron and steel articles, per unit weight <2 tons",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "002309",
+    "description": "Lead, lead articles, metal",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "002311",
+    "description": "Molybdenum wire, metal",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "002313",
+    "description": "Scrap metal",
+    "gradeCode": "Q",
+    "gradeName": "Scrap Metal"
+  },
+  {
+    "code": "002314",
+    "description": "Tin, tin articles, metal",
+    "gradeCode": "Q",
+    "gradeName": "Scrap Metal"
+  },
+  {
+    "code": "002315",
+    "description": "Tungsten wire, metal",
+    "gradeCode": "Q",
+    "gradeName": "Scrap Metal"
+  },
+  {
+    "code": "002316",
+    "description": "Zinc, zinc articles, metal",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "002317",
+    "description": "Steel and metal coils, sheets, pipes, bars, per unit >2 tons",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "002318",
+    "description": "Steel and metal coils, sheets, pipes, bars, per unit <=2 tons",
+    "gradeCode": "Q",
+    "gradeName": "Scrap Metal"
+  },
+  {
+    "code": "002319",
+    "description": "Empty tanks, containers, metal, with residue",
+    "gradeCode": "Q",
+    "gradeName": "Scrap Metal"
+  },
+  {
+    "code": "002401",
+    "description": "Mineral fuels, oils, waxes",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "002404",
+    "description": "SRF pellets",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "002503",
+    "description": "Consolidated Cargo",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "002504",
+    "description": "Optical, photographic, medical or surgical instruments and apparatus",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "002505",
+    "description": "Photographic paper, photographic film",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "002506",
+    "description": "Non-lithium batteries only",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "002601",
+    "description": "Musical instruments",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "002701",
+    "description": "Iron ore",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "002702",
+    "description": "Minerals, non-frozen",
+    "gradeCode": "Q",
+    "gradeName": "Scrap Metal"
+  },
+  {
+    "code": "002703",
+    "description": "Ores, nos",
+    "gradeCode": "Q",
+    "gradeName": "Scrap Metal"
+  },
+  {
+    "code": "002704",
+    "description": "Seaweed ash",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "002705",
+    "description": "Slag, ash",
+    "gradeCode": "Q",
+    "gradeName": "Scrap Metal"
+  },
+  {
+    "code": "002706",
+    "description": "Minerals, frozen",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "002801",
+    "description": "Books, newspapers, pictures, printed matter",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "002802",
+    "description": "Paper, paperboard, packing material",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "002803",
+    "description": "Wastepaper",
+    "gradeCode": "Q",
+    "gradeName": "Scrap Metal"
+  },
+  {
+    "code": "002804",
+    "description": "Paperboard, KLB, Kraft Liner board, linerboard, newsprint",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "002808",
+    "description": "Battery waste for disposal or recycling",
+    "gradeCode": "Q",
+    "gradeName": "Scrap Metal"
+  },
+  {
+    "code": "002809",
+    "description": "Stationery",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "002810",
+    "description": "Non-battery hazardous waste for disposal or recycling",
+    "gradeCode": "Q",
+    "gradeName": "Scrap Metal"
+  },
+  {
+    "code": "0029",
+    "description": "Personal care and cleaning products",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "002901",
+    "description": "Detergents",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "002903",
+    "description": "Essential oils",
+    "gradeCode": "S",
+    "gradeName": "Flexi"
+  },
+  {
+    "code": "002904",
+    "description": "Lubricants",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "002905",
+    "description": "Cosmetics, perfumes and deodorants, non-frozen",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "002906",
+    "description": "Polishes, creams",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "002907",
+    "description": "Shampoo",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "002908",
+    "description": "Soap",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "002909",
+    "description": "Toilet paper, paper napkins, diapers, sanitary towels",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "002910",
+    "description": "Waxes",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "002911",
+    "description": "Make-up, cosmetics, toilet preparations",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "003002",
+    "description": "Pharmaceutical products, medicaments, low value",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "003003",
+    "description": "Pharmaceutical products, medicaments, high value",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "003004",
+    "description": "Medical devices, healthcare products, nutritional supplements, lab equipment",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "003101",
+    "description": "Cut flowers, non-frozen",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "003102",
+    "description": "Flower bulbs",
+    "gradeCode": "M",
+    "gradeName": "Food Grade"
+  },
+  {
+    "code": "003103",
+    "description": "Foliage, grass, moss",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "003201",
+    "description": "Adhesive tape, plastic, frozen",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "003202",
+    "description": "Epoxy resin, plastic, non-frozen",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "003203",
+    "description": "Gloves, surgical gloves, rubber",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "003204",
+    "description": "Plastic, plastic articles, new, non-frozen",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "003205",
+    "description": "Plastic, plastic articles, used",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "003207",
+    "description": "Rubber articles, rubber goods",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "003208",
+    "description": "Sacks and bags, plastic",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "003209",
+    "description": "Synthetic resins, plastic",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "003210",
+    "description": "Tires, tyres, rubber, new",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "003211",
+    "description": "Tires, tyres, rubber, used",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "003212",
+    "description": "Natural rubber, cup lumps",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "003213",
+    "description": "Adhesive tape, plastic, non-frozen",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "003216",
+    "description": "Plates, sheets, film, foil, plastic, non-frozen",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "003217",
+    "description": "Plastic pellets",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "003301",
+    "description": "Artificial flowers",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "003302",
+    "description": "Prepared feathers and down, artificial flowers, human hair articles",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "003503",
+    "description": "Matches",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "003701",
+    "description": "Clay",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "003702",
+    "description": "Phosphates",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "003703",
+    "description": "Salt, sulphur, earths, stone, plastering materials, lime, cement, marble, granite",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "003801",
+    "description": "Sports goods",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "003901",
+    "description": "Esparto, plaiting materials and articles",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "003902",
+    "description": "Hay, straw and articles of straw",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "003904",
+    "description": "Seaweed, non-frozen",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "004001",
+    "description": "Tanning extracts, dyeing extracts, paints, varnishes",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "004002",
+    "description": "White pigments, titanium dioxide",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "004101",
+    "description": "Carpets, floor coverings, textiles",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "004102",
+    "description": "Cotton-textiles (not raw cotton)",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "004103",
+    "description": "Fabrics, nos, textiles",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "004104",
+    "description": "Footwear, new, apparel",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "004105",
+    "description": "Footwear, used, apparel",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "004106",
+    "description": "Garments, apparel, new",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "004107",
+    "description": "Garments, apparel, used",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "004108",
+    "description": "Hats, caps, new, apparel",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "004110",
+    "description": "Impregnated textile fabrics",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "004111",
+    "description": "Man-made filaments, textiles",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "004112",
+    "description": "Man-made staple fibres, textiles",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "004113",
+    "description": "Other vegetable textile fibres, paper yarn",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "004115",
+    "description": "Silk, textiles",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "004116",
+    "description": "Textiles, cotton piece goods",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "004117",
+    "description": "Twine, cordage, ropes, cables, textiles",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "004118",
+    "description": "Wadding, felt, nonwovens, thread, cord, yarn",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "004119",
+    "description": "Wool, animal hair, textiles",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "004120",
+    "description": "Cotton seeds",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "004121",
+    "description": "Cotton, raw, dry, in bales",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "004201",
+    "description": "Ceramics, stoneware",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "004202",
+    "description": "Glass, glassware",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "004204",
+    "description": "Tile, stone articles",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "004205",
+    "description": "Fiber Glass",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "004301",
+    "description": "Cigarettes",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "004302",
+    "description": "Tobacco, tobacco accessories",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "004401",
+    "description": "Toys, games (no batteries)",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "004402",
+    "description": "Toys, games (with lithium batteries)",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "004403",
+    "description": "Toys, games (with non-lithium batteries)",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "004601",
+    "description": "Aircraft, spacecraft, and parts thereof",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "004602",
+    "description": "Autoparts, car parts, vehicle parts, motorcycle parts, bicycle parts, new",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "004603",
+    "description": "Autoparts, car parts, vehicle parts, motorcycle parts, bicycle parts, used",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "004605",
+    "description": "Railway equipment",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "004606",
+    "description": "Ships, boats and floating structures",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "004607",
+    "description": "New non-electric vehicle (cars, motorbikes, bicycles, forklifts, boats)",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "004608",
+    "description": "Used non-electric vehicle (cars, motorbikes, bicycles, forklifts, boats)",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "004609",
+    "description": "Damaged non-electric vehicle",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "004610",
+    "description": "New electric vehicle, lithium battery powered",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "004613",
+    "description": "Used electric vehicle, lithium battery powered (battery in good state)",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "004615",
+    "description": "Combined new/damaged non-electric and electric vehicles, lithium battery powered",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "004616",
+    "description": "New electric vehicles, non-lithium battery powered",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "004617",
+    "description": "Used electric vehicles, non-lithium battery powered (battery in good state)",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "0047",
+    "description": "Wood",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "004702",
+    "description": "Logs, lumber",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "004703",
+    "description": "Plywood, panel, board products",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "004704",
+    "description": "Timber, sawn",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "004706",
+    "description": "Wood pulp",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "004707",
+    "description": "Wood, articles of wood, nos",
+    "gradeCode": "E",
+    "gradeName": "General Cargo"
+  },
+  {
+    "code": "9999",
+    "description": "FAK (Freight All Kinds)",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  },
+  {
+    "code": "999991",
+    "description": "US Government Household Goods and Privately Owned Vehicles",
+    "gradeCode": "K",
+    "gradeName": "General Cargo \u2014 Premium"
+  }
+]

@@ -1,0 +1,3143 @@
+[
+  {
+    "imo": "9222560",
+    "name": "CHEETAH II",
+    "assetType": "Products Tanker",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2000,
+    "grossTonnage": 28534
+  },
+  {
+    "imo": "9234501",
+    "name": "SEALION I",
+    "assetType": "Products Tanker",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2002,
+    "grossTonnage": 30800
+  },
+  {
+    "imo": "9240885",
+    "name": "EAST 1",
+    "assetType": "Chemical / Products Tanker",
+    "flagName": "Hong Kong, China",
+    "flagIso2": "HK",
+    "buildYear": 2002,
+    "grossTonnage": 30128
+  },
+  {
+    "imo": "9264570",
+    "name": "THEMIS",
+    "assetType": "Crude Oil Tanker",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2002,
+    "grossTonnage": 56358
+  },
+  {
+    "imo": "9288734",
+    "name": "ARABESCA",
+    "assetType": "Crude Oil Tanker",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2005,
+    "grossTonnage": 57296
+  },
+  {
+    "imo": "9420617",
+    "name": "ZANGAZUR",
+    "assetType": "Crude Oil Tanker",
+    "flagName": "Azerbaijan",
+    "flagIso2": "AZ",
+    "buildYear": 2010,
+    "grossTonnage": 60379
+  },
+  {
+    "imo": "9441269",
+    "name": "BITTERN",
+    "assetType": "Bulk Carrier",
+    "flagName": "Marshall Islands",
+    "flagIso2": "MH",
+    "buildYear": 2009,
+    "grossTonnage": 33064
+  },
+  {
+    "imo": "7802586",
+    "name": "HUNTER",
+    "assetType": "Utility Vessel",
+    "flagName": "Mexico",
+    "flagIso2": "MX",
+    "buildYear": 1978,
+    "grossTonnage": 673
+  },
+  {
+    "imo": "9444340",
+    "name": "BOS PRELUDE",
+    "assetType": "Platform Supply Ship",
+    "flagName": "Luxembourg",
+    "flagIso2": "LU",
+    "buildYear": 2010,
+    "grossTonnage": 2177
+  },
+  {
+    "imo": "9492414",
+    "name": "VOLISSOS",
+    "assetType": "Bulk Carrier",
+    "flagName": "Marshall Islands",
+    "flagIso2": "MH",
+    "buildYear": 2010,
+    "grossTonnage": 33044
+  },
+  {
+    "imo": "9155767",
+    "name": "HSIN OCEAN",
+    "assetType": "Chemical / Products Tanker",
+    "flagName": "Barbados",
+    "flagIso2": "BB",
+    "buildYear": 1999,
+    "grossTonnage": 27544
+  },
+  {
+    "imo": "9333785",
+    "name": "CAPRICORN SUN",
+    "assetType": "Crude Oil Tanker",
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2007,
+    "grossTonnage": 59164
+  },
+  {
+    "imo": "9320635",
+    "name": "LOTUS",
+    "assetType": "General Cargo Ship",
+    "flagName": "Barbados",
+    "flagIso2": "BB",
+    "buildYear": 2006,
+    "grossTonnage": 2945
+  },
+  {
+    "imo": "8716306",
+    "name": "ST HELENA",
+    "assetType": "Passenger Ship",
+    "flagName": "United Kingdom",
+    "flagIso2": "GB",
+    "buildYear": 1990,
+    "grossTonnage": 6820
+  },
+  {
+    "imo": "9296810",
+    "name": "MISSONI",
+    "assetType": "Crude Oil Tanker",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2005,
+    "grossTonnage": 56163
+  },
+  {
+    "imo": "9335147",
+    "name": "KRITI CAPTAIN",
+    "assetType": "Chemical / Products Tanker",
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2007,
+    "grossTonnage": 23656
+  },
+  {
+    "imo": "9337547",
+    "name": "LUMA",
+    "assetType": "Anchor Handling Tug Supply",
+    "flagName": "Chile",
+    "flagIso2": "CL",
+    "buildYear": 2005,
+    "grossTonnage": 1470
+  },
+  {
+    "imo": "9386536",
+    "name": "SPRING FORTUNE",
+    "assetType": "Crude Oil Tanker",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2009,
+    "grossTonnage": 62775
+  },
+  {
+    "imo": "9261619",
+    "name": "HANNAH (ex Sea Luck Iii)",
+    "assetType": "Crude Oil Tanker",
+    "flagName": "Malawi",
+    "flagIso2": "MW",
+    "buildYear": 2003,
+    "grossTonnage": 57314
+  },
+  {
+    "imo": "9283306",
+    "name": "BUDDHA",
+    "assetType": "Crude / Oil Products Tanker",
+    "flagName": "Antigua & Barbuda",
+    "flagIso2": "AG",
+    "buildYear": 2004,
+    "grossTonnage": 62002
+  },
+  {
+    "imo": "9330472",
+    "name": "THORIN",
+    "assetType": "Crude Oil Tanker",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2007,
+    "grossTonnage": 55909
+  },
+  {
+    "imo": "9348479",
+    "name": "LUCKY FAIRY",
+    "assetType": "Crude Oil Tanker",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2006,
+    "grossTonnage": 61473
+  },
+  {
+    "imo": "9625152",
+    "name": "MANIFESTO",
+    "assetType": "LPG Tanker",
+    "flagName": "Singapore",
+    "flagIso2": "SG",
+    "buildYear": 2013,
+    "grossTonnage": 47190
+  },
+  {
+    "imo": "9713545",
+    "name": "DREAM ARRAX",
+    "assetType": "LPG Tanker",
+    "flagName": "Marshall Islands",
+    "flagIso2": "MH",
+    "buildYear": 2015,
+    "grossTonnage": 4258
+  },
+  {
+    "imo": "9865776",
+    "name": "EDEN",
+    "assetType": "Chemical / Products Tanker",
+    "flagName": "Marshall Islands",
+    "flagIso2": "MH",
+    "buildYear": 2020,
+    "grossTonnage": 29917
+  },
+  {
+    "imo": "9441403",
+    "name": "PUFFIN BULKER",
+    "assetType": "Bulk Carrier",
+    "flagName": "Marshall Islands",
+    "flagIso2": "MH",
+    "buildYear": 2011,
+    "grossTonnage": 33064
+  },
+  {
+    "imo": "8769365",
+    "name": "ORITSETIMEYIN",
+    "assetType": "Drilling Rig, jack up",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2009,
+    "grossTonnage": 6880
+  },
+  {
+    "imo": "9503043",
+    "name": "BRITOIL DEFENDER",
+    "assetType": "Anchor Handling Tug Supply",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2012,
+    "grossTonnage": 3161
+  },
+  {
+    "imo": "9753791",
+    "name": "BOW AQUARIUS",
+    "assetType": "Chemical / Products Tanker",
+    "flagName": "Norway NIS",
+    "flagIso2": "NO",
+    "buildYear": 2016,
+    "grossTonnage": 26364
+  },
+  {
+    "imo": "9829710",
+    "name": "AN YUAN",
+    "assetType": "Accommodation Platform, jack up",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2023,
+    "grossTonnage": 18081
+  },
+  {
+    "imo": "9358412",
+    "name": "TORM MATHILDE",
+    "assetType": "Crude / Oil Products Tanker",
+    "flagName": "Denmark (DIS)",
+    "flagIso2": "DK",
+    "buildYear": 2008,
+    "grossTonnage": 61819
+  },
+  {
+    "imo": "9154270",
+    "name": "ALGRACE",
+    "assetType": "General Cargo Ship",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 1999,
+    "grossTonnage": 11848
+  },
+  {
+    "imo": "9420423",
+    "name": "STENA LIVIA",
+    "assetType": "Passenger / Ro-Ro Ship (Vehicles)",
+    "flagName": "Denmark",
+    "flagIso2": "DK",
+    "buildYear": 2008,
+    "grossTonnage": 26904
+  },
+  {
+    "imo": "1013999",
+    "name": "JAL KAILASH",
+    "assetType": "Chemical / Products Tanker",
+    "flagName": "Singapore",
+    "flagIso2": "SG",
+    "buildYear": 2025,
+    "grossTonnage": 29696
+  },
+  {
+    "imo": "9871672",
+    "name": "MISR 2",
+    "assetType": "Bunkering Tanker",
+    "flagName": "Egypt",
+    "flagIso2": "EG",
+    "buildYear": 2019,
+    "grossTonnage": 1021
+  },
+  {
+    "imo": "9441374",
+    "name": "ORIOLE",
+    "assetType": "Bulk Carrier",
+    "flagName": "Marshall Islands",
+    "flagIso2": "MH",
+    "buildYear": 2011,
+    "grossTonnage": 33064
+  },
+  {
+    "imo": "9726516",
+    "name": "KMARIN OSLO",
+    "assetType": "Bulk Carrier",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2015,
+    "grossTonnage": 36518
+  },
+  {
+    "imo": "1076173",
+    "name": "MH LANGOEY",
+    "assetType": "Bulk Carrier",
+    "flagName": "Marshall Islands",
+    "flagIso2": "MH",
+    "buildYear": 2025,
+    "grossTonnage": 35741
+  },
+  {
+    "imo": "9622916",
+    "name": "CORA OLDENDORFF",
+    "assetType": "Bulk Carrier",
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2012,
+    "grossTonnage": 51253
+  },
+  {
+    "imo": "9308950",
+    "name": "SEASONS I",
+    "assetType": "Crude / Oil Products Tanker",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2006,
+    "grossTonnage": 61724
+  },
+  {
+    "imo": "9952505",
+    "name": "KRISTIAN OLDENDORFF",
+    "assetType": "Bulk Carrier",
+    "flagName": "Portugal (MAR)",
+    "flagIso2": "PT",
+    "buildYear": 2024,
+    "grossTonnage": 44666
+  },
+  {
+    "imo": "9319480",
+    "name": "BOW ARCHITECT",
+    "assetType": "Chemical / Products Tanker",
+    "flagName": "Norway NIS",
+    "flagIso2": "NO",
+    "buildYear": 2005,
+    "grossTonnage": 18427
+  },
+  {
+    "imo": "9289910",
+    "name": "MORNING MIDAS",
+    "assetType": "Vehicles Carrier",
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2006,
+    "grossTonnage": 46800
+  },
+  {
+    "imo": "9461063",
+    "name": "PANAGIOTIS",
+    "assetType": "Bulk Carrier",
+    "flagName": "Marshall Islands",
+    "flagIso2": "MH",
+    "buildYear": 2010,
+    "grossTonnage": 43817
+  },
+  {
+    "imo": "9175078",
+    "name": "ZAMBRA",
+    "assetType": "Crude Oil Tanker",
+    "flagName": "Unknown",
+    "flagIso2": null,
+    "buildYear": 1999,
+    "grossTonnage": 81565
+  },
+  {
+    "imo": "9282194",
+    "name": "AL SALAAM",
+    "assetType": "Tug",
+    "flagName": "Sudan",
+    "flagIso2": "SD",
+    "buildYear": 2004,
+    "grossTonnage": 691
+  },
+  {
+    "imo": "9951836",
+    "name": "STELLAMAR",
+    "assetType": "General Cargo Ship",
+    "flagName": "Cyprus",
+    "flagIso2": "CY",
+    "buildYear": 2024,
+    "grossTonnage": 4135
+  },
+  {
+    "imo": "9443645",
+    "name": "UP JADE",
+    "assetType": "Platform Supply Ship",
+    "flagName": "Mexico",
+    "flagIso2": "MX",
+    "buildYear": 2012,
+    "grossTonnage": 2917
+  },
+  {
+    "imo": "9564138",
+    "name": "VITOSHA",
+    "assetType": "Bulk Carrier",
+    "flagName": "Malta",
+    "flagIso2": "MT",
+    "buildYear": 2010,
+    "grossTonnage": 19865
+  },
+  {
+    "imo": "9255672",
+    "name": "LEBRE",
+    "assetType": "Crude Oil Tanker",
+    "flagName": "Barbados",
+    "flagIso2": "BB",
+    "buildYear": 2004,
+    "grossTonnage": 57301
+  },
+  {
+    "imo": "9179581",
+    "name": "HYUNDAI AQUAPIA",
+    "assetType": "LNG Tanker",
+    "flagName": "Marshall Islands",
+    "flagIso2": "MH",
+    "buildYear": 2000,
+    "grossTonnage": 113998
+  },
+  {
+    "imo": "9346160",
+    "name": "AH STAR",
+    "assetType": "Bulk Carrier",
+    "flagName": "Hong Kong, China",
+    "flagIso2": "HK",
+    "buildYear": 2007,
+    "grossTonnage": 32474
+  },
+  {
+    "imo": "8879914",
+    "name": "ST. MARYS CEMENT II",
+    "assetType": "Bulk Cement Barge, non propelled",
+    "flagName": "Canada",
+    "flagIso2": "CA",
+    "buildYear": 1978,
+    "grossTonnage": 11446
+  },
+  {
+    "imo": "9403152",
+    "name": "AGP KARTINI III",
+    "assetType": "Bulk Carrier",
+    "flagName": "Indonesia",
+    "flagIso2": "ID",
+    "buildYear": 2009,
+    "grossTonnage": 32379
+  },
+  {
+    "imo": "9155145",
+    "name": "HYUNDAI TECHNOPIA",
+    "assetType": "LNG Tanker",
+    "flagName": "Marshall Islands",
+    "flagIso2": "MH",
+    "buildYear": 1999,
+    "grossTonnage": 113998
+  },
+  {
+    "imo": "9621546",
+    "name": "BOREAS-G",
+    "assetType": "Offshore Tug / Supply Ship",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2012,
+    "grossTonnage": 1736
+  },
+  {
+    "imo": "9216212",
+    "name": "HOANH SON STAR",
+    "assetType": "Bulk Carrier",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2001,
+    "grossTonnage": 39973
+  },
+  {
+    "imo": "9294678",
+    "name": "GOLDEN CONVERGENCE",
+    "assetType": "Products Tanker",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2005,
+    "grossTonnage": 43075
+  },
+  {
+    "imo": "9122590",
+    "name": "BERGE FUJI",
+    "assetType": "Ore Carrier",
+    "flagName": "Isle Of Man",
+    "flagIso2": "IM",
+    "buildYear": 1996,
+    "grossTonnage": 145963
+  },
+  {
+    "imo": "9522166",
+    "name": "SL ADEN",
+    "assetType": "Tug",
+    "flagName": "Nigeria",
+    "flagIso2": "NG",
+    "buildYear": 2009,
+    "grossTonnage": 724
+  },
+  {
+    "imo": "9333321",
+    "name": "ATLAS GARNET",
+    "assetType": "Anchor Handling Tug Supply",
+    "flagName": "Togo",
+    "flagIso2": "TG",
+    "buildYear": 2005,
+    "grossTonnage": 1160
+  },
+  {
+    "imo": "9083081",
+    "name": "GREAT ROYAL",
+    "assetType": "Bulk Carrier",
+    "flagName": "Bangladesh",
+    "flagIso2": "BD",
+    "buildYear": 1994,
+    "grossTonnage": 23263
+  },
+  {
+    "imo": "9114335",
+    "name": "DON JULIO",
+    "assetType": "Fishing Vessel",
+    "flagName": "Chile",
+    "flagIso2": "CL",
+    "buildYear": 1995,
+    "grossTonnage": 1397
+  },
+  {
+    "imo": "9292838",
+    "name": "LISTIGA",
+    "assetType": "Crude / Oil Products Tanker",
+    "flagName": "Sierra Leone",
+    "flagIso2": "SL",
+    "buildYear": 2005,
+    "grossTonnage": 32144
+  },
+  {
+    "imo": "8608884",
+    "name": "NORTHWEST SNIPE",
+    "assetType": "LNG Tanker",
+    "flagName": "Australia",
+    "flagIso2": "AU",
+    "buildYear": 1990,
+    "grossTonnage": 105010
+  },
+  {
+    "imo": "9611022",
+    "name": "PANCARAN LIBERTY",
+    "assetType": "Bulk Carrier",
+    "flagName": "Indonesia",
+    "flagIso2": "ID",
+    "buildYear": 2013,
+    "grossTonnage": 33456
+  },
+  {
+    "imo": "8804244",
+    "name": "TAI JI",
+    "assetType": "Refrigerated Cargo Ship",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 1989,
+    "grossTonnage": 4970
+  },
+  {
+    "imo": "9330496",
+    "name": "ADELIE P (ex CELSIUS NICOSIA)",
+    "assetType": "Container Ship (Fully Cellular)",
+    "flagName": "Marshall Islands",
+    "flagIso2": "MH",
+    "buildYear": 2007,
+    "grossTonnage": 36483
+  },
+  {
+    "imo": "9522154",
+    "name": "SL SANA A",
+    "assetType": "Tug",
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2009,
+    "grossTonnage": 724
+  },
+  {
+    "imo": "9712852",
+    "name": "STI KINGSWAY",
+    "assetType": "Crude / Oil Products Tanker",
+    "flagName": "Marshall Islands",
+    "flagIso2": "MH",
+    "buildYear": 2015,
+    "grossTonnage": 63915
+  },
+  {
+    "imo": "7349455",
+    "name": "SCHARH\u00d6RN",
+    "assetType": "Pollution Control Vessel",
+    "flagName": "Germany",
+    "flagIso2": "DE",
+    "buildYear": 1974,
+    "grossTonnage": 1305
+  },
+  {
+    "imo": "9266865",
+    "name": "BIVOLA",
+    "assetType": "Crude Oil Tanker",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2004,
+    "grossTonnage": 58070
+  },
+  {
+    "imo": "9543031",
+    "name": "SL HODEIDAH",
+    "assetType": "Tug",
+    "flagName": "Nigeria",
+    "flagIso2": "NG",
+    "buildYear": 2009,
+    "grossTonnage": 724
+  },
+  {
+    "imo": "9568081",
+    "name": "MANTA RAY 5",
+    "assetType": "Anchor Handling Tug Supply",
+    "flagName": "Nigeria",
+    "flagIso2": "NG",
+    "buildYear": 2009,
+    "grossTonnage": 646
+  },
+  {
+    "imo": "9714757",
+    "name": "PHILLIP BAY",
+    "assetType": "Bulk Carrier",
+    "flagName": "Marshall Islands",
+    "flagIso2": "MH",
+    "buildYear": 2015,
+    "grossTonnage": 25546
+  },
+  {
+    "imo": "1029053",
+    "name": "HELGA G.",
+    "assetType": "General Cargo Ship",
+    "flagName": "Portugal (MAR)",
+    "flagIso2": "PT",
+    "buildYear": 2025,
+    "grossTonnage": 2518
+  },
+  {
+    "imo": "9045807",
+    "name": "BATELEUR",
+    "assetType": "LPG Tanker",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 1995,
+    "grossTonnage": 10018
+  },
+  {
+    "imo": "9286229",
+    "name": "RIEVERIA I",
+    "assetType": "Crude Oil Tanker",
+    "flagName": "San Marino",
+    "flagIso2": "SM",
+    "buildYear": 2004,
+    "grossTonnage": 81074
+  },
+  {
+    "imo": "9564140",
+    "name": "STRANDJA",
+    "assetType": "Bulk Carrier",
+    "flagName": "Malta",
+    "flagIso2": "MT",
+    "buildYear": 2010,
+    "grossTonnage": 19865
+  },
+  {
+    "imo": "9553646",
+    "name": "HAPPY OSPREY",
+    "assetType": "LPG Tanker",
+    "flagName": "Denmark (DIS)",
+    "flagIso2": "DK",
+    "buildYear": 2013,
+    "grossTonnage": 12819
+  },
+  {
+    "imo": "9712759",
+    "name": "SITC HAINAN",
+    "assetType": "Container Ship (Fully Cellular)",
+    "flagName": "Hong Kong, China",
+    "flagIso2": "HK",
+    "buildYear": 2015,
+    "grossTonnage": 17119
+  },
+  {
+    "imo": "9592927",
+    "name": "WHISKY STAR XXXIII",
+    "assetType": "Offshore Construction Vessel, jack up",
+    "flagName": "Nigeria",
+    "flagIso2": "NG",
+    "buildYear": 2010,
+    "grossTonnage": 761
+  },
+  {
+    "imo": "5247316",
+    "name": "MOKSTEIN",
+    "assetType": "Fishing Vessel",
+    "flagName": "Norway NIS",
+    "flagIso2": "NO",
+    "buildYear": 1960,
+    "grossTonnage": 1503
+  },
+  {
+    "imo": "9308089",
+    "name": "DE XI",
+    "assetType": "Crude/ Oil Products Tanker",
+    "flagName": "Marshall Islands",
+    "flagIso2": "MH",
+    "buildYear": 2006,
+    "grossTonnage": 41994
+  },
+  {
+    "imo": "9286281",
+    "name": "SAMADHA",
+    "assetType": "Crude Oil Tanker",
+    "flagName": "Sierra Leone",
+    "flagIso2": "SL",
+    "buildYear": 2004,
+    "grossTonnage": 81074
+  },
+  {
+    "imo": "9299707",
+    "name": "GUANYIN",
+    "assetType": "Crude Oil Tanker",
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2005,
+    "grossTonnage": 57248
+  },
+  {
+    "imo": "9301471",
+    "name": "MSC LUANDA VIII",
+    "assetType": "Container Ship (Fully Cellular)",
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2006,
+    "grossTonnage": 89941
+  },
+  {
+    "imo": "9321093",
+    "name": "LADY VIOLETTA (ex Fwn Solide)",
+    "assetType": "General Cargo Ship",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2006,
+    "grossTonnage": 7767
+  },
+  {
+    "imo": "9247376",
+    "name": "MARIEL",
+    "assetType": "Crude Oil Tanker",
+    "flagName": "Sierra Leone",
+    "flagIso2": "SL",
+    "buildYear": 2002,
+    "grossTonnage": 83616
+  },
+  {
+    "imo": "9255684",
+    "name": "GOLDEN EAGLE",
+    "assetType": "Crude Oil Tanker",
+    "flagName": "Saint Kitts And Nevis",
+    "flagIso2": "KN",
+    "buildYear": 2004,
+    "grossTonnage": 57301
+  },
+  {
+    "imo": "9779941",
+    "name": "SHUSHA",
+    "assetType": "Crude / Oil Products Tanker",
+    "flagName": "Azerbaijan",
+    "flagIso2": "AZ",
+    "buildYear": 2017,
+    "grossTonnage": 61032
+  },
+  {
+    "imo": "9301495",
+    "name": "TSC DORADO",
+    "assetType": "Container Ship (Fully Cellular)",
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2006,
+    "grossTonnage": 89941
+  },
+  {
+    "imo": "9370111",
+    "name": "IMPALA",
+    "assetType": "General Cargo Ship",
+    "flagName": "Antigua & Barbuda",
+    "flagIso2": "AG",
+    "buildYear": 2008,
+    "grossTonnage": 9556
+  },
+  {
+    "imo": "9299678",
+    "name": "PRISMA",
+    "assetType": "Crude Oil Tanker",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2005,
+    "grossTonnage": 85431
+  },
+  {
+    "imo": "9835496",
+    "name": "ATAIR",
+    "assetType": "Research Survey Vessel",
+    "flagName": "Germany",
+    "flagIso2": "DE",
+    "buildYear": 2020,
+    "grossTonnage": 3134
+  },
+  {
+    "imo": "9969792",
+    "name": "KLEO OLDENDORFF",
+    "assetType": "Bulk Carrier",
+    "flagName": "Portugal",
+    "flagIso2": "PT",
+    "buildYear": 2025,
+    "grossTonnage": 44601
+  },
+  {
+    "imo": "9040895",
+    "name": "AVATR (ex KIRAN ASYA)",
+    "assetType": "Bulk Carrier",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2005,
+    "grossTonnage": 39555
+  },
+  {
+    "imo": "9304253",
+    "name": "MAC GLORY (ex Navios Asteriks)",
+    "assetType": "Bulk Carrier",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2005,
+    "grossTonnage": 40014
+  },
+  {
+    "imo": "9411082",
+    "name": "NEW LIBERTY",
+    "assetType": "Crude Oil Tanker",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2010,
+    "grossTonnage": 86990
+  },
+  {
+    "imo": "8763452",
+    "name": "BLEO HOLM",
+    "assetType": "FPSO, Oil",
+    "flagName": "Cura\u00e7ao",
+    "flagIso2": "CW",
+    "buildYear": 1997,
+    "grossTonnage": 59248
+  },
+  {
+    "imo": "9236652",
+    "name": "ROB",
+    "assetType": "Container Ship (Fully Cellular)",
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2001,
+    "grossTonnage": 25535
+  },
+  {
+    "imo": "9282481",
+    "name": "TAGOR",
+    "assetType": "Crude Oil Tanker",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2005,
+    "grossTonnage": 63797
+  },
+  {
+    "imo": "9318022",
+    "name": "CHARMINAR",
+    "assetType": "Chemical / Products Tanker",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2006,
+    "grossTonnage": 30053
+  },
+  {
+    "imo": "9321718",
+    "name": "ZALE",
+    "assetType": "Crude Oil Tanker",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2006,
+    "grossTonnage": 81409
+  },
+  {
+    "imo": "9328170",
+    "name": "AETHER",
+    "assetType": "Crude / Oil Products Tanker",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2007,
+    "grossTonnage": 63440
+  },
+  {
+    "imo": "9400980",
+    "name": "OMNI",
+    "assetType": "Crude Oil Tanker",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2008,
+    "grossTonnage": 55894
+  },
+  {
+    "imo": "9859234",
+    "name": "SEVERN",
+    "assetType": "Chemical/Products Tanker",
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2021,
+    "grossTonnage": 30087
+  },
+  {
+    "imo": "8768969",
+    "name": "CUTLASS FISH",
+    "assetType": "Offshore Construction Vessel, jack upNigeria",
+    "flagName": null,
+    "flagIso2": null,
+    "buildYear": 2006,
+    "grossTonnage": 761
+  },
+  {
+    "imo": "9481958",
+    "name": "MIKE BAY",
+    "assetType": "Bulk Carrier",
+    "flagName": "Marshall Islands",
+    "flagIso2": "MH",
+    "buildYear": 2010,
+    "grossTonnage": 22988
+  },
+  {
+    "imo": "9969807",
+    "name": "KAI OLDENDORFF",
+    "assetType": "Bulk Carrier",
+    "flagName": "Portugal",
+    "flagIso2": "PT",
+    "buildYear": 2025,
+    "grossTonnage": 44613
+  },
+  {
+    "imo": "9655975",
+    "name": "TRISTAR JISHA (ex CLEAROCEAN MA Chemical / Product Tanker",
+    "assetType": "Liberia",
+    "flagName": null,
+    "flagIso2": null,
+    "buildYear": 2014,
+    "grossTonnage": 29705
+  },
+  {
+    "imo": "9904716",
+    "name": "FLY ENTERPRISE",
+    "assetType": "Bulk Carrier",
+    "flagName": "Papua New Guinea",
+    "flagIso2": "PG",
+    "buildYear": 2022,
+    "grossTonnage": 4541
+  },
+  {
+    "imo": "1014008",
+    "name": "JAL KALP",
+    "assetType": "Chemical / Products Tanker",
+    "flagName": "Singapore",
+    "flagIso2": "SG",
+    "buildYear": 2025,
+    "grossTonnage": 29696
+  },
+  {
+    "imo": "9307152",
+    "name": "AQUA PEARL",
+    "assetType": "Crude Oil Tanker",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2005,
+    "grossTonnage": 56172
+  },
+  {
+    "imo": "9201827",
+    "name": "MIA (ex LADY CARINA)",
+    "assetType": "General Cargo Ship",
+    "flagName": "Antigua & Barbuda",
+    "flagIso2": "AG",
+    "buildYear": 2001,
+    "grossTonnage": 4235
+  },
+  {
+    "imo": "9323429",
+    "name": "WHITE CRANE",
+    "assetType": "Crude Oil Tanker",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2007,
+    "grossTonnage": 158463
+  },
+  {
+    "imo": "9229635",
+    "name": "YU XIAO 3",
+    "assetType": "Bulk Carrier",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2002,
+    "grossTonnage": 39035
+  },
+  {
+    "imo": "8021854",
+    "name": "NINGALOO VISION",
+    "assetType": "FPSO, Oil",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 1981,
+    "grossTonnage": 63876
+  },
+  {
+    "imo": "9234666",
+    "name": "ADELINE G",
+    "assetType": "Crude Oil Tanker",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2003,
+    "grossTonnage": 161233
+  },
+  {
+    "imo": "9256975",
+    "name": "KONGM",
+    "assetType": "Crude Oil Tanker",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2003,
+    "grossTonnage": 160247
+  },
+  {
+    "imo": "9460564",
+    "name": "BALU 6 (ex P. Yanbu)",
+    "assetType": "Crude Oil Tanker",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2011,
+    "grossTonnage": 55909
+  },
+  {
+    "imo": "9712761",
+    "name": "SITC KEELUNG",
+    "assetType": "Container Ship (Fully Cellular)",
+    "flagName": "Hong Kong, China",
+    "flagIso2": "HK",
+    "buildYear": 2015,
+    "grossTonnage": 17119
+  },
+  {
+    "imo": "9191553",
+    "name": "YATEEKA",
+    "assetType": "Chemical / Products Tanker",
+    "flagName": "Gabon",
+    "flagIso2": "GA",
+    "buildYear": 2000,
+    "grossTonnage": 9549
+  },
+  {
+    "imo": "9252618",
+    "name": "MOUNT",
+    "assetType": "Anchor Handling Tug Supply",
+    "flagName": "Palau",
+    "flagIso2": "PW",
+    "buildYear": 2003,
+    "grossTonnage": 1413
+  },
+  {
+    "imo": "9198197",
+    "name": "VISCARIA",
+    "assetType": "Tug",
+    "flagName": "Sweden",
+    "flagIso2": "SE",
+    "buildYear": 2000,
+    "grossTonnage": 603
+  },
+  {
+    "imo": "9340386",
+    "name": "SUNLIT",
+    "assetType": "Chemical / Products Tanker",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2007,
+    "grossTonnage": 8539
+  },
+  {
+    "imo": "9951848",
+    "name": "ECOMAR",
+    "assetType": "General Cargo Ship",
+    "flagName": "Cyprus",
+    "flagIso2": "CY",
+    "buildYear": 2024,
+    "grossTonnage": 4135
+  },
+  {
+    "imo": "9724685",
+    "name": "BRITISH CAPTAIN",
+    "assetType": "Chemical / Products Tanker",
+    "flagName": "Isle Of Man",
+    "flagIso2": "IM",
+    "buildYear": 2017,
+    "grossTonnage": 30948
+  },
+  {
+    "imo": "9167203",
+    "name": "PREM PRIDE",
+    "assetType": "FSO, Oil",
+    "flagName": "India",
+    "flagIso2": "IN",
+    "buildYear": 1999,
+    "grossTonnage": 61764
+  },
+  {
+    "imo": "9750763",
+    "name": "LUNA NELLE",
+    "assetType": "Platform Supply Ship",
+    "flagName": "Marshall Islands",
+    "flagIso2": "MH",
+    "buildYear": 2019,
+    "grossTonnage": 3535
+  },
+  {
+    "imo": "1004651",
+    "name": "LAZY Z",
+    "assetType": "Yacht",
+    "flagName": "Cayman Islands",
+    "flagIso2": "KY",
+    "buildYear": 1997,
+    "grossTonnage": 638
+  },
+  {
+    "imo": "7821037",
+    "name": "MADURU OYA",
+    "assetType": "Products Tanker",
+    "flagName": "Sri Lanka",
+    "flagIso2": "LK",
+    "buildYear": 1979,
+    "grossTonnage": 637
+  },
+  {
+    "imo": "9141560",
+    "name": "DON MANUEL                                        Fishing Vessel",
+    "assetType": null,
+    "flagName": "Chile",
+    "flagIso2": "CL",
+    "buildYear": 1996,
+    "grossTonnage": 1310
+  },
+  {
+    "imo": "9491393",
+    "name": "SHINE SPRING (ex APJ JAI)                   Bulk Carrier",
+    "assetType": null,
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2011,
+    "grossTonnage": 32987
+  },
+  {
+    "imo": "9741736",
+    "name": "PAVLARA                                                 Bulk Carrier",
+    "assetType": null,
+    "flagName": "Marshall Islands",
+    "flagIso2": "MH",
+    "buildYear": 2016,
+    "grossTonnage": 25598
+  },
+  {
+    "imo": "9423877",
+    "name": "AHTS MONTY J.                                      Anchor Handling Tug Supply",
+    "assetType": null,
+    "flagName": "Vanuatu",
+    "flagIso2": "VU",
+    "buildYear": 2007,
+    "grossTonnage": 1623
+  },
+  {
+    "imo": "9969819",
+    "name": "KAYLA OLDENDORFF                            Bulk Carrier",
+    "assetType": null,
+    "flagName": "Portugal (MAR)",
+    "flagIso2": "PT",
+    "buildYear": 2025,
+    "grossTonnage": 44601
+  },
+  {
+    "imo": "9673630",
+    "name": "SEABOARD GARDENIA                         Container Ship (Fully Cellular)",
+    "assetType": null,
+    "flagName": "Portugal",
+    "flagIso2": "PT",
+    "buildYear": 2014,
+    "grossTonnage": 18826
+  },
+  {
+    "imo": "9715488",
+    "name": "BULK PASSION (ex HERUN ZHEJIANGBulk Carrier",
+    "assetType": null,
+    "flagName": "Hong Kong",
+    "flagIso2": "HK",
+    "buildYear": 2017,
+    "grossTonnage": 94385
+  },
+  {
+    "imo": "9228784",
+    "name": "NOBEL M                                                Chemical / Products Tanker",
+    "assetType": null,
+    "flagName": "Barbados",
+    "flagIso2": "BB",
+    "buildYear": 2002,
+    "grossTonnage": 24997
+  },
+  {
+    "imo": "9279800",
+    "name": "YU XIAO 10 (ex PEDHOULAS MERCH Bulk Carrier",
+    "assetType": null,
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2006,
+    "grossTonnage": 43151
+  },
+  {
+    "imo": "9171345",
+    "name": "NVS PIONEER                                        Products Tanker",
+    "assetType": null,
+    "flagName": "Palau",
+    "flagIso2": "PW",
+    "buildYear": 2000,
+    "grossTonnage": 27254
+  },
+  {
+    "imo": "9238038",
+    "name": "TRADER II                                                LNG Tanker",
+    "assetType": null,
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2002,
+    "grossTonnage": 93498
+  },
+  {
+    "imo": "9867061",
+    "name": "AL HASSAN AL-MARRAKCHI                Fishery Research Vessel",
+    "assetType": null,
+    "flagName": "Morocco",
+    "flagIso2": "MA",
+    "buildYear": 2020,
+    "grossTonnage": 1238
+  },
+  {
+    "imo": "8920141",
+    "name": "FUJI BAY                                                  Refrigerated Cargo Ship",
+    "assetType": null,
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 1990,
+    "grossTonnage": 9070
+  },
+  {
+    "imo": "8130693",
+    "name": "ZHONG SHAN DA XUE JI DI                  Anchor Handling Tug Supply",
+    "assetType": null,
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 1983,
+    "grossTonnage": 3469
+  },
+  {
+    "imo": "9486582",
+    "name": "PORTAITISSA ( ex ACUITY)                    Bulk Carrier",
+    "assetType": null,
+    "flagName": "Marshall Islands",
+    "flagIso2": "MH",
+    "buildYear": 2011,
+    "grossTonnage": 24168
+  },
+  {
+    "imo": "9371969",
+    "name": "PAPUAN COAST                                     General Cargo Ship",
+    "assetType": null,
+    "flagName": "Papua New Guinea",
+    "flagIso2": "PG",
+    "buildYear": 2007,
+    "grossTonnage": 5316
+  },
+  {
+    "imo": "1023516",
+    "name": "SOUTHERN RESONANCE                     Crude Oil Tanker",
+    "assetType": null,
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2025,
+    "grossTonnage": 60177
+  },
+  {
+    "imo": "9601168",
+    "name": "SAFFRON (ex MYSTRAS)                       Bulk Carrier",
+    "assetType": null,
+    "flagName": "Marshall Islands",
+    "flagIso2": "MH",
+    "buildYear": 2013,
+    "grossTonnage": 33361
+  },
+  {
+    "imo": "9164524",
+    "name": "STAR                                                        Chemical / Products Tanker",
+    "assetType": null,
+    "flagName": "Palau",
+    "flagIso2": "PW",
+    "buildYear": 1999,
+    "grossTonnage": 8829
+  },
+  {
+    "imo": "9330824",
+    "name": "XH NAVIGATOR                                      Bulk Carrier",
+    "assetType": null,
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2005,
+    "grossTonnage": 88853
+  },
+  {
+    "imo": "9577604",
+    "name": "AGHIA MARINA (ex VERITY)                  Bulk Carrier",
+    "assetType": null,
+    "flagName": "Marshall Islands",
+    "flagIso2": "MH",
+    "buildYear": 2012,
+    "grossTonnage": 24168
+  },
+  {
+    "imo": "1021714",
+    "name": "KAREN OLDENDORFF                           Bulk Carrier",
+    "assetType": null,
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2025,
+    "grossTonnage": 44613
+  },
+  {
+    "imo": "9497335",
+    "name": "FER 610 (ex Thunderbird)                     Bulk Carrier",
+    "assetType": null,
+    "flagName": "Marshall Islands",
+    "flagIso2": "MH",
+    "buildYear": 2011,
+    "grossTonnage": 43717
+  },
+  {
+    "imo": "9691113",
+    "name": "SITC SHANDONG                                  Container Ship (Fully Cellular)",
+    "assetType": null,
+    "flagName": "Hong Kong",
+    "flagIso2": "HK",
+    "buildYear": 2014,
+    "grossTonnage": 17119
+  },
+  {
+    "imo": "9976329",
+    "name": "JONGLEUR                                              General Cargo Ship",
+    "assetType": null,
+    "flagName": "Latvia",
+    "flagIso2": "LV",
+    "buildYear": 2025,
+    "grossTonnage": 3250
+  },
+  {
+    "imo": "1021180",
+    "name": "JAL DHVANI                                            Chemical / Product Tanker",
+    "assetType": null,
+    "flagName": "Singapore",
+    "flagIso2": "SG",
+    "buildYear": 2025,
+    "grossTonnage": 29696
+  },
+  {
+    "imo": "9441271",
+    "name": "GRACE JESSIE (ex Star Canary)           Bulk Carrier",
+    "assetType": null,
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2009,
+    "grossTonnage": 33064
+  },
+  {
+    "imo": "1010545",
+    "name": "BURKUT                                                  Yacht",
+    "assetType": null,
+    "flagName": "Cayman Islands",
+    "flagIso2": "KY",
+    "buildYear": 2009,
+    "grossTonnage": 739
+  },
+  {
+    "imo": "9676515",
+    "name": "WONDER MAIA (ex GREEN SKY)          Chemical / Product Tanker",
+    "assetType": null,
+    "flagName": "Marshall Islands",
+    "flagIso2": "MH",
+    "buildYear": 2014,
+    "grossTonnage": 30263
+  },
+  {
+    "imo": "9577628",
+    "name": "AGHIA DYNAMI (ex EQUITY)                 Bulk Carrier",
+    "assetType": null,
+    "flagName": "Marshall Islands",
+    "flagIso2": "MH",
+    "buildYear": 2013,
+    "grossTonnage": 24168
+  },
+  {
+    "imo": "9111838",
+    "name": "SAL ALHOMOLA AL MORKAZA             Suez Canal Authority",
+    "assetType": null,
+    "flagName": "Egypt",
+    "flagIso2": "EG",
+    "buildYear": 1995,
+    "grossTonnage": 1800
+  },
+  {
+    "imo": "9673666",
+    "name": "NORDLUCHS                                         Container Ship (Fully Cellular)",
+    "assetType": null,
+    "flagName": "Portugal",
+    "flagIso2": "PT",
+    "buildYear": 2014,
+    "grossTonnage": 18826
+  },
+  {
+    "imo": "9724702",
+    "name": "BRITISH ENGINEER                               Chemical / Products Tanker",
+    "assetType": null,
+    "flagName": "Isle Of Man",
+    "flagIso2": "IM",
+    "buildYear": 2017,
+    "grossTonnage": 30948
+  },
+  {
+    "imo": "9995894",
+    "name": "HOLGER G                                              General Cargo Ship",
+    "assetType": null,
+    "flagName": "Antigua & Barbuda",
+    "flagIso2": "AG",
+    "buildYear": 2025,
+    "grossTonnage": 2545
+  },
+  {
+    "imo": "9208239",
+    "name": "PAMIR                                                      LPG Tanker",
+    "assetType": null,
+    "flagName": "Comoros",
+    "flagIso2": "KM",
+    "buildYear": 2001,
+    "grossTonnage": 47156
+  },
+  {
+    "imo": "9486594",
+    "name": "ELEOVRYTISSA ( ex PARITY)                 Bulk Carrier",
+    "assetType": null,
+    "flagName": "Marshall Islands",
+    "flagIso2": "MH",
+    "buildYear": 2012,
+    "grossTonnage": 24168
+  },
+  {
+    "imo": "9724726",
+    "name": "FRANK LIGHT 9 ex BRITISH CHIEF)     Chemical / Product Tanker",
+    "assetType": null,
+    "flagName": "Marshall Islands",
+    "flagIso2": "MH",
+    "buildYear": 2017,
+    "grossTonnage": 30948
+  },
+  {
+    "imo": "9311529",
+    "name": "CHL VENUS                                            Bulk Carrier",
+    "assetType": null,
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2005,
+    "grossTonnage": 31260
+  },
+  {
+    "imo": "9288813",
+    "name": "CHAMPION ENDURANCE                    Crude Oil Tanker",
+    "assetType": null,
+    "flagName": "Marshall Islands",
+    "flagIso2": "MH",
+    "buildYear": 2005,
+    "grossTonnage": 29352
+  },
+  {
+    "imo": "9224441",
+    "name": "FIRN                                                         Crude Oil Tanker",
+    "assetType": null,
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2002,
+    "grossTonnage": 81085
+  },
+  {
+    "imo": "9461685",
+    "name": "ORKIM CITRINE (ex HAFNIA LUPUS)   Chemical / Product Tanker",
+    "assetType": null,
+    "flagName": "Malaysia",
+    "flagIso2": "MY",
+    "buildYear": 2012,
+    "grossTonnage": 30265
+  },
+  {
+    "imo": "9724001",
+    "name": "OGBA                                                      Bulk Carrier",
+    "assetType": null,
+    "flagName": "Singapore",
+    "flagIso2": "SG",
+    "buildYear": 2015,
+    "grossTonnage": 36449
+  },
+  {
+    "imo": "9834741",
+    "name": "DISNEY DESTINY                                   Passenger Ship",
+    "assetType": null,
+    "flagName": "Bahamas",
+    "flagIso2": "BS",
+    "buildYear": 2025,
+    "grossTonnage": 144256
+  },
+  {
+    "imo": "9230763",
+    "name": "SEASHIN                                                 Bulk Carrier",
+    "assetType": null,
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2001,
+    "grossTonnage": 30174
+  },
+  {
+    "imo": "9233650",
+    "name": "UTOPIA QUEST                                       Crude Oil Tanker",
+    "assetType": null,
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2002,
+    "grossTonnage": 157003
+  },
+  {
+    "imo": "9254836",
+    "name": "GHOUSTA                                               Bulk Carrier",
+    "assetType": null,
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2002,
+    "grossTonnage": 27989
+  },
+  {
+    "imo": "9723992",
+    "name": "ML SWALLOW",
+    "assetType": "Bulk Carrier",
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2015,
+    "grossTonnage": 36449
+  },
+  {
+    "imo": "9377846",
+    "name": "BHG FORTUNE",
+    "assetType": "General Cargo Ship",
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2010,
+    "grossTonnage": 8395
+  },
+  {
+    "imo": "9430686",
+    "name": "GLORY BLUE (ex ASIA APSARA)",
+    "assetType": "Chemical / Product Tanker",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2012,
+    "grossTonnage": 9366
+  },
+  {
+    "imo": "9976331",
+    "name": "NAUTICA",
+    "assetType": "General Cargo",
+    "flagName": "Latvia",
+    "flagIso2": "LV",
+    "buildYear": 2025,
+    "grossTonnage": 3339
+  },
+  {
+    "imo": "9244855",
+    "name": "MAJESTY",
+    "assetType": "Bulk Carrier",
+    "flagName": "Bangladesh",
+    "flagIso2": "BD",
+    "buildYear": 2002,
+    "grossTonnage": 30053
+  },
+  {
+    "imo": "9263693",
+    "name": "SINO STAR",
+    "assetType": "Chemical / Products Tanker",
+    "flagName": "Hong Kong, China",
+    "flagIso2": "HK",
+    "buildYear": 2003,
+    "grossTonnage": 30056
+  },
+  {
+    "imo": "9457385",
+    "name": "SPT THEMIS (ex ASTIR LADY)",
+    "assetType": "Chemical / Product Tanker",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2011,
+    "grossTonnage": 30060
+  },
+  {
+    "imo": "9867621",
+    "name": "KHANKENDI",
+    "assetType": "Crude / Oil Products Tanker",
+    "flagName": "Azerbaijan",
+    "flagIso2": "AZ",
+    "buildYear": 2020,
+    "grossTonnage": 62826
+  },
+  {
+    "imo": "8404812",
+    "name": "HEBRIDEAN ISLES",
+    "assetType": "Passenger / Ro-Ro Ship (Vehicles)",
+    "flagName": "United Kingdom",
+    "flagIso2": "GB",
+    "buildYear": 1985,
+    "grossTonnage": 3040
+  },
+  {
+    "imo": "9155626",
+    "name": "WHITE SHARK",
+    "assetType": "LPG Tanker",
+    "flagName": "San Marino",
+    "flagIso2": "SM",
+    "buildYear": 2025,
+    "grossTonnage": 15180
+  },
+  {
+    "imo": "9536064",
+    "name": "BIRGIT G.",
+    "assetType": "General Cargo Ship",
+    "flagName": "Antigua & Barbuda",
+    "flagIso2": "AG",
+    "buildYear": 2010,
+    "grossTonnage": 2545
+  },
+  {
+    "imo": "9609134",
+    "name": "VENUS STAR( ex SEA VENUS)",
+    "assetType": "Bulk Carrier",
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2025,
+    "grossTonnage": 44025
+  },
+  {
+    "imo": "9030814",
+    "name": "PUTERI DELIMA",
+    "assetType": "LNG Tanker",
+    "flagName": "Malaysia",
+    "flagIso2": "MY",
+    "buildYear": 1995,
+    "grossTonnage": 86205
+  },
+  {
+    "imo": "9030826",
+    "name": "PUTERI NILAM",
+    "assetType": "LNG Tanker",
+    "flagName": "Malaysia",
+    "flagIso2": "MY",
+    "buildYear": 1995,
+    "grossTonnage": 86211
+  },
+  {
+    "imo": "9275969",
+    "name": "SHT2",
+    "assetType": "Chemical / Product Tanker",
+    "flagName": "Marshall Islands",
+    "flagIso2": "MH",
+    "buildYear": 2004,
+    "grossTonnage": 43075
+  },
+  {
+    "imo": "9924168",
+    "name": "SAMSON",
+    "assetType": "Trailing Suction Hopper Dredger",
+    "flagName": "Saint Vincent & The Grenadines",
+    "flagIso2": "VC",
+    "buildYear": 2024,
+    "grossTonnage": 4465
+  },
+  {
+    "imo": "8957998",
+    "name": "PAN UNITED F.D. V",
+    "assetType": "Floating Dock",
+    "flagName": "Indonesia",
+    "flagIso2": "ID",
+    "buildYear": 2000,
+    "grossTonnage": 40000
+  },
+  {
+    "imo": "9211808",
+    "name": "FARNELLA",
+    "assetType": "Fishing Vessel",
+    "flagName": "Belize",
+    "flagIso2": "BZ",
+    "buildYear": 2000,
+    "grossTonnage": 667
+  },
+  {
+    "imo": "9220201",
+    "name": "LILA BEIHAI",
+    "assetType": "Bulk Carrier",
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2002,
+    "grossTonnage": 91051
+  },
+  {
+    "imo": "9258480",
+    "name": "ACHERON (ex ORION I)",
+    "assetType": "Crude Oil Tanker",
+    "flagName": "Barbados",
+    "flagIso2": "BB",
+    "buildYear": 2004,
+    "grossTonnage": 56227
+  },
+  {
+    "imo": "9374703",
+    "name": "ODERBORG",
+    "assetType": "General Cargo Ship",
+    "flagName": "Netherlands",
+    "flagIso2": "NL",
+    "buildYear": 2025,
+    "grossTonnage": 2528
+  },
+  {
+    "imo": "1021738",
+    "name": "KODY OLDENDORFF",
+    "assetType": "Bulk Carrier",
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2025,
+    "grossTonnage": 44500
+  },
+  {
+    "imo": "9306639",
+    "name": "SAVIR LION",
+    "assetType": "Crude Oil Tanker",
+    "flagName": "Indonesia",
+    "flagIso2": "ID",
+    "buildYear": 2007,
+    "grossTonnage": 61724
+  },
+  {
+    "imo": "1021726",
+    "name": "KALLE OLDENDORFF",
+    "assetType": "Bulk Carrier",
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2025,
+    "grossTonnage": 44601
+  },
+  {
+    "imo": "9130896",
+    "name": "JAYNEE W",
+    "assetType": "Products Tanker",
+    "flagName": "United Kingdom",
+    "flagIso2": "GB",
+    "buildYear": 1996,
+    "grossTonnage": 1689
+  },
+  {
+    "imo": "9731858",
+    "name": "COMTE. CRISTOVAO",
+    "assetType": "Floating Dock",
+    "flagName": "Brazil",
+    "flagIso2": "BR",
+    "buildYear": 2016,
+    "grossTonnage": 4456
+  },
+  {
+    "imo": "9321108",
+    "name": "LADY LAURA (ex FWN BONAFIDE)",
+    "assetType": "General Cargo Ship",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2006,
+    "grossTonnage": 7767
+  },
+  {
+    "imo": "9822736",
+    "name": "NORDMAAS",
+    "assetType": "Container Ship (Fully Cellular)",
+    "flagName": "Cyprus",
+    "flagIso2": "CY",
+    "buildYear": 2019,
+    "grossTonnage": 19035
+  },
+  {
+    "imo": "9963011",
+    "name": "BALTIC ECLIPSE",
+    "assetType": "General Cargo Ship",
+    "flagName": "Portugal (MAR)",
+    "flagIso2": "PT",
+    "buildYear": 2024,
+    "grossTonnage": 2518
+  },
+  {
+    "imo": "9497323",
+    "name": "FULMAR S",
+    "assetType": "Bulk Carrier",
+    "flagName": "Marshall Islands",
+    "flagIso2": "MH",
+    "buildYear": 2010,
+    "grossTonnage": 43717
+  },
+  {
+    "imo": "9279783",
+    "name": "YU XIAO 6",
+    "assetType": "Bulk Carrier",
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2005,
+    "grossTonnage": 40002
+  },
+  {
+    "imo": "1021740",
+    "name": "KATY OLDENDORFF",
+    "assetType": "Bulk Carrier",
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2025,
+    "grossTonnage": 44601
+  },
+  {
+    "imo": "9963009",
+    "name": "BALTIC COASTER",
+    "assetType": "General Cargo Ship",
+    "flagName": "Portugal (MAR)",
+    "flagIso2": "PT",
+    "buildYear": 2024,
+    "grossTonnage": 2518
+  },
+  {
+    "imo": "9247986",
+    "name": "AVA 10",
+    "assetType": "Crude Oil Tanker",
+    "flagName": "Comoros",
+    "flagIso2": "KM",
+    "buildYear": 2003,
+    "grossTonnage": 56225
+  },
+  {
+    "imo": "9333254",
+    "name": "CULTURE",
+    "assetType": "Chemical / Products Tanker",
+    "flagName": "India",
+    "flagIso2": "IN",
+    "buildYear": 2006,
+    "grossTonnage": 28799
+  },
+  {
+    "imo": "9573658",
+    "name": "PVT NOVA (ex YOSEMITE TRADER)",
+    "assetType": "Chemical / Products Tanker",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2011,
+    "grossTonnage": 28777
+  },
+  {
+    "imo": "9951850",
+    "name": "AQUAMAR",
+    "assetType": "General Cargo Ship",
+    "flagName": "Cyprus",
+    "flagIso2": "CY",
+    "buildYear": 2024,
+    "grossTonnage": 4135
+  },
+  {
+    "imo": "9327451",
+    "name": "CHAMPION ARCTIC (ex SEAWAYS GAChemical / Products Tanker",
+    "assetType": null,
+    "flagName": "Norway (Nis) (ex Liberia)",
+    "flagIso2": "NO",
+    "buildYear": 2007,
+    "grossTonnage": 27916
+  },
+  {
+    "imo": "9337418",
+    "name": "ATMOS(ex PATMOS WARRIOR)",
+    "assetType": "Crude Oil Tanker",
+    "flagName": "Palau",
+    "flagIso2": "PW",
+    "buildYear": 2007,
+    "grossTonnage": 56172
+  },
+  {
+    "imo": "9487172",
+    "name": "YUN QUE ZUO (ex NEW ACCORD)",
+    "assetType": "Crude Oil Tanker",
+    "flagName": "China (People's Republic of)",
+    "flagIso2": "CN",
+    "buildYear": 2009,
+    "grossTonnage": 61736
+  },
+  {
+    "imo": "7625500",
+    "name": "MONTELAURA                                        Refrigerated Cargo Ship",
+    "assetType": null,
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 1977,
+    "grossTonnage": 2695
+  },
+  {
+    "imo": "9691125",
+    "name": "SITC ZHEJIANG                                      Container Ship (Fully Cellular)",
+    "assetType": null,
+    "flagName": "Hong Kong",
+    "flagIso2": "HK",
+    "buildYear": 2014,
+    "grossTonnage": 17119
+  },
+  {
+    "imo": "9721310",
+    "name": "BEAUTY PEPPA (ex BEAUTY PEONY)   Bulk Carrier",
+    "assetType": null,
+    "flagName": "Marshall Islands",
+    "flagIso2": "MH",
+    "buildYear": 2015,
+    "grossTonnage": 36415
+  },
+  {
+    "imo": "9557654",
+    "name": "UP TURQUOISE                                      Platform Supply Ship",
+    "assetType": null,
+    "flagName": "Marshall Islands",
+    "flagIso2": "MH",
+    "buildYear": 2010,
+    "grossTonnage": 3753
+  },
+  {
+    "imo": "9726085",
+    "name": "GAS TIFFANY (ex SHAHRASTANI)        LPG Carrier",
+    "assetType": null,
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2016,
+    "grossTonnage": 47347
+  },
+  {
+    "imo": "9927304",
+    "name": "SSI PRUDENT                                         Bulk Carrier",
+    "assetType": null,
+    "flagName": "Marshall Islands",
+    "flagIso2": "MH",
+    "buildYear": 2022,
+    "grossTonnage": 35846
+  },
+  {
+    "imo": "9337004",
+    "name": "OCEANUS                                               Crude Oil Tanker",
+    "assetType": null,
+    "flagName": "Marshall Islands",
+    "flagIso2": "MH",
+    "buildYear": 2008,
+    "grossTonnage": 79048
+  },
+  {
+    "imo": "9288837",
+    "name": "CHAMPION TIMUR                                Chemical / Product Tanker",
+    "assetType": null,
+    "flagName": "Norway (NIS)",
+    "flagIso2": "NO",
+    "buildYear": 2005,
+    "grossTonnage": 29214
+  },
+  {
+    "imo": "9465186",
+    "name": "CAPE PUFFIN                                         Bulk Carrier",
+    "assetType": null,
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2007,
+    "grossTonnage": 91407
+  },
+  {
+    "imo": "9666560",
+    "name": "ESSHU MARU                                         LNG Tanker",
+    "assetType": null,
+    "flagName": "Bahamas",
+    "flagIso2": "BS",
+    "buildYear": 2014,
+    "grossTonnage": 136740
+  },
+  {
+    "imo": "9236420",
+    "name": "SEAPEAK ASIA                                        LNG Tanker",
+    "assetType": null,
+    "flagName": "Bahamas",
+    "flagIso2": "BS",
+    "buildYear": 2003,
+    "grossTonnage": 90835
+  },
+  {
+    "imo": "9543029",
+    "name": "SL MUKALLA                                           Tug",
+    "assetType": null,
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2009,
+    "grossTonnage": 724
+  },
+  {
+    "imo": "9256937",
+    "name": "DRAGON FORTUNE( ex SEA ADORE)  Chemical / Product Tanker",
+    "assetType": null,
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2004,
+    "grossTonnage": 27829
+  },
+  {
+    "imo": "9511454",
+    "name": "CAPE SHANGRILA                                 Bulk Carrier",
+    "assetType": null,
+    "flagName": "Marshall Islands",
+    "flagIso2": "MH",
+    "buildYear": 2009,
+    "grossTonnage": 91971
+  },
+  {
+    "imo": "9327334",
+    "name": "ZEAL                                                        Chemical / Product Tanker",
+    "assetType": null,
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2005,
+    "grossTonnage": 4869
+  },
+  {
+    "imo": "9300374",
+    "name": "YANG FAN                                               Bulk Carrier",
+    "assetType": null,
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2005,
+    "grossTonnage": 89659
+  },
+  {
+    "imo": "9015577",
+    "name": "ZEYNEP KIRAN                                       Bulk Carrier",
+    "assetType": null,
+    "flagName": "Turkiye",
+    "flagIso2": "TR",
+    "buildYear": 2001,
+    "grossTonnage": 17934
+  },
+  {
+    "imo": "9315941",
+    "name": "CHAMPION BALTIC( ex SEAWAYS HUChemical / Product Tanker",
+    "assetType": null,
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2007,
+    "grossTonnage": 27916
+  },
+  {
+    "imo": "9243887",
+    "name": "VIDAR                                                      General Cargo Ship",
+    "assetType": null,
+    "flagName": "Chile",
+    "flagIso2": "CL",
+    "buildYear": 2002,
+    "grossTonnage": 1978
+  },
+  {
+    "imo": "9601510",
+    "name": "AZUMA                                                    Offshore Support Vessel",
+    "assetType": null,
+    "flagName": "Marshall Islands (ex Faeroes (Fas))",
+    "flagIso2": null,
+    "buildYear": 2012,
+    "grossTonnage": 1741
+  },
+  {
+    "imo": "9718002",
+    "name": "MENARO                                                 Bulk Carrier",
+    "assetType": null,
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2016,
+    "grossTonnage": 44029
+  },
+  {
+    "imo": "9258478",
+    "name": "GT HONOR                                             Crude Oil Tanker",
+    "assetType": null,
+    "flagName": "Hong Kong, China",
+    "flagIso2": "HK",
+    "buildYear": 2004,
+    "grossTonnage": 56227
+  },
+  {
+    "imo": "9545508",
+    "name": "NIKE                                                         Bulk Carrier",
+    "assetType": null,
+    "flagName": "Marshall Islands",
+    "flagIso2": "MH",
+    "buildYear": 2010,
+    "grossTonnage": 23494
+  },
+  {
+    "imo": "9114347",
+    "name": "MEDKON RIZE                                        General Cargo Ship",
+    "assetType": null,
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 1996,
+    "grossTonnage": 6310
+  },
+  {
+    "imo": "9372858",
+    "name": "LADY CHRISTINA                                   Crude / Oil Products Tanker",
+    "assetType": null,
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2007,
+    "grossTonnage": 42010
+  },
+  {
+    "imo": "9411563",
+    "name": "A.S. RUBY RED                                       Chemical / Products Tanker",
+    "assetType": null,
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2007,
+    "grossTonnage": 8473
+  },
+  {
+    "imo": "9498236",
+    "name": "SUNDA (ex Emilie)                                 Bulk Carrier",
+    "assetType": null,
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2010,
+    "grossTonnage": 19906
+  },
+  {
+    "imo": "9472751",
+    "name": "UOG SYROS                                           Chemical / Products Tanker",
+    "assetType": null,
+    "flagName": "Marshall Islands",
+    "flagIso2": "MH",
+    "buildYear": 2010,
+    "grossTonnage": 29727
+  },
+  {
+    "imo": "9972842",
+    "name": "SMC MAGELLAN                                    Container Ship (Fully Cellular)",
+    "assetType": null,
+    "flagName": "Hong Kong, China",
+    "flagIso2": "HK",
+    "buildYear": 2024,
+    "grossTonnage": 9562
+  },
+  {
+    "imo": "9282508",
+    "name": "CAUVERI                                                 Crude Oil Tanker",
+    "assetType": null,
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2005,
+    "grossTonnage": 63598
+  },
+  {
+    "imo": "9468384",
+    "name": "MAMA THERESA                                     Crane Vessel",
+    "assetType": null,
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2010,
+    "grossTonnage": 18006
+  },
+  {
+    "imo": "9522934",
+    "name": "ENTERPRISE                                           Bulk Carrier",
+    "assetType": null,
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2011,
+    "grossTonnage": 22691
+  },
+  {
+    "imo": "9305934",
+    "name": "MEDKON SAMSUN                                Container Ship (Fully Cellular)",
+    "assetType": null,
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2004,
+    "grossTonnage": 6434
+  },
+  {
+    "imo": "9626259",
+    "name": "NORDPUMA                                           Container Ship (Fully Cellular)",
+    "assetType": null,
+    "flagName": "Cyprus",
+    "flagIso2": "CY",
+    "buildYear": 2015,
+    "grossTonnage": 18826
+  },
+  {
+    "imo": "1034187",
+    "name": "SILVERSTONE                                        Crude / Oil Products Tanker",
+    "assetType": null,
+    "flagName": "Marshall Islands",
+    "flagIso2": "MH",
+    "buildYear": 2025,
+    "grossTonnage": 62716
+  },
+  {
+    "imo": "9358802",
+    "name": "INTAN PREMIER                                     Chemical / Products Tanker",
+    "assetType": null,
+    "flagName": "Palau",
+    "flagIso2": "PW",
+    "buildYear": 2009,
+    "grossTonnage": 8025
+  },
+  {
+    "imo": "9069047",
+    "name": "M.L.D. LA CIOTAT 2000 tonnes            Mechanical Lift Dock",
+    "assetType": null,
+    "flagName": "France",
+    "flagIso2": "FR",
+    "buildYear": 2007,
+    "grossTonnage": 2000
+  },
+  {
+    "imo": "9149201",
+    "name": "NACC BUFFALO                                     Cement Carrier",
+    "assetType": null,
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 1998,
+    "grossTonnage": 6311
+  },
+  {
+    "imo": "9774094",
+    "name": "GULLIVER                                               Crane Vessel",
+    "assetType": null,
+    "flagName": "Luxembourg",
+    "flagIso2": "LU",
+    "buildYear": 2018,
+    "grossTonnage": 15327
+  },
+  {
+    "imo": "8906640",
+    "name": "AMITY                                                      Suction Dredger Pontoon",
+    "assetType": null,
+    "flagName": "Australia",
+    "flagIso2": "AU",
+    "buildYear": 1990,
+    "grossTonnage": 917
+  },
+  {
+    "imo": "9693771",
+    "name": "MANDARIN PENGHU                            Bulk Carrier",
+    "assetType": null,
+    "flagName": "Marshall Islands",
+    "flagIso2": "MH",
+    "buildYear": 2015,
+    "grossTonnage": 44046
+  },
+  {
+    "imo": "1021752",
+    "name": "KEVIN OLDENDORFF                            Bulk Carrier",
+    "assetType": null,
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2026,
+    "grossTonnage": 44601
+  },
+  {
+    "imo": "8025680",
+    "name": "ATLANTIC HURON                                 Bulk Carrier, Self-discharging, Laker",
+    "assetType": null,
+    "flagName": "Canada",
+    "flagIso2": "CA",
+    "buildYear": 1984,
+    "grossTonnage": 23054
+  },
+  {
+    "imo": "9175779",
+    "name": "HR TURAG                                               Container Ship",
+    "assetType": null,
+    "flagName": "Bangladesh",
+    "flagIso2": "BD",
+    "buildYear": 1999,
+    "grossTonnage": 14063
+  },
+  {
+    "imo": "9310537",
+    "name": "GREAT YONGHENG (ex The Giver)      Bulk Carrier",
+    "assetType": null,
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2006,
+    "grossTonnage": 38892
+  },
+  {
+    "imo": "9312303",
+    "name": "SUNNY KOGON (ex LONDON SPIRIT) Bulk Carrier",
+    "assetType": null,
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2007,
+    "grossTonnage": 106312
+  },
+  {
+    "imo": "9801548",
+    "name": "SITC SENDAI                                          Container Ship",
+    "assetType": null,
+    "flagName": "Hong Kong",
+    "flagIso2": "HK",
+    "buildYear": 2018,
+    "grossTonnage": 9967
+  },
+  {
+    "imo": "9358400",
+    "name": "LUCKYRIDE (ex TORM MAREN)            Crude Oil Tanker",
+    "assetType": null,
+    "flagName": "Hong Kong",
+    "flagIso2": "HK",
+    "buildYear": 2008,
+    "grossTonnage": 62084
+  },
+  {
+    "imo": "9251523",
+    "name": "APREX                                                     Chemical / Product Tanker",
+    "assetType": null,
+    "flagName": "Hong Kong",
+    "flagIso2": "HK",
+    "buildYear": 2003,
+    "grossTonnage": 29211
+  },
+  {
+    "imo": "9175597",
+    "name": "HR RHEA                                                 Container Ship",
+    "assetType": null,
+    "flagName": "Bangladesh",
+    "flagIso2": "BD",
+    "buildYear": 1999,
+    "grossTonnage": 17652
+  },
+  {
+    "imo": "9330290",
+    "name": "XH MARINER                                          Bulk Carrier",
+    "assetType": null,
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2006,
+    "grossTonnage": 89726
+  },
+  {
+    "imo": "9549188",
+    "name": "NN ALGEIBA                                           Diving Support Vessel",
+    "assetType": null,
+    "flagName": "Mexico",
+    "flagIso2": "MX",
+    "buildYear": 2009,
+    "grossTonnage": 1502
+  },
+  {
+    "imo": "9803041",
+    "name": "LOFTI GAD ALLAH                                  Tug",
+    "assetType": null,
+    "flagName": "Egypt",
+    "flagIso2": "EG",
+    "buildYear": 2021,
+    "grossTonnage": 567
+  },
+  {
+    "imo": "1045215",
+    "name": "ALI CAN BAYRAK (ex HERCULES HAR Chemical/Products Tanker",
+    "assetType": null,
+    "flagName": "Malta",
+    "flagIso2": "MT",
+    "buildYear": 2025,
+    "grossTonnage": 4988
+  },
+  {
+    "imo": "9197727",
+    "name": "AQUA SPIRIT                                           LPG Tanker",
+    "assetType": null,
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 1999,
+    "grossTonnage": 6051
+  },
+  {
+    "imo": "9801550",
+    "name": "SITC SUBIC                                             Container Ship",
+    "assetType": null,
+    "flagName": "Hong Kong",
+    "flagIso2": "HK",
+    "buildYear": 2019,
+    "grossTonnage": 9967
+  },
+  {
+    "imo": "9611589",
+    "name": "VENI                                                        Bulk Carrier",
+    "assetType": null,
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2011,
+    "grossTonnage": 20218
+  },
+  {
+    "imo": "9951862",
+    "name": "MAXIMAR                                                General Cargo",
+    "assetType": null,
+    "flagName": "Cyprus",
+    "flagIso2": "CY",
+    "buildYear": 2024,
+    "grossTonnage": 4135
+  },
+  {
+    "imo": "9182916",
+    "name": "NORTHERN ENDEAVOUR                     FPSO, Oil",
+    "assetType": null,
+    "flagName": "Australia",
+    "flagIso2": "AU",
+    "buildYear": 1998,
+    "grossTonnage": 108406
+  },
+  {
+    "imo": "9259276",
+    "name": "SEAPEAK MARS                                      LNG Tanker",
+    "assetType": null,
+    "flagName": "Bahamas",
+    "flagIso2": "BS",
+    "buildYear": 2004,
+    "grossTonnage": 90835
+  },
+  {
+    "imo": "9041758",
+    "name": "DUTA PACIFIC                                        Crude Oil Tanker",
+    "assetType": null,
+    "flagName": "Malaysia",
+    "flagIso2": "MY",
+    "buildYear": 1995,
+    "grossTonnage": 57463
+  },
+  {
+    "imo": "9175614",
+    "name": "HR HERA                                                 Container Ship",
+    "assetType": null,
+    "flagName": "Bangladesh",
+    "flagIso2": "BD",
+    "buildYear": 1999,
+    "grossTonnage": 17652
+  },
+  {
+    "imo": "9291262",
+    "name": "SILVAR                                                    Crude Oil Tanker",
+    "assetType": null,
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2005,
+    "grossTonnage": 63694
+  },
+  {
+    "imo": "8714437",
+    "name": "NORTHERN ALLIANCE                          Fishing Vessel",
+    "assetType": null,
+    "flagName": "Canada",
+    "flagIso2": "CA",
+    "buildYear": 1990,
+    "grossTonnage": 622
+  },
+  {
+    "imo": "9637870",
+    "name": "TABASCO                                                Drilling Rig, jack up",
+    "assetType": null,
+    "flagName": "Mexico",
+    "flagIso2": "MX",
+    "buildYear": 2013,
+    "grossTonnage": 14641
+  },
+  {
+    "imo": "9201803",
+    "name": "LADY CLARISSA                                     General Cargo Ship",
+    "assetType": null,
+    "flagName": "Netherlands",
+    "flagIso2": "NL",
+    "buildYear": 2000,
+    "grossTonnage": 4235
+  },
+  {
+    "imo": "9323883",
+    "name": "TISSA (ex PORTAITISSA)                        Bulk Carrier",
+    "assetType": null,
+    "flagName": "Guinea-Bissau",
+    "flagIso2": "GW",
+    "buildYear": 2006,
+    "grossTonnage": 47051
+  },
+  {
+    "imo": "9369760",
+    "name": "GAS RIVER                                              LPG Tanker",
+    "assetType": null,
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2008,
+    "grossTonnage": 23032
+  },
+  {
+    "imo": "9471123",
+    "name": "FORTUNE GAS                                       LPG Tanker",
+    "assetType": null,
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2010,
+    "grossTonnage": 22977
+  },
+  {
+    "imo": "9534846",
+    "name": "BLUE NOVA                                            Crude Oil Tanker",
+    "assetType": null,
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2011,
+    "grossTonnage": 157225
+  },
+  {
+    "imo": "9007178",
+    "name": "AMAZON CHIEFTAIN                             Anchor Handling Tug Supply",
+    "assetType": null,
+    "flagName": "Antigua & Barbuda",
+    "flagIso2": "AG",
+    "buildYear": 1992,
+    "grossTonnage": 2966
+  },
+  {
+    "imo": "9346380",
+    "name": "ES BRIGHT SEA ( ex CAPE MERLIN)     Bulk Carrier",
+    "assetType": null,
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2005,
+    "grossTonnage": 104727
+  },
+  {
+    "imo": "9363314",
+    "name": "POCHARD S                                           Open Hatch Cargo Ship",
+    "assetType": null,
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2007,
+    "grossTonnage": 20238
+  },
+  {
+    "imo": "9477024",
+    "name": "VORTEX VANGUARD                             Anchor Handling Tug Supply",
+    "assetType": null,
+    "flagName": "Vanuatu",
+    "flagIso2": "VU",
+    "buildYear": 2010,
+    "grossTonnage": 2301
+  },
+  {
+    "imo": "9553232",
+    "name": "PHOENIX                                                Bulk Carrier",
+    "assetType": null,
+    "flagName": "Singapore",
+    "flagIso2": "SG",
+    "buildYear": 2012,
+    "grossTonnage": 32987
+  },
+  {
+    "imo": "9626261",
+    "name": "NORDLEOPARD                                     Container Ship",
+    "assetType": null,
+    "flagName": "Cyprus",
+    "flagIso2": "CY",
+    "buildYear": 2015,
+    "grossTonnage": 18826
+  },
+  {
+    "imo": "9847889",
+    "name": "ROMULUS (ex SEACON SHANGHAI)  Bulk Carrier",
+    "assetType": null,
+    "flagName": "Marshall Islands",
+    "flagIso2": "MH",
+    "buildYear": 2019,
+    "grossTonnage": 44038
+  },
+  {
+    "imo": "9722936",
+    "name": "KUWAIT PROSPERITY (ex FRONT SPE Crude Oil Tanker",
+    "assetType": null,
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2016,
+    "grossTonnage": 154379
+  },
+  {
+    "imo": "9317860",
+    "name": "BOW ENGINEER                                    Chemical / Product Tanker",
+    "assetType": null,
+    "flagName": "Norway (NIS)",
+    "flagIso2": "NO",
+    "buildYear": 2006,
+    "grossTonnage": 18429
+  },
+  {
+    "imo": "9482562",
+    "name": "VELOS POLARIS (ex ELANDRA BALTI  Chemical / Product Tanker",
+    "assetType": null,
+    "flagName": "Marshall Islands",
+    "flagIso2": "MH",
+    "buildYear": 2011,
+    "grossTonnage": 29736
+  },
+  {
+    "imo": "9339583",
+    "name": "ERASMUS NINJA                                    Container Ship",
+    "assetType": null,
+    "flagName": "Marshall Islands",
+    "flagIso2": "MH",
+    "buildYear": 2007,
+    "grossTonnage": 26435
+  },
+  {
+    "imo": "7717004",
+    "name": "GLOBAL EXPLORER",
+    "assetType": "Supply Tender",
+    "flagName": "Mexico",
+    "flagIso2": "MX",
+    "buildYear": 1978,
+    "grossTonnage": 2704
+  },
+  {
+    "imo": "8615851",
+    "name": "AMALTAL APOLLO",
+    "assetType": "Fishing Vessel",
+    "flagName": "New Zealand",
+    "flagIso2": "NZ",
+    "buildYear": 1987,
+    "grossTonnage": 530
+  },
+  {
+    "imo": "9482550",
+    "name": "VELOS AURORA (ex ELANDRA FJORDChemical / Product Tanker",
+    "assetType": "Marshall Islands",
+    "flagName": null,
+    "flagIso2": null,
+    "buildYear": 2011,
+    "grossTonnage": 29736
+  },
+  {
+    "imo": "9582831",
+    "name": "MANDY",
+    "assetType": "Bulk Carrier",
+    "flagName": "Singapore",
+    "flagIso2": "SG",
+    "buildYear": 2010,
+    "grossTonnage": 94917
+  },
+  {
+    "imo": "8302088",
+    "name": "ATLANTIC SOVEREIGN",
+    "assetType": "Anchor Handling Tug Supply",
+    "flagName": "Belize",
+    "flagIso2": "BZ",
+    "buildYear": 1984,
+    "grossTonnage": 2295
+  },
+  {
+    "imo": "9709075",
+    "name": "BOS ANJIL (ex PACIFIC OCEAN)",
+    "assetType": "Crude Oil Tanker",
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2015,
+    "grossTonnage": 154379
+  },
+  {
+    "imo": "9835173",
+    "name": "ANGOLA PROSPERITY (ex Hunter)",
+    "assetType": "LPG Carrier",
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2019,
+    "grossTonnage": 49552
+  },
+  {
+    "imo": "9458822",
+    "name": "ALTUM SIDUS (ex UOG CONSTANTIN Chemical / Product Tanker",
+    "assetType": "Marshall Islands",
+    "flagName": null,
+    "flagIso2": null,
+    "buildYear": 2010,
+    "grossTonnage": 29124
+  },
+  {
+    "imo": "9709087",
+    "name": "VIETNAM PROSPERITY (ex",
+    "assetType": "FRONT CLCrude Oil Tanker",
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2016,
+    "grossTonnage": 154875
+  },
+  {
+    "imo": "9315939",
+    "name": "CHAMPION POLAR",
+    "assetType": "Chemical / Products Tanker",
+    "flagName": "Norway NIS",
+    "flagIso2": "NO",
+    "buildYear": 2007,
+    "grossTonnage": 27916
+  },
+  {
+    "imo": "9519298",
+    "name": "NIRVANA I",
+    "assetType": "Bulk Carrier",
+    "flagName": "San Marino",
+    "flagIso2": "SM",
+    "buildYear": 2010,
+    "grossTonnage": 32987
+  },
+  {
+    "imo": "9825477",
+    "name": "IDASSA (ex PLATANOS)",
+    "assetType": "Crude Oil Tanker",
+    "flagName": "Croatia",
+    "flagIso2": "HR",
+    "buildYear": 2019,
+    "grossTonnage": 63461
+  },
+  {
+    "imo": "8215376",
+    "name": "NAGDA 2",
+    "assetType": "Products Tanker",
+    "flagName": "Egypt",
+    "flagIso2": "EG",
+    "buildYear": 1984,
+    "grossTonnage": 2042
+  },
+  {
+    "imo": "9824019",
+    "name": "NORWEGIAN LUNA",
+    "assetType": "Passenger Ship",
+    "flagName": "Bahamas",
+    "flagIso2": "BS",
+    "buildYear": 2026,
+    "grossTonnage": 156300
+  },
+  {
+    "imo": "9896414",
+    "name": "CLIPPER VALIANT (ex VIVIT DUBHE)",
+    "assetType": "Crude Oil Tanker",
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2021,
+    "grossTonnage": 154046
+  },
+  {
+    "imo": "8806747",
+    "name": "EXPLORIS ONE",
+    "assetType": "Passenger / Cruise",
+    "flagName": "Bahamas",
+    "flagIso2": "BS",
+    "buildYear": 1989,
+    "grossTonnage": 6158
+  },
+  {
+    "imo": "9835185",
+    "name": "CLIPPER VOYAGER (ex VIVIT FORNA",
+    "assetType": "LPG Carrier",
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2019,
+    "grossTonnage": 49552
+  },
+  {
+    "imo": "8709951",
+    "name": "BGP PIONEER",
+    "assetType": "Research Survey Vessel",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 1988,
+    "grossTonnage": 5739
+  },
+  {
+    "imo": "9467562",
+    "name": "MOZAMBIQUE B (ex ANTIGONE)",
+    "assetType": "Bulk Carrier",
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2011,
+    "grossTonnage": 23426
+  },
+  {
+    "imo": "9709128",
+    "name": "ENERGY PARTNER",
+    "assetType": "Platform Supply Ship",
+    "flagName": "Turkey",
+    "flagIso2": "TR",
+    "buildYear": 2016,
+    "grossTonnage": 3638
+  },
+  {
+    "imo": "9696125",
+    "name": "RAIMY EYMARD",
+    "assetType": "Offshore Construction Vessel, jack upNigeria",
+    "flagName": null,
+    "flagIso2": null,
+    "buildYear": 2013,
+    "grossTonnage": 743
+  },
+  {
+    "imo": "9658147",
+    "name": "OCEANICASUB XII",
+    "assetType": "Platform Supply Ship",
+    "flagName": "Brazil",
+    "flagIso2": "BR",
+    "buildYear": 2013,
+    "grossTonnage": 3410
+  },
+  {
+    "imo": "9727223",
+    "name": "BANGLADESH PROSPERITY (ex VENI Crude Oil Tanker",
+    "assetType": "Liberia (ex Marshall Islands)",
+    "flagName": null,
+    "flagIso2": null,
+    "buildYear": 2016,
+    "grossTonnage": 162800
+  },
+  {
+    "imo": "9840879",
+    "name": "CLIPPER VIKING (ex",
+    "assetType": "VIVIT ALTAIS)",
+    "flagName": null,
+    "flagIso2": null,
+    "buildYear": 2019,
+    "grossTonnage": 46781
+  },
+  {
+    "imo": "9372729",
+    "name": "PMS 36",
+    "assetType": "Anchor Handling Tug Supply",
+    "flagName": "Egypt",
+    "flagIso2": "EG",
+    "buildYear": 2007,
+    "grossTonnage": 1966
+  },
+  {
+    "imo": "9322281",
+    "name": "FRANCE C (ex DAISHAN)",
+    "assetType": "Crude Oil Tanker",
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2007,
+    "grossTonnage": 157844
+  },
+  {
+    "imo": "9584231",
+    "name": "NOVENA WW (ex YANGTZE GRACE)",
+    "assetType": "Bulk Carrier",
+    "flagName": "Hong Kong",
+    "flagIso2": "HK",
+    "buildYear": 2012,
+    "grossTonnage": 20969
+  },
+  {
+    "imo": "9452658",
+    "name": "THE RAINBOW",
+    "assetType": "Bulk Carrier",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2011,
+    "grossTonnage": 33036
+  },
+  {
+    "imo": "9600425",
+    "name": "GLOBAL GOLDEN (ex MAX WARRIOR Bulk Carrier",
+    "assetType": "Liberia",
+    "flagName": null,
+    "flagIso2": null,
+    "buildYear": 2014,
+    "grossTonnage": 107158
+  },
+  {
+    "imo": "9496329",
+    "name": "REKAPEX (ex",
+    "assetType": "ADVENTURE)",
+    "flagName": null,
+    "flagIso2": null,
+    "buildYear": 2011,
+    "grossTonnage": 23426
+  },
+  {
+    "imo": "9720952",
+    "name": "CL HEIDI",
+    "assetType": "Bulk Carrier",
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2016,
+    "grossTonnage": 36353
+  },
+  {
+    "imo": "9731846",
+    "name": "BTG FUJI",
+    "assetType": "Bulk Carrier",
+    "flagName": "Bahamas",
+    "flagIso2": "BS",
+    "buildYear": 2016,
+    "grossTonnage": 43229
+  },
+  {
+    "imo": "9252644",
+    "name": "BP 26 ESCHWEGE",
+    "assetType": "Pollution Control Vessel",
+    "flagName": "Germany",
+    "flagIso2": "DE",
+    "buildYear": 2003,
+    "grossTonnage": 1030
+  },
+  {
+    "imo": "9298325",
+    "name": "BURG STAR (ex HAMBURG STAR)",
+    "assetType": "Crude Oil Tanker",
+    "flagName": "Bahamas",
+    "flagIso2": "BS",
+    "buildYear": 2005,
+    "grossTonnage": 41966
+  },
+  {
+    "imo": "9232151",
+    "name": "ZEYNEP C",
+    "assetType": "Bulk Carrier",
+    "flagName": "Turkiye",
+    "flagIso2": "TR",
+    "buildYear": 2003,
+    "grossTonnage": 31167
+  },
+  {
+    "imo": "9532757",
+    "name": "SENEGAL PROSPERITY (ex OCEANIS Crude Oil Tanker",
+    "assetType": "Liberia",
+    "flagName": null,
+    "flagIso2": null,
+    "buildYear": 2011,
+    "grossTonnage": 161579
+  },
+  {
+    "imo": "9883819",
+    "name": "HLS AMBER",
+    "assetType": "LPG Carrier",
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2020,
+    "grossTonnage": 49567
+  },
+  {
+    "imo": "9826847",
+    "name": "CHILE PROSPERITY (ex VERY LUCKY)Crude Oil Tanker",
+    "assetType": "Liberia (ex Marshall Islands)",
+    "flagName": null,
+    "flagIso2": null,
+    "buildYear": 2019,
+    "grossTonnage": 163306
+  },
+  {
+    "imo": "9551703",
+    "name": "WINTIME FORTUNE (ex TITANA)",
+    "assetType": "Bulk Carrier",
+    "flagName": "Marshall Islands",
+    "flagIso2": "MH",
+    "buildYear": 2012,
+    "grossTonnage": 32987
+  },
+  {
+    "imo": "9713959",
+    "name": "ERIETTA",
+    "assetType": "Bulk Carrier",
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2015,
+    "grossTonnage": 34821
+  },
+  {
+    "imo": "9149495",
+    "name": "STOLT SEA",
+    "assetType": "Chemical / Products Tanker",
+    "flagName": "Cayman Islands",
+    "flagIso2": "KY",
+    "buildYear": 1999,
+    "grossTonnage": 14900
+  },
+  {
+    "imo": "9230878",
+    "name": "SA CAPRICORN",
+    "assetType": "Crude Oil Tanker",
+    "flagName": "Bahamas",
+    "flagIso2": "BS",
+    "buildYear": 2002,
+    "grossTonnage": 161233
+  },
+  {
+    "imo": "9267285",
+    "name": "APALOS",
+    "assetType": "General Cargo Ship",
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2003,
+    "grossTonnage": 7752
+  },
+  {
+    "imo": "9177806",
+    "name": "LPG SEVAN",
+    "assetType": "LPG Tanker",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 1999,
+    "grossTonnage": 23952
+  },
+  {
+    "imo": "9296377",
+    "name": "MARJORIE",
+    "assetType": "Crude Oil Tanker",
+    "flagName": "Vanuatu",
+    "flagIso2": "VU",
+    "buildYear": 2006,
+    "grossTonnage": 78845
+  },
+  {
+    "imo": "9325908",
+    "name": "PENELOP",
+    "assetType": "Crude Oil Tanker",
+    "flagName": "Bahamas",
+    "flagIso2": "BS",
+    "buildYear": 2006,
+    "grossTonnage": 63448
+  },
+  {
+    "imo": "9438391",
+    "name": "BHG UNITY (ex ARAMIS  )",
+    "assetType": "General Cargo",
+    "flagName": "Panama",
+    "flagIso2": "PA",
+    "buildYear": 2011,
+    "grossTonnage": 22998
+  },
+  {
+    "imo": "9534028",
+    "name": "COBALT NOVA",
+    "assetType": "Crude Oil Tanker",
+    "flagName": "Liberia",
+    "flagIso2": "LR",
+    "buildYear": 2011,
+    "grossTonnage": 164580
+  },
+  {
+    "imo": "9413183",
+    "name": "LEWEK ALTAIR",
+    "assetType": "Offshore Support Vessel",
+    "flagName": "India",
+    "flagIso2": "IN",
+    "buildYear": 2009,
+    "grossTonnage": 3402
+  },
+  {
+    "imo": "9576193",
+    "name": "SEA LIBERTY 1",
+    "assetType": "Fish Farm Support Vessel",
+    "flagName": "Norway",
+    "flagIso2": "NO",
+    "buildYear": 2010,
+    "grossTonnage": 1517
+  }
+]

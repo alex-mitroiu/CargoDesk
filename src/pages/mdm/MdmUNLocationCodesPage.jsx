@@ -1,0 +1,105 @@
+import { useState, useEffect, useCallback, useRef } from "react";
+import Spinner, { PageSpinner } from "../../components/primitives/Spinner";
+import { T } from "../../tokens";
+import { inputBase } from "../../components/primitives/Form";
+import { api } from "../../api";
+import Badge from "../../components/primitives/Badge";
+import Pagination from "../../components/primitives/Pagination";
+
+// ─── MDM Locations: UN Location Codes Page ────────────────────────────────────
+
+const MdmUNLocationCodesPage = () => {
+  const [rows,     setRows]     = useState([]);
+  const [total,    setTotal]    = useState(0);
+  const [offset,   setOffset]   = useState(0);
+  const [search,   setSearch]   = useState("");
+  const [loading,  setLoading]  = useState(true);
+  const LIMIT = 50;
+  const timer  = useRef(null);
+
+  const load = useCallback(async (opts = {}) => {
+    setLoading(true);
+    try {
+      const res = await api.unlocodes.search({
+        search: opts.search  !== undefined ? opts.search  : search,
+        limit:  LIMIT,
+        offset: opts.offset  !== undefined ? opts.offset  : offset,
+      });
+      setRows(res.results);
+      setTotal(res.total);
+    } catch {}
+    setLoading(false);
+  }, [search, offset]);
+
+  useEffect(() => { load(); }, []);
+
+  const handleSearch = v => {
+    setSearch(v);
+    setOffset(0);
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => load({ search: v, offset: 0 }), 300);
+  };
+
+  const goPage = off => { setOffset(off); load({ offset: off }); };
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 24 }}>
+        <div>
+          <h1 style={{ fontFamily: T.head, fontSize: 26, fontWeight: 800, color: T.text, margin: 0 }}>UN Location Codes</h1>
+          <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, margin: "4px 0 0" }}>
+            {total.toLocaleString()} codes · 5-char identifiers cross-checked against seaport data
+          </p>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <Badge variant="success">✅ = Seaport in DB</Badge>
+          <Badge variant="default">— = No seaport record</Badge>
+        </div>
+      </div>
+
+      <div style={{ marginBottom: 14 }}>
+        <input value={search} onChange={e => handleSearch(e.target.value)}
+          placeholder="Search by UN/LOCODE (e.g. NLRTM, DEHAM)…"
+          style={{ ...inputBase, fontFamily: T.mono, fontSize: 13, maxWidth: 380 }} />
+      </div>
+
+      <div style={{ background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, overflow: "hidden" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "110px 1fr 80px 130px 120px",
+          padding: "10px 20px", borderBottom: `1px solid ${T.border}` }}>
+          {["UN/LOCODE", "Port / Location Name", "Country", "Zone", "Has Seaport?"].map((h, i) => (
+            <span key={i} style={{ fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>{h}</span>
+          ))}
+        </div>
+        {loading ? (
+          <PageSpinner />
+        ) : rows.length === 0 ? (
+          <div style={{ padding: 40, textAlign: "center", color: T.textMuted, fontFamily: T.body, fontSize: 14 }}>
+            {search ? "No codes match your search." : "No data yet — run node import-mdm-data.js first."}
+          </div>
+        ) : rows.map(r => (
+          <div key={r.unlocode}
+            style={{ display: "grid", gridTemplateColumns: "110px 1fr 80px 130px 120px",
+              padding: "11px 20px", borderBottom: `1px solid ${T.border}22`, alignItems: "center",
+              transition: "background .1s" }}
+            onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
+            onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+            <span style={{ fontFamily: T.mono, fontSize: 13, color: T.accent, fontWeight: 700 }}>{r.unlocode}</span>
+            <span style={{ fontFamily: T.body, fontSize: 13, color: r.name ? T.text : T.border, fontStyle: r.name ? "normal" : "italic" }}>
+              {r.name || "Unknown"}
+            </span>
+            <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>{r.countryCode || "—"}</span>
+            <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>{r.zoneCode || "—"}</span>
+            <span style={{ fontSize: 16 }}>{r.unlocode ? "✅" : <span style={{ color: T.border, fontFamily: T.mono, fontSize: 11 }}>—</span>}</span>
+          </div>
+        ))}
+      </div>
+
+      <Pagination total={total} offset={offset} limit={LIMIT} onPage={goPage} />
+    </div>
+  );
+};
+
+
+// ─── Incoterms Modal ──────────────────────────────────────────────────────────
+
+export default MdmUNLocationCodesPage;
