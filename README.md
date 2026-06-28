@@ -2,7 +2,7 @@
 
 > Freight management application for tracking ocean shipments, carrier space utilisation, and maritime master data.
 
-![Version](https://img.shields.io/badge/version-0.9.0-blue)
+[![Version](https://img.shields.io/badge/version-0.10.0-blue)](.)
 ![Node](https://img.shields.io/badge/node-22.5%2B-green)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
@@ -114,6 +114,7 @@ See the built-in **About** page (ℹ in the sidebar) for the full interactive sc
 
 | Version | Summary |
 |---------|---------|
+| 0.10.0  | Commodities MDM (294 Maersk codes), HS Code + Cargo Description fields, status audit trail with timeline UI, global toast system, URL hash navigation with shipment deep links, light/dark theme, loading spinners, Link Vessel action. |
 | 0.9.0 | Container freight fields (commodity, weight, volume, DG/IMDG). Light/dark theme. Footer + About page with schema. |
 | 0.8.0 | Space Configs: POL/POD, auto trade-lane badges, conflict detection. Dashboard Archive. |
 | 0.7.0 | Space Configs: trade lane, alert threshold, notes. 6-week trend charts + sparklines. |
