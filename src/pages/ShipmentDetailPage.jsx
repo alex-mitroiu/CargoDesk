@@ -155,15 +155,15 @@ const ContainerForm = ({ init = {}, onSave, onCancel }) => {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <div>
           <Inp label="Gross Weight (kg)" value={f.grossWeightKg}
-            onChange={v => { set("grossWeightKg")(v); touch("weight"); }}
-            type="number" placeholder="18 000" required
+            onChange={v => { if (v === "" || /^\d*\.?\d*$/.test(v)) { set("grossWeightKg")(v); touch("weight"); } }}
+            type="text" inputMode="decimal" placeholder="18 000" required
             hint="Total gross weight including packaging" />
           <FieldErr show={touched.weight && !weightOk} msg="Gross weight must be greater than 0" />
         </div>
         <div>
           <Inp label="Volume (CBM)" value={f.volumeCbm}
-            onChange={v => { set("volumeCbm")(v); touch("volume"); }}
-            type="number" placeholder="28.5" required
+            onChange={v => { if (v === "" || /^\d*\.?\d*$/.test(v)) { set("volumeCbm")(v); touch("volume"); } }}
+            type="text" inputMode="decimal" placeholder="28.5" required
             hint="Cubic metres — cargo measurement" />
           <FieldErr show={touched.volume && !volumeOk} msg="Volume must be greater than 0" />
         </div>
@@ -665,6 +665,7 @@ const LinkVesselModal = ({ shipment, onSave, onClose }) => {
 // ─── Shipment History Timeline ────────────────────────────────────────────────
 
 const EVENT_CONFIG = {
+  SHIPMENT_CREATED:  { icon: "🚢",  label: "Shipment created",  color: () => T.success  },
   STATUS_CHANGED:    { icon: "🔄", label: "Status changed",    color: () => T.accent   },
   FIELD_UPDATED:     { icon: "✏️",  label: "Field updated",     color: () => T.info     },
   CONTAINER_ADDED:   { icon: "➕",  label: "Container added",   color: () => T.success  },
@@ -690,7 +691,12 @@ const EventRow = ({ ev }) => {
   const field = ev.field ? (FIELD_LABELS[ev.field] || ev.field) : null;
 
   let summary = "";
-  if (ev.eventType === "CONTAINER_ADDED") {
+  if (ev.eventType === "SHIPMENT_CREATED") {
+    const m = ev.meta || {};
+    summary = [m.pol, m.pod].filter(Boolean).join(" → ");
+    if (m.carrier) summary += `  ·  ${m.carrier}`;
+    if (m.etd)     summary += `  ·  ETD ${m.etd}`;
+  } else if (ev.eventType === "CONTAINER_ADDED") {
     const m = ev.meta || {};
     summary = `${ev.newValue}  ${m.size ? `${m.size}ft` : ""}  ${m.type || ""}`.trim();
   } else if (ev.eventType === "CONTAINER_REMOVED") {

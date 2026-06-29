@@ -29,7 +29,8 @@ import MdmCountriesPage       from "./pages/mdm/MdmCountriesPage";
 import MdmUNLocationCodesPage  from "./pages/mdm/MdmUNLocationCodesPage";
 import MdmCommoditiesPage     from "./pages/mdm/MdmCommoditiesPage";
 import MdmCustomersPage       from "./pages/mdm/MdmCustomersPage";
-import MdmContractsPage       from "./pages/mdm/MdmContractsPage";
+import MdmContractsPage        from "./pages/mdm/MdmContractsPage";
+import SpaceConfigurationsPage from "./pages/SpaceConfigurationsPage";
 
 
 
@@ -271,8 +272,9 @@ function App() {
     home:               "Home",
     shipments:          "Shipments",
     "shipment-detail":  "Shipment Detail",
-    dashboard:          "Dashboard — Space Configurations",
-    "dashboard-archive":"Dashboard — Archive",
+    dashboard:           "Consumption Dashboard",
+    "space-configs":     "Space Configurations",
+    "dashboard-archive": "Dashboard — Archive",
     kanban:             "Integration Board",
     "user-manual":      "User Manual",
     about:              "About",
@@ -579,9 +581,10 @@ function App() {
           {/* Top-level items */}
           <NavBtn pageKey="shipments" icon="⛴" label="Shipments" />
 
-          {/* Dashboard + Archive sub-group */}
-          <NavBtn pageKey="dashboard" icon="◈" label="Dashboard" />
-          <NavBtn pageKey="dashboard-archive" icon="🗄" label="Archive" indent />
+          {/* Dashboard sub-group */}
+          <NavBtn pageKey="dashboard"      icon="◈"  label="Dashboard" />
+          <NavBtn pageKey="space-configs"  icon="⚡" label="Space Configurations" indent />
+          <NavBtn pageKey="dashboard-archive" icon="🗄" label="Archive"           indent />
 
           <NavBtn pageKey="kanban" icon="📋" label="Integration Board" />
 
@@ -723,7 +726,7 @@ function App() {
             allocations={allocations.filter(a => a.endDate < new Date().toISOString().split("T")[0])
               .sort((a, b) => b.endDate.localeCompare(a.endDate))}
             carriers={carriers}
-            onRenew={a => { setPendingRenew({ ...a, effectiveDate: "", endDate: "" }); navigate("dashboard"); }}
+            onRenew={a => { setPendingRenew({ ...a, effectiveDate: "", endDate: "" }); navigate("space-configs"); }}
             onDelete={async id => { try { await api.allocations.remove(id); setAllocations(p => p.filter(x => x.id !== id)); toast.success("Configuration deleted"); } catch (e) { toast.error(e.message); } }}
             standalone
           />
@@ -731,10 +734,19 @@ function App() {
 
         {page === "dashboard" && (
           <DashboardPage
+            shipments={shipments} containers={containers} carriers={carriers}
+            allocations={allocations} />
+        )}
+
+        {page === "space-configs" && (
+          <SpaceConfigurationsPage
+            allocations={allocations}
+            carriers={carriers}
+            shipments={shipments}
+            containers={containers}
             pendingRenew={pendingRenew}
             onPendingRenewClear={() => setPendingRenew(null)}
-            shipments={shipments} containers={containers} carriers={carriers}
-            allocations={allocations}
+            navigate={navigate}
             onAddAlloc={async form => {
               try {
                 const created = await api.allocations.create(form);

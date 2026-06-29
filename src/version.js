@@ -2,11 +2,17 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.13.0";
+export const VERSION   = "0.14.0";
 export const BUILD     = "2026-06-29";
-export const CODENAME  = "Manifest";
+export const CODENAME  = "Logbook";
 
 export const CHANGELOG = [
+  {
+    version:  "0.14.0",
+    date:     "2026-06-29",
+    codename: "Logbook",
+    summary:  "Entity audit log: entity_events table tracks CREATED/UPDATED/DELETED events across allocations, carriers, and contracts; GET /api/entity-events/:type/:id bridges shipment_events for the shipment type so all history queries share a single endpoint. ActionMenu: cog (⚙) button replaces individual Edit/Delete buttons on Shipments, Carriers, and Contracts — opens a position:fixed dropdown with Edit, History, and Delete items. EntityHistoryModal renders a timestamped event timeline with field diffs and meta pills, reused across entities. Space Configurations promoted to a standalone sidebar page (Dashboard › Space Configurations) with per-allocation lifetime consumption bars, 6-week sparklines, mandatory contract linking via contract picker, and ActionMenu per row. Dashboard simplified to Overview + Contract Consumption tabs (read-only, no CRUD). Space config fixes: Effective From date picker blocks past dates on new allocations; conflict detection now distinguishes same-contract duplicates (hard block) from cross-contract overlaps on the same lane (amber warning, allowed).",
+  },
   {
     version:  "0.13.0",
     date:     "2026-06-29",

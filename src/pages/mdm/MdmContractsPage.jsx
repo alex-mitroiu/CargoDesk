@@ -10,6 +10,8 @@ import Pagination from "../../components/primitives/Pagination";
 import { inputBase, Field } from "../../components/primitives/Form";
 import DatePicker from "../../components/primitives/DatePicker";
 import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns.jsx";
+import ActionMenu from "../../components/primitives/ActionMenu";
+import EntityHistoryModal from "../../components/shared/EntityHistoryModal";
 import PortCombobox from "../../components/shared/PortCombobox";
 import CustomerCombobox from "../../components/shared/CustomerCombobox";
 
@@ -611,7 +613,8 @@ const MdmContractsPage = () => {
   const [offset,  setOffset]  = useState(0);
   const [filters, setFilters] = useState(EMPTY_FILTERS);
   const [loading, setLoading] = useState(true);
-  const [modal,   setModal]   = useState(null);  // null | "new" | contract obj
+  const [modal,           setModal]           = useState(null);
+  const [historyContract, setHistoryContract] = useState(null);
   const timer = useRef(null);
 
   const doLoad = useCallback(async (f, off) => {
@@ -825,25 +828,12 @@ const MdmContractsPage = () => {
               </div>
 
               {/* Actions */}
-              <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-                <button type="button" onClick={() => setModal(c)}
-                  title="Edit"
-                  style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 5,
-                    color: T.textMuted, cursor: "pointer", padding: "4px 8px", fontSize: 13,
-                    fontFamily: T.body, lineHeight: 1 }}
-                  onMouseEnter={e => { e.currentTarget.style.color = T.text; e.currentTarget.style.borderColor = T.borderMid; }}
-                  onMouseLeave={e => { e.currentTarget.style.color = T.textMuted; e.currentTarget.style.borderColor = T.border; }}>
-                  ✎
-                </button>
-                <button type="button" onClick={() => handleDelete(c.id)}
-                  title="Delete"
-                  style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 5,
-                    color: T.danger, cursor: "pointer", padding: "4px 8px", fontSize: 13,
-                    fontFamily: T.body, lineHeight: 1 }}
-                  onMouseEnter={e => { e.currentTarget.style.borderColor = T.danger; e.currentTarget.style.background = T.dangerBg; }}
-                  onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.background = "none"; }}>
-                  ✕
-                </button>
+              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                <ActionMenu items={[
+                  { icon: "✎",  label: "Edit",    onClick: () => setModal(c) },
+                  { icon: "📋", label: "History",  onClick: () => setHistoryContract(c) },
+                  { icon: "✕",  label: "Delete",  variant: "danger", onClick: () => handleDelete(c.id) },
+                ]} />
               </div>
             </div>
           );
@@ -870,6 +860,26 @@ const MdmContractsPage = () => {
             onClose={() => setModal(null)}
           />
         </Modal>
+      )}
+
+      {/* History modal */}
+      {historyContract && (
+        <EntityHistoryModal
+          entityType="contract"
+          entityId={historyContract.id}
+          title={`History — ${historyContract.contractNumber}`}
+          headerContent={
+            <>
+              <span style={{ fontFamily: T.mono, fontSize: 12, color: T.accent, fontWeight: 700 }}>{historyContract.contractNumber}</span>
+              {historyContract.carrierCode && <span style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>{historyContract.carrierCode}</span>}
+              {historyContract.validFrom && (
+                <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>
+                  {historyContract.validFrom} – {historyContract.validTo}
+                </span>
+              )}
+            </>
+          }
+          onClose={() => setHistoryContract(null)} />
       )}
     </div>
   );

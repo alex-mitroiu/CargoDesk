@@ -124,6 +124,9 @@ export const api = {
     update:  (id, data)   => req("PUT",    `/contracts/${id}`, data),
     remove:  (id)         => req("DELETE", `/contracts/${id}`),
   },
+  entityEvents: {
+    list: (type, id) => req("GET", `/entity-events/${type}/${id}`),
+  },
   systemMessages: {
     list:   ()     => req("GET",    "/system-messages"),
     all:    ()     => req("GET",    "/system-messages/all"),

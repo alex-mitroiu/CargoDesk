@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import { T, CONTRACT_PRESETS, CONTAINER_TYPES, STATUSES, INCOTERMS_2020,
          statusVariant, contractVariant, teuOf, addDays, diffDays } from "../tokens";
 import { api } from "../api";
@@ -13,83 +13,108 @@ import { CommodityCombobox } from "../components/shared/CommodityCombobox";
 import CustomerCombobox from "../components/shared/CustomerCombobox";
 import Spinner from "../components/primitives/Spinner";
 import { useResizableColumns, ColResizer } from "../components/primitives/useResizableColumns";
+import ActionMenu from "../components/primitives/ActionMenu";
+import EntityHistoryModal from "../components/shared/EntityHistoryModal";
 
-// ─── Local ContractField component ────────────────────────────────────────────
+// ─── Contract Picker Modal (Central Contract) ─────────────────────────────────
+
+const ContractPickerModal = ({ pol, pod, matches, onSelect, onClose }) => {
+  const kindBadge = kind => kind === "exact"
+    ? { label: "Exact match",     bg: T.success + "22", color: T.success }
+    : { label: "Via linked port", bg: T.info    + "22", color: T.info    };
+
+  return (
+    <Modal title={`Select Contract — ${pol} → ${pod}`} onClose={onClose} width={620}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {matches === null && (
+          <div style={{ padding: 40, display: "flex", justifyContent: "center" }}>
+            <Spinner />
+          </div>
+        )}
+
+        {matches !== null && matches.length === 0 && (
+          <div style={{ padding: "32px 0", textAlign: "center",
+            fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
+            No active contracts found for {pol} → {pod} within the ETD validity window.
+          </div>
+        )}
+
+        {matches !== null && matches.map(c => {
+          const k = kindBadge(c.matchKind);
+          return (
+            <button key={c.id} type="button" onClick={() => onSelect(c)}
+              style={{ display: "flex", flexDirection: "column", gap: 8, width: "100%",
+                padding: "12px 14px", background: T.bg,
+                border: `1px solid ${T.border}`, borderRadius: 8,
+                cursor: "pointer", textAlign: "left", transition: "border-color .15s" }}
+              onMouseEnter={e => e.currentTarget.style.borderColor = T.accent}
+              onMouseLeave={e => e.currentTarget.style.borderColor = T.border}>
+              {/* Line 1: number · match badge · carrier (right) */}
+              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                <span style={{ fontFamily: T.mono, fontSize: 14, color: T.accent, fontWeight: 700 }}>
+                  {c.contractNumber}
+                </span>
+                <span style={{ background: k.bg, color: k.color,
+                  padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700 }}>
+                  {k.label}
+                </span>
+                <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted, marginLeft: "auto" }}>
+                  {c.carrierCode}
+                </span>
+              </div>
+              {/* Line 2: validity · linked port hints */}
+              <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
+                <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
+                  Valid {c.validFrom} → {c.validTo}
+                </span>
+                {c.linkedPolVia && (
+                  <span style={{ fontFamily: T.mono, fontSize: 11, color: T.info }}>
+                    POL via {c.linkedPolVia}
+                  </span>
+                )}
+                {c.linkedPodVia && (
+                  <span style={{ fontFamily: T.mono, fontSize: 11, color: T.info }}>
+                    POD via {c.linkedPodVia}
+                  </span>
+                )}
+              </div>
+              {/* Line 3: route legs */}
+              {c.legs && c.legs.length > 0 && (
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {c.legs.map((l, i) => (
+                    <span key={i} style={{ fontFamily: T.mono, fontSize: 11,
+                      background: T.surface, border: `1px solid ${T.border}`,
+                      borderRadius: 4, padding: "2px 8px", color: T.text }}>
+                      {l.pol} → {l.pod}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </Modal>
+  );
+};
+
+// ─── ContractField ─────────────────────────────────────────────────────────────
 
 const ContractField = ({ value, onChange, carrier, pol, pod, etd, contractType }) => {
   const isCentral = contractType === "Central Contract";
 
-  const [q,        setQ]        = useState(value.ref || "");
-  const [results,  setResults]  = useState([]);
-  const [open,     setOpen]     = useState(false);
-  const [dropStyle,setDropStyle]= useState({});
-  const [matches,  setMatches]  = useState(null);
-  const [matching, setMatching] = useState(false);
-  const timer      = useRef(null);
-  const matchTimer = useRef(null);
-  const inputRef   = useRef(null);
-  const dropRef    = useRef(null);
-  const qRef       = useRef(q);
+  // Central: route-match state
+  const [matches,    setMatches]    = useState(null);
+  const [matching,   setMatching]   = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const matchTimer   = useRef(null);
+  const autoSelected = useRef(false);
 
-  useEffect(() => { setQ(value.ref || ""); }, [value.ref]);
-  useEffect(() => { qRef.current = q; }, [q]);
-
-  const positionDrop = useCallback(() => {
-    if (!inputRef.current) return;
-    const r = inputRef.current.getBoundingClientRect();
-    setDropStyle({ position: "fixed", top: r.bottom + 4, left: r.left, width: r.width, zIndex: 9000 });
-  }, []);
-
-  // Close typeahead on outside click (only relevant when not Central Contract)
-  useEffect(() => {
-    const h = e => {
-      if (inputRef.current && !inputRef.current.contains(e.target) &&
-          dropRef.current  && !dropRef.current.contains(e.target)) setOpen(false);
-    };
-    document.addEventListener("mousedown", h);
-    return () => document.removeEventListener("mousedown", h);
-  }, []);
-
-  useEffect(() => {
-    if (!open) return;
-    const upd = () => positionDrop();
-    window.addEventListener("scroll", upd, true);
-    window.addEventListener("resize", upd);
-    return () => { window.removeEventListener("scroll", upd, true); window.removeEventListener("resize", upd); };
-  }, [open, positionDrop]);
-
-  // Text-based typeahead — only active when NOT Central Contract
-  const search = v => {
-    setQ(v);
-    onChange({ id: "", ref: v });
-    clearTimeout(timer.current);
-    if (!v.trim()) { setResults([]); setOpen(false); return; }
-    timer.current = setTimeout(async () => {
-      try {
-        const res = await api.contracts.find({ q: v, carrier, asOf: new Date().toISOString().slice(0, 10) });
-        setResults(res);
-        if (res.length) { positionDrop(); setOpen(true); }
-      } catch {}
-    }, 250);
-  };
-
-  const select = c => {
-    setQ(c.contractNumber);
-    onChange({ id: c.id, ref: c.contractNumber });
-    setResults([]);
-    setOpen(false);
-  };
-
-  const clearContract = () => {
-    onChange({ id: "", ref: "" });
-    setQ("");
-    setMatches(null);
-  };
-
-  // Route-based matching — only runs for Central Contract
+  // ── Central route-match ────────────────────────────────────────────────────
   useEffect(() => {
     clearTimeout(matchTimer.current);
-    if (!isCentral || !pol || !pod || !etd) { setMatches(null); return; }
+    if (!isCentral) { setMatches(null); autoSelected.current = false; return; }
+    if (!pol || !pod || !etd) { setMatches(null); return; }
     setMatching(true);
     matchTimer.current = setTimeout(async () => {
       try {
@@ -97,9 +122,10 @@ const ContractField = ({ value, onChange, carrier, pol, pod, etd, contractType }
         if (carrier) params.carrier = carrier;
         const res = await api.contracts.match(params);
         setMatches(res);
-        if (res.length === 1 && !qRef.current) {
+        // Auto-select when exactly one match and nothing is chosen yet
+        if (res.length === 1 && !value.id && !autoSelected.current) {
+          autoSelected.current = true;
           onChange({ id: res[0].id, ref: res[0].contractNumber });
-          setQ(res[0].contractNumber);
         }
       } catch {
         setMatches([]);
@@ -109,166 +135,74 @@ const ContractField = ({ value, onChange, carrier, pol, pod, etd, contractType }
     }, 400);
   }, [isCentral, pol, pod, etd, carrier]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // When switching away from Central Contract, clear the matched contract
-  useEffect(() => {
-    if (!isCentral) { setMatches(null); }
-  }, [isCentral]);
+  const clearContract = () => {
+    onChange({ id: "", ref: "" });
+    autoSelected.current = false;
+  };
+
+  const pickContract = c => {
+    onChange({ id: c.id, ref: c.contractNumber });
+    setPickerOpen(false);
+  };
 
   const allReady = pol && pod && etd;
 
-  const kindBadge = kind => kind === "exact"
-    ? { label: "Exact",           bg: T.success + "22", color: T.success }
-    : { label: "Via linked port", bg: T.info    + "22", color: T.info    };
+  // ── Render ─────────────────────────────────────────────────────────────────
+  if (isCentral) {
+    const browseLabel = matching
+      ? "Searching…"
+      : matches === null || !allReady
+        ? "Browse matching contracts…"
+        : matches.length === 0
+          ? "No contracts found for this route"
+          : `${matches.length} contract${matches.length !== 1 ? "s" : ""} found — click to select`;
 
-  return (
-    <Field label="Contract Ref">
-      {/* Selected contract chip (Central Contract with a resolved ID) */}
-      {isCentral && value.id ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px",
-          background: T.bg, border: `1px solid ${T.accent}55`, borderRadius: 6 }}>
-          <span style={{ fontFamily: T.mono, fontSize: 13, color: T.accent, fontWeight: 700, flex: 1 }}>
-            {q || value.ref}
-          </span>
-          <button type="button" onClick={clearContract}
-            style={{ background: "none", border: "none", cursor: "pointer",
-              color: T.textMuted, fontSize: 12, padding: 0 }}>
-            ✕ clear
-          </button>
-        </div>
-      ) : (
-        <div>
-          <input
-            ref={inputRef}
-            value={q}
-            readOnly={isCentral}
-            onChange={isCentral ? undefined : e => search(e.target.value)}
-            onFocus={isCentral ? undefined : () => { if (results.length > 0) { positionDrop(); setOpen(true); } }}
-            placeholder={isCentral ? "Select a contract via route match below…" : "Contract number…"}
-            style={{
-              ...inputBase, width: "100%", fontFamily: T.mono, fontSize: 13,
-              ...(isCentral ? { background: T.bg, color: T.textMuted, cursor: "default" } : {}),
-            }}
-          />
-          {/* Typeahead dropdown — non-Central only */}
-          {!isCentral && open && results.length > 0 && (
-            <div ref={dropRef} style={{ ...dropStyle,
-              background: T.surface, border: `1px solid ${T.border}`, borderRadius: 6,
-              boxShadow: "0 6px 20px rgba(0,0,0,.35)", overflow: "hidden", maxHeight: 260, overflowY: "auto" }}>
-              {results.map(c => (
-                <button key={c.id} type="button" onClick={() => select(c)}
-                  style={{ display: "flex", flexDirection: "column", gap: 2,
-                    width: "100%", padding: "8px 12px", background: "none",
-                    border: "none", borderBottom: `1px solid ${T.border}22`,
-                    cursor: "pointer", textAlign: "left" }}
-                  onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
-                  onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                  <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.accent }}>
-                    {c.contractNumber}
-                  </span>
-                  <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
-                    {c.carrierCode} · {c.validFrom} → {c.validTo}
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+    const browseDisabled = !allReady || (matches !== null && matches.length === 0);
 
-      {/* Route-match panel — Central Contract only */}
-      {isCentral && !value.id && allReady && (
-        <div style={{ marginTop: 8, padding: "10px 12px", background: T.bg,
-          border: `1px solid ${T.border}`, borderRadius: 6 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6,
-            marginBottom: (!matching && matches && matches.length > 0) ? 8 : 0 }}>
-            <span style={{ fontFamily: T.body, fontSize: 10, fontWeight: 700, color: T.textMuted,
-              textTransform: "uppercase", letterSpacing: ".08em" }}>Route Match</span>
-            {matching && <Spinner size="sm" />}
+    return (
+      <Field label="Contract Ref">
+        {value.id ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px",
+            background: T.bg, border: `1px solid ${T.accent}55`, borderRadius: 6 }}>
+            <span style={{ fontFamily: T.mono, fontSize: 13, color: T.accent, fontWeight: 700, flex: 1 }}>
+              {value.ref}
+            </span>
+            <button type="button" onClick={() => setPickerOpen(true)}
+              style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 4,
+                cursor: "pointer", color: T.text, fontFamily: T.body, fontSize: 11,
+                padding: "2px 8px" }}>
+              Change
+            </button>
+            <button type="button" onClick={clearContract}
+              style={{ background: "none", border: "none", cursor: "pointer",
+                color: T.textMuted, fontSize: 13, padding: "0 2px", lineHeight: 1 }}>
+              ✕
+            </button>
           </div>
+        ) : (
+          <button type="button"
+            onClick={() => !browseDisabled && setPickerOpen(true)}
+            style={{ ...inputBase, width: "100%", cursor: browseDisabled ? "default" : "pointer",
+              textAlign: "left", fontFamily: T.body, fontSize: 13,
+              color: matches !== null && matches.length === 0 ? T.danger : T.textMuted,
+              background: T.bg, borderStyle: !allReady ? "solid" : "dashed",
+              opacity: browseDisabled && allReady ? 0.6 : 1 }}>
+            {browseLabel}
+          </button>
+        )}
 
-          {!matching && matches !== null && (
-            <>
-              {matches.length === 0 && (
-                <p style={{ margin: 0, fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
-                  No active contracts cover {pol} → {pod} within the ETD validity window.
-                </p>
-              )}
+        {pickerOpen && (
+          <ContractPickerModal
+            pol={pol} pod={pod}
+            matches={matches}
+            onSelect={pickContract}
+            onClose={() => setPickerOpen(false)}
+          />
+        )}
+      </Field>
+    );
+  }
 
-              {matches.length === 1 && (() => {
-                const k = kindBadge(matches[0].matchKind);
-                return (
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                    <span style={{ fontFamily: T.body, fontSize: 12, color: T.success }}>✓ Auto-matched</span>
-                    <span style={{ fontFamily: T.mono, fontSize: 12, color: T.accent, fontWeight: 700 }}>
-                      {matches[0].contractNumber}
-                    </span>
-                    <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
-                      {matches[0].carrierCode} · {matches[0].validFrom} → {matches[0].validTo}
-                    </span>
-                    <span style={{ background: k.bg, color: k.color,
-                      padding: "1px 7px", borderRadius: 4, fontSize: 10, fontWeight: 700 }}>
-                      {k.label}
-                    </span>
-                  </div>
-                );
-              })()}
-
-              {matches.length > 1 && (
-                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, display: "block", marginBottom: 2 }}>
-                    {matches.length} contracts match this route — select one:
-                  </span>
-                  {matches.map(c => {
-                    const k   = kindBadge(c.matchKind);
-                    const sel = value.id === c.id;
-                    return (
-                      <button key={c.id} type="button"
-                        onClick={() => { onChange({ id: c.id, ref: c.contractNumber }); setQ(c.contractNumber); }}
-                        style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px",
-                          background: sel ? T.accent + "18" : T.surface,
-                          border: `1px solid ${sel ? T.accent : T.border}`,
-                          borderRadius: 6, cursor: "pointer", textAlign: "left", width: "100%" }}>
-                        <span style={{ width: 12, height: 12, borderRadius: "50%", flexShrink: 0,
-                          border: `2px solid ${sel ? T.accent : T.border}`,
-                          background: sel ? T.accent : "transparent" }} />
-                        <span style={{ fontFamily: T.mono, fontSize: 12, color: T.accent, fontWeight: 700 }}>
-                          {c.contractNumber}
-                        </span>
-                        <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, flex: 1 }}>
-                          {c.carrierCode} · {c.validFrom} → {c.validTo}
-                        </span>
-                        {c.linkedPolVia && (
-                          <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted }}>
-                            POL via {c.linkedPolVia}
-                          </span>
-                        )}
-                        {c.linkedPodVia && (
-                          <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted }}>
-                            POD via {c.linkedPodVia}
-                          </span>
-                        )}
-                        <span style={{ background: k.bg, color: k.color, flexShrink: 0,
-                          padding: "1px 7px", borderRadius: 4, fontSize: 10, fontWeight: 700 }}>
-                          {k.label}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      )}
-
-      {/* Hint when Central Contract but POL/POD/ETD not yet set */}
-      {isCentral && !value.id && !allReady && (
-        <p style={{ margin: "6px 0 0", fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
-          Set POL, POD, and ETD to find matching contracts.
-        </p>
-      )}
-    </Field>
-  );
 };
 
 const ShipmentForm = ({ init = {}, carriers, onSave, onCancel }) => {
@@ -407,15 +341,17 @@ const ShipmentForm = ({ init = {}, carriers, onSave, onCancel }) => {
         if (v !== "Central Contract") setF(p => ({ ...p, contractType: v, contractId: "", contractRef: "" }));
         else set("contractType")(v);
       }} />
-      <ContractField
-        value={{ id: f.contractId, ref: f.contractRef }}
-        onChange={({ id, ref }) => setF(p => ({ ...p, contractId: id, contractRef: ref }))}
-        carrier={f.carrierCode}
-        pol={polPort?.unlocode}
-        pod={podPort?.unlocode}
-        etd={f.etd}
-        contractType={f.contractType}
-      />
+      {isCentral && (
+        <ContractField
+          value={{ id: f.contractId, ref: f.contractRef }}
+          onChange={({ id, ref }) => setF(p => ({ ...p, contractId: id, contractRef: ref }))}
+          carrier={f.carrierCode}
+          pol={polPort?.unlocode}
+          pod={podPort?.unlocode}
+          etd={f.etd}
+          contractType={f.contractType}
+        />
+      )}
       {!isCentral && (
         <Inp label="Contract Reference" value={f.contractRef} onChange={v => setF(p => ({ ...p, contractRef: v }))}
           placeholder="e.g. SPOT-2025-001" mono hint="Free-text reference for this contract arrangement" />
@@ -439,7 +375,8 @@ const ShipmentForm = ({ init = {}, carriers, onSave, onCancel }) => {
 };
 
 const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, onNew }) => {
-  const [confirm,  setConfirm]  = useState(null);
+  const [confirm,       setConfirm]       = useState(null);
+  const [historyShipment, setHistoryShipment] = useState(null);
   const [filters,  setFilters]  = useState({ search: '', status: '', carrier: '' });
   const teuFor = id => containers.filter(c => c.shipmentId === id).reduce((s, c) => s + teuOf(c.size), 0);
   const { template: shipTemplate, startResize: shipStartResize } = useResizableColumns("shipments", [140,70,70,150,165,46,60,130,90]);
@@ -555,9 +492,13 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
               <Badge variant={contractVariant(s.contractType)}>{s.contractType}</Badge>
               <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text }}>{teuFor(s.id)}</span>
               <Badge variant={statusVariant(s.status)}>{s.status}</Badge>
-              <Btn size="sm" variant="danger" onClick={e => { e.stopPropagation(); setConfirm(s.id); }}>
-                ✕ Remove
-              </Btn>
+              <div onClick={e => e.stopPropagation()}>
+                <ActionMenu items={[
+                  { icon: "👁", label: "Open",    onClick: () => onSelect(s.id) },
+                  { icon: "📋", label: "History", onClick: () => setHistoryShipment(s) },
+                  { icon: "✕", label: "Delete",  variant: "danger", onClick: () => setConfirm(s.id) },
+                ]} />
+              </div>
             </div>
           );
         })}
@@ -568,6 +509,21 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
           message={`Remove shipment ${confirm} and all its containers? This cannot be undone.`}
           onConfirm={() => { onDelete(confirm); setConfirm(null); }}
           onCancel={() => setConfirm(null)} />
+      )}
+      {historyShipment && (
+        <EntityHistoryModal
+          entityType="shipment"
+          entityId={historyShipment.id}
+          title={`History — ${historyShipment.id}`}
+          headerContent={
+            <>
+              <span style={{ fontFamily: T.mono, fontSize: 12, color: T.accent, fontWeight: 700 }}>{historyShipment.id}</span>
+              <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>{historyShipment.pol} → {historyShipment.pod}</span>
+              {historyShipment.carrierCode && <span style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>{historyShipment.carrierCode}</span>}
+              {historyShipment.etd && <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>ETD {historyShipment.etd}</span>}
+            </>
+          }
+          onClose={() => setHistoryShipment(null)} />
       )}
     </div>
   );

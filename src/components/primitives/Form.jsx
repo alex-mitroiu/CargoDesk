@@ -52,10 +52,10 @@ export const inputBase = {
   outline: "none", width: "100%", boxSizing: "border-box",
 };
 
-const Inp = ({ label, value, onChange, placeholder, mono, maxLength, required, hint, type = "text" }) => (
+const Inp = ({ label, value, onChange, placeholder, mono, maxLength, required, hint, type = "text", inputMode }) => (
   <Field label={label} required={required} hint={hint}>
     <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
-      maxLength={maxLength} type={type}
+      maxLength={maxLength} type={type} inputMode={inputMode}
       style={{ ...inputBase, fontFamily: mono ? T.mono : T.body, fontSize: mono ? 13 : 14 }} />
   </Field>
 );
@@ -79,58 +79,16 @@ const Textarea = ({ label, value, onChange, placeholder, rows = 3 }) => (
 
 // ─── Shared: Contract Type Picker ─────────────────────────────────────────────
 
-const ContractTypeTooltip = ({ text }) => {
-  const [show, setShow] = React.useState(false);
-  return (
-    <div style={{ position: "relative", display: "inline-block" }}
-      onMouseEnter={() => setShow(true)} onMouseLeave={() => setShow(false)}>
-      <div style={{
-        padding: "6px 14px", borderRadius: 6, fontFamily: T.body, fontSize: 13, fontWeight: 500,
-        background: T.surface, border: `1px solid ${T.border}`,
-        color: T.border, cursor: "not-allowed", userSelect: "none",
-        opacity: 0.55,
-      }}>
-        Central Contract
-      </div>
-      {show && (
-        <div style={{
-          position: "absolute", bottom: "calc(100% + 8px)", left: "50%",
-          transform: "translateX(-50%)", zIndex: 400,
-          background: T.surface, border: `1px solid ${T.border}`,
-          borderRadius: 8, padding: "10px 14px",
-          boxShadow: "0 8px 24px rgba(0,0,0,.5)",
-          minWidth: 240, maxWidth: 300,
-        }}>
-          <div style={{ fontFamily: T.body, fontSize: 12, color: T.warning, fontWeight: 600, marginBottom: 4 }}>
-            🔒 Not yet available
-          </div>
-          <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, lineHeight: 1.6 }}>
-            Central Contracts require a dedicated Contract Management module and a separate DB table.
-            This will be implemented in a future release.
-          </div>
-          {/* Tooltip arrow */}
-          <div style={{
-            position: "absolute", bottom: -6, left: "50%", transform: "translateX(-50%) rotate(45deg)",
-            width: 10, height: 10, background: T.surface, borderRight: `1px solid ${T.border}`,
-            borderBottom: `1px solid ${T.border}`,
-          }} />
-        </div>
-      )}
-    </div>
-  );
-};
-
 const ContractTypeInput = ({ value, onChange }) => (
   <div>
     <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
       textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 8 }}>
       Contract Type <span style={{ color: T.danger }}>*</span>
     </div>
-    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
       {CONTRACT_PRESETS.map(t => (
         <BtnToggle key={t} selected={value === t} onClick={() => onChange(t)}>{t}</BtnToggle>
       ))}
-      <ContractTypeTooltip />
     </div>
   </div>
 );

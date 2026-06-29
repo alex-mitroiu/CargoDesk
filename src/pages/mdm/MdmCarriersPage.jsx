@@ -6,6 +6,8 @@ import Btn from "../../components/primitives/Btn";
 import Badge from "../../components/primitives/Badge";
 import {Inp, BtnToggle, Field, Sel, Textarea, ContractTypeInput} from "../../components/primitives/Form";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
+import ActionMenu from "../../components/primitives/ActionMenu";
+import EntityHistoryModal from "../../components/shared/EntityHistoryModal";
 import DatePicker from "../../components/primitives/DatePicker";
 import PortCombobox from "../../components/shared/PortCombobox";
 import { VesselField } from "../../components/shared/VesselCombobox";
@@ -268,8 +270,9 @@ const AllocationForm = ({ init = {}, carriers, onSave, onCancel }) => {
 // ─── Page: Carrier Registry ───────────────────────────────────────────────────
 
 const CarriersPage = ({ carriers, onAdd, onEdit, onDelete }) => {
-  const [modal, setModal]   = useState(null); // null | "add" | carrier obj
-  const [confirm, setConfirm] = useState(null);
+  const [modal,          setModal]          = useState(null);
+  const [confirm,        setConfirm]        = useState(null);
+  const [historyCarrier, setHistoryCarrier] = useState(null);
   const { template, startResize } = useResizableColumns("mdm-carriers", [130,200,160]);
   const headers = ["Code","Name","Actions"];
 
@@ -307,10 +310,11 @@ const CarriersPage = ({ carriers, onAdd, onEdit, onDelete }) => {
             onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
             <span style={{ fontFamily: T.mono, fontSize: 14, color: T.accent, fontWeight: 700 }}>{c.code}</span>
             <span style={{ fontFamily: T.body, fontSize: 14, color: T.text }}>{c.name}</span>
-            <div style={{ display: "flex", gap: 6 }}>
-              <Btn size="sm" variant="secondary" onClick={() => setModal(c)}>✎ Edit</Btn>
-              <Btn size="sm" variant="danger"    onClick={() => setConfirm(c.code)}>✕ Remove</Btn>
-            </div>
+            <ActionMenu items={[
+              { icon: "✎", label: "Edit",    onClick: () => setModal(c) },
+              { icon: "📋", label: "History", onClick: () => setHistoryCarrier(c) },
+              { icon: "✕", label: "Remove",  variant: "danger", onClick: () => setConfirm(c.code) },
+            ]} />
           </div>
         ))}
       </div>
@@ -334,6 +338,19 @@ const CarriersPage = ({ carriers, onAdd, onEdit, onDelete }) => {
           message={`Remove carrier "${confirm}" from the registry? Existing shipments referencing this code will not be deleted.`}
           onConfirm={() => { onDelete(confirm); setConfirm(null); }}
           onCancel={() => setConfirm(null)} />
+      )}
+      {historyCarrier && (
+        <EntityHistoryModal
+          entityType="carrier"
+          entityId={historyCarrier.code}
+          title={`History — ${historyCarrier.code}`}
+          headerContent={
+            <>
+              <span style={{ fontFamily: T.mono, fontSize: 12, color: T.accent, fontWeight: 700 }}>{historyCarrier.code}</span>
+              <span style={{ fontFamily: T.body, fontSize: 12, color: T.text }}>{historyCarrier.name}</span>
+            </>
+          }
+          onClose={() => setHistoryCarrier(null)} />
       )}
     </div>
   );

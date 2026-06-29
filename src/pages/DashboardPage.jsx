@@ -9,6 +9,7 @@ import Badge from "../components/primitives/Badge";
 import { Inp, Sel, ContractTypeInput, Textarea } from "../components/primitives/Form";
 import PortCombobox from "../components/shared/PortCombobox";
 import { Modal, ConfirmModal } from "../components/primitives/Modal";
+import Spinner from "../components/primitives/spinner";
 import Pagination from "../components/primitives/Pagination";
 import DatePicker from "../components/primitives/DatePicker";
 import { useResizableColumns, ColResizer } from "../components/primitives/useResizableColumns.jsx";
@@ -234,6 +235,70 @@ const ConflictBanner = ({ conflicts, loading }) => {
   );
 };
 
+// ─── AllocContractPickerModal ─────────────────────────────────────────────────
+
+const AllocContractPickerModal = ({ pol, pod, matches, onSelect, onClose }) => {
+  const [hovered, setHovered] = useState(null);
+  return (
+    <Modal title={`Select Contract — ${pol} → ${pod}`} onClose={onClose} width={600}>
+      {matches === null ? (
+        <div style={{ padding: "48px 0", display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
+          <Spinner />
+          <span style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted }}>Searching contracts…</span>
+        </div>
+      ) : matches.length === 0 ? (
+        <div style={{ padding: "40px 0", textAlign: "center" }}>
+          <div style={{ fontSize: 28, marginBottom: 10 }}>🔍</div>
+          <div style={{ fontFamily: T.body, fontSize: 14, color: T.text, marginBottom: 4 }}>No contracts found for this route</div>
+          <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
+            Try adjusting the POL, POD, or carrier, or check the valid-from / valid-to dates on your contracts.
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 420, overflowY: "auto", padding: "4px 2px" }}>
+          {matches.map(c => (
+            <div key={c.id}
+              onClick={() => onSelect(c)}
+              onMouseEnter={() => setHovered(c.id)}
+              onMouseLeave={() => setHovered(null)}
+              style={{
+                border: `1px solid ${hovered === c.id ? T.accent : T.border}`,
+                borderRadius: 8, padding: "14px 16px", cursor: "pointer",
+                background: hovered === c.id ? T.accentBg : T.surface,
+                transition: "border-color .12s, background .12s",
+              }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                <span style={{ fontFamily: T.mono, fontSize: 14, fontWeight: 700, color: T.accent }}>{c.contractNumber}</span>
+                <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
+                  {c.validFrom} – {c.validTo}
+                </span>
+              </div>
+              {c.carrierCode && (
+                <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, marginBottom: 6 }}>
+                  Carrier: <span style={{ color: T.text, fontWeight: 600 }}>{c.carrierCode}</span>
+                </div>
+              )}
+              {c.legs?.length > 0 && (
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
+                  {c.legs.map((leg, i) => (
+                    <span key={i} style={{
+                      fontFamily: T.mono, fontSize: 11,
+                      background: T.bg, border: `1px solid ${T.border}`,
+                      borderRadius: 4, padding: "2px 8px", color: T.textMuted,
+                    }}>
+                      {leg.pol} → {leg.pod}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </Modal>
+  );
+};
+
 // ─── AllocationForm ───────────────────────────────────────────────────────────
 
 const AllocationForm = ({ init = {}, carriers, tradeLanes = [], onSave, onCancel }) => {
@@ -247,6 +312,15 @@ const AllocationForm = ({ init = {}, carriers, tradeLanes = [], onSave, onCancel
   const [notes,          setNotes]          = useState(init.notes          || "");
   const [alertThreshold, setAlertThreshold] = useState(init.alertThreshold ?? 80);
   const [serverErr,      setServerErr]      = useState("");
+
+  // Contract picker
+  const [contractId,         setContractId]         = useState(init.contractId     || "");
+  const [contractNumber,     setContractNumber]     = useState(init.contractNumber || "");
+  const [contractMatches,    setContractMatches]    = useState(null);
+  const [contractLoading,    setContractLoading]    = useState(false);
+  const [contractPickerOpen, setContractPickerOpen] = useState(false);
+  const contractTimer = useRef(null);
+  const autoContractSelected = useRef(false);
 
   // POL / POD
   const [polPort,  setPolPort]  = useState(init.pol ? { unlocode: init.pol,  name: "" } : null);
@@ -300,6 +374,37 @@ const AllocationForm = ({ init = {}, carriers, tradeLanes = [], onSave, onCancel
     else { setDestLane(""); setDestOptions([]); }
   };
 
+  // Contract auto-match — debounced 400ms, triggers when carrier + POL + POD are set
+  useEffect(() => {
+    clearTimeout(contractTimer.current);
+    if (!carrierCode || !polPort?.unlocode || !podPort?.unlocode) {
+      setContractMatches(null); return;
+    }
+    setContractLoading(true);
+    contractTimer.current = setTimeout(async () => {
+      try {
+        const today = new Date().toISOString().slice(0, 10);
+        const res = await api.contracts.match({
+          pol: polPort.unlocode,
+          pod: podPort.unlocode,
+          carrier: carrierCode,
+          etd: effectiveDate || today,
+        });
+        setContractMatches(res);
+        if (res.length === 1 && !contractId && !autoContractSelected.current) {
+          autoContractSelected.current = true;
+          setContractId(res[0].id);
+          setContractNumber(res[0].contractNumber);
+        }
+      } catch {
+        setContractMatches([]);
+      } finally {
+        setContractLoading(false);
+      }
+    }, 400);
+    return () => clearTimeout(contractTimer.current);
+  }, [carrierCode, polPort?.unlocode, podPort?.unlocode, effectiveDate]);
+
   // Conflict check — debounced 500ms
   useEffect(() => {
     clearTimeout(conflictTimer.current);
@@ -329,7 +434,8 @@ const AllocationForm = ({ init = {}, carriers, tradeLanes = [], onSave, onCancel
   const teu    = parseInt(teuStr) || 0;
   const thresh = Math.min(100, Math.max(1, parseInt(alertThreshold) || 80));
   const valid  = carrierCode && teu > 0 && effectiveDate && endDate && endDate >= effectiveDate
-               && polPort?.unlocode && podPort?.unlocode && originLane && destLane;
+               && polPort?.unlocode && podPort?.unlocode && originLane && destLane
+               && contractId;
 
   const threshColour = thresh >= 90 ? T.danger : thresh >= 75 ? T.warning : T.success;
 
@@ -342,6 +448,7 @@ const AllocationForm = ({ init = {}, carriers, tradeLanes = [], onSave, onCancel
         pol: polPort.unlocode, pod: podPort.unlocode,
         originLane, destLane,
         tradeLane: `${originLane}_${destLane}`,
+        contractId, contractNumber,
       });
     } catch (e) { setServerErr(e.message || "Could not save — check for overlapping periods."); }
   };
@@ -393,6 +500,63 @@ const AllocationForm = ({ init = {}, carriers, tradeLanes = [], onSave, onCancel
             </div>
           )}
         </div>
+      )}
+
+      {/* Contract */}
+      <div style={{ background: T.bg, border: `1px solid ${contractId ? T.success : T.border}`, borderRadius: 8, padding: "14px 16px" }}>
+        <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
+          textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 10 }}>
+          Contract <span style={{ color: T.danger }}>*</span>
+        </div>
+        {contractId ? (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.success }}>✓</span>
+              <span style={{ fontFamily: T.mono, fontSize: 13, color: T.text, fontWeight: 600 }}>{contractNumber}</span>
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button type="button" onClick={() => setContractPickerOpen(true)}
+                style={{ fontFamily: T.body, fontSize: 12, color: T.accent, background: "none", border: `1px solid ${T.accent}`, borderRadius: 5, padding: "4px 12px", cursor: "pointer" }}>
+                Change
+              </button>
+              <button type="button" onClick={() => { setContractId(""); setContractNumber(""); autoContractSelected.current = false; }}
+                style={{ fontFamily: T.body, fontSize: 12, color: T.danger, background: "none", border: `1px solid ${T.danger}44`, borderRadius: 5, padding: "4px 10px", cursor: "pointer" }}>
+                ✕
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button type="button"
+            disabled={!carrierCode || !polPort?.unlocode || !podPort?.unlocode}
+            onClick={() => setContractPickerOpen(true)}
+            style={{
+              width: "100%", padding: "10px 14px", borderRadius: 6, cursor: "pointer",
+              background: "none", textAlign: "left",
+              border: `1.5px dashed ${(!carrierCode || !polPort?.unlocode || !podPort?.unlocode) ? T.border : T.accent}`,
+              color: (!carrierCode || !polPort?.unlocode || !podPort?.unlocode) ? T.textMuted : T.accent,
+              fontFamily: T.body, fontSize: 13, opacity: (!carrierCode || !polPort?.unlocode || !podPort?.unlocode) ? 0.5 : 1,
+            }}>
+            {contractLoading
+              ? "Searching contracts…"
+              : (!carrierCode || !polPort?.unlocode || !podPort?.unlocode)
+                ? "Set carrier, POL and POD to find matching contracts"
+                : contractMatches === null
+                  ? "Searching contracts…"
+                  : contractMatches.length === 0
+                    ? "No matching contracts — click to browse all"
+                    : `${contractMatches.length} contract${contractMatches.length !== 1 ? "s" : ""} found — click to select`}
+          </button>
+        )}
+      </div>
+
+      {contractPickerOpen && (
+        <AllocContractPickerModal
+          pol={polPort?.unlocode || ""}
+          pod={podPort?.unlocode || ""}
+          matches={contractMatches}
+          onSelect={c => { setContractId(c.id); setContractNumber(c.contractNumber); setContractPickerOpen(false); }}
+          onClose={() => setContractPickerOpen(false)}
+        />
       )}
 
       {/* TEU */}
@@ -830,32 +994,240 @@ const DeltaBadge = ({ delta, prevTEU }) => {
   );
 };
 
+// ─── Matched Shipments Table (Overview tab) ───────────────────────────────────
+
+const MatchedShipmentsTable = ({ shipments, containers, carriers, activeAllocations }) => {
+  const rows = useMemo(() => shipments.map(s => {
+    const teu     = containers.filter(c => c.shipmentId === s.id).reduce((acc, c) => acc + teuOf(c.size), 0);
+    const carrier = carriers.find(c => c.code === s.carrierCode);
+    const alloc   = activeAllocations.find(a =>
+      a.carrierCode === s.carrierCode && (!a.pol || a.pol === s.pol) && (!a.pod || a.pod === s.pod)
+    );
+    return { ...s, teu, carrier, alloc };
+  }), [shipments, activeAllocations, containers, carriers]);
+
+  const COL = "130px 120px 120px 110px 140px 48px 90px";
+  const HDR = ["Shipment ID", "POL → POD", "Carrier", "Contract", "Space Config", "TEU", "Status"];
+
+  return (
+    <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden" }}>
+      <div style={{ padding: "15px 20px", borderBottom: `1px solid ${T.border}` }}>
+        <h2 style={{ fontFamily: T.head, fontSize: 17, fontWeight: 700, color: T.text, margin: 0 }}>
+          Shipments in Period
+        </h2>
+        <p style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, margin: "2px 0 0" }}>
+          {shipments.length} shipment{shipments.length !== 1 ? "s" : ""} with ETD in range — correlated to active space configurations
+        </p>
+      </div>
+
+      {shipments.length === 0 ? (
+        <div style={{ padding: 40, textAlign: "center", color: T.textMuted, fontFamily: T.body, fontSize: 13 }}>
+          No shipments with ETD in this period. Adjust the date range or create new shipments.
+        </div>
+      ) : (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: COL,
+            padding: "9px 20px", borderBottom: `1px solid ${T.border}` }}>
+            {HDR.map(h => (
+              <span key={h} style={{ fontFamily: T.body, fontSize: 10.5, fontWeight: 600,
+                color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>{h}</span>
+            ))}
+          </div>
+          {rows.map(s => (
+            <div key={s.id}
+              style={{ display: "grid", gridTemplateColumns: COL,
+                padding: "12px 20px", borderBottom: `1px solid ${T.border}22`,
+                alignItems: "center", transition: "background .1s" }}
+              onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
+              onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+              <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textCode, fontWeight: 700 }}>{s.id}</span>
+              <span style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>{s.pol} → {s.pod}</span>
+              <div>
+                <span style={{ fontFamily: T.mono, fontSize: 12, color: T.accent, fontWeight: 700 }}>{s.carrierCode}</span>
+                {s.carrier && <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted }}> · {s.carrier.name}</span>}
+              </div>
+              <Badge variant={contractVariant(s.contractType)}>{s.contractType}</Badge>
+              {s.alloc ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                  <span style={{ fontFamily: T.body, fontSize: 10, color: T.success, fontWeight: 600 }}>● Matched</span>
+                  <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted }}>
+                    {s.alloc.pol} › {s.alloc.pod} · {s.alloc.allocatedTEU} TEU
+                  </span>
+                </div>
+              ) : (
+                <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted }}>No config match</span>
+              )}
+              <span style={{ fontFamily: T.mono, fontSize: 14, fontWeight: 700, color: T.text }}>{s.teu}</span>
+              <Badge variant={statusVariant(s.status)}>{s.status}</Badge>
+            </div>
+          ))}
+        </>
+      )}
+    </div>
+  );
+};
+
+// ─── Contract Consumption View (Contract tab) ─────────────────────────────────
+
+const ContractConsumptionView = ({ rangeShipments, containers, carriers }) => {
+  const [contractMap, setContractMap] = useState({});
+  const [loading,     setLoading]     = useState(false);
+
+  const centralShipments = useMemo(() =>
+    rangeShipments.filter(s => s.contractType === "Central Contract" && s.contractId),
+    [rangeShipments]
+  );
+
+  const groups = useMemo(() => {
+    const m = {};
+    centralShipments.forEach(s => {
+      if (!m[s.contractId]) m[s.contractId] = {
+        contractId: s.contractId, contractRef: s.contractRef,
+        carrierCode: s.carrierCode, shipments: [],
+      };
+      m[s.contractId].shipments.push(s);
+    });
+    return Object.values(m);
+  }, [centralShipments]);
+
+  useEffect(() => {
+    const missing = groups.map(g => g.contractId).filter(id => !contractMap[id]);
+    if (!missing.length) return;
+    setLoading(true);
+    Promise.all(missing.map(id => api.contracts.get(id).catch(() => null)))
+      .then(results => {
+        setContractMap(prev => {
+          const next = { ...prev };
+          results.forEach(c => { if (c) next[c.id] = c; });
+          return next;
+        });
+      })
+      .finally(() => setLoading(false));
+  }, [groups]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const teuFor = s => containers.filter(c => c.shipmentId === s.id).reduce((acc, c) => acc + teuOf(c.size), 0);
+
+  const SHP_COL = "140px 130px 90px 48px 90px";
+  const SHP_HDR = ["Shipment ID", "POL → POD", "ETD", "TEU", "Status"];
+
+  if (centralShipments.length === 0) {
+    return (
+      <div>
+        <div style={{ marginBottom: 16 }}>
+          <h2 style={{ fontFamily: T.head, fontSize: 19, fontWeight: 700, color: T.text, margin: 0 }}>Contract Consumption</h2>
+          <p style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, margin: "3px 0 0" }}>
+            Central Contract shipments in the selected period, grouped by contract
+          </p>
+        </div>
+        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12,
+          padding: 48, textAlign: "center" }}>
+          <div style={{ fontFamily: T.body, fontSize: 14, color: T.textMuted, marginBottom: 8 }}>
+            No Central Contract shipments in this period.
+          </div>
+          <div style={{ fontFamily: T.body, fontSize: 12, color: T.border }}>
+            Shipments must have contract type "Central Contract" and a linked system contract to appear here.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div style={{ marginBottom: 16 }}>
+        <h2 style={{ fontFamily: T.head, fontSize: 19, fontWeight: 700, color: T.text, margin: 0 }}>Contract Consumption</h2>
+        <p style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, margin: "3px 0 0" }}>
+          {groups.length} contract{groups.length !== 1 ? "s" : ""} · {centralShipments.length} Central Contract shipment{centralShipments.length !== 1 ? "s" : ""} in range
+        </p>
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        {groups.map(g => {
+          const contract = contractMap[g.contractId];
+          const groupTEU = g.shipments.reduce((acc, s) => acc + teuFor(s), 0);
+          const carrier  = carriers.find(c => c.code === g.carrierCode);
+
+          return (
+            <div key={g.contractId} style={{ background: T.surface, border: `1px solid ${T.border}`,
+              borderRadius: 12, overflow: "hidden" }}>
+
+              {/* Contract header */}
+              <div style={{ padding: "14px 20px", borderBottom: `1px solid ${T.border}`,
+                background: T.accentBg, display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                  <span style={{ fontFamily: T.mono, fontSize: 15, color: T.accent, fontWeight: 700 }}>
+                    {contract?.contractNumber || g.contractRef || g.contractId}
+                    {loading && !contract && (
+                      <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, fontWeight: 400, marginLeft: 8 }}>
+                        loading…
+                      </span>
+                    )}
+                  </span>
+                  <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>
+                    {g.carrierCode}{carrier ? ` · ${carrier.name}` : ""}
+                    {contract && ` · Valid ${contract.validFrom} → ${contract.validTo}`}
+                  </span>
+                </div>
+
+                {contract?.legs?.length > 0 && (
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {contract.legs.map((l, i) => (
+                      <span key={i} style={{ fontFamily: T.mono, fontSize: 11, background: T.surface,
+                        border: `1px solid ${T.border}`, borderRadius: 4, padding: "2px 8px", color: T.text }}>
+                        {l.pol} → {l.pod}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                <div style={{ marginLeft: "auto", textAlign: "right" }}>
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 6, justifyContent: "flex-end" }}>
+                    <span style={{ fontFamily: T.mono, fontSize: 26, fontWeight: 700, color: T.success }}>{groupTEU}</span>
+                    <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>TEU</span>
+                  </div>
+                  <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
+                    {g.shipments.length} shipment{g.shipments.length !== 1 ? "s" : ""}
+                  </span>
+                </div>
+              </div>
+
+              {/* Shipments under this contract */}
+              <div style={{ display: "grid", gridTemplateColumns: SHP_COL,
+                padding: "8px 20px", borderBottom: `1px solid ${T.border}` }}>
+                {SHP_HDR.map(h => (
+                  <span key={h} style={{ fontFamily: T.body, fontSize: 10, fontWeight: 600,
+                    color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>{h}</span>
+                ))}
+              </div>
+              {g.shipments.map(s => (
+                <div key={s.id}
+                  style={{ display: "grid", gridTemplateColumns: SHP_COL,
+                    padding: "10px 20px", borderBottom: `1px solid ${T.border}22`,
+                    alignItems: "center", transition: "background .1s" }}
+                  onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
+                  onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                  <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textCode, fontWeight: 700 }}>{s.id}</span>
+                  <span style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>{s.pol} → {s.pod}</span>
+                  <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>{s.etd || "—"}</span>
+                  <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.text }}>{teuFor(s)}</span>
+                  <Badge variant={statusVariant(s.status)}>{s.status}</Badge>
+                </div>
+              ))}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
 // ─── Page: Dashboard ──────────────────────────────────────────────────────────
 
 // ─── Date range helpers ────────────────────────────────────────────────────────
 
 
-const DashboardPage = ({ shipments, containers, carriers, allocations, onAddAlloc, onEditAlloc, onDeleteAlloc, pendingRenew = null, onPendingRenewClear }) => {
-  const [allocModal,   setAllocModal]   = useState(null);
-  const [confirmAlloc, setConfirmAlloc] = useState(null);
-  const [tradeLanes,   setTradeLanes]   = useState([]);
-  const [renewInit,    setRenewInit]    = useState(null);
-  const [archiveOpen,  setArchiveOpen]  = useState(false);
-  const { template: allocTemplate, startResize: allocStartResize } = useResizableColumns("dashboard-allocs", [150,200,100,150,140,100,130]);
-  const allocHeaders = ["Carrier","Name","TEU","Effective Period","Consumed","Remaining","Actions"];
-
-  // Open renew modal when navigated from Archive page
-  useEffect(() => {
-    if (pendingRenew) {
-      setRenewInit(pendingRenew);
-      setAllocModal("add");
-      onPendingRenewClear?.();
-    }
-  }, [pendingRenew]);
-
-  useEffect(() => { api.tradeLanes.list().then(setTradeLanes).catch(() => {}); }, []);
-  const [rangePickerOpen, setRangePickerOpen] = useState(false);
-
+const DashboardPage = ({ shipments, containers, carriers, allocations }) => {
+  const [view, setView] = useState("overview"); // "overview" | "contracts"
   // Date range state — defaults to current Mon-Sun
   const [rangeStart, setRangeStart] = useState(() => currentWeekStart());
   const [rangeEnd,   setRangeEnd]   = useState(() => addDays(currentWeekStart(), 6));
@@ -1016,6 +1388,7 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, onAddAllo
 
   return (
     <div>
+      {/* ── Header ── */}
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 24 }}>
         <div>
           <h1 style={{ fontFamily: T.head, fontSize: 26, fontWeight: 800, color: T.text, margin: 0 }}>Consumption Dashboard</h1>
@@ -1025,40 +1398,24 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, onAddAllo
         </div>
       </div>
 
-      {/* ── Date range picker ── */}
+      {/* ── Date range picker (always visible) ── */}
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
-        padding: "16px 20px", marginBottom: 24 }}>
+        padding: "16px 20px", marginBottom: 20 }}>
         <div style={{ display: "flex", alignItems: "flex-end", gap: 12 }}>
-          {/* Navigation */}
           <Btn variant="secondary" size="sm" onClick={() => shiftRange(-1)}>← Prev</Btn>
-
-          {/* Date range pickers */}
           <div style={{ flex: 1, display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 10, alignItems: "end" }}>
-            <DatePicker
-              label="From"
-              value={rangeStart}
-              onChange={handleStartChange}
-              placeholder="Start date…"
-            />
+            <DatePicker label="From" value={rangeStart} onChange={handleStartChange} placeholder="Start date…" />
             <div style={{ fontFamily: T.mono, fontSize: 18, color: T.textMuted, paddingBottom: 9, userSelect: "none" }}>—</div>
-            <DatePicker
-              label="To"
-              value={rangeEnd}
-              onChange={handleEndChange}
-              minDate={rangeStart}
-              maxDate={rangeStart ? addDays(rangeStart, MAX_RANGE_DAYS) : undefined}
-              placeholder="End date…"
-            />
+            <DatePicker label="To" value={rangeEnd} onChange={handleEndChange}
+              minDate={rangeStart} maxDate={rangeStart ? addDays(rangeStart, MAX_RANGE_DAYS) : undefined}
+              placeholder="End date…" />
           </div>
-
           <Btn variant="secondary" size="sm" onClick={() => shiftRange(1)}>Next →</Btn>
           <Btn variant="ghost" size="sm" onClick={goToday}
             style={{ borderLeft: `1px solid ${T.border}`, paddingLeft: 14 }}>
             This Week
           </Btn>
         </div>
-
-        {/* Range summary */}
         <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 14,
           borderTop: `1px solid ${T.border}33`, paddingTop: 10 }}>
           <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>
@@ -1075,228 +1432,111 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, onAddAllo
         </div>
       </div>
 
-      {/* KPIs */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginBottom: 26 }}>
+      {/* ── Tab bar ── */}
+      <div style={{ display: "flex", borderBottom: `1px solid ${T.border}`, marginBottom: 24 }}>
         {[
-          { label: "Total Allocated",      value: totalAlloc,    color: T.text,    sub: `${allocations.length} configuration${allocations.length !== 1 ? "s" : ""}` },
-          { label: "Active Consumption",   value: totalConsumed, color: T.success, sub: `${totalAlloc > 0 ? ((totalConsumed / totalAlloc) * 100).toFixed(1) : 0}% of total utilized` },
-          { label: "Remaining Capacity",   value: totalRemain,   color: T.accent,  sub: "available to book" },
-        ].map((k, i) => (
-          <div key={i} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "20px 24px" }}>
-            <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".08em" }}>{k.label}</div>
-            <div style={{ display: "flex", alignItems: "baseline", gap: 6, margin: "8px 0 4px" }}>
-              <span style={{ fontFamily: T.mono, fontSize: 36, fontWeight: 700, color: k.color }}>{k.value}</span>
-              <span style={{ fontFamily: T.mono, fontSize: 14, color: T.textMuted }}>TEU</span>
-            </div>
-            <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>{k.sub}</div>
-          </div>
+          { key: "overview",  label: "Overview" },
+          { key: "contracts", label: "Contract Consumption" },
+        ].map(tab => (
+          <button key={tab.key} type="button" onClick={() => setView(tab.key)}
+            style={{
+              padding: "10px 20px", background: "none", border: "none",
+              borderBottom: view === tab.key ? `2px solid ${T.accent}` : "2px solid transparent",
+              color: view === tab.key ? T.accent : T.textMuted,
+              fontFamily: T.body, fontSize: 13, fontWeight: 600,
+              cursor: "pointer", marginBottom: -1,
+              transition: "color .15s, border-color .15s",
+            }}>
+            {tab.label}
+          </button>
         ))}
       </div>
 
-      {/* Charts row */}
-      {chartData.length > 0 && (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 22 }}>
-
-          {/* Left: TEU by Carrier (stacked bar) */}
-          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "20px 20px 14px" }}>
-            <div style={{ marginBottom: 16 }}>
-              <h2 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: "0 0 3px" }}>TEU by Carrier</h2>
-              <p style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, margin: 0 }}>
-                Awarded vs consumed for the selected period
-              </p>
-            </div>
-            <ResponsiveContainer width="100%" height={240}>
-              <BarChart data={chartData} margin={{ top: 4, right: 8, left: -8, bottom: 4 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke={T.border} vertical={false} />
-                <XAxis dataKey="carrier" tick={{ fontFamily: T.mono, fontSize: 11, fill: T.textMuted }} axisLine={{ stroke: T.border }} tickLine={false} />
-                <YAxis tick={{ fontFamily: T.body, fontSize: 10, fill: T.textMuted }} axisLine={false} tickLine={false} />
-                <Tooltip content={<TooltipContent />} cursor={{ fill: T.border + "44" }} />
-                <Legend wrapperStyle={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, paddingTop: 10 }} />
-                <Bar dataKey="consumed"  name="Consumed"   stackId="s" fill={T.success} />
-                <Bar dataKey="remaining" name="Remaining"  stackId="s" fill={T.borderMid} radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+      {/* ── Overview tab ── */}
+      {view === "overview" && (
+        <>
+          {/* KPIs */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginBottom: 26 }}>
+            {[
+              { label: "Total Allocated",    value: totalAlloc,    color: T.text,    sub: `${allocations.length} configuration${allocations.length !== 1 ? "s" : ""}` },
+              { label: "Active Consumption", value: totalConsumed, color: T.success, sub: `${totalAlloc > 0 ? ((totalConsumed / totalAlloc) * 100).toFixed(1) : 0}% of total utilized` },
+              { label: "Remaining Capacity", value: totalRemain,   color: T.accent,  sub: "available to book" },
+            ].map((k, i) => (
+              <div key={i} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "20px 24px" }}>
+                <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".08em" }}>{k.label}</div>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 6, margin: "8px 0 4px" }}>
+                  <span style={{ fontFamily: T.mono, fontSize: 36, fontWeight: 700, color: k.color }}>{k.value}</span>
+                  <span style={{ fontFamily: T.mono, fontSize: 14, color: T.textMuted }}>TEU</span>
+                </div>
+                <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>{k.sub}</div>
+              </div>
+            ))}
           </div>
 
-          {/* Right: 6-week trend line chart */}
-          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "20px 20px 14px" }}>
-            <div style={{ marginBottom: 16 }}>
-              <h2 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: "0 0 3px" }}>6-Week TEU Trend</h2>
-              <p style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, margin: 0 }}>
-                Weekly shipment consumption per carrier — last 6 weeks
-              </p>
-            </div>
-            <ResponsiveContainer width="100%" height={240}>
-              <LineChart data={trendChartData} margin={{ top: 4, right: 8, left: -8, bottom: 4 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke={T.border} vertical={false} />
-                <XAxis dataKey="week" tick={{ fontFamily: T.mono, fontSize: 10, fill: T.textMuted }} axisLine={{ stroke: T.border }} tickLine={false} />
-                <YAxis tick={{ fontFamily: T.body, fontSize: 10, fill: T.textMuted }} axisLine={false} tickLine={false} allowDecimals={false} />
-                <Tooltip
-                  contentStyle={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8,
-                    fontFamily: T.body, fontSize: 12 }}
-                  labelStyle={{ color: T.text, fontWeight: 600, marginBottom: 4 }}
-                  itemStyle={{ color: T.textMuted }}
-                  formatter={(v, name) => [`${v} TEU`, name]}
-                  cursor={{ stroke: T.border, strokeWidth: 1 }}
-                />
-                <Legend wrapperStyle={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, paddingTop: 10 }} />
-                {trendCarriers.map((code, i) => (
-                  <Line
-                    key={code}
-                    type="monotone"
-                    dataKey={code}
-                    stroke={CARRIER_COLORS[i % CARRIER_COLORS.length]}
-                    strokeWidth={2}
-                    dot={{ r: 3, fill: CARRIER_COLORS[i % CARRIER_COLORS.length] }}
-                    activeDot={{ r: 5 }}
-                  />
-                ))}
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-
-        </div>
-      )}
-
-      {/* Space Configuration Table */}
-      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden" }}>
-        <div style={{ padding: "15px 20px", borderBottom: `1px solid ${T.border}`,
-          display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div>
-            <h2 style={{ fontFamily: T.head, fontSize: 17, fontWeight: 700, color: T.text, margin: 0 }}>Space Configurations</h2>
-            <p style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, margin: "2px 0 0" }}>
-              Awarded TEU per carrier &amp; contract — click ✎ to edit, ＋ to add a new one
-            </p>
-          </div>
-          <Btn onClick={() => setAllocModal("add")} disabled={carriers.length === 0}>＋ Add Configuration</Btn>
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: allocTemplate,
-          padding: "9px 20px", borderBottom: `1px solid ${T.border}` }}>
-          {allocHeaders.map((h, i) => (
-            <div key={i} style={{ position: "relative", paddingLeft: 6, fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
-              {h}{i < allocHeaders.length - 1 && <ColResizer onStart={e => allocStartResize(i, e)} />}
-            </div>
-          ))}
-        </div>
-
-        {currentAllocations.length === 0 ? (
-          <div style={{ padding: 36, textAlign: "center", color: T.textMuted, fontFamily: T.body, fontSize: 14 }}>
-            No configurations yet. Use "+ Add Configuration" to set up carrier space allocations.
-          </div>
-        ) : currentAllocations.map(a => {
-          const isActive   = activeAllocations.some(x => x.id === a.id);
-          const consumed   = isActive ? (consumedMap[a.carrierCode] || 0) : 0;
-          const remaining  = Math.max(0, a.allocatedTEU - consumed);
-          const pct        = a.allocatedTEU > 0 ? (consumed / a.allocatedTEU) * 100 : 0;
-          const carrier    = carriers.find(c => c.code === a.carrierCode);
-          const thresh     = a.alertThreshold ?? 80;
-          const barColour  = pct >= 100 ? T.danger : pct >= thresh ? (thresh >= 90 ? T.danger : T.warning) : T.success;
-          return (
-            <div key={a.id}
-              style={{ display: "grid", gridTemplateColumns: allocTemplate,
-                padding: "13px 20px", borderBottom: `1px solid ${T.border}22`, alignItems: "center",
-                opacity: isActive ? 1 : 0.45, transition: "background .1s, opacity .2s" }}
-              onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
-              onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                <span style={{ fontFamily: T.mono, fontSize: 13, color: T.accent, fontWeight: 700 }}>{a.carrierCode}</span>
-                {(a.originLane || a.destLane) && <div style={{ display: "flex" }}><LanePair origin={a.originLane} dest={a.destLane} /></div>}
+          {/* Charts */}
+          {chartData.length > 0 && (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 22 }}>
+              <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "20px 20px 14px" }}>
+                <div style={{ marginBottom: 16 }}>
+                  <h2 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: "0 0 3px" }}>TEU by Carrier</h2>
+                  <p style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, margin: 0 }}>Awarded vs consumed for the selected period</p>
+                </div>
+                <ResponsiveContainer width="100%" height={240}>
+                  <BarChart data={chartData} margin={{ top: 4, right: 8, left: -8, bottom: 4 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={T.border} vertical={false} />
+                    <XAxis dataKey="carrier" tick={{ fontFamily: T.mono, fontSize: 11, fill: T.textMuted }} axisLine={{ stroke: T.border }} tickLine={false} />
+                    <YAxis tick={{ fontFamily: T.body, fontSize: 10, fill: T.textMuted }} axisLine={false} tickLine={false} />
+                    <Tooltip content={<TooltipContent />} cursor={{ fill: T.border + "44" }} />
+                    <Legend wrapperStyle={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, paddingTop: 10 }} />
+                    <Bar dataKey="consumed"  name="Consumed"  stackId="s" fill={T.success} />
+                    <Bar dataKey="remaining" name="Remaining" stackId="s" fill={T.borderMid} radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
               </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                <span style={{ fontFamily: T.body, fontSize: 13, color: T.text }}>{carrier?.name || "—"}</span>
-                {(a.pol && a.pod) && (
-                  <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
-                    {a.pol} <span style={{ color: T.border }}>›</span> {a.pod}
-                  </span>
-                )}
-                {a.notes && (
-                  <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, fontStyle: "italic",
-                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 180 }}>
-                    {a.notes}
-                  </span>
-                )}
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                <span style={{ fontFamily: T.mono, fontSize: 13, color: T.text, fontWeight: 700 }}>{a.allocatedTEU} TEU</span>
-                {isActive && (
-                  <>
-                    <div style={{ background: T.border, borderRadius: 4, height: 4, width: 72, overflow: "hidden" }}>
-                      <div style={{ height: "100%", width: `${Math.min(100, pct)}%`,
-                        background: barColour, transition: "width .4s" }} />
-                    </div>
-                    <span style={{ fontFamily: T.mono, fontSize: 9.5, color: barColour }}>{pct.toFixed(0)}% <span style={{ color: T.border }}>/ {thresh}%</span></span>
-                  </>
-                )}
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-                <span style={{ fontFamily: T.mono, fontSize: 10.5, color: isActive ? T.success : T.textMuted }}>
-                  {a.effectiveDate || "—"}
-                </span>
-                <span style={{ fontFamily: T.mono, fontSize: 10.5, color: T.textMuted }}>
-                  {a.endDate ? `→ ${a.endDate}` : ""}
-                </span>
-                {isActive && (
-                  <span style={{ fontFamily: T.body, fontSize: 9.5, color: T.success, fontWeight: 600 }}>● Active</span>
-                )}
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                <span style={{ fontFamily: T.mono, fontSize: 13,
-                  color: isActive ? (consumed > 0 ? T.success : T.textMuted) : T.border,
-                  fontWeight: 600 }}>
-                  {isActive ? `${consumed} TEU` : "—"}
-                </span>
-                {isActive && (() => {
-                  const trend = carrierTrends[a.carrierCode];
-                  if (!trend) return null;
-                  const sparkColor = trend.delta > 5 ? T.success : trend.delta < -5 ? T.danger : T.textMuted;
-                  return (
-                    <>
-                      <DeltaBadge delta={trend.delta} prevTEU={trend.prevTEU} />
-                      <Sparkline data={trend.sparkData} color={sparkColor} />
-                    </>
-                  );
-                })()}
-              </div>
-              <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 600,
-                color: isActive ? (remaining === 0 ? T.danger : remaining < 10 ? T.warning : T.textMuted) : T.border }}>
-                {isActive ? `${remaining} TEU` : "—"}
-              </span>
-              <div style={{ display: "flex", gap: 5 }}>
-                <Btn size="sm" variant="secondary" onClick={() => setAllocModal(a)}>✎ Edit</Btn>
-                <Btn size="sm" variant="danger"    onClick={() => setConfirmAlloc(a.id)}>✕</Btn>
+              <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "20px 20px 14px" }}>
+                <div style={{ marginBottom: 16 }}>
+                  <h2 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: "0 0 3px" }}>6-Week TEU Trend</h2>
+                  <p style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, margin: 0 }}>Weekly shipment consumption per carrier — last 6 weeks</p>
+                </div>
+                <ResponsiveContainer width="100%" height={240}>
+                  <LineChart data={trendChartData} margin={{ top: 4, right: 8, left: -8, bottom: 4 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke={T.border} vertical={false} />
+                    <XAxis dataKey="week" tick={{ fontFamily: T.mono, fontSize: 10, fill: T.textMuted }} axisLine={{ stroke: T.border }} tickLine={false} />
+                    <YAxis tick={{ fontFamily: T.body, fontSize: 10, fill: T.textMuted }} axisLine={false} tickLine={false} allowDecimals={false} />
+                    <Tooltip contentStyle={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, fontFamily: T.body, fontSize: 12 }}
+                      labelStyle={{ color: T.text, fontWeight: 600, marginBottom: 4 }} itemStyle={{ color: T.textMuted }}
+                      formatter={(v, name) => [`${v} TEU`, name]} cursor={{ stroke: T.border, strokeWidth: 1 }} />
+                    <Legend wrapperStyle={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, paddingTop: 10 }} />
+                    {trendCarriers.map((code, i) => (
+                      <Line key={code} type="monotone" dataKey={code}
+                        stroke={CARRIER_COLORS[i % CARRIER_COLORS.length]} strokeWidth={2}
+                        dot={{ r: 3, fill: CARRIER_COLORS[i % CARRIER_COLORS.length] }} activeDot={{ r: 5 }} />
+                    ))}
+                  </LineChart>
+                </ResponsiveContainer>
               </div>
             </div>
-          );
-        })}
-      </div>
+          )}
 
-      {/* Modals */}
-
-
-
-
-
-      {allocModal === "add" && (
-        <Modal title={renewInit ? "Renew Space Configuration" : "Add Space Configuration"} onClose={() => { setAllocModal(null); setRenewInit(null); }} width={620} minHeight={620}>
-          <AllocationForm init={renewInit || {}} carriers={carriers} tradeLanes={tradeLanes}
-            onSave={async form => { await onAddAlloc(form); setAllocModal(null); setRenewInit(null); }}
-            onCancel={() => { setAllocModal(null); setRenewInit(null); }} />
-        </Modal>
+          {/* Matched shipments */}
+          <MatchedShipmentsTable
+            shipments={rangeShipments}
+            containers={containers}
+            carriers={carriers}
+            activeAllocations={activeAllocations}
+          />
+        </>
       )}
-      {allocModal && allocModal !== "add" && (
-        <Modal title="Edit Space Configuration" onClose={() => setAllocModal(null)} width={620} minHeight={620}>
-          <AllocationForm init={allocModal} carriers={carriers} tradeLanes={tradeLanes}
-            onSave={async form => { await onEditAlloc(allocModal.id, form); setAllocModal(null); }}
-            onCancel={() => setAllocModal(null)} />
-        </Modal>
+
+      {/* ── Contract Consumption tab ── */}
+      {view === "contracts" && (
+        <ContractConsumptionView
+          rangeShipments={rangeShipments}
+          containers={containers}
+          carriers={carriers}
+        />
       )}
-      {confirmAlloc && (
-        <ConfirmModal
-          message="Remove this space configuration? Existing shipments will not be affected."
-          onConfirm={() => { onDeleteAlloc(confirmAlloc); setConfirmAlloc(null); }}
-          onCancel={() => setConfirmAlloc(null)} />
-      )}
+
     </div>
   );
 };

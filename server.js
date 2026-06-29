@@ -250,6 +250,18 @@ db.exec(`
     sort_order     INTEGER DEFAULT 0,
     notes          TEXT DEFAULT ''
   );
+
+  CREATE TABLE IF NOT EXISTS entity_events (
+    id          TEXT PRIMARY KEY,
+    entity_type TEXT NOT NULL,
+    entity_id   TEXT NOT NULL,
+    event_type  TEXT NOT NULL,
+    field       TEXT,
+    old_value   TEXT,
+    new_value   TEXT,
+    meta        TEXT,
+    created_at  TEXT NOT NULL
+  );
 `);
 
 // ─── Safe migrations ──────────────────────────────────────────────────────────
@@ -285,6 +297,8 @@ const migrations = [
   "ALTER TABLE shipments   ADD COLUMN contract_ref    TEXT    DEFAULT ''",
   "ALTER TABLE contract_legs ADD COLUMN pol_linked_allowed INTEGER DEFAULT 0",
   "ALTER TABLE contract_legs ADD COLUMN pod_linked_allowed INTEGER DEFAULT 0",
+  "ALTER TABLE allocations ADD COLUMN contract_id     TEXT DEFAULT ''",
+  "ALTER TABLE allocations ADD COLUMN contract_number TEXT DEFAULT ''",
 ];
 
 for (const sql of migrations) {
@@ -345,7 +359,7 @@ try { db.exec("UPDATE shipments SET vessel = '', vessel_imo = '' WHERE vessel_im
 
 const mapShipment     = r => ({ id: r.id, pol: r.pol, polName: r.pol_name || '', pod: r.pod, podName: r.pod_name || '', carrierCode: r.carrier_code, contractType: r.contract_type, contractNotes: r.contract_notes || '', status: r.status, createdAt: r.created_at, etd: r.etd || '', eta: r.eta || '', bookingRef: r.booking_ref || '', blNumber: r.bl_number || '', vessel: r.vessel || '', voyage: r.voyage || '', incoterm: r.incoterm || '', vesselImo: r.vessel_imo || '', contractId: r.contract_id || '', contractRef: r.contract_ref || '', commodityCode: r.commodity_code || '', shipperId: r.shipper_id || '', shipperName: r.shipper_name || '', consigneeId: r.consignee_id || '', consigneeName: r.consignee_name || '', principalId: r.principal_id || '', principalName: r.principal_name || '' });
 const mapContainer    = r => ({ id: r.id, shipmentId: r.shipment_id, containerNumber: r.container_number || '', sealNumber: r.seal_number || '', size: r.size, type: r.type, hsCode: r.hs_code || '', cargoDescription: r.cargo_description || '', grossWeightKg: r.gross_weight_kg ?? null, volumeCbm: r.volume_cbm ?? null, isDg: r.is_dg === 1, dgClass: r.dg_class || '' });
-const mapAllocation   = r => ({ id: r.id, carrierCode: r.carrier_code, allocatedTEU: r.allocated_teu, effectiveDate: r.effective_date || '', endDate: r.end_date || '', tradeLane: r.trade_lane || '', notes: r.notes || '', alertThreshold: r.alert_threshold ?? 80, pol: r.pol || '', pod: r.pod || '', originLane: r.origin_lane || '', destLane: r.dest_lane || '', coverageScope: r.coverage_scope || 'STRICT' });
+const mapAllocation   = r => ({ id: r.id, carrierCode: r.carrier_code, allocatedTEU: r.allocated_teu, effectiveDate: r.effective_date || '', endDate: r.end_date || '', tradeLane: r.trade_lane || '', notes: r.notes || '', alertThreshold: r.alert_threshold ?? 80, pol: r.pol || '', pod: r.pod || '', originLane: r.origin_lane || '', destLane: r.dest_lane || '', coverageScope: r.coverage_scope || 'STRICT', contractId: r.contract_id || '', contractNumber: r.contract_number || '' });
 const mapCarrier      = r => ({ code: r.code, name: r.name, shortName: r.short_name || '' });
 const mapVessel       = r => ({ imo: r.imo, name: r.name, assetType: r.asset_type || '', flagIso2: r.flag_iso2 || '', flagName: r.flag_name || '', buildYear: r.build_year, grossTonnage: r.gross_tonnage });
 const mapPortLocation = r => ({ unlocode: r.unlocode, name: r.name, latitude: r.latitude, longitude: r.longitude, countryCode: r.country_code, zoneCode: r.zone_code, lastSyncedAt: r.last_synced_at || null });
@@ -404,6 +418,20 @@ const mapRate = r => ({
   sortOrder:     r.sort_order,
   notes:         r.notes,
 });
+
+// ─── Entity event logger (generic: allocations, contracts, carriers) ─────────
+const logEntityEvent = (entityType, entityId, eventType, field = null, oldVal = null, newVal = null, meta = null) => {
+  try {
+    db.prepare(
+      "INSERT INTO entity_events (id,entity_type,entity_id,event_type,field,old_value,new_value,meta,created_at) VALUES (?,?,?,?,?,?,?,?,?)"
+    ).run(`EEV-${uid()}`, entityType, entityId, eventType,
+      field   ?? null,
+      oldVal  != null ? String(oldVal) : null,
+      newVal  != null ? String(newVal) : null,
+      meta    ?? null,
+      new Date().toISOString());
+  } catch(e) { console.warn('logEntityEvent failed:', e.message); }
+};
 
 // ─── Shipment event logger ────────────────────────────────────────────────────
 const logEvent = (shipmentId, type, field, oldVal, newVal, meta = '') => {
@@ -527,6 +555,8 @@ app.post("/api/shipments", (req, res) => {
   const createdAt = new Date().toISOString();
   db.prepare("INSERT INTO shipments (id,pol,pod,carrier_code,contract_type,contract_notes,status,created_at,etd,eta,booking_ref,bl_number,vessel,voyage,incoterm,vessel_imo,contract_id,contract_ref,commodity_code,shipper_id,shipper_name,consignee_id,consignee_name,principal_id,principal_name) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
     .run(id, polU, podU, carrierCode, contractType, contractNotes, status, createdAt, etd, eta, bookingRef, blNumber, vessel, voyage, incoterm, vesselImo, contractId, contractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName);
+  logEvent(id, 'SHIPMENT_CREATED', null, null, null,
+    JSON.stringify({ pol: polU, pod: podU, carrier: carrierCode, status, etd, contractType }));
   ok(res, mapShipment({ id, pol: polU, pod: podU, carrier_code: carrierCode, contract_type: contractType, contract_notes: contractNotes, status, created_at: createdAt, etd, eta, booking_ref: bookingRef, bl_number: blNumber, vessel, voyage, incoterm, vessel_imo: vesselImo, contract_id: contractId, contract_ref: contractRef, commodity_code: commodityCode, shipper_id: shipperId, shipper_name: shipperName, consignee_id: consigneeId, consignee_name: consigneeName, principal_id: principalId, principal_name: principalName }), 201);
 });
 
@@ -639,34 +669,45 @@ app.get("/api/allocations", (req, res) => {
 
 app.post("/api/allocations", (req, res) => {
   const { carrierCode, allocatedTEU, effectiveDate, endDate, tradeLane = '', notes = '',
-          alertThreshold = 80, pol = '', pod = '', originLane = '', destLane = '', coverageScope = 'STRICT' } = req.body;
+          alertThreshold = 80, pol = '', pod = '', originLane = '', destLane = '', coverageScope = 'STRICT',
+          contractId = '', contractNumber = '' } = req.body;
   if (!carrierCode || allocatedTEU == null || !effectiveDate || !endDate || !pol || !pod)
     return err(res, "carrierCode, allocatedTEU, effectiveDate, endDate, pol, pod all required");
+  if (!contractId) return err(res, "contractId required");
   if (endDate < effectiveDate) return err(res, "end date must be on or after effective date");
   if (checkOverlap(carrierCode, effectiveDate, endDate, pol, pod))
     return err(res, `An allocation for ${carrierCode} on route ${pol.toUpperCase()} → ${pod.toUpperCase()} already covers that date range`);
   const id = `ALC-${uid()}`;
-  db.prepare("INSERT INTO allocations (id,carrier_code,allocated_teu,effective_date,end_date,trade_lane,notes,alert_threshold,pol,pod,origin_lane,dest_lane,coverage_scope) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
-    .run(id, carrierCode, allocatedTEU, effectiveDate, endDate, tradeLane, notes, alertThreshold, pol.toUpperCase(), pod.toUpperCase(), originLane, destLane, coverageScope);
-  ok(res, mapAllocation({ id, carrier_code: carrierCode, allocated_teu: allocatedTEU, effective_date: effectiveDate, end_date: endDate, trade_lane: tradeLane, notes, alert_threshold: alertThreshold, pol: pol.toUpperCase(), pod: pod.toUpperCase(), origin_lane: originLane, dest_lane: destLane, coverage_scope: coverageScope }), 201);
+  db.prepare("INSERT INTO allocations (id,carrier_code,allocated_teu,effective_date,end_date,trade_lane,notes,alert_threshold,pol,pod,origin_lane,dest_lane,coverage_scope,contract_id,contract_number) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    .run(id, carrierCode, allocatedTEU, effectiveDate, endDate, tradeLane, notes, alertThreshold, pol.toUpperCase(), pod.toUpperCase(), originLane, destLane, coverageScope, contractId, contractNumber);
+  logEntityEvent('allocation', id, 'CREATED', null, null, null,
+    JSON.stringify({ carrierCode, pol: pol.toUpperCase(), pod: pod.toUpperCase(), allocatedTEU, effectiveDate, endDate, contractNumber }));
+  ok(res, mapAllocation({ id, carrier_code: carrierCode, allocated_teu: allocatedTEU, effective_date: effectiveDate, end_date: endDate, trade_lane: tradeLane, notes, alert_threshold: alertThreshold, pol: pol.toUpperCase(), pod: pod.toUpperCase(), origin_lane: originLane, dest_lane: destLane, coverage_scope: coverageScope, contract_id: contractId, contract_number: contractNumber }), 201);
 });
 
 app.put("/api/allocations/:id", (req, res) => {
   const { carrierCode, allocatedTEU, effectiveDate, endDate, tradeLane = '', notes = '',
-          alertThreshold = 80, pol = '', pod = '', originLane = '', destLane = '' } = req.body;
+          alertThreshold = 80, pol = '', pod = '', originLane = '', destLane = '',
+          contractId = '', contractNumber = '' } = req.body;
   if (!effectiveDate || !endDate || !pol || !pod) return err(res, "effectiveDate, endDate, pol, pod required");
+  if (!contractId) return err(res, "contractId required");
   if (endDate < effectiveDate) return err(res, "end date must be on or after effective date");
   if (checkOverlap(carrierCode, effectiveDate, endDate, pol, pod, req.params.id))
     return err(res, `Another allocation for ${carrierCode} on route ${pol.toUpperCase()} → ${pod.toUpperCase()} already covers that date range`);
-  const info = db.prepare("UPDATE allocations SET carrier_code=?, allocated_teu=?, effective_date=?, end_date=?, trade_lane=?, notes=?, alert_threshold=?, pol=?, pod=?, origin_lane=?, dest_lane=? WHERE id=?")
-    .run(carrierCode, allocatedTEU, effectiveDate, endDate, tradeLane, notes, alertThreshold, pol.toUpperCase(), pod.toUpperCase(), originLane, destLane, req.params.id);
+  const info = db.prepare("UPDATE allocations SET carrier_code=?, allocated_teu=?, effective_date=?, end_date=?, trade_lane=?, notes=?, alert_threshold=?, pol=?, pod=?, origin_lane=?, dest_lane=?, contract_id=?, contract_number=? WHERE id=?")
+    .run(carrierCode, allocatedTEU, effectiveDate, endDate, tradeLane, notes, alertThreshold, pol.toUpperCase(), pod.toUpperCase(), originLane, destLane, contractId, contractNumber, req.params.id);
   if (info.changes === 0) return err(res, "Not found", 404);
-  ok(res, mapAllocation({ id: req.params.id, carrier_code: carrierCode, allocated_teu: allocatedTEU, effective_date: effectiveDate, end_date: endDate, trade_lane: tradeLane, notes, alert_threshold: alertThreshold, pol: pol.toUpperCase(), pod: pod.toUpperCase(), origin_lane: originLane, dest_lane: destLane }));
+  logEntityEvent('allocation', req.params.id, 'UPDATED', null, null, null,
+    JSON.stringify({ carrierCode, pol: pol.toUpperCase(), pod: pod.toUpperCase(), allocatedTEU, effectiveDate, endDate, contractNumber }));
+  ok(res, mapAllocation({ id: req.params.id, carrier_code: carrierCode, allocated_teu: allocatedTEU, effective_date: effectiveDate, end_date: endDate, trade_lane: tradeLane, notes, alert_threshold: alertThreshold, pol: pol.toUpperCase(), pod: pod.toUpperCase(), origin_lane: originLane, dest_lane: destLane, contract_id: contractId, contract_number: contractNumber }));
 });
 
 app.delete("/api/allocations/:id", (req, res) => {
+  const existing = db.prepare("SELECT * FROM allocations WHERE id=?").get(req.params.id);
   const info = db.prepare("DELETE FROM allocations WHERE id=?").run(req.params.id);
   if (info.changes === 0) return err(res, "Not found", 404);
+  if (existing) logEntityEvent('allocation', req.params.id, 'DELETED', null, null, null,
+    JSON.stringify({ carrierCode: existing.carrier_code, pol: existing.pol, pod: existing.pod }));
   ok(res, { deleted: req.params.id });
 });
 
@@ -707,16 +748,28 @@ app.get("/api/carriers/:code", (req, res) => { const r = db.prepare("SELECT * FR
 app.post("/api/carriers", (req, res) => {
   const { code, name, shortName = '' } = req.body;
   if (!code || !name) return err(res, "code and name required");
-  try { db.prepare("INSERT INTO carriers (code,name,short_name) VALUES (?,?,?)").run(code.toUpperCase().trim(), name.trim(), shortName.trim()); ok(res, mapCarrier({ code: code.toUpperCase().trim(), name: name.trim(), short_name: shortName.trim() }), 201); }
-  catch(e) { err(res, isUniqueViolation(e) ? `Carrier ${code} already exists` : e.message); }
+  try {
+    const codeU = code.toUpperCase().trim();
+    db.prepare("INSERT INTO carriers (code,name,short_name) VALUES (?,?,?)").run(codeU, name.trim(), shortName.trim());
+    logEntityEvent('carrier', codeU, 'CREATED', null, null, null, JSON.stringify({ name: name.trim() }));
+    ok(res, mapCarrier({ code: codeU, name: name.trim(), short_name: shortName.trim() }), 201);
+  } catch(e) { err(res, isUniqueViolation(e) ? `Carrier ${code} already exists` : e.message); }
 });
 app.put("/api/carriers/:code", (req, res) => {
   const { name, shortName = '' } = req.body;
+  const existing = db.prepare("SELECT * FROM carriers WHERE code=?").get(req.params.code);
   const info = db.prepare("UPDATE carriers SET name=?, short_name=? WHERE code=?").run(name, shortName, req.params.code);
   if (info.changes === 0) return err(res, "Not found", 404);
+  if (existing && existing.name !== name) logEntityEvent('carrier', req.params.code, 'UPDATED', 'name', existing.name, name);
   ok(res, mapCarrier({ code: req.params.code, name, short_name: shortName }));
 });
-app.delete("/api/carriers/:code", (req, res) => { const info = db.prepare("DELETE FROM carriers WHERE code=?").run(req.params.code); if (info.changes===0) return err(res,"Not found",404); ok(res,{deleted:req.params.code}); });
+app.delete("/api/carriers/:code", (req, res) => {
+  const existing = db.prepare("SELECT * FROM carriers WHERE code=?").get(req.params.code);
+  const info = db.prepare("DELETE FROM carriers WHERE code=?").run(req.params.code);
+  if (info.changes===0) return err(res,"Not found",404);
+  if (existing) logEntityEvent('carrier', req.params.code, 'DELETED', null, null, null, JSON.stringify({ name: existing.name }));
+  ok(res,{deleted:req.params.code});
+});
 
 // ─── Vessels ──────────────────────────────────────────────────────────────────
 
@@ -1213,6 +1266,8 @@ app.post("/api/contracts", async (req, res) => {
   const c    = db.prepare("SELECT * FROM contracts WHERE id=?").get(id);
   const lgs  = db.prepare("SELECT * FROM contract_legs  WHERE contract_id=? ORDER BY leg_order").all(id);
   const rts  = db.prepare("SELECT * FROM contract_rates WHERE contract_id=? ORDER BY sort_order").all(id);
+  logEntityEvent('contract', id, 'CREATED', null, null, null,
+    JSON.stringify({ contractNumber, carrierCode, validFrom, validTo, status }));
   ok(res, { ...mapContract(c), legs: lgs.map(mapLeg), rates: rts.map(mapRate) }, 201);
 });
 
@@ -1233,13 +1288,46 @@ app.put("/api/contracts/:id", async (req, res) => {
   const c   = db.prepare("SELECT * FROM contracts WHERE id=?").get(req.params.id);
   const lgs = db.prepare("SELECT * FROM contract_legs  WHERE contract_id=? ORDER BY leg_order").all(req.params.id);
   const rts = db.prepare("SELECT * FROM contract_rates WHERE contract_id=? ORDER BY sort_order").all(req.params.id);
+  logEntityEvent('contract', req.params.id, 'UPDATED', null, null, null,
+    JSON.stringify({ contractNumber, carrierCode, validFrom, validTo, status }));
   ok(res, { ...mapContract(c), legs: lgs.map(mapLeg), rates: rts.map(mapRate) });
 });
 
 app.delete("/api/contracts/:id", (req, res) => {
+  const existing = db.prepare("SELECT * FROM contracts WHERE id=?").get(req.params.id);
   const info = db.prepare("DELETE FROM contracts WHERE id=?").run(req.params.id);
   if (info.changes === 0) return err(res, "Not found", 404);
+  if (existing) logEntityEvent('contract', req.params.id, 'DELETED', null, null, null,
+    JSON.stringify({ contractNumber: existing.contract_number, carrierCode: existing.carrier_code }));
   ok(res, { deleted: req.params.id });
+});
+
+// ─── Entity Events ────────────────────────────────────────────────────────────
+
+app.get("/api/entity-events/:type/:id", (req, res) => {
+  // Shipments have their own event table — bridge through it
+  if (req.params.type === 'shipment') {
+    const rows = db.prepare(
+      "SELECT * FROM shipment_events WHERE shipment_id=? ORDER BY occurred_at DESC"
+    ).all(req.params.id);
+    return ok(res, rows.map(r => ({
+      id: r.id, entityType: 'shipment', entityId: r.shipment_id,
+      eventType: r.event_type, field: r.field,
+      oldValue: r.old_value, newValue: r.new_value,
+      meta: r.meta ? (() => { try { return JSON.parse(r.meta); } catch { return r.meta; } })() : null,
+      createdAt: r.occurred_at,
+    })));
+  }
+  const rows = db.prepare(
+    "SELECT * FROM entity_events WHERE entity_type=? AND entity_id=? ORDER BY created_at DESC"
+  ).all(req.params.type, req.params.id);
+  ok(res, rows.map(r => ({
+    id: r.id, entityType: r.entity_type, entityId: r.entity_id,
+    eventType: r.event_type, field: r.field,
+    oldValue: r.old_value, newValue: r.new_value,
+    meta: r.meta ? (() => { try { return JSON.parse(r.meta); } catch { return r.meta; } })() : null,
+    createdAt: r.created_at,
+  })));
 });
 
 // ─── Health ───────────────────────────────────────────────────────────────────

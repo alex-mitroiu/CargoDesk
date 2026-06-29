@@ -65,6 +65,8 @@ import { VERSION, BUILD, CODENAME, CHANGELOG, COPYRIGHT_YEAR, COPYRIGHT_OWNER } 
         { name: "alert_threshold",  type: "INTEGER",  note: "Utilisation % that triggers warning (default 80). Added v0.7.0" },
         { name: "notes",            type: "TEXT",     note: "Contract caveats, rollover terms. Added v0.7.0" },
         { name: "coverage_scope",   type: "TEXT",     note: "STRICT | LINKED | CONTRACT:id — reserved for Contract Management. Added v0.8.0" },
+        { name: "contract_id",      type: "TEXT",     note: "FK → contracts. Mandatory from v0.14.0 — links the space config to a signed contract." },
+        { name: "contract_number",  type: "TEXT",     note: "Denormalised contract number for display without a JOIN. Added v0.14.0" },
       ],
     },
     {
@@ -164,21 +166,6 @@ import { VERSION, BUILD, CODENAME, CHANGELOG, COPYRIGHT_YEAR, COPYRIGHT_OWNER } 
       ],
     },
     {
-      table: "shipment_events",
-      description: "Full audit log of all shipment changes. One row per discrete change — field updates, container operations, status transitions.",
-      columns: [
-        { name: "id",          type: "TEXT PK", note: "Auto-generated EVT-XXXX identifier" },
-        { name: "shipment_id", type: "TEXT FK", note: "Parent shipment → ON DELETE CASCADE" },
-        { name: "event_type",  type: "TEXT",    note: "STATUS_CHANGED | FIELD_UPDATED | CONTAINER_ADDED | CONTAINER_REMOVED | CONTAINER_UPDATED" },
-        { name: "field",       type: "TEXT",    note: "DB column name that changed (e.g. etd, gross_weight_kg)" },
-        { name: "old_value",   type: "TEXT",    note: "Value before the change" },
-        { name: "new_value",   type: "TEXT",    note: "Value after the change" },
-        { name: "actor",       type: "TEXT",    note: "Identity of the actor — defaults to 'user', ready for auth. Added v0.11.0" },
-        { name: "occurred_at", type: "TEXT",    note: "UTC ISO 8601 timestamp" },
-        { name: "meta",        type: "TEXT",    note: "JSON with extra context (container number, size, type)" },
-      ],
-    },
-    {
       table: "status_log",
       description: "Immutable audit trail of shipment status transitions. Cascades on shipment delete.",
       columns: [
@@ -188,6 +175,21 @@ import { VERSION, BUILD, CODENAME, CHANGELOG, COPYRIGHT_YEAR, COPYRIGHT_OWNER } 
         { name: "to_status",    type: "TEXT",     note: "Status after the change" },
         { name: "changed_at",   type: "TEXT",     note: "UTC ISO 8601 timestamp of the transition" },
         { name: "changed_by",   type: "TEXT",     note: "Identity of the actor. Defaults to 'user' — ready for auth. Added v0.10.0" },
+      ],
+    },
+    {
+      table: "entity_events",
+      description: "Generic audit log for non-shipment entities — allocations, carriers, and contracts. Added v0.14.0.",
+      columns: [
+        { name: "id",          type: "TEXT PK",  note: "Auto-generated EEV-XXXX identifier" },
+        { name: "entity_type", type: "TEXT",     note: "Entity kind: allocation | carrier | contract" },
+        { name: "entity_id",   type: "TEXT",     note: "PK of the entity in its own table" },
+        { name: "event_type",  type: "TEXT",     note: "CREATED | UPDATED | DELETED" },
+        { name: "field",       type: "TEXT",     note: "Column that changed (UPDATED events only)" },
+        { name: "old_value",   type: "TEXT",     note: "Value before the change" },
+        { name: "new_value",   type: "TEXT",     note: "Value after the change" },
+        { name: "meta",        type: "TEXT",     note: "JSON snapshot — key fields at time of event (carrier, POL, POD, contract number, etc.)" },
+        { name: "created_at",  type: "TEXT",     note: "UTC ISO 8601 timestamp" },
       ],
     },
     {
@@ -313,18 +315,17 @@ const AboutPage = () => {
   );
 
   const features = [
-    { icon: "📦", title: "Shipment Tracking",       desc: "Create and manage ocean freight shipments with container-level detail: HS Code, gross weight, volume, IMDG dangerous goods class, and Maersk commodity type. Full status audit trail with timestamped transitions." },
-    { icon: "◈",  title: "Dashboard",               desc: "TEU utilisation per carrier and route. Space Configurations with POL/POD, auto trade-lane detection, linked-port conflict warnings, 6-week trend chart, sparklines, and a renewal archive." },
-    { icon: "📦", title: "Commodities MDM",          desc: "294 Maersk freight commodity codes (Grades M/K/E/S/Q) with full-text typeahead search. Mandatory on every shipment booking — determines handling requirements and documentation." },
-    { icon: "🚢", title: "Vessel Registry",          desc: "349 vessels from the IMO registry, searchable by name, IMO number, or asset type, linked to country flags and integrated with the shipment form." },
-    { icon: "📍", title: "Port & MDM Directory",     desc: "14,269 UN/LOCODE ports, carrier directory, trade lanes, linked ports, regions, countries, UN location codes, and commodity codes — all editable." },
-    { icon: "📋", title: "Integration Board",        desc: "Kanban board (Ready / In Progress / Done / Released) for tracking development and integration tasks, with priority and section filters." },
-    { icon: "📜", title: "Shipment History Tracker", desc: "Full audit trail: field changes, container add/remove/update, and status transitions logged automatically as discrete events — rendered as a colour-coded timeline on the detail page." },
-    { icon: "🎯", title: "Kanban Drag-to-Reorder",     desc: "Cards drag within columns to sequence by priority. Drop indicators show insertion position. Persisted immediately with optimistic updates." },
-    { icon: "🌗", title: "Light / Dark Theme",       desc: "Apple HIG-compliant light theme alongside the CargoDesk dark theme. Instant toggle in the user menu, preference persisted to localStorage." },
-    { icon: "📜", title: "Shipment History Tracker",   desc: "Full audit trail for every shipment: field changes, container additions/removals/updates and status transitions are logged automatically as discrete events and rendered as a colour-coded timeline on the detail page." },
-    { icon: "🎯", title: "Kanban Drag-to-Reorder",      desc: "Cards can be dragged within a column to sequence by priority. Drop indicators show insertion position. Changes are persisted immediately with optimistic UI updates." },
-    { icon: "📚", title: "User Manual",              desc: "Built-in documentation covering Incoterms® 2020 and IMDG dangerous goods classes (Classes 1–9, 20 sub-classes with full descriptions and source link)." },
+    { icon: "📦", title: "Shipment Tracking",         desc: "Create and manage ocean freight shipments with container-level detail: HS Code, gross weight, volume, IMDG dangerous goods class, and Maersk commodity type. Full status audit trail with timestamped transitions." },
+    { icon: "◈",  title: "Consumption Dashboard",     desc: "TEU utilisation heatmap per carrier and route, date-range picker, and a dedicated Contract Consumption breakdown tab. Space Configurations now live on their own sidebar page." },
+    { icon: "⚡", title: "Space Configurations",      desc: "Standalone page (Dashboard › Space Configurations) for managing carrier TEU allocations. Per-allocation lifetime consumption bars, 6-week sparklines, mandatory contract picker, conflict detection, and a full ActionMenu per row (Edit, History, Delete)." },
+    { icon: "⚙",  title: "Action Menus & Audit Log",  desc: "Cog (⚙) ActionMenu replaces individual buttons across Shipments, Carriers, and Contracts. Clicking History opens EntityHistoryModal — a timestamped timeline of CREATED/UPDATED/DELETED events with field diffs and meta pills, backed by the new entity_events table." },
+    { icon: "📜", title: "Shipment History Tracker",  desc: "Full audit trail for every shipment: field changes, container additions/removals/updates, and status transitions logged automatically — rendered as a colour-coded timeline on the detail page. Bridged into the unified entity-events endpoint." },
+    { icon: "📦", title: "Commodities MDM",           desc: "294 Maersk freight commodity codes (Grades M/K/E/S/Q) with full-text typeahead search. Mandatory on every shipment booking — determines handling requirements and documentation." },
+    { icon: "🚢", title: "Vessel Registry",           desc: "349 vessels from the IMO registry, searchable by name, IMO number, or asset type, linked to country flags and integrated with the shipment form." },
+    { icon: "📍", title: "Port & MDM Directory",      desc: "14,269 UN/LOCODE ports, carrier directory, trade lanes, linked ports, regions, countries, UN location codes, and commodity codes — all editable." },
+    { icon: "📋", title: "Integration Board",         desc: "Kanban board (Ready / In Progress / Done / Released) for tracking development and integration tasks, with priority and section filters. Cards drag within columns with live drop indicators." },
+    { icon: "🌗", title: "Light / Dark Theme",        desc: "Apple HIG-compliant light theme alongside the CargoDesk dark theme. Instant toggle in the user menu, preference persisted to localStorage." },
+    { icon: "📚", title: "User Manual",               desc: "Built-in documentation covering Incoterms® 2020 and IMDG dangerous goods classes (Classes 1–9, 20 sub-classes with full descriptions and source link)." },
   ];
 
   const stack = [
