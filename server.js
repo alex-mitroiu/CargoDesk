@@ -90,12 +90,13 @@ db.exec(`
   );
 
   CREATE TABLE IF NOT EXISTS port_locations (
-    unlocode     TEXT PRIMARY KEY,
-    name         TEXT NOT NULL,
-    latitude     REAL DEFAULT 0,
-    longitude    REAL DEFAULT 0,
-    country_code TEXT DEFAULT '',
-    zone_code    TEXT DEFAULT ''
+    unlocode       TEXT PRIMARY KEY,
+    name           TEXT NOT NULL,
+    latitude       REAL DEFAULT 0,
+    longitude      REAL DEFAULT 0,
+    country_code   TEXT DEFAULT '',
+    zone_code      TEXT DEFAULT '',
+    last_synced_at TEXT DEFAULT NULL
   );
 
   CREATE TABLE IF NOT EXISTS linked_ports (
@@ -183,12 +184,27 @@ const migrations = [
   "ALTER TABLE containers  ADD COLUMN is_dg           INTEGER DEFAULT 0",
   "ALTER TABLE containers  ADD COLUMN dg_class        TEXT    DEFAULT ''",
   "ALTER TABLE containers  ADD COLUMN cargo_description TEXT    DEFAULT ''",
+  "ALTER TABLE port_locations ADD COLUMN last_synced_at TEXT DEFAULT NULL",
   "ALTER TABLE carriers    ADD COLUMN short_name      TEXT    DEFAULT ''",
 ];
 
 for (const sql of migrations) {
   try { db.exec(sql); } catch {}
 }
+
+
+// ─── Backfill port country_code from unlocode ─────────────────────────────────
+// Derives country from first 2 chars of UN/LOCODE (e.g. NLRTM → NL).
+// Safe to run on every startup — only touches rows where country_code is missing.
+(function backfillPortCountryCodes() {
+  const info = db.prepare(`
+    UPDATE port_locations
+    SET country_code = UPPER(SUBSTR(unlocode, 1, 2))
+    WHERE country_code IS NULL OR country_code = ''
+  `).run();
+  if (info.changes > 0)
+    console.log(`  ✔ Backfilled country_code on ${info.changes.toLocaleString()} port rows`);
+})();
 
 // ─── Column rename migrations ─────────────────────────────────────────────────
 
@@ -215,9 +231,9 @@ const mapContainer    = r => ({ id: r.id, shipmentId: r.shipment_id, containerNu
 const mapAllocation   = r => ({ id: r.id, carrierCode: r.carrier_code, allocatedTEU: r.allocated_teu, effectiveDate: r.effective_date || '', endDate: r.end_date || '', tradeLane: r.trade_lane || '', notes: r.notes || '', alertThreshold: r.alert_threshold ?? 80, pol: r.pol || '', pod: r.pod || '', originLane: r.origin_lane || '', destLane: r.dest_lane || '', coverageScope: r.coverage_scope || 'STRICT' });
 const mapCarrier      = r => ({ code: r.code, name: r.name, shortName: r.short_name || '' });
 const mapVessel       = r => ({ imo: r.imo, name: r.name, assetType: r.asset_type || '', flagIso2: r.flag_iso2 || '', flagName: r.flag_name || '', buildYear: r.build_year, grossTonnage: r.gross_tonnage });
-const mapPortLocation = r => ({ unlocode: r.unlocode, name: r.name, latitude: r.latitude, longitude: r.longitude, countryCode: r.country_code, zoneCode: r.zone_code });
+const mapPortLocation = r => ({ unlocode: r.unlocode, name: r.name, latitude: r.latitude, longitude: r.longitude, countryCode: r.country_code, zoneCode: r.zone_code, lastSyncedAt: r.last_synced_at || null });
 const mapLinkedPort   = r => ({ id: r.id, primaryUnlocode: r.primary_unlocode, primaryName: r.primary_name || '', linkedUnlocode: r.linked_unlocode, linkedName: r.linked_name || '', note: r.note || '' });
-const mapTradeLane    = r => ({ code: r.code, name: r.name, description: r.description || '' });
+const mapTradeLane    = r => ({ code: r.code, name: r.name, description: r.description || '', countryCount: r.country_count ?? 0 });
 const mapRegion       = r => ({ code: r.code, name: r.name, description: r.description || '' });
 const mapCountry      = r => ({ iso2: r.iso2, name: r.name, unMember: r.un_member === 1, regionCode: r.region_code || '' });
 const mapTicket       = r => ({ id: r.id, title: r.title, section: r.section || '', description: r.description || '', priority: r.priority, status: r.status, position: r.position, createdAt: r.created_at });
@@ -506,12 +522,16 @@ app.post("/api/port-locations", (req, res) => {
   const { unlocode, name, latitude=0, longitude=0, countryCode='', zoneCode='' } = req.body;
   if (!unlocode || !name) return err(res, "unlocode and name required");
   const code = unlocode.toUpperCase().trim();
-  try { db.prepare("INSERT INTO port_locations (unlocode,name,latitude,longitude,country_code,zone_code) VALUES (?,?,?,?,?,?)").run(code, name.trim(), latitude, longitude, countryCode.trim().toUpperCase(), zoneCode.trim()); ok(res, mapPortLocation({ unlocode: code, name: name.trim(), latitude, longitude, country_code: countryCode.trim().toUpperCase(), zone_code: zoneCode.trim() }), 201); }
+  const derivedCC = code.length >= 2 ? code.slice(0, 2) : countryCode.trim().toUpperCase();
+  const finalCC = countryCode.trim().toUpperCase() || derivedCC;
+  const now = new Date().toISOString();
+  try { db.prepare("INSERT INTO port_locations (unlocode,name,latitude,longitude,country_code,zone_code,last_synced_at) VALUES (?,?,?,?,?,?,?)").run(code, name.trim(), latitude, longitude, finalCC, zoneCode.trim(), now); ok(res, mapPortLocation({ unlocode: code, name: name.trim(), latitude, longitude, country_code: finalCC, zone_code: zoneCode.trim(), last_synced_at: now }), 201); }
   catch(e) { err(res, isUniqueViolation(e) ? `Port ${unlocode} already exists` : e.message); }
 });
 app.put("/api/port-locations/:unlocode", (req, res) => {
   const { name, latitude=0, longitude=0, countryCode='', zoneCode='' } = req.body;
-  const info = db.prepare("UPDATE port_locations SET name=?, latitude=?, longitude=?, country_code=?, zone_code=? WHERE unlocode=?").run(name, latitude, longitude, countryCode.toUpperCase(), zoneCode, req.params.unlocode.toUpperCase());
+  const cc = countryCode.toUpperCase() || req.params.unlocode.slice(0, 2).toUpperCase();
+  const info = db.prepare("UPDATE port_locations SET name=?, latitude=?, longitude=?, country_code=?, zone_code=?, last_synced_at=? WHERE unlocode=?").run(name, latitude, longitude, cc, zoneCode, new Date().toISOString(), req.params.unlocode.toUpperCase());
   if (info.changes===0) return err(res,"Not found",404);
   ok(res, mapPortLocation({ unlocode: req.params.unlocode.toUpperCase(), name, latitude, longitude, country_code: countryCode.toUpperCase(), zone_code: zoneCode }));
 });
@@ -542,7 +562,39 @@ app.delete("/api/linked-ports/:id", (req, res) => { const info = db.prepare("DEL
 
 // ─── Trade Lanes ──────────────────────────────────────────────────────────────
 
-app.get("/api/trade-lanes", (req, res) => ok(res, db.prepare("SELECT * FROM trade_lanes ORDER BY code").all().map(mapTradeLane)));
+app.get("/api/trade-lanes", (req, res) => ok(res, db.prepare(`
+  SELECT tl.*, COUNT(ctl.iso2) AS country_count
+  FROM trade_lanes tl
+  LEFT JOIN country_trade_lanes ctl ON ctl.lane_code = tl.code
+  GROUP BY tl.code
+  ORDER BY tl.code
+`).all().map(mapTradeLane)));
+
+// Countries assigned to a trade lane
+app.get("/api/trade-lanes/:code/countries", (req, res) => {
+  const rows = db.prepare(`
+    SELECT c.iso2, c.name, c.un_member, c.region_code
+    FROM country_trade_lanes ctl
+    JOIN countries c ON c.iso2 = ctl.iso2
+    WHERE ctl.lane_code = ?
+    ORDER BY c.name
+  `).all(req.params.code.toUpperCase());
+  ok(res, rows.map(mapCountry));
+});
+
+// Bulk replace countries for a trade lane
+app.put("/api/trade-lanes/:code/countries", (req, res) => {
+  const code  = req.params.code.toUpperCase();
+  const iso2s = Array.isArray(req.body.iso2s) ? req.body.iso2s : [];
+  db.exec("BEGIN");
+  try {
+    db.prepare("DELETE FROM country_trade_lanes WHERE lane_code = ?").run(code);
+    const ins = db.prepare("INSERT OR IGNORE INTO country_trade_lanes (iso2, lane_code) VALUES (?, ?)");
+    for (const iso2 of iso2s) ins.run(iso2.toUpperCase(), code);
+    db.exec("COMMIT");
+    ok(res, { code, iso2s });
+  } catch(e) { db.exec("ROLLBACK"); err(res, e.message); }
+});
 app.post("/api/trade-lanes", (req, res) => {
   const { code, name, description='' } = req.body;
   if (!code || !name) return err(res, "code and name required");
@@ -608,7 +660,7 @@ app.get("/api/countries", (req, res) => {
   const rows  = db.prepare(`
     SELECT c.*, COUNT(pl.unlocode) AS port_count
     FROM countries c
-    LEFT JOIN port_locations pl ON SUBSTR(pl.unlocode, 1, 2) = c.iso2
+    LEFT JOIN port_locations pl ON pl.country_code = c.iso2
     ${where}
     GROUP BY c.iso2
     ORDER BY c.name

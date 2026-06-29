@@ -43,8 +43,8 @@ function importPorts() {
   const dataLines = lines.slice(1);
 
   const stmt = db.prepare(`
-    INSERT OR IGNORE INTO port_locations (unlocode, name, latitude, longitude, country_code, zone_code)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT OR IGNORE INTO port_locations (unlocode, name, latitude, longitude, country_code, zone_code, last_synced_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `);
 
   let inserted = 0;
@@ -61,15 +61,21 @@ function importPorts() {
       const name    = parts[1].trim();
       const lat     = parseFloat(parts[2]) || null;
       const lon     = parseFloat(parts[3]) || null;
-      const country = parts[4].trim();
+      const country = (parts[4] || '').trim().toUpperCase() || code.slice(0, 2);
       // zone may have trailing ",," — strip it
-      const zone    = parts[5].split(",")[0].trim();
+      const zone    = parts[5] ? parts[5].split(",")[0].trim() : '';
+      const now     = new Date().toISOString();
 
       if (!code || code.length !== 5 || !name) { skipped++; continue; }
 
-      const info = stmt.run(code, name, lat, lon, country, zone);
-      if (info.changes > 0) inserted++;
-      else skipped++;
+      const info = stmt.run(code, name, lat, lon, country, zone, now);
+      if (info.changes > 0) { inserted++; continue; }
+      // Delta-sync: update if name/coords changed, or country_code was empty
+      db.prepare(
+        "UPDATE port_locations SET name=?, latitude=?, longitude=?, country_code=?, last_synced_at=? " +
+        "WHERE unlocode=? AND (name!=? OR latitude!=? OR longitude!=? OR country_code='' OR country_code IS NULL)"
+      ).run(name, lat, lon, country, now, code, name, lat, lon);
+      skipped++;
     }
     db.exec("COMMIT");
   } catch (e) {
