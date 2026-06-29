@@ -219,6 +219,13 @@ const migrations = [
   "ALTER TABLE port_locations ADD COLUMN last_synced_at TEXT DEFAULT NULL",
   "ALTER TABLE carriers    ADD COLUMN short_name      TEXT    DEFAULT ''",
   "ALTER TABLE tickets     ADD COLUMN shipment_id     TEXT    DEFAULT NULL",
+  "ALTER TABLE tickets     ADD COLUMN type            TEXT    DEFAULT 'Task'",
+  "ALTER TABLE shipments   ADD COLUMN shipper_id      TEXT    DEFAULT ''",
+  "ALTER TABLE shipments   ADD COLUMN shipper_name    TEXT    DEFAULT ''",
+  "ALTER TABLE shipments   ADD COLUMN consignee_id    TEXT    DEFAULT ''",
+  "ALTER TABLE shipments   ADD COLUMN consignee_name  TEXT    DEFAULT ''",
+  "ALTER TABLE shipments   ADD COLUMN principal_id    TEXT    DEFAULT ''",
+  "ALTER TABLE shipments   ADD COLUMN principal_name  TEXT    DEFAULT ''",
 ];
 
 for (const sql of migrations) {
@@ -259,7 +266,7 @@ try { db.exec("UPDATE shipments SET vessel = '', vessel_imo = '' WHERE vessel_im
 
 // ─── Map functions ────────────────────────────────────────────────────────────
 
-const mapShipment     = r => ({ id: r.id, pol: r.pol, polName: r.pol_name || '', pod: r.pod, podName: r.pod_name || '', carrierCode: r.carrier_code, contractType: r.contract_type, contractNotes: r.contract_notes || '', status: r.status, createdAt: r.created_at, etd: r.etd || '', eta: r.eta || '', bookingRef: r.booking_ref || '', blNumber: r.bl_number || '', vessel: r.vessel || '', voyage: r.voyage || '', incoterm: r.incoterm || '', vesselImo: r.vessel_imo || '', contractId: r.contract_id || '', commodityCode: r.commodity_code || '' });
+const mapShipment     = r => ({ id: r.id, pol: r.pol, polName: r.pol_name || '', pod: r.pod, podName: r.pod_name || '', carrierCode: r.carrier_code, contractType: r.contract_type, contractNotes: r.contract_notes || '', status: r.status, createdAt: r.created_at, etd: r.etd || '', eta: r.eta || '', bookingRef: r.booking_ref || '', blNumber: r.bl_number || '', vessel: r.vessel || '', voyage: r.voyage || '', incoterm: r.incoterm || '', vesselImo: r.vessel_imo || '', contractId: r.contract_id || '', commodityCode: r.commodity_code || '', shipperId: r.shipper_id || '', shipperName: r.shipper_name || '', consigneeId: r.consignee_id || '', consigneeName: r.consignee_name || '', principalId: r.principal_id || '', principalName: r.principal_name || '' });
 const mapContainer    = r => ({ id: r.id, shipmentId: r.shipment_id, containerNumber: r.container_number || '', sealNumber: r.seal_number || '', size: r.size, type: r.type, hsCode: r.hs_code || '', cargoDescription: r.cargo_description || '', grossWeightKg: r.gross_weight_kg ?? null, volumeCbm: r.volume_cbm ?? null, isDg: r.is_dg === 1, dgClass: r.dg_class || '' });
 const mapAllocation   = r => ({ id: r.id, carrierCode: r.carrier_code, allocatedTEU: r.allocated_teu, effectiveDate: r.effective_date || '', endDate: r.end_date || '', tradeLane: r.trade_lane || '', notes: r.notes || '', alertThreshold: r.alert_threshold ?? 80, pol: r.pol || '', pod: r.pod || '', originLane: r.origin_lane || '', destLane: r.dest_lane || '', coverageScope: r.coverage_scope || 'STRICT' });
 const mapCarrier      = r => ({ code: r.code, name: r.name, shortName: r.short_name || '' });
@@ -269,7 +276,7 @@ const mapLinkedPort   = r => ({ id: r.id, primaryUnlocode: r.primary_unlocode, p
 const mapTradeLane    = r => ({ code: r.code, name: r.name, description: r.description || '', countryCount: r.country_count ?? 0 });
 const mapRegion       = r => ({ code: r.code, name: r.name, description: r.description || '' });
 const mapCountry      = r => ({ iso2: r.iso2, name: r.name, unMember: r.un_member === 1, regionCode: r.region_code || '', portCount: r.port_count ?? 0 });
-const mapTicket       = r => ({ id: r.id, title: r.title, section: r.section || '', description: r.description || '', priority: r.priority, status: r.status, position: r.position, createdAt: r.created_at, shipmentId: r.shipment_id || null });
+const mapTicket       = r => ({ id: r.id, title: r.title, section: r.section || '', description: r.description || '', priority: r.priority, status: r.status, position: r.position, createdAt: r.created_at, shipmentId: r.shipment_id || null, type: r.type || 'Task' });
 const mapCustomer     = r => ({ id: r.id, companyName: r.company_name, address1: r.address1 || '', address2: r.address2 || '', city: r.city || '', state: r.state || '', postalCode: r.postal_code || '', countryIso2: r.country_iso2 || '', phone: r.phone || '', fax: r.fax || '', email: r.email || '', website: r.website || '', notes: r.notes || '', createdAt: r.created_at });
 const mapCommodity    = r => ({ code: r.code, description: r.description, gradeCode: r.grade_code, gradeName: r.grade_name });
 
@@ -386,27 +393,32 @@ app.get("/api/shipments/:id/status-log", (req, res) => {
 app.post("/api/shipments", (req, res) => {
   const { pol, pod, carrierCode, contractType, contractNotes = "", status = "Active",
           etd = "", eta = "", bookingRef = "", blNumber = "", vessel = "", voyage = "",
-          incoterm = "", vesselImo = "", contractId = "", commodityCode = "" } = req.body;
+          incoterm = "", vesselImo = "", contractId = "", commodityCode = "",
+          shipperId = "", shipperName = "", consigneeId = "", consigneeName = "",
+          principalId = "", principalName = "" } = req.body;
   if (!pol || !pod || !carrierCode || !contractType) return err(res, "pol, pod, carrierCode, contractType required");
   const id = `SHP-${uid()}`;
   const polU = pol.toUpperCase(), podU = pod.toUpperCase();
   const createdAt = new Date().toISOString();
-  db.prepare("INSERT INTO shipments (id,pol,pod,carrier_code,contract_type,contract_notes,status,created_at,etd,eta,booking_ref,bl_number,vessel,voyage,incoterm,vessel_imo,contract_id,commodity_code) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-    .run(id, polU, podU, carrierCode, contractType, contractNotes, status, createdAt, etd, eta, bookingRef, blNumber, vessel, voyage, incoterm, vesselImo, contractId, commodityCode);
-  ok(res, mapShipment({ id, pol: polU, pod: podU, carrier_code: carrierCode, contract_type: contractType, contract_notes: contractNotes, status, created_at: createdAt, etd, eta, booking_ref: bookingRef, bl_number: blNumber, vessel, voyage, incoterm, vessel_imo: vesselImo, contract_id: contractId, commodity_code: commodityCode }), 201);
+  db.prepare("INSERT INTO shipments (id,pol,pod,carrier_code,contract_type,contract_notes,status,created_at,etd,eta,booking_ref,bl_number,vessel,voyage,incoterm,vessel_imo,contract_id,commodity_code,shipper_id,shipper_name,consignee_id,consignee_name,principal_id,principal_name) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    .run(id, polU, podU, carrierCode, contractType, contractNotes, status, createdAt, etd, eta, bookingRef, blNumber, vessel, voyage, incoterm, vesselImo, contractId, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName);
+  ok(res, mapShipment({ id, pol: polU, pod: podU, carrier_code: carrierCode, contract_type: contractType, contract_notes: contractNotes, status, created_at: createdAt, etd, eta, booking_ref: bookingRef, bl_number: blNumber, vessel, voyage, incoterm, vessel_imo: vesselImo, contract_id: contractId, commodity_code: commodityCode, shipper_id: shipperId, shipper_name: shipperName, consignee_id: consigneeId, consignee_name: consigneeName, principal_id: principalId, principal_name: principalName }), 201);
 });
 
 app.put("/api/shipments/:id", (req, res) => {
   const { pol, pod, carrierCode, contractType, contractNotes = "", status,
           etd = "", eta = "", bookingRef = "", blNumber = "", vessel = "", voyage = "",
-          incoterm = "", vesselImo = "", contractId = "", commodityCode = "" } = req.body;
+          incoterm = "", vesselImo = "", contractId = "", commodityCode = "",
+          shipperId = "", shipperName = "", consigneeId = "", consigneeName = "",
+          principalId = "", principalName = "" } = req.body;
   const polU = pol.toUpperCase(), podU = pod.toUpperCase();
   const existing = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
   if (!existing) return err(res, "Not found", 404);
   const info = db.prepare(`
     UPDATE shipments SET pol=?, pod=?, carrier_code=?, contract_type=?, contract_notes=?, status=?,
-    etd=?, eta=?, booking_ref=?, bl_number=?, vessel=?, voyage=?, incoterm=?, vessel_imo=?, contract_id=?, commodity_code=? WHERE id=?
-  `).run(polU, podU, carrierCode, contractType, contractNotes, status, etd, eta, bookingRef, blNumber, vessel, voyage, incoterm, vesselImo, contractId, commodityCode, req.params.id);
+    etd=?, eta=?, booking_ref=?, bl_number=?, vessel=?, voyage=?, incoterm=?, vessel_imo=?, contract_id=?, commodity_code=?,
+    shipper_id=?, shipper_name=?, consignee_id=?, consignee_name=?, principal_id=?, principal_name=? WHERE id=?
+  `).run(polU, podU, carrierCode, contractType, contractNotes, status, etd, eta, bookingRef, blNumber, vessel, voyage, incoterm, vesselImo, contractId, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, req.params.id);
   if (info.changes === 0) return err(res, "Not found", 404);
   // Log all changed fields
   const newVals = { pol: polU, pod: podU, status, etd, eta, carrier_code: carrierCode,
@@ -803,6 +815,20 @@ app.put("/api/countries/:iso2", (req, res) => {
 });
 app.delete("/api/countries/:iso2", (req, res) => { const info = db.prepare("DELETE FROM countries WHERE iso2=?").run(req.params.iso2.toUpperCase()); if (info.changes===0) return err(res,"Not found",404); ok(res,{deleted:req.params.iso2}); });
 
+app.get("/api/countries/:iso2/locations", (req, res) => {
+  const iso2   = req.params.iso2.toUpperCase();
+  const search = (req.query.search || "").trim();
+  const lim    = Math.min(parseInt(req.query.limit  || "50",  10), 200);
+  const off    = parseInt(req.query.offset || "0", 10);
+  const where  = search
+    ? "WHERE country_code=? AND (unlocode LIKE ? OR name LIKE ?)"
+    : "WHERE country_code=?";
+  const params = search ? [iso2, `%${search}%`, `%${search}%`] : [iso2];
+  const total  = db.prepare(`SELECT COUNT(*) AS n FROM port_locations ${where}`).get(...params).n;
+  const rows   = db.prepare(`SELECT * FROM port_locations ${where} ORDER BY unlocode LIMIT ? OFFSET ?`).all(...params, lim, off);
+  ok(res, { results: rows.map(mapPortLocation), total, limit: lim, offset: off });
+});
+
 // ─── UN Location Codes (alias for port-locations with simpler search) ──────────
 
 app.get("/api/unlocodes", (req, res) => {
@@ -819,33 +845,40 @@ app.get("/api/unlocodes", (req, res) => {
 
 app.get("/api/tickets", (req, res) => ok(res, db.prepare("SELECT * FROM tickets ORDER BY status, position, created_at").all().map(mapTicket)));
 app.post("/api/tickets", (req, res) => {
-  const { title, section='', description='', priority='Medium', status='Ready', shipmentId=null } = req.body;
+  const { title, section='', description='', priority='Medium', status='Ready', shipmentId=null, type='Task' } = req.body;
   if (!title) return err(res, "title required");
   const id = `TKT-${uid()}`;
   const pos = (db.prepare("SELECT MAX(position) AS m FROM tickets WHERE status=?").get(status)?.m ?? -1) + 1;
   const sid = shipmentId || null;
-  db.prepare("INSERT INTO tickets (id,title,section,description,priority,status,position,created_at,shipment_id) VALUES (?,?,?,?,?,?,?,?,?)").run(id, title, section, description, priority, status, pos, new Date().toISOString(), sid);
-  ok(res, mapTicket({ id, title, section, description, priority, status, position: pos, created_at: new Date().toISOString(), shipment_id: sid }), 201);
+  db.prepare("INSERT INTO tickets (id,title,section,description,priority,status,position,created_at,shipment_id,type) VALUES (?,?,?,?,?,?,?,?,?,?)").run(id, title, section, description, priority, status, pos, new Date().toISOString(), sid, type);
+  ok(res, mapTicket({ id, title, section, description, priority, status, position: pos, created_at: new Date().toISOString(), shipment_id: sid, type }), 201);
 });
 app.put("/api/tickets/:id", (req, res) => {
-  const { title, section='', description='', priority='Medium', status='Ready', position=0, shipmentId=null } = req.body;
+  const { title, section='', description='', priority='Medium', status='Ready', position=0, shipmentId=null, type='Task' } = req.body;
   const sid = shipmentId || null;
-  const info = db.prepare("UPDATE tickets SET title=?, section=?, description=?, priority=?, status=?, position=?, shipment_id=? WHERE id=?").run(title, section, description, priority, status, position, sid, req.params.id);
+  const info = db.prepare("UPDATE tickets SET title=?, section=?, description=?, priority=?, status=?, position=?, shipment_id=?, type=? WHERE id=?").run(title, section, description, priority, status, position, sid, type, req.params.id);
   if (info.changes===0) return err(res,"Not found",404);
-  ok(res, mapTicket({ id: req.params.id, title, section, description, priority, status, position, created_at: '', shipment_id: sid }));
+  ok(res, mapTicket({ id: req.params.id, title, section, description, priority, status, position, created_at: '', shipment_id: sid, type }));
 });
 app.delete("/api/tickets/:id", (req, res) => { const info = db.prepare("DELETE FROM tickets WHERE id=?").run(req.params.id); if (info.changes===0) return err(res,"Not found",404); ok(res,{deleted:req.params.id}); });
 
 // ─── Customers ────────────────────────────────────────────────────────────────
 
 app.get("/api/customers", (req, res) => {
-  const { search='', limit='50', offset='0' } = req.query;
+  const { search='', city='', country='', customerId='', limit='50', offset='0' } = req.query;
   const lim = Math.min(parseInt(limit)||50, 200), off = parseInt(offset)||0;
+  const conditions = [], params = [];
   const s = search.trim();
-  const where  = s ? "WHERE company_name LIKE ? OR city LIKE ? OR email LIKE ? OR phone LIKE ?" : "";
-  const params = s ? [`%${s}%`, `%${s}%`, `%${s}%`, `%${s}%`] : [];
-  const total  = db.prepare(`SELECT COUNT(*) AS n FROM customers ${where}`).get(...params).n;
-  const rows   = db.prepare(`SELECT * FROM customers ${where} ORDER BY company_name LIMIT ? OFFSET ?`).all(...params, lim, off);
+  if (s) { conditions.push("(company_name LIKE ? OR email LIKE ? OR phone LIKE ? OR id LIKE ?)"); params.push(`%${s}%`, `%${s}%`, `%${s}%`, `%${s}%`); }
+  const ci = city.trim();
+  if (ci) { conditions.push("city LIKE ?"); params.push(`%${ci}%`); }
+  const co = country.trim().toUpperCase();
+  if (co) { conditions.push("country_iso2 = ?"); params.push(co); }
+  const cid = customerId.trim();
+  if (cid) { conditions.push("id LIKE ?"); params.push(`%${cid}%`); }
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  const total = db.prepare(`SELECT COUNT(*) AS n FROM customers ${where}`).get(...params).n;
+  const rows  = db.prepare(`SELECT * FROM customers ${where} ORDER BY company_name LIMIT ? OFFSET ?`).all(...params, lim, off);
   ok(res, { results: rows.map(mapCustomer), total, limit: lim, offset: off });
 });
 

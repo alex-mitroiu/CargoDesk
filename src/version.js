@@ -2,11 +2,17 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.12.0";
+export const VERSION   = "0.13.0";
 export const BUILD     = "2026-06-29";
-export const CODENAME  = "Starboard";
+export const CODENAME  = "Manifest";
 
 export const CHANGELOG = [
+  {
+    version:  "0.13.0",
+    date:     "2026-06-29",
+    codename: "Manifest",
+    summary:  "Shipper / Consignee / Principal: three mandatory party fields on every shipment form, backed by CustomerCombobox — typeahead suggestions plus a 🔍 full picker modal; stored as ID + denormalised name (6 new DB columns); parties section promoted to top of the create/edit modal. Requires Review status: new purple shipment status with matching badge variant and theme tokens. FCL badge: Type column added to shipments list showing a blue FCL badge on every row. CSV export: one-click ↓ Export CSV button on the shipments list producing one row per container (25 columns) as a browser download. Kanban ticket types: Feature / Bug / Improvement / Task / Chore selector with colour-coded badges; Task hidden on cards to keep them clean. Customers search filters: Country, City, Customer Code inputs plus a manual Search button added to the Customers MDM page and mirrored in the Select Customer picker modal for consistency. Countries View Locations fix: GET /api/countries/:iso2/locations endpoint was missing — added with search + pagination. Resizable columns: drag-to-resize handles on every data table throughout the app (Shipments, Dashboard, Shipment containers, all 10 MDM pages); widths persist to localStorage per table.",
+  },
   {
     version:  "0.12.0",
     date:     "2026-06-29",

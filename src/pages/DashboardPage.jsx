@@ -11,6 +11,7 @@ import PortCombobox from "../components/shared/PortCombobox";
 import { Modal, ConfirmModal } from "../components/primitives/Modal";
 import Pagination from "../components/primitives/Pagination";
 import DatePicker from "../components/primitives/DatePicker";
+import { useResizableColumns, ColResizer } from "../components/primitives/useResizableColumns";
 
 // ─── Lane pair display ───────────────────────────────────────────────────────
 
@@ -471,6 +472,8 @@ const AllocationForm = ({ init = {}, carriers, tradeLanes = [], onSave, onCancel
 const CarriersPage = ({ carriers, onAdd, onEdit, onDelete }) => {
   const [modal, setModal]   = useState(null); // null | "add" | carrier obj
   const [confirm, setConfirm] = useState(null);
+  const { template: carrTpl, startResize: carrResize } = useResizableColumns("mdm-carriers", [130,200,160]);
+  const carrHdrs = ["Code","Name","Actions"];
 
   return (
     <div>
@@ -485,10 +488,12 @@ const CarriersPage = ({ carriers, onAdd, onEdit, onDelete }) => {
       </div>
 
       <div style={{ background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, overflow: "hidden" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "130px 1fr 160px",
+        <div style={{ display: "grid", gridTemplateColumns: carrTpl,
           padding: "10px 20px", borderBottom: `1px solid ${T.border}` }}>
-          {["Code", "Name", "Actions"].map((h, i) => (
-            <span key={i} style={{ fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>{h}</span>
+          {carrHdrs.map((h, i) => (
+            <div key={i} style={{ position: "relative", fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
+              {h}{i < carrHdrs.length - 1 && <ColResizer onStart={e => carrResize(i, e)} />}
+            </div>
           ))}
         </div>
 
@@ -497,7 +502,7 @@ const CarriersPage = ({ carriers, onAdd, onEdit, onDelete }) => {
             No carriers yet. Add your first carrier above.
           </div>
         ) : carriers.map(c => (
-          <div key={c.code} style={{ display: "grid", gridTemplateColumns: "130px 1fr 160px",
+          <div key={c.code} style={{ display: "grid", gridTemplateColumns: carrTpl,
             padding: "14px 20px", borderBottom: `1px solid ${T.border}22`, alignItems: "center",
             transition: "background .1s" }}
             onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
@@ -542,6 +547,8 @@ const CarriersPage = ({ carriers, onAdd, onEdit, onDelete }) => {
 const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, onNew }) => {
   const [confirm, setConfirm] = useState(null);
   const teuFor = id => containers.filter(c => c.shipmentId === id).reduce((s, c) => s + teuOf(c.size), 0);
+  const { template: shipTpl, startResize: shipResize } = useResizableColumns("shipments", [140,70,70,150,165,46,60,130,90]);
+  const shipHdrs = ["Shipment ID","POL","POD","Carrier","Contract","TEU","Status",""];
 
   return (
     <div>
@@ -563,10 +570,12 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
       )}
 
       <div style={{ background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, overflow: "hidden" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "140px 70px 70px 1fr 165px 60px 110px 110px",
+        <div style={{ display: "grid", gridTemplateColumns: shipTpl,
           padding: "10px 20px", borderBottom: `1px solid ${T.border}` }}>
-          {["Shipment ID", "POL", "POD", "Carrier", "Contract", "TEU", "Status", ""].map((h, i) => (
-            <span key={i} style={{ fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>{h}</span>
+          {shipHdrs.map((h, i) => (
+            <div key={i} style={{ position: "relative", fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
+              {h}{i < shipHdrs.length - 1 && <ColResizer onStart={e => shipResize(i, e)} />}
+            </div>
           ))}
         </div>
 
@@ -578,7 +587,7 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
           const carrier = carriers.find(c => c.code === s.carrierCode);
           return (
             <div key={s.id} onClick={() => onSelect(s.id)}
-              style={{ display: "grid", gridTemplateColumns: "140px 70px 70px 1fr 165px 60px 110px 110px",
+              style={{ display: "grid", gridTemplateColumns: shipTpl,
                 padding: "14px 20px", borderBottom: `1px solid ${T.border}22`,
                 cursor: "pointer", alignItems: "center", transition: "background .1s" }}
               onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
@@ -617,6 +626,8 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
   const [ctrModal,  setCtrModal]  = useState(null); // null | "add" | container obj
   const [editShp,   setEditShp]   = useState(false);
   const [confirmCtr, setConfirmCtr] = useState(null);
+  const { template: dashCtrTemplate, startResize: dashCtrStartResize } = useResizableColumns("dashboard-carriers", [200,90,130,70,140]);
+  const dashCtrHeaders = ["Container No.","Size","Type","TEU","Actions"];
   const carrier  = carriers.find(c => c.code === shipment.carrierCode);
   const ctrs     = containers.filter(c => c.shipmentId === shipment.id);
   const totalTEU = ctrs.reduce((s, c) => s + teuOf(c.size), 0);
@@ -725,14 +736,16 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
           </div>
         ) : (
           <>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 90px 130px 70px 140px",
+            <div style={{ display: "grid", gridTemplateColumns: dashCtrTemplate,
               padding: "9px 20px", borderBottom: `1px solid ${T.border}` }}>
-              {["Container No.", "Size", "Type", "TEU", "Actions"].map((h, i) => (
-                <span key={i} style={{ fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>{h}</span>
+              {dashCtrHeaders.map((h, i) => (
+                <div key={i} style={{ position: "relative", fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
+                  {h}{i < dashCtrHeaders.length - 1 && <ColResizer onStart={e => dashCtrStartResize(i, e)} />}
+                </div>
               ))}
             </div>
             {ctrs.map(c => (
-              <div key={c.id} style={{ display: "grid", gridTemplateColumns: "1fr 90px 130px 70px 140px",
+              <div key={c.id} style={{ display: "grid", gridTemplateColumns: dashCtrTemplate,
                 padding: "12px 20px", borderBottom: `1px solid ${T.border}22`, alignItems: "center" }}>
                 <span style={{ fontFamily: T.mono, fontSize: 13, color: T.textCode, fontWeight: 600 }}>{c.number}</span>
                 <span style={{ fontFamily: T.mono, fontSize: 13, color: T.text }}>{c.size}ft</span>
@@ -828,6 +841,8 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, onAddAllo
   const [tradeLanes,   setTradeLanes]   = useState([]);
   const [renewInit,    setRenewInit]    = useState(null);
   const [archiveOpen,  setArchiveOpen]  = useState(false);
+  const { template: allocTemplate, startResize: allocStartResize } = useResizableColumns("dashboard-allocs", [150,200,100,150,140,100,130]);
+  const allocHeaders = ["Carrier","Name","TEU","Effective Period","Consumed","Remaining","Actions"];
 
   // Open renew modal when navigated from Archive page
   useEffect(() => {
@@ -1156,10 +1171,12 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, onAddAllo
           <Btn onClick={() => setAllocModal("add")} disabled={carriers.length === 0}>＋ Add Configuration</Btn>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "150px 1fr 100px 150px 140px 100px 130px",
+        <div style={{ display: "grid", gridTemplateColumns: allocTemplate,
           padding: "9px 20px", borderBottom: `1px solid ${T.border}` }}>
-          {["Carrier", "Name", "TEU", "Effective Period", "Consumed", "Remaining", "Actions"].map((h, i) => (
-            <span key={i} style={{ fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>{h}</span>
+          {allocHeaders.map((h, i) => (
+            <div key={i} style={{ position: "relative", fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
+              {h}{i < allocHeaders.length - 1 && <ColResizer onStart={e => allocStartResize(i, e)} />}
+            </div>
           ))}
         </div>
 
@@ -1177,7 +1194,7 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, onAddAllo
           const barColour  = pct >= 100 ? T.danger : pct >= thresh ? (thresh >= 90 ? T.danger : T.warning) : T.success;
           return (
             <div key={a.id}
-              style={{ display: "grid", gridTemplateColumns: "150px 1fr 100px 150px 140px 100px 130px",
+              style={{ display: "grid", gridTemplateColumns: allocTemplate,
                 padding: "13px 20px", borderBottom: `1px solid ${T.border}22`, alignItems: "center",
                 opacity: isActive ? 1 : 0.45, transition: "background .1s, opacity .2s" }}
               onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}

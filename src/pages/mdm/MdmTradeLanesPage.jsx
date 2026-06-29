@@ -7,12 +7,15 @@ import { Modal, ConfirmModal } from "../../components/primitives/Modal";
 import CountryCombobox from "../../components/shared/CountryCombobox";
 import { Inp, Field, Textarea } from "../../components/primitives/Form";
 import { PageSpinner } from "../../components/primitives/Spinner";
+import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns";
 
 const MdmTradeLanesPage = () => {
   const [lanes,   setLanes]   = useState([]);
   const [loading, setLoading] = useState(true);
   const [modal,   setModal]   = useState(null);
   const [confirm, setConfirm] = useState(null);
+  const { template, startResize } = useResizableColumns("mdm-tradelanes", [90,150,150,120,130]);
+  const headers = ["Code","Name","Description","Countries","Actions"];
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -157,10 +160,12 @@ const MdmTradeLanesPage = () => {
       </div>
 
       <div style={{ background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, overflow: "hidden" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "90px 1fr 1fr 120px 130px",
+        <div style={{ display: "grid", gridTemplateColumns: template,
           padding: "10px 20px", borderBottom: `1px solid ${T.border}` }}>
-          {["Code", "Name", "Description", "Countries", "Actions"].map((h, i) => (
-            <span key={i} style={{ fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>{h}</span>
+          {headers.map((h, i) => (
+            <div key={i} style={{ position: "relative", fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
+              {h}{i < headers.length - 1 && <ColResizer onStart={e => startResize(i, e)} />}
+            </div>
           ))}
         </div>
         {loading ? (
@@ -171,7 +176,7 @@ const MdmTradeLanesPage = () => {
           </div>
         ) : lanes.map(l => (
           <div key={l.code}
-            style={{ display: "grid", gridTemplateColumns: "90px 1fr 1fr 120px 130px",
+            style={{ display: "grid", gridTemplateColumns: template,
               padding: "13px 20px", borderBottom: `1px solid ${T.border}22`, alignItems: "center",
               transition: "background .1s" }}
             onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}

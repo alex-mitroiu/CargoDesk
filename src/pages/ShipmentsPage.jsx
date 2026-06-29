@@ -11,6 +11,7 @@ import { VesselField } from "../components/shared/VesselCombobox";
 import { inputBase, BtnToggle, Inp, Sel, Textarea, Field, ContractTypeInput } from "../components/primitives/Form";
 import { CommodityCombobox } from "../components/shared/CommodityCombobox";
 import Spinner from "../components/primitives/Spinner";
+import { useResizableColumns, ColResizer } from "../components/primitives/useResizableColumns";
 
 const ShipmentForm = ({ init = {}, carriers, onSave, onCancel }) => {
   const [polPort, setPolPort] = useState(init.pol ? { unlocode: init.pol, name: "" } : null);
@@ -144,6 +145,8 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
   const [confirm,  setConfirm]  = useState(null);
   const [filters,  setFilters]  = useState({ search: '', status: '', carrier: '' });
   const teuFor = id => containers.filter(c => c.shipmentId === id).reduce((s, c) => s + teuOf(c.size), 0);
+  const { template: shipTemplate, startResize: shipStartResize } = useResizableColumns("shipments", [140,70,70,150,165,46,60,130,90]);
+  const shipHeaders = ["Shipment ID","POL","POD","Carrier","Contract","TEU","Status",""];
 
   const filtered = shipments.filter(s => {
     if (filters.status  && s.status      !== filters.status)  return false;
@@ -217,10 +220,12 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
       )}
 
       <div style={{ background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, overflow: "hidden" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "140px 70px 70px 1fr 165px 60px 110px 110px",
+        <div style={{ display: "grid", gridTemplateColumns: shipTemplate,
           padding: "10px 20px", borderBottom: `1px solid ${T.border}` }}>
-          {["Shipment ID", "POL", "POD", "Carrier", "Contract", "TEU", "Status", ""].map((h, i) => (
-            <span key={i} style={{ fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>{h}</span>
+          {shipHeaders.map((h, i) => (
+            <div key={i} style={{ position: "relative", fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
+              {h}{i < shipHeaders.length - 1 && <ColResizer onStart={e => shipStartResize(i, e)} />}
+            </div>
           ))}
         </div>
 
@@ -232,7 +237,7 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
           const carrier = carriers.find(c => c.code === s.carrierCode);
           return (
             <div key={s.id} onClick={() => onSelect(s.id)}
-              style={{ display: "grid", gridTemplateColumns: "140px 70px 70px 1fr 165px 60px 110px 110px",
+              style={{ display: "grid", gridTemplateColumns: shipTemplate,
                 padding: "14px 20px", borderBottom: `1px solid ${T.border}22`,
                 cursor: "pointer", alignItems: "center", transition: "background .1s" }}
               onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}

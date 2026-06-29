@@ -14,8 +14,18 @@ const COLUMNS = ["Ready", "In Progress", "Done", "Released"];
 const SECTIONS = [
   "General", "Shipments", "Dashboard", "Vessels", "Port Locations",
   "Carriers", "Trade Lanes", "Countries", "UN Location Codes",
-  "API / Backend", "UI / UX", "Landing Page", "Kanban",
+  "Customers", "API / Backend", "UI / UX", "Landing Page", "Kanban",
 ];
+
+const TYPES = ["Feature", "Bug", "Improvement", "Task", "Chore"];
+
+const TYPE_VARIANT = {
+  Feature:     "info",
+  Bug:         "danger",
+  Improvement: "success",
+  Task:        "default",
+  Chore:       "warning",
+};
 
 const PRIORITIES = ["Critical", "High", "Medium", "Low"];
 
@@ -43,6 +53,7 @@ const TicketModal = ({ init = {}, shipments = [], onSave, onCancel }) => {
   const isEdit = !!init.id;
   const [f, setF] = useState({
     title:       init.title       || "",
+    type:        init.type        || "Task",
     section:     init.section     || "General",
     description: init.description || "",
     priority:    init.priority    || "Medium",
@@ -55,7 +66,9 @@ const TicketModal = ({ init = {}, shipments = [], onSave, onCancel }) => {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <Inp label="Title" value={f.title} onChange={set("title")} placeholder="e.g. Wire VesselCombobox to ShipmentForm" required />
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+        <Sel label="Type" value={f.type} onChange={set("type")}
+          options={TYPES.map(t => ({ value: t, label: t }))} />
         <Sel label="Section" value={f.section} onChange={set("section")}
           options={SECTIONS.map(s => ({ value: s, label: s }))} />
         <Sel label="Priority" value={f.priority} onChange={set("priority")}
@@ -156,6 +169,9 @@ const TicketCard = ({ ticket, onEdit, onDelete, onMove, colIndex,
 
         {/* Meta */}
         <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 10 }}>
+          {ticket.type && ticket.type !== "Task" && (
+            <Badge variant={TYPE_VARIANT[ticket.type] || "default"}>{ticket.type}</Badge>
+          )}
           <Badge variant={PRIORITY_VARIANT[ticket.priority] || "default"}>{ticket.priority}</Badge>
           {ticket.section && (
             <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted,

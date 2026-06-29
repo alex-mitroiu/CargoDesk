@@ -6,6 +6,7 @@ import Btn from "../../components/primitives/Btn";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
 import Pagination from "../../components/primitives/Pagination";
 import { inputBase, Inp, Textarea, Field } from "../../components/primitives/Form";
+import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns";
 
 // ─── Customer Form ────────────────────────────────────────────────────────────
 
@@ -141,11 +142,13 @@ const MdmCustomersPage = () => {
 
   // Column header style
   const th = {
-    fontFamily: T.body, fontSize: 10.5, fontWeight: 600,
+    position: "relative", fontFamily: T.body, fontSize: 10.5, fontWeight: 600,
     color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em",
   };
 
-  const COL = "220px 160px 80px 160px 160px 130px";
+  const { template: template, startResize } = useResizableColumns("mdm-customers", [220,160,80,160,160,130]);
+  const custHeaders = ["Company","City / Country","Phone","Email","Website",""];
+  const COL = template;
 
   return (
     <div>
@@ -178,8 +181,8 @@ const MdmCustomersPage = () => {
         {/* Column headers */}
         <div style={{ display: "grid", gridTemplateColumns: COL,
           padding: "10px 20px", borderBottom: `1px solid ${T.border}`, gap: 0 }}>
-          {["Company", "City / Country", "Phone", "Email", "Website", ""].map((h, i) => (
-            <span key={i} style={th}>{h}</span>
+          {custHeaders.map((h, i) => (
+            <div key={i} style={th}>{h}{i < custHeaders.length - 1 && <ColResizer onStart={e => startResize(i, e)} />}</div>
           ))}
         </div>
 

@@ -7,6 +7,7 @@ import Badge from "../../components/primitives/Badge";
 import { inputBase, Inp } from "../../components/primitives/Form";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
 import Pagination from "../../components/primitives/Pagination";
+import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns";
 
 // ─── MDM: Vessels Page ────────────────────────────────────────────────────────
 
@@ -20,6 +21,8 @@ const MdmVesselsPage = () => {
   const [confirm, setConfirm]  = useState(null);
   const LIMIT = 50;
   const timer  = useRef(null);
+  const { template, startResize } = useResizableColumns("mdm-vessels", [90,160,160,90,80,110,130]);
+  const headers = ["IMO","Ship Name","Asset Type","Flag","Built","Gross Ton.","Actions"];
 
   const load = useCallback(async (opts = {}) => {
     setLoading(true);
@@ -109,10 +112,12 @@ const MdmVesselsPage = () => {
 
       {/* Table */}
       <div style={{ background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, overflow: "hidden" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "90px 1fr 1fr 90px 80px 110px 130px",
+        <div style={{ display: "grid", gridTemplateColumns: template,
           padding: "10px 20px", borderBottom: `1px solid ${T.border}` }}>
-          {["IMO", "Ship Name", "Asset Type", "Flag", "Built", "Gross Ton.", "Actions"].map((h, i) => (
-            <span key={i} style={{ fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>{h}</span>
+          {headers.map((h, i) => (
+            <div key={i} style={{ position: "relative", fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
+              {h}{i < headers.length - 1 && <ColResizer onStart={e => startResize(i, e)} />}
+            </div>
           ))}
         </div>
 
@@ -124,7 +129,7 @@ const MdmVesselsPage = () => {
           </div>
         ) : results.map(v => (
           <div key={v.imo}
-            style={{ display: "grid", gridTemplateColumns: "90px 1fr 1fr 90px 80px 110px 130px",
+            style={{ display: "grid", gridTemplateColumns: template,
               padding: "12px 20px", borderBottom: `1px solid ${T.border}22`, alignItems: "center",
               transition: "background .1s" }}
             onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}

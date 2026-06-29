@@ -1,6 +1,6 @@
 export const CONTRACT_PRESETS = ["Pending", "SPOT", "Customer Own"];
 export const CONTAINER_TYPES  = ["DC", "RF", "OT", "FR", "TK"];
-export const STATUSES         = ["Active", "Pending", "Completed", "Cancelled"];
+export const STATUSES         = ["Active", "Pending", "Completed", "Cancelled", "Requires Review"];
 export const teuOf = (size) => (size === "40" ? 2 : 1);
 
 // ─── Theme definitions ───────────────────────────────────────────────────────
@@ -18,6 +18,7 @@ export const DARK_THEME = {
   danger:  "#ef5050", dangerBg:  "rgba(239,80,80,0.10)",
   warning: "#f5b84c", warningBg: "rgba(245,184,76,0.10)",
   info:    "#4db3e8", infoBg:    "rgba(77,179,232,0.10)",
+  purple:  "#a855f7", purpleBg:  "rgba(168,85,247,0.12)",
   // Button-specific
   btnPrimaryText: "#07111e",
   btnSecondaryHoverBg: "#112030",
@@ -41,6 +42,7 @@ export const LIGHT_THEME = {
   danger:  "#FF3B30", dangerBg:  "rgba(255,59,48,0.08)",
   warning: "#FF9F0A", warningBg: "rgba(255,159,10,0.08)",
   info:    "#32ADE6", infoBg:    "rgba(50,173,230,0.08)",
+  purple:  "#7C3AED", purpleBg:  "rgba(124,58,237,0.08)",
   // Button-specific
   btnPrimaryText: "#FFFFFF",
   btnSecondaryHoverBg: "#E8E8ED",
@@ -86,7 +88,7 @@ export const LANE_BADGE_VARIANT = {
   "NAM":"default","CAR":"default","SAM":"default","WAF":"danger","EAF":"danger",
   "SAF":"danger","NAF":"warning","OCE":"default",
 };
-export const statusVariant   = s => ({ Active:"success",Pending:"warning",Completed:"info",Cancelled:"danger" }[s] || "default");
+export const statusVariant   = s => ({ Active:"success",Pending:"warning",Completed:"info",Cancelled:"danger","Requires Review":"purple" }[s] || "default");
 export const contractVariant = c => ({ SPOT:"info","Customer Own":"amber",Pending:"warning" }[c] || "default");
 
 

@@ -6,6 +6,7 @@ import Btn from "../../components/primitives/Btn";
 import { Inp, Field } from "../../components/primitives/Form";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
 import PortCombobox from "../../components/shared/PortCombobox";
+import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns";
 
 // ─── MDM: Linked Ports Page ───────────────────────────────────────────────────
 
@@ -15,6 +16,8 @@ const MdmLinkedPortsPage = () => {
   const [modal,   setModal]   = useState(null); // null | "add" | link obj
   const [confirm, setConfirm] = useState(null);
   const [apiErr,  setApiErr]  = useState(null);
+  const { template, startResize } = useResizableColumns("mdm-linked-ports", [100,160,30,100,160,160,120]);
+  const headers = ["Primary","Port Name","","Linked To","Port Name","Note","Actions"];
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -120,10 +123,12 @@ const MdmLinkedPortsPage = () => {
       )}
 
       <div style={{ background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, overflow: "hidden" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "100px 1fr 30px 100px 1fr 1fr 120px",
+        <div style={{ display: "grid", gridTemplateColumns: template,
           padding: "10px 20px", borderBottom: `1px solid ${T.border}` }}>
-          {["Primary", "Port Name", "", "Linked To", "Port Name", "Note", "Actions"].map((h, i) => (
-            <span key={i} style={{ fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>{h}</span>
+          {headers.map((h, i) => (
+            <div key={i} style={{ position: "relative", fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
+              {h}{i < headers.length - 1 && <ColResizer onStart={e => startResize(i, e)} />}
+            </div>
           ))}
         </div>
 
@@ -135,7 +140,7 @@ const MdmLinkedPortsPage = () => {
           </div>
         ) : links.map(l => (
           <div key={l.id}
-            style={{ display: "grid", gridTemplateColumns: "100px 1fr 30px 100px 1fr 1fr 120px",
+            style={{ display: "grid", gridTemplateColumns: template,
               padding: "13px 20px", borderBottom: `1px solid ${T.border}22`, alignItems: "center",
               transition: "background .1s" }}
             onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}

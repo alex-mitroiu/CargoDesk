@@ -8,6 +8,7 @@ import { Modal, ConfirmModal } from "../../components/primitives/Modal";
 import CountryCombobox from "../../components/shared/CountryCombobox";
 import CountryLocationsModal from "../../components/shared/CountryLocationsModal";
 import { PageSpinner } from "../../components/primitives/Spinner";
+import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns";
 
 // ─── MDM Locations: Countries Page ────────────────────────────────────────────
 
@@ -21,6 +22,8 @@ const MdmCountriesPage = () => {
   const [confirm,        setConfirm]        = useState(null);
   const [viewLocations,  setViewLocations]  = useState(null);   // country obj for popup
   const timer = useRef(null);
+  const { template, startResize } = useResizableColumns("mdm-countries", [65,160,120,200,80,180]);
+  const headers = ["ISO2","Country Name","UN Member?","Trade Lanes","Ports","Actions"];
 
   const load = useCallback(async (s = search) => {
     setLoading(true);
@@ -136,10 +139,12 @@ const MdmCountriesPage = () => {
       </div>
 
       <div style={{ background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, overflow: "hidden" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "65px 160px 120px 1fr 80px 180px",
+        <div style={{ display: "grid", gridTemplateColumns: template,
           padding: "10px 20px", borderBottom: `1px solid ${T.border}` }}>
-          {["ISO2", "Country Name", "UN Member?", "Trade Lanes", "Ports", "Actions"].map((h, i) => (
-            <span key={i} style={{ fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>{h}</span>
+          {headers.map((h, i) => (
+            <div key={i} style={{ position: "relative", fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
+              {h}{i < headers.length - 1 && <ColResizer onStart={e => startResize(i, e)} />}
+            </div>
           ))}
         </div>
         {loading ? (
@@ -148,7 +153,7 @@ const MdmCountriesPage = () => {
           <div style={{ padding: 40, textAlign: "center", color: T.textMuted, fontFamily: T.body, fontSize: 14 }}>No countries match your search.</div>
         ) : countries.map(c => (
           <div key={c.iso2}
-            style={{ display: "grid", gridTemplateColumns: "65px 160px 120px 1fr 80px 180px",
+            style={{ display: "grid", gridTemplateColumns: template,
               padding: "11px 20px", borderBottom: `1px solid ${T.border}22`, alignItems: "center",
               transition: "background .1s" }}
             onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}

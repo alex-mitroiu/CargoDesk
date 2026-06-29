@@ -11,6 +11,7 @@ import Badge from "../components/primitives/Badge";
 import {Inp, Sel, Field, BtnToggle} from "../components/primitives/Form";
 import { Modal, ConfirmModal } from "../components/primitives/Modal";
 import DatePicker from "../components/primitives/DatePicker";
+import { useResizableColumns, ColResizer } from "../components/primitives/useResizableColumns";
 
 
 // ─── Section header with hover tooltip ───────────────────────────────────────
@@ -342,6 +343,8 @@ const AllocationForm = ({ init = {}, carriers, onSave, onCancel }) => {
 const CarriersPage = ({ carriers, onAdd, onEdit, onDelete }) => {
   const [modal, setModal]   = useState(null); // null | "add" | carrier obj
   const [confirm, setConfirm] = useState(null);
+  const { template: carrTpl3, startResize: carrResize3 } = useResizableColumns("mdm-carriers", [130,200,160]);
+  const carrHdrs3 = ["Code","Name","Actions"];
 
   return (
     <div>
@@ -356,10 +359,12 @@ const CarriersPage = ({ carriers, onAdd, onEdit, onDelete }) => {
       </div>
 
       <div style={{ background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, overflow: "hidden" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "130px 1fr 160px",
+        <div style={{ display: "grid", gridTemplateColumns: carrTpl3,
           padding: "10px 20px", borderBottom: `1px solid ${T.border}` }}>
-          {["Code", "Name", "Actions"].map((h, i) => (
-            <span key={i} style={{ fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>{h}</span>
+          {carrHdrs3.map((h, i) => (
+            <div key={i} style={{ position: "relative", fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
+              {h}{i < carrHdrs3.length - 1 && <ColResizer onStart={e => carrResize3(i, e)} />}
+            </div>
           ))}
         </div>
 
@@ -368,7 +373,7 @@ const CarriersPage = ({ carriers, onAdd, onEdit, onDelete }) => {
             No carriers yet. Add your first carrier above.
           </div>
         ) : carriers.map(c => (
-          <div key={c.code} style={{ display: "grid", gridTemplateColumns: "130px 1fr 160px",
+          <div key={c.code} style={{ display: "grid", gridTemplateColumns: carrTpl3,
             padding: "14px 20px", borderBottom: `1px solid ${T.border}22`, alignItems: "center",
             transition: "background .1s" }}
             onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
@@ -413,6 +418,8 @@ const CarriersPage = ({ carriers, onAdd, onEdit, onDelete }) => {
 const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, onNew }) => {
   const [confirm, setConfirm] = useState(null);
   const teuFor = id => containers.filter(c => c.shipmentId === id).reduce((s, c) => s + teuOf(c.size), 0);
+  const { template: shipTpl2, startResize: shipResize2 } = useResizableColumns("shipments", [140,70,70,150,165,46,60,130,90]);
+  const shipHdrs2 = ["Shipment ID","POL","POD","Carrier","Contract","TEU","Status",""];
 
   return (
     <div>
@@ -434,10 +441,12 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
       )}
 
       <div style={{ background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, overflow: "hidden" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "140px 70px 70px 1fr 165px 60px 110px 110px",
+        <div style={{ display: "grid", gridTemplateColumns: shipTpl2,
           padding: "10px 20px", borderBottom: `1px solid ${T.border}` }}>
-          {["Shipment ID", "POL", "POD", "Carrier", "Contract", "TEU", "Status", ""].map((h, i) => (
-            <span key={i} style={{ fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>{h}</span>
+          {shipHdrs2.map((h, i) => (
+            <div key={i} style={{ position: "relative", fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
+              {h}{i < shipHdrs2.length - 1 && <ColResizer onStart={e => shipResize2(i, e)} />}
+            </div>
           ))}
         </div>
 
@@ -449,7 +458,7 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
           const carrier = carriers.find(c => c.code === s.carrierCode);
           return (
             <div key={s.id} onClick={() => onSelect(s.id)}
-              style={{ display: "grid", gridTemplateColumns: "140px 70px 70px 1fr 165px 60px 110px 110px",
+              style={{ display: "grid", gridTemplateColumns: shipTpl2,
                 padding: "14px 20px", borderBottom: `1px solid ${T.border}22`,
                 cursor: "pointer", alignItems: "center", transition: "background .1s" }}
               onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
@@ -802,6 +811,8 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
   const [statusLog,  setStatusLog]  = useState([]);
   const [logOpen,    setLogOpen]    = useState(true);
   const [events,     setEvents]     = useState([]);
+  const { template: ctrTemplate, startResize: ctrStartResize } = useResizableColumns("shipment-containers", [140,60,90,50,80,150,100,90,120]);
+  const ctrHeaders = ["Container No.","Size","Type","TEU","HS Code","Cargo Description","Wt / Vol","DG","Actions"];
 
   useEffect(() => {
     if (!shipment?.id) return;
@@ -964,14 +975,16 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
           </div>
         ) : (
           <>
-            <div style={{ display: "grid", gridTemplateColumns: "140px 60px 90px 50px 80px 1fr 100px 90px 120px",
+            <div style={{ display: "grid", gridTemplateColumns: ctrTemplate,
               padding: "9px 20px", borderBottom: `1px solid ${T.border}` }}>
-              {["Container No.", "Size", "Type", "TEU", "HS Code", "Cargo Description", "Wt / Vol", "DG", "Actions"].map((h, i) => (
-                <span key={i} style={{ fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>{h}</span>
+              {ctrHeaders.map((h, i) => (
+                <div key={i} style={{ position: "relative", fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
+                  {h}{i < ctrHeaders.length - 1 && <ColResizer onStart={e => ctrStartResize(i, e)} />}
+                </div>
               ))}
             </div>
             {ctrs.map(c => (
-              <div key={c.id} style={{ display: "grid", gridTemplateColumns: "140px 60px 90px 50px 80px 1fr 100px 90px 120px",
+              <div key={c.id} style={{ display: "grid", gridTemplateColumns: ctrTemplate,
                 padding: "12px 20px", borderBottom: `1px solid ${T.border}22`, alignItems: "center" }}
                 onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
                 onMouseLeave={e => e.currentTarget.style.background = "transparent"}>

@@ -8,6 +8,7 @@ const Badge = ({ children, variant = "default" }) => {
     danger:  { bg: T.dangerBg,    c: T.danger },
     info:    { bg: T.infoBg,      c: T.info },
     amber:   { bg: T.accentBg,    c: T.accent },
+    purple:  { bg: T.purpleBg,    c: T.purple },
   }[variant] || { bg: T.surface, c: T.textMuted };
   return (
     <span style={{ background: v.bg, color: v.c, fontFamily: T.mono, fontSize: 10.5, fontWeight: 600,

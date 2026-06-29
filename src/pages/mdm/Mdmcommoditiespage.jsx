@@ -8,6 +8,7 @@ import { inputBase } from "../../components/primitives/Form";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
 import Pagination from "../../components/primitives/Pagination";
 import { GradePill } from "../../components/shared/CommodityCombobox";
+import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns";
 
 // ─── Grade options ────────────────────────────────────────────────────────────
 const GRADES = [
@@ -70,6 +71,8 @@ const MdmCommoditiesPage = () => {
   const [confirm, setConfirm] = useState(null);
   const LIMIT = 50;
   const timer = useRef(null);
+  const { template, startResize } = useResizableColumns("mdm-commodities", [90,250,180,130]);
+  const headers = ["Code","Description","Grade","Actions"];
 
   const load = useCallback(async (opts = {}) => {
     setLoading(true);
@@ -124,11 +127,13 @@ const MdmCommoditiesPage = () => {
 
       {/* Table */}
       <div style={{ background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, overflow: "hidden" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "90px 1fr 180px 130px",
+        <div style={{ display: "grid", gridTemplateColumns: template,
           padding: "10px 20px", borderBottom: `1px solid ${T.border}` }}>
-          {["Code", "Description", "Grade", "Actions"].map((h, i) => (
-            <span key={i} style={{ fontFamily: T.body, fontSize: 10.5, fontWeight: 600,
-              color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>{h}</span>
+          {headers.map((h, i) => (
+            <div key={i} style={{ position: "relative", fontFamily: T.body, fontSize: 10.5, fontWeight: 600,
+              color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
+              {h}{i < headers.length - 1 && <ColResizer onStart={e => startResize(i, e)} />}
+            </div>
           ))}
         </div>
 
@@ -140,7 +145,7 @@ const MdmCommoditiesPage = () => {
           </div>
         ) : results.map(c => (
           <div key={c.code}
-            style={{ display: "grid", gridTemplateColumns: "90px 1fr 180px 130px",
+            style={{ display: "grid", gridTemplateColumns: template,
               padding: "11px 20px", borderBottom: `1px solid ${T.border}22`, alignItems: "center" }}
             onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
             onMouseLeave={e => e.currentTarget.style.background = "transparent"}>

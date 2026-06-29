@@ -5,6 +5,7 @@ import { inputBase } from "../../components/primitives/Form";
 import { api } from "../../api";
 import Badge from "../../components/primitives/Badge";
 import Pagination from "../../components/primitives/Pagination";
+import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns";
 
 // ─── MDM Locations: UN Location Codes Page ────────────────────────────────────
 
@@ -16,6 +17,8 @@ const MdmUNLocationCodesPage = () => {
   const [loading,  setLoading]  = useState(true);
   const LIMIT = 50;
   const timer  = useRef(null);
+  const { template, startResize } = useResizableColumns("mdm-unlocodes", [110,200,80,130,120]);
+  const headers = ["UN/LOCODE","Port / Location Name","Country","Zone","Has Seaport?"];
 
   const load = useCallback(async (opts = {}) => {
     setLoading(true);
@@ -64,10 +67,12 @@ const MdmUNLocationCodesPage = () => {
       </div>
 
       <div style={{ background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, overflow: "hidden" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "110px 1fr 80px 130px 120px",
+        <div style={{ display: "grid", gridTemplateColumns: template,
           padding: "10px 20px", borderBottom: `1px solid ${T.border}` }}>
-          {["UN/LOCODE", "Port / Location Name", "Country", "Zone", "Has Seaport?"].map((h, i) => (
-            <span key={i} style={{ fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>{h}</span>
+          {headers.map((h, i) => (
+            <div key={i} style={{ position: "relative", fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
+              {h}{i < headers.length - 1 && <ColResizer onStart={e => startResize(i, e)} />}
+            </div>
           ))}
         </div>
         {loading ? (
@@ -78,7 +83,7 @@ const MdmUNLocationCodesPage = () => {
           </div>
         ) : rows.map(r => (
           <div key={r.unlocode}
-            style={{ display: "grid", gridTemplateColumns: "110px 1fr 80px 130px 120px",
+            style={{ display: "grid", gridTemplateColumns: template,
               padding: "11px 20px", borderBottom: `1px solid ${T.border}22`, alignItems: "center",
               transition: "background .1s" }}
             onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
