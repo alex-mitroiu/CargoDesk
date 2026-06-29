@@ -168,6 +168,24 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_status_log_shipment ON status_log(shipment_id, changed_at);
 
+  -- ── Customers ──
+  CREATE TABLE IF NOT EXISTS customers (
+    id           TEXT PRIMARY KEY,
+    company_name TEXT NOT NULL,
+    address1     TEXT DEFAULT '',
+    address2     TEXT DEFAULT '',
+    city         TEXT DEFAULT '',
+    state        TEXT DEFAULT '',
+    postal_code  TEXT DEFAULT '',
+    country_iso2 TEXT DEFAULT '',
+    phone        TEXT DEFAULT '',
+    fax          TEXT DEFAULT '',
+    email        TEXT DEFAULT '',
+    website      TEXT DEFAULT '',
+    notes        TEXT DEFAULT '',
+    created_at   TEXT NOT NULL
+  );
+
   -- ── Commodities (Maersk freight type registry) ──
   CREATE TABLE IF NOT EXISTS commodities (
     code        TEXT PRIMARY KEY,
@@ -200,6 +218,7 @@ const migrations = [
   "ALTER TABLE containers  ADD COLUMN cargo_description TEXT    DEFAULT ''",
   "ALTER TABLE port_locations ADD COLUMN last_synced_at TEXT DEFAULT NULL",
   "ALTER TABLE carriers    ADD COLUMN short_name      TEXT    DEFAULT ''",
+  "ALTER TABLE tickets     ADD COLUMN shipment_id     TEXT    DEFAULT NULL",
 ];
 
 for (const sql of migrations) {
@@ -249,8 +268,9 @@ const mapPortLocation = r => ({ unlocode: r.unlocode, name: r.name, latitude: r.
 const mapLinkedPort   = r => ({ id: r.id, primaryUnlocode: r.primary_unlocode, primaryName: r.primary_name || '', linkedUnlocode: r.linked_unlocode, linkedName: r.linked_name || '', note: r.note || '' });
 const mapTradeLane    = r => ({ code: r.code, name: r.name, description: r.description || '', countryCount: r.country_count ?? 0 });
 const mapRegion       = r => ({ code: r.code, name: r.name, description: r.description || '' });
-const mapCountry      = r => ({ iso2: r.iso2, name: r.name, unMember: r.un_member === 1, regionCode: r.region_code || '' });
-const mapTicket       = r => ({ id: r.id, title: r.title, section: r.section || '', description: r.description || '', priority: r.priority, status: r.status, position: r.position, createdAt: r.created_at });
+const mapCountry      = r => ({ iso2: r.iso2, name: r.name, unMember: r.un_member === 1, regionCode: r.region_code || '', portCount: r.port_count ?? 0 });
+const mapTicket       = r => ({ id: r.id, title: r.title, section: r.section || '', description: r.description || '', priority: r.priority, status: r.status, position: r.position, createdAt: r.created_at, shipmentId: r.shipment_id || null });
+const mapCustomer     = r => ({ id: r.id, companyName: r.company_name, address1: r.address1 || '', address2: r.address2 || '', city: r.city || '', state: r.state || '', postalCode: r.postal_code || '', countryIso2: r.country_iso2 || '', phone: r.phone || '', fax: r.fax || '', email: r.email || '', website: r.website || '', notes: r.notes || '', createdAt: r.created_at });
 const mapCommodity    = r => ({ code: r.code, description: r.description, gradeCode: r.grade_code, gradeName: r.grade_name });
 
 // ─── Shipment event logger ────────────────────────────────────────────────────
@@ -799,20 +819,71 @@ app.get("/api/unlocodes", (req, res) => {
 
 app.get("/api/tickets", (req, res) => ok(res, db.prepare("SELECT * FROM tickets ORDER BY status, position, created_at").all().map(mapTicket)));
 app.post("/api/tickets", (req, res) => {
-  const { title, section='', description='', priority='Medium', status='Ready' } = req.body;
+  const { title, section='', description='', priority='Medium', status='Ready', shipmentId=null } = req.body;
   if (!title) return err(res, "title required");
   const id = `TKT-${uid()}`;
   const pos = (db.prepare("SELECT MAX(position) AS m FROM tickets WHERE status=?").get(status)?.m ?? -1) + 1;
-  db.prepare("INSERT INTO tickets (id,title,section,description,priority,status,position,created_at) VALUES (?,?,?,?,?,?,?,?)").run(id, title, section, description, priority, status, pos, new Date().toISOString());
-  ok(res, mapTicket({ id, title, section, description, priority, status, position: pos, created_at: new Date().toISOString() }), 201);
+  const sid = shipmentId || null;
+  db.prepare("INSERT INTO tickets (id,title,section,description,priority,status,position,created_at,shipment_id) VALUES (?,?,?,?,?,?,?,?,?)").run(id, title, section, description, priority, status, pos, new Date().toISOString(), sid);
+  ok(res, mapTicket({ id, title, section, description, priority, status, position: pos, created_at: new Date().toISOString(), shipment_id: sid }), 201);
 });
 app.put("/api/tickets/:id", (req, res) => {
-  const { title, section='', description='', priority='Medium', status='Ready', position=0 } = req.body;
-  const info = db.prepare("UPDATE tickets SET title=?, section=?, description=?, priority=?, status=?, position=? WHERE id=?").run(title, section, description, priority, status, position, req.params.id);
+  const { title, section='', description='', priority='Medium', status='Ready', position=0, shipmentId=null } = req.body;
+  const sid = shipmentId || null;
+  const info = db.prepare("UPDATE tickets SET title=?, section=?, description=?, priority=?, status=?, position=?, shipment_id=? WHERE id=?").run(title, section, description, priority, status, position, sid, req.params.id);
   if (info.changes===0) return err(res,"Not found",404);
-  ok(res, mapTicket({ id: req.params.id, title, section, description, priority, status, position, created_at: '' }));
+  ok(res, mapTicket({ id: req.params.id, title, section, description, priority, status, position, created_at: '', shipment_id: sid }));
 });
 app.delete("/api/tickets/:id", (req, res) => { const info = db.prepare("DELETE FROM tickets WHERE id=?").run(req.params.id); if (info.changes===0) return err(res,"Not found",404); ok(res,{deleted:req.params.id}); });
+
+// ─── Customers ────────────────────────────────────────────────────────────────
+
+app.get("/api/customers", (req, res) => {
+  const { search='', limit='50', offset='0' } = req.query;
+  const lim = Math.min(parseInt(limit)||50, 200), off = parseInt(offset)||0;
+  const s = search.trim();
+  const where  = s ? "WHERE company_name LIKE ? OR city LIKE ? OR email LIKE ? OR phone LIKE ?" : "";
+  const params = s ? [`%${s}%`, `%${s}%`, `%${s}%`, `%${s}%`] : [];
+  const total  = db.prepare(`SELECT COUNT(*) AS n FROM customers ${where}`).get(...params).n;
+  const rows   = db.prepare(`SELECT * FROM customers ${where} ORDER BY company_name LIMIT ? OFFSET ?`).all(...params, lim, off);
+  ok(res, { results: rows.map(mapCustomer), total, limit: lim, offset: off });
+});
+
+app.get("/api/customers/:id", (req, res) => {
+  const r = db.prepare("SELECT * FROM customers WHERE id=?").get(req.params.id);
+  if (!r) return err(res, "Not found", 404);
+  ok(res, mapCustomer(r));
+});
+
+app.post("/api/customers", (req, res) => {
+  const { companyName, address1='', address2='', city='', state='', postalCode='',
+          countryIso2='', phone='', fax='', email='', website='', notes='' } = req.body;
+  if (!companyName?.trim()) return err(res, "companyName required");
+  const id = `CUS-${uid()}`;
+  const createdAt = new Date().toISOString();
+  const ccU = countryIso2.toUpperCase().trim();
+  db.prepare("INSERT INTO customers (id,company_name,address1,address2,city,state,postal_code,country_iso2,phone,fax,email,website,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    .run(id, companyName.trim(), address1, address2, city, state, postalCode, ccU, phone, fax, email, website, notes, createdAt);
+  ok(res, mapCustomer({ id, company_name: companyName.trim(), address1, address2, city, state, postal_code: postalCode, country_iso2: ccU, phone, fax, email, website, notes, created_at: createdAt }), 201);
+});
+
+app.put("/api/customers/:id", (req, res) => {
+  const { companyName, address1='', address2='', city='', state='', postalCode='',
+          countryIso2='', phone='', fax='', email='', website='', notes='' } = req.body;
+  if (!companyName?.trim()) return err(res, "companyName required");
+  const ccU = countryIso2.toUpperCase().trim();
+  const info = db.prepare(`UPDATE customers SET company_name=?,address1=?,address2=?,city=?,state=?,
+    postal_code=?,country_iso2=?,phone=?,fax=?,email=?,website=?,notes=? WHERE id=?`)
+    .run(companyName.trim(), address1, address2, city, state, postalCode, ccU, phone, fax, email, website, notes, req.params.id);
+  if (info.changes === 0) return err(res, "Not found", 404);
+  ok(res, mapCustomer({ id: req.params.id, company_name: companyName.trim(), address1, address2, city, state, postal_code: postalCode, country_iso2: ccU, phone, fax, email, website, notes, created_at: '' }));
+});
+
+app.delete("/api/customers/:id", (req, res) => {
+  const info = db.prepare("DELETE FROM customers WHERE id=?").run(req.params.id);
+  if (info.changes === 0) return err(res, "Not found", 404);
+  ok(res, { deleted: req.params.id });
+});
 
 // ─── Commodities ──────────────────────────────────────────────────────────────
 

@@ -39,7 +39,7 @@ const COL_ACCENT = {
 
 // ─── Ticket Modal ─────────────────────────────────────────────────────────────
 
-const TicketModal = ({ init = {}, onSave, onCancel }) => {
+const TicketModal = ({ init = {}, shipments = [], onSave, onCancel }) => {
   const isEdit = !!init.id;
   const [f, setF] = useState({
     title:       init.title       || "",
@@ -47,6 +47,7 @@ const TicketModal = ({ init = {}, onSave, onCancel }) => {
     description: init.description || "",
     priority:    init.priority    || "Medium",
     status:      init.status      || "Ready",
+    shipmentId:  init.shipmentId  || "",
   });
   const set = k => v => setF(p => ({ ...p, [k]: v }));
   const valid = f.title.trim().length > 0;
@@ -60,6 +61,12 @@ const TicketModal = ({ init = {}, onSave, onCancel }) => {
         <Sel label="Priority" value={f.priority} onChange={set("priority")}
           options={PRIORITIES.map(p => ({ value: p, label: p }))} />
       </div>
+      <Sel label="Linked Shipment (optional)" value={f.shipmentId} onChange={set("shipmentId")}
+        options={[
+          { value: "", label: "— None —" },
+          ...shipments.map(s => ({ value: s.id, label: `${s.id} · ${s.pol}→${s.pod} · ${s.carrierCode} (${s.status})` })),
+        ]}
+      />
       <Textarea label="Description" value={f.description} onChange={set("description")}
         placeholder="What needs to be done, acceptance criteria, notes…" rows={4} />
       {isEdit && (
@@ -137,6 +144,15 @@ const TicketCard = ({ ticket, onEdit, onDelete, onMove, colIndex,
             </div>
           </div>
         </div>
+
+        {/* Linked shipment */}
+        {ticket.shipmentId && (
+          <div style={{ fontFamily: T.mono, fontSize: 10, color: T.accent,
+            background: `${T.accent}15`, border: `1px solid ${T.accent}33`,
+            borderRadius: 4, padding: "2px 7px", marginBottom: 8, display: "inline-block" }}>
+            ⛴ {ticket.shipmentId}
+          </div>
+        )}
 
         {/* Meta */}
         <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 10 }}>
@@ -288,7 +304,7 @@ const KanbanColumn = ({ status, tickets, onEdit, onDelete, onMove,
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-const KanbanPage = () => {
+const KanbanPage = ({ shipments = [] }) => {
   const [tickets, setTickets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modal,   setModal]   = useState(null);
@@ -449,6 +465,7 @@ const KanbanPage = () => {
         >
           <TicketModal
             init={modal === "add" ? {} : modal}
+            shipments={shipments}
             onSave={handleSave}
             onCancel={() => setModal(null)}
           />

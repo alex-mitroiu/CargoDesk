@@ -2,11 +2,17 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.11.0";
+export const VERSION   = "0.12.0";
 export const BUILD     = "2026-06-29";
-export const CODENAME  = "Meridian";
+export const CODENAME  = "Starboard";
 
 export const CHANGELOG = [
+  {
+    version:  "0.12.0",
+    date:     "2026-06-29",
+    codename: "Starboard",
+    summary:  "Customers MDM: new module with full CRUD — company name, address (line 1/2, city, state, postal code, country ISO2), phone, fax, email, website, notes. Shipment list filters: search by ID/POL/POD/booking ref, filter by status and carrier with live clear button. Landing page KPI cards: Over Threshold and Configs Expiring added to Fleet Overview. Home page Requires Attention section: active allocations above their alert threshold shown with utilisation bar, route, and expiry, sorted worst-first. Kanban tickets linked to shipments: shipment_id FK, optional shipment selector in ticket modal, shipment chip on cards. Notification bell: live badge count for above-threshold allocations; clicking opens a dropdown listing up to 5 offending lanes (carrier, POL › POD, utilisation %) sorted worst-first, each entry navigates to the Dashboard. Countries MDM portCount fix: mapCountry now forwards port_count from LEFT JOIN.",
+  },
   {
     version:  "0.11.0",
     date:     "2026-06-29",

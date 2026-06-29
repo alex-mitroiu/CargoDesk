@@ -102,6 +102,13 @@ export const api = {
     list: ()                  => req("GET",    "/country-trade-lanes"),
     set:  (iso2, lanes)       => req("PUT",    `/countries/${iso2}/trade-lanes`, { lanes }),
   },
+  customers: {
+    list:   (p = {})     => req("GET",    `/customers?${new URLSearchParams(p)}`),
+    get:    (id)         => req("GET",    `/customers/${id}`),
+    create: (data)       => req("POST",   "/customers", data),
+    update: (id, data)   => req("PUT",    `/customers/${id}`, data),
+    remove: (id)         => req("DELETE", `/customers/${id}`),
+  },
   tickets: {
     list:   ()          => req("GET",    "/tickets"),
     create: (data)      => req("POST",   "/tickets", data),

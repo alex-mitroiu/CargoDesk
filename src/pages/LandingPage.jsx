@@ -46,7 +46,7 @@ const greeting = () => {
 };
 
 // ─── LandingPage ──────────────────────────────────────────────────────────────
-const LandingPage = ({ shipments = [], containers = [], carriers = [], onNewShipment, navigate }) => {
+const LandingPage = ({ shipments = [], containers = [], carriers = [], allocations = [], onNewShipment, navigate }) => {
   // Clock
   const [now, setNow] = useState(new Date());
   useEffect(() => {
@@ -110,6 +110,29 @@ const LandingPage = ({ shipments = [], containers = [], carriers = [], onNewShip
     .slice(0, 5);
 
   const activeCount = shipments.filter(s => s.status === "Active").length;
+
+  // Allocation KPIs — consumed TEU per carrier vs threshold
+  const consumedByCarrier = {};
+  shipments.forEach(s => {
+    const teu = containers.filter(c => c.shipmentId === s.id).reduce((a, c) => a + (c.size === '40' ? 2 : 1), 0);
+    consumedByCarrier[s.carrierCode] = (consumedByCarrier[s.carrierCode] || 0) + teu;
+  });
+  const activeAllocs   = allocations.filter(a => a.endDate >= todayStr);
+  const aboveThreshold = activeAllocs.filter(a =>
+    a.allocatedTEU > 0 && (consumedByCarrier[a.carrierCode] || 0) / a.allocatedTEU * 100 >= a.alertThreshold
+  ).length;
+  const in30           = addDays(todayStr, 30);
+  const expiringCount  = activeAllocs.filter(a => a.endDate <= in30).length;
+
+  // Allocations needing attention — above their alert threshold, sorted worst first
+  const attnAllocations = activeAllocs
+    .filter(a => a.allocatedTEU > 0 && (consumedByCarrier[a.carrierCode] || 0) / a.allocatedTEU * 100 >= a.alertThreshold)
+    .map(a => ({
+      ...a,
+      consumed: consumedByCarrier[a.carrierCode] || 0,
+      pct: Math.round((consumedByCarrier[a.carrierCode] || 0) / a.allocatedTEU * 100),
+    }))
+    .sort((a, b) => b.pct - a.pct);
 
   // Formatting helpers
   const fmtTime = d => d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -222,11 +245,11 @@ const LandingPage = ({ shipments = [], containers = [], carriers = [], onNewShip
             Fleet Overview
           </div>
           {[
-            { label: "Active Shipments",  value: activeCount,          icon: "📦", color: T.success  },
-            { label: "Total Shipments",   value: shipments.length,     icon: "🗂",  color: T.text     },
-            { label: "Carriers",          value: carriers.length,      icon: "🏢", color: T.accent   },
-            //{ label: "Vessels in DB",     value: stats?.vessels ?? "…", icon: "🚢", color: T.info     },
-            //{ label: "Ports in DB",       value: stats?.ports != null ? stats.ports.toLocaleString() : "…", icon: "📍", color: T.textMuted },
+            { label: "Active Shipments",   value: activeCount,      icon: "📦", color: T.success                                    },
+            { label: "Total Shipments",    value: shipments.length, icon: "🗂",  color: T.text                                       },
+            { label: "Carriers",           value: carriers.length,  icon: "🏢", color: T.accent                                     },
+            { label: "Over Threshold",     value: aboveThreshold,   icon: "⚠️", color: aboveThreshold > 0 ? T.warning : T.success   },
+            { label: "Configs Expiring",   value: expiringCount,    icon: "📅", color: expiringCount  > 0 ? T.warning : T.success   },
           ].map(({ label, value, icon, color }) => (
             <div key={label} style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <span style={{ fontSize: 15, width: 22, textAlign: "center" }}>{icon}</span>
@@ -276,6 +299,85 @@ const LandingPage = ({ shipments = [], containers = [], carriers = [], onNewShip
           </div>
         )}
       </div>
+
+      {/* ── Allocations requiring attention ── */}
+      {attnAllocations.length > 0 && (
+        <div style={{
+          ...card({ marginBottom: 14, padding: 0, overflow: "hidden" }),
+          borderTop: `3px solid ${T.warning}`,
+        }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+            padding: "16px 22px 12px" }}>
+            <div style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.warning }}>
+              ⚠ Requires Attention
+            </div>
+            <button onClick={() => navigate("dashboard")}
+              style={{ background: "none", border: `1px solid ${T.warning}55`, borderRadius: 6,
+                color: T.warning, cursor: "pointer", padding: "4px 12px",
+                fontFamily: T.body, fontSize: 12, fontWeight: 600 }}>
+              View Dashboard →
+            </button>
+          </div>
+
+          {/* Column headers */}
+          <div style={{ display: "grid",
+            gridTemplateColumns: "80px 120px 1fr 110px 100px",
+            padding: "0 22px 6px", gap: 0 }}>
+            {["Carrier", "Route", "Utilisation", "Threshold", "Expires"].map((h, i) => (
+              <span key={i} style={{ fontFamily: T.body, fontSize: 10.5, fontWeight: 600,
+                color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>{h}</span>
+            ))}
+          </div>
+
+          {attnAllocations.map(a => (
+            <div key={a.id} style={{ display: "grid",
+              gridTemplateColumns: "80px 120px 1fr 110px 100px",
+              padding: "10px 22px", gap: 0, alignItems: "center",
+              borderTop: `1px solid ${T.border}22` }}>
+
+              {/* Carrier */}
+              <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.accent }}>
+                {a.carrierCode}
+              </span>
+
+              {/* Route */}
+              <div style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>
+                {a.pol}
+                <span style={{ color: T.border, margin: "0 4px" }}>›</span>
+                {a.pod}
+              </div>
+
+              {/* Utilisation bar + numbers */}
+              <div style={{ paddingRight: 16 }}>
+                <div style={{ height: 6, borderRadius: 3, background: T.bg, overflow: "hidden", marginBottom: 4 }}>
+                  <div style={{
+                    width: `${Math.min(a.pct, 100)}%`, height: "100%", borderRadius: 3,
+                    background: a.pct >= 100 ? T.danger : T.warning,
+                    transition: "width .3s",
+                  }} />
+                </div>
+                <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+                  {a.consumed} / {a.allocatedTEU} TEU
+                  <span style={{ color: a.pct >= 100 ? T.danger : T.warning, fontWeight: 700, marginLeft: 6 }}>
+                    {a.pct}%
+                  </span>
+                </span>
+              </div>
+
+              {/* Threshold */}
+              <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+                {a.alertThreshold}% limit
+              </span>
+
+              {/* Expiry */}
+              <span style={{ fontFamily: T.mono, fontSize: 11,
+                color: a.endDate <= in30 ? T.warning : T.textMuted }}>
+                {a.endDate}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* ── Quick actions ── */}
       <div style={{ display: "flex", gap: 10 }}>

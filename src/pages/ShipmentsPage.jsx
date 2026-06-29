@@ -141,19 +141,72 @@ const ShipmentForm = ({ init = {}, carriers, onSave, onCancel }) => {
 };
 
 const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, onNew }) => {
-  const [confirm, setConfirm] = useState(null);
+  const [confirm,  setConfirm]  = useState(null);
+  const [filters,  setFilters]  = useState({ search: '', status: '', carrier: '' });
   const teuFor = id => containers.filter(c => c.shipmentId === id).reduce((s, c) => s + teuOf(c.size), 0);
+
+  const filtered = shipments.filter(s => {
+    if (filters.status  && s.status      !== filters.status)  return false;
+    if (filters.carrier && s.carrierCode !== filters.carrier) return false;
+    if (filters.search) {
+      const q = filters.search.toLowerCase();
+      if (!s.id.toLowerCase().includes(q)
+        && !s.pol.toLowerCase().includes(q)
+        && !s.pod.toLowerCase().includes(q)
+        && !(s.bookingRef || '').toLowerCase().includes(q)
+        && !(s.blNumber   || '').toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
+  const hasFilters = !!(filters.search || filters.status || filters.carrier);
 
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 28 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 16 }}>
         <div>
           <h1 style={{ fontFamily: T.head, fontSize: 26, fontWeight: 800, color: T.text, margin: 0 }}>Shipments</h1>
           <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, margin: "4px 0 0" }}>
-            {shipments.length} total · {shipments.filter(s => s.status === "Active").length} active
+            {hasFilters ? `${filtered.length} of ${shipments.length}` : shipments.length} total
+            · {shipments.filter(s => s.status === "Active").length} active
           </p>
         </div>
         <Btn onClick={onNew} size="lg" disabled={carriers.length === 0}>＋ New Shipment</Btn>
+      </div>
+
+      {/* Filter bar */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
+        <input
+          value={filters.search}
+          onChange={e => setFilters(f => ({ ...f, search: e.target.value }))}
+          placeholder="Search ID, POL, POD, booking ref…"
+          style={{ ...inputBase, flex: "1 1 200px", minWidth: 160 }}
+        />
+        <select
+          value={filters.status}
+          onChange={e => setFilters(f => ({ ...f, status: e.target.value }))}
+          style={{ ...inputBase, width: 148, cursor: "pointer" }}
+        >
+          <option value="">All statuses</option>
+          {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+        </select>
+        <select
+          value={filters.carrier}
+          onChange={e => setFilters(f => ({ ...f, carrier: e.target.value }))}
+          style={{ ...inputBase, width: 180, cursor: "pointer" }}
+        >
+          <option value="">All carriers</option>
+          {carriers.map(c => <option key={c.code} value={c.code}>{c.code} – {c.name}</option>)}
+        </select>
+        {hasFilters && (
+          <button
+            onClick={() => setFilters({ search: '', status: '', carrier: '' })}
+            style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 6,
+              color: T.textMuted, cursor: "pointer", padding: "6px 12px",
+              fontFamily: T.body, fontSize: 12, whiteSpace: "nowrap" }}>
+            ✕ Clear
+          </button>
+        )}
       </div>
 
       {carriers.length === 0 && (
@@ -171,11 +224,11 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
           ))}
         </div>
 
-        {shipments.length === 0 ? (
+        {filtered.length === 0 ? (
           <div style={{ padding: 48, textAlign: "center", color: T.textMuted, fontFamily: T.body, fontSize: 14 }}>
-            No shipments yet. Create your first one above.
+            {hasFilters ? "No shipments match your filters." : "No shipments yet. Create your first one above."}
           </div>
-        ) : shipments.map(s => {
+        ) : filtered.map(s => {
           const carrier = carriers.find(c => c.code === s.carrierCode);
           return (
             <div key={s.id} onClick={() => onSelect(s.id)}

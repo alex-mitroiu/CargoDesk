@@ -28,6 +28,7 @@ import MdmRegionsPage         from "./pages/mdm/MdmRegionsPage";
 import MdmCountriesPage       from "./pages/mdm/MdmCountriesPage";
 import MdmUNLocationCodesPage  from "./pages/mdm/MdmUNLocationCodesPage";
 import MdmCommoditiesPage     from "./pages/mdm/MdmCommoditiesPage";
+import MdmCustomersPage       from "./pages/mdm/MdmCustomersPage";
 
 
 
@@ -48,6 +49,7 @@ function App() {
   const [allocations, setAllocations] = useState([]);
   const [ready,       setReady]       = useState(false);
   const [apiError,    setApiError]    = useState(null);
+
 
   const [page,       setPage]       = useState(() => {
     const hash = window.location.hash.replace("#", "").trim();
@@ -118,7 +120,7 @@ function App() {
   }, [page]);
 
   // kanban is top-level, not MDM
-  const MDM_PAGES = ["mdm-carriers", "mdm-ports", "mdm-linked", "mdm-vessels", "mdm-commodities", "mdm-tradelanes", "mdm-countries", "mdm-unlocodes"];
+  const MDM_PAGES = ["mdm-carriers", "mdm-ports", "mdm-linked", "mdm-vessels", "mdm-commodities", "mdm-tradelanes", "mdm-countries", "mdm-unlocodes", "mdm-customers"];
   const ALL_PAGES = [...MDM_PAGES, "manual"];
   const isMdmActive = MDM_PAGES.includes(page);
 
@@ -176,6 +178,7 @@ function App() {
     "mdm-regions":      "Master Data — Regions",
     "mdm-countries":    "Master Data — Countries",
     "mdm-unlocodes":    "Master Data — UN Location Codes",
+    "mdm-customers":    "Master Data — Customers",
     manual:             "User Manual",
   };
 
@@ -216,8 +219,35 @@ function App() {
     const [open, setOpen]   = useState(false);
     const menuRef           = useRef(null);
 
+    const [bellOpen, setBellOpen] = useState(false);
+    const bellRef                 = useRef(null);
+
+    // Active allocations above their alert threshold, sorted worst-first (max 5 shown)
+    const bellItems = (() => {
+      if (!ready) return [];
+      const today = new Date().toISOString().split('T')[0];
+      const consumed = {};
+      shipments.forEach(s => {
+        const teu = containers.filter(c => c.shipmentId === s.id).reduce((a, c) => a + (c.size === '40' ? 2 : 1), 0);
+        consumed[s.carrierCode] = (consumed[s.carrierCode] || 0) + teu;
+      });
+      return allocations
+        .filter(a => a.endDate >= today && a.allocatedTEU > 0)
+        .filter(a => (consumed[a.carrierCode] || 0) / a.allocatedTEU * 100 >= a.alertThreshold)
+        .map(a => ({
+          ...a,
+          pct: Math.round((consumed[a.carrierCode] || 0) / a.allocatedTEU * 100),
+        }))
+        .sort((a, b) => b.pct - a.pct)
+        .slice(0, 5);
+    })();
+    const bellCount = bellItems.length;
+
     useEffect(() => {
-      const h = e => { if (menuRef.current && !menuRef.current.contains(e.target)) setOpen(false); };
+      const h = e => {
+        if (menuRef.current && !menuRef.current.contains(e.target)) setOpen(false);
+        if (bellRef.current && !bellRef.current.contains(e.target)) setBellOpen(false);
+      };
       document.addEventListener("mousedown", h);
       return () => document.removeEventListener("mousedown", h);
     }, []);
@@ -267,13 +297,92 @@ function App() {
         {/* Right — actions */}
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
 
-          {/* Notification bell — placeholder */}
-          <button type="button"
-            title="Notifications — coming in a future release"
-            style={{ background: "none", border: "none", cursor: "default",
-              opacity: 0.35, fontSize: 16, padding: "4px 6px" }}>
-            🔔
-          </button>
+          {/* Notification bell */}
+          <div ref={bellRef} style={{ position: "relative" }}>
+            <button type="button"
+              title={bellCount > 0
+                ? `${bellCount} allocation${bellCount > 1 ? "s" : ""} above threshold`
+                : "No active threshold alerts"}
+              onClick={() => { if (bellCount > 0) setBellOpen(o => !o); }}
+              style={{ position: "relative", background: "none", border: "none",
+                cursor: bellCount > 0 ? "pointer" : "default",
+                opacity: bellCount > 0 ? 1 : 0.35, fontSize: 16, padding: "4px 6px" }}>
+              🔔
+              {bellCount > 0 && (
+                <span style={{
+                  position: "absolute", top: 0, right: 0,
+                  background: T.danger, color: "#fff",
+                  borderRadius: "50%", width: 16, height: 16,
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontFamily: T.mono, fontSize: 9, fontWeight: 700, lineHeight: 1,
+                }}>
+                  {bellCount > 9 ? "9+" : bellCount}
+                </span>
+              )}
+            </button>
+
+            {bellOpen && bellItems.length > 0 && (
+              <div style={{
+                position: "absolute", right: 0, top: "calc(100% + 8px)", zIndex: 500,
+                background: T.surface, border: `1px solid ${T.border}`,
+                borderRadius: 12, boxShadow: "0 12px 36px rgba(0,0,0,.35)",
+                minWidth: 300, overflow: "hidden",
+              }}>
+                {/* Header */}
+                <div style={{ padding: "10px 16px 8px",
+                  borderBottom: `1px solid ${T.border}`,
+                  display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <span style={{ fontFamily: T.body, fontSize: 12, fontWeight: 700, color: T.warning }}>
+                    ⚠ Above Threshold
+                  </span>
+                  <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted }}>
+                    {bellCount} allocation{bellCount > 1 ? "s" : ""}
+                  </span>
+                </div>
+
+                {/* Items */}
+                {bellItems.map(a => (
+                  <button key={a.id} type="button"
+                    onClick={() => { navigate("dashboard"); setBellOpen(false); }}
+                    style={{
+                      display: "flex", alignItems: "center", justifyContent: "space-between",
+                      width: "100%", padding: "10px 16px", background: "none", border: "none",
+                      borderBottom: `1px solid ${T.border}22`, cursor: "pointer", textAlign: "left",
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
+                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                      <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.accent }}>
+                        {a.carrierCode}
+                      </span>
+                      <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+                        {a.pol} › {a.pod}
+                      </span>
+                    </div>
+                    <span style={{
+                      fontFamily: T.mono, fontSize: 13, fontWeight: 700,
+                      color: a.pct >= 100 ? T.danger : T.warning,
+                    }}>
+                      {a.pct}%
+                    </span>
+                  </button>
+                ))}
+
+                {/* Footer link */}
+                <button type="button"
+                  onClick={() => { navigate("dashboard"); setBellOpen(false); }}
+                  style={{
+                    width: "100%", padding: "9px 16px", background: "none",
+                    border: "none", cursor: "pointer",
+                    fontFamily: T.body, fontSize: 12, color: T.textMuted, textAlign: "center",
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.background = T.surfaceHover; e.currentTarget.style.color = T.text; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = T.textMuted; }}>
+                  View all in Dashboard →
+                </button>
+              </div>
+            )}
+          </div>
 
           {/* User menu */}
           <div ref={menuRef} style={{ position: "relative" }}>
@@ -388,6 +497,7 @@ function App() {
                 {/* Directory */}
                 <div style={{ fontFamily: T.mono, fontSize: 9, color: T.border, fontWeight: 700,
                   textTransform: "uppercase", letterSpacing: ".1em", padding: "5px 12px 3px 28px" }}>Directory</div>
+                <NavBtn pageKey="mdm-customers"    icon="👥" label="Customers"       indent />
                 <NavBtn pageKey="mdm-carriers" icon="🏢" label="Carriers"       indent />
                 <NavBtn pageKey="mdm-vessels"      icon="🚢" label="Vessels"         indent />
                 <NavBtn pageKey="mdm-commodities" icon="📦" label="Commodities"     indent />
@@ -425,6 +535,7 @@ function App() {
             shipments={shipments}
             containers={containers}
             carriers={carriers}
+            allocations={allocations}
             navigate={navigate}
             onNewShipment={() => { navigate("shipments"); setShowNewShp(true); }}
           />
@@ -496,7 +607,7 @@ function App() {
             }} />
         )}
 
-        {page === "kanban"    && <KanbanPage />}
+        {page === "kanban"    && <KanbanPage shipments={shipments} />}
 
         {page === "dashboard-archive" && (
           <DashboardArchive
@@ -563,6 +674,7 @@ function App() {
         {page === "mdm-countries" && <MdmCountriesPage />}
         {page === "mdm-unlocodes"   && <MdmUNLocationCodesPage />}
         {page === "mdm-commodities" && <MdmCommoditiesPage />}
+        {page === "mdm-customers"  && <MdmCustomersPage />}
         {page === "manual"         && <UserManualPage />}
         {page === "about"          && <AboutPage />}
 
