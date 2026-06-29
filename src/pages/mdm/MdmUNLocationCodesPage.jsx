@@ -1,11 +1,11 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+﻿import { useState, useEffect, useCallback, useRef } from "react";
 import Spinner, { PageSpinner } from "../../components/primitives/Spinner";
 import { T } from "../../tokens";
 import { inputBase } from "../../components/primitives/Form";
 import { api } from "../../api";
 import Badge from "../../components/primitives/Badge";
 import Pagination from "../../components/primitives/Pagination";
-import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns";
+import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns.jsx";
 
 // ─── MDM Locations: UN Location Codes Page ────────────────────────────────────
 
@@ -70,7 +70,7 @@ const MdmUNLocationCodesPage = () => {
         <div style={{ display: "grid", gridTemplateColumns: template,
           padding: "10px 20px", borderBottom: `1px solid ${T.border}` }}>
           {headers.map((h, i) => (
-            <div key={i} style={{ position: "relative", fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
+            <div key={i} style={{ position: "relative", paddingLeft: 6, fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
               {h}{i < headers.length - 1 && <ColResizer onStart={e => startResize(i, e)} />}
             </div>
           ))}

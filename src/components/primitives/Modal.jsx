@@ -2,8 +2,7 @@ import { T } from "../../tokens";
 import Btn from "./Btn";
 
 const Modal = ({ title, onClose, children, width = 520, minHeight }) => (
-  <div onClick={e => e.target === e.currentTarget && onClose()}
-    style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.78)", display: "flex",
+  <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.78)", display: "flex",
       alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20 }}>
     <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12,
       width: "100%", maxWidth: width, maxHeight: "90vh", overflowY: "auto",

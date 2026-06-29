@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+﻿import { useState, useEffect, useCallback } from "react";
 import Spinner, { PageSpinner } from "../../components/primitives/Spinner";
 import { T } from "../../tokens";
 import { api } from "../../api";
@@ -6,7 +6,7 @@ import Btn from "../../components/primitives/Btn";
 import { Inp, Field } from "../../components/primitives/Form";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
 import PortCombobox from "../../components/shared/PortCombobox";
-import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns";
+import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns.jsx";
 
 // ─── MDM: Linked Ports Page ───────────────────────────────────────────────────
 
@@ -126,7 +126,7 @@ const MdmLinkedPortsPage = () => {
         <div style={{ display: "grid", gridTemplateColumns: template,
           padding: "10px 20px", borderBottom: `1px solid ${T.border}` }}>
           {headers.map((h, i) => (
-            <div key={i} style={{ position: "relative", fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
+            <div key={i} style={{ position: "relative", paddingLeft: 6, fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
               {h}{i < headers.length - 1 && <ColResizer onStart={e => startResize(i, e)} />}
             </div>
           ))}

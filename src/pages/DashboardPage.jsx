@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+﻿import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid,
          Tooltip, Legend, ResponsiveContainer } from "recharts";
 import { T, STATUSES, statusVariant, contractVariant, addDays, diffDays,
@@ -11,7 +11,7 @@ import PortCombobox from "../components/shared/PortCombobox";
 import { Modal, ConfirmModal } from "../components/primitives/Modal";
 import Pagination from "../components/primitives/Pagination";
 import DatePicker from "../components/primitives/DatePicker";
-import { useResizableColumns, ColResizer } from "../components/primitives/useResizableColumns";
+import { useResizableColumns, ColResizer } from "../components/primitives/useResizableColumns.jsx";
 
 // ─── Lane pair display ───────────────────────────────────────────────────────
 
@@ -491,7 +491,7 @@ const CarriersPage = ({ carriers, onAdd, onEdit, onDelete }) => {
         <div style={{ display: "grid", gridTemplateColumns: carrTpl,
           padding: "10px 20px", borderBottom: `1px solid ${T.border}` }}>
           {carrHdrs.map((h, i) => (
-            <div key={i} style={{ position: "relative", fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
+            <div key={i} style={{ position: "relative", paddingLeft: 6, fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
               {h}{i < carrHdrs.length - 1 && <ColResizer onStart={e => carrResize(i, e)} />}
             </div>
           ))}
@@ -573,7 +573,7 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
         <div style={{ display: "grid", gridTemplateColumns: shipTpl,
           padding: "10px 20px", borderBottom: `1px solid ${T.border}` }}>
           {shipHdrs.map((h, i) => (
-            <div key={i} style={{ position: "relative", fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
+            <div key={i} style={{ position: "relative", paddingLeft: 6, fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
               {h}{i < shipHdrs.length - 1 && <ColResizer onStart={e => shipResize(i, e)} />}
             </div>
           ))}
@@ -739,7 +739,7 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
             <div style={{ display: "grid", gridTemplateColumns: dashCtrTemplate,
               padding: "9px 20px", borderBottom: `1px solid ${T.border}` }}>
               {dashCtrHeaders.map((h, i) => (
-                <div key={i} style={{ position: "relative", fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
+                <div key={i} style={{ position: "relative", paddingLeft: 6, fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
                   {h}{i < dashCtrHeaders.length - 1 && <ColResizer onStart={e => dashCtrStartResize(i, e)} />}
                 </div>
               ))}
@@ -1174,7 +1174,7 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, onAddAllo
         <div style={{ display: "grid", gridTemplateColumns: allocTemplate,
           padding: "9px 20px", borderBottom: `1px solid ${T.border}` }}>
           {allocHeaders.map((h, i) => (
-            <div key={i} style={{ position: "relative", fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
+            <div key={i} style={{ position: "relative", paddingLeft: 6, fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
               {h}{i < allocHeaders.length - 1 && <ColResizer onStart={e => allocStartResize(i, e)} />}
             </div>
           ))}

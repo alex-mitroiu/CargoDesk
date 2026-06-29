@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+﻿import React, { useState, useEffect } from "react";
 import { T, INCOTERMS_2020, CONTAINER_TYPES, teuOf,
          statusVariant, contractVariant , addDays, diffDays , IMDG_CLASSES, IMDG_CLASS_VARIANT } from "../tokens";
 import { ShipmentForm } from "./ShipmentsPage";
@@ -11,7 +11,7 @@ import Badge from "../components/primitives/Badge";
 import {Inp, Sel, Field, BtnToggle} from "../components/primitives/Form";
 import { Modal, ConfirmModal } from "../components/primitives/Modal";
 import DatePicker from "../components/primitives/DatePicker";
-import { useResizableColumns, ColResizer } from "../components/primitives/useResizableColumns";
+import { useResizableColumns, ColResizer } from "../components/primitives/useResizableColumns.jsx";
 
 
 // ─── Section header with hover tooltip ───────────────────────────────────────
@@ -362,7 +362,7 @@ const CarriersPage = ({ carriers, onAdd, onEdit, onDelete }) => {
         <div style={{ display: "grid", gridTemplateColumns: carrTpl3,
           padding: "10px 20px", borderBottom: `1px solid ${T.border}` }}>
           {carrHdrs3.map((h, i) => (
-            <div key={i} style={{ position: "relative", fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
+            <div key={i} style={{ position: "relative", paddingLeft: 6, fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
               {h}{i < carrHdrs3.length - 1 && <ColResizer onStart={e => carrResize3(i, e)} />}
             </div>
           ))}
@@ -444,7 +444,7 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
         <div style={{ display: "grid", gridTemplateColumns: shipTpl2,
           padding: "10px 20px", borderBottom: `1px solid ${T.border}` }}>
           {shipHdrs2.map((h, i) => (
-            <div key={i} style={{ position: "relative", fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
+            <div key={i} style={{ position: "relative", paddingLeft: 6, fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
               {h}{i < shipHdrs2.length - 1 && <ColResizer onStart={e => shipResize2(i, e)} />}
             </div>
           ))}
@@ -978,7 +978,7 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
             <div style={{ display: "grid", gridTemplateColumns: ctrTemplate,
               padding: "9px 20px", borderBottom: `1px solid ${T.border}` }}>
               {ctrHeaders.map((h, i) => (
-                <div key={i} style={{ position: "relative", fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
+                <div key={i} style={{ position: "relative", paddingLeft: 6, fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
                   {h}{i < ctrHeaders.length - 1 && <ColResizer onStart={e => ctrStartResize(i, e)} />}
                 </div>
               ))}

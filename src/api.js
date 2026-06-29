@@ -115,6 +115,24 @@ export const api = {
     update: (id, data)  => req("PUT",    `/tickets/${id}`, data),
     remove: (id)        => req("DELETE", `/tickets/${id}`),
   },
+  contracts: {
+    search:  (p = {})     => req("GET",    `/contracts?${new URLSearchParams(p)}`),
+    find:    (p = {})     => req("GET",    `/contracts/search?${new URLSearchParams(p)}`),
+    match:   (p = {})     => req("GET",    `/contracts/match?${new URLSearchParams(p)}`),
+    get:     (id)         => req("GET",    `/contracts/${id}`),
+    create:  (data)       => req("POST",   "/contracts", data),
+    update:  (id, data)   => req("PUT",    `/contracts/${id}`, data),
+    remove:  (id)         => req("DELETE", `/contracts/${id}`),
+  },
+  systemMessages: {
+    list:   ()     => req("GET",    "/system-messages"),
+    all:    ()     => req("GET",    "/system-messages/all"),
+    create: (data) => req("POST",   "/system-messages", data),
+    remove: (id)   => req("DELETE", `/system-messages/${id}`),
+  },
+  fx: {
+    rates: () => req("GET", "/fx/rates"),
+  },
   vessels: {
     search: (q = "")          => req("GET",    `/vessels/search?q=${encodeURIComponent(q)}`),
     list:   (p = {})          => req("GET",    `/vessels?${new URLSearchParams(p)}`),

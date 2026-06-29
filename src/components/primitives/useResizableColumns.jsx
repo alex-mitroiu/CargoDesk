@@ -66,10 +66,10 @@ export const ColResizer = ({ onStart }) => (
       display: "flex", alignItems: "center", justifyContent: "center",
     }}
     onMouseEnter={e => e.currentTarget.querySelector("div").style.background = T.accent}
-    onMouseLeave={e => e.currentTarget.querySelector("div").style.background = "transparent"}
+    onMouseLeave={e => e.currentTarget.querySelector("div").style.background = T.border}
   >
     <div style={{
-      width: 1, height: "60%", background: "transparent",
+      width: 1, height: "70%", background: T.border,
       borderRadius: 1, transition: "background .15s",
       pointerEvents: "none",
     }} />

@@ -1,4 +1,4 @@
-export const CONTRACT_PRESETS = ["Pending", "SPOT", "Customer Own"];
+export const CONTRACT_PRESETS = ["Pending", "SPOT", "Customer Own", "Central Contract"];
 export const CONTAINER_TYPES  = ["DC", "RF", "OT", "FR", "TK"];
 export const STATUSES         = ["Active", "Pending", "Completed", "Cancelled", "Requires Review"];
 export const teuOf = (size) => (size === "40" ? 2 : 1);

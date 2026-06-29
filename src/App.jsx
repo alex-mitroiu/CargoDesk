@@ -29,8 +29,113 @@ import MdmCountriesPage       from "./pages/mdm/MdmCountriesPage";
 import MdmUNLocationCodesPage  from "./pages/mdm/MdmUNLocationCodesPage";
 import MdmCommoditiesPage     from "./pages/mdm/MdmCommoditiesPage";
 import MdmCustomersPage       from "./pages/mdm/MdmCustomersPage";
+import MdmContractsPage       from "./pages/mdm/MdmContractsPage";
 
 
+
+// ─── Health Modal ─────────────────────────────────────────────────────────────
+
+const HEALTH_CHECKS = [
+  { id: "server",    label: "API Server",              url: "/api/health",                     cat: "Internal" },
+  { id: "shipments", label: "Shipments",               url: "/api/shipments",                  cat: "Internal" },
+  { id: "contracts", label: "Contracts",               url: "/api/contracts?limit=1",          cat: "Internal" },
+  { id: "carriers",  label: "Carriers",                url: "/api/carriers",                   cat: "Internal" },
+  { id: "vessels",   label: "Vessels",                 url: "/api/vessels?limit=1",            cat: "Internal" },
+  { id: "ports",     label: "Port Locations",          url: "/api/port-locations?limit=1",     cat: "Internal" },
+  { id: "customers", label: "Customers",               url: "/api/customers?limit=1",          cat: "Internal" },
+  { id: "fx",        label: "FX Rates (frankfurter.app)", url: "https://api.frankfurter.app/latest?from=USD&to=EUR", cat: "External" },
+  { id: "weather",   label: "Weather (open-meteo.com)",   url: "https://api.open-meteo.com/v1/forecast?latitude=51.9&longitude=4.5&current=temperature_2m", cat: "External" },
+];
+
+const HealthModal = ({ onClose }) => {
+  const [results, setResults] = useState({});
+  const [running, setRunning] = useState(false);
+
+  const runChecks = async () => {
+    setRunning(true);
+    setResults({});
+    await Promise.all(HEALTH_CHECKS.map(async ({ id, url }) => {
+      const t0 = Date.now();
+      try {
+        const ctrl  = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 7000);
+        const r     = await fetch(url, { signal: ctrl.signal });
+        clearTimeout(timer);
+        setResults(p => ({ ...p, [id]: { ok: r.ok, status: r.status, latency: Date.now() - t0 } }));
+      } catch (e) {
+        setResults(p => ({ ...p, [id]: { ok: false, error: e.name === "AbortError" ? "Timeout (7 s)" : e.message, latency: Date.now() - t0 } }));
+      }
+    }));
+    setRunning(false);
+  };
+
+  useEffect(() => { runChecks(); }, []);
+
+  const cats     = ["Internal", "External"];
+  const allDone  = HEALTH_CHECKS.every(c => c.id in results);
+  const allOk    = allDone && HEALTH_CHECKS.every(c => results[c.id]?.ok);
+  const anyFail  = allDone && HEALTH_CHECKS.some(c => !results[c.id]?.ok);
+
+  return (
+    <Modal title="System Health" onClose={onClose} width={520}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+
+        {/* Summary bar */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <span style={{ fontFamily: T.body, fontSize: 13, fontWeight: 600,
+            color: running ? T.textMuted : allOk ? T.success : anyFail ? T.danger : T.textMuted }}>
+            {running ? "Checking services…" : allOk ? "✓ All systems operational" : anyFail ? "✗ One or more services degraded" : ""}
+          </span>
+          <Btn variant="secondary" onClick={runChecks} disabled={running}>
+            {running ? "Running…" : "Re-check"}
+          </Btn>
+        </div>
+
+        {/* Per-category tables */}
+        {cats.map(cat => (
+          <div key={cat}>
+            <div style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: T.accent,
+              textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 8 }}>
+              {cat} Services
+            </div>
+            <div style={{ background: T.bg, borderRadius: 8, border: `1px solid ${T.border}`, overflow: "hidden" }}>
+              {HEALTH_CHECKS.filter(c => c.cat === cat).map((c, i, arr) => {
+                const r      = results[c.id];
+                const isLast = i === arr.length - 1;
+                const dotColor = r === undefined ? T.border : r.ok ? T.success : T.danger;
+                return (
+                  <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 12,
+                    padding: "10px 14px", borderBottom: isLast ? "none" : `1px solid ${T.border}22` }}>
+                    <div style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
+                      background: dotColor,
+                      boxShadow: r?.ok ? `0 0 6px ${T.success}77` : r ? `0 0 6px ${T.danger}77` : "none",
+                      transition: "background .3s, box-shadow .3s" }} />
+                    <span style={{ fontFamily: T.body, fontSize: 13, color: T.text, flex: 1 }}>
+                      {c.label}
+                    </span>
+                    <span style={{ fontFamily: T.mono, fontSize: 11,
+                      color: r === undefined ? T.border : r.ok ? T.success : T.danger }}>
+                      {r === undefined ? "—" : r.ok ? `${r.latency} ms` : (r.error || `HTTP ${r.status}`)}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+
+        {/* Help note */}
+        <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, lineHeight: 1.7,
+          background: T.bg, borderRadius: 8, padding: "12px 14px", border: `1px solid ${T.border}` }}>
+          When reporting a bug, note which services show errors above and include their status codes or
+          error messages. Internal services run on{" "}
+          <code style={{ fontFamily: T.mono, color: T.textCode, fontSize: 11 }}>localhost:3001</code>.
+          External services require an internet connection.
+        </div>
+      </div>
+    </Modal>
+  );
+};
 
 // ─── Root App ─────────────────────────────────────────────────────────────────
 
@@ -50,6 +155,8 @@ function App() {
   const [ready,       setReady]       = useState(false);
   const [apiError,    setApiError]    = useState(null);
 
+
+  const [healthOpen, setHealthOpen] = useState(false);
 
   const [page,       setPage]       = useState(() => {
     const hash = window.location.hash.replace("#", "").trim();
@@ -120,7 +227,7 @@ function App() {
   }, [page]);
 
   // kanban is top-level, not MDM
-  const MDM_PAGES = ["mdm-carriers", "mdm-ports", "mdm-linked", "mdm-vessels", "mdm-commodities", "mdm-tradelanes", "mdm-countries", "mdm-unlocodes", "mdm-customers"];
+  const MDM_PAGES = ["mdm-carriers", "mdm-ports", "mdm-linked", "mdm-vessels", "mdm-commodities", "mdm-tradelanes", "mdm-countries", "mdm-unlocodes", "mdm-customers", "mdm-contracts"];
   const ALL_PAGES = [...MDM_PAGES, "manual"];
   const isMdmActive = MDM_PAGES.includes(page);
 
@@ -179,6 +286,7 @@ function App() {
     "mdm-countries":    "Master Data — Countries",
     "mdm-unlocodes":    "Master Data — UN Location Codes",
     "mdm-customers":    "Master Data — Customers",
+    "mdm-contracts":    "Master Data — Contracts",
     manual:             "User Manual",
   };
 
@@ -498,6 +606,7 @@ function App() {
                 <div style={{ fontFamily: T.mono, fontSize: 9, color: T.border, fontWeight: 700,
                   textTransform: "uppercase", letterSpacing: ".1em", padding: "5px 12px 3px 28px" }}>Directory</div>
                 <NavBtn pageKey="mdm-customers"    icon="👥" label="Customers"       indent />
+                <NavBtn pageKey="mdm-contracts"   icon="📋" label="Contracts"       indent />
                 <NavBtn pageKey="mdm-carriers" icon="🏢" label="Carriers"       indent />
                 <NavBtn pageKey="mdm-vessels"      icon="🚢" label="Vessels"         indent />
                 <NavBtn pageKey="mdm-commodities" icon="📦" label="Commodities"     indent />
@@ -675,6 +784,7 @@ function App() {
         {page === "mdm-unlocodes"   && <MdmUNLocationCodesPage />}
         {page === "mdm-commodities" && <MdmCommoditiesPage />}
         {page === "mdm-customers"  && <MdmCustomersPage />}
+        {page === "mdm-contracts"  && <MdmContractsPage />}
         {page === "manual"         && <UserManualPage />}
         {page === "about"          && <AboutPage />}
 
@@ -695,13 +805,27 @@ function App() {
         <span style={{ fontFamily: T.body, fontSize: 11, color: T.border }}>
           © {COPYRIGHT_YEAR} {COPYRIGHT_OWNER} · All rights reserved
         </span>
-        <button type="button" onClick={() => navigate("about")}
-          style={{ background: "none", border: "none", cursor: "pointer",
-            fontFamily: T.mono, fontSize: 11, color: T.textMuted,
-            padding: 0, textDecoration: "underline dotted" }}>
-          About
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+          <button type="button" onClick={() => setHealthOpen(true)}
+            style={{ background: "none", border: "none", cursor: "pointer", padding: 0,
+              display: "flex", alignItems: "center", gap: 5 }}>
+            <div style={{ width: 7, height: 7, borderRadius: "50%", background: T.success,
+              boxShadow: `0 0 5px ${T.success}88` }} />
+            <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted,
+              textDecoration: "underline dotted" }}>
+              System Health
+            </span>
+          </button>
+          <button type="button" onClick={() => navigate("about")}
+            style={{ background: "none", border: "none", cursor: "pointer",
+              fontFamily: T.mono, fontSize: 11, color: T.textMuted,
+              padding: 0, textDecoration: "underline dotted" }}>
+            About
+          </button>
+        </div>
       </footer>
+
+      {healthOpen && <HealthModal onClose={() => setHealthOpen(false)} />}
 
       <ToastContainer />
     </div>

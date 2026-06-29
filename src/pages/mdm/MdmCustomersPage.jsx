@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+﻿import { useState, useEffect, useCallback, useRef } from "react";
 import { T } from "../../tokens";
 import { api } from "../../api";
 import { PageSpinner } from "../../components/primitives/Spinner";
@@ -6,7 +6,7 @@ import Btn from "../../components/primitives/Btn";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
 import Pagination from "../../components/primitives/Pagination";
 import { inputBase, Inp, Textarea, Field } from "../../components/primitives/Form";
-import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns";
+import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns.jsx";
 
 // ─── Customer Form ────────────────────────────────────────────────────────────
 
@@ -142,7 +142,7 @@ const MdmCustomersPage = () => {
 
   // Column header style
   const th = {
-    position: "relative", fontFamily: T.body, fontSize: 10.5, fontWeight: 600,
+    position: "relative", paddingLeft: 6, fontFamily: T.body, fontSize: 10.5, fontWeight: 600,
     color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em",
   };
 

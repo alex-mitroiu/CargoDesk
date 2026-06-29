@@ -89,6 +89,65 @@ const LandingPage = ({ shipments = [], containers = [], carriers = [], allocatio
     setCity(c); localStorage.setItem("wd_city", c); setEditCity(false);
   };
 
+  // Currency converter
+  const [fxRates,   setFxRates]   = useState({});
+  const [fxFrom,    setFxFrom]    = useState(() => localStorage.getItem("fx_from") || "EUR");
+  const [fxTo,      setFxTo]      = useState(() => localStorage.getItem("fx_to")   || "USD");
+  const [fxAmount,  setFxAmount]  = useState("1000");
+
+  useEffect(() => {
+    api.fx.rates().then(r => setFxRates(r.rates || {})).catch(() => {});
+  }, []);
+
+  const fxConvert = (amt, from, to) => {
+    const n = parseFloat(amt);
+    if (!n || from === to) return n || 0;
+    const toUsd = from === "USD" ? n : (fxRates[from] ? n / fxRates[from] : null);
+    if (toUsd === null) return null;
+    return to === "USD" ? toUsd : toUsd * (fxRates[to] || 1);
+  };
+  const fxResult = fxConvert(fxAmount, fxFrom, fxTo);
+
+  const swapFx = () => {
+    setFxFrom(fxTo); setFxTo(fxFrom);
+    localStorage.setItem("fx_from", fxTo);
+    localStorage.setItem("fx_to",   fxFrom);
+  };
+
+  const FX_CURRENCIES = ["USD","EUR","GBP","CHF","JPY","CNY","SGD","HKD","AED","SAR","AUD","CAD","DKK","NOK","SEK","INR","BRL","MXN","ZAR","TRY"];
+  const selStyle = { background: T.bg, border: `1px solid ${T.border}`, borderRadius: 5,
+    color: T.text, fontFamily: T.mono, fontSize: 12, padding: "4px 6px", outline: "none", cursor: "pointer" };
+
+  // System messages
+  const [sysMessages, setSysMessages] = useState([]);
+  const [showMsgForm, setShowMsgForm] = useState(false);
+  const [msgForm, setMsgForm]         = useState({ title:"", body:"", severity:"info", activeFrom:"", activeTo:"" });
+
+  const loadMessages = () => api.systemMessages.list().then(setSysMessages).catch(() => {});
+  useEffect(() => { loadMessages(); }, []);
+
+  const addMessage = async () => {
+    if (!msgForm.title.trim()) return;
+    try {
+      await api.systemMessages.create(msgForm);
+      setMsgForm({ title:"", body:"", severity:"info", activeFrom:"", activeTo:"" });
+      setShowMsgForm(false);
+      loadMessages();
+    } catch {}
+  };
+  const removeMessage = async (id) => {
+    try { await api.systemMessages.remove(id); loadMessages(); } catch {}
+  };
+
+  const severityStyle = s => ({
+    info:    { border: `1px solid ${T.info}44`,    borderLeft: `3px solid ${T.info}`,    bg: T.infoBg    },
+    warning: { border: `1px solid ${T.warning}44`, borderLeft: `3px solid ${T.warning}`, bg: T.warningBg },
+    danger:  { border: `1px solid ${T.danger}44`,  borderLeft: `3px solid ${T.danger}`,  bg: T.dangerBg  },
+    success: { border: `1px solid ${T.success}44`, borderLeft: `3px solid ${T.success}`, bg: T.successBg },
+  }[s] || { border: `1px solid ${T.border}`, borderLeft: `3px solid ${T.border}`, bg: T.surface });
+
+  const sevColor = { info: T.info, warning: T.warning, danger: T.danger, success: T.success };
+
   // Quick stats
   const [stats, setStats] = useState(null);
   useEffect(() => {
@@ -257,6 +316,154 @@ const LandingPage = ({ shipments = [], containers = [], carriers = [], allocatio
               <span style={{ fontFamily: T.mono, fontSize: 14, fontWeight: 700, color }}>{value}</span>
             </div>
           ))}
+        </div>
+      </div>
+
+      {/* ── Currency converter + System messages ── */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14 }}>
+
+        {/* Currency Converter */}
+        <div style={card({ display: "flex", flexDirection: "column", gap: 14 })}>
+          <div style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: T.textMuted,
+            textTransform: "uppercase", letterSpacing: ".1em" }}>
+            💱 Currency Converter
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <input
+              type="number" min="0" value={fxAmount}
+              onChange={e => setFxAmount(e.target.value)}
+              style={{ width: 90, background: T.bg, border: `1px solid ${T.border}`, borderRadius: 5,
+                color: T.text, fontFamily: T.mono, fontSize: 13, padding: "5px 8px", outline: "none" }}
+            />
+            <select value={fxFrom}
+              onChange={e => { setFxFrom(e.target.value); localStorage.setItem("fx_from", e.target.value); }}
+              style={selStyle}>
+              {FX_CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <button onClick={swapFx}
+              title="Swap currencies"
+              style={{ background: T.accentBg, border: `1px solid ${T.accent}44`, borderRadius: 5,
+                color: T.accent, cursor: "pointer", padding: "4px 9px", fontSize: 14, lineHeight: 1 }}>
+              ⇄
+            </button>
+            <select value={fxTo}
+              onChange={e => { setFxTo(e.target.value); localStorage.setItem("fx_to", e.target.value); }}
+              style={selStyle}>
+              {FX_CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+          {fxResult !== null ? (
+            <div>
+              <div style={{ fontFamily: T.mono, fontSize: 28, fontWeight: 800, color: T.accent, lineHeight: 1 }}>
+                {fxTo} {fxResult.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
+              <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginTop: 4 }}>
+                {parseFloat(fxAmount).toLocaleString("en-US")} {fxFrom} at ECB rate
+              </div>
+            </div>
+          ) : (
+            <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
+              {Object.keys(fxRates).length === 0 ? "Loading rates…" : "Enter an amount above"}
+            </div>
+          )}
+          <div style={{ fontFamily: T.body, fontSize: 11, color: T.border, marginTop: "auto" }}>
+            Rates via frankfurter.app (ECB) · Refreshed daily
+          </div>
+        </div>
+
+        {/* System Messages */}
+        <div style={card({ padding: 0, overflow: "hidden", display: "flex", flexDirection: "column" })}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+            padding: "16px 18px 12px" }}>
+            <div style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: T.textMuted,
+              textTransform: "uppercase", letterSpacing: ".1em" }}>
+              📣 System Messages
+            </div>
+            <button
+              onClick={() => setShowMsgForm(v => !v)}
+              title="Post a new system message"
+              style={{ background: showMsgForm ? T.accentBg : "none",
+                border: `1px solid ${showMsgForm ? T.accent : T.border}`,
+                borderRadius: 5, color: showMsgForm ? T.accent : T.textMuted,
+                cursor: "pointer", padding: "3px 10px", fontFamily: T.body, fontSize: 12, fontWeight: 600 }}>
+              {showMsgForm ? "✕ Cancel" : "+ Post"}
+            </button>
+          </div>
+
+          {/* New message form */}
+          {showMsgForm && (
+            <div style={{ padding: "0 18px 14px", borderBottom: `1px solid ${T.border}22`,
+              display: "flex", flexDirection: "column", gap: 8 }}>
+              <input placeholder="Title…" value={msgForm.title}
+                onChange={e => setMsgForm(p => ({ ...p, title: e.target.value }))}
+                style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 5,
+                  color: T.text, fontFamily: T.body, fontSize: 13, padding: "6px 10px", outline: "none" }} />
+              <textarea placeholder="Body (optional)…" value={msgForm.body} rows={2}
+                onChange={e => setMsgForm(p => ({ ...p, body: e.target.value }))}
+                style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 5,
+                  color: T.text, fontFamily: T.body, fontSize: 12, padding: "6px 10px",
+                  outline: "none", resize: "vertical" }} />
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <select value={msgForm.severity} onChange={e => setMsgForm(p => ({ ...p, severity: e.target.value }))}
+                  style={{ ...selStyle, fontSize: 11, flex: 1 }}>
+                  {["info","warning","danger","success"].map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+                <input type="date" value={msgForm.activeFrom} title="Active from"
+                  onChange={e => setMsgForm(p => ({ ...p, activeFrom: e.target.value }))}
+                  style={{ ...selStyle, fontSize: 11, flex: 1 }} />
+                <input type="date" value={msgForm.activeTo} title="Active to"
+                  onChange={e => setMsgForm(p => ({ ...p, activeTo: e.target.value }))}
+                  style={{ ...selStyle, fontSize: 11, flex: 1 }} />
+                <button onClick={addMessage}
+                  style={{ background: T.accent, border: "none", borderRadius: 5,
+                    color: T.btnPrimaryText, cursor: "pointer", padding: "5px 14px",
+                    fontFamily: T.body, fontSize: 12, fontWeight: 600 }}>
+                  Post
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Message list */}
+          <div style={{ flex: 1, overflowY: "auto", maxHeight: 220 }}>
+            {sysMessages.length === 0 ? (
+              <div style={{ padding: "24px 18px", fontFamily: T.body, fontSize: 13,
+                color: T.textMuted, fontStyle: "italic" }}>
+                No active system messages.
+              </div>
+            ) : sysMessages.map(m => {
+              const st = severityStyle(m.severity);
+              return (
+                <div key={m.id} style={{ margin: "8px 12px", borderRadius: 7,
+                  background: st.bg, border: st.border, borderLeft: st.borderLeft, padding: "10px 12px" }}>
+                  <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
+                    <div style={{ fontFamily: T.body, fontSize: 13, fontWeight: 700,
+                      color: sevColor[m.severity] || T.text, flex: 1 }}>
+                      {m.title}
+                    </div>
+                    <button onClick={() => removeMessage(m.id)}
+                      style={{ background: "none", border: "none", cursor: "pointer",
+                        color: T.textMuted, fontSize: 14, lineHeight: 1, padding: "0 2px", flexShrink: 0 }}
+                      onMouseEnter={e => e.currentTarget.style.color = T.danger}
+                      onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>
+                      ✕
+                    </button>
+                  </div>
+                  {m.body && (
+                    <div style={{ fontFamily: T.body, fontSize: 12, color: T.text,
+                      marginTop: 4, lineHeight: 1.5 }}>
+                      {m.body}
+                    </div>
+                  )}
+                  {(m.activeFrom || m.activeTo) && (
+                    <div style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted, marginTop: 6 }}>
+                      {m.activeFrom && `From ${m.activeFrom}`}{m.activeFrom && m.activeTo && " · "}{m.activeTo && `Until ${m.activeTo}`}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
 
