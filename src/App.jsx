@@ -176,7 +176,6 @@ function App() {
     "mdm-regions":      "Master Data — Regions",
     "mdm-countries":    "Master Data — Countries",
     "mdm-unlocodes":    "Master Data — UN Location Codes",
-    "mdm-regions":      "Master Data — Regions",
     manual:             "User Manual",
   };
 
