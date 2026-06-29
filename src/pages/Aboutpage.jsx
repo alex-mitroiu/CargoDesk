@@ -98,7 +98,8 @@ import { VERSION, BUILD, CODENAME, CHANGELOG, COPYRIGHT_YEAR, COPYRIGHT_OWNER } 
         { name: "latitude",     type: "REAL",     note: "Geographic latitude" },
         { name: "longitude",    type: "REAL",     note: "Geographic longitude" },
         { name: "country_code", type: "TEXT",     note: "ISO2 country code" },
-        { name: "zone_code",    type: "TEXT",     note: "Subdivision / zone code" },
+        { name: "zone_code",      type: "TEXT",   note: "Subdivision / zone code" },
+        { name: "last_synced_at", type: "TEXT",   note: "UTC timestamp of last import-mdm-data.js sync — enables delta sync and deprecation detection. Added v0.11.0" },
       ],
     },
     {
@@ -145,6 +146,36 @@ import { VERSION, BUILD, CODENAME, CHANGELOG, COPYRIGHT_YEAR, COPYRIGHT_OWNER } 
         { name: "name",        type: "TEXT",     note: "Country name" },
         { name: "un_member",   type: "INTEGER",  note: "1 = UN member state" },
         { name: "region_code", type: "TEXT",     note: "FK → regions. Added post v0.1.0" },
+      ],
+    },
+    {
+      table: "shipment_events",
+      description: "Full audit log of all shipment changes — field updates, container operations, and status transitions. One row per discrete change.",
+      columns: [
+        { name: "id",          type: "TEXT PK",  note: "Auto-generated EVT-XXXX identifier" },
+        { name: "shipment_id", type: "TEXT FK",  note: "Parent shipment → ON DELETE CASCADE" },
+        { name: "event_type",  type: "TEXT",     note: "STATUS_CHANGED | FIELD_UPDATED | CONTAINER_ADDED | CONTAINER_REMOVED | CONTAINER_UPDATED" },
+        { name: "field",       type: "TEXT",     note: "DB column name that changed (e.g. etd, carrier_code, gross_weight_kg)" },
+        { name: "old_value",   type: "TEXT",     note: "Value before the change" },
+        { name: "new_value",   type: "TEXT",     note: "Value after the change" },
+        { name: "actor",       type: "TEXT",     note: "Identity of the actor — defaults to 'user', ready for auth. Added v0.11.0" },
+        { name: "occurred_at", type: "TEXT",     note: "UTC ISO 8601 timestamp" },
+        { name: "meta",        type: "TEXT",     note: "JSON blob with extra context (container number, size, type for container events)" },
+      ],
+    },
+    {
+      table: "shipment_events",
+      description: "Full audit log of all shipment changes. One row per discrete change — field updates, container operations, status transitions.",
+      columns: [
+        { name: "id",          type: "TEXT PK", note: "Auto-generated EVT-XXXX identifier" },
+        { name: "shipment_id", type: "TEXT FK", note: "Parent shipment → ON DELETE CASCADE" },
+        { name: "event_type",  type: "TEXT",    note: "STATUS_CHANGED | FIELD_UPDATED | CONTAINER_ADDED | CONTAINER_REMOVED | CONTAINER_UPDATED" },
+        { name: "field",       type: "TEXT",    note: "DB column name that changed (e.g. etd, gross_weight_kg)" },
+        { name: "old_value",   type: "TEXT",    note: "Value before the change" },
+        { name: "new_value",   type: "TEXT",    note: "Value after the change" },
+        { name: "actor",       type: "TEXT",    note: "Identity of the actor — defaults to 'user', ready for auth. Added v0.11.0" },
+        { name: "occurred_at", type: "TEXT",    note: "UTC ISO 8601 timestamp" },
+        { name: "meta",        type: "TEXT",    note: "JSON with extra context (container number, size, type)" },
       ],
     },
     {
@@ -288,7 +319,11 @@ const AboutPage = () => {
     { icon: "🚢", title: "Vessel Registry",          desc: "349 vessels from the IMO registry, searchable by name, IMO number, or asset type, linked to country flags and integrated with the shipment form." },
     { icon: "📍", title: "Port & MDM Directory",     desc: "14,269 UN/LOCODE ports, carrier directory, trade lanes, linked ports, regions, countries, UN location codes, and commodity codes — all editable." },
     { icon: "📋", title: "Integration Board",        desc: "Kanban board (Ready / In Progress / Done / Released) for tracking development and integration tasks, with priority and section filters." },
+    { icon: "📜", title: "Shipment History Tracker", desc: "Full audit trail: field changes, container add/remove/update, and status transitions logged automatically as discrete events — rendered as a colour-coded timeline on the detail page." },
+    { icon: "🎯", title: "Kanban Drag-to-Reorder",     desc: "Cards drag within columns to sequence by priority. Drop indicators show insertion position. Persisted immediately with optimistic updates." },
     { icon: "🌗", title: "Light / Dark Theme",       desc: "Apple HIG-compliant light theme alongside the CargoDesk dark theme. Instant toggle in the user menu, preference persisted to localStorage." },
+    { icon: "📜", title: "Shipment History Tracker",   desc: "Full audit trail for every shipment: field changes, container additions/removals/updates and status transitions are logged automatically as discrete events and rendered as a colour-coded timeline on the detail page." },
+    { icon: "🎯", title: "Kanban Drag-to-Reorder",      desc: "Cards can be dragged within a column to sequence by priority. Drop indicators show insertion position. Changes are persisted immediately with optimistic UI updates." },
     { icon: "📚", title: "User Manual",              desc: "Built-in documentation covering Incoterms® 2020 and IMDG dangerous goods classes (Classes 1–9, 20 sub-classes with full descriptions and source link)." },
   ];
 

@@ -143,6 +143,20 @@ db.exec(`
     created_at  TEXT NOT NULL
   );
 
+  -- ── Shipment event log (all changes) ──
+  CREATE TABLE IF NOT EXISTS shipment_events (
+    id          TEXT PRIMARY KEY,
+    shipment_id TEXT NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
+    event_type  TEXT NOT NULL,
+    field       TEXT DEFAULT NULL,
+    old_value   TEXT DEFAULT NULL,
+    new_value   TEXT DEFAULT NULL,
+    actor       TEXT NOT NULL DEFAULT 'user',
+    occurred_at TEXT NOT NULL,
+    meta        TEXT DEFAULT ''
+  );
+  CREATE INDEX IF NOT EXISTS idx_shp_events ON shipment_events(shipment_id, occurred_at);
+
   -- ── Shipment status audit log ──
   CREATE TABLE IF NOT EXISTS status_log (
     id           TEXT PRIMARY KEY,
@@ -235,9 +249,54 @@ const mapPortLocation = r => ({ unlocode: r.unlocode, name: r.name, latitude: r.
 const mapLinkedPort   = r => ({ id: r.id, primaryUnlocode: r.primary_unlocode, primaryName: r.primary_name || '', linkedUnlocode: r.linked_unlocode, linkedName: r.linked_name || '', note: r.note || '' });
 const mapTradeLane    = r => ({ code: r.code, name: r.name, description: r.description || '', countryCount: r.country_count ?? 0 });
 const mapRegion       = r => ({ code: r.code, name: r.name, description: r.description || '' });
+const mapCountry      = r => ({ iso2: r.iso2, name: r.name, unMember: r.un_member === 1, regionCode: r.region_code || '' });
 const mapTicket       = r => ({ id: r.id, title: r.title, section: r.section || '', description: r.description || '', priority: r.priority, status: r.status, position: r.position, createdAt: r.created_at });
 const mapCommodity    = r => ({ code: r.code, description: r.description, gradeCode: r.grade_code, gradeName: r.grade_name });
-const mapCountry      = r => ({ iso2: r.iso2, name: r.name, unMember: r.un_member === 1, regionCode: r.region_code || '', portCount: r.port_count ?? 0 });
+
+// ─── Shipment event logger ────────────────────────────────────────────────────
+const logEvent = (shipmentId, type, field, oldVal, newVal, meta = '') => {
+  try {
+    db.prepare(
+      "INSERT INTO shipment_events (id,shipment_id,event_type,field,old_value,new_value,actor,occurred_at,meta) VALUES (?,?,?,?,?,?,?,?,?)"
+    ).run(`EVT-${uid()}`, shipmentId, type,
+      field   ?? null,
+      oldVal  != null ? String(oldVal) : null,
+      newVal  != null ? String(newVal) : null,
+      'user', new Date().toISOString(), meta);
+  } catch(e) { console.warn('logEvent failed:', e.message); }
+};
+
+// Fields to track on shipments (db column → human label)
+const TRACKED_FIELDS = {
+  pol:            'Port of Loading',
+  pod:            'Port of Discharge',
+  status:         'Status',
+  etd:            'Estimated Departure',
+  eta:            'Estimated Arrival',
+  carrier_code:   'Carrier',
+  vessel:         'Vessel',
+  vessel_imo:     'Vessel IMO',
+  voyage:         'Voyage',
+  incoterm:       'Incoterm',
+  commodity_code: 'Commodity',
+  booking_ref:    'Booking Reference',
+  bl_number:      'B/L Number',
+  contract_type:  'Contract Type',
+  contract_id:    'Contract ID',
+};
+
+const TRACKED_CTR_FIELDS = {
+  container_number:  'Container Number',
+  size:              'Size',
+  type:              'Equipment Type',
+  hs_code:           'HS Code',
+  cargo_description: 'Cargo Description',
+  gross_weight_kg:   'Gross Weight (kg)',
+  volume_cbm:        'Volume (CBM)',
+  is_dg:             'Dangerous Goods',
+  dg_class:          'DG Class',
+};
+
 // ─── Allocation conflict helpers ──────────────────────────────────────────────
 
 const checkOverlap = (carrierCode, effectiveDate, endDate, pol = '', pod = '', excludeId = null) => {
@@ -278,6 +337,20 @@ app.get("/api/shipments/:id", (req, res) => {
   ok(res, mapShipment(row));
 });
 
+// Full shipment event history
+app.get("/api/shipments/:id/events", (req, res) => {
+  const rows = db.prepare(
+    "SELECT * FROM shipment_events WHERE shipment_id=? ORDER BY occurred_at ASC"
+  ).all(req.params.id);
+  ok(res, rows.map(r => ({
+    id: r.id, shipmentId: r.shipment_id,
+    eventType: r.event_type, field: r.field,
+    oldValue: r.old_value, newValue: r.new_value,
+    actor: r.actor, occurredAt: r.occurred_at,
+    meta: r.meta ? JSON.parse(r.meta) : {},
+  })));
+});
+
 // Shipment status audit log
 app.get("/api/shipments/:id/status-log", (req, res) => {
   const rows = db.prepare(
@@ -308,13 +381,24 @@ app.put("/api/shipments/:id", (req, res) => {
           etd = "", eta = "", bookingRef = "", blNumber = "", vessel = "", voyage = "",
           incoterm = "", vesselImo = "", contractId = "", commodityCode = "" } = req.body;
   const polU = pol.toUpperCase(), podU = pod.toUpperCase();
-  const existing = db.prepare("SELECT status FROM shipments WHERE id=?").get(req.params.id);
+  const existing = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
   if (!existing) return err(res, "Not found", 404);
   const info = db.prepare(`
     UPDATE shipments SET pol=?, pod=?, carrier_code=?, contract_type=?, contract_notes=?, status=?,
     etd=?, eta=?, booking_ref=?, bl_number=?, vessel=?, voyage=?, incoterm=?, vessel_imo=?, contract_id=?, commodity_code=? WHERE id=?
   `).run(polU, podU, carrierCode, contractType, contractNotes, status, etd, eta, bookingRef, blNumber, vessel, voyage, incoterm, vesselImo, contractId, commodityCode, req.params.id);
   if (info.changes === 0) return err(res, "Not found", 404);
+  // Log all changed fields
+  const newVals = { pol: polU, pod: podU, status, etd, eta, carrier_code: carrierCode,
+    vessel, vessel_imo: vesselImo, voyage, incoterm, commodity_code: commodityCode,
+    booking_ref: bookingRef, bl_number: blNumber, contract_type: contractType, contract_id: contractId };
+  for (const [col] of Object.entries(TRACKED_FIELDS)) {
+    const o = String(existing[col] || ''), n = String(newVals[col] || '');
+    if (o !== n) {
+      const type = col === 'status' ? 'STATUS_CHANGED' : 'FIELD_UPDATED';
+      logEvent(req.params.id, type, col, o || null, n || null);
+    }
+  }
   if (existing.status !== status) {
     db.prepare("INSERT INTO status_log (id,shipment_id,from_status,to_status,changed_at,changed_by) VALUES (?,?,?,?,?,?)")
       .run(`SL-${uid()}`, req.params.id, existing.status, status, new Date().toISOString(), "user");
@@ -352,23 +436,41 @@ app.post("/api/containers", (req, res) => {
   const cnU = containerNumber.toUpperCase();
   db.prepare("INSERT INTO containers (id,shipment_id,container_number,seal_number,size,type,hs_code,cargo_description,gross_weight_kg,volume_cbm,is_dg,dg_class) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
     .run(id, shipmentId, cnU, sealNumber, size, type, hsCode, cargoDescription, grossWeightKg, volumeCbm, isDg ? 1 : 0, dgClass);
-  ok(res, mapContainer({ id, shipment_id: shipmentId, container_number: cnU, seal_number: sealNumber, size, type, hs_code: hsCode, cargo_description: cargoDescription, gross_weight_kg: grossWeightKg, volume_cbm: volumeCbm, is_dg: isDg ? 1 : 0, dg_class: dgClass }), 201);
+  const addedCtr = mapContainer({ id, shipment_id: shipmentId, container_number: cnU, seal_number: sealNumber, size, type, hs_code: hsCode, cargo_description: cargoDescription, gross_weight_kg: grossWeightKg, volume_cbm: volumeCbm, is_dg: isDg ? 1 : 0, dg_class: dgClass });
+  logEvent(shipmentId, 'CONTAINER_ADDED', null, null, cnU,
+    JSON.stringify({ size, type, hsCode, cargoDescription }));
+  ok(res, addedCtr, 201);
 });
 
 app.put("/api/containers/:id", (req, res) => {
   const { containerNumber = "", sealNumber = "", size, type,
           hsCode = "", cargoDescription = "", grossWeightKg = null, volumeCbm = null, isDg = false, dgClass = "" } = req.body;
-  const cnU  = containerNumber.toUpperCase();
+  const cnU    = containerNumber.toUpperCase();
+  const oldCtr = db.prepare("SELECT * FROM containers WHERE id=?").get(req.params.id);
+  if (!oldCtr) return err(res, "Not found", 404);
   const info = db.prepare("UPDATE containers SET container_number=?, seal_number=?, size=?, type=?, hs_code=?, cargo_description=?, gross_weight_kg=?, volume_cbm=?, is_dg=?, dg_class=? WHERE id=?")
     .run(cnU, sealNumber, size, type, hsCode, cargoDescription, grossWeightKg, volumeCbm, isDg ? 1 : 0, dgClass, req.params.id);
   if (info.changes === 0) return err(res, "Not found", 404);
+  const newVals = { container_number: cnU, size, type, hs_code: hsCode,
+    cargo_description: cargoDescription, gross_weight_kg: grossWeightKg,
+    volume_cbm: volumeCbm, is_dg: isDg ? 1 : 0, dg_class: dgClass };
+  const meta = JSON.stringify({ containerNumber: cnU });
+  for (const [col] of Object.entries(TRACKED_CTR_FIELDS)) {
+    const o = String(oldCtr[col] ?? ''), n = String(newVals[col] ?? '');
+    if (o !== n && !(o === '' && n === '')) {
+      logEvent(oldCtr.shipment_id, 'CONTAINER_UPDATED', col, o, n, meta);
+    }
+  }
   const row = db.prepare("SELECT * FROM containers WHERE id=?").get(req.params.id);
   ok(res, mapContainer(row));
 });
 
 app.delete("/api/containers/:id", (req, res) => {
-  const info = db.prepare("DELETE FROM containers WHERE id=?").run(req.params.id);
-  if (info.changes === 0) return err(res, "Not found", 404);
+  const ctr = db.prepare("SELECT * FROM containers WHERE id=?").get(req.params.id);
+  if (!ctr) return err(res, "Not found", 404);
+  db.prepare("DELETE FROM containers WHERE id=?").run(req.params.id);
+  logEvent(ctr.shipment_id, 'CONTAINER_REMOVED', null, ctr.container_number, null,
+    JSON.stringify({ size: ctr.size, type: ctr.type }));
   ok(res, { deleted: req.params.id });
 });
 

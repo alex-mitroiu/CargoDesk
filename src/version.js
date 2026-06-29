@@ -2,62 +2,68 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.10.0";
-export const BUILD     = "2026-06-28";
-export const CODENAME  = "Compass";
+export const VERSION   = "0.11.0";
+export const BUILD     = "2026-06-29";
+export const CODENAME  = "Meridian";
 
 export const CHANGELOG = [
   {
-    version: "0.10.0",
-    date:    "2026-06-28",
-    codename:"Compass",
-    summary: "Space Configs: POL/POD required, auto trade-lane detection (EU-N › FE badges), linked-port conflict detection with coverage override stub. Commodities MDM: 294 Maersk codes, CommodityCombobox, mandatory field on shipments. Containers: commodity renamed to HS Code, gross weight, volume, DG/IMDG class (20 sub-classes with descriptions). Light/Dark theme: Apple HIG palette, instant toggle, persisted. Header: user dropdown, theme toggle, notification placeholder. Global toast system: success/error/warning/info, 5xx auto-toast. URL hash navigation: #shipments/SHP-ID deep links, browser back/forward. Shipment status audit trail: status_log table, automatic logging, timeline UI.",
+    version:  "0.11.0",
+    date:     "2026-06-29",
+    codename: "Meridian",
+    summary:  "Shipment History Tracker: shipment_events table logs every field change, container add/remove/update automatically — rendered as a colour-coded vertical timeline on the detail page. Kanban drag-to-reorder within columns with live drop indicators and optimistic updates. Countries MDM: port count fixed via LEFT JOIN + startup country_code backfill. Trade Lanes: country count and assignment endpoints added. Port locations: last_synced_at column + delta-sync pattern in import script. Loading spinners (FullPageSpinner, PageSpinner, inline Spinner) across all MDM pages and form save buttons. URL hash includes shipment ID for deep links. Duplicate key and missing import fixes.",
   },
   {
-    version: "0.9.0",
-    date:    "2026-06-28",
-    codename:"Anchor",
-    summary: "Container freight fields (commodity, weight, volume, DG/IMDG). User Manual: DG Classes reference section. Footer + About page with interactive DB schema. Version registry.",
+    version:  "0.10.0",
+    date:     "2026-06-28",
+    codename: "Compass",
+    summary:  "Space Configs: POL/POD required, auto trade-lane detection, linked-port conflict detection. Commodities MDM: 294 Maersk codes, CommodityCombobox, mandatory on shipments. Containers: HS Code + Cargo Description split, gross weight, volume, DG/IMDG class. Light/Dark theme. Global toast system. URL hash navigation. Status audit trail.",
   },
   {
-    version: "0.8.0",
-    date:    "2026-06-28",
-    summary: "Space Configs: POL/POD, auto trade-lane badges, conflict detection. Dashboard Archive page as sidebar child. 6-week TEU trend line chart alongside carrier bar chart. Sparklines + delta badges per allocation row.",
+    version:  "0.9.0",
+    date:     "2026-06-28",
+    codename: "Anchor",
+    summary:  "Container freight fields (commodity, weight, volume, DG/IMDG). User Manual DG Classes reference. Footer + About page with interactive DB schema. Version registry.",
   },
   {
-    version: "0.7.0",
-    date:    "2026-06-28",
-    summary: "Space Configs: trade lane, alert threshold slider, notes field. Dashboard Archive (expired configs, ↻ Renew flow). DashboardPage modularised into DashboardArchivePage.",
+    version:  "0.8.0",
+    date:     "2026-06-28",
+    summary:  "Space Configs: POL/POD, auto trade-lane badges, conflict detection. Dashboard Archive page. 6-week TEU trend line chart. Sparklines + delta badges per allocation row.",
   },
   {
-    version: "0.6.0",
-    date:    "2026-06-27",
-    summary: "Contract ID field. DatePicker 3-level navigation (Days→Months→Years), smart viewport flip. Central Contract button with tooltip placeholder.",
+    version:  "0.7.0",
+    date:     "2026-06-28",
+    summary:  "Space Configs: trade lane, alert threshold, notes. Dashboard Archive + Renew flow.",
   },
   {
-    version: "0.5.0",
-    date:    "2026-06-27",
-    summary: "MDM Vessels: 349 vessels from IMO registry, VesselField combobox. Modular refactor: monolithic cargodesk.jsx split into 27 source files.",
+    version:  "0.6.0",
+    date:     "2026-06-27",
+    summary:  "Contract ID field. DatePicker 3-level navigation, smart viewport flip.",
   },
   {
-    version: "0.4.0",
-    date:    "2026-06-27",
-    summary: "Landing page with weather widget, fleet stats, upcoming departures. Space Config POL/POD required. Allocation consumption scoped per carrier.",
+    version:  "0.5.0",
+    date:     "2026-06-27",
+    summary:  "MDM Vessels: 349 vessels from IMO registry. Modular refactor into 27 source files.",
   },
   {
-    version: "0.3.0",
-    date:    "2026-06-27",
-    summary: "Integration Board (Kanban): Ready / In Progress / Done / Released, drag-and-drop, priority & section filters. Dashboard TEU utilisation charts.",
+    version:  "0.4.0",
+    date:     "2026-06-27",
+    summary:  "Landing page with weather widget, fleet stats, upcoming departures.",
   },
   {
-    version: "0.2.0",
-    date:    "2026-06-27",
-    summary: "MDM: 8 modules, 14,269 ports seeded. Shipment detail with container management.",
+    version:  "0.3.0",
+    date:     "2026-06-27",
+    summary:  "Integration Board (Kanban): Ready / In Progress / Done / Released.",
   },
   {
-    version: "0.1.0",
-    date:    "2026-06-26",
-    summary: "Initial build: shipments, containers, Express + SQLite backend, React 18 + Vite frontend, dark design system.",
+    version:  "0.2.0",
+    date:     "2026-06-27",
+    summary:  "MDM: 8 modules, 14,269 ports seeded. Shipment detail with container management.",
+  },
+  {
+    version:  "0.1.0",
+    date:     "2026-06-26",
+    summary:  "Initial build: shipments, containers, Express + SQLite backend, React 18 + Vite frontend, dark design system.",
   },
 ];
 

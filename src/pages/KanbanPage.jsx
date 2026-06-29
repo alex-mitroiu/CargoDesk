@@ -76,30 +76,57 @@ const TicketModal = ({ init = {}, onSave, onCancel }) => {
   );
 };
 
+// ─── Drop Indicator ───────────────────────────────────────────────────────────
+
+const DropLine = () => (
+  <div style={{
+    height: 2, borderRadius: 2,
+    background: T.accent,
+    boxShadow: `0 0 6px ${T.accent}88`,
+    margin: "2px 0",
+    flexShrink: 0,
+  }} />
+);
+
 // ─── Ticket Card ──────────────────────────────────────────────────────────────
 
-const TicketCard = ({ ticket, onEdit, onDelete, onMove, colIndex }) => {
+const TicketCard = ({ ticket, onEdit, onDelete, onMove, colIndex,
+                      isDragging, dropIndicator, onDragStart, onDragEnd, onDragOver }) => {
   const [confirm, setConfirm] = useState(false);
-  const [dragging, setDragging] = useState(false);
+  const cardRef = useRef(null);
+
+  const handleDragOver = e => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!cardRef.current) return;
+    const rect = cardRef.current.getBoundingClientRect();
+    const mid  = rect.top + rect.height / 2;
+    onDragOver(ticket.id, e.clientY < mid ? "before" : "after");
+  };
 
   return (
     <>
+      {dropIndicator === "before" && <DropLine />}
+
       <div
+        ref={cardRef}
         draggable
-        onDragStart={e => { e.dataTransfer.setData("ticketId", ticket.id); setDragging(true); }}
-        onDragEnd={() => setDragging(false)}
+        onDragStart={e => { e.dataTransfer.setData("ticketId", ticket.id); onDragStart(ticket.id); }}
+        onDragEnd={onDragEnd}
+        onDragOver={handleDragOver}
         style={{
           background: T.bg, border: `1px solid ${T.border}`,
           borderLeft:  `3px solid ${PRIORITY_DOT[ticket.priority] || T.border}`,
           borderRadius: 8, padding: "12px 14px", cursor: "grab",
-          opacity: dragging ? 0.4 : 1, transition: "opacity .15s, box-shadow .15s",
-          boxShadow: dragging ? "none" : "0 2px 8px rgba(0,0,0,.25)",
+          opacity: isDragging ? 0.35 : 1,
+          transition: "opacity .15s, box-shadow .15s",
+          boxShadow: isDragging ? "none" : "0 2px 8px rgba(0,0,0,.25)",
           userSelect: "none",
         }}
-        onMouseEnter={e => { if (!dragging) e.currentTarget.style.boxShadow = "0 4px 16px rgba(0,0,0,.4)"; }}
-        onMouseLeave={e => e.currentTarget.style.boxShadow = dragging ? "none" : "0 2px 8px rgba(0,0,0,.25)"}
+        onMouseEnter={e => { if (!isDragging) e.currentTarget.style.boxShadow = "0 4px 16px rgba(0,0,0,.4)"; }}
+        onMouseLeave={e => e.currentTarget.style.boxShadow = isDragging ? "none" : "0 2px 8px rgba(0,0,0,.25)"}
       >
-        {/* Header row */}
+        {/* Header */}
         <div style={{ display: "flex", alignItems: "flex-start", gap: 6, marginBottom: 8 }}>
           <div style={{ flex: 1 }}>
             <div style={{ fontFamily: T.body, fontSize: 13, fontWeight: 600, color: T.text, lineHeight: 1.4 }}>
@@ -132,7 +159,8 @@ const TicketCard = ({ ticket, onEdit, onDelete, onMove, colIndex }) => {
         )}
 
         {/* Actions */}
-        <div style={{ display: "flex", gap: 5, justifyContent: "flex-end", borderTop: `1px solid ${T.border}22`, paddingTop: 8 }}>
+        <div style={{ display: "flex", gap: 5, justifyContent: "flex-end",
+          borderTop: `1px solid ${T.border}22`, paddingTop: 8 }}>
           {colIndex > 0 && (
             <button onClick={() => onMove(ticket, COLUMNS[colIndex - 1])}
               style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 4,
@@ -153,12 +181,15 @@ const TicketCard = ({ ticket, onEdit, onDelete, onMove, colIndex }) => {
           {colIndex < COLUMNS.length - 1 && (
             <button onClick={() => onMove(ticket, COLUMNS[colIndex + 1])}
               style={{ background: T.accentBg, border: `1px solid ${T.accent}55`, borderRadius: 4,
-                color: T.accent, cursor: "pointer", fontSize: 11, padding: "2px 8px", fontFamily: T.body, fontWeight: 600 }}>
+                color: T.accent, cursor: "pointer", fontSize: 11, padding: "2px 8px",
+                fontFamily: T.body, fontWeight: 600 }}>
               {COLUMNS[colIndex + 1].split(" ")[0]} →
             </button>
           )}
         </div>
       </div>
+
+      {dropIndicator === "after" && <DropLine />}
 
       {confirm && (
         <ConfirmModal
@@ -172,26 +203,45 @@ const TicketCard = ({ ticket, onEdit, onDelete, onMove, colIndex }) => {
 
 // ─── Kanban Column ────────────────────────────────────────────────────────────
 
-const KanbanColumn = ({ status, tickets, onEdit, onDelete, onMove, onDrop, colIndex }) => {
-  const [dragOver, setDragOver] = useState(false);
+const KanbanColumn = ({ status, tickets, onEdit, onDelete, onMove,
+                        onDrop, colIndex, dragId }) => {
+  // { id: ticketId, side: "before"|"after" } — where the drop line appears
+  const [dropTarget, setDropTarget] = useState(null);
+  const [colDragOver, setColDragOver] = useState(false);
+
+  const clearDrop = () => { setDropTarget(null); setColDragOver(false); };
+
+  const handleColDragOver = e => {
+    e.preventDefault();
+    // Only highlight column if dragging over the empty area (no card target)
+    setColDragOver(true);
+  };
+
+  const handleCardDragOver = (id, side) => {
+    setColDragOver(false);
+    setDropTarget({ id, side });
+  };
+
+  const handleDrop = e => {
+    e.preventDefault();
+    const id = e.dataTransfer.getData("ticketId");
+    if (id) onDrop(id, status, dropTarget?.id, dropTarget?.side);
+    clearDrop();
+  };
 
   return (
     <div
-      onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-      onDragLeave={() => setDragOver(false)}
-      onDrop={e => {
-        e.preventDefault(); setDragOver(false);
-        const id = e.dataTransfer.getData("ticketId");
-        if (id) onDrop(id, status);
-      }}
+      onDragOver={handleColDragOver}
+      onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) clearDrop(); }}
+      onDrop={handleDrop}
       style={{
         flex: 1, minWidth: 220,
-        background: dragOver ? `${COL_ACCENT[status]}11` : T.surface,
-        border:     `1px solid ${dragOver ? COL_ACCENT[status] : T.border}`,
+        background: colDragOver ? `${COL_ACCENT[status]}11` : T.surface,
+        border:     `1px solid ${colDragOver ? COL_ACCENT[status] : T.border}`,
         borderTop:  `3px solid ${COL_ACCENT[status]}`,
         borderRadius: 10, padding: 14,
         transition: "background .15s, border-color .15s",
-        display: "flex", flexDirection: "column", gap: 10,
+        display: "flex", flexDirection: "column", gap: 6,
       }}
     >
       {/* Column header */}
@@ -210,12 +260,23 @@ const KanbanColumn = ({ status, tickets, onEdit, onDelete, onMove, onDrop, colIn
 
       {/* Cards */}
       {tickets.map(t => (
-        <TicketCard key={t.id} ticket={t} colIndex={colIndex}
-          onEdit={onEdit} onDelete={onDelete} onMove={onMove} />
+        <TicketCard
+          key={t.id}
+          ticket={t}
+          colIndex={colIndex}
+          isDragging={dragId === t.id}
+          dropIndicator={dropTarget?.id === t.id ? dropTarget.side : null}
+          onEdit={onEdit}
+          onDelete={onDelete}
+          onMove={onMove}
+          onDragStart={id => setDropTarget(null)}
+          onDragEnd={() => clearDrop()}
+          onDragOver={handleCardDragOver}
+        />
       ))}
 
-      {/* Empty state */}
-      {tickets.length === 0 && !dragOver && (
+      {/* Empty state / bottom drop zone */}
+      {tickets.length === 0 && (
         <div style={{ fontFamily: T.body, fontSize: 12, color: T.border,
           fontStyle: "italic", textAlign: "center", padding: "20px 0" }}>
           Drop cards here
@@ -230,8 +291,9 @@ const KanbanColumn = ({ status, tickets, onEdit, onDelete, onMove, onDrop, colIn
 const KanbanPage = () => {
   const [tickets, setTickets] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [modal,   setModal]   = useState(null); // null | "add" | ticket obj
+  const [modal,   setModal]   = useState(null);
   const [filter,  setFilter]  = useState({ priority: "", section: "" });
+  const [dragId,  setDragId]  = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -244,30 +306,79 @@ const KanbanPage = () => {
   const byStatus = status => {
     let list = tickets.filter(t => t.status === status);
     if (filter.priority) list = list.filter(t => t.priority === filter.priority);
-    if (filter.section)  list = list.filter(t => t.section === filter.section);
+    if (filter.section)  list = list.filter(t => t.section  === filter.section);
     return list.sort((a, b) => a.position - b.position);
   };
 
-  const handleDrop = async (ticketId, newStatus) => {
-    const t = tickets.find(x => x.id === ticketId);
-    if (!t || t.status === newStatus) return;
-    await api.tickets.update(ticketId, { ...t, status: newStatus, position: 9999 });
-    load();
+  const handleDrop = async (ticketId, newStatus, targetId, side) => {
+    const dragged = tickets.find(t => t.id === ticketId);
+    if (!dragged) return;
+    setDragId(null);
+
+    // ── Cross-column move ──────────────────────────────────────────────────────
+    if (dragged.status !== newStatus) {
+      const colCards = tickets
+        .filter(t => t.status === newStatus)
+        .sort((a, b) => a.position - b.position);
+      const newPos = colCards.length > 0 ? colCards[colCards.length - 1].position + 1 : 0;
+      const updated = { ...dragged, status: newStatus, position: newPos };
+      setTickets(prev => prev.map(t => t.id === ticketId ? updated : t));
+      await api.tickets.update(ticketId, updated);
+      return;
+    }
+
+    // ── Same-column reorder ────────────────────────────────────────────────────
+    const col = tickets
+      .filter(t => t.status === newStatus)
+      .sort((a, b) => a.position - b.position);
+
+    // Remove dragged card from its current position
+    const without = col.filter(t => t.id !== ticketId);
+
+    // Find insertion index
+    let insertAt = without.length; // default: end
+    if (targetId) {
+      const targetIdx = without.findIndex(t => t.id === targetId);
+      if (targetIdx !== -1) insertAt = side === "before" ? targetIdx : targetIdx + 1;
+    }
+
+    // Rebuild column order
+    const reordered = [...without];
+    reordered.splice(insertAt, 0, dragged);
+
+    // Assign sequential positions
+    const withPositions = reordered.map((t, i) => ({ ...t, position: i }));
+
+    // Optimistic update
+    setTickets(prev => {
+      const other = prev.filter(t => t.status !== newStatus);
+      return [...other, ...withPositions];
+    });
+
+    // Persist only changed positions
+    const toSave = withPositions.filter(t => {
+      const original = tickets.find(x => x.id === t.id);
+      return original?.position !== t.position;
+    });
+    await Promise.all(toSave.map(t => api.tickets.update(t.id, t)));
   };
 
   const handleMove = async (ticket, newStatus) => {
-    await api.tickets.update(ticket.id, { ...ticket, status: newStatus, position: 9999 });
-    load();
+    const colCards = tickets
+      .filter(t => t.status === newStatus)
+      .sort((a, b) => a.position - b.position);
+    const newPos = colCards.length > 0 ? colCards[colCards.length - 1].position + 1 : 0;
+    const updated = { ...ticket, status: newStatus, position: newPos };
+    setTickets(prev => prev.map(t => t.id === ticket.id ? updated : t));
+    await api.tickets.update(ticket.id, updated);
   };
 
-  const handleEdit = async (ticket) => setModal(ticket);
-
-  const handleDelete = async (id) => {
+  const handleDelete = async id => {
     await api.tickets.remove(id);
     setTickets(p => p.filter(t => t.id !== id));
   };
 
-  const handleSave = async (form) => {
+  const handleSave = async form => {
     if (modal === "add") {
       await api.tickets.create(form);
     } else {
@@ -289,10 +400,10 @@ const KanbanPage = () => {
           </h1>
           <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, margin: "4px 0 0" }}>
             {tickets.length} ticket{tickets.length !== 1 ? "s" : ""} · {totalOpen} open
+            {dragId && <span style={{ color: T.textMuted, fontStyle: "italic" }}> · dragging…</span>}
           </p>
         </div>
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          {/* Filters */}
           <select value={filter.priority} onChange={e => setFilter(f => ({ ...f, priority: e.target.value }))}
             style={{ ...inputBase, fontFamily: T.body, fontSize: 13, width: 130, cursor: "pointer" }}>
             <option value="">All priorities</option>
@@ -313,26 +424,28 @@ const KanbanPage = () => {
           Loading board…
         </div>
       ) : (
-        <div style={{ display: "flex", gap: 14, alignItems: "flex-start", overflowX: "auto", flex: 1, paddingBottom: 8 }}>
+        <div
+          style={{ display: "flex", gap: 14, alignItems: "flex-start", overflowX: "auto", flex: 1, paddingBottom: 8 }}
+          onDragEnd={() => setDragId(null)}
+        >
           {COLUMNS.map((col, i) => (
             <KanbanColumn
               key={col} status={col} colIndex={i}
               tickets={byStatus(col)}
-              onEdit={handleEdit}
+              onEdit={t => setModal(t)}
               onDelete={handleDelete}
               onMove={handleMove}
               onDrop={handleDrop}
+              dragId={dragId}
             />
           ))}
         </div>
       )}
 
-      {/* Modal */}
       {modal && (
         <Modal
           title={modal === "add" ? "New Ticket" : `Edit — ${modal.id}`}
-          onClose={() => setModal(null)}
-          width={520}
+          onClose={() => setModal(null)} width={520}
         >
           <TicketModal
             init={modal === "add" ? {} : modal}

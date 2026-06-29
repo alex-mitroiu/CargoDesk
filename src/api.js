@@ -27,6 +27,9 @@ export const api = {
   statusLog: {
     list: (shipmentId) => req("GET", `/shipments/${shipmentId}/status-log`),
   },
+  shipmentEvents: {
+    list: (shipmentId) => req("GET", `/shipments/${shipmentId}/events`),
+  },
   shipments: {
     list:   ()        => req("GET",    "/shipments"),
     create: (data)    => req("POST",   "/shipments", data),

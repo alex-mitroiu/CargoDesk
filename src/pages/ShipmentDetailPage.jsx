@@ -652,6 +652,148 @@ const LinkVesselModal = ({ shipment, onSave, onClose }) => {
   );
 };
 
+
+// ─── Shipment History Timeline ────────────────────────────────────────────────
+
+const EVENT_CONFIG = {
+  STATUS_CHANGED:    { icon: "🔄", label: "Status changed",    color: () => T.accent   },
+  FIELD_UPDATED:     { icon: "✏️",  label: "Field updated",     color: () => T.info     },
+  CONTAINER_ADDED:   { icon: "➕",  label: "Container added",   color: () => T.success  },
+  CONTAINER_REMOVED: { icon: "➖",  label: "Container removed", color: () => T.danger   },
+  CONTAINER_UPDATED: { icon: "📦",  label: "Container updated", color: () => T.warning  },
+};
+
+const FIELD_LABELS = {
+  pol: "Port of Loading", pod: "Port of Discharge", status: "Status",
+  etd: "Estimated Departure", eta: "Estimated Arrival", carrier_code: "Carrier",
+  vessel: "Vessel", vessel_imo: "Vessel IMO", voyage: "Voyage", incoterm: "Incoterm",
+  commodity_code: "Commodity", booking_ref: "Booking Reference", bl_number: "B/L Number",
+  contract_type: "Contract Type", contract_id: "Contract ID",
+  container_number: "Container Number", size: "Size", type: "Equipment Type",
+  hs_code: "HS Code", cargo_description: "Cargo Description",
+  gross_weight_kg: "Gross Weight (kg)", volume_cbm: "Volume (CBM)",
+  is_dg: "Dangerous Goods", dg_class: "DG Class",
+};
+
+const EventRow = ({ ev }) => {
+  const cfg   = EVENT_CONFIG[ev.eventType] ?? { icon: "·", label: ev.eventType, color: () => T.textMuted };
+  const color = cfg.color();
+  const field = ev.field ? (FIELD_LABELS[ev.field] || ev.field) : null;
+
+  let summary = "";
+  if (ev.eventType === "CONTAINER_ADDED") {
+    const m = ev.meta || {};
+    summary = `${ev.newValue}  ${m.size ? `${m.size}ft` : ""}  ${m.type || ""}`.trim();
+  } else if (ev.eventType === "CONTAINER_REMOVED") {
+    const m = ev.meta || {};
+    summary = `${ev.oldValue}  ${m.size ? `${m.size}ft` : ""}  ${m.type || ""}`.trim();
+  } else if (ev.eventType === "CONTAINER_UPDATED") {
+    const m = ev.meta || {};
+    summary = m.containerNumber ? `${m.containerNumber} — ` : "";
+    summary += `${field}: `;
+    summary += ev.oldValue ? `${ev.oldValue} → ` : "";
+    summary += ev.newValue || "—";
+  } else {
+    summary = field ? `${field}: ` : "";
+    summary += ev.oldValue ? `${ev.oldValue} → ` : "";
+    summary += ev.newValue || "—";
+  }
+
+  return (
+    <div style={{ display: "flex", gap: 14, alignItems: "flex-start", paddingBottom: 14 }}>
+      {/* Dot */}
+      <div style={{ width: 30, flexShrink: 0, display: "flex", justifyContent: "center",
+        paddingTop: 2, zIndex: 1 }}>
+        <div style={{ width: 10, height: 10, borderRadius: "50%",
+          background: color, border: `2px solid ${T.surface}`,
+          boxShadow: `0 0 0 1px ${color}` }} />
+      </div>
+      {/* Content */}
+      <div style={{ flex: 1 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 13 }}>{cfg.icon}</span>
+          <span style={{ fontFamily: T.body, fontSize: 12, fontWeight: 700, color }}>
+            {cfg.label}
+          </span>
+        </div>
+        {summary && (
+          <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted,
+            marginTop: 3, lineHeight: 1.5 }}>
+            {summary}
+          </div>
+        )}
+        <div style={{ display: "flex", gap: 10, marginTop: 3, flexWrap: "wrap" }}>
+          <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted }}>
+            {fmtDateTime(ev.occurredAt)}
+          </span>
+          <span style={{ fontFamily: T.body, fontSize: 10, color: T.border }}>
+            · {relTime(ev.occurredAt)}
+          </span>
+          {ev.actor && ev.actor !== "system" && (
+            <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted }}>
+              · by {ev.actor}
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const ShipmentTimeline = ({ events, currentStatus, open, onToggle }) => (
+  <div style={{ background: T.surface, borderRadius: 12,
+    border: `1px solid ${T.border}`, overflow: "hidden" }}>
+    <button type="button" onClick={onToggle}
+      style={{ display: "flex", alignItems: "center", gap: 10, width: "100%",
+        padding: "14px 20px", background: "none", border: "none",
+        cursor: "pointer", textAlign: "left" }}>
+      <span style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text }}>
+        {open ? "▾" : "▸"} Shipment History
+      </span>
+      <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted,
+        background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8,
+        padding: "1px 8px" }}>
+        {events.length} event{events.length !== 1 ? "s" : ""}
+      </span>
+    </button>
+
+    {open && (
+      <div style={{ padding: "0 20px 20px" }}>
+        {events.length === 0 ? (
+          <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted,
+            fontStyle: "italic", margin: 0 }}>
+            No history yet. Changes to this shipment will appear here automatically.
+          </p>
+        ) : (
+          <div style={{ position: "relative" }}>
+            {/* Vertical line */}
+            <div style={{ position: "absolute", left: 15, top: 0, bottom: 0,
+              width: 1, background: T.border }} />
+            <div style={{ display: "flex", flexDirection: "column" }}>
+              {events.map(ev => <EventRow key={ev.id} ev={ev} />)}
+              {/* Current status cap */}
+              <div style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
+                <div style={{ width: 30, flexShrink: 0, display: "flex",
+                  justifyContent: "center", paddingTop: 2, zIndex: 1 }}>
+                  <div style={{ width: 12, height: 12, borderRadius: "50%",
+                    background: T.success, border: `2px solid ${T.surface}`,
+                    boxShadow: `0 0 0 1px ${T.success}` }} />
+                </div>
+                <div>
+                  <div style={{ fontFamily: T.mono, fontSize: 12,
+                    color: T.success, fontWeight: 700 }}>
+                    Current status: {currentStatus}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    )}
+  </div>
+);
+
 const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, onAddContainer, onEditContainer, onDeleteContainer }) => {
   const [ctrModal,      setCtrModal]      = useState(null);
   const [linkVesselOpen, setLinkVesselOpen] = useState(false);
@@ -659,10 +801,12 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
   const [confirmCtr, setConfirmCtr] = useState(null);
   const [statusLog,  setStatusLog]  = useState([]);
   const [logOpen,    setLogOpen]    = useState(true);
+  const [events,     setEvents]     = useState([]);
 
   useEffect(() => {
     if (!shipment?.id) return;
     api.statusLog.list(shipment.id).then(setStatusLog).catch(() => setStatusLog([]));
+    api.shipmentEvents.list(shipment.id).then(setEvents).catch(() => setEvents([]));
   }, [shipment?.id, shipment?.status]);
   const carrier  = carriers.find(c => c.code === shipment.carrierCode);
   const ctrs     = containers.filter(c => c.shipmentId === shipment.id);
@@ -793,9 +937,9 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
         )}
       </div>
 
-      {/* Status History */}
-      <StatusTimeline
-        log={statusLog}
+      {/* Shipment History */}
+      <ShipmentTimeline
+        events={events}
         currentStatus={shipment.status}
         open={logOpen}
         onToggle={() => setLogOpen(o => !o)}
@@ -879,6 +1023,7 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
                   ? await onAddContainer(shipment.id, form)
                   : await onEditContainer(ctrModal.id, form);
                 setCtrModal(null);
+              api.shipmentEvents.list(shipment.id).then(setEvents).catch(() => {});
               } catch { /* error already toasted by App.jsx handler */ }
             }}
             onCancel={() => setCtrModal(null)} />
