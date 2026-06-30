@@ -7,7 +7,7 @@ import { api } from "../api";
 import Btn from "../components/primitives/Btn";
 import Badge from "../components/primitives/Badge";
 import { Inp, Sel, ContractTypeInput, Textarea } from "../components/primitives/Form";
-import PortCombobox from "../components/shared/PortCombobox";
+import PortField from "../components/shared/PortField";
 import { Modal, ConfirmModal } from "../components/primitives/Modal";
 import Spinner from "../components/primitives/spinner";
 import Pagination from "../components/primitives/Pagination";
@@ -32,88 +32,6 @@ const LanePair = ({ origin, dest }) => (
       : <span style={{ fontFamily: T.mono, fontSize: 12, color: T.border }}>—</span>}
   </div>
 );
-
-// ─── Port field — selected state + clear + linked-port alternatives ──────────
-
-const PortField = ({ label, port, onSelect, placeholder }) => {
-  const [links,   setLinks]   = useState([]);
-  const [loadLnk, setLoadLnk] = useState(false);
-
-  useEffect(() => {
-    if (!port?.unlocode) { setLinks([]); return; }
-    setLoadLnk(true);
-    api.portLinks(port.unlocode)
-      .then(rows => setLinks(rows || []))
-      .catch(() => setLinks([]))
-      .finally(() => setLoadLnk(false));
-  }, [port?.unlocode]);
-
-  return (
-    <div>
-      <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
-        textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 6 }}>
-        {label} <span style={{ color: T.danger }}>*</span>
-      </div>
-
-      {port?.unlocode ? (
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          {/* Selected port row */}
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <div style={{ flex: 1, background: T.bg, border: `1px solid ${T.accent}55`,
-              borderRadius: 6, padding: "8px 12px", display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontFamily: T.mono, fontSize: 13, color: T.accent, fontWeight: 700 }}>
-                {port.unlocode}
-              </span>
-              {port.name && (
-                <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
-                  {port.name}
-                </span>
-              )}
-            </div>
-            <button type="button" onClick={() => { onSelect(null); setLinks([]); }}
-              style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 5,
-                color: T.textMuted, cursor: "pointer", padding: "6px 10px", fontSize: 12 }}>✕</button>
-          </div>
-
-          {/* Linked port alternatives */}
-          {loadLnk && (
-            <span style={{ fontFamily: T.body, fontSize: 11, color: T.border }}>
-              Checking linked locations…
-            </span>
-          )}
-          {!loadLnk && links.length > 0 && (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 5, alignItems: "center" }}>
-              <span style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, flexShrink: 0 }}>
-                Covers linked:
-              </span>
-              {links.map(lp => (
-                <button key={lp.unlocode} type="button"
-                  title={lp.name || lp.unlocode}
-                  onClick={() => onSelect({ unlocode: lp.unlocode, name: lp.name || "" })}
-                  style={{
-                    fontFamily: T.mono, fontSize: 10.5, fontWeight: 600,
-                    color: T.textMuted, background: T.bg,
-                    border: `1px solid ${T.border}`, borderRadius: 4,
-                    padding: "2px 8px", cursor: "pointer",
-                    transition: "border-color .1s, color .1s",
-                  }}
-                  onMouseEnter={e => { e.currentTarget.style.borderColor = T.accent; e.currentTarget.style.color = T.accent; }}
-                  onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.textMuted; }}>
-                  {lp.unlocode}
-                </button>
-              ))}
-              <span style={{ fontFamily: T.body, fontSize: 10, color: T.border, fontStyle: "italic" }}>
-                — click to switch
-              </span>
-            </div>
-          )}
-        </div>
-      ) : (
-        <PortCombobox placeholder={placeholder} onChange={onSelect} />
-      )}
-    </div>
-  );
-};
 
 // ─── Coverage scope override button ─────────────────────────────────────────
 // Disabled until Contract Management module is available.
@@ -473,8 +391,8 @@ const AllocationForm = ({ init = {}, carriers, tradeLanes = [], onSave, onCancel
 
       {/* POL / POD */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <PortField label="Port of Loading (POL)"   port={polPort} onSelect={handlePolSelect} placeholder="Search origin port…" />
-        <PortField label="Port of Discharge (POD)" port={podPort} onSelect={handlePodSelect} placeholder="Search destination port…" />
+        <PortField label="Port of Loading (POL)"   value={polPort} onChange={handlePolSelect} placeholder="Search origin port…" required showLinks />
+        <PortField label="Port of Discharge (POD)" value={podPort} onChange={handlePodSelect} placeholder="Search destination port…" required showLinks />
       </div>
 
       {/* Auto-detected trade lane pair */}

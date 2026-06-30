@@ -6,7 +6,7 @@ import Btn from "../components/primitives/Btn";
 import Badge from "../components/primitives/Badge";
 import { Modal, ConfirmModal } from "../components/primitives/Modal";
 import DatePicker from "../components/primitives/DatePicker";
-import PortCombobox from "../components/shared/PortCombobox";
+import PortField from "../components/shared/PortField";
 import { VesselField } from "../components/shared/VesselCombobox";
 import { inputBase, BtnToggle, Inp, Sel, Textarea, Field, ContractTypeInput } from "../components/primitives/Form";
 import { CommodityCombobox } from "../components/shared/CommodityCombobox";
@@ -248,25 +248,6 @@ const ShipmentForm = ({ init = {}, carriers, onSave, onCancel }) => {
     } finally { setIsSaving(false); }
   };
 
-  const PortField = ({ label, port, onSelect, placeholder }) => (
-    <Field label={label} required>
-      {port?.unlocode ? (
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <div style={{ flex: 1, background: T.bg, border: `1px solid ${T.accent}55`, borderRadius: 6,
-            padding: "8px 12px", display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontFamily: T.mono, fontSize: 13, color: T.accent, fontWeight: 700 }}>{port.unlocode}</span>
-            {port.name && <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>{port.name}</span>}
-          </div>
-          <button onClick={() => onSelect(null)}
-            style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 5,
-              color: T.textMuted, cursor: "pointer", padding: "6px 10px", fontSize: 12 }}>✕</button>
-        </div>
-      ) : (
-        <PortCombobox placeholder={placeholder} onChange={onSelect} />
-      )}
-    </Field>
-  );
-
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       {carriers.length === 0 && (
@@ -291,8 +272,8 @@ const ShipmentForm = ({ init = {}, carriers, onSave, onCancel }) => {
 
       {/* Ports */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <PortField label="Port of Loading"   port={polPort} onSelect={setPolPort} placeholder="Search POL (NLRTM, Rotterdam…)" />
-        <PortField label="Port of Discharge" port={podPort} onSelect={setPodPort} placeholder="Search POD (CNSHA, Shanghai…)" />
+        <PortField label="Port of Loading"   value={polPort} onChange={setPolPort} placeholder="Search POL (NLRTM, Rotterdam…)" required />
+        <PortField label="Port of Discharge" value={podPort} onChange={setPodPort} placeholder="Search POD (CNSHA, Shanghai…)" required />
       </div>
 
       {/* Carrier */}

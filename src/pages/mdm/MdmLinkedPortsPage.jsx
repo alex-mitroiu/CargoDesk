@@ -3,9 +3,9 @@ import Spinner, { PageSpinner } from "../../components/primitives/Spinner";
 import { T } from "../../tokens";
 import { api } from "../../api";
 import Btn from "../../components/primitives/Btn";
-import { Inp, Field } from "../../components/primitives/Form";
+import { Inp } from "../../components/primitives/Form";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
-import PortCombobox from "../../components/shared/PortCombobox";
+import PortField from "../../components/shared/PortField";
 import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns.jsx";
 
 // ─── MDM: Linked Ports Page ───────────────────────────────────────────────────
@@ -28,31 +28,6 @@ const MdmLinkedPortsPage = () => {
 
   useEffect(() => { load(); }, []);
 
-  // Selected-state port field — shows combobox until a port is chosen,
-  // then shows the selection with a clear button.
-  const PortField = ({ label, port, onSelect, placeholder }) => (
-    <Field label={label} required>
-      {port?.unlocode ? (
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <div style={{ flex: 1, background: T.bg, border: `1px solid ${T.accent}55`,
-            borderRadius: 6, padding: "8px 12px", display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontFamily: T.mono, fontSize: 13, color: T.accent, fontWeight: 700 }}>
-              {port.unlocode}
-            </span>
-            {port.name && (
-              <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>{port.name}</span>
-            )}
-          </div>
-          <button type="button" onClick={() => onSelect(null)}
-            style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 5,
-              color: T.textMuted, cursor: "pointer", padding: "6px 10px", fontSize: 12 }}>✕</button>
-        </div>
-      ) : (
-        <PortCombobox placeholder={placeholder} onChange={onSelect} />
-      )}
-    </Field>
-  );
-
   const LinkForm = ({ init = {}, onSave, onCancel }) => {
     const [primary, setPrimary] = useState(init.primaryUnlocode ? { unlocode: init.primaryUnlocode, name: init.primaryName || "" } : null);
     const [linked,  setLinked]  = useState(init.linkedUnlocode  ? { unlocode: init.linkedUnlocode,  name: init.linkedName  || "" } : null);
@@ -65,12 +40,12 @@ const MdmLinkedPortsPage = () => {
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         {!isEdit && (
           <>
-            <PortField label="Primary Port" port={primary}
-              onSelect={p => { setPrimary(p); setFErr(""); }}
-              placeholder="Search primary UN/LOCODE…" />
-            <PortField label="Linked Port"  port={linked}
-              onSelect={p => { setLinked(p); setFErr(""); }}
-              placeholder="Search linked UN/LOCODE…" />
+            <PortField label="Primary Port" value={primary}
+              onChange={p => { setPrimary(p); setFErr(""); }}
+              placeholder="Search primary UN/LOCODE…" required />
+            <PortField label="Linked Port"  value={linked}
+              onChange={p => { setLinked(p); setFErr(""); }}
+              placeholder="Search linked UN/LOCODE…" required />
             {primary && linked && primary.unlocode === linked.unlocode && (
               <div style={{ fontFamily: T.body, fontSize: 12, color: T.danger, background: T.dangerBg, borderRadius: 6, padding: "8px 12px" }}>
                 A port cannot be linked to itself.
