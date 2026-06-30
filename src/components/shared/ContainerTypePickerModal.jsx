@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { T, CONTAINER_OPTIONS } from "../../tokens";
-import { Field } from "../primitives/Form";
+import { Field, inputBase } from "../primitives/Form";
 import { Modal } from "../primitives/Modal";
 
 // ─── ContainerTypePickerModal ─────────────────────────────────────────────────
@@ -83,55 +83,170 @@ export const ContainerTypePickerModal = ({ current, onSelect, onClose }) => {
 };
 
 // ─── ContainerTypeField ───────────────────────────────────────────────────────
-// Drop-in labelled field: button trigger + modal. Manages its own open state.
-// Props:
-//   size     — "20" | "40"
-//   type     — "DC" | "HC" | "RF" | "OT" | "FR" | "TK"
-//   onChange — called with { size, type, code, label, teu } on selection
-//   required — shows red asterisk on label
+// Chip-style field matching CarrierCombobox.
+// Unselected: real <input> with typeahead filtering (type "40RF", "dry", etc.)
+//             + 🔍 button to open full visual picker.
+// Selected:   chip row (code · label · TEU badge · 🔍 · ✕).
 
 export const ContainerTypeField = ({ size, type, onChange, required = false }) => {
-  const [open, setOpen] = useState(false);
+  const [query,       setQuery]       = useState("");
+  const [dropOpen,    setDropOpen]    = useState(false);
+  const [highlighted, setHighlighted] = useState(-1);
+  const [pickerOpen,  setPickerOpen]  = useState(false);
+  const [dropStyle,   setDropStyle]   = useState({});
+  const inputRef = useRef(null);
+  const dropRef  = useRef(null);
+
   const selected = CONTAINER_OPTIONS.find(o => o.size === size && o.type === type) || null;
 
-  return (
-    <Field label="Equipment Type" required={required}
-      hint="Size, type and TEU — click to browse all options">
-      <button type="button" onClick={() => setOpen(true)}
-        style={{ width: "100%", display: "flex", alignItems: "center",
-          justifyContent: "space-between", padding: "8px 12px", borderRadius: 6,
-          cursor: "pointer", textAlign: "left", background: "none",
-          border: `1px solid ${selected ? T.accent + "66" : T.border}`,
-          transition: "border-color .12s" }}
-        onMouseEnter={e => e.currentTarget.style.borderColor = T.accent}
-        onMouseLeave={e => e.currentTarget.style.borderColor = selected ? T.accent + "66" : T.border}>
-        {selected ? (
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <span style={{ fontFamily: T.mono, fontSize: 14, fontWeight: 800, color: T.accent }}>
-              {selected.code}
-            </span>
-            <span style={{ fontFamily: T.body, fontSize: 13, color: T.text }}>
-              {selected.label}
-            </span>
-            <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted,
-              background: T.bg, border: `1px solid ${T.border}`, borderRadius: 4,
-              padding: "1px 7px" }}>
-              {selected.teu} TEU
-            </span>
-          </div>
-        ) : (
-          <span style={{ fontFamily: T.body, fontSize: 13, color: T.border }}>
-            Select equipment type…
-          </span>
-        )}
-        <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted, flexShrink: 0 }}>▾</span>
-      </button>
+  const filtered = query.trim()
+    ? CONTAINER_OPTIONS.filter(o =>
+        o.code.toUpperCase().includes(query.toUpperCase()) ||
+        o.label.toLowerCase().includes(query.toLowerCase()) ||
+        o.size.includes(query) ||
+        o.type.toUpperCase().includes(query.toUpperCase()))
+    : CONTAINER_OPTIONS;
 
-      {open && (
+  const positionDrop = useCallback(() => {
+    if (!inputRef.current) return;
+    const r = inputRef.current.getBoundingClientRect();
+    setDropStyle({ position: "fixed", top: r.bottom + 4, left: r.left, width: r.width, zIndex: 9000 });
+  }, []);
+
+  useEffect(() => {
+    const h = e => {
+      if (
+        inputRef.current && !inputRef.current.contains(e.target) &&
+        dropRef.current  && !dropRef.current.contains(e.target)
+      ) setDropOpen(false);
+    };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, []);
+
+  useEffect(() => {
+    if (!dropOpen) return;
+    const update = () => positionDrop();
+    window.addEventListener("scroll", update, true);
+    window.addEventListener("resize", update);
+    return () => { window.removeEventListener("scroll", update, true); window.removeEventListener("resize", update); };
+  }, [dropOpen, positionDrop]);
+
+  const openDrop = () => { positionDrop(); setDropOpen(true); };
+
+  const handleInput = q => {
+    setQuery(q); setHighlighted(-1);
+    positionDrop(); setDropOpen(true);
+  };
+
+  const select = opt => {
+    setQuery(""); setDropOpen(false); setHighlighted(-1);
+    onChange(opt);
+  };
+
+  const handleKeyDown = e => {
+    if (!dropOpen || filtered.length === 0) return;
+    switch (e.key) {
+      case "ArrowDown": e.preventDefault(); setHighlighted(h => Math.min(h + 1, filtered.length - 1)); break;
+      case "ArrowUp":   e.preventDefault(); setHighlighted(h => Math.max(h - 1, 0)); break;
+      case "Enter":     e.preventDefault(); { const i = highlighted >= 0 ? highlighted : 0; if (filtered[i]) select(filtered[i]); } break;
+      case "Escape":    setDropOpen(false); setHighlighted(-1); break;
+    }
+  };
+
+  return (
+    <Field label="Equipment Type" required={required}>
+      {selected ? (
+        // ── Selected chip ─────────────────────────────────────────────────────
+        <div style={{ ...inputBase, display: "flex", alignItems: "center", gap: 8,
+          border: `1px solid ${T.accent}55`, padding: "7px 10px" }}>
+          <span style={{ fontFamily: T.mono, fontSize: 13, color: T.accent,
+            fontWeight: 700, flexShrink: 0 }}>
+            {selected.code}
+          </span>
+          <span style={{ fontFamily: T.body, fontSize: 13, color: T.text, flex: 1,
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {selected.label}
+          </span>
+          <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted,
+            background: T.bg, border: `1px solid ${T.border}`, borderRadius: 4,
+            padding: "1px 7px", flexShrink: 0 }}>
+            {selected.teu} TEU
+          </span>
+          <button type="button" onClick={() => setPickerOpen(true)}
+            title="Browse equipment types"
+            style={{ background: "none", border: "none", cursor: "pointer",
+              color: T.textMuted, fontSize: 13, padding: "0 2px", flexShrink: 0, lineHeight: 1 }}
+            onMouseEnter={e => e.currentTarget.style.color = T.text}
+            onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>
+            🔍
+          </button>
+          <button type="button" onClick={() => onChange(null)}
+            style={{ background: "none", border: "none", cursor: "pointer",
+              color: T.textMuted, fontSize: 15, padding: "0 2px", flexShrink: 0, lineHeight: 1 }}>
+            ✕
+          </button>
+        </div>
+      ) : (
+        // ── Typeahead input ───────────────────────────────────────────────────
+        <>
+          <div style={{ position: "relative" }}>
+            <input
+              ref={inputRef}
+              value={query}
+              onChange={e => handleInput(e.target.value)}
+              onFocus={openDrop}
+              onKeyDown={handleKeyDown}
+              placeholder="Type code or name (40DC, reefer…)"
+              autoComplete="off"
+              style={{ ...inputBase, fontFamily: T.body, fontSize: 13,
+                paddingRight: 36, width: "100%", boxSizing: "border-box" }}
+            />
+            <button type="button" onClick={() => setPickerOpen(true)}
+              title="Browse all equipment types"
+              style={{ position: "absolute", right: 8, top: "50%",
+                transform: "translateY(-50%)", background: "none", border: "none",
+                cursor: "pointer", color: T.textMuted, fontSize: 13, padding: 2, lineHeight: 1 }}
+              onMouseEnter={e => e.currentTarget.style.color = T.text}
+              onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>
+              🔍
+            </button>
+          </div>
+
+          {dropOpen && filtered.length > 0 && (
+            <div ref={dropRef} style={{
+              ...dropStyle,
+              background: T.surface, border: `1px solid ${T.border}`,
+              borderRadius: 10, boxShadow: "0 12px 32px rgba(0,0,0,.4)",
+              overflow: "hidden",
+            }}>
+              {filtered.map((opt, idx) => (
+                <button key={opt.code} type="button"
+                  onMouseDown={e => { e.preventDefault(); select(opt); }}
+                  onMouseEnter={() => setHighlighted(idx)}
+                  style={{ display: "flex", alignItems: "center", gap: 10,
+                    width: "100%", padding: "9px 14px",
+                    background: idx === highlighted ? T.surfaceHover : "transparent",
+                    border: "none", borderBottom: `1px solid ${T.border}22`,
+                    cursor: "pointer", textAlign: "left" }}>
+                  <span style={{ fontFamily: T.mono, fontSize: 12, color: T.accent,
+                    fontWeight: 700, flexShrink: 0, width: 44 }}>{opt.code}</span>
+                  <span style={{ fontFamily: T.body, fontSize: 13, color: T.text, flex: 1 }}>{opt.label}</span>
+                  <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted,
+                    background: T.bg, border: `1px solid ${T.border}`, borderRadius: 4,
+                    padding: "1px 6px", flexShrink: 0 }}>{opt.teu} TEU</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {pickerOpen && (
         <ContainerTypePickerModal
           current={selected?.code}
-          onSelect={opt => onChange(opt)}
-          onClose={() => setOpen(false)}
+          onSelect={opt => { onChange(opt); setPickerOpen(false); }}
+          onClose={() => setPickerOpen(false)}
         />
       )}
     </Field>

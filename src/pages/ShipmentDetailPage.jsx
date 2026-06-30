@@ -1,7 +1,8 @@
 ﻿import React, { useState, useEffect } from "react";
-import { T, INCOTERMS_2020, CONTAINER_TYPES, CONTAINER_OPTIONS, teuOf,
+import { T, INCOTERMS_2020, teuOf,
          statusVariant, contractVariant , addDays, diffDays , IMDG_CLASSES, IMDG_CLASS_VARIANT } from "../tokens";
-import { ContainerTypePickerModal } from "../components/shared/ContainerTypePickerModal";
+import { ContainerTypeField } from "../components/shared/ContainerTypePickerModal";
+import CarrierCombobox from "../components/shared/CarrierCombobox";
 import { ShipmentForm } from "./ShipmentsPage";
 import { VesselField } from "../components/shared/VesselCombobox";
 import { CommodityCombobox, GradePill } from "../components/shared/CommodityCombobox";
@@ -81,8 +82,8 @@ const SectionHeader = ({ n, title }) => {
 const ContainerForm = ({ init = {}, onSave, onCancel }) => {
   const [f, setF] = useState({
     containerNumber:  init.containerNumber  || "",
-    size:             init.size             || "40",
-    type:             init.type             || "DC",
+    size:             init.size             || "",
+    type:             init.type             || "",
     hsCode:           init.hsCode           || "",
     cargoDescription: init.cargoDescription || "",
     grossWeightKg:    init.grossWeightKg    != null ? String(init.grossWeightKg) : "",
@@ -92,19 +93,16 @@ const ContainerForm = ({ init = {}, onSave, onCancel }) => {
   });
   const set = k => v => setF(p => ({ ...p, [k]: v }));
 
-  const [touched,         setTouched]         = useState({});
-  const [isSaving,        setIsSaving]        = useState(false);
-  const [typePickerOpen,  setTypePickerOpen]  = useState(false);
+  const [touched,  setTouched]  = useState({});
+  const [isSaving, setIsSaving] = useState(false);
   const touch = k => setTouched(p => ({ ...p, [k]: true }));
-
-  const selectedEquipment = CONTAINER_OPTIONS.find(o => o.size === f.size && o.type === f.type) || null;
 
   const weightOk = parseFloat(f.grossWeightKg) > 0;
   const volumeOk = parseFloat(f.volumeCbm)    > 0;
   const hsOk     = f.hsCode.trim().length > 0;
   const descOk   = f.cargoDescription.trim().length > 0;
-  const valid    = f.containerNumber.length >= 4 && hsOk && descOk
-                 && weightOk && volumeOk && (!f.isDg || f.dgClass);
+  const valid    = f.containerNumber.length >= 4 && f.size && f.type
+                 && hsOk && descOk && weightOk && volumeOk && (!f.isDg || f.dgClass);
 
   const FieldErr = ({ show, msg }) => show
     ? <div style={{ fontFamily: T.body, fontSize: 11, color: T.danger, marginTop: 3 }}>{msg}</div>
@@ -121,43 +119,9 @@ const ContainerForm = ({ init = {}, onSave, onCancel }) => {
         placeholder="MAEU1234567" mono required
         hint="ISO 6346 container ID" />
 
-      <Field label="Equipment Type" required hint="Size, type and TEU — click to browse all options">
-        <button type="button" onClick={() => setTypePickerOpen(true)}
-          style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between",
-            padding: "8px 12px", borderRadius: 6, cursor: "pointer", textAlign: "left",
-            background: "none", border: `1px solid ${selectedEquipment ? T.accent + "66" : T.border}`,
-            transition: "border-color .12s" }}
-          onMouseEnter={e => e.currentTarget.style.borderColor = T.accent}
-          onMouseLeave={e => e.currentTarget.style.borderColor = selectedEquipment ? T.accent + "66" : T.border}>
-          {selectedEquipment ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <span style={{ fontFamily: T.mono, fontSize: 14, fontWeight: 800, color: T.accent }}>
-                {selectedEquipment.code}
-              </span>
-              <span style={{ fontFamily: T.body, fontSize: 13, color: T.text }}>
-                {selectedEquipment.label}
-              </span>
-              <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted,
-                background: T.bg, border: `1px solid ${T.border}`, borderRadius: 4,
-                padding: "1px 7px" }}>
-                {selectedEquipment.teu} TEU
-              </span>
-            </div>
-          ) : (
-            <span style={{ fontFamily: T.body, fontSize: 13, color: T.border }}>
-              Select equipment type…
-            </span>
-          )}
-          <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted, flexShrink: 0 }}>▾</span>
-        </button>
-      </Field>
-
-      {typePickerOpen && (
-        <ContainerTypePickerModal
-          current={selectedEquipment?.code}
-          onSelect={opt => { setF(p => ({ ...p, size: opt.size, type: opt.type })); }}
-          onClose={() => setTypePickerOpen(false)} />
-      )}
+      <ContainerTypeField
+        size={f.size} type={f.type} required
+        onChange={opt => setF(p => ({ ...p, size: opt?.size || "", type: opt?.type || "" }))} />
 
       {/* ② Cargo Details */}
       <SectionHeader n="②" title="Cargo Details" />
@@ -279,17 +243,13 @@ const ContainerForm = ({ init = {}, onSave, onCancel }) => {
   );
 };
 
-const AllocationForm = ({ init = {}, carriers, onSave, onCancel }) => {
+const AllocationForm = ({ init = {}, onSave, onCancel }) => {
   const isEdit = !!init.id;
-  const [carrierCode,    setCarrierCode]    = useState(init.carrierCode   || carriers[0]?.code || "");
+  const [carrierCode,    setCarrierCode]    = useState(init.carrierCode   || "");
   const [teuStr,         setTeuStr]         = useState(init.allocatedTEU  ? String(init.allocatedTEU) : "");
   const [effectiveDate,  setEffectiveDate]  = useState(init.effectiveDate || "");
   const [endDate,        setEndDate]        = useState(init.endDate       || "");
   const [serverErr,      setServerErr]      = useState("");
-
-  useEffect(() => {
-    if (!carrierCode && carriers.length > 0) setCarrierCode(carriers[0].code);
-  }, [carriers]);
 
   const handleEffectiveChange = val => {
     setEffectiveDate(val);
@@ -315,8 +275,9 @@ const AllocationForm = ({ init = {}, carriers, onSave, onCancel }) => {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <Sel label="Carrier" value={carrierCode} onChange={v => { setCarrierCode(v); setServerErr(""); }} required
-        options={carriers.map(c => ({ value: c.code, label: `${c.code} – ${c.name}` }))} />
+      <Field label="Carrier" required>
+        <CarrierCombobox value={carrierCode} onChange={v => { setCarrierCode(v); setServerErr(""); }} />
+      </Field>
       <Inp label="Allocated Space (TEU)" value={teuStr} onChange={setTeuStr}
         type="number" placeholder="100" required hint="Total TEU awarded by this carrier for the period" />
 

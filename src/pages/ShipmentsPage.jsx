@@ -337,7 +337,7 @@ const ShipmentForm = ({ init = {}, onSave, onCancel }) => {
 
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", paddingTop: 4 }}>
         <Btn variant="secondary" onClick={onCancel}>Cancel</Btn>
-        <Btn onClick={handleSave} disabled={!valid || carriers.length === 0}>
+        <Btn onClick={handleSave} disabled={!valid}>
           <span style={{ display: "flex", alignItems: "center", gap: 7 }}>
             {isSaving && <Spinner size="sm" color="currentColor" />}
             {isSaving ? "Saving…" : (init.id ? "Save Changes" : "Create Shipment")}

@@ -131,7 +131,7 @@ const ContainerForm = ({ init = {}, onSave, onCancel }) => {
         placeholder="MAEU1234567" mono required />
       <ContainerTypeField
         size={f.size} type={f.type}
-        onChange={opt => setF(p => ({ ...p, size: opt.size, type: opt.type }))}
+        onChange={opt => setF(p => ({ ...p, size: opt?.size || "", type: opt?.type || "" }))}
       />
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
         <Btn variant="secondary" onClick={onCancel}>Cancel</Btn>
