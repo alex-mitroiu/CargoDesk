@@ -1,4 +1,4 @@
-export const CONTRACT_PRESETS = ["Pending", "SPOT", "Customer Own", "Central Contract"];
+export const CONTRACT_PRESETS = ["Pending", "SPOT", "Customer Own", "Central"];
 export const CONTAINER_TYPES  = ["DC", "HC", "RF", "OT", "FR", "TK"];
 export const STATUSES         = ["Active", "Pending", "Completed", "Cancelled", "Requires Review"];
 export const teuOf = (size) => (size === "40" ? 2 : 1);
@@ -103,7 +103,7 @@ export const LANE_BADGE_VARIANT = {
   "SAF":"danger","NAF":"warning","OCE":"default",
 };
 export const statusVariant   = s => ({ Active:"success",Pending:"warning",Completed:"info",Cancelled:"danger","Requires Review":"purple" }[s] || "default");
-export const contractVariant = c => ({ SPOT:"info","Customer Own":"amber",Pending:"warning" }[c] || "default");
+export const contractVariant = c => ({ SPOT:"manual","Customer Own":"manual",Pending:"manual",Central:"central" }[c] || "default");
 
 // ─── Contract-leg route matching ──────────────────────────────────────────────
 // Mirrors the linked-port expansion in GET /api/contracts/match: a contract leg's

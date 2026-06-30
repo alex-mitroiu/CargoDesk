@@ -331,6 +331,14 @@ function App() {
 
     const [bellOpen, setBellOpen] = useState(false);
     const bellRef                 = useRef(null);
+    const [activeSysMsgs, setActiveSysMsgs] = useState([]);
+
+    useEffect(() => {
+      const load = () => api.systemMessages.list().then(setActiveSysMsgs).catch(() => {});
+      load();
+      const t = setInterval(load, 60000);
+      return () => clearInterval(t);
+    }, []);
 
     // Active allocations above their alert threshold, sorted worst-first (max 5 shown)
     const bellItems = (() => {
@@ -351,7 +359,7 @@ function App() {
         .sort((a, b) => b.pct - a.pct)
         .slice(0, 5);
     })();
-    const bellCount = bellItems.length;
+    const bellCount = bellItems.length + activeSysMsgs.length;
 
     useEffect(() => {
       const h = e => {
@@ -433,9 +441,7 @@ function App() {
           {/* Notification bell */}
           <div ref={bellRef} style={{ position: "relative" }}>
             <button type="button"
-              title={bellCount > 0
-                ? `${bellCount} allocation${bellCount > 1 ? "s" : ""} above threshold`
-                : "No active threshold alerts"}
+              title={bellCount > 0 ? `${bellCount} notification${bellCount > 1 ? "s" : ""}` : "No active notifications"}
               onClick={() => { if (bellCount > 0) setBellOpen(o => !o); }}
               style={{ position: "relative", background: "none", border: "none",
                 cursor: bellCount > 0 ? "pointer" : "default",
@@ -454,65 +460,103 @@ function App() {
               )}
             </button>
 
-            {bellOpen && bellItems.length > 0 && (
+            {bellOpen && bellCount > 0 && (
               <div style={{
                 position: "absolute", right: 0, top: "calc(100% + 8px)", zIndex: 500,
                 background: T.surface, border: `1px solid ${T.border}`,
                 borderRadius: 12, boxShadow: "0 12px 36px rgba(0,0,0,.35)",
-                minWidth: 300, overflow: "hidden",
+                minWidth: 320, maxWidth: 380, overflow: "hidden",
               }}>
-                {/* Header */}
-                <div style={{ padding: "10px 16px 8px",
-                  borderBottom: `1px solid ${T.border}`,
-                  display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                  <span style={{ fontFamily: T.body, fontSize: 12, fontWeight: 700, color: T.warning }}>
-                    ⚠ Above Threshold
-                  </span>
-                  <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted }}>
-                    {bellCount} allocation{bellCount > 1 ? "s" : ""}
-                  </span>
-                </div>
 
-                {/* Items */}
-                {bellItems.map(a => (
-                  <button key={a.id} type="button"
-                    onClick={() => { navigate("dashboard"); setBellOpen(false); }}
-                    style={{
-                      display: "flex", alignItems: "center", justifyContent: "space-between",
-                      width: "100%", padding: "10px 16px", background: "none", border: "none",
-                      borderBottom: `1px solid ${T.border}22`, cursor: "pointer", textAlign: "left",
-                    }}
-                    onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
-                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                      <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.accent }}>
-                        {a.carrierCode}
+                {/* ── System Messages section ── */}
+                {activeSysMsgs.length > 0 && (() => {
+                  const sevColor = { info: T.info, warning: T.warning, danger: T.danger, success: T.success };
+                  const sevIcon  = { info: "ℹ", warning: "⚠", danger: "🚨", success: "✓" };
+                  return (
+                    <>
+                      <div style={{ padding: "10px 16px 8px",
+                        borderBottom: `1px solid ${T.border}`,
+                        display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                        <span style={{ fontFamily: T.body, fontSize: 12, fontWeight: 700, color: T.info }}>
+                          📣 System Messages
+                        </span>
+                        <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted }}>
+                          {activeSysMsgs.length} active
+                        </span>
+                      </div>
+                      {activeSysMsgs.map(m => (
+                        <div key={m.id} style={{
+                          padding: "10px 16px",
+                          borderBottom: `1px solid ${T.border}22`,
+                          borderLeft: `3px solid ${sevColor[m.severity] || T.border}`,
+                        }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: m.body ? 3 : 0 }}>
+                            <span style={{ fontSize: 12 }}>{sevIcon[m.severity] || "•"}</span>
+                            <span style={{ fontFamily: T.body, fontSize: 13, fontWeight: 700,
+                              color: sevColor[m.severity] || T.text, flex: 1 }}>
+                              {m.title}
+                            </span>
+                          </div>
+                          {m.body && (
+                            <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted,
+                              lineHeight: 1.4, marginLeft: 18 }}>
+                              {m.body}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </>
+                  );
+                })()}
+
+                {/* ── Allocation threshold section ── */}
+                {bellItems.length > 0 && (
+                  <>
+                    <div style={{ padding: "10px 16px 8px",
+                      borderBottom: `1px solid ${T.border}`,
+                      display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <span style={{ fontFamily: T.body, fontSize: 12, fontWeight: 700, color: T.warning }}>
+                        ⚠ Above Threshold
                       </span>
-                      <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
-                        {a.pol} › {a.pod}
+                      <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted }}>
+                        {bellItems.length} allocation{bellItems.length > 1 ? "s" : ""}
                       </span>
                     </div>
-                    <span style={{
-                      fontFamily: T.mono, fontSize: 13, fontWeight: 700,
-                      color: a.pct >= 100 ? T.danger : T.warning,
-                    }}>
-                      {a.pct}%
-                    </span>
-                  </button>
-                ))}
-
-                {/* Footer link */}
-                <button type="button"
-                  onClick={() => { navigate("dashboard"); setBellOpen(false); }}
-                  style={{
-                    width: "100%", padding: "9px 16px", background: "none",
-                    border: "none", cursor: "pointer",
-                    fontFamily: T.body, fontSize: 12, color: T.textMuted, textAlign: "center",
-                  }}
-                  onMouseEnter={e => { e.currentTarget.style.background = T.surfaceHover; e.currentTarget.style.color = T.text; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = T.textMuted; }}>
-                  View all in Dashboard →
-                </button>
+                    {bellItems.map(a => (
+                      <button key={a.id} type="button"
+                        onClick={() => { navigate("dashboard"); setBellOpen(false); }}
+                        style={{
+                          display: "flex", alignItems: "center", justifyContent: "space-between",
+                          width: "100%", padding: "10px 16px", background: "none", border: "none",
+                          borderBottom: `1px solid ${T.border}22`, cursor: "pointer", textAlign: "left",
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
+                        onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                          <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.accent }}>
+                            {a.carrierCode}
+                          </span>
+                          <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+                            {a.pol} › {a.pod}
+                          </span>
+                        </div>
+                        <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700,
+                          color: a.pct >= 100 ? T.danger : T.warning }}>
+                          {a.pct}%
+                        </span>
+                      </button>
+                    ))}
+                    <button type="button"
+                      onClick={() => { navigate("dashboard"); setBellOpen(false); }}
+                      style={{ width: "100%", padding: "9px 16px", background: "none",
+                        border: "none", cursor: "pointer",
+                        fontFamily: T.body, fontSize: 12, color: T.textMuted, textAlign: "center" }}
+                      onMouseEnter={e => { e.currentTarget.style.background = T.surfaceHover; e.currentTarget.style.color = T.text; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = T.textMuted; }}>
+                      View all in Dashboard →
+                    </button>
+                  </>
+                )}
               </div>
             )}
           </div>

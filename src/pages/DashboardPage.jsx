@@ -996,7 +996,7 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocat
   const [loading,     setLoading]     = useState(false);
 
   const centralShipments = useMemo(() =>
-    rangeShipments.filter(s => s.contractType === "Central Contract" && s.contractId),
+    rangeShipments.filter(s => s.contractType === "Central" && s.contractId),
     [rangeShipments]
   );
 
@@ -1082,16 +1082,16 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocat
         <div style={{ marginBottom: 16 }}>
           <h2 style={{ fontFamily: T.head, fontSize: 19, fontWeight: 700, color: T.text, margin: 0 }}>Contract Consumption</h2>
           <p style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, margin: "3px 0 0" }}>
-            Central Contract shipments in the selected period, grouped by contract
+            Central shipments in the selected period, grouped by contract
           </p>
         </div>
         <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12,
           padding: 48, textAlign: "center" }}>
           <div style={{ fontFamily: T.body, fontSize: 14, color: T.textMuted, marginBottom: 8 }}>
-            No Central Contract shipments in this period.
+            No Central shipments in this period.
           </div>
           <div style={{ fontFamily: T.body, fontSize: 12, color: T.border }}>
-            Shipments must have contract type "Central Contract" and a linked system contract to appear here.
+            Shipments must have contract type "Central" and a linked system contract to appear here.
           </div>
         </div>
       </div>
@@ -1103,7 +1103,7 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocat
       <div style={{ marginBottom: 16 }}>
         <h2 style={{ fontFamily: T.head, fontSize: 19, fontWeight: 700, color: T.text, margin: 0 }}>Contract Consumption</h2>
         <p style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, margin: "3px 0 0" }}>
-          {groups.length} contract{groups.length !== 1 ? "s" : ""} · {centralShipments.length} Central Contract shipment{centralShipments.length !== 1 ? "s" : ""} in range
+          {groups.length} contract{groups.length !== 1 ? "s" : ""} · {centralShipments.length} Central shipment{centralShipments.length !== 1 ? "s" : ""} in range
         </p>
       </div>
 
@@ -1367,7 +1367,7 @@ const DashboardPage = ({ shipments, containers, carriers, allocations }) => {
   const allocContractMatch = (s, a) => {
     if (a.contractId)     return s.contractId === a.contractId;
     if (a.contractNumber) return s.contractRef === a.contractNumber;
-    return s.contractType === "Central Contract";
+    return s.contractType === "Central";
   };
 
   // TEU consumed per carrier — filtered by contract + pol/pod to avoid overcounting
@@ -1467,9 +1467,9 @@ const DashboardPage = ({ shipments, containers, carriers, allocations }) => {
 
   const trendCarriers = [...new Set(activeAllocations.map(a => a.carrierCode))];
 
-  // 6-week TEU trend by contract (Central Contract shipments only)
+  // 6-week TEU trend by contract (Central shipments only)
   const contractTrendData = useMemo(() => {
-    const centralSh    = shipments.filter(s => s.contractType === "Central Contract" && s.contractId);
+    const centralSh    = shipments.filter(s => s.contractType === "Central" && s.contractId);
     const contractIds  = [...new Set(centralSh.map(s => s.contractId))];
     const refMap       = {};
     centralSh.forEach(s => { if (!refMap[s.contractId]) refMap[s.contractId] = s.contractRef || String(s.contractId); });

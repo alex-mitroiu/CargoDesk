@@ -30,6 +30,10 @@ export const api = {
   shipmentEvents: {
     list: (shipmentId) => req("GET", `/shipments/${shipmentId}/events`),
   },
+  shipmentMessages: {
+    list: (shipmentId)       => req("GET",  `/shipments/${shipmentId}/messages`),
+    post: (shipmentId, data) => req("POST", `/shipments/${shipmentId}/messages`, data),
+  },
   shipments: {
     list:   ()        => req("GET",    "/shipments"),
     create: (data)    => req("POST",   "/shipments", data),

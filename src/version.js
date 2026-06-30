@@ -2,11 +2,17 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.15.0";
+export const VERSION   = "0.16.0";
 export const BUILD     = "2026-06-30";
-export const CODENAME  = "Waypoint";
+export const CODENAME  = "Courier";
 
 export const CHANGELOG = [
+  {
+    version:  "0.16.0",
+    date:     "2026-06-30",
+    codename: "Courier",
+    summary:  "Shipment Messages: per-shipment threaded message panel accessible via ✉️ / 📩 icon in the detail header; unread count badge tracked per shipment in localStorage; right-side drawer stays on top with semi-transparent backdrop; messages show author avatar initial, name, role, and timestamp; sort toggle (oldest / newest first) with smart auto-scroll; compose area enforces 15–500 character limit with live counter and Ctrl+Enter shortcut. Real-time delivery via WebSocket (ws package, WebSocketServer attached to the shared HTTP server on /ws path; Vite dev proxy configured); 10-second poll fallback if the socket fails to connect. Shipment Detail improvements: FCL badge in header alongside the status badge; ETD and ETA info cards now show the day-of-week and month in UTC (GMT); click the shipment ID to copy it to clipboard with toast confirmation. Contract badge redesign: SPOT / Pending / Customer Own consolidated to a solid orange badge (theme-independent); Central Contract renamed to Central with a solid blue badge; full rename across DB (migration), server, all pages, and tokens. Contract column in Shipments list: stacked layout showing badge on top and contract reference below; Carrier column also stacked (code bold / name muted). System messages: active-from / active-to inputs upgraded to datetime-local for minute-precision scheduling; active messages appear in a dedicated section of the notification bell dropdown. Requires Attention section (Landing Page): split into Space Configs tab (existing threshold alerts) and Shipment Review tab (shipments with status Requires Review), each row has an ↗ open-in-new-tab button. New-tab workflow: clicking a shipment row or the Open action in ShipmentsPage opens the shipment in a new browser tab; the detail page sets document.title to the shipment ID; a beforeunload guard warns before closing a tab with unsaved container changes. Breadcrumb updated to CargoDesk › Shipments › {ID} › Details with a clickable Shipments segment. Home icon added to the header between the notification bell and user avatar. Calendar week (CW XX) badge shown in the Landing Page clock card. Kanban version tags: tickets gain a version field populated from the CHANGELOG; the selected version renders as a purple badge on the card. Bug fix: contract_ref was absent from TRACKED_FIELDS and newVals in PUT /api/shipments/:id, so editing the Contract Reference field logged no history event — now fixed.",
+  },
   {
     version:  "0.15.0",
     date:     "2026-06-30",

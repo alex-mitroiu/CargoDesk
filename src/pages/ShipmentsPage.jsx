@@ -17,7 +17,7 @@ import { useResizableColumns, ColResizer } from "../components/primitives/useRes
 import ActionMenu from "../components/primitives/ActionMenu";
 import EntityHistoryModal from "../components/shared/EntityHistoryModal";
 
-// ─── Contract Picker Modal (Central Contract) ─────────────────────────────────
+// ─── Contract Picker Modal (Central) ──────────────────────────────────────────
 
 const ContractPickerModal = ({ pol, pod, matches, onSelect, onClose }) => {
   const kindBadge = kind => kind === "exact"
@@ -102,7 +102,7 @@ const ContractPickerModal = ({ pol, pod, matches, onSelect, onClose }) => {
 // ─── ContractField ─────────────────────────────────────────────────────────────
 
 const ContractField = ({ value, onChange, carrier, pol, pod, etd, contractType }) => {
-  const isCentral = contractType === "Central Contract";
+  const isCentral = contractType === "Central";
 
   // Central: route-match state
   const [matches,    setMatches]    = useState(null);
@@ -235,7 +235,7 @@ const ShipmentForm = ({ init = {}, onSave, onCancel }) => {
   const [isSaving, setIsSaving] = useState(false);
   const set = k => v => setF(p => ({ ...p, [k]: v }));
 
-  const isCentral = f.contractType === "Central Contract";
+  const isCentral = f.contractType === "Central";
   const valid = polPort?.unlocode?.length === 5 && podPort?.unlocode?.length === 5
     && f.carrierCode && f.contractType.trim().length > 0 && f.incoterm !== ""
     && f.commodityCode.trim().length > 0
@@ -311,8 +311,8 @@ const ShipmentForm = ({ init = {}, onSave, onCancel }) => {
 
       {/* Contract */}
       <ContractTypeInput value={f.contractType} onChange={v => {
-        // Clearing the linked contract when switching away from Central Contract
-        if (v !== "Central Contract") setF(p => ({ ...p, contractType: v, contractId: "", contractRef: "" }));
+        // Clearing the linked contract when switching away from Central
+        if (v !== "Central") setF(p => ({ ...p, contractType: v, contractId: "", contractRef: "" }));
         else set("contractType")(v);
       }} />
       {isCentral && (
@@ -459,11 +459,14 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
                 <span style={{ fontFamily: T.mono, fontSize: 13, color: T.text, fontWeight: 700 }}>{s.pod}</span>
                 {s.podName && <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{s.podName}</span>}
               </div>
-              <div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
                 <span style={{ fontFamily: T.mono, fontSize: 12, color: T.accent, fontWeight: 700 }}>{s.carrierCode}</span>
-                {carrier && <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}> · {carrier.name}</span>}
+                {carrier && <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{carrier.name}</span>}
               </div>
-              <Badge variant={contractVariant(s.contractType)}>{s.contractType}</Badge>
+              <div style={{ display: "flex", flexDirection: "column", gap: 3, alignItems: "center" }}>
+                <Badge variant={contractVariant(s.contractType)}>{s.contractType}</Badge>
+                {s.contractRef && <span style={{ fontFamily: T.mono, fontSize: 10.5, color: T.textMuted }}>{s.contractRef}</span>}
+              </div>
               <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text }}>{teuFor(s.id)}</span>
               <Badge variant={statusVariant(s.status)}>{s.status}</Badge>
               <div onClick={e => e.stopPropagation()}>

@@ -6,6 +6,7 @@ import { Modal, ConfirmModal } from "../components/primitives/Modal";
 import Btn from "../components/primitives/Btn";
 import Badge from "../components/primitives/Badge";
 import { Inp, Sel, Field, Textarea } from "../components/primitives/Form";
+import { CHANGELOG } from "../version";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -59,6 +60,7 @@ const TicketModal = ({ init = {}, shipments = [], onSave, onCancel }) => {
     priority:    init.priority    || "Medium",
     status:      init.status      || "Ready",
     shipmentId:  init.shipmentId  || "",
+    version:     init.version     || "",
   });
   const set = k => v => setF(p => ({ ...p, [k]: v }));
   const valid = f.title.trim().length > 0;
@@ -78,6 +80,12 @@ const TicketModal = ({ init = {}, shipments = [], onSave, onCancel }) => {
         options={[
           { value: "", label: "— None —" },
           ...shipments.map(s => ({ value: s.id, label: `${s.id} · ${s.pol}→${s.pod} · ${s.carrierCode} (${s.status})` })),
+        ]}
+      />
+      <Sel label="Version tag (optional)" value={f.version} onChange={set("version")}
+        options={[
+          { value: "", label: "— Untagged —" },
+          ...CHANGELOG.map(c => ({ value: c.version, label: `v${c.version}${c.codename ? ` "${c.codename}"` : ""} · ${c.date}` })),
         ]}
       />
       <Textarea label="Description" value={f.description} onChange={set("description")}
@@ -177,6 +185,13 @@ const TicketCard = ({ ticket, onEdit, onDelete, onMove, colIndex,
             <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted,
               background: T.surface, border: `1px solid ${T.border}`, borderRadius: 4, padding: "1px 6px" }}>
               {ticket.section}
+            </span>
+          )}
+          {ticket.version && (
+            <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700,
+              color: "#8b5cf6", background: "rgba(139,92,246,.12)",
+              border: "1px solid rgba(139,92,246,.3)", borderRadius: 4, padding: "1px 6px" }}>
+              v{ticket.version}
             </span>
           )}
         </div>

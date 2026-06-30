@@ -577,7 +577,7 @@ const SpaceConfigurationsPage = ({
   const contractMatch = (s, a) => {
     if (a.contractId)     return s.contractId === a.contractId;
     if (a.contractNumber) return s.contractRef === a.contractNumber;
-    return s.contractType === "Central Contract";
+    return s.contractType === "Central";
   };
 
   // Per-allocation consumed TEU — scoped to carrier + contract + route + period

@@ -1,7 +1,9 @@
 "use strict";
 const express    = require("express");
+const http       = require("http");
 const path       = require("path");
 const fs         = require("fs");
+const { WebSocketServer } = require("ws");
 const { DatabaseSync } = require("node:sqlite");
 
 const app = express();
@@ -195,6 +197,17 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_commodities_desc ON commodities(description);
 
+  -- ── Shipment Messages ──
+  CREATE TABLE IF NOT EXISTS shipment_messages (
+    id          TEXT PRIMARY KEY,
+    shipment_id TEXT NOT NULL,
+    body        TEXT NOT NULL,
+    author      TEXT NOT NULL,
+    role        TEXT DEFAULT '',
+    created_at  TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_shp_msgs ON shipment_messages(shipment_id, created_at);
+
   -- ── System Messages ──
   CREATE TABLE IF NOT EXISTS system_messages (
     id          TEXT PRIMARY KEY,
@@ -288,6 +301,7 @@ const migrations = [
   "ALTER TABLE carriers    ADD COLUMN short_name      TEXT    DEFAULT ''",
   "ALTER TABLE tickets     ADD COLUMN shipment_id     TEXT    DEFAULT NULL",
   "ALTER TABLE tickets     ADD COLUMN type            TEXT    DEFAULT 'Task'",
+  "ALTER TABLE tickets     ADD COLUMN version         TEXT    DEFAULT ''",
   "ALTER TABLE shipments   ADD COLUMN shipper_id      TEXT    DEFAULT ''",
   "ALTER TABLE shipments   ADD COLUMN shipper_name    TEXT    DEFAULT ''",
   "ALTER TABLE shipments   ADD COLUMN consignee_id    TEXT    DEFAULT ''",
@@ -299,6 +313,7 @@ const migrations = [
   "ALTER TABLE contract_legs ADD COLUMN pod_linked_allowed INTEGER DEFAULT 0",
   "ALTER TABLE allocations ADD COLUMN contract_id     TEXT DEFAULT ''",
   "ALTER TABLE allocations ADD COLUMN contract_number TEXT DEFAULT ''",
+  "UPDATE shipments SET contract_type = 'Central' WHERE contract_type = 'Central Contract'",
 ];
 
 for (const sql of migrations) {
@@ -367,7 +382,7 @@ const mapLinkedPort   = r => ({ id: r.id, primaryUnlocode: r.primary_unlocode, p
 const mapTradeLane    = r => ({ code: r.code, name: r.name, description: r.description || '', countryCount: r.country_count ?? 0 });
 const mapRegion       = r => ({ code: r.code, name: r.name, description: r.description || '' });
 const mapCountry      = r => ({ iso2: r.iso2, name: r.name, unMember: r.un_member === 1, regionCode: r.region_code || '', portCount: r.port_count ?? 0 });
-const mapTicket       = r => ({ id: r.id, title: r.title, section: r.section || '', description: r.description || '', priority: r.priority, status: r.status, position: r.position, createdAt: r.created_at, shipmentId: r.shipment_id || null, type: r.type || 'Task' });
+const mapTicket       = r => ({ id: r.id, title: r.title, section: r.section || '', description: r.description || '', priority: r.priority, status: r.status, position: r.position, createdAt: r.created_at, shipmentId: r.shipment_id || null, type: r.type || 'Task', version: r.version || '' });
 const mapCustomer     = r => ({ id: r.id, companyName: r.company_name, address1: r.address1 || '', address2: r.address2 || '', city: r.city || '', state: r.state || '', postalCode: r.postal_code || '', countryIso2: r.country_iso2 || '', phone: r.phone || '', fax: r.fax || '', email: r.email || '', website: r.website || '', notes: r.notes || '', createdAt: r.created_at });
 const mapCommodity    = r => ({ code: r.code, description: r.description, gradeCode: r.grade_code, gradeName: r.grade_name });
 const mapSystemMessage = r => ({
@@ -463,6 +478,7 @@ const TRACKED_FIELDS = {
   bl_number:      'B/L Number',
   contract_type:  'Contract Type',
   contract_id:    'Contract ID',
+  contract_ref:   'Contract Reference',
 };
 
 const TRACKED_CTR_FIELDS = {
@@ -578,7 +594,8 @@ app.put("/api/shipments/:id", (req, res) => {
   // Log all changed fields
   const newVals = { pol: polU, pod: podU, status, etd, eta, carrier_code: carrierCode,
     vessel, vessel_imo: vesselImo, voyage, incoterm, commodity_code: commodityCode,
-    booking_ref: bookingRef, bl_number: blNumber, contract_type: contractType, contract_id: contractId };
+    booking_ref: bookingRef, bl_number: blNumber, contract_type: contractType,
+    contract_id: contractId, contract_ref: contractRef };
   for (const [col] of Object.entries(TRACKED_FIELDS)) {
     const o = String(existing[col] || ''), n = String(newVals[col] || '');
     if (o !== n) {
@@ -1023,20 +1040,20 @@ app.get("/api/unlocodes", (req, res) => {
 
 app.get("/api/tickets", (req, res) => ok(res, db.prepare("SELECT * FROM tickets ORDER BY status, position, created_at").all().map(mapTicket)));
 app.post("/api/tickets", (req, res) => {
-  const { title, section='', description='', priority='Medium', status='Ready', shipmentId=null, type='Task' } = req.body;
+  const { title, section='', description='', priority='Medium', status='Ready', shipmentId=null, type='Task', version='' } = req.body;
   if (!title) return err(res, "title required");
   const id = `TKT-${uid()}`;
   const pos = (db.prepare("SELECT MAX(position) AS m FROM tickets WHERE status=?").get(status)?.m ?? -1) + 1;
   const sid = shipmentId || null;
-  db.prepare("INSERT INTO tickets (id,title,section,description,priority,status,position,created_at,shipment_id,type) VALUES (?,?,?,?,?,?,?,?,?,?)").run(id, title, section, description, priority, status, pos, new Date().toISOString(), sid, type);
-  ok(res, mapTicket({ id, title, section, description, priority, status, position: pos, created_at: new Date().toISOString(), shipment_id: sid, type }), 201);
+  db.prepare("INSERT INTO tickets (id,title,section,description,priority,status,position,created_at,shipment_id,type,version) VALUES (?,?,?,?,?,?,?,?,?,?,?)").run(id, title, section, description, priority, status, pos, new Date().toISOString(), sid, type, version);
+  ok(res, mapTicket({ id, title, section, description, priority, status, position: pos, created_at: new Date().toISOString(), shipment_id: sid, type, version }), 201);
 });
 app.put("/api/tickets/:id", (req, res) => {
-  const { title, section='', description='', priority='Medium', status='Ready', position=0, shipmentId=null, type='Task' } = req.body;
+  const { title, section='', description='', priority='Medium', status='Ready', position=0, shipmentId=null, type='Task', version='' } = req.body;
   const sid = shipmentId || null;
-  const info = db.prepare("UPDATE tickets SET title=?, section=?, description=?, priority=?, status=?, position=?, shipment_id=?, type=? WHERE id=?").run(title, section, description, priority, status, position, sid, type, req.params.id);
+  const info = db.prepare("UPDATE tickets SET title=?, section=?, description=?, priority=?, status=?, position=?, shipment_id=?, type=?, version=? WHERE id=?").run(title, section, description, priority, status, position, sid, type, version, req.params.id);
   if (info.changes===0) return err(res,"Not found",404);
-  ok(res, mapTicket({ id: req.params.id, title, section, description, priority, status, position, created_at: '', shipment_id: sid, type }));
+  ok(res, mapTicket({ id: req.params.id, title, section, description, priority, status, position, created_at: '', shipment_id: sid, type, version }));
 });
 app.delete("/api/tickets/:id", (req, res) => { const info = db.prepare("DELETE FROM tickets WHERE id=?").run(req.params.id); if (info.changes===0) return err(res,"Not found",404); ok(res,{deleted:req.params.id}); });
 
@@ -1340,6 +1357,29 @@ app.get("/api/entity-events/:type/:id", (req, res) => {
   })));
 });
 
+// ─── Shipment Messages ────────────────────────────────────────────────────────
+
+app.get("/api/shipments/:id/messages", (req, res) => {
+  const rows = db.prepare(
+    "SELECT * FROM shipment_messages WHERE shipment_id=? ORDER BY created_at ASC"
+  ).all(req.params.id);
+  ok(res, rows.map(r => ({ id: r.id, shipmentId: r.shipment_id, body: r.body,
+    author: r.author, role: r.role, createdAt: r.created_at })));
+});
+
+app.post("/api/shipments/:id/messages", (req, res) => {
+  const { body, author = "User", role = "" } = req.body;
+  if (!body || body.trim().length < 15) return err(res, "Message must be at least 15 characters", 400);
+  if (body.trim().length > 500) return err(res, "Message must be at most 500 characters", 400);
+  const id = `MSG-${uid()}`;
+  const createdAt = new Date().toISOString();
+  db.prepare("INSERT INTO shipment_messages (id,shipment_id,body,author,role,created_at) VALUES (?,?,?,?,?,?)")
+    .run(id, req.params.id, body.trim(), author.trim(), role.trim(), createdAt);
+  const newMsg = { id, shipmentId: req.params.id, body: body.trim(), author, role, createdAt };
+  broadcastMessage(req.params.id, newMsg);
+  ok(res, newMsg, 201);
+});
+
 // ─── Health ───────────────────────────────────────────────────────────────────
 
 app.get("/api/health", (req, res) => {
@@ -1398,7 +1438,45 @@ app.delete("/api/system-messages/:id", (req, res) => {
   ok(res, { deleted: req.params.id });
 });
 
+// ─── WebSocket server ─────────────────────────────────────────────────────────
+
+const httpServer = http.createServer(app);
+const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
+
+// shipmentId → Set<WebSocket>
+const shipmentSubs = new Map();
+
+wss.on("connection", ws => {
+  let subscribedId = null;
+
+  ws.on("message", raw => {
+    try {
+      const msg = JSON.parse(raw);
+      if (msg.type === "subscribe" && msg.shipmentId) {
+        subscribedId = msg.shipmentId;
+        if (!shipmentSubs.has(subscribedId)) shipmentSubs.set(subscribedId, new Set());
+        shipmentSubs.get(subscribedId).add(ws);
+      }
+    } catch { /* ignore malformed frames */ }
+  });
+
+  ws.on("close", () => {
+    if (subscribedId && shipmentSubs.has(subscribedId)) {
+      shipmentSubs.get(subscribedId).delete(ws);
+    }
+  });
+});
+
+const broadcastMessage = (shipmentId, payload) => {
+  const subs = shipmentSubs.get(shipmentId);
+  if (!subs) return;
+  const frame = JSON.stringify({ type: "new_message", message: payload });
+  for (const ws of subs) {
+    if (ws.readyState === ws.OPEN) ws.send(frame);
+  }
+};
+
 // ─── Start ────────────────────────────────────────────────────────────────────
 
 const PORT = 3001;
-app.listen(PORT, () => console.log(`⚓  CargoDesk API running on http://localhost:${PORT}`));
+httpServer.listen(PORT, () => console.log(`⚓  CargoDesk API + WS running on http://localhost:${PORT}`));

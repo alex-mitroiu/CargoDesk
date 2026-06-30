@@ -7,6 +7,7 @@ import { ShipmentForm } from "./ShipmentsPage";
 import { VesselField } from "../components/shared/VesselCombobox";
 import { CommodityCombobox, GradePill } from "../components/shared/CommodityCombobox";
 import { api } from "../api";
+import { toast } from "../toast";
 import Btn from "../components/primitives/Btn";
 import Spinner from "../components/primitives/Spinner";
 import Badge from "../components/primitives/Badge";
@@ -814,6 +815,171 @@ const ShipmentTimeline = ({ events, currentStatus, open, onToggle }) => (
   </div>
 );
 
+// ─── Messages drawer ─────────────────────────────────────────────────────────
+
+const MessagesDrawer = ({ shipmentId, messages, onPost, onClose }) => {
+  const [body,    setBody]    = useState("");
+  const [posting, setPosting] = useState(false);
+  const [sortAsc, setSortAsc] = useState(true);
+  const listRef = useRef(null);
+
+  const sorted = sortAsc ? [...messages] : [...messages].reverse();
+
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    if (sortAsc) {
+      const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+      if (nearBottom) el.scrollTop = el.scrollHeight;
+    } else {
+      const nearTop = el.scrollTop < 80;
+      if (nearTop) el.scrollTop = 0;
+    }
+  }, [messages, sortAsc]);
+
+  const charCount = body.length;
+  const valid = charCount >= 15 && charCount <= 500;
+
+  const handlePost = async () => {
+    if (!valid || posting) return;
+    setPosting(true);
+    try { await onPost(body); setBody(""); } finally { setPosting(false); }
+  };
+
+  const fmtTs = iso => {
+    const d = new Date(iso);
+    return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) +
+      " · " + d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  };
+
+  return (
+    <>
+      {/* Backdrop — semi-transparent, click to close */}
+      <div onClick={onClose}
+        style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.25)", zIndex: 1100 }} />
+
+      {/* Drawer panel */}
+      <div style={{
+        position: "fixed", top: 0, right: 0, bottom: 0, width: 420,
+        background: T.surface, borderLeft: `1px solid ${T.border}`,
+        boxShadow: "-8px 0 32px rgba(0,0,0,.35)",
+        zIndex: 1101, display: "flex", flexDirection: "column",
+      }}>
+        {/* Header */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+          padding: "16px 20px", borderBottom: `1px solid ${T.border}`, flexShrink: 0 }}>
+          <div>
+            <div style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text }}>
+              💬 Messages
+            </div>
+            <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, marginTop: 2 }}>
+              {shipmentId} · {messages.length} message{messages.length !== 1 ? "s" : ""}
+            </div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <button
+              onClick={() => setSortAsc(a => !a)}
+              title={sortAsc ? "Showing oldest first — click for newest first" : "Showing newest first — click for oldest first"}
+              style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 6,
+                cursor: "pointer", color: T.textMuted, fontSize: 12, padding: "4px 10px",
+                fontFamily: T.mono, lineHeight: 1, whiteSpace: "nowrap",
+                transition: "border-color .15s, color .15s" }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = T.accent; e.currentTarget.style.color = T.accent; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.textMuted; }}>
+              {sortAsc ? "↑ Oldest first" : "↓ Newest first"}
+            </button>
+            <button onClick={onClose}
+            style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 6,
+              cursor: "pointer", color: T.textMuted, fontSize: 15, padding: "4px 10px",
+              lineHeight: 1 }}
+            onMouseEnter={e => { e.currentTarget.style.borderColor = T.danger; e.currentTarget.style.color = T.danger; }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.textMuted; }}>
+            ✕
+          </button>
+          </div>
+        </div>
+
+        {/* Message list */}
+        <div ref={listRef} style={{ flex: 1, overflowY: "auto", padding: "16px 20px",
+          display: "flex", flexDirection: "column", gap: 14 }}>
+          {sorted.length === 0 ? (
+            <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted,
+              fontStyle: "italic", textAlign: "center", marginTop: 40 }}>
+              No messages yet. Be the first to post one.
+            </div>
+          ) : sorted.map(m => (
+            <div key={m.id} style={{ background: T.bg, border: `1px solid ${T.border}`,
+              borderRadius: 10, padding: "12px 14px" }}>
+              {/* Author row */}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                <div style={{ width: 28, height: 28, borderRadius: "50%",
+                  background: T.accent, display: "flex", alignItems: "center", justifyContent: "center",
+                  fontFamily: T.head, fontSize: 12, fontWeight: 800, color: "#fff", flexShrink: 0 }}>
+                  {m.author.charAt(0).toUpperCase()}
+                </div>
+                <div>
+                  <div style={{ fontFamily: T.body, fontSize: 13, fontWeight: 700, color: T.text }}>
+                    {m.author}
+                  </div>
+                  {m.role && (
+                    <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
+                      {m.role}
+                    </div>
+                  )}
+                </div>
+              </div>
+              {/* Timestamp */}
+              <div style={{ fontFamily: T.mono, fontSize: 10.5, color: T.textMuted, marginBottom: 8 }}>
+                {fmtTs(m.createdAt)}
+              </div>
+              {/* Body */}
+              <div style={{ fontFamily: T.body, fontSize: 13, color: T.text, lineHeight: 1.6,
+                whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                {m.body}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Compose area */}
+        <div style={{ borderTop: `1px solid ${T.border}`, padding: "14px 20px",
+          display: "flex", flexDirection: "column", gap: 10, flexShrink: 0 }}>
+          <textarea
+            value={body}
+            onChange={e => setBody(e.target.value)}
+            placeholder="Type a message… (min 15, max 500 characters)"
+            rows={4}
+            maxLength={500}
+            style={{ background: T.bg, border: `1px solid ${body.length > 0 && !valid ? T.danger : T.border}`,
+              borderRadius: 8, color: T.text, fontFamily: T.body, fontSize: 13,
+              padding: "10px 12px", outline: "none", resize: "none",
+              lineHeight: 1.5, transition: "border-color .15s" }}
+            onFocus={e => e.currentTarget.style.borderColor = T.accent}
+            onBlur={e => e.currentTarget.style.borderColor = body.length > 0 && !valid ? T.danger : T.border}
+            onKeyDown={e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) handlePost(); }}
+          />
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <span style={{ fontFamily: T.mono, fontSize: 11,
+              color: charCount > 500 ? T.danger : charCount >= 15 ? T.success : T.textMuted }}>
+              {charCount} / 500{charCount < 15 && charCount > 0 ? ` (min ${15 - charCount} more)` : ""}
+            </span>
+            <button onClick={handlePost} disabled={!valid || posting}
+              style={{ background: valid ? T.accent : T.border, border: "none", borderRadius: 7,
+                color: valid ? "#fff" : T.textMuted, cursor: valid ? "pointer" : "default",
+                padding: "8px 20px", fontFamily: T.body, fontSize: 13, fontWeight: 700,
+                transition: "background .15s" }}>
+              {posting ? "Posting…" : "Post"}
+            </button>
+          </div>
+          <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.border }}>
+            Ctrl+Enter to post quickly
+          </div>
+        </div>
+      </div>
+    </>
+  );
+};
+
 const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, onAddContainer, onEditContainer, onDeleteContainer }) => {
   const [ctrModal,       setCtrModal]       = useState(null);
   const [linkVesselOpen, setLinkVesselOpen] = useState(false);
@@ -824,6 +990,9 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
   const [events,         setEvents]         = useState([]);
   const [allocations,    setAllocations]    = useState([]);
   const [isDirty,        setIsDirty]        = useState(false);
+  const [msgsOpen,       setMsgsOpen]       = useState(false);
+  const [messages,       setMessages]       = useState([]);
+  const [unreadCount,    setUnreadCount]    = useState(0);
   const { template: ctrTemplate, startResize: ctrStartResize } = useResizableColumns("shipment-containers", [140,60,90,50,80,150,100,90,120]);
   const ctrHeaders = ["Container No.","Size","Type","TEU","HS Code","Cargo Description","Wt / Vol","DG","Actions"];
 
@@ -847,6 +1016,51 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
   }, [shipment?.id, shipment?.status]);
 
   useEffect(() => { api.allocations.list().then(setAllocations).catch(() => {}); }, []);
+
+  const loadMessages = () =>
+    api.shipmentMessages.list(shipment.id).then(msgs => {
+      setMessages(msgs);
+      const lastRead = localStorage.getItem(`msg_read_${shipment.id}`) || "";
+      setUnreadCount(msgs.filter(m => m.createdAt > lastRead).length);
+    }).catch(() => {});
+
+  useEffect(() => { loadMessages(); }, [shipment.id]);
+
+  useEffect(() => {
+    if (!msgsOpen) return;
+    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const ws = new WebSocket(`${proto}//${window.location.host}/ws`);
+    let pollId;
+
+    ws.onopen = () => ws.send(JSON.stringify({ type: "subscribe", shipmentId: shipment.id }));
+    ws.onmessage = e => {
+      try {
+        const frame = JSON.parse(e.data);
+        if (frame.type === "new_message") {
+          setMessages(prev => {
+            if (prev.some(m => m.id === frame.message.id)) return prev;
+            const lastRead = localStorage.getItem(`msg_read_${shipment.id}`) || "";
+            if (frame.message.createdAt > lastRead) setUnreadCount(n => n + 1);
+            return [...prev, frame.message];
+          });
+        }
+      } catch { /* ignore */ }
+    };
+    // Fall back to polling if the socket fails to connect
+    ws.onerror = () => { pollId = setInterval(loadMessages, 10_000); };
+    ws.onclose = () => { if (pollId) clearInterval(pollId); };
+
+    return () => {
+      ws.close();
+      if (pollId) clearInterval(pollId);
+    };
+  }, [msgsOpen, shipment.id]);
+
+  const openMessages = () => {
+    setMsgsOpen(true);
+    localStorage.setItem(`msg_read_${shipment.id}`, new Date().toISOString());
+    setUnreadCount(0);
+  };
   const carrier  = carriers.find(c => c.code === shipment.carrierCode);
   const ctrs     = containers.filter(c => c.shipmentId === shipment.id);
   const totalTEU = ctrs.reduce((s, c) => s + teuOf(c.size), 0);
@@ -854,7 +1068,7 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
   const allocContractMatch = (s, a) => {
     if (a.contractId)     return s.contractId === a.contractId;
     if (a.contractNumber) return s.contractRef === a.contractNumber;
-    return s.contractType === "Central Contract";
+    return s.contractType === "Central";
   };
   const todayStr = new Date().toISOString().slice(0, 10);
   const linkedAlloc = allocations.find(a =>
@@ -881,13 +1095,40 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
         <Btn variant="secondary" onClick={onBack}>← Back</Btn>
         <div style={{ flex: 1 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <h1 style={{ fontFamily: T.head, fontSize: 24, fontWeight: 800, color: T.text, margin: 0 }}>{shipment.id}</h1>
+            <h1
+              title="Click to copy shipment ID"
+              onClick={() => navigator.clipboard.writeText(shipment.id).then(() => toast.success(`Copied ${shipment.id}`))}
+              style={{ fontFamily: T.head, fontSize: 24, fontWeight: 800, color: T.text, margin: 0,
+                cursor: "pointer", userSelect: "none" }}>
+              {shipment.id}
+            </h1>
             <Badge variant={statusVariant(shipment.status)}>{shipment.status}</Badge>
+            <span style={{ fontFamily: T.mono, fontSize: 10.5, fontWeight: 700,
+              background: "rgb(30,115,190)", color: "#fff",
+              borderRadius: 4, padding: "2px 9px", letterSpacing: ".06em" }}>FCL</span>
           </div>
           <p style={{ fontFamily: T.mono, fontSize: 13, color: T.textMuted, margin: "3px 0 0" }}>
 {shipment.polName || shipment.pol} → {shipment.podName || shipment.pod} · created {shipment.createdAt}
           </p>
         </div>
+        <button
+          onClick={openMessages}
+          title={unreadCount > 0 ? `${unreadCount} unread message${unreadCount > 1 ? "s" : ""}` : "Shipment messages"}
+          style={{ position: "relative", background: "none", border: `1px solid ${T.border}`,
+            borderRadius: 8, cursor: "pointer", padding: "7px 12px", fontSize: 18, lineHeight: 1,
+            transition: "border-color .15s" }}
+          onMouseEnter={e => e.currentTarget.style.borderColor = T.accent}
+          onMouseLeave={e => e.currentTarget.style.borderColor = T.border}>
+          {unreadCount > 0 ? "📩" : "✉️"}
+          {unreadCount > 0 && (
+            <span style={{ position: "absolute", top: -5, right: -5,
+              background: T.danger, color: "#fff", borderRadius: "50%",
+              width: 17, height: 17, display: "flex", alignItems: "center", justifyContent: "center",
+              fontFamily: T.mono, fontSize: 9, fontWeight: 700, lineHeight: 1 }}>
+              {unreadCount > 9 ? "9+" : unreadCount}
+            </span>
+          )}
+        </button>
         <Btn variant="secondary" onClick={() => setEditShp(true)}>✎ Edit Shipment</Btn>
       </div>
 
@@ -905,8 +1146,34 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
 
       {/* Info cards row 2 */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 22 }}>
-        <InfoCard label="ETD" value={shipment.etd || "—"} mono />
-        <InfoCard label="ETA" value={shipment.eta || "—"} mono />
+        {/* ETD with GMT */}
+        <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 10, padding: "14px 18px" }}>
+          <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
+            textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 6 }}>ETD</div>
+          <div style={{ fontFamily: T.mono, fontSize: 16, fontWeight: 700, color: T.text }}>
+            {shipment.etd || "—"}
+          </div>
+          {shipment.etd && (
+            <div style={{ fontFamily: T.mono, fontSize: 10.5, color: T.textMuted, marginTop: 3 }}>
+              {new Date(shipment.etd + "T00:00:00Z").toLocaleDateString("en-GB",
+                { weekday: "short", day: "2-digit", month: "short", timeZone: "UTC" })} · GMT
+            </div>
+          )}
+        </div>
+        {/* ETA with GMT */}
+        <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 10, padding: "14px 18px" }}>
+          <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
+            textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 6 }}>ETA</div>
+          <div style={{ fontFamily: T.mono, fontSize: 16, fontWeight: 700, color: T.text }}>
+            {shipment.eta || "—"}
+          </div>
+          {shipment.eta && (
+            <div style={{ fontFamily: T.mono, fontSize: 10.5, color: T.textMuted, marginTop: 3 }}>
+              {new Date(shipment.eta + "T00:00:00Z").toLocaleDateString("en-GB",
+                { weekday: "short", day: "2-digit", month: "short", timeZone: "UTC" })} · GMT
+            </div>
+          )}
+        </div>
         {/* Vessel card with Link action */}
         <div style={{ background: T.bg, border: `1px solid ${(!shipment.vessel && !shipment.vesselImo) ? T.warning + "88" : T.border}`,
           borderRadius: 10, padding: "14px 18px", position: "relative" }}>
@@ -1006,6 +1273,9 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
           <div>
             <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 4 }}>Contract Type</div>
             <Badge variant={contractVariant(shipment.contractType)}>{shipment.contractType}</Badge>
+            {shipment.contractRef && (
+              <div style={{ fontFamily: T.mono, fontSize: 11.5, color: T.textMuted, marginTop: 4 }}>{shipment.contractRef}</div>
+            )}
           </div>
           <div>
             <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 4 }}>Contract ID</div>
@@ -1171,6 +1441,17 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
           onConfirm={() => { onDeleteContainer(confirmCtr); setConfirmCtr(null); }}
           onCancel={() => setConfirmCtr(null)} />
       )}
+
+      {/* ── Messages drawer ── */}
+      {msgsOpen && <MessagesDrawer
+        shipmentId={shipment.id}
+        messages={messages}
+        onPost={async (body) => {
+          await api.shipmentMessages.post(shipment.id, { body, author: "Alex Mitroiu", role: "Freight Manager" });
+          loadMessages();
+        }}
+        onClose={() => setMsgsOpen(false)}
+      />}
     </div>
   );
 };
