@@ -438,15 +438,30 @@ try { loadSanctionsIndex(); } catch {}
 
 // ─── OFAC SDN sync (extracted so route and scheduler both call it) ─────────────
 
-async function syncOfacSdn() {
-  const xml = await new Promise((resolve, reject) => {
-    https.get({ hostname: "www.treasury.gov", path: "/ofac/downloads/sdn.xml", port: 443, rejectUnauthorized: false }, r => {
+function httpsGetFollowRedirects(url, depth = 0) {
+  return new Promise((resolve, reject) => {
+    if (depth > 5) return reject(new Error("Too many redirects"));
+    https.get(url, { rejectUnauthorized: false }, r => {
+      if (r.statusCode >= 300 && r.statusCode < 400 && r.headers.location) {
+        r.resume();
+        const next = r.headers.location.startsWith("http")
+          ? r.headers.location
+          : new URL(r.headers.location, url).href;
+        return resolve(httpsGetFollowRedirects(next, depth + 1));
+      }
       if (r.statusCode !== 200) { r.resume(); return reject(new Error(`OFAC returned HTTP ${r.statusCode}`)); }
-      const bufs = [];
-      r.on("data", c => bufs.push(c));
-      r.on("end", () => resolve(Buffer.concat(bufs).toString("utf8")));
-      r.on("error", reject);
+      resolve(r);
     }).on("error", reject);
+  });
+}
+
+async function syncOfacSdn() {
+  const resp = await httpsGetFollowRedirects("https://www.treasury.gov/ofac/downloads/sdn.xml");
+  const xml = await new Promise((resolve, reject) => {
+    const bufs = [];
+    resp.on("data", c => bufs.push(c));
+    resp.on("end", () => resolve(Buffer.concat(bufs).toString("utf8")));
+    resp.on("error", reject);
   });
 
   const entries = [];
@@ -492,29 +507,51 @@ async function syncOfacSdn() {
 
 let ofacAutoSyncTimer = null;
 
-function scheduleNextOfacSync() {
+// setTimeout is backed by a 32-bit int; anything above ~24.8 days wraps to 1ms.
+const MAX_TIMER_MS = 2_000_000_000; // ~23.1 days — safe upper bound
+
+function scheduleNextOfacSync(retryDelayMs = null) {
   clearTimeout(ofacAutoSyncTimer);
   try {
     const s = getSettings();
     if (s.api_ofac_enabled !== 'true') return;
     const lastSync = db.prepare("SELECT synced_at FROM sanctions_syncs WHERE source='OFAC-SDN'").get();
     if (!lastSync) return; // Never synced — user must trigger the first one manually
-    const val        = Math.max(1, parseInt(s.api_ofac_interval_value) || 1);
-    const unit       = s.api_ofac_interval_unit || 'weeks';
-    const msMap      = { days: 86400000, weeks: 7 * 86400000, months: 30 * 86400000 };
-    const intervalMs = val * (msMap[unit] || msMap.weeks);
-    const nextDue    = new Date(lastSync.synced_at).getTime() + intervalMs;
-    const delay      = Math.max(60000, nextDue - Date.now()); // at least 1 min in the future
+
+    let delay;
+    if (retryDelayMs != null) {
+      // After a failed sync: wait the requested retry interval, then try again
+      delay = Math.min(MAX_TIMER_MS, retryDelayMs);
+    } else {
+      const val        = Math.max(1, parseInt(s.api_ofac_interval_value) || 1);
+      const unit       = s.api_ofac_interval_unit || 'weeks';
+      const msMap      = { days: 86400000, weeks: 7 * 86400000, months: 30 * 86400000 };
+      const intervalMs = val * (msMap[unit] || msMap.weeks);
+      const nextDue    = new Date(lastSync.synced_at).getTime() + intervalMs;
+      // Cap so we never exceed 32-bit int; fire early if still waiting, check again then
+      delay = Math.min(MAX_TIMER_MS, Math.max(60000, nextDue - Date.now()));
+    }
+
     ofacAutoSyncTimer = setTimeout(async () => {
+      // Re-check whether the sync is actually due (handles the >24-day cap case)
+      const ls = db.prepare("SELECT synced_at FROM sanctions_syncs WHERE source='OFAC-SDN'").get();
+      const sv        = Math.max(1, parseInt(getSettings().api_ofac_interval_value) || 1);
+      const su        = getSettings().api_ofac_interval_unit || 'weeks';
+      const msMap     = { days: 86400000, weeks: 7 * 86400000, months: 30 * 86400000 };
+      const due       = ls ? new Date(ls.synced_at).getTime() + sv * (msMap[su] || msMap.weeks) : 0;
+      if (Date.now() < due) { scheduleNextOfacSync(); return; } // not due yet, reschedule
+
       console.log("⚓ Auto-syncing OFAC SDN…");
       try {
         const r = await syncOfacSdn();
         console.log(`  ✔ OFAC auto-sync complete: ${r.entries.toLocaleString()} entries`);
+        scheduleNextOfacSync();
       } catch (e) {
         console.error("  ✗ OFAC auto-sync failed:", e.message);
+        scheduleNextOfacSync(3_600_000); // retry in 1 hour, don't hammer on failure
       }
-      scheduleNextOfacSync();
     }, delay);
+
     console.log(`  ⏱ OFAC auto-sync scheduled in ${Math.round(delay / 3600000 * 10) / 10}h`);
   } catch {}
 }
@@ -808,7 +845,9 @@ app.post("/api/shipments", (req, res) => {
     .run(id, polU, podU, carrierCode, contractType, contractNotes, status, createdAt, etd, eta, bookingRef, blNumber, vessel, voyage, incoterm, vesselImo, contractId, contractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName);
   logEvent(id, 'SHIPMENT_CREATED', null, null, null,
     JSON.stringify({ pol: polU, pod: podU, carrier: carrierCode, status, etd, contractType }));
-  ok(res, mapShipment({ id, pol: polU, pod: podU, carrier_code: carrierCode, contract_type: contractType, contract_notes: contractNotes, status, created_at: createdAt, etd, eta, booking_ref: bookingRef, bl_number: blNumber, vessel, voyage, incoterm, vessel_imo: vesselImo, contract_id: contractId, contract_ref: contractRef, commodity_code: commodityCode, shipper_id: shipperId, shipper_name: shipperName, consignee_id: consigneeId, consignee_name: consigneeName, principal_id: principalId, principal_name: principalName }), 201);
+  const silentScreening = sanctionsMap.size > 0 ? screenShipmentById(id) : null;
+  const base = mapShipment({ id, pol: polU, pod: podU, carrier_code: carrierCode, contract_type: contractType, contract_notes: contractNotes, status, created_at: createdAt, etd, eta, booking_ref: bookingRef, bl_number: blNumber, vessel, voyage, incoterm, vessel_imo: vesselImo, contract_id: contractId, contract_ref: contractRef, commodity_code: commodityCode, shipper_id: shipperId, shipper_name: shipperName, consignee_id: consigneeId, consignee_name: consigneeName, principal_id: principalId, principal_name: principalName });
+  ok(res, silentScreening ? { ...base, screening: silentScreening } : base, 201);
 });
 
 app.put("/api/shipments/:id", (req, res) => {
@@ -849,7 +888,21 @@ app.put("/api/shipments/:id", (req, res) => {
     LEFT JOIN port_locations p2 ON p2.unlocode = s.pod
     WHERE s.id = ?
   `).get(req.params.id);
-  ok(res, mapShipment(updated));
+  // Silent re-screen: only when SDN list is loaded, not if a compliance officer overrode it,
+  // and only when party names or route changed (don't wipe a clean result on an ETA-only edit).
+  let silentScreening = null;
+  if (sanctionsMap.size > 0) {
+    const prev = db.prepare("SELECT result, overridden_at FROM shipment_screenings WHERE shipment_id=?").get(req.params.id);
+    const isOverridden = prev?.result === 'CLEAR' && prev?.overridden_at;
+    const partyOrRouteChanged = !prev
+      || existing.shipper_name  !== shipperName
+      || existing.consignee_name !== consigneeName
+      || existing.principal_name !== principalName
+      || existing.pol            !== polU
+      || existing.pod            !== podU;
+    if (!isOverridden && partyOrRouteChanged) silentScreening = screenShipmentById(req.params.id);
+  }
+  ok(res, silentScreening ? { ...mapShipment(updated), screening: silentScreening } : mapShipment(updated));
 });
 
 app.delete("/api/shipments/:id", (req, res) => {

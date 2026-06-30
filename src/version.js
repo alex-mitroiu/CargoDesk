@@ -2,11 +2,23 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.16.0";
+export const VERSION   = "0.17.1";
 export const BUILD     = "2026-06-30";
-export const CODENAME  = "Courier";
+export const CODENAME  = "Sentry";
 
 export const CHANGELOG = [
+  {
+    version:  "0.17.1",
+    date:     "2026-06-30",
+    codename: "Sentry",
+    summary:  "Hotfix: FX Rates health check was fetching https://api.frankfurter.app directly from the browser, triggering a CORS block (HTTP 301, no Access-Control-Allow-Origin header). Fixed by routing the health check through the existing /api/fx/rates backend endpoint, which already proxies the request server-side.",
+  },
+  {
+    version:  "0.17.0",
+    date:     "2026-06-30",
+    codename: "Sentry",
+    summary:  "Application Settings: new ⚙ nav item (pinned above footer) with API Controls tab; External APIs subtab — FX Rates, Weather, and OFAC SDN each have an ON/OFF toggle, configurable auto-sync recurrence (days / weeks / months), last-sync info, latency test, and action buttons; Internal APIs subtab — WebSocket, Shipments, Contracts, Customers, Carriers, Vessels, Port Locations, System Messages each have a toggle that gates the corresponding sidebar nav item (disabled modules hide from navigation and show a 🔒 Module Disabled fallback page). User Manual and About moved from sidebar nav to the user avatar dropdown. System Health respects the same toggles — disabled APIs are shown as inactive rather than failing. Sanctions & Denied Party Screening (OFAC SDN): shipments are now screened silently on every create and edit; screening runs only when the SDN index is loaded (sanctionsMap.size > 0), skips re-screening when a compliance officer has already manually overridden a result, and only re-screens on edit when party names or POL/POD change (not on ETA-only edits). Warning toast fires on save if any sanctioned party is detected, naming each hit (e.g. 'Consignee: Mahan Air'). Compliance badge in shipment detail header simplified to '⚠ Compliance review required'; hover tooltip lists each flagged party on its own line. OFAC auto-sync fixes: httpsGetFollowRedirects() follows up to 5 HTTP 302 redirects (treasury.gov redirects to ofac.treasury.gov); setTimeout overflow fixed by capping the delay at 2,000,000,000 ms (~23 days) so intervals longer than 24 days no longer collapse to 1 ms and spam-retry; failed syncs now wait 1 hour before retrying instead of immediately rescheduling from the same stale lastSync timestamp. OFAC manual import: CSV file upload path added alongside the direct-sync button (Vite large-body passthrough plugin pipes the 25 MB CSV stream directly to Express, bypassing proxy buffer limits). SDN test customers: five pre-seeded customer records covering direct SDN name match (Mahan Air), alias match (IRISL), Russian SDN entity (Rosoboronexport), and two clean control entities (Rotterdam Cargo Services B.V., Evergreen Logistics Pte. Ltd.). Shipment detail header label size increased 15% (10.5 → 12 px) for status badge, FCL chip, and compliance badge; Badge primitive gains a size prop for per-instance override.",
+  },
   {
     version:  "0.16.0",
     date:     "2026-06-30",

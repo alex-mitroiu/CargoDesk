@@ -47,7 +47,7 @@ const HEALTH_CHECKS = [
   { id: "ports",     label: "Port Locations",          url: "/api/port-locations?limit=1",     cat: "Internal" },
   { id: "customers", label: "Customers",               url: "/api/customers?limit=1",          cat: "Internal" },
   { id: "sysmsg",    label: "System Messages",         url: "/api/system-messages",            cat: "Internal" },
-  { id: "fx",      label: "FX Rates (frankfurter.app)", url: "https://api.frankfurter.app/latest?from=USD&to=EUR", cat: "External", settingKey: "api_fx_enabled" },
+  { id: "fx",      label: "FX Rates (frankfurter.app)", url: "/api/fx/rates",                                      cat: "External", settingKey: "api_fx_enabled" },
   { id: "weather", label: "Weather (open-meteo.com)",   url: "https://api.open-meteo.com/v1/forecast?latitude=51.9&longitude=4.5&current=temperature_2m", cat: "External", settingKey: "api_weather_enabled" },
 ];
 
@@ -840,6 +840,10 @@ function App() {
                       setShipments(p => [created, ...p]);
                       setShowNewShp(false);
                       toast.success("Shipment created");
+                      if (created.screening?.result === "HIT") {
+                        const parties = (created.screening.hits || []).map(h => `${h.field}: ${h.value}`).join(", ");
+                        toast.warning(`Compliance review required — sanctioned party detected${parties ? ` (${parties})` : ""}`);
+                      }
                     } catch (e) { toast.error(e.message); throw e; }
                   }}
                   onCancel={() => setShowNewShp(false)} />
@@ -857,6 +861,11 @@ function App() {
                 const updated = await api.shipments.update(id, form);
                 setShipments(p => p.map(s => s.id === id ? { ...s, ...updated } : s));
                 toast.success("Shipment updated");
+                if (updated.screening?.result === "HIT") {
+                  const parties = (updated.screening.hits || []).map(h => `${h.field}: ${h.value}`).join(", ");
+                  toast.warning(`Compliance review required — sanctioned party detected${parties ? ` (${parties})` : ""}`);
+                }
+                return updated;
               } catch (e) { toast.error(e.message); throw e; }
             }}
             onAddContainer={async (shipmentId, form) => {

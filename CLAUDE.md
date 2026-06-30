@@ -4,7 +4,7 @@
 Full-stack freight management app. React 18 + Vite frontend, Express + node:sqlite backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.15.0 "Waypoint"**
+- Version: **v0.17.1 "Sentry"**
 - Run: `npm run dev` (runs server on :3001 + Vite on :5173 concurrently)
 - Seed: `node import-mdm-data.js`
 
@@ -95,9 +95,11 @@ src/
 - **contractMatch**: `contractMatch(s, a)` — priority: contractId exact > contractNumber/contractRef string > contractType === "Central Contract"
 - **Contract legs loaded on demand**: SpaceConfigurationsPage fetches `api.contracts.get(id)` for each unique allocation contractId and caches in `contractsById` state
 
-## Recent changes (v0.15.0)
-- SpaceConfigurationsPage: Linked Shipments action + modal; IdChip in History header; Actions column header; setRawConflicts crash fix; contractMatch + allocationRouteMatch applied to consumedPerAlloc and Linked Shipments filter; "linked" badge shown when port-link resolved match
-- DashboardPage: 0-TEU exclusion from rangeShipments; Contract Consumption Allocated vs Consumed TEU chart + 6-week trend line chart per contract; Shipments in Period resizable columns; CHART_COLORS module-level constant
-- ShipmentDetailPage: ContainerTypePickerModal — visual equipment picker grouped by 20ft/40ft
-- server.js: contracts list batches leg fetching via IN query (no N+1)
-- tokens.js: buildLinkedPortIndex, matchedLegFor, allocationRouteMatch helpers added
+## Recent changes (v0.17.0)
+- AppSettingsPage (new): ⚙ nav item pinned above footer; API Controls tab with External APIs subtab (FX Rates, Weather, OFAC SDN — toggle, recurrence, test, import, sync) and Internal APIs subtab (WebSocket, Shipments, Contracts, Customers, Carriers, Vessels, Ports, System Messages — toggle + latency test); toggles gate corresponding sidebar nav items and render a 🔒 Module Disabled fallback for direct URL access
+- App.jsx: appSettings state + PAGE_SETTING_MAP + isEnabled() helper; settings reloaded on nav away from settings page; NavBtn hides when module disabled; User Manual + About moved from sidebar to avatar dropdown; paddingBottom on aside to clear footer
+- Sanctions screening: silent auto-screen on POST/PUT /api/shipments when sanctionsMap.size > 0; skips re-screen if compliance override exists or if only non-party fields changed; screening result embedded in response; warning toast on HIT names each flagged party
+- OFAC sync: httpsGetFollowRedirects() follows up to 5 redirects; setTimeout overflow fixed (capped at 2,000,000,000 ms); failed syncs retry after 1 h instead of immediately; CSV file-upload path added (Vite large-body passthrough plugin)
+- ShipmentDetailPage: compliance badge text simplified to "⚠ Compliance review required"; hover tooltip lists hit parties; header badge fontSize 10.5 → 12 (+15%); edit save refreshes screening state from response
+- Badge primitive: size prop added for per-instance font-size override
+- server.js: app_settings table + SETTING_DEFAULTS seeding; getSettings() helper; scheduleNextOfacSync() with cap + retry logic; express.json limit raised to 25 mb; POST /api/sanctions/import-csv; GET|PUT /api/settings

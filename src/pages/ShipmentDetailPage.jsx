@@ -819,7 +819,7 @@ const ComplianceModal = ({ shipment, screening, onChange, onClose }) => {
             </span>
             <div>
               <div style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: rs.color }}>
-                {effectiveResult === "HIT" ? "HIT — Compliance review required"
+                {effectiveResult === "HIT" ? "Compliance review required"
                   : effectiveResult === "OVERRIDE" ? "CLEAR (manually overridden)"
                   : "CLEAR — No matches found"}
               </div>
@@ -1063,25 +1063,33 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
                 cursor: "pointer", userSelect: "none" }}>
               {shipment.id}
             </h1>
-            <Badge variant={statusVariant(shipment.status)}>{shipment.status}</Badge>
-            <span style={{ fontFamily: T.mono, fontSize: 10.5, fontWeight: 700,
+            <Badge variant={statusVariant(shipment.status)} size={12}>{shipment.status}</Badge>
+            <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700,
               background: "rgb(30,115,190)", color: "#fff",
               borderRadius: 4, padding: "2px 9px", letterSpacing: ".06em" }}>FCL</span>
             {/* Compliance badge */}
             {(() => {
-              const r = screening?.result;
+              const r        = screening?.result;
+              const isHit    = r === "HIT";
               const overridden = screening?.overriddenAt;
-              const isHit = r === "HIT";
               const bg    = !r ? T.border + "33" : isHit ? "#ef444420" : "#22c55e20";
               const color = !r ? T.textMuted    : isHit ? "#ef4444"   : "#22c55e";
-              const label = !r ? "UNSCREENED" : isHit ? "⚠ HIT" : overridden ? "✓ CLEAR*" : "✓ CLEAR";
+              const label = !r ? "UNSCREENED" : isHit ? "⚠ Compliance review required" : overridden ? "✓ CLEAR*" : "✓ CLEAR";
+              const hitLines = isHit && screening?.hits?.length
+                ? screening.hits.map(h => `${h.field}: ${h.value}`).join("\n")
+                : null;
+              const tooltipText = !r ? "Run compliance screening"
+                : isHit ? `Sanctioned party detected:\n${hitLines}\n\nClick to review`
+                : overridden ? "Cleared via manual override"
+                : "Compliance clear";
               return (
                 <button onClick={() => setComplianceOpen(true)}
-                  title={!r ? "Run compliance screening" : isHit ? "Compliance hit — click to review" : overridden ? "Cleared via override" : "Compliance clear"}
-                  style={{ fontFamily: T.mono, fontSize: 10.5, fontWeight: 700, cursor: "pointer",
+                  title={tooltipText}
+                  style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, cursor: "pointer",
                     borderRadius: 4, padding: "2px 9px", letterSpacing: ".06em",
                     border: `1px solid ${!r ? T.border : isHit ? "#ef444444" : "#22c55e44"}`,
-                    background: bg, color, transition: "opacity .15s" }}>
+                    background: bg, color, transition: "opacity .15s",
+                    whiteSpace: "nowrap" }}>
                   {label}
                 </button>
               );
@@ -1411,7 +1419,11 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
       {editShp && (
         <Modal title="Edit Shipment" onClose={() => setEditShp(false)} width={560}>
           <ShipmentForm init={shipment}
-            onSave={form => { onUpdate(shipment.id, form); setEditShp(false); }}
+            onSave={async form => {
+              const res = await onUpdate(shipment.id, form);
+              if (res?.screening) setScreening(res.screening);
+              setEditShp(false);
+            }}
             onCancel={() => setEditShp(false)} />
         </Modal>
       )}

@@ -1,6 +1,6 @@
 import { T } from "../../tokens";
 
-const Badge = ({ children, variant = "default" }) => {
+const Badge = ({ children, variant = "default", size }) => {
   const v = {
     default:  { bg: T.surface,            c: T.textMuted },
     success:  { bg: T.successBg,          c: T.success   },
@@ -13,7 +13,7 @@ const Badge = ({ children, variant = "default" }) => {
     central:  { bg: "rgb(77,179,232)",    c: "#fff"      },
   }[variant] || { bg: T.surface, c: T.textMuted };
   return (
-    <span style={{ background: v.bg, color: v.c, fontFamily: T.mono, fontSize: 10.5, fontWeight: 600,
+    <span style={{ background: v.bg, color: v.c, fontFamily: T.mono, fontSize: size ?? 10.5, fontWeight: 600,
       padding: "2px 9px", borderRadius: 4, letterSpacing: ".06em", whiteSpace: "nowrap", width: "fit-content", alignSelf: "center", display: "inline-block" }}>
       {children}
     </span>
