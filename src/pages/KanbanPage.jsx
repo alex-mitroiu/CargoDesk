@@ -5,7 +5,7 @@ import { api } from "../api";
 import { Modal, ConfirmModal } from "../components/primitives/Modal";
 import Btn from "../components/primitives/Btn";
 import Badge from "../components/primitives/Badge";
-import { Inp, Sel, Field, Textarea } from "../components/primitives/Form";
+import { Inp, Sel, Textarea } from "../components/primitives/Form";
 import { CHANGELOG } from "../version";
 
 // ─── Constants ────────────────────────────────────────────────────────────────

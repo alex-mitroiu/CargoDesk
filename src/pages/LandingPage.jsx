@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { T, toIso, addDays } from "../tokens";
 import { api } from "../api";
 
@@ -432,26 +432,31 @@ const LandingPage = ({ shipments = [], containers = [], carriers = [], allocatio
                 style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 5,
                   color: T.text, fontFamily: T.body, fontSize: 12, padding: "6px 10px",
                   outline: "none", resize: "vertical" }} />
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <select value={msgForm.severity} onChange={e => setMsgForm(p => ({ ...p, severity: e.target.value }))}
-                  style={{ ...selStyle, fontSize: 11, flex: 1 }}>
-                  {["info","warning","danger","success"].map(s => <option key={s} value={s}>{s}</option>)}
-                </select>
-                <div style={{ display: "flex", flexDirection: "column", gap: 2, flex: 1 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                  <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted }}>Severity</span>
+                  <select value={msgForm.severity} onChange={e => setMsgForm(p => ({ ...p, severity: e.target.value }))}
+                    style={{ ...selStyle, fontSize: 11 }}>
+                    {["info","warning","danger","success"].map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                   <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted }}>Active from</span>
-                  <input type="datetime-local" value={msgForm.activeFrom} title="Active from"
+                  <input type="datetime-local" value={msgForm.activeFrom}
                     onChange={e => setMsgForm(p => ({ ...p, activeFrom: e.target.value }))}
-                    style={{ ...selStyle, fontSize: 11, width: "100%" }} />
+                    style={{ ...selStyle, fontSize: 11 }} />
                 </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 2, flex: 1 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
                   <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted }}>Active to</span>
-                  <input type="datetime-local" value={msgForm.activeTo} title="Active to"
+                  <input type="datetime-local" value={msgForm.activeTo}
                     onChange={e => setMsgForm(p => ({ ...p, activeTo: e.target.value }))}
-                    style={{ ...selStyle, fontSize: 11, width: "100%" }} />
+                    style={{ ...selStyle, fontSize: 11 }} />
                 </div>
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end" }}>
                 <button onClick={addMessage}
                   style={{ background: T.accent, border: "none", borderRadius: 5,
-                    color: T.btnPrimaryText, cursor: "pointer", padding: "5px 14px",
+                    color: T.btnPrimaryText, cursor: "pointer", padding: "6px 18px",
                     fontFamily: T.body, fontSize: 12, fontWeight: 600 }}>
                   Post
                 </button>

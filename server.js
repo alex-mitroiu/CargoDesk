@@ -2,7 +2,6 @@
 const express    = require("express");
 const http       = require("http");
 const path       = require("path");
-const fs         = require("fs");
 const { WebSocketServer } = require("ws");
 const { DatabaseSync } = require("node:sqlite");
 
@@ -1359,6 +1358,15 @@ app.get("/api/entity-events/:type/:id", (req, res) => {
 
 // ─── Shipment Messages ────────────────────────────────────────────────────────
 
+const broadcastMessage = (shipmentId, payload) => {
+  const subs = shipmentSubs.get(shipmentId);
+  if (!subs) return;
+  const frame = JSON.stringify({ type: "new_message", message: payload });
+  for (const ws of subs) {
+    if (ws.readyState === ws.OPEN) ws.send(frame);
+  }
+};
+
 app.get("/api/shipments/:id/messages", (req, res) => {
   const rows = db.prepare(
     "SELECT * FROM shipment_messages WHERE shipment_id=? ORDER BY created_at ASC"
@@ -1393,7 +1401,7 @@ app.get("/api/health", (req, res) => {
     };
     ok(res, {
       status:        "ok",
-      version:       "0.13.0",
+      version:       "0.16.0",
       uptime:        Math.floor(process.uptime()),
       memoryMb:      Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
       fxCurrencies:  Object.keys(fxCache.rates).length,
@@ -1462,19 +1470,12 @@ wss.on("connection", ws => {
 
   ws.on("close", () => {
     if (subscribedId && shipmentSubs.has(subscribedId)) {
-      shipmentSubs.get(subscribedId).delete(ws);
+      const subs = shipmentSubs.get(subscribedId);
+      subs.delete(ws);
+      if (subs.size === 0) shipmentSubs.delete(subscribedId);
     }
   });
 });
-
-const broadcastMessage = (shipmentId, payload) => {
-  const subs = shipmentSubs.get(shipmentId);
-  if (!subs) return;
-  const frame = JSON.stringify({ type: "new_message", message: payload });
-  for (const ws of subs) {
-    if (ws.readyState === ws.OPEN) ws.send(frame);
-  }
-};
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 

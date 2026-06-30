@@ -1,8 +1,7 @@
 ﻿import React, { useState, useEffect, useRef } from "react";
 import { T, INCOTERMS_2020, teuOf,
-         statusVariant, contractVariant , addDays, diffDays , IMDG_CLASSES, IMDG_CLASS_VARIANT } from "../tokens";
+         statusVariant, contractVariant, IMDG_CLASSES } from "../tokens";
 import { ContainerTypeField } from "../components/shared/ContainerTypePickerModal";
-import CarrierCombobox from "../components/shared/CarrierCombobox";
 import { ShipmentForm } from "./ShipmentsPage";
 import { VesselField } from "../components/shared/VesselCombobox";
 import { CommodityCombobox, GradePill } from "../components/shared/CommodityCombobox";
@@ -11,7 +10,7 @@ import { toast } from "../toast";
 import Btn from "../components/primitives/Btn";
 import Spinner from "../components/primitives/Spinner";
 import Badge from "../components/primitives/Badge";
-import {Inp, Sel, Field, BtnToggle} from "../components/primitives/Form";
+import {Inp, Sel, BtnToggle} from "../components/primitives/Form";
 import { Modal, ConfirmModal } from "../components/primitives/Modal";
 import DatePicker from "../components/primitives/DatePicker";
 import { useResizableColumns, ColResizer } from "../components/primitives/useResizableColumns.jsx";
@@ -254,245 +253,6 @@ const ContainerForm = ({ init = {}, onSave, onCancel, onDirtyChange }) => {
           </span>
         </Btn>
       </div>
-    </div>
-  );
-};
-
-const AllocationForm = ({ init = {}, onSave, onCancel }) => {
-  const isEdit = !!init.id;
-  const [carrierCode,    setCarrierCode]    = useState(init.carrierCode   || "");
-  const [teuStr,         setTeuStr]         = useState(init.allocatedTEU  ? String(init.allocatedTEU) : "");
-  const [effectiveDate,  setEffectiveDate]  = useState(init.effectiveDate || "");
-  const [endDate,        setEndDate]        = useState(init.endDate       || "");
-  const [serverErr,      setServerErr]      = useState("");
-
-  const handleEffectiveChange = val => {
-    setEffectiveDate(val);
-    setServerErr("");
-    if (endDate && val && endDate < val) setEndDate(val);
-    if (endDate && val) {
-      const maxEnd = addDays(val, 90);
-      if (endDate > maxEnd) setEndDate(maxEnd);
-    }
-  };
-
-  const teu   = parseInt(teuStr) || 0;
-  const valid = carrierCode && teu > 0 && effectiveDate && endDate && endDate >= effectiveDate;
-
-  const handleSave = async () => {
-    if (!valid) return;
-    try {
-      await onSave({ carrierCode, allocatedTEU: teu, effectiveDate, endDate });
-    } catch (e) {
-      setServerErr(e.message || "Could not save — check for overlapping periods.");
-    }
-  };
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <Field label="Carrier" required>
-        <CarrierCombobox value={carrierCode} onChange={v => { setCarrierCode(v); setServerErr(""); }} />
-      </Field>
-      <Inp label="Allocated Space (TEU)" value={teuStr} onChange={setTeuStr}
-        type="number" placeholder="100" required hint="Total TEU awarded by this carrier for the period" />
-
-      {/* Date range — mandatory */}
-      <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "14px 16px" }}>
-        <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
-          textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 12 }}>
-          Effective Period <span style={{ color: T.danger }}>*</span>
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-          <DatePicker
-            label="Effective From"
-            value={effectiveDate}
-            onChange={handleEffectiveChange}
-            placeholder="Start date…"
-          />
-          <DatePicker
-            label="Effective To"
-            value={endDate}
-            onChange={v => { setEndDate(v); setServerErr(""); }}
-            minDate={effectiveDate || undefined}
-            maxDate={effectiveDate ? addDays(effectiveDate, 90) : undefined}
-            placeholder="End date…"
-            disabled={!effectiveDate}
-          />
-        </div>
-        {effectiveDate && endDate && (
-          <div style={{ marginTop: 8, fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
-            {diffDays(effectiveDate, endDate) + 1} day period
-            · max 90 days per configuration
-          </div>
-        )}
-      </div>
-
-      {serverErr && (
-        <div style={{ fontFamily: T.body, fontSize: 12, color: T.danger, background: T.dangerBg,
-          border: `1px solid ${T.danger}44`, borderRadius: 6, padding: "8px 12px" }}>
-          {serverErr}
-        </div>
-      )}
-
-      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", paddingTop: 4 }}>
-        <Btn variant="secondary" onClick={onCancel}>Cancel</Btn>
-        <Btn onClick={handleSave} disabled={!valid}>
-          {isEdit ? "Save Changes" : "Add Configuration"}
-        </Btn>
-      </div>
-    </div>
-  );
-};
-
-// ─── Page: Carrier Registry ───────────────────────────────────────────────────
-
-const CarriersPage = ({ carriers, onAdd, onEdit, onDelete }) => {
-  const [modal, setModal]   = useState(null); // null | "add" | carrier obj
-  const [confirm, setConfirm] = useState(null);
-  const { template: carrTpl3, startResize: carrResize3 } = useResizableColumns("mdm-carriers", [130,200,160]);
-  const carrHdrs3 = ["Code","Name","Actions"];
-
-  return (
-    <div>
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 28 }}>
-        <div>
-          <h1 style={{ fontFamily: T.head, fontSize: 26, fontWeight: 800, color: T.text, margin: 0 }}>Carrier Registry</h1>
-          <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, margin: "4px 0 0" }}>
-            {carriers.length} carrier{carriers.length !== 1 ? "s" : ""} · reference database for shipments &amp; allocations
-          </p>
-        </div>
-        <Btn onClick={() => setModal("add")} size="lg">＋ Add Carrier</Btn>
-      </div>
-
-      <div style={{ background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, overflow: "hidden" }}>
-        <div style={{ display: "grid", gridTemplateColumns: carrTpl3,
-          padding: "10px 20px", borderBottom: `1px solid ${T.border}` }}>
-          {carrHdrs3.map((h, i) => (
-            <div key={i} style={{ position: "relative", paddingLeft: 6, fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
-              {h}{i < carrHdrs3.length - 1 && <ColResizer onStart={e => carrResize3(i, e)} />}
-            </div>
-          ))}
-        </div>
-
-        {carriers.length === 0 ? (
-          <div style={{ padding: 48, textAlign: "center", color: T.textMuted, fontFamily: T.body, fontSize: 14 }}>
-            No carriers yet. Add your first carrier above.
-          </div>
-        ) : carriers.map(c => (
-          <div key={c.code} style={{ display: "grid", gridTemplateColumns: carrTpl3,
-            padding: "14px 20px", borderBottom: `1px solid ${T.border}22`, alignItems: "center",
-            transition: "background .1s" }}
-            onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
-            onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-            <span style={{ fontFamily: T.mono, fontSize: 14, color: T.accent, fontWeight: 700 }}>{c.code}</span>
-            <span style={{ fontFamily: T.body, fontSize: 14, color: T.text }}>{c.name}</span>
-            <div style={{ display: "flex", gap: 6 }}>
-              <Btn size="sm" variant="secondary" onClick={() => setModal(c)}>✎ Edit</Btn>
-              <Btn size="sm" variant="danger"    onClick={() => setConfirm(c.code)}>✕ Remove</Btn>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {modal === "add" && (
-        <Modal title="Add Carrier" onClose={() => setModal(null)}>
-          <CarrierForm existing={carriers}
-            onSave={data => { onAdd(data); setModal(null); }}
-            onCancel={() => setModal(null)} />
-        </Modal>
-      )}
-      {modal && modal !== "add" && (
-        <Modal title="Edit Carrier" onClose={() => setModal(null)}>
-          <CarrierForm init={modal} existing={carriers}
-            onSave={data => { onEdit(modal.code, data); setModal(null); }}
-            onCancel={() => setModal(null)} />
-        </Modal>
-      )}
-      {confirm && (
-        <ConfirmModal
-          message={`Remove carrier "${confirm}" from the registry? Existing shipments referencing this code will not be deleted.`}
-          onConfirm={() => { onDelete(confirm); setConfirm(null); }}
-          onCancel={() => setConfirm(null)} />
-      )}
-    </div>
-  );
-};
-
-// ─── Page: Shipments List ─────────────────────────────────────────────────────
-
-
-const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, onNew }) => {
-  const [confirm, setConfirm] = useState(null);
-  const teuFor = id => containers.filter(c => c.shipmentId === id).reduce((s, c) => s + teuOf(c.size), 0);
-  const { template: shipTpl2, startResize: shipResize2 } = useResizableColumns("shipments", [140,70,70,150,165,46,60,130,90]);
-  const shipHdrs2 = ["Shipment ID","POL","POD","Carrier","Contract","TEU","Status",""];
-
-  return (
-    <div>
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 28 }}>
-        <div>
-          <h1 style={{ fontFamily: T.head, fontSize: 26, fontWeight: 800, color: T.text, margin: 0 }}>Shipments</h1>
-          <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, margin: "4px 0 0" }}>
-            {shipments.length} total · {shipments.filter(s => s.status === "Active").length} active
-          </p>
-        </div>
-        <Btn onClick={onNew} size="lg" disabled={carriers.length === 0}>＋ New Shipment</Btn>
-      </div>
-
-      {carriers.length === 0 && (
-        <div style={{ background: T.warningBg, border: `1px solid ${T.warning}55`, borderRadius: 8,
-          padding: "12px 18px", fontFamily: T.body, fontSize: 13, color: T.warning, marginBottom: 18 }}>
-          ⚠ Carrier Registry is empty. Go to <strong>Carrier Registry</strong> and add at least one carrier before creating shipments.
-        </div>
-      )}
-
-      <div style={{ background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, overflow: "hidden" }}>
-        <div style={{ display: "grid", gridTemplateColumns: shipTpl2,
-          padding: "10px 20px", borderBottom: `1px solid ${T.border}` }}>
-          {shipHdrs2.map((h, i) => (
-            <div key={i} style={{ position: "relative", paddingLeft: 6, fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
-              {h}{i < shipHdrs2.length - 1 && <ColResizer onStart={e => shipResize2(i, e)} />}
-            </div>
-          ))}
-        </div>
-
-        {shipments.length === 0 ? (
-          <div style={{ padding: 48, textAlign: "center", color: T.textMuted, fontFamily: T.body, fontSize: 14 }}>
-            No shipments yet. Create your first one above.
-          </div>
-        ) : shipments.map(s => {
-          const carrier = carriers.find(c => c.code === s.carrierCode);
-          return (
-            <div key={s.id} onClick={() => onSelect(s.id)}
-              style={{ display: "grid", gridTemplateColumns: shipTpl2,
-                padding: "14px 20px", borderBottom: `1px solid ${T.border}22`,
-                cursor: "pointer", alignItems: "center", transition: "background .1s" }}
-              onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
-              onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-              <span style={{ fontFamily: T.mono, fontSize: 11.5, color: T.textCode, fontWeight: 700 }}>{s.id}</span>
-              <span style={{ fontFamily: T.mono, fontSize: 13, color: T.text, fontWeight: 700 }}>{s.pol}</span>
-              <span style={{ fontFamily: T.mono, fontSize: 13, color: T.text, fontWeight: 700 }}>{s.pod}</span>
-              <div>
-                <span style={{ fontFamily: T.mono, fontSize: 12, color: T.accent, fontWeight: 700 }}>{s.carrierCode}</span>
-                {carrier && <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}> · {carrier.name}</span>}
-              </div>
-              <Badge variant={contractVariant(s.contractType)}>{s.contractType}</Badge>
-              <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text }}>{teuFor(s.id)}</span>
-              <Badge variant={statusVariant(s.status)}>{s.status}</Badge>
-              <Btn size="sm" variant="danger" onClick={e => { e.stopPropagation(); setConfirm(s.id); }}>
-                ✕ Remove
-              </Btn>
-            </div>
-          );
-        })}
-      </div>
-
-      {confirm && (
-        <ConfirmModal
-          message={`Remove shipment ${confirm} and all its containers? This cannot be undone.`}
-          onConfirm={() => { onDelete(confirm); setConfirm(null); }}
-          onCancel={() => setConfirm(null)} />
-      )}
     </div>
   );
 };
@@ -873,7 +633,7 @@ const MessagesDrawer = ({ shipmentId, messages, onPost, onClose }) => {
               💬 Messages
             </div>
             <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, marginTop: 2 }}>
-              {shipmentId} · {messages.length} message{messages.length !== 1 ? "s" : ""}
+              {shipmentId} · {sorted.length} message{sorted.length !== 1 ? "s" : ""}
             </div>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -1017,12 +777,14 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
 
   useEffect(() => { api.allocations.list().then(setAllocations).catch(() => {}); }, []);
 
+  const loadMessagesRef = useRef(null);
   const loadMessages = () =>
     api.shipmentMessages.list(shipment.id).then(msgs => {
       setMessages(msgs);
       const lastRead = localStorage.getItem(`msg_read_${shipment.id}`) || "";
       setUnreadCount(msgs.filter(m => m.createdAt > lastRead).length);
     }).catch(() => {});
+  loadMessagesRef.current = loadMessages;
 
   useEffect(() => { loadMessages(); }, [shipment.id]);
 
@@ -1046,8 +808,7 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
         }
       } catch { /* ignore */ }
     };
-    // Fall back to polling if the socket fails to connect
-    ws.onerror = () => { pollId = setInterval(loadMessages, 10_000); };
+    ws.onerror = () => { pollId = setInterval(() => loadMessagesRef.current?.(), 10_000); };
     ws.onclose = () => { if (pollId) clearInterval(pollId); };
 
     return () => {
@@ -1455,7 +1216,5 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
     </div>
   );
 };
-
-// ─── Page: Dashboard ──────────────────────────────────────────────────────────
 
 export default ShipmentDetailPage;
