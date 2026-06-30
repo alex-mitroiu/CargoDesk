@@ -131,6 +131,15 @@ export const api = {
   entityEvents: {
     list: (type, id) => req("GET", `/entity-events/${type}/${id}`),
   },
+  sanctions: {
+    status: ()     => req("GET",  "/sanctions/status"),
+    sync:   ()     => req("POST", "/sanctions/sync"),
+  },
+  screening: {
+    get:      (id)        => req("GET",  `/shipments/${id}/screening`),
+    run:      (id)        => req("POST", `/shipments/${id}/screen`),
+    override: (id, data)  => req("POST", `/shipments/${id}/screening/override`, data),
+  },
   systemMessages: {
     list:   ()     => req("GET",    "/system-messages"),
     all:    ()     => req("GET",    "/system-messages/all"),
@@ -139,6 +148,10 @@ export const api = {
   },
   fx: {
     rates: () => req("GET", "/fx/rates"),
+  },
+  settings: {
+    get:    ()       => req("GET", "/settings"),
+    update: (data)   => req("PUT", "/settings", data),
   },
   vessels: {
     search: (q = "")          => req("GET",    `/vessels/search?q=${encodeURIComponent(q)}`),

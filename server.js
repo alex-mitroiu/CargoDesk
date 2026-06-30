@@ -1,6 +1,7 @@
 "use strict";
 const express    = require("express");
 const http       = require("http");
+const https      = require("https");
 const path       = require("path");
 const { WebSocketServer } = require("ws");
 const { DatabaseSync } = require("node:sqlite");
@@ -274,6 +275,40 @@ db.exec(`
     meta        TEXT,
     created_at  TEXT NOT NULL
   );
+
+  CREATE TABLE IF NOT EXISTS sanctions_entries (
+    id               TEXT PRIMARY KEY,
+    source           TEXT NOT NULL,
+    ref_id           TEXT DEFAULT '',
+    entity_name      TEXT NOT NULL,
+    entity_name_norm TEXT NOT NULL,
+    entity_type      TEXT DEFAULT '',
+    program          TEXT DEFAULT '',
+    aliases_norm     TEXT DEFAULT '[]'
+  );
+  CREATE INDEX IF NOT EXISTS idx_sanctions_norm ON sanctions_entries(entity_name_norm);
+
+  CREATE TABLE IF NOT EXISTS sanctions_syncs (
+    source       TEXT PRIMARY KEY,
+    synced_at    TEXT NOT NULL,
+    entry_count  INTEGER DEFAULT 0
+  );
+
+  CREATE TABLE IF NOT EXISTS shipment_screenings (
+    id              TEXT PRIMARY KEY,
+    shipment_id     TEXT NOT NULL,
+    screened_at     TEXT NOT NULL,
+    result          TEXT NOT NULL,
+    hits            TEXT DEFAULT '[]',
+    overridden_at   TEXT,
+    override_reason TEXT,
+    UNIQUE(shipment_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS app_settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
 `);
 
 // ─── Safe migrations ──────────────────────────────────────────────────────────
@@ -319,11 +354,206 @@ for (const sql of migrations) {
   try { db.exec(sql); } catch {}
 }
 
+// ─── App Settings ─────────────────────────────────────────────────────────────
+
+function getSettings() {
+  try {
+    return Object.fromEntries(db.prepare("SELECT key, value FROM app_settings").all().map(r => [r.key, r.value]));
+  } catch { return {}; }
+}
+
+// Seed defaults (INSERT OR IGNORE — never overwrite saved user choices)
+const SETTING_DEFAULTS = {
+  api_fx_enabled:             'true',
+  api_fx_interval_value:      '1',
+  api_fx_interval_unit:       'days',
+  api_weather_enabled:        'true',
+  api_weather_interval_value: '1',
+  api_weather_interval_unit:  'days',
+  api_ofac_enabled:           'true',
+  api_ofac_interval_value:    '1',
+  api_ofac_interval_unit:     'weeks',
+  api_ws_enabled:             'true',
+};
+{
+  const ins = db.prepare("INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)");
+  db.exec("BEGIN");
+  try {
+    for (const [k, v] of Object.entries(SETTING_DEFAULTS)) ins.run(k, v);
+    db.exec("COMMIT");
+  } catch (e) { db.exec("ROLLBACK"); }
+}
+
+// ─── Sanctions helpers ────────────────────────────────────────────────────────
+
+// OFAC-embargoed country codes (2-letter ISO, extracted from port UNLOCODE prefix)
+const EMBARGOED_COUNTRIES = new Set([
+  'CU', // Cuba
+  'IR', // Iran
+  'KP', // North Korea (DPRK)
+  'SY', // Syria
+  'RU', // Russia
+  'BY', // Belarus
+  'MM', // Myanmar
+  'ZW', // Zimbabwe
+  'SS', // South Sudan
+  'CF', // Central African Republic
+  'LY', // Libya
+  'SO', // Somalia
+  'YE', // Yemen
+  'VE', // Venezuela
+  'SD', // Sudan
+  'ER', // Eritrea
+]);
+
+const normSanctionName = s =>
+  (s || '').toLowerCase().replace(/[^a-z0-9]/g, ' ').replace(/\s+/g, ' ').trim();
+
+// In-memory index: normalized name/alias → entry metadata
+let sanctionsMap = new Map();
+
+function loadSanctionsIndex() {
+  sanctionsMap = new Map();
+  const rows = db.prepare(
+    "SELECT source, entity_name, entity_type, program, aliases_norm FROM sanctions_entries"
+  ).all();
+  for (const r of rows) {
+    const meta = { entityName: r.entity_name, entityType: r.entity_type, program: r.program, source: r.source };
+    sanctionsMap.set(normSanctionName(r.entity_name), meta);
+    try {
+      for (const alias of JSON.parse(r.aliases_norm || '[]')) {
+        if (!sanctionsMap.has(alias)) sanctionsMap.set(alias, meta);
+      }
+    } catch {}
+  }
+}
+try { loadSanctionsIndex(); } catch {}
+
+// ─── OFAC SDN sync (extracted so route and scheduler both call it) ─────────────
+
+async function syncOfacSdn() {
+  const xml = await new Promise((resolve, reject) => {
+    const agent = new https.Agent({ rejectUnauthorized: false });
+    https.get("https://www.treasury.gov/ofac/downloads/sdn.xml", { agent }, r => {
+      if (r.statusCode !== 200) { r.resume(); return reject(new Error(`OFAC returned HTTP ${r.statusCode}`)); }
+      const bufs = [];
+      r.on("data", c => bufs.push(c));
+      r.on("end", () => resolve(Buffer.concat(bufs).toString("utf8")));
+      r.on("error", reject);
+    }).on("error", reject);
+  });
+
+  const entries = [];
+  for (const block of xml.split("<sdnEntry>").slice(1)) {
+    const end = block.indexOf("</sdnEntry>");
+    if (end === -1) continue;
+    const e      = block.substring(0, end);
+    const get    = tag => { const m = e.match(new RegExp(`<${tag}>([^<]*)</${tag}>`)); return m ? m[1].trim() : ""; };
+    const getAll = tag => [...e.matchAll(new RegExp(`<${tag}>([^<]*)</${tag}>`, "g"))].map(m => m[1].trim());
+    const last   = get("lastName");
+    if (!last) continue;
+    const first      = get("firstName");
+    const name       = first ? `${first} ${last}` : last;
+    const aliasNorms = [];
+    for (const ab of [...e.matchAll(/<aka>([\s\S]*?)<\/aka>/g)]) {
+      const al = (ab[1].match(/<lastName>([^<]*)<\/lastName>/) || [])[1] || "";
+      const af = (ab[1].match(/<firstName>([^<]*)<\/firstName>/) || [])[1] || "";
+      const a  = af ? `${af} ${al}`.trim() : al.trim();
+      if (a) aliasNorms.push(normSanctionName(a));
+    }
+    entries.push({ refId: get("uid"), name, sdnType: get("sdnType"), programs: getAll("program").join("; "), aliasNorms });
+  }
+
+  db.prepare("DELETE FROM sanctions_entries WHERE source='OFAC-SDN'").run();
+  const ins = db.prepare(
+    `INSERT OR REPLACE INTO sanctions_entries (id,source,ref_id,entity_name,entity_name_norm,entity_type,program,aliases_norm)
+     VALUES (?,'OFAC-SDN',?,?,?,?,?,?)`
+  );
+  db.exec("BEGIN");
+  try {
+    for (const e of entries)
+      ins.run(`OFAC-${e.refId}`, e.refId, e.name, normSanctionName(e.name), e.sdnType, e.programs, JSON.stringify(e.aliasNorms));
+    db.exec("COMMIT");
+  } catch (e2) { db.exec("ROLLBACK"); throw e2; }
+
+  const now = new Date().toISOString();
+  db.prepare("INSERT OR REPLACE INTO sanctions_syncs (source,synced_at,entry_count) VALUES ('OFAC-SDN',?,?)").run(now, entries.length);
+  loadSanctionsIndex();
+  return { source: "OFAC-SDN", syncedAt: now, entries: entries.length };
+}
+
+// ─── OFAC auto-sync scheduler ─────────────────────────────────────────────────
+
+let ofacAutoSyncTimer = null;
+
+function scheduleNextOfacSync() {
+  clearTimeout(ofacAutoSyncTimer);
+  try {
+    const s = getSettings();
+    if (s.api_ofac_enabled !== 'true') return;
+    const lastSync = db.prepare("SELECT synced_at FROM sanctions_syncs WHERE source='OFAC-SDN'").get();
+    if (!lastSync) return; // Never synced — user must trigger the first one manually
+    const val        = Math.max(1, parseInt(s.api_ofac_interval_value) || 1);
+    const unit       = s.api_ofac_interval_unit || 'weeks';
+    const msMap      = { days: 86400000, weeks: 7 * 86400000, months: 30 * 86400000 };
+    const intervalMs = val * (msMap[unit] || msMap.weeks);
+    const nextDue    = new Date(lastSync.synced_at).getTime() + intervalMs;
+    const delay      = Math.max(60000, nextDue - Date.now()); // at least 1 min in the future
+    ofacAutoSyncTimer = setTimeout(async () => {
+      console.log("⚓ Auto-syncing OFAC SDN…");
+      try {
+        const r = await syncOfacSdn();
+        console.log(`  ✔ OFAC auto-sync complete: ${r.entries.toLocaleString()} entries`);
+      } catch (e) {
+        console.error("  ✗ OFAC auto-sync failed:", e.message);
+      }
+      scheduleNextOfacSync();
+    }, delay);
+    console.log(`  ⏱ OFAC auto-sync scheduled in ${Math.round(delay / 3600000 * 10) / 10}h`);
+  } catch {}
+}
+try { scheduleNextOfacSync(); } catch {}
+
+function screenShipmentById(shipmentId) {
+  const s = db.prepare("SELECT * FROM shipments WHERE id=?").get(shipmentId);
+  if (!s) return null;
+
+  const hits = [];
+
+  // Party name screening
+  for (const [field, name] of [['Shipper', s.shipper_name], ['Consignee', s.consignee_name], ['Principal', s.principal_name]]) {
+    if (!name || !name.trim()) continue;
+    const match = sanctionsMap.get(normSanctionName(name));
+    if (match) hits.push({ field, value: name, matchedEntry: match.entityName, program: match.program, source: match.source });
+  }
+
+  // Country embargo via UNLOCODE prefix (first 2 chars)
+  for (const [field, code] of [['POL', s.pol], ['POD', s.pod]]) {
+    const cc = (code || '').substring(0, 2).toUpperCase();
+    if (cc && EMBARGOED_COUNTRIES.has(cc))
+      hits.push({ field, value: code, matchedEntry: `Embargoed country (${cc})`, program: 'Country Embargo', source: 'OFAC' });
+  }
+
+  const result = hits.length > 0 ? 'HIT' : 'CLEAR';
+  const id     = `SCR-${uid()}`;
+  const now    = new Date().toISOString();
+  db.prepare(
+    `INSERT OR REPLACE INTO shipment_screenings (id, shipment_id, screened_at, result, hits) VALUES (?,?,?,?,?)`
+  ).run(id, shipmentId, now, result, JSON.stringify(hits));
+
+  return { id, result, hits, screenedAt: now, overriddenAt: null, overrideReason: null };
+}
+
 
 // ─── FX Rate Cache (frankfurter.app, ECB rates, refreshed every 24 h) ─────────
 let fxCache = { rates: {}, ts: 0 };
 async function getFxRates() {
-  if (Date.now() - fxCache.ts < 86400000 && Object.keys(fxCache.rates).length) return fxCache.rates;
+  const s        = getSettings();
+  const val      = Math.max(1, parseInt(s.api_fx_interval_value) || 1);
+  const unit     = s.api_fx_interval_unit || 'days';
+  const msMap    = { days: 86400000, weeks: 7 * 86400000, months: 30 * 86400000 };
+  const ttl      = val * (msMap[unit] || msMap.days);
+  if (Date.now() - fxCache.ts < ttl && Object.keys(fxCache.rates).length) return fxCache.rates;
   try {
     const r = await fetch("https://api.frankfurter.app/latest?from=USD");
     const d = await r.json();
@@ -1235,6 +1465,20 @@ app.get("/api/contracts/match", (req, res) => {
     }
   }
 
+  // Batch-fetch rates for all matched contracts (no N+1)
+  if (results.length > 0) {
+    const ids = results.map(r => r.id);
+    const placeholders = ids.map(() => "?").join(",");
+    const allRates = db.prepare(
+      `SELECT * FROM contract_rates WHERE contract_id IN (${placeholders}) ORDER BY sort_order`
+    ).all(...ids);
+    const ratesById = {};
+    for (const r of allRates) {
+      (ratesById[r.contract_id] = ratesById[r.contract_id] || []).push(mapRate(r));
+    }
+    for (const c of results) c.rates = ratesById[c.id] || [];
+  }
+
   ok(res, results);
 });
 
@@ -1444,6 +1688,67 @@ app.delete("/api/system-messages/:id", (req, res) => {
   const info = db.prepare("DELETE FROM system_messages WHERE id=?").run(req.params.id);
   if (info.changes === 0) return err(res, "Not found", 404);
   ok(res, { deleted: req.params.id });
+});
+
+// ─── Sanctions & Screening ───────────────────────────────────────────────────
+
+app.get("/api/sanctions/status", (req, res) => {
+  const syncs = db.prepare("SELECT * FROM sanctions_syncs ORDER BY synced_at DESC").all();
+  const count = db.prepare("SELECT COUNT(*) AS n FROM sanctions_entries").get().n;
+  ok(res, { syncs, entryCount: count, indexed: sanctionsMap.size });
+});
+
+app.post("/api/sanctions/sync", async (req, res) => {
+  try {
+    ok(res, await syncOfacSdn());
+    scheduleNextOfacSync();
+  } catch (e) {
+    err(res, e.message, 502);
+  }
+});
+
+app.get("/api/shipments/:id/screening", (req, res) => {
+  const row = db.prepare("SELECT * FROM shipment_screenings WHERE shipment_id=?").get(req.params.id);
+  if (!row) return ok(res, null);
+  ok(res, { id: row.id, shipmentId: row.shipment_id, screenedAt: row.screened_at,
+    result: row.result, hits: JSON.parse(row.hits || "[]"),
+    overriddenAt: row.overridden_at || null, overrideReason: row.override_reason || null });
+});
+
+app.post("/api/shipments/:id/screen", (req, res) => {
+  if (!db.prepare("SELECT id FROM shipments WHERE id=?").get(req.params.id)) return err(res, "Not found", 404);
+  if (sanctionsMap.size === 0) return err(res, "Sanctions list not yet synced — use POST /api/sanctions/sync first.", 400);
+  ok(res, screenShipmentById(req.params.id));
+});
+
+app.post("/api/shipments/:id/screening/override", (req, res) => {
+  const { reason = "" } = req.body;
+  if (!reason.trim()) return err(res, "Override reason is required");
+  const row = db.prepare("SELECT id FROM shipment_screenings WHERE shipment_id=?").get(req.params.id);
+  if (!row) return err(res, "No screening record found for this shipment", 404);
+  const now = new Date().toISOString();
+  db.prepare("UPDATE shipment_screenings SET result='CLEAR', overridden_at=?, override_reason=? WHERE shipment_id=?")
+    .run(now, reason.trim(), req.params.id);
+  ok(res, { overriddenAt: now, overrideReason: reason.trim() });
+});
+
+// ─── Application Settings ────────────────────────────────────────────────────
+
+app.get("/api/settings", (req, res) => ok(res, getSettings()));
+
+app.put("/api/settings", (req, res) => {
+  const updates = req.body;
+  if (!updates || typeof updates !== "object" || Array.isArray(updates))
+    return err(res, "Expected JSON object of { key: value } pairs");
+  const stmt = db.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)");
+  db.exec("BEGIN");
+  try {
+    for (const [k, v] of Object.entries(updates)) stmt.run(String(k), String(v));
+    db.exec("COMMIT");
+  } catch (e) { db.exec("ROLLBACK"); return err(res, e.message); }
+  // Reschedule OFAC auto-sync if relevant settings changed
+  scheduleNextOfacSync();
+  ok(res, getSettings());
 });
 
 // ─── WebSocket server ─────────────────────────────────────────────────────────

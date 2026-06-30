@@ -740,6 +740,177 @@ const MessagesDrawer = ({ shipmentId, messages, onPost, onClose }) => {
   );
 };
 
+// ─── Compliance Modal ─────────────────────────────────────────────────────────
+
+const RESULT_STYLE = {
+  HIT:    { color: "#ef4444", bg: "#ef444415", border: "#ef444444" },
+  CLEAR:  { color: "#22c55e", bg: "#22c55e15", border: "#22c55e44" },
+  OVERRIDE: { color: "#f59e0b", bg: "#f59e0b15", border: "#f59e0b44" },
+};
+
+const ComplianceModal = ({ shipment, screening, onChange, onClose }) => {
+  const [busy,           setBusy]           = useState(false);
+  const [syncing,        setSyncing]        = useState(false);
+  const [overrideOpen,   setOverrideOpen]   = useState(false);
+  const [overrideReason, setOverrideReason] = useState("");
+
+  const effectiveResult = screening?.result === "CLEAR" && screening?.overriddenAt ? "OVERRIDE" : screening?.result;
+  const rs = RESULT_STYLE[effectiveResult] || RESULT_STYLE.CLEAR;
+
+  const runScreen = async () => {
+    setBusy(true);
+    try {
+      const r = await api.screening.run(shipment.id);
+      onChange(r);
+      toast.success(`Screening complete — ${r.result}`);
+    } catch (e) {
+      toast.error(e.message || "Screening failed");
+    } finally { setBusy(false); }
+  };
+
+  const syncList = async () => {
+    setSyncing(true);
+    try {
+      const r = await api.sanctions.sync();
+      toast.success(`OFAC SDN synced — ${r.entries.toLocaleString()} entries loaded`);
+    } catch (e) {
+      toast.error(e.message || "Sync failed");
+    } finally { setSyncing(false); }
+  };
+
+  const submitOverride = async () => {
+    if (!overrideReason.trim()) return;
+    setBusy(true);
+    try {
+      const r = await api.screening.override(shipment.id, { reason: overrideReason });
+      onChange({ ...screening, result: "CLEAR", overriddenAt: r.overriddenAt, overrideReason: r.overrideReason });
+      toast.success("Override saved — status set to CLEAR");
+      setOverrideOpen(false);
+      setOverrideReason("");
+    } catch (e) {
+      toast.error(e.message || "Override failed");
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <Modal title="Compliance Screening" onClose={onClose} width={560}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+
+        {/* Status banner */}
+        {screening ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "14px 16px",
+            background: rs.bg, border: `1px solid ${rs.border}`, borderRadius: 8 }}>
+            <span style={{ fontSize: 24, lineHeight: 1 }}>
+              {effectiveResult === "HIT" ? "🔴" : effectiveResult === "OVERRIDE" ? "🟡" : "🟢"}
+            </span>
+            <div>
+              <div style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: rs.color }}>
+                {effectiveResult === "HIT" ? "HIT — Compliance review required"
+                  : effectiveResult === "OVERRIDE" ? "CLEAR (manually overridden)"
+                  : "CLEAR — No matches found"}
+              </div>
+              <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginTop: 3 }}>
+                Screened {new Date(screening.screenedAt).toLocaleString("en-GB")} · OFAC SDN
+                {screening.overriddenAt && ` · Overridden ${new Date(screening.overriddenAt).toLocaleString("en-GB")}`}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div style={{ padding: "14px 16px", background: T.surface, border: `1px solid ${T.border}`,
+            borderRadius: 8, fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
+            This shipment has not been screened yet. Run a screening to check all parties against the OFAC SDN list.
+          </div>
+        )}
+
+        {/* Hit list */}
+        {screening?.hits?.length > 0 && (
+          <div>
+            <div style={{ fontFamily: T.body, fontSize: 10, fontWeight: 700,
+              textTransform: "uppercase", letterSpacing: ".07em", color: T.textMuted, marginBottom: 8 }}>
+              {screening.hits.length} match{screening.hits.length !== 1 ? "es" : ""}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {screening.hits.map((h, i) => (
+                <div key={i} style={{ padding: "10px 12px", background: T.bg,
+                  border: `1px solid ${T.danger}33`, borderLeft: `3px solid ${T.danger}`, borderRadius: 6 }}>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 5 }}>
+                    <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: T.danger,
+                      background: T.danger + "18", borderRadius: 3, padding: "1px 6px" }}>
+                      {h.field}
+                    </span>
+                    <span style={{ fontFamily: T.mono, fontSize: 13, color: T.text, fontWeight: 600 }}>
+                      {h.value}
+                    </span>
+                  </div>
+                  <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, lineHeight: 1.5 }}>
+                    Matched: <span style={{ color: T.text, fontWeight: 600 }}>{h.matchedEntry}</span>
+                    {h.program && <> · <span style={{ color: "#f59e0b" }}>{h.program}</span></>}
+                    {h.source && <> · <span style={{ fontSize: 11 }}>{h.source}</span></>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Override reason display */}
+        {screening?.overrideReason && (
+          <div style={{ padding: "8px 12px", background: "#f59e0b12",
+            border: "1px solid #f59e0b44", borderRadius: 6,
+            fontFamily: T.body, fontSize: 12, color: T.text }}>
+            <span style={{ fontWeight: 600 }}>Override reason: </span>{screening.overrideReason}
+          </div>
+        )}
+
+        {/* Override form */}
+        {screening?.result === "HIT" && !screening?.overriddenAt && (
+          overrideOpen ? (
+            <div style={{ padding: 14, background: T.surface, border: `1px solid ${T.border}`,
+              borderRadius: 8, display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ fontFamily: T.body, fontSize: 12, fontWeight: 600, color: T.text }}>
+                Override reason <span style={{ color: T.danger }}>*</span>
+              </div>
+              <textarea
+                value={overrideReason}
+                onChange={e => setOverrideReason(e.target.value)}
+                placeholder="Explain why this is a false positive or has been cleared by compliance…"
+                rows={3}
+                style={{ fontFamily: T.body, fontSize: 13, resize: "vertical",
+                  background: T.bg, border: `1px solid ${T.border}`, borderRadius: 6,
+                  padding: "8px 10px", color: T.text, outline: "none", width: "100%", boxSizing: "border-box" }}
+              />
+              <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                <Btn variant="secondary" onClick={() => { setOverrideOpen(false); setOverrideReason(""); }}>Cancel</Btn>
+                <Btn disabled={!overrideReason.trim() || busy} onClick={submitOverride}>
+                  {busy ? "Saving…" : "Confirm Override"}
+                </Btn>
+              </div>
+            </div>
+          ) : (
+            <Btn variant="secondary" onClick={() => setOverrideOpen(true)}>
+              Clear as false positive (override)
+            </Btn>
+          )
+        )}
+
+        {/* Footer actions */}
+        <div style={{ display: "flex", gap: 8, alignItems: "center",
+          borderTop: `1px solid ${T.border}`, paddingTop: 14 }}>
+          <button onClick={syncList} disabled={syncing}
+            style={{ fontFamily: T.body, fontSize: 12, background: "none",
+              border: `1px solid ${T.border}`, borderRadius: 6, padding: "6px 12px",
+              color: T.textMuted, cursor: syncing ? "default" : "pointer" }}>
+            {syncing ? "Syncing OFAC SDN…" : "↻ Sync OFAC SDN list"}
+          </button>
+          <Btn onClick={runScreen} disabled={busy} style={{ marginLeft: "auto" }}>
+            {busy ? "Screening…" : screening ? "↻ Re-screen" : "Run Screening"}
+          </Btn>
+        </div>
+      </div>
+    </Modal>
+  );
+};
+
 const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, onAddContainer, onEditContainer, onDeleteContainer }) => {
   const [ctrModal,       setCtrModal]       = useState(null);
   const [linkVesselOpen, setLinkVesselOpen] = useState(false);
@@ -753,6 +924,8 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
   const [msgsOpen,       setMsgsOpen]       = useState(false);
   const [messages,       setMessages]       = useState([]);
   const [unreadCount,    setUnreadCount]    = useState(0);
+  const [screening,      setScreening]      = useState(null);
+  const [complianceOpen, setComplianceOpen] = useState(false);
   const { template: ctrTemplate, startResize: ctrStartResize } = useResizableColumns("shipment-containers", [140,60,90,50,80,150,100,90,120]);
   const ctrHeaders = ["Container No.","Size","Type","TEU","HS Code","Cargo Description","Wt / Vol","DG","Actions"];
 
@@ -760,6 +933,11 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
   useEffect(() => {
     document.title = `${shipment.id} · CargoDesk`;
     return () => { document.title = "CargoDesk"; };
+  }, [shipment.id]);
+
+  // Load latest screening result on mount
+  useEffect(() => {
+    api.screening.get(shipment.id).then(s => setScreening(s)).catch(() => {});
   }, [shipment.id]);
 
   // Warn before closing tab when a form has unsaved changes
@@ -867,6 +1045,25 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
             <span style={{ fontFamily: T.mono, fontSize: 10.5, fontWeight: 700,
               background: "rgb(30,115,190)", color: "#fff",
               borderRadius: 4, padding: "2px 9px", letterSpacing: ".06em" }}>FCL</span>
+            {/* Compliance badge */}
+            {(() => {
+              const r = screening?.result;
+              const overridden = screening?.overriddenAt;
+              const isHit = r === "HIT";
+              const bg    = !r ? T.border + "33" : isHit ? "#ef444420" : "#22c55e20";
+              const color = !r ? T.textMuted    : isHit ? "#ef4444"   : "#22c55e";
+              const label = !r ? "UNSCREENED" : isHit ? "⚠ HIT" : overridden ? "✓ CLEAR*" : "✓ CLEAR";
+              return (
+                <button onClick={() => setComplianceOpen(true)}
+                  title={!r ? "Run compliance screening" : isHit ? "Compliance hit — click to review" : overridden ? "Cleared via override" : "Compliance clear"}
+                  style={{ fontFamily: T.mono, fontSize: 10.5, fontWeight: 700, cursor: "pointer",
+                    borderRadius: 4, padding: "2px 9px", letterSpacing: ".06em",
+                    border: `1px solid ${!r ? T.border : isHit ? "#ef444444" : "#22c55e44"}`,
+                    background: bg, color, transition: "opacity .15s" }}>
+                  {label}
+                </button>
+              );
+            })()}
           </div>
           <p style={{ fontFamily: T.mono, fontSize: 13, color: T.textMuted, margin: "3px 0 0" }}>
 {shipment.polName || shipment.pol} → {shipment.podName || shipment.pod} · created {shipment.createdAt}
@@ -1213,6 +1410,15 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
         }}
         onClose={() => setMsgsOpen(false)}
       />}
+
+      {complianceOpen && (
+        <ComplianceModal
+          shipment={shipment}
+          screening={screening}
+          onChange={s => setScreening(s)}
+          onClose={() => setComplianceOpen(false)}
+        />
+      )}
     </div>
   );
 };

@@ -24,73 +24,134 @@ const ContractPickerModal = ({ pol, pod, matches, onSelect, onClose }) => {
     ? { label: "Exact match",     bg: T.success + "22", color: T.success }
     : { label: "Via linked port", bg: T.info    + "22", color: T.info    };
 
+  const totalUsd = rates => rates && rates.length ? rates.reduce((s, r) => s + r.amountUsd, 0) : null;
+
+  // Sort matches by total cost ascending; contracts with no rates go last
+  const sorted = matches ? [...matches].sort((a, b) => {
+    const ta = totalUsd(a.rates) ?? Infinity;
+    const tb = totalUsd(b.rates) ?? Infinity;
+    return ta - tb;
+  }) : matches;
+
+  const lowestTotal = sorted && sorted.length > 0
+    ? Math.min(...sorted.map(c => totalUsd(c.rates) ?? Infinity).filter(v => v < Infinity))
+    : null;
+
   return (
-    <Modal title={`Select Contract — ${pol} → ${pod}`} onClose={onClose} width={620}>
+    <Modal title={`Select Contract — ${pol} → ${pod}`} onClose={onClose} width={660}>
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {matches === null && (
+        {sorted === null && (
           <div style={{ padding: 40, display: "flex", justifyContent: "center" }}>
             <Spinner />
           </div>
         )}
 
-        {matches !== null && matches.length === 0 && (
+        {sorted !== null && sorted.length === 0 && (
           <div style={{ padding: "32px 0", textAlign: "center",
             fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
             No active contracts found for {pol} → {pod} within the ETD validity window.
           </div>
         )}
 
-        {matches !== null && matches.map(c => {
-          const k = kindBadge(c.matchKind);
+        {sorted !== null && sorted.length > 1 && (
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end",
+            gap: 2, paddingRight: 2 }}>
+            <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
+              Sorted by lowest buy rate · {sorted.length} contracts
+            </span>
+            <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
+              All prices expressed in USD
+            </span>
+          </div>
+        )}
+
+        {sorted !== null && sorted.map((c, idx) => {
+          const k      = kindBadge(c.matchKind);
+          const rates  = c.rates || [];
+          const total  = totalUsd(rates);
+          const isBest = lowestTotal !== null && total === lowestTotal && sorted.length > 1;
+          const fmtUsd = v => `$${Math.round(v).toLocaleString("en-US")}`;
+
           return (
             <button key={c.id} type="button" onClick={() => onSelect(c)}
-              style={{ display: "flex", flexDirection: "column", gap: 8, width: "100%",
+              style={{ display: "flex", alignItems: "center", gap: 14, width: "100%",
                 padding: "12px 14px", background: T.bg,
-                border: `1px solid ${T.border}`, borderRadius: 8,
+                border: `1px solid ${isBest ? T.success + "88" : T.border}`, borderRadius: 8,
                 cursor: "pointer", textAlign: "left", transition: "border-color .15s" }}
               onMouseEnter={e => e.currentTarget.style.borderColor = T.accent}
-              onMouseLeave={e => e.currentTarget.style.borderColor = T.border}>
-              {/* Line 1: number · match badge · carrier (right) */}
-              <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                <span style={{ fontFamily: T.mono, fontSize: 14, color: T.accent, fontWeight: 700 }}>
-                  {c.contractNumber}
-                </span>
-                <span style={{ background: k.bg, color: k.color,
-                  padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700 }}>
-                  {k.label}
-                </span>
-                <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted, marginLeft: "auto" }}>
+              onMouseLeave={e => e.currentTarget.style.borderColor = isBest ? T.success + "88" : T.border}>
+
+              {/* Left: all contract info */}
+              <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
+
+                {/* Line 1: number · match badge · best-rate badge · rank */}
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{ fontFamily: T.mono, fontSize: 14, color: T.accent, fontWeight: 700 }}>
+                    {c.contractNumber}
+                  </span>
+                  <span style={{ background: k.bg, color: k.color,
+                    padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700 }}>
+                    {k.label}
+                  </span>
+                  {isBest && (
+                    <span style={{ background: T.success + "22", color: T.success,
+                      padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700 }}>
+                      Best rate
+                    </span>
+                  )}
+                  {sorted.length > 1 && (
+                    <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+                      #{idx + 1}
+                    </span>
+                  )}
+                </div>
+
+                {/* Line 2: validity · linked port hints */}
+                <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
+                  <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
+                    Valid {c.validFrom} → {c.validTo}
+                  </span>
+                  {c.linkedPolVia && (
+                    <span style={{ fontFamily: T.mono, fontSize: 11, color: T.info }}>
+                      POL via {c.linkedPolVia}
+                    </span>
+                  )}
+                  {c.linkedPodVia && (
+                    <span style={{ fontFamily: T.mono, fontSize: 11, color: T.info }}>
+                      POD via {c.linkedPodVia}
+                    </span>
+                  )}
+                </div>
+
+                {/* Line 3: route legs */}
+                {c.legs && c.legs.length > 0 && (
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {c.legs.map((l, i) => (
+                      <span key={i} style={{ fontFamily: T.mono, fontSize: 11,
+                        background: T.surface, border: `1px solid ${T.border}`,
+                        borderRadius: 4, padding: "2px 8px", color: T.text }}>
+                        {l.pol} → {l.pod}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Right: bold total buy rate + carrier */}
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end",
+                gap: 4, flexShrink: 0, minWidth: 80 }}>
+                {total !== null ? (
+                  <span style={{ fontFamily: T.mono, fontSize: 20, fontWeight: 700,
+                    color: isBest ? T.success : T.text, letterSpacing: "-.01em" }}>
+                    {fmtUsd(total)}
+                  </span>
+                ) : (
+                  <span style={{ fontFamily: T.mono, fontSize: 13, color: T.textMuted }}>—</span>
+                )}
+                <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
                   {c.carrierCode}
                 </span>
               </div>
-              {/* Line 2: validity · linked port hints */}
-              <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
-                <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
-                  Valid {c.validFrom} → {c.validTo}
-                </span>
-                {c.linkedPolVia && (
-                  <span style={{ fontFamily: T.mono, fontSize: 11, color: T.info }}>
-                    POL via {c.linkedPolVia}
-                  </span>
-                )}
-                {c.linkedPodVia && (
-                  <span style={{ fontFamily: T.mono, fontSize: 11, color: T.info }}>
-                    POD via {c.linkedPodVia}
-                  </span>
-                )}
-              </div>
-              {/* Line 3: route legs */}
-              {c.legs && c.legs.length > 0 && (
-                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  {c.legs.map((l, i) => (
-                    <span key={i} style={{ fontFamily: T.mono, fontSize: 11,
-                      background: T.surface, border: `1px solid ${T.border}`,
-                      borderRadius: 4, padding: "2px 8px", color: T.text }}>
-                      {l.pol} → {l.pod}
-                    </span>
-                  ))}
-                </div>
-              )}
             </button>
           );
         })}

@@ -118,10 +118,12 @@ const DropLine = () => (
 
 // ─── Ticket Card ──────────────────────────────────────────────────────────────
 
-const TicketCard = ({ ticket, onEdit, onDelete, onMove, colIndex,
-                      isDragging, dropIndicator, onDragStart, onDragEnd, onDragOver }) => {
+const TicketCard = ({ ticket, onEdit, onDelete, onMove, onPreview, colIndex,
+                      isSelected, isDragging, dropIndicator,
+                      onDragStart, onDragEnd, onDragOver }) => {
   const [confirm, setConfirm] = useState(false);
-  const cardRef = useRef(null);
+  const cardRef  = useRef(null);
+  const dragged  = useRef(false);
 
   const handleDragOver = e => {
     e.preventDefault();
@@ -132,6 +134,8 @@ const TicketCard = ({ ticket, onEdit, onDelete, onMove, colIndex,
     onDragOver(ticket.id, e.clientY < mid ? "before" : "after");
   };
 
+  const stop = fn => e => { e.stopPropagation(); fn(); };
+
   return (
     <>
       {dropIndicator === "before" && <DropLine />}
@@ -139,20 +143,22 @@ const TicketCard = ({ ticket, onEdit, onDelete, onMove, colIndex,
       <div
         ref={cardRef}
         draggable
-        onDragStart={e => { e.dataTransfer.setData("ticketId", ticket.id); onDragStart(ticket.id); }}
-        onDragEnd={onDragEnd}
+        onDragStart={e => { dragged.current = true; e.dataTransfer.setData("ticketId", ticket.id); onDragStart(ticket.id); }}
+        onDragEnd={e => { dragged.current = false; onDragEnd(e); }}
         onDragOver={handleDragOver}
+        onClick={() => { if (!dragged.current) onPreview(ticket); }}
         style={{
-          background: T.bg, border: `1px solid ${T.border}`,
-          borderLeft:  `3px solid ${PRIORITY_DOT[ticket.priority] || T.border}`,
-          borderRadius: 8, padding: "12px 14px", cursor: "grab",
+          background: isSelected ? `${T.accent}0d` : T.bg,
+          border: `1px solid ${isSelected ? T.accent + "66" : T.border}`,
+          borderLeft: `3px solid ${isSelected ? T.accent : (PRIORITY_DOT[ticket.priority] || T.border)}`,
+          borderRadius: 8, padding: "12px 14px", cursor: "pointer",
           opacity: isDragging ? 0.35 : 1,
-          transition: "opacity .15s, box-shadow .15s",
-          boxShadow: isDragging ? "none" : "0 2px 8px rgba(0,0,0,.25)",
+          transition: "opacity .15s, box-shadow .15s, border-color .15s, background .15s",
+          boxShadow: isDragging ? "none" : isSelected ? `0 0 0 1px ${T.accent}33, 0 2px 8px rgba(0,0,0,.25)` : "0 2px 8px rgba(0,0,0,.25)",
           userSelect: "none",
         }}
-        onMouseEnter={e => { if (!isDragging) e.currentTarget.style.boxShadow = "0 4px 16px rgba(0,0,0,.4)"; }}
-        onMouseLeave={e => e.currentTarget.style.boxShadow = isDragging ? "none" : "0 2px 8px rgba(0,0,0,.25)"}
+        onMouseEnter={e => { if (!isDragging) e.currentTarget.style.boxShadow = isSelected ? `0 0 0 1px ${T.accent}33, 0 4px 16px rgba(0,0,0,.4)` : "0 4px 16px rgba(0,0,0,.4)"; }}
+        onMouseLeave={e => e.currentTarget.style.boxShadow = isDragging ? "none" : isSelected ? `0 0 0 1px ${T.accent}33, 0 2px 8px rgba(0,0,0,.25)` : "0 2px 8px rgba(0,0,0,.25)"}
       >
         {/* Header */}
         <div style={{ display: "flex", alignItems: "flex-start", gap: 6, marginBottom: 8 }}>
@@ -209,24 +215,24 @@ const TicketCard = ({ ticket, onEdit, onDelete, onMove, colIndex,
         <div style={{ display: "flex", gap: 5, justifyContent: "flex-end",
           borderTop: `1px solid ${T.border}22`, paddingTop: 8 }}>
           {colIndex > 0 && (
-            <button onClick={() => onMove(ticket, COLUMNS[colIndex - 1])}
+            <button onClick={stop(() => onMove(ticket, COLUMNS[colIndex - 1]))}
               style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 4,
                 color: T.textMuted, cursor: "pointer", fontSize: 11, padding: "2px 8px", fontFamily: T.body }}>
               ← {COLUMNS[colIndex - 1].split(" ")[0]}
             </button>
           )}
-          <button onClick={() => onEdit(ticket)}
+          <button onClick={stop(() => onEdit(ticket))}
             style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 4,
               color: T.textMuted, cursor: "pointer", fontSize: 11, padding: "2px 8px", fontFamily: T.body }}>
             ✎
           </button>
-          <button onClick={() => setConfirm(true)}
+          <button onClick={stop(() => setConfirm(true))}
             style={{ background: "none", border: `1px solid ${T.danger}44`, borderRadius: 4,
               color: T.danger, cursor: "pointer", fontSize: 11, padding: "2px 8px", fontFamily: T.body }}>
             ✕
           </button>
           {colIndex < COLUMNS.length - 1 && (
-            <button onClick={() => onMove(ticket, COLUMNS[colIndex + 1])}
+            <button onClick={stop(() => onMove(ticket, COLUMNS[colIndex + 1]))}
               style={{ background: T.accentBg, border: `1px solid ${T.accent}55`, borderRadius: 4,
                 color: T.accent, cursor: "pointer", fontSize: 11, padding: "2px 8px",
                 fontFamily: T.body, fontWeight: 600 }}>
@@ -248,10 +254,159 @@ const TicketCard = ({ ticket, onEdit, onDelete, onMove, colIndex,
   );
 };
 
+// ─── Ticket Preview Panel ─────────────────────────────────────────────────────
+
+const TicketPreview = ({ ticket, colIndex, shipments, onClose, onEdit, onMove, onDelete }) => {
+  const [confirm, setConfirm] = useState(false);
+  const linked = shipments.find(s => s.id === ticket.shipmentId);
+
+  const MetaRow = ({ label, children }) => (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, minHeight: 24 }}>
+      <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted,
+        width: 68, flexShrink: 0 }}>
+        {label}
+      </span>
+      {children}
+    </div>
+  );
+
+  return (
+    <div style={{
+      width: 320, flexShrink: 0,
+      background: T.surface,
+      border: `1px solid ${T.border}`,
+      borderTop: `3px solid ${COL_ACCENT[ticket.status]}`,
+      borderRadius: 10,
+      display: "flex", flexDirection: "column",
+      overflow: "hidden",
+      alignSelf: "stretch",
+    }}>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+        padding: "10px 14px", borderBottom: `1px solid ${T.border}`, flexShrink: 0 }}>
+        <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>{ticket.id}</span>
+        <button onClick={onClose}
+          style={{ background: "none", border: "none", cursor: "pointer",
+            color: T.textMuted, fontSize: 18, padding: "0 2px", lineHeight: 1 }}>
+          ×
+        </button>
+      </div>
+
+      {/* Scrollable body */}
+      <div style={{ flex: 1, overflowY: "auto", padding: "16px 16px", display: "flex", flexDirection: "column", gap: 16 }}>
+
+        {/* Title */}
+        <div style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, lineHeight: 1.45 }}>
+          {ticket.title}
+        </div>
+
+        {/* Meta */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 8,
+          paddingBottom: 16, borderBottom: `1px solid ${T.border}` }}>
+          <MetaRow label="Status">
+            <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700,
+              color: COL_ACCENT[ticket.status],
+              background: `${COL_ACCENT[ticket.status]}22`,
+              border: `1px solid ${COL_ACCENT[ticket.status]}44`,
+              borderRadius: 10, padding: "2px 10px" }}>
+              {ticket.status}
+            </span>
+          </MetaRow>
+          <MetaRow label="Type">
+            <Badge variant={TYPE_VARIANT[ticket.type] || "default"}>{ticket.type}</Badge>
+          </MetaRow>
+          <MetaRow label="Priority">
+            <Badge variant={PRIORITY_VARIANT[ticket.priority] || "default"}>{ticket.priority}</Badge>
+          </MetaRow>
+          {ticket.section && (
+            <MetaRow label="Section">
+              <span style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>{ticket.section}</span>
+            </MetaRow>
+          )}
+          {ticket.version && (
+            <MetaRow label="Version">
+              <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700,
+                color: "#8b5cf6", background: "rgba(139,92,246,.12)",
+                border: "1px solid rgba(139,92,246,.3)", borderRadius: 4, padding: "2px 8px" }}>
+                v{ticket.version}
+              </span>
+            </MetaRow>
+          )}
+          {ticket.shipmentId && (
+            <MetaRow label="Shipment">
+              <span style={{ fontFamily: T.mono, fontSize: 11, color: T.accent,
+                background: `${T.accent}15`, border: `1px solid ${T.accent}33`,
+                borderRadius: 4, padding: "2px 8px" }}>
+                ⛴ {ticket.shipmentId}{linked ? ` · ${linked.pol}→${linked.pod}` : ""}
+              </span>
+            </MetaRow>
+          )}
+        </div>
+
+        {/* Description */}
+        <div>
+          <div style={{ fontFamily: T.body, fontSize: 10, fontWeight: 700, color: T.textMuted,
+            textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 8 }}>
+            Description
+          </div>
+          {ticket.description ? (
+            <div style={{ fontFamily: T.body, fontSize: 13, color: T.text,
+              lineHeight: 1.65, whiteSpace: "pre-wrap" }}>
+              {ticket.description}
+            </div>
+          ) : (
+            <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, fontStyle: "italic" }}>
+              No description provided.
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Actions footer */}
+      <div style={{ padding: "10px 14px", borderTop: `1px solid ${T.border}`,
+        display: "flex", gap: 6, flexShrink: 0 }}>
+        {colIndex > 0 && (
+          <button onClick={() => onMove(ticket, COLUMNS[colIndex - 1])}
+            style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 5,
+              color: T.textMuted, cursor: "pointer", fontSize: 11, padding: "5px 10px", fontFamily: T.body }}>
+            ← {COLUMNS[colIndex - 1].split(" ")[0]}
+          </button>
+        )}
+        <button onClick={onEdit}
+          style={{ flex: 1, background: T.accentBg, border: `1px solid ${T.accent}55`, borderRadius: 5,
+            color: T.accent, cursor: "pointer", fontSize: 12, padding: "5px 10px",
+            fontFamily: T.body, fontWeight: 600 }}>
+          ✎ Edit
+        </button>
+        {colIndex < COLUMNS.length - 1 && (
+          <button onClick={() => onMove(ticket, COLUMNS[colIndex + 1])}
+            style={{ background: T.accentBg, border: `1px solid ${T.accent}55`, borderRadius: 5,
+              color: T.accent, cursor: "pointer", fontSize: 11, padding: "5px 10px",
+              fontFamily: T.body, fontWeight: 600 }}>
+            {COLUMNS[colIndex + 1].split(" ")[0]} →
+          </button>
+        )}
+        <button onClick={() => setConfirm(true)}
+          style={{ background: "none", border: `1px solid ${T.danger}44`, borderRadius: 5,
+            color: T.danger, cursor: "pointer", fontSize: 11, padding: "5px 10px", fontFamily: T.body }}>
+          ✕
+        </button>
+      </div>
+
+      {confirm && (
+        <ConfirmModal
+          message={`Delete "${ticket.title}"?`}
+          onConfirm={() => { setConfirm(false); onDelete(ticket.id); onClose(); }}
+          onCancel={() => setConfirm(false)} />
+      )}
+    </div>
+  );
+};
+
 // ─── Kanban Column ────────────────────────────────────────────────────────────
 
-const KanbanColumn = ({ status, tickets, onEdit, onDelete, onMove,
-                        onDrop, colIndex, dragId }) => {
+const KanbanColumn = ({ status, tickets, onEdit, onDelete, onMove, onPreview,
+                        onDrop, colIndex, dragId, previewId }) => {
   // { id: ticketId, side: "before"|"after" } — where the drop line appears
   const [dropTarget, setDropTarget] = useState(null);
   const [colDragOver, setColDragOver] = useState(false);
@@ -312,10 +467,12 @@ const KanbanColumn = ({ status, tickets, onEdit, onDelete, onMove,
           ticket={t}
           colIndex={colIndex}
           isDragging={dragId === t.id}
+          isSelected={previewId === t.id}
           dropIndicator={dropTarget?.id === t.id ? dropTarget.side : null}
           onEdit={onEdit}
           onDelete={onDelete}
           onMove={onMove}
+          onPreview={onPreview}
           onDragStart={id => setDropTarget(null)}
           onDragEnd={() => clearDrop()}
           onDragOver={handleCardDragOver}
@@ -336,11 +493,15 @@ const KanbanColumn = ({ status, tickets, onEdit, onDelete, onMove,
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 const KanbanPage = ({ shipments = [] }) => {
-  const [tickets, setTickets] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [modal,   setModal]   = useState(null);
-  const [filter,  setFilter]  = useState({ priority: "", section: "" });
-  const [dragId,  setDragId]  = useState(null);
+  const [tickets,   setTickets]   = useState([]);
+  const [loading,   setLoading]   = useState(true);
+  const [modal,     setModal]     = useState(null);
+  const [filter,    setFilter]    = useState({ priority: "", section: "" });
+  const [dragId,    setDragId]    = useState(null);
+  const [previewId, setPreviewId] = useState(null);
+
+  // Derive preview from live tickets so it reflects edits/moves automatically
+  const preview = previewId ? tickets.find(t => t.id === previewId) ?? null : null;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -423,6 +584,7 @@ const KanbanPage = ({ shipments = [] }) => {
   const handleDelete = async id => {
     await api.tickets.remove(id);
     setTickets(p => p.filter(t => t.id !== id));
+    setPreviewId(p => p === id ? null : p);
   };
 
   const handleSave = async form => {
@@ -465,27 +627,45 @@ const KanbanPage = ({ shipments = [] }) => {
         </div>
       </div>
 
-      {/* Board */}
+      {/* Board + preview */}
       {loading ? (
         <div style={{ fontFamily: T.body, fontSize: 14, color: T.textMuted, padding: 40, textAlign: "center" }}>
           Loading board…
         </div>
       ) : (
-        <div
-          style={{ display: "flex", gap: 14, alignItems: "flex-start", overflowX: "auto", flex: 1, paddingBottom: 8 }}
-          onDragEnd={() => setDragId(null)}
-        >
-          {COLUMNS.map((col, i) => (
-            <KanbanColumn
-              key={col} status={col} colIndex={i}
-              tickets={byStatus(col)}
-              onEdit={t => setModal(t)}
-              onDelete={handleDelete}
+        <div style={{ display: "flex", gap: 14, flex: 1, minHeight: 0 }}>
+          {/* Columns */}
+          <div
+            style={{ display: "flex", gap: 14, alignItems: "flex-start", overflowX: "auto", flex: 1, paddingBottom: 8 }}
+            onDragEnd={() => setDragId(null)}
+          >
+            {COLUMNS.map((col, i) => (
+              <KanbanColumn
+                key={col} status={col} colIndex={i}
+                tickets={byStatus(col)}
+                onEdit={t => setModal(t)}
+                onDelete={handleDelete}
+                onMove={handleMove}
+                onDrop={handleDrop}
+                onPreview={t => setPreviewId(p => p === t.id ? null : t.id)}
+                dragId={dragId}
+                previewId={previewId}
+              />
+            ))}
+          </div>
+
+          {/* Preview panel */}
+          {preview && (
+            <TicketPreview
+              ticket={preview}
+              colIndex={COLUMNS.indexOf(preview.status)}
+              shipments={shipments}
+              onClose={() => setPreviewId(null)}
+              onEdit={() => setModal(preview)}
               onMove={handleMove}
-              onDrop={handleDrop}
-              dragId={dragId}
+              onDelete={handleDelete}
             />
-          ))}
+          )}
         </div>
       )}
 

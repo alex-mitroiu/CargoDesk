@@ -15,6 +15,7 @@ import DashboardPage       from "./pages/DashboardPage";
 import DashboardArchive    from "./pages/DashboardArchivePage";
 import UserManualPage      from "./pages/UserManualPage";
 import AboutPage           from "./pages/AboutPage";
+import AppSettingsPage     from "./pages/AppSettingsPage";
 import { VERSION, COPYRIGHT_YEAR, COPYRIGHT_OWNER } from "./version";
 import LandingPage         from "./pages/LandingPage";
 import KanbanPage          from "./pages/KanbanPage";
@@ -38,25 +39,60 @@ import SpaceConfigurationsPage from "./pages/SpaceConfigurationsPage";
 
 const HEALTH_CHECKS = [
   { id: "server",    label: "API Server",              url: "/api/health",                     cat: "Internal" },
+  { id: "ws",        label: "WebSocket Server",        url: null,   type: "ws",               cat: "Internal", settingKey: "api_ws_enabled" },
   { id: "shipments", label: "Shipments",               url: "/api/shipments",                  cat: "Internal" },
   { id: "contracts", label: "Contracts",               url: "/api/contracts?limit=1",          cat: "Internal" },
   { id: "carriers",  label: "Carriers",                url: "/api/carriers",                   cat: "Internal" },
   { id: "vessels",   label: "Vessels",                 url: "/api/vessels?limit=1",            cat: "Internal" },
   { id: "ports",     label: "Port Locations",          url: "/api/port-locations?limit=1",     cat: "Internal" },
   { id: "customers", label: "Customers",               url: "/api/customers?limit=1",          cat: "Internal" },
-  { id: "fx",        label: "FX Rates (frankfurter.app)", url: "https://api.frankfurter.app/latest?from=USD&to=EUR", cat: "External" },
-  { id: "weather",   label: "Weather (open-meteo.com)",   url: "https://api.open-meteo.com/v1/forecast?latitude=51.9&longitude=4.5&current=temperature_2m", cat: "External" },
+  { id: "sysmsg",    label: "System Messages",         url: "/api/system-messages",            cat: "Internal" },
+  { id: "fx",      label: "FX Rates (frankfurter.app)", url: "https://api.frankfurter.app/latest?from=USD&to=EUR", cat: "External", settingKey: "api_fx_enabled" },
+  { id: "weather", label: "Weather (open-meteo.com)",   url: "https://api.open-meteo.com/v1/forecast?latitude=51.9&longitude=4.5&current=temperature_2m", cat: "External", settingKey: "api_weather_enabled" },
 ];
 
 const HealthModal = ({ onClose }) => {
-  const [results, setResults] = useState({});
-  const [running, setRunning] = useState(false);
+  const [results,  setResults]  = useState({});
+  const [running,  setRunning]  = useState(false);
+  const [settings, setSettings] = useState({});
+
+  useEffect(() => {
+    fetch("/api/settings").then(r => r.ok ? r.json() : {}).then(s => setSettings(s)).catch(() => {});
+  }, []);
 
   const runChecks = async () => {
     setRunning(true);
     setResults({});
-    await Promise.all(HEALTH_CHECKS.map(async ({ id, url }) => {
+    await Promise.all(HEALTH_CHECKS.map(async ({ id, url, type, settingKey }) => {
+      // Respect user's enabled/disabled setting
+      if (settingKey && settings[settingKey] === 'false') {
+        setResults(p => ({ ...p, [id]: { disabled: true } }));
+        return;
+      }
       const t0 = Date.now();
+      if (type === "ws") {
+        await new Promise(resolve => {
+          const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+          const ws = new WebSocket(`${proto}//${window.location.host}/ws`);
+          const timer = setTimeout(() => {
+            ws.close();
+            setResults(p => ({ ...p, [id]: { ok: false, error: "Timeout (7 s)", latency: Date.now() - t0 } }));
+            resolve();
+          }, 7000);
+          ws.onopen = () => {
+            clearTimeout(timer);
+            ws.close();
+            setResults(p => ({ ...p, [id]: { ok: true, status: 101, latency: Date.now() - t0 } }));
+            resolve();
+          };
+          ws.onerror = () => {
+            clearTimeout(timer);
+            setResults(p => ({ ...p, [id]: { ok: false, error: "Connection refused", latency: Date.now() - t0 } }));
+            resolve();
+          };
+        });
+        return;
+      }
       try {
         const ctrl  = new AbortController();
         const timer = setTimeout(() => ctrl.abort(), 7000);
@@ -72,10 +108,10 @@ const HealthModal = ({ onClose }) => {
 
   useEffect(() => { runChecks(); }, []);
 
-  const cats     = ["Internal", "External"];
-  const allDone  = HEALTH_CHECKS.every(c => c.id in results);
-  const allOk    = allDone && HEALTH_CHECKS.every(c => results[c.id]?.ok);
-  const anyFail  = allDone && HEALTH_CHECKS.some(c => !results[c.id]?.ok);
+  const cats    = ["Internal", "External"];
+  const allDone = HEALTH_CHECKS.every(c => c.id in results);
+  const allOk   = allDone && HEALTH_CHECKS.every(c => results[c.id]?.disabled || results[c.id]?.ok);
+  const anyFail = allDone && HEALTH_CHECKS.some(c => !results[c.id]?.disabled && !results[c.id]?.ok);
 
   return (
     <Modal title="System Health" onClose={onClose} width={520}>
@@ -101,22 +137,24 @@ const HealthModal = ({ onClose }) => {
             </div>
             <div style={{ background: T.bg, borderRadius: 8, border: `1px solid ${T.border}`, overflow: "hidden" }}>
               {HEALTH_CHECKS.filter(c => c.cat === cat).map((c, i, arr) => {
-                const r      = results[c.id];
-                const isLast = i === arr.length - 1;
-                const dotColor = r === undefined ? T.border : r.ok ? T.success : T.danger;
+                const r        = results[c.id];
+                const isLast   = i === arr.length - 1;
+                const disabled = r?.disabled;
+                const dotColor = disabled ? T.border : r === undefined ? T.border : r.ok ? T.success : T.danger;
                 return (
                   <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 12,
-                    padding: "10px 14px", borderBottom: isLast ? "none" : `1px solid ${T.border}22` }}>
+                    padding: "10px 14px", borderBottom: isLast ? "none" : `1px solid ${T.border}22`,
+                    opacity: disabled ? 0.5 : 1 }}>
                     <div style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
                       background: dotColor,
-                      boxShadow: r?.ok ? `0 0 6px ${T.success}77` : r ? `0 0 6px ${T.danger}77` : "none",
+                      boxShadow: (!disabled && r?.ok) ? `0 0 6px ${T.success}77` : (r && !r.ok && !disabled) ? `0 0 6px ${T.danger}77` : "none",
                       transition: "background .3s, box-shadow .3s" }} />
                     <span style={{ fontFamily: T.body, fontSize: 13, color: T.text, flex: 1 }}>
                       {c.label}
                     </span>
                     <span style={{ fontFamily: T.mono, fontSize: 11,
-                      color: r === undefined ? T.border : r.ok ? T.success : T.danger }}>
-                      {r === undefined ? "—" : r.ok ? `${r.latency} ms` : (r.error || `HTTP ${r.status}`)}
+                      color: disabled ? T.border : r === undefined ? T.border : r.ok ? T.success : T.danger }}>
+                      {disabled ? "Disabled" : r === undefined ? "—" : r.ok ? `${r.latency} ms` : (r.error || `HTTP ${r.status}`)}
                     </span>
                   </div>
                 );
@@ -278,6 +316,7 @@ function App() {
     kanban:             "Integration Board",
     "user-manual":      "User Manual",
     about:              "About",
+    settings:           "Application Settings",
     "mdm-carriers":     "Master Data — Carriers",
     "mdm-vessels":      "Master Data — Vessels",
     "mdm-commodities":  "Master Data — Commodities",
@@ -622,8 +661,9 @@ function App() {
 
                 <Divider />
 
-                <MenuItem icon="⌨" label="Keyboard Shortcuts" disabled sub="Coming soon" />
+                <MenuItem icon="📖" label="User Manual"      onClick={() => navigate("manual")} />
                 <MenuItem icon="ℹ" label="About CargoDesk" onClick={() => navigate("about")} />
+                <MenuItem icon="⌨" label="Keyboard Shortcuts" disabled sub="Coming soon" />
 
                 <Divider />
 
@@ -642,7 +682,7 @@ function App() {
 
       {/* ── Sidebar ── */}
       <aside style={{ width: 240, background: T.surface, borderRight: `1px solid ${T.border}`,
-        display: "flex", flexDirection: "column", flexShrink: 0 }}>
+        display: "flex", flexDirection: "column", flexShrink: 0, paddingBottom: 44 }}>
 
         {/* Logo — click to go home */}
         <div style={{ padding: "22px 20px 20px", borderBottom: `1px solid ${T.border}` }}>
@@ -702,14 +742,12 @@ function App() {
               </div>
             )}
           </div>
-          {/* Utility */}
-          <div style={{ marginTop: 16 }}>
-            <div style={{ fontFamily: T.mono, fontSize: 9, color: T.border, fontWeight: 700,
-              textTransform: "uppercase", letterSpacing: ".1em", padding: "5px 12px 3px 12px" }}>Help</div>
-            <NavBtn pageKey="manual" icon="📖" label="User Manual" />
-            <NavBtn pageKey="about"  icon="ℹ"  label="About"       />
-          </div>
         </nav>
+
+        {/* Application Settings — pinned below nav, above footer */}
+        <div style={{ padding: "8px 12px 14px", borderTop: `1px solid ${T.border}33` }}>
+          <NavBtn pageKey="settings" icon="⚙" label="Application Settings" />
+        </div>
 
       </aside>
 
@@ -876,6 +914,7 @@ function App() {
         {page === "mdm-contracts"  && <MdmContractsPage />}
         {page === "manual"         && <UserManualPage />}
         {page === "about"          && <AboutPage />}
+        {page === "settings"       && <AppSettingsPage />}
 
         </main>
       </div>
@@ -904,12 +943,6 @@ function App() {
               textDecoration: "underline dotted" }}>
               System Health
             </span>
-          </button>
-          <button type="button" onClick={() => navigate("about")}
-            style={{ background: "none", border: "none", cursor: "pointer",
-              fontFamily: T.mono, fontSize: 11, color: T.textMuted,
-              padding: 0, textDecoration: "underline dotted" }}>
-            About
           </button>
         </div>
       </footer>
