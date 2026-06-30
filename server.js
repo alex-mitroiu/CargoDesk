@@ -1370,11 +1370,11 @@ app.get("/api/health", (req, res) => {
 // ─── System Messages ─────────────────────────────────────────────────────────
 
 app.get("/api/system-messages", (req, res) => {
-  const today = new Date().toISOString().slice(0, 10);
+  const now = new Date().toISOString().slice(0, 16);
   const rows = db.prepare(`SELECT * FROM system_messages
     WHERE (active_from = '' OR active_from <= ?)
       AND (active_to   = '' OR active_to   >= ?)
-    ORDER BY created_at DESC`).all(today, today);
+    ORDER BY created_at DESC`).all(now, now);
   ok(res, rows.map(mapSystemMessage));
 });
 

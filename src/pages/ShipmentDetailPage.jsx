@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect } from "react";
+﻿import React, { useState, useEffect, useRef } from "react";
 import { T, INCOTERMS_2020, teuOf,
          statusVariant, contractVariant , addDays, diffDays , IMDG_CLASSES, IMDG_CLASS_VARIANT } from "../tokens";
 import { ContainerTypeField } from "../components/shared/ContainerTypePickerModal";
@@ -79,8 +79,8 @@ const SectionHeader = ({ n, title }) => {
 
 // ─── Container form ───────────────────────────────────────────────────────────
 
-const ContainerForm = ({ init = {}, onSave, onCancel }) => {
-  const [f, setF] = useState({
+const ContainerForm = ({ init = {}, onSave, onCancel, onDirtyChange }) => {
+  const initSnap = useRef({
     containerNumber:  init.containerNumber  || "",
     size:             init.size             || "",
     type:             init.type             || "",
@@ -91,10 +91,24 @@ const ContainerForm = ({ init = {}, onSave, onCancel }) => {
     isDg:             init.isDg             || false,
     dgClass:          init.dgClass          || "",
   });
+  const [f, setF] = useState({ ...initSnap.current });
   const set = k => v => setF(p => ({ ...p, [k]: v }));
 
   const [touched,  setTouched]  = useState({});
   const [isSaving, setIsSaving] = useState(false);
+
+  // Notify parent when form diverges from its initial values
+  useEffect(() => {
+    const s = initSnap.current;
+    const dirty = f.containerNumber !== s.containerNumber || f.size !== s.size ||
+      f.type !== s.type || f.hsCode !== s.hsCode || f.cargoDescription !== s.cargoDescription ||
+      f.grossWeightKg !== s.grossWeightKg || f.volumeCbm !== s.volumeCbm ||
+      f.isDg !== s.isDg || f.dgClass !== s.dgClass;
+    onDirtyChange?.(dirty);
+  }, [f]);
+
+  // Clear dirty flag when the form unmounts (modal closed)
+  useEffect(() => () => onDirtyChange?.(false), []);
   const touch = k => setTouched(p => ({ ...p, [k]: true }));
 
   const weightOk = parseFloat(f.grossWeightKg) > 0;
@@ -801,24 +815,55 @@ const ShipmentTimeline = ({ events, currentStatus, open, onToggle }) => (
 );
 
 const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, onAddContainer, onEditContainer, onDeleteContainer }) => {
-  const [ctrModal,      setCtrModal]      = useState(null);
+  const [ctrModal,       setCtrModal]       = useState(null);
   const [linkVesselOpen, setLinkVesselOpen] = useState(false);
-  const [editShp,   setEditShp]   = useState(false);
-  const [confirmCtr, setConfirmCtr] = useState(null);
-  const [statusLog,  setStatusLog]  = useState([]);
-  const [logOpen,    setLogOpen]    = useState(true);
-  const [events,     setEvents]     = useState([]);
+  const [editShp,        setEditShp]        = useState(false);
+  const [confirmCtr,     setConfirmCtr]     = useState(null);
+  const [statusLog,      setStatusLog]      = useState([]);
+  const [logOpen,        setLogOpen]        = useState(true);
+  const [events,         setEvents]         = useState([]);
+  const [allocations,    setAllocations]    = useState([]);
+  const [isDirty,        setIsDirty]        = useState(false);
   const { template: ctrTemplate, startResize: ctrStartResize } = useResizableColumns("shipment-containers", [140,60,90,50,80,150,100,90,120]);
   const ctrHeaders = ["Container No.","Size","Type","TEU","HS Code","Cargo Description","Wt / Vol","DG","Actions"];
+
+  // Tab title — show shipment ID so multi-tab workflows are easy to navigate
+  useEffect(() => {
+    document.title = `${shipment.id} · CargoDesk`;
+    return () => { document.title = "CargoDesk"; };
+  }, [shipment.id]);
+
+  // Warn before closing tab when a form has unsaved changes
+  useEffect(() => {
+    const handler = e => { if (isDirty) { e.preventDefault(); e.returnValue = ""; } };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [isDirty]);
 
   useEffect(() => {
     if (!shipment?.id) return;
     api.statusLog.list(shipment.id).then(setStatusLog).catch(() => setStatusLog([]));
     api.shipmentEvents.list(shipment.id).then(setEvents).catch(() => setEvents([]));
   }, [shipment?.id, shipment?.status]);
+
+  useEffect(() => { api.allocations.list().then(setAllocations).catch(() => {}); }, []);
   const carrier  = carriers.find(c => c.code === shipment.carrierCode);
   const ctrs     = containers.filter(c => c.shipmentId === shipment.id);
   const totalTEU = ctrs.reduce((s, c) => s + teuOf(c.size), 0);
+
+  const allocContractMatch = (s, a) => {
+    if (a.contractId)     return s.contractId === a.contractId;
+    if (a.contractNumber) return s.contractRef === a.contractNumber;
+    return s.contractType === "Central Contract";
+  };
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const linkedAlloc = allocations.find(a =>
+    a.carrierCode === shipment.carrierCode &&
+    a.effectiveDate <= todayStr && a.endDate >= todayStr &&
+    allocContractMatch(shipment, a) &&
+    (!a.pol || a.pol === shipment.pol) &&
+    (!a.pod || a.pod === shipment.pod)
+  ) || null;
 
   const InfoCard = ({ label, value, color, mono }) => (
     <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 10, padding: "14px 18px" }}>
@@ -894,6 +939,63 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
 
         <InfoCard label="Voyage" value={shipment.voyage || "—"} mono />
       </div>
+
+      {/* Linked space configuration */}
+      {allocations.length > 0 && (linkedAlloc ? (() => {
+        const allocTEU  = linkedAlloc.allocatedTEU || 0;
+        const thresh    = linkedAlloc.alertThreshold ?? 80;
+        const shipTEU   = totalTEU;
+        const pct       = allocTEU > 0 ? Math.min(100, (shipTEU / allocTEU) * 100) : 0;
+        const barColor  = pct >= 100 ? T.danger : pct >= thresh ? T.warning : T.success;
+        return (
+          <div style={{ background: T.surface, border: `1px solid ${T.accent}44`,
+            borderLeft: `3px solid ${T.accent}`, borderRadius: 10,
+            padding: "14px 20px", marginBottom: 22,
+            display: "flex", alignItems: "center", gap: 24, flexWrap: "wrap" }}>
+            <div>
+              <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
+                textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 5 }}>Space Configuration</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontFamily: T.mono, fontSize: 14, fontWeight: 700, color: T.accent }}>
+                  {linkedAlloc.carrierCode}
+                </span>
+                {linkedAlloc.pol && linkedAlloc.pod && (
+                  <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>
+                    {linkedAlloc.pol} <span style={{ color: T.border }}>›</span> {linkedAlloc.pod}
+                  </span>
+                )}
+                {linkedAlloc.contractNumber && (
+                  <span style={{ fontFamily: T.mono, fontSize: 11, color: T.accent, fontWeight: 600,
+                    background: T.accentBg, borderRadius: 4, padding: "1px 7px" }}>
+                    {linkedAlloc.contractNumber}
+                  </span>
+                )}
+              </div>
+            </div>
+            <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+              {linkedAlloc.effectiveDate} → {linkedAlloc.endDate}
+            </div>
+            <div style={{ marginLeft: "auto", display: "flex", flexDirection: "column", gap: 4, minWidth: 140 }}>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+                  This shipment: {shipTEU} / {allocTEU} TEU
+                </span>
+                <span style={{ fontFamily: T.mono, fontSize: 11, color: barColor, fontWeight: 600 }}>
+                  {pct.toFixed(0)}%
+                </span>
+              </div>
+              <div style={{ background: T.border, borderRadius: 4, height: 5, overflow: "hidden" }}>
+                <div style={{ height: "100%", width: `${pct}%`, background: barColor, transition: "width .4s" }} />
+              </div>
+            </div>
+          </div>
+        );
+      })() : (
+        <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, fontStyle: "italic",
+          marginBottom: 14 }}>
+          No active space configuration matches this shipment.
+        </div>
+      ))}
 
       {/* Contract + references */}
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
@@ -1027,11 +1129,13 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
       {ctrModal && (
         <Modal title={ctrModal === "add" ? "Add Container" : "Edit Container"} onClose={() => setCtrModal(null)}>
           <ContainerForm init={ctrModal === "add" ? {} : ctrModal}
+            onDirtyChange={setIsDirty}
             onSave={async form => {
               try {
                 ctrModal === "add"
                   ? await onAddContainer(shipment.id, form)
                   : await onEditContainer(ctrModal.id, form);
+                setIsDirty(false);
                 setCtrModal(null);
               api.shipmentEvents.list(shipment.id).then(setEvents).catch(() => {});
               } catch { /* error already toasted by App.jsx handler */ }

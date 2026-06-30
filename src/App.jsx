@@ -398,10 +398,33 @@ function App() {
         {/* Left — breadcrumb */}
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ fontFamily: T.body, fontSize: 12, color: T.border }}>CargoDesk</span>
-          <span style={{ fontFamily: T.mono, fontSize: 10, color: T.border }}>›</span>
-          <span style={{ fontFamily: T.body, fontSize: 13, fontWeight: 600, color: T.textMuted }}>
-            {pageTitle}
-          </span>
+          {page === "detail" && selectedShipment ? (
+            <>
+              <span style={{ fontFamily: T.mono, fontSize: 10, color: T.border }}>›</span>
+              <button onClick={() => navigate("shipments")}
+                style={{ background: "none", border: "none", cursor: "pointer", padding: 0,
+                  fontFamily: T.body, fontSize: 12, color: T.textMuted }}
+                onMouseEnter={e => e.currentTarget.style.color = T.text}
+                onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>
+                Shipments
+              </button>
+              <span style={{ fontFamily: T.mono, fontSize: 10, color: T.border }}>›</span>
+              <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.accent }}>
+                {selectedShipment.id}
+              </span>
+              <span style={{ fontFamily: T.mono, fontSize: 10, color: T.border }}>›</span>
+              <span style={{ fontFamily: T.body, fontSize: 13, fontWeight: 600, color: T.textMuted }}>
+                Details
+              </span>
+            </>
+          ) : (
+            <>
+              <span style={{ fontFamily: T.mono, fontSize: 10, color: T.border }}>›</span>
+              <span style={{ fontFamily: T.body, fontSize: 13, fontWeight: 600, color: T.textMuted }}>
+                {pageTitle}
+              </span>
+            </>
+          )}
         </div>
 
         {/* Right — actions */}
@@ -493,6 +516,16 @@ function App() {
               </div>
             )}
           </div>
+
+          {/* Home button */}
+          <button type="button" onClick={() => navigate("home")} title="Go to Home"
+            style={{ background: "none", border: "none", cursor: "pointer",
+              fontSize: 17, padding: "4px 6px", lineHeight: 1,
+              opacity: page === "home" ? 1 : 0.55, transition: "opacity .15s" }}
+            onMouseEnter={e => e.currentTarget.style.opacity = 1}
+            onMouseLeave={e => e.currentTarget.style.opacity = page === "home" ? 1 : 0.55}>
+            🏠
+          </button>
 
           {/* User menu */}
           <div ref={menuRef} style={{ position: "relative" }}>

@@ -675,10 +675,14 @@ const SpaceConfigurationsPage = ({
           const statusLabel = isFuture ? "Future" : isActive ? "Active" : "Ending";
           const statusColor = isFuture ? T.accent : isActive ? T.success : T.warning;
 
+          const alertColor = pct >= 100 ? T.danger : T.warning;
+          const isAlerting = pct >= thresh;
+
           return (
             <div key={a.id}
               style={{ display: "grid", gridTemplateColumns: allocTemplate,
                 padding: "13px 20px", borderBottom: `1px solid ${T.border}22`, alignItems: "center",
+                borderLeft: isAlerting ? `3px solid ${alertColor}` : "3px solid transparent",
                 transition: "background .1s" }}
               onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
               onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
@@ -738,7 +742,13 @@ const SpaceConfigurationsPage = ({
               </div>
 
               {/* Status */}
-              <span style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600, color: statusColor }}>● {statusLabel}</span>
+              {isActive && isAlerting ? (
+                <span style={{ fontFamily: T.body, fontSize: 11, fontWeight: 700, color: alertColor }}>
+                  ● {pct >= 100 ? "Over Limit" : "At Limit"}
+                </span>
+              ) : (
+                <span style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600, color: statusColor }}>● {statusLabel}</span>
+              )}
 
               {/* Cog menu */}
               <div style={{ display: "flex", justifyContent: "flex-end" }}>

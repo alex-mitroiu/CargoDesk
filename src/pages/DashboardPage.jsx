@@ -1363,15 +1363,29 @@ const DashboardPage = ({ shipments, containers, carriers, allocations }) => {
 
   // Split allocations: current (not expired) vs archived (expired)
   const currentAllocations  = allocations.filter(a => a.endDate >= today);
-  // TEU consumed per carrier — all shipments in range, all contract types
+
+  const allocContractMatch = (s, a) => {
+    if (a.contractId)     return s.contractId === a.contractId;
+    if (a.contractNumber) return s.contractRef === a.contractNumber;
+    return s.contractType === "Central Contract";
+  };
+
+  // TEU consumed per carrier — filtered by contract + pol/pod to avoid overcounting
   const consumedMap = useMemo(() => {
     const m = {};
     rangeShipments.forEach(s => {
+      const matched = activeAllocations.find(a =>
+        s.carrierCode === a.carrierCode &&
+        allocContractMatch(s, a) &&
+        (!a.pol || s.pol === a.pol) &&
+        (!a.pod || s.pod === a.pod)
+      );
+      if (!matched) return;
       const teu = containers.filter(c => c.shipmentId === s.id).reduce((acc, c) => acc + teuOf(c.size), 0);
       m[s.carrierCode] = (m[s.carrierCode] || 0) + teu;
     });
     return m;
-  }, [rangeShipments, containers]);
+  }, [rangeShipments, containers, activeAllocations]);
 
 
   // Trend data: delta vs previous equivalent period + 6-week sparkline

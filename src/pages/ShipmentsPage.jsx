@@ -444,7 +444,7 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
         ) : filtered.map(s => {
           const carrier = carriers.find(c => c.code === s.carrierCode);
           return (
-            <div key={s.id} onClick={() => onSelect(s.id)}
+            <div key={s.id} onClick={() => window.open(`#shipments/${s.id}`, "_blank")}
               style={{ display: "grid", gridTemplateColumns: shipTemplate,
                 padding: "14px 20px", borderBottom: `1px solid ${T.border}22`,
                 cursor: "pointer", alignItems: "center", transition: "background .1s" }}
@@ -468,7 +468,7 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
               <Badge variant={statusVariant(s.status)}>{s.status}</Badge>
               <div onClick={e => e.stopPropagation()}>
                 <ActionMenu items={[
-                  { icon: "👁", label: "Open",    onClick: () => onSelect(s.id) },
+                  { icon: "↗", label: "Open",    onClick: () => window.open(`#shipments/${s.id}`, "_blank") },
                   { icon: "📋", label: "History", onClick: () => setHistoryShipment(s) },
                   { icon: "✕", label: "Delete",  variant: "danger", onClick: () => setConfirm(s.id) },
                 ]} />

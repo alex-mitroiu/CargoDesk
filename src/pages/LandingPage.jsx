@@ -121,7 +121,8 @@ const LandingPage = ({ shipments = [], containers = [], carriers = [], allocatio
   // System messages
   const [sysMessages, setSysMessages] = useState([]);
   const [showMsgForm, setShowMsgForm] = useState(false);
-  const [msgForm, setMsgForm]         = useState({ title:"", body:"", severity:"info", activeFrom:"", activeTo:"" });
+  const emptyMsgForm = { title:"", body:"", severity:"info", activeFrom:"", activeTo:"" };
+  const [msgForm, setMsgForm]         = useState(emptyMsgForm);
 
   const loadMessages = () => api.systemMessages.list().then(setSysMessages).catch(() => {});
   useEffect(() => { loadMessages(); }, []);
@@ -130,10 +131,19 @@ const LandingPage = ({ shipments = [], containers = [], carriers = [], allocatio
     if (!msgForm.title.trim()) return;
     try {
       await api.systemMessages.create(msgForm);
-      setMsgForm({ title:"", body:"", severity:"info", activeFrom:"", activeTo:"" });
+      setMsgForm(emptyMsgForm);
       setShowMsgForm(false);
       loadMessages();
     } catch {}
+  };
+
+  const fmtDatetime = iso => {
+    if (!iso) return null;
+    const [date, time] = iso.split("T");
+    if (!date) return null;
+    const d = new Date(date + "T12:00:00");
+    const datePart = d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+    return time ? `${datePart}, ${time}` : datePart;
   };
   const removeMessage = async (id) => {
     try { await api.systemMessages.remove(id); loadMessages(); } catch {}
@@ -183,6 +193,12 @@ const LandingPage = ({ shipments = [], containers = [], carriers = [], allocatio
   const in30           = addDays(todayStr, 30);
   const expiringCount  = activeAllocs.filter(a => a.endDate <= in30).length;
 
+  // Shipments requiring review
+  const reviewShipments = shipments.filter(s => s.status === "Requires Review");
+
+  // Attention panel tab
+  const [attnTab, setAttnTab] = useState("configs");
+
   // Allocations needing attention — above their alert threshold, sorted worst first
   const attnAllocations = activeAllocs
     .filter(a => a.allocatedTEU > 0 && (consumedByCarrier[a.carrierCode] || 0) / a.allocatedTEU * 100 >= a.alertThreshold)
@@ -197,6 +213,12 @@ const LandingPage = ({ shipments = [], containers = [], carriers = [], allocatio
   const fmtTime = d => d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
   const fmtDate = d => d.toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
   const fmtEtd  = iso => new Date(iso + "T12:00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
+  const getISOWeek = d => {
+    const tmp = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+    tmp.setUTCDate(tmp.getUTCDate() + 4 - (tmp.getUTCDay() || 7));
+    const yearStart = new Date(Date.UTC(tmp.getUTCFullYear(), 0, 1));
+    return Math.ceil((((tmp - yearStart) / 86400000) + 1) / 7);
+  };
 
   // Card styles
   const card = extra => ({
@@ -226,8 +248,15 @@ const LandingPage = ({ shipments = [], containers = [], carriers = [], allocatio
           <div style={{ fontFamily: T.mono, fontSize: 36, fontWeight: 700, color: T.accent, letterSpacing: "0.04em", lineHeight: 1 }}>
             {fmtTime(now)}
           </div>
-          <div style={{ fontFamily: T.body, fontSize: 14, color: T.text, marginTop: 8, fontWeight: 600 }}>
-            {fmtDate(now)}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 8 }}>
+            <div style={{ fontFamily: T.body, fontSize: 14, color: T.text, fontWeight: 600 }}>
+              {fmtDate(now)}
+            </div>
+            <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: T.accent,
+              background: T.accentBg, border: `1px solid ${T.accent}44`,
+              borderRadius: 5, padding: "2px 8px", flexShrink: 0 }}>
+              CW {getISOWeek(now)}
+            </span>
           </div>
           <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, marginTop: 4 }}>
             {Intl.DateTimeFormat().resolvedOptions().timeZone}
@@ -408,12 +437,18 @@ const LandingPage = ({ shipments = [], containers = [], carriers = [], allocatio
                   style={{ ...selStyle, fontSize: 11, flex: 1 }}>
                   {["info","warning","danger","success"].map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
-                <input type="date" value={msgForm.activeFrom} title="Active from"
-                  onChange={e => setMsgForm(p => ({ ...p, activeFrom: e.target.value }))}
-                  style={{ ...selStyle, fontSize: 11, flex: 1 }} />
-                <input type="date" value={msgForm.activeTo} title="Active to"
-                  onChange={e => setMsgForm(p => ({ ...p, activeTo: e.target.value }))}
-                  style={{ ...selStyle, fontSize: 11, flex: 1 }} />
+                <div style={{ display: "flex", flexDirection: "column", gap: 2, flex: 1 }}>
+                  <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted }}>Active from</span>
+                  <input type="datetime-local" value={msgForm.activeFrom} title="Active from"
+                    onChange={e => setMsgForm(p => ({ ...p, activeFrom: e.target.value }))}
+                    style={{ ...selStyle, fontSize: 11, width: "100%" }} />
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 2, flex: 1 }}>
+                  <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted }}>Active to</span>
+                  <input type="datetime-local" value={msgForm.activeTo} title="Active to"
+                    onChange={e => setMsgForm(p => ({ ...p, activeTo: e.target.value }))}
+                    style={{ ...selStyle, fontSize: 11, width: "100%" }} />
+                </div>
                 <button onClick={addMessage}
                   style={{ background: T.accent, border: "none", borderRadius: 5,
                     color: T.btnPrimaryText, cursor: "pointer", padding: "5px 14px",
@@ -457,7 +492,9 @@ const LandingPage = ({ shipments = [], containers = [], carriers = [], allocatio
                   )}
                   {(m.activeFrom || m.activeTo) && (
                     <div style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted, marginTop: 6 }}>
-                      {m.activeFrom && `From ${m.activeFrom}`}{m.activeFrom && m.activeTo && " · "}{m.activeTo && `Until ${m.activeTo}`}
+                      {m.activeFrom && `From ${fmtDatetime(m.activeFrom)}`}
+                      {m.activeFrom && m.activeTo && " · "}
+                      {m.activeTo && `Until ${fmtDatetime(m.activeTo)}`}
                     </div>
                   )}
                 </div>
@@ -507,82 +544,179 @@ const LandingPage = ({ shipments = [], containers = [], carriers = [], allocatio
         )}
       </div>
 
-      {/* ── Allocations requiring attention ── */}
-      {attnAllocations.length > 0 && (
+      {/* ── Requires Attention ── */}
+      {(attnAllocations.length > 0 || reviewShipments.length > 0) && (
         <div style={{
           ...card({ marginBottom: 14, padding: 0, overflow: "hidden" }),
           borderTop: `3px solid ${T.warning}`,
         }}>
+          {/* Header + tabs */}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
-            padding: "16px 22px 12px" }}>
+            padding: "16px 22px 0" }}>
             <div style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.warning }}>
               ⚠ Requires Attention
             </div>
-            <button onClick={() => navigate("dashboard")}
+            <button onClick={() => navigate(attnTab === "configs" ? "space-configs" : "shipments")}
               style={{ background: "none", border: `1px solid ${T.warning}55`, borderRadius: 6,
                 color: T.warning, cursor: "pointer", padding: "4px 12px",
                 fontFamily: T.body, fontSize: 12, fontWeight: 600 }}>
-              View Dashboard →
+              {attnTab === "configs" ? "View Space Configs →" : "View Shipments →"}
             </button>
           </div>
 
-          {/* Column headers */}
-          <div style={{ display: "grid",
-            gridTemplateColumns: "80px 120px 1fr 110px 100px",
-            padding: "0 22px 6px", gap: 0 }}>
-            {["Carrier", "Route", "Utilisation", "Threshold", "Expires"].map((h, i) => (
-              <span key={i} style={{ fontFamily: T.body, fontSize: 10.5, fontWeight: 600,
-                color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>{h}</span>
-            ))}
+          {/* Tab pills */}
+          <div style={{ display: "flex", gap: 6, padding: "12px 22px 0" }}>
+            {[
+              { key: "configs",   label: "Space Configs",   count: attnAllocations.length },
+              { key: "shipments", label: "Shipment Review", count: reviewShipments.length },
+            ].map(({ key, label, count }) => {
+              const active = attnTab === key;
+              return (
+                <button key={key} onClick={() => setAttnTab(key)}
+                  style={{ display: "flex", alignItems: "center", gap: 6,
+                    padding: "5px 14px", borderRadius: 20, cursor: "pointer",
+                    fontFamily: T.body, fontSize: 12, fontWeight: active ? 700 : 500,
+                    background: active ? T.warning + "22" : "none",
+                    color: active ? T.warning : T.textMuted,
+                    border: active ? `1px solid ${T.warning}55` : `1px solid ${T.border}44`,
+                    transition: "all .12s" }}>
+                  {label}
+                  {count > 0 && (
+                    <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700,
+                      background: active ? T.warning : T.border,
+                      color: active ? "#fff" : T.textMuted,
+                      borderRadius: 10, padding: "1px 6px", minWidth: 18, textAlign: "center" }}>
+                      {count}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
 
-          {attnAllocations.map(a => (
-            <div key={a.id} style={{ display: "grid",
-              gridTemplateColumns: "80px 120px 1fr 110px 100px",
-              padding: "10px 22px", gap: 0, alignItems: "center",
-              borderTop: `1px solid ${T.border}22` }}>
+          <div style={{ height: 12 }} />
 
-              {/* Carrier */}
-              <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.accent }}>
-                {a.carrierCode}
-              </span>
-
-              {/* Route */}
-              <div style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>
-                {a.pol}
-                <span style={{ color: T.border, margin: "0 4px" }}>›</span>
-                {a.pod}
+          {/* ── Tab: Space Configs ── */}
+          {attnTab === "configs" && (
+            attnAllocations.length === 0 ? (
+              <div style={{ padding: "16px 22px 20px", fontFamily: T.body, fontSize: 13,
+                color: T.textMuted, fontStyle: "italic" }}>
+                No space configurations above their alert threshold.
               </div>
-
-              {/* Utilisation bar + numbers */}
-              <div style={{ paddingRight: 16 }}>
-                <div style={{ height: 6, borderRadius: 3, background: T.bg, overflow: "hidden", marginBottom: 4 }}>
-                  <div style={{
-                    width: `${Math.min(a.pct, 100)}%`, height: "100%", borderRadius: 3,
-                    background: a.pct >= 100 ? T.danger : T.warning,
-                    transition: "width .3s",
-                  }} />
+            ) : (
+              <>
+                <div style={{ display: "grid",
+                  gridTemplateColumns: "80px 120px 1fr 110px 100px",
+                  padding: "0 22px 6px", gap: 0 }}>
+                  {["Carrier", "Route", "Utilisation", "Threshold", "Expires"].map((h, i) => (
+                    <span key={i} style={{ fontFamily: T.body, fontSize: 10.5, fontWeight: 600,
+                      color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>{h}</span>
+                  ))}
                 </div>
-                <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
-                  {a.consumed} / {a.allocatedTEU} TEU
-                  <span style={{ color: a.pct >= 100 ? T.danger : T.warning, fontWeight: 700, marginLeft: 6 }}>
-                    {a.pct}%
-                  </span>
-                </span>
+                {attnAllocations.map(a => (
+                  <div key={a.id} style={{ display: "grid",
+                    gridTemplateColumns: "80px 120px 1fr 110px 100px",
+                    padding: "10px 22px", gap: 0, alignItems: "center",
+                    borderTop: `1px solid ${T.border}22` }}>
+                    <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.accent }}>
+                      {a.carrierCode}
+                    </span>
+                    <div style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>
+                      {a.pol}
+                      <span style={{ color: T.border, margin: "0 4px" }}>›</span>
+                      {a.pod}
+                    </div>
+                    <div style={{ paddingRight: 16 }}>
+                      <div style={{ height: 6, borderRadius: 3, background: T.bg, overflow: "hidden", marginBottom: 4 }}>
+                        <div style={{ width: `${Math.min(a.pct, 100)}%`, height: "100%", borderRadius: 3,
+                          background: a.pct >= 100 ? T.danger : T.warning, transition: "width .3s" }} />
+                      </div>
+                      <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+                        {a.consumed} / {a.allocatedTEU} TEU
+                        <span style={{ color: a.pct >= 100 ? T.danger : T.warning, fontWeight: 700, marginLeft: 6 }}>
+                          {a.pct}%
+                        </span>
+                      </span>
+                    </div>
+                    <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+                      {a.alertThreshold}% limit
+                    </span>
+                    <span style={{ fontFamily: T.mono, fontSize: 11,
+                      color: a.endDate <= in30 ? T.warning : T.textMuted }}>
+                      {a.endDate}
+                    </span>
+                  </div>
+                ))}
+              </>
+            )
+          )}
+
+          {/* ── Tab: Requires Review shipments ── */}
+          {attnTab === "shipments" && (
+            reviewShipments.length === 0 ? (
+              <div style={{ padding: "16px 22px 20px", fontFamily: T.body, fontSize: 13,
+                color: T.textMuted, fontStyle: "italic" }}>
+                No shipments currently require review.
               </div>
+            ) : (
+              <>
+                <div style={{ display: "grid",
+                  gridTemplateColumns: "130px 70px 70px 1fr 90px 80px 36px",
+                  padding: "0 22px 6px", gap: 0 }}>
+                  {["Shipment", "POL", "POD", "Carrier", "ETD", "TEU", ""].map((h, i) => (
+                    <span key={i} style={{ fontFamily: T.body, fontSize: 10.5, fontWeight: 600,
+                      color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>{h}</span>
+                  ))}
+                </div>
+                {reviewShipments.map(s => {
+                  const car = carriers.find(c => c.code === s.carrierCode);
+                  const teu = containers.filter(c => c.shipmentId === s.id)
+                    .reduce((acc, c) => acc + (c.size === "40" ? 2 : 1), 0);
+                  return (
+                    <div key={s.id} style={{ display: "grid",
+                      gridTemplateColumns: "130px 70px 70px 1fr 90px 80px 36px",
+                      padding: "10px 22px", gap: 0, alignItems: "center",
+                      borderTop: `1px solid ${T.border}22` }}>
+                      <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textCode, fontWeight: 700 }}>
+                        {s.id}
+                      </span>
+                      <span style={{ fontFamily: T.mono, fontSize: 13, color: T.text, fontWeight: 600 }}>
+                        {s.pol}
+                      </span>
+                      <span style={{ fontFamily: T.mono, fontSize: 13, color: T.text, fontWeight: 600 }}>
+                        {s.pod}
+                      </span>
+                      <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
+                        <span style={{ color: T.accent, fontWeight: 700, fontFamily: T.mono, marginRight: 6 }}>
+                          {s.carrierCode}
+                        </span>
+                        {car?.name}
+                      </div>
+                      <span style={{ fontFamily: T.mono, fontSize: 12,
+                        color: s.etd ? T.text : T.textMuted }}>
+                        {s.etd ? fmtEtd(s.etd) : "—"}
+                      </span>
+                      <span style={{ fontFamily: T.mono, fontSize: 13, color: T.text }}>
+                        {teu > 0 ? `${teu} TEU` : "—"}
+                      </span>
+                      <button
+                        title={`Open ${s.id} in new tab`}
+                        onClick={() => window.open(`#shipments/${s.id}`, "_blank")}
+                        style={{ background: "none", border: "none", cursor: "pointer",
+                          color: T.textMuted, fontSize: 15, padding: "2px 4px",
+                          lineHeight: 1, borderRadius: 4 }}
+                        onMouseEnter={e => { e.currentTarget.style.color = T.accent; e.currentTarget.style.background = T.accentBg; }}
+                        onMouseLeave={e => { e.currentTarget.style.color = T.textMuted; e.currentTarget.style.background = "none"; }}>
+                        ↗
+                      </button>
+                    </div>
+                  );
+                })}
+              </>
+            )
+          )}
 
-              {/* Threshold */}
-              <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
-                {a.alertThreshold}% limit
-              </span>
-
-              {/* Expiry */}
-              <span style={{ fontFamily: T.mono, fontSize: 11,
-                color: a.endDate <= in30 ? T.warning : T.textMuted }}>
-                {a.endDate}
-              </span>
-            </div>
-          ))}
+          <div style={{ height: 6 }} />
         </div>
       )}
 
