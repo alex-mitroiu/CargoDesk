@@ -29,7 +29,8 @@ import MdmRegionsPage         from "./pages/mdm/MdmRegionsPage";
 import MdmCountriesPage       from "./pages/mdm/MdmCountriesPage";
 import MdmUNLocationCodesPage  from "./pages/mdm/MdmUNLocationCodesPage";
 import MdmCommoditiesPage     from "./pages/mdm/MdmCommoditiesPage";
-import MdmCustomersPage       from "./pages/mdm/MdmCustomersPage";
+import MdmCustomersPage           from "./pages/mdm/MdmCustomersPage";
+import MdmSanctionedCustomersPage from "./pages/mdm/MdmSanctionedCustomersPage";
 import MdmContractsPage        from "./pages/mdm/MdmContractsPage";
 import SpaceConfigurationsPage from "./pages/SpaceConfigurationsPage";
 
@@ -206,7 +207,8 @@ function App() {
     "space-configs":   "api_shipments_enabled",
     "dashboard-archive":"api_shipments_enabled",
     "mdm-contracts":   "api_contracts_enabled",
-    "mdm-customers":   "api_customers_enabled",
+    "mdm-customers":              "api_customers_enabled",
+    "mdm-sanctioned-customers":  "api_customers_enabled",
     "mdm-carriers":    "api_carriers_enabled",
     "mdm-vessels":     "api_vessels_enabled",
     "mdm-ports":       "api_ports_enabled",
@@ -291,7 +293,7 @@ function App() {
   }, [page]);
 
   // kanban is top-level, not MDM
-  const MDM_PAGES = ["mdm-carriers", "mdm-ports", "mdm-linked", "mdm-vessels", "mdm-commodities", "mdm-tradelanes", "mdm-countries", "mdm-unlocodes", "mdm-customers", "mdm-contracts"];
+  const MDM_PAGES = ["mdm-carriers", "mdm-ports", "mdm-linked", "mdm-vessels", "mdm-commodities", "mdm-tradelanes", "mdm-countries", "mdm-unlocodes", "mdm-customers", "mdm-sanctioned-customers", "mdm-contracts"];
   const ALL_PAGES = [...MDM_PAGES, "manual"];
   const isMdmActive = MDM_PAGES.includes(page);
 
@@ -313,19 +315,21 @@ function App() {
   if (!ready) return <FullPageSpinner label="Connecting to database…" />;
 
   // ── Shared nav button style ──
-  const NavBtn = ({ pageKey, icon, label, indent = false }) => {
+  const NavBtn = ({ pageKey, icon, label, indent = false, subIndent = false }) => {
     if (!isEnabled(pageKey)) return null;
     const active = page === pageKey || (pageKey === "shipments" && page === "detail");
+    const pad = subIndent ? "6px 12px 6px 44px" : indent ? "7px 12px 7px 28px" : "9px 12px";
+    const fs  = subIndent ? 12 : indent ? 13 : 14;
     return (
       <button onClick={() => navigate(pageKey)}
         style={{ display: "flex", alignItems: "center", gap: 9, width: "100%",
-          padding: indent ? "7px 12px 7px 28px" : "9px 12px",
-          borderRadius: 7, border: "none", cursor: "pointer", marginBottom: 2, textAlign: "left",
+          padding: pad, borderRadius: 7, border: "none", cursor: "pointer",
+          marginBottom: 2, textAlign: "left",
           background: active ? T.accentBg : "transparent",
           color: active ? T.accent : T.textMuted,
-          fontFamily: T.body, fontSize: indent ? 13 : 14, fontWeight: active ? 600 : 400,
+          fontFamily: T.body, fontSize: fs, fontWeight: active ? 600 : 400,
           borderLeft: `3px solid ${active ? T.accent : "transparent"}` }}>
-        <span style={{ fontSize: indent ? 13 : 15 }}>{icon}</span>
+        <span style={{ fontSize: fs }}>{icon}</span>
         {label}
       </button>
     );
@@ -352,7 +356,8 @@ function App() {
     "mdm-regions":      "Master Data — Regions",
     "mdm-countries":    "Master Data — Countries",
     "mdm-unlocodes":    "Master Data — UN Location Codes",
-    "mdm-customers":    "Master Data — Customers",
+    "mdm-customers":              "Master Data — Customers",
+    "mdm-sanctioned-customers":  "Master Data — Sanctioned Customers",
     "mdm-contracts":    "Master Data — Contracts",
     manual:             "User Manual",
   };
@@ -751,7 +756,8 @@ function App() {
                 {/* Directory */}
                 <div style={{ fontFamily: T.mono, fontSize: 9, color: T.border, fontWeight: 700,
                   textTransform: "uppercase", letterSpacing: ".1em", padding: "5px 12px 3px 28px" }}>Directory</div>
-                <NavBtn pageKey="mdm-customers"    icon="👥" label="Customers"       indent />
+                <NavBtn pageKey="mdm-customers"            icon="👥" label="Customers"            indent />
+                <NavBtn pageKey="mdm-sanctioned-customers" icon="🔴" label="Sanctioned Customers" subIndent />
                 <NavBtn pageKey="mdm-contracts"   icon="📋" label="Contracts"       indent />
                 <NavBtn pageKey="mdm-carriers" icon="🏢" label="Carriers"       indent />
                 <NavBtn pageKey="mdm-vessels"      icon="🚢" label="Vessels"         indent />
@@ -967,7 +973,8 @@ function App() {
         {page === "mdm-countries"  &&                                 <MdmCountriesPage />}
         {page === "mdm-unlocodes"  &&                                 <MdmUNLocationCodesPage />}
         {page === "mdm-commodities"&&                                 <MdmCommoditiesPage />}
-        {page === "mdm-customers"  && isEnabled("mdm-customers")  && <MdmCustomersPage />}
+        {page === "mdm-customers"              && isEnabled("mdm-customers")             && <MdmCustomersPage />}
+        {page === "mdm-sanctioned-customers"   && isEnabled("mdm-sanctioned-customers")  && <MdmSanctionedCustomersPage />}
         {page === "mdm-contracts"  && isEnabled("mdm-contracts")  && <MdmContractsPage />}
         {page === "manual"         && <UserManualPage />}
         {page === "about"          && <AboutPage />}

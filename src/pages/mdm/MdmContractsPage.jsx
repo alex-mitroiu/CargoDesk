@@ -669,7 +669,7 @@ const MdmContractsPage = () => {
 
   // Column resizer
   const { template, startResize } = useResizableColumns("mdm-contracts", [120,100,120,180,140,50,100,100,90,80]);
-  const headers = ["Contract #","Carrier","Named Account","Route","Containers","DG","Valid From","Valid To","Status",""];
+  const headers = ["Contract #","Carrier","Named Account","Route","Containers","DG","Valid From","Valid To","Status","Actions"];
 
   const th = {
     position: "relative", paddingLeft: 6, fontFamily: T.body, fontSize: 10.5, fontWeight: 600,

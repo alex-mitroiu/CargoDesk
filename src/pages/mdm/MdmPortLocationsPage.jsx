@@ -6,6 +6,7 @@ import Btn from "../../components/primitives/Btn";
 import Badge from "../../components/primitives/Badge";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
 import Pagination from "../../components/primitives/Pagination";
+import ActionMenu from "../../components/primitives/ActionMenu";
 import { inputBase, Inp, Sel, Field } from "../../components/primitives/Form";
 import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns.jsx";
 
@@ -141,19 +142,12 @@ const MdmPortLocationsPage = () => {
             <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>{p.latitude?.toFixed(4) ?? "—"}</span>
             <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>{p.longitude?.toFixed(4) ?? "—"}</span>
             <Badge>{p.zoneCode || "—"}</Badge>
-            <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-              {p.latitude && p.longitude ? (
-                <a href={`https://www.google.com/maps/search/?api=1&query=${p.latitude}%2C${p.longitude}`}
-                  target="_blank" rel="noopener noreferrer"
-                  onClick={e => e.stopPropagation()}
-                  style={{ fontFamily: T.body, fontSize: 11, color: T.info, textDecoration: "none",
-                    background: T.infoBg, border: `1px solid ${T.info}44`, borderRadius: 4,
-                    padding: "2px 7px", whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 3 }}>
-                  📍 Map
-                </a>
-              ) : <span style={{ color: T.border, fontSize: 11, fontFamily: T.mono }}>—</span>}
-              <Btn size="sm" variant="secondary" onClick={() => setModal(p)}>✎</Btn>
-              <Btn size="sm" variant="danger"    onClick={() => setConfirm(p.unlocode)}>✕</Btn>
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <ActionMenu items={[
+                ...(p.latitude && p.longitude ? [{ icon: "📍", label: "Open Map", onClick: () => window.open(`https://www.google.com/maps/search/?api=1&query=${p.latitude}%2C${p.longitude}`, "_blank") }] : []),
+                { icon: "✎", label: "Edit",   onClick: () => setModal(p) },
+                { icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(p.unlocode) },
+              ]} />
             </div>
           </div>
         ))}

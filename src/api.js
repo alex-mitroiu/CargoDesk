@@ -135,6 +135,7 @@ export const api = {
     status:    ()        => req("GET",  "/sanctions/status"),
     sync:      ()        => req("POST", "/sanctions/sync"),
     importCsv: (csv)     => req("POST", "/sanctions/import-csv", { csv }),
+    entries:   (p = {})  => req("GET",  `/sanctions/entries?${new URLSearchParams(p)}`),
   },
   screening: {
     get:      (id)        => req("GET",  `/shipments/${id}/screening`),

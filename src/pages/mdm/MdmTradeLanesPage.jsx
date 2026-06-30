@@ -5,6 +5,7 @@ import Btn from "../../components/primitives/Btn";
 import Badge from "../../components/primitives/Badge";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
 import CountryCombobox from "../../components/shared/CountryCombobox";
+import ActionMenu from "../../components/primitives/ActionMenu";
 import { Inp, Field, Textarea } from "../../components/primitives/Form";
 import { PageSpinner } from "../../components/primitives/Spinner";
 import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns.jsx";
@@ -185,9 +186,11 @@ const MdmTradeLanesPage = () => {
             <span style={{ fontFamily: T.body, fontSize: 13, color: T.text, fontWeight: 600 }}>{l.name}</span>
             <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>{l.description || "—"}</span>
             <span style={{ fontFamily: T.mono, fontSize: 13, color: T.text }}>{l.countryCount} countries</span>
-            <div style={{ display: "flex", gap: 6 }}>
-              <Btn size="sm" variant="secondary" onClick={() => setModal(l)}>✎ Edit</Btn>
-              <Btn size="sm" variant="danger"    onClick={() => setConfirm(l.code)}>✕</Btn>
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <ActionMenu items={[
+                { icon: "✎", label: "Edit",   onClick: () => setModal(l) },
+                { icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(l.code) },
+              ]} />
             </div>
           </div>
         ))}

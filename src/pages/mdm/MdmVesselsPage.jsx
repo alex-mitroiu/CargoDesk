@@ -7,6 +7,7 @@ import Badge from "../../components/primitives/Badge";
 import { inputBase, Inp } from "../../components/primitives/Form";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
 import Pagination from "../../components/primitives/Pagination";
+import ActionMenu from "../../components/primitives/ActionMenu";
 import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns.jsx";
 
 // ─── MDM: Vessels Page ────────────────────────────────────────────────────────
@@ -145,9 +146,11 @@ const MdmVesselsPage = () => {
             </div>
             <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>{v.buildYear || "—"}</span>
             <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>{v.grossTonnage ? v.grossTonnage.toLocaleString() : "—"}</span>
-            <div style={{ display: "flex", gap: 5 }}>
-              <Btn size="sm" variant="secondary" onClick={() => setModal(v)}>✎ Edit</Btn>
-              <Btn size="sm" variant="danger"    onClick={() => setConfirm(v.imo)}>✕</Btn>
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <ActionMenu items={[
+                { icon: "✎", label: "Edit",   onClick: () => setModal(v) },
+                { icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(v.imo) },
+              ]} />
             </div>
           </div>
         ))}

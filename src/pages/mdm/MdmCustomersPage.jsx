@@ -5,6 +5,7 @@ import { PageSpinner } from "../../components/primitives/Spinner";
 import Btn from "../../components/primitives/Btn";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
 import Pagination from "../../components/primitives/Pagination";
+import ActionMenu from "../../components/primitives/ActionMenu";
 import { inputBase, Inp, Textarea, Field } from "../../components/primitives/Form";
 import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns.jsx";
 
@@ -147,7 +148,7 @@ const MdmCustomersPage = () => {
   };
 
   const { template: template, startResize } = useResizableColumns("mdm-customers", [220,160,80,160,160,130]);
-  const custHeaders = ["Company","City / Country","Phone","Email","Website",""];
+  const custHeaders = ["Company","City / Country","Phone","Email","Website","Actions"];
   const COL = template;
 
   return (
@@ -235,9 +236,11 @@ const MdmCustomersPage = () => {
             </div>
 
             {/* Actions */}
-            <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-              <Btn size="sm" variant="secondary" onClick={() => setModal(c)}>Edit</Btn>
-              <Btn size="sm" variant="danger"    onClick={() => setConfirm(c.id)}>✕</Btn>
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <ActionMenu items={[
+                { icon: "✎", label: "Edit",   onClick: () => setModal(c) },
+                { icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(c.id) },
+              ]} />
             </div>
           </div>
         ))}

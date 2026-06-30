@@ -415,7 +415,7 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
   const [filters,  setFilters]  = useState({ search: '', status: '', carrier: '' });
   const teuFor = id => containers.filter(c => c.shipmentId === id).reduce((s, c) => s + teuOf(c.size), 0);
   const { template: shipTemplate, startResize: shipStartResize } = useResizableColumns("shipments", [140,70,70,150,165,46,60,130,90]);
-  const shipHeaders = ["Shipment ID","POL","POD","Carrier","Contract","TEU","Status",""];
+  const shipHeaders = ["Shipment ID","POL","POD","Carrier","Contract","TEU","Status","Actions"];
 
   const filtered = shipments.filter(s => {
     if (filters.status  && s.status      !== filters.status)  return false;

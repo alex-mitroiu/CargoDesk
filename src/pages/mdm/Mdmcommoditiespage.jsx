@@ -7,6 +7,7 @@ import { Inp, Sel } from "../../components/primitives/Form";
 import { inputBase } from "../../components/primitives/Form";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
 import Pagination from "../../components/primitives/Pagination";
+import ActionMenu from "../../components/primitives/ActionMenu";
 import { GradePill } from "../../components/shared/CommodityCombobox";
 import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns.jsx";
 
@@ -152,9 +153,11 @@ const MdmCommoditiesPage = () => {
             <span style={{ fontFamily: T.mono, fontSize: 12, color: T.accent, fontWeight: 700 }}>{c.code}</span>
             <span style={{ fontFamily: T.body, fontSize: 13, color: T.text }}>{c.description}</span>
             <div style={{ display: "flex" }}><GradePill code={c.gradeCode} name={c.gradeName} /></div>
-            <div style={{ display: "flex", gap: 5 }}>
-              <Btn size="sm" variant="secondary" onClick={() => setModal(c)}>✎ Edit</Btn>
-              <Btn size="sm" variant="danger"    onClick={() => setConfirm(c.code)}>✕</Btn>
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <ActionMenu items={[
+                { icon: "✎", label: "Edit",   onClick: () => setModal(c) },
+                { icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(c.code) },
+              ]} />
             </div>
           </div>
         ))}

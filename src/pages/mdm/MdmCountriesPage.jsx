@@ -6,6 +6,8 @@ import Badge from "../../components/primitives/Badge";
 import { inputBase,BtnToggle, Field, Inp} from "../../components/primitives/Form";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
 import CountryCombobox from "../../components/shared/CountryCombobox";
+import ActionMenu from "../../components/primitives/ActionMenu";
+import Pagination from "../../components/primitives/Pagination";
 import CountryLocationsModal from "../../components/shared/CountryLocationsModal";
 import { PageSpinner } from "../../components/primitives/Spinner";
 import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns.jsx";
@@ -13,52 +15,61 @@ import { useResizableColumns, ColResizer } from "../../components/primitives/use
 // ─── MDM Locations: Countries Page ────────────────────────────────────────────
 
 
+const LIMIT = 50;
+
 const MdmCountriesPage = () => {
   const [countries,      setCountries]      = useState([]);
+  const [total,          setTotal]          = useState(0);
+  const [offset,         setOffset]         = useState(0);
   const [allLanes,       setAllLanes]       = useState([]);
+  const [laneMap,        setLaneMap]        = useState({});
   const [search,         setSearch]         = useState("");
   const [loading,        setLoading]        = useState(true);
-  const [modal,          setModal]          = useState(null);   // null | "add" | country obj
+  const [modal,          setModal]          = useState(null);
   const [confirm,        setConfirm]        = useState(null);
-  const [viewLocations,  setViewLocations]  = useState(null);   // country obj for popup
+  const [viewLocations,  setViewLocations]  = useState(null);
   const timer = useRef(null);
   const { template, startResize } = useResizableColumns("mdm-countries", [65,160,120,200,80,180]);
   const headers = ["ISO2","Country Name","UN Member?","Trade Lanes","Ports","Actions"];
 
-  const load = useCallback(async (s = search) => {
+  const load = useCallback(async (opts = {}) => {
+    const s   = opts.search  !== undefined ? opts.search  : search;
+    const off = opts.offset  !== undefined ? opts.offset  : offset;
     setLoading(true);
     try {
       const [cRes, l, assignments] = await Promise.all([
-        api.countries.list({ search: s, limit: "300" }),
-        api.tradeLanes.list(),
-        api.countryLanes.list(),
+        api.countries.list({ search: s, limit: String(LIMIT), offset: String(off) }),
+        allLanes.length ? Promise.resolve(allLanes) : api.tradeLanes.list(),
+        Object.keys(laneMap).length ? Promise.resolve(null) : api.countryLanes.list(),
       ]);
       const rows = cRes.results || cRes || [];
-      // Build a map: iso2 → [lane_code, ...]
-      const laneMap = {};
-      (assignments || []).forEach(a => {
-        const key = a.iso2 || a.Iso2;
-        const lane = a.lane_code || a.laneCode;
-        if (!laneMap[key]) laneMap[key] = [];
-        laneMap[key].push(lane);
-      });
-      setCountries(rows.map(c => ({
-        ...c,
-        tradeLanes: laneMap[c.iso2] || [],
-        portCount:  c.portCount,
-      })));
-      setAllLanes(l);
+      setTotal(cRes.total ?? rows.length);
+      if (l !== allLanes) setAllLanes(l);
+      const newLaneMap = { ...laneMap };
+      if (assignments) {
+        (assignments || []).forEach(a => {
+          const key  = a.iso2 || a.Iso2;
+          const lane = a.lane_code || a.laneCode;
+          if (!newLaneMap[key]) newLaneMap[key] = [];
+          if (!newLaneMap[key].includes(lane)) newLaneMap[key].push(lane);
+        });
+        setLaneMap(newLaneMap);
+      }
+      setCountries(rows.map(c => ({ ...c, tradeLanes: newLaneMap[c.iso2] || [] })));
     } catch (e) { console.error("Countries load error:", e); }
     setLoading(false);
-  }, [search]);
+  }, [search, offset, allLanes, laneMap]);
 
-  useEffect(() => { load(""); }, []);
+  useEffect(() => { load({ search: "", offset: 0 }); }, []);
 
   const handleSearch = v => {
     setSearch(v);
+    setOffset(0);
     clearTimeout(timer.current);
-    timer.current = setTimeout(() => load(v), 280);
+    timer.current = setTimeout(() => load({ search: v, offset: 0 }), 280);
   };
+
+  const goPage = off => { setOffset(off); load({ offset: off }); };
 
   const CountryForm = ({ init = {}, onSave, onCancel }) => {
     const [iso2,      setIso2]      = useState(init.iso2 || "");
@@ -126,7 +137,7 @@ const MdmCountriesPage = () => {
         <div>
           <h1 style={{ fontFamily: T.head, fontSize: 26, fontWeight: 800, color: T.text, margin: 0 }}>Countries</h1>
           <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, margin: "4px 0 0" }}>
-            {countries.length} entr{countries.length !== 1 ? "ies" : "y"} · ISO 3166-1 alpha-2 · with FIATA trade lane assignments
+            {total} entr{total !== 1 ? "ies" : "y"} · ISO 3166-1 alpha-2 · with FIATA trade lane assignments
           </p>
         </div>
         <Btn onClick={() => setModal("add")} size="lg">＋ Add Country</Btn>
@@ -172,16 +183,22 @@ const MdmCountriesPage = () => {
             <span style={{ fontFamily: T.mono, fontSize: 13, color: c.portCount > 0 ? T.success : T.textMuted, fontWeight: c.portCount > 0 ? 700 : 400 }}>
               {(c.portCount ?? 0).toLocaleString()}
             </span>
-            <div style={{ display: "flex", gap: 5 }}>
-              {(c.portCount ?? 0) > 0 && (
-                <Btn size="sm" variant="ghost" onClick={() => setViewLocations(c)}>View Locations</Btn>
-              )}
-              <Btn size="sm" variant="secondary" onClick={() => setModal(c)}>✎</Btn>
-              <Btn size="sm" variant="danger"    onClick={() => setConfirm(c.iso2)}>✕</Btn>
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <ActionMenu items={[
+                ...((c.portCount ?? 0) > 0 ? [{ icon: "📍", label: "View Locations", onClick: () => setViewLocations(c) }] : []),
+                { icon: "✎", label: "Edit",   onClick: () => setModal(c) },
+                { icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(c.iso2) },
+              ]} />
             </div>
           </div>
         ))}
       </div>
+
+      {total > LIMIT && (
+        <div style={{ marginTop: 16 }}>
+          <Pagination total={total} limit={LIMIT} offset={offset} onPage={goPage} />
+        </div>
+      )}
 
       {modal === "add" && (
         <Modal title="Add Country" onClose={() => setModal(null)} width={560}>

@@ -6,12 +6,17 @@ import Btn from "../../components/primitives/Btn";
 import { Inp } from "../../components/primitives/Form";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
 import PortField from "../../components/shared/PortField";
+import ActionMenu from "../../components/primitives/ActionMenu";
+import Pagination from "../../components/primitives/Pagination";
 import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns.jsx";
 
 // ─── MDM: Linked Ports Page ───────────────────────────────────────────────────
 
+const LP_LIMIT = 50;
+
 const MdmLinkedPortsPage = () => {
   const [links,   setLinks]   = useState([]);
+  const [offset,  setOffset]  = useState(0);
   const [loading, setLoading] = useState(true);
   const [modal,   setModal]   = useState(null); // null | "add" | link obj
   const [confirm, setConfirm] = useState(null);
@@ -85,6 +90,7 @@ const MdmLinkedPortsPage = () => {
           <h1 style={{ fontFamily: T.head, fontSize: 26, fontWeight: 800, color: T.text, margin: 0 }}>Linked Ports</h1>
           <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, margin: "4px 0 0" }}>
             {links.length} link{links.length !== 1 ? "s" : ""} configured · map one UN/LOCODE to another (e.g. USLAX → USLGB)
+
           </p>
         </div>
         <Btn onClick={() => setModal("add")} size="lg">＋ Add Link</Btn>
@@ -113,7 +119,7 @@ const MdmLinkedPortsPage = () => {
           <div style={{ padding: 40, textAlign: "center", color: T.textMuted, fontFamily: T.body, fontSize: 14 }}>
             No port links configured yet. Use "+ Add Link" to create one.
           </div>
-        ) : links.map(l => (
+        ) : links.slice(offset, offset + LP_LIMIT).map(l => (
           <div key={l.id}
             style={{ display: "grid", gridTemplateColumns: template,
               padding: "13px 20px", borderBottom: `1px solid ${T.border}22`, alignItems: "center",
@@ -128,13 +134,21 @@ const MdmLinkedPortsPage = () => {
             <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, fontStyle: l.note ? "normal" : "italic" }}>
               {l.note || "—"}
             </span>
-            <div style={{ display: "flex", gap: 6 }}>
-              <Btn size="sm" variant="secondary" onClick={() => setModal(l)}>✎ Note</Btn>
-              <Btn size="sm" variant="danger"    onClick={() => setConfirm(l.id)}>✕</Btn>
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <ActionMenu items={[
+                { icon: "✎", label: "Edit Note", onClick: () => setModal(l) },
+                { icon: "✕", label: "Delete",    variant: "danger", onClick: () => setConfirm(l.id) },
+              ]} />
             </div>
           </div>
         ))}
       </div>
+
+      {links.length > LP_LIMIT && (
+        <div style={{ marginTop: 16 }}>
+          <Pagination total={links.length} limit={LP_LIMIT} offset={offset} onPage={off => setOffset(off)} />
+        </div>
+      )}
 
       {modal === "add" && (
         <Modal title="Add Port Link" onClose={() => setModal(null)} width={560}>

@@ -1751,6 +1751,23 @@ app.delete("/api/system-messages/:id", (req, res) => {
 
 // ─── Sanctions & Screening ───────────────────────────────────────────────────
 
+app.get("/api/sanctions/entries", (req, res) => {
+  const { search = '', limit = '50', offset = '0', source = '' } = req.query;
+  const lim = Math.min(parseInt(limit) || 50, 200);
+  const off = parseInt(offset) || 0;
+  const conditions = [];
+  const params = [];
+  if (search.trim()) {
+    conditions.push("(entity_name LIKE ? OR program LIKE ?)");
+    params.push(`%${search.trim()}%`, `%${search.trim()}%`);
+  }
+  if (source.trim()) { conditions.push("source = ?"); params.push(source.trim()); }
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  const total = db.prepare(`SELECT COUNT(*) AS n FROM sanctions_entries ${where}`).get(...params).n;
+  const rows  = db.prepare(`SELECT id, source, ref_id, entity_name, entity_type, program FROM sanctions_entries ${where} ORDER BY entity_name LIMIT ? OFFSET ?`).all(...params, lim, off);
+  ok(res, { results: rows, total, limit: lim, offset: off });
+});
+
 app.get("/api/sanctions/status", (req, res) => {
   const syncs = db.prepare("SELECT * FROM sanctions_syncs ORDER BY synced_at DESC").all();
   const count = db.prepare("SELECT COUNT(*) AS n FROM sanctions_entries").get().n;
