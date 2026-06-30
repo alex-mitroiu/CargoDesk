@@ -768,13 +768,27 @@ const ComplianceModal = ({ shipment, screening, onChange, onClose }) => {
     } finally { setBusy(false); }
   };
 
-  const syncList = async () => {
+  const csvInputRef = useRef(null);
+  const importCsv = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = "";
+    setSyncing(true);
+    try {
+      const csv = await file.text();
+      const r = await api.sanctions.importCsv(csv);
+      toast.success(`OFAC SDN imported — ${r.entries.toLocaleString()} entries loaded`);
+    } catch (err2) {
+      toast.error(err2.message || "Import failed");
+    } finally { setSyncing(false); }
+  };
+  const syncFromSource = async () => {
     setSyncing(true);
     try {
       const r = await api.sanctions.sync();
       toast.success(`OFAC SDN synced — ${r.entries.toLocaleString()} entries loaded`);
-    } catch (e) {
-      toast.error(e.message || "Sync failed");
+    } catch (err2) {
+      toast.error(err2.message || "Sync failed");
     } finally { setSyncing(false); }
   };
 
@@ -896,11 +910,19 @@ const ComplianceModal = ({ shipment, screening, onChange, onClose }) => {
         {/* Footer actions */}
         <div style={{ display: "flex", gap: 8, alignItems: "center",
           borderTop: `1px solid ${T.border}`, paddingTop: 14 }}>
-          <button onClick={syncList} disabled={syncing}
+          <input ref={csvInputRef} type="file" accept=".csv,text/csv"
+            onChange={importCsv} style={{ display: "none" }} />
+          <button onClick={() => csvInputRef.current?.click()} disabled={syncing}
             style={{ fontFamily: T.body, fontSize: 12, background: "none",
               border: `1px solid ${T.border}`, borderRadius: 6, padding: "6px 12px",
               color: T.textMuted, cursor: syncing ? "default" : "pointer" }}>
-            {syncing ? "Syncing OFAC SDN…" : "↻ Sync OFAC SDN list"}
+            {syncing ? "Working…" : "⤒ Import sdn.csv"}
+          </button>
+          <button onClick={syncFromSource} disabled={syncing}
+            style={{ fontFamily: T.body, fontSize: 12, background: "none",
+              border: `1px solid ${T.border}`, borderRadius: 6, padding: "6px 12px",
+              color: T.textMuted, cursor: syncing ? "default" : "pointer" }}>
+            {syncing ? "Working…" : "↻ Sync from source"}
           </button>
           <Btn onClick={runScreen} disabled={busy} style={{ marginLeft: "auto" }}>
             {busy ? "Screening…" : screening ? "↻ Re-screen" : "Run Screening"}

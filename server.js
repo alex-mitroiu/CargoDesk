@@ -8,7 +8,7 @@ const { DatabaseSync } = require("node:sqlite");
 
 const app = express();
 const db  = new DatabaseSync(path.join(__dirname, "cargodesk.db"));
-app.use(express.json());
+app.use(express.json({ limit: "25mb" }));
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -374,6 +374,13 @@ const SETTING_DEFAULTS = {
   api_ofac_interval_value:    '1',
   api_ofac_interval_unit:     'weeks',
   api_ws_enabled:             'true',
+  api_shipments_enabled:      'true',
+  api_contracts_enabled:      'true',
+  api_customers_enabled:      'true',
+  api_carriers_enabled:       'true',
+  api_vessels_enabled:        'true',
+  api_ports_enabled:          'true',
+  api_sysmsg_enabled:         'true',
 };
 {
   const ins = db.prepare("INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)");
@@ -433,8 +440,7 @@ try { loadSanctionsIndex(); } catch {}
 
 async function syncOfacSdn() {
   const xml = await new Promise((resolve, reject) => {
-    const agent = new https.Agent({ rejectUnauthorized: false });
-    https.get("https://www.treasury.gov/ofac/downloads/sdn.xml", { agent }, r => {
+    https.get({ hostname: "www.treasury.gov", path: "/ofac/downloads/sdn.xml", port: 443, rejectUnauthorized: false }, r => {
       if (r.statusCode !== 200) { r.resume(); return reject(new Error(`OFAC returned HTTP ${r.statusCode}`)); }
       const bufs = [];
       r.on("data", c => bufs.push(c));
@@ -1704,6 +1710,81 @@ app.post("/api/sanctions/sync", async (req, res) => {
     scheduleNextOfacSync();
   } catch (e) {
     err(res, e.message, 502);
+  }
+});
+
+// ─── OFAC CSV import ──────────────────────────────────────────────────────────
+// Parses OFAC sdn.csv — handles both formats:
+//   (A)  ent_num, "Name", "Type", "Program", ...
+//   (B)  " -0- ", ent_num, "Name", "Type", "Program", ...  (record-type-indicator variant)
+function parseCSVLine(line) {
+  const fields = [];
+  let cur = "", inQ = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (c === '"') {
+      if (inQ && line[i + 1] === '"') { cur += '"'; i++; }
+      else inQ = !inQ;
+    } else if (c === ',' && !inQ) {
+      fields.push(cur.trim()); cur = "";
+    } else {
+      cur += c;
+    }
+  }
+  fields.push(cur.trim());
+  return fields;
+}
+
+function parseOfacCsv(csvText) {
+  const lines = csvText.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+  const entries = [];
+  for (const raw of lines) {
+    if (!raw.trim()) continue;
+    const f = parseCSVLine(raw);
+    if (f.length < 2) continue;
+    let entNum, name, sdnType, program;
+    // Detect format (B): first field looks like -0-, -1-, -2- …
+    const recIndicator = f[0].replace(/[\s-]/g, "");
+    if (/^\d+$/.test(recIndicator) && f[0].includes("-")) {
+      if (recIndicator !== "0") continue; // skip aliases / addresses / other sub-records
+      entNum = f[1]; name = f[2]; sdnType = f[3] || ""; program = f[4] || "";
+    } else {
+      // Format (A): first field is entity number
+      entNum = f[0]; name = f[1]; sdnType = f[2] || ""; program = f[3] || "";
+    }
+    if (!name || !entNum) continue;
+    // Skip header rows
+    if (/sdn_?name|^name$/i.test(name)) continue;
+    entries.push({ refId: String(entNum), name, sdnType, program: program.replace(/;+$/, "") });
+  }
+  return entries;
+}
+
+app.post("/api/sanctions/import-csv", (req, res) => {
+  const { csv } = req.body;
+  if (!csv || typeof csv !== "string") return err(res, "csv string required");
+  try {
+    const entries = parseOfacCsv(csv);
+    if (entries.length === 0) return err(res, "No valid entries found — check the file format");
+    db.prepare("DELETE FROM sanctions_entries WHERE source='OFAC-SDN'").run();
+    const ins = db.prepare(
+      `INSERT OR REPLACE INTO sanctions_entries
+         (id, source, ref_id, entity_name, entity_name_norm, entity_type, program, aliases_norm)
+       VALUES (?, 'OFAC-SDN', ?, ?, ?, ?, ?, '[]')`
+    );
+    db.exec("BEGIN");
+    try {
+      for (const e of entries)
+        ins.run(`OFAC-${e.refId}`, e.refId, e.name, normSanctionName(e.name), e.sdnType, e.program);
+      db.exec("COMMIT");
+    } catch (e2) { db.exec("ROLLBACK"); throw e2; }
+    const now = new Date().toISOString();
+    db.prepare("INSERT OR REPLACE INTO sanctions_syncs (source, synced_at, entry_count) VALUES ('OFAC-SDN', ?, ?)").run(now, entries.length);
+    loadSanctionsIndex();
+    scheduleNextOfacSync();
+    ok(res, { source: "OFAC-SDN", syncedAt: now, entries: entries.length });
+  } catch (e) {
+    err(res, e.message, 400);
   }
 });
 

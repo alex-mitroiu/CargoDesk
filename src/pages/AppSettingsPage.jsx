@@ -3,9 +3,9 @@ import { T } from "../tokens";
 import { api } from "../api";
 import { toast } from "../toast";
 
-const TABS = ["API Controls"];
+// ─── External API definitions ─────────────────────────────────────────────────
 
-const APIS = [
+const EXTERNAL_APIS = [
   {
     id: "fx",
     name: "FX Rates",
@@ -42,16 +42,68 @@ const APIS = [
     defaultUnit: "weeks",
     recurrenceLabel: "Sync every",
   },
+];
+
+// ─── Internal API definitions ──────────────────────────────────────────────────
+
+const INTERNAL_APIS = [
   {
-    id: "ws",
-    name: "WebSocket Server",
-    provider: "Internal",
+    id: "ws",        name: "WebSocket Server",  provider: "Internal",
     description: "Real-time delivery of shipment messages and event notifications.",
-    testType: "ws",
-    testUrl: null,
-    hasRecurrence: false,
+    testType: "ws",  testUrl: null,
+    hasToggle: true, settingKey: "api_ws_enabled",
+  },
+  {
+    id: "server",    name: "API Server",         provider: "Internal",
+    description: "Core health endpoint — confirms the Express server is reachable.",
+    testType: "http", testUrl: "/api/health",
+    hasToggle: false,
+  },
+  {
+    id: "shipments", name: "Shipments",           provider: "Internal",
+    description: "Shipment records — list, create, update, delete.",
+    testType: "http", testUrl: "/api/shipments",
+    hasToggle: true, settingKey: "api_shipments_enabled",
+  },
+  {
+    id: "contracts", name: "Contracts",           provider: "Internal",
+    description: "Carrier rate contracts with legs and IMDG class filters.",
+    testType: "http", testUrl: "/api/contracts?limit=1",
+    hasToggle: true, settingKey: "api_contracts_enabled",
+  },
+  {
+    id: "customers", name: "Customers",           provider: "Internal",
+    description: "Customer records with address and contact details.",
+    testType: "http", testUrl: "/api/customers?limit=1",
+    hasToggle: true, settingKey: "api_customers_enabled",
+  },
+  {
+    id: "carriers",  name: "Carriers",            provider: "Internal",
+    description: "Carrier master data.",
+    testType: "http", testUrl: "/api/carriers",
+    hasToggle: true, settingKey: "api_carriers_enabled",
+  },
+  {
+    id: "vessels",   name: "Vessels",             provider: "Internal",
+    description: "IMO vessel registry — 349 vessels.",
+    testType: "http", testUrl: "/api/vessels?limit=1",
+    hasToggle: true, settingKey: "api_vessels_enabled",
+  },
+  {
+    id: "ports",     name: "Port Locations",      provider: "Internal",
+    description: "14,269 UN/LOCODE port locations and linked port pairs.",
+    testType: "http", testUrl: "/api/port-locations?limit=1",
+    hasToggle: true, settingKey: "api_ports_enabled",
+  },
+  {
+    id: "sysmsg",    name: "System Messages",     provider: "Internal",
+    description: "Operational notices with severity and active date ranges.",
+    testType: "http", testUrl: "/api/system-messages",
+    hasToggle: true, settingKey: "api_sysmsg_enabled",
   },
 ];
+
+// ─── Shared components ────────────────────────────────────────────────────────
 
 function Toggle({ on, onChange }) {
   return (
@@ -91,14 +143,21 @@ function StatusDot({ result, testing }) {
   );
 }
 
+const TABS    = ["API Controls"];
+const API_SUBTABS = ["External APIs", "Internal APIs"];
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
+
 export default function AppSettingsPage() {
-  const [activeTab,     setActiveTab]     = useState("API Controls");
-  const [settings,      setSettings]      = useState(null);
-  const [testResults,   setTestResults]   = useState({});
-  const [testing,       setTesting]       = useState({});
-  const [sanctionsInfo, setSanctionsInfo] = useState(null);
-  const [syncing,       setSyncing]       = useState(false);
-  const saveTimers = useRef({});
+  const [activeTab,      setActiveTab]      = useState("API Controls");
+  const [activeApiSub,   setActiveApiSub]   = useState("External APIs");
+  const [settings,       setSettings]       = useState(null);
+  const [testResults,    setTestResults]    = useState({});
+  const [testing,        setTesting]        = useState({});
+  const [sanctionsInfo,  setSanctionsInfo]  = useState(null);
+  const [syncing,        setSyncing]        = useState(false);
+  const fileInputRef = useRef(null);
+  const saveTimers   = useRef({});
 
   useEffect(() => {
     api.settings.get()
@@ -116,14 +175,14 @@ export default function AppSettingsPage() {
     }, 400);
   }, []);
 
-  const toggle = (apiId) => {
-    if (!settings) return;
-    const key  = `api_${apiId}_enabled`;
+  const toggle = (apiDef) => {
+    if (!settings || !apiDef.settingKey) return;
+    const key  = apiDef.settingKey;
     const next = settings[key] === 'false' ? 'true' : 'false';
     setSettings(s => ({ ...s, [key]: next }));
     clearTimeout(saveTimers.current[key]);
     api.settings.update({ [key]: next })
-      .then(() => toast.success(`${APIS.find(a => a.id === apiId)?.name ?? apiId} ${next === 'true' ? 'enabled' : 'disabled'}`))
+      .then(() => toast.success(`${apiDef.name} ${next === 'true' ? 'enabled' : 'disabled'}`))
       .catch(() => { setSettings(s => ({ ...s, [key]: next === 'true' ? 'false' : 'true' })); toast.error("Save failed"); });
   };
 
@@ -143,13 +202,9 @@ export default function AppSettingsPage() {
         await new Promise(resolve => {
           const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
           const ws    = new WebSocket(`${proto}//${window.location.host}/ws`);
-          const tmr   = setTimeout(() => {
-            ws.close();
-            setTestResults(r => ({ ...r, [apiDef.id]: { ok: false, error: "Timeout (7 s)" } }));
-            resolve();
-          }, 7000);
-          ws.onopen  = () => { clearTimeout(tmr); ws.close(); setTestResults(r => ({ ...r, [apiDef.id]: { ok: true, latency: Date.now() - t0 } })); resolve(); };
-          ws.onerror = () => { clearTimeout(tmr); setTestResults(r => ({ ...r, [apiDef.id]: { ok: false, error: "Connection refused" } })); resolve(); };
+          const tmr   = setTimeout(() => { ws.close(); setTestResults(r => ({ ...r, [apiDef.id]: { ok: false, error: "Timeout (7 s)" } })); resolve(); }, 7000);
+          ws.onopen  = () => { clearTimeout(tmr); ws.close(); setTestResults(r => ({ ...r, [apiDef.id]: { ok: true,  latency: Date.now() - t0 } })); resolve(); };
+          ws.onerror = () => { clearTimeout(tmr);             setTestResults(r => ({ ...r, [apiDef.id]: { ok: false, error: "Connection refused" } })); resolve(); };
         });
       } else if (apiDef.testType === "status") {
         const info = await api.sanctions.status();
@@ -171,15 +226,36 @@ export default function AppSettingsPage() {
     setTesting(t => ({ ...t, [apiDef.id]: false }));
   };
 
-  const manualSync = async () => {
+  const testAll = async (apis) => {
+    await Promise.all(apis.map(a => runTest(a)));
+  };
+
+  const handleCsvFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = "";
+    setSyncing(true);
+    try {
+      const csv = await file.text();
+      const result = await api.sanctions.importCsv(csv);
+      toast.success(`OFAC imported: ${result.entries.toLocaleString()} entries`);
+      const info = await api.sanctions.status();
+      setSanctionsInfo(info);
+    } catch (err2) {
+      toast.error(`Import failed: ${err2.message}`);
+    }
+    setSyncing(false);
+  };
+
+  const syncFromSource = async () => {
     setSyncing(true);
     try {
       const result = await api.sanctions.sync();
       toast.success(`OFAC synced: ${result.entries.toLocaleString()} entries`);
       const info = await api.sanctions.status();
       setSanctionsInfo(info);
-    } catch (e) {
-      toast.error(`Sync failed: ${e.message}`);
+    } catch (err2) {
+      toast.error(`Sync failed: ${err2.message}`);
     }
     setSyncing(false);
   };
@@ -193,11 +269,199 @@ export default function AppSettingsPage() {
     background: T.bg, color: T.text, fontFamily: T.mono, fontSize: 13, outline: "none",
   };
 
+  // ── Subtab bar ──
+  const SubTabBar = ({ tabs, active, onChange, extras }) => (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+      borderBottom: `1px solid ${T.border}33`, marginBottom: 18 }}>
+      <div style={{ display: "flex" }}>
+        {tabs.map(tab => (
+          <button key={tab} onClick={() => onChange(tab)} type="button"
+            style={{
+              padding: "6px 16px", border: "none", cursor: "pointer", background: "none",
+              fontFamily: T.mono, fontSize: 11, fontWeight: tab === active ? 700 : 400,
+              textTransform: "uppercase", letterSpacing: ".08em",
+              color: tab === active ? T.accent : T.textMuted,
+              borderBottom: `2px solid ${tab === active ? T.accent : "transparent"}`,
+              marginBottom: -1,
+            }}>
+            {tab}
+          </button>
+        ))}
+      </div>
+      {extras}
+    </div>
+  );
+
+  // ── External API card ──
+  const ExternalCard = ({ apiDef }) => {
+    const enabled       = settings[`api_${apiDef.id}_enabled`] !== 'false';
+    const intervalValue = settings[`api_${apiDef.id}_interval_value`] ?? apiDef.defaultValue ?? '1';
+    const intervalUnit  = settings[`api_${apiDef.id}_interval_unit`]  ?? apiDef.defaultUnit  ?? 'days';
+    const testResult    = testResults[apiDef.id];
+    const isTesting     = testing[apiDef.id];
+
+    let ofacNextDue = null;
+    if (apiDef.id === 'ofac' && sanctionsInfo?.syncs?.[0]?.synced_at) {
+      const val   = Math.max(1, parseInt(intervalValue) || 1);
+      const msMap = { days: 86400000, weeks: 7 * 86400000, months: 30 * 86400000 };
+      ofacNextDue = new Date(new Date(sanctionsInfo.syncs[0].synced_at).getTime() + val * (msMap[intervalUnit] || msMap.weeks));
+    }
+
+    return (
+      <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, background: T.surface,
+        overflow: "hidden", opacity: enabled ? 1 : 0.65, transition: "opacity 0.2s" }}>
+
+        {/* Header */}
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", padding: "16px 20px 14px" }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 5 }}>
+              <span style={{ fontFamily: T.body, fontSize: 15, fontWeight: 700, color: T.text }}>{apiDef.name}</span>
+              <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted,
+                background: T.bg, border: `1px solid ${T.border}`, borderRadius: 4, padding: "2px 8px" }}>
+                {apiDef.provider}
+              </span>
+              {!enabled && (
+                <span style={{ fontFamily: T.mono, fontSize: 10, color: T.warning,
+                  background: `${T.warning}18`, border: `1px solid ${T.warning}44`,
+                  borderRadius: 4, padding: "2px 8px" }}>DISABLED</span>
+              )}
+            </div>
+            <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, lineHeight: 1.5 }}>
+              {apiDef.description}
+            </div>
+          </div>
+          <Toggle on={enabled} onChange={() => toggle({ ...apiDef, settingKey: `api_${apiDef.id}_enabled` })} />
+        </div>
+
+        {/* Recurrence */}
+        {apiDef.hasRecurrence && (
+          <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10,
+            padding: "12px 20px", borderTop: `1px solid ${T.border}22`, background: `${T.bg}88` }}>
+            <span style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted }}>{apiDef.recurrenceLabel}</span>
+            <input type="number" min={1} max={365} value={intervalValue}
+              onChange={e => setRecurrence(apiDef.id, 'value', e.target.value)}
+              disabled={!enabled} style={{ ...inp, width: 58 }} />
+            <select value={intervalUnit}
+              onChange={e => setRecurrence(apiDef.id, 'unit', e.target.value)}
+              disabled={!enabled}
+              style={{ ...inp, paddingRight: 14, cursor: enabled ? "pointer" : "default" }}>
+              <option value="days">Days</option>
+              <option value="weeks">Weeks</option>
+              <option value="months">Months</option>
+            </select>
+            {apiDef.id === 'ofac' && sanctionsInfo && (
+              <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, marginLeft: 4 }}>
+                {sanctionsInfo.entryCount > 0 ? `${sanctionsInfo.entryCount.toLocaleString()} entries` : "Not yet synced"}
+                {sanctionsInfo.syncs?.[0]?.synced_at && <> · Last {new Date(sanctionsInfo.syncs[0].synced_at).toLocaleDateString()}</>}
+                {ofacNextDue && <> · Next {ofacNextDue < new Date() ? "overdue" : ofacNextDue.toLocaleDateString()}</>}
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* Actions */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10,
+          padding: "10px 20px 14px", borderTop: `1px solid ${T.border}22` }}>
+          <button onClick={() => runTest(apiDef)} disabled={isTesting} type="button"
+            style={{ padding: "5px 13px", borderRadius: 6, border: `1px solid ${T.accent}55`,
+              background: T.accentBg, color: T.accent, fontFamily: T.mono, fontSize: 12,
+              cursor: isTesting ? "wait" : "pointer", opacity: isTesting ? 0.65 : 1 }}>
+            {isTesting ? "Testing…" : "▶ Test"}
+          </button>
+          {apiDef.id === 'ofac' && enabled && (
+            <>
+              <input ref={fileInputRef} type="file" accept=".csv,text/csv"
+                onChange={handleCsvFile} style={{ display: "none" }} />
+              <button onClick={() => fileInputRef.current?.click()} disabled={syncing} type="button"
+                style={{ padding: "5px 13px", borderRadius: 6, border: `1px solid ${T.border}`,
+                  background: T.bg, color: T.text, fontFamily: T.mono, fontSize: 12,
+                  cursor: syncing ? "wait" : "pointer", opacity: syncing ? 0.65 : 1 }}>
+                {syncing ? "Working…" : "⤒ Import sdn.csv"}
+              </button>
+              <button onClick={syncFromSource} disabled={syncing} type="button"
+                style={{ padding: "5px 13px", borderRadius: 6, border: `1px solid ${T.border}`,
+                  background: T.bg, color: T.text, fontFamily: T.mono, fontSize: 12,
+                  cursor: syncing ? "wait" : "pointer", opacity: syncing ? 0.65 : 1 }}>
+                {syncing ? "Working…" : "↻ Sync from source"}
+              </button>
+            </>
+          )}
+          <StatusDot result={testResult} testing={isTesting} />
+        </div>
+      </div>
+    );
+  };
+
+  // ── Internal API card ──
+  const InternalCard = ({ apiDef }) => {
+    const enabled    = !apiDef.hasToggle || settings[apiDef.settingKey] !== 'false';
+    const testResult = testResults[apiDef.id];
+    const isTesting  = testing[apiDef.id];
+
+    return (
+      <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, background: T.surface,
+        overflow: "hidden", opacity: enabled ? 1 : 0.65, transition: "opacity 0.2s" }}>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "13px 20px" }}>
+          {/* Status / test result dot */}
+          <div style={{
+            width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
+            background: !testResult ? T.border : testResult.ok ? T.success : T.danger,
+            boxShadow: testResult?.ok ? `0 0 6px ${T.success}77` : testResult && !testResult.ok ? `0 0 6px ${T.danger}77` : "none",
+            transition: "background .3s",
+          }} />
+
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
+              <span style={{ fontFamily: T.body, fontSize: 14, fontWeight: 600, color: T.text }}>{apiDef.name}</span>
+              <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted,
+                background: T.bg, border: `1px solid ${T.border}`, borderRadius: 4, padding: "1px 7px" }}>
+                {apiDef.provider}
+              </span>
+              {apiDef.hasToggle && !enabled && (
+                <span style={{ fontFamily: T.mono, fontSize: 10, color: T.warning,
+                  background: `${T.warning}18`, border: `1px solid ${T.warning}44`,
+                  borderRadius: 4, padding: "1px 7px" }}>DISABLED</span>
+              )}
+            </div>
+            <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>{apiDef.description}</div>
+          </div>
+
+          {/* Latency badge (once tested) */}
+          {testResult && (
+            <span style={{ fontFamily: T.mono, fontSize: 11, flexShrink: 0,
+              color: testResult.ok ? T.success : T.danger }}>
+              {testResult.ok
+                ? (testResult.label ?? `${testResult.latency} ms`)
+                : (testResult.error ?? `HTTP ${testResult.status}`)}
+            </span>
+          )}
+          {isTesting && (
+            <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, flexShrink: 0 }}>Testing…</span>
+          )}
+
+          {/* Test button */}
+          <button onClick={() => runTest(apiDef)} disabled={isTesting} type="button"
+            style={{ padding: "4px 11px", borderRadius: 6, border: `1px solid ${T.accent}55`,
+              background: T.accentBg, color: T.accent, fontFamily: T.mono, fontSize: 11,
+              cursor: isTesting ? "wait" : "pointer", opacity: isTesting ? 0.65 : 1, flexShrink: 0 }}>
+            ▶ Test
+          </button>
+
+          {/* Toggle (only for configurable internal services like WebSocket) */}
+          {apiDef.hasToggle && (
+            <Toggle on={enabled} onChange={() => toggle(apiDef)} />
+          )}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div style={{ maxWidth: 780 }}>
 
-      {/* Tab bar */}
-      <div style={{ display: "flex", gap: 0, borderBottom: `2px solid ${T.border}`, marginBottom: 28 }}>
+      {/* Main tab bar */}
+      <div style={{ display: "flex", borderBottom: `2px solid ${T.border}`, marginBottom: 24 }}>
         {TABS.map(tab => (
           <button key={tab} onClick={() => setActiveTab(tab)} type="button"
             style={{
@@ -214,145 +478,36 @@ export default function AppSettingsPage() {
 
       {/* API Controls */}
       {activeTab === "API Controls" && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          {APIS.map(apiDef => {
-            const enabled       = settings[`api_${apiDef.id}_enabled`] !== 'false';
-            const intervalValue = settings[`api_${apiDef.id}_interval_value`] ?? apiDef.defaultValue ?? '1';
-            const intervalUnit  = settings[`api_${apiDef.id}_interval_unit`]  ?? apiDef.defaultUnit  ?? 'days';
-            const testResult    = testResults[apiDef.id];
-            const isTesting     = testing[apiDef.id];
-
-            // compute next OFAC due
-            let ofacNextDue = null;
-            if (apiDef.id === 'ofac' && sanctionsInfo?.syncs?.[0]?.synced_at) {
-              const val    = Math.max(1, parseInt(intervalValue) || 1);
-              const msMap  = { days: 86400000, weeks: 7 * 86400000, months: 30 * 86400000 };
-              const ms     = val * (msMap[intervalUnit] || msMap.weeks);
-              ofacNextDue  = new Date(new Date(sanctionsInfo.syncs[0].synced_at).getTime() + ms);
+        <>
+          {/* Subtab bar */}
+          <SubTabBar
+            tabs={API_SUBTABS}
+            active={activeApiSub}
+            onChange={setActiveApiSub}
+            extras={
+              activeApiSub === "Internal APIs" && (
+                <button onClick={() => testAll(INTERNAL_APIS)} type="button"
+                  style={{ padding: "4px 12px", borderRadius: 6, border: `1px solid ${T.border}`,
+                    background: T.bg, color: T.textMuted, fontFamily: T.mono, fontSize: 11,
+                    cursor: "pointer", marginBottom: 2 }}>
+                  ▶ Test all
+                </button>
+              )
             }
+          />
 
-            return (
-              <div key={apiDef.id} style={{
-                border: `1px solid ${T.border}`,
-                borderRadius: 10,
-                background: T.surface,
-                overflow: "hidden",
-                opacity: enabled ? 1 : 0.65,
-                transition: "opacity 0.2s",
-              }}>
-                {/* Card header */}
-                <div style={{
-                  display: "flex", alignItems: "flex-start", justifyContent: "space-between",
-                  padding: "16px 20px 14px",
-                }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 5 }}>
-                      <span style={{ fontFamily: T.body, fontSize: 15, fontWeight: 700, color: T.text }}>
-                        {apiDef.name}
-                      </span>
-                      <span style={{
-                        fontFamily: T.mono, fontSize: 10, color: T.textMuted,
-                        background: T.bg, border: `1px solid ${T.border}`,
-                        borderRadius: 4, padding: "2px 8px",
-                      }}>
-                        {apiDef.provider}
-                      </span>
-                      {!enabled && (
-                        <span style={{
-                          fontFamily: T.mono, fontSize: 10, color: T.warning,
-                          background: `${T.warning}18`, border: `1px solid ${T.warning}44`,
-                          borderRadius: 4, padding: "2px 8px",
-                        }}>
-                          DISABLED
-                        </span>
-                      )}
-                    </div>
-                    <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, lineHeight: 1.5 }}>
-                      {apiDef.description}
-                    </div>
-                  </div>
-                  <Toggle on={enabled} onChange={() => toggle(apiDef.id)} />
-                </div>
+          {activeApiSub === "External APIs" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              {EXTERNAL_APIS.map(a => <ExternalCard key={a.id} apiDef={a} />)}
+            </div>
+          )}
 
-                {/* Recurrence row */}
-                {apiDef.hasRecurrence && (
-                  <div style={{
-                    display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10,
-                    padding: "12px 20px",
-                    borderTop: `1px solid ${T.border}22`,
-                    background: `${T.bg}88`,
-                  }}>
-                    <span style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
-                      {apiDef.recurrenceLabel}
-                    </span>
-                    <input type="number" min={1} max={365} value={intervalValue}
-                      onChange={e => setRecurrence(apiDef.id, 'value', e.target.value)}
-                      disabled={!enabled}
-                      style={{ ...inp, width: 58 }} />
-                    <select value={intervalUnit}
-                      onChange={e => setRecurrence(apiDef.id, 'unit', e.target.value)}
-                      disabled={!enabled}
-                      style={{ ...inp, paddingRight: 14, cursor: enabled ? "pointer" : "default" }}>
-                      <option value="days">Days</option>
-                      <option value="weeks">Weeks</option>
-                      <option value="months">Months</option>
-                    </select>
-
-                    {/* OFAC-specific: last sync / next due */}
-                    {apiDef.id === 'ofac' && sanctionsInfo && (
-                      <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, marginLeft: 4 }}>
-                        {sanctionsInfo.entryCount > 0
-                          ? `${sanctionsInfo.entryCount.toLocaleString()} entries`
-                          : "Not yet synced"}
-                        {sanctionsInfo.syncs?.[0]?.synced_at && (
-                          <> · Last {new Date(sanctionsInfo.syncs[0].synced_at).toLocaleDateString()}</>
-                        )}
-                        {ofacNextDue && (
-                          <> · Next {ofacNextDue < new Date() ? "overdue" : ofacNextDue.toLocaleDateString()}</>
-                        )}
-                      </span>
-                    )}
-                  </div>
-                )}
-
-                {/* Actions row */}
-                <div style={{
-                  display: "flex", alignItems: "center", gap: 10,
-                  padding: "10px 20px 14px",
-                  borderTop: `1px solid ${T.border}22`,
-                }}>
-                  {/* Test connectivity */}
-                  <button onClick={() => runTest(apiDef)} disabled={isTesting} type="button"
-                    style={{
-                      padding: "5px 13px", borderRadius: 6,
-                      border: `1px solid ${T.accent}55`, background: T.accentBg,
-                      color: T.accent, fontFamily: T.mono, fontSize: 12,
-                      cursor: isTesting ? "wait" : "pointer",
-                      opacity: isTesting ? 0.65 : 1,
-                    }}>
-                    {isTesting ? "Testing…" : "▶ Test"}
-                  </button>
-
-                  {/* OFAC manual sync */}
-                  {apiDef.id === 'ofac' && enabled && (
-                    <button onClick={manualSync} disabled={syncing} type="button"
-                      style={{
-                        padding: "5px 13px", borderRadius: 6,
-                        border: `1px solid ${T.border}`, background: T.bg,
-                        color: T.text, fontFamily: T.mono, fontSize: 12,
-                        cursor: syncing ? "wait" : "pointer",
-                        opacity: syncing ? 0.65 : 1,
-                      }}>
-                      {syncing ? "Syncing…" : "↻ Sync Now"}
-                    </button>
-                  )}
-
-                  <StatusDot result={testResult} testing={isTesting} />
-                </div>
-              </div>
-            );
-          })}
-        </div>
+          {activeApiSub === "Internal APIs" && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {INTERNAL_APIS.map(a => <InternalCard key={a.id} apiDef={a} />)}
+            </div>
+          )}
+        </>
       )}
     </div>
   );

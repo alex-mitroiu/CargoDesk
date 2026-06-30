@@ -132,8 +132,9 @@ export const api = {
     list: (type, id) => req("GET", `/entity-events/${type}/${id}`),
   },
   sanctions: {
-    status: ()     => req("GET",  "/sanctions/status"),
-    sync:   ()     => req("POST", "/sanctions/sync"),
+    status:    ()        => req("GET",  "/sanctions/status"),
+    sync:      ()        => req("POST", "/sanctions/sync"),
+    importCsv: (csv)     => req("POST", "/sanctions/import-csv", { csv }),
   },
   screening: {
     get:      (id)        => req("GET",  `/shipments/${id}/screening`),

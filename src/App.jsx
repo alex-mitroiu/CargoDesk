@@ -193,9 +193,30 @@ function App() {
   const [allocations, setAllocations] = useState([]);
   const [ready,       setReady]       = useState(false);
   const [apiError,    setApiError]    = useState(null);
-
+  const [appSettings, setAppSettings] = useState({});
 
   const [healthOpen, setHealthOpen] = useState(false);
+
+  // Map from page key → settings key that gates it
+  const PAGE_SETTING_MAP = {
+    shipments:         "api_shipments_enabled",
+    detail:            "api_shipments_enabled",
+    kanban:            "api_shipments_enabled",
+    dashboard:         "api_shipments_enabled",
+    "space-configs":   "api_shipments_enabled",
+    "dashboard-archive":"api_shipments_enabled",
+    "mdm-contracts":   "api_contracts_enabled",
+    "mdm-customers":   "api_customers_enabled",
+    "mdm-carriers":    "api_carriers_enabled",
+    "mdm-vessels":     "api_vessels_enabled",
+    "mdm-ports":       "api_ports_enabled",
+    "mdm-linked":      "api_ports_enabled",
+  };
+
+  const isEnabled = (pageKey) => {
+    const k = PAGE_SETTING_MAP[pageKey];
+    return !k || appSettings[k] !== 'false';
+  };
 
   const [page,       setPage]       = useState(() => {
     const hash = window.location.hash.replace("#", "").trim();
@@ -225,8 +246,9 @@ function App() {
   };
   const [mdmOpen,    setMdmOpen]    = useState(true);
 
-  // Load all data on mount
+  // Load all data + settings on mount
   useEffect(() => {
+    api.settings.get().then(s => setAppSettings(s)).catch(() => {});
     Promise.all([
       api.carriers.list(),
       api.shipments.list(),
@@ -245,6 +267,9 @@ function App() {
 
   const selectedShipment = shipments.find(s => s.id === selectedId);
   const navigate = (key) => {
+    // Reload settings when leaving the settings page so nav updates immediately
+    if (page === "settings" && key !== "settings")
+      api.settings.get().then(s => setAppSettings(s)).catch(() => {});
     setPage(key); setSelectedId(null); setShowNewShp(false);
     window.location.hash = key;
   };
@@ -289,6 +314,7 @@ function App() {
 
   // ── Shared nav button style ──
   const NavBtn = ({ pageKey, icon, label, indent = false }) => {
+    if (!isEnabled(pageKey)) return null;
     const active = page === pageKey || (pageKey === "shipments" && page === "detail");
     return (
       <button onClick={() => navigate(pageKey)}
@@ -756,6 +782,28 @@ function App() {
         <Header />
         <main style={{ flex: 1, padding: "28px 36px 60px", overflow: "auto" }}>
 
+        {/* Disabled module fallback */}
+        {!isEnabled(page) && (
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center",
+            justifyContent: "center", minHeight: 360, gap: 14, textAlign: "center" }}>
+            <div style={{ fontSize: 40 }}>🔒</div>
+            <div style={{ fontFamily: T.head, fontSize: 20, fontWeight: 700, color: T.text }}>
+              Module Disabled
+            </div>
+            <div style={{ fontFamily: T.body, fontSize: 14, color: T.textMuted, maxWidth: 340, lineHeight: 1.6 }}>
+              This module has been turned off in Application Settings.
+              Re-enable it to restore access.
+            </div>
+            <button onClick={() => navigate("settings")} type="button"
+              style={{ marginTop: 8, padding: "8px 20px", borderRadius: 8,
+                border: `1px solid ${T.accent}`, background: T.accentBg,
+                color: T.accent, fontFamily: T.body, fontSize: 14,
+                fontWeight: 600, cursor: "pointer" }}>
+              Open Application Settings
+            </button>
+          </div>
+        )}
+
         {/* Home / Landing */}
         {page === "home" && (
           <LandingPage
@@ -834,7 +882,7 @@ function App() {
             }} />
         )}
 
-        {page === "kanban"    && <KanbanPage shipments={shipments} />}
+        {page === "kanban"    && isEnabled("kanban")    && <KanbanPage shipments={shipments} />}
 
         {page === "dashboard-archive" && (
           <DashboardArchive
@@ -886,7 +934,7 @@ function App() {
         )}
 
         {/* MDM pages */}
-        {page === "mdm-carriers" && (
+        {page === "mdm-carriers" && isEnabled("mdm-carriers") && (
           <MdmCarriersPage
             carriers={carriers}
             onAdd={async data => {
@@ -903,15 +951,15 @@ function App() {
             }} />
         )}
 
-        {page === "mdm-vessels"   && <MdmVesselsPage />}
-        {page === "mdm-ports"     && <MdmPortLocationsPage />}
-        {page === "mdm-linked"    && <MdmLinkedPortsPage />}
-        {page === "mdm-tradelanes" && <MdmTradeLanesPage />}
-        {page === "mdm-countries" && <MdmCountriesPage />}
-        {page === "mdm-unlocodes"   && <MdmUNLocationCodesPage />}
-        {page === "mdm-commodities" && <MdmCommoditiesPage />}
-        {page === "mdm-customers"  && <MdmCustomersPage />}
-        {page === "mdm-contracts"  && <MdmContractsPage />}
+        {page === "mdm-vessels"    && isEnabled("mdm-vessels")    && <MdmVesselsPage />}
+        {page === "mdm-ports"      && isEnabled("mdm-ports")      && <MdmPortLocationsPage />}
+        {page === "mdm-linked"     && isEnabled("mdm-linked")     && <MdmLinkedPortsPage />}
+        {page === "mdm-tradelanes" &&                                 <MdmTradeLanesPage />}
+        {page === "mdm-countries"  &&                                 <MdmCountriesPage />}
+        {page === "mdm-unlocodes"  &&                                 <MdmUNLocationCodesPage />}
+        {page === "mdm-commodities"&&                                 <MdmCommoditiesPage />}
+        {page === "mdm-customers"  && isEnabled("mdm-customers")  && <MdmCustomersPage />}
+        {page === "mdm-contracts"  && isEnabled("mdm-contracts")  && <MdmContractsPage />}
         {page === "manual"         && <UserManualPage />}
         {page === "about"          && <AboutPage />}
         {page === "settings"       && <AppSettingsPage />}
