@@ -5,6 +5,8 @@ import { api } from "../../api";
 import Btn from "../../components/primitives/Btn";
 import Badge from "../../components/primitives/Badge";
 import {Inp, BtnToggle, Field, Sel, Textarea, ContractTypeInput} from "../../components/primitives/Form";
+import CarrierCombobox from "../../components/shared/CarrierCombobox";
+import { ContainerTypeField } from "../../components/shared/ContainerTypePickerModal";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
 import ActionMenu from "../../components/primitives/ActionMenu";
 import EntityHistoryModal from "../../components/shared/EntityHistoryModal";
@@ -36,11 +38,11 @@ const CarrierForm = ({ init = {}, onSave, onCancel, existing = [] }) => {
   );
 };
 
-const ShipmentForm = ({ init = {}, carriers, onSave, onCancel }) => {
+const ShipmentForm = ({ init = {}, onSave, onCancel }) => {
   const [polPort, setPolPort] = useState(init.pol ? { unlocode: init.pol, name: "" } : null);
   const [podPort, setPodPort] = useState(init.pod ? { unlocode: init.pod, name: "" } : null);
   const [f, setF] = useState({
-    carrierCode:   init.carrierCode   || carriers[0]?.code || "",
+    carrierCode:   init.carrierCode   || "",
     contractType:  init.contractType  || "SPOT",
     contractNotes: init.contractNotes || "",
     status:        init.status        || "Active",
@@ -64,13 +66,6 @@ const ShipmentForm = ({ init = {}, carriers, onSave, onCancel }) => {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      {carriers.length === 0 && (
-        <div style={{ background: T.warningBg, border: `1px solid ${T.warning}55`, borderRadius: 8,
-          padding: "12px 16px", fontFamily: T.body, fontSize: 13, color: T.warning }}>
-          ⚠ No carriers in registry. Add a carrier first before creating a shipment.
-        </div>
-      )}
-
       {/* Ports */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <PortField label="Port of Loading"   value={polPort} onChange={setPolPort} placeholder="Search POL (NLRTM, Rotterdam…)" required />
@@ -78,10 +73,9 @@ const ShipmentForm = ({ init = {}, carriers, onSave, onCancel }) => {
       </div>
 
       {/* Carrier */}
-      {carriers.length > 0 && (
-        <Sel label="Carrier" value={f.carrierCode} onChange={set("carrierCode")} required
-          options={carriers.map(c => ({ value: c.code, label: `${c.code} – ${c.name}` }))} />
-      )}
+      <Field label="Carrier" required>
+        <CarrierCombobox value={f.carrierCode} onChange={set("carrierCode")} />
+      </Field>
 
       {/* Incoterm — mandatory */}
       <Sel label="Incoterm" value={f.incoterm} onChange={set("incoterm")} required
@@ -118,7 +112,7 @@ const ShipmentForm = ({ init = {}, carriers, onSave, onCancel }) => {
 
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", paddingTop: 4 }}>
         <Btn variant="secondary" onClick={onCancel}>Cancel</Btn>
-        <Btn onClick={handleSave} disabled={!valid || carriers.length === 0}>
+        <Btn onClick={handleSave} disabled={!valid}>
           {init.id ? "Save Changes" : "Create Shipment"}
         </Btn>
       </div>
@@ -129,26 +123,16 @@ const ShipmentForm = ({ init = {}, carriers, onSave, onCancel }) => {
 const ContainerForm = ({ init = {}, onSave, onCancel }) => {
   const [f, setF] = useState({ number: init.number || "", size: init.size || "40", type: init.type || "DC" });
   const set = k => v => setF(p => ({ ...p, [k]: v }));
-  const typeLabel = { DC: "Dry", RF: "Reefer", OT: "Open Top", FR: "Flat Rack", TK: "Tank" };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <Inp label="Container Number" value={f.number}
         onChange={v => set("number")(v.toUpperCase().replace(/\s/g, ""))}
         placeholder="MAEU1234567" mono required />
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <Field label="Size">
-          <div style={{ display: "flex", gap: 8 }}>
-            {["20", "40"].map(sz => (
-              <BtnToggle key={sz} selected={f.size === sz} onClick={() => set("size")(sz)} wide sub={sz === "20" ? "1 TEU" : "2 TEU"}>
-                {sz}ft
-              </BtnToggle>
-            ))}
-          </div>
-        </Field>
-        <Sel label="Equipment Type" value={f.type} onChange={set("type")}
-          options={CONTAINER_TYPES.map(t => ({ value: t, label: `${t} – ${typeLabel[t] || t}` }))} />
-      </div>
+      <ContainerTypeField
+        size={f.size} type={f.type}
+        onChange={opt => setF(p => ({ ...p, size: opt.size, type: opt.type }))}
+      />
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
         <Btn variant="secondary" onClick={onCancel}>Cancel</Btn>
         <Btn onClick={() => f.number.length >= 4 && onSave(f)} disabled={f.number.length < 4}>
@@ -159,17 +143,13 @@ const ContainerForm = ({ init = {}, onSave, onCancel }) => {
   );
 };
 
-const AllocationForm = ({ init = {}, carriers, onSave, onCancel }) => {
+const AllocationForm = ({ init = {}, onSave, onCancel }) => {
   const isEdit = !!init.id;
-  const [carrierCode,    setCarrierCode]    = useState(init.carrierCode   || carriers[0]?.code || "");
+  const [carrierCode,    setCarrierCode]    = useState(init.carrierCode   || "");
   const [teuStr,         setTeuStr]         = useState(init.allocatedTEU  ? String(init.allocatedTEU) : "");
   const [effectiveDate,  setEffectiveDate]  = useState(init.effectiveDate || "");
   const [endDate,        setEndDate]        = useState(init.endDate       || "");
   const [serverErr,      setServerErr]      = useState("");
-
-  useEffect(() => {
-    if (!carrierCode && carriers.length > 0) setCarrierCode(carriers[0].code);
-  }, [carriers]);
 
   const handleEffectiveChange = val => {
     setEffectiveDate(val);
@@ -195,8 +175,9 @@ const AllocationForm = ({ init = {}, carriers, onSave, onCancel }) => {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <Sel label="Carrier" value={carrierCode} onChange={v => { setCarrierCode(v); setServerErr(""); }} required
-        options={carriers.map(c => ({ value: c.code, label: `${c.code} – ${c.name}` }))} />
+      <Field label="Carrier" required>
+        <CarrierCombobox value={carrierCode} onChange={v => { setCarrierCode(v); setServerErr(""); }} />
+      </Field>
       <Inp label="Allocated Space (TEU)" value={teuStr} onChange={setTeuStr}
         type="number" placeholder="100" required hint="Total TEU awarded by this carrier for the period" />
 

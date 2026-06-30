@@ -7,6 +7,7 @@ import Badge from "../components/primitives/Badge";
 import { Modal, ConfirmModal } from "../components/primitives/Modal";
 import DatePicker from "../components/primitives/DatePicker";
 import PortField from "../components/shared/PortField";
+import CarrierCombobox from "../components/shared/CarrierCombobox";
 import { VesselField } from "../components/shared/VesselCombobox";
 import { inputBase, BtnToggle, Inp, Sel, Textarea, Field, ContractTypeInput } from "../components/primitives/Form";
 import { CommodityCombobox } from "../components/shared/CommodityCombobox";
@@ -205,11 +206,11 @@ const ContractField = ({ value, onChange, carrier, pol, pod, etd, contractType }
 
 };
 
-const ShipmentForm = ({ init = {}, carriers, onSave, onCancel }) => {
+const ShipmentForm = ({ init = {}, onSave, onCancel }) => {
   const [polPort, setPolPort] = useState(init.pol ? { unlocode: init.pol, name: "" } : null);
   const [podPort, setPodPort] = useState(init.pod ? { unlocode: init.pod, name: "" } : null);
   const [f, setF] = useState({
-    carrierCode:   init.carrierCode   || carriers[0]?.code || "",
+    carrierCode:   init.carrierCode   || "",
     contractType:  init.contractType  || "SPOT",
     contractNotes: init.contractNotes || "",
     status:        init.status        || "Active",
@@ -250,13 +251,6 @@ const ShipmentForm = ({ init = {}, carriers, onSave, onCancel }) => {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      {carriers.length === 0 && (
-        <div style={{ background: T.warningBg, border: `1px solid ${T.warning}55`, borderRadius: 8,
-          padding: "12px 16px", fontFamily: T.body, fontSize: 13, color: T.warning }}>
-          ⚠ No carriers in registry. Add a carrier first before creating a shipment.
-        </div>
-      )}
-
       {/* Parties */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
         <CustomerCombobox label="Shipper"
@@ -277,10 +271,9 @@ const ShipmentForm = ({ init = {}, carriers, onSave, onCancel }) => {
       </div>
 
       {/* Carrier */}
-      {carriers.length > 0 && (
-        <Sel label="Carrier" value={f.carrierCode} onChange={set("carrierCode")} required
-          options={carriers.map(c => ({ value: c.code, label: `${c.code} – ${c.name}` }))} />
-      )}
+      <Field label="Carrier" required>
+        <CarrierCombobox value={f.carrierCode} onChange={set("carrierCode")} />
+      </Field>
 
       {/* Incoterm — mandatory */}
       <Sel label="Incoterm" value={f.incoterm} onChange={set("incoterm")} required

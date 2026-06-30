@@ -670,7 +670,7 @@ function App() {
               onNew={() => setShowNewShp(true)} />
             {showNewShp && (
               <Modal title="New Shipment" onClose={() => setShowNewShp(false)} width={560}>
-                <ShipmentForm carriers={carriers}
+                <ShipmentForm
                   onSave={async form => {
                     try {
                       const created = await api.shipments.create(form);

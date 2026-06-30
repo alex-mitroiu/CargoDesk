@@ -6,8 +6,9 @@ import { T, STATUSES, statusVariant, contractVariant, addDays, diffDays,
 import { api } from "../api";
 import Btn from "../components/primitives/Btn";
 import Badge from "../components/primitives/Badge";
-import { Inp, Sel, ContractTypeInput, Textarea } from "../components/primitives/Form";
+import { Inp, Sel, ContractTypeInput, Textarea, Field } from "../components/primitives/Form";
 import PortField from "../components/shared/PortField";
+import CarrierCombobox from "../components/shared/CarrierCombobox";
 import { Modal, ConfirmModal } from "../components/primitives/Modal";
 import Spinner from "../components/primitives/spinner";
 import Pagination from "../components/primitives/Pagination";
@@ -224,11 +225,11 @@ const AllocContractPickerModal = ({ pol, pod, matches, onSelect, onClose }) => {
 
 // ─── AllocationForm ───────────────────────────────────────────────────────────
 
-const AllocationForm = ({ init = {}, carriers, tradeLanes = [], onSave, onCancel }) => {
+const AllocationForm = ({ init = {}, tradeLanes = [], onSave, onCancel }) => {
   const isEdit = !!init.id;
 
   // Core fields
-  const [carrierCode,    setCarrierCode]    = useState(init.carrierCode    || carriers[0]?.code || "");
+  const [carrierCode,    setCarrierCode]    = useState(init.carrierCode    || "");
   const [teuStr,         setTeuStr]         = useState(init.allocatedTEU   ? String(init.allocatedTEU) : "");
   const [effectiveDate,  setEffectiveDate]  = useState(init.effectiveDate  || "");
   const [endDate,        setEndDate]        = useState(init.endDate        || "");
@@ -261,10 +262,6 @@ const AllocationForm = ({ init = {}, carriers, tradeLanes = [], onSave, onCancel
   const [conflicts,       setConflicts]       = useState({ exact: [], linked: [] });
   const [conflictLoading, setConflictLoading] = useState(false);
   const conflictTimer = useRef(null);
-
-  useEffect(() => {
-    if (!carrierCode && carriers.length > 0) setCarrierCode(carriers[0].code);
-  }, [carriers]);
 
   // On edit load: fetch lanes for existing ports
   useEffect(() => {
@@ -385,9 +382,9 @@ const AllocationForm = ({ init = {}, carriers, tradeLanes = [], onSave, onCancel
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
 
       {/* Carrier */}
-      <Sel label="Carrier" value={carrierCode}
-        onChange={v => { setCarrierCode(v); setServerErr(""); }} required
-        options={carriers.map(c => ({ value: c.code, label: `${c.code} – ${c.name}` }))} />
+      <Field label="Carrier" required>
+        <CarrierCombobox value={carrierCode} onChange={v => { setCarrierCode(v); setServerErr(""); }} />
+      </Field>
 
       {/* POL / POD */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>

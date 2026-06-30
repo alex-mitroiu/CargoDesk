@@ -4,8 +4,9 @@ import { T, addDays, diffDays, teuOf, LANE_BADGE_VARIANT, todayIso, statusVarian
 import { api } from "../api";
 import Btn from "../components/primitives/Btn";
 import Badge from "../components/primitives/Badge";
-import { Inp, Sel, Textarea } from "../components/primitives/Form";
+import { Inp, Sel, Textarea, Field } from "../components/primitives/Form";
 import PortField from "../components/shared/PortField";
+import CarrierCombobox from "../components/shared/CarrierCombobox";
 import { Modal, ConfirmModal } from "../components/primitives/Modal";
 import Spinner from "../components/primitives/spinner";
 import Pagination from "../components/primitives/Pagination";
@@ -217,10 +218,10 @@ const AllocContractPickerModal = ({ pol, pod, matches, onSelect, onClose }) => {
 
 // ─── Allocation Form ──────────────────────────────────────────────────────────
 
-const AllocationForm = ({ init = {}, carriers, tradeLanes = [], onSave, onCancel }) => {
+const AllocationForm = ({ init = {}, tradeLanes = [], onSave, onCancel }) => {
   const isEdit = !!init.id;
 
-  const [carrierCode,    setCarrierCode]    = useState(init.carrierCode    || carriers[0]?.code || "");
+  const [carrierCode,    setCarrierCode]    = useState(init.carrierCode    || "");
   const [teuStr,         setTeuStr]         = useState(init.allocatedTEU   ? String(init.allocatedTEU) : "");
   const [effectiveDate,  setEffectiveDate]  = useState(init.effectiveDate  || "");
   const [endDate,        setEndDate]        = useState(init.endDate        || "");
@@ -249,10 +250,6 @@ const AllocationForm = ({ init = {}, carriers, tradeLanes = [], onSave, onCancel
   const [rawConflicts,    setRawConflicts]    = useState({ exact: [], linked: [] });
   const [conflictLoading, setConflictLoading] = useState(false);
   const conflictTimer = useRef(null);
-
-  useEffect(() => {
-    if (!carrierCode && carriers.length > 0) setCarrierCode(carriers[0].code);
-  }, [carriers]);
 
   useEffect(() => {
     if (init.pol) fetchLane(init.pol, setOriginLane, setOriginOptions, true);
@@ -371,8 +368,9 @@ const AllocationForm = ({ init = {}, carriers, tradeLanes = [], onSave, onCancel
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <Sel label="Carrier" value={carrierCode} onChange={v => { setCarrierCode(v); setServerErr(""); }} required
-        options={carriers.map(c => ({ value: c.code, label: `${c.code} – ${c.name}` }))} />
+      <Field label="Carrier" required>
+        <CarrierCombobox value={carrierCode} onChange={v => { setCarrierCode(v); setServerErr(""); }} />
+      </Field>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <PortField label="Port of Loading (POL)"   value={polPort} onChange={handlePolSelect} placeholder="Search origin port…" required showLinks />
@@ -760,14 +758,14 @@ const SpaceConfigurationsPage = ({
       {allocModal === "add" && (
         <Modal title={renewInit ? "Renew Space Configuration" : "Add Space Configuration"}
           onClose={() => { setAllocModal(null); setRenewInit(null); }} width={620} minHeight={620}>
-          <AllocationForm init={renewInit || {}} carriers={carriers} tradeLanes={tradeLanes}
+          <AllocationForm init={renewInit || {}} tradeLanes={tradeLanes}
             onSave={async form => { await onAddAlloc(form); setAllocModal(null); setRenewInit(null); }}
             onCancel={() => { setAllocModal(null); setRenewInit(null); }} />
         </Modal>
       )}
       {allocModal && allocModal !== "add" && (
         <Modal title="Edit Space Configuration" onClose={() => setAllocModal(null)} width={620} minHeight={620}>
-          <AllocationForm init={allocModal} carriers={carriers} tradeLanes={tradeLanes}
+          <AllocationForm init={allocModal} tradeLanes={tradeLanes}
             onSave={async form => { await onEditAlloc(allocModal.id, form); setAllocModal(null); }}
             onCancel={() => setAllocModal(null)} />
         </Modal>
