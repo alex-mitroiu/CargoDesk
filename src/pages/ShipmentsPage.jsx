@@ -457,7 +457,7 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
         <div style={{ display: "grid", gridTemplateColumns: shipTemplate,
           padding: "10px 20px", borderBottom: `1px solid ${T.border}` }}>
           {shipHeaders.map((h, i) => (
-            <div key={i} style={{ position: "relative", fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
+            <div key={i} style={{ position: "relative", paddingLeft: 6, fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
               {h}{i < shipHeaders.length - 1 && <ColResizer onStart={e => shipStartResize(i, e)} />}
             </div>
           ))}

@@ -4,7 +4,7 @@
 Full-stack freight management app. React 18 + Vite frontend, Express + node:sqlite backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.11.0 "Meridian"**
+- Version: **v0.15.0 "Waypoint"**
 - Run: `npm run dev` (runs server on :3001 + Vite on :5173 concurrently)
 - Seed: `node import-mdm-data.js`
 
@@ -21,19 +21,21 @@ import-mdm-data.js                 Seeds ports, carriers, vessels, commodities
 src/
   App.jsx                          Root: routing, nav, state, theme toggle
   api.js                           All fetch wrappers (api.shipments, api.ports, etc.)
-  tokens.js                        T object, theme colours, IMDG_CLASSES, CONTAINER_TYPES
+  tokens.js                        T object, theme colours, route-matching helpers
   toast.js                         Pub-sub toast emitter
   version.js                       VERSION, CODENAME, CHANGELOG
   pages/
     ShipmentsPage.jsx              Shipment list + ShipmentForm (new/edit)
-    ShipmentDetailPage.jsx         Detail view, ContainerForm, StatusTimeline,
+    ShipmentDetailPage.jsx         Detail view, ContainerForm + ContainerTypePickerModal,
                                    ShipmentTimeline (history tracker), LinkVesselModal
-    DashboardPage.jsx              Space configurations (allocations), PortField w/ linked ports
+    DashboardPage.jsx              Overview + Contract Consumption tabs, AllocationForm
+    SpaceConfigurationsPage.jsx    Standalone Space Configs page with Linked Shipments modal
     DashboardArchivePage.jsx       Expired allocations + renew flow
     KanbanPage.jsx                 Integration board with drag-to-reorder
     AboutPage.jsx                  DB schema, features, changelog
     mdm/
       MdmCommoditiesPage.jsx       294 Maersk commodity codes
+      MdmContractsPage.jsx         Carrier contracts with legs and IMDG class filters
       MdmCountriesPage.jsx         Countries + port count + trade lane assignments
       MdmLinkedPortsPage.jsx       Linked port pairs
       MdmPortLocationsPage.jsx     14,269 UN/LOCODE ports
@@ -44,32 +46,39 @@ src/
       MdmUNLocationCodesPage.jsx   UN location code browser
   components/
     primitives/
-      Btn.jsx Modal.jsx Form.jsx Badge.jsx Spinner.jsx
-      ToastContainer.jsx DatePicker.jsx Pagination.jsx
+      ActionMenu.jsx   Btn.jsx Modal.jsx Form.jsx Badge.jsx Spinner.jsx
+      ToastContainer.jsx DatePicker.jsx Pagination.jsx useResizableColumns.jsx
     shared/
       PortCombobox.jsx             position:fixed dropdown (escapes modal overflow)
-      CommodityCombobox.jsx        Typeahead with GradePill
+      CommodityCombobox.jsx        Typeahead with GradePill + CommodityPickerModal
       VesselCombobox.jsx           {VesselCombobox, VesselField} named exports
+      EntityHistoryModal.jsx       Generic audit-log timeline viewer
 ```
 
-## Database — 13 tables
+## Database — 20 tables
 | Table | Purpose |
 |---|---|
 | shipments | Core shipment records |
 | containers | Container-level cargo detail |
-| allocations | Space configurations (TEU per carrier/route) |
+| allocations | Space configurations (TEU per carrier/route/contract) |
 | carriers | Carrier MDM |
 | vessels | Vessel MDM (IMO registry) |
 | port_locations | 14,269 UN/LOCODE ports (has last_synced_at) |
-| linked_ports | Port equivalence pairs |
+| linked_ports | Port equivalence pairs — conflict detection + route matching |
 | trade_lanes | FIATA high-level trade lanes |
 | country_trade_lanes | Country → lane assignments |
 | regions | Region MDM |
 | countries | ISO 3166-1 countries + portCount via JOIN |
-| tickets | Kanban board cards |
+| tickets | Kanban board cards (shipment_id FK) |
 | status_log | Shipment status transitions (legacy, kept for compat) |
 | shipment_events | Full audit log: FIELD_UPDATED, STATUS_CHANGED, CONTAINER_ADDED/REMOVED/UPDATED |
+| entity_events | Generic audit log for allocations, carriers, contracts |
 | commodities | 294 Maersk freight commodity codes (Grades M/K/E/S/Q) |
+| customers | Customer records with full address and contact details |
+| contracts | Carrier rate contracts with IMDG class filters |
+| contract_legs | POL/POD pairs per contract with polLinkedAllowed / podLinkedAllowed flags |
+| contract_rates | Rate entries per contract |
+| system_messages | Operational notices with severity and active date range |
 
 ## Key patterns
 - **PortCombobox dropdown**: always `position: fixed` with `getBoundingClientRect()` to escape modal `overflow:auto`
@@ -81,11 +90,14 @@ src/
 - **Version**: update `src/version.js` on every release
 - **Theme**: `T.surface`, `T.bg`, `T.text`, `T.textMuted`, `T.accent`, `T.border`, `T.success`, `T.danger`, `T.warning`, `T.info`
 - **VesselField**: named export `{ VesselField }` not default
+- **EntityHistoryModal**: accepts `entityType`, `entityId`, `title`, `headerContent`, `onClose`; bridges to `shipment_events` for type="shipment", else uses `entity_events`
+- **Route matching**: `allocationRouteMatch(s, a, contractsById, linkedPortIdx)` in tokens.js — defers to the allocation's contract legs (`polLinkedAllowed`/`podLinkedAllowed`) for linked-port expansion; falls back to exact pol/pod equality when no contract is loaded
+- **contractMatch**: `contractMatch(s, a)` — priority: contractId exact > contractNumber/contractRef string > contractType === "Central Contract"
+- **Contract legs loaded on demand**: SpaceConfigurationsPage fetches `api.contracts.get(id)` for each unique allocation contractId and caches in `contractsById` state
 
-## Recent fixes (v0.11.0)
-- shipment_events table: logEvent() called in PUT /api/shipments, POST/PUT/DELETE /api/containers
-- Kanban: drag-to-reorder within columns with DropLine indicator
-- Countries portCount: LEFT JOIN + startup backfill on country_code
-- Trade lanes: GET/PUT /api/trade-lanes/:code/countries endpoints added
-- Port locations: last_synced_at column + delta-sync in import-mdm-data.js
-- App.jsx: duplicate "mdm-regions" key removed from PAGE_TITLES
+## Recent changes (v0.15.0)
+- SpaceConfigurationsPage: Linked Shipments action + modal; IdChip in History header; Actions column header; setRawConflicts crash fix; contractMatch + allocationRouteMatch applied to consumedPerAlloc and Linked Shipments filter; "linked" badge shown when port-link resolved match
+- DashboardPage: 0-TEU exclusion from rangeShipments; Contract Consumption Allocated vs Consumed TEU chart + 6-week trend line chart per contract; Shipments in Period resizable columns; CHART_COLORS module-level constant
+- ShipmentDetailPage: ContainerTypePickerModal — visual equipment picker grouped by 20ft/40ft
+- server.js: contracts list batches leg fetching via IN query (no N+1)
+- tokens.js: buildLinkedPortIndex, matchedLegFor, allocationRouteMatch helpers added

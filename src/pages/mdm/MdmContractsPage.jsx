@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { T, IMDG_CLASSES } from "../../tokens";
+import { T, IMDG_CLASSES, CONTAINER_OPTIONS as CONTAINER_OPTION_DEFS } from "../../tokens";
 import { api } from "../../api";
 import { toast } from "../../toast";
 import { PageSpinner } from "../../components/primitives/Spinner";
@@ -36,7 +36,7 @@ const SERVICE_CODES = [
   { code: "SCS",   label: "Suez Canal" },
   { code: "OTHER", label: "Other / Custom" },
 ];
-const CONTAINER_OPTIONS = ["20DC","40DC","40HC","40RF","20RF","20OT","40OT","20FR","40FR","20TK","40TK"];
+const CONTAINER_OPTIONS = CONTAINER_OPTION_DEFS.map(o => o.code);
 const CURRENCIES = ["USD","EUR","GBP","CHF","JPY","CNY","SGD","HKD","AED","SAR","AUD","CAD","DKK","NOK","SEK"];
 const UNITS = ["per_container","per_bl","per_kg","per_cbm"];
 const MOVEMENT_TYPES = ["FCL","LCL"];
@@ -613,8 +613,9 @@ const MdmContractsPage = () => {
   const [offset,  setOffset]  = useState(0);
   const [filters, setFilters] = useState(EMPTY_FILTERS);
   const [loading, setLoading] = useState(true);
-  const [modal,           setModal]           = useState(null);
-  const [historyContract, setHistoryContract] = useState(null);
+  const [modal,            setModal]            = useState(null);
+  const [historyContract,  setHistoryContract]  = useState(null);
+  const [routingContract,  setRoutingContract]  = useState(null);
   const timer = useRef(null);
 
   const doLoad = useCallback(async (f, off) => {
@@ -671,7 +672,7 @@ const MdmContractsPage = () => {
   const headers = ["Contract #","Carrier","Named Account","Route","Containers","DG","Valid From","Valid To","Status",""];
 
   const th = {
-    position: "relative", fontFamily: T.body, fontSize: 10.5, fontWeight: 600,
+    position: "relative", paddingLeft: 6, fontFamily: T.body, fontSize: 10.5, fontWeight: 600,
     color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em",
   };
 
@@ -786,8 +787,31 @@ const MdmContractsPage = () => {
               </div>
 
               {/* Route */}
-              <div style={{ fontFamily: T.mono, fontSize: 11, color: T.text }}>
-                {routeSummary(legs)}
+              <div>
+                {legs.length === 0 ? (
+                  <span style={{ color: T.border }}>—</span>
+                ) : (
+                  <>
+                    <div style={{ fontFamily: T.mono, fontSize: 12, color: T.text, fontWeight: 600 }}>
+                      {legs[0].pol} <span style={{ color: T.border }}>›</span> {legs[0].pod}
+                    </div>
+                    {(legs[0].polName || legs[0].podName) && (
+                      <div style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted, marginTop: 1,
+                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {legs[0].polName} › {legs[0].podName}
+                      </div>
+                    )}
+                    {legs.length > 1 && (
+                      <button type="button"
+                        onClick={e => { e.stopPropagation(); setRoutingContract(c); }}
+                        style={{ marginTop: 4, background: "none", border: "none", padding: 0,
+                          cursor: "pointer", fontFamily: T.body, fontSize: 10.5, color: T.accent,
+                          textDecoration: "underline", textDecorationStyle: "dotted" }}>
+                        +{legs.length - 1} more routing{legs.length - 1 > 1 ? "s" : ""}
+                      </button>
+                    )}
+                  </>
+                )}
               </div>
 
               {/* Container types */}
@@ -880,6 +904,58 @@ const MdmContractsPage = () => {
             </>
           }
           onClose={() => setHistoryContract(null)} />
+      )}
+
+      {/* Routings modal */}
+      {routingContract && (
+        <Modal
+          title={`Routings — ${routingContract.contractNumber}`}
+          onClose={() => setRoutingContract(null)}
+          width={500}
+        >
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {(routingContract.legs || []).map((leg, i) => (
+              <div key={i} style={{ background: T.bg, border: `1px solid ${T.border}`,
+                borderRadius: 8, padding: "12px 16px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: leg.polName || leg.podName || leg.transitDays || leg.vesselService ? 8 : 0 }}>
+                  <span style={{ fontFamily: T.mono, fontSize: 10, color: T.border, fontWeight: 600,
+                    background: T.surface, border: `1px solid ${T.border}`, borderRadius: 4,
+                    padding: "1px 6px", flexShrink: 0 }}>
+                    Leg {i + 1}
+                  </span>
+                  <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.accent }}>{leg.pol}</span>
+                  <span style={{ fontFamily: T.mono, fontSize: 14, color: T.textMuted }}>›</span>
+                  <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.accent }}>{leg.pod}</span>
+                </div>
+                {(leg.polName || leg.podName) && (
+                  <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, marginBottom: 6 }}>
+                    {leg.polName} <span style={{ color: T.border }}>›</span> {leg.podName}
+                  </div>
+                )}
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 20px" }}>
+                  {leg.transitDays > 0 && (
+                    <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+                      Transit: <span style={{ color: T.text }}>{leg.transitDays}d</span>
+                    </span>
+                  )}
+                  {leg.vesselService && (
+                    <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+                      Service: <span style={{ color: T.text }}>{leg.vesselService}</span>
+                    </span>
+                  )}
+                  {(leg.polLinkedAllowed || leg.podLinkedAllowed) && (
+                    <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
+                      Linked ports:{" "}
+                      <span style={{ color: T.text }}>
+                        {[leg.polLinkedAllowed && "POL", leg.podLinkedAllowed && "POD"].filter(Boolean).join(", ")}
+                      </span>
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Modal>
       )}
     </div>
   );

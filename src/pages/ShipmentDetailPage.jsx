@@ -1,5 +1,5 @@
 ﻿import React, { useState, useEffect } from "react";
-import { T, INCOTERMS_2020, CONTAINER_TYPES, teuOf,
+import { T, INCOTERMS_2020, CONTAINER_TYPES, CONTAINER_OPTIONS, teuOf,
          statusVariant, contractVariant , addDays, diffDays , IMDG_CLASSES, IMDG_CLASS_VARIANT } from "../tokens";
 import { ShipmentForm } from "./ShipmentsPage";
 import { VesselField } from "../components/shared/VesselCombobox";
@@ -73,6 +73,81 @@ const SectionHeader = ({ n, title }) => {
   );
 };
 
+// ─── Container type picker modal ─────────────────────────────────────────────
+
+const ContainerTypePickerModal = ({ current, onSelect, onClose }) => {
+  const [hovered, setHovered] = useState(null);
+  const groups = [
+    { size: "20", teu: 1, items: CONTAINER_OPTIONS.filter(o => o.size === "20") },
+    { size: "40", teu: 2, items: CONTAINER_OPTIONS.filter(o => o.size === "40") },
+  ];
+  return (
+    <Modal title="Select Equipment Type" onClose={onClose} width={560}>
+      {/* TEU info banner */}
+      <div style={{ display: "flex", gap: 12, marginBottom: 20 }}>
+        {[{ size: "20", teu: 1 }, { size: "40", teu: 2 }].map(({ size, teu }) => (
+          <div key={size} style={{ flex: 1, background: T.bg, border: `1px solid ${T.border}`,
+            borderRadius: 8, padding: "10px 14px", display: "flex", alignItems: "center", gap: 12 }}>
+            <span style={{ fontFamily: T.mono, fontSize: 22, fontWeight: 800, color: T.accent }}>{size}ft</span>
+            <div>
+              <div style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.text }}>{teu} TEU</div>
+              <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
+                {size === "20" ? "Standard 20ft unit" : "Standard 40ft unit"}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Options grouped by size */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        {groups.map(({ size, teu, items }) => (
+          <div key={size}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+              <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700,
+                color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
+                {size}ft · {teu} TEU
+              </span>
+              <div style={{ flex: 1, height: 1, background: T.border, opacity: 0.4 }} />
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              {items.map(opt => {
+                const isSelected = current === opt.code;
+                const isHovered  = hovered === opt.code;
+                return (
+                  <div key={opt.code}
+                    onClick={() => { onSelect(opt); onClose(); }}
+                    onMouseEnter={() => setHovered(opt.code)}
+                    onMouseLeave={() => setHovered(null)}
+                    style={{ display: "grid", gridTemplateColumns: "64px 160px 1fr",
+                      alignItems: "center", gap: 12, padding: "10px 14px",
+                      borderRadius: 8, cursor: "pointer",
+                      background: isSelected ? T.accent + "18" : isHovered ? T.surfaceHover : T.surface,
+                      border: `1px solid ${isSelected ? T.accent + "66" : isHovered ? T.border : T.border + "55"}`,
+                      transition: "background .1s, border-color .1s" }}>
+                    <span style={{ fontFamily: T.mono, fontSize: 14, fontWeight: 800,
+                      color: isSelected ? T.accent : T.text }}>
+                      {opt.code}
+                    </span>
+                    <span style={{ fontFamily: T.body, fontSize: 12, fontWeight: 600, color: T.text }}>
+                      {opt.label}
+                    </span>
+                    <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, lineHeight: 1.4 }}>
+                      {opt.desc}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </Modal>
+  );
+};
+
+// ─── Container form ───────────────────────────────────────────────────────────
+
 const ContainerForm = ({ init = {}, onSave, onCancel }) => {
   const [f, setF] = useState({
     containerNumber:  init.containerNumber  || "",
@@ -86,11 +161,13 @@ const ContainerForm = ({ init = {}, onSave, onCancel }) => {
     dgClass:          init.dgClass          || "",
   });
   const set = k => v => setF(p => ({ ...p, [k]: v }));
-  const typeLabel = { DC: "Dry", RF: "Reefer", OT: "Open Top", FR: "Flat Rack", TK: "Tank" };
 
-  const [touched,  setTouched]  = useState({});
-  const [isSaving, setIsSaving] = useState(false);
+  const [touched,         setTouched]         = useState({});
+  const [isSaving,        setIsSaving]        = useState(false);
+  const [typePickerOpen,  setTypePickerOpen]  = useState(false);
   const touch = k => setTouched(p => ({ ...p, [k]: true }));
+
+  const selectedEquipment = CONTAINER_OPTIONS.find(o => o.size === f.size && o.type === f.type) || null;
 
   const weightOk = parseFloat(f.grossWeightKg) > 0;
   const volumeOk = parseFloat(f.volumeCbm)    > 0;
@@ -114,20 +191,43 @@ const ContainerForm = ({ init = {}, onSave, onCancel }) => {
         placeholder="MAEU1234567" mono required
         hint="ISO 6346 container ID" />
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <Field label="Size" required>
-          <div style={{ display: "flex", gap: 8 }}>
-            {["20", "40"].map(sz => (
-              <BtnToggle key={sz} selected={f.size === sz} onClick={() => set("size")(sz)} wide
-                sub={sz === "20" ? "1 TEU" : "2 TEU"}>
-                {sz}ft
-              </BtnToggle>
-            ))}
-          </div>
-        </Field>
-        <Sel label="Equipment Type" value={f.type} onChange={set("type")} required
-          options={CONTAINER_TYPES.map(t => ({ value: t, label: `${t} – ${typeLabel[t] || t}` }))} />
-      </div>
+      <Field label="Equipment Type" required hint="Size, type and TEU — click to browse all options">
+        <button type="button" onClick={() => setTypePickerOpen(true)}
+          style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between",
+            padding: "8px 12px", borderRadius: 6, cursor: "pointer", textAlign: "left",
+            background: "none", border: `1px solid ${selectedEquipment ? T.accent + "66" : T.border}`,
+            transition: "border-color .12s" }}
+          onMouseEnter={e => e.currentTarget.style.borderColor = T.accent}
+          onMouseLeave={e => e.currentTarget.style.borderColor = selectedEquipment ? T.accent + "66" : T.border}>
+          {selectedEquipment ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <span style={{ fontFamily: T.mono, fontSize: 14, fontWeight: 800, color: T.accent }}>
+                {selectedEquipment.code}
+              </span>
+              <span style={{ fontFamily: T.body, fontSize: 13, color: T.text }}>
+                {selectedEquipment.label}
+              </span>
+              <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted,
+                background: T.bg, border: `1px solid ${T.border}`, borderRadius: 4,
+                padding: "1px 7px" }}>
+                {selectedEquipment.teu} TEU
+              </span>
+            </div>
+          ) : (
+            <span style={{ fontFamily: T.body, fontSize: 13, color: T.border }}>
+              Select equipment type…
+            </span>
+          )}
+          <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted, flexShrink: 0 }}>▾</span>
+        </button>
+      </Field>
+
+      {typePickerOpen && (
+        <ContainerTypePickerModal
+          current={selectedEquipment?.code}
+          onSelect={opt => { setF(p => ({ ...p, size: opt.size, type: opt.type })); }}
+          onClose={() => setTypePickerOpen(false)} />
+      )}
 
       {/* ② Cargo Details */}
       <SectionHeader n="②" title="Cargo Details" />

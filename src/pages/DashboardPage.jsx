@@ -14,6 +14,11 @@ import Pagination from "../components/primitives/Pagination";
 import DatePicker from "../components/primitives/DatePicker";
 import { useResizableColumns, ColResizer } from "../components/primitives/useResizableColumns.jsx";
 
+const CHART_COLORS = [
+  "#6366f1","#22c55e","#f59e0b","#3b82f6",
+  "#ec4899","#8b5cf6","#06b6d4","#ef4444","#10b981","#f97316",
+];
+
 // ─── Lane pair display ───────────────────────────────────────────────────────
 
 const LanePair = ({ origin, dest }) => (
@@ -1006,8 +1011,8 @@ const MatchedShipmentsTable = ({ shipments, containers, carriers, activeAllocati
     return { ...s, teu, carrier, alloc };
   }), [shipments, activeAllocations, containers, carriers]);
 
-  const COL = "130px 120px 120px 110px 140px 48px 90px";
   const HDR = ["Shipment ID", "POL → POD", "Carrier", "Contract", "Space Config", "TEU", "Status"];
+  const { template: COL, startResize } = useResizableColumns("dashboard-matched-shipments", [130, 120, 120, 110, 140, 48, 90]);
 
   return (
     <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden" }}>
@@ -1028,9 +1033,11 @@ const MatchedShipmentsTable = ({ shipments, containers, carriers, activeAllocati
         <>
           <div style={{ display: "grid", gridTemplateColumns: COL,
             padding: "9px 20px", borderBottom: `1px solid ${T.border}` }}>
-            {HDR.map(h => (
-              <span key={h} style={{ fontFamily: T.body, fontSize: 10.5, fontWeight: 600,
-                color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>{h}</span>
+            {HDR.map((h, i) => (
+              <div key={h} style={{ position: "relative", paddingLeft: 6, fontFamily: T.body, fontSize: 10.5,
+                fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
+                {h}{i < HDR.length - 1 && <ColResizer onStart={e => startResize(i, e)} />}
+              </div>
             ))}
           </div>
           {rows.map(s => (
@@ -1069,7 +1076,7 @@ const MatchedShipmentsTable = ({ shipments, containers, carriers, activeAllocati
 
 // ─── Contract Consumption View (Contract tab) ─────────────────────────────────
 
-const ContractConsumptionView = ({ rangeShipments, containers, carriers }) => {
+const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocations = [], contractTrendData }) => {
   const [contractMap, setContractMap] = useState({});
   const [loading,     setLoading]     = useState(false);
 
@@ -1089,6 +1096,50 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers }) => {
     });
     return Object.values(m);
   }, [centralShipments]);
+
+  // Allocated TEU per contract from space configs
+  const allocByContract = useMemo(() => {
+    const m = {};
+    allocations.forEach(a => {
+      if (!a.contractId) return;
+      m[a.contractId] = (m[a.contractId] || 0) + a.allocatedTEU;
+    });
+    return m;
+  }, [allocations]);
+
+  // Consumed TEU per contract from shipments
+  const consumedByContract = useMemo(() => {
+    const m = {};
+    centralShipments.forEach(s => {
+      const teu = containers.filter(c => c.shipmentId === s.id).reduce((acc, c) => acc + teuOf(c.size), 0);
+      m[s.contractId] = (m[s.contractId] || 0) + teu;
+    });
+    return m;
+  }, [centralShipments, containers]);
+
+  // Chart rows — union of contracts from allocations + shipments, sorted by utilisation desc
+  const chartRows = useMemo(() => {
+    const ids = new Set([
+      ...Object.keys(allocByContract),
+      ...Object.keys(consumedByContract),
+    ]);
+    return Array.from(ids).map(id => {
+      const alloc    = allocations.find(a => a.contractId === id);
+      const allocated = allocByContract[id] || 0;
+      const consumed  = consumedByContract[id] || 0;
+      const pct       = allocated > 0 ? Math.round((consumed / allocated) * 100) : null;
+      const barColor  = pct === null ? T.info
+                      : pct >= 100  ? T.danger
+                      : pct >= 80   ? T.warning
+                      : T.success;
+      return {
+        contractId:     id,
+        contractNumber: alloc?.contractNumber || id,
+        carrierCode:    alloc?.carrierCode || "",
+        allocated, consumed, pct, barColor,
+      };
+    }).sort((a, b) => (b.pct ?? -1) - (a.pct ?? -1));
+  }, [allocByContract, consumedByContract, allocations]);
 
   useEffect(() => {
     const missing = groups.map(g => g.contractId).filter(id => !contractMap[id]);
@@ -1140,6 +1191,129 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers }) => {
           {groups.length} contract{groups.length !== 1 ? "s" : ""} · {centralShipments.length} Central Contract shipment{centralShipments.length !== 1 ? "s" : ""} in range
         </p>
       </div>
+
+      {/* ── Charts row ── */}
+      {(chartRows.length > 0 || contractTrendData?.contractIds?.length > 0) && (
+        <div style={{ display: "grid",
+          gridTemplateColumns: contractTrendData?.contractIds?.length > 0 ? "1fr 1fr" : "1fr",
+          gap: 16, marginBottom: 18 }}>
+
+          {/* Left: allocated vs consumed bars */}
+          {chartRows.length > 0 && (
+            <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12,
+              padding: "18px 20px" }}>
+              <div style={{ marginBottom: 14 }}>
+                <h2 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: "0 0 3px" }}>
+                  Allocated vs Consumed TEU
+                </h2>
+                <p style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, margin: 0 }}>
+                  Space config utilisation per contract
+                </p>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10,
+                maxHeight: 260, overflowY: "auto" }}>
+                {chartRows.map(row => (
+                  <div key={row.contractId} style={{ display: "grid",
+                    gridTemplateColumns: "160px 1fr 120px", gap: 10, alignItems: "center" }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: T.accent,
+                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {row.contractNumber}
+                      </div>
+                      {row.carrierCode && (
+                        <div style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted, marginTop: 1 }}>
+                          {row.carrierCode}
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ position: "relative", height: 16, borderRadius: 3,
+                      background: T.border + "44", overflow: "hidden" }}>
+                      {row.allocated > 0 && (
+                        <div style={{ position: "absolute", left: 0, top: 0, bottom: 0,
+                          width: `${Math.min(100, (row.consumed / row.allocated) * 100)}%`,
+                          background: row.barColor, borderRadius: 3, transition: "width .4s ease",
+                          minWidth: row.consumed > 0 ? 4 : 0 }} />
+                      )}
+                      {row.allocated === 0 && row.consumed > 0 && (
+                        <div style={{ position: "absolute", left: 0, top: 0, bottom: 0,
+                          width: "100%", background: T.info + "55", borderRadius: 3 }} />
+                      )}
+                    </div>
+                    <div style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                      <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: row.barColor }}>
+                        {row.consumed}
+                      </span>
+                      <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted }}>
+                        {" / "}{row.allocated > 0 ? row.allocated : "—"} TEU
+                      </span>
+                      {row.pct !== null && (
+                        <span style={{ fontFamily: T.mono, fontSize: 10, color: row.barColor,
+                          marginLeft: 5, background: row.barColor + "18",
+                          border: `1px solid ${row.barColor}44`,
+                          borderRadius: 3, padding: "0 4px" }}>
+                          {row.pct}%
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ display: "flex", gap: 12, marginTop: 14, paddingTop: 12,
+                borderTop: `1px solid ${T.border}22`, flexWrap: "wrap" }}>
+                {[
+                  { color: T.success, label: "< 80%" },
+                  { color: T.warning, label: "80–99%" },
+                  { color: T.danger,  label: "≥ 100%" },
+                  { color: T.info,    label: "No config" },
+                ].map(({ color, label }) => (
+                  <div key={label} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                    <div style={{ width: 8, height: 8, borderRadius: 2, background: color, flexShrink: 0 }} />
+                    <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{label}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Right: 6-week trend by contract */}
+          {contractTrendData?.contractIds?.length > 0 && (
+            <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12,
+              padding: "20px 20px 14px" }}>
+              <div style={{ marginBottom: 16 }}>
+                <h2 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: "0 0 3px" }}>
+                  6-Week TEU Trend
+                </h2>
+                <p style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, margin: 0 }}>
+                  Weekly consumption per contract — last 6 weeks
+                </p>
+              </div>
+              <ResponsiveContainer width="100%" height={240}>
+                <LineChart data={contractTrendData.weeks} margin={{ top: 4, right: 8, left: -8, bottom: 4 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={T.border} vertical={false} />
+                  <XAxis dataKey="week" tick={{ fontFamily: T.mono, fontSize: 10, fill: T.textMuted }}
+                    axisLine={{ stroke: T.border }} tickLine={false} />
+                  <YAxis tick={{ fontFamily: T.body, fontSize: 10, fill: T.textMuted }}
+                    axisLine={false} tickLine={false} allowDecimals={false} />
+                  <Tooltip
+                    contentStyle={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, fontFamily: T.body, fontSize: 12 }}
+                    labelStyle={{ color: T.text, fontWeight: 600, marginBottom: 4 }}
+                    itemStyle={{ color: T.textMuted }}
+                    formatter={(v, name) => [`${v} TEU`, contractTrendData.refMap[name] || name]}
+                    cursor={{ stroke: T.border, strokeWidth: 1 }} />
+                  <Legend
+                    wrapperStyle={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, paddingTop: 10 }}
+                    formatter={name => contractTrendData.refMap[name] || name} />
+                  {contractTrendData.contractIds.map((id, i) => (
+                    <Line key={id} type="monotone" dataKey={id}
+                      stroke={CHART_COLORS[i % CHART_COLORS.length]} strokeWidth={2}
+                      dot={{ r: 3, fill: CHART_COLORS[i % CHART_COLORS.length] }} activeDot={{ r: 5 }} />
+                  ))}
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </div>
+      )}
 
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         {groups.map(g => {
@@ -1263,11 +1437,12 @@ const DashboardPage = ({ shipments, containers, carriers, allocations }) => {
     [allocations, rangeStart, rangeEnd]
   );
 
-  // Shipments with ETD (or createdAt) in range
+  // Shipments with ETD (or createdAt) in range, with at least 1 TEU
   const rangeShipments = useMemo(() => shipments.filter(s => {
     const ref = s.etd || s.createdAt || "";
-    return ref >= rangeStart && ref <= rangeEnd;
-  }), [shipments, rangeStart, rangeEnd]);
+    if (!(ref >= rangeStart && ref <= rangeEnd)) return false;
+    return containers.filter(c => c.shipmentId === s.id).reduce((acc, c) => acc + teuOf(c.size), 0) > 0;
+  }), [shipments, rangeStart, rangeEnd, containers]);
 
   const today = todayIso();
 
@@ -1345,12 +1520,6 @@ const DashboardPage = ({ shipments, containers, carriers, allocations }) => {
 
   const totalAlloc    = activeAllocations.reduce((s, a) => s + a.allocatedTEU, 0);
 
-  // Color palette for carrier lines
-  const CARRIER_COLORS = [
-    "#6366f1","#22c55e","#f59e0b","#3b82f6",
-    "#ec4899","#8b5cf6","#06b6d4","#ef4444","#10b981","#f97316",
-  ];
-
   // Trend chart data: reshape sparkData arrays into recharts [{week, MAEU, HLCU, ...}]
   const trendChartData = useMemo(() => {
     const today        = todayIso();
@@ -1368,6 +1537,29 @@ const DashboardPage = ({ shipments, containers, carriers, allocations }) => {
   }, [carrierTrends, activeAllocations]);
 
   const trendCarriers = [...new Set(activeAllocations.map(a => a.carrierCode))];
+
+  // 6-week TEU trend by contract (Central Contract shipments only)
+  const contractTrendData = useMemo(() => {
+    const centralSh    = shipments.filter(s => s.contractType === "Central Contract" && s.contractId);
+    const contractIds  = [...new Set(centralSh.map(s => s.contractId))];
+    const refMap       = {};
+    centralSh.forEach(s => { if (!refMap[s.contractId]) refMap[s.contractId] = s.contractRef || String(s.contractId); });
+    const todayStr = todayIso();
+    const weeks = Array.from({ length: 6 }, (_, i) => {
+      const wEnd   = addDays(todayStr, -(5 - i) * 7);
+      const wStart = addDays(wEnd, -6);
+      const label  = parseIso(wEnd).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+      const pt     = { week: label };
+      contractIds.forEach(id => {
+        pt[id] = centralSh
+          .filter(s => s.contractId === id && s.etd >= wStart && s.etd <= wEnd)
+          .reduce((acc, s) =>
+            acc + containers.filter(c => c.shipmentId === s.id).reduce((a2, c) => a2 + teuOf(c.size), 0), 0);
+      });
+      return pt;
+    });
+    return { weeks, contractIds, refMap };
+  }, [shipments, containers]);
 
   const totalConsumed = chartData.reduce((s, d) => s + d.consumed, 0);
   const totalRemain   = Math.max(0, totalAlloc - totalConsumed);
@@ -1509,8 +1701,8 @@ const DashboardPage = ({ shipments, containers, carriers, allocations }) => {
                     <Legend wrapperStyle={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, paddingTop: 10 }} />
                     {trendCarriers.map((code, i) => (
                       <Line key={code} type="monotone" dataKey={code}
-                        stroke={CARRIER_COLORS[i % CARRIER_COLORS.length]} strokeWidth={2}
-                        dot={{ r: 3, fill: CARRIER_COLORS[i % CARRIER_COLORS.length] }} activeDot={{ r: 5 }} />
+                        stroke={CHART_COLORS[i % CHART_COLORS.length]} strokeWidth={2}
+                        dot={{ r: 3, fill: CHART_COLORS[i % CHART_COLORS.length] }} activeDot={{ r: 5 }} />
                     ))}
                   </LineChart>
                 </ResponsiveContainer>
@@ -1534,6 +1726,8 @@ const DashboardPage = ({ shipments, containers, carriers, allocations }) => {
           rangeShipments={rangeShipments}
           containers={containers}
           carriers={carriers}
+          allocations={activeAllocations}
+          contractTrendData={contractTrendData}
         />
       )}
 

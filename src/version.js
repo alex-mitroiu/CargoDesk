@@ -2,11 +2,17 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.14.0";
-export const BUILD     = "2026-06-29";
-export const CODENAME  = "Logbook";
+export const VERSION   = "0.15.0";
+export const BUILD     = "2026-06-30";
+export const CODENAME  = "Waypoint";
 
 export const CHANGELOG = [
+  {
+    version:  "0.15.0",
+    date:     "2026-06-30",
+    codename: "Waypoint",
+    summary:  "Space Configs — Linked Shipments: new action-menu item opens a read-only modal showing every shipment currently consuming that configuration's space, with a TEU progress bar and a per-row contract badge; shipments that matched via a linked-port equivalent on the carrier's contract leg show a linked badge. Config ID chip with copy-to-clipboard added to the History modal header for easier cross-referencing. Actions column header fix; setConflicts crash fix. Contract-aware TEU consumption: consumedPerAlloc and the Linked Shipments modal now filter by contractId / contractRef (not just carrier), and resolve linked-port equivalents via each contract leg's polLinkedAllowed / podLinkedAllowed flags — fixing cases where a shipment's port is a registered linked equivalent of the config's declared port but was previously excluded. Shared helpers buildLinkedPortIndex / matchedLegFor / allocationRouteMatch added to tokens.js. Dashboard — 0-TEU shipments excluded from all range calculations and displayed lists. Contract Consumption tab gains an Allocated vs Consumed TEU bar chart (utilisation per contract, green/amber/red) and a 6-week TEU trend line chart per contract number; Shipments in Period table gains drag-to-resize columns with localStorage persistence. Shipment Detail — ContainerTypePickerModal: clicking the Equipment Type field now opens a visual picker grouped by 20ft / 40ft, showing equipment code, label, description and TEU value per option. server.js — contracts list now batches leg fetching via a single IN query instead of N+1 lookups.",
+  },
   {
     version:  "0.14.0",
     date:     "2026-06-29",

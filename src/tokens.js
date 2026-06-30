@@ -1,7 +1,21 @@
 export const CONTRACT_PRESETS = ["Pending", "SPOT", "Customer Own", "Central Contract"];
-export const CONTAINER_TYPES  = ["DC", "RF", "OT", "FR", "TK"];
+export const CONTAINER_TYPES  = ["DC", "HC", "RF", "OT", "FR", "TK"];
 export const STATUSES         = ["Active", "Pending", "Completed", "Cancelled", "Requires Review"];
 export const teuOf = (size) => (size === "40" ? 2 : 1);
+
+export const CONTAINER_OPTIONS = [
+  { code: "20DC", size: "20", type: "DC", teu: 1, label: "20ft Dry Container", desc: "Standard dry cargo — general goods, non-temperature-sensitive" },
+  { code: "40DC", size: "40", type: "DC", teu: 2, label: "40ft Dry Container", desc: "Standard dry cargo — general goods, non-temperature-sensitive" },
+  { code: "40HC", size: "40", type: "HC", teu: 2, label: "40ft High Cube",     desc: "Extra interior height (9'6\") for voluminous or tall cargo" },
+  { code: "20RF", size: "20", type: "RF", teu: 1, label: "20ft Reefer",        desc: "Temperature-controlled — food, pharma, cold-chain cargo" },
+  { code: "40RF", size: "40", type: "RF", teu: 2, label: "40ft Reefer",        desc: "Temperature-controlled — food, pharma, cold-chain cargo" },
+  { code: "20OT", size: "20", type: "OT", teu: 1, label: "20ft Open Top",      desc: "Removable roof — machinery, lumber, crane-loaded cargo" },
+  { code: "40OT", size: "40", type: "OT", teu: 2, label: "40ft Open Top",      desc: "Removable roof — machinery, lumber, crane-loaded cargo" },
+  { code: "20FR", size: "20", type: "FR", teu: 1, label: "20ft Flat Rack",     desc: "Collapsible ends — heavy machinery, vehicles, oversized loads" },
+  { code: "40FR", size: "40", type: "FR", teu: 2, label: "40ft Flat Rack",     desc: "Collapsible ends — heavy machinery, vehicles, oversized loads" },
+  { code: "20TK", size: "20", type: "TK", teu: 1, label: "20ft Tank",          desc: "Liquid bulk — chemicals, food-grade liquids, petroleum products" },
+  { code: "40TK", size: "40", type: "TK", teu: 2, label: "40ft Tank",          desc: "Liquid bulk — chemicals, food-grade liquids, petroleum products" },
+];
 
 // ─── Theme definitions ───────────────────────────────────────────────────────
 
@@ -90,6 +104,37 @@ export const LANE_BADGE_VARIANT = {
 };
 export const statusVariant   = s => ({ Active:"success",Pending:"warning",Completed:"info",Cancelled:"danger","Requires Review":"purple" }[s] || "default");
 export const contractVariant = c => ({ SPOT:"info","Customer Own":"amber",Pending:"warning" }[c] || "default");
+
+// ─── Contract-leg route matching ──────────────────────────────────────────────
+// Mirrors the linked-port expansion in GET /api/contracts/match: a contract leg's
+// pol_linked_allowed / pod_linked_allowed flags decide whether a shipment can match
+// via a linked port on that side, instead of requiring an exact UN/LOCODE match.
+export const buildLinkedPortIndex = (linkedPorts = []) => {
+  const idx = {};
+  linkedPorts.forEach(lp => {
+    (idx[lp.primaryUnlocode] ??= new Set()).add(lp.linkedUnlocode);
+    (idx[lp.linkedUnlocode]  ??= new Set()).add(lp.primaryUnlocode);
+  });
+  return idx;
+};
+
+export const matchedLegFor = (contract, linkedPortIdx, pol, pod) => {
+  if (!contract?.legs?.length) return null;
+  return contract.legs.find(leg => {
+    const polOk = leg.pol === pol || (leg.polLinkedAllowed && linkedPortIdx[leg.pol]?.has(pol));
+    const podOk = leg.pod === pod || (leg.podLinkedAllowed && linkedPortIdx[leg.pod]?.has(pod));
+    return polOk && podOk;
+  }) || null;
+};
+
+// Route match for a shipment against an allocation: when the allocation has a linked
+// system contract, defer to that contract's legs (with linked-port expansion); otherwise
+// fall back to a plain exact POL/POD comparison against the allocation's own fields.
+export const allocationRouteMatch = (s, a, contractsById, linkedPortIdx) => {
+  const contract = a.contractId ? contractsById[a.contractId] : null;
+  if (contract) return !!matchedLegFor(contract, linkedPortIdx, s.pol, s.pod);
+  return (!a.pol || s.pol === a.pol) && (!a.pod || s.pod === a.pod);
+};
 
 
 export const INCOTERMS_2020 = [

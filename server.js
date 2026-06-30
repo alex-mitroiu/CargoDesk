@@ -1099,11 +1099,13 @@ app.delete("/api/customers/:id", (req, res) => {
 // ─── Commodities ──────────────────────────────────────────────────────────────
 
 app.get("/api/commodities", (req, res) => {
-  const { search='', limit='50', offset='0' } = req.query;
+  const { search='', grade='', limit='50', offset='0' } = req.query;
   const lim = Math.min(parseInt(limit)||50, 300), off = parseInt(offset)||0;
-  const s = search.trim();
-  const where  = s ? "WHERE code LIKE ? OR description LIKE ? OR grade_name LIKE ?" : "";
-  const params = s ? [`%${s}%`, `%${s}%`, `%${s}%`] : [];
+  const s = search.trim(), g = grade.trim().toUpperCase();
+  const clauses = [], params = [];
+  if (s) { clauses.push("(code LIKE ? OR description LIKE ? OR grade_name LIKE ?)"); params.push(`%${s}%`, `%${s}%`, `%${s}%`); }
+  if (g) { clauses.push("grade_code=?"); params.push(g); }
+  const where = clauses.length ? "WHERE " + clauses.join(" AND ") : "";
   const total  = db.prepare(`SELECT COUNT(*) AS n FROM commodities ${where}`).get(...params).n;
   const rows   = db.prepare(`SELECT * FROM commodities ${where} ORDER BY code LIMIT ? OFFSET ?`).all(...params, lim, off);
   ok(res, { results: rows.map(mapCommodity), total, limit: lim, offset: off });
@@ -1238,7 +1240,15 @@ app.get("/api/contracts", (req, res) => {
   const where = clauses.length ? "WHERE " + clauses.join(" AND ") : "";
   const total = db.prepare(`SELECT COUNT(*) AS n FROM contracts c ${where}`).get(...params).n;
   const rows  = db.prepare(`SELECT c.* FROM contracts c ${where} ORDER BY c.created_at DESC LIMIT ? OFFSET ?`).all(...params, lim, off);
-  ok(res, { results: rows.map(mapContract), total, limit: lim, offset: off });
+  // Attach legs in one IN query rather than N+1 queries
+  const ids = rows.map(r => r.id);
+  let legsMap = {};
+  if (ids.length > 0) {
+    const ph = ids.map(() => '?').join(',');
+    db.prepare(`SELECT * FROM contract_legs WHERE contract_id IN (${ph}) ORDER BY leg_order`).all(...ids)
+      .forEach(l => { (legsMap[l.contract_id] = legsMap[l.contract_id] || []).push(mapLeg(l)); });
+  }
+  ok(res, { results: rows.map(r => ({ ...mapContract(r), legs: legsMap[r.id] || [] })), total, limit: lim, offset: off });
 });
 
 app.get("/api/contracts/:id", (req, res) => {

@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
-import { T, addDays, diffDays, teuOf, LANE_BADGE_VARIANT, todayIso } from "../tokens";
+import { T, addDays, diffDays, teuOf, LANE_BADGE_VARIANT, todayIso, statusVariant, contractVariant,
+  buildLinkedPortIndex, matchedLegFor, allocationRouteMatch } from "../tokens";
 import { api } from "../api";
 import Btn from "../components/primitives/Btn";
 import Badge from "../components/primitives/Badge";
@@ -12,6 +13,33 @@ import DatePicker from "../components/primitives/DatePicker";
 import { useResizableColumns, ColResizer } from "../components/primitives/useResizableColumns.jsx";
 import ActionMenu from "../components/primitives/ActionMenu";
 import EntityHistoryModal from "../components/shared/EntityHistoryModal";
+
+// ─── Config ID chip with copy-to-clipboard ───────────────────────────────────
+const IdChip = ({ id }) => {
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    navigator.clipboard.writeText(id).catch(() => {});
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, width: "100%" }}>
+      <span style={{ fontFamily: T.body, fontSize: 10, fontWeight: 600, color: T.textMuted,
+        textTransform: "uppercase", letterSpacing: ".08em", flexShrink: 0 }}>Config ID</span>
+      <span style={{ fontFamily: T.mono, fontSize: 13, color: T.text, fontWeight: 700,
+        letterSpacing: ".04em" }}>{id}</span>
+      <button type="button" onClick={copy}
+        style={{ background: copied ? T.success + "22" : "none",
+          border: `1px solid ${copied ? T.success : T.border}`,
+          borderRadius: 4, cursor: "pointer",
+          fontFamily: T.mono, fontSize: 10,
+          color: copied ? T.success : T.textMuted,
+          padding: "2px 8px", transition: "all .15s", flexShrink: 0 }}>
+        {copied ? "✓ copied" : "copy"}
+      </button>
+    </div>
+  );
+};
 
 // ─── Lane pair display ────────────────────────────────────────────────────────
 
@@ -345,7 +373,7 @@ const AllocationForm = ({ init = {}, carriers, tradeLanes = [], onSave, onCancel
   useEffect(() => {
     clearTimeout(conflictTimer.current);
     if (!carrierCode || !polPort?.unlocode || !podPort?.unlocode || !effectiveDate || !endDate) {
-      setConflicts({ exact: [], linked: [] }); return;
+      setRawConflicts({ exact: [], linked: [] }); return;
     }
     conflictTimer.current = setTimeout(async () => {
       setConflictLoading(true);
@@ -565,16 +593,37 @@ const SpaceConfigurationsPage = ({
   const [allocModal,    setAllocModal]    = useState(null);
   const [confirmAlloc,  setConfirmAlloc]  = useState(null);
   const [renewInit,     setRenewInit]     = useState(null);
-  const [historyAlloc,  setHistoryAlloc]  = useState(null); // alloc obj for history modal
+  const [historyAlloc,  setHistoryAlloc]  = useState(null);
+  const [linkedAlloc,   setLinkedAlloc]   = useState(null); // alloc obj for linked shipments modal
   const [tradeLanes,    setTradeLanes]    = useState([]);
+  const [linkedPorts,   setLinkedPorts]   = useState([]);
+  const [contractsById, setContractsById] = useState({});
 
   const { template: allocTemplate, startResize: allocStartResize } =
     useResizableColumns("space-configs", [150, 200, 160, 100, 150, 110, 100, 56]);
-  const allocHeaders = ["Carrier", "Name / Route", "Contract", "TEU", "Effective Period", "Consumed", "Status", ""];
+  const allocHeaders = ["Carrier", "Name / Route", "Contract", "TEU", "Effective Period", "Consumed", "Status", "Actions"];
 
   const today = new Date().toISOString().slice(0, 10);
 
   useEffect(() => { api.tradeLanes.list().then(setTradeLanes).catch(() => {}); }, []);
+  useEffect(() => { api.linkedPorts.list().then(setLinkedPorts).catch(() => {}); }, []);
+
+  // Fetch (and cache) the system contract — with its legs — behind each allocation's
+  // contractId, so route matching can honor per-leg linked-port expansion.
+  useEffect(() => {
+    const ids = [...new Set(allocations.map(a => a.contractId).filter(Boolean))];
+    const missing = ids.filter(id => !contractsById[id]);
+    if (!missing.length) return;
+    Promise.all(missing.map(id => api.contracts.get(id).catch(() => null))).then(results => {
+      setContractsById(prev => {
+        const next = { ...prev };
+        results.forEach(c => { if (c) next[c.id] = c; });
+        return next;
+      });
+    });
+  }, [allocations]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const linkedPortIdx = useMemo(() => buildLinkedPortIndex(linkedPorts), [linkedPorts]);
 
   // Open renew modal when navigated from Archive page
   useEffect(() => {
@@ -585,18 +634,30 @@ const SpaceConfigurationsPage = ({
     }
   }, [pendingRenew]);
 
-  // Per-allocation consumed TEU (scoped to each allocation's own period + carrier)
+  // Returns true when a shipment's contract matches an allocation's linked contract
+  const contractMatch = (s, a) => {
+    if (a.contractId)     return s.contractId === a.contractId;
+    if (a.contractNumber) return s.contractRef === a.contractNumber;
+    return s.contractType === "Central Contract";
+  };
+
+  // Per-allocation consumed TEU — scoped to carrier + contract + route + period
   const consumedPerAlloc = useMemo(() => {
     const m = {};
     allocations.forEach(a => {
       const teu = shipments
-        .filter(s => s.carrierCode === a.carrierCode && s.etd >= a.effectiveDate && s.etd <= a.endDate)
+        .filter(s =>
+          s.carrierCode === a.carrierCode &&
+          s.etd >= a.effectiveDate && s.etd <= a.endDate &&
+          contractMatch(s, a) &&
+          allocationRouteMatch(s, a, contractsById, linkedPortIdx)
+        )
         .reduce((sum, s) =>
           sum + containers.filter(c => c.shipmentId === s.id).reduce((acc, c) => acc + teuOf(c.size), 0), 0);
       m[a.id] = teu;
     });
     return m;
-  }, [allocations, shipments, containers]);
+  }, [allocations, shipments, containers, contractsById, linkedPortIdx]);
 
   // 6-week sparkline per allocation carrier
   const sparkPerAlloc = useMemo(() => {
@@ -743,9 +804,10 @@ const SpaceConfigurationsPage = ({
               {/* Cog menu */}
               <div style={{ display: "flex", justifyContent: "flex-end" }}>
                 <ActionMenu items={[
-                  { icon: "✎", label: "Edit",    onClick: () => setAllocModal(a) },
-                  { icon: "📋", label: "History", onClick: () => setHistoryAlloc(a) },
-                  { icon: "✕", label: "Delete",  variant: "danger", onClick: () => setConfirmAlloc(a.id) },
+                  { icon: "✎",  label: "Edit",              onClick: () => setAllocModal(a) },
+                  { icon: "🔗", label: "Linked Shipments",  onClick: () => setLinkedAlloc(a) },
+                  { icon: "📋", label: "History",           onClick: () => setHistoryAlloc(a) },
+                  { icon: "✕",  label: "Delete",            variant: "danger", onClick: () => setConfirmAlloc(a.id) },
                 ]} />
               </div>
             </div>
@@ -778,14 +840,118 @@ const SpaceConfigurationsPage = ({
           onCancel={() => setConfirmAlloc(null)} />
       )}
 
+      {/* ── Linked Shipments modal ── */}
+      {linkedAlloc && (() => {
+        const a = linkedAlloc;
+        const contract = a.contractId ? contractsById[a.contractId] : null;
+        const linked = shipments.filter(s =>
+          s.carrierCode === a.carrierCode &&
+          s.etd >= a.effectiveDate && s.etd <= a.endDate &&
+          contractMatch(s, a) &&
+          allocationRouteMatch(s, a, contractsById, linkedPortIdx)
+        ).map(s => {
+          const leg = contract ? matchedLegFor(contract, linkedPortIdx, s.pol, s.pod) : null;
+          return {
+            ...s,
+            teu: containers.filter(c => c.shipmentId === s.id).reduce((acc, c) => acc + teuOf(c.size), 0),
+            viaLinkedPol: !!leg && leg.pol !== s.pol,
+            viaLinkedPod: !!leg && leg.pod !== s.pod,
+          };
+        }).filter(s => s.teu > 0);
+
+        const totalTEU    = linked.reduce((acc, s) => acc + s.teu, 0);
+        const allocated   = a.allocatedTEU;
+        const pct         = allocated > 0 ? Math.round((totalTEU / allocated) * 100) : 0;
+        const barColor    = pct >= 100 ? T.danger : pct >= (a.alertThreshold ?? 80) ? T.warning : T.success;
+        const SHP_COLS    = ["Shipment ID", "POL → POD", "ETD", "Contract", "TEU", "Status"];
+        const SHP_TMPL    = "140px 130px 90px 150px 52px 90px";
+
+        return (
+          <Modal title="Linked Shipments" onClose={() => setLinkedAlloc(null)} width={700}>
+            {/* Config summary */}
+            <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8,
+              padding: "12px 16px", marginBottom: 16, display: "flex", gap: 20, flexWrap: "wrap", alignItems: "center" }}>
+              <div>
+                <div style={{ fontFamily: T.mono, fontSize: 13, color: T.accent, fontWeight: 700 }}>{a.carrierCode}</div>
+                {(a.pol && a.pod) && (
+                  <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>{a.pol} › {a.pod}</div>
+                )}
+              </div>
+              {a.contractNumber && (
+                <div style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>{a.contractNumber}</div>
+              )}
+              <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+                {a.effectiveDate} – {a.endDate}
+              </div>
+              <div style={{ marginLeft: "auto", textAlign: "right" }}>
+                <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, marginBottom: 3 }}>
+                  <span style={{ color: barColor, fontWeight: 700 }}>{totalTEU}</span>
+                  {" / "}{allocated} TEU consumed ({pct}%)
+                </div>
+                <div style={{ background: T.border + "44", borderRadius: 4, height: 6, width: 140, overflow: "hidden" }}>
+                  <div style={{ height: "100%", width: `${Math.min(100, pct)}%`,
+                    background: barColor, borderRadius: 4, transition: "width .4s" }} />
+                </div>
+              </div>
+            </div>
+
+            {linked.length === 0 ? (
+              <div style={{ padding: "40px 0", textAlign: "center", fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
+                No shipments match this configuration's carrier, route, and period.
+              </div>
+            ) : (
+              <>
+                <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, marginBottom: 10 }}>
+                  {linked.length} shipment{linked.length !== 1 ? "s" : ""} in period
+                </div>
+                <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: SHP_TMPL,
+                    padding: "8px 14px", borderBottom: `1px solid ${T.border}` }}>
+                    {SHP_COLS.map(h => (
+                      <span key={h} style={{ fontFamily: T.body, fontSize: 10, fontWeight: 600,
+                        color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>{h}</span>
+                    ))}
+                  </div>
+                  {linked.map(s => (
+                    <div key={s.id} style={{ display: "grid", gridTemplateColumns: SHP_TMPL,
+                      padding: "10px 14px", borderBottom: `1px solid ${T.border}22`, alignItems: "center",
+                      transition: "background .1s" }}
+                      onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
+                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                      <span style={{ fontFamily: T.mono, fontSize: 11, color: T.accent, fontWeight: 700 }}>{s.id}</span>
+                      <span style={{ fontFamily: T.mono, fontSize: 12, color: T.text, display: "flex", alignItems: "center", gap: 5 }}>
+                        {s.pol} → {s.pod}
+                        {(s.viaLinkedPol || s.viaLinkedPod) && (
+                          <span title="Matched via a linked port equivalent on the carrier's contract leg"
+                            style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, color: T.warning,
+                              background: T.warning + "18", border: `1px solid ${T.warning}44`,
+                              borderRadius: 3, padding: "1px 4px", flexShrink: 0 }}>
+                            ↔ linked
+                          </span>
+                        )}
+                      </span>
+                      <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>{s.etd || "—"}</span>
+                      <Badge variant={contractVariant(s.contractType)}>{s.contractType || "—"}</Badge>
+                      <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.text }}>{s.teu}</span>
+                      <Badge variant={statusVariant(s.status)}>{s.status}</Badge>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </Modal>
+        );
+      })()}
+
       {/* ── History modal ── */}
       {historyAlloc && (
         <EntityHistoryModal
           entityType="allocation"
           entityId={historyAlloc.id}
-          title={`History — ${historyAlloc.id}`}
+          title="Configuration History"
           headerContent={
             <>
+              <IdChip id={historyAlloc.id} />
               <span style={{ fontFamily: T.mono, fontSize: 12, color: T.accent, fontWeight: 700 }}>{historyAlloc.carrierCode}</span>
               <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>{historyAlloc.pol} → {historyAlloc.pod}</span>
               {historyAlloc.contractNumber && (
