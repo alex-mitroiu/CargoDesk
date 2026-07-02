@@ -146,4 +146,5 @@ dist/
 cargodesk.db
 *.db-shm
 *.db-wal
+!sampleDB/cargodesk.db
 .env
