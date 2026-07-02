@@ -46,7 +46,7 @@ const EMPTY_FILTERS = { search:"", carrier:"", status:"", dg:"", asOf:"", contai
 const LIMIT = 25;
 
 const EMPTY_FORM = {
-  contractNumber: "", carrierCode: "", namedAccountId: "", namedAccount: "",
+  contractNumber: "", contractRef: "", carrierCode: "", namedAccountId: "", namedAccount: "",
   movementType: "FCL", containerTypes: [], dgAllowed: false, imdgClasses: [],
   validFrom: "", validTo: "", currency: "USD", status: "Active", notes: "",
   legs: [],
@@ -88,25 +88,27 @@ function routeSummary(legs) {
 
 // ─── Contract Modal Form ──────────────────────────────────────────────────────
 
-const ContractModal = ({ editing, onSave, onClose }) => {
+const ContractModal = ({ editing, prefill, onSave, onClose }) => {
+  const src = editing || prefill;
   const [f, setF] = useState(() => {
-    if (!editing) return { ...EMPTY_FORM };
+    if (!src) return { ...EMPTY_FORM };
     return {
-      contractNumber: editing.contractNumber || "",
-      carrierCode:    editing.carrierCode    || "",
-      namedAccountId: editing.namedAccountId || "",
-      namedAccount:   editing.namedAccount   || "",
-      movementType:   editing.movementType   || "FCL",
-      containerTypes: editing.containerTypes || [],
-      dgAllowed:      editing.dgAllowed      || false,
-      imdgClasses:    editing.imdgClasses    || [],
-      validFrom:      editing.validFrom      || "",
-      validTo:        editing.validTo        || "",
-      currency:       editing.currency       || "USD",
-      status:         editing.status         || "Active",
-      notes:          editing.notes          || "",
-      legs:           editing.legs           || [],
-      rates:          editing.rates          || [],
+      contractNumber: src.contractNumber || "",
+      contractRef:    src.contractRef    || "",
+      carrierCode:    src.carrierCode    || "",
+      namedAccountId: src.namedAccountId || "",
+      namedAccount:   src.namedAccount   || "",
+      movementType:   src.movementType   || "FCL",
+      containerTypes: src.containerTypes || [],
+      dgAllowed:      src.dgAllowed      || false,
+      imdgClasses:    src.imdgClasses    || [],
+      validFrom:      src.validFrom      || "",
+      validTo:        src.validTo        || "",
+      currency:       src.currency       || "USD",
+      status:         src.status         || "Active",
+      notes:          src.notes          || "",
+      legs:           src.legs           || [],
+      rates:          src.rates          || [],
     };
   });
 
@@ -114,7 +116,7 @@ const ContractModal = ({ editing, onSave, onClose }) => {
   const [saving,       setSaving]       = useState(false);
   const [allCarriers,  setAllCarriers]  = useState([]);
   const [carrierOpen,  setCarrierOpen]  = useState(false);
-  const [carrierQuery, setCarrierQuery] = useState(editing?.carrierCode || "");
+  const [carrierQuery, setCarrierQuery] = useState(src?.carrierCode || "");
   const carrierRef = useRef(null);
   const carrierDropPos = useRef({});
 
@@ -322,6 +324,17 @@ const ContractModal = ({ editing, onSave, onClose }) => {
             )}
           </div>
         </Field>
+        {/* Contract Reference */}
+        <div style={{ gridColumn: "1 / -1" }}>
+          <Field label="Contract Reference" hint="Disambiguates contracts sharing the same number — e.g. per region or customer">
+            <input
+              value={f.contractRef}
+              onChange={e => setF(p => ({ ...p, contractRef: e.target.value }))}
+              placeholder="e.g. REF-2025-APAC-001"
+              style={{ ...inputBase, fontFamily: T.mono, fontSize: 13 }}
+            />
+          </Field>
+        </div>
         {/* Named Account */}
         <div style={{ gridColumn: "1 / -1" }}>
           <CustomerCombobox
@@ -614,6 +627,7 @@ const MdmContractsPage = () => {
   const [filters, setFilters] = useState(EMPTY_FILTERS);
   const [loading, setLoading] = useState(true);
   const [modal,            setModal]            = useState(null);
+  const [cloneSource,      setCloneSource]      = useState(null);
   const [historyContract,  setHistoryContract]  = useState(null);
   const [routingContract,  setRoutingContract]  = useState(null);
   const timer = useRef(null);
@@ -643,7 +657,17 @@ const MdmContractsPage = () => {
   const handleClear  = () => { setFilters(EMPTY_FILTERS); setOffset(0); doLoad(EMPTY_FILTERS, 0); };
   const goPage = off => { setOffset(off); doLoad(filters, off); };
 
-  const handleSaved = () => { setModal(null); doLoad(filters, offset); };
+  const handleSaved = () => { setModal(null); setCloneSource(null); doLoad(filters, offset); };
+
+  const handleDuplicate = async c => {
+    try {
+      const full = await api.contracts.get(c.id);
+      setCloneSource(full);
+      setModal("new");
+    } catch (e) {
+      toast.error(e.message);
+    }
+  };
 
   const handleDelete = async id => {
     if (!window.confirm("Delete this contract? This cannot be undone.")) return;
@@ -770,6 +794,11 @@ const MdmContractsPage = () => {
                 <div style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.accent }}>
                   {c.contractNumber || "—"}
                 </div>
+                {c.contractRef && (
+                  <div style={{ fontFamily: T.mono, fontSize: 10.5, color: T.text, marginTop: 2 }}>
+                    {c.contractRef}
+                  </div>
+                )}
                 <div style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted, marginTop: 2 }}>
                   {c.id}
                 </div>
@@ -854,9 +883,10 @@ const MdmContractsPage = () => {
               {/* Actions */}
               <div style={{ display: "flex", justifyContent: "flex-end" }}>
                 <ActionMenu items={[
-                  { icon: "✎",  label: "Edit",    onClick: () => setModal(c) },
-                  { icon: "📋", label: "History",  onClick: () => setHistoryContract(c) },
-                  { icon: "✕",  label: "Delete",  variant: "danger", onClick: () => handleDelete(c.id) },
+                  { icon: "✎",  label: "Edit",      onClick: () => setModal(c) },
+                  { icon: "⧉",  label: "Duplicate", onClick: () => handleDuplicate(c) },
+                  { icon: "📋", label: "History",   onClick: () => setHistoryContract(c) },
+                  { icon: "✕",  label: "Delete",    variant: "danger", onClick: () => handleDelete(c.id) },
                 ]} />
               </div>
             </div>
@@ -874,14 +904,19 @@ const MdmContractsPage = () => {
       {/* Contract modal */}
       {modal && (
         <Modal
-          title={modal === "new" ? "New Contract" : `Edit — ${modal.contractNumber}`}
-          onClose={() => setModal(null)}
+          title={
+            modal === "new"
+              ? (cloneSource ? `New Contract — copy of ${cloneSource.contractNumber}` : "New Contract")
+              : `Edit — ${modal.contractNumber}`
+          }
+          onClose={() => { setModal(null); setCloneSource(null); }}
           width={820}
         >
           <ContractModal
             editing={modal === "new" ? null : modal}
+            prefill={modal === "new" ? cloneSource : null}
             onSave={handleSaved}
-            onClose={() => setModal(null)}
+            onClose={() => { setModal(null); setCloneSource(null); }}
           />
         </Modal>
       )}

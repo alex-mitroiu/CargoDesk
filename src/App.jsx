@@ -33,6 +33,7 @@ import MdmCustomersPage           from "./pages/mdm/MdmCustomersPage";
 import MdmSanctionedCustomersPage from "./pages/mdm/MdmSanctionedCustomersPage";
 import MdmContractsPage        from "./pages/mdm/MdmContractsPage";
 import SpaceConfigurationsPage from "./pages/SpaceConfigurationsPage";
+import LicensePage             from "./pages/LicensePage";
 
 
 
@@ -196,7 +197,10 @@ function App() {
   const [apiError,    setApiError]    = useState(null);
   const [appSettings, setAppSettings] = useState({});
 
-  const [healthOpen, setHealthOpen] = useState(false);
+  const [healthOpen,       setHealthOpen]       = useState(false);
+  const [licenseAccepted,  setLicenseAccepted]  = useState(
+    () => !!localStorage.getItem("cargodesk_license_accepted")
+  );
 
   // Map from page key → settings key that gates it
   const PAGE_SETTING_MAP = {
@@ -694,6 +698,7 @@ function App() {
 
                         <MenuItem icon="📖" label="User Manual"      onClick={() => navigate("manual")} />
                 <MenuItem icon="ℹ" label="About CargoDesk" onClick={() => navigate("about")} />
+                <MenuItem icon="⚖" label="License & Terms"  onClick={() => navigate("license")} />
                 <MenuItem icon="⌨" label="Keyboard Shortcuts" disabled sub="Coming soon" />
 
                 <Divider />
@@ -979,6 +984,7 @@ function App() {
         {page === "mdm-contracts"  && isEnabled("mdm-contracts")  && <MdmContractsPage />}
         {page === "manual"         && <UserManualPage />}
         {page === "about"          && <AboutPage />}
+        {page === "license"        && <LicensePage />}
         {page === "settings"       && <AppSettingsPage />}
 
         </main>
@@ -996,7 +1002,12 @@ function App() {
           ⚓ CargoDesk · v{VERSION}
         </span>
         <span style={{ fontFamily: T.body, fontSize: 11, color: T.border }}>
-          © {COPYRIGHT_YEAR} {COPYRIGHT_OWNER} · All rights reserved
+          © {COPYRIGHT_YEAR} {COPYRIGHT_OWNER} ·{" "}
+          <button type="button" onClick={() => navigate("license")}
+            style={{ background: "none", border: "none", cursor: "pointer", padding: 0,
+              fontFamily: T.body, fontSize: 11, color: T.border, textDecoration: "underline" }}>
+            License & Terms
+          </button>
         </span>
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
           <button type="button" onClick={() => setHealthOpen(true)}
@@ -1013,6 +1024,53 @@ function App() {
       </footer>
 
       {healthOpen && <HealthModal onClose={() => setHealthOpen(false)} />}
+
+      {!licenseAccepted && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9000,
+          background: "rgba(0,0,0,.72)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12,
+            padding: "32px 36px", maxWidth: 560, width: "calc(100% - 48px)", boxShadow: "0 24px 64px rgba(0,0,0,.5)" }}>
+            <h2 style={{ fontFamily: T.head, fontSize: 20, fontWeight: 800, color: T.text, margin: "0 0 8px" }}>
+              License Agreement
+            </h2>
+            <p style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, margin: "0 0 20px" }}>
+              CargoDesk · © {COPYRIGHT_YEAR} {COPYRIGHT_OWNER}
+            </p>
+            <div style={{ fontFamily: T.body, fontSize: 13.5, color: T.text, lineHeight: 1.7,
+              background: T.bg, borderRadius: 8, padding: "16px 18px", marginBottom: 20,
+              border: `1px solid ${T.border}`, maxHeight: 220, overflowY: "auto" }}>
+              <p style={{ margin: "0 0 10px" }}>
+                CargoDesk is provided for <strong>non-commercial use only</strong>. By clicking
+                "I Accept" you agree to the End-User License Agreement (EULA).
+              </p>
+              <p style={{ margin: "0 0 10px" }}>
+                You may not use this software for commercial purposes — including deploying it
+                within a for-profit organisation, offering it as a service, or integrating it
+                into a commercial product — without obtaining a separate written licence from
+                the author.
+              </p>
+              <p style={{ margin: 0 }}>
+                The software is provided "as is" without warranty of any kind. Full terms are
+                available on the{" "}
+                <button type="button" onClick={() => { navigate("license"); }}
+                  style={{ background: "none", border: "none", cursor: "pointer", padding: 0,
+                    fontFamily: T.body, fontSize: 13.5, color: T.accent, textDecoration: "underline" }}>
+                  License & Terms
+                </button>{" "}page.
+              </p>
+            </div>
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button type="button"
+                onClick={() => { localStorage.setItem("cargodesk_license_accepted", "1"); setLicenseAccepted(true); }}
+                style={{ fontFamily: T.body, fontSize: 13, fontWeight: 600, cursor: "pointer",
+                  background: T.accent, color: "#fff", border: "none", borderRadius: 7,
+                  padding: "10px 22px" }}>
+                I Accept
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <ToastContainer />
     </div>

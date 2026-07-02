@@ -121,12 +121,13 @@ export const CommodityPickerModal = ({ onSelect, onClose }) => {
 
         {/* Table */}
         <div style={{ background: T.bg, borderRadius: 8, border: `1px solid ${T.border}`, overflow: "hidden" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "72px 110px 1fr",
-            padding: "8px 14px", borderBottom: `1px solid ${T.border}` }}>
-            {["Code", "Grade", "Description"].map((h, i) => (
-              <span key={i} style={{ fontFamily: T.body, fontSize: 10, fontWeight: 600,
-                color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>{h}</span>
-            ))}
+          <div style={{ display: "flex", gap: 0, padding: "8px 14px", borderBottom: `1px solid ${T.border}` }}>
+            <span style={{ fontFamily: T.body, fontSize: 10, fontWeight: 600, color: T.textMuted,
+              textTransform: "uppercase", letterSpacing: ".08em", width: 72, flexShrink: 0 }}>Code</span>
+            <span style={{ fontFamily: T.body, fontSize: 10, fontWeight: 600, color: T.textMuted,
+              textTransform: "uppercase", letterSpacing: ".08em", width: 180, flexShrink: 0 }}>Grade</span>
+            <span style={{ fontFamily: T.body, fontSize: 10, fontWeight: 600, color: T.textMuted,
+              textTransform: "uppercase", letterSpacing: ".08em" }}>Description</span>
           </div>
 
           {loading ? (
@@ -139,18 +140,19 @@ export const CommodityPickerModal = ({ onSelect, onClose }) => {
             </div>
           ) : rows.map(c => (
             <button key={c.code} type="button" onClick={() => onSelect(c)}
-              style={{ display: "grid", gridTemplateColumns: "72px 110px 1fr",
+              style={{ display: "flex", alignItems: "flex-start",
                 width: "100%", padding: "10px 14px", background: "none", border: "none",
-                borderBottom: `1px solid ${T.border}22`, cursor: "pointer", textAlign: "left",
-                alignItems: "center" }}
+                borderBottom: `1px solid ${T.border}22`, cursor: "pointer", textAlign: "left" }}
               onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
               onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-              <span style={{ fontFamily: T.mono, fontSize: 12, color: T.accent, fontWeight: 700 }}>
+              <span style={{ fontFamily: T.mono, fontSize: 12, color: T.accent, fontWeight: 700,
+                width: 72, flexShrink: 0, paddingTop: 1 }}>
                 {c.code}
               </span>
-              <GradePill code={c.gradeCode} name={c.gradeName} />
-              <span style={{ fontFamily: T.body, fontSize: 13, color: T.text,
-                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              <div style={{ width: 180, flexShrink: 0, paddingRight: 16, paddingTop: 1 }}>
+                <GradePill code={c.gradeCode} name={c.gradeName} />
+              </div>
+              <span style={{ fontFamily: T.body, fontSize: 13, color: T.text, lineHeight: 1.4 }}>
                 {c.description}
               </span>
             </button>

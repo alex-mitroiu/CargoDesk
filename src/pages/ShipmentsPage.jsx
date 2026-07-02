@@ -17,144 +17,317 @@ import { useResizableColumns, ColResizer } from "../components/primitives/useRes
 import ActionMenu from "../components/primitives/ActionMenu";
 import EntityHistoryModal from "../components/shared/EntityHistoryModal";
 
-// ─── Contract Picker Modal (Central) ──────────────────────────────────────────
+// ─── Contract Picker Modal (Central) — two-path: space configs → contracts ─────
 
-const ContractPickerModal = ({ pol, pod, matches, onSelect, onClose }) => {
+const SKIP_REASONS = [
+  { value: "exhausted",             label: "Allocation exhausted" },
+  { value: "carrier_direct",        label: "Carrier-direct booking" },
+  { value: "customer_request",      label: "Customer request" },
+  { value: "operational_exception", label: "Operational exception" },
+];
+const OVERAGE_REASONS = [
+  { value: "carrier_verbal", label: "Carrier verbal approval" },
+  { value: "priority_cargo", label: "Priority cargo" },
+  { value: "emergency",      label: "Emergency booking" },
+  { value: "agreed_uplift",  label: "Agreed uplift" },
+];
+
+const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0, onSelectContract, onSelectAllocation, onClose }) => {
+  const [expandedGroups, setExpandedGroups] = useState(new Set());
+  const [skipMode,       setSkipMode]       = useState(false);
+  const [skipReason,     setSkipReason]     = useState("");
+  const [overageReasons, setOverageReasons] = useState({});
+
+  const isLoading    = matches === null || allocs === null;
+  const hasAllocs    = allocs && allocs.length > 0;
+  const contractsLocked = hasAllocs && !skipReason;
+
   const kindBadge = kind => kind === "exact"
     ? { label: "Exact match",     bg: T.success + "22", color: T.success }
     : { label: "Via linked port", bg: T.info    + "22", color: T.info    };
 
   const totalUsd = rates => rates && rates.length ? rates.reduce((s, r) => s + r.amountUsd, 0) : null;
+  const fmtUsd   = v => `$${Math.round(v).toLocaleString("en-US")}`;
 
-  // Sort matches by total cost ascending; contracts with no rates go last
+  // ── Allocation card ────────────────────────────────────────────────────────
+  const renderAllocCard = alloc => {
+    const pct      = alloc.allocatedTEU > 0 ? Math.round((alloc.consumedTEU / alloc.allocatedTEU) * 100) : 0;
+    const overage  = shipmentTEU > 0 && shipmentTEU > alloc.remainingTEU;
+    const reason   = overageReasons[alloc.id] || "";
+    const canSelect = !overage || !!reason;
+    const k        = kindBadge(alloc.matchKind);
+    return (
+      <div key={alloc.id} style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
+        {/* Route + badges */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span style={{ fontFamily: T.mono, fontSize: 13, color: T.accent, fontWeight: 700 }}>{alloc.carrierCode}</span>
+          <span style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>{alloc.pol} → {alloc.pod}</span>
+          <span style={{ background: k.bg, color: k.color, padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700 }}>{k.label}</span>
+          {alloc.linkedPolVia && <span style={{ fontFamily: T.mono, fontSize: 11, color: T.info }}>POL via {alloc.linkedPolVia}</span>}
+          {alloc.linkedPodVia && <span style={{ fontFamily: T.mono, fontSize: 11, color: T.info }}>POD via {alloc.linkedPodVia}</span>}
+        </div>
+        {/* Contract + validity */}
+        <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
+          {alloc.contractNumber
+            ? <>Contract <span style={{ fontFamily: T.mono, color: T.text }}>{alloc.contractNumber}</span>{" · "}</>
+            : null}
+          Valid {alloc.effectiveDate} → {alloc.endDate}
+        </div>
+        {/* TEU summary + bar */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+          <div style={{ display: "flex", gap: 14, fontFamily: T.mono, fontSize: 11, flexWrap: "wrap" }}>
+            <span style={{ color: T.text, fontWeight: 600 }}>{alloc.allocatedTEU} TEU allocated</span>
+            <span style={{ color: T.textMuted }}>{alloc.consumedTEU} consumed</span>
+            <span style={{ color: alloc.remainingTEU > 0 ? T.success : T.danger, fontWeight: 700 }}>{alloc.remainingTEU} remaining</span>
+          </div>
+          <div style={{ height: 6, borderRadius: 3, background: T.border + "88", overflow: "hidden" }}>
+            <div style={{ height: "100%", borderRadius: 3, width: `${Math.min(100, pct)}%`,
+              background: pct >= 100 ? T.danger : pct >= alloc.alertThreshold ? T.warning : T.success, transition: "width .3s" }} />
+          </div>
+        </div>
+        {/* Overage warning + reason picker */}
+        {overage && (
+          <div style={{ background: T.warning + "15", border: `1px solid ${T.warning}55`, borderRadius: 6, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ fontFamily: T.body, fontSize: 12, color: T.warning, fontWeight: 600 }}>
+              ⚠ Shipment is {shipmentTEU} TEU — only {alloc.remainingTEU} TEU remaining (Δ +{shipmentTEU - alloc.remainingTEU})
+            </div>
+            <select value={reason} onChange={e => setOverageReasons(p => ({ ...p, [alloc.id]: e.target.value }))}
+              style={{ ...inputBase, fontFamily: T.body, fontSize: 13 }}>
+              <option value="">Select overage reason to proceed…</option>
+              {OVERAGE_REASONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+            </select>
+          </div>
+        )}
+        <Btn disabled={!canSelect} onClick={() => canSelect && onSelectAllocation(alloc, reason)}
+          style={{ alignSelf: "flex-start" }}>
+          Select this configuration
+        </Btn>
+      </div>
+    );
+  };
+
+  // ── Contract card + group renderer ────────────────────────────────────────
   const sorted = matches ? [...matches].sort((a, b) => {
     const ta = totalUsd(a.rates) ?? Infinity;
     const tb = totalUsd(b.rates) ?? Infinity;
     return ta - tb;
-  }) : matches;
+  }) : null;
 
   const lowestTotal = sorted && sorted.length > 0
     ? Math.min(...sorted.map(c => totalUsd(c.rates) ?? Infinity).filter(v => v < Infinity))
     : null;
 
+  const groups = sorted ? (() => {
+    const map = new Map();
+    for (const c of sorted) {
+      if (!map.has(c.contractNumber)) map.set(c.contractNumber, []);
+      map.get(c.contractNumber).push(c);
+    }
+    return [...map.values()];
+  })() : null;
+
+  const toggleGroup = num =>
+    setExpandedGroups(prev => { const next = new Set(prev); next.has(num) ? next.delete(num) : next.add(num); return next; });
+
+  const renderCard = (c, { indented = false } = {}) => {
+    const k      = kindBadge(c.matchKind);
+    const rates  = c.rates || [];
+    const total  = totalUsd(rates);
+    const isBest = !contractsLocked && lowestTotal !== null && total === lowestTotal && sorted.length > 1;
+    return (
+      <button key={c.id} type="button"
+        onClick={() => !contractsLocked && onSelectContract(c, skipReason)}
+        disabled={contractsLocked}
+        style={{
+          display: "flex", alignItems: "center", gap: 14, width: "100%",
+          padding: "12px 14px", background: T.bg, textAlign: "left",
+          border: `1px solid ${isBest ? T.success + "88" : T.border}`,
+          borderRadius: 8, cursor: contractsLocked ? "not-allowed" : "pointer",
+          opacity: contractsLocked ? 0.45 : 1, transition: "border-color .15s",
+          ...(indented && { marginLeft: 16, width: "calc(100% - 16px)", borderLeft: `3px solid ${T.accent}22` }),
+        }}
+        onMouseEnter={e => { if (!contractsLocked) e.currentTarget.style.borderColor = T.accent; }}
+        onMouseLeave={e => { e.currentTarget.style.borderColor = isBest ? T.success + "88" : T.border; }}>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            {!indented && <span style={{ fontFamily: T.mono, fontSize: 14, color: T.accent, fontWeight: 700 }}>{c.contractNumber}</span>}
+            {c.contractRef
+              ? <span style={{ fontFamily: T.mono, fontSize: indented ? 13 : 12, fontWeight: indented ? 700 : 400, color: indented ? T.accent : T.text }}>{c.contractRef}</span>
+              : indented && <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, fontStyle: "italic" }}>No reference</span>}
+            {c.namedAccount && <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>{indented ? "" : "· "}{c.namedAccount}</span>}
+            <span style={{ background: k.bg, color: k.color, padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700 }}>{k.label}</span>
+            {isBest && <span style={{ background: T.success + "22", color: T.success, padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700 }}>Best rate</span>}
+          </div>
+          <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
+            <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>Valid {c.validFrom} → {c.validTo}</span>
+            {c.linkedPolVia && <span style={{ fontFamily: T.mono, fontSize: 11, color: T.info }}>POL via {c.linkedPolVia}</span>}
+            {c.linkedPodVia && <span style={{ fontFamily: T.mono, fontSize: 11, color: T.info }}>POD via {c.linkedPodVia}</span>}
+          </div>
+          {c.legs && c.legs.length > 0 && (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {c.legs.map((l, i) => (
+                <span key={i} style={{ fontFamily: T.mono, fontSize: 11, background: T.surface, border: `1px solid ${T.border}`, borderRadius: 4, padding: "2px 8px", color: T.text }}>
+                  {l.pol} → {l.pod}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4, flexShrink: 0, minWidth: 80 }}>
+          {total !== null
+            ? <span style={{ fontFamily: T.mono, fontSize: 20, fontWeight: 700, color: isBest ? T.success : T.text, letterSpacing: "-.01em" }}>{fmtUsd(total)}</span>
+            : <span style={{ fontFamily: T.mono, fontSize: 13, color: T.textMuted }}>—</span>}
+          <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>{c.carrierCode}</span>
+        </div>
+      </button>
+    );
+  };
+
   return (
-    <Modal title={`Select Contract — ${pol} → ${pod}`} onClose={onClose} width={660}>
+    <Modal title={`Select Contract — ${pol} → ${pod}`} onClose={onClose} width={680}>
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {sorted === null && (
-          <div style={{ padding: 40, display: "flex", justifyContent: "center" }}>
-            <Spinner />
-          </div>
-        )}
 
-        {sorted !== null && sorted.length === 0 && (
-          <div style={{ padding: "32px 0", textAlign: "center",
-            fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
-            No active contracts found for {pol} → {pod} within the ETD validity window.
-          </div>
-        )}
+        {isLoading && <div style={{ padding: 40, display: "flex", justifyContent: "center" }}><Spinner /></div>}
 
-        {sorted !== null && sorted.length > 1 && (
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end",
-            gap: 2, paddingRight: 2 }}>
-            <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
-              Sorted by lowest buy rate · {sorted.length} contracts
-            </span>
-            <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
-              All prices expressed in USD
-            </span>
-          </div>
-        )}
-
-        {sorted !== null && sorted.map((c, idx) => {
-          const k      = kindBadge(c.matchKind);
-          const rates  = c.rates || [];
-          const total  = totalUsd(rates);
-          const isBest = lowestTotal !== null && total === lowestTotal && sorted.length > 1;
-          const fmtUsd = v => `$${Math.round(v).toLocaleString("en-US")}`;
-
-          return (
-            <button key={c.id} type="button" onClick={() => onSelect(c)}
-              style={{ display: "flex", alignItems: "center", gap: 14, width: "100%",
-                padding: "12px 14px", background: T.bg,
-                border: `1px solid ${isBest ? T.success + "88" : T.border}`, borderRadius: 8,
-                cursor: "pointer", textAlign: "left", transition: "border-color .15s" }}
-              onMouseEnter={e => e.currentTarget.style.borderColor = T.accent}
-              onMouseLeave={e => e.currentTarget.style.borderColor = isBest ? T.success + "88" : T.border}>
-
-              {/* Left: all contract info */}
-              <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
-
-                {/* Line 1: number · match badge · best-rate badge · rank */}
-                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                  <span style={{ fontFamily: T.mono, fontSize: 14, color: T.accent, fontWeight: 700 }}>
-                    {c.contractNumber}
+        {!isLoading && (
+          <>
+            {/* ── Space Configurations section ──────────────────────────────── */}
+            {hasAllocs && (
+              <>
+                <div style={{ fontFamily: T.body, fontSize: 12, fontWeight: 600, color: T.text, display: "flex", alignItems: "center", gap: 8 }}>
+                  <span>📦 Space Configurations</span>
+                  <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, fontWeight: 400 }}>
+                    {allocs.length} found for this route
                   </span>
-                  <span style={{ background: k.bg, color: k.color,
-                    padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700 }}>
-                    {k.label}
-                  </span>
-                  {isBest && (
-                    <span style={{ background: T.success + "22", color: T.success,
-                      padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700 }}>
-                      Best rate
-                    </span>
-                  )}
-                  {sorted.length > 1 && (
-                    <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
-                      #{idx + 1}
-                    </span>
-                  )}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {allocs.map(renderAllocCard)}
                 </div>
 
-                {/* Line 2: validity · linked port hints */}
-                <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
-                  <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
-                    Valid {c.validFrom} → {c.validTo}
-                  </span>
-                  {c.linkedPolVia && (
-                    <span style={{ fontFamily: T.mono, fontSize: 11, color: T.info }}>
-                      POL via {c.linkedPolVia}
-                    </span>
-                  )}
-                  {c.linkedPodVia && (
-                    <span style={{ fontFamily: T.mono, fontSize: 11, color: T.info }}>
-                      POD via {c.linkedPodVia}
-                    </span>
-                  )}
+                {/* Skip divider */}
+                <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "2px 0" }}>
+                  <div style={{ flex: 1, height: 1, background: T.border }} />
+                  <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>or</span>
+                  <div style={{ flex: 1, height: 1, background: T.border }} />
                 </div>
 
-                {/* Line 3: route legs */}
-                {c.legs && c.legs.length > 0 && (
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                    {c.legs.map((l, i) => (
-                      <span key={i} style={{ fontFamily: T.mono, fontSize: 11,
-                        background: T.surface, border: `1px solid ${T.border}`,
-                        borderRadius: 4, padding: "2px 8px", color: T.text }}>
-                        {l.pol} → {l.pod}
-                      </span>
-                    ))}
+                {/* Skip affordance */}
+                {!skipMode ? (
+                  <button type="button" onClick={() => setSkipMode(true)}
+                    style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px",
+                      background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8,
+                      cursor: "pointer", color: T.textMuted, fontFamily: T.body, fontSize: 13,
+                      transition: "all .15s", textAlign: "left" }}
+                    onMouseEnter={e => { e.currentTarget.style.borderColor = T.accent; e.currentTarget.style.color = T.text; }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.textMuted; }}>
+                    <span style={{ fontSize: 14 }}>↷</span>
+                    <span>Skip space configurations — choose a contract directly</span>
+                  </button>
+                ) : !skipReason ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "12px 14px", background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8 }}>
+                    <div style={{ fontFamily: T.body, fontSize: 12, fontWeight: 600, color: T.text }}>Reason for skipping space configurations</div>
+                    <select value={skipReason} onChange={e => setSkipReason(e.target.value)}
+                      style={{ ...inputBase, fontFamily: T.body, fontSize: 13 }}>
+                      <option value="">Select reason…</option>
+                      {SKIP_REASONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                    </select>
+                    <button type="button" onClick={() => setSkipMode(false)}
+                      style={{ background: "none", border: "none", cursor: "pointer", color: T.textMuted, fontFamily: T.body, fontSize: 11, alignSelf: "flex-start", padding: 0, textDecoration: "underline" }}>
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", background: T.success + "18", border: `1px solid ${T.success}44`, borderRadius: 8 }}>
+                    <span style={{ color: T.success, fontSize: 14 }}>✓</span>
+                    <span style={{ fontFamily: T.body, fontSize: 13, color: T.text, flex: 1 }}>
+                      Skipping: <strong>{SKIP_REASONS.find(r => r.value === skipReason)?.label}</strong>
+                    </span>
+                    <button type="button" onClick={() => setSkipReason("")}
+                      style={{ background: "none", border: "none", cursor: "pointer", color: T.textMuted, fontFamily: T.body, fontSize: 11, padding: 0, textDecoration: "underline" }}>
+                      Change
+                    </button>
                   </div>
                 )}
-              </div>
+              </>
+            )}
 
-              {/* Right: bold total buy rate + carrier */}
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end",
-                gap: 4, flexShrink: 0, minWidth: 80 }}>
-                {total !== null ? (
-                  <span style={{ fontFamily: T.mono, fontSize: 20, fontWeight: 700,
-                    color: isBest ? T.success : T.text, letterSpacing: "-.01em" }}>
-                    {fmtUsd(total)}
-                  </span>
-                ) : (
-                  <span style={{ fontFamily: T.mono, fontSize: 13, color: T.textMuted }}>—</span>
+            {/* ── Contracts section ─────────────────────────────────────────── */}
+            {matches !== null && (
+              <>
+                {hasAllocs && (
+                  <div style={{ fontFamily: T.body, fontSize: 12, fontWeight: 600, color: T.text, display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
+                    <span>📄 Contracts</span>
+                    {contractsLocked
+                      ? <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, fontWeight: 400 }}>— skip configurations above to unlock</span>
+                      : sorted && sorted.length > 0 && (
+                          <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, fontWeight: 400 }}>
+                            {sorted.length} found{groups && groups.length < sorted.length ? ` in ${groups.length} groups` : ""}
+                          </span>
+                        )}
+                  </div>
                 )}
-                <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
-                  {c.carrierCode}
-                </span>
-              </div>
-            </button>
-          );
-        })}
+
+                {(!hasAllocs || !contractsLocked) && sorted && sorted.length > 1 && (
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2, paddingRight: 2 }}>
+                    <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
+                      Sorted by lowest buy rate · {sorted.length} contract{sorted.length !== 1 ? "s" : ""}
+                      {groups && groups.length < sorted.length ? ` in ${groups.length} group${groups.length !== 1 ? "s" : ""}` : ""}
+                    </span>
+                    <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>All prices expressed in USD</span>
+                  </div>
+                )}
+
+                {sorted.length === 0 && (
+                  <div style={{ padding: "32px 0", textAlign: "center", fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
+                    No active contracts found for {pol} → {pod} within the ETD validity window.
+                  </div>
+                )}
+
+                {groups !== null && groups.map(members => {
+                  if (members.length === 1) return renderCard(members[0]);
+
+                  const num          = members[0].contractNumber;
+                  const isOpen       = expandedGroups.has(num);
+                  const groupBest    = Math.min(...members.map(c => totalUsd(c.rates) ?? Infinity).filter(v => v < Infinity));
+                  const isBestGroup  = !contractsLocked && lowestTotal !== null && groupBest === lowestTotal;
+                  const groupCarrier = [...new Set(members.map(m => m.carrierCode))].join(", ");
+
+                  return (
+                    <div key={num} style={{ display: "flex", flexDirection: "column", gap: 6, opacity: contractsLocked ? 0.45 : 1 }}>
+                      <button type="button" onClick={() => !contractsLocked && toggleGroup(num)}
+                        disabled={contractsLocked}
+                        style={{ display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "11px 14px", background: T.surface,
+                          border: `1px solid ${isOpen ? T.accent + "66" : T.border}`, borderRadius: 8,
+                          cursor: contractsLocked ? "not-allowed" : "pointer", textAlign: "left", transition: "border-color .15s" }}
+                        onMouseEnter={e => { if (!contractsLocked) e.currentTarget.style.borderColor = T.accent; }}
+                        onMouseLeave={e => { e.currentTarget.style.borderColor = isOpen ? T.accent + "66" : T.border; }}>
+                        <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, flexShrink: 0, width: 12 }}>{isOpen ? "▾" : "▸"}</span>
+                        <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", minWidth: 0 }}>
+                          <span style={{ fontFamily: T.mono, fontSize: 14, color: T.accent, fontWeight: 700 }}>{num}</span>
+                          <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, background: T.accent + "18", color: T.accent, border: `1px solid ${T.accent}44`, borderRadius: 4, padding: "1px 7px" }}>
+                            {members.length} variants
+                          </span>
+                          {isBestGroup && <span style={{ background: T.success + "22", color: T.success, padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700 }}>Best rate</span>}
+                        </div>
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2, flexShrink: 0 }}>
+                          {groupBest < Infinity
+                            ? <span style={{ fontFamily: T.mono, fontSize: 13, color: isBestGroup ? T.success : T.textMuted, fontWeight: 600 }}>from {fmtUsd(groupBest)}</span>
+                            : <span style={{ fontFamily: T.mono, fontSize: 13, color: T.textMuted }}>—</span>}
+                          <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>{groupCarrier}</span>
+                        </div>
+                      </button>
+                      {isOpen && !contractsLocked && (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                          {members.map(c => renderCard(c, { indented: true }))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </>
+            )}
+          </>
+        )}
       </div>
     </Modal>
   );
@@ -162,64 +335,76 @@ const ContractPickerModal = ({ pol, pod, matches, onSelect, onClose }) => {
 
 // ─── ContractField ─────────────────────────────────────────────────────────────
 
-const ContractField = ({ value, onChange, carrier, pol, pod, etd, contractType }) => {
+const ContractField = ({ value, onChange, pol, pod, etd, contractType }) => {
   const isCentral = contractType === "Central";
 
-  // Central: route-match state
   const [matches,    setMatches]    = useState(null);
+  const [allocs,     setAllocs]     = useState(null);
   const [matching,   setMatching]   = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const matchTimer   = useRef(null);
   const autoSelected = useRef(false);
 
-  // ── Central route-match ────────────────────────────────────────────────────
   useEffect(() => {
     clearTimeout(matchTimer.current);
-    if (!isCentral) { setMatches(null); autoSelected.current = false; return; }
-    if (!pol || !pod || !etd) { setMatches(null); return; }
+    if (!isCentral) { setMatches(null); setAllocs(null); autoSelected.current = false; return; }
+    if (!pol || !pod || !etd) { setMatches(null); setAllocs(null); return; }
     setMatching(true);
     matchTimer.current = setTimeout(async () => {
       try {
-        const params = { pol, pod, etd };
-        if (carrier) params.carrier = carrier;
-        const res = await api.contracts.match(params);
-        setMatches(res);
-        // Auto-select when exactly one match and nothing is chosen yet
-        if (res.length === 1 && !value.id && !autoSelected.current) {
+        const [contractRes, allocRes] = await Promise.all([
+          api.contracts.match({ pol, pod, etd }),
+          api.allocations.match({ pol, pod, etd }),
+        ]);
+        setMatches(contractRes);
+        setAllocs(allocRes);
+        // Auto-select only when no space configs found and exactly one contract matches
+        if (allocRes.length === 0 && contractRes.length === 1 && !value.id && !autoSelected.current) {
           autoSelected.current = true;
-          onChange({ id: res[0].id, ref: res[0].contractNumber });
+          onChange({ id: contractRes[0].id, ref: contractRes[0].contractNumber, carrierCode: contractRes[0].carrierCode, allocationId: "", spaceSkipReason: "", spaceOverageReason: "" });
         }
       } catch {
         setMatches([]);
+        setAllocs([]);
       } finally {
         setMatching(false);
       }
     }, 400);
-  }, [isCentral, pol, pod, etd, carrier]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isCentral, pol, pod, etd]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const clearContract = () => {
-    onChange({ id: "", ref: "" });
+    onChange({ id: "", ref: "", carrierCode: null, allocationId: "", spaceSkipReason: "", spaceOverageReason: "" });
     autoSelected.current = false;
   };
 
-  const pickContract = c => {
-    onChange({ id: c.id, ref: c.contractNumber });
+  const pickContract = (c, skipReason = "") => {
+    onChange({ id: c.id, ref: c.contractNumber, carrierCode: c.carrierCode, allocationId: "", spaceSkipReason: skipReason, spaceOverageReason: "" });
+    setPickerOpen(false);
+  };
+
+  const pickAllocation = (alloc, overageReason = "") => {
+    onChange({ id: alloc.contractId, ref: alloc.contractNumber, carrierCode: alloc.carrierCode, allocationId: alloc.id, spaceSkipReason: "", spaceOverageReason: overageReason });
     setPickerOpen(false);
   };
 
   const allReady = pol && pod && etd;
 
-  // ── Render ─────────────────────────────────────────────────────────────────
   if (isCentral) {
-    const browseLabel = matching
-      ? "Searching…"
-      : matches === null || !allReady
-        ? "Browse matching contracts…"
-        : matches.length === 0
-          ? "No contracts found for this route"
-          : `${matches.length} contract${matches.length !== 1 ? "s" : ""} found — click to select`;
+    const hasAllocs     = allocs && allocs.length > 0;
+    const missing = !pol ? "POL" : !pod ? "POD" : !etd ? "ETD" : null;
+    const browseLabel   = missing
+      ? `Set ${missing} first to search for contracts`
+      : matching
+        ? "Searching…"
+        : matches === null
+          ? "Browse matching contracts…"
+          : hasAllocs
+            ? `${allocs.length} space config${allocs.length !== 1 ? "s" : ""} + ${matches.length} contract${matches.length !== 1 ? "s" : ""} — click to review`
+            : matches.length === 0
+              ? "No contracts found for this route"
+              : `${matches.length} contract${matches.length !== 1 ? "s" : ""} found — click to select`;
 
-    const browseDisabled = !allReady || (matches !== null && matches.length === 0);
+    const browseDisabled = !!missing || (!hasAllocs && matches !== null && matches.length === 0);
 
     return (
       <Field label="Contract Ref">
@@ -229,10 +414,16 @@ const ContractField = ({ value, onChange, carrier, pol, pod, etd, contractType }
             <span style={{ fontFamily: T.mono, fontSize: 13, color: T.accent, fontWeight: 700, flex: 1 }}>
               {value.ref}
             </span>
+            {value.allocationId && (
+              <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700,
+                background: T.success + "22", color: T.success,
+                border: `1px solid ${T.success}44`, borderRadius: 4, padding: "2px 8px", whiteSpace: "nowrap" }}>
+                📦 Space config
+              </span>
+            )}
             <button type="button" onClick={() => setPickerOpen(true)}
               style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 4,
-                cursor: "pointer", color: T.text, fontFamily: T.body, fontSize: 11,
-                padding: "2px 8px" }}>
+                cursor: "pointer", color: T.text, fontFamily: T.body, fontSize: 11, padding: "2px 8px" }}>
               Change
             </button>
             <button type="button" onClick={clearContract}
@@ -244,11 +435,12 @@ const ContractField = ({ value, onChange, carrier, pol, pod, etd, contractType }
         ) : (
           <button type="button"
             onClick={() => !browseDisabled && setPickerOpen(true)}
-            style={{ ...inputBase, width: "100%", cursor: browseDisabled ? "default" : "pointer",
+            style={{ ...inputBase, width: "100%",
+              cursor: browseDisabled ? (missing ? "not-allowed" : "default") : "pointer",
               textAlign: "left", fontFamily: T.body, fontSize: 13,
-              color: matches !== null && matches.length === 0 ? T.danger : T.textMuted,
-              background: T.bg, borderStyle: !allReady ? "solid" : "dashed",
-              opacity: browseDisabled && allReady ? 0.6 : 1 }}>
+              color: !missing && !hasAllocs && matches !== null && matches.length === 0 ? T.danger : T.textMuted,
+              background: T.bg, borderStyle: missing ? "solid" : "dashed",
+              opacity: browseDisabled ? 0.55 : 1 }}>
             {browseLabel}
           </button>
         )}
@@ -257,7 +449,9 @@ const ContractField = ({ value, onChange, carrier, pol, pod, etd, contractType }
           <ContractPickerModal
             pol={pol} pod={pod}
             matches={matches}
-            onSelect={pickContract}
+            allocs={allocs}
+            onSelectContract={pickContract}
+            onSelectAllocation={pickAllocation}
             onClose={() => setPickerOpen(false)}
           />
         )}
@@ -290,9 +484,13 @@ const ShipmentForm = ({ init = {}, onSave, onCancel }) => {
     shipperName:   init.shipperName    || "",
     consigneeId:   init.consigneeId    || "",
     consigneeName: init.consigneeName  || "",
-    principalId:   init.principalId    || "",
-    principalName: init.principalName  || "",
+    principalId:       init.principalId       || "",
+    principalName:     init.principalName     || "",
+    allocationId:      init.allocationId      || "",
+    spaceSkipReason:   init.spaceSkipReason   || "",
+    spaceOverageReason: init.spaceOverageReason || "",
   });
+  const [carrierUpdated, setCarrierUpdated] = useState("");
   const [isSaving, setIsSaving] = useState(false);
   const set = k => v => setF(p => ({ ...p, [k]: v }));
 
@@ -372,20 +570,43 @@ const ShipmentForm = ({ init = {}, onSave, onCancel }) => {
 
       {/* Contract */}
       <ContractTypeInput value={f.contractType} onChange={v => {
-        // Clearing the linked contract when switching away from Central
-        if (v !== "Central") setF(p => ({ ...p, contractType: v, contractId: "", contractRef: "" }));
+        if (v !== "Central") setF(p => ({ ...p, contractType: v, contractId: "", contractRef: "", allocationId: "" }));
         else set("contractType")(v);
       }} />
       {isCentral && (
         <ContractField
-          value={{ id: f.contractId, ref: f.contractRef }}
-          onChange={({ id, ref }) => setF(p => ({ ...p, contractId: id, contractRef: ref }))}
-          carrier={f.carrierCode}
+          value={{ id: f.contractId, ref: f.contractRef, allocationId: f.allocationId }}
+          onChange={({ id, ref, carrierCode, allocationId, spaceSkipReason, spaceOverageReason }) => {
+            setF(p => {
+              const next = {
+                ...p,
+                contractId:         id,
+                contractRef:        ref,
+                allocationId:       allocationId      !== undefined ? allocationId      : p.allocationId,
+                spaceSkipReason:    spaceSkipReason   !== undefined ? spaceSkipReason   : p.spaceSkipReason,
+                spaceOverageReason: spaceOverageReason !== undefined ? spaceOverageReason : p.spaceOverageReason,
+              };
+              if (carrierCode !== null && carrierCode !== undefined && carrierCode && carrierCode !== p.carrierCode) {
+                setCarrierUpdated(carrierCode);
+                next.carrierCode = carrierCode;
+              } else if (!id) {
+                setCarrierUpdated("");
+              }
+              return next;
+            });
+          }}
           pol={polPort?.unlocode}
           pod={podPort?.unlocode}
           etd={f.etd}
           contractType={f.contractType}
         />
+      )}
+      {isCentral && carrierUpdated && (
+        <div style={{ fontFamily: T.body, fontSize: 12, color: T.info,
+          background: T.info + "18", border: `1px solid ${T.info}44`,
+          borderRadius: 6, padding: "6px 10px" }}>
+          Carrier updated to <strong style={{ fontFamily: T.mono }}>{carrierUpdated}</strong> to match the selected contract.
+        </div>
       )}
       {!isCentral && (
         <Inp label="Contract Reference" value={f.contractRef} onChange={v => setF(p => ({ ...p, contractRef: v }))}
@@ -505,7 +726,8 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
         ) : filtered.map(s => {
           const carrier = carriers.find(c => c.code === s.carrierCode);
           return (
-            <div key={s.id} onClick={() => window.open(`#shipments/${s.id}`, "_blank")}
+            <div key={s.id} onDoubleClick={() => window.open(`#shipments/${s.id}`, "_blank")}
+              title="Double-click to open"
               style={{ display: "grid", gridTemplateColumns: shipTemplate,
                 padding: "14px 20px", borderBottom: `1px solid ${T.border}22`,
                 cursor: "pointer", alignItems: "center", transition: "background .1s" }}

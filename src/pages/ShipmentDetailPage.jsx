@@ -2277,6 +2277,7 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
   const [messages,       setMessages]       = useState([]);
   const [unreadCount,    setUnreadCount]    = useState(0);
   const [screening,      setScreening]      = useState(null);
+  const [spaceBadge,     setSpaceBadge]     = useState(shipment.spaceBadge || "");
   const [complianceOpen, setComplianceOpen] = useState(false);
   const [contractOpen,   setContractOpen]   = useState(false);
   const [ctrListOpen,    setCtrListOpen]    = useState(false);
@@ -2317,6 +2318,23 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
   loadMessagesRef.current = loadMessages;
 
   useEffect(() => { loadMessages(); }, [shipment.id]);
+
+  // Keep space badge in sync whenever the shipment prop is replaced by the parent
+  useEffect(() => { setSpaceBadge(shipment.spaceBadge || ""); }, [shipment.id, shipment.spaceBadge]);
+
+  // Always-on WS subscription for space badge updates
+  useEffect(() => {
+    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const ws = new WebSocket(`${proto}//${window.location.host}/ws`);
+    ws.onopen = () => ws.send(JSON.stringify({ type: "subscribe", shipmentId: shipment.id }));
+    ws.onmessage = e => {
+      try {
+        const frame = JSON.parse(e.data);
+        if (frame.type === "space_badge_update") setSpaceBadge(frame.badge || "");
+      } catch { /* ignore */ }
+    };
+    return () => ws.close();
+  }, [shipment.id]);
 
   useEffect(() => {
     if (!msgsOpen) return;
@@ -2424,6 +2442,23 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
                 </button>
               );
             })()}
+            {/* Space badge */}
+            {spaceBadge === "exceeded" && (
+              <span title="Shipment TEU exceeds remaining space on the linked allocation — no overage reason on record"
+                style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, whiteSpace: "nowrap",
+                  borderRadius: 4, padding: "2px 9px", letterSpacing: ".06em",
+                  border: `1px solid ${T.danger}55`, background: T.danger + "20", color: T.danger }}>
+                ⚠ Space exceeded
+              </span>
+            )}
+            {spaceBadge === "warning" && (
+              <span title="Shipment TEU exceeds allocation space — overage reason on file"
+                style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, whiteSpace: "nowrap",
+                  borderRadius: 4, padding: "2px 9px", letterSpacing: ".06em",
+                  border: `1px solid ${T.warning}55`, background: T.warning + "20", color: T.warning }}>
+                ⚠ Space warning
+              </span>
+            )}
           </div>
           <p style={{ fontFamily: T.mono, fontSize: 13, color: T.textMuted, margin: "3px 0 0" }}>
 {shipment.polName || shipment.pol} → {shipment.podName || shipment.pod} · created {shipment.createdAt}

@@ -191,9 +191,17 @@ const AllocContractPickerModal = ({ pol, pod, matches, onSelect, onClose }) => {
                 background: hovered === c.id ? T.accentBg : T.surface,
                 transition: "border-color .12s, background .12s",
               }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-                <span style={{ fontFamily: T.mono, fontSize: 14, fontWeight: 700, color: T.accent }}>{c.contractNumber}</span>
-                <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{ fontFamily: T.mono, fontSize: 14, fontWeight: 700, color: T.accent }}>{c.contractNumber}</span>
+                  {c.contractRef && (
+                    <span style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>{c.contractRef}</span>
+                  )}
+                  {c.namedAccount && (
+                    <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>· {c.namedAccount}</span>
+                  )}
+                </div>
+                <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, flexShrink: 0, marginLeft: 8 }}>
                   {c.validFrom} – {c.validTo}
                 </span>
               </div>

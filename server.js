@@ -391,6 +391,11 @@ const migrations = [
     note           TEXT NOT NULL DEFAULT '',
     created_at     TEXT NOT NULL
   )`,
+  "ALTER TABLE contracts ADD COLUMN contract_ref TEXT DEFAULT ''",
+  "ALTER TABLE shipments ADD COLUMN allocation_id        TEXT DEFAULT ''",
+  "ALTER TABLE shipments ADD COLUMN space_skip_reason    TEXT DEFAULT ''",
+  "ALTER TABLE shipments ADD COLUMN space_overage_reason TEXT DEFAULT ''",
+  "ALTER TABLE shipments ADD COLUMN space_badge          TEXT DEFAULT ''",
 ];
 
 for (const sql of migrations) {
@@ -718,7 +723,7 @@ try { db.exec("UPDATE shipments SET vessel = '', vessel_imo = '' WHERE vessel_im
 
 // ─── Map functions ────────────────────────────────────────────────────────────
 
-const mapShipment     = r => ({ id: r.id, pol: r.pol, polName: r.pol_name || '', pod: r.pod, podName: r.pod_name || '', carrierCode: r.carrier_code, contractType: r.contract_type, contractNotes: r.contract_notes || '', status: r.status, createdAt: r.created_at, etd: r.etd || '', eta: r.eta || '', bookingRef: r.booking_ref || '', blNumber: r.bl_number || '', vessel: r.vessel || '', voyage: r.voyage || '', incoterm: r.incoterm || '', vesselImo: r.vessel_imo || '', contractId: r.contract_id || '', contractRef: r.contract_ref || '', commodityCode: r.commodity_code || '', shipperId: r.shipper_id || '', shipperName: r.shipper_name || '', consigneeId: r.consignee_id || '', consigneeName: r.consignee_name || '', principalId: r.principal_id || '', principalName: r.principal_name || '', marginBuyUsd: r.margin_buy_usd ?? null, marginSellUsd: r.margin_sell_usd ?? null, overdueCount: r.overdue_count ?? 0 });
+const mapShipment     = r => ({ id: r.id, pol: r.pol, polName: r.pol_name || '', pod: r.pod, podName: r.pod_name || '', carrierCode: r.carrier_code, contractType: r.contract_type, contractNotes: r.contract_notes || '', status: r.status, createdAt: r.created_at, etd: r.etd || '', eta: r.eta || '', bookingRef: r.booking_ref || '', blNumber: r.bl_number || '', vessel: r.vessel || '', voyage: r.voyage || '', incoterm: r.incoterm || '', vesselImo: r.vessel_imo || '', contractId: r.contract_id || '', contractRef: r.contract_ref || '', commodityCode: r.commodity_code || '', shipperId: r.shipper_id || '', shipperName: r.shipper_name || '', consigneeId: r.consignee_id || '', consigneeName: r.consignee_name || '', principalId: r.principal_id || '', principalName: r.principal_name || '', allocationId: r.allocation_id || '', spaceSkipReason: r.space_skip_reason || '', spaceOverageReason: r.space_overage_reason || '', spaceBadge: r.space_badge || '', marginBuyUsd: r.margin_buy_usd ?? null, marginSellUsd: r.margin_sell_usd ?? null, overdueCount: r.overdue_count ?? 0 });
 const mapCostLine     = r => ({ id: r.id, shipmentId: r.shipment_id, type: r.type, chargeCode: r.charge_code, currency: r.currency, amount: r.amount, exchangeRate: r.exchange_rate, amountUsd: Math.round(r.amount * r.exchange_rate * 100) / 100, notes: r.notes || '', containerId: r.container_id || '', source: r.source || 'manual', modifiedAt: r.modified_at || null, createdAt: r.created_at });
 const mapContainer    = r => ({ id: r.id, shipmentId: r.shipment_id, containerNumber: r.container_number || '', sealNumber: r.seal_number || '', size: r.size, type: r.type, hsCode: r.hs_code || '', cargoDescription: r.cargo_description || '', grossWeightKg: r.gross_weight_kg ?? null, volumeCbm: r.volume_cbm ?? null, isDg: r.is_dg === 1, dgClass: r.dg_class || '' });
 const mapAllocation   = r => ({ id: r.id, carrierCode: r.carrier_code, allocatedTEU: r.allocated_teu, effectiveDate: r.effective_date || '', endDate: r.end_date || '', tradeLane: r.trade_lane || '', notes: r.notes || '', alertThreshold: r.alert_threshold ?? 80, pol: r.pol || '', pod: r.pod || '', originLane: r.origin_lane || '', destLane: r.dest_lane || '', coverageScope: r.coverage_scope || 'STRICT', contractId: r.contract_id || '', contractNumber: r.contract_number || '' });
@@ -745,6 +750,7 @@ const mapMilestoneTemplate = r => ({ id: r.id, templateKey: r.template_key, carr
 const mapContract = r => ({
   id:              r.id,
   contractNumber:  r.contract_number,
+  contractRef:     r.contract_ref     || '',
   carrierCode:     r.carrier_code,
   namedAccountId:  r.named_account_id,
   namedAccount:    r.named_account,
@@ -831,6 +837,7 @@ const TRACKED_FIELDS = {
   contract_type:  'Contract Type',
   contract_id:    'Contract ID',
   contract_ref:   'Contract Reference',
+  allocation_id:  'Space Configuration',
 };
 
 const TRACKED_CTR_FIELDS = {
@@ -952,18 +959,19 @@ app.post("/api/shipments", (req, res) => {
           etd = "", eta = "", bookingRef = "", blNumber = "", vessel = "", voyage = "",
           incoterm = "", vesselImo = "", contractId = "", contractRef = "", commodityCode = "",
           shipperId = "", shipperName = "", consigneeId = "", consigneeName = "",
-          principalId = "", principalName = "" } = req.body;
+          principalId = "", principalName = "",
+          allocationId = "", spaceSkipReason = "", spaceOverageReason = "" } = req.body;
   if (!pol || !pod || !carrierCode || !contractType) return err(res, "pol, pod, carrierCode, contractType required");
   const id = `SHP-${uid()}`;
   const polU = pol.toUpperCase(), podU = pod.toUpperCase();
   const createdAt = new Date().toISOString();
-  db.prepare("INSERT INTO shipments (id,pol,pod,carrier_code,contract_type,contract_notes,status,created_at,etd,eta,booking_ref,bl_number,vessel,voyage,incoterm,vessel_imo,contract_id,contract_ref,commodity_code,shipper_id,shipper_name,consignee_id,consignee_name,principal_id,principal_name) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-    .run(id, polU, podU, carrierCode, contractType, contractNotes, status, createdAt, etd, eta, bookingRef, blNumber, vessel, voyage, incoterm, vesselImo, contractId, contractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName);
+  db.prepare("INSERT INTO shipments (id,pol,pod,carrier_code,contract_type,contract_notes,status,created_at,etd,eta,booking_ref,bl_number,vessel,voyage,incoterm,vessel_imo,contract_id,contract_ref,commodity_code,shipper_id,shipper_name,consignee_id,consignee_name,principal_id,principal_name,allocation_id,space_skip_reason,space_overage_reason) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    .run(id, polU, podU, carrierCode, contractType, contractNotes, status, createdAt, etd, eta, bookingRef, blNumber, vessel, voyage, incoterm, vesselImo, contractId, contractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, allocationId, spaceSkipReason, spaceOverageReason);
   logEvent(id, 'SHIPMENT_CREATED', null, null, null,
     JSON.stringify({ pol: polU, pod: podU, carrier: carrierCode, status, etd, contractType }));
   if (contractType === 'Central' && contractId) importContractRates(id);
   const silentScreening = sanctionsMap.size > 0 ? screenShipmentById(id) : null;
-  const base = mapShipment({ id, pol: polU, pod: podU, carrier_code: carrierCode, contract_type: contractType, contract_notes: contractNotes, status, created_at: createdAt, etd, eta, booking_ref: bookingRef, bl_number: blNumber, vessel, voyage, incoterm, vessel_imo: vesselImo, contract_id: contractId, contract_ref: contractRef, commodity_code: commodityCode, shipper_id: shipperId, shipper_name: shipperName, consignee_id: consigneeId, consignee_name: consigneeName, principal_id: principalId, principal_name: principalName });
+  const base = mapShipment({ id, pol: polU, pod: podU, carrier_code: carrierCode, contract_type: contractType, contract_notes: contractNotes, status, created_at: createdAt, etd, eta, booking_ref: bookingRef, bl_number: blNumber, vessel, voyage, incoterm, vessel_imo: vesselImo, contract_id: contractId, contract_ref: contractRef, commodity_code: commodityCode, shipper_id: shipperId, shipper_name: shipperName, consignee_id: consigneeId, consignee_name: consigneeName, principal_id: principalId, principal_name: principalName, allocation_id: allocationId, space_skip_reason: spaceSkipReason, space_overage_reason: spaceOverageReason });
   ok(res, silentScreening ? { ...base, screening: silentScreening } : base, 201);
 });
 
@@ -972,27 +980,38 @@ app.put("/api/shipments/:id", (req, res) => {
           etd = "", eta = "", bookingRef = "", blNumber = "", vessel = "", voyage = "",
           incoterm = "", vesselImo = "", contractId = "", contractRef = "", commodityCode = "",
           shipperId = "", shipperName = "", consigneeId = "", consigneeName = "",
-          principalId = "", principalName = "" } = req.body;
+          principalId = "", principalName = "",
+          allocationId = "", spaceSkipReason = "", spaceOverageReason = "" } = req.body;
   const polU = pol.toUpperCase(), podU = pod.toUpperCase();
   const existing = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
   if (!existing) return err(res, "Not found", 404);
   const info = db.prepare(`
     UPDATE shipments SET pol=?, pod=?, carrier_code=?, contract_type=?, contract_notes=?, status=?,
     etd=?, eta=?, booking_ref=?, bl_number=?, vessel=?, voyage=?, incoterm=?, vessel_imo=?, contract_id=?, contract_ref=?, commodity_code=?,
-    shipper_id=?, shipper_name=?, consignee_id=?, consignee_name=?, principal_id=?, principal_name=? WHERE id=?
-  `).run(polU, podU, carrierCode, contractType, contractNotes, status, etd, eta, bookingRef, blNumber, vessel, voyage, incoterm, vesselImo, contractId, contractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, req.params.id);
+    shipper_id=?, shipper_name=?, consignee_id=?, consignee_name=?, principal_id=?, principal_name=?,
+    allocation_id=?, space_skip_reason=?, space_overage_reason=? WHERE id=?
+  `).run(polU, podU, carrierCode, contractType, contractNotes, status, etd, eta, bookingRef, blNumber, vessel, voyage, incoterm, vesselImo, contractId, contractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, allocationId, spaceSkipReason, spaceOverageReason, req.params.id);
   if (info.changes === 0) return err(res, "Not found", 404);
   // Log all changed fields
   const newVals = { pol: polU, pod: podU, status, etd, eta, carrier_code: carrierCode,
     vessel, vessel_imo: vesselImo, voyage, incoterm, commodity_code: commodityCode,
     booking_ref: bookingRef, bl_number: blNumber, contract_type: contractType,
-    contract_id: contractId, contract_ref: contractRef };
+    contract_id: contractId, contract_ref: contractRef, allocation_id: allocationId };
   for (const [col] of Object.entries(TRACKED_FIELDS)) {
     const o = String(existing[col] || ''), n = String(newVals[col] || '');
     if (o !== n) {
       const type = col === 'status' ? 'STATUS_CHANGED' : 'FIELD_UPDATED';
       logEvent(req.params.id, type, col, o || null, n || null);
     }
+  }
+  // Auto-post structured events when skip/overage reasons are newly set
+  if (!existing.space_skip_reason && spaceSkipReason) {
+    logEvent(req.params.id, 'SPACE_SKIPPED', 'space_skip_reason', null, spaceSkipReason,
+      JSON.stringify({ contractId, contractNumber: contractRef }));
+  }
+  if (!existing.space_overage_reason && spaceOverageReason) {
+    logEvent(req.params.id, 'SPACE_OVERAGE', 'space_overage_reason', null, spaceOverageReason,
+      JSON.stringify({ allocationId }));
   }
   if (existing.status !== status) {
     db.prepare("INSERT INTO status_log (id,shipment_id,from_status,to_status,changed_at,changed_by) VALUES (?,?,?,?,?,?)")
@@ -1048,6 +1067,7 @@ app.post("/api/containers", (req, res) => {
   const addedCtr = mapContainer({ id, shipment_id: shipmentId, container_number: cnU, seal_number: sealNumber, size, type, hs_code: hsCode, cargo_description: cargoDescription, gross_weight_kg: grossWeightKg, volume_cbm: volumeCbm, is_dg: isDg ? 1 : 0, dg_class: dgClass });
   logEvent(shipmentId, 'CONTAINER_ADDED', null, null, cnU,
     JSON.stringify({ size, type, hsCode, cargoDescription }));
+  recomputeSpaceBadge(shipmentId);
   ok(res, addedCtr, 201);
 });
 
@@ -1071,6 +1091,7 @@ app.put("/api/containers/:id", (req, res) => {
     }
   }
   const row = db.prepare("SELECT * FROM containers WHERE id=?").get(req.params.id);
+  recomputeSpaceBadge(oldCtr.shipment_id);
   ok(res, mapContainer(row));
 });
 
@@ -1080,6 +1101,7 @@ app.delete("/api/containers/:id", (req, res) => {
   db.prepare("DELETE FROM containers WHERE id=?").run(req.params.id);
   logEvent(ctr.shipment_id, 'CONTAINER_REMOVED', null, ctr.container_number, null,
     JSON.stringify({ size: ctr.size, type: ctr.type }));
+  recomputeSpaceBadge(ctr.shipment_id);
   ok(res, { deleted: req.params.id });
 });
 
@@ -1131,6 +1153,48 @@ app.delete("/api/allocations/:id", (req, res) => {
   if (existing) logEntityEvent('allocation', req.params.id, 'DELETED', null, null, null,
     JSON.stringify({ carrierCode: existing.carrier_code, pol: existing.pol, pod: existing.pod }));
   ok(res, { deleted: req.params.id });
+});
+
+// Shipment contract picker: find allocations matching the route + ETD date
+// Placed before /conflicts so the static segment doesn't shadow a future param route
+app.get("/api/allocations/match", (req, res) => {
+  const { pol = "", pod = "", etd = "" } = req.query;
+  if (!pol || !pod || !etd) return ok(res, []);
+
+  const polU = pol.toUpperCase();
+  const podU = pod.toUpperCase();
+
+  const linkedTo = code => db.prepare(`
+    SELECT CASE WHEN primary_unlocode=? THEN linked_unlocode ELSE primary_unlocode END AS code
+    FROM linked_ports WHERE primary_unlocode=? OR linked_unlocode=?
+  `).all(code, code, code).map(r => r.code);
+
+  const polAll = [polU, ...linkedTo(polU)];
+  const podAll = [podU, ...linkedTo(podU)];
+  const ph = arr => arr.map(() => "?").join(",");
+
+  const allocs = db.prepare(`
+    SELECT * FROM allocations
+    WHERE pol IN (${ph(polAll)}) AND pod IN (${ph(podAll)})
+    AND effective_date <= ? AND end_date >= ?
+    ORDER BY effective_date DESC
+  `).all(...polAll, ...podAll, etd, etd);
+
+  const results = allocs.map(a => {
+    const { consumed_teu } = db.prepare(`
+      SELECT COALESCE(SUM(CASE WHEN c.size=20 THEN 1 WHEN c.size IN (40,45) THEN 2 ELSE 0 END), 0) AS consumed_teu
+      FROM containers c
+      JOIN shipments s ON s.id = c.shipment_id
+      WHERE s.allocation_id = ?
+    `).get(a.id);
+    const base       = mapAllocation(a);
+    const matchKind  = (a.pol === polU && a.pod === podU) ? "exact" : "linked";
+    const linkedPolVia = a.pol !== polU ? a.pol : null;
+    const linkedPodVia = a.pod !== podU ? a.pod : null;
+    return { ...base, consumedTEU: consumed_teu, remainingTEU: Math.max(0, base.allocatedTEU - consumed_teu), matchKind, linkedPolVia, linkedPodVia };
+  });
+
+  ok(res, results);
 });
 
 // Port links for conflict detection
@@ -1633,7 +1697,7 @@ async function saveRates(contractId, rates) {
 app.get("/api/contracts/search", (req, res) => {
   const { q="", pol="", pod="", carrier="", asOf="" } = req.query;
   const clauses = [], params = [];
-  if (q.trim()) { clauses.push(`(c.contract_number LIKE ? OR c.carrier_code LIKE ? OR c.named_account LIKE ?)`); const s=`%${q.trim()}%`; params.push(s,s,s); }
+  if (q.trim()) { clauses.push(`(c.contract_number LIKE ? OR c.contract_ref LIKE ? OR c.carrier_code LIKE ? OR c.named_account LIKE ?)`); const s=`%${q.trim()}%`; params.push(s,s,s,s); }
   if (carrier.trim()) { clauses.push("c.carrier_code=?"); params.push(carrier.trim()); }
   if (asOf.trim()) { clauses.push("c.valid_from<=? AND c.valid_to>=?"); params.push(asOf, asOf); }
   clauses.push("c.status='Active'");
@@ -1714,9 +1778,9 @@ app.get("/api/contracts", (req, res) => {
   if (asOf.trim())    { clauses.push("c.valid_from<=? AND c.valid_to>=?"); params.push(asOf, asOf); }
   if (containerType.trim()) { clauses.push(`c.container_types LIKE ?`); params.push(`%"${containerType.trim()}"%`); }
   if (search.trim()) {
-    clauses.push(`(c.contract_number LIKE ? OR c.named_account LIKE ? OR c.carrier_code LIKE ? OR EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND (l.pol LIKE ? OR l.pod LIKE ? OR l.pol_name LIKE ? OR l.pod_name LIKE ?)))`);
+    clauses.push(`(c.contract_number LIKE ? OR c.contract_ref LIKE ? OR c.named_account LIKE ? OR c.carrier_code LIKE ? OR EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND (l.pol LIKE ? OR l.pod LIKE ? OR l.pol_name LIKE ? OR l.pod_name LIKE ?)))`);
     const s = `%${search.trim()}%`;
-    params.push(s, s, s, s, s, s, s);
+    params.push(s, s, s, s, s, s, s, s);
   }
   const where = clauses.length ? "WHERE " + clauses.join(" AND ") : "";
   const total = db.prepare(`SELECT COUNT(*) AS n FROM contracts c ${where}`).get(...params).n;
@@ -1741,15 +1805,17 @@ app.get("/api/contracts/:id", (req, res) => {
 });
 
 app.post("/api/contracts", async (req, res) => {
-  const { contractNumber="", carrierCode="", namedAccountId="", namedAccount="",
+  const { contractNumber="", contractRef="", carrierCode="", namedAccountId="", namedAccount="",
           movementType="FCL", containerTypes=[], dgAllowed=false, imdgClasses=[],
           validFrom="", validTo="", currency="USD", status="Active", notes="",
           legs=[], rates=[] } = req.body;
+  const dup = db.prepare("SELECT id FROM contracts WHERE contract_number=? AND contract_ref=? AND named_account_id=?").get(contractNumber, contractRef, namedAccountId);
+  if (dup) return err(res, `A contract with this number${contractRef ? ", reference" : ""}${namedAccountId ? ", and account" : ""} already exists (${dup.id})`);
   const id = `CNTR-${uid()}`;
   const createdAt = new Date().toISOString();
-  db.prepare(`INSERT INTO contracts (id,contract_number,carrier_code,named_account_id,named_account,movement_type,container_types,dg_allowed,imdg_classes,valid_from,valid_to,currency,status,notes,created_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-    .run(id, contractNumber, carrierCode, namedAccountId, namedAccount, movementType,
+  db.prepare(`INSERT INTO contracts (id,contract_number,contract_ref,carrier_code,named_account_id,named_account,movement_type,container_types,dg_allowed,imdg_classes,valid_from,valid_to,currency,status,notes,created_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(id, contractNumber, contractRef, carrierCode, namedAccountId, namedAccount, movementType,
          JSON.stringify(containerTypes), dgAllowed ? 1 : 0, JSON.stringify(imdgClasses),
          validFrom, validTo, currency, status, notes, createdAt);
   saveLegs(id, legs);
@@ -1758,19 +1824,21 @@ app.post("/api/contracts", async (req, res) => {
   const lgs  = db.prepare("SELECT * FROM contract_legs  WHERE contract_id=? ORDER BY leg_order").all(id);
   const rts  = db.prepare("SELECT * FROM contract_rates WHERE contract_id=? ORDER BY sort_order").all(id);
   logEntityEvent('contract', id, 'CREATED', null, null, null,
-    JSON.stringify({ contractNumber, carrierCode, validFrom, validTo, status }));
+    JSON.stringify({ contractNumber, contractRef, carrierCode, validFrom, validTo, status }));
   ok(res, { ...mapContract(c), legs: lgs.map(mapLeg), rates: rts.map(mapRate) }, 201);
 });
 
 app.put("/api/contracts/:id", async (req, res) => {
-  const { contractNumber="", carrierCode="", namedAccountId="", namedAccount="",
+  const { contractNumber="", contractRef="", carrierCode="", namedAccountId="", namedAccount="",
           movementType="FCL", containerTypes=[], dgAllowed=false, imdgClasses=[],
           validFrom="", validTo="", currency="USD", status="Active", notes="",
           legs=[], rates=[] } = req.body;
-  const info = db.prepare(`UPDATE contracts SET contract_number=?,carrier_code=?,named_account_id=?,named_account=?,
+  const dup = db.prepare("SELECT id FROM contracts WHERE contract_number=? AND contract_ref=? AND named_account_id=? AND id!=?").get(contractNumber, contractRef, namedAccountId, req.params.id);
+  if (dup) return err(res, `A contract with this number${contractRef ? ", reference" : ""}${namedAccountId ? ", and account" : ""} already exists (${dup.id})`);
+  const info = db.prepare(`UPDATE contracts SET contract_number=?,contract_ref=?,carrier_code=?,named_account_id=?,named_account=?,
     movement_type=?,container_types=?,dg_allowed=?,imdg_classes=?,valid_from=?,valid_to=?,currency=?,status=?,notes=?
     WHERE id=?`)
-    .run(contractNumber, carrierCode, namedAccountId, namedAccount, movementType,
+    .run(contractNumber, contractRef, carrierCode, namedAccountId, namedAccount, movementType,
          JSON.stringify(containerTypes), dgAllowed ? 1 : 0, JSON.stringify(imdgClasses),
          validFrom, validTo, currency, status, notes, req.params.id);
   if (info.changes === 0) return err(res, "Not found", 404);
@@ -1780,7 +1848,7 @@ app.put("/api/contracts/:id", async (req, res) => {
   const lgs = db.prepare("SELECT * FROM contract_legs  WHERE contract_id=? ORDER BY leg_order").all(req.params.id);
   const rts = db.prepare("SELECT * FROM contract_rates WHERE contract_id=? ORDER BY sort_order").all(req.params.id);
   logEntityEvent('contract', req.params.id, 'UPDATED', null, null, null,
-    JSON.stringify({ contractNumber, carrierCode, validFrom, validTo, status }));
+    JSON.stringify({ contractNumber, contractRef, carrierCode, validFrom, validTo, status }));
   ok(res, { ...mapContract(c), legs: lgs.map(mapLeg), rates: rts.map(mapRate) });
 });
 
@@ -1830,6 +1898,42 @@ const broadcastMessage = (shipmentId, payload) => {
   for (const ws of subs) {
     if (ws.readyState === ws.OPEN) ws.send(frame);
   }
+};
+
+// Recompute and persist space_badge after any container change; broadcast if changed.
+// NOTE: shipmentSubs is declared after this function — that's safe because this
+// function is only ever called at request-time, by which point all module-level
+// consts are initialised.
+const recomputeSpaceBadge = shipmentId => {
+  try {
+    const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(shipmentId);
+    if (!shipment) return;
+
+    let badge = '';
+    if (shipment.allocation_id) {
+      const alloc = db.prepare("SELECT * FROM allocations WHERE id=?").get(shipment.allocation_id);
+      if (alloc) {
+        const { shipment_teu } = db.prepare(
+          "SELECT COALESCE(SUM(CASE WHEN size=20 THEN 1 WHEN size IN (40,45) THEN 2 ELSE 0 END),0) AS shipment_teu FROM containers WHERE shipment_id=?"
+        ).get(shipmentId);
+        const { other_teu } = db.prepare(
+          "SELECT COALESCE(SUM(CASE WHEN c.size=20 THEN 1 WHEN c.size IN (40,45) THEN 2 ELSE 0 END),0) AS other_teu FROM containers c JOIN shipments s ON s.id=c.shipment_id WHERE s.allocation_id=? AND s.id!=?"
+        ).get(shipment.allocation_id, shipmentId);
+        const remaining = Math.max(0, alloc.allocated_teu - other_teu);
+        if (shipment_teu > remaining)          badge = 'exceeded';
+        else if (shipment.space_overage_reason) badge = 'warning';
+      }
+    }
+
+    if (badge !== (shipment.space_badge || '')) {
+      db.prepare("UPDATE shipments SET space_badge=? WHERE id=?").run(badge, shipmentId);
+      const subs = shipmentSubs.get(shipmentId);
+      if (subs) {
+        const frame = JSON.stringify({ type: "space_badge_update", badge });
+        for (const ws of subs) if (ws.readyState === ws.OPEN) ws.send(frame);
+      }
+    }
+  } catch { /* non-fatal */ }
 };
 
 app.get("/api/shipments/:id/messages", (req, res) => {

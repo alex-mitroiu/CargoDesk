@@ -57,11 +57,12 @@ export const api = {
   portLanes: (unlocode) => req("GET", `/port-locations/${unlocode}/lanes`),
   portLinks: (unlocode) => req("GET", `/port-locations/${unlocode}/links`),
   allocations: {
-    list:   ()           => req("GET",    "/allocations"),
-    create: (data)       => req("POST",   "/allocations", data),
-    update: (id, data)   => req("PUT",    `/allocations/${id}`, data),
+    list:      ()            => req("GET",    "/allocations"),
+    create:    (data)        => req("POST",   "/allocations", data),
+    update:    (id, data)    => req("PUT",    `/allocations/${id}`, data),
     remove:    (id)          => req("DELETE", `/allocations/${id}`),
     conflicts: (params)      => req("GET",    `/allocations/conflicts?${new URLSearchParams(params)}`),
+    match:     (params)      => req("GET",    `/allocations/match?${new URLSearchParams(params)}`),
   },
   ports: {
     search: (params)     => req("GET",    `/port-locations?${new URLSearchParams(params)}`),
