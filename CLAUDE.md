@@ -4,7 +4,7 @@
 Full-stack freight management app. React 18 + Vite frontend, Express + node:sqlite backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.17.1 "Sentry"**
+- Version: **v0.18.0 "Traverse"**
 - Run: `npm run dev` (runs server on :3001 + Vite on :5173 concurrently)
 - Seed: `node import-mdm-data.js`
 
@@ -95,11 +95,9 @@ src/
 - **contractMatch**: `contractMatch(s, a)` — priority: contractId exact > contractNumber/contractRef string > contractType === "Central Contract"
 - **Contract legs loaded on demand**: SpaceConfigurationsPage fetches `api.contracts.get(id)` for each unique allocation contractId and caches in `contractsById` state
 
-## Recent changes (v0.17.0)
-- AppSettingsPage (new): ⚙ nav item pinned above footer; API Controls tab with External APIs subtab (FX Rates, Weather, OFAC SDN — toggle, recurrence, test, import, sync) and Internal APIs subtab (WebSocket, Shipments, Contracts, Customers, Carriers, Vessels, Ports, System Messages — toggle + latency test); toggles gate corresponding sidebar nav items and render a 🔒 Module Disabled fallback for direct URL access
-- App.jsx: appSettings state + PAGE_SETTING_MAP + isEnabled() helper; settings reloaded on nav away from settings page; NavBtn hides when module disabled; User Manual + About moved from sidebar to avatar dropdown; paddingBottom on aside to clear footer
-- Sanctions screening: silent auto-screen on POST/PUT /api/shipments when sanctionsMap.size > 0; skips re-screen if compliance override exists or if only non-party fields changed; screening result embedded in response; warning toast on HIT names each flagged party
-- OFAC sync: httpsGetFollowRedirects() follows up to 5 redirects; setTimeout overflow fixed (capped at 2,000,000,000 ms); failed syncs retry after 1 h instead of immediately; CSV file-upload path added (Vite large-body passthrough plugin)
-- ShipmentDetailPage: compliance badge text simplified to "⚠ Compliance review required"; hover tooltip lists hit parties; header badge fontSize 10.5 → 12 (+15%); edit save refreshes screening state from response
-- Badge primitive: size prop added for per-instance font-size override
-- server.js: app_settings table + SETTING_DEFAULTS seeding; getSettings() helper; scheduleNextOfacSync() with cap + retry logic; express.json limit raised to 25 mb; POST /api/sanctions/import-csv; GET|PUT /api/settings
+## Recent changes (v0.18.0)
+- **Operational Accounting** (renamed from Cost Control): `source` + `modified_at` columns on `shipment_cost_lines`; lines show Contract / Contract (Modified) / Manual pills; Cost Line History modal with CREATED/IMPORTED/UPDATED/DELETED filter chips + CSV export (stored in `entity_events`); ⇄ Mirror as BUY/SELL button in Add/Edit modal — saves primary line and creates mirrored copy with type flipped; Container column in cost line table; import now filters per-container rates by container type; manual lines preserved on recalculate; module renamed to "Operational Accounting - Masha's Domain"
+- **Shipment Milestones** (new): `milestone_templates` + `shipment_milestones` DB tables; default 9-step FCL template seeded on startup (Booking Confirmed → Delivered); `POST /api/shipments/:id/milestones/init` picks best-matching template by carrier + trade lane; `MilestonePanel` in shipment detail — vertical stepper with progress bar, completed/current/overdue/upcoming states, inline date+note editing, mark-complete/undo, reset, collapse toggle; overdue badge on shipment rows; Overdue Milestones KPI on Landing Page
+- **Integration Board**: two new columns — In Testing (cyan) + Testing Failed (red) between Done and Released; per-column Show More (first 5 visible, ▾▾/▴▴ toggle); Show/Hide Released column toggle in toolbar (default ON)
+- **REST API compliance**: cost-line routes nested — `PUT/DELETE /api/cost-lines/:id` → `PUT/DELETE /api/shipments/:shipmentId/cost-lines/:id`; `api.costLines.update(shipmentId, lineId, d)` and `api.costLines.remove(shipmentId, lineId)` signatures updated
+- **Postman collection**: `/src/dev/CargoDesk.postman_collection.json` (18 resource folders, all routes with example bodies) + `/src/dev/CargoDesk.postman_environment.json` (`{{baseUrl}}` = `http://localhost:3001`)

@@ -1,0 +1,835 @@
+{
+  "info": {
+    "name": "CargoDesk API v0.17.1",
+    "_postman_id": "cargodesk-v0-17-1",
+    "description": "Full REST API for CargoDesk freight management system. Import CargoDesk.postman_environment.json and set the active environment to use {{baseUrl}}.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+
+    {
+      "name": "Shipments",
+      "item": [
+        {
+          "name": "List shipments",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/shipments" }
+        },
+        {
+          "name": "Get shipment",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/shipments/SHP-XXXXXX" }
+        },
+        {
+          "name": "Create shipment",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/shipments",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"pol\": \"NLRTM\",\n  \"pod\": \"SGSIN\",\n  \"carrierCode\": \"MSCU\",\n  \"contractType\": \"Central Contract\",\n  \"status\": \"Active\",\n  \"etd\": \"2026-08-01\",\n  \"eta\": \"2026-08-25\"\n}" }
+          }
+        },
+        {
+          "name": "Update shipment",
+          "request": {
+            "method": "PUT",
+            "url": "{{baseUrl}}/api/shipments/SHP-XXXXXX",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"Completed\",\n  \"blNumber\": \"MSCUABC123\"\n}" }
+          }
+        },
+        {
+          "name": "Delete shipment",
+          "request": { "method": "DELETE", "url": "{{baseUrl}}/api/shipments/SHP-XXXXXX" }
+        },
+        {
+          "name": "Get shipment events",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/shipments/SHP-XXXXXX/events" }
+        },
+        {
+          "name": "Get shipment status log",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/shipments/SHP-XXXXXX/status-log" }
+        },
+        {
+          "name": "Get compliance hits",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/shipments/compliance-hits" }
+        }
+      ]
+    },
+
+    {
+      "name": "Cost Lines",
+      "item": [
+        {
+          "name": "List cost lines",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/shipments/SHP-XXXXXX/cost-lines" }
+        },
+        {
+          "name": "Create cost line",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/shipments/SHP-XXXXXX/cost-lines",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"type\": \"BUY\",\n  \"chargeCode\": \"Ocean Freight\",\n  \"currency\": \"USD\",\n  \"amount\": 1500,\n  \"exchangeRate\": 1,\n  \"notes\": \"\",\n  \"containerId\": \"\"\n}" }
+          }
+        },
+        {
+          "name": "Update cost line",
+          "request": {
+            "method": "PUT",
+            "url": "{{baseUrl}}/api/shipments/SHP-XXXXXX/cost-lines/CL-XXXXXX",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"type\": \"BUY\",\n  \"chargeCode\": \"Ocean Freight\",\n  \"currency\": \"USD\",\n  \"amount\": 1600,\n  \"exchangeRate\": 1,\n  \"notes\": \"Revised rate\",\n  \"containerId\": \"\"\n}" }
+          }
+        },
+        {
+          "name": "Delete cost line",
+          "request": { "method": "DELETE", "url": "{{baseUrl}}/api/shipments/SHP-XXXXXX/cost-lines/CL-XXXXXX" }
+        },
+        {
+          "name": "Import contract rates",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/shipments/SHP-XXXXXX/cost-lines/import-contract",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"overwrite\": true,\n  \"splitPerContainer\": false\n}" }
+          }
+        },
+        {
+          "name": "Get cost line events",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/shipments/SHP-XXXXXX/cost-line-events" }
+        }
+      ]
+    },
+
+    {
+      "name": "Milestones",
+      "item": [
+        {
+          "name": "List milestones for shipment",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/shipments/SHP-XXXXXX/milestones" }
+        },
+        {
+          "name": "Initialize milestones from template",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/shipments/SHP-XXXXXX/milestones/init",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"carrierCode\": \"MSCU\",\n  \"tradeLane\": \"\"\n}" }
+          }
+        },
+        {
+          "name": "Update milestone",
+          "request": {
+            "method": "PUT",
+            "url": "{{baseUrl}}/api/milestones/MS-XXXXXX",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"estimatedDate\": \"2026-08-05\",\n  \"completedAt\": \"\",\n  \"completedBy\": \"\",\n  \"note\": \"Awaiting carrier confirmation\"\n}" }
+          }
+        },
+        {
+          "name": "Mark milestone complete",
+          "request": {
+            "method": "PUT",
+            "url": "{{baseUrl}}/api/milestones/MS-XXXXXX",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"estimatedDate\": \"2026-08-05\",\n  \"completedAt\": \"2026-08-05T10:30:00.000Z\",\n  \"completedBy\": \"User\",\n  \"note\": \"\"\n}" }
+          }
+        },
+        {
+          "name": "Delete milestone",
+          "request": { "method": "DELETE", "url": "{{baseUrl}}/api/milestones/MS-XXXXXX" }
+        }
+      ]
+    },
+
+    {
+      "name": "Milestone Templates",
+      "item": [
+        {
+          "name": "List milestone templates",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/milestone-templates" }
+        },
+        {
+          "name": "Create milestone template step",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/milestone-templates",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"templateKey\": \"FCL\",\n  \"carrierCode\": \"MSCU\",\n  \"tradeLane\": \"\",\n  \"milestoneKey\": \"booking_confirmed\",\n  \"label\": \"Booking Confirmed\",\n  \"sequenceOrder\": 1\n}" }
+          }
+        },
+        {
+          "name": "Update milestone template step",
+          "request": {
+            "method": "PUT",
+            "url": "{{baseUrl}}/api/milestone-templates/MT-XXXXXX",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"label\": \"Booking Confirmed (MSCU)\",\n  \"sequenceOrder\": 1\n}" }
+          }
+        },
+        {
+          "name": "Delete milestone template step",
+          "request": { "method": "DELETE", "url": "{{baseUrl}}/api/milestone-templates/MT-XXXXXX" }
+        }
+      ]
+    },
+
+    {
+      "name": "Containers",
+      "item": [
+        {
+          "name": "List containers",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/containers" }
+        },
+        {
+          "name": "Create container",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/containers",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"shipmentId\": \"SHP-XXXXXX\",\n  \"containerNumber\": \"MSCU1234567\",\n  \"size\": \"40\",\n  \"type\": \"HC\",\n  \"cargoDescription\": \"General goods\",\n  \"grossWeightKg\": 18000\n}" }
+          }
+        },
+        {
+          "name": "Update container",
+          "request": {
+            "method": "PUT",
+            "url": "{{baseUrl}}/api/containers/CNTR-XXXXXX",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"sealNumber\": \"SEAL123\",\n  \"grossWeightKg\": 18500\n}" }
+          }
+        },
+        {
+          "name": "Delete container",
+          "request": { "method": "DELETE", "url": "{{baseUrl}}/api/containers/CNTR-XXXXXX" }
+        }
+      ]
+    },
+
+    {
+      "name": "Allocations (Space Configs)",
+      "item": [
+        {
+          "name": "List allocations",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/allocations" }
+        },
+        {
+          "name": "Create allocation",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/allocations",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"carrierCode\": \"MSCU\",\n  \"allocatedTEU\": 100,\n  \"effectiveDate\": \"2026-01-01\",\n  \"endDate\": \"2026-12-31\",\n  \"tradeLane\": \"FEWB\",\n  \"pol\": \"NLRTM\",\n  \"pod\": \"SGSIN\",\n  \"contractId\": \"\"\n}" }
+          }
+        },
+        {
+          "name": "Update allocation",
+          "request": {
+            "method": "PUT",
+            "url": "{{baseUrl}}/api/allocations/ALLOC-XXXXXX",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"allocatedTEU\": 120,\n  \"alertThreshold\": 85\n}" }
+          }
+        },
+        {
+          "name": "Delete allocation",
+          "request": { "method": "DELETE", "url": "{{baseUrl}}/api/allocations/ALLOC-XXXXXX" }
+        },
+        {
+          "name": "Get allocation conflicts",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/allocations/conflicts?pol=NLRTM&pod=SGSIN&carrierCode=MSCU" }
+        }
+      ]
+    },
+
+    {
+      "name": "Contracts",
+      "item": [
+        {
+          "name": "Search contracts",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/contracts?carrierCode=MSCU&status=active" }
+        },
+        {
+          "name": "Find contracts",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/contracts/search?q=MSCU" }
+        },
+        {
+          "name": "Match contracts",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/contracts/match?pol=NLRTM&pod=SGSIN&carrierCode=MSCU" }
+        },
+        {
+          "name": "Get contract",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/contracts/CNT-XXXXXX" }
+        },
+        {
+          "name": "Create contract",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/contracts",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"contractNumber\": \"MSCU-2026-001\",\n  \"carrierCode\": \"MSCU\",\n  \"movementType\": \"FCL\",\n  \"validFrom\": \"2026-01-01\",\n  \"validTo\": \"2026-12-31\",\n  \"currency\": \"USD\",\n  \"status\": \"active\"\n}" }
+          }
+        },
+        {
+          "name": "Update contract",
+          "request": {
+            "method": "PUT",
+            "url": "{{baseUrl}}/api/contracts/CNT-XXXXXX",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"expired\"\n}" }
+          }
+        },
+        {
+          "name": "Delete contract",
+          "request": { "method": "DELETE", "url": "{{baseUrl}}/api/contracts/CNT-XXXXXX" }
+        }
+      ]
+    },
+
+    {
+      "name": "Carriers",
+      "item": [
+        {
+          "name": "List carriers",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/carriers" }
+        },
+        {
+          "name": "Create carrier",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/carriers",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"code\": \"HLCU\",\n  \"name\": \"Hapag-Lloyd\",\n  \"shortName\": \"HL\"\n}" }
+          }
+        },
+        {
+          "name": "Update carrier",
+          "request": {
+            "method": "PUT",
+            "url": "{{baseUrl}}/api/carriers/HLCU",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Hapag-Lloyd AG\"\n}" }
+          }
+        },
+        {
+          "name": "Delete carrier",
+          "request": { "method": "DELETE", "url": "{{baseUrl}}/api/carriers/HLCU" }
+        }
+      ]
+    },
+
+    {
+      "name": "Vessels",
+      "item": [
+        {
+          "name": "List vessels",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/vessels?page=1&limit=50" }
+        },
+        {
+          "name": "Search vessels",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/vessels/search?q=MSC" }
+        },
+        {
+          "name": "Get vessel",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/vessels/9999999" }
+        },
+        {
+          "name": "Create vessel",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/vessels",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"imo\": \"9999999\",\n  \"name\": \"MSC EXAMPLE\",\n  \"assetType\": \"Container Ship\",\n  \"flagIso2\": \"PA\",\n  \"buildYear\": 2020,\n  \"grossTonnage\": 220000\n}" }
+          }
+        },
+        {
+          "name": "Update vessel",
+          "request": {
+            "method": "PUT",
+            "url": "{{baseUrl}}/api/vessels/9999999",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"MSC EXAMPLE II\"\n}" }
+          }
+        },
+        {
+          "name": "Delete vessel",
+          "request": { "method": "DELETE", "url": "{{baseUrl}}/api/vessels/9999999" }
+        }
+      ]
+    },
+
+    {
+      "name": "Customers",
+      "item": [
+        {
+          "name": "List customers",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/customers?q=&limit=50&offset=0" }
+        },
+        {
+          "name": "Get customer",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/customers/CUS-XXXXXX" }
+        },
+        {
+          "name": "Create customer",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/customers",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"companyName\": \"Acme Corp\",\n  \"address1\": \"123 Main St\",\n  \"city\": \"Rotterdam\",\n  \"countryIso2\": \"NL\",\n  \"email\": \"logistics@acme.com\"\n}" }
+          }
+        },
+        {
+          "name": "Update customer",
+          "request": {
+            "method": "PUT",
+            "url": "{{baseUrl}}/api/customers/CUS-XXXXXX",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"phone\": \"+31612345678\"\n}" }
+          }
+        },
+        {
+          "name": "Delete customer",
+          "request": { "method": "DELETE", "url": "{{baseUrl}}/api/customers/CUS-XXXXXX" }
+        },
+        {
+          "name": "Sanctions check (all customers)",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/customers/sanctions-check" }
+        }
+      ]
+    },
+
+    {
+      "name": "Sanctions & Screening",
+      "item": [
+        {
+          "name": "Get sanctions sync status",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/sanctions/status" }
+        },
+        {
+          "name": "Trigger OFAC sync",
+          "request": { "method": "POST", "url": "{{baseUrl}}/api/sanctions/sync" }
+        },
+        {
+          "name": "Import OFAC CSV",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/sanctions/import-csv",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"csv\": \"<paste SDN CSV content here>\"\n}" }
+          }
+        },
+        {
+          "name": "List sanction entries",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/sanctions/entries?q=&limit=50&offset=0" }
+        },
+        {
+          "name": "Get shipment screening result",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/shipments/SHP-XXXXXX/screening" }
+        },
+        {
+          "name": "Run shipment screening",
+          "request": { "method": "POST", "url": "{{baseUrl}}/api/shipments/SHP-XXXXXX/screen" }
+        },
+        {
+          "name": "Override compliance",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/shipments/SHP-XXXXXX/screening/override",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"reason\": \"Reviewed and approved — not same entity\"\n}" }
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "Port Locations (UN/LOCODE)",
+      "item": [
+        {
+          "name": "Search port locations",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/port-locations?q=Rotterdam&limit=20&offset=0" }
+        },
+        {
+          "name": "Get port location",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/port-locations/NLRTM" }
+        },
+        {
+          "name": "Create port location",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/port-locations",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"unlocode\": \"TESTA\",\n  \"name\": \"Test Port\",\n  \"countryCode\": \"TE\"\n}" }
+          }
+        },
+        {
+          "name": "Update port location",
+          "request": {
+            "method": "PUT",
+            "url": "{{baseUrl}}/api/port-locations/TESTA",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Test Port Updated\"\n}" }
+          }
+        },
+        {
+          "name": "Delete port location",
+          "request": { "method": "DELETE", "url": "{{baseUrl}}/api/port-locations/TESTA" }
+        },
+        {
+          "name": "Get trade lanes for port",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/port-locations/NLRTM/lanes" }
+        },
+        {
+          "name": "Get linked ports for port",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/port-locations/NLRTM/links" }
+        },
+        {
+          "name": "Browse UN/LOCODE (unlocodes)",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/unlocodes?q=Rotterdam&limit=20&offset=0" }
+        }
+      ]
+    },
+
+    {
+      "name": "Linked Ports",
+      "item": [
+        {
+          "name": "List linked ports",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/linked-ports" }
+        },
+        {
+          "name": "Create linked port pair",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/linked-ports",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"primaryUnlocode\": \"NLRTM\",\n  \"linkedUnlocode\": \"NLANR\",\n  \"note\": \"Port pair for Rotterdam / Antwerp\"\n}" }
+          }
+        },
+        {
+          "name": "Update linked port pair",
+          "request": {
+            "method": "PUT",
+            "url": "{{baseUrl}}/api/linked-ports/LP-XXXXXX",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"note\": \"Updated note\"\n}" }
+          }
+        },
+        {
+          "name": "Delete linked port pair",
+          "request": { "method": "DELETE", "url": "{{baseUrl}}/api/linked-ports/LP-XXXXXX" }
+        }
+      ]
+    },
+
+    {
+      "name": "Trade Lanes",
+      "item": [
+        {
+          "name": "List trade lanes",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/trade-lanes" }
+        },
+        {
+          "name": "Create trade lane",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/trade-lanes",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"code\": \"FEWB\",\n  \"name\": \"Far East Westbound\"\n}" }
+          }
+        },
+        {
+          "name": "Update trade lane",
+          "request": {
+            "method": "PUT",
+            "url": "{{baseUrl}}/api/trade-lanes/FEWB",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"description\": \"Asia → Europe westbound\"\n}" }
+          }
+        },
+        {
+          "name": "Delete trade lane",
+          "request": { "method": "DELETE", "url": "{{baseUrl}}/api/trade-lanes/FEWB" }
+        },
+        {
+          "name": "Get countries for trade lane",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/trade-lanes/FEWB/countries" }
+        },
+        {
+          "name": "Set countries for trade lane",
+          "request": {
+            "method": "PUT",
+            "url": "{{baseUrl}}/api/trade-lanes/FEWB/countries",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"iso2s\": [\"CN\", \"JP\", \"KR\"]\n}" }
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "Countries",
+      "item": [
+        {
+          "name": "List countries",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/countries" }
+        },
+        {
+          "name": "Create country",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/countries",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"iso2\": \"XX\",\n  \"name\": \"Test Country\",\n  \"regionCode\": \"\"\n}" }
+          }
+        },
+        {
+          "name": "Update country",
+          "request": {
+            "method": "PUT",
+            "url": "{{baseUrl}}/api/countries/XX",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"regionCode\": \"ASIA\"\n}" }
+          }
+        },
+        {
+          "name": "Delete country",
+          "request": { "method": "DELETE", "url": "{{baseUrl}}/api/countries/XX" }
+        },
+        {
+          "name": "Get locations for country",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/countries/NL/locations?limit=20&offset=0" }
+        },
+        {
+          "name": "Set trade lanes for country",
+          "request": {
+            "method": "PUT",
+            "url": "{{baseUrl}}/api/countries/NL/trade-lanes",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"lanes\": [\"FEWB\", \"MENA\"]\n}" }
+          }
+        },
+        {
+          "name": "List all country→lane assignments",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/country-trade-lanes" }
+        }
+      ]
+    },
+
+    {
+      "name": "Regions",
+      "item": [
+        {
+          "name": "List regions",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/regions" }
+        },
+        {
+          "name": "Create region",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/regions",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"code\": \"APAC\",\n  \"name\": \"Asia Pacific\"\n}" }
+          }
+        },
+        {
+          "name": "Update region",
+          "request": {
+            "method": "PUT",
+            "url": "{{baseUrl}}/api/regions/APAC",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"description\": \"Asia Pacific region\"\n}" }
+          }
+        },
+        {
+          "name": "Delete region",
+          "request": { "method": "DELETE", "url": "{{baseUrl}}/api/regions/APAC" }
+        }
+      ]
+    },
+
+    {
+      "name": "Commodities",
+      "item": [
+        {
+          "name": "List commodities",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/commodities?limit=50&offset=0" }
+        },
+        {
+          "name": "Search commodities",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/commodities/search?q=steel" }
+        },
+        {
+          "name": "Get commodity",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/commodities/STEEL" }
+        },
+        {
+          "name": "Create commodity",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/commodities",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"code\": \"TESTCMD\",\n  \"description\": \"Test Commodity\",\n  \"gradeCode\": \"M\"\n}" }
+          }
+        },
+        {
+          "name": "Update commodity",
+          "request": {
+            "method": "PUT",
+            "url": "{{baseUrl}}/api/commodities/TESTCMD",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"description\": \"Test Commodity Updated\"\n}" }
+          }
+        },
+        {
+          "name": "Delete commodity",
+          "request": { "method": "DELETE", "url": "{{baseUrl}}/api/commodities/TESTCMD" }
+        }
+      ]
+    },
+
+    {
+      "name": "Tickets (Kanban)",
+      "item": [
+        {
+          "name": "List tickets",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/tickets" }
+        },
+        {
+          "name": "Create ticket",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/tickets",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"title\": \"Fix port matching bug\",\n  \"section\": \"Bugs\",\n  \"priority\": \"High\",\n  \"status\": \"Backlog\",\n  \"type\": \"Bug\",\n  \"version\": \"v0.18.0\",\n  \"shipmentId\": null\n}" }
+          }
+        },
+        {
+          "name": "Update ticket",
+          "request": {
+            "method": "PUT",
+            "url": "{{baseUrl}}/api/tickets/TKT-XXXXXX",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"status\": \"In Progress\"\n}" }
+          }
+        },
+        {
+          "name": "Delete ticket",
+          "request": { "method": "DELETE", "url": "{{baseUrl}}/api/tickets/TKT-XXXXXX" }
+        },
+        {
+          "name": "Get ticket links",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/tickets/TKT-XXXXXX/links" }
+        },
+        {
+          "name": "Add ticket link",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/tickets/TKT-XXXXXX/links",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"toId\": \"TKT-YYYYYY\",\n  \"linkType\": \"Blocks\"\n}" }
+          }
+        },
+        {
+          "name": "Delete ticket link",
+          "request": { "method": "DELETE", "url": "{{baseUrl}}/api/ticket-links/LP-XXXXXX" }
+        }
+      ]
+    },
+
+    {
+      "name": "Shipment Messages",
+      "item": [
+        {
+          "name": "List messages for shipment",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/shipments/SHP-XXXXXX/messages" }
+        },
+        {
+          "name": "Post message to shipment",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/shipments/SHP-XXXXXX/messages",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"body\": \"Shipment on hold pending B/L amendment.\",\n  \"author\": \"Alice\"\n}" }
+          }
+        }
+      ]
+    },
+
+    {
+      "name": "Entity Events (Audit Log)",
+      "item": [
+        {
+          "name": "Get entity events",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/entity-events/allocation/ALLOC-XXXXXX" }
+        }
+      ]
+    },
+
+    {
+      "name": "Margin Summary",
+      "item": [
+        {
+          "name": "Get margin summary",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/margin/summary" }
+        }
+      ]
+    },
+
+    {
+      "name": "System Messages",
+      "item": [
+        {
+          "name": "List active system messages",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/system-messages" }
+        },
+        {
+          "name": "List all system messages",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/system-messages/all" }
+        },
+        {
+          "name": "Create system message",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/system-messages",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"title\": \"Scheduled Maintenance\",\n  \"body\": \"System will be unavailable 02:00–04:00 UTC on 2026-08-01.\",\n  \"severity\": \"warning\",\n  \"activeFrom\": \"2026-07-30\",\n  \"activeTo\": \"2026-08-01\"\n}" }
+          }
+        },
+        {
+          "name": "Delete system message",
+          "request": { "method": "DELETE", "url": "{{baseUrl}}/api/system-messages/SM-XXXXXX" }
+        }
+      ]
+    },
+
+    {
+      "name": "FX Rates",
+      "item": [
+        {
+          "name": "Get cached FX rates",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/fx/rates" }
+        }
+      ]
+    },
+
+    {
+      "name": "Settings",
+      "item": [
+        {
+          "name": "Get all settings",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/settings" }
+        },
+        {
+          "name": "Update settings",
+          "request": {
+            "method": "PUT",
+            "url": "{{baseUrl}}/api/settings",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"api_fx_enabled\": \"true\",\n  \"api_ofac_enabled\": \"false\"\n}" }
+          }
+        }
+      ]
+    }
+
+  ]
+}

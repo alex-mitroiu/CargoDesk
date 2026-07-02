@@ -11,7 +11,7 @@ import { toast } from "../toast";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const COLUMNS = ["Ready", "In Progress", "Done", "Released"];
+const COLUMNS = ["Ready", "In Progress", "Done", "In Testing", "Testing Failed", "Released"];
 
 const SECTIONS = [
   "General", "Shipments", "Dashboard", "Contracts", "Cost Control",
@@ -46,11 +46,15 @@ const PRIORITY_DOT = {
 };
 
 const COL_ACCENT = {
-  "Ready":       "#6366f1",
-  "In Progress": "#f59e0b",
-  "Done":        "#22c55e",
-  "Released":    "#8b5cf6",
+  "Ready":          "#6366f1",
+  "In Progress":    "#f59e0b",
+  "Done":           "#22c55e",
+  "In Testing":     "#06b6d4",
+  "Testing Failed": "#ef4444",
+  "Released":       "#8b5cf6",
 };
+
+const PREVIEW_LIMIT = 5;
 
 // ─── Ticket Links Panel ───────────────────────────────────────────────────────
 
@@ -554,9 +558,9 @@ const TicketPreview = ({ ticket, colIndex, shipments, tickets, onClose, onEdit, 
 
 const KanbanColumn = ({ status, tickets, onEdit, onDelete, onMove, onPreview,
                         onDrop, colIndex, dragId, previewId }) => {
-  // { id: ticketId, side: "before"|"after" } — where the drop line appears
   const [dropTarget, setDropTarget] = useState(null);
   const [colDragOver, setColDragOver] = useState(false);
+  const [expanded, setExpanded] = useState(false);
 
   const clearDrop = () => { setDropTarget(null); setColDragOver(false); };
 
@@ -608,7 +612,7 @@ const KanbanColumn = ({ status, tickets, onEdit, onDelete, onMove, onPreview,
       </div>
 
       {/* Cards */}
-      {tickets.map(t => (
+      {(expanded ? tickets : tickets.slice(0, PREVIEW_LIMIT)).map(t => (
         <TicketCard
           key={t.id}
           ticket={t}
@@ -620,11 +624,42 @@ const KanbanColumn = ({ status, tickets, onEdit, onDelete, onMove, onPreview,
           onDelete={onDelete}
           onMove={onMove}
           onPreview={onPreview}
-          onDragStart={id => setDropTarget(null)}
+          onDragStart={() => setDropTarget(null)}
           onDragEnd={() => clearDrop()}
           onDragOver={handleCardDragOver}
         />
       ))}
+
+      {/* Show more / collapse */}
+      {tickets.length > PREVIEW_LIMIT && !expanded && (
+        <>
+          <div style={{ borderTop: `1px dashed ${T.border}`, margin: "4px 0" }} />
+          <button
+            type="button"
+            onClick={() => setExpanded(true)}
+            style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, background: "none",
+              border: "none", cursor: "pointer", textAlign: "center", padding: "4px 0",
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}
+            onMouseEnter={e => e.currentTarget.style.color = T.text}
+            onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>
+            <span>▾▾</span>
+            <span>Show {tickets.length - PREVIEW_LIMIT} more</span>
+          </button>
+        </>
+      )}
+      {tickets.length > PREVIEW_LIMIT && expanded && (
+        <button
+          type="button"
+          onClick={() => setExpanded(false)}
+          style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, background: "none",
+            border: "none", cursor: "pointer", textAlign: "center", padding: "4px 0",
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}
+          onMouseEnter={e => e.currentTarget.style.color = T.text}
+          onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>
+          <span>▴▴</span>
+          <span>Collapse</span>
+        </button>
+      )}
 
       {/* Empty state / bottom drop zone */}
       {tickets.length === 0 && (
@@ -640,12 +675,13 @@ const KanbanColumn = ({ status, tickets, onEdit, onDelete, onMove, onPreview,
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 const KanbanPage = ({ shipments = [] }) => {
-  const [tickets,   setTickets]   = useState([]);
-  const [loading,   setLoading]   = useState(true);
-  const [modal,     setModal]     = useState(null);
-  const [filter,    setFilter]    = useState({ priority: "", section: "" });
-  const [dragId,    setDragId]    = useState(null);
-  const [previewId, setPreviewId] = useState(null);
+  const [tickets,       setTickets]       = useState([]);
+  const [loading,       setLoading]       = useState(true);
+  const [modal,         setModal]         = useState(null);
+  const [filter,        setFilter]        = useState({ priority: "", section: "" });
+  const [dragId,        setDragId]        = useState(null);
+  const [previewId,     setPreviewId]     = useState(null);
+  const [showReleased,  setShowReleased]  = useState(true);
 
   // Derive preview from live tickets so it reflects edits/moves automatically
   const preview = previewId ? tickets.find(t => t.id === previewId) ?? null : null;
@@ -744,7 +780,7 @@ const KanbanPage = ({ shipments = [] }) => {
     load();
   };
 
-  const totalOpen = tickets.filter(t => t.status !== "Released").length;
+  const totalOpen = tickets.filter(t => t.status !== "Released" && t.status !== "Testing Failed" && t.status !== "Done").length;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 18, height: "100%" }}>
@@ -770,6 +806,19 @@ const KanbanPage = ({ shipments = [] }) => {
             <option value="">All sections</option>
             {SECTIONS.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
+          <button
+            type="button"
+            onClick={() => setShowReleased(v => !v)}
+            style={{
+              fontFamily: T.body, fontSize: 12, cursor: "pointer",
+              padding: "5px 12px", borderRadius: 7,
+              border: `1px solid ${showReleased ? "#8b5cf6" : T.border}`,
+              background: showReleased ? "rgba(139,92,246,.12)" : "none",
+              color: showReleased ? "#8b5cf6" : T.textMuted,
+              transition: "all .15s",
+            }}>
+            {showReleased ? "● Released" : "○ Released"}
+          </button>
           <Btn onClick={() => setModal("add")} size="lg">＋ Add Ticket</Btn>
         </div>
       </div>
@@ -786,9 +835,9 @@ const KanbanPage = ({ shipments = [] }) => {
             style={{ display: "flex", gap: 14, alignItems: "flex-start", overflowX: "auto", flex: 1, paddingBottom: 8 }}
             onDragEnd={() => setDragId(null)}
           >
-            {COLUMNS.map((col, i) => (
+            {COLUMNS.filter(col => showReleased || col !== "Released").map((col) => (
               <KanbanColumn
-                key={col} status={col} colIndex={i}
+                key={col} status={col} colIndex={COLUMNS.indexOf(col)}
                 tickets={byStatus(col)}
                 onEdit={t => setModal(t)}
                 onDelete={handleDelete}

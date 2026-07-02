@@ -529,7 +529,12 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
                 {s.contractRef && <span style={{ fontFamily: T.mono, fontSize: 10.5, color: T.textMuted }}>{s.contractRef}</span>}
               </div>
               <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text }}>{teuFor(s.id)}</span>
-              <Badge variant={statusVariant(s.status)}>{s.status}</Badge>
+              <div style={{ display: "flex", flexDirection: "column", gap: 3, alignItems: "center" }}>
+                <Badge variant={statusVariant(s.status)}>{s.status}</Badge>
+                {s.overdueCount > 0 && (
+                  <Badge variant="danger" size={9.5}>{s.overdueCount} overdue</Badge>
+                )}
+              </div>
               <div>{(() => {
                 if (!financeEnabled) return null;
                 const buy = s.marginBuyUsd || 0, sell = s.marginSellUsd || 0;

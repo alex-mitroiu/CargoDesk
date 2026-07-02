@@ -2,7 +2,7 @@
 
 > Freight management application for tracking ocean shipments, carrier space utilisation, contracts, and maritime master data.
 
-[![Version](https://img.shields.io/badge/version-0.17.1-blue)](.)
+[![Version](https://img.shields.io/badge/version-0.18.0-blue)](.)
 ![Node](https://img.shields.io/badge/node-22.5%2B-green)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
@@ -29,7 +29,9 @@
 - **Customers MDM** — Full CRUD for customers: company name, address, phone, fax, email, website, notes. Searchable by country, city, and customer code. `CustomerCombobox` typeahead used for Shipper / Consignee / Principal.
 - **Vessel Registry** — 349 IMO vessels searchable by name, IMO number, or asset type.
 - **Port Directory** — 14,269 UN/LOCODE seaports with linked-port relationships, trade lane assignment, and delta-sync support (`last_synced_at`).
-- **Integration Board** — Kanban (Ready / In Progress / Done / Released) with drag-to-reorder within columns, live drop indicators, colour-coded ticket types, shipment linking, and version tags — each ticket can be tagged to a release version with a purple badge displayed on the card.
+- **Operational Accounting** — Per-shipment BUY and SELL cost lines with charge codes, multi-currency amounts with auto-filled FX rates, and per-container assignment. Each line shows its source (Contract / Contract (Modified) / Manual) and tracks changes in a dedicated Cost Line History modal (CREATED / IMPORTED / UPDATED / DELETED events with filter chips and CSV export). The Add/Edit form includes a ⇄ Mirror as BUY/SELL button that saves the current line and instantly creates a mirrored copy with the type flipped.
+- **Shipment Milestones** — Per-shipment milestone workflow backed by configurable templates. A default 9-step FCL sequence (Booking Confirmed → SI Submitted → Cargo Gated In → Vessel Departed → B/L Issued → Vessel Arrived → Customs Cleared → Cargo Released → Delivered) is seeded on startup. Each shipment's milestone panel shows a vertical stepper with per-step states (completed / current / overdue / upcoming), a progress bar, inline estimated-date and note editing, and mark-complete / undo actions. Overdue milestone count is surfaced as a badge on shipment rows and as a Fleet Overview KPI on the Landing Page.
+- **Integration Board** — Kanban with six columns (Ready / In Progress / Done / In Testing / Testing Failed / Released), drag-to-reorder within columns, live drop indicators, colour-coded ticket types, shipment linking, and version tags. Each column collapses to the first 5 tickets with a ▾▾ Show More control. The Released column can be toggled on/off from the toolbar.
 - **Entity Audit Log** — `entity_events` table tracks every CREATED / UPDATED / DELETED event across allocations, carriers, and contracts. `EntityHistoryModal` renders a timestamped field-diff timeline, accessible via the History action on any row.
 - **Currency Converter** — Live FX rates widget on the home page (20 currencies via Frankfurter / ECB) with swap button and localStorage-persisted currency pair.
 - **Landing Page** — Fleet KPIs, weather widget, currency converter, calendar week badge on the clock card, system messages, and the Requires Attention section.
@@ -108,9 +110,12 @@ CargoDesk/
 │   ├── carriers.csv           # 68 carrier records
 │   └── vessels.json           # 349 vessels (IMO registry)
 └── src/
-    ├── api.js                 # All fetch wrappers (api.shipments, api.ports, api.shipmentMessages...)
+    ├── api.js                 # All fetch wrappers (api.shipments, api.costLines, api.milestones...)
     ├── tokens.js              # Design tokens, theme system, route-matching helpers
     ├── version.js             # VERSION, CODENAME, CHANGELOG
+    ├── dev/
+    │   ├── CargoDesk.postman_collection.json   # All API routes in 18 resource folders
+    │   └── CargoDesk.postman_environment.json  # {{baseUrl}} = http://localhost:3001
     ├── toast.js               # Pub-sub toast emitter
     ├── App.jsx                # Routing, navigation, top-level state, HealthModal
     ├── main.jsx
@@ -187,6 +192,9 @@ CargoDesk/
 | `contract_legs` | Origin / destination port pairs per contract with linked-port allowance flags |
 | `contract_rates` | Rate entries per contract |
 | `system_messages` | Operational notices with severity and minute-precision active date/time range |
+| `shipment_cost_lines` | BUY and SELL cost lines per shipment with source tracking (`source`, `modified_at`) |
+| `shipment_milestones` | Per-shipment milestone steps with estimated date, completion timestamp, and note |
+| `milestone_templates` | Reusable milestone step definitions grouped by template key, carrier, and trade lane |
 
 See the built-in **About** page (i in the sidebar) for the full interactive schema reference with column descriptions and migration history.
 
@@ -196,6 +204,7 @@ See the built-in **About** page (i in the sidebar) for the full interactive sche
 
 | Version | Codename | Summary |
 |---------|----------|---------|
+| 0.18.0 | Traverse | Operational Accounting: source tracking (Contract / Contract (Modified) / Manual pills), Cost Line History modal with CREATED/IMPORTED/UPDATED/DELETED audit log + CSV export, ⇄ Mirror as BUY/SELL in the Add/Edit modal, Container column, import container-type filtering, manual line preservation on recalculate, renamed from Cost Control. Shipment Milestones: new `milestone_templates` + `shipment_milestones` tables, default 9-step FCL template seeded on startup, `MilestonePanel` vertical stepper with progress bar, per-step states, inline editing, collapse toggle, overdue badge on shipment rows, Overdue Milestones KPI on Landing Page. Integration Board: In Testing + Testing Failed columns, per-column Show More (▾▾/▴▴), Show/Hide Released toggle. REST API: cost-line routes nested under shipments; Postman collection added in `/src/dev/`. |
 | 0.17.1 | Sentry | Hotfix: FX Rates health check was fetching `frankfurter.app` directly from the browser, triggering a CORS block (HTTP 301, no `Access-Control-Allow-Origin` header). Routed through the existing `/api/fx/rates` backend endpoint instead. |
 | 0.17.0 | Sentry | Application Settings page (⚙ nav item above footer): API Controls tab with External APIs subtab (FX Rates, Weather, OFAC SDN — toggle, recurrence, latency test, CSV import, direct sync) and Internal APIs subtab (WebSocket, Shipments, Contracts, Customers, Carriers, Vessels, Ports, System Messages — toggle + latency test). Toggles gate sidebar nav items; disabled modules show a 🔒 Module Disabled fallback. User Manual and About moved to the avatar dropdown. Sanctions & Denied Party Screening: shipments are screened silently on every create/edit when the SDN index is loaded; skips re-screen on OVERRIDE or non-party edits; warning toast names each flagged party. Compliance badge simplified to "⚠ Compliance review required" with a per-party hover tooltip. OFAC auto-sync: redirect following (up to 5 hops), `setTimeout` overflow fixed (capped at ~23 days), failed syncs retry after 1 h. CSV file-upload path added via Vite large-body passthrough plugin. Five SDN test customers seeded. Header badge font size increased 15% (10.5 → 12 px); `Badge` gains a `size` prop. |
 | 0.16.0 | Courier | Shipment Messages: per-shipment threaded panel with ✉️/📩 header icon, unread badge, author/role/timestamp display, sort toggle, 15–500 char compose area, and Ctrl+Enter posting. Real-time delivery via WebSocket (`ws`) with 10-second poll fallback. Shipment Detail: FCL badge, GTM day/month on ETD and ETA cards, click-to-copy shipment ID. Contract badges redesigned: SPOT/Pending/Customer Own → solid orange; Central Contract renamed to Central → solid blue; full rename across DB, server, and UI. Shipments list: stacked carrier (code/name) and contract (badge/ref) columns. System messages upgraded to `datetime-local` inputs; active messages shown in bell dropdown. Requires Attention split into Space Configs and Shipment Review tabs. New-tab workflow for shipments with document.title and beforeunload dirty guard. Breadcrumb updated to full path with clickable segments. Home icon added to header. Calendar week badge on Landing Page clock card. Kanban version tags: tickets gain a version field with a purple badge on the card. Bug fix: `contract_ref` was missing from `TRACKED_FIELDS` so editing it logged no history event. |

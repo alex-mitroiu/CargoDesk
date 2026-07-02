@@ -2,11 +2,17 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.17.1";
-export const BUILD     = "2026-06-30";
-export const CODENAME  = "Sentry";
+export const VERSION   = "0.18.0";
+export const BUILD     = "2026-07-02";
+export const CODENAME  = "Traverse";
 
 export const CHANGELOG = [
+  {
+    version:  "0.18.0",
+    date:     "2026-07-02",
+    codename: "Traverse",
+    summary:  "Operational Accounting (renamed from Cost Control): source tracking — every cost line now carries a source field (contract / manual) and a modified_at timestamp; lines show Contract, Contract (Modified), or Manual pills in the table. Cost Line History modal: full CREATED / IMPORTED / UPDATED / DELETED audit log with filter chips and CSV export, stored in entity_events (separate from shipment history). Mirror feature: Add/Edit modal gains a ⇄ Mirror as BUY/SELL button that saves the current line and instantly creates a mirrored copy with the type flipped and all other values preserved. Container column added to the cost line table. Import fix: per-container rates are now filtered by container type (e.g. 40HC) so no phantom lines are created for non-matching equipment. Manual line preservation: recalculate (overwrite) only deletes contract-sourced BUY lines — manually added lines survive. Module renamed to Operational Accounting - Masha's Domain throughout. Shipment Milestones (new): milestone_templates and shipment_milestones DB tables; default 9-step FCL template (Booking Confirmed → SI Submitted → Cargo Gated In → Vessel Departed → B/L Issued → Vessel Arrived → Customs Cleared → Cargo Released → Delivered) seeded on startup; POST /api/shipments/:id/milestones/init auto-selects best-matching template by carrier and trade lane; MilestonePanel in shipment detail renders a vertical stepper with progress bar, per-step completed / current / overdue / upcoming states (colour-coded), inline estimated-date and note editing, mark-complete / undo, reset, and collapse toggle; overdue milestone badge on shipment rows in the list; Overdue Milestones KPI added to Landing Page Fleet Overview. Integration Board: two new columns — In Testing (cyan) and Testing Failed (red) — inserted between Done and Released; per-column Show More collapses each list to the first 5 tickets with a ▾▾ Show N more button and ▴▴ Collapse; Show/Hide Released toggle in the board toolbar (default ON, styled with the Released accent colour). REST API compliance: cost-line PUT and DELETE routes moved from /api/cost-lines/:id to /api/shipments/:shipmentId/cost-lines/:id (nested under the parent resource); api.costLines.update/remove signatures updated accordingly. Postman collection added at /src/dev/CargoDesk.postman_collection.json covering all routes in 18 resource folders, plus CargoDesk.postman_environment.json with a {{baseUrl}} variable.",
+  },
   {
     version:  "0.17.1",
     date:     "2026-06-30",

@@ -14,7 +14,6 @@ import Badge from "../components/primitives/Badge";
 import {Inp, Sel, BtnToggle} from "../components/primitives/Form";
 import { Modal, ConfirmModal } from "../components/primitives/Modal";
 import DatePicker from "../components/primitives/DatePicker";
-import { useResizableColumns, ColResizer } from "../components/primitives/useResizableColumns.jsx";
 
 
 // ─── Section header with hover tooltip ───────────────────────────────────────
@@ -553,59 +552,356 @@ const EventRow = ({ ev }) => {
   );
 };
 
-const ShipmentTimeline = ({ events, currentStatus, open, onToggle }) => (
-  <div style={{ background: T.surface, borderRadius: 12,
-    border: `1px solid ${T.border}`, overflow: "hidden" }}>
-    <button type="button" onClick={onToggle}
-      style={{ display: "flex", alignItems: "center", gap: 10, width: "100%",
-        padding: "14px 20px", background: "none", border: "none",
-        cursor: "pointer", textAlign: "left" }}>
-      <span style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text }}>
-        {open ? "▾" : "▸"} Shipment History
-      </span>
-      <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted,
-        background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8,
-        padding: "1px 8px" }}>
-        {events.length} event{events.length !== 1 ? "s" : ""}
-      </span>
-    </button>
+const getEventSummary = ev => {
+  const field = ev.field ? (FIELD_LABELS[ev.field] || ev.field) : null;
+  if (ev.eventType === "SHIPMENT_CREATED") {
+    const m = ev.meta || {};
+    let s = [m.pol, m.pod].filter(Boolean).join(" → ");
+    if (m.carrier) s += `  ·  ${m.carrier}`;
+    if (m.etd) s += `  ·  ETD ${m.etd}`;
+    return s;
+  }
+  if (ev.eventType === "CONTAINER_ADDED") {
+    const m = ev.meta || {};
+    return `${ev.newValue}  ${m.size ? `${m.size}ft` : ""}  ${m.type || ""}`.trim();
+  }
+  if (ev.eventType === "CONTAINER_REMOVED") {
+    const m = ev.meta || {};
+    return `${ev.oldValue}  ${m.size ? `${m.size}ft` : ""}  ${m.type || ""}`.trim();
+  }
+  if (ev.eventType === "CONTAINER_UPDATED") {
+    const m = ev.meta || {};
+    let s = m.containerNumber ? `${m.containerNumber} — ` : "";
+    s += `${field}: ${ev.oldValue ? `${ev.oldValue} → ` : ""}${ev.newValue || "—"}`;
+    return s;
+  }
+  if (ev.eventType === "COST_LINE_ADDED" || ev.eventType === "COST_LINE_REMOVED") {
+    const m = ev.meta || {};
+    let s = [m.type, m.chargeCode].filter(Boolean).join("  ·  ");
+    if (m.amountUsd != null) s += `  ·  USD ${Number(m.amountUsd).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    return s;
+  }
+  if (ev.eventType === "COST_LINE_UPDATED") {
+    const m = ev.meta || {};
+    let s = [m.type, m.chargeCode].filter(Boolean).join("  ·  ");
+    if (field) s += `  —  ${field}: ${ev.oldValue} → ${ev.newValue}`;
+    return s;
+  }
+  if (ev.eventType === "COMPLIANCE_HIT") {
+    const hits = Array.isArray(ev.meta?.hits) ? ev.meta.hits : [];
+    return hits.map(h => `${h.field}: ${h.value}`).join(", ") || "Sanctioned party or embargoed route detected";
+  }
+  return field ? `${field}: ${ev.oldValue ? `${ev.oldValue} → ` : ""}${ev.newValue || "—"}` : "";
+};
 
-    {open && (
-      <div style={{ padding: "0 20px 20px" }}>
-        {events.length === 0 ? (
-          <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted,
-            fontStyle: "italic", margin: 0 }}>
-            No history yet. Changes to this shipment will appear here automatically.
-          </p>
-        ) : (
-          <div style={{ position: "relative" }}>
-            {/* Vertical line */}
-            <div style={{ position: "absolute", left: 15, top: 0, bottom: 0,
-              width: 1, background: T.border }} />
-            <div style={{ display: "flex", flexDirection: "column" }}>
-              {events.map(ev => <EventRow key={ev.id} ev={ev} />)}
-              {/* Current status cap */}
-              <div style={{ display: "flex", gap: 14, alignItems: "flex-start" }}>
-                <div style={{ width: 30, flexShrink: 0, display: "flex",
-                  justifyContent: "center", paddingTop: 2, zIndex: 1 }}>
-                  <div style={{ width: 12, height: 12, borderRadius: "50%",
-                    background: T.success, border: `2px solid ${T.surface}`,
-                    boxShadow: `0 0 0 1px ${T.success}` }} />
-                </div>
-                <div>
-                  <div style={{ fontFamily: T.mono, fontSize: 12,
-                    color: T.success, fontWeight: 700 }}>
-                    Current status: {currentStatus}
+const CompactHistory = ({ events, onShowAll }) => {
+  const sorted = [...events].sort((a, b) => new Date(b.occurredAt) - new Date(a.occurredAt));
+  const preview = sorted.slice(0, 6);
+  return (
+    <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
+      overflow: "hidden", display: "flex", flexDirection: "column" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+        padding: "14px 18px", borderBottom: `1px solid ${T.border}33`, flexShrink: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text }}>Shipment History</span>
+          <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted,
+            background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "1px 7px" }}>
+            {events.length}
+          </span>
+        </div>
+        {events.length > 0 && (
+          <button type="button" onClick={onShowAll}
+            style={{ fontFamily: T.body, fontSize: 12, color: T.accent, background: "none",
+              border: `1px solid ${T.accent}55`, borderRadius: 7, padding: "4px 11px", cursor: "pointer" }}>
+            Show all →
+          </button>
+        )}
+      </div>
+      {events.length === 0 ? (
+        <div style={{ padding: "20px 18px", fontFamily: T.body, fontSize: 12,
+          color: T.textMuted, fontStyle: "italic", flex: 1 }}>
+          No history yet.
+        </div>
+      ) : (
+        <div style={{ flex: 1 }}>
+          {preview.map((ev, i) => {
+            const cfg = EVENT_CONFIG[ev.eventType] ?? { icon: "·", label: ev.eventType, color: () => T.textMuted };
+            const color = cfg.color();
+            const sum = getEventSummary(ev);
+            return (
+              <div key={ev.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 18px",
+                borderBottom: i < preview.length - 1 ? `1px solid ${T.border}22` : "none" }}>
+                <div style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
+                  background: color, boxShadow: `0 0 0 2px ${color}33` }} />
+                <span style={{ fontSize: 13, flexShrink: 0, lineHeight: 1 }}>{cfg.icon}</span>
+                <span style={{ fontFamily: T.body, fontSize: 12, fontWeight: 600, color, flexShrink: 0, width: 110 }}>
+                  {cfg.label}
+                </span>
+                {sum && (
+                  <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted,
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
+                    {sum}
+                  </span>
+                )}
+                <span style={{ fontFamily: T.mono, fontSize: 10, color: T.border, flexShrink: 0, marginLeft: "auto" }}>
+                  {relTime(ev.occurredAt)}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <button type="button" onClick={onShowAll} disabled={events.length === 0}
+        style={{ display: "block", width: "100%", padding: "10px 18px", textAlign: "center",
+          fontFamily: T.body, fontSize: 12, background: T.bg, flexShrink: 0,
+          border: "none", borderTop: `1px solid ${T.border}22`, cursor: events.length === 0 ? "default" : "pointer",
+          color: events.length === 0 ? T.border : T.textMuted }}
+        onMouseEnter={e => { if (events.length > 0) e.currentTarget.style.color = T.accent; }}
+        onMouseLeave={e => { e.currentTarget.style.color = events.length === 0 ? T.border : T.textMuted; }}>
+        {events.length > 6
+          ? `${events.length - 6} more event${events.length - 6 !== 1 ? "s" : ""} — Show all →`
+          : events.length > 0 ? "Show all →" : "No events yet"}
+      </button>
+    </div>
+  );
+};
+
+const HistoryModal = ({ events, shipmentId, onClose }) => {
+  const PAGE_SIZE = 15;
+  const TYPE_GROUPS = {
+    Shipment:     ["SHIPMENT_CREATED", "STATUS_CHANGED"],
+    Fields:       ["FIELD_UPDATED"],
+    Container:    ["CONTAINER_ADDED", "CONTAINER_REMOVED", "CONTAINER_UPDATED"],
+    Compliance:   ["COMPLIANCE_HIT"],
+    "Cost Lines": ["COST_LINE_ADDED", "COST_LINE_UPDATED", "COST_LINE_REMOVED"],
+  };
+  const GROUP_NAMES = Object.keys(TYPE_GROUPS);
+
+  const [activeGroups, setActiveGroups] = useState(() => new Set(GROUP_NAMES));
+  const [dateRange,    setDateRange]    = useState("all");
+  const [search,       setSearch]       = useState("");
+  const [sortDir,      setSortDir]      = useState("desc");
+  const [page,         setPage]         = useState(0);
+  const [expanded,     setExpanded]     = useState(() => new Set());
+
+  const toggleGroup = g => setActiveGroups(prev => {
+    const next = new Set(prev);
+    next.has(g) ? next.delete(g) : next.add(g);
+    setPage(0);
+    return next;
+  });
+
+  const activeTypes = new Set(GROUP_NAMES.filter(g => activeGroups.has(g)).flatMap(g => TYPE_GROUPS[g]));
+  const today = new Date().toISOString().slice(0, 10);
+  const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString();
+
+  const filtered = events
+    .filter(ev => activeTypes.has(ev.eventType))
+    .filter(ev => dateRange === "today" ? ev.occurredAt.startsWith(today)
+                : dateRange === "7d"    ? ev.occurredAt >= sevenDaysAgo
+                : true)
+    .filter(ev => {
+      if (!search.trim()) return true;
+      const q = search.toLowerCase();
+      return getEventSummary(ev).toLowerCase().includes(q)
+          || (EVENT_CONFIG[ev.eventType]?.label || ev.eventType).toLowerCase().includes(q)
+          || (ev.field && (FIELD_LABELS[ev.field] || ev.field).toLowerCase().includes(q));
+    })
+    .sort((a, b) => sortDir === "desc"
+      ? new Date(b.occurredAt) - new Date(a.occurredAt)
+      : new Date(a.occurredAt) - new Date(b.occurredAt));
+
+  // Group consecutive FIELD_UPDATED within 3 seconds
+  const grouped = [];
+  let gi = 0;
+  while (gi < filtered.length) {
+    const ev = filtered[gi];
+    if (ev.eventType === "FIELD_UPDATED") {
+      const batch = [ev];
+      const t0 = new Date(ev.occurredAt).getTime();
+      let gj = gi + 1;
+      while (gj < filtered.length
+          && filtered[gj].eventType === "FIELD_UPDATED"
+          && Math.abs(new Date(filtered[gj].occurredAt).getTime() - t0) < 3000) {
+        batch.push(filtered[gj]);
+        gj++;
+      }
+      grouped.push(batch.length > 1
+        ? { _isGroup: true, id: `grp-${ev.id}`, events: batch, occurredAt: ev.occurredAt, actor: ev.actor }
+        : ev);
+      gi = gj;
+    } else {
+      grouped.push(ev);
+      gi++;
+    }
+  }
+
+  const totalPages = Math.ceil(grouped.length / PAGE_SIZE);
+  const pageItems  = grouped.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+
+  const exportCSV = () => {
+    const rows = [["Event Type", "Summary", "Date/Time", "Actor"]];
+    filtered.forEach(ev => rows.push([
+      EVENT_CONFIG[ev.eventType]?.label || ev.eventType,
+      `"${getEventSummary(ev).replace(/"/g, '""')}"`,
+      fmtDateTime(ev.occurredAt),
+      ev.actor || "system",
+    ]));
+    const csv = rows.map(r => r.join(",")).join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    const a = document.createElement("a");
+    a.href = url; a.download = `${shipmentId}-history.csv`; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const th  = { fontFamily: T.body, fontSize: 10, fontWeight: 700, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".07em" };
+  const inp = { fontFamily: T.body, fontSize: 12, color: T.text, background: T.bg, border: `1px solid ${T.border}`, borderRadius: 7, padding: "5px 10px", outline: "none" };
+
+  return (
+    <Modal title={`Shipment History — ${shipmentId}`} onClose={onClose} width={820}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+
+        {/* Toolbar */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          {GROUP_NAMES.map(g => {
+            const on = activeGroups.has(g);
+            return (
+              <button key={g} type="button" onClick={() => toggleGroup(g)}
+                style={{ fontFamily: T.body, fontSize: 11, padding: "3px 10px", borderRadius: 20,
+                  border: `1px solid ${on ? T.accent + "66" : T.border}`,
+                  background: on ? T.accentBg : "transparent",
+                  color: on ? T.accent : T.textMuted, cursor: "pointer" }}>
+                {g}
+              </button>
+            );
+          })}
+          <div style={{ width: 1, height: 18, background: T.border, flexShrink: 0 }} />
+          <div style={{ display: "flex", borderRadius: 7, overflow: "hidden", border: `1px solid ${T.border}` }}>
+            {[["all","All time"],["today","Today"],["7d","7 days"]].map(([r, label], idx) => (
+              <button key={r} type="button" onClick={() => { setDateRange(r); setPage(0); }}
+                style={{ fontFamily: T.body, fontSize: 11, padding: "4px 10px",
+                  background: dateRange === r ? T.accent : "transparent",
+                  color: dateRange === r ? T.btnPrimaryText : T.textMuted,
+                  border: "none", borderRight: idx < 2 ? `1px solid ${T.border}` : "none", cursor: "pointer" }}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <input value={search} onChange={e => { setSearch(e.target.value); setPage(0); }}
+            placeholder="Search events…" style={{ ...inp, minWidth: 150 }} />
+          <div style={{ flex: 1 }} />
+          <button type="button" onClick={exportCSV}
+            style={{ ...inp, cursor: "pointer", color: T.textMuted, padding: "5px 12px" }}>
+            ⬇ Export CSV
+          </button>
+        </div>
+
+        <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
+          {grouped.length} row{grouped.length !== 1 ? "s" : ""}
+          {grouped.length !== events.length ? ` (filtered from ${events.length})` : ""}
+        </div>
+
+        {/* Table */}
+        <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden" }}>
+          <div style={{ display: "flex", alignItems: "center", padding: "7px 14px",
+            borderBottom: `1px solid ${T.border}`, background: T.bg, gap: 10 }}>
+            <div style={{ ...th, width: 160, flexShrink: 0 }}>Event Type</div>
+            <div style={{ ...th, flex: 1 }}>Summary</div>
+            <div style={{ ...th, width: 160, flexShrink: 0, cursor: "pointer", userSelect: "none",
+              display: "flex", alignItems: "center", gap: 4 }}
+              onClick={() => { setSortDir(d => d === "desc" ? "asc" : "desc"); setPage(0); }}>
+              Date / Time {sortDir === "desc" ? "↓" : "↑"}
+            </div>
+            <div style={{ ...th, width: 70, flexShrink: 0 }}>Actor</div>
+          </div>
+
+          {pageItems.length === 0 ? (
+            <div style={{ padding: 32, textAlign: "center", fontFamily: T.body,
+              fontSize: 13, color: T.textMuted, fontStyle: "italic" }}>
+              No events match the current filters.
+            </div>
+          ) : pageItems.map(item => {
+            if (item._isGroup) {
+              const isOpen = expanded.has(item.id);
+              return (
+                <React.Fragment key={item.id}>
+                  <div
+                    onClick={() => setExpanded(prev => { const n = new Set(prev); isOpen ? n.delete(item.id) : n.add(item.id); return n; })}
+                    style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px",
+                      borderBottom: `1px solid ${T.border}22`, cursor: "pointer" }}
+                    onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
+                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                    <div style={{ width: 160, flexShrink: 0 }}>
+                      <Badge variant="info">Fields</Badge>
+                    </div>
+                    <div style={{ flex: 1, fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+                      {isOpen ? "▾" : "▸"} {item.events.length} field update{item.events.length !== 1 ? "s" : ""}
+                    </div>
+                    <div style={{ width: 160, flexShrink: 0, fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+                      {fmtDateTime(item.occurredAt)}
+                    </div>
+                    <div style={{ width: 70, flexShrink: 0, fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
+                      {item.actor || "—"}
+                    </div>
                   </div>
+                  {isOpen && item.events.map(subEv => (
+                    <div key={subEv.id} style={{ display: "flex", alignItems: "center", gap: 10,
+                      padding: "7px 14px 7px 36px",
+                      borderBottom: `1px solid ${T.border}22`, background: `${T.accent}06` }}>
+                      <div style={{ width: 144, flexShrink: 0 }} />
+                      <div style={{ flex: 1, fontFamily: T.mono, fontSize: 11, color: T.textMuted,
+                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {getEventSummary(subEv)}
+                      </div>
+                      <div style={{ width: 160, flexShrink: 0, fontFamily: T.mono, fontSize: 10, color: T.border }}>
+                        {fmtDateTime(subEv.occurredAt)}
+                      </div>
+                      <div style={{ width: 70, flexShrink: 0 }} />
+                    </div>
+                  ))}
+                </React.Fragment>
+              );
+            }
+            const cfg = EVENT_CONFIG[item.eventType] ?? { icon: "·", label: item.eventType, color: () => T.textMuted };
+            const color = cfg.color();
+            return (
+              <div key={item.id}
+                style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px",
+                  borderBottom: `1px solid ${T.border}22` }}
+                onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
+                onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                <div style={{ width: 160, flexShrink: 0, display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ fontSize: 13 }}>{cfg.icon}</span>
+                  <span style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600, color }}>{cfg.label}</span>
+                </div>
+                <div style={{ flex: 1, fontFamily: T.mono, fontSize: 11, color: T.textMuted,
+                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {getEventSummary(item)}
+                </div>
+                <div style={{ width: 160, flexShrink: 0, fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+                  {fmtDateTime(item.occurredAt)}
+                </div>
+                <div style={{ width: 70, flexShrink: 0, fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
+                  {item.actor || "—"}
                 </div>
               </div>
-            </div>
+            );
+          })}
+        </div>
+
+        {totalPages > 1 && (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+            <button type="button" disabled={page === 0} onClick={() => setPage(p => p - 1)}
+              style={{ ...inp, cursor: page === 0 ? "default" : "pointer", opacity: page === 0 ? .4 : 1, padding: "4px 12px" }}>←</button>
+            <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>{page + 1} / {totalPages}</span>
+            <button type="button" disabled={page === totalPages - 1} onClick={() => setPage(p => p + 1)}
+              style={{ ...inp, cursor: page === totalPages - 1 ? "default" : "pointer", opacity: page === totalPages - 1 ? .4 : 1, padding: "4px 12px" }}>→</button>
           </div>
         )}
       </div>
-    )}
-  </div>
-);
+    </Modal>
+  );
+};
 
 // ─── Messages drawer ─────────────────────────────────────────────────────────
 
@@ -965,7 +1261,278 @@ const ComplianceModal = ({ shipment, screening, onChange, onClose }) => {
   );
 };
 
-// ─── Cost Control ─────────────────────────────────────────────────────────────
+// ─── Shipment Milestones ──────────────────────────────────────────────────────
+
+const MilestonePanel = ({ shipmentId, shipment }) => {
+  const [milestones,   setMilestones]   = useState([]);
+  const [loading,      setLoading]      = useState(true);
+  const [initializing, setInitializing] = useState(false);
+  const [expanded,     setExpanded]     = useState(null);
+  const [saving,       setSaving]       = useState(null);
+  const [fields,       setFields]       = useState({});
+  const [collapsed,    setCollapsed]    = useState(false);
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  const load = () => {
+    setLoading(true);
+    return api.milestones.list(shipmentId)
+      .then(m => setMilestones(m))
+      .catch(() => setMilestones([]))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => { load(); }, [shipmentId]);
+
+  const handleInit = async (reset = false) => {
+    setInitializing(true);
+    try {
+      await api.milestones.init(shipmentId, { carrierCode: shipment?.carrierCode });
+      await load();
+      toast.success(reset ? "Milestones reset" : "Milestones initialized");
+    } catch (e) { toast.error(e.message); }
+    setInitializing(false);
+  };
+
+  const handleToggleComplete = async m => {
+    setSaving(m.id);
+    try {
+      const completing = !m.completedAt;
+      await api.milestones.update(m.id, {
+        estimatedDate: m.estimatedDate,
+        note: m.note,
+        completedAt: completing ? new Date().toISOString() : '',
+        completedBy: completing ? 'User' : '',
+      });
+      if (completing) setExpanded(null);
+      await load();
+      if (completing) toast.success(`${m.label} marked complete`);
+    } catch (e) { toast.error(e.message); }
+    setSaving(null);
+  };
+
+  const handleSaveFields = async m => {
+    setSaving(m.id);
+    try {
+      const f = fields[m.id] || {};
+      await api.milestones.update(m.id, {
+        estimatedDate: f.estimatedDate ?? m.estimatedDate,
+        note:          f.note          ?? m.note,
+        completedAt:   m.completedAt,
+        completedBy:   m.completedBy,
+      });
+      await load();
+      setExpanded(null);
+    } catch (e) { toast.error(e.message); }
+    setSaving(null);
+  };
+
+  const milestoneState = (m, idx) => {
+    if (m.completedAt) return 'completed';
+    if (m.estimatedDate && m.estimatedDate < today) return 'overdue';
+    const firstIncomplete = milestones.findIndex(x => !x.completedAt);
+    if (idx === firstIncomplete) return 'current';
+    return 'upcoming';
+  };
+
+  const stateColor = st => ({
+    completed: T.success, overdue: T.danger, current: T.accent, upcoming: T.border,
+  }[st]);
+
+  const overdueCount    = milestones.filter(m => !m.completedAt && m.estimatedDate && m.estimatedDate < today).length;
+  const completedCount  = milestones.filter(m => !!m.completedAt).length;
+  const progress        = milestones.length > 0 ? Math.round((completedCount / milestones.length) * 100) : 0;
+
+  const fmtCompleted = iso =>
+    new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+
+  return (
+    <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, overflow: "hidden" }}>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+        padding: "14px 18px", borderBottom: collapsed ? "none" : `1px solid ${T.border}33`,
+        cursor: "pointer" }}
+        onClick={() => setCollapsed(c => !c)}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text }}>
+            Shipment Milestones
+          </span>
+          {milestones.length > 0 && (
+            <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+              {completedCount}/{milestones.length}
+            </span>
+          )}
+          {overdueCount > 0 && <Badge variant="danger">{overdueCount} overdue</Badge>}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {milestones.length > 0 && (
+            <button type="button" onClick={e => { e.stopPropagation(); handleInit(true); }} disabled={initializing}
+              style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, background: "none",
+                border: `1px solid ${T.border}`, borderRadius: 7, padding: "3px 10px",
+                cursor: initializing ? "not-allowed" : "pointer" }}>
+              {initializing ? "Resetting…" : "↺ Reset"}
+            </button>
+          )}
+          <span style={{ fontFamily: T.mono, fontSize: 13, color: T.textMuted, lineHeight: 1, userSelect: "none" }}>
+            {collapsed ? "▸" : "▾"}
+          </span>
+        </div>
+      </div>
+
+      {/* Body */}
+      {!collapsed && (loading ? (
+        <div style={{ padding: "24px 18px", fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
+          Loading…
+        </div>
+      ) : milestones.length === 0 ? (
+        <div style={{ padding: "32px 18px", display: "flex", flexDirection: "column", alignItems: "center", gap: 14 }}>
+          <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
+            No milestones set for this shipment.
+          </div>
+          <Btn onClick={() => handleInit(false)} disabled={initializing}>
+            {initializing ? "Initializing…" : "⚑ Initialize Milestones"}
+          </Btn>
+        </div>
+      ) : (
+        <div style={{ padding: "18px 18px 10px" }}>
+          {/* Progress bar */}
+          <div style={{ marginBottom: 18 }}>
+            <div style={{ height: 4, background: T.border, borderRadius: 2, overflow: "hidden" }}>
+              <div style={{ height: "100%", width: `${progress}%`, background: T.success,
+                transition: "width .3s ease", borderRadius: 2 }} />
+            </div>
+            <div style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted, marginTop: 4 }}>
+              {progress}% complete
+            </div>
+          </div>
+
+          {/* Steps */}
+          {milestones.map((m, idx) => {
+            const state      = milestoneState(m, idx);
+            const color      = stateColor(state);
+            const isLast     = idx === milestones.length - 1;
+            const isExpanded = expanded === m.id;
+            const isBusy     = saving === m.id;
+            const f          = fields[m.id] || {};
+
+            return (
+              <div key={m.id} style={{ display: "flex", gap: 14 }}>
+                {/* Timeline column */}
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center",
+                  flexShrink: 0, width: 30 }}>
+                  <div
+                    onClick={() => !m.completedAt && setExpanded(isExpanded ? null : m.id)}
+                    style={{
+                      width: 28, height: 28, borderRadius: "50%",
+                      background: state === 'upcoming' ? T.surface : color,
+                      border: `2px solid ${color}`,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      color: state === 'upcoming' ? T.textMuted : "#fff",
+                      fontSize: 12, fontWeight: 700, flexShrink: 0,
+                      cursor: state !== 'completed' ? "pointer" : "default",
+                      boxShadow: state === 'current' ? `0 0 0 5px ${color}22` : "none",
+                    }}>
+                    {state === 'completed' ? "✓" : state === 'overdue' ? "!" : m.sequenceOrder}
+                  </div>
+                  {!isLast && (
+                    <div style={{ width: 2, flex: 1, minHeight: 28,
+                      background: m.completedAt ? T.success : T.border, opacity: .45 }} />
+                  )}
+                </div>
+
+                {/* Content column */}
+                <div style={{ flex: 1, paddingBottom: isLast ? 8 : 24 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2,
+                    cursor: state !== 'completed' ? "pointer" : "default" }}
+                    onClick={() => !m.completedAt && setExpanded(isExpanded ? null : m.id)}>
+                    <span style={{ fontFamily: T.body, fontSize: 13,
+                      fontWeight: state === 'current' ? 700 : 500,
+                      color: state === 'upcoming' ? T.textMuted : T.text }}>
+                      {m.label}
+                    </span>
+                    {state === 'current' && <Badge variant="info" size={10}>Current</Badge>}
+                    {state === 'overdue' && <Badge variant="danger" size={10}>Overdue</Badge>}
+                  </div>
+
+                  {/* Sub-info line */}
+                  <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, display: "flex", gap: 8 }}>
+                    {m.completedAt && (
+                      <span>Completed {fmtCompleted(m.completedAt)}{m.completedBy ? ` · ${m.completedBy}` : ""}</span>
+                    )}
+                    {!m.completedAt && m.estimatedDate && (
+                      <span style={{ color: state === 'overdue' ? T.danger : T.textMuted }}>
+                        Est. {m.estimatedDate}
+                      </span>
+                    )}
+                    {m.note && <span>{m.note}</span>}
+                  </div>
+
+                  {/* Expanded edit form */}
+                  {isExpanded && !m.completedAt && (
+                    <div style={{ marginTop: 10, padding: "12px 14px",
+                      background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8,
+                      display: "flex", flexDirection: "column", gap: 10 }}>
+                      <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
+                        <div>
+                          <div style={{ fontFamily: T.body, fontSize: 10, fontWeight: 600, color: T.textMuted,
+                            marginBottom: 4, textTransform: "uppercase", letterSpacing: ".06em" }}>
+                            Estimated Date
+                          </div>
+                          <input type="date"
+                            value={f.estimatedDate ?? m.estimatedDate}
+                            onChange={e => setFields(prev => ({ ...prev, [m.id]: { ...prev[m.id], estimatedDate: e.target.value } }))}
+                            style={{ fontFamily: T.mono, fontSize: 12, padding: "5px 8px", borderRadius: 6,
+                              border: `1px solid ${T.border}`, background: T.surface, color: T.text, outline: "none" }} />
+                        </div>
+                        <div style={{ flex: 1, minWidth: 140 }}>
+                          <div style={{ fontFamily: T.body, fontSize: 10, fontWeight: 600, color: T.textMuted,
+                            marginBottom: 4, textTransform: "uppercase", letterSpacing: ".06em" }}>
+                            Note
+                          </div>
+                          <input type="text"
+                            value={f.note ?? m.note}
+                            onChange={e => setFields(prev => ({ ...prev, [m.id]: { ...prev[m.id], note: e.target.value } }))}
+                            placeholder="Optional note…"
+                            style={{ fontFamily: T.body, fontSize: 12, padding: "5px 8px", borderRadius: 6,
+                              border: `1px solid ${T.border}`, background: T.surface, color: T.text,
+                              outline: "none", width: "100%", boxSizing: "border-box" }} />
+                        </div>
+                      </div>
+                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                        <Btn size="sm" onClick={() => handleSaveFields(m)} disabled={isBusy}>
+                          {isBusy ? "Saving…" : "Save"}
+                        </Btn>
+                        <Btn size="sm" variant="success" onClick={() => handleToggleComplete(m)} disabled={isBusy}>
+                          ✓ Mark Complete
+                        </Btn>
+                        <button type="button" onClick={() => setExpanded(null)}
+                          style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted,
+                            background: "none", border: "none", cursor: "pointer" }}>
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Undo for completed */}
+                  {m.completedAt && (
+                    <button type="button" onClick={() => handleToggleComplete(m)} disabled={isBusy}
+                      style={{ marginTop: 3, fontFamily: T.body, fontSize: 10, color: T.textMuted,
+                        background: "none", border: "none", cursor: "pointer", padding: 0 }}>
+                      {isBusy ? "Undoing…" : "↩ Undo"}
+                    </button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  );
+};
+
+// ─── Operational Accounting ───────────────────────────────────────────────────
 
 const CHARGE_CODES = ["Ocean Freight", "Origin THC", "Destination THC", "B/L Fee", "Customs", "Inland", "Other"];
 const CURRENCIES   = ["USD", "EUR", "GBP", "CNY", "SGD", "JPY", "AED", "CHF"];
@@ -975,7 +1542,7 @@ const marginVariant = pct => pct == null ? "default" : pct >= 20 ? "success" : p
 
 const fmtUsd = v => v == null ? "—" : `$${Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-const CostLineForm = ({ init = {}, fxRates = {}, containers = [], onSave, onCancel }) => {
+const CostLineForm = ({ init = {}, fxRates = {}, containers = [], onSave, onSaveAndMirror, onCancel }) => {
   const [type,         setType]         = useState(init.type         || "BUY");
   const [chargeCode,   setChargeCode]   = useState(init.chargeCode   || "Ocean Freight");
   const [currency,     setCurrency]     = useState(init.currency     || "USD");
@@ -1065,6 +1632,12 @@ const CostLineForm = ({ init = {}, fxRates = {}, containers = [], onSave, onCanc
       </div>
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
         <Btn variant="secondary" onClick={onCancel}>Cancel</Btn>
+        <Btn variant="secondary"
+          onClick={() => onSaveAndMirror({ type, chargeCode, currency, amount: amtNum, exchangeRate: rateNum, notes, containerId })}
+          disabled={!valid}
+          title={`Save this line and create a mirrored ${type === "BUY" ? "SELL" : "BUY"} line with the same values`}>
+          ⇄ Mirror as {type === "BUY" ? "SELL" : "BUY"}
+        </Btn>
         <Btn onClick={() => onSave({ type, chargeCode, currency, amount: amtNum, exchangeRate: rateNum, notes, containerId })} disabled={!valid}>
           {isEdit ? "Save Changes" : "Add Line"}
         </Btn>
@@ -1073,25 +1646,200 @@ const CostLineForm = ({ init = {}, fxRates = {}, containers = [], onSave, onCanc
   );
 };
 
+const CL_FIELD_LABELS = {
+  type: "Type", charge_code: "Charge Code", currency: "Currency",
+  amount: "Amount", exchange_rate: "Exchange Rate", notes: "Notes", container_id: "Container",
+};
+
+const CostLineHistoryModal = ({ shipmentId, onClose }) => {
+  const [events,    setEvents]    = useState([]);
+  const [lineIndex, setLineIndex] = useState({});
+  const [loading,   setLoading]   = useState(true);
+  const [filter,    setFilter]    = useState(new Set(["CREATED","IMPORTED","UPDATED","DELETED"]));
+
+  useEffect(() => {
+    Promise.all([api.costLines.events(shipmentId), api.costLines.list(shipmentId)])
+      .then(([evts, lines]) => {
+        setEvents(evts);
+        setLineIndex(Object.fromEntries(lines.map(l => [l.id, l])));
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [shipmentId]);
+
+  const toggleFilter = t =>
+    setFilter(prev => { const s = new Set(prev); s.has(t) ? s.delete(t) : s.add(t); return s; });
+
+  const visible = events.filter(e => filter.has(e.event_type));
+
+  const evtColor = t => ({ CREATED: T.success, IMPORTED: T.info, UPDATED: T.warning, DELETED: T.danger }[t] || T.textMuted);
+
+  const resolveCharge = ev => {
+    try {
+      const m = JSON.parse(ev.meta || "{}");
+      if (m.chargeCode) return m.chargeCode;
+    } catch {}
+    return lineIndex[ev.entity_id]?.chargeCode || ev.entity_id;
+  };
+
+  const fmtVal = (field, val) => {
+    if (val == null || val === "") return "—";
+    if (field === "amount" || field === "exchange_rate") return Number(val).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+    return String(val);
+  };
+
+  const exportCsv = () => {
+    const rows = [["Time","Event","Charge Code","Field","Old Value","New Value","Line ID"]];
+    visible.forEach(e => rows.push([
+      e.created_at, e.event_type, resolveCharge(e),
+      CL_FIELD_LABELS[e.field] || e.field || "",
+      fmtVal(e.field, e.old_value), fmtVal(e.field, e.new_value), e.entity_id,
+    ]));
+    const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(",")).join("\n");
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    a.download = `cost-line-history-${shipmentId}.csv`;
+    a.click();
+  };
+
+  const th = { fontFamily: T.body, fontSize: 10, fontWeight: 600, color: T.textMuted,
+    textTransform: "uppercase", letterSpacing: ".07em" };
+
+  const TYPE_LABELS = { CREATED: "Created", IMPORTED: "Imported", UPDATED: "Updated", DELETED: "Deleted" };
+  const ALL_TYPES   = ["CREATED","IMPORTED","UPDATED","DELETED"];
+
+  return (
+    <Modal title={`Accounting History — ${shipmentId}`} onClose={onClose} width={860}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+
+        {/* Toolbar */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>Show:</span>
+            {ALL_TYPES.map(t => (
+              <button key={t} type="button"
+                onClick={() => toggleFilter(t)}
+                style={{ fontFamily: T.body, fontSize: 11, borderRadius: 7, padding: "3px 10px", cursor: "pointer",
+                  border: `1px solid ${filter.has(t) ? evtColor(t) : T.border}`,
+                  background: filter.has(t) ? `${evtColor(t)}18` : "none",
+                  color: filter.has(t) ? evtColor(t) : T.textMuted }}>
+                {TYPE_LABELS[t]}
+              </button>
+            ))}
+          </div>
+          <button type="button" onClick={exportCsv}
+            style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, background: "none",
+              border: `1px solid ${T.border}`, borderRadius: 7, padding: "4px 12px", cursor: "pointer" }}>
+            ⬇ CSV
+          </button>
+        </div>
+
+        {/* Table */}
+        {loading ? (
+          <div style={{ padding: 24, textAlign: "center", fontFamily: T.body, fontSize: 13, color: T.textMuted }}>Loading…</div>
+        ) : visible.length === 0 ? (
+          <div style={{ padding: 24, textAlign: "center", fontFamily: T.body, fontSize: 13, color: T.textMuted, fontStyle: "italic" }}>
+            No events recorded yet.
+          </div>
+        ) : (
+          <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden" }}>
+            <div style={{ display: "flex", alignItems: "center", padding: "6px 16px",
+              background: T.bg, borderBottom: `1px solid ${T.border}33` }}>
+              <div style={{ ...th, width: 150, flexShrink: 0 }}>Time</div>
+              <div style={{ ...th, width: 100, flexShrink: 0 }}>Event</div>
+              <div style={{ ...th, flex: 1 }}>Charge Code</div>
+              <div style={{ ...th, width: 110, flexShrink: 0 }}>Field</div>
+              <div style={{ ...th, width: 130, flexShrink: 0 }}>Old Value</div>
+              <div style={{ ...th, width: 130, flexShrink: 0 }}>New Value</div>
+            </div>
+            <div style={{ maxHeight: 460, overflowY: "auto" }}>
+              {visible.map(ev => {
+                const charge = resolveCharge(ev);
+                const fieldLabel = CL_FIELD_LABELS[ev.field] || ev.field || null;
+                const isUpdate = ev.event_type === "UPDATED";
+                return (
+                  <div key={ev.id}
+                    style={{ display: "flex", alignItems: "center", padding: "9px 16px",
+                      borderBottom: `1px solid ${T.border}22` }}
+                    onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
+                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                    <div style={{ width: 150, flexShrink: 0, fontFamily: T.mono, fontSize: 10, color: T.textMuted }}>
+                      {new Date(ev.created_at).toLocaleString("en-GB", { day: "2-digit", month: "short",
+                        year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                    </div>
+                    <div style={{ width: 100, flexShrink: 0 }}>
+                      <span style={{ fontFamily: T.body, fontSize: 10, fontWeight: 600,
+                        color: evtColor(ev.event_type),
+                        background: `${evtColor(ev.event_type)}18`,
+                        border: `1px solid ${evtColor(ev.event_type)}44`,
+                        borderRadius: 6, padding: "2px 7px" }}>
+                        {TYPE_LABELS[ev.event_type] || ev.event_type}
+                      </span>
+                    </div>
+                    <div style={{ flex: 1, fontFamily: T.body, fontSize: 12, color: T.text,
+                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{charge}</div>
+                    <div style={{ width: 110, flexShrink: 0, fontFamily: T.body, fontSize: 11,
+                      color: isUpdate ? T.text : T.textMuted }}>
+                      {fieldLabel || (isUpdate ? "—" : "")}
+                    </div>
+                    <div style={{ width: 130, flexShrink: 0, fontFamily: T.mono, fontSize: 11,
+                      color: T.danger, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {isUpdate ? fmtVal(ev.field, ev.old_value) : ""}
+                    </div>
+                    <div style={{ width: 130, flexShrink: 0, fontFamily: T.mono, fontSize: 11,
+                      color: isUpdate ? T.success : T.textMuted,
+                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {isUpdate ? fmtVal(ev.field, ev.new_value) : (
+                        ev.event_type === "CREATED"  ? "Manual entry" :
+                        ev.event_type === "IMPORTED" ? "From contract" :
+                        ev.event_type === "DELETED"  ? "Removed" : ""
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {!loading && visible.length > 0 && (
+          <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, textAlign: "right" }}>
+            {visible.length} event{visible.length !== 1 ? "s" : ""}
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
+};
+
 const CostControl = ({ shipmentId, contractType, contractId, containers = [] }) => {
-  const [open,             setOpen]             = useState(false);
   const [lines,            setLines]            = useState([]);
   const [loading,          setLoading]          = useState(false);
-  const [modal,            setModal]            = useState(null); // null | "add" | line object
+  const [lineModal,        setLineModal]        = useState(null);
   const [confirm,          setConfirm]          = useState(null);
   const [fxRates,          setFxRates]          = useState({});
   const [importing,        setImporting]        = useState(false);
+  const [splitting,        setSplitting]        = useState(false);
   const [importOpts,       setImportOpts]       = useState(false);
   const [splitPerCtr,      setSplitPerCtr]      = useState(false);
   const [importedForCount, setImportedForCount] = useState(null);
+  const [ccOpen,           setCcOpen]           = useState(false);
+  const [clHistOpen,       setClHistOpen]       = useState(false);
 
   const isCentral   = contractType === "Central" && !!contractId;
   const hasBuyLines = lines.some(l => l.type === "BUY");
+  const isSplit     = lines.some(l => l.containerId);
   const isStale     = importedForCount !== null && importedForCount !== containers.length;
+  const canSplitOrAggregate = isCentral && (isSplit || containers.length > 0);
+
+  const buy  = lines.filter(l => l.type === "BUY").reduce((s, l) => s + l.amountUsd, 0);
+  const sell = lines.filter(l => l.type === "SELL").reduce((s, l) => s + l.amountUsd, 0);
+  const gp   = sell - buy;
+  const pct  = sell > 0 ? Math.round((gp / sell) * 1000) / 10 : null;
 
   const load = () => {
     setLoading(true);
-    api.costLines.list(shipmentId)
+    return api.costLines.list(shipmentId)
       .then(setLines)
       .catch(() => setLines([]))
       .finally(() => setLoading(false));
@@ -1102,31 +1850,33 @@ const CostControl = ({ shipmentId, contractType, contractId, containers = [] }) 
     api.fx.rates().then(d => setFxRates(d.rates || {})).catch(() => {});
   }, [shipmentId]);
 
-  const handleOpen = () => { setOpen(o => !o); };
-
-  const buy  = lines.filter(l => l.type === "BUY").reduce((s, l) => s + l.amountUsd, 0);
-  const sell = lines.filter(l => l.type === "SELL").reduce((s, l) => s + l.amountUsd, 0);
-  const gp   = sell - buy;
-  const pct  = sell > 0 ? Math.round((gp / sell) * 1000) / 10 : null;
-  const hasLines = lines.length > 0;
-
-  const handleSave = async (data) => {
+  const handleSave = async (data, mirror = false) => {
     try {
-      if (modal === "add") {
+      if (lineModal === "add") {
         await api.costLines.create(shipmentId, data);
-        toast.success("Cost line added");
+        if (mirror) {
+          await api.costLines.create(shipmentId, { ...data, type: data.type === "BUY" ? "SELL" : "BUY" });
+          toast.success(`Cost line added + mirrored as ${data.type === "BUY" ? "SELL" : "BUY"}`);
+        } else {
+          toast.success("Cost line added");
+        }
       } else {
-        await api.costLines.update(modal.id, data);
-        toast.success("Cost line updated");
+        await api.costLines.update(shipmentId, lineModal.id, data);
+        if (mirror) {
+          await api.costLines.create(shipmentId, { ...data, type: data.type === "BUY" ? "SELL" : "BUY" });
+          toast.success(`Changes saved + mirrored as ${data.type === "BUY" ? "SELL" : "BUY"}`);
+        } else {
+          toast.success("Cost line updated");
+        }
       }
-      setModal(null);
+      setLineModal(null);
       load();
     } catch (e) { toast.error(e.message); }
   };
 
   const handleDelete = async id => {
     try {
-      await api.costLines.remove(id);
+      await api.costLines.remove(shipmentId, id);
       toast.success("Cost line removed");
       setConfirm(null);
       load();
@@ -1140,7 +1890,7 @@ const CostControl = ({ shipmentId, contractType, contractId, containers = [] }) 
       const { imported } = await api.costLines.importContract(shipmentId, { overwrite, splitPerContainer: splitPerCtr });
       toast.success(`${imported} BUY line${imported !== 1 ? "s" : ""} imported from contract`);
       setImportedForCount(containers.length);
-      load();
+      await load();
     } catch (e) { toast.error(e.message); }
     setImporting(false);
   };
@@ -1154,50 +1904,205 @@ const CostControl = ({ shipmentId, contractType, contractId, containers = [] }) 
     }
   };
 
+  const handleToggleSplit = async () => {
+    setSplitting(true);
+    try {
+      const { imported } = await api.costLines.importContract(shipmentId, {
+        overwrite: true,
+        splitPerContainer: !isSplit,
+      });
+      toast.success(!isSplit
+        ? `Split into ${imported} line${imported !== 1 ? "s" : ""} across ${containers.length} containers`
+        : `Aggregated to ${imported} BUY line${imported !== 1 ? "s" : ""}`
+      );
+      setImportedForCount(containers.length);
+      await load();
+    } catch (e) { toast.error(e.message); }
+    setSplitting(false);
+  };
+
+  const PREVIEW = 5;
+  const preview = lines.slice(0, PREVIEW);
+
   const th = { fontFamily: T.body, fontSize: 10, fontWeight: 600, color: T.textMuted,
     textTransform: "uppercase", letterSpacing: ".07em" };
 
+  const sourceInfo = l => {
+    if (l.source === "contract" && l.modifiedAt) return { label: "Contract (Modified)", color: T.warning };
+    if (l.source === "contract")                  return { label: "Contract",            color: T.info    };
+    return                                               { label: "Manual",              color: T.textMuted };
+  };
+
+  const renderTableRow = (l, showActions = false) => {
+    const ctr = l.containerId ? containers.find(c => c.id === l.containerId) : null;
+    const ctrLabel = ctr ? (ctr.containerNumber || `(${ctr.size || ""}${ctr.type || ""})`) : null;
+    const src = sourceInfo(l);
+    return (
+      <div key={l.id}
+        style={{ display: "flex", alignItems: "center", padding: showActions ? "9px 16px" : "8px 18px",
+          borderBottom: `1px solid ${T.border}22` }}
+        onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
+        onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+        {/* Type */}
+        <div style={{ width: showActions ? 60 : 46, flexShrink: 0 }}>
+          <Badge variant={l.type === "BUY" ? "warning" : "success"}>{l.type}</Badge>
+        </div>
+        {/* Charge */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontFamily: T.body, fontSize: 12, color: T.text,
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.chargeCode}</div>
+        </div>
+        {/* Container */}
+        <div style={{ width: showActions ? 100 : 80, flexShrink: 0, paddingLeft: 4,
+          fontFamily: T.mono, fontSize: showActions ? 11 : 10,
+          color: ctrLabel ? T.accent : T.border,
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {ctrLabel || "—"}
+        </div>
+        {/* Source (modal only) */}
+        {showActions && (
+          <div style={{ width: 130, flexShrink: 0, paddingLeft: 4 }}>
+            <span style={{ fontFamily: T.body, fontSize: 10, fontWeight: 600,
+              color: src.color, background: `${src.color}18`,
+              border: `1px solid ${src.color}44`,
+              borderRadius: 6, padding: "2px 7px", whiteSpace: "nowrap" }}>
+              {src.label}
+            </span>
+          </div>
+        )}
+        {/* Currency */}
+        <div style={{ width: showActions ? 80 : 60, flexShrink: 0,
+          fontFamily: T.mono, fontSize: 11, color: T.text }}>{l.currency}</div>
+        {/* Exch. Rate */}
+        {showActions && (
+          <div style={{ width: 100, flexShrink: 0,
+            fontFamily: T.mono, fontSize: 11, color: T.textMuted, textAlign: "right" }}>
+            {l.exchangeRate === 1 ? "1.0000" : l.exchangeRate.toFixed(4)}
+          </div>
+        )}
+        {/* Amount */}
+        <div style={{ width: showActions ? 110 : 80, flexShrink: 0,
+          fontFamily: T.mono, fontSize: 12, color: T.text, textAlign: "right", fontWeight: 600 }}>
+          {l.amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+        </div>
+        {/* Actions */}
+        {showActions && (
+          <div style={{ width: 36, flexShrink: 0 }}>
+            <ActionMenu items={[
+              { icon: "✎", label: "Edit",   onClick: () => setLineModal(l) },
+              { icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(l.id) },
+            ]} />
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <>
+      {/* ── Compact card ── */}
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
-        overflow: "hidden", marginTop: 12 }}>
+        overflow: "hidden", display: "flex", flexDirection: "column" }}>
+
         {/* Header */}
-        <button type="button" onClick={handleOpen}
-          style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
-            width: "100%", padding: "15px 20px", background: "none", border: "none",
-            cursor: "pointer", gap: 12 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
-              {open ? "▾" : "▸"}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+          padding: "14px 18px", borderBottom: `1px solid ${T.border}33`, flexShrink: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text }}>Operational Accounting - Masha's Domain</span>
+            <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted,
+              background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "1px 7px" }}>
+              {lines.length}
             </span>
-            <h2 style={{ fontFamily: T.head, fontSize: 17, fontWeight: 700, color: T.text, margin: 0 }}>
-              Cost Control
-            </h2>
-            {!open && hasLines && (
-              <span style={{
-                fontFamily: T.mono, fontSize: 12, fontWeight: 700,
-                color: gp >= 0 ? T.success : T.danger,
-              }}>
-                {gp >= 0 ? "+" : ""}{fmtUsd(gp)} GP
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            {canSplitOrAggregate && (
+              <button type="button" onClick={handleToggleSplit} disabled={splitting}
+                style={{ fontFamily: T.body, fontSize: 11,
+                  color: isSplit ? T.warning : T.info,
+                  background: "none",
+                  border: `1px solid ${isSplit ? T.warning + "55" : T.info + "55"}`,
+                  borderRadius: 7, padding: "4px 10px",
+                  cursor: splitting ? "not-allowed" : "pointer",
+                  opacity: splitting ? 0.6 : 1 }}>
+                {splitting ? "Working…" : isSplit ? "⊞ Aggregate" : "◫ Split / container"}
+              </button>
+            )}
+            <button type="button" onClick={() => setLineModal("add")}
+              style={{ fontFamily: T.body, fontSize: 12, color: T.accent, background: "none",
+                border: `1px solid ${T.accent}55`, borderRadius: 7, padding: "4px 11px", cursor: "pointer" }}>
+              + Add
+            </button>
+          </div>
+        </div>
+
+        {/* Lines preview */}
+        <div style={{ flex: 1, overflow: "hidden" }}>
+          {loading ? (
+            <div style={{ padding: "20px 18px", fontFamily: T.body, fontSize: 12, color: T.textMuted }}>Loading…</div>
+          ) : lines.length === 0 ? (
+            <div style={{ padding: "20px 18px", fontFamily: T.body, fontSize: 12,
+              color: T.textMuted, fontStyle: "italic" }}>No cost lines yet.</div>
+          ) : preview.map(l => renderTableRow(l, false))}
+        </div>
+
+        {/* Summary — always rendered to keep card height stable */}
+        <div style={{ borderTop: `1px solid ${T.border}`, padding: "10px 18px",
+          background: T.bg, flexShrink: 0, display: "flex", gap: 18, alignItems: "center", flexWrap: "wrap" }}>
+          <div>
+            <div style={{ ...th, marginBottom: 2, fontSize: 9 }}>Total Buy</div>
+            <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700,
+              color: lines.length > 0 ? T.warning : T.border }}>
+              {lines.length > 0 ? fmtUsd(buy) : "—"}
+            </span>
+          </div>
+          <div>
+            <div style={{ ...th, marginBottom: 2, fontSize: 9 }}>Total Sell</div>
+            <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700,
+              color: lines.length > 0 ? T.success : T.border }}>
+              {lines.length > 0 ? fmtUsd(sell) : "—"}
+            </span>
+          </div>
+          <div>
+            <div style={{ ...th, marginBottom: 2, fontSize: 9 }}>Gross Profit</div>
+            <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700,
+              color: lines.length > 0 ? (gp >= 0 ? T.success : T.danger) : T.border }}>
+              {lines.length > 0 ? `${gp >= 0 ? "+" : ""}${fmtUsd(gp)}` : "—"}
+            </span>
+          </div>
+          <div style={{ marginLeft: "auto" }}>
+            <div style={{ ...th, marginBottom: 2, fontSize: 9 }}>Gross Margin</div>
+            {pct != null ? (
+              <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 800, color: marginColor(pct),
+                background: `${marginColor(pct)}18`, borderRadius: 7, padding: "2px 10px" }}>
+                {pct}%
               </span>
+            ) : (
+              <span style={{ fontFamily: T.mono, fontSize: 13, color: T.border }}>—</span>
             )}
           </div>
-          {!open && hasLines && pct != null && (
-            <span style={{
-              fontFamily: T.mono, fontSize: 11, fontWeight: 700, padding: "2px 10px",
-              borderRadius: 8, background: `${marginColor(pct)}22`, color: marginColor(pct),
-              border: `1px solid ${marginColor(pct)}44`,
-            }}>
-              {pct}% margin
-            </span>
-          )}
-        </button>
+        </div>
 
-        {open && (
-          <div style={{ borderTop: `1px solid ${T.border}` }}>
+        {/* Show all footer */}
+        <button type="button" onClick={() => setCcOpen(true)}
+          style={{ display: "block", width: "100%", padding: "10px 18px", textAlign: "center",
+            fontFamily: T.body, fontSize: 12, background: T.bg, flexShrink: 0,
+            border: "none", borderTop: `1px solid ${T.border}22`, cursor: "pointer",
+            color: T.textMuted }}
+          onMouseEnter={e => e.currentTarget.style.color = T.accent}
+          onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>
+          {lines.length > PREVIEW
+            ? `${lines.length - PREVIEW} more line${lines.length - PREVIEW !== 1 ? "s" : ""} — Show all →`
+            : lines.length > 0 ? "Manage all lines →" : "Open Operational Accounting →"}
+        </button>
+      </div>
+
+      {/* ── Full Cost Control modal ── */}
+      {ccOpen && (
+        <Modal title={`Operational Accounting — ${shipmentId}`} onClose={() => setCcOpen(false)} width={880}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+
             {/* Toolbar */}
-            <div style={{ padding: "12px 20px", display: "flex", alignItems: "center", justifyContent: "space-between",
-              borderBottom: `1px solid ${T.border}33`, gap: 12, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 {isCentral && (
                   <button type="button" onClick={openImport} disabled={importing}
@@ -1213,92 +2118,52 @@ const CostControl = ({ shipmentId, contractType, contractId, containers = [] }) 
                   </span>
                 )}
               </div>
-              <Btn size="sm" onClick={() => setModal("add")}>＋ Add Line</Btn>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <button type="button" onClick={() => setClHistOpen(true)}
+                  style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, background: "none",
+                    border: `1px solid ${T.border}`, borderRadius: 7, padding: "5px 12px", cursor: "pointer" }}
+                  onMouseEnter={e => e.currentTarget.style.color = T.text}
+                  onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>
+                  ⏱ History
+                </button>
+                <Btn size="sm" onClick={() => setLineModal("add")}>＋ Add Line</Btn>
+              </div>
             </div>
 
             {/* Table */}
             {loading ? (
-              <div style={{ padding: 32, textAlign: "center", color: T.textMuted, fontFamily: T.body, fontSize: 13 }}>Loading…</div>
+              <div style={{ padding: 24, textAlign: "center", color: T.textMuted, fontFamily: T.body, fontSize: 13 }}>Loading…</div>
             ) : lines.length === 0 ? (
-              <div style={{ padding: 32, textAlign: "center", color: T.textMuted, fontFamily: T.body, fontSize: 13, fontStyle: "italic" }}>
+              <div style={{ padding: 24, textAlign: "center", color: T.textMuted, fontFamily: T.body,
+                fontSize: 13, fontStyle: "italic" }}>
                 No cost lines yet. Add a BUY or SELL line above.
               </div>
             ) : (
-              <>
-                {/* Header */}
-                <div style={{ display: "flex", alignItems: "center", padding: "6px 20px",
-                  borderBottom: `1px solid ${T.border}33` }}>
-                  <div style={{ display: "flex", alignItems: "center", flex: 1, gap: 12, minWidth: 0 }}>
-                    <div style={{ ...th, width: 60, flexShrink: 0 }}>Type</div>
-                    <div style={{ ...th, flex: 1 }}>Charge</div>
-                  </div>
-                  <div style={{ display: "flex", alignItems: "center", gap: 0, flexShrink: 0 }}>
-                    <div style={{ ...th, width: 90 }}>Currency</div>
-                    <div style={{ ...th, width: 110, textAlign: "right" }}>Exch. Rate</div>
-                    <div style={{ ...th, width: 120, textAlign: "right" }}>Amount</div>
-                    <div style={{ width: 36 }} />
-                  </div>
+              <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden" }}>
+                {/* Table header */}
+                <div style={{ display: "flex", alignItems: "center", padding: "6px 16px",
+                  borderBottom: `1px solid ${T.border}33`, background: T.bg }}>
+                  <div style={{ ...th, width: 60, flexShrink: 0 }}>Type</div>
+                  <div style={{ ...th, flex: 1 }}>Charge</div>
+                  <div style={{ ...th, width: 100, flexShrink: 0 }}>Container</div>
+                  <div style={{ ...th, width: 130, flexShrink: 0 }}>Source</div>
+                  <div style={{ ...th, width: 80, flexShrink: 0 }}>Currency</div>
+                  <div style={{ ...th, width: 100, textAlign: "right", flexShrink: 0 }}>Exch. Rate</div>
+                  <div style={{ ...th, width: 110, textAlign: "right", flexShrink: 0 }}>Amount</div>
+                  <div style={{ width: 36, flexShrink: 0 }} />
                 </div>
-
-                {/* Rows */}
-                {lines.map(l => (
-                  <div key={l.id}
-                    style={{ display: "flex", alignItems: "center", padding: "9px 20px",
-                      borderBottom: `1px solid ${T.border}22`, transition: "background .1s" }}
-                    onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
-                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                    {/* Left: type + charge */}
-                    <div style={{ display: "flex", alignItems: "center", flex: 1, gap: 12, minWidth: 0 }}>
-                      <div style={{ width: 60, flexShrink: 0 }}>
-                        <Badge variant={l.type === "BUY" ? "warning" : "success"}>{l.type}</Badge>
-                      </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontFamily: T.body, fontSize: 12, color: T.text,
-                          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.chargeCode}</div>
-                        {l.containerId && (() => {
-                          const c = containers.find(c => c.id === l.containerId);
-                          if (!c) return null;
-                          const label = c.containerNumber
-                            ? `${c.containerNumber}${c.size || c.type ? ` (${c.size}${c.type})` : ''}`
-                            : `(${c.size || ""}${c.type || ""})`;
-                          return <div style={{ fontFamily: T.mono, fontSize: 10, color: T.accent, marginTop: 2 }}>{label}</div>;
-                        })()}
-                      </div>
-                    </div>
-                    {/* Right: currency + rate + amount + action */}
-                    <div style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
-                      <div style={{ width: 90, fontFamily: T.mono, fontSize: 11, color: T.text }}>{l.currency}</div>
-                      <div style={{ width: 110, fontFamily: T.mono, fontSize: 11, color: T.textMuted, textAlign: "right" }}>
-                        {l.exchangeRate === 1 ? "1.0000" : l.exchangeRate.toFixed(4)}
-                      </div>
-                      <div style={{ width: 120, fontFamily: T.mono, fontSize: 12, color: T.text, textAlign: "right", fontWeight: 600 }}>
-                        {l.amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </div>
-                      <div style={{ width: 36 }}>
-                        <ActionMenu items={[
-                          { icon: "✎", label: "Edit",   onClick: () => setModal(l) },
-                          { icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(l.id) },
-                        ]} />
-                      </div>
-                    </div>
-                  </div>
-                ))}
-
+                {/* Table rows */}
+                {lines.map(l => renderTableRow(l, true))}
                 {/* Summary */}
-                <div style={{ padding: "14px 20px", borderTop: `1px solid ${T.border}`,
-                  display: "flex", gap: 28, alignItems: "center", flexWrap: "wrap",
-                  background: T.bg }}>
+                <div style={{ padding: "14px 16px", borderTop: `1px solid ${T.border}`,
+                  display: "flex", gap: 28, alignItems: "center", flexWrap: "wrap", background: T.bg }}>
                   <div>
                     <div style={{ ...th, marginBottom: 3 }}>Total Buy (USD)</div>
-                    <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.warning }}>
-                      {fmtUsd(buy)}
-                    </span>
+                    <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.warning }}>{fmtUsd(buy)}</span>
                   </div>
                   <div>
                     <div style={{ ...th, marginBottom: 3 }}>Total Sell (USD)</div>
-                    <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.success }}>
-                      {fmtUsd(sell)}
-                    </span>
+                    <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.success }}>{fmtUsd(sell)}</span>
                   </div>
                   <div>
                     <div style={{ ...th, marginBottom: 3 }}>Gross Profit</div>
@@ -1311,40 +2176,45 @@ const CostControl = ({ shipmentId, contractType, contractId, containers = [] }) 
                     {pct == null ? (
                       <span style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, fontStyle: "italic" }}>No sell lines</span>
                     ) : (
-                      <span style={{
-                        fontFamily: T.mono, fontSize: 18, fontWeight: 800, color: marginColor(pct),
-                        background: `${marginColor(pct)}18`, borderRadius: 8,
-                        padding: "2px 12px",
-                      }}>
+                      <span style={{ fontFamily: T.mono, fontSize: 18, fontWeight: 800, color: marginColor(pct),
+                        background: `${marginColor(pct)}18`, borderRadius: 8, padding: "2px 12px" }}>
                         {pct}%
                       </span>
                     )}
                   </div>
                 </div>
-              </>
+              </div>
             )}
           </div>
-        )}
-      </div>
+        </Modal>
+      )}
 
-      {modal && (
+      {clHistOpen && (
+        <CostLineHistoryModal shipmentId={shipmentId} onClose={() => setClHistOpen(false)} />
+      )}
+
+      {/* Add / Edit line modal */}
+      {lineModal && (
         <Modal
-          title={modal === "add" ? "Add Cost Line" : `Edit — ${modal.chargeCode}`}
-          onClose={() => setModal(null)} width={500}>
+          title={lineModal === "add" ? "Add Cost Line" : `Edit — ${lineModal.chargeCode}`}
+          onClose={() => setLineModal(null)} width={500}>
           <CostLineForm
-            init={modal === "add" ? {} : modal}
+            init={lineModal === "add" ? {} : lineModal}
             fxRates={fxRates}
             containers={containers}
             onSave={handleSave}
-            onCancel={() => setModal(null)} />
+            onSaveAndMirror={data => handleSave(data, true)}
+            onCancel={() => setLineModal(null)} />
         </Modal>
       )}
+
       {confirm && (
         <ConfirmModal
           message="Remove this cost line? This cannot be undone."
           onConfirm={() => handleDelete(confirm)}
           onCancel={() => setConfirm(null)} />
       )}
+
       {importOpts && (
         <Modal title="Import from Contract" onClose={() => setImportOpts(false)} width={440}>
           <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -1399,7 +2269,7 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
   const [editShp,        setEditShp]        = useState(false);
   const [confirmCtr,     setConfirmCtr]     = useState(null);
   const [statusLog,      setStatusLog]      = useState([]);
-  const [logOpen,        setLogOpen]        = useState(true);
+  const [historyOpen,    setHistoryOpen]    = useState(false);
   const [events,         setEvents]         = useState([]);
   const [allocations,    setAllocations]    = useState([]);
   const [isDirty,        setIsDirty]        = useState(false);
@@ -1408,8 +2278,8 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
   const [unreadCount,    setUnreadCount]    = useState(0);
   const [screening,      setScreening]      = useState(null);
   const [complianceOpen, setComplianceOpen] = useState(false);
-  const { template: ctrTemplate, startResize: ctrStartResize } = useResizableColumns("shipment-containers", [140,60,90,50,80,150,100,90,120]);
-  const ctrHeaders = ["Container No.","Size","Type","TEU","HS Code","Cargo Description","Wt / Vol","DG","Actions"];
+  const [contractOpen,   setContractOpen]   = useState(false);
+  const [ctrListOpen,    setCtrListOpen]    = useState(false);
 
   // Tab title — show shipment ID so multi-tab workflows are easy to navigate
   useEffect(() => {
@@ -1712,146 +2582,276 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
         </div>
       ))}
 
-      {/* Contract + references  ·  Cargo Details — side by side */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+      {/* Contract & References  ·  Cargo Details — side by side */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12, alignItems: "stretch" }}>
 
-      {/* Contract + references */}
+      {/* Contract & References compact card */}
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
-        padding: "16px 20px" }}>
-        <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
-          textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 12 }}>Contract &amp; References</div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 14 }}>
-          <div>
-            <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 4 }}>Contract Type</div>
-            <Badge variant={contractVariant(shipment.contractType)}>{shipment.contractType}</Badge>
-            {shipment.contractRef && (
-              <div style={{ fontFamily: T.mono, fontSize: 11.5, color: T.textMuted, marginTop: 4 }}>{shipment.contractRef}</div>
-            )}
-          </div>
-          <div>
-            <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 4 }}>Contract ID</div>
-            <span style={{ fontFamily: T.mono, fontSize: 13, color: shipment.contractId ? T.textCode : T.border }}>{shipment.contractId || "—"}</span>
-          </div>
-          <div>
-            <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 4 }}>Incoterm</div>
-            {shipment.incoterm
-              ? <span style={{ fontFamily: T.mono, fontSize: 13, color: T.textCode, fontWeight: 700 }}>
-                  {shipment.incoterm}
-                  <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, fontWeight: 400, marginLeft: 6 }}>
-                    {INCOTERMS_2020.find(t => t.code === shipment.incoterm)?.name || ""}
-                  </span>
-                </span>
-              : <span style={{ fontFamily: T.body, fontSize: 13, color: T.border }}>—</span>
-            }
-          </div>
-          <div>
-            <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 4 }}>Booking Ref</div>
-            <span style={{ fontFamily: T.mono, fontSize: 13, color: shipment.bookingRef ? T.textCode : T.border }}>{shipment.bookingRef || "—"}</span>
-          </div>
-          <div>
-            <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 4 }}>B/L Number</div>
-            <span style={{ fontFamily: T.mono, fontSize: 13, color: shipment.blNumber ? T.textCode : T.border }}>{shipment.blNumber || "—"}</span>
-          </div>
+        overflow: "hidden", display: "flex", flexDirection: "column" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+          padding: "14px 18px", borderBottom: `1px solid ${T.border}33`, flexShrink: 0 }}>
+          <span style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text }}>
+            Contract &amp; References
+          </span>
         </div>
-        {shipment.commodityCode && (
-          <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.border}22` }}>
-            <div style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted, fontWeight: 600,
-              textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 6 }}>Commodity</div>
-            <CommodityDisplay code={shipment.commodityCode} />
-          </div>
-        )}
-        {shipment.contractNotes && (
-          <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.border}33` }}>
-            <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 4 }}>Notes</div>
-            <span style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.6 }}>{shipment.contractNotes}</span>
-          </div>
-        )}
+        <div style={{ flex: 1 }}>
+          {[
+            { label: "Contract Type", node: (
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <Badge variant={contractVariant(shipment.contractType)}>{shipment.contractType}</Badge>
+                  {shipment.contractRef && <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>{shipment.contractRef}</span>}
+                </div>
+              ) },
+            { label: "Incoterm", node: shipment.incoterm
+                ? <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textCode, fontWeight: 700 }}>
+                    {shipment.incoterm}
+                    <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, fontWeight: 400, marginLeft: 6 }}>
+                      {INCOTERMS_2020.find(t => t.code === shipment.incoterm)?.name || ""}
+                    </span>
+                  </span>
+                : <span style={{ fontFamily: T.body, fontSize: 12, color: T.border }}>—</span> },
+            { label: "Booking Ref", node: <span style={{ fontFamily: T.mono, fontSize: 12, color: shipment.bookingRef ? T.textCode : T.border }}>{shipment.bookingRef || "—"}</span> },
+            { label: "B/L Number",  node: <span style={{ fontFamily: T.mono, fontSize: 12, color: shipment.blNumber  ? T.textCode : T.border }}>{shipment.blNumber  || "—"}</span> },
+          ].map(({ label, node }, i, arr) => (
+            <div key={label} style={{ display: "flex", alignItems: "center", gap: 12, padding: "9px 18px",
+              borderBottom: i < arr.length - 1 ? `1px solid ${T.border}22` : "none" }}>
+              <span style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
+                textTransform: "uppercase", letterSpacing: ".06em", width: 96, flexShrink: 0 }}>
+                {label}
+              </span>
+              {node}
+            </div>
+          ))}
+        </div>
+        <button type="button" onClick={() => setContractOpen(true)}
+          style={{ display: "block", width: "100%", padding: "10px 18px", textAlign: "center",
+            fontFamily: T.body, fontSize: 12, color: T.textMuted, background: T.bg, flexShrink: 0,
+            border: "none", borderTop: `1px solid ${T.border}22`, cursor: "pointer" }}
+          onMouseEnter={e => e.currentTarget.style.color = T.accent}
+          onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>
+          Show all details →
+        </button>
       </div>
 
-      {/* Cargo Details */}
-      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, overflow: "hidden" }}>
-        <div style={{ padding: "15px 20px", borderBottom: `1px solid ${T.border}`,
-          display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div>
-            <h2 style={{ fontFamily: T.head, fontSize: 17, fontWeight: 700, color: T.text, margin: 0 }}>Cargo Details</h2>
-            <p style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, margin: "2px 0 0" }}>
-              {ctrs.length} container{ctrs.length !== 1 ? "s" : ""} · {totalTEU} TEU total
-            </p>
+      {/* Cargo Details compact card */}
+      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
+        overflow: "hidden", display: "flex", flexDirection: "column" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+          padding: "14px 18px", borderBottom: `1px solid ${T.border}33`, flexShrink: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text }}>Cargo Details</span>
+            <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted,
+              background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "1px 7px" }}>
+              {ctrs.length}
+            </span>
+            {totalTEU > 0 && (
+              <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>· {totalTEU} TEU</span>
+            )}
           </div>
-          <Btn onClick={() => setCtrModal("add")}>＋ Add Container</Btn>
+          <button type="button" onClick={() => setCtrModal("add")}
+            style={{ fontFamily: T.body, fontSize: 12, color: T.accent, background: "none",
+              border: `1px solid ${T.accent}55`, borderRadius: 7, padding: "4px 11px", cursor: "pointer" }}>
+            + Add
+          </button>
         </div>
-
-        {ctrs.length === 0 ? (
-          <div style={{ padding: 36, textAlign: "center", color: T.textMuted, fontFamily: T.body, fontSize: 14 }}>
-            No containers yet. Add one above.
-          </div>
-        ) : (
-          <>
-            <div style={{ display: "grid", gridTemplateColumns: ctrTemplate,
-              padding: "9px 20px", borderBottom: `1px solid ${T.border}` }}>
-              {ctrHeaders.map((h, i) => (
-                <div key={i} style={{ position: "relative", paddingLeft: 6, fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
-                  {h}{i < ctrHeaders.length - 1 && <ColResizer onStart={e => ctrStartResize(i, e)} />}
-                </div>
-              ))}
+        <div style={{ flex: 1 }}>
+          {ctrs.length === 0 ? (
+            <div style={{ padding: "20px 18px", fontFamily: T.body, fontSize: 12,
+              color: T.textMuted, fontStyle: "italic" }}>No containers yet.</div>
+          ) : ctrs.slice(0, 3).map((c, i) => (
+            <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 18px",
+              borderBottom: i < Math.min(ctrs.length, 3) - 1 ? `1px solid ${T.border}22` : "none" }}>
+              <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textCode, fontWeight: 600,
+                width: 128, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {c.containerNumber || "—"}
+              </span>
+              <span style={{ fontFamily: T.mono, fontSize: 11, color: T.text, flexShrink: 0, width: 32 }}>
+                {c.size}ft
+              </span>
+              <div style={{ flexShrink: 0 }}><Badge>{c.type}</Badge></div>
+              {c.isDg && c.dgClass && (
+                <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: "#fff",
+                  background: T.danger, borderRadius: 4, padding: "1px 6px", flexShrink: 0 }}>
+                  IMO {c.dgClass}
+                </span>
+              )}
+              <span style={{ fontFamily: T.body, fontSize: 12, flex: 1,
+                color: c.cargoDescription ? T.textMuted : T.border,
+                fontStyle: c.cargoDescription ? "normal" : "italic",
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {c.cargoDescription || "No description"}
+              </span>
             </div>
-            {ctrs.map(c => (
-              <div key={c.id} style={{ display: "grid", gridTemplateColumns: ctrTemplate,
-                padding: "12px 20px", borderBottom: `1px solid ${T.border}22`, alignItems: "center" }}
-                onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
-                onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textCode, fontWeight: 600 }}>{c.containerNumber || "—"}</span>
-                <span style={{ fontFamily: T.mono, fontSize: 13, color: T.text }}>{c.size}ft</span>
-                <Badge>{c.type}</Badge>
-                <span style={{ fontFamily: T.mono, fontSize: 14, fontWeight: 700, color: T.text }}>{teuOf(c.size)}</span>
-                <span style={{ fontFamily: T.mono, fontSize: 11, color: c.hsCode ? T.textCode : T.border }}>
-                  {c.hsCode || "—"}
-                </span>
-                <span style={{ fontFamily: T.body, fontSize: 12, color: c.cargoDescription ? T.text : T.border,
-                  fontStyle: c.cargoDescription ? "normal" : "italic",
-                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {c.cargoDescription || "—"}
-                </span>
-                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                  {c.grossWeightKg != null && <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>{c.grossWeightKg.toLocaleString()} kg</span>}
-                  {c.volumeCbm    != null && <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>{c.volumeCbm} m³</span>}
-                  {c.grossWeightKg == null && c.volumeCbm == null && <span style={{ fontFamily: T.mono, fontSize: 11, color: T.border }}>—</span>}
-                </div>
-                <div>
-                  {c.isDg && c.dgClass ? (
-                    <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700,
-                      color: "#fff", background: T.danger, borderRadius: 5, padding: "2px 8px",
-                      border: `1px solid ${T.danger}` }}>
-                      IMO {c.dgClass}
-                    </span>
-                  ) : (
-                    <span style={{ fontFamily: T.mono, fontSize: 11, color: T.border }}>—</span>
-                  )}
-                </div>
-                <div style={{ display: "flex", gap: 6 }}>
-                  <Btn size="sm" variant="secondary" onClick={() => setCtrModal(c)}>Edit</Btn>
-                  <Btn size="sm" variant="danger"    onClick={() => setConfirmCtr(c.id)}>✕</Btn>
-                </div>
-              </div>
-            ))}
-          </>
-        )}
+          ))}
+        </div>
+        <button type="button" onClick={() => setCtrListOpen(true)}
+          style={{ display: "block", width: "100%", padding: "10px 18px", textAlign: "center",
+            fontFamily: T.body, fontSize: 12, color: T.textMuted, background: T.bg, flexShrink: 0,
+            border: "none", borderTop: `1px solid ${T.border}22`, cursor: "pointer" }}
+          onMouseEnter={e => e.currentTarget.style.color = T.accent}
+          onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>
+          {ctrs.length > 3
+            ? `${ctrs.length - 3} more container${ctrs.length - 3 !== 1 ? "s" : ""} — Show all →`
+            : ctrs.length > 0 ? "Manage containers →" : "Open containers →"}
+        </button>
       </div>
 
       </div>{/* end 1fr 1fr grid */}
 
-      {/* Shipment History */}
-      <ShipmentTimeline
-        events={events}
-        currentStatus={shipment.status}
-        open={logOpen}
-        onToggle={() => setLogOpen(o => !o)}
-      />
+      {/* History + Cost Control side-by-side */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, alignItems: "stretch" }}>
+        <CompactHistory events={events} onShowAll={() => setHistoryOpen(true)} />
+        <CostControl shipmentId={shipment.id} contractType={shipment.contractType} contractId={shipment.contractId} containers={ctrs} />
+      </div>
+      {historyOpen && <HistoryModal events={events} shipmentId={shipment.id} onClose={() => setHistoryOpen(false)} />}
 
-      {/* Cost Control */}
-      <CostControl shipmentId={shipment.id} contractType={shipment.contractType} contractId={shipment.contractId} containers={ctrs} />
+      {/* Milestone Workflow */}
+      <div style={{ marginTop: 20 }}>
+        <MilestonePanel shipmentId={shipment.id} shipment={shipment} />
+      </div>
 
       {/* Modals */}
+
+      {/* Contract & References — full details */}
+      {contractOpen && (
+        <Modal title="Contract &amp; References" onClose={() => setContractOpen(false)} width={520}>
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            {[
+              { label: "Contract Type", node: (
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <Badge variant={contractVariant(shipment.contractType)}>{shipment.contractType}</Badge>
+                    {shipment.contractRef && <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>{shipment.contractRef}</span>}
+                  </div>
+                ) },
+              { label: "Contract ID", node: <span style={{ fontFamily: T.mono, fontSize: 13, color: shipment.contractId ? T.textCode : T.border }}>{shipment.contractId || "—"}</span> },
+              { label: "Incoterm", node: shipment.incoterm
+                  ? <span style={{ fontFamily: T.mono, fontSize: 13, color: T.textCode, fontWeight: 700 }}>
+                      {shipment.incoterm}
+                      <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, fontWeight: 400, marginLeft: 8 }}>
+                        {INCOTERMS_2020.find(t => t.code === shipment.incoterm)?.name || ""}
+                      </span>
+                    </span>
+                  : <span style={{ fontFamily: T.body, fontSize: 13, color: T.border }}>—</span> },
+              { label: "Booking Ref", node: <span style={{ fontFamily: T.mono, fontSize: 13, color: shipment.bookingRef ? T.textCode : T.border }}>{shipment.bookingRef || "—"}</span> },
+              { label: "B/L Number",  node: <span style={{ fontFamily: T.mono, fontSize: 13, color: shipment.blNumber  ? T.textCode : T.border }}>{shipment.blNumber  || "—"}</span> },
+            ].map(({ label, node }, i, arr) => (
+              <div key={label} style={{ display: "flex", alignItems: "center", gap: 16, padding: "11px 0",
+                borderBottom: i < arr.length - 1 ? `1px solid ${T.border}22` : "none" }}>
+                <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, fontWeight: 600,
+                  textTransform: "uppercase", letterSpacing: ".06em", width: 110, flexShrink: 0 }}>
+                  {label}
+                </span>
+                {node}
+              </div>
+            ))}
+            {shipment.commodityCode && (
+              <div style={{ paddingTop: 14, marginTop: 2, borderTop: `1px solid ${T.border}22` }}>
+                <div style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted, fontWeight: 600,
+                  textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 8 }}>Commodity</div>
+                <CommodityDisplay code={shipment.commodityCode} />
+              </div>
+            )}
+            {shipment.contractNotes && (
+              <div style={{ paddingTop: 14, marginTop: 2, borderTop: `1px solid ${T.border}22` }}>
+                <div style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted, fontWeight: 600,
+                  textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 6 }}>Notes</div>
+                <p style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.6, margin: 0 }}>
+                  {shipment.contractNotes}
+                </p>
+              </div>
+            )}
+          </div>
+        </Modal>
+      )}
+
+      {/* Containers — full list for selection / edit / delete */}
+      {ctrListOpen && (
+        <Modal title={`Containers — ${shipment.id}`} onClose={() => setCtrListOpen(false)} width={820}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
+                {ctrs.length} container{ctrs.length !== 1 ? "s" : ""} · {totalTEU} TEU total
+              </span>
+              <Btn onClick={() => { setCtrListOpen(false); setCtrModal("add"); }}>＋ Add Container</Btn>
+            </div>
+            {ctrs.length === 0 ? (
+              <div style={{ padding: 32, textAlign: "center", fontFamily: T.body,
+                fontSize: 13, color: T.textMuted, fontStyle: "italic" }}>
+                No containers yet.
+              </div>
+            ) : (
+              <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden" }}>
+                {/* Header */}
+                {(() => {
+                  const thStyle = { fontFamily: T.body, fontSize: 10, fontWeight: 700,
+                    color: T.textMuted, textTransform: "uppercase", letterSpacing: ".07em" };
+                  return (
+                    <div style={{ display: "flex", alignItems: "center", padding: "7px 14px",
+                      borderBottom: `1px solid ${T.border}`, background: T.bg }}>
+                      <div style={{ ...thStyle, width: 140, flexShrink: 0 }}>Container No.</div>
+                      <div style={{ ...thStyle, width: 104, flexShrink: 0 }}>Size / Type</div>
+                      <div style={{ ...thStyle, width: 44,  flexShrink: 0 }}>TEU</div>
+                      <div style={{ ...thStyle, width: 84,  flexShrink: 0 }}>HS Code</div>
+                      <div style={{ ...thStyle, flex: 1 }}>Cargo Description</div>
+                      <div style={{ ...thStyle, width: 88,  flexShrink: 0 }}>Wt / Vol</div>
+                      <div style={{ ...thStyle, width: 64,  flexShrink: 0 }}>DG</div>
+                      <div style={{ ...thStyle, width: 86,  flexShrink: 0 }} />
+                    </div>
+                  );
+                })()}
+                {/* Rows */}
+                {ctrs.map(c => (
+                  <div key={c.id} style={{ display: "flex", alignItems: "center", padding: "10px 14px",
+                    borderBottom: `1px solid ${T.border}22` }}
+                    onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
+                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                    <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textCode, fontWeight: 600,
+                      width: 140, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {c.containerNumber || "—"}
+                    </span>
+                    <div style={{ width: 104, flexShrink: 0, display: "flex", alignItems: "center", gap: 5 }}>
+                      <span style={{ fontFamily: T.mono, fontSize: 11, color: T.text }}>{c.size}ft</span>
+                      <Badge>{c.type}</Badge>
+                    </div>
+                    <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.text,
+                      width: 44, flexShrink: 0 }}>{teuOf(c.size)}</span>
+                    <span style={{ fontFamily: T.mono, fontSize: 11, color: c.hsCode ? T.textCode : T.border,
+                      width: 84, flexShrink: 0 }}>{c.hsCode || "—"}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontFamily: T.body, fontSize: 12,
+                        color: c.cargoDescription ? T.text : T.border,
+                        fontStyle: c.cargoDescription ? "normal" : "italic",
+                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {c.cargoDescription || "—"}
+                      </div>
+                    </div>
+                    <div style={{ width: 88, flexShrink: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+                      {c.grossWeightKg != null && <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted }}>{c.grossWeightKg.toLocaleString()} kg</span>}
+                      {c.volumeCbm    != null && <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted }}>{c.volumeCbm} m³</span>}
+                      {c.grossWeightKg == null && c.volumeCbm == null && <span style={{ fontFamily: T.mono, fontSize: 11, color: T.border }}>—</span>}
+                    </div>
+                    <div style={{ width: 64, flexShrink: 0 }}>
+                      {c.isDg && c.dgClass
+                        ? <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700,
+                            color: "#fff", background: T.danger, borderRadius: 4, padding: "2px 7px" }}>
+                            IMO {c.dgClass}
+                          </span>
+                        : <span style={{ fontFamily: T.mono, fontSize: 11, color: T.border }}>—</span>}
+                    </div>
+                    <div style={{ width: 86, flexShrink: 0, display: "flex", gap: 5 }}>
+                      <Btn size="sm" variant="secondary"
+                        onClick={() => { setCtrListOpen(false); setCtrModal(c); }}>Edit</Btn>
+                      <Btn size="sm" variant="danger"
+                        onClick={() => setConfirmCtr(c.id)}>✕</Btn>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </Modal>
+      )}
+
       {ctrModal && (
         <Modal title={ctrModal === "add" ? "Add Container" : "Edit Container"} onClose={() => setCtrModal(null)}>
           <ContainerForm init={ctrModal === "add" ? {} : ctrModal}

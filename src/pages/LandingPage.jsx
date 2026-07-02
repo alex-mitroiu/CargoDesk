@@ -178,7 +178,8 @@ const LandingPage = ({ shipments = [], containers = [], carriers = [], allocatio
     .sort((a, b) => a.etd.localeCompare(b.etd))
     .slice(0, 5);
 
-  const activeCount = shipments.filter(s => s.status === "Active").length;
+  const activeCount   = shipments.filter(s => s.status === "Active").length;
+  const overdueCount  = shipments.filter(s => s.overdueCount > 0).length;
 
   // Allocation KPIs — consumed TEU per carrier vs threshold
   const consumedByCarrier = {};
@@ -336,6 +337,7 @@ const LandingPage = ({ shipments = [], containers = [], carriers = [], allocatio
             { label: "Active Shipments",   value: activeCount,      icon: "📦", color: T.success                                    },
             { label: "Total Shipments",    value: shipments.length, icon: "🗂",  color: T.text                                       },
             { label: "Carriers",           value: carriers.length,  icon: "🏢", color: T.accent                                     },
+            { label: "Overdue Milestones", value: overdueCount,     icon: "⏰", color: overdueCount   > 0 ? T.danger  : T.success   },
             { label: "Over Threshold",     value: aboveThreshold,   icon: "⚠️", color: aboveThreshold > 0 ? T.warning : T.success   },
             { label: "Configs Expiring",   value: expiringCount,    icon: "📅", color: expiringCount  > 0 ? T.warning : T.success   },
           ].map(({ label, value, icon, color }) => (

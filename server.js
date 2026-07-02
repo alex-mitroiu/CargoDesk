@@ -360,12 +360,36 @@ const migrations = [
     created_at    TEXT NOT NULL
   )`,
   "ALTER TABLE shipment_cost_lines ADD COLUMN container_id TEXT DEFAULT ''",
+  "ALTER TABLE shipment_cost_lines ADD COLUMN source TEXT DEFAULT 'manual'",
+  "ALTER TABLE shipment_cost_lines ADD COLUMN modified_at TEXT",
   `CREATE TABLE IF NOT EXISTS ticket_links (
     id         TEXT PRIMARY KEY,
     from_id    TEXT NOT NULL,
     to_id      TEXT NOT NULL,
     link_type  TEXT NOT NULL,
     created_at TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS milestone_templates (
+    id             TEXT PRIMARY KEY,
+    template_key   TEXT NOT NULL DEFAULT 'FCL',
+    carrier_code   TEXT NOT NULL DEFAULT '',
+    trade_lane     TEXT NOT NULL DEFAULT '',
+    milestone_key  TEXT NOT NULL,
+    label          TEXT NOT NULL,
+    sequence_order INTEGER NOT NULL DEFAULT 0,
+    created_at     TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS shipment_milestones (
+    id             TEXT PRIMARY KEY,
+    shipment_id    TEXT NOT NULL,
+    milestone_key  TEXT NOT NULL,
+    label          TEXT NOT NULL,
+    sequence_order INTEGER NOT NULL DEFAULT 0,
+    estimated_date TEXT NOT NULL DEFAULT '',
+    completed_at   TEXT NOT NULL DEFAULT '',
+    completed_by   TEXT NOT NULL DEFAULT '',
+    note           TEXT NOT NULL DEFAULT '',
+    created_at     TEXT NOT NULL
   )`,
 ];
 
@@ -667,10 +691,35 @@ async function toUsd(amount, currency) {
 
 try { db.exec("UPDATE shipments SET vessel = '', vessel_imo = '' WHERE vessel_imo = ''"); } catch {}
 
+// Seeds the default FCL milestone template if none exists.
+(function seedDefaultMilestoneTemplate() {
+  try {
+    const existing = db.prepare("SELECT COUNT(*) as n FROM milestone_templates WHERE template_key='FCL' AND carrier_code=''").get();
+    if (existing.n > 0) return;
+    const now = new Date().toISOString();
+    const defaults = [
+      { key: 'booking_confirmed', label: 'Booking Confirmed', seq: 1 },
+      { key: 'si_submitted',      label: 'SI Submitted',       seq: 2 },
+      { key: 'cargo_gated_in',    label: 'Cargo Gated In',     seq: 3 },
+      { key: 'vessel_departed',   label: 'Vessel Departed',    seq: 4 },
+      { key: 'bl_issued',         label: 'B/L Issued',         seq: 5 },
+      { key: 'vessel_arrived',    label: 'Vessel Arrived',     seq: 6 },
+      { key: 'customs_cleared',   label: 'Customs Cleared',    seq: 7 },
+      { key: 'cargo_released',    label: 'Cargo Released',     seq: 8 },
+      { key: 'delivered',         label: 'Delivered',          seq: 9 },
+    ];
+    for (const d of defaults) {
+      db.prepare("INSERT INTO milestone_templates (id,template_key,carrier_code,trade_lane,milestone_key,label,sequence_order,created_at) VALUES (?,?,?,?,?,?,?,?)")
+        .run(`MT-${uid()}`, 'FCL', '', '', d.key, d.label, d.seq, now);
+    }
+    console.log('  ✔ Seeded default FCL milestone template (9 steps)');
+  } catch (e) { console.warn('  ⚠ Could not seed milestone template:', e.message); }
+})();
+
 // ─── Map functions ────────────────────────────────────────────────────────────
 
-const mapShipment     = r => ({ id: r.id, pol: r.pol, polName: r.pol_name || '', pod: r.pod, podName: r.pod_name || '', carrierCode: r.carrier_code, contractType: r.contract_type, contractNotes: r.contract_notes || '', status: r.status, createdAt: r.created_at, etd: r.etd || '', eta: r.eta || '', bookingRef: r.booking_ref || '', blNumber: r.bl_number || '', vessel: r.vessel || '', voyage: r.voyage || '', incoterm: r.incoterm || '', vesselImo: r.vessel_imo || '', contractId: r.contract_id || '', contractRef: r.contract_ref || '', commodityCode: r.commodity_code || '', shipperId: r.shipper_id || '', shipperName: r.shipper_name || '', consigneeId: r.consignee_id || '', consigneeName: r.consignee_name || '', principalId: r.principal_id || '', principalName: r.principal_name || '', marginBuyUsd: r.margin_buy_usd ?? null, marginSellUsd: r.margin_sell_usd ?? null });
-const mapCostLine     = r => ({ id: r.id, shipmentId: r.shipment_id, type: r.type, chargeCode: r.charge_code, currency: r.currency, amount: r.amount, exchangeRate: r.exchange_rate, amountUsd: Math.round(r.amount * r.exchange_rate * 100) / 100, notes: r.notes || '', containerId: r.container_id || '', createdAt: r.created_at });
+const mapShipment     = r => ({ id: r.id, pol: r.pol, polName: r.pol_name || '', pod: r.pod, podName: r.pod_name || '', carrierCode: r.carrier_code, contractType: r.contract_type, contractNotes: r.contract_notes || '', status: r.status, createdAt: r.created_at, etd: r.etd || '', eta: r.eta || '', bookingRef: r.booking_ref || '', blNumber: r.bl_number || '', vessel: r.vessel || '', voyage: r.voyage || '', incoterm: r.incoterm || '', vesselImo: r.vessel_imo || '', contractId: r.contract_id || '', contractRef: r.contract_ref || '', commodityCode: r.commodity_code || '', shipperId: r.shipper_id || '', shipperName: r.shipper_name || '', consigneeId: r.consignee_id || '', consigneeName: r.consignee_name || '', principalId: r.principal_id || '', principalName: r.principal_name || '', marginBuyUsd: r.margin_buy_usd ?? null, marginSellUsd: r.margin_sell_usd ?? null, overdueCount: r.overdue_count ?? 0 });
+const mapCostLine     = r => ({ id: r.id, shipmentId: r.shipment_id, type: r.type, chargeCode: r.charge_code, currency: r.currency, amount: r.amount, exchangeRate: r.exchange_rate, amountUsd: Math.round(r.amount * r.exchange_rate * 100) / 100, notes: r.notes || '', containerId: r.container_id || '', source: r.source || 'manual', modifiedAt: r.modified_at || null, createdAt: r.created_at });
 const mapContainer    = r => ({ id: r.id, shipmentId: r.shipment_id, containerNumber: r.container_number || '', sealNumber: r.seal_number || '', size: r.size, type: r.type, hsCode: r.hs_code || '', cargoDescription: r.cargo_description || '', grossWeightKg: r.gross_weight_kg ?? null, volumeCbm: r.volume_cbm ?? null, isDg: r.is_dg === 1, dgClass: r.dg_class || '' });
 const mapAllocation   = r => ({ id: r.id, carrierCode: r.carrier_code, allocatedTEU: r.allocated_teu, effectiveDate: r.effective_date || '', endDate: r.end_date || '', tradeLane: r.trade_lane || '', notes: r.notes || '', alertThreshold: r.alert_threshold ?? 80, pol: r.pol || '', pod: r.pod || '', originLane: r.origin_lane || '', destLane: r.dest_lane || '', coverageScope: r.coverage_scope || 'STRICT', contractId: r.contract_id || '', contractNumber: r.contract_number || '' });
 const mapCarrier      = r => ({ code: r.code, name: r.name, shortName: r.short_name || '' });
@@ -690,6 +739,8 @@ const mapSystemMessage = r => ({
   id: r.id, title: r.title, body: r.body,
   severity: r.severity, activeFrom: r.active_from, activeTo: r.active_to, createdAt: r.created_at,
 });
+const mapMilestone         = r => ({ id: r.id, shipmentId: r.shipment_id, milestoneKey: r.milestone_key, label: r.label, sequenceOrder: r.sequence_order, estimatedDate: r.estimated_date || '', completedAt: r.completed_at || '', completedBy: r.completed_by || '', note: r.note || '', createdAt: r.created_at });
+const mapMilestoneTemplate = r => ({ id: r.id, templateKey: r.template_key, carrierCode: r.carrier_code || '', tradeLane: r.trade_lane || '', milestoneKey: r.milestone_key, label: r.label, sequenceOrder: r.sequence_order, createdAt: r.created_at });
 
 const mapContract = r => ({
   id:              r.id,
@@ -815,7 +866,8 @@ app.get("/api/shipments", (req, res) => {
            p1.name AS pol_name,
            p2.name AS pod_name,
            COALESCE(buy.total, 0)  AS margin_buy_usd,
-           COALESCE(sell.total, 0) AS margin_sell_usd
+           COALESCE(sell.total, 0) AS margin_sell_usd,
+           COALESCE(ms.overdue_count, 0) AS overdue_count
     FROM shipments s
     LEFT JOIN port_locations p1 ON p1.unlocode = s.pol
     LEFT JOIN port_locations p2 ON p2.unlocode = s.pod
@@ -825,6 +877,11 @@ app.get("/api/shipments", (req, res) => {
     LEFT JOIN (SELECT shipment_id, SUM(amount * exchange_rate) AS total
                FROM shipment_cost_lines WHERE type='SELL' GROUP BY shipment_id) sell
            ON sell.shipment_id = s.id
+    LEFT JOIN (SELECT shipment_id, COUNT(*) AS overdue_count
+               FROM shipment_milestones
+               WHERE estimated_date != '' AND estimated_date < date('now') AND completed_at = ''
+               GROUP BY shipment_id) ms
+           ON ms.shipment_id = s.id
     ORDER BY s.created_at DESC
   `).all();
   ok(res, rows.map(mapShipment));
@@ -2005,7 +2062,6 @@ function importContractRates(shipmentId, { splitPerContainer = false } = {}) {
   const rates = db.prepare("SELECT * FROM contract_rates WHERE contract_id=? ORDER BY sort_order").all(shipment.contract_id);
   if (!rates.length) return 0;
   const ctrs = db.prepare("SELECT id, container_number, size, type FROM containers WHERE shipment_id=?").all(shipmentId);
-  const containerCount = ctrs.length || 1;
   const now = new Date().toISOString();
   let created = 0;
   for (const r of rates) {
@@ -2013,26 +2069,34 @@ function importContractRates(shipmentId, { splitPerContainer = false } = {}) {
     const exchangeRate = (r.amount > 0 && r.amount_usd > 0) ? Math.round((r.amount_usd / r.amount) * 100000) / 100000 : 1;
     const baseNotes    = [r.service_code, r.description].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(' — ');
 
-    if (r.unit === 'per_container' && splitPerContainer && ctrs.length > 0) {
-      for (const c of ctrs) {
+    // When the rate targets a specific container type, only apply to matching containers.
+    // Skip entirely if none match — prevents phantom lines for unrelated container sizes.
+    const applicableCtrs = r.container_type
+      ? ctrs.filter(c => `${c.size || ''}${c.type || ''}`.toUpperCase() === r.container_type.toUpperCase())
+      : ctrs;
+    if (r.unit === 'per_container' && r.container_type && applicableCtrs.length === 0) continue;
+
+    if (r.unit === 'per_container' && splitPerContainer && applicableCtrs.length > 0) {
+      for (const c of applicableCtrs) {
         const cLabel = c.container_number
           ? `${c.container_number}${c.size || c.type ? ` (${c.size}${c.type})` : ''}`
           : `(${c.size || ''}${c.type || ''})`;
         const notes = [cLabel, baseNotes].filter(Boolean).join(' — ');
         const id    = `CL-${uid()}`;
-        db.prepare("INSERT INTO shipment_cost_lines (id,shipment_id,type,charge_code,currency,amount,exchange_rate,notes,container_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
-          .run(id, shipmentId, 'BUY', chargeCode, r.currency || 'USD', r.amount, exchangeRate, notes, c.id, now);
-        logEvent(shipmentId, 'COST_LINE_ADDED', null, null, null,
-          JSON.stringify({ lineId: id, type: 'BUY', chargeCode, currency: r.currency || 'USD', amount: r.amount, exchangeRate, amountUsd: Math.round(r.amount * exchangeRate * 100) / 100, containerId: c.id, source: 'contract' }));
+        db.prepare("INSERT INTO shipment_cost_lines (id,shipment_id,type,charge_code,currency,amount,exchange_rate,notes,container_id,created_at,source) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+          .run(id, shipmentId, 'BUY', chargeCode, r.currency || 'USD', r.amount, exchangeRate, notes, c.id, now, 'contract');
+        logEntityEvent('cost_line', id, 'IMPORTED', null, null, null,
+          JSON.stringify({ shipmentId, chargeCode, currency: r.currency || 'USD', amount: r.amount, exchangeRate, containerId: c.id }));
         created++;
       }
     } else {
+      const containerCount = r.unit === 'per_container' ? (applicableCtrs.length || 1) : 1;
       const amount = r.unit === 'per_container' ? r.amount * containerCount : r.amount;
       const id     = `CL-${uid()}`;
-      db.prepare("INSERT INTO shipment_cost_lines (id,shipment_id,type,charge_code,currency,amount,exchange_rate,notes,container_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
-        .run(id, shipmentId, 'BUY', chargeCode, r.currency || 'USD', amount, exchangeRate, baseNotes, '', now);
-      logEvent(shipmentId, 'COST_LINE_ADDED', null, null, null,
-        JSON.stringify({ lineId: id, type: 'BUY', chargeCode, currency: r.currency || 'USD', amount, exchangeRate, amountUsd: Math.round(amount * exchangeRate * 100) / 100, source: 'contract' }));
+      db.prepare("INSERT INTO shipment_cost_lines (id,shipment_id,type,charge_code,currency,amount,exchange_rate,notes,container_id,created_at,source) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+        .run(id, shipmentId, 'BUY', chargeCode, r.currency || 'USD', amount, exchangeRate, baseNotes, '', now, 'contract');
+      logEntityEvent('cost_line', id, 'IMPORTED', null, null, null,
+        JSON.stringify({ shipmentId, chargeCode, currency: r.currency || 'USD', amount, exchangeRate }));
       created++;
     }
   }
@@ -2048,7 +2112,7 @@ app.post("/api/shipments/:id/cost-lines/import-contract", (req, res) => {
   if (shipment.contract_type !== 'Central' || !shipment.contract_id)
     return err(res, "Shipment is not linked to a Central contract");
   if (overwrite) {
-    const existing = db.prepare("SELECT id FROM shipment_cost_lines WHERE shipment_id=? AND type='BUY'").all(req.params.id);
+    const existing = db.prepare("SELECT id FROM shipment_cost_lines WHERE shipment_id=? AND type='BUY' AND source='contract'").all(req.params.id);
     for (const row of existing) db.prepare("DELETE FROM shipment_cost_lines WHERE id=?").run(row.id);
   }
   const count = importContractRates(req.params.id, { splitPerContainer });
@@ -2070,19 +2134,20 @@ app.post("/api/shipments/:id/cost-lines", (req, res) => {
   const now = new Date().toISOString();
   db.prepare("INSERT INTO shipment_cost_lines (id,shipment_id,type,charge_code,currency,amount,exchange_rate,notes,container_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
     .run(id, req.params.id, type, chargeCode, currency.toUpperCase(), Number(amount), Number(exchangeRate), notes, containerId, now);
-  logEvent(req.params.id, 'COST_LINE_ADDED', null, null, null,
-    JSON.stringify({ lineId: id, type, chargeCode, currency: currency.toUpperCase(), amount: Number(amount), exchangeRate: Number(exchangeRate), amountUsd: Math.round(Number(amount) * Number(exchangeRate) * 100) / 100 }));
-  ok(res, mapCostLine({ id, shipment_id: req.params.id, type, charge_code: chargeCode, currency: currency.toUpperCase(), amount: Number(amount), exchange_rate: Number(exchangeRate), notes, container_id: containerId, created_at: now }), 201);
+  logEntityEvent('cost_line', id, 'CREATED', null, null, null,
+    JSON.stringify({ shipmentId: req.params.id, type, chargeCode, currency: currency.toUpperCase(), amount: Number(amount), exchangeRate: Number(exchangeRate) }));
+  ok(res, mapCostLine({ id, shipment_id: req.params.id, type, charge_code: chargeCode, currency: currency.toUpperCase(), amount: Number(amount), exchange_rate: Number(exchangeRate), notes, container_id: containerId, source: 'manual', modified_at: null, created_at: now }), 201);
 });
 
-app.put("/api/cost-lines/:id", (req, res) => {
+app.put("/api/shipments/:shipmentId/cost-lines/:id", (req, res) => {
   const { type, chargeCode, currency = 'USD', amount, exchangeRate = 1, notes = '', containerId = '' } = req.body;
   if (!type || !chargeCode || amount == null) return err(res, "type, chargeCode, amount required");
   if (!['BUY','SELL'].includes(type)) return err(res, "type must be BUY or SELL");
-  const existing = db.prepare("SELECT * FROM shipment_cost_lines WHERE id=?").get(req.params.id);
+  const existing = db.prepare("SELECT * FROM shipment_cost_lines WHERE id=? AND shipment_id=?").get(req.params.id, req.params.shipmentId);
   if (!existing) return err(res, "Not found", 404);
-  db.prepare("UPDATE shipment_cost_lines SET type=?,charge_code=?,currency=?,amount=?,exchange_rate=?,notes=?,container_id=? WHERE id=?")
-    .run(type, chargeCode, currency.toUpperCase(), Number(amount), Number(exchangeRate), notes, containerId, req.params.id);
+  const now = new Date().toISOString();
+  db.prepare("UPDATE shipment_cost_lines SET type=?,charge_code=?,currency=?,amount=?,exchange_rate=?,notes=?,container_id=?,modified_at=? WHERE id=?")
+    .run(type, chargeCode, currency.toUpperCase(), Number(amount), Number(exchangeRate), notes, containerId, now, req.params.id);
   for (const [field, oldV, newV] of [
     ['type',          existing.type,          type],
     ['charge_code',   existing.charge_code,   chargeCode],
@@ -2092,18 +2157,116 @@ app.put("/api/cost-lines/:id", (req, res) => {
     ['notes',         existing.notes || '',   notes],
     ['container_id',  existing.container_id || '', containerId],
   ]) {
-    if (String(oldV) !== String(newV)) logEvent(existing.shipment_id, 'COST_LINE_UPDATED', field, oldV, newV,
-      JSON.stringify({ lineId: req.params.id, chargeCode, type }));
+    if (String(oldV) !== String(newV))
+      logEntityEvent('cost_line', req.params.id, 'UPDATED', field, oldV, newV,
+        JSON.stringify({ shipmentId: existing.shipment_id, chargeCode: chargeCode, type }));
   }
-  ok(res, mapCostLine({ id: req.params.id, shipment_id: existing.shipment_id, type, charge_code: chargeCode, currency: currency.toUpperCase(), amount: Number(amount), exchange_rate: Number(exchangeRate), notes, container_id: containerId, created_at: existing.created_at }));
+  ok(res, mapCostLine({ id: req.params.id, shipment_id: existing.shipment_id, type, charge_code: chargeCode, currency: currency.toUpperCase(), amount: Number(amount), exchange_rate: Number(exchangeRate), notes, container_id: containerId, source: existing.source || 'manual', modified_at: now, created_at: existing.created_at }));
 });
 
-app.delete("/api/cost-lines/:id", (req, res) => {
-  const existing = db.prepare("SELECT * FROM shipment_cost_lines WHERE id=?").get(req.params.id);
+app.delete("/api/shipments/:shipmentId/cost-lines/:id", (req, res) => {
+  const existing = db.prepare("SELECT * FROM shipment_cost_lines WHERE id=? AND shipment_id=?").get(req.params.id, req.params.shipmentId);
   if (!existing) return err(res, "Not found", 404);
   db.prepare("DELETE FROM shipment_cost_lines WHERE id=?").run(req.params.id);
-  logEvent(existing.shipment_id, 'COST_LINE_REMOVED', null, null, null,
-    JSON.stringify({ lineId: req.params.id, type: existing.type, chargeCode: existing.charge_code, amountUsd: Math.round(existing.amount * existing.exchange_rate * 100) / 100 }));
+  logEntityEvent('cost_line', req.params.id, 'DELETED', null, null, null,
+    JSON.stringify({ shipmentId: existing.shipment_id, type: existing.type, chargeCode: existing.charge_code, amount: existing.amount, currency: existing.currency, source: existing.source || 'manual' }));
+  ok(res, { deleted: req.params.id });
+});
+
+app.get("/api/shipments/:id/cost-line-events", (req, res) => {
+  const rows = db.prepare(`
+    SELECT * FROM entity_events
+    WHERE entity_type = 'cost_line'
+    AND json_extract(meta, '$.shipmentId') = ?
+    ORDER BY created_at DESC
+  `).all(req.params.id);
+  ok(res, rows);
+});
+
+// ─── Shipment Milestones ──────────────────────────────────────────────────────
+
+app.get("/api/shipments/:id/milestones", (req, res) => {
+  const rows = db.prepare(
+    "SELECT * FROM shipment_milestones WHERE shipment_id=? ORDER BY sequence_order ASC"
+  ).all(req.params.id);
+  ok(res, rows.map(mapMilestone));
+});
+
+app.post("/api/shipments/:id/milestones/init", (req, res) => {
+  const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
+  if (!shipment) return err(res, "Shipment not found", 404);
+  const carrierCode = req.body?.carrierCode || shipment.carrier_code || '';
+  const tradeLane   = req.body?.tradeLane || '';
+  let templates = carrierCode
+    ? db.prepare("SELECT * FROM milestone_templates WHERE carrier_code=? AND trade_lane=? ORDER BY sequence_order").all(carrierCode, tradeLane)
+    : [];
+  if (!templates.length && carrierCode)
+    templates = db.prepare("SELECT * FROM milestone_templates WHERE carrier_code=? AND trade_lane='' ORDER BY sequence_order").all(carrierCode);
+  if (!templates.length)
+    templates = db.prepare("SELECT * FROM milestone_templates WHERE template_key='FCL' AND carrier_code='' ORDER BY sequence_order").all();
+  if (!templates.length) return err(res, "No milestone template found");
+  db.prepare("DELETE FROM shipment_milestones WHERE shipment_id=?").run(req.params.id);
+  const now = new Date().toISOString();
+  const created = [];
+  for (const t of templates) {
+    const id = `MS-${uid()}`;
+    db.prepare("INSERT INTO shipment_milestones (id,shipment_id,milestone_key,label,sequence_order,estimated_date,completed_at,completed_by,note,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
+      .run(id, req.params.id, t.milestone_key, t.label, t.sequence_order, '', '', '', '', now);
+    created.push(mapMilestone({ id, shipment_id: req.params.id, milestone_key: t.milestone_key, label: t.label, sequence_order: t.sequence_order, estimated_date: '', completed_at: '', completed_by: '', note: '', created_at: now }));
+  }
+  ok(res, created, 201);
+});
+
+app.put("/api/milestones/:id", (req, res) => {
+  const { estimatedDate = '', completedAt = '', completedBy = '', note = '' } = req.body || {};
+  const existing = db.prepare("SELECT * FROM shipment_milestones WHERE id=?").get(req.params.id);
+  if (!existing) return err(res, "Not found", 404);
+  db.prepare("UPDATE shipment_milestones SET estimated_date=?,completed_at=?,completed_by=?,note=? WHERE id=?")
+    .run(estimatedDate, completedAt, completedBy, note, req.params.id);
+  ok(res, mapMilestone({ ...existing, estimated_date: estimatedDate, completed_at: completedAt, completed_by: completedBy, note }));
+});
+
+app.delete("/api/milestones/:id", (req, res) => {
+  const existing = db.prepare("SELECT * FROM shipment_milestones WHERE id=?").get(req.params.id);
+  if (!existing) return err(res, "Not found", 404);
+  db.prepare("DELETE FROM shipment_milestones WHERE id=?").run(req.params.id);
+  ok(res, { deleted: req.params.id });
+});
+
+// ─── Milestone Templates ──────────────────────────────────────────────────────
+
+app.get("/api/milestone-templates", (req, res) => {
+  const rows = db.prepare("SELECT * FROM milestone_templates ORDER BY template_key, carrier_code, sequence_order").all();
+  ok(res, rows.map(mapMilestoneTemplate));
+});
+
+app.post("/api/milestone-templates", (req, res) => {
+  const { templateKey = 'FCL', carrierCode = '', tradeLane = '', milestoneKey, label, sequenceOrder = 0 } = req.body || {};
+  if (!milestoneKey || !label) return err(res, "milestoneKey and label required");
+  const id = `MT-${uid()}`;
+  const now = new Date().toISOString();
+  db.prepare("INSERT INTO milestone_templates (id,template_key,carrier_code,trade_lane,milestone_key,label,sequence_order,created_at) VALUES (?,?,?,?,?,?,?,?)")
+    .run(id, templateKey, carrierCode, tradeLane, milestoneKey, label, Number(sequenceOrder), now);
+  ok(res, mapMilestoneTemplate({ id, template_key: templateKey, carrier_code: carrierCode, trade_lane: tradeLane, milestone_key: milestoneKey, label, sequence_order: Number(sequenceOrder), created_at: now }), 201);
+});
+
+app.put("/api/milestone-templates/:id", (req, res) => {
+  const { templateKey, carrierCode = '', tradeLane = '', milestoneKey, label, sequenceOrder } = req.body || {};
+  const existing = db.prepare("SELECT * FROM milestone_templates WHERE id=?").get(req.params.id);
+  if (!existing) return err(res, "Not found", 404);
+  const tKey = templateKey || existing.template_key;
+  const mKey = milestoneKey || existing.milestone_key;
+  const lbl  = label || existing.label;
+  const seq  = sequenceOrder != null ? Number(sequenceOrder) : existing.sequence_order;
+  db.prepare("UPDATE milestone_templates SET template_key=?,carrier_code=?,trade_lane=?,milestone_key=?,label=?,sequence_order=? WHERE id=?")
+    .run(tKey, carrierCode, tradeLane, mKey, lbl, seq, req.params.id);
+  ok(res, mapMilestoneTemplate({ id: req.params.id, template_key: tKey, carrier_code: carrierCode, trade_lane: tradeLane, milestone_key: mKey, label: lbl, sequence_order: seq, created_at: existing.created_at }));
+});
+
+app.delete("/api/milestone-templates/:id", (req, res) => {
+  const existing = db.prepare("SELECT * FROM milestone_templates WHERE id=?").get(req.params.id);
+  if (!existing) return err(res, "Not found", 404);
+  db.prepare("DELETE FROM milestone_templates WHERE id=?").run(req.params.id);
   ok(res, { deleted: req.params.id });
 });
 
