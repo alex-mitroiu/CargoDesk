@@ -10,7 +10,10 @@
     "server": "node server.js",
     "client": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "seed": "node scripts/import-mdm-data.js",
+    "seed:contracts": "node scripts/seed-contracts.js",
+    "checkdb": "node scripts/checkdb.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

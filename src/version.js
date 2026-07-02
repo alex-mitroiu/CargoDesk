@@ -2,11 +2,17 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.18.0";
+export const VERSION   = "0.18.1";
 export const BUILD     = "2026-07-02";
 export const CODENAME  = "Traverse";
 
 export const CHANGELOG = [
+  {
+    version:  "0.18.1",
+    date:     "2026-07-02",
+    codename: "Traverse",
+    summary:  "Hotfix: License & EULA page (non-commercial use terms, donation section); first-visit acceptance modal stored in localStorage; License & Terms link in sidebar nav and footer. File structure cleanup: seed scripts moved to scripts/ folder (import-mdm-data.js, seed-contracts.js, checkdb.js); npm run seed / seed:contracts / checkdb shortcuts added to package.json; all __dirname paths updated. sampleDB/ folder added with pre-loaded sample database for quick onboarding. Commodity picker grade column widened to 180px to prevent overflow. Shipments table changed to double-click to open in new tab. ContractField disabled state now names the missing field (Set ETD first…) instead of silently blocking clicks.",
+  },
   {
     version:  "0.18.0",
     date:     "2026-07-02",

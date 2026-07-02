@@ -2,7 +2,7 @@
 const path = require("path");
 const { DatabaseSync } = require("node:sqlite");
 
-const db = new DatabaseSync(path.join(__dirname, "cargodesk.db"));
+const db = new DatabaseSync(path.join(__dirname, "..", "cargodesk.db"));
 
 console.log("\n── port_locations sample ──────────────────────────────────");
 db.prepare("SELECT unlocode, country_code, SUBSTR(unlocode,1,2) AS derived FROM port_locations LIMIT 8").all()

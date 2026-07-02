@@ -2,7 +2,7 @@
 
 > Freight management application for tracking ocean shipments, carrier space utilisation, contracts, and maritime master data.
 
-[![Version](https://img.shields.io/badge/version-0.18.0-blue)](.)
+[![Version](https://img.shields.io/badge/version-0.18.1-blue)](.)
 ![Node](https://img.shields.io/badge/node-22.5%2B-green)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
@@ -78,10 +78,10 @@ npm install
 npm run dev
 
 # Seed master data -- run once after the first server start
-node import-mdm-data.js
+npm run seed
 
 # Seed sample contracts (optional)
-node seed-contracts.js
+npm run seed:contracts
 ```
 
 Open [http://localhost:5173](http://localhost:5173)
@@ -91,7 +91,7 @@ Open [http://localhost:5173](http://localhost:5173)
 - `cargodesk.db` is created automatically on the first server start.
 - Schema changes are applied via safe `ALTER TABLE` migrations at startup — no manual DB intervention needed.
 - The database file is excluded from version control (see `.gitignore`).
-- Run `import-mdm-data.js` and `seed-contracts.js` with the server already running so they write to the same `cargodesk.db` instance.
+- Run `npm run seed` and `npm run seed:contracts` with the server already running so they write to the same `cargodesk.db` instance.
 - The FX converter and weather widget use free public APIs — no API keys required.
 - The WebSocket server shares port 3001 with the Express API (`/ws` path). The Vite dev server proxies WebSocket connections automatically.
 
@@ -102,13 +102,17 @@ Open [http://localhost:5173](http://localhost:5173)
 ```
 CargoDesk/
 ├── server.js                  # Express API + WebSocket server + SQLite schema + migrations + all endpoints
-├── import-mdm-data.js         # Seeds ports, carriers, vessels, regions, commodities
-├── seed-contracts.js          # Seeds sample carrier contracts
 ├── vite.config.js             # Vite config with /api and /ws proxy rules
+├── scripts/
+│   ├── import-mdm-data.js     # Seeds ports, carriers, vessels, regions, commodities (npm run seed)
+│   ├── seed-contracts.js      # Seeds sample carrier contracts (npm run seed:contracts)
+│   └── checkdb.js             # Dev utility — inspects DB schema and row counts (npm run checkdb)
 ├── data/
 │   ├── seaports.csv           # 14,269 UN/LOCODE records
 │   ├── carriers.csv           # 68 carrier records
 │   └── vessels.json           # 349 vessels (IMO registry)
+├── sampleDB/
+│   └── cargodesk.db           # Pre-loaded sample database — copy to project root to use
 └── src/
     ├── api.js                 # All fetch wrappers (api.shipments, api.costLines, api.milestones...)
     ├── tokens.js              # Design tokens, theme system, route-matching helpers
@@ -204,6 +208,7 @@ See the built-in **About** page (i in the sidebar) for the full interactive sche
 
 | Version | Codename | Summary |
 |---------|----------|---------|
+| 0.18.1 | Traverse | Hotfix: License & EULA page (non-commercial use terms, donation section); first-visit acceptance modal. File structure cleanup: seed scripts moved to `scripts/`; `npm run seed` / `seed:contracts` / `checkdb` shortcuts added. `sampleDB/` with pre-loaded database for quick onboarding. Commodity picker grade column overflow fix. Shipments table double-click to open. ContractField disabled state names the missing field. |
 | 0.18.0 | Traverse | Operational Accounting: source tracking (Contract / Contract (Modified) / Manual pills), Cost Line History modal with CREATED/IMPORTED/UPDATED/DELETED audit log + CSV export, ⇄ Mirror as BUY/SELL in the Add/Edit modal, Container column, import container-type filtering, manual line preservation on recalculate, renamed from Cost Control. Shipment Milestones: new `milestone_templates` + `shipment_milestones` tables, default 9-step FCL template seeded on startup, `MilestonePanel` vertical stepper with progress bar, per-step states, inline editing, collapse toggle, overdue badge on shipment rows, Overdue Milestones KPI on Landing Page. Integration Board: In Testing + Testing Failed columns, per-column Show More (▾▾/▴▴), Show/Hide Released toggle. REST API: cost-line routes nested under shipments; Postman collection added in `/src/dev/`. |
 | 0.17.1 | Sentry | Hotfix: FX Rates health check was fetching `frankfurter.app` directly from the browser, triggering a CORS block (HTTP 301, no `Access-Control-Allow-Origin` header). Routed through the existing `/api/fx/rates` backend endpoint instead. |
 | 0.17.0 | Sentry | Application Settings page (⚙ nav item above footer): API Controls tab with External APIs subtab (FX Rates, Weather, OFAC SDN — toggle, recurrence, latency test, CSV import, direct sync) and Internal APIs subtab (WebSocket, Shipments, Contracts, Customers, Carriers, Vessels, Ports, System Messages — toggle + latency test). Toggles gate sidebar nav items; disabled modules show a 🔒 Module Disabled fallback. User Manual and About moved to the avatar dropdown. Sanctions & Denied Party Screening: shipments are screened silently on every create/edit when the SDN index is loaded; skips re-screen on OVERRIDE or non-party edits; warning toast names each flagged party. Compliance badge simplified to "⚠ Compliance review required" with a per-party hover tooltip. OFAC auto-sync: redirect following (up to 5 hops), `setTimeout` overflow fixed (capped at ~23 days), failed syncs retry after 1 h. CSV file-upload path added via Vite large-body passthrough plugin. Five SDN test customers seeded. Header badge font size increased 15% (10.5 → 12 px); `Badge` gains a `size` prop. |

@@ -4,9 +4,9 @@
 Full-stack freight management app. React 18 + Vite frontend, Express + node:sqlite backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.18.0 "Traverse"**
+- Version: **v0.18.1 "Traverse"**
 - Run: `npm run dev` (runs server on :3001 + Vite on :5173 concurrently)
-- Seed: `node import-mdm-data.js`
+- Seed: `npm run seed` (runs `scripts/import-mdm-data.js`)
 
 ## Stack
 - Frontend: React 18, Vite, JSX with inline styles (no CSS files, no Tailwind)
@@ -17,7 +17,12 @@ Full-stack freight management app. React 18 + Vite frontend, Express + node:sqli
 ## Key files
 ```
 server.js                          Express API + SQLite schema + all endpoints
-import-mdm-data.js                 Seeds ports, carriers, vessels, commodities
+scripts/
+  import-mdm-data.js               Seeds ports, carriers, vessels, commodities (npm run seed)
+  seed-contracts.js                Seeds sample carrier contracts (npm run seed:contracts)
+  checkdb.js                       Dev utility — inspects DB schema and row counts (npm run checkdb)
+sampleDB/
+  cargodesk.db                     Pre-loaded sample DB — copy to project root to use
 src/
   App.jsx                          Root: routing, nav, state, theme toggle
   api.js                           All fetch wrappers (api.shipments, api.ports, etc.)
