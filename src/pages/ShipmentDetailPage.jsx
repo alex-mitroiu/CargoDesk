@@ -8,6 +8,7 @@ import { CommodityCombobox, GradePill } from "../components/shared/CommodityComb
 import { api } from "../api";
 import { toast } from "../toast";
 import Btn from "../components/primitives/Btn";
+import ActionMenu from "../components/primitives/ActionMenu";
 import Spinner from "../components/primitives/Spinner";
 import Badge from "../components/primitives/Badge";
 import {Inp, Sel, BtnToggle} from "../components/primitives/Form";
@@ -431,12 +432,16 @@ const LinkVesselModal = ({ shipment, onSave, onClose }) => {
 // ─── Shipment History Timeline ────────────────────────────────────────────────
 
 const EVENT_CONFIG = {
-  SHIPMENT_CREATED:  { icon: "🚢",  label: "Shipment created",  color: () => T.success  },
-  STATUS_CHANGED:    { icon: "🔄", label: "Status changed",    color: () => T.accent   },
-  FIELD_UPDATED:     { icon: "✏️",  label: "Field updated",     color: () => T.info     },
-  CONTAINER_ADDED:   { icon: "➕",  label: "Container added",   color: () => T.success  },
-  CONTAINER_REMOVED: { icon: "➖",  label: "Container removed", color: () => T.danger   },
-  CONTAINER_UPDATED: { icon: "📦",  label: "Container updated", color: () => T.warning  },
+  SHIPMENT_CREATED:  { icon: "🚢",  label: "Shipment created",       color: () => T.success  },
+  STATUS_CHANGED:    { icon: "🔄", label: "Status changed",          color: () => T.accent   },
+  FIELD_UPDATED:     { icon: "✏️",  label: "Field updated",           color: () => T.info     },
+  CONTAINER_ADDED:   { icon: "➕",  label: "Container added",         color: () => T.success  },
+  CONTAINER_REMOVED: { icon: "➖",  label: "Container removed",       color: () => T.danger   },
+  CONTAINER_UPDATED: { icon: "📦",  label: "Container updated",       color: () => T.warning  },
+  COMPLIANCE_HIT:    { icon: "⚠️",  label: "Compliance hit detected", color: () => T.danger   },
+  COST_LINE_ADDED:   { icon: "＋",  label: "Cost line added",          color: () => T.success  },
+  COST_LINE_UPDATED: { icon: "✏️",  label: "Cost line updated",        color: () => T.info     },
+  COST_LINE_REMOVED: { icon: "✕",   label: "Cost line removed",        color: () => T.danger   },
 };
 
 const FIELD_LABELS = {
@@ -474,6 +479,14 @@ const EventRow = ({ ev }) => {
     summary += `${field}: `;
     summary += ev.oldValue ? `${ev.oldValue} → ` : "";
     summary += ev.newValue || "—";
+  } else if (ev.eventType === "COST_LINE_ADDED" || ev.eventType === "COST_LINE_REMOVED") {
+    const m = ev.meta || {};
+    summary = [m.type, m.chargeCode].filter(Boolean).join("  ·  ");
+    if (m.amountUsd != null) summary += `  ·  USD ${Number(m.amountUsd).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  } else if (ev.eventType === "COST_LINE_UPDATED") {
+    const m = ev.meta || {};
+    summary = [m.type, m.chargeCode].filter(Boolean).join("  ·  ");
+    if (field) summary += `  —  ${field}: ${ev.oldValue} → ${ev.newValue}`;
   } else {
     summary = field ? `${field}: ` : "";
     summary += ev.oldValue ? `${ev.oldValue} → ` : "";
@@ -497,7 +510,26 @@ const EventRow = ({ ev }) => {
             {cfg.label}
           </span>
         </div>
-        {summary && (
+        {ev.eventType === "COMPLIANCE_HIT" ? (() => {
+          const hits = Array.isArray(ev.meta?.hits) ? ev.meta.hits : [];
+          return (
+            <div style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 3 }}>
+              {hits.length === 0
+                ? <span style={{ fontFamily: T.mono, fontSize: 11, color: T.danger }}>Sanctioned party or embargoed route detected</span>
+                : hits.map((h, i) => (
+                  <div key={i} style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+                    <span style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600, color: T.danger, minWidth: 80 }}>
+                      {h.field}
+                    </span>
+                    <span style={{ fontFamily: T.mono, fontSize: 11, color: T.text }}>{h.value}</span>
+                    {h.program && (
+                      <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted }}>· {h.program}</span>
+                    )}
+                  </div>
+                ))}
+            </div>
+          );
+        })() : summary && (
           <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted,
             marginTop: 3, lineHeight: 1.5 }}>
             {summary}
@@ -933,6 +965,434 @@ const ComplianceModal = ({ shipment, screening, onChange, onClose }) => {
   );
 };
 
+// ─── Cost Control ─────────────────────────────────────────────────────────────
+
+const CHARGE_CODES = ["Ocean Freight", "Origin THC", "Destination THC", "B/L Fee", "Customs", "Inland", "Other"];
+const CURRENCIES   = ["USD", "EUR", "GBP", "CNY", "SGD", "JPY", "AED", "CHF"];
+
+const marginColor  = pct => pct == null ? T.textMuted : pct >= 20 ? T.success : pct >= 10 ? T.warning : T.danger;
+const marginVariant = pct => pct == null ? "default" : pct >= 20 ? "success" : pct >= 10 ? "warning" : "danger";
+
+const fmtUsd = v => v == null ? "—" : `$${Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+const CostLineForm = ({ init = {}, fxRates = {}, containers = [], onSave, onCancel }) => {
+  const [type,         setType]         = useState(init.type         || "BUY");
+  const [chargeCode,   setChargeCode]   = useState(init.chargeCode   || "Ocean Freight");
+  const [currency,     setCurrency]     = useState(init.currency     || "USD");
+  const [amount,       setAmount]       = useState(init.amount       != null ? String(init.amount) : "");
+  const [exchangeRate, setExchangeRate] = useState(init.exchangeRate != null ? String(init.exchangeRate) : "1");
+  const [notes,        setNotes]        = useState(init.notes        || "");
+  const [containerId,  setContainerId]  = useState(init.containerId  || "");
+  const isEdit = !!init.id;
+
+  // Auto-fill exchange rate when currency changes (rates are FROM USD: 1 USD = X ccy)
+  const handleCurrency = c => {
+    setCurrency(c);
+    if (c === "USD") { setExchangeRate("1"); return; }
+    const rate = fxRates[c];
+    if (rate) setExchangeRate(String(Math.round((1 / rate) * 100000) / 100000));
+  };
+
+  const amtNum  = parseFloat(amount)       || 0;
+  const rateNum = parseFloat(exchangeRate) || 1;
+  const amtUsd  = Math.round(amtNum * rateNum * 100) / 100;
+  const valid   = amtNum > 0 && chargeCode;
+
+  const lbl = { fontFamily: T.body, fontSize: 11, fontWeight: 600, color: T.textMuted,
+    textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 4 };
+  const inp = { fontFamily: T.body, fontSize: 14, color: T.text, background: T.bg,
+    border: `1px solid ${T.border}`, borderRadius: 8, padding: "7px 12px",
+    outline: "none", width: "100%", boxSizing: "border-box" };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14, padding: "4px 0" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <div>
+          <div style={lbl}>Type</div>
+          <select value={type} onChange={e => setType(e.target.value)} style={inp}>
+            <option value="BUY">BUY (Cost)</option>
+            <option value="SELL">SELL (Revenue)</option>
+          </select>
+        </div>
+        <div>
+          <div style={lbl}>Charge Code</div>
+          <select value={chargeCode} onChange={e => setChargeCode(e.target.value)} style={inp}>
+            {CHARGE_CODES.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+        <div>
+          <div style={lbl}>Currency</div>
+          <select value={currency} onChange={e => handleCurrency(e.target.value)} style={inp}>
+            {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+        <div>
+          <div style={lbl}>Amount</div>
+          <input type="number" min="0" step="0.01" value={amount}
+            onChange={e => setAmount(e.target.value)} placeholder="0.00" style={inp} autoFocus={!isEdit} />
+        </div>
+        <div>
+          <div style={lbl}>Exchange Rate → USD</div>
+          <input type="number" min="0.000001" step="0.0001" value={exchangeRate}
+            onChange={e => setExchangeRate(e.target.value)} style={inp} />
+        </div>
+      </div>
+      {currency !== "USD" && (
+        <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+          ≈ {fmtUsd(amtUsd)} USD at rate {rateNum}
+        </div>
+      )}
+      {containers.length > 0 && (
+        <div>
+          <div style={lbl}>Container <span style={{ fontWeight: 400, color: T.textMuted, textTransform: "none", letterSpacing: 0 }}>(optional — leave blank for shipment-level)</span></div>
+          <select value={containerId} onChange={e => setContainerId(e.target.value)} style={inp}>
+            <option value="">— All containers / shipment-level —</option>
+            {containers.map(c => {
+              const label = c.containerNumber
+                ? `${c.containerNumber}${c.size || c.type ? ` (${c.size}${c.type})` : ''}`
+                : `(${c.size || ""}${c.type || ""})`;
+              return <option key={c.id} value={c.id}>{label}</option>;
+            })}
+          </select>
+        </div>
+      )}
+      <div>
+        <div style={lbl}>Notes</div>
+        <input value={notes} onChange={e => setNotes(e.target.value)}
+          placeholder="Optional notes…" style={inp} />
+      </div>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
+        <Btn variant="secondary" onClick={onCancel}>Cancel</Btn>
+        <Btn onClick={() => onSave({ type, chargeCode, currency, amount: amtNum, exchangeRate: rateNum, notes, containerId })} disabled={!valid}>
+          {isEdit ? "Save Changes" : "Add Line"}
+        </Btn>
+      </div>
+    </div>
+  );
+};
+
+const CostControl = ({ shipmentId, contractType, contractId, containers = [] }) => {
+  const [open,             setOpen]             = useState(false);
+  const [lines,            setLines]            = useState([]);
+  const [loading,          setLoading]          = useState(false);
+  const [modal,            setModal]            = useState(null); // null | "add" | line object
+  const [confirm,          setConfirm]          = useState(null);
+  const [fxRates,          setFxRates]          = useState({});
+  const [importing,        setImporting]        = useState(false);
+  const [importOpts,       setImportOpts]       = useState(false);
+  const [splitPerCtr,      setSplitPerCtr]      = useState(false);
+  const [importedForCount, setImportedForCount] = useState(null);
+
+  const isCentral   = contractType === "Central" && !!contractId;
+  const hasBuyLines = lines.some(l => l.type === "BUY");
+  const isStale     = importedForCount !== null && importedForCount !== containers.length;
+
+  const load = () => {
+    setLoading(true);
+    api.costLines.list(shipmentId)
+      .then(setLines)
+      .catch(() => setLines([]))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    load();
+    api.fx.rates().then(d => setFxRates(d.rates || {})).catch(() => {});
+  }, [shipmentId]);
+
+  const handleOpen = () => { setOpen(o => !o); };
+
+  const buy  = lines.filter(l => l.type === "BUY").reduce((s, l) => s + l.amountUsd, 0);
+  const sell = lines.filter(l => l.type === "SELL").reduce((s, l) => s + l.amountUsd, 0);
+  const gp   = sell - buy;
+  const pct  = sell > 0 ? Math.round((gp / sell) * 1000) / 10 : null;
+  const hasLines = lines.length > 0;
+
+  const handleSave = async (data) => {
+    try {
+      if (modal === "add") {
+        await api.costLines.create(shipmentId, data);
+        toast.success("Cost line added");
+      } else {
+        await api.costLines.update(modal.id, data);
+        toast.success("Cost line updated");
+      }
+      setModal(null);
+      load();
+    } catch (e) { toast.error(e.message); }
+  };
+
+  const handleDelete = async id => {
+    try {
+      await api.costLines.remove(id);
+      toast.success("Cost line removed");
+      setConfirm(null);
+      load();
+    } catch (e) { toast.error(e.message); }
+  };
+
+  const handleImport = async (overwrite = false) => {
+    setImporting(true);
+    setImportOpts(false);
+    try {
+      const { imported } = await api.costLines.importContract(shipmentId, { overwrite, splitPerContainer: splitPerCtr });
+      toast.success(`${imported} BUY line${imported !== 1 ? "s" : ""} imported from contract`);
+      setImportedForCount(containers.length);
+      load();
+    } catch (e) { toast.error(e.message); }
+    setImporting(false);
+  };
+
+  const openImport = () => {
+    if (hasBuyLines || containers.length > 1) {
+      setSplitPerCtr(containers.length > 1);
+      setImportOpts(true);
+    } else {
+      handleImport(false);
+    }
+  };
+
+  const th = { fontFamily: T.body, fontSize: 10, fontWeight: 600, color: T.textMuted,
+    textTransform: "uppercase", letterSpacing: ".07em" };
+
+  return (
+    <>
+      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
+        overflow: "hidden", marginTop: 12 }}>
+        {/* Header */}
+        <button type="button" onClick={handleOpen}
+          style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+            width: "100%", padding: "15px 20px", background: "none", border: "none",
+            cursor: "pointer", gap: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+              {open ? "▾" : "▸"}
+            </span>
+            <h2 style={{ fontFamily: T.head, fontSize: 17, fontWeight: 700, color: T.text, margin: 0 }}>
+              Cost Control
+            </h2>
+            {!open && hasLines && (
+              <span style={{
+                fontFamily: T.mono, fontSize: 12, fontWeight: 700,
+                color: gp >= 0 ? T.success : T.danger,
+              }}>
+                {gp >= 0 ? "+" : ""}{fmtUsd(gp)} GP
+              </span>
+            )}
+          </div>
+          {!open && hasLines && pct != null && (
+            <span style={{
+              fontFamily: T.mono, fontSize: 11, fontWeight: 700, padding: "2px 10px",
+              borderRadius: 8, background: `${marginColor(pct)}22`, color: marginColor(pct),
+              border: `1px solid ${marginColor(pct)}44`,
+            }}>
+              {pct}% margin
+            </span>
+          )}
+        </button>
+
+        {open && (
+          <div style={{ borderTop: `1px solid ${T.border}` }}>
+            {/* Toolbar */}
+            <div style={{ padding: "12px 20px", display: "flex", alignItems: "center", justifyContent: "space-between",
+              borderBottom: `1px solid ${T.border}33`, gap: 12, flexWrap: "wrap" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                {isCentral && (
+                  <button type="button" onClick={openImport} disabled={importing}
+                    style={{ fontFamily: T.body, fontSize: 12, color: T.accent, background: "none",
+                      border: `1px solid ${T.accent}44`, borderRadius: 7, padding: "5px 12px",
+                      cursor: importing ? "not-allowed" : "pointer", opacity: importing ? 0.6 : 1 }}>
+                    {importing ? "Importing…" : hasBuyLines ? "↻ Recalculate from contract" : "⬇ Import from contract"}
+                  </button>
+                )}
+                {isStale && (
+                  <span style={{ fontFamily: T.body, fontSize: 11, color: T.warning }}>
+                    ⚠ Container count changed — recalculate to update
+                  </span>
+                )}
+              </div>
+              <Btn size="sm" onClick={() => setModal("add")}>＋ Add Line</Btn>
+            </div>
+
+            {/* Table */}
+            {loading ? (
+              <div style={{ padding: 32, textAlign: "center", color: T.textMuted, fontFamily: T.body, fontSize: 13 }}>Loading…</div>
+            ) : lines.length === 0 ? (
+              <div style={{ padding: 32, textAlign: "center", color: T.textMuted, fontFamily: T.body, fontSize: 13, fontStyle: "italic" }}>
+                No cost lines yet. Add a BUY or SELL line above.
+              </div>
+            ) : (
+              <>
+                {/* Header */}
+                <div style={{ display: "flex", alignItems: "center", padding: "6px 20px",
+                  borderBottom: `1px solid ${T.border}33` }}>
+                  <div style={{ display: "flex", alignItems: "center", flex: 1, gap: 12, minWidth: 0 }}>
+                    <div style={{ ...th, width: 60, flexShrink: 0 }}>Type</div>
+                    <div style={{ ...th, flex: 1 }}>Charge</div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 0, flexShrink: 0 }}>
+                    <div style={{ ...th, width: 90 }}>Currency</div>
+                    <div style={{ ...th, width: 110, textAlign: "right" }}>Exch. Rate</div>
+                    <div style={{ ...th, width: 120, textAlign: "right" }}>Amount</div>
+                    <div style={{ width: 36 }} />
+                  </div>
+                </div>
+
+                {/* Rows */}
+                {lines.map(l => (
+                  <div key={l.id}
+                    style={{ display: "flex", alignItems: "center", padding: "9px 20px",
+                      borderBottom: `1px solid ${T.border}22`, transition: "background .1s" }}
+                    onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
+                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                    {/* Left: type + charge */}
+                    <div style={{ display: "flex", alignItems: "center", flex: 1, gap: 12, minWidth: 0 }}>
+                      <div style={{ width: 60, flexShrink: 0 }}>
+                        <Badge variant={l.type === "BUY" ? "warning" : "success"}>{l.type}</Badge>
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontFamily: T.body, fontSize: 12, color: T.text,
+                          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.chargeCode}</div>
+                        {l.containerId && (() => {
+                          const c = containers.find(c => c.id === l.containerId);
+                          if (!c) return null;
+                          const label = c.containerNumber
+                            ? `${c.containerNumber}${c.size || c.type ? ` (${c.size}${c.type})` : ''}`
+                            : `(${c.size || ""}${c.type || ""})`;
+                          return <div style={{ fontFamily: T.mono, fontSize: 10, color: T.accent, marginTop: 2 }}>{label}</div>;
+                        })()}
+                      </div>
+                    </div>
+                    {/* Right: currency + rate + amount + action */}
+                    <div style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
+                      <div style={{ width: 90, fontFamily: T.mono, fontSize: 11, color: T.text }}>{l.currency}</div>
+                      <div style={{ width: 110, fontFamily: T.mono, fontSize: 11, color: T.textMuted, textAlign: "right" }}>
+                        {l.exchangeRate === 1 ? "1.0000" : l.exchangeRate.toFixed(4)}
+                      </div>
+                      <div style={{ width: 120, fontFamily: T.mono, fontSize: 12, color: T.text, textAlign: "right", fontWeight: 600 }}>
+                        {l.amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </div>
+                      <div style={{ width: 36 }}>
+                        <ActionMenu items={[
+                          { icon: "✎", label: "Edit",   onClick: () => setModal(l) },
+                          { icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(l.id) },
+                        ]} />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+
+                {/* Summary */}
+                <div style={{ padding: "14px 20px", borderTop: `1px solid ${T.border}`,
+                  display: "flex", gap: 28, alignItems: "center", flexWrap: "wrap",
+                  background: T.bg }}>
+                  <div>
+                    <div style={{ ...th, marginBottom: 3 }}>Total Buy (USD)</div>
+                    <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.warning }}>
+                      {fmtUsd(buy)}
+                    </span>
+                  </div>
+                  <div>
+                    <div style={{ ...th, marginBottom: 3 }}>Total Sell (USD)</div>
+                    <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.success }}>
+                      {fmtUsd(sell)}
+                    </span>
+                  </div>
+                  <div>
+                    <div style={{ ...th, marginBottom: 3 }}>Gross Profit</div>
+                    <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: gp >= 0 ? T.success : T.danger }}>
+                      {gp >= 0 ? "+" : ""}{fmtUsd(gp)}
+                    </span>
+                  </div>
+                  <div style={{ marginLeft: "auto" }}>
+                    <div style={{ ...th, marginBottom: 3 }}>Gross Margin</div>
+                    {pct == null ? (
+                      <span style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, fontStyle: "italic" }}>No sell lines</span>
+                    ) : (
+                      <span style={{
+                        fontFamily: T.mono, fontSize: 18, fontWeight: 800, color: marginColor(pct),
+                        background: `${marginColor(pct)}18`, borderRadius: 8,
+                        padding: "2px 12px",
+                      }}>
+                        {pct}%
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </div>
+
+      {modal && (
+        <Modal
+          title={modal === "add" ? "Add Cost Line" : `Edit — ${modal.chargeCode}`}
+          onClose={() => setModal(null)} width={500}>
+          <CostLineForm
+            init={modal === "add" ? {} : modal}
+            fxRates={fxRates}
+            containers={containers}
+            onSave={handleSave}
+            onCancel={() => setModal(null)} />
+        </Modal>
+      )}
+      {confirm && (
+        <ConfirmModal
+          message="Remove this cost line? This cannot be undone."
+          onConfirm={() => handleDelete(confirm)}
+          onCancel={() => setConfirm(null)} />
+      )}
+      {importOpts && (
+        <Modal title="Import from Contract" onClose={() => setImportOpts(false)} width={440}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {hasBuyLines && (
+              <div style={{ background: `${T.warning}18`, border: `1px solid ${T.warning}44`,
+                borderRadius: 8, padding: "10px 14px", fontFamily: T.body, fontSize: 12, color: T.text }}>
+                ⚠ Existing BUY lines will be replaced with the current contract rates.
+              </div>
+            )}
+            {containers.length > 1 && (
+              <div>
+                <div style={{ fontFamily: T.body, fontSize: 12, fontWeight: 600, color: T.text, marginBottom: 10 }}>
+                  Per-container rate lines — {containers.length} containers
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {[
+                    { val: false, title: `Aggregate (1 line × ${containers.length})`, desc: "One combined line with the multiplied amount" },
+                    { val: true,  title: `Split per container (${containers.length} lines per rate)`, desc: "Individual line per container at the unit rate" },
+                  ].map(({ val, title, desc }) => (
+                    <label key={String(val)}
+                      style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer",
+                        background: splitPerCtr === val ? `${T.accent}12` : T.bg,
+                        border: `1px solid ${splitPerCtr === val ? T.accent + "55" : T.border}`,
+                        borderRadius: 8, padding: "10px 14px" }}>
+                      <input type="radio" checked={splitPerCtr === val} onChange={() => setSplitPerCtr(val)}
+                        style={{ marginTop: 2, accentColor: T.accent }} />
+                      <div>
+                        <div style={{ fontFamily: T.body, fontSize: 12, fontWeight: 600, color: T.text }}>{title}</div>
+                        <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginTop: 2 }}>{desc}</div>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, paddingTop: 4 }}>
+              <Btn variant="secondary" onClick={() => setImportOpts(false)}>Cancel</Btn>
+              <Btn onClick={() => handleImport(hasBuyLines)}>
+                {hasBuyLines ? "Replace & Import" : "Import"}
+              </Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </>
+  );
+};
+
 const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, onAddContainer, onEditContainer, onDeleteContainer }) => {
   const [ctrModal,       setCtrModal]       = useState(null);
   const [linkVesselOpen, setLinkVesselOpen] = useState(false);
@@ -1252,9 +1712,12 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
         </div>
       ))}
 
+      {/* Contract + references  ·  Cargo Details — side by side */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+
       {/* Contract + references */}
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
-        padding: "16px 20px", marginBottom: 22 }}>
+        padding: "16px 20px" }}>
         <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
           textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 12 }}>Contract &amp; References</div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 14 }}>
@@ -1305,16 +1768,8 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
         )}
       </div>
 
-      {/* Shipment History */}
-      <ShipmentTimeline
-        events={events}
-        currentStatus={shipment.status}
-        open={logOpen}
-        onToggle={() => setLogOpen(o => !o)}
-      />
-
       {/* Cargo Details */}
-      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, overflow: "hidden", marginTop: 12 }}>
+      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, overflow: "hidden" }}>
         <div style={{ padding: "15px 20px", borderBottom: `1px solid ${T.border}`,
           display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div>
@@ -1382,6 +1837,19 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
           </>
         )}
       </div>
+
+      </div>{/* end 1fr 1fr grid */}
+
+      {/* Shipment History */}
+      <ShipmentTimeline
+        events={events}
+        currentStatus={shipment.status}
+        open={logOpen}
+        onToggle={() => setLogOpen(o => !o)}
+      />
+
+      {/* Cost Control */}
+      <CostControl shipmentId={shipment.id} contractType={shipment.contractType} contractId={shipment.contractId} containers={ctrs} />
 
       {/* Modals */}
       {ctrModal && (

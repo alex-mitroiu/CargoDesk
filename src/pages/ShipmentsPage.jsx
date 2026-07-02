@@ -409,13 +409,13 @@ const ShipmentForm = ({ init = {}, onSave, onCancel }) => {
   );
 };
 
-const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, onNew }) => {
+const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, onNew, financeEnabled = true }) => {
   const [confirm,       setConfirm]       = useState(null);
   const [historyShipment, setHistoryShipment] = useState(null);
   const [filters,  setFilters]  = useState({ search: '', status: '', carrier: '' });
   const teuFor = id => containers.filter(c => c.shipmentId === id).reduce((s, c) => s + teuOf(c.size), 0);
-  const { template: shipTemplate, startResize: shipStartResize } = useResizableColumns("shipments", [140,70,70,150,165,46,60,130,90]);
-  const shipHeaders = ["Shipment ID","POL","POD","Carrier","Contract","TEU","Status","Actions"];
+  const { template: shipTemplate, startResize: shipStartResize } = useResizableColumns("shipments", [140,70,70,150,165,46,60,80,130,90]);
+  const shipHeaders = ["Shipment ID","POL","POD","Carrier","Contract","TEU","Status","Margin","Actions"];
 
   const filtered = shipments.filter(s => {
     if (filters.status  && s.status      !== filters.status)  return false;
@@ -530,6 +530,21 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
               </div>
               <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text }}>{teuFor(s.id)}</span>
               <Badge variant={statusVariant(s.status)}>{s.status}</Badge>
+              <div>{(() => {
+                if (!financeEnabled) return null;
+                const buy = s.marginBuyUsd || 0, sell = s.marginSellUsd || 0;
+                if (buy === 0 && sell === 0) return <span style={{ fontFamily: T.mono, fontSize: 11, color: T.border }}>—</span>;
+                const gp  = sell - buy;
+                const pct = sell > 0 ? Math.round((gp / sell) * 1000) / 10 : null;
+                const col = pct == null ? T.textMuted : pct >= 20 ? T.success : pct >= 10 ? T.warning : T.danger;
+                return (
+                  <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700,
+                    color: col, background: `${col}18`, borderRadius: 6, padding: "2px 8px",
+                    border: `1px solid ${col}33` }}>
+                    {pct != null ? `${pct}%` : "—"}
+                  </span>
+                );
+              })()}</div>
               <div onClick={e => e.stopPropagation()}>
                 <ActionMenu items={[
                   { icon: "↗", label: "Open",    onClick: () => window.open(`#shipments/${s.id}`, "_blank") },

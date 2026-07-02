@@ -692,9 +692,13 @@ function App() {
 
                 <Divider />
 
-                <MenuItem icon="📖" label="User Manual"      onClick={() => navigate("manual")} />
+                        <MenuItem icon="📖" label="User Manual"      onClick={() => navigate("manual")} />
                 <MenuItem icon="ℹ" label="About CargoDesk" onClick={() => navigate("about")} />
                 <MenuItem icon="⌨" label="Keyboard Shortcuts" disabled sub="Coming soon" />
+
+                <Divider />
+
+                <MenuItem icon="⚙" label="Application Settings" onClick={() => navigate("settings")} />
 
                 <Divider />
 
@@ -713,7 +717,7 @@ function App() {
 
       {/* ── Sidebar ── */}
       <aside style={{ width: 240, background: T.surface, borderRight: `1px solid ${T.border}`,
-        display: "flex", flexDirection: "column", flexShrink: 0, paddingBottom: 44 }}>
+        display: "flex", flexDirection: "column", flexShrink: 0 }}>
 
         {/* Logo — click to go home */}
         <div style={{ padding: "22px 20px 20px", borderBottom: `1px solid ${T.border}` }}>
@@ -776,11 +780,6 @@ function App() {
           </div>
         </nav>
 
-        {/* Application Settings — pinned below nav, above footer */}
-        <div style={{ padding: "8px 12px 14px", borderTop: `1px solid ${T.border}33` }}>
-          <NavBtn pageKey="settings" icon="⚙" label="Application Settings" />
-        </div>
-
       </aside>
 
       {/* ── Main ── */}
@@ -827,6 +826,7 @@ function App() {
           <>
             <ShipmentsPage
               shipments={shipments} containers={containers} carriers={carriers}
+              financeEnabled={appSettings.finance_view_enabled !== 'false'}
               onSelect={id => { setSelectedId(id); setPage("detail"); window.location.hash = `shipments/${id}`; }}
               onDelete={async id => {
                 try {
@@ -913,7 +913,8 @@ function App() {
         {page === "dashboard" && (
           <DashboardPage
             shipments={shipments} containers={containers} carriers={carriers}
-            allocations={allocations} />
+            allocations={allocations}
+            financeEnabled={appSettings.finance_view_enabled !== 'false'} />
         )}
 
         {page === "space-configs" && (

@@ -143,7 +143,7 @@ function StatusDot({ result, testing }) {
   );
 }
 
-const TABS    = ["API Controls"];
+const TABS    = ["API Controls", "Finance"];
 const API_SUBTABS = ["External APIs", "Internal APIs"];
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
@@ -477,6 +477,41 @@ export default function AppSettingsPage() {
       </div>
 
       {/* API Controls */}
+      {activeTab === "Finance" && settings && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 600 }}>
+          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
+            padding: "18px 22px", display: "flex", alignItems: "flex-start",
+            justifyContent: "space-between", gap: 20 }}>
+            <div>
+              <div style={{ fontFamily: T.body, fontSize: 14, fontWeight: 700, color: T.text, marginBottom: 4 }}>
+                Finance View
+              </div>
+              <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, lineHeight: 1.6 }}>
+                Show margin percentages, gross profit and cost breakdown on shipments, the shipment list,
+                and the Dashboard Margin tab. Disable to hide all financial figures from non-finance users.
+              </div>
+              <div style={{ marginTop: 8, fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+                Setting key: <span style={{ color: T.accent }}>finance_view_enabled</span>
+              </div>
+            </div>
+            <Toggle
+              on={settings.finance_view_enabled !== 'false'}
+              onChange={() => {
+                const next = settings.finance_view_enabled === 'false' ? 'true' : 'false';
+                setSettings(s => ({ ...s, finance_view_enabled: next }));
+                api.settings.update({ finance_view_enabled: next })
+                  .then(() => toast.success(`Finance view ${next === 'true' ? 'enabled' : 'disabled'}`))
+                  .catch(() => toast.error("Failed to save setting"));
+              }}
+            />
+          </div>
+          <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, padding: "0 4px", lineHeight: 1.6 }}>
+            💡 TKT-6H68IQ — A future improvement will add user-role-based gating so individual accounts
+            can have finance access independently of this global toggle.
+          </div>
+        </div>
+      )}
+
       {activeTab === "API Controls" && (
         <>
           {/* Subtab bar */}

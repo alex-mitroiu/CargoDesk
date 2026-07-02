@@ -1310,13 +1310,373 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocat
   );
 };
 
+// ─── Margin tab ───────────────────────────────────────────────────────────────
+
+const fmtUsd = v => v == null ? "—" : `$${Number(v).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+const marginColor = pct => pct == null ? T.textMuted : pct >= 20 ? T.success : pct >= 10 ? T.warning : T.danger;
+
+const MarginView = ({ financeEnabled }) => {
+  const [data,    setData]    = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api.margin.summary()
+      .then(setData)
+      .catch(() => setData(null))
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return (
+    <div style={{ padding: 48, textAlign: "center", color: T.textMuted, fontFamily: T.body, fontSize: 14 }}>
+      Loading margin data…
+    </div>
+  );
+
+  if (!data || (data.byCarrier.length === 0 && data.byLane.length === 0)) return (
+    <div style={{ padding: 48, textAlign: "center", color: T.textMuted, fontFamily: T.body, fontSize: 14, fontStyle: "italic" }}>
+      No cost lines recorded yet. Open a shipment and add BUY / SELL lines in Cost Control.
+    </div>
+  );
+
+  const kpiStyle = { background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "20px 24px" };
+  const kpiLabel = { fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".08em" };
+  const kpiVal   = (v, col) => (
+    <div style={{ fontFamily: T.mono, fontSize: 28, fontWeight: 700, color: col, margin: "8px 0 2px" }}>
+      {financeEnabled ? v : "••••"}
+    </div>
+  );
+
+  const pct  = data.grossMarginPct;
+  const col  = marginColor(pct);
+
+  const TrendChart = ({ rows, dataKeys, title, subtitle }) => (
+    <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "20px 20px 14px" }}>
+      <div style={{ marginBottom: 14 }}>
+        <h3 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: "0 0 2px" }}>{title}</h3>
+        <p style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, margin: 0 }}>{subtitle}</p>
+      </div>
+      <ResponsiveContainer width="100%" height={220}>
+        <LineChart data={rows} margin={{ top: 4, right: 8, left: -8, bottom: 4 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke={T.border} vertical={false} />
+          <XAxis dataKey="week" tick={{ fontFamily: T.mono, fontSize: 10, fill: T.textMuted }} axisLine={{ stroke: T.border }} tickLine={false} />
+          <YAxis tick={{ fontFamily: T.body, fontSize: 10, fill: T.textMuted }} axisLine={false} tickLine={false}
+            tickFormatter={v => `${v}%`} domain={[0, 100]} allowDecimals={false} />
+          <Tooltip contentStyle={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, fontFamily: T.body, fontSize: 12 }}
+            labelStyle={{ color: T.text, fontWeight: 600, marginBottom: 4 }} itemStyle={{ color: T.textMuted }}
+            formatter={(v, name) => [`${v}%`, name]} cursor={{ stroke: T.border }} />
+          <Legend wrapperStyle={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, paddingTop: 10 }} />
+          {dataKeys.map((k, i) => (
+            <Line key={k} type="monotone" dataKey={k} name={k}
+              stroke={CHART_COLORS[i % CHART_COLORS.length]} strokeWidth={2}
+              dot={{ r: 3, fill: CHART_COLORS[i % CHART_COLORS.length] }}
+              activeDot={{ r: 5 }} connectNulls />
+          ))}
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+
+  // Build carrier margin % trend: weeks × carrier
+  const carrierWeekData = (() => {
+    const allWeeks = data.byCarrier[0]?.weeks || [];
+    return allWeeks.map((w, wi) => {
+      const pt = { week: w.week };
+      data.byCarrier.forEach(c => {
+        const wk = c.weeks[wi];
+        if (wk?.totalSellUsd > 0) pt[c.carrierCode] = Math.round((wk.grossProfitUsd / wk.totalSellUsd) * 1000) / 10;
+      });
+      return pt;
+    });
+  })();
+
+  // Build lane margin % trend: weeks × lane
+  const laneWeekData = (() => {
+    const top5 = data.byLane.slice(0, 5);
+    const allWeeks = top5[0]?.weeks || [];
+    return allWeeks.map((w, wi) => {
+      const pt = { week: w.week };
+      top5.forEach(l => {
+        const wk = l.weeks[wi];
+        if (wk?.totalSellUsd > 0) pt[l.lane] = Math.round((wk.grossProfitUsd / wk.totalSellUsd) * 1000) / 10;
+      });
+      return pt;
+    });
+  })();
+
+  const carrierKeys = data.byCarrier.map(c => c.carrierCode);
+  const laneKeys    = data.byLane.slice(0, 5).map(l => l.lane);
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 22 }}>
+        <h2 style={{ fontFamily: T.head, fontSize: 19, fontWeight: 700, color: T.text, margin: 0 }}>Margin Overview</h2>
+        <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>All time · base currency USD</span>
+      </div>
+
+      {/* KPIs */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 24 }}>
+        <div style={kpiStyle}>
+          <div style={kpiLabel}>Total Buy</div>
+          {kpiVal(fmtUsd(data.totalBuyUsd), T.warning)}
+          <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>cost to carrier</div>
+        </div>
+        <div style={kpiStyle}>
+          <div style={kpiLabel}>Total Sell</div>
+          {kpiVal(fmtUsd(data.totalSellUsd), T.success)}
+          <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>revenue from customer</div>
+        </div>
+        <div style={kpiStyle}>
+          <div style={kpiLabel}>Gross Profit</div>
+          {kpiVal(fmtUsd(data.grossProfitUsd), data.grossProfitUsd >= 0 ? T.success : T.danger)}
+          <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>sell − buy</div>
+        </div>
+        <div style={{ ...kpiStyle, background: pct != null ? `${col}10` : T.surface, borderColor: pct != null ? `${col}44` : T.border }}>
+          <div style={kpiLabel}>Gross Margin</div>
+          <div style={{ fontFamily: T.mono, fontSize: 28, fontWeight: 700, color: pct != null ? col : T.textMuted, margin: "8px 0 2px" }}>
+            {pct != null ? `${pct}%` : "—"}
+          </div>
+          <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
+            {pct == null ? "no sell lines" : pct >= 20 ? "healthy" : pct >= 10 ? "watch" : "below target"}
+          </div>
+        </div>
+      </div>
+
+      {/* Trend charts */}
+      {(carrierKeys.length > 0 || laneKeys.length > 0) && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 22 }}>
+          {carrierKeys.length > 0 && (
+            <TrendChart
+              rows={carrierWeekData}
+              dataKeys={carrierKeys}
+              title="6-Week Margin Trend — By Carrier"
+              subtitle="Gross margin % per carrier, rolling 6 weeks" />
+          )}
+          {laneKeys.length > 0 && (
+            <TrendChart
+              rows={laneWeekData}
+              dataKeys={laneKeys}
+              title="6-Week Margin Trend — By Trade Lane"
+              subtitle="Gross margin % per lane (top 5), rolling 6 weeks" />
+          )}
+        </div>
+      )}
+
+      {/* Carrier breakdown table */}
+      {data.byCarrier.length > 0 && (
+        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden", marginBottom: 16 }}>
+          <div style={{ padding: "13px 20px", borderBottom: `1px solid ${T.border}` }}>
+            <h3 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: 0 }}>By Carrier</h3>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "100px 1fr 1fr 1fr 80px",
+            padding: "8px 20px", borderBottom: `1px solid ${T.border}` }}>
+            {["Carrier","Buy (USD)","Sell (USD)","GP (USD)","Margin"].map((h, i) => (
+              <div key={i} style={{ fontFamily: T.body, fontSize: 10, fontWeight: 600, color: T.textMuted,
+                textTransform: "uppercase", letterSpacing: ".07em" }}>{h}</div>
+            ))}
+          </div>
+          {data.byCarrier.map(c => {
+            const cpct = c.grossMarginPct; const cc = marginColor(cpct);
+            return (
+              <div key={c.carrierCode}
+                style={{ display: "grid", gridTemplateColumns: "100px 1fr 1fr 1fr 80px",
+                  padding: "11px 20px", borderBottom: `1px solid ${T.border}22`, alignItems: "center",
+                  transition: "background .1s" }}
+                onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
+                onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.accent }}>{c.carrierCode}</span>
+                <span style={{ fontFamily: T.mono, fontSize: 12, color: T.warning }}>{financeEnabled ? fmtUsd(c.totalBuyUsd) : "••••"}</span>
+                <span style={{ fontFamily: T.mono, fontSize: 12, color: T.success }}>{financeEnabled ? fmtUsd(c.totalSellUsd) : "••••"}</span>
+                <span style={{ fontFamily: T.mono, fontSize: 12, color: c.grossProfitUsd >= 0 ? T.success : T.danger }}>
+                  {financeEnabled ? `${c.grossProfitUsd >= 0 ? "+" : ""}${fmtUsd(c.grossProfitUsd)}` : "••••"}
+                </span>
+                <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: cc,
+                  background: `${cc}18`, borderRadius: 6, padding: "2px 8px", border: `1px solid ${cc}33` }}>
+                  {cpct != null ? `${cpct}%` : "—"}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─── Compliance Review tab ────────────────────────────────────────────────────
+
+const ComplianceReviewView = ({ compHits, custHits, loading, onRefresh }) => {
+  const th = {
+    position: "relative", paddingLeft: 6,
+    fontFamily: T.body, fontSize: 10.5, fontWeight: 600,
+    color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em",
+  };
+
+  const shipHits = Array.isArray(compHits) ? compHits : [];
+  const cHits    = custHits?.hits || [];
+  const bothEnabled = custHits?.enabled !== false;
+
+  return (
+    <div>
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+        <div>
+          <h2 style={{ fontFamily: T.head, fontSize: 19, fontWeight: 700, color: T.text, margin: 0 }}>
+            Compliance Review
+          </h2>
+          <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, margin: "4px 0 0" }}>
+            Active OFAC SDN hits requiring officer review
+          </p>
+        </div>
+        <button type="button" onClick={onRefresh}
+          style={{ fontFamily: T.body, fontSize: 12, color: T.accent, background: "none",
+            border: `1px solid ${T.accent}44`, borderRadius: 7, padding: "6px 14px",
+            cursor: "pointer" }}>
+          ↻ Refresh
+        </button>
+      </div>
+
+      {loading ? (
+        <div style={{ padding: 48, textAlign: "center", color: T.textMuted, fontFamily: T.body, fontSize: 14 }}>
+          Loading compliance data…
+        </div>
+      ) : (
+        <>
+          {/* ── Shipment Hits ── */}
+          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden", marginBottom: 24 }}>
+            <div style={{ padding: "14px 20px", borderBottom: `1px solid ${T.border}`,
+              display: "flex", alignItems: "center", gap: 10 }}>
+              <h3 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: 0 }}>
+                Shipments — Active Compliance Hits
+              </h3>
+              {shipHits.length > 0 && (
+                <span style={{ background: T.danger, color: "#fff", fontFamily: T.mono, fontSize: 10,
+                  fontWeight: 700, borderRadius: 10, padding: "1px 7px" }}>
+                  {shipHits.length}
+                </span>
+              )}
+            </div>
+            {/* Column headers */}
+            <div style={{ display: "grid", gridTemplateColumns: "140px 130px 110px 1fr 120px 90px",
+              padding: "10px 20px", borderBottom: `1px solid ${T.border}` }}>
+              {["Shipment ID", "Route", "Carrier", "Flagged Parties", "Screened At", "Status"].map((h, i) => (
+                <div key={i} style={th}>{h}</div>
+              ))}
+            </div>
+            {shipHits.length === 0 ? (
+              <div style={{ padding: 32, textAlign: "center", color: T.textMuted,
+                fontFamily: T.body, fontSize: 14, fontStyle: "italic" }}>
+                No active compliance hits — all shipments are clear.
+              </div>
+            ) : shipHits.map(s => {
+              const hitLabels = s.screening.hits.map(h => `${h.field}: ${h.value}`).join(" · ");
+              return (
+                <div key={s.id}
+                  style={{ display: "grid", gridTemplateColumns: "140px 130px 110px 1fr 120px 90px",
+                    padding: "11px 20px", borderBottom: `1px solid ${T.border}22`, alignItems: "center",
+                    background: "#ef444408", transition: "background .1s" }}
+                  onMouseEnter={e => e.currentTarget.style.background = "#ef444412"}
+                  onMouseLeave={e => e.currentTarget.style.background = "#ef444408"}>
+                  <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.text }}>{s.id}</span>
+                  <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>{s.pol} → {s.pod}</span>
+                  <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>{s.carrierCode}</span>
+                  <span style={{ fontFamily: T.body, fontSize: 12, color: T.danger, fontWeight: 600,
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    ⚠ {hitLabels}
+                  </span>
+                  <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+                    {s.screening.screenedAt ? new Date(s.screening.screenedAt).toLocaleDateString("en-GB") : "—"}
+                  </span>
+                  <Badge variant={statusVariant(s.status)} size={11}>{s.status}</Badge>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* ── Customer Hits ── */}
+          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden" }}>
+            <div style={{ padding: "14px 20px", borderBottom: `1px solid ${T.border}`,
+              display: "flex", alignItems: "center", gap: 10 }}>
+              <h3 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: 0 }}>
+                Customer — SDN Matches
+              </h3>
+              {cHits.length > 0 && (
+                <span style={{ background: T.danger, color: "#fff", fontFamily: T.mono, fontSize: 10,
+                  fontWeight: 700, borderRadius: 10, padding: "1px 7px" }}>
+                  {cHits.length}
+                </span>
+              )}
+            </div>
+            {!bothEnabled ? (
+              <div style={{ padding: "20px 24px", fontFamily: T.body, fontSize: 13, color: T.textMuted, fontStyle: "italic" }}>
+                Requires both <strong>Customers</strong> and <strong>OFAC SDN</strong> APIs to be enabled in Application Settings.
+              </div>
+            ) : (
+              <>
+                <div style={{ display: "grid", gridTemplateColumns: "140px 1fr 1fr 140px",
+                  padding: "10px 20px", borderBottom: `1px solid ${T.border}` }}>
+                  {["Customer ID", "Company Name", "Matched SDN Entry", "Program"].map((h, i) => (
+                    <div key={i} style={th}>{h}</div>
+                  ))}
+                </div>
+                {cHits.length === 0 ? (
+                  <div style={{ padding: 32, textAlign: "center", color: T.textMuted,
+                    fontFamily: T.body, fontSize: 14, fontStyle: "italic" }}>
+                    No customers matched against the SDN list.
+                  </div>
+                ) : cHits.map((h, i) => (
+                  <div key={i}
+                    style={{ display: "grid", gridTemplateColumns: "140px 1fr 1fr 140px",
+                      padding: "11px 20px", borderBottom: `1px solid ${T.border}22`, alignItems: "center",
+                      background: "#ef444408", transition: "background .1s" }}
+                    onMouseEnter={e => e.currentTarget.style.background = "#ef444412"}
+                    onMouseLeave={e => e.currentTarget.style.background = "#ef444408"}>
+                    <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>{h.customer.id}</span>
+                    <span style={{ fontFamily: T.body, fontSize: 13, fontWeight: 600, color: T.danger }}>
+                      ⚠ {h.customer.companyName}
+                    </span>
+                    <span style={{ fontFamily: T.body, fontSize: 12, color: T.text }}>{h.matchedEntry}</span>
+                    <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>{h.program || "—"}</span>
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
+
 // ─── Page: Dashboard ──────────────────────────────────────────────────────────
 
 // ─── Date range helpers ────────────────────────────────────────────────────────
 
 
-const DashboardPage = ({ shipments, containers, carriers, allocations }) => {
-  const [view, setView] = useState("overview"); // "overview" | "contracts"
+const DashboardPage = ({ shipments, containers, carriers, allocations, financeEnabled = true }) => {
+  const [view, setView] = useState("overview"); // "overview" | "contracts" | "compliance"
+
+  // Compliance tab state — loaded on first open
+  const [compHits,     setCompHits]     = useState(null);   // null = not yet loaded
+  const [custHits,     setCustHits]     = useState(null);
+  const [compLoading,  setCompLoading]  = useState(false);
+
+  const loadCompliance = useCallback(async () => {
+    setCompLoading(true);
+    try {
+      const [ch, cu] = await Promise.all([
+        api.screening.complianceHits(),
+        api.customers.sanctionsCheck(),
+      ]);
+      setCompHits(ch);
+      setCustHits(cu);
+    } catch { setCompHits([]); setCustHits({ enabled: false, hits: [] }); }
+    setCompLoading(false);
+  }, []);
+
+  const handleTabChange = key => {
+    setView(key);
+    if (key === "compliance" && compHits === null) loadCompliance();
+  };
   // Date range state — defaults to current Mon-Sun
   const [rangeStart, setRangeStart] = useState(() => currentWeekStart());
   const [rangeEnd,   setRangeEnd]   = useState(() => addDays(currentWeekStart(), 6));
@@ -1556,10 +1916,12 @@ const DashboardPage = ({ shipments, containers, carriers, allocations }) => {
       {/* ── Tab bar ── */}
       <div style={{ display: "flex", borderBottom: `1px solid ${T.border}`, marginBottom: 24 }}>
         {[
-          { key: "overview",  label: "Overview" },
-          { key: "contracts", label: "Contract Consumption" },
+          { key: "overview",   label: "Overview" },
+          { key: "contracts",  label: "Contract Consumption" },
+          { key: "margin",     label: "Margin" },
+          { key: "compliance", label: "Compliance Review", count: Array.isArray(compHits) ? compHits.length : null },
         ].map(tab => (
-          <button key={tab.key} type="button" onClick={() => setView(tab.key)}
+          <button key={tab.key} type="button" onClick={() => handleTabChange(tab.key)}
             style={{
               padding: "10px 20px", background: "none", border: "none",
               borderBottom: view === tab.key ? `2px solid ${T.accent}` : "2px solid transparent",
@@ -1567,8 +1929,18 @@ const DashboardPage = ({ shipments, containers, carriers, allocations }) => {
               fontFamily: T.body, fontSize: 13, fontWeight: 600,
               cursor: "pointer", marginBottom: -1,
               transition: "color .15s, border-color .15s",
+              display: "flex", alignItems: "center", gap: 7,
             }}>
             {tab.label}
+            {tab.count != null && tab.count > 0 && (
+              <span style={{
+                background: T.danger, color: "#fff",
+                fontFamily: T.mono, fontSize: 10, fontWeight: 700,
+                borderRadius: 10, padding: "1px 6px", lineHeight: "16px",
+              }}>
+                {tab.count}
+              </span>
+            )}
           </button>
         ))}
       </div>
@@ -1657,6 +2029,19 @@ const DashboardPage = ({ shipments, containers, carriers, allocations }) => {
           carriers={carriers}
           allocations={activeAllocations}
           contractTrendData={contractTrendData}
+        />
+      )}
+
+      {/* ── Margin tab ── */}
+      {view === "margin" && <MarginView financeEnabled={financeEnabled} />}
+
+      {/* ── Compliance Review tab ── */}
+      {view === "compliance" && (
+        <ComplianceReviewView
+          compHits={compHits}
+          custHits={custHits}
+          loading={compLoading}
+          onRefresh={loadCompliance}
         />
       )}
 

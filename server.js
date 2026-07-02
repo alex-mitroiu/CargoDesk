@@ -348,6 +348,25 @@ const migrations = [
   "ALTER TABLE allocations ADD COLUMN contract_id     TEXT DEFAULT ''",
   "ALTER TABLE allocations ADD COLUMN contract_number TEXT DEFAULT ''",
   "UPDATE shipments SET contract_type = 'Central' WHERE contract_type = 'Central Contract'",
+  `CREATE TABLE IF NOT EXISTS shipment_cost_lines (
+    id            TEXT PRIMARY KEY,
+    shipment_id   TEXT NOT NULL,
+    type          TEXT NOT NULL,
+    charge_code   TEXT NOT NULL,
+    currency      TEXT NOT NULL DEFAULT 'USD',
+    amount        REAL NOT NULL DEFAULT 0,
+    exchange_rate REAL NOT NULL DEFAULT 1,
+    notes         TEXT DEFAULT '',
+    created_at    TEXT NOT NULL
+  )`,
+  "ALTER TABLE shipment_cost_lines ADD COLUMN container_id TEXT DEFAULT ''",
+  `CREATE TABLE IF NOT EXISTS ticket_links (
+    id         TEXT PRIMARY KEY,
+    from_id    TEXT NOT NULL,
+    to_id      TEXT NOT NULL,
+    link_type  TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  )`,
 ];
 
 for (const sql of migrations) {
@@ -373,6 +392,7 @@ const SETTING_DEFAULTS = {
   api_ofac_enabled:           'true',
   api_ofac_interval_value:    '1',
   api_ofac_interval_unit:     'weeks',
+  finance_view_enabled:       'true',
   api_ws_enabled:             'true',
   api_shipments_enabled:      'true',
   api_contracts_enabled:      'true',
@@ -577,12 +597,17 @@ function screenShipmentById(shipmentId) {
       hits.push({ field, value: code, matchedEntry: `Embargoed country (${cc})`, program: 'Country Embargo', source: 'OFAC' });
   }
 
-  const result = hits.length > 0 ? 'HIT' : 'CLEAR';
-  const id     = `SCR-${uid()}`;
-  const now    = new Date().toISOString();
+  const prevRow = db.prepare("SELECT result FROM shipment_screenings WHERE shipment_id=?").get(shipmentId);
+  const result  = hits.length > 0 ? 'HIT' : 'CLEAR';
+  const id      = `SCR-${uid()}`;
+  const now     = new Date().toISOString();
   db.prepare(
     `INSERT OR REPLACE INTO shipment_screenings (id, shipment_id, screened_at, result, hits) VALUES (?,?,?,?,?)`
   ).run(id, shipmentId, now, result, JSON.stringify(hits));
+
+  if (result === 'HIT' && prevRow?.result !== 'HIT') {
+    logEvent(shipmentId, 'COMPLIANCE_HIT', null, null, null, JSON.stringify({ hits }));
+  }
 
   return { id, result, hits, screenedAt: now, overriddenAt: null, overrideReason: null };
 }
@@ -644,7 +669,8 @@ try { db.exec("UPDATE shipments SET vessel = '', vessel_imo = '' WHERE vessel_im
 
 // ─── Map functions ────────────────────────────────────────────────────────────
 
-const mapShipment     = r => ({ id: r.id, pol: r.pol, polName: r.pol_name || '', pod: r.pod, podName: r.pod_name || '', carrierCode: r.carrier_code, contractType: r.contract_type, contractNotes: r.contract_notes || '', status: r.status, createdAt: r.created_at, etd: r.etd || '', eta: r.eta || '', bookingRef: r.booking_ref || '', blNumber: r.bl_number || '', vessel: r.vessel || '', voyage: r.voyage || '', incoterm: r.incoterm || '', vesselImo: r.vessel_imo || '', contractId: r.contract_id || '', contractRef: r.contract_ref || '', commodityCode: r.commodity_code || '', shipperId: r.shipper_id || '', shipperName: r.shipper_name || '', consigneeId: r.consignee_id || '', consigneeName: r.consignee_name || '', principalId: r.principal_id || '', principalName: r.principal_name || '' });
+const mapShipment     = r => ({ id: r.id, pol: r.pol, polName: r.pol_name || '', pod: r.pod, podName: r.pod_name || '', carrierCode: r.carrier_code, contractType: r.contract_type, contractNotes: r.contract_notes || '', status: r.status, createdAt: r.created_at, etd: r.etd || '', eta: r.eta || '', bookingRef: r.booking_ref || '', blNumber: r.bl_number || '', vessel: r.vessel || '', voyage: r.voyage || '', incoterm: r.incoterm || '', vesselImo: r.vessel_imo || '', contractId: r.contract_id || '', contractRef: r.contract_ref || '', commodityCode: r.commodity_code || '', shipperId: r.shipper_id || '', shipperName: r.shipper_name || '', consigneeId: r.consignee_id || '', consigneeName: r.consignee_name || '', principalId: r.principal_id || '', principalName: r.principal_name || '', marginBuyUsd: r.margin_buy_usd ?? null, marginSellUsd: r.margin_sell_usd ?? null });
+const mapCostLine     = r => ({ id: r.id, shipmentId: r.shipment_id, type: r.type, chargeCode: r.charge_code, currency: r.currency, amount: r.amount, exchangeRate: r.exchange_rate, amountUsd: Math.round(r.amount * r.exchange_rate * 100) / 100, notes: r.notes || '', containerId: r.container_id || '', createdAt: r.created_at });
 const mapContainer    = r => ({ id: r.id, shipmentId: r.shipment_id, containerNumber: r.container_number || '', sealNumber: r.seal_number || '', size: r.size, type: r.type, hsCode: r.hs_code || '', cargoDescription: r.cargo_description || '', grossWeightKg: r.gross_weight_kg ?? null, volumeCbm: r.volume_cbm ?? null, isDg: r.is_dg === 1, dgClass: r.dg_class || '' });
 const mapAllocation   = r => ({ id: r.id, carrierCode: r.carrier_code, allocatedTEU: r.allocated_teu, effectiveDate: r.effective_date || '', endDate: r.end_date || '', tradeLane: r.trade_lane || '', notes: r.notes || '', alertThreshold: r.alert_threshold ?? 80, pol: r.pol || '', pod: r.pod || '', originLane: r.origin_lane || '', destLane: r.dest_lane || '', coverageScope: r.coverage_scope || 'STRICT', contractId: r.contract_id || '', contractNumber: r.contract_number || '' });
 const mapCarrier      = r => ({ code: r.code, name: r.name, shortName: r.short_name || '' });
@@ -654,6 +680,9 @@ const mapLinkedPort   = r => ({ id: r.id, primaryUnlocode: r.primary_unlocode, p
 const mapTradeLane    = r => ({ code: r.code, name: r.name, description: r.description || '', countryCount: r.country_count ?? 0 });
 const mapRegion       = r => ({ code: r.code, name: r.name, description: r.description || '' });
 const mapCountry      = r => ({ iso2: r.iso2, name: r.name, unMember: r.un_member === 1, regionCode: r.region_code || '', portCount: r.port_count ?? 0 });
+const INVERSE_LINK_LABEL = { "Blocks": "Is blocked by", "Duplicates": "Is duplicated by", "Implements": "Is implemented by", "Relates to": "Relates to" };
+const inverseLinkLabel = t => INVERSE_LINK_LABEL[t] || t;
+const mapTicketLink   = r => ({ id: r.id, fromId: r.from_id, toId: r.to_id, linkType: r.link_type, createdAt: r.created_at });
 const mapTicket       = r => ({ id: r.id, title: r.title, section: r.section || '', description: r.description || '', priority: r.priority, status: r.status, position: r.position, createdAt: r.created_at, shipmentId: r.shipment_id || null, type: r.type || 'Task', version: r.version || '' });
 const mapCustomer     = r => ({ id: r.id, companyName: r.company_name, address1: r.address1 || '', address2: r.address2 || '', city: r.city || '', state: r.state || '', postalCode: r.postal_code || '', countryIso2: r.country_iso2 || '', phone: r.phone || '', fax: r.fax || '', email: r.email || '', website: r.website || '', notes: r.notes || '', createdAt: r.created_at });
 const mapCommodity    = r => ({ code: r.code, description: r.description, gradeCode: r.grade_code, gradeName: r.grade_name });
@@ -784,13 +813,43 @@ app.get("/api/shipments", (req, res) => {
   const rows = db.prepare(`
     SELECT s.*,
            p1.name AS pol_name,
-           p2.name AS pod_name
+           p2.name AS pod_name,
+           COALESCE(buy.total, 0)  AS margin_buy_usd,
+           COALESCE(sell.total, 0) AS margin_sell_usd
     FROM shipments s
     LEFT JOIN port_locations p1 ON p1.unlocode = s.pol
     LEFT JOIN port_locations p2 ON p2.unlocode = s.pod
+    LEFT JOIN (SELECT shipment_id, SUM(amount * exchange_rate) AS total
+               FROM shipment_cost_lines WHERE type='BUY' GROUP BY shipment_id) buy
+           ON buy.shipment_id = s.id
+    LEFT JOIN (SELECT shipment_id, SUM(amount * exchange_rate) AS total
+               FROM shipment_cost_lines WHERE type='SELL' GROUP BY shipment_id) sell
+           ON sell.shipment_id = s.id
     ORDER BY s.created_at DESC
   `).all();
   ok(res, rows.map(mapShipment));
+});
+
+app.get("/api/shipments/compliance-hits", (req, res) => {
+  const rows = db.prepare(`
+    SELECT s.*, p1.name AS pol_name, p2.name AS pod_name,
+           ss.result AS scr_result, ss.hits AS scr_hits, ss.screened_at, ss.overridden_at
+    FROM shipments s
+    JOIN shipment_screenings ss ON ss.shipment_id = s.id
+    LEFT JOIN port_locations p1 ON p1.unlocode = s.pol
+    LEFT JOIN port_locations p2 ON p2.unlocode = s.pod
+    WHERE ss.result = 'HIT'
+    ORDER BY ss.screened_at DESC
+  `).all();
+  ok(res, rows.map(r => ({
+    ...mapShipment(r),
+    screening: {
+      result: r.scr_result,
+      hits: JSON.parse(r.scr_hits || '[]'),
+      screenedAt: r.screened_at,
+      overriddenAt: r.overridden_at || null,
+    },
+  })));
 });
 
 app.get("/api/shipments/:id", (req, res) => {
@@ -845,6 +904,7 @@ app.post("/api/shipments", (req, res) => {
     .run(id, polU, podU, carrierCode, contractType, contractNotes, status, createdAt, etd, eta, bookingRef, blNumber, vessel, voyage, incoterm, vesselImo, contractId, contractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName);
   logEvent(id, 'SHIPMENT_CREATED', null, null, null,
     JSON.stringify({ pol: polU, pod: podU, carrier: carrierCode, status, etd, contractType }));
+  if (contractType === 'Central' && contractId) importContractRates(id);
   const silentScreening = sanctionsMap.size > 0 ? screenShipmentById(id) : null;
   const base = mapShipment({ id, pol: polU, pod: podU, carrier_code: carrierCode, contract_type: contractType, contract_notes: contractNotes, status, created_at: createdAt, etd, eta, booking_ref: bookingRef, bl_number: blNumber, vessel, voyage, incoterm, vessel_imo: vesselImo, contract_id: contractId, contract_ref: contractRef, commodity_code: commodityCode, shipper_id: shipperId, shipper_name: shipperName, consignee_id: consigneeId, consignee_name: consigneeName, principal_id: principalId, principal_name: principalName });
   ok(res, silentScreening ? { ...base, screening: silentScreening } : base, 201);
@@ -1345,6 +1405,36 @@ app.put("/api/tickets/:id", (req, res) => {
 });
 app.delete("/api/tickets/:id", (req, res) => { const info = db.prepare("DELETE FROM tickets WHERE id=?").run(req.params.id); if (info.changes===0) return err(res,"Not found",404); ok(res,{deleted:req.params.id}); });
 
+app.get("/api/tickets/:id/links", (req, res) => {
+  const rows = db.prepare("SELECT * FROM ticket_links WHERE from_id=? OR to_id=?").all(req.params.id, req.params.id);
+  const result = rows.map(l => {
+    const isOut    = l.from_id === req.params.id;
+    const otherId  = isOut ? l.to_id : l.from_id;
+    const other    = db.prepare("SELECT id, title, status, type FROM tickets WHERE id=?").get(otherId);
+    return { ...mapTicketLink(l), direction: isOut ? "out" : "in",
+      displayType: isOut ? l.link_type : inverseLinkLabel(l.link_type),
+      otherTicketId: otherId, otherTicket: other || { id: otherId, title: otherId, status: "", type: "" } };
+  });
+  ok(res, result);
+});
+
+app.post("/api/tickets/:id/links", (req, res) => {
+  const { toId, linkType } = req.body || {};
+  if (!toId || !linkType) return err(res, "toId and linkType required");
+  if (!db.prepare("SELECT id FROM tickets WHERE id=?").get(toId)) return err(res, "Target ticket not found", 404);
+  if (db.prepare("SELECT id FROM ticket_links WHERE (from_id=? AND to_id=?) OR (from_id=? AND to_id=?)").get(req.params.id, toId, toId, req.params.id))
+    return err(res, "Link already exists");
+  const id = `LNK-${uid()}`;
+  db.prepare("INSERT INTO ticket_links (id,from_id,to_id,link_type,created_at) VALUES (?,?,?,?,?)").run(id, req.params.id, toId, linkType, new Date().toISOString());
+  ok(res, { id, fromId: req.params.id, toId, linkType }, 201);
+});
+
+app.delete("/api/ticket-links/:id", (req, res) => {
+  const info = db.prepare("DELETE FROM ticket_links WHERE id=?").run(req.params.id);
+  if (info.changes === 0) return err(res, "Not found", 404);
+  ok(res, { deleted: req.params.id });
+});
+
 // ─── Customers ────────────────────────────────────────────────────────────────
 
 app.get("/api/customers", (req, res) => {
@@ -1363,6 +1453,21 @@ app.get("/api/customers", (req, res) => {
   const total = db.prepare(`SELECT COUNT(*) AS n FROM customers ${where}`).get(...params).n;
   const rows  = db.prepare(`SELECT * FROM customers ${where} ORDER BY company_name LIMIT ? OFFSET ?`).all(...params, lim, off);
   ok(res, { results: rows.map(mapCustomer), total, limit: lim, offset: off });
+});
+
+app.get("/api/customers/sanctions-check", (req, res) => {
+  const s = getSettings();
+  if (s.api_customers_enabled !== 'true' || s.api_ofac_enabled !== 'true') {
+    return ok(res, { enabled: false, hits: [] });
+  }
+  if (sanctionsMap.size === 0) return ok(res, { enabled: true, hits: [] });
+  const customers = db.prepare("SELECT * FROM customers ORDER BY company_name").all();
+  const hits = [];
+  for (const c of customers) {
+    const match = sanctionsMap.get(normSanctionName(c.company_name || ''));
+    if (match) hits.push({ customer: mapCustomer(c), matchedEntry: match.entityName, program: match.program, source: match.source });
+  }
+  ok(res, { enabled: true, hits });
 });
 
 app.get("/api/customers/:id", (req, res) => {
@@ -1881,6 +1986,182 @@ app.post("/api/shipments/:id/screening/override", (req, res) => {
   db.prepare("UPDATE shipment_screenings SET result='CLEAR', overridden_at=?, override_reason=? WHERE shipment_id=?")
     .run(now, reason.trim(), req.params.id);
   ok(res, { overriddenAt: now, overrideReason: reason.trim() });
+});
+
+// ─── Contract rate → charge code mapping ─────────────────────────────────────
+
+const SERVICE_CODE_MAP = {
+  OF: 'Ocean Freight', OCF: 'Ocean Freight',
+  BL: 'B/L Fee',  BLF: 'B/L Fee', DOC: 'B/L Fee',
+  THC: 'Origin THC', OTHC: 'Origin THC', ORI: 'Origin THC',
+  DTHC: 'Destination THC', DEST: 'Destination THC',
+  CUS: 'Customs', CUST: 'Customs',
+  INL: 'Inland', INLAND: 'Inland',
+};
+
+function importContractRates(shipmentId, { splitPerContainer = false } = {}) {
+  const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(shipmentId);
+  if (!shipment || shipment.contract_type !== 'Central' || !shipment.contract_id) return 0;
+  const rates = db.prepare("SELECT * FROM contract_rates WHERE contract_id=? ORDER BY sort_order").all(shipment.contract_id);
+  if (!rates.length) return 0;
+  const ctrs = db.prepare("SELECT id, container_number, size, type FROM containers WHERE shipment_id=?").all(shipmentId);
+  const containerCount = ctrs.length || 1;
+  const now = new Date().toISOString();
+  let created = 0;
+  for (const r of rates) {
+    const chargeCode   = SERVICE_CODE_MAP[r.service_code?.toUpperCase()] || 'Other';
+    const exchangeRate = (r.amount > 0 && r.amount_usd > 0) ? Math.round((r.amount_usd / r.amount) * 100000) / 100000 : 1;
+    const baseNotes    = [r.service_code, r.description].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(' — ');
+
+    if (r.unit === 'per_container' && splitPerContainer && ctrs.length > 0) {
+      for (const c of ctrs) {
+        const cLabel = c.container_number
+          ? `${c.container_number}${c.size || c.type ? ` (${c.size}${c.type})` : ''}`
+          : `(${c.size || ''}${c.type || ''})`;
+        const notes = [cLabel, baseNotes].filter(Boolean).join(' — ');
+        const id    = `CL-${uid()}`;
+        db.prepare("INSERT INTO shipment_cost_lines (id,shipment_id,type,charge_code,currency,amount,exchange_rate,notes,container_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
+          .run(id, shipmentId, 'BUY', chargeCode, r.currency || 'USD', r.amount, exchangeRate, notes, c.id, now);
+        logEvent(shipmentId, 'COST_LINE_ADDED', null, null, null,
+          JSON.stringify({ lineId: id, type: 'BUY', chargeCode, currency: r.currency || 'USD', amount: r.amount, exchangeRate, amountUsd: Math.round(r.amount * exchangeRate * 100) / 100, containerId: c.id, source: 'contract' }));
+        created++;
+      }
+    } else {
+      const amount = r.unit === 'per_container' ? r.amount * containerCount : r.amount;
+      const id     = `CL-${uid()}`;
+      db.prepare("INSERT INTO shipment_cost_lines (id,shipment_id,type,charge_code,currency,amount,exchange_rate,notes,container_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
+        .run(id, shipmentId, 'BUY', chargeCode, r.currency || 'USD', amount, exchangeRate, baseNotes, '', now);
+      logEvent(shipmentId, 'COST_LINE_ADDED', null, null, null,
+        JSON.stringify({ lineId: id, type: 'BUY', chargeCode, currency: r.currency || 'USD', amount, exchangeRate, amountUsd: Math.round(amount * exchangeRate * 100) / 100, source: 'contract' }));
+      created++;
+    }
+  }
+  return created;
+}
+
+// ─── Cost Lines ───────────────────────────────────────────────────────────────
+
+app.post("/api/shipments/:id/cost-lines/import-contract", (req, res) => {
+  const { overwrite = false, splitPerContainer = false } = req.body || {};
+  const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
+  if (!shipment) return err(res, "Shipment not found", 404);
+  if (shipment.contract_type !== 'Central' || !shipment.contract_id)
+    return err(res, "Shipment is not linked to a Central contract");
+  if (overwrite) {
+    const existing = db.prepare("SELECT id FROM shipment_cost_lines WHERE shipment_id=? AND type='BUY'").all(req.params.id);
+    for (const row of existing) db.prepare("DELETE FROM shipment_cost_lines WHERE id=?").run(row.id);
+  }
+  const count = importContractRates(req.params.id, { splitPerContainer });
+  ok(res, { imported: count });
+});
+
+app.get("/api/shipments/:id/cost-lines", (req, res) => {
+  const rows = db.prepare(
+    "SELECT * FROM shipment_cost_lines WHERE shipment_id=? ORDER BY type, created_at ASC"
+  ).all(req.params.id);
+  ok(res, rows.map(mapCostLine));
+});
+
+app.post("/api/shipments/:id/cost-lines", (req, res) => {
+  const { type, chargeCode, currency = 'USD', amount, exchangeRate = 1, notes = '', containerId = '' } = req.body;
+  if (!type || !chargeCode || amount == null) return err(res, "type, chargeCode, amount required");
+  if (!['BUY','SELL'].includes(type)) return err(res, "type must be BUY or SELL");
+  const id  = `CL-${uid()}`;
+  const now = new Date().toISOString();
+  db.prepare("INSERT INTO shipment_cost_lines (id,shipment_id,type,charge_code,currency,amount,exchange_rate,notes,container_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
+    .run(id, req.params.id, type, chargeCode, currency.toUpperCase(), Number(amount), Number(exchangeRate), notes, containerId, now);
+  logEvent(req.params.id, 'COST_LINE_ADDED', null, null, null,
+    JSON.stringify({ lineId: id, type, chargeCode, currency: currency.toUpperCase(), amount: Number(amount), exchangeRate: Number(exchangeRate), amountUsd: Math.round(Number(amount) * Number(exchangeRate) * 100) / 100 }));
+  ok(res, mapCostLine({ id, shipment_id: req.params.id, type, charge_code: chargeCode, currency: currency.toUpperCase(), amount: Number(amount), exchange_rate: Number(exchangeRate), notes, container_id: containerId, created_at: now }), 201);
+});
+
+app.put("/api/cost-lines/:id", (req, res) => {
+  const { type, chargeCode, currency = 'USD', amount, exchangeRate = 1, notes = '', containerId = '' } = req.body;
+  if (!type || !chargeCode || amount == null) return err(res, "type, chargeCode, amount required");
+  if (!['BUY','SELL'].includes(type)) return err(res, "type must be BUY or SELL");
+  const existing = db.prepare("SELECT * FROM shipment_cost_lines WHERE id=?").get(req.params.id);
+  if (!existing) return err(res, "Not found", 404);
+  db.prepare("UPDATE shipment_cost_lines SET type=?,charge_code=?,currency=?,amount=?,exchange_rate=?,notes=?,container_id=? WHERE id=?")
+    .run(type, chargeCode, currency.toUpperCase(), Number(amount), Number(exchangeRate), notes, containerId, req.params.id);
+  for (const [field, oldV, newV] of [
+    ['type',          existing.type,          type],
+    ['charge_code',   existing.charge_code,   chargeCode],
+    ['currency',      existing.currency,      currency.toUpperCase()],
+    ['amount',        String(existing.amount), String(Number(amount))],
+    ['exchange_rate', String(existing.exchange_rate), String(Number(exchangeRate))],
+    ['notes',         existing.notes || '',   notes],
+    ['container_id',  existing.container_id || '', containerId],
+  ]) {
+    if (String(oldV) !== String(newV)) logEvent(existing.shipment_id, 'COST_LINE_UPDATED', field, oldV, newV,
+      JSON.stringify({ lineId: req.params.id, chargeCode, type }));
+  }
+  ok(res, mapCostLine({ id: req.params.id, shipment_id: existing.shipment_id, type, charge_code: chargeCode, currency: currency.toUpperCase(), amount: Number(amount), exchange_rate: Number(exchangeRate), notes, container_id: containerId, created_at: existing.created_at }));
+});
+
+app.delete("/api/cost-lines/:id", (req, res) => {
+  const existing = db.prepare("SELECT * FROM shipment_cost_lines WHERE id=?").get(req.params.id);
+  if (!existing) return err(res, "Not found", 404);
+  db.prepare("DELETE FROM shipment_cost_lines WHERE id=?").run(req.params.id);
+  logEvent(existing.shipment_id, 'COST_LINE_REMOVED', null, null, null,
+    JSON.stringify({ lineId: req.params.id, type: existing.type, chargeCode: existing.charge_code, amountUsd: Math.round(existing.amount * existing.exchange_rate * 100) / 100 }));
+  ok(res, { deleted: req.params.id });
+});
+
+// ─── Margin Summary (Dashboard) ───────────────────────────────────────────────
+
+app.get("/api/margin/summary", (req, res) => {
+  const lines = db.prepare(`
+    SELECT cl.*, s.carrier_code, s.pol, s.pod, s.etd, s.created_at AS shp_created_at
+    FROM shipment_cost_lines cl
+    JOIN shipments s ON s.id = cl.shipment_id
+  `).all();
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const weekBuckets = Array.from({ length: 6 }, (_, i) => {
+    const d = new Date(todayStr);
+    d.setDate(d.getDate() - (5 - i) * 7);
+    const end   = d.toISOString().slice(0, 10);
+    const start = new Date(d.setDate(d.getDate() - 6)).toISOString().slice(0, 10);
+    const label = new Date(end).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+    return { start, end, label };
+  });
+
+  const aggregate = (rows) => {
+    const buy  = rows.filter(r => r.type === 'BUY').reduce((s, r) => s + r.amount * r.exchange_rate, 0);
+    const sell = rows.filter(r => r.type === 'SELL').reduce((s, r) => s + r.amount * r.exchange_rate, 0);
+    const gp   = sell - buy;
+    const pct  = sell > 0 ? Math.round((gp / sell) * 1000) / 10 : null;
+    return { totalBuyUsd: Math.round(buy * 100) / 100, totalSellUsd: Math.round(sell * 100) / 100, grossProfitUsd: Math.round(gp * 100) / 100, grossMarginPct: pct };
+  };
+
+  const weeklyBreakdown = (rows) => weekBuckets.map(b => {
+    const inBucket = rows.filter(r => {
+      const ref = (r.etd || r.shp_created_at || '').slice(0, 10);
+      return ref >= b.start && ref <= b.end;
+    });
+    const a = aggregate(inBucket);
+    return { week: b.label, ...a };
+  });
+
+  // Overall totals
+  const overall = aggregate(lines);
+
+  // By carrier
+  const carrierCodes = [...new Set(lines.map(r => r.carrier_code))];
+  const byCarrier = carrierCodes.map(code => {
+    const rows = lines.filter(r => r.carrier_code === code);
+    return { carrierCode: code, ...aggregate(rows), weeks: weeklyBreakdown(rows) };
+  }).sort((a, b) => (b.totalSellUsd || 0) - (a.totalSellUsd || 0));
+
+  // By lane (pol → pod)
+  const lanes = [...new Set(lines.map(r => `${r.pol} → ${r.pod}`))];
+  const byLane = lanes.map(lane => {
+    const [pol, pod] = lane.split(' → ');
+    const rows = lines.filter(r => r.pol === pol && r.pod === pod);
+    return { lane, ...aggregate(rows), weeks: weeklyBreakdown(rows) };
+  }).sort((a, b) => (b.totalSellUsd || 0) - (a.totalSellUsd || 0));
+
+  ok(res, { ...overall, byCarrier, byLane });
 });
 
 // ─── Application Settings ────────────────────────────────────────────────────
