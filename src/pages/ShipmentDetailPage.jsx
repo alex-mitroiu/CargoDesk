@@ -2699,7 +2699,7 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
       </div>{/* end 1fr 1fr grid */}
 
       {/* History + Cost Control side-by-side */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, alignItems: "stretch" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, alignItems: "stretch" }}>
         <CompactHistory events={events} onShowAll={() => setHistoryOpen(true)} />
         <CostControl shipmentId={shipment.id} contractType={shipment.contractType} contractId={shipment.contractId} containers={ctrs} />
       </div>
