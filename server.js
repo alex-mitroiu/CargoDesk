@@ -1056,10 +1056,27 @@ app.get("/api/containers", (req, res) => {
   ok(res, rows.map(mapContainer));
 });
 
+// Returns an error string if the DG class violates the shipment's contract policy, else null.
+const checkDgPolicy = (shipmentId, isDg, dgClass) => {
+  if (!isDg || !dgClass) return null;
+  const shipment = db.prepare("SELECT contract_id, contract_ref FROM shipments WHERE id=?").get(shipmentId);
+  if (!shipment?.contract_id) return null;
+  const contract = db.prepare("SELECT dg_allowed, imdg_classes, contract_number FROM contracts WHERE id=?").get(shipment.contract_id);
+  if (!contract) return null;
+  if (!contract.dg_allowed)
+    return `Contract ${contract.contract_number} does not permit DG cargo`;
+  const allowed = JSON.parse(contract.imdg_classes || "[]");
+  if (allowed.length > 0 && !allowed.includes(dgClass))
+    return `IMO class ${dgClass} is not permitted under contract ${contract.contract_number} (allowed: ${allowed.join(", ")})`;
+  return null;
+};
+
 app.post("/api/containers", (req, res) => {
   const { shipmentId, containerNumber = "", sealNumber = "", size, type,
           hsCode = "", cargoDescription = "", grossWeightKg = null, volumeCbm = null, isDg = false, dgClass = "" } = req.body;
   if (!shipmentId || !size || !type) return err(res, "shipmentId, size, type required");
+  const dgErr = checkDgPolicy(shipmentId, isDg, dgClass);
+  if (dgErr) return err(res, dgErr, 422);
   const id  = `CTR-${uid()}`;
   const cnU = containerNumber.toUpperCase();
   db.prepare("INSERT INTO containers (id,shipment_id,container_number,seal_number,size,type,hs_code,cargo_description,gross_weight_kg,volume_cbm,is_dg,dg_class) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
@@ -1077,6 +1094,8 @@ app.put("/api/containers/:id", (req, res) => {
   const cnU    = containerNumber.toUpperCase();
   const oldCtr = db.prepare("SELECT * FROM containers WHERE id=?").get(req.params.id);
   if (!oldCtr) return err(res, "Not found", 404);
+  const dgErr = checkDgPolicy(oldCtr.shipment_id, isDg, dgClass);
+  if (dgErr) return err(res, dgErr, 422);
   const info = db.prepare("UPDATE containers SET container_number=?, seal_number=?, size=?, type=?, hs_code=?, cargo_description=?, gross_weight_kg=?, volume_cbm=?, is_dg=?, dg_class=? WHERE id=?")
     .run(cnU, sealNumber, size, type, hsCode, cargoDescription, grossWeightKg, volumeCbm, isDg ? 1 : 0, dgClass, req.params.id);
   if (info.changes === 0) return err(res, "Not found", 404);

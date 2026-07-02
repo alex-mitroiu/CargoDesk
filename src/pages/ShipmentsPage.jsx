@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import useSaving from "../hooks/useSaving";
 import { T, CONTRACT_PRESETS, CONTAINER_TYPES, STATUSES, INCOTERMS_2020,
          statusVariant, contractVariant, teuOf, addDays, diffDays } from "../tokens";
 import { api } from "../api";
@@ -491,7 +492,7 @@ const ShipmentForm = ({ init = {}, onSave, onCancel }) => {
     spaceOverageReason: init.spaceOverageReason || "",
   });
   const [carrierUpdated, setCarrierUpdated] = useState("");
-  const [isSaving, setIsSaving] = useState(false);
+  const [isSaving, withSaving] = useSaving();
   const set = k => v => setF(p => ({ ...p, [k]: v }));
 
   const isCentral = f.contractType === "Central";
@@ -500,12 +501,9 @@ const ShipmentForm = ({ init = {}, onSave, onCancel }) => {
     && f.commodityCode.trim().length > 0
     && (!isCentral || f.contractId.trim().length > 0);
 
-  const handleSave = async () => {
+  const handleSave = () => {
     if (!valid) return;
-    setIsSaving(true);
-    try {
-      await onSave({ ...f, pol: polPort.unlocode, pod: podPort.unlocode });
-    } finally { setIsSaving(false); }
+    withSaving(() => onSave({ ...f, pol: polPort.unlocode, pod: podPort.unlocode }));
   };
 
   return (

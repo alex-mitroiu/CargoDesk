@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import useSaving from "../../hooks/useSaving";
 import { T, IMDG_CLASSES, CONTAINER_OPTIONS as CONTAINER_OPTION_DEFS } from "../../tokens";
 import { api } from "../../api";
 import { toast } from "../../toast";
-import { PageSpinner } from "../../components/primitives/Spinner";
+import Spinner, { PageSpinner } from "../../components/primitives/Spinner";
 import Btn from "../../components/primitives/Btn";
 import Badge from "../../components/primitives/Badge";
 import { Modal } from "../../components/primitives/Modal";
@@ -113,7 +114,7 @@ const ContractModal = ({ editing, prefill, onSave, onClose }) => {
   });
 
   const [fxRates,      setFxRates]      = useState({});
-  const [saving,       setSaving]       = useState(false);
+  const [saving,       withSaving]      = useSaving();
   const [allCarriers,  setAllCarriers]  = useState([]);
   const [carrierOpen,  setCarrierOpen]  = useState(false);
   const [carrierQuery, setCarrierQuery] = useState(src?.carrierCode || "");
@@ -207,20 +208,19 @@ const ContractModal = ({ editing, prefill, onSave, onClose }) => {
       return toast.error(`"${f.carrierCode}" is not a recognised carrier code`);
     if (!f.validFrom || !f.validTo) return toast.error("Validity dates required");
     if (f.legs.length === 0) return toast.error("At least one routing leg required");
-    setSaving(true);
-    try {
-      if (editing) {
-        await api.contracts.update(editing.id, f);
-      } else {
-        await api.contracts.create(f);
+    withSaving(async () => {
+      try {
+        if (editing) {
+          await api.contracts.update(editing.id, f);
+        } else {
+          await api.contracts.create(f);
+        }
+        toast.success(editing ? "Contract updated" : "Contract created");
+        onSave();
+      } catch (e) {
+        toast.error(e.message);
       }
-      toast.success(editing ? "Contract updated" : "Contract created");
-      onSave();
-    } catch (e) {
-      toast.error(e.message);
-    } finally {
-      setSaving(false);
-    }
+    });
   };
 
   const selectBase = {
@@ -611,7 +611,10 @@ const ContractModal = ({ editing, prefill, onSave, onClose }) => {
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", paddingTop: 16 }}>
         <Btn variant="secondary" onClick={onClose}>Cancel</Btn>
         <Btn onClick={handleSave} disabled={saving}>
-          {saving ? "Saving…" : (editing ? "Save Changes" : "Create Contract")}
+          <span style={{ display: "flex", alignItems: "center", gap: 7 }}>
+            {saving && <Spinner size="sm" color="currentColor" />}
+            {saving ? "Saving…" : (editing ? "Save Changes" : "Create Contract")}
+          </span>
         </Btn>
       </div>
     </div>

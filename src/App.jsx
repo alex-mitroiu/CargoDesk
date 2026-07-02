@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { T, applyTheme } from "./tokens";
 import { toast } from "./toast";
 import ToastContainer from "./components/primitives/ToastContainer";
+import GlobalSavingOverlay from "./components/primitives/GlobalSavingOverlay";
 import { FullPageSpinner } from "./components/primitives/Spinner";
 import { api } from "./api";
 
@@ -75,7 +76,8 @@ const HealthModal = ({ onClose }) => {
       if (type === "ws") {
         await new Promise(resolve => {
           const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-          const ws = new WebSocket(`${proto}//${window.location.host}/ws`);
+          const wsHost = import.meta.env.DEV ? "localhost:3001" : window.location.host;
+          const ws = new WebSocket(`${proto}//${wsHost}/ws`);
           const timer = setTimeout(() => {
             ws.close();
             setResults(p => ({ ...p, [id]: { ok: false, error: "Timeout (7 s)", latency: Date.now() - t0 } }));
@@ -178,6 +180,138 @@ const HealthModal = ({ onClose }) => {
   );
 };
 
+// ─── Shipment Detail Sidebar ──────────────────────────────────────────────────
+
+const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick }) => {
+  const goBack = () => {
+    if (window.opener) window.close();
+    else navigate("shipments");
+  };
+
+  const scrollTo = (id) =>
+    document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
+
+  const handleSection = (id) => {
+    scrollTo(id);
+    onSectionClick(id);
+  };
+
+  const STATUS_COLORS = {
+    ACTIVE:    { bg: "#22c55e22", color: "#22c55e" },
+    COMPLETED: { bg: "#3b82f622", color: "#3b82f6" },
+    CANCELLED: { bg: "#ef444422", color: "#ef4444" },
+    DRAFT:     { bg: "#ffffff11", color: T.textMuted },
+  };
+  const sc = STATUS_COLORS[shipment.status] || STATUS_COLORS.DRAFT;
+
+  const sections = [
+    { id: "shp-overview",   icon: "◎",  label: "Overview" },
+    { id: "shp-cargo",      icon: "📦", label: "Cargo",      badge: ctrCount || null },
+    { id: "shp-milestones", icon: "⚑",  label: "Milestones" },
+    { id: "shp-accounting", icon: "◈",  label: "Accounting" },
+  ];
+
+  return (
+    <aside style={{ width: 240, background: T.surface, borderRight: `1px solid ${T.border}`,
+      display: "flex", flexDirection: "column", flexShrink: 0 }}>
+
+      {/* Logo */}
+      <div style={{ padding: "22px 20px 18px", borderBottom: `1px solid ${T.border}` }}>
+        <div style={{ fontFamily: T.head, fontSize: 17, fontWeight: 800, color: T.text }}>
+          ⚓ CargoDesk
+        </div>
+        <div style={{ fontFamily: T.mono, fontSize: 9.5, color: T.textMuted, marginTop: 3,
+          letterSpacing: ".12em", textTransform: "uppercase" }}>
+          Freight Management
+        </div>
+      </div>
+
+      {/* Back */}
+      <div style={{ padding: "12px 16px", borderBottom: `1px solid ${T.border}` }}>
+        <button onClick={goBack} style={{
+          display: "flex", alignItems: "center", gap: 8,
+          width: "100%", padding: "8px 12px", borderRadius: 8,
+          background: T.bg, border: `1px solid ${T.border}`,
+          fontFamily: T.body, fontSize: 13, color: T.text,
+          cursor: "pointer", fontWeight: 500, textAlign: "left",
+        }}>
+          ← {window.opener ? "Close tab" : "All Shipments"}
+        </button>
+      </div>
+
+      {/* Shipment context card */}
+      <div style={{ padding: "14px 16px", borderBottom: `1px solid ${T.border}`,
+        display: "flex", flexDirection: "column", gap: 7 }}>
+
+        <div
+          title="Click to copy shipment ID"
+          onClick={() => navigator.clipboard.writeText(shipment.id)
+            .then(() => toast.success(`Copied ${shipment.id}`))}
+          style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 800, color: T.text,
+            cursor: "pointer", userSelect: "none", letterSpacing: ".02em" }}>
+          {shipment.id}
+        </div>
+
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+          <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, borderRadius: 4,
+            padding: "2px 8px", background: sc.bg, color: sc.color }}>
+            {shipment.status}
+          </span>
+          {shipment.carrier && (
+            <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+              {shipment.carrier}
+            </span>
+          )}
+        </div>
+
+        {(shipment.pol || shipment.pod) && (
+          <div style={{ fontFamily: T.mono, fontSize: 12, color: T.text, fontWeight: 600 }}>
+            {shipment.pol || "—"} → {shipment.pod || "—"}
+          </div>
+        )}
+
+        {shipment.etd && (
+          <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+            ETD {shipment.etd}
+          </div>
+        )}
+      </div>
+
+      {/* Section nav */}
+      <nav style={{ padding: "14px 12px", flex: 1, overflowY: "auto" }}>
+        <div style={{ fontFamily: T.mono, fontSize: 9.5, color: T.border, fontWeight: 700,
+          textTransform: "uppercase", letterSpacing: ".12em", padding: "0 12px", marginBottom: 8 }}>
+          Sections
+        </div>
+        {sections.map(({ id, icon, label, badge }) => (
+          <button key={id} onClick={() => handleSection(id)}
+            style={{
+              display: "flex", alignItems: "center", justifyContent: "space-between",
+              width: "100%", padding: "8px 12px", borderRadius: 8,
+              background: "none", border: "none", cursor: "pointer",
+              fontFamily: T.body, fontSize: 13, color: T.text,
+              marginBottom: 2,
+            }}
+            onMouseEnter={e => e.currentTarget.style.background = T.bg}
+            onMouseLeave={e => e.currentTarget.style.background = "none"}
+          >
+            <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ width: 18, textAlign: "center", fontSize: 14 }}>{icon}</span>
+              <span>{label}</span>
+            </span>
+            {badge != null && (
+              <span style={{ fontFamily: T.mono, fontSize: 11, background: T.accent + "22",
+                color: T.accent, borderRadius: 10, padding: "1px 7px", fontWeight: 700 }}>
+                {badge}
+              </span>
+            )}
+          </button>
+        ))}
+      </nav>
+    </aside>
+  );
+};
+
 // ─── Root App ─────────────────────────────────────────────────────────────────
 
 function App() {
@@ -250,7 +384,8 @@ function App() {
     localStorage.setItem("cd_theme", next ? "dark" : "light"); // persist
     setIsDark(next);                                            // trigger re-render (T already updated)
   };
-  const [mdmOpen,    setMdmOpen]    = useState(true);
+  const [mdmOpen,      setMdmOpen]      = useState(true);
+  const [detailAction, setDetailAction] = useState(null);
 
   // Load all data + settings on mount
   useEffect(() => {
@@ -721,71 +856,80 @@ function App() {
     <div style={{ display: "flex", minHeight: "100vh", background: T.bg, fontFamily: T.body, color: T.text }}>
 
       {/* ── Sidebar ── */}
-      <aside style={{ width: 240, background: T.surface, borderRight: `1px solid ${T.border}`,
-        display: "flex", flexDirection: "column", flexShrink: 0 }}>
+      {page === "detail" && selectedShipment ? (
+        <ShipmentDetailSidebar
+          shipment={selectedShipment}
+          ctrCount={containers.filter(c => c.shipmentId === selectedShipment.id).length}
+          navigate={navigate}
+          onSectionClick={setDetailAction}
+        />
+      ) : (
+        <aside style={{ width: 240, background: T.surface, borderRight: `1px solid ${T.border}`,
+          display: "flex", flexDirection: "column", flexShrink: 0 }}>
 
-        {/* Logo — click to go home */}
-        <div style={{ padding: "22px 20px 20px", borderBottom: `1px solid ${T.border}` }}>
-          <div onClick={() => navigate("home")} style={{ fontFamily: T.head, fontSize: 17, fontWeight: 800, color: T.text, cursor: "pointer" }}>⚓ CargoDesk</div>
-          <div style={{ fontFamily: T.mono, fontSize: 9.5, color: T.textMuted, marginTop: 3, letterSpacing: ".12em", textTransform: "uppercase" }}>
-            Freight Management
+          {/* Logo — click to go home */}
+          <div style={{ padding: "22px 20px 20px", borderBottom: `1px solid ${T.border}` }}>
+            <div onClick={() => navigate("home")} style={{ fontFamily: T.head, fontSize: 17, fontWeight: 800, color: T.text, cursor: "pointer" }}>⚓ CargoDesk</div>
+            <div style={{ fontFamily: T.mono, fontSize: 9.5, color: T.textMuted, marginTop: 3, letterSpacing: ".12em", textTransform: "uppercase" }}>
+              Freight Management
+            </div>
           </div>
-        </div>
 
-        {/* Nav */}
-        <nav style={{ padding: "14px 12px", flex: 1, overflowY: "auto" }}>
+          {/* Nav */}
+          <nav style={{ padding: "14px 12px", flex: 1, overflowY: "auto" }}>
 
-          {/* Top-level items */}
-          <NavBtn pageKey="shipments" icon="⛴" label="Shipments" />
+            {/* Top-level items */}
+            <NavBtn pageKey="shipments" icon="⛴" label="Shipments" />
 
-          {/* Dashboard sub-group */}
-          <NavBtn pageKey="dashboard"      icon="◈"  label="Dashboard" />
-          <NavBtn pageKey="space-configs"  icon="⚡" label="Space Configurations" indent />
-          <NavBtn pageKey="dashboard-archive" icon="🗄" label="Archive"           indent />
+            {/* Dashboard sub-group */}
+            <NavBtn pageKey="dashboard"      icon="◈"  label="Dashboard" />
+            <NavBtn pageKey="space-configs"  icon="⚡" label="Space Configurations" indent />
+            <NavBtn pageKey="dashboard-archive" icon="🗄" label="Archive"           indent />
 
-          <NavBtn pageKey="kanban" icon="📋" label="Integration Board" />
+            <NavBtn pageKey="kanban" icon="📋" label="Integration Board" />
 
-          {/* MDM section */}
-          <div style={{ marginTop: 10 }}>
-            {/* MDM section header — clickable to expand/collapse */}
-            <button onClick={() => setMdmOpen(o => !o)}
-              style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
-                width: "100%", padding: "6px 12px", background: "none", border: "none", cursor: "pointer",
-                marginBottom: 2 }}>
-              <span style={{ fontFamily: T.mono, fontSize: 9.5, color: isMdmActive ? T.accent : T.border,
-                fontWeight: 700, textTransform: "uppercase", letterSpacing: ".12em" }}>
-                Master Data
-              </span>
-              <span style={{ fontFamily: T.mono, fontSize: 10, color: T.border, transition: "transform .2s",
-                display: "inline-block", transform: mdmOpen ? "rotate(90deg)" : "rotate(0deg)" }}>▶</span>
-            </button>
+            {/* MDM section */}
+            <div style={{ marginTop: 10 }}>
+              {/* MDM section header — clickable to expand/collapse */}
+              <button onClick={() => setMdmOpen(o => !o)}
+                style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+                  width: "100%", padding: "6px 12px", background: "none", border: "none", cursor: "pointer",
+                  marginBottom: 2 }}>
+                <span style={{ fontFamily: T.mono, fontSize: 9.5, color: isMdmActive ? T.accent : T.border,
+                  fontWeight: 700, textTransform: "uppercase", letterSpacing: ".12em" }}>
+                  Master Data
+                </span>
+                <span style={{ fontFamily: T.mono, fontSize: 10, color: T.border, transition: "transform .2s",
+                  display: "inline-block", transform: mdmOpen ? "rotate(90deg)" : "rotate(0deg)" }}>▶</span>
+              </button>
 
-            {mdmOpen && (
-              <div>
-                {/* Directory */}
-                <div style={{ fontFamily: T.mono, fontSize: 9, color: T.border, fontWeight: 700,
-                  textTransform: "uppercase", letterSpacing: ".1em", padding: "5px 12px 3px 28px" }}>Directory</div>
-                <NavBtn pageKey="mdm-customers"            icon="👥" label="Customers"            indent />
-                <NavBtn pageKey="mdm-sanctioned-customers" icon="🔴" label="Sanctioned Customers" subIndent />
-                <NavBtn pageKey="mdm-contracts"   icon="📋" label="Contracts"       indent />
-                <NavBtn pageKey="mdm-carriers" icon="🏢" label="Carriers"       indent />
-                <NavBtn pageKey="mdm-vessels"      icon="🚢" label="Vessels"         indent />
-                <NavBtn pageKey="mdm-commodities" icon="📦" label="Commodities"     indent />
-                <NavBtn pageKey="mdm-ports"    icon="📍" label="Port Locations" indent />
-                <NavBtn pageKey="mdm-linked"   icon="🔗" label="Linked Ports"   indent />
+              {mdmOpen && (
+                <div>
+                  {/* Directory */}
+                  <div style={{ fontFamily: T.mono, fontSize: 9, color: T.border, fontWeight: 700,
+                    textTransform: "uppercase", letterSpacing: ".1em", padding: "5px 12px 3px 28px" }}>Directory</div>
+                  <NavBtn pageKey="mdm-customers"            icon="👥" label="Customers"            indent />
+                  <NavBtn pageKey="mdm-sanctioned-customers" icon="🔴" label="Sanctioned Customers" subIndent />
+                  <NavBtn pageKey="mdm-contracts"   icon="📋" label="Contracts"       indent />
+                  <NavBtn pageKey="mdm-carriers" icon="🏢" label="Carriers"       indent />
+                  <NavBtn pageKey="mdm-vessels"      icon="🚢" label="Vessels"         indent />
+                  <NavBtn pageKey="mdm-commodities" icon="📦" label="Commodities"     indent />
+                  <NavBtn pageKey="mdm-ports"    icon="📍" label="Port Locations" indent />
+                  <NavBtn pageKey="mdm-linked"   icon="🔗" label="Linked Ports"   indent />
 
-                {/* Locations sub-section */}
-                <div style={{ fontFamily: T.mono, fontSize: 9, color: T.border, fontWeight: 700,
-                  textTransform: "uppercase", letterSpacing: ".1em", padding: "10px 12px 3px 28px" }}>Locations</div>
-                <NavBtn pageKey="mdm-tradelanes" icon="🌊" label="Trade Lanes"         indent />
-                <NavBtn pageKey="mdm-countries" icon="🏳" label="Countries"          indent />
-                <NavBtn pageKey="mdm-unlocodes" icon="🔢" label="UN Location Codes"  indent />
-              </div>
-            )}
-          </div>
-        </nav>
+                  {/* Locations sub-section */}
+                  <div style={{ fontFamily: T.mono, fontSize: 9, color: T.border, fontWeight: 700,
+                    textTransform: "uppercase", letterSpacing: ".1em", padding: "10px 12px 3px 28px" }}>Locations</div>
+                  <NavBtn pageKey="mdm-tradelanes" icon="🌊" label="Trade Lanes"         indent />
+                  <NavBtn pageKey="mdm-countries" icon="🏳" label="Countries"          indent />
+                  <NavBtn pageKey="mdm-unlocodes" icon="🔢" label="UN Location Codes"  indent />
+                </div>
+              )}
+            </div>
+          </nav>
 
-      </aside>
+        </aside>
+      )}
 
       {/* ── Main ── */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
@@ -866,6 +1010,7 @@ function App() {
         {page === "detail" && selectedShipment && (
           <ShipmentDetailPage
             shipment={selectedShipment} containers={containers} carriers={carriers}
+            detailAction={detailAction} onDetailActionConsumed={() => setDetailAction(null)}
             onBack={() => { setPage("shipments"); setSelectedId(null); window.location.hash = "shipments"; }}
             onUpdate={async (id, form) => {
               try {
@@ -1073,6 +1218,7 @@ function App() {
       )}
 
       <ToastContainer />
+      <GlobalSavingOverlay />
     </div>
   );
 }

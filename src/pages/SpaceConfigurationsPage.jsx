@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from "react";
+import useSaving from "../hooks/useSaving";
 import { T, addDays, diffDays, teuOf, LANE_BADGE_VARIANT, todayIso, statusVariant, contractVariant,
   buildLinkedPortIndex, matchedLegFor, allocationRouteMatch } from "../tokens";
 import { api } from "../api";
@@ -236,6 +237,7 @@ const AllocationForm = ({ init = {}, tradeLanes = [], onSave, onCancel }) => {
   const [notes,          setNotes]          = useState(init.notes          || "");
   const [alertThreshold, setAlertThreshold] = useState(init.alertThreshold ?? 80);
   const [serverErr,      setServerErr]      = useState("");
+  const [isSaving,       withSaving]        = useSaving();
 
   const [contractId,         setContractId]         = useState(init.contractId     || "");
   const [contractNumber,     setContractNumber]     = useState(init.contractNumber || "");
@@ -355,18 +357,20 @@ const AllocationForm = ({ init = {}, tradeLanes = [], onSave, onCancel }) => {
                && !conflicts.exact.length;
   const threshColour = thresh >= 90 ? T.danger : thresh >= 75 ? T.warning : T.success;
 
-  const handleSave = async () => {
+  const handleSave = () => {
     if (!valid) return;
-    try {
-      await onSave({
-        carrierCode, allocatedTEU: teu, effectiveDate, endDate, notes,
-        alertThreshold: thresh,
-        pol: polPort.unlocode, pod: podPort.unlocode,
-        originLane, destLane,
-        tradeLane: `${originLane}_${destLane}`,
-        contractId, contractNumber,
-      });
-    } catch (e) { setServerErr(e.message || "Could not save — check for overlapping periods."); }
+    withSaving(async () => {
+      try {
+        await onSave({
+          carrierCode, allocatedTEU: teu, effectiveDate, endDate, notes,
+          alertThreshold: thresh,
+          pol: polPort.unlocode, pod: podPort.unlocode,
+          originLane, destLane,
+          tradeLane: `${originLane}_${destLane}`,
+          contractId, contractNumber,
+        });
+      } catch (e) { setServerErr(e.message || "Could not save — check for overlapping periods."); }
+    });
   };
 
   const laneSelOpts = (options, fallback) => [
@@ -523,7 +527,12 @@ const AllocationForm = ({ init = {}, tradeLanes = [], onSave, onCancel }) => {
       )}
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", paddingTop: 4 }}>
         <Btn variant="secondary" onClick={onCancel}>Cancel</Btn>
-        <Btn onClick={handleSave} disabled={!valid}>{isEdit ? "Save Changes" : "Add Configuration"}</Btn>
+        <Btn onClick={handleSave} disabled={!valid || isSaving}>
+          <span style={{ display: "flex", alignItems: "center", gap: 7 }}>
+            {isSaving && <Spinner size="sm" color="currentColor" />}
+            {isSaving ? "Saving…" : (isEdit ? "Save Changes" : "Add Configuration")}
+          </span>
+        </Btn>
       </div>
     </div>
   );

@@ -1,4 +1,5 @@
 ﻿import React, { useState, useEffect, useRef } from "react";
+import useSaving from "../hooks/useSaving";
 import { T, INCOTERMS_2020, teuOf,
          statusVariant, contractVariant, IMDG_CLASSES } from "../tokens";
 import { ContainerTypeField } from "../components/shared/ContainerTypePickerModal";
@@ -79,7 +80,7 @@ const SectionHeader = ({ n, title }) => {
 
 // ─── Container form ───────────────────────────────────────────────────────────
 
-const ContainerForm = ({ init = {}, onSave, onCancel, onDirtyChange }) => {
+const ContainerForm = ({ init = {}, onSave, onCancel, onDirtyChange, dgPolicy = null }) => {
   const initSnap = useRef({
     containerNumber:  init.containerNumber  || "",
     size:             init.size             || "",
@@ -94,8 +95,8 @@ const ContainerForm = ({ init = {}, onSave, onCancel, onDirtyChange }) => {
   const [f, setF] = useState({ ...initSnap.current });
   const set = k => v => setF(p => ({ ...p, [k]: v }));
 
-  const [touched,  setTouched]  = useState({});
-  const [isSaving, setIsSaving] = useState(false);
+  const [touched,   setTouched]   = useState({});
+  const [isSaving,  withSaving]   = useSaving();
 
   // Notify parent when form diverges from its initial values
   useEffect(() => {
@@ -115,8 +116,18 @@ const ContainerForm = ({ init = {}, onSave, onCancel, onDirtyChange }) => {
   const volumeOk = parseFloat(f.volumeCbm)    > 0;
   const hsOk     = f.hsCode.trim().length > 0;
   const descOk   = f.cargoDescription.trim().length > 0;
+
+  const dgConflict = (() => {
+    if (!f.isDg || !f.dgClass || !dgPolicy) return null;
+    if (!dgPolicy.dgAllowed) return `Contract does not permit DG cargo`;
+    if (dgPolicy.imdgClasses.length > 0 && !dgPolicy.imdgClasses.includes(f.dgClass))
+      return `IMO class ${f.dgClass} not permitted by contract (allowed: ${dgPolicy.imdgClasses.join(", ")})`;
+    return null;
+  })();
+
   const valid    = f.containerNumber.length >= 4 && f.size && f.type
-                 && hsOk && descOk && weightOk && volumeOk && (!f.isDg || f.dgClass);
+                 && hsOk && descOk && weightOk && volumeOk && (!f.isDg || f.dgClass)
+                 && !dgConflict;
 
   const FieldErr = ({ show, msg }) => show
     ? <div style={{ fontFamily: T.body, fontSize: 11, color: T.danger, marginTop: 3 }}>{msg}</div>
@@ -226,6 +237,17 @@ const ContainerForm = ({ init = {}, onSave, onCancel, onDirtyChange }) => {
             </div>
           ) : null;
         })()}
+
+        {dgConflict && (
+          <div style={{ marginTop: 10, padding: "10px 12px",
+            background: T.danger + "12", borderRadius: 6,
+            border: `1px solid ${T.danger}55`,
+            fontFamily: T.body, fontSize: 12, color: T.danger,
+            display: "flex", alignItems: "flex-start", gap: 7 }}>
+            <span style={{ flexShrink: 0, fontWeight: 700 }}>⛔</span>
+            <span>{dgConflict}</span>
+          </div>
+        )}
       </div>
 
       {/* Actions */}
@@ -233,19 +255,16 @@ const ContainerForm = ({ init = {}, onSave, onCancel, onDirtyChange }) => {
         <Btn variant="secondary" onClick={onCancel}>Cancel</Btn>
         <Btn
           disabled={!valid || isSaving}
-          onClick={async () => {
+          onClick={() => {
             setTouched({ weight: true, volume: true, hsCode: true, desc: true });
             if (!valid) return;
-            setIsSaving(true);
-            try {
-              await onSave({
-                containerNumber: f.containerNumber, size: f.size, type: f.type,
-                hsCode: f.hsCode, cargoDescription: f.cargoDescription,
-                grossWeightKg: f.grossWeightKg ? parseFloat(f.grossWeightKg) : null,
-                volumeCbm:     f.volumeCbm     ? parseFloat(f.volumeCbm)     : null,
-                isDg: f.isDg, dgClass: f.dgClass,
-              });
-            } finally { setIsSaving(false); }
+            withSaving(() => onSave({
+              containerNumber: f.containerNumber, size: f.size, type: f.type,
+              hsCode: f.hsCode, cargoDescription: f.cargoDescription,
+              grossWeightKg: f.grossWeightKg ? parseFloat(f.grossWeightKg) : null,
+              volumeCbm:     f.volumeCbm     ? parseFloat(f.volumeCbm)     : null,
+              isDg: f.isDg, dgClass: f.dgClass,
+            }));
           }}>
           <span style={{ display: "flex", alignItems: "center", gap: 7 }}>
             {isSaving && <Spinner size="sm" color="currentColor" />}
@@ -394,14 +413,10 @@ const LinkVesselModal = ({ shipment, onSave, onClose }) => {
     shipment.vesselImo ? { imo: shipment.vesselImo, name: shipment.vessel || "" } : null
   );
   const [voyage,  setVoyage]  = React.useState(shipment.voyage || "");
-  const [saving,  setSaving]  = React.useState(false);
+  const [saving, withSaving] = useSaving();
 
-  const handleSave = async () => {
-    setSaving(true);
-    try {
-      await onSave(vessel?.imo || "", vessel?.name || "", voyage);
-    } finally { setSaving(false); }
-  };
+  const handleSave = () =>
+    withSaving(() => onSave(vessel?.imo || "", vessel?.name || "", voyage));
 
   return (
     <Modal title="Link Vessel" onClose={onClose} width={440}>
@@ -1812,7 +1827,7 @@ const CostLineHistoryModal = ({ shipmentId, onClose }) => {
   );
 };
 
-const CostControl = ({ shipmentId, contractType, contractId, containers = [] }) => {
+const CostControl = ({ shipmentId, contractType, contractId, containers = [], openSignal = 0 }) => {
   const [lines,            setLines]            = useState([]);
   const [loading,          setLoading]          = useState(false);
   const [lineModal,        setLineModal]        = useState(null);
@@ -1825,6 +1840,8 @@ const CostControl = ({ shipmentId, contractType, contractId, containers = [] }) 
   const [importedForCount, setImportedForCount] = useState(null);
   const [ccOpen,           setCcOpen]           = useState(false);
   const [clHistOpen,       setClHistOpen]       = useState(false);
+
+  useEffect(() => { if (openSignal > 0) setCcOpen(true); }, [openSignal]);
 
   const isCentral   = contractType === "Central" && !!contractId;
   const hasBuyLines = lines.some(l => l.type === "BUY");
@@ -2263,7 +2280,7 @@ const CostControl = ({ shipmentId, contractType, contractId, containers = [] }) 
   );
 };
 
-const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, onAddContainer, onEditContainer, onDeleteContainer }) => {
+const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, onAddContainer, onEditContainer, onDeleteContainer, detailAction = null, onDetailActionConsumed }) => {
   const [ctrModal,       setCtrModal]       = useState(null);
   const [linkVesselOpen, setLinkVesselOpen] = useState(false);
   const [editShp,        setEditShp]        = useState(false);
@@ -2281,6 +2298,16 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
   const [complianceOpen, setComplianceOpen] = useState(false);
   const [contractOpen,   setContractOpen]   = useState(false);
   const [ctrListOpen,    setCtrListOpen]    = useState(false);
+  const [dgPolicy,             setDgPolicy]             = useState(null);
+  const [openAccountingSignal, setOpenAccountingSignal] = useState(0);
+
+  // Sidebar section link → open corresponding management panel
+  useEffect(() => {
+    if (!detailAction) return;
+    if (detailAction === "shp-cargo")      setCtrListOpen(true);
+    if (detailAction === "shp-accounting") setOpenAccountingSignal(s => s + 1);
+    onDetailActionConsumed?.();
+  }, [detailAction]);
 
   // Tab title — show shipment ID so multi-tab workflows are easy to navigate
   useEffect(() => {
@@ -2325,7 +2352,8 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
   // Always-on WS subscription for space badge updates
   useEffect(() => {
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const ws = new WebSocket(`${proto}//${window.location.host}/ws`);
+    const wsHost = import.meta.env.DEV ? "localhost:3001" : window.location.host;
+    const ws = new WebSocket(`${proto}//${wsHost}/ws`);
     ws.onopen = () => ws.send(JSON.stringify({ type: "subscribe", shipmentId: shipment.id }));
     ws.onmessage = e => {
       try {
@@ -2339,7 +2367,8 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
   useEffect(() => {
     if (!msgsOpen) return;
     const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const ws = new WebSocket(`${proto}//${window.location.host}/ws`);
+    const wsHost = import.meta.env.DEV ? "localhost:3001" : window.location.host;
+    const ws = new WebSocket(`${proto}//${wsHost}/ws`);
     let pollId;
 
     ws.onopen = () => ws.send(JSON.stringify({ type: "subscribe", shipmentId: shipment.id }));
@@ -2374,6 +2403,23 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
   const ctrs     = containers.filter(c => c.shipmentId === shipment.id);
   const totalTEU = ctrs.reduce((s, c) => s + teuOf(c.size), 0);
 
+  useEffect(() => {
+    if (!shipment.contractId) { setDgPolicy(null); return; }
+    api.contracts.get(shipment.contractId)
+      .then(c => setDgPolicy({ dgAllowed: c.dgAllowed, imdgClasses: c.imdgClasses || [] }))
+      .catch(() => setDgPolicy(null));
+  }, [shipment.contractId]);
+
+  const ctrDgConflict = c => {
+    if (!c.isDg || !c.dgClass || !dgPolicy) return null;
+    if (!dgPolicy.dgAllowed) return `Contract does not permit DG cargo`;
+    if (dgPolicy.imdgClasses.length > 0 && !dgPolicy.imdgClasses.includes(c.dgClass))
+      return `IMO class ${c.dgClass} not permitted by contract (allowed: ${dgPolicy.imdgClasses.join(", ")})`;
+    return null;
+  };
+
+  const dgConflicts = ctrs.filter(c => ctrDgConflict(c)).length;
+
   const allocContractMatch = (s, a) => {
     if (a.contractId)     return s.contractId === a.contractId;
     if (a.contractNumber) return s.contractRef === a.contractNumber;
@@ -2400,7 +2446,7 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
   return (
     <div>
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 24 }}>
+      <div id="shp-overview" style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 24 }}>
         <Btn variant="secondary" onClick={onBack}>← Back</Btn>
         <div style={{ flex: 1 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -2618,7 +2664,7 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
       ))}
 
       {/* Contract & References  ·  Cargo Details — side by side */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12, alignItems: "stretch" }}>
+      <div id="shp-cargo" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12, alignItems: "stretch" }}>
 
       {/* Contract & References compact card */}
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
@@ -2682,6 +2728,14 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
             {totalTEU > 0 && (
               <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>· {totalTEU} TEU</span>
             )}
+            {dgConflicts > 0 && (
+              <span title={`${dgConflicts} container${dgConflicts !== 1 ? "s" : ""} with DG class not permitted by contract`}
+                style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600, color: T.warning,
+                  background: T.warning + "18", border: `1px solid ${T.warning}55`,
+                  borderRadius: 6, padding: "1px 8px", cursor: "default" }}>
+                ⚠ {dgConflicts} DG conflict{dgConflicts !== 1 ? "s" : ""}
+              </span>
+            )}
           </div>
           <button type="button" onClick={() => setCtrModal("add")}
             style={{ fontFamily: T.body, fontSize: 12, color: T.accent, background: "none",
@@ -2710,6 +2764,14 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
                   IMO {c.dgClass}
                 </span>
               )}
+              {ctrDgConflict(c) && (
+                <span title={ctrDgConflict(c)}
+                  style={{ fontFamily: T.body, fontSize: 10, fontWeight: 700, color: T.warning,
+                    background: T.warning + "18", border: `1px solid ${T.warning}55`,
+                    borderRadius: 4, padding: "1px 6px", flexShrink: 0, cursor: "default" }}>
+                  ⚠ DG conflict
+                </span>
+              )}
               <span style={{ fontFamily: T.body, fontSize: 12, flex: 1,
                 color: c.cargoDescription ? T.textMuted : T.border,
                 fontStyle: c.cargoDescription ? "normal" : "italic",
@@ -2734,14 +2796,14 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
       </div>{/* end 1fr 1fr grid */}
 
       {/* History + Cost Control side-by-side */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, alignItems: "stretch" }}>
+      <div id="shp-accounting" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, alignItems: "stretch" }}>
         <CompactHistory events={events} onShowAll={() => setHistoryOpen(true)} />
-        <CostControl shipmentId={shipment.id} contractType={shipment.contractType} contractId={shipment.contractId} containers={ctrs} />
+        <CostControl shipmentId={shipment.id} contractType={shipment.contractType} contractId={shipment.contractId} containers={ctrs} openSignal={openAccountingSignal} />
       </div>
       {historyOpen && <HistoryModal events={events} shipmentId={shipment.id} onClose={() => setHistoryOpen(false)} />}
 
       {/* Milestone Workflow */}
-      <div style={{ marginTop: 20 }}>
+      <div id="shp-milestones" style={{ marginTop: 20 }}>
         <MilestonePanel shipmentId={shipment.id} shipment={shipment} />
       </div>
 
@@ -2804,9 +2866,18 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
         <Modal title={`Containers — ${shipment.id}`} onClose={() => setCtrListOpen(false)} width={820}>
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
-                {ctrs.length} container{ctrs.length !== 1 ? "s" : ""} · {totalTEU} TEU total
-              </span>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
+                  {ctrs.length} container{ctrs.length !== 1 ? "s" : ""} · {totalTEU} TEU total
+                </span>
+                {dgConflicts > 0 && (
+                  <span style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600, color: T.warning,
+                    background: T.warning + "18", border: `1px solid ${T.warning}55`,
+                    borderRadius: 6, padding: "2px 8px" }}>
+                    ⚠ {dgConflicts} DG conflict{dgConflicts !== 1 ? "s" : ""} — review required
+                  </span>
+                )}
+              </div>
               <Btn onClick={() => { setCtrListOpen(false); setCtrModal("add"); }}>＋ Add Container</Btn>
             </div>
             {ctrs.length === 0 ? (
@@ -2865,13 +2936,21 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
                       {c.volumeCbm    != null && <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted }}>{c.volumeCbm} m³</span>}
                       {c.grossWeightKg == null && c.volumeCbm == null && <span style={{ fontFamily: T.mono, fontSize: 11, color: T.border }}>—</span>}
                     </div>
-                    <div style={{ width: 64, flexShrink: 0 }}>
+                    <div style={{ width: 64, flexShrink: 0, display: "flex", flexDirection: "column", gap: 3 }}>
                       {c.isDg && c.dgClass
                         ? <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700,
                             color: "#fff", background: T.danger, borderRadius: 4, padding: "2px 7px" }}>
                             IMO {c.dgClass}
                           </span>
                         : <span style={{ fontFamily: T.mono, fontSize: 11, color: T.border }}>—</span>}
+                      {ctrDgConflict(c) && (
+                        <span title={ctrDgConflict(c)}
+                          style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, color: T.warning,
+                            background: T.warning + "18", border: `1px solid ${T.warning}55`,
+                            borderRadius: 4, padding: "1px 5px", cursor: "default", whiteSpace: "nowrap" }}>
+                          ⚠ conflict
+                        </span>
+                      )}
                     </div>
                     <div style={{ width: 86, flexShrink: 0, display: "flex", gap: 5 }}>
                       <Btn size="sm" variant="secondary"
@@ -2890,6 +2969,7 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
       {ctrModal && (
         <Modal title={ctrModal === "add" ? "Add Container" : "Edit Container"} onClose={() => setCtrModal(null)}>
           <ContainerForm init={ctrModal === "add" ? {} : ctrModal}
+            dgPolicy={dgPolicy}
             onDirtyChange={setIsDirty}
             onSave={async form => {
               try {
