@@ -1,6 +1,7 @@
 ﻿import { useState, useEffect, useCallback, useRef } from "react";
 import { T } from "../../tokens";
 import { api } from "../../api";
+import { useAuth } from "../../AuthContext";
 import { PageSpinner } from "../../components/primitives/Spinner";
 import Btn from "../../components/primitives/Btn";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
@@ -85,6 +86,7 @@ const CustomerForm = ({ init = {}, onSave, onCancel }) => {
 const LIMIT = 50;
 
 const MdmCustomersPage = () => {
+  const { canEdit } = useAuth();
   const [results, setResults] = useState([]);
   const [total,   setTotal]   = useState(0);
   const [offset,  setOffset]  = useState(0);
@@ -163,7 +165,7 @@ const MdmCustomersPage = () => {
             {total} customer{total !== 1 ? "s" : ""} in registry
           </p>
         </div>
-        <Btn size="lg" onClick={() => setModal("add")}>＋ Add Customer</Btn>
+        {canEdit && <Btn size="lg" onClick={() => setModal("add")}>＋ Add Customer</Btn>}
       </div>
 
       {/* Search */}
@@ -238,8 +240,8 @@ const MdmCustomersPage = () => {
             {/* Actions */}
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <ActionMenu items={[
-                { icon: "✎", label: "Edit",   onClick: () => setModal(c) },
-                { icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(c.id) },
+                ...(canEdit ? [{ icon: "✎", label: "Edit",   onClick: () => setModal(c) }] : []),
+                ...(canEdit ? [{ icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(c.id) }] : []),
               ]} />
             </div>
           </div>

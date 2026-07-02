@@ -5,6 +5,7 @@ import ToastContainer from "./components/primitives/ToastContainer";
 import GlobalSavingOverlay from "./components/primitives/GlobalSavingOverlay";
 import { FullPageSpinner } from "./components/primitives/Spinner";
 import { api } from "./api";
+import { AuthContext } from "./AuthContext";
 
 import Btn from "./components/primitives/Btn";
 import { Modal } from "./components/primitives/Modal";
@@ -19,6 +20,8 @@ import AboutPage           from "./pages/AboutPage";
 import AppSettingsPage     from "./pages/AppSettingsPage";
 import { VERSION, COPYRIGHT_YEAR, COPYRIGHT_OWNER } from "./version";
 import LandingPage         from "./pages/LandingPage";
+import LoginPage           from "./pages/LoginPage";
+import { TOKEN_KEY }       from "./api";
 import KanbanPage          from "./pages/KanbanPage";
 
 import MdmCarriersPage        from "./pages/mdm/MdmCarriersPage";
@@ -386,9 +389,49 @@ function App() {
   };
   const [mdmOpen,      setMdmOpen]      = useState(true);
   const [detailAction, setDetailAction] = useState(null);
+  const [user,         setUser]         = useState(null);
+  const [authLoading,  setAuthLoading]  = useState(true);
 
-  // Load all data + settings on mount
+  // Verify stored token on mount
   useEffect(() => {
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (!token) { setAuthLoading(false); return; }
+    api.auth.me()
+      .then(u => { setUser(u); setAuthLoading(false); })
+      .catch(() => { localStorage.removeItem(TOKEN_KEY); setAuthLoading(false); });
+  }, []);
+
+  // Listen for 401 → auto-logout
+  useEffect(() => {
+    const h = () => { setUser(null); };
+    window.addEventListener("cargodesk:logout", h);
+    return () => window.removeEventListener("cargodesk:logout", h);
+  }, []);
+
+  const [activeRole, setActiveRole] = useState(null);
+
+  const ROLE_RANK   = { viewer: 0, operator: 1, admin: 2 };
+  const ROLE_LABELS = { admin: "Admin", operator: "Operator", viewer: "Viewer" };
+  const availableRoles = (role) =>
+    Object.keys(ROLE_RANK)
+      .filter(r => ROLE_RANK[r] <= ROLE_RANK[role])
+      .sort((a, b) => ROLE_RANK[b] - ROLE_RANK[a]);
+
+  const handleLogin  = (token, userData) => {
+    localStorage.setItem(TOKEN_KEY, token);
+    setUser(userData);
+    setActiveRole(userData.role);
+  };
+  const handleLogout = () => {
+    localStorage.removeItem(TOKEN_KEY);
+    setUser(null);
+    setActiveRole(null);
+  };
+
+  // Load all data + settings — only after user is authenticated
+  useEffect(() => {
+    if (!user) return;
+    setReady(false);
     api.settings.get().then(s => setAppSettings(s)).catch(() => {});
     Promise.all([
       api.carriers.list(),
@@ -404,7 +447,7 @@ function App() {
         setReady(true);
       })
       .catch(e => setApiError(e.message));
-  }, []);
+  }, [user?.id]);
 
   const selectedShipment = shipments.find(s => s.id === selectedId);
   const navigate = (key) => {
@@ -435,6 +478,9 @@ function App() {
   const MDM_PAGES = ["mdm-carriers", "mdm-ports", "mdm-linked", "mdm-vessels", "mdm-commodities", "mdm-tradelanes", "mdm-countries", "mdm-unlocodes", "mdm-customers", "mdm-sanctioned-customers", "mdm-contracts"];
   const ALL_PAGES = [...MDM_PAGES, "manual"];
   const isMdmActive = MDM_PAGES.includes(page);
+
+  if (authLoading) return <FullPageSpinner />;
+  if (!user)       return <LoginPage onLogin={handleLogin} />;
 
   if (apiError) return (
     <div style={{ display: "flex", minHeight: "100vh", background: T.bg, alignItems: "center", justifyContent: "center" }}>
@@ -780,6 +826,29 @@ function App() {
             🏠
           </button>
 
+          {/* Role chip — visible at all times; amber when stepped down */}
+          {availableRoles(user.role).length > 1 && (() => {
+            const isSwitched = activeRole !== user.role;
+            const chipColor  = isSwitched ? T.warning : T.textMuted;
+            const chipBg     = isSwitched ? T.warning + "18" : "transparent";
+            const chipBorder = isSwitched ? T.warning + "55" : T.border;
+            return (
+              <button type="button" onClick={() => setOpen(o => !o)}
+                title={isSwitched ? `Active role: ${ROLE_LABELS[activeRole]} (primary: ${ROLE_LABELS[user.role]})` : `Role: ${ROLE_LABELS[activeRole]}`}
+                style={{
+                  display: "flex", alignItems: "center", gap: 5,
+                  padding: "3px 9px 3px 8px", borderRadius: 20,
+                  border: `1px solid ${chipBorder}`, background: chipBg,
+                  fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: chipColor,
+                  cursor: "pointer", transition: "all .15s",
+                }}>
+                {isSwitched && <span style={{ fontSize: 9 }}>●</span>}
+                {ROLE_LABELS[activeRole]}
+                <span style={{ fontSize: 9, opacity: .6 }}>▾</span>
+              </button>
+            );
+          })()}
+
           {/* User menu */}
           <div ref={menuRef} style={{ position: "relative" }}>
             <button type="button" onClick={() => setOpen(o => !o)}
@@ -791,7 +860,7 @@ function App() {
                 boxShadow: open ? `0 0 0 3px ${T.accent}44` : "none",
                 transition: "box-shadow .15s",
               }}>
-              A
+              {user.name?.[0]?.toUpperCase() || "?"}
             </button>
 
             {open && (
@@ -808,13 +877,22 @@ function App() {
                     background: T.accent, flexShrink: 0,
                     display: "flex", alignItems: "center", justifyContent: "center",
                     fontFamily: T.head, fontSize: 18, fontWeight: 800, color: T.btnPrimaryText,
-                  }}>A</div>
-                  <div>
+                  }}>{user.name?.[0]?.toUpperCase() || "?"}</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
                     <div style={{ fontFamily: T.head, fontSize: 14, fontWeight: 700, color: T.text }}>
-                      Alex
+                      {user.name}
                     </div>
-                    <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
-                      Freight Manager
+                    <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                      <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, textTransform: "capitalize" }}>
+                        {ROLE_LABELS[user.role]}
+                      </span>
+                      {activeRole !== user.role && (
+                        <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700,
+                          color: T.warning, background: T.warning + "18",
+                          borderRadius: 4, padding: "1px 6px", border: `1px solid ${T.warning}44` }}>
+                          → {ROLE_LABELS[activeRole]}
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -829,6 +907,58 @@ function App() {
                   <ThemeToggle />
                 </div>
 
+                {/* Role switcher — only when user has more than one available role */}
+                {availableRoles(user.role).length > 1 && (() => {
+                  const isSwitched = activeRole !== user.role;
+                  return (
+                    <>
+                      <Divider />
+                      <div style={{ padding: "8px 16px 12px" }}>
+                        <div style={{ fontFamily: T.mono, fontSize: 9.5, fontWeight: 700, color: T.border,
+                          textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 8,
+                          display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                          <span>Active Role</span>
+                          {isSwitched && (
+                            <button type="button" onClick={() => setActiveRole(user.role)}
+                              style={{ background: "none", border: "none", cursor: "pointer",
+                                fontFamily: T.mono, fontSize: 9, color: T.warning, padding: 0 }}>
+                              reset ↺
+                            </button>
+                          )}
+                        </div>
+                        <div style={{ display: "flex", gap: 5 }}>
+                          {availableRoles(user.role).map(r => {
+                            const isActive = activeRole === r;
+                            return (
+                              <button key={r} type="button"
+                                onClick={() => { setActiveRole(r); setOpen(false); }}
+                                style={{
+                                  flex: 1, padding: "6px 4px", borderRadius: 7, cursor: "pointer",
+                                  border: `1px solid ${isActive ? T.accent : T.border}`,
+                                  background: isActive ? T.accent + "22" : T.bg,
+                                  color: isActive ? T.accent : T.textMuted,
+                                  fontFamily: T.mono, fontSize: 11, fontWeight: 700,
+                                  textAlign: "center", transition: "all .12s",
+                                }}
+                                onMouseEnter={e => { if (!isActive) { e.currentTarget.style.borderColor = T.accent + "77"; e.currentTarget.style.color = T.text; } }}
+                                onMouseLeave={e => { if (!isActive) { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.textMuted; } }}>
+                                {isActive && "● "}{ROLE_LABELS[r]}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        {isSwitched && (
+                          <div style={{ fontFamily: T.body, fontSize: 11, color: T.warning,
+                            marginTop: 8, display: "flex", alignItems: "center", gap: 5 }}>
+                            <span>⚠</span>
+                            <span>Viewing as {ROLE_LABELS[activeRole]} — server auth unchanged</span>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  );
+                })()}
+
                 <Divider />
 
                         <MenuItem icon="📖" label="User Manual"      onClick={() => navigate("manual")} />
@@ -842,8 +972,7 @@ function App() {
 
                 <Divider />
 
-                <MenuItem icon="🚪" label="Sign Out" disabled
-                  sub="Authentication not yet implemented" />
+                <MenuItem icon="🚪" label="Sign Out" onClick={handleLogout} />
               </div>
             )}
           </div>
@@ -852,7 +981,17 @@ function App() {
     );
   };
 
+  const effectiveRole = activeRole || user?.role || "viewer";
+  const authCtxValue = {
+    user,
+    activeRole: effectiveRole,
+    canEdit:    effectiveRole !== "viewer",
+    isAdmin:    effectiveRole === "admin",
+    isViewer:   effectiveRole === "viewer",
+  };
+
   return (
+  <AuthContext.Provider value={authCtxValue}>
     <div style={{ display: "flex", minHeight: "100vh", background: T.bg, fontFamily: T.body, color: T.text }}>
 
       {/* ── Sidebar ── */}
@@ -1220,6 +1359,7 @@ function App() {
       <ToastContainer />
       <GlobalSavingOverlay />
     </div>
+  </AuthContext.Provider>
   );
 }
 

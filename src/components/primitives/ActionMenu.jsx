@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { T } from "../../tokens";
 
 const ActionMenu = ({ items }) => {
+  if (!items || items.length === 0) return null;
   const [open, setOpen] = useState(false);
   const [pos,  setPos]  = useState({ top: 0, left: 0 });
   const btnRef  = useRef(null);

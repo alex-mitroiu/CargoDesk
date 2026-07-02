@@ -1,5 +1,6 @@
 ﻿import { useState, useEffect } from "react";
 import { T , addDays, diffDays } from "../../tokens";
+import { useAuth } from "../../AuthContext";
 import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns.jsx";
 import { api } from "../../api";
 import Btn from "../../components/primitives/Btn";
@@ -232,6 +233,7 @@ const AllocationForm = ({ init = {}, onSave, onCancel }) => {
 // ─── Page: Carrier Registry ───────────────────────────────────────────────────
 
 const CarriersPage = ({ carriers, onAdd, onEdit, onDelete }) => {
+  const { canEdit } = useAuth();
   const [modal,          setModal]          = useState(null);
   const [confirm,        setConfirm]        = useState(null);
   const [historyCarrier, setHistoryCarrier] = useState(null);
@@ -247,7 +249,7 @@ const CarriersPage = ({ carriers, onAdd, onEdit, onDelete }) => {
             {carriers.length} carrier{carriers.length !== 1 ? "s" : ""} · reference database for shipments &amp; allocations
           </p>
         </div>
-        <Btn onClick={() => setModal("add")} size="lg">＋ Add Carrier</Btn>
+        {canEdit && <Btn onClick={() => setModal("add")} size="lg">＋ Add Carrier</Btn>}
       </div>
 
       <div style={{ background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, overflow: "hidden" }}>
@@ -273,9 +275,9 @@ const CarriersPage = ({ carriers, onAdd, onEdit, onDelete }) => {
             <span style={{ fontFamily: T.mono, fontSize: 14, color: T.accent, fontWeight: 700 }}>{c.code}</span>
             <span style={{ fontFamily: T.body, fontSize: 14, color: T.text }}>{c.name}</span>
             <ActionMenu items={[
-              { icon: "✎", label: "Edit",    onClick: () => setModal(c) },
+              ...(canEdit ? [{ icon: "✎", label: "Edit", onClick: () => setModal(c) }] : []),
               { icon: "📋", label: "History", onClick: () => setHistoryCarrier(c) },
-              { icon: "✕", label: "Remove",  variant: "danger", onClick: () => setConfirm(c.code) },
+              ...(canEdit ? [{ icon: "✕", label: "Remove", variant: "danger", onClick: () => setConfirm(c.code) }] : []),
             ]} />
           </div>
         ))}

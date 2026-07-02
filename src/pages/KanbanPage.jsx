@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { T } from "../tokens";
 import { inputBase } from "../components/primitives/Form";
 import { api } from "../api";
+import { useAuth } from "../AuthContext";
 import { Modal, ConfirmModal } from "../components/primitives/Modal";
 import Btn from "../components/primitives/Btn";
 import Badge from "../components/primitives/Badge";
@@ -258,6 +259,7 @@ const DropLine = () => (
 const TicketCard = ({ ticket, onEdit, onDelete, onMove, onPreview, colIndex,
                       isSelected, isDragging, dropIndicator,
                       onDragStart, onDragEnd, onDragOver }) => {
+  const { canEdit } = useAuth();
   const [confirm, setConfirm] = useState(false);
   const cardRef  = useRef(null);
   const dragged  = useRef(false);
@@ -279,10 +281,10 @@ const TicketCard = ({ ticket, onEdit, onDelete, onMove, onPreview, colIndex,
 
       <div
         ref={cardRef}
-        draggable
-        onDragStart={e => { dragged.current = true; e.dataTransfer.setData("ticketId", ticket.id); onDragStart(ticket.id); }}
-        onDragEnd={e => { dragged.current = false; onDragEnd(e); }}
-        onDragOver={handleDragOver}
+        draggable={canEdit}
+        onDragStart={canEdit ? (e => { dragged.current = true; e.dataTransfer.setData("ticketId", ticket.id); onDragStart(ticket.id); }) : undefined}
+        onDragEnd={canEdit ? (e => { dragged.current = false; onDragEnd(e); }) : undefined}
+        onDragOver={canEdit ? handleDragOver : undefined}
         onClick={() => { if (!dragged.current) onPreview(ticket); }}
         style={{
           background: isSelected ? `${T.accent}0d` : T.bg,
@@ -349,6 +351,7 @@ const TicketCard = ({ ticket, onEdit, onDelete, onMove, onPreview, colIndex,
         )}
 
         {/* Actions */}
+        {canEdit && (
         <div style={{ display: "flex", gap: 5, justifyContent: "flex-end",
           borderTop: `1px solid ${T.border}22`, paddingTop: 8 }}>
           {colIndex > 0 && (
@@ -377,6 +380,7 @@ const TicketCard = ({ ticket, onEdit, onDelete, onMove, onPreview, colIndex,
             </button>
           )}
         </div>
+        )}
       </div>
 
       {dropIndicator === "after" && <DropLine />}
@@ -394,6 +398,7 @@ const TicketCard = ({ ticket, onEdit, onDelete, onMove, onPreview, colIndex,
 // ─── Ticket Preview Panel ─────────────────────────────────────────────────────
 
 const TicketPreview = ({ ticket, colIndex, shipments, tickets, onClose, onEdit, onMove, onDelete }) => {
+  const { canEdit } = useAuth();
   const [confirm, setConfirm] = useState(false);
   const linked = shipments.find(s => s.id === ticket.shipmentId);
 
@@ -516,20 +521,22 @@ const TicketPreview = ({ ticket, colIndex, shipments, tickets, onClose, onEdit, 
       {/* Actions footer */}
       <div style={{ padding: "10px 14px", borderTop: `1px solid ${T.border}`,
         display: "flex", gap: 6, flexShrink: 0 }}>
-        {colIndex > 0 && (
+        {canEdit && colIndex > 0 && (
           <button onClick={() => onMove(ticket, COLUMNS[colIndex - 1])}
             style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 5,
               color: T.textMuted, cursor: "pointer", fontSize: 11, padding: "5px 10px", fontFamily: T.body }}>
             ← {COLUMNS[colIndex - 1].split(" ")[0]}
           </button>
         )}
-        <button onClick={onEdit}
-          style={{ flex: 1, background: T.accentBg, border: `1px solid ${T.accent}55`, borderRadius: 5,
-            color: T.accent, cursor: "pointer", fontSize: 12, padding: "5px 10px",
-            fontFamily: T.body, fontWeight: 600 }}>
-          ✎ Edit
-        </button>
-        {colIndex < COLUMNS.length - 1 && (
+        {canEdit && (
+          <button onClick={onEdit}
+            style={{ flex: 1, background: T.accentBg, border: `1px solid ${T.accent}55`, borderRadius: 5,
+              color: T.accent, cursor: "pointer", fontSize: 12, padding: "5px 10px",
+              fontFamily: T.body, fontWeight: 600 }}>
+            ✎ Edit
+          </button>
+        )}
+        {canEdit && colIndex < COLUMNS.length - 1 && (
           <button onClick={() => onMove(ticket, COLUMNS[colIndex + 1])}
             style={{ background: T.accentBg, border: `1px solid ${T.accent}55`, borderRadius: 5,
               color: T.accent, cursor: "pointer", fontSize: 11, padding: "5px 10px",
@@ -537,11 +544,13 @@ const TicketPreview = ({ ticket, colIndex, shipments, tickets, onClose, onEdit, 
             {COLUMNS[colIndex + 1].split(" ")[0]} →
           </button>
         )}
-        <button onClick={() => setConfirm(true)}
-          style={{ background: "none", border: `1px solid ${T.danger}44`, borderRadius: 5,
-            color: T.danger, cursor: "pointer", fontSize: 11, padding: "5px 10px", fontFamily: T.body }}>
-          ✕
-        </button>
+        {canEdit && (
+          <button onClick={() => setConfirm(true)}
+            style={{ background: "none", border: `1px solid ${T.danger}44`, borderRadius: 5,
+              color: T.danger, cursor: "pointer", fontSize: 11, padding: "5px 10px", fontFamily: T.body }}>
+            ✕
+          </button>
+        )}
       </div>
 
       {confirm && (
@@ -675,6 +684,7 @@ const KanbanColumn = ({ status, tickets, onEdit, onDelete, onMove, onPreview,
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 const KanbanPage = ({ shipments = [] }) => {
+  const { canEdit } = useAuth();
   const [tickets,       setTickets]       = useState([]);
   const [loading,       setLoading]       = useState(true);
   const [modal,         setModal]         = useState(null);
@@ -819,7 +829,7 @@ const KanbanPage = ({ shipments = [] }) => {
             }}>
             {showReleased ? "● Released" : "○ Released"}
           </button>
-          <Btn onClick={() => setModal("add")} size="lg">＋ Add Ticket</Btn>
+          {canEdit && <Btn onClick={() => setModal("add")} size="lg">＋ Add Ticket</Btn>}
         </div>
       </div>
 

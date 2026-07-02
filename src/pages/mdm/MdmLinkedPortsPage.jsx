@@ -2,6 +2,7 @@
 import Spinner, { PageSpinner } from "../../components/primitives/Spinner";
 import { T } from "../../tokens";
 import { api } from "../../api";
+import { useAuth } from "../../AuthContext";
 import Btn from "../../components/primitives/Btn";
 import { Inp } from "../../components/primitives/Form";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
@@ -15,6 +16,7 @@ import { useResizableColumns, ColResizer } from "../../components/primitives/use
 const LP_LIMIT = 50;
 
 const MdmLinkedPortsPage = () => {
+  const { canEdit } = useAuth();
   const [links,   setLinks]   = useState([]);
   const [offset,  setOffset]  = useState(0);
   const [loading, setLoading] = useState(true);
@@ -93,7 +95,7 @@ const MdmLinkedPortsPage = () => {
 
           </p>
         </div>
-        <Btn onClick={() => setModal("add")} size="lg">＋ Add Link</Btn>
+        {canEdit && <Btn onClick={() => setModal("add")} size="lg">＋ Add Link</Btn>}
       </div>
 
       {apiErr && (
@@ -136,8 +138,8 @@ const MdmLinkedPortsPage = () => {
             </span>
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <ActionMenu items={[
-                { icon: "✎", label: "Edit Note", onClick: () => setModal(l) },
-                { icon: "✕", label: "Delete",    variant: "danger", onClick: () => setConfirm(l.id) },
+                ...(canEdit ? [{ icon: "✎", label: "Edit Note", onClick: () => setModal(l) }] : []),
+                ...(canEdit ? [{ icon: "✕", label: "Delete",    variant: "danger", onClick: () => setConfirm(l.id) }] : []),
               ]} />
             </div>
           </div>

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { T, LANE_BADGE_VARIANT, diffDays, todayIso } from "../tokens";
 import Btn from "../components/primitives/Btn";
 import Badge from "../components/primitives/Badge";
+import { useAuth } from "../AuthContext";
 
 // ─── Lane pair (local — mirrors DashboardPage) ────────────────────────────────
 const LanePair = ({ origin, dest }) => (
@@ -29,6 +30,7 @@ const expiredAgo = endDate => {
 // Pure display component — receives data and callbacks from DashboardPage.
 
 const DashboardArchive = ({ allocations = [], carriers = [], onRenew, onDelete, standalone = false }) => {
+  const { canEdit } = useAuth();
   const [open, setOpen] = useState(false);
 
   if (!standalone && allocations.length === 0) return null;
@@ -93,10 +95,12 @@ const DashboardArchive = ({ allocations = [], carriers = [], onRenew, onDelete, 
                 {expiredAgo(a.endDate)}
               </span>
             </div>
-            <div style={{ display: "flex", gap: 6 }}>
-              <Btn size="sm" variant="secondary" onClick={() => onRenew(a)}>↻ Renew</Btn>
-              <Btn size="sm" variant="danger"    onClick={() => onDelete(a.id)}>✕</Btn>
-            </div>
+            {canEdit && (
+              <div style={{ display: "flex", gap: 6 }}>
+                <Btn size="sm" variant="secondary" onClick={() => onRenew(a)}>↻ Renew</Btn>
+                <Btn size="sm" variant="danger"    onClick={() => onDelete(a.id)}>✕</Btn>
+              </div>
+            )}
           </div>
         );
       })}

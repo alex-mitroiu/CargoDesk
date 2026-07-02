@@ -1,6 +1,7 @@
 ﻿import { useState, useCallback, useEffect, useRef } from "react";
 import { T, LANE_BADGE_VARIANT } from "../../tokens";
 import { api } from "../../api";
+import { useAuth } from "../../AuthContext";
 import Btn from "../../components/primitives/Btn";
 import Badge from "../../components/primitives/Badge";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
@@ -11,6 +12,7 @@ import { PageSpinner } from "../../components/primitives/Spinner";
 import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns.jsx";
 
 const MdmTradeLanesPage = () => {
+  const { canEdit } = useAuth();
   const [lanes,   setLanes]   = useState([]);
   const [loading, setLoading] = useState(true);
   const [modal,   setModal]   = useState(null);
@@ -157,7 +159,7 @@ const MdmTradeLanesPage = () => {
             {lanes.length} FIATA high-level trade lanes · linked to countries
           </p>
         </div>
-        <Btn onClick={() => setModal("add")} size="lg">＋ Add Lane</Btn>
+        {canEdit && <Btn onClick={() => setModal("add")} size="lg">＋ Add Lane</Btn>}
       </div>
 
       <div style={{ background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, overflow: "hidden" }}>
@@ -188,8 +190,8 @@ const MdmTradeLanesPage = () => {
             <span style={{ fontFamily: T.mono, fontSize: 13, color: T.text }}>{l.countryCount} countries</span>
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <ActionMenu items={[
-                { icon: "✎", label: "Edit",   onClick: () => setModal(l) },
-                { icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(l.code) },
+                ...(canEdit ? [{ icon: "✎", label: "Edit",   onClick: () => setModal(l) }] : []),
+                ...(canEdit ? [{ icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(l.code) }] : []),
               ]} />
             </div>
           </div>

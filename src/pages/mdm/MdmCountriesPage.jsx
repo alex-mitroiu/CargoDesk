@@ -1,6 +1,7 @@
 ﻿import { useState, useCallback, useEffect, useRef } from "react";
 import { T, LANE_BADGE_VARIANT, contractVariant } from "../../tokens";
 import { api } from "../../api";
+import { useAuth } from "../../AuthContext";
 import Btn from "../../components/primitives/Btn";
 import Badge from "../../components/primitives/Badge";
 import { inputBase,BtnToggle, Field, Inp} from "../../components/primitives/Form";
@@ -18,6 +19,7 @@ import { useResizableColumns, ColResizer } from "../../components/primitives/use
 const LIMIT = 50;
 
 const MdmCountriesPage = () => {
+  const { canEdit } = useAuth();
   const [countries,      setCountries]      = useState([]);
   const [total,          setTotal]          = useState(0);
   const [offset,         setOffset]         = useState(0);
@@ -140,7 +142,7 @@ const MdmCountriesPage = () => {
             {total} entr{total !== 1 ? "ies" : "y"} · ISO 3166-1 alpha-2 · with FIATA trade lane assignments
           </p>
         </div>
-        <Btn onClick={() => setModal("add")} size="lg">＋ Add Country</Btn>
+        {canEdit && <Btn onClick={() => setModal("add")} size="lg">＋ Add Country</Btn>}
       </div>
 
       <div style={{ marginBottom: 14 }}>
@@ -186,8 +188,8 @@ const MdmCountriesPage = () => {
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <ActionMenu items={[
                 ...((c.portCount ?? 0) > 0 ? [{ icon: "📍", label: "View Locations", onClick: () => setViewLocations(c) }] : []),
-                { icon: "✎", label: "Edit",   onClick: () => setModal(c) },
-                { icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(c.iso2) },
+                ...(canEdit ? [{ icon: "✎", label: "Edit",   onClick: () => setModal(c) }] : []),
+                ...(canEdit ? [{ icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(c.iso2) }] : []),
               ]} />
             </div>
           </div>

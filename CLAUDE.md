@@ -4,7 +4,7 @@
 Full-stack freight management app. React 18 + Vite frontend, Express + node:sqlite backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.18.1 "Traverse"**
+- Version: **v0.19.0 "Muster"**
 - Run: `npm run dev` (runs server on :3001 + Vite on :5173 concurrently)
 - Seed: `npm run seed` (runs `scripts/import-mdm-data.js`)
 
@@ -24,12 +24,15 @@ scripts/
 sampleDB/
   cargodesk.db                     Pre-loaded sample DB — copy to project root to use
 src/
-  App.jsx                          Root: routing, nav, state, theme toggle
-  api.js                           All fetch wrappers (api.shipments, api.ports, etc.)
+  App.jsx                          Root: routing, nav, state, theme toggle, auth guards, role switcher
+  api.js                           All fetch wrappers (api.shipments, api.ports, api.auth, api.users…)
   tokens.js                        T object, theme colours, route-matching helpers
   toast.js                         Pub-sub toast emitter
   version.js                       VERSION, CODENAME, CHANGELOG
+  AuthContext.jsx                  createContext + useAuth hook — provides user, activeRole,
+                                   canEdit, isAdmin, isViewer to all components
   pages/
+    LoginPage.jsx                  Centered login form; calls api.auth.login → onLogin(token, user)
     ShipmentsPage.jsx              Shipment list + ShipmentForm (new/edit)
     ShipmentDetailPage.jsx         Detail view, ContainerForm + ContainerTypePickerModal,
                                    ShipmentTimeline (history tracker), LinkVesselModal
@@ -37,6 +40,7 @@ src/
     SpaceConfigurationsPage.jsx    Standalone Space Configs page with Linked Shipments modal
     DashboardArchivePage.jsx       Expired allocations + renew flow
     KanbanPage.jsx                 Integration board with drag-to-reorder
+    AppSettingsPage.jsx            API Controls + Finance + Users (admin only) tabs
     AboutPage.jsx                  DB schema, features, changelog
     mdm/
       MdmCommoditiesPage.jsx       294 Maersk commodity codes
@@ -58,9 +62,10 @@ src/
       CommodityCombobox.jsx        Typeahead with GradePill + CommodityPickerModal
       VesselCombobox.jsx           {VesselCombobox, VesselField} named exports
       EntityHistoryModal.jsx       Generic audit-log timeline viewer
+      UserManagementPanel.jsx      Admin-only user CRUD table (name, email, role, status, last login)
 ```
 
-## Database — 20 tables
+## Database — 21 tables
 | Table | Purpose |
 |---|---|
 | shipments | Core shipment records |
@@ -84,6 +89,7 @@ src/
 | contract_legs | POL/POD pairs per contract with polLinkedAllowed / podLinkedAllowed flags |
 | contract_rates | Rate entries per contract |
 | system_messages | Operational notices with severity and active date range |
+| users | Authenticated users: id, email, name, password_hash, role (admin/operator/viewer), is_active, created_at, last_login |
 
 ## Key patterns
 - **PortCombobox dropdown**: always `position: fixed` with `getBoundingClientRect()` to escape modal `overflow:auto`
@@ -99,10 +105,17 @@ src/
 - **Route matching**: `allocationRouteMatch(s, a, contractsById, linkedPortIdx)` in tokens.js — defers to the allocation's contract legs (`polLinkedAllowed`/`podLinkedAllowed`) for linked-port expansion; falls back to exact pol/pod equality when no contract is loaded
 - **contractMatch**: `contractMatch(s, a)` — priority: contractId exact > contractNumber/contractRef string > contractType === "Central Contract"
 - **Contract legs loaded on demand**: SpaceConfigurationsPage fetches `api.contracts.get(id)` for each unique allocation contractId and caches in `contractsById` state
+- **Auth token**: stored in `localStorage` under key `cargodesk_token`; decoded with `jwt.verify` in `auth()` middleware factory; `api.auth.login(email, password)` → `{ token, user }`
+- **useAuth()**: `import { useAuth } from './AuthContext'` → `{ user, activeRole, canEdit, isAdmin, isViewer }`; `canEdit = effectiveRole !== "viewer"` — use this single boolean to gate all write actions
+- **Role hierarchy**: admin (2) > operator (1) > viewer (0); `activeRole` overrides `user.role` when an admin is impersonating a lower role
+- **ActionMenu null guard**: ActionMenu returns `null` when `items` is empty — safe to always render it with conditional items spread: `...(canEdit ? [{ ...}] : [])`
+- **Admin seed**: on first startup, if no users exist, server seeds a default admin: `admin@cargodesk.com` / `admin123` — warn users to change this
+- **bcryptjs**: password hashing uses `bcryptjs` (pure JS, no native deps); `POST /api/users` returns `{ ok: true }`, not the created record — reload the list after create/edit
 
-## Recent changes (v0.18.0)
-- **Operational Accounting** (renamed from Cost Control): `source` + `modified_at` columns on `shipment_cost_lines`; lines show Contract / Contract (Modified) / Manual pills; Cost Line History modal with CREATED/IMPORTED/UPDATED/DELETED filter chips + CSV export (stored in `entity_events`); ⇄ Mirror as BUY/SELL button in Add/Edit modal — saves primary line and creates mirrored copy with type flipped; Container column in cost line table; import now filters per-container rates by container type; manual lines preserved on recalculate; module renamed to "Operational Accounting - Masha's Domain"
-- **Shipment Milestones** (new): `milestone_templates` + `shipment_milestones` DB tables; default 9-step FCL template seeded on startup (Booking Confirmed → Delivered); `POST /api/shipments/:id/milestones/init` picks best-matching template by carrier + trade lane; `MilestonePanel` in shipment detail — vertical stepper with progress bar, completed/current/overdue/upcoming states, inline date+note editing, mark-complete/undo, reset, collapse toggle; overdue badge on shipment rows; Overdue Milestones KPI on Landing Page
-- **Integration Board**: two new columns — In Testing (cyan) + Testing Failed (red) between Done and Released; per-column Show More (first 5 visible, ▾▾/▴▴ toggle); Show/Hide Released column toggle in toolbar (default ON)
-- **REST API compliance**: cost-line routes nested — `PUT/DELETE /api/cost-lines/:id` → `PUT/DELETE /api/shipments/:shipmentId/cost-lines/:id`; `api.costLines.update(shipmentId, lineId, d)` and `api.costLines.remove(shipmentId, lineId)` signatures updated
-- **Postman collection**: `/src/dev/CargoDesk.postman_collection.json` (18 resource folders, all routes with example bodies) + `/src/dev/CargoDesk.postman_environment.json` (`{{baseUrl}}` = `http://localhost:3001`)
+## Recent changes (v0.19.0 "Muster")
+- **Authentication**: JWT-based login (`POST /api/auth/login`); token stored in `localStorage` under `cargodesk_token`; `auth()` Express middleware factory validates token on protected routes; `LoginPage.jsx` renders centered login form; on first startup with an empty `users` table the server seeds a default admin account (`admin@cargodesk.com` / `admin123`)
+- **User Management**: `users` table (21st table); full CRUD via `GET/POST /api/users` + `PUT/DELETE /api/users/:id`; `UserManagementPanel.jsx` in AppSettings → Users tab (admin only); `RoleBadge` color-coded admin/operator/viewer; passwords hashed with `bcryptjs`; `is_active` flag to disable accounts without deleting them
+- **RBAC — three roles**: admin (full access + user management), operator (full access, no user admin), viewer (read-only everywhere); `activeRole` in App.jsx state lets admins impersonate lower roles via the nav role-switcher
+- **AuthContext**: `src/AuthContext.jsx` exports `AuthContext` + `useAuth()` hook — every page/component imports `const { canEdit, isAdmin, isViewer } = useAuth()` to gate write actions
+- **Viewer read-only enforcement**: all write actions gated with `canEdit` across every page and MDM module — New/Edit/Delete buttons hidden; ActionMenu returns `null` when its `items` array is empty (guard added to `ActionMenu.jsx`); drag-and-drop on KanbanPage disabled when viewer; "👁 View Only" banner shown on ShipmentDetailPage
+- **Shipment Detail sidebar**: collapsible info panel with key fields, vessel, route, commodity summary alongside the main detail content

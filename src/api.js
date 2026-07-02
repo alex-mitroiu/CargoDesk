@@ -1,13 +1,26 @@
 const BASE = "/api";
+export const TOKEN_KEY = "cargodesk_token";
 
 import { toast } from "./toast";
 
 const req = async (method, path, body) => {
+  const token = localStorage.getItem(TOKEN_KEY);
+  const headers = {};
+  if (body)  headers["Content-Type"]  = "application/json";
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
   const res = await fetch(`${BASE}${path}`, {
     method,
-    headers: body ? { "Content-Type": "application/json" } : {},
+    headers,
     body: body ? JSON.stringify(body) : undefined,
   });
+
+  if (res.status === 401) {
+    localStorage.removeItem(TOKEN_KEY);
+    window.dispatchEvent(new Event("cargodesk:logout"));
+    throw new Error("Session expired — please sign in again");
+  }
+
   if (!res.ok) {
     const e = await res.json().catch(() => ({}));
     const msg = e.error || e.message || `HTTP ${res.status}`;
@@ -176,6 +189,16 @@ export const api = {
     all:    ()     => req("GET",    "/system-messages/all"),
     create: (data) => req("POST",   "/system-messages", data),
     remove: (id)   => req("DELETE", `/system-messages/${id}`),
+  },
+  auth: {
+    login: (email, password) => req("POST", "/auth/login", { email, password }),
+    me:    ()                => req("GET",  "/auth/me"),
+  },
+  users: {
+    list:   ()           => req("GET",    "/users"),
+    create: (data)       => req("POST",   "/users", data),
+    update: (id, data)   => req("PATCH",  `/users/${id}`, data),
+    remove: (id)         => req("DELETE", `/users/${id}`),
   },
   fx: {
     rates: () => req("GET", "/fx/rates"),

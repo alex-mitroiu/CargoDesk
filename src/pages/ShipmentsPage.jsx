@@ -3,6 +3,7 @@ import useSaving from "../hooks/useSaving";
 import { T, CONTRACT_PRESETS, CONTAINER_TYPES, STATUSES, INCOTERMS_2020,
          statusVariant, contractVariant, teuOf, addDays, diffDays } from "../tokens";
 import { api } from "../api";
+import { useAuth } from "../AuthContext";
 import Btn from "../components/primitives/Btn";
 import Badge from "../components/primitives/Badge";
 import { Modal, ConfirmModal } from "../components/primitives/Modal";
@@ -629,6 +630,7 @@ const ShipmentForm = ({ init = {}, onSave, onCancel }) => {
 };
 
 const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, onNew, financeEnabled = true }) => {
+  const { canEdit } = useAuth();
   const [confirm,       setConfirm]       = useState(null);
   const [historyShipment, setHistoryShipment] = useState(null);
   const [filters,  setFilters]  = useState({ search: '', status: '', carrier: '' });
@@ -662,7 +664,7 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
             · {shipments.filter(s => s.status === "Active").length} active
           </p>
         </div>
-        <Btn onClick={onNew} size="lg" disabled={carriers.length === 0}>＋ New Shipment</Btn>
+        {canEdit && <Btn onClick={onNew} size="lg" disabled={carriers.length === 0}>＋ New Shipment</Btn>}
       </div>
 
       {/* Filter bar */}
@@ -774,7 +776,7 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
                 <ActionMenu items={[
                   { icon: "↗", label: "Open",    onClick: () => window.open(`#shipments/${s.id}`, "_blank") },
                   { icon: "📋", label: "History", onClick: () => setHistoryShipment(s) },
-                  { icon: "✕", label: "Delete",  variant: "danger", onClick: () => setConfirm(s.id) },
+                  ...(canEdit ? [{ icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(s.id) }] : []),
                 ]} />
               </div>
             </div>

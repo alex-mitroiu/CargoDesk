@@ -2,6 +2,7 @@
 import Spinner, { PageSpinner } from "../../components/primitives/Spinner";
 import { T } from "../../tokens";
 import { api } from "../../api";
+import { useAuth } from "../../AuthContext";
 import Btn from "../../components/primitives/Btn";
 import { Inp, Sel } from "../../components/primitives/Form";
 import { inputBase } from "../../components/primitives/Form";
@@ -62,6 +63,7 @@ const CommodityForm = ({ init = {}, onSave, onCancel }) => {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 const MdmCommoditiesPage = () => {
+  const { canEdit } = useAuth();
   const [results, setResults] = useState([]);
   const [total,   setTotal]   = useState(0);
   const [offset,  setOffset]  = useState(0);
@@ -111,7 +113,7 @@ const MdmCommoditiesPage = () => {
             {total.toLocaleString()} Maersk commodity codes · source: lista-de-commodities-y-grado-de-unidad
           </p>
         </div>
-        <Btn onClick={() => setModal("add")} size="lg">＋ Add Commodity</Btn>
+        {canEdit && <Btn onClick={() => setModal("add")} size="lg">＋ Add Commodity</Btn>}
       </div>
 
       {/* Search + grade filter */}
@@ -155,8 +157,8 @@ const MdmCommoditiesPage = () => {
             <div style={{ display: "flex" }}><GradePill code={c.gradeCode} name={c.gradeName} /></div>
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <ActionMenu items={[
-                { icon: "✎", label: "Edit",   onClick: () => setModal(c) },
-                { icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(c.code) },
+                ...(canEdit ? [{ icon: "✎", label: "Edit",   onClick: () => setModal(c) }] : []),
+                ...(canEdit ? [{ icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(c.code) }] : []),
               ]} />
             </div>
           </div>

@@ -2,11 +2,17 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.18.1";
+export const VERSION   = "0.19.0";
 export const BUILD     = "2026-07-02";
-export const CODENAME  = "Traverse";
+export const CODENAME  = "Muster";
 
 export const CHANGELOG = [
+  {
+    version:  "0.19.0",
+    date:     "2026-07-02",
+    codename: "Muster",
+    summary:  "Authentication: JWT-based login page; users table in SQLite with bcrypt-hashed passwords; 8-hour access tokens stored in localStorage; POST /api/auth/login, GET /api/auth/me, POST /api/auth/logout; admin account seeded on first startup; global auth() middleware gates all /api/* routes (exempt: /api/auth/*); 401 responses dispatch cargodesk:logout across all tabs. User Management: admin-only Users tab in Application Settings; full CRUD — create (name, email, role, password), edit (name, role, active toggle, reset password), delete with confirmation; table shows role badge, active/inactive pill, last login. RBAC: three roles — admin (full access), operator (create & edit), viewer (read-only); AuthContext provides canEdit / isAdmin / isViewer computed from effective role; role switcher in user dropdown lets admin step down to operator or viewer for preview (JWT unchanged, server unaffected). Viewer read-only: all create/edit/delete actions hidden for viewer role across every page — Shipments (New Shipment button + Delete action), Shipment Detail (Edit Shipment, Link Vessel, Add/Edit/Delete containers; View Only banner shown), Archive (Renew + Delete buttons), Integration Board (Add Ticket, card move/edit/delete, drag-to-reorder all gated), Space Configurations, Contracts, and all 9 MDM pages (Carriers, Vessels, Ports, Linked Ports, Customers, Commodities, Regions, Trade Lanes, Countries). Shipment Detail contextual sidebar: when a shipment is open in its own tab the main sidebar is replaced by a shipment-specific nav with a context card (ID, route, TEU, status), section links (Overview, Cargo Details, Accounting, Milestones) that scroll to and open the matching panel, and a smart Close Tab back button. ActionMenu guard: returns null when items array is empty so no orphan ⚙ buttons appear for viewer-role users.",
+  },
   {
     version:  "0.18.1",
     date:     "2026-07-02",

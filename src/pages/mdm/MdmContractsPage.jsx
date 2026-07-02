@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import useSaving from "../../hooks/useSaving";
 import { T, IMDG_CLASSES, CONTAINER_OPTIONS as CONTAINER_OPTION_DEFS } from "../../tokens";
 import { api } from "../../api";
+import { useAuth } from "../../AuthContext";
 import { toast } from "../../toast";
 import Spinner, { PageSpinner } from "../../components/primitives/Spinner";
 import Btn from "../../components/primitives/Btn";
@@ -624,6 +625,7 @@ const ContractModal = ({ editing, prefill, onSave, onClose }) => {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 const MdmContractsPage = () => {
+  const { canEdit } = useAuth();
   const [results, setResults] = useState([]);
   const [total,   setTotal]   = useState(0);
   const [offset,  setOffset]  = useState(0);
@@ -716,7 +718,7 @@ const MdmContractsPage = () => {
             {hasFilters ? " matching filters" : " in registry"}
           </p>
         </div>
-        <Btn size="lg" onClick={() => setModal("new")}>＋ New Contract</Btn>
+        {canEdit && <Btn size="lg" onClick={() => setModal("new")}>＋ New Contract</Btn>}
       </div>
 
       {/* Filter bar */}
@@ -886,10 +888,10 @@ const MdmContractsPage = () => {
               {/* Actions */}
               <div style={{ display: "flex", justifyContent: "flex-end" }}>
                 <ActionMenu items={[
-                  { icon: "✎",  label: "Edit",      onClick: () => setModal(c) },
-                  { icon: "⧉",  label: "Duplicate", onClick: () => handleDuplicate(c) },
+                  ...(canEdit ? [{ icon: "✎",  label: "Edit",      onClick: () => setModal(c) }] : []),
+                  ...(canEdit ? [{ icon: "⧉",  label: "Duplicate", onClick: () => handleDuplicate(c) }] : []),
                   { icon: "📋", label: "History",   onClick: () => setHistoryContract(c) },
-                  { icon: "✕",  label: "Delete",    variant: "danger", onClick: () => handleDelete(c.id) },
+                  ...(canEdit ? [{ icon: "✕",  label: "Delete",    variant: "danger", onClick: () => handleDelete(c.id) }] : []),
                 ]} />
               </div>
             </div>

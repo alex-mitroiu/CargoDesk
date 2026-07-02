@@ -3,6 +3,7 @@ import useSaving from "../hooks/useSaving";
 import { T, addDays, diffDays, teuOf, LANE_BADGE_VARIANT, todayIso, statusVariant, contractVariant,
   buildLinkedPortIndex, matchedLegFor, allocationRouteMatch } from "../tokens";
 import { api } from "../api";
+import { useAuth } from "../AuthContext";
 import Btn from "../components/primitives/Btn";
 import Badge from "../components/primitives/Badge";
 import { Inp, Sel, Textarea, Field } from "../components/primitives/Form";
@@ -546,6 +547,7 @@ const SpaceConfigurationsPage = ({
   pendingRenew, onPendingRenewClear,
   navigate,
 }) => {
+  const { canEdit } = useAuth();
   const [allocModal,    setAllocModal]    = useState(null);
   const [confirmAlloc,  setConfirmAlloc]  = useState(null);
   const [renewInit,     setRenewInit]     = useState(null);
@@ -656,7 +658,7 @@ const SpaceConfigurationsPage = ({
         </div>
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
           <Btn variant="secondary" onClick={() => navigate("dashboard-archive")}>🗄 Archive</Btn>
-          <Btn onClick={() => setAllocModal("add")} disabled={carriers.length === 0}>＋ Add Configuration</Btn>
+          {canEdit && <Btn onClick={() => setAllocModal("add")} disabled={carriers.length === 0}>＋ Add Configuration</Btn>}
         </div>
       </div>
 
@@ -770,10 +772,10 @@ const SpaceConfigurationsPage = ({
               {/* Cog menu */}
               <div style={{ display: "flex", justifyContent: "flex-end" }}>
                 <ActionMenu items={[
-                  { icon: "✎",  label: "Edit",              onClick: () => setAllocModal(a) },
+                  ...(canEdit ? [{ icon: "✎", label: "Edit", onClick: () => setAllocModal(a) }] : []),
                   { icon: "🔗", label: "Linked Shipments",  onClick: () => setLinkedAlloc(a) },
                   { icon: "📋", label: "History",           onClick: () => setHistoryAlloc(a) },
-                  { icon: "✕",  label: "Delete",            variant: "danger", onClick: () => setConfirmAlloc(a.id) },
+                  ...(canEdit ? [{ icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirmAlloc(a.id) }] : []),
                 ]} />
               </div>
             </div>

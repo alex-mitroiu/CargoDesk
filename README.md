@@ -2,7 +2,7 @@
 
 > Freight management application for tracking ocean shipments, carrier space utilisation, contracts, and maritime master data.
 
-[![Version](https://img.shields.io/badge/version-0.18.1-blue)](.)
+[![Version](https://img.shields.io/badge/version-0.19.0-blue)](.)
 ![Node](https://img.shields.io/badge/node-22.5%2B-green)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
@@ -40,6 +40,9 @@
 - **Light / Dark Theme** — Apple-style light theme and CargoDesk dark theme, toggled on the fly.
 - **User Manual** — Built-in docs covering Incoterms 2020 and IMDG dangerous goods classes.
 - **System Health** — Footer button opens a modal that parallel-pings all internal API routes and external services, reporting latency or error per endpoint.
+- **Authentication** — JWT-based login with `bcryptjs` password hashing. Token stored in `localStorage`; all API routes protected by `auth()` middleware. A default admin account (`admin@cargodesk.com` / `admin123`) is seeded on first startup when no users exist.
+- **User Management** — Admin-only Users tab in Application Settings: create, edit, deactivate, and delete user accounts. Role-coded badges (admin / operator / viewer). Passwords hashed, never exposed.
+- **RBAC — Three Roles** — admin (full access + user management), operator (full access, no user admin), viewer (read-only everywhere). All write actions (create, edit, delete, drag-to-reorder on Kanban) are hidden for viewers. A "👁 View Only" banner appears on the shipment detail page. Admins can impersonate lower roles via the nav role-switcher.
 
 ---
 
@@ -86,6 +89,17 @@ npm run seed:contracts
 
 Open [http://localhost:5173](http://localhost:5173)
 
+### Default Login
+
+On first startup, if no users exist, the server seeds a default admin account:
+
+| Field | Value |
+|-------|-------|
+| Email | `admin@cargodesk.com` |
+| Password | `admin123` |
+
+> **Change the password immediately** in Application Settings → Users after your first login.
+
 ### Notes
 
 - `cargodesk.db` is created automatically on the first server start.
@@ -121,7 +135,8 @@ CargoDesk/
     │   ├── CargoDesk.postman_collection.json   # All API routes in 18 resource folders
     │   └── CargoDesk.postman_environment.json  # {{baseUrl}} = http://localhost:3001
     ├── toast.js               # Pub-sub toast emitter
-    ├── App.jsx                # Routing, navigation, top-level state, HealthModal
+    ├── App.jsx                # Routing, navigation, top-level state, auth guards, role switcher
+    ├── AuthContext.jsx        # createContext + useAuth hook — user, activeRole, canEdit, isAdmin, isViewer
     ├── main.jsx
     ├── components/
     │   ├── primitives/
@@ -143,8 +158,10 @@ CargoDesk/
     │       ├── EntityHistoryModal.jsx    # Generic audit-log timeline viewer
     │       ├── IncotermsModal.jsx
     │       ├── PortCombobox.jsx          # position:fixed dropdown (escapes modal overflow)
+    │       ├── UserManagementPanel.jsx   # Admin-only user CRUD (name, email, role, status, last login)
     │       └── VesselCombobox.jsx        # {VesselCombobox, VesselField} named exports
     └── pages/
+        ├── LoginPage.jsx                # Centered login form; calls api.auth.login → onLogin(token, user)
         ├── LandingPage.jsx              # Fleet KPIs, weather, FX, calendar week, system messages, requires-attention tabs
         ├── ShipmentsPage.jsx            # Shipment list + filters + CSV export + ShipmentForm (opens in new tab)
         ├── ShipmentDetailPage.jsx       # Detail view, MessagesDrawer (WebSocket), ContainerForm, ShipmentTimeline
@@ -152,6 +169,7 @@ CargoDesk/
         ├── SpaceConfigurationsPage.jsx  # Standalone Space Configs page with Linked Shipments modal
         ├── DashboardArchivePage.jsx     # Expired allocations + renew flow
         ├── KanbanPage.jsx               # Ticket board with drag-to-reorder, ticket types, and version tags
+        ├── AppSettingsPage.jsx          # API Controls + Finance + Users (admin only) tabs
         ├── UserManualPage.jsx           # Incoterms 2020 + IMDG reference
         ├── AboutPage.jsx                # DB schema, features, changelog
         └── mdm/
@@ -199,6 +217,7 @@ CargoDesk/
 | `shipment_cost_lines` | BUY and SELL cost lines per shipment with source tracking (`source`, `modified_at`) |
 | `shipment_milestones` | Per-shipment milestone steps with estimated date, completion timestamp, and note |
 | `milestone_templates` | Reusable milestone step definitions grouped by template key, carrier, and trade lane |
+| `users` | Authenticated users: email, name, `password_hash`, role (admin/operator/viewer), `is_active`, `last_login` |
 
 See the built-in **About** page (i in the sidebar) for the full interactive schema reference with column descriptions and migration history.
 
@@ -208,6 +227,7 @@ See the built-in **About** page (i in the sidebar) for the full interactive sche
 
 | Version | Codename | Summary |
 |---------|----------|---------|
+| 0.19.0 | Muster | Authentication: JWT login, `bcryptjs` password hashing, `auth()` Express middleware, default admin seeded on first startup (`admin@cargodesk.com` / `admin123`). User Management: full CRUD in AppSettings → Users tab (admin only), role-coded badges, `is_active` flag. RBAC: three roles (admin / operator / viewer); viewer read-only enforced across every page and MDM module — all write buttons hidden, Kanban drag disabled, "👁 View Only" banner on shipment detail. Admin role-switcher in nav. ActionMenu returns `null` when empty (prevents orphan ⚙ buttons). |
 | 0.18.1 | Traverse | Hotfix: License & EULA page (non-commercial use terms, donation section); first-visit acceptance modal. File structure cleanup: seed scripts moved to `scripts/`; `npm run seed` / `seed:contracts` / `checkdb` shortcuts added. `sampleDB/` with pre-loaded database for quick onboarding. Commodity picker grade column overflow fix. Shipments table double-click to open. ContractField disabled state names the missing field. |
 | 0.18.0 | Traverse | Operational Accounting: source tracking (Contract / Contract (Modified) / Manual pills), Cost Line History modal with CREATED/IMPORTED/UPDATED/DELETED audit log + CSV export, ⇄ Mirror as BUY/SELL in the Add/Edit modal, Container column, import container-type filtering, manual line preservation on recalculate, renamed from Cost Control. Shipment Milestones: new `milestone_templates` + `shipment_milestones` tables, default 9-step FCL template seeded on startup, `MilestonePanel` vertical stepper with progress bar, per-step states, inline editing, collapse toggle, overdue badge on shipment rows, Overdue Milestones KPI on Landing Page. Integration Board: In Testing + Testing Failed columns, per-column Show More (▾▾/▴▴), Show/Hide Released toggle. REST API: cost-line routes nested under shipments; Postman collection added in `/src/dev/`. |
 | 0.17.1 | Sentry | Hotfix: FX Rates health check was fetching `frankfurter.app` directly from the browser, triggering a CORS block (HTTP 301, no `Access-Control-Allow-Origin` header). Routed through the existing `/api/fx/rates` backend endpoint instead. |

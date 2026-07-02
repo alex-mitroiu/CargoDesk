@@ -2,6 +2,8 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { T } from "../tokens";
 import { api } from "../api";
 import { toast } from "../toast";
+import { useAuth } from "../AuthContext";
+import UserManagementPanel from "../components/UserManagementPanel";
 
 // ─── External API definitions ─────────────────────────────────────────────────
 
@@ -143,12 +145,15 @@ function StatusDot({ result, testing }) {
   );
 }
 
-const TABS    = ["API Controls", "Finance"];
+const TABS_BASE = ["API Controls", "Finance"];
+const TABS      = TABS_BASE; // extended with "Users" for admin below
 const API_SUBTABS = ["External APIs", "Internal APIs"];
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function AppSettingsPage() {
+  const { isAdmin } = useAuth();
+  const tabs = isAdmin ? [...TABS_BASE, "Users"] : TABS_BASE;
   const [activeTab,      setActiveTab]      = useState("API Controls");
   const [activeApiSub,   setActiveApiSub]   = useState("External APIs");
   const [settings,       setSettings]       = useState(null);
@@ -462,7 +467,7 @@ export default function AppSettingsPage() {
 
       {/* Main tab bar */}
       <div style={{ display: "flex", borderBottom: `2px solid ${T.border}`, marginBottom: 24 }}>
-        {TABS.map(tab => (
+        {tabs.map(tab => (
           <button key={tab} onClick={() => setActiveTab(tab)} type="button"
             style={{
               padding: "9px 20px", border: "none", cursor: "pointer", background: "none",
@@ -543,6 +548,10 @@ export default function AppSettingsPage() {
             </div>
           )}
         </>
+      )}
+
+      {activeTab === "Users" && isAdmin && (
+        <UserManagementPanel />
       )}
     </div>
   );

@@ -5,6 +5,12 @@ const https      = require("https");
 const path       = require("path");
 const { WebSocketServer } = require("ws");
 const { DatabaseSync } = require("node:sqlite");
+const bcrypt = require("bcryptjs");
+const jwt    = require("jsonwebtoken");
+
+const JWT_SECRET = process.env.JWT_SECRET || "cargoDesk-dev-secret-do-not-use-in-prod";
+if (!process.env.JWT_SECRET)
+  console.warn("⚠  JWT_SECRET env var not set — using insecure dev default. Set it before deploying.");
 
 const app = express();
 const db  = new DatabaseSync(path.join(__dirname, "cargodesk.db"));
@@ -309,6 +315,18 @@ db.exec(`
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
   );
+
+  -- ── Users ──
+  CREATE TABLE IF NOT EXISTS users (
+    id            TEXT PRIMARY KEY,
+    email         TEXT UNIQUE NOT NULL,
+    name          TEXT NOT NULL DEFAULT '',
+    password_hash TEXT NOT NULL,
+    role          TEXT NOT NULL DEFAULT 'viewer',
+    is_active     INTEGER NOT NULL DEFAULT 1,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    last_login    TEXT
+  );
 `);
 
 // ─── Safe migrations ──────────────────────────────────────────────────────────
@@ -401,6 +419,22 @@ const migrations = [
 for (const sql of migrations) {
   try { db.exec(sql); } catch {}
 }
+
+// ─── Seed admin user ──────────────────────────────────────────────────────────
+
+;(function seedAdmin() {
+  const ADMIN_EMAIL = "alex.mitroiu@gmail.com";
+  const TEMP_PW    = "Admin2026!";
+  const exists = db.prepare("SELECT id FROM users WHERE email = ?").get(ADMIN_EMAIL);
+  if (!exists) {
+    db.prepare(
+      "INSERT INTO users (id, email, name, password_hash, role, is_active, created_at) VALUES (?, ?, ?, ?, 'admin', 1, datetime('now'))"
+    ).run(`USR-${uid()}`, ADMIN_EMAIL, "Alex Mitroiu", bcrypt.hashSync(TEMP_PW, 10));
+    console.log(`\n⚓  Admin user created: ${ADMIN_EMAIL}`);
+    console.log(`   Temporary password : ${TEMP_PW}`);
+    console.log(`   Change it via the User Management panel.\n`);
+  }
+})();
 
 // ─── App Settings ─────────────────────────────────────────────────────────────
 
@@ -864,6 +898,108 @@ const checkOverlap = (carrierCode, effectiveDate, endDate, pol = '', pod = '', e
   return rows.length > 0;
 };
 
+
+// ─── Auth middleware ──────────────────────────────────────────────────────────
+
+const auth = (roles = []) => (req, res, next) => {
+  const header = req.headers["authorization"];
+  if (!header?.startsWith("Bearer ")) return err(res, "Unauthorized", 401);
+  try {
+    const payload = jwt.verify(header.slice(7), JWT_SECRET);
+    if (roles.length && !roles.includes(payload.role))
+      return err(res, "Forbidden", 403);
+    req.user = payload;
+    next();
+  } catch { err(res, "Invalid or expired token", 401); }
+};
+
+// Role check only (token already verified by global middleware)
+const requireRole = (roles) => (req, res, next) =>
+  roles.includes(req.user?.role) ? next() : err(res, "Forbidden", 403);
+
+// Require valid token on all /api/* except /api/auth/*
+app.use("/api", (req, res, next) =>
+  req.path.startsWith("/auth/") ? next() : auth()(req, res, next)
+);
+
+// ─── Auth routes ──────────────────────────────────────────────────────────────
+
+app.post("/api/auth/login", (req, res) => {
+  const { email, password } = req.body || {};
+  if (!email || !password) return err(res, "Email and password required");
+  const user = db.prepare(
+    "SELECT * FROM users WHERE email = ? AND is_active = 1"
+  ).get(email.toLowerCase().trim());
+  if (!user || !bcrypt.compareSync(password, user.password_hash))
+    return err(res, "Invalid email or password", 401);
+  const token = jwt.sign(
+    { id: user.id, email: user.email, name: user.name, role: user.role },
+    JWT_SECRET, { expiresIn: "8h" }
+  );
+  db.prepare("UPDATE users SET last_login = datetime('now') WHERE id = ?").run(user.id);
+  ok(res, { token, user: { id: user.id, email: user.email, name: user.name, role: user.role } });
+});
+
+app.get("/api/auth/me", auth(), (req, res) => {
+  const user = db.prepare(
+    "SELECT id, email, name, role, is_active, created_at, last_login FROM users WHERE id = ?"
+  ).get(req.user.id);
+  if (!user || !user.is_active) return err(res, "User not found or inactive", 404);
+  ok(res, user);
+});
+
+app.post("/api/auth/logout", (req, res) => ok(res, { ok: true }));
+
+// ─── Users ────────────────────────────────────────────────────────────────────
+
+app.get("/api/users", requireRole(["admin"]), (req, res) => {
+  const rows = db.prepare(
+    "SELECT id, email, name, role, is_active, created_at, last_login FROM users ORDER BY created_at"
+  ).all();
+  ok(res, rows);
+});
+
+app.post("/api/users", requireRole(["admin"]), (req, res) => {
+  const { email, name, role = "viewer", password } = req.body || {};
+  if (!email || !name || !password) return err(res, "email, name, and password are required");
+  if (!["admin", "operator", "viewer"].includes(role)) return err(res, "Invalid role");
+  try {
+    db.prepare(
+      "INSERT INTO users (id, email, name, password_hash, role, is_active, created_at) VALUES (?, ?, ?, ?, ?, 1, datetime('now'))"
+    ).run(`USR-${uid()}`, email.toLowerCase().trim(), name, bcrypt.hashSync(password, 10), role);
+    ok(res, { ok: true }, 201);
+  } catch (e) {
+    if (isUniqueViolation(e)) return err(res, "Email already in use");
+    throw e;
+  }
+});
+
+app.patch("/api/users/:id", requireRole(["admin"]), (req, res) => {
+  const { name, role, is_active, password } = req.body || {};
+  const user = db.prepare("SELECT * FROM users WHERE id = ?").get(req.params.id);
+  if (!user) return err(res, "User not found", 404);
+  if (req.params.id === req.user.id && is_active === 0)
+    return err(res, "Cannot deactivate your own account");
+  const sets = [], vals = [];
+  if (name      !== undefined) { sets.push("name = ?");          vals.push(name); }
+  if (role      !== undefined) {
+    if (!["admin","operator","viewer"].includes(role)) return err(res, "Invalid role");
+    sets.push("role = ?"); vals.push(role);
+  }
+  if (is_active !== undefined) { sets.push("is_active = ?");     vals.push(is_active ? 1 : 0); }
+  if (password)                { sets.push("password_hash = ?"); vals.push(bcrypt.hashSync(password, 10)); }
+  if (!sets.length) return err(res, "Nothing to update");
+  vals.push(req.params.id);
+  db.prepare(`UPDATE users SET ${sets.join(", ")} WHERE id = ?`).run(...vals);
+  ok(res, { ok: true });
+});
+
+app.delete("/api/users/:id", requireRole(["admin"]), (req, res) => {
+  if (req.params.id === req.user.id) return err(res, "Cannot delete your own account");
+  const r = db.prepare("DELETE FROM users WHERE id = ?").run(req.params.id);
+  if (!r.changes) return err(res, "User not found", 404);
+  ok(res, { ok: true });
+});
 
 // ─── Shipments ────────────────────────────────────────────────────────────────
 

@@ -2,6 +2,7 @@
 import Spinner, { PageSpinner } from "../../components/primitives/Spinner";
 import { T } from "../../tokens";
 import { api } from "../../api";
+import { useAuth } from "../../AuthContext";
 import Btn from "../../components/primitives/Btn";
 import Badge from "../../components/primitives/Badge";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
@@ -13,6 +14,7 @@ import { useResizableColumns, ColResizer } from "../../components/primitives/use
 // ─── MDM: Port Locations Page ─────────────────────────────────────────────────
 
 const MdmPortLocationsPage = () => {
+  const { canEdit } = useAuth();
   const [search,   setSearch]   = useState("");
   const [country,  setCountry]  = useState("");
   const [results,  setResults]  = useState([]);
@@ -96,7 +98,7 @@ const MdmPortLocationsPage = () => {
             {total.toLocaleString()} UN/LOCODE records · ISO 3166 country codes · coordinates
           </p>
         </div>
-        <Btn onClick={() => setModal("add")} size="lg">＋ Add Port</Btn>
+        {canEdit && <Btn onClick={() => setModal("add")} size="lg">＋ Add Port</Btn>}
       </div>
 
       {/* Search bar */}
@@ -145,8 +147,8 @@ const MdmPortLocationsPage = () => {
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <ActionMenu items={[
                 ...(p.latitude && p.longitude ? [{ icon: "📍", label: "Open Map", onClick: () => window.open(`https://www.google.com/maps/search/?api=1&query=${p.latitude}%2C${p.longitude}`, "_blank") }] : []),
-                { icon: "✎", label: "Edit",   onClick: () => setModal(p) },
-                { icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(p.unlocode) },
+                ...(canEdit ? [{ icon: "✎", label: "Edit",   onClick: () => setModal(p) }] : []),
+                ...(canEdit ? [{ icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(p.unlocode) }] : []),
               ]} />
             </div>
           </div>

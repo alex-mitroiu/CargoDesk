@@ -2,6 +2,7 @@
 import useSaving from "../hooks/useSaving";
 import { T, INCOTERMS_2020, teuOf,
          statusVariant, contractVariant, IMDG_CLASSES } from "../tokens";
+import { useAuth } from "../AuthContext";
 import { ContainerTypeField } from "../components/shared/ContainerTypePickerModal";
 import { ShipmentForm } from "./ShipmentsPage";
 import { VesselField } from "../components/shared/VesselCombobox";
@@ -2281,6 +2282,7 @@ const CostControl = ({ shipmentId, contractType, contractId, containers = [], op
 };
 
 const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, onAddContainer, onEditContainer, onDeleteContainer, detailAction = null, onDetailActionConsumed }) => {
+  const { canEdit } = useAuth();
   const [ctrModal,       setCtrModal]       = useState(null);
   const [linkVesselOpen, setLinkVesselOpen] = useState(false);
   const [editShp,        setEditShp]        = useState(false);
@@ -2528,8 +2530,19 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
             </span>
           )}
         </button>
-        <Btn variant="secondary" onClick={() => setEditShp(true)}>✎ Edit Shipment</Btn>
+        {canEdit && <Btn variant="secondary" onClick={() => setEditShp(true)}>✎ Edit Shipment</Btn>}
       </div>
+
+      {!canEdit && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 9, padding: "9px 16px",
+          borderRadius: 8, background: T.info + "15", border: `1px solid ${T.info}44`,
+          fontFamily: T.body, fontSize: 12, color: T.info, marginBottom: 16,
+        }}>
+          <span style={{ fontSize: 14 }}>👁</span>
+          <strong>View Only</strong> — your account has read-only access. Contact an admin to request edit permissions.
+        </div>
+      )}
 
       {/* Info cards row 1 */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 14 }}>
@@ -2579,11 +2592,13 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
             <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
               textTransform: "uppercase", letterSpacing: ".08em" }}>Vessel</div>
-            <button type="button" onClick={() => setLinkVesselOpen(true)}
-              style={{ fontFamily: T.body, fontSize: 10.5, color: T.accent, background: "none",
-                border: "none", cursor: "pointer", padding: 0, fontWeight: 600 }}>
-              {shipment.vessel || shipment.vesselImo ? "✎ Change" : "＋ Link Vessel"}
-            </button>
+            {canEdit && (
+              <button type="button" onClick={() => setLinkVesselOpen(true)}
+                style={{ fontFamily: T.body, fontSize: 10.5, color: T.accent, background: "none",
+                  border: "none", cursor: "pointer", padding: 0, fontWeight: 600 }}>
+                {shipment.vessel || shipment.vesselImo ? "✎ Change" : "＋ Link Vessel"}
+              </button>
+            )}
           </div>
           {shipment.vessel || shipment.vesselImo ? (
             <>
@@ -2878,7 +2893,7 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
                   </span>
                 )}
               </div>
-              <Btn onClick={() => { setCtrListOpen(false); setCtrModal("add"); }}>＋ Add Container</Btn>
+              {canEdit && <Btn onClick={() => { setCtrListOpen(false); setCtrModal("add"); }}>＋ Add Container</Btn>}
             </div>
             {ctrs.length === 0 ? (
               <div style={{ padding: 32, textAlign: "center", fontFamily: T.body,
@@ -2952,12 +2967,14 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
                         </span>
                       )}
                     </div>
-                    <div style={{ width: 86, flexShrink: 0, display: "flex", gap: 5 }}>
-                      <Btn size="sm" variant="secondary"
-                        onClick={() => { setCtrListOpen(false); setCtrModal(c); }}>Edit</Btn>
-                      <Btn size="sm" variant="danger"
-                        onClick={() => setConfirmCtr(c.id)}>✕</Btn>
-                    </div>
+                    {canEdit && (
+                      <div style={{ width: 86, flexShrink: 0, display: "flex", gap: 5 }}>
+                        <Btn size="sm" variant="secondary"
+                          onClick={() => { setCtrListOpen(false); setCtrModal(c); }}>Edit</Btn>
+                        <Btn size="sm" variant="danger"
+                          onClick={() => setConfirmCtr(c.id)}>✕</Btn>
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
