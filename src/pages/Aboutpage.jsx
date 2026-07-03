@@ -27,7 +27,7 @@ import { VERSION, BUILD, CODENAME, CHANGELOG, COPYRIGHT_YEAR, COPYRIGHT_OWNER } 
         { name: "vessel",        type: "TEXT",     note: "Vessel display name (legacy/display only)" },
         { name: "vessel_imo",    type: "TEXT",     note: "IMO number — FK → vessels. Added v0.5.0" },
         { name: "commodity_code", type: "TEXT",     note: "FK → commodities. Maersk freight type — mandatory. Added v0.10.0" },
-        { name: "voyage",        type: "TEXT",     note: "Voyage number" },
+        { name: "voyage",        type: "TEXT",     note: "Voyage/Loop identifier" },
         { name: "created_at",    type: "TEXT",     note: "ISO timestamp of record creation" },
       ],
     },

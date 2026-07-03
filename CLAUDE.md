@@ -4,7 +4,7 @@
 Full-stack freight management app. React 18 + Vite frontend, Express + node:sqlite backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.19.0 "Muster"**
+- Version: **v0.20.0 "Lading"**
 - Run: `npm run dev` (runs server on :3001 + Vite on :5173 concurrently)
 - Seed: `npm run seed` (runs `scripts/import-mdm-data.js`)
 
@@ -111,11 +111,18 @@ src/
 - **ActionMenu null guard**: ActionMenu returns `null` when `items` is empty — safe to always render it with conditional items spread: `...(canEdit ? [{ ...}] : [])`
 - **Admin seed**: on first startup, if no users exist, server seeds a default admin: `admin@cargodesk.com` / `admin123` — warn users to change this
 - **bcryptjs**: password hashing uses `bcryptjs` (pure JS, no native deps); `POST /api/users` returns `{ ok: true }`, not the created record — reload the list after create/edit
+- **Kanban ticket nesting**: `parent_id` self-referencing FK on `tickets` — Epic → Story → sub-task; parent picker in TicketModal (typeahead filtered to Epics/Stories); breadcrumb chip on TicketCard and TicketPreview; children list with progress bar in TicketPreview; clicking a child navigates the preview panel to that ticket
+- **Kanban Epic progress ring**: SVG ring on Epic cards showing X% of child tickets done (green at 100%, accent otherwise); computed from `allTickets` prop passed down from KanbanPage
+- **Kanban assignee**: `assignee_id` FK → `users.id`; `GET /api/tickets` LEFT JOINs users so `assignee_name` and `assignee_initial` are always in the response — no second round-trip needed on the client; avatar chip shown on card and preview
+- **Kanban due date**: `due_date` TEXT (YYYY-MM-DD); `isOverdue(d)` helper compares against today's ISO date prefix; overdue cards show red ⚠ badge
+- **Kanban avatar colour**: `avatarColor(id)` derives a deterministic colour from the user ID string by summing char codes mod palette length — same user always gets the same colour across sessions
+- **Kanban WIP limits**: per-column Work-In-Progress limit set via ⚙ in the column header; persisted to `localStorage` under key `cargodesk_wip_limits`; count badge turns amber at limit, red when exceeded; `onSetWipLimit(null)` clears the limit
+- **TICKET_JOIN constant**: shared SQL fragment in server.js used by GET, POST response, and PUT response so the assignee JOIN is defined in one place
 
-## Recent changes (v0.19.0 "Muster")
-- **Authentication**: JWT-based login (`POST /api/auth/login`); token stored in `localStorage` under `cargodesk_token`; `auth()` Express middleware factory validates token on protected routes; `LoginPage.jsx` renders centered login form; on first startup with an empty `users` table the server seeds a default admin account (`admin@cargodesk.com` / `admin123`)
-- **User Management**: `users` table (21st table); full CRUD via `GET/POST /api/users` + `PUT/DELETE /api/users/:id`; `UserManagementPanel.jsx` in AppSettings → Users tab (admin only); `RoleBadge` color-coded admin/operator/viewer; passwords hashed with `bcryptjs`; `is_active` flag to disable accounts without deleting them
-- **RBAC — three roles**: admin (full access + user management), operator (full access, no user admin), viewer (read-only everywhere); `activeRole` in App.jsx state lets admins impersonate lower roles via the nav role-switcher
-- **AuthContext**: `src/AuthContext.jsx` exports `AuthContext` + `useAuth()` hook — every page/component imports `const { canEdit, isAdmin, isViewer } = useAuth()` to gate write actions
-- **Viewer read-only enforcement**: all write actions gated with `canEdit` across every page and MDM module — New/Edit/Delete buttons hidden; ActionMenu returns `null` when its `items` array is empty (guard added to `ActionMenu.jsx`); drag-and-drop on KanbanPage disabled when viewer; "👁 View Only" banner shown on ShipmentDetailPage
-- **Shipment Detail sidebar**: collapsible info panel with key fields, vessel, route, commodity summary alongside the main detail content
+## Recent changes (v0.20.0 "Lading")
+- **Quick Container Setup**: new Containers section in the new-shipment form (hidden on edit); fields: Count, Container Type (`ContainerTypeField`), Weight (kg), Volume (CBM), Distribution (`all` = total÷N, `per` = copy same to each), Cargo Description, DG toggle + IMDG class picker; Generate button builds draft container objects shown as preview chips; on save, containers are created via `api.containers.create({ shipmentId, ...ctr })` after legs and merged into `containers` state
+- **Central Contract gate**: clicking "Central" on a new shipment with no draft containers shows `toast.warning` directing the user to generate containers first — ensures contract eligibility can be filtered by cargo details
+- **Incoterm → Principal auto-default**: changing Incoterm automatically sets Principal — C/D terms (CPT, CIP, CFR, CIF, DAP, DPU, DDP) → Shipper; E/F terms (EXW, FCA, FAS, FOB) → Consignee; only fires when the relevant party is already selected; done in a single `setF` call for atomicity
+- **Routing banner — TSP chips**: `ShipmentDetailPage` loads legs via `api.legs.list` on mount; TSPs derived as `legs.slice(0,-1).map(l => l.pod)`; shown as monospaced chips in the banner centre panel
+- **Routing banner — carrier code fallback**: `contractCarrierCode` state populated from `api.contracts.get` fetch; banner displays `shipment.carrierCode || contractCarrierCode` so shipments with a linked contract always show a carrier even if `shipment.carrier_code` is empty
+- **`syncShipmentFromLegs` fix (server)**: leg save now uses `COALESCE(NULLIF(?, ''), carrier_code)` — a leg with no carrier no longer overwrites the shipment's stored `carrier_code` with an empty string

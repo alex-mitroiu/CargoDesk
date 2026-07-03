@@ -47,6 +47,12 @@ export const api = {
     list: (shipmentId)       => req("GET",  `/shipments/${shipmentId}/messages`),
     post: (shipmentId, data) => req("POST", `/shipments/${shipmentId}/messages`, data),
   },
+  legs: {
+    list:   (shipmentId)              => req("GET",    `/shipments/${shipmentId}/legs`),
+    create: (shipmentId, data)        => req("POST",   `/shipments/${shipmentId}/legs`, data),
+    update: (shipmentId, legId, data) => req("PUT",    `/shipments/${shipmentId}/legs/${legId}`, data),
+    remove: (shipmentId, legId)       => req("DELETE", `/shipments/${shipmentId}/legs/${legId}`),
+  },
   shipments: {
     list:   ()        => req("GET",    "/shipments"),
     create: (data)    => req("POST",   "/shipments", data),

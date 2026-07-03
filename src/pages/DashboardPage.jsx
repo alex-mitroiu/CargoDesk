@@ -774,7 +774,7 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
           color={shipment.vessel ? T.text : T.border}
           sub={shipment.vesselImo ? `IMO ${shipment.vesselImo}` : null}
         />
-        <InfoCard label="Voyage" value={shipment.voyage || "—"} mono />
+        <InfoCard label="Voyage/Loop" value={shipment.voyage || "—"} mono />
       </div>
 
       {/* Contract + references */}
@@ -872,7 +872,7 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
         </Modal>
       )}
       {editShp && (
-        <Modal title="Edit Shipment" onClose={() => setEditShp(false)} width={560}>
+        <Modal title="Edit Shipment" onClose={() => setEditShp(false)} width={672}>
           <ShipmentForm init={shipment} carriers={carriers}
             onSave={form => { onUpdate(shipment.id, form); setEditShp(false); }}
             onCancel={() => setEditShp(false)} />

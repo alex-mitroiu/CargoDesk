@@ -214,6 +214,26 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_shp_msgs ON shipment_messages(shipment_id, created_at);
 
+  -- ── Shipment Legs ──
+  CREATE TABLE IF NOT EXISTS shipment_legs (
+    id            TEXT PRIMARY KEY,
+    shipment_id   TEXT NOT NULL,
+    leg_order     INTEGER NOT NULL DEFAULT 0,
+    mot           TEXT NOT NULL DEFAULT 'SEA',
+    pol           TEXT NOT NULL DEFAULT '',
+    pod           TEXT NOT NULL DEFAULT '',
+    etd           TEXT DEFAULT NULL,
+    eta           TEXT DEFAULT NULL,
+    carrier_code  TEXT DEFAULT '',
+    vessel        TEXT DEFAULT '',
+    vessel_imo    TEXT DEFAULT '',
+    voyage        TEXT DEFAULT '',
+    contract_type TEXT DEFAULT '',
+    contract_ref  TEXT DEFAULT '',
+    created_at    TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_shp_legs ON shipment_legs(shipment_id, leg_order);
+
   -- ── System Messages ──
   CREATE TABLE IF NOT EXISTS system_messages (
     id          TEXT PRIMARY KEY,
@@ -414,6 +434,20 @@ const migrations = [
   "ALTER TABLE shipments ADD COLUMN space_skip_reason    TEXT DEFAULT ''",
   "ALTER TABLE shipments ADD COLUMN space_overage_reason TEXT DEFAULT ''",
   "ALTER TABLE shipments ADD COLUMN space_badge          TEXT DEFAULT ''",
+  // v0.20.0 — Kanban board enhancements
+  "ALTER TABLE tickets ADD COLUMN parent_id   TEXT DEFAULT NULL", // self-ref FK: epic › story › sub-task nesting
+  "ALTER TABLE tickets ADD COLUMN assignee_id TEXT DEFAULT NULL", // FK → users.id
+  "ALTER TABLE tickets ADD COLUMN due_date    TEXT DEFAULT NULL", // ISO date string YYYY-MM-DD
+  "ALTER TABLE tickets ADD COLUMN test_notes  TEXT DEFAULT NULL", // captured in TestOutcomeModal when leaving In Testing
+  // v0.20.0 — shipment form Phase 1: missing operational fields
+  "ALTER TABLE shipments ADD COLUMN freight_terms     TEXT DEFAULT 'Prepaid'",
+  "ALTER TABLE shipments ADD COLUMN movement_type     TEXT DEFAULT 'FCL'",
+  "ALTER TABLE shipments ADD COLUMN service_type      TEXT DEFAULT 'Port-to-Port'",
+  "ALTER TABLE shipments ADD COLUMN place_of_receipt  TEXT DEFAULT ''",
+  "ALTER TABLE shipments ADD COLUMN place_of_delivery TEXT DEFAULT ''",
+  "ALTER TABLE shipments ADD COLUMN cargo_ready_date  TEXT DEFAULT NULL",
+  "ALTER TABLE shipments ADD COLUMN notify_id         TEXT DEFAULT ''",
+  "ALTER TABLE shipments ADD COLUMN notify_name       TEXT DEFAULT ''",
 ];
 
 for (const sql of migrations) {
@@ -757,7 +791,28 @@ try { db.exec("UPDATE shipments SET vessel = '', vessel_imo = '' WHERE vessel_im
 
 // ─── Map functions ────────────────────────────────────────────────────────────
 
-const mapShipment     = r => ({ id: r.id, pol: r.pol, polName: r.pol_name || '', pod: r.pod, podName: r.pod_name || '', carrierCode: r.carrier_code, contractType: r.contract_type, contractNotes: r.contract_notes || '', status: r.status, createdAt: r.created_at, etd: r.etd || '', eta: r.eta || '', bookingRef: r.booking_ref || '', blNumber: r.bl_number || '', vessel: r.vessel || '', voyage: r.voyage || '', incoterm: r.incoterm || '', vesselImo: r.vessel_imo || '', contractId: r.contract_id || '', contractRef: r.contract_ref || '', commodityCode: r.commodity_code || '', shipperId: r.shipper_id || '', shipperName: r.shipper_name || '', consigneeId: r.consignee_id || '', consigneeName: r.consignee_name || '', principalId: r.principal_id || '', principalName: r.principal_name || '', allocationId: r.allocation_id || '', spaceSkipReason: r.space_skip_reason || '', spaceOverageReason: r.space_overage_reason || '', spaceBadge: r.space_badge || '', marginBuyUsd: r.margin_buy_usd ?? null, marginSellUsd: r.margin_sell_usd ?? null, overdueCount: r.overdue_count ?? 0 });
+const mapShipment     = r => ({ id: r.id, pol: r.pol, polName: r.pol_name || '', pod: r.pod, podName: r.pod_name || '', carrierCode: r.carrier_code, contractType: r.contract_type, contractNotes: r.contract_notes || '', status: r.status, createdAt: r.created_at, etd: r.etd || '', eta: r.eta || '', bookingRef: r.booking_ref || '', blNumber: r.bl_number || '', vessel: r.vessel || '', voyage: r.voyage || '', incoterm: r.incoterm || '', vesselImo: r.vessel_imo || '', contractId: r.contract_id || '', contractRef: r.contract_ref || '', commodityCode: r.commodity_code || '', shipperId: r.shipper_id || '', shipperName: r.shipper_name || '', consigneeId: r.consignee_id || '', consigneeName: r.consignee_name || '', principalId: r.principal_id || '', principalName: r.principal_name || '', allocationId: r.allocation_id || '', spaceSkipReason: r.space_skip_reason || '', spaceOverageReason: r.space_overage_reason || '', spaceBadge: r.space_badge || '', marginBuyUsd: r.margin_buy_usd ?? null, marginSellUsd: r.margin_sell_usd ?? null, overdueCount: r.overdue_count ?? 0, freightTerms: r.freight_terms || 'Prepaid', movementType: r.movement_type || 'FCL', serviceType: r.service_type || 'Port-to-Port', placeOfReceipt: r.place_of_receipt || '', placeOfDelivery: r.place_of_delivery || '', cargoReadyDate: r.cargo_ready_date || null, notifyId: r.notify_id || '', notifyName: r.notify_name || '' });
+const mapShipmentLeg = r => ({
+  id: r.id, shipmentId: r.shipment_id, legOrder: r.leg_order,
+  mot: r.mot || 'SEA', pol: r.pol || '', pod: r.pod || '',
+  etd: r.etd || null, eta: r.eta || null,
+  carrierCode: r.carrier_code || '', vessel: r.vessel || '', vesselImo: r.vessel_imo || '',
+  voyage: r.voyage || '', contractType: r.contract_type || '', contractRef: r.contract_ref || '',
+  createdAt: r.created_at,
+});
+
+const syncShipmentFromLegs = (shipmentId) => {
+  const legs = db.prepare("SELECT * FROM shipment_legs WHERE shipment_id=? ORDER BY leg_order ASC").all(shipmentId);
+  if (!legs.length) return;
+  const first = legs[0], last = legs[legs.length - 1];
+  const seaLeg = legs.find(l => l.mot === 'SEA') || first;
+  // COALESCE(NULLIF(?, ''), carrier_code) preserves an existing carrier when the leg has none set
+  db.prepare(`UPDATE shipments SET pol=?, pod=?, etd=?, eta=?, carrier_code=COALESCE(NULLIF(?, ''), carrier_code), vessel=?, vessel_imo=?, voyage=? WHERE id=?`)
+    .run(first.pol || '', last.pod || '', first.etd || null, last.eta || null,
+         seaLeg.carrier_code || '', seaLeg.vessel || '', seaLeg.vessel_imo || '',
+         seaLeg.voyage || '', shipmentId);
+};
+
 const mapCostLine     = r => ({ id: r.id, shipmentId: r.shipment_id, type: r.type, chargeCode: r.charge_code, currency: r.currency, amount: r.amount, exchangeRate: r.exchange_rate, amountUsd: Math.round(r.amount * r.exchange_rate * 100) / 100, notes: r.notes || '', containerId: r.container_id || '', source: r.source || 'manual', modifiedAt: r.modified_at || null, createdAt: r.created_at });
 const mapContainer    = r => ({ id: r.id, shipmentId: r.shipment_id, containerNumber: r.container_number || '', sealNumber: r.seal_number || '', size: r.size, type: r.type, hsCode: r.hs_code || '', cargoDescription: r.cargo_description || '', grossWeightKg: r.gross_weight_kg ?? null, volumeCbm: r.volume_cbm ?? null, isDg: r.is_dg === 1, dgClass: r.dg_class || '' });
 const mapAllocation   = r => ({ id: r.id, carrierCode: r.carrier_code, allocatedTEU: r.allocated_teu, effectiveDate: r.effective_date || '', endDate: r.end_date || '', tradeLane: r.trade_lane || '', notes: r.notes || '', alertThreshold: r.alert_threshold ?? 80, pol: r.pol || '', pod: r.pod || '', originLane: r.origin_lane || '', destLane: r.dest_lane || '', coverageScope: r.coverage_scope || 'STRICT', contractId: r.contract_id || '', contractNumber: r.contract_number || '' });
@@ -771,7 +826,26 @@ const mapCountry      = r => ({ iso2: r.iso2, name: r.name, unMember: r.un_membe
 const INVERSE_LINK_LABEL = { "Blocks": "Is blocked by", "Duplicates": "Is duplicated by", "Implements": "Is implemented by", "Relates to": "Relates to" };
 const inverseLinkLabel = t => INVERSE_LINK_LABEL[t] || t;
 const mapTicketLink   = r => ({ id: r.id, fromId: r.from_id, toId: r.to_id, linkType: r.link_type, createdAt: r.created_at });
-const mapTicket       = r => ({ id: r.id, title: r.title, section: r.section || '', description: r.description || '', priority: r.priority, status: r.status, position: r.position, createdAt: r.created_at, shipmentId: r.shipment_id || null, type: r.type || 'Task', version: r.version || '' });
+const mapTicket       = r => ({
+  id:              r.id,
+  title:           r.title,
+  section:         r.section         || '',
+  description:     r.description     || '',
+  priority:        r.priority        || 'Medium',
+  status:          r.status          || 'Ready',
+  position:        r.position        ?? 0,
+  createdAt:       r.created_at,
+  shipmentId:      r.shipment_id     || null,
+  type:            r.type            || 'Task',
+  version:         r.version         || '',
+  // v0.20.0 — nesting + assignee + due date
+  parentId:        r.parent_id       || null,
+  assigneeId:      r.assignee_id     || null,
+  assigneeName:    r.assignee_name   || null,   // joined from users at query time
+  assigneeInitial: r.assignee_name   ? r.assignee_name.trim()[0].toUpperCase() : null,
+  dueDate:         r.due_date        || null,
+  testNotes:       r.test_notes      || null,
+});
 const mapCustomer     = r => ({ id: r.id, companyName: r.company_name, address1: r.address1 || '', address2: r.address2 || '', city: r.city || '', state: r.state || '', postalCode: r.postal_code || '', countryIso2: r.country_iso2 || '', phone: r.phone || '', fax: r.fax || '', email: r.email || '', website: r.website || '', notes: r.notes || '', createdAt: r.created_at });
 const mapCommodity    = r => ({ code: r.code, description: r.description, gradeCode: r.grade_code, gradeName: r.grade_name });
 const mapSystemMessage = r => ({
@@ -1096,18 +1170,21 @@ app.post("/api/shipments", (req, res) => {
           incoterm = "", vesselImo = "", contractId = "", contractRef = "", commodityCode = "",
           shipperId = "", shipperName = "", consigneeId = "", consigneeName = "",
           principalId = "", principalName = "",
-          allocationId = "", spaceSkipReason = "", spaceOverageReason = "" } = req.body;
+          allocationId = "", spaceSkipReason = "", spaceOverageReason = "",
+          freightTerms = "Prepaid", movementType = "FCL", serviceType = "Port-to-Port",
+          placeOfReceipt = "", placeOfDelivery = "", cargoReadyDate = null,
+          notifyId = "", notifyName = "" } = req.body;
   if (!pol || !pod || !carrierCode || !contractType) return err(res, "pol, pod, carrierCode, contractType required");
   const id = `SHP-${uid()}`;
   const polU = pol.toUpperCase(), podU = pod.toUpperCase();
   const createdAt = new Date().toISOString();
-  db.prepare("INSERT INTO shipments (id,pol,pod,carrier_code,contract_type,contract_notes,status,created_at,etd,eta,booking_ref,bl_number,vessel,voyage,incoterm,vessel_imo,contract_id,contract_ref,commodity_code,shipper_id,shipper_name,consignee_id,consignee_name,principal_id,principal_name,allocation_id,space_skip_reason,space_overage_reason) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-    .run(id, polU, podU, carrierCode, contractType, contractNotes, status, createdAt, etd, eta, bookingRef, blNumber, vessel, voyage, incoterm, vesselImo, contractId, contractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, allocationId, spaceSkipReason, spaceOverageReason);
+  db.prepare("INSERT INTO shipments (id,pol,pod,carrier_code,contract_type,contract_notes,status,created_at,etd,eta,booking_ref,bl_number,vessel,voyage,incoterm,vessel_imo,contract_id,contract_ref,commodity_code,shipper_id,shipper_name,consignee_id,consignee_name,principal_id,principal_name,allocation_id,space_skip_reason,space_overage_reason,freight_terms,movement_type,service_type,place_of_receipt,place_of_delivery,cargo_ready_date,notify_id,notify_name) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    .run(id, polU, podU, carrierCode, contractType, contractNotes, status, createdAt, etd, eta, bookingRef, blNumber, vessel, voyage, incoterm, vesselImo, contractId, contractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, allocationId, spaceSkipReason, spaceOverageReason, freightTerms, movementType, serviceType, placeOfReceipt, placeOfDelivery, cargoReadyDate || null, notifyId, notifyName);
   logEvent(id, 'SHIPMENT_CREATED', null, null, null,
     JSON.stringify({ pol: polU, pod: podU, carrier: carrierCode, status, etd, contractType }));
   if (contractType === 'Central' && contractId) importContractRates(id);
   const silentScreening = sanctionsMap.size > 0 ? screenShipmentById(id) : null;
-  const base = mapShipment({ id, pol: polU, pod: podU, carrier_code: carrierCode, contract_type: contractType, contract_notes: contractNotes, status, created_at: createdAt, etd, eta, booking_ref: bookingRef, bl_number: blNumber, vessel, voyage, incoterm, vessel_imo: vesselImo, contract_id: contractId, contract_ref: contractRef, commodity_code: commodityCode, shipper_id: shipperId, shipper_name: shipperName, consignee_id: consigneeId, consignee_name: consigneeName, principal_id: principalId, principal_name: principalName, allocation_id: allocationId, space_skip_reason: spaceSkipReason, space_overage_reason: spaceOverageReason });
+  const base = mapShipment(db.prepare("SELECT * FROM shipments WHERE id=?").get(id));
   ok(res, silentScreening ? { ...base, screening: silentScreening } : base, 201);
 });
 
@@ -1117,7 +1194,10 @@ app.put("/api/shipments/:id", (req, res) => {
           incoterm = "", vesselImo = "", contractId = "", contractRef = "", commodityCode = "",
           shipperId = "", shipperName = "", consigneeId = "", consigneeName = "",
           principalId = "", principalName = "",
-          allocationId = "", spaceSkipReason = "", spaceOverageReason = "" } = req.body;
+          allocationId = "", spaceSkipReason = "", spaceOverageReason = "",
+          freightTerms = "Prepaid", movementType = "FCL", serviceType = "Port-to-Port",
+          placeOfReceipt = "", placeOfDelivery = "", cargoReadyDate = null,
+          notifyId = "", notifyName = "" } = req.body;
   const polU = pol.toUpperCase(), podU = pod.toUpperCase();
   const existing = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
   if (!existing) return err(res, "Not found", 404);
@@ -1125,8 +1205,10 @@ app.put("/api/shipments/:id", (req, res) => {
     UPDATE shipments SET pol=?, pod=?, carrier_code=?, contract_type=?, contract_notes=?, status=?,
     etd=?, eta=?, booking_ref=?, bl_number=?, vessel=?, voyage=?, incoterm=?, vessel_imo=?, contract_id=?, contract_ref=?, commodity_code=?,
     shipper_id=?, shipper_name=?, consignee_id=?, consignee_name=?, principal_id=?, principal_name=?,
-    allocation_id=?, space_skip_reason=?, space_overage_reason=? WHERE id=?
-  `).run(polU, podU, carrierCode, contractType, contractNotes, status, etd, eta, bookingRef, blNumber, vessel, voyage, incoterm, vesselImo, contractId, contractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, allocationId, spaceSkipReason, spaceOverageReason, req.params.id);
+    allocation_id=?, space_skip_reason=?, space_overage_reason=?,
+    freight_terms=?, movement_type=?, service_type=?, place_of_receipt=?, place_of_delivery=?,
+    cargo_ready_date=?, notify_id=?, notify_name=? WHERE id=?
+  `).run(polU, podU, carrierCode, contractType, contractNotes, status, etd, eta, bookingRef, blNumber, vessel, voyage, incoterm, vesselImo, contractId, contractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, allocationId, spaceSkipReason, spaceOverageReason, freightTerms, movementType, serviceType, placeOfReceipt, placeOfDelivery, cargoReadyDate || null, notifyId, notifyName, req.params.id);
   if (info.changes === 0) return err(res, "Not found", 404);
   // Log all changed fields
   const newVals = { pol: polU, pod: podU, status, etd, eta, carrier_code: carrierCode,
@@ -1661,25 +1743,64 @@ app.get("/api/unlocodes", (req, res) => {
 });
 
 // ─── Integration Kanban (Tickets) ─────────────────────────────────────────────
+// Each ticket row is JOIN-ed with users so assignee name is always included in
+// the response without a second round-trip from the client.
 
-app.get("/api/tickets", (req, res) => ok(res, db.prepare("SELECT * FROM tickets ORDER BY status, position, created_at").all().map(mapTicket)));
+const TICKET_JOIN = `
+  SELECT t.*, u.name AS assignee_name
+  FROM   tickets t
+  LEFT   JOIN users u ON t.assignee_id = u.id
+`;
+
+app.get("/api/tickets", (req, res) =>
+  ok(res, db.prepare(`${TICKET_JOIN} ORDER BY t.status, t.position, t.created_at`).all().map(mapTicket))
+);
+
 app.post("/api/tickets", (req, res) => {
-  const { title, section='', description='', priority='Medium', status='Ready', shipmentId=null, type='Task', version='' } = req.body;
+  const {
+    title, section = '', description = '', priority = 'Medium', status = 'Ready',
+    shipmentId = null, type = 'Task', version = '',
+    parentId = null, assigneeId = null, dueDate = null, testNotes = null,
+  } = req.body;
   if (!title) return err(res, "title required");
-  const id = `TKT-${uid()}`;
+  const id  = `TKT-${uid()}`;
   const pos = (db.prepare("SELECT MAX(position) AS m FROM tickets WHERE status=?").get(status)?.m ?? -1) + 1;
-  const sid = shipmentId || null;
-  db.prepare("INSERT INTO tickets (id,title,section,description,priority,status,position,created_at,shipment_id,type,version) VALUES (?,?,?,?,?,?,?,?,?,?,?)").run(id, title, section, description, priority, status, pos, new Date().toISOString(), sid, type, version);
-  ok(res, mapTicket({ id, title, section, description, priority, status, position: pos, created_at: new Date().toISOString(), shipment_id: sid, type, version }), 201);
+  db.prepare(`
+    INSERT INTO tickets
+      (id, title, section, description, priority, status, position, created_at,
+       shipment_id, type, version, parent_id, assignee_id, due_date, test_notes)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+  `).run(id, title, section, description, priority, status, pos, new Date().toISOString(),
+         shipmentId || null, type, version, parentId || null, assigneeId || null, dueDate || null,
+         testNotes || null);
+  const row = db.prepare(`${TICKET_JOIN} WHERE t.id=?`).get(id);
+  ok(res, mapTicket(row), 201);
 });
+
 app.put("/api/tickets/:id", (req, res) => {
-  const { title, section='', description='', priority='Medium', status='Ready', position=0, shipmentId=null, type='Task', version='' } = req.body;
-  const sid = shipmentId || null;
-  const info = db.prepare("UPDATE tickets SET title=?, section=?, description=?, priority=?, status=?, position=?, shipment_id=?, type=?, version=? WHERE id=?").run(title, section, description, priority, status, position, sid, type, version, req.params.id);
-  if (info.changes===0) return err(res,"Not found",404);
-  ok(res, mapTicket({ id: req.params.id, title, section, description, priority, status, position, created_at: '', shipment_id: sid, type, version }));
+  const {
+    title, section = '', description = '', priority = 'Medium', status = 'Ready', position = 0,
+    shipmentId = null, type = 'Task', version = '',
+    parentId = null, assigneeId = null, dueDate = null, testNotes = null,
+  } = req.body;
+  const info = db.prepare(`
+    UPDATE tickets
+    SET title=?, section=?, description=?, priority=?, status=?, position=?,
+        shipment_id=?, type=?, version=?, parent_id=?, assignee_id=?, due_date=?, test_notes=?
+    WHERE id=?
+  `).run(title, section, description, priority, status, position,
+         shipmentId || null, type, version, parentId || null, assigneeId || null, dueDate || null,
+         testNotes || null, req.params.id);
+  if (info.changes === 0) return err(res, "Not found", 404);
+  const row = db.prepare(`${TICKET_JOIN} WHERE t.id=?`).get(req.params.id);
+  ok(res, mapTicket(row));
 });
-app.delete("/api/tickets/:id", (req, res) => { const info = db.prepare("DELETE FROM tickets WHERE id=?").run(req.params.id); if (info.changes===0) return err(res,"Not found",404); ok(res,{deleted:req.params.id}); });
+
+app.delete("/api/tickets/:id", (req, res) => {
+  const info = db.prepare("DELETE FROM tickets WHERE id=?").run(req.params.id);
+  if (info.changes === 0) return err(res, "Not found", 404);
+  ok(res, { deleted: req.params.id });
+});
 
 app.get("/api/tickets/:id/links", (req, res) => {
   const rows = db.prepare("SELECT * FROM ticket_links WHERE from_id=? OR to_id=?").all(req.params.id, req.params.id);
@@ -2110,6 +2231,48 @@ app.post("/api/shipments/:id/messages", (req, res) => {
   const newMsg = { id, shipmentId: req.params.id, body: body.trim(), author, role, createdAt };
   broadcastMessage(req.params.id, newMsg);
   ok(res, newMsg, 201);
+});
+
+// ─── Shipment Legs ────────────────────────────────────────────────────────────
+
+app.get("/api/shipments/:id/legs", auth(), (req, res) => {
+  const rows = db.prepare("SELECT * FROM shipment_legs WHERE shipment_id=? ORDER BY leg_order ASC").all(req.params.id);
+  ok(res, rows.map(mapShipmentLeg));
+});
+
+app.post("/api/shipments/:id/legs", auth(), (req, res) => {
+  const { mot='SEA', pol='', pod='', etd=null, eta=null, carrierCode='',
+          vessel='', vesselImo='', voyage='', contractType='', contractRef='' } = req.body;
+  const id = `LEG-${uid()}`;
+  const maxOrder = db.prepare("SELECT MAX(leg_order) as m FROM shipment_legs WHERE shipment_id=?").get(req.params.id);
+  const legOrder = (maxOrder?.m ?? -1) + 1;
+  const createdAt = new Date().toISOString();
+  db.prepare(`INSERT INTO shipment_legs (id,shipment_id,leg_order,mot,pol,pod,etd,eta,carrier_code,vessel,vessel_imo,voyage,contract_type,contract_ref,created_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(id, req.params.id, legOrder, mot, pol.toUpperCase(), pod.toUpperCase(),
+         etd||null, eta||null, carrierCode, vessel, vesselImo, voyage, contractType, contractRef, createdAt);
+  syncShipmentFromLegs(req.params.id);
+  ok(res, mapShipmentLeg(db.prepare("SELECT * FROM shipment_legs WHERE id=?").get(id)), 201);
+});
+
+app.put("/api/shipments/:id/legs/:legId", auth(), (req, res) => {
+  const { mot='SEA', pol='', pod='', etd=null, eta=null, carrierCode='',
+          vessel='', vesselImo='', voyage='', contractType='', contractRef='', legOrder } = req.body;
+  const existing = db.prepare("SELECT * FROM shipment_legs WHERE id=? AND shipment_id=?").get(req.params.legId, req.params.id);
+  if (!existing) return err(res, "Not found", 404);
+  db.prepare(`UPDATE shipment_legs SET mot=?,pol=?,pod=?,etd=?,eta=?,carrier_code=?,vessel=?,vessel_imo=?,voyage=?,contract_type=?,contract_ref=?,leg_order=? WHERE id=?`)
+    .run(mot, pol.toUpperCase(), pod.toUpperCase(), etd||null, eta||null,
+         carrierCode, vessel, vesselImo, voyage, contractType, contractRef,
+         legOrder ?? existing.leg_order, req.params.legId);
+  syncShipmentFromLegs(req.params.id);
+  ok(res, mapShipmentLeg(db.prepare("SELECT * FROM shipment_legs WHERE id=?").get(req.params.legId)));
+});
+
+app.delete("/api/shipments/:id/legs/:legId", auth(), (req, res) => {
+  const info = db.prepare("DELETE FROM shipment_legs WHERE id=? AND shipment_id=?").run(req.params.legId, req.params.id);
+  if (info.changes === 0) return err(res, "Not found", 404);
+  syncShipmentFromLegs(req.params.id);
+  ok(res, { deleted: req.params.legId });
 });
 
 // ─── Health ───────────────────────────────────────────────────────────────────

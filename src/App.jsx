@@ -11,8 +11,9 @@ import Btn from "./components/primitives/Btn";
 import { Modal } from "./components/primitives/Modal";
 import { Field } from "./components/primitives/Form";
 
-import ShipmentsPage, { ShipmentForm } from "./pages/ShipmentsPage";
-import ShipmentDetailPage  from "./pages/ShipmentDetailPage";
+import ShipmentsPage     from "./pages/ShipmentsPage";
+import ShipmentFormPage  from "./pages/ShipmentFormPage";
+import ShipmentDetailPage, { ContainerForm } from "./pages/ShipmentDetailPage";
 import DashboardPage       from "./pages/DashboardPage";
 import DashboardArchive    from "./pages/DashboardArchivePage";
 import UserManualPage      from "./pages/UserManualPage";
@@ -180,6 +181,107 @@ const HealthModal = ({ onClose }) => {
         </div>
       </div>
     </Modal>
+  );
+};
+
+// ─── Shipment Form Sidebar ────────────────────────────────────────────────────
+
+const ShipmentFormSidebar = ({ shipment, mode, navigate, onContainers }) => {
+  const goBack = () => {
+    if (window.opener) { window.close(); return; }
+    if (mode === "edit" && shipment) navigate("detail", shipment.id);
+    else navigate("shipments");
+  };
+
+  const STATUS_COLORS = {
+    Active:    { bg: "#22c55e22", color: "#22c55e" },
+    Completed: { bg: "#3b82f622", color: "#3b82f6" },
+    Cancelled: { bg: "#ef444422", color: "#ef4444" },
+  };
+  const sc = shipment ? (STATUS_COLORS[shipment.status] || { bg: "#ffffff11", color: T.textMuted }) : null;
+
+  return (
+    <aside style={{ width: 240, background: T.surface, borderRight: `1px solid ${T.border}`,
+      display: "flex", flexDirection: "column", flexShrink: 0 }}>
+
+      <div style={{ padding: "22px 20px 18px", borderBottom: `1px solid ${T.border}` }}>
+        <div style={{ fontFamily: T.head, fontSize: 17, fontWeight: 800, color: T.text }}>⚓ CargoDesk</div>
+        <div style={{ fontFamily: T.mono, fontSize: 9.5, color: T.textMuted, marginTop: 3,
+          letterSpacing: ".12em", textTransform: "uppercase" }}>Freight Management</div>
+      </div>
+
+      <div style={{ padding: "12px 16px", borderBottom: `1px solid ${T.border}` }}>
+        <button onClick={goBack} style={{
+          display: "flex", alignItems: "center", gap: 8, width: "100%",
+          padding: "8px 12px", borderRadius: 8, background: T.bg, border: `1px solid ${T.border}`,
+          fontFamily: T.body, fontSize: 13, color: T.text, cursor: "pointer", fontWeight: 500, textAlign: "left",
+        }}>
+          ← {mode === "edit" && shipment ? shipment.id : "All Shipments"}
+        </button>
+      </div>
+
+      <div style={{ padding: "14px 16px", borderBottom: `1px solid ${T.border}`,
+        display: "flex", flexDirection: "column", gap: 7 }}>
+        {mode === "new" ? (
+          <>
+            <div style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.textMuted }}>New Shipment</div>
+            <div style={{ fontFamily: T.body, fontSize: 12, color: T.border }}>Fill in the form to create</div>
+          </>
+        ) : shipment ? (
+          <>
+            <div style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 800, color: T.text,
+              cursor: "pointer", userSelect: "none" }}
+              title="Click to copy"
+              onClick={() => navigator.clipboard.writeText(shipment.id).then(() => toast.success(`Copied ${shipment.id}`))}>
+              {shipment.id}
+            </div>
+            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+              <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, borderRadius: 4,
+                padding: "2px 8px", background: sc.bg, color: sc.color }}>{shipment.status}</span>
+              {shipment.carrierCode && (
+                <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>{shipment.carrierCode}</span>
+              )}
+            </div>
+            {(shipment.pol || shipment.pod) && (
+              <div style={{ fontFamily: T.mono, fontSize: 12, color: T.text, fontWeight: 600 }}>
+                {shipment.pol || "—"} → {shipment.pod || "—"}
+              </div>
+            )}
+            {shipment.etd && (
+              <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>ETD {shipment.etd}</div>
+            )}
+          </>
+        ) : null}
+      </div>
+
+      {mode === "edit" && shipment && (
+        <div style={{ padding: "10px 16px", borderBottom: `1px solid ${T.border}` }}>
+          <button onClick={onContainers} style={{
+            display: "flex", alignItems: "center", gap: 8, width: "100%",
+            padding: "8px 12px", borderRadius: 8, background: "transparent",
+            border: `1px solid ${T.border}`, fontFamily: T.body, fontSize: 13,
+            color: T.text, cursor: "pointer", fontWeight: 500, textAlign: "left",
+            transition: "border-color .15s, background .15s",
+          }}
+          onMouseEnter={e => { e.currentTarget.style.borderColor = T.accent; e.currentTarget.style.background = T.accentBg; }}
+          onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.background = "transparent"; }}>
+            📦 Containers
+          </button>
+        </div>
+      )}
+
+      <div style={{ padding: "14px 16px", flex: 1 }}>
+        <div style={{ fontFamily: T.mono, fontSize: 9.5, color: T.border, fontWeight: 700,
+          textTransform: "uppercase", letterSpacing: ".12em", marginBottom: 8 }}>
+          {mode === "new" ? "Creating" : "Editing"}
+        </div>
+        <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, lineHeight: 1.55 }}>
+          {mode === "new"
+            ? "Unsaved changes will be lost if you navigate away."
+            : "Changes are saved when you click Save Changes."}
+        </div>
+      </div>
+    </aside>
   );
 };
 
@@ -361,17 +463,22 @@ function App() {
     return !k || appSettings[k] !== 'false';
   };
 
+  const parseHash = hash => {
+    if (!hash) return { page: "home", selectedId: null };
+    if (hash === "shipments/new") return { page: "shipment-new", selectedId: null };
+    if (/^shipments\/[^/]+\/edit$/.test(hash)) return { page: "shipment-edit", selectedId: hash.split("/")[1] };
+    if (hash.startsWith("shipments/")) return { page: "detail", selectedId: hash.split("/")[1] || null };
+    return { page: hash, selectedId: null };
+  };
+
   const [page,       setPage]       = useState(() => {
     const hash = window.location.hash.replace("#", "").trim();
-    if (hash.startsWith("shipments/")) return "detail";
-    return hash || "home";
+    return parseHash(hash).page;
   });
   const [selectedId, setSelectedId] = useState(() => {
     const hash = window.location.hash.replace("#", "").trim();
-    if (hash.startsWith("shipments/")) return hash.split("/")[1] || null;
-    return null;
+    return parseHash(hash).selectedId;
   });
-  const [showNewShp,   setShowNewShp]   = useState(false);
   const [pendingRenew, setPendingRenew] = useState(null);
   const [isDark,       setIsDark]       = useState(() => {
     const saved = localStorage.getItem("cd_theme");
@@ -450,29 +557,47 @@ function App() {
   }, [user?.id]);
 
   const selectedShipment = shipments.find(s => s.id === selectedId);
-  const navigate = (key) => {
-    // Reload settings when leaving the settings page so nav updates immediately
+  const formDirtyRef = useRef(false);
+  const [formCtrListOpen, setFormCtrListOpen] = useState(false);
+  const [formCtrModal,    setFormCtrModal]    = useState(null);
+
+  const isFormPage = p => p === "shipment-new" || p === "shipment-edit";
+  const formHash   = (p, id) => p === "shipment-new" ? "shipments/new" : `shipments/${id}/edit`;
+
+  const navigate = (key, id = null) => {
+    if (isFormPage(page) && formDirtyRef.current) {
+      if (!window.confirm("You have unsaved changes. Leave and discard them?")) return;
+    }
+    formDirtyRef.current = false;
     if (page === "settings" && key !== "settings")
       api.settings.get().then(s => setAppSettings(s)).catch(() => {});
-    setPage(key); setSelectedId(null); setShowNewShp(false);
-    window.location.hash = key;
+    setPage(key);
+    setSelectedId(id);
+    if (key === "shipment-new")             window.location.hash = "shipments/new";
+    else if (key === "shipment-edit" && id) window.location.hash = `shipments/${id}/edit`;
+    else if (key === "detail" && id)        window.location.hash = `shipments/${id}`;
+    else                                    window.location.hash = key;
   };
 
-  // Browser back/forward — supports #shipments/SHP-XXXXX
+  // Browser back/forward
   useEffect(() => {
     const onHash = () => {
       const hash = window.location.hash.replace("#", "").trim();
       if (!hash) return;
-      if (hash.startsWith("shipments/")) {
-        const id = hash.split("/")[1];
-        if (id) { setSelectedId(id); setPage("detail"); return; }
+      if (isFormPage(page) && formDirtyRef.current) {
+        if (!window.confirm("You have unsaved changes. Leave and discard them?")) {
+          window.location.hash = formHash(page, selectedId);
+          return;
+        }
+        formDirtyRef.current = false;
       }
-      if (hash === "shipments") { setPage("shipments"); setSelectedId(null); return; }
-      if (hash !== page) { setPage(hash); setSelectedId(null); }
+      const parsed = parseHash(hash);
+      setPage(parsed.page);
+      setSelectedId(parsed.selectedId);
     };
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
-  }, [page]);
+  }, [page, selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // kanban is top-level, not MDM
   const MDM_PAGES = ["mdm-carriers", "mdm-ports", "mdm-linked", "mdm-vessels", "mdm-commodities", "mdm-tradelanes", "mdm-countries", "mdm-unlocodes", "mdm-customers", "mdm-sanctioned-customers", "mdm-contracts"];
@@ -502,7 +627,7 @@ function App() {
   // ── Shared nav button style ──
   const NavBtn = ({ pageKey, icon, label, indent = false, subIndent = false }) => {
     if (!isEnabled(pageKey)) return null;
-    const active = page === pageKey || (pageKey === "shipments" && page === "detail");
+    const active = page === pageKey || (pageKey === "shipments" && (page === "detail" || page === "shipment-new" || page === "shipment-edit"));
     const pad = subIndent ? "6px 12px 6px 44px" : indent ? "7px 12px 7px 28px" : "9px 12px";
     const fs  = subIndent ? 12 : indent ? 13 : 14;
     return (
@@ -525,6 +650,8 @@ function App() {
     home:               "Home",
     shipments:          "Shipments",
     "shipment-detail":  "Shipment Detail",
+    "shipment-new":     "New Shipment",
+    "shipment-edit":    "Edit Shipment",
     dashboard:           "Consumption Dashboard",
     "space-configs":     "Space Configurations",
     "dashboard-archive": "Dashboard — Archive",
@@ -1002,6 +1129,10 @@ function App() {
           navigate={navigate}
           onSectionClick={setDetailAction}
         />
+      ) : page === "shipment-new" ? (
+        <ShipmentFormSidebar mode="new" shipment={null} navigate={navigate} />
+      ) : page === "shipment-edit" && selectedShipment ? (
+        <ShipmentFormSidebar mode="edit" shipment={selectedShipment} navigate={navigate} onContainers={() => setFormCtrListOpen(true)} />
       ) : (
         <aside style={{ width: 240, background: T.surface, borderRight: `1px solid ${T.border}`,
           display: "flex", flexDirection: "column", flexShrink: 0 }}>
@@ -1105,52 +1236,84 @@ function App() {
             carriers={carriers}
             allocations={allocations}
             navigate={navigate}
-            onNewShipment={() => { navigate("shipments"); setShowNewShp(true); }}
+            onNewShipment={() => navigate("shipment-new")}
           />
         )}
 
         {/* Operational pages */}
         {page === "shipments" && (
-          <>
-            <ShipmentsPage
-              shipments={shipments} containers={containers} carriers={carriers}
-              financeEnabled={appSettings.finance_view_enabled !== 'false'}
-              onSelect={id => { setSelectedId(id); setPage("detail"); window.location.hash = `shipments/${id}`; }}
-              onDelete={async id => {
-                try {
-                  await api.shipments.remove(id);
-                  setShipments(p => p.filter(s => s.id !== id));
-                  setContainers(p => p.filter(c => c.shipmentId !== id));
-                  toast.success("Shipment deleted");
-                } catch (e) { toast.error(e.message); }
-              }}
-              onNew={() => setShowNewShp(true)} />
-            {showNewShp && (
-              <Modal title="New Shipment" onClose={() => setShowNewShp(false)} width={560}>
-                <ShipmentForm
-                  onSave={async form => {
-                    try {
-                      const created = await api.shipments.create(form);
-                      setShipments(p => [created, ...p]);
-                      setShowNewShp(false);
-                      toast.success("Shipment created");
-                      if (created.screening?.result === "HIT") {
-                        const parties = (created.screening.hits || []).map(h => `${h.field}: ${h.value}`).join(", ");
-                        toast.warning(`Compliance review required — sanctioned party detected${parties ? ` (${parties})` : ""}`);
-                      }
-                    } catch (e) { toast.error(e.message); throw e; }
-                  }}
-                  onCancel={() => setShowNewShp(false)} />
-              </Modal>
-            )}
-          </>
+          <ShipmentsPage
+            shipments={shipments} containers={containers} carriers={carriers}
+            financeEnabled={appSettings.finance_view_enabled !== 'false'}
+            onSelect={id => navigate("detail", id)}
+            onDelete={async id => {
+              try {
+                await api.shipments.remove(id);
+                setShipments(p => p.filter(s => s.id !== id));
+                setContainers(p => p.filter(c => c.shipmentId !== id));
+                toast.success("Shipment deleted");
+              } catch (e) { toast.error(e.message); }
+            }}
+            onNew={() => navigate("shipment-new")} />
         )}
+
+        {page === "shipment-new" && (
+          <ShipmentFormPage
+            mode="new"
+            init={{}}
+            onDirtyChange={v => { formDirtyRef.current = v; }}
+            onBack={() => navigate("shipments")}
+            onSave={async (form, draftLegs = [], draftContainers = []) => {
+              try {
+                const created = await api.shipments.create(form);
+                setShipments(p => [created, ...p]);
+                toast.success("Shipment created");
+                if (created.screening?.result === "HIT") {
+                  const parties = (created.screening.hits || []).map(h => `${h.field}: ${h.value}`).join(", ");
+                  toast.warning(`Compliance review required — sanctioned party detected${parties ? ` (${parties})` : ""}`);
+                }
+                for (const { id: _draftId, polName: _pn, podName: _ppn, ...leg } of draftLegs.filter(l => l.pol || l.pod)) {
+                  await api.legs.create(created.id, leg);
+                }
+                for (const ctr of draftContainers) {
+                  const newCtr = await api.containers.create({ shipmentId: created.id, ...ctr });
+                  setContainers(p => [...p, newCtr]);
+                }
+                navigate("detail", created.id);
+              } catch (e) { toast.error(e.message); throw e; }
+            }} />
+        )}
+
+        {page === "shipment-edit" && selectedId && (() => {
+          const shp = shipments.find(s => s.id === selectedId);
+          if (!shp) return null;
+          return (
+            <ShipmentFormPage
+              mode="edit"
+              init={shp}
+              onDirtyChange={v => { formDirtyRef.current = v; }}
+              onBack={() => navigate("detail", selectedId)}
+              onSave={async (form) => {
+                try {
+                  const updated = await api.shipments.update(shp.id, form);
+                  setShipments(p => p.map(s => s.id === shp.id ? { ...s, ...updated } : s));
+                  toast.success("Shipment updated");
+                  if (updated.screening?.result === "HIT") {
+                    const parties = (updated.screening.hits || []).map(h => `${h.field}: ${h.value}`).join(", ");
+                    toast.warning(`Compliance review required — sanctioned party detected${parties ? ` (${parties})` : ""}`);
+                  }
+                  navigate("detail", shp.id);
+                } catch (e) { toast.error(e.message); throw e; }
+              }} />
+          );
+        })()}
 
         {page === "detail" && selectedShipment && (
           <ShipmentDetailPage
             shipment={selectedShipment} containers={containers} carriers={carriers}
             detailAction={detailAction} onDetailActionConsumed={() => setDetailAction(null)}
-            onBack={() => { setPage("shipments"); setSelectedId(null); window.location.hash = "shipments"; }}
+            onBack={() => navigate("shipments")}
+            onEdit={() => navigate("shipment-edit", selectedShipment.id)}
             onUpdate={async (id, form) => {
               try {
                 const updated = await api.shipments.update(id, form);
@@ -1354,6 +1517,79 @@ function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── Container list modal (triggered from edit-form sidebar) ── */}
+      {formCtrListOpen && selectedShipment && (() => {
+        const shipCtrs = containers.filter(c => c.shipmentId === selectedShipment.id);
+        return (
+          <Modal title={`Containers — ${selectedShipment.id}`} onClose={() => setFormCtrListOpen(false)} width={760}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                <Btn onClick={() => { setFormCtrListOpen(false); setFormCtrModal("add"); }}>＋ Add Container</Btn>
+              </div>
+              {shipCtrs.length === 0 ? (
+                <div style={{ padding: "32px 0", textAlign: "center", fontFamily: T.body,
+                  fontSize: 13, color: T.textMuted }}>
+                  No containers yet — click Add Container to start.
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                  {shipCtrs.map(c => (
+                    <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 12,
+                      padding: "10px 14px", background: T.bg, border: `1px solid ${T.border}`,
+                      borderRadius: 8 }}>
+                      <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.text, flex: 1 }}>
+                        {c.containerNumber || <em style={{ color: T.textMuted }}>No number</em>}
+                      </span>
+                      <span style={{ fontFamily: T.mono, fontSize: 12, color: T.accent,
+                        background: T.accentBg, border: `1px solid ${T.accent}33`,
+                        borderRadius: 4, padding: "2px 8px" }}>{c.size}</span>
+                      <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>{c.type}</span>
+                      {c.isDg && <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700,
+                        color: T.danger, background: T.danger + "18", border: `1px solid ${T.danger}44`,
+                        borderRadius: 4, padding: "2px 6px" }}>DG {c.dgClass}</span>}
+                      <div style={{ display: "flex", gap: 6 }}>
+                        <Btn size="sm" variant="secondary" onClick={() => { setFormCtrListOpen(false); setFormCtrModal(c); }}>Edit</Btn>
+                        <Btn size="sm" variant="danger" onClick={async () => {
+                          if (!window.confirm(`Remove container ${c.containerNumber || c.id}?`)) return;
+                          try {
+                            await api.containers.remove(c.id);
+                            setContainers(p => p.filter(x => x.id !== c.id));
+                            toast.success("Container removed");
+                          } catch (e) { toast.error(e.message); }
+                        }}>✕</Btn>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </Modal>
+        );
+      })()}
+
+      {/* ── Container add/edit modal (triggered from edit-form sidebar) ── */}
+      {formCtrModal && selectedShipment && (
+        <ContainerForm
+          init={formCtrModal === "add" ? {} : formCtrModal}
+          onSave={async (form) => {
+            try {
+              if (formCtrModal === "add") {
+                const ctr = await api.containers.create({ shipmentId: selectedShipment.id, ...form });
+                setContainers(p => [...p, ctr]);
+                toast.success("Container added");
+              } else {
+                const updated = await api.containers.update(formCtrModal.id, form);
+                setContainers(p => p.map(c => c.id === formCtrModal.id ? { ...c, ...updated } : c));
+                toast.success("Container updated");
+              }
+              setFormCtrModal(null);
+              setFormCtrListOpen(true);
+            } catch (e) { toast.error(e.message); }
+          }}
+          onCancel={() => { setFormCtrModal(null); setFormCtrListOpen(true); }}
+        />
       )}
 
       <ToastContainer />

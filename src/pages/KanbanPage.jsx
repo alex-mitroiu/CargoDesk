@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import mermaid from "mermaid";
 import { T } from "../tokens";
 import { inputBase } from "../components/primitives/Form";
 import { api } from "../api";
@@ -12,7 +13,7 @@ import { toast } from "../toast";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const COLUMNS = ["Ready", "In Progress", "Done", "In Testing", "Testing Failed", "Released"];
+const COLUMNS = ["Ready", "In Progress", "Done", "In Testing", "Testing Failed", "Ready to Deploy", "Released"];
 
 const SECTIONS = [
   "General", "Shipments", "Dashboard", "Contracts", "Cost Control",
@@ -23,9 +24,23 @@ const SECTIONS = [
 const LINK_TYPES = ["Relates to", "Blocks", "Duplicates", "Implements"];
 const INVERSE_LABEL = { "Blocks": "Is blocked by", "Duplicates": "Is duplicated by", "Implements": "Is implemented by", "Relates to": "Relates to" };
 
-const TYPES = ["Feature", "Bug", "Improvement", "Task", "Chore"];
+// Epic and Story sit above the existing work-item types for nesting (Phase 3).
+// They are listed first so the picker naturally groups them at the top.
+const TYPES = ["Epic", "Story", "Feature", "Bug", "Improvement", "Task", "Chore"];
+
+const TYPE_ICON = {
+  Epic:        "⚡",
+  Story:       "📖",
+  Feature:     "✨",
+  Bug:         "🦟",
+  Improvement: "🔨",
+  Task:        "☑",
+  Chore:       "🔧",
+};
 
 const TYPE_VARIANT = {
+  Epic:        "warning",
+  Story:       "info",
   Feature:     "info",
   Bug:         "danger",
   Improvement: "success",
@@ -51,11 +66,377 @@ const COL_ACCENT = {
   "In Progress":    "#f59e0b",
   "Done":           "#22c55e",
   "In Testing":     "#06b6d4",
-  "Testing Failed": "#ef4444",
-  "Released":       "#8b5cf6",
+  "Testing Failed":  "#ef4444",
+  "Ready to Deploy": "#f97316",
+  "Released":        "#8b5cf6",
 };
 
 const PREVIEW_LIMIT = 5;
+
+// Returns true when a due date string (YYYY-MM-DD) is strictly in the past.
+const isOverdue = d => d && d < new Date().toISOString().slice(0, 10);
+
+// Deterministic colour for an assignee avatar based on their user ID.
+// Cycles through a fixed palette so the same person always gets the same colour.
+const AVATAR_PALETTE = ["#6366f1","#f59e0b","#22c55e","#06b6d4","#ef4444","#8b5cf6","#ec4899","#14b8a6"];
+const avatarColor = id => AVATAR_PALETTE[(id || "").split("").reduce((n, c) => n + c.charCodeAt(0), 0) % AVATAR_PALETTE.length];
+
+// ─── Mermaid Renderer ─────────────────────────────────────────────────────────
+// Renders a Mermaid diagram definition to SVG client-side.
+// Each instance uses a unique ID so concurrent renders don't collide.
+// Re-mounts (via key) when the definition changes to avoid stale SVG.
+
+const MermaidRenderer = ({ definition }) => {
+  const [svg,   setSvg]   = useState("");
+  const [error, setError] = useState(null);
+  // Unique stable ID for this renderer instance
+  const diagId = useRef(`mcd-${Math.random().toString(36).slice(2, 9)}`);
+
+  useEffect(() => {
+    let cancelled = false;
+    setSvg("");
+    setError(null);
+
+    mermaid.initialize({
+      startOnLoad: false,
+      theme:       "dark",
+      flowchart:   { curve: "basis", padding: 24, nodeSpacing: 48, rankSpacing: 64 },
+      securityLevel: "loose",   // needed to allow <br/> in node labels
+    });
+
+    mermaid.render(diagId.current, definition)
+      .then(({ svg: out }) => { if (!cancelled) setSvg(out); })
+      .catch(e            => { if (!cancelled) setError(String(e)); });
+
+    return () => { cancelled = true; };
+  }, [definition]);
+
+  if (error) return (
+    <div style={{ padding: 20, fontFamily: T.mono, fontSize: 12, color: T.danger,
+      background: `${T.danger}11`, borderRadius: 8, margin: 16 }}>
+      ⚠ Diagram render error — check the definition syntax.<br />
+      <span style={{ opacity: 0.7, fontSize: 11 }}>{error}</span>
+    </div>
+  );
+
+  if (!svg) return (
+    <div style={{ padding: 48, textAlign: "center", fontFamily: T.body,
+      fontSize: 13, color: T.textMuted }}>
+      Rendering diagram…
+    </div>
+  );
+
+  return (
+    <div dangerouslySetInnerHTML={{ __html: svg }}
+      style={{ width: "100%", display: "flex", justifyContent: "center" }} />
+  );
+};
+
+// ─── Ticket Diagram Modal ─────────────────────────────────────────────────────
+// Shows two views for an Epic:
+//   Hierarchy  — parent → child tree for all descendants
+//   Dependencies — directed graph of Blocks / Implements / etc. links within the epic
+// Links are fetched in parallel on open; the hierarchy renders immediately from props.
+
+const TicketDiagramModal = ({ ticket, allTickets, onClose }) => {
+  const [links,       setLinks]       = useState({});   // ticketId → link[]
+  const [linksLoaded, setLinksLoaded] = useState(false);
+  const [view,        setView]        = useState("hierarchy");
+
+  // Collect all descendants of this Epic recursively (breadth-first).
+  const descendants = useMemo(() => {
+    const result = [], queue = [ticket.id], seen = new Set([ticket.id]);
+    while (queue.length) {
+      const pid = queue.shift();
+      allTickets
+        .filter(t => t.parentId === pid)
+        .forEach(t => { if (!seen.has(t.id)) { seen.add(t.id); result.push(t); queue.push(t.id); } });
+    }
+    return result;
+  }, [ticket.id, allTickets]);
+
+  const epicGroup = useMemo(() => [ticket, ...descendants], [ticket, descendants]);
+
+  // Fetch links for every ticket in the group in parallel.
+  useEffect(() => {
+    Promise.all(epicGroup.map(t =>
+      api.tickets.links(t.id)
+        .then(ls => ({ id: t.id, ls }))
+        .catch(()  => ({ id: t.id, ls: [] }))
+    )).then(results => {
+      const map = {};
+      results.forEach(r => { map[r.id] = r.ls; });
+      setLinks(map);
+      setLinksLoaded(true);
+    });
+  }, [ticket.id]);   // re-fetch only when the root ticket changes
+
+  // Safe Mermaid node ID — hyphens are not allowed.
+  const sid = id => id.replace(/-/g, "_");
+
+  // ── Hierarchy diagram definition ──────────────────────────────────────────
+  const hierarchyDef = useMemo(() => {
+    const lines = ["flowchart TD"];
+    epicGroup.forEach(t => {
+      const icon  = TYPE_ICON[t.type] || "📋";
+      const label = t.title.length > 38 ? t.title.slice(0, 38) + "…" : t.title;
+      const done  = ["Done", "Ready to Deploy", "Released"].includes(t.status);
+      // Different node shapes: Epic = stadium, Story = rect, others = rounded rect
+      const [o, c] = t.type === "Epic"  ? (["([", "])"])
+                   : t.type === "Story" ? (["[",  "]" ])
+                   :                      (["(",  ")" ]);
+      lines.push(`  ${sid(t.id)}${o}"${icon} ${t.id}\\n${label}"${c}`);
+      if (done) lines.push(`  style ${sid(t.id)} opacity:0.55`);
+    });
+    descendants.forEach(t => {
+      if (t.parentId) lines.push(`  ${sid(t.parentId)} --> ${sid(t.id)}`);
+    });
+    return lines.join("\n");
+  }, [epicGroup, descendants]);
+
+  // ── Dependency diagram definition ─────────────────────────────────────────
+  const dependencyDef = useMemo(() => {
+    if (!linksLoaded) return "flowchart LR\n  loading[\"⏳ Loading links…\"]";
+
+    const epicIds = new Set(epicGroup.map(t => t.id));
+    const edges   = [];
+
+    epicGroup.forEach(t => {
+      (links[t.id] || [])
+        .filter(l => l.direction === "out" && epicIds.has(l.otherTicketId))
+        .forEach(l => {
+          const arrow = l.linkType === "Blocks"     ? "-->"
+                      : l.linkType === "Implements" ? "-..->"
+                      : l.linkType === "Duplicates" ? "==>"
+                      :                               "--->";
+          edges.push({ from: t.id, to: l.otherTicketId, arrow, label: l.linkType.toLowerCase() });
+        });
+    });
+
+    if (edges.length === 0) return (
+      "flowchart LR\n  none[\"No dependency links between\\ntickets in this Epic\"]"
+    );
+
+    const involvedIds = new Set(edges.flatMap(e => [e.from, e.to]));
+    const lines = ["flowchart LR"];
+    [...involvedIds].forEach(id => {
+      const t     = epicGroup.find(e => e.id === id);
+      if (!t) return;
+      const icon  = TYPE_ICON[t.type] || "📋";
+      const label = t.title.length > 30 ? t.title.slice(0, 30) + "…" : t.title;
+      lines.push(`  ${sid(id)}["${icon} ${id}\\n${label}"]`);
+    });
+    edges.forEach(e =>
+      lines.push(`  ${sid(e.from)} ${e.arrow}|"${e.label}"| ${sid(e.to)}`)
+    );
+    return lines.join("\n");
+  }, [linksLoaded, links, epicGroup]);
+
+  const currentDef = view === "hierarchy" ? hierarchyDef : dependencyDef;
+
+  const TAB_BTN = active => ({
+    fontFamily: T.body, fontSize: 13, fontWeight: active ? 700 : 400,
+    padding: "10px 20px", background: "none", border: "none", cursor: "pointer",
+    color:       active ? T.accent    : T.textMuted,
+    borderBottom: active ? `2px solid ${T.accent}` : "2px solid transparent",
+    transition: "color .12s",
+  });
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 10001,
+      background: "rgba(0,0,0,.65)", display: "flex", alignItems: "center", justifyContent: "center" }}
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={{ width: "min(92vw, 900px)", maxHeight: "88vh", background: T.surface,
+        border: `1px solid ${T.border}`, borderRadius: 14, overflow: "hidden",
+        display: "flex", flexDirection: "column", boxShadow: "0 28px 80px rgba(0,0,0,.55)" }}>
+
+        {/* Header */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+          padding: "14px 20px", borderBottom: `1px solid ${T.border}`, flexShrink: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 22 }}>🏔</span>
+            <div>
+              <div style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text }}>
+                {ticket.title}
+              </div>
+              <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+                {ticket.id} · {epicGroup.length} ticket{epicGroup.length !== 1 ? "s" : ""}
+              </div>
+            </div>
+          </div>
+          <button onClick={onClose}
+            style={{ background: "none", border: "none", cursor: "pointer",
+              color: T.textMuted, fontSize: 22, lineHeight: 1, padding: "0 4px" }}>×</button>
+        </div>
+
+        {/* Tab bar */}
+        <div style={{ display: "flex", alignItems: "center",
+          borderBottom: `1px solid ${T.border}`, flexShrink: 0 }}>
+          <button type="button" onClick={() => setView("hierarchy")} style={TAB_BTN(view === "hierarchy")}>
+            🌳 Hierarchy
+          </button>
+          <button type="button" onClick={() => setView("dependencies")} style={TAB_BTN(view === "dependencies")}>
+            🔗 Dependencies
+          </button>
+          {!linksLoaded && view === "dependencies" && (
+            <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted,
+              marginLeft: 8, fontStyle: "italic" }}>
+              loading links…
+            </span>
+          )}
+        </div>
+
+        {/* Diagram canvas — key forces MermaidRenderer to remount on view/def change */}
+        <div style={{ flex: 1, overflowY: "auto", overflowX: "auto",
+          background: T.bg, padding: 16, display: "flex", justifyContent: "center" }}>
+          <MermaidRenderer key={currentDef} definition={currentDef} />
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── Test Outcome Modal ───────────────────────────────────────────────────────
+// Shown when a ticket leaves "In Testing". Forces an explicit Pass / Fail
+// decision and captures optional (Pass) or mandatory (Fail) test notes before
+// the ticket is routed to "Ready to Deploy" or "Testing Failed".
+
+const TestOutcomeModal = ({ ticket, onConfirm, onCancel }) => {
+  const [outcome, setOutcome] = useState(null);    // "pass" | "fail"
+  const [notes,   setNotes]   = useState(ticket.testNotes || "");
+  const [touched, setTouched] = useState(false);
+
+  const notesRequired = outcome === "fail";
+  const notesEmpty    = notes.trim() === "";
+  const invalid       = notesRequired && notesEmpty;
+
+  const submit = () => {
+    setTouched(true);
+    if (!outcome || invalid) return;
+    onConfirm({
+      newStatus: outcome === "pass" ? "Ready to Deploy" : "Testing Failed",
+      testNotes: notes.trim() || null,
+    });
+  };
+
+  const BTN_BASE = {
+    flex: 1, padding: "18px 12px", borderRadius: 10, cursor: "pointer",
+    fontFamily: T.head, fontSize: 15, fontWeight: 700, border: "2px solid",
+    transition: "all .15s", display: "flex", flexDirection: "column",
+    alignItems: "center", gap: 6,
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 10002,
+      background: "rgba(0,0,0,.7)", display: "flex", alignItems: "center",
+      justifyContent: "center" }}
+      onClick={e => { if (e.target === e.currentTarget) onCancel(); }}>
+      <div style={{ width: "min(92vw, 460px)", background: T.surface,
+        border: `1px solid ${T.border}`, borderRadius: 14,
+        boxShadow: "0 28px 80px rgba(0,0,0,.6)", overflow: "hidden" }}>
+
+        {/* Header */}
+        <div style={{ padding: "18px 20px 14px", borderBottom: `1px solid ${T.border}` }}>
+          <div style={{ fontFamily: T.head, fontSize: 16, fontWeight: 800, color: T.text }}>
+            Testing outcome
+          </div>
+          <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, marginTop: 3 }}>
+            <span style={{ fontFamily: T.mono, fontSize: 11 }}>{ticket.id}</span>
+            {" · "}{ticket.title.length > 52 ? ticket.title.slice(0, 52) + "…" : ticket.title}
+          </div>
+        </div>
+
+        <div style={{ padding: "20px 20px 0" }}>
+          {/* Pass / Fail choice */}
+          <div style={{ display: "flex", gap: 12, marginBottom: 20 }}>
+            <button type="button" onClick={() => setOutcome("pass")} style={{
+              ...BTN_BASE,
+              background:   outcome === "pass" ? `${T.success}18` : "none",
+              borderColor:  outcome === "pass" ? T.success : T.border,
+              color:        outcome === "pass" ? T.success : T.textMuted,
+            }}>
+              <span style={{ fontSize: 28 }}>✅</span>
+              <span>Pass</span>
+              <span style={{ fontFamily: T.body, fontSize: 11, fontWeight: 400,
+                color: outcome === "pass" ? T.success : T.textMuted, opacity: .8 }}>
+                → Ready to Deploy
+              </span>
+            </button>
+
+            <button type="button" onClick={() => setOutcome("fail")} style={{
+              ...BTN_BASE,
+              background:   outcome === "fail" ? `${T.danger}18` : "none",
+              borderColor:  outcome === "fail" ? T.danger : T.border,
+              color:        outcome === "fail" ? T.danger : T.textMuted,
+            }}>
+              <span style={{ fontSize: 28 }}>❌</span>
+              <span>Fail</span>
+              <span style={{ fontFamily: T.body, fontSize: 11, fontWeight: 400,
+                color: outcome === "fail" ? T.danger : T.textMuted, opacity: .8 }}>
+                → Testing Failed
+              </span>
+            </button>
+          </div>
+
+          {/* Notes field — always visible, mandatory label swaps on outcome */}
+          <div style={{ marginBottom: 20 }}>
+            <label style={{ fontFamily: T.body, fontSize: 12, fontWeight: 600,
+              color: (touched && invalid) ? T.danger : T.text,
+              display: "block", marginBottom: 6 }}>
+              {outcome === "fail" ? "Failure reason *" : "Test notes"}
+              {outcome === "pass" && (
+                <span style={{ fontWeight: 400, color: T.textMuted, marginLeft: 4 }}>(optional)</span>
+              )}
+            </label>
+            <textarea
+              value={notes}
+              onChange={e => setNotes(e.target.value)}
+              placeholder={outcome === "fail"
+                ? "Describe what failed — steps to reproduce, error messages, environment…"
+                : "Any notes about what was tested or verified…"}
+              rows={4}
+              style={{
+                width: "100%", resize: "vertical", boxSizing: "border-box",
+                fontFamily: T.body, fontSize: 13, color: T.text,
+                background: T.bg, borderRadius: 7, padding: "9px 12px",
+                border: `1px solid ${(touched && invalid) ? T.danger : T.border}`,
+                outline: "none", lineHeight: 1.5,
+              }}
+            />
+            {touched && invalid && (
+              <div style={{ fontFamily: T.body, fontSize: 11, color: T.danger, marginTop: 4 }}>
+                A failure reason is required before marking as failed.
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div style={{ padding: "0 20px 20px", display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <button type="button" onClick={onCancel}
+            style={{ fontFamily: T.body, fontSize: 13, padding: "8px 18px",
+              background: "none", border: `1px solid ${T.border}`, borderRadius: 7,
+              color: T.textMuted, cursor: "pointer" }}>
+            Cancel
+          </button>
+          <button type="button" onClick={submit}
+            disabled={!outcome}
+            style={{ fontFamily: T.body, fontSize: 13, fontWeight: 700,
+              padding: "8px 22px", borderRadius: 7, cursor: outcome ? "pointer" : "not-allowed",
+              background: !outcome    ? T.border
+                        : outcome === "pass" ? T.success : T.danger,
+              border: "none", color: "#fff",
+              opacity: !outcome ? 0.45 : 1,
+              transition: "background .15s, opacity .15s" }}>
+            {!outcome      ? "Select outcome"
+             : outcome === "pass" ? "✅ Move to Ready to Deploy"
+             :                      "❌ Move to Testing Failed"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 // ─── Ticket Links Panel ───────────────────────────────────────────────────────
 
@@ -181,9 +562,134 @@ const TicketLinksPanel = ({ ticketId, allTickets = [] }) => {
   );
 };
 
+// ─── Parent Picker Modal ──────────────────────────────────────────────────────
+// Full-screen picker for selecting a parent Epic or Story.
+// Supports free-text search across title + ID, and one-click type filtering.
+
+const PARENT_TYPES = ["Epic", "Story"];
+
+const ParentPickerModal = ({ tickets = [], excludeId, onSelect, onClose }) => {
+  const [search,     setSearch]     = useState("");
+  const [typeFilter, setTypeFilter] = useState(""); // "" = all, "Epic", "Story"
+
+  const q = search.trim().toLowerCase();
+  const results = tickets
+    .filter(t =>
+      t.id !== excludeId &&
+      PARENT_TYPES.includes(t.type) &&
+      (typeFilter === "" || t.type === typeFilter) &&
+      (q.length === 0 ||
+        t.id.toLowerCase().includes(q) ||
+        t.title.toLowerCase().includes(q) ||
+        (t.description || "").toLowerCase().includes(q))
+    )
+    .sort((a, b) => {
+      // Epics first, then by status position, then alphabetical
+      if (a.type !== b.type) return a.type === "Epic" ? -1 : 1;
+      return a.title.localeCompare(b.title);
+    });
+
+  const btnBase = active => ({
+    fontFamily: T.body, fontSize: 12, fontWeight: active ? 700 : 400,
+    padding: "4px 12px", borderRadius: 6, cursor: "pointer", border: "none",
+    background: active ? T.accent : T.surface,
+    color:      active ? "#fff"   : T.textMuted,
+    transition: "background .12s, color .12s",
+  });
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 10000,
+      background: "rgba(0,0,0,.55)", display: "flex", alignItems: "center", justifyContent: "center" }}
+      onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={{ width: 560, maxHeight: "80vh", background: T.surface,
+        border: `1px solid ${T.border}`, borderRadius: 14,
+        display: "flex", flexDirection: "column", overflow: "hidden",
+        boxShadow: "0 20px 60px rgba(0,0,0,.4)" }}>
+
+        {/* Header */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+          padding: "14px 18px", borderBottom: `1px solid ${T.border}`, flexShrink: 0 }}>
+          <span style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text }}>
+            Select Parent Epic / Story
+          </span>
+          <button onClick={onClose}
+            style={{ background: "none", border: "none", cursor: "pointer",
+              color: T.textMuted, fontSize: 20, lineHeight: 1, padding: "0 2px" }}>×</button>
+        </div>
+
+        {/* Search + type filter */}
+        <div style={{ padding: "12px 18px", borderBottom: `1px solid ${T.border}`, flexShrink: 0,
+          display: "flex", flexDirection: "column", gap: 10 }}>
+          <input
+            autoFocus
+            value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="Search by type, ID, title, or keywords…"
+            style={{ ...inputBase, fontFamily: T.body, fontSize: 13,
+              width: "100%", boxSizing: "border-box" }} />
+          <div style={{ display: "flex", gap: 6 }}>
+            {["", ...PARENT_TYPES].map(t => (
+              <button key={t} type="button"
+                onClick={() => setTypeFilter(t)}
+                style={btnBase(typeFilter === t)}>
+                {t === "" ? "All" : `${TYPE_ICON[t]} ${t}`}
+              </button>
+            ))}
+            <span style={{ marginLeft: "auto", fontFamily: T.mono, fontSize: 11,
+              color: T.textMuted, alignSelf: "center" }}>
+              {results.length} result{results.length !== 1 ? "s" : ""}
+            </span>
+          </div>
+        </div>
+
+        {/* Results list */}
+        <div style={{ overflowY: "auto", flex: 1 }}>
+          {results.length === 0 ? (
+            <div style={{ padding: 32, textAlign: "center", fontFamily: T.body,
+              fontSize: 13, color: T.textMuted, fontStyle: "italic" }}>
+              No {typeFilter || "Epics or Stories"} match your search.
+            </div>
+          ) : results.map((t, i) => (
+            <div key={t.id}
+              onClick={() => { onSelect(t); onClose(); }}
+              style={{ display: "flex", alignItems: "center", gap: 10,
+                padding: "11px 18px", cursor: "pointer",
+                borderBottom: i < results.length - 1 ? `1px solid ${T.border}22` : "none",
+                transition: "background .1s" }}
+              onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
+              onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+              <span style={{ fontSize: 18, flexShrink: 0 }}>{TYPE_ICON[t.type] || "📋"}</span>
+              <Badge variant={TYPE_VARIANT[t.type] || "default"}>{t.type}</Badge>
+              <span style={{ fontFamily: T.mono, fontSize: 11, color: T.accent, flexShrink: 0 }}>
+                {t.id}
+              </span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontFamily: T.body, fontSize: 13, color: T.text, fontWeight: 500,
+                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {t.title}
+                </div>
+                {t.description && (
+                  <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted,
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 1 }}>
+                    {t.description}
+                  </div>
+                )}
+              </div>
+              <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted,
+                background: T.bg, border: `1px solid ${T.border}`,
+                borderRadius: 4, padding: "1px 6px", flexShrink: 0 }}>
+                {t.status}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ─── Ticket Modal ─────────────────────────────────────────────────────────────
 
-const TicketModal = ({ init = {}, shipments = [], tickets = [], onSave, onCancel }) => {
+const TicketModal = ({ init = {}, shipments = [], tickets = [], users = [], onSave, onCancel }) => {
   const isEdit = !!init.id;
   const [f, setF] = useState({
     title:       init.title       || "",
@@ -194,21 +700,106 @@ const TicketModal = ({ init = {}, shipments = [], tickets = [], onSave, onCancel
     status:      init.status      || "Ready",
     shipmentId:  init.shipmentId  || "",
     version:     init.version     || "",
+    assigneeId:  init.assigneeId  || "",
+    dueDate:     init.dueDate     || "",
+    parentId:    init.parentId    || "",   // ID of parent Epic/Story, or empty for top-level
   });
+  const [showParentPicker, setShowParentPicker] = useState(false);
   const set = k => v => setF(p => ({ ...p, [k]: v }));
   const valid = f.title.trim().length > 0;
+
+  const selectedParent = f.parentId ? tickets.find(t => t.id === f.parentId) : null;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <Inp label="Title" value={f.title} onChange={set("title")} placeholder="e.g. Wire VesselCombobox to ShipmentForm" required />
+
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
         <Sel label="Type" value={f.type} onChange={set("type")}
-          options={TYPES.map(t => ({ value: t, label: t }))} />
+          options={TYPES.map(t => ({ value: t, label: `${TYPE_ICON[t]} ${t}` }))} />
         <Sel label="Section" value={f.section} onChange={set("section")}
           options={SECTIONS.map(s => ({ value: s, label: s }))} />
         <Sel label="Priority" value={f.priority} onChange={set("priority")}
           options={PRIORITIES.map(p => ({ value: p, label: p }))} />
       </div>
+
+      {/* Assignee + Due date on one row */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <Sel label="Assignee" value={f.assigneeId} onChange={set("assigneeId")}
+          options={[
+            { value: "", label: "— Unassigned —" },
+            ...users.filter(u => u.isActive !== false).map(u => ({ value: u.id, label: u.name })),
+          ]}
+        />
+        {/* Native date input styled to match the design system */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <label style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600, color: T.textMuted,
+            textTransform: "uppercase", letterSpacing: ".06em" }}>Due Date</label>
+          <input type="date" value={f.dueDate} onChange={e => set("dueDate")(e.target.value)}
+            style={{ ...inputBase, fontFamily: T.mono, fontSize: 13, cursor: "pointer",
+              colorScheme: "dark" }} />
+        </div>
+      </div>
+
+      {/* Parent Epic / Story — lookup button opens ParentPickerModal */}
+      {f.type !== "Epic" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <label style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600, color: T.textMuted,
+            textTransform: "uppercase", letterSpacing: ".06em" }}>
+            Parent Epic / Story <span style={{ fontWeight: 400, textTransform: "none" }}>(optional)</span>
+          </label>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            {/* Display chip when a parent is selected */}
+            <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, minHeight: 36,
+              background: T.bg, border: `1px solid ${selectedParent ? T.accent + "66" : T.border}`,
+              borderRadius: 7, padding: "6px 12px" }}>
+              {selectedParent ? (
+                <>
+                  <span style={{ fontSize: 15, flexShrink: 0 }}>{TYPE_ICON[selectedParent.type] || "📋"}</span>
+                  <Badge variant={TYPE_VARIANT[selectedParent.type] || "default"}>{selectedParent.type}</Badge>
+                  <span style={{ fontFamily: T.mono, fontSize: 11, color: T.accent, flexShrink: 0 }}>
+                    {selectedParent.id}
+                  </span>
+                  <span style={{ fontFamily: T.body, fontSize: 12, color: T.text, flex: 1,
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {selectedParent.title}
+                  </span>
+                  <button type="button" onClick={() => set("parentId")("")}
+                    style={{ background: "none", border: "none", cursor: "pointer",
+                      color: T.textMuted, fontSize: 16, lineHeight: 1, padding: "0 2px", flexShrink: 0 }}
+                    onMouseEnter={e => e.currentTarget.style.color = T.danger}
+                    onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>×</button>
+                </>
+              ) : (
+                <span style={{ fontFamily: T.body, fontSize: 12, color: T.border, fontStyle: "italic" }}>
+                  None — click 🔍 to search
+                </span>
+              )}
+            </div>
+            {/* Lookup button */}
+            <button type="button" onClick={() => setShowParentPicker(true)}
+              title="Search for a parent Epic or Story"
+              style={{ background: T.accentBg, border: `1px solid ${T.accent}55`, borderRadius: 7,
+                color: T.accent, cursor: "pointer", fontSize: 16, padding: "6px 12px",
+                lineHeight: 1, flexShrink: 0, transition: "background .12s" }}
+              onMouseEnter={e => e.currentTarget.style.background = `${T.accent}33`}
+              onMouseLeave={e => e.currentTarget.style.background = T.accentBg}>
+              🔍
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Parent picker modal — rendered outside the form to avoid z-index issues */}
+      {showParentPicker && (
+        <ParentPickerModal
+          tickets={tickets}
+          excludeId={init.id}
+          onSelect={t => set("parentId")(t.id)}
+          onClose={() => setShowParentPicker(false)}
+        />
+      )}
+
       <Sel label="Linked Shipment (optional)" value={f.shipmentId} onChange={set("shipmentId")}
         options={[
           { value: "", label: "— None —" },
@@ -223,6 +814,7 @@ const TicketModal = ({ init = {}, shipments = [], tickets = [], onSave, onCancel
       />
       <Textarea label="Description" value={f.description} onChange={set("description")}
         placeholder="What needs to be done, acceptance criteria, notes…" rows={4} />
+
       {isEdit && (
         <Sel label="Status" value={f.status} onChange={set("status")}
           options={COLUMNS.map(c => ({ value: c, label: c }))} />
@@ -232,6 +824,7 @@ const TicketModal = ({ init = {}, shipments = [], tickets = [], onSave, onCancel
           <TicketLinksPanel ticketId={init.id} allTickets={tickets} />
         </div>
       )}
+
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", paddingTop: 4 }}>
         <Btn variant="secondary" onClick={onCancel}>Cancel</Btn>
         <Btn disabled={!valid} onClick={() => onSave(f)}>
@@ -256,13 +849,23 @@ const DropLine = () => (
 
 // ─── Ticket Card ──────────────────────────────────────────────────────────────
 
-const TicketCard = ({ ticket, onEdit, onDelete, onMove, onPreview, colIndex,
+const TicketCard = ({ ticket, onEdit, onDelete, onMove, onPreview, onDiagram, colIndex,
                       isSelected, isDragging, dropIndicator,
-                      onDragStart, onDragEnd, onDragOver }) => {
+                      onDragStart, onDragEnd, onDragOver,
+                      allTickets = [] }) => {
   const { canEdit } = useAuth();
   const [confirm, setConfirm] = useState(false);
   const cardRef  = useRef(null);
   const dragged  = useRef(false);
+
+  // Compute child progress for Epic cards (done / total children).
+  const children   = ticket.type === "Epic" ? allTickets.filter(t => t.parentId === ticket.id) : [];
+  const doneCount  = children.filter(t => ["Done","Ready to Deploy","Released"].includes(t.status)).length;
+  const totalCount = children.length;
+  const progress   = totalCount > 0 ? Math.round((doneCount / totalCount) * 100) : null;
+
+  // Parent breadcrumb for non-top-level tickets.
+  const parent = ticket.parentId ? allTickets.find(t => t.id === ticket.parentId) : null;
 
   const handleDragOver = e => {
     e.preventDefault();
@@ -299,16 +902,48 @@ const TicketCard = ({ ticket, onEdit, onDelete, onMove, onPreview, colIndex,
         onMouseEnter={e => { if (!isDragging) e.currentTarget.style.boxShadow = isSelected ? `0 0 0 1px ${T.accent}33, 0 4px 16px rgba(0,0,0,.4)` : "0 4px 16px rgba(0,0,0,.4)"; }}
         onMouseLeave={e => e.currentTarget.style.boxShadow = isDragging ? "none" : isSelected ? `0 0 0 1px ${T.accent}33, 0 2px 8px rgba(0,0,0,.25)` : "0 2px 8px rgba(0,0,0,.25)"}
       >
+        {/* Parent breadcrumb — shown on tickets that have a parent */}
+        {parent && (
+          <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 6 }}>
+            <Badge variant={TYPE_VARIANT[parent.type] || "default"} style={{ fontSize: 9 }}>{parent.type}</Badge>
+            <span style={{ fontFamily: T.mono, fontSize: 9, color: T.textMuted,
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 140 }}>
+              {parent.title}
+            </span>
+          </div>
+        )}
+
         {/* Header */}
         <div style={{ display: "flex", alignItems: "flex-start", gap: 6, marginBottom: 8 }}>
           <div style={{ flex: 1 }}>
             <div style={{ fontFamily: T.body, fontSize: 13, fontWeight: 600, color: T.text, lineHeight: 1.4 }}>
               {ticket.title}
             </div>
-            <div style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted, marginTop: 2 }}>
+            <div style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted, marginTop: 2,
+              display: "flex", alignItems: "center", gap: 4 }}>
+              <span style={{ fontSize: 11 }}>{TYPE_ICON[ticket.type] || "📋"}</span>
               {ticket.id}
             </div>
           </div>
+          {/* Epic progress ring */}
+          {ticket.type === "Epic" && progress !== null && (
+            <div title={`${doneCount} / ${totalCount} children done`}
+              style={{ position: "relative", width: 32, height: 32, flexShrink: 0 }}>
+              <svg width="32" height="32" style={{ transform: "rotate(-90deg)" }}>
+                <circle cx="16" cy="16" r="12" fill="none" stroke={T.border} strokeWidth="3" />
+                <circle cx="16" cy="16" r="12" fill="none"
+                  stroke={progress === 100 ? T.success : T.accent} strokeWidth="3"
+                  strokeDasharray={`${2 * Math.PI * 12}`}
+                  strokeDashoffset={`${2 * Math.PI * 12 * (1 - progress / 100)}`}
+                  strokeLinecap="round" style={{ transition: "stroke-dashoffset .3s" }} />
+              </svg>
+              <span style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center",
+                justifyContent: "center", fontFamily: T.mono, fontSize: 8, fontWeight: 700,
+                color: progress === 100 ? T.success : T.text }}>
+                {progress}%
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Linked shipment */}
@@ -350,6 +985,41 @@ const TicketCard = ({ ticket, onEdit, onDelete, onMove, onPreview, colIndex,
           </div>
         )}
 
+        {/* Assignee + due date footer */}
+        {(ticket.assigneeId || ticket.dueDate) && (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+            marginBottom: 8, gap: 6 }}>
+            {ticket.assigneeId ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                {/* Avatar circle — colour is deterministic from the user ID */}
+                <div style={{
+                  width: 20, height: 20, borderRadius: "50%", flexShrink: 0,
+                  background: avatarColor(ticket.assigneeId),
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontFamily: T.body, fontSize: 10, fontWeight: 700, color: "#fff",
+                }}>
+                  {ticket.assigneeInitial || "?"}
+                </div>
+                <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
+                  {ticket.assigneeName || ticket.assigneeId}
+                </span>
+              </div>
+            ) : <span />}
+
+            {ticket.dueDate && (
+              <span style={{
+                fontFamily: T.mono, fontSize: 10, fontWeight: 600,
+                padding: "1px 6px", borderRadius: 4,
+                color:      isOverdue(ticket.dueDate) ? T.danger  : T.textMuted,
+                background: isOverdue(ticket.dueDate) ? `${T.danger}15`  : T.surface,
+                border:     `1px solid ${isOverdue(ticket.dueDate) ? T.danger + "55" : T.border}`,
+              }}>
+                {isOverdue(ticket.dueDate) ? "⚠ " : ""}{ticket.dueDate}
+              </span>
+            )}
+          </div>
+        )}
+
         {/* Actions */}
         {canEdit && (
         <div style={{ display: "flex", gap: 5, justifyContent: "flex-end",
@@ -366,6 +1036,14 @@ const TicketCard = ({ ticket, onEdit, onDelete, onMove, onPreview, colIndex,
               color: T.textMuted, cursor: "pointer", fontSize: 11, padding: "2px 8px", fontFamily: T.body }}>
             ✎
           </button>
+          {ticket.type === "Epic" && (
+            <button onClick={stop(() => onDiagram && onDiagram(ticket))}
+              title="View Epic diagram"
+              style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 4,
+                color: T.accent, cursor: "pointer", fontSize: 11, padding: "2px 8px", fontFamily: T.body }}>
+              🗺
+            </button>
+          )}
           <button onClick={stop(() => setConfirm(true))}
             style={{ background: "none", border: `1px solid ${T.danger}44`, borderRadius: 4,
               color: T.danger, cursor: "pointer", fontSize: 11, padding: "2px 8px", fontFamily: T.body }}>
@@ -397,10 +1075,13 @@ const TicketCard = ({ ticket, onEdit, onDelete, onMove, onPreview, colIndex,
 
 // ─── Ticket Preview Panel ─────────────────────────────────────────────────────
 
-const TicketPreview = ({ ticket, colIndex, shipments, tickets, onClose, onEdit, onMove, onDelete }) => {
+const TicketPreview = ({ ticket, colIndex, shipments, tickets, users, onClose, onEdit, onMove, onDelete, onPreview, onDiagram }) => {
   const { canEdit } = useAuth();
   const [confirm, setConfirm] = useState(false);
-  const linked = shipments.find(s => s.id === ticket.shipmentId);
+  const linked   = shipments.find(s => s.id === ticket.shipmentId);
+  const parent   = ticket.parentId ? tickets.find(t => t.id === ticket.parentId) : null;
+  const children = tickets.filter(t => t.parentId === ticket.id)
+    .sort((a, b) => a.position - b.position);
 
   const MetaRow = ({ label, children }) => (
     <div style={{ display: "flex", alignItems: "center", gap: 10, minHeight: 24 }}>
@@ -446,6 +1127,22 @@ const TicketPreview = ({ ticket, colIndex, shipments, tickets, onClose, onEdit, 
       {/* Scrollable body */}
       <div style={{ flex: 1, overflowY: "auto", padding: "16px 16px", display: "flex", flexDirection: "column", gap: 16 }}>
 
+        {/* Parent breadcrumb */}
+        {parent && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: -4 }}>
+            <Badge variant={TYPE_VARIANT[parent.type] || "default"}>{parent.type}</Badge>
+            <button type="button" onClick={() => onPreview && onPreview(parent)}
+              style={{ background: "none", border: "none", cursor: "pointer", padding: 0,
+                fontFamily: T.mono, fontSize: 11, color: T.accent, textDecoration: "underline dotted" }}>
+              {parent.id}
+            </button>
+            <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted,
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {parent.title}
+            </span>
+          </div>
+        )}
+
         {/* Title */}
         <div style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, lineHeight: 1.45 }}>
           {ticket.title}
@@ -483,12 +1180,50 @@ const TicketPreview = ({ ticket, colIndex, shipments, tickets, onClose, onEdit, 
               </span>
             </MetaRow>
           )}
+          {ticket.assigneeId && (
+            <MetaRow label="Assignee">
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <div style={{
+                  width: 22, height: 22, borderRadius: "50%", flexShrink: 0,
+                  background: avatarColor(ticket.assigneeId),
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontFamily: T.body, fontSize: 11, fontWeight: 700, color: "#fff",
+                }}>
+                  {ticket.assigneeInitial || "?"}
+                </div>
+                <span style={{ fontFamily: T.body, fontSize: 12, color: T.text }}>
+                  {ticket.assigneeName || ticket.assigneeId}
+                </span>
+              </div>
+            </MetaRow>
+          )}
+          {ticket.dueDate && (
+            <MetaRow label="Due Date">
+              <span style={{
+                fontFamily: T.mono, fontSize: 11, fontWeight: 600,
+                padding: "2px 8px", borderRadius: 4,
+                color:      isOverdue(ticket.dueDate) ? T.danger  : T.text,
+                background: isOverdue(ticket.dueDate) ? `${T.danger}15`  : T.surface,
+                border:     `1px solid ${isOverdue(ticket.dueDate) ? T.danger + "55" : T.border}`,
+              }}>
+                {isOverdue(ticket.dueDate) ? "⚠ Overdue · " : ""}{ticket.dueDate}
+              </span>
+            </MetaRow>
+          )}
           {ticket.shipmentId && (
             <MetaRow label="Shipment">
               <span style={{ fontFamily: T.mono, fontSize: 11, color: T.accent,
                 background: `${T.accent}15`, border: `1px solid ${T.accent}33`,
                 borderRadius: 4, padding: "2px 8px" }}>
                 ⛴ {ticket.shipmentId}{linked ? ` · ${linked.pol}→${linked.pod}` : ""}
+              </span>
+            </MetaRow>
+          )}
+          {ticket.testNotes && (
+            <MetaRow label="Test notes">
+              <span style={{ fontFamily: T.body, fontSize: 12, color: T.text,
+                lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
+                {ticket.testNotes}
               </span>
             </MetaRow>
           )}
@@ -512,6 +1247,60 @@ const TicketPreview = ({ ticket, colIndex, shipments, tickets, onClose, onEdit, 
           )}
         </div>
 
+        {/* Children / sub-tasks list — shown for Epics and Stories that have children */}
+        {children.length > 0 && (
+          <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: 16 }}>
+            <div style={{ fontFamily: T.body, fontSize: 10, fontWeight: 700, color: T.textMuted,
+              textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 8,
+              display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span>Children ({children.length})</span>
+              <span style={{ fontWeight: 400, color: T.border }}>
+                {children.filter(c => ["Done","Ready to Deploy","Released"].includes(c.status)).length} done
+              </span>
+            </div>
+            {/* Progress bar */}
+            {children.length > 0 && (() => {
+              const done = children.filter(c => ["Done","Ready to Deploy","Released"].includes(c.status)).length;
+              const pct  = Math.round((done / children.length) * 100);
+              return (
+                <div style={{ height: 4, borderRadius: 2, background: T.border,
+                  marginBottom: 10, overflow: "hidden" }}>
+                  <div style={{ height: "100%", borderRadius: 2, width: `${pct}%`,
+                    background: pct === 100 ? T.success : T.accent, transition: "width .3s" }} />
+                </div>
+              );
+            })()}
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              {children.map(c => (
+                <div key={c.id}
+                  onClick={() => onPreview && onPreview(c)}
+                  style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px",
+                    borderRadius: 6, background: T.bg, border: `1px solid ${T.border}`,
+                    cursor: "pointer", transition: "background .1s" }}
+                  onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
+                  onMouseLeave={e => e.currentTarget.style.background = T.bg}>
+                  {/* Done checkbox visual */}
+                  <span style={{ fontSize: 12, flexShrink: 0,
+                    color: (["Done","Ready to Deploy","Released"].includes(c.status)) ? T.success : T.border }}>
+                    {(["Done","Ready to Deploy","Released"].includes(c.status)) ? "✓" : "○"}
+                  </span>
+                  <span style={{ fontSize: 13, flexShrink: 0 }}>{TYPE_ICON[c.type] || "📋"}</span>
+                  <Badge variant={TYPE_VARIANT[c.type] || "default"}>{c.type}</Badge>
+                  <span style={{ fontFamily: T.body, fontSize: 12, color: T.text, flex: 1,
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                    textDecoration: (["Done","Ready to Deploy","Released"].includes(c.status)) ? "line-through" : "none",
+                    opacity: (["Done","Ready to Deploy","Released"].includes(c.status)) ? 0.6 : 1 }}>
+                    {c.title}
+                  </span>
+                  <span style={{ fontFamily: T.mono, fontSize: 9, color: T.textMuted, flexShrink: 0 }}>
+                    {c.status}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Links */}
         <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: 16 }}>
           <TicketLinksPanel ticketId={ticket.id} allTickets={tickets} />
@@ -526,6 +1315,14 @@ const TicketPreview = ({ ticket, colIndex, shipments, tickets, onClose, onEdit, 
             style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 5,
               color: T.textMuted, cursor: "pointer", fontSize: 11, padding: "5px 10px", fontFamily: T.body }}>
             ← {COLUMNS[colIndex - 1].split(" ")[0]}
+          </button>
+        )}
+        {ticket.type === "Epic" && (
+          <button onClick={() => onDiagram && onDiagram(ticket)}
+            title="View Epic diagram"
+            style={{ background: "none", border: `1px solid ${T.accent}55`, borderRadius: 5,
+              color: T.accent, cursor: "pointer", fontSize: 12, padding: "5px 10px", fontFamily: T.body }}>
+            🗺 Diagram
           </button>
         )}
         {canEdit && (
@@ -565,13 +1362,24 @@ const TicketPreview = ({ ticket, colIndex, shipments, tickets, onClose, onEdit, 
 
 // ─── Kanban Column ────────────────────────────────────────────────────────────
 
-const KanbanColumn = ({ status, tickets, onEdit, onDelete, onMove, onPreview,
-                        onDrop, colIndex, dragId, previewId }) => {
+const KanbanColumn = ({ status, tickets, allTickets, onEdit, onDelete, onMove, onPreview, onDiagram,
+                        onDrop, colIndex, dragId, previewId, wipLimit, onSetWipLimit }) => {
   const [dropTarget, setDropTarget] = useState(null);
   const [colDragOver, setColDragOver] = useState(false);
   const [expanded, setExpanded] = useState(false);
 
+  const [editingWip, setEditingWip] = useState(false);
+  const [wipInput,   setWipInput]   = useState(wipLimit ?? "");
   const clearDrop = () => { setDropTarget(null); setColDragOver(false); };
+
+  // WIP status: null = no limit, "ok" = under, "warn" = at limit, "over" = exceeded
+  const wipStatus = wipLimit
+    ? tickets.length > wipLimit  ? "over"
+    : tickets.length === wipLimit ? "warn"
+    : "ok"
+    : null;
+
+  const WIP_BADGE_COLOR = { ok: T.success, warn: T.warning, over: T.danger };
 
   const handleColDragOver = e => {
     e.preventDefault();
@@ -610,13 +1418,52 @@ const KanbanColumn = ({ status, tickets, onEdit, onDelete, onMove, onPreview,
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <span style={{ fontFamily: T.head, fontSize: 14, fontWeight: 700, color: T.text }}>{status}</span>
+          {/* Count badge — colour shifts when WIP limit is at/exceeded */}
           <span style={{
             fontFamily: T.mono, fontSize: 11, fontWeight: 700,
-            color: COL_ACCENT[status],
-            background: `${COL_ACCENT[status]}22`,
-            border: `1px solid ${COL_ACCENT[status]}44`,
+            color:      wipStatus ? WIP_BADGE_COLOR[wipStatus] : COL_ACCENT[status],
+            background: wipStatus ? `${WIP_BADGE_COLOR[wipStatus]}22` : `${COL_ACCENT[status]}22`,
+            border:     `1px solid ${wipStatus ? WIP_BADGE_COLOR[wipStatus] + "55" : COL_ACCENT[status] + "44"}`,
             borderRadius: 10, padding: "1px 8px",
-          }}>{tickets.length}</span>
+            transition: "color .2s, background .2s, border-color .2s",
+          }}>
+            {tickets.length}{wipLimit ? ` / ${wipLimit}` : ""}
+          </span>
+          {wipStatus === "over" && (
+            <span title="WIP limit exceeded" style={{ fontSize: 13 }}>⚠</span>
+          )}
+        </div>
+
+        {/* WIP limit gear — admin only; shown on hover */}
+        <div style={{ position: "relative" }}>
+          {editingWip ? (
+            <form onSubmit={e => { e.preventDefault(); onSetWipLimit(wipInput === "" ? null : Number(wipInput)); setEditingWip(false); }}
+              style={{ display: "flex", gap: 4, alignItems: "center" }}>
+              <input
+                type="number" min="1" max="99" value={wipInput}
+                onChange={e => setWipInput(e.target.value)}
+                placeholder="∞"
+                autoFocus
+                style={{ width: 44, fontFamily: T.mono, fontSize: 12, textAlign: "center",
+                  background: T.bg, border: `1px solid ${T.accent}`, borderRadius: 5,
+                  color: T.text, padding: "2px 4px", outline: "none" }} />
+              <button type="submit" style={{ background: T.accent, border: "none", borderRadius: 4,
+                color: "#fff", cursor: "pointer", fontSize: 11, padding: "2px 6px", fontFamily: T.body }}>✓</button>
+              <button type="button" onClick={() => setEditingWip(false)}
+                style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 4,
+                  color: T.textMuted, cursor: "pointer", fontSize: 11, padding: "2px 6px", fontFamily: T.body }}>✕</button>
+            </form>
+          ) : (
+            <button type="button" onClick={() => { setWipInput(wipLimit ?? ""); setEditingWip(true); }}
+              title={wipLimit ? `WIP limit: ${wipLimit} — click to change` : "Set WIP limit"}
+              style={{ background: "none", border: "none", cursor: "pointer",
+                color: wipLimit ? T.accent : T.border, fontSize: 13, lineHeight: 1,
+                padding: "2px 4px", opacity: 0.7, transition: "opacity .15s, color .15s" }}
+              onMouseEnter={e => e.currentTarget.style.opacity = "1"}
+              onMouseLeave={e => e.currentTarget.style.opacity = "0.7"}>
+              ⚙
+            </button>
+          )}
         </div>
       </div>
 
@@ -626,6 +1473,7 @@ const KanbanColumn = ({ status, tickets, onEdit, onDelete, onMove, onPreview,
           key={t.id}
           ticket={t}
           colIndex={colIndex}
+          allTickets={allTickets}
           isDragging={dragId === t.id}
           isSelected={previewId === t.id}
           dropIndicator={dropTarget?.id === t.id ? dropTarget.side : null}
@@ -633,6 +1481,7 @@ const KanbanColumn = ({ status, tickets, onEdit, onDelete, onMove, onPreview,
           onDelete={onDelete}
           onMove={onMove}
           onPreview={onPreview}
+          onDiagram={onDiagram}
           onDragStart={() => setDropTarget(null)}
           onDragEnd={() => clearDrop()}
           onDragOver={handleCardDragOver}
@@ -686,14 +1535,34 @@ const KanbanColumn = ({ status, tickets, onEdit, onDelete, onMove, onPreview,
 const KanbanPage = ({ shipments = [] }) => {
   const { canEdit } = useAuth();
   const [tickets,       setTickets]       = useState([]);
+  const [users,         setUsers]         = useState([]);
   const [loading,       setLoading]       = useState(true);
   const [modal,         setModal]         = useState(null);
-  const [filter,        setFilter]        = useState({ priority: "", section: "" });
+  const [filter,        setFilter]        = useState({ priority: "", section: "", type: "", assigneeId: "" });
   const [dragId,        setDragId]        = useState(null);
   const [previewId,     setPreviewId]     = useState(null);
   const [showReleased,  setShowReleased]  = useState(true);
 
-  // Derive preview from live tickets so it reflects edits/moves automatically
+  // WIP limits are persisted to localStorage so they survive page refreshes.
+  // Shape: { "Ready": 5, "In Progress": 3, ... } — columns without a limit are absent.
+  const [diagramTicket,     setDiagramTicket]     = useState(null);
+  const [testOutcomePending, setTestOutcomePending] = useState(null); // { ticket } waiting for outcome
+
+  const [wipLimits, setWipLimits] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("cargodesk_wip_limits") || "{}"); }
+    catch { return {}; }
+  });
+
+  const setWipLimit = (col, limit) => {
+    setWipLimits(prev => {
+      const next = { ...prev };
+      if (limit == null) delete next[col]; else next[col] = limit;
+      localStorage.setItem("cargodesk_wip_limits", JSON.stringify(next));
+      return next;
+    });
+  };
+
+  // Derive preview from live tickets so it reflects edits/moves automatically.
   const preview = previewId ? tickets.find(t => t.id === previewId) ?? null : null;
 
   const load = useCallback(async () => {
@@ -702,13 +1571,37 @@ const KanbanPage = ({ shipments = [] }) => {
     setLoading(false);
   }, []);
 
-  useEffect(() => { load(); }, []);
+  // Users are loaded once — they change rarely and are only needed for the
+  // assignee picker and filter dropdown.
+  useEffect(() => {
+    load();
+    api.users.list().then(setUsers).catch(() => {});
+  }, []);
 
   const byStatus = status => {
     let list = tickets.filter(t => t.status === status);
-    if (filter.priority) list = list.filter(t => t.priority === filter.priority);
-    if (filter.section)  list = list.filter(t => t.section  === filter.section);
+    if (filter.priority)   list = list.filter(t => t.priority   === filter.priority);
+    if (filter.section)    list = list.filter(t => t.section    === filter.section);
+    if (filter.type)       list = list.filter(t => t.type       === filter.type);
+    if (filter.assigneeId) list = list.filter(t => t.assigneeId === filter.assigneeId);
     return list.sort((a, b) => a.position - b.position);
+  };
+
+  // Shared helper — executes a cross-column move, persisting testNotes when supplied.
+  const commitMove = async (ticket, newStatus, testNotes = undefined) => {
+    const colCards = tickets
+      .filter(t => t.status === newStatus)
+      .sort((a, b) => a.position - b.position);
+    const newPos  = colCards.length > 0 ? colCards[colCards.length - 1].position + 1 : 0;
+    const updated = {
+      ...ticket,
+      status:    newStatus,
+      position:  newPos,
+      // Only overwrite testNotes when we have a value to write (undefined = leave existing).
+      ...(testNotes !== undefined ? { testNotes } : {}),
+    };
+    setTickets(prev => prev.map(t => t.id === ticket.id ? updated : t));
+    await api.tickets.update(ticket.id, updated);
   };
 
   const handleDrop = async (ticketId, newStatus, targetId, side) => {
@@ -718,13 +1611,13 @@ const KanbanPage = ({ shipments = [] }) => {
 
     // ── Cross-column move ──────────────────────────────────────────────────────
     if (dragged.status !== newStatus) {
-      const colCards = tickets
-        .filter(t => t.status === newStatus)
-        .sort((a, b) => a.position - b.position);
-      const newPos = colCards.length > 0 ? colCards[colCards.length - 1].position + 1 : 0;
-      const updated = { ...dragged, status: newStatus, position: newPos };
-      setTickets(prev => prev.map(t => t.id === ticketId ? updated : t));
-      await api.tickets.update(ticketId, updated);
+      // Gate: leaving "In Testing" → show outcome modal instead of moving directly.
+      if (dragged.status === "In Testing" &&
+          (newStatus === "Ready to Deploy" || newStatus === "Testing Failed")) {
+        setTestOutcomePending(dragged);
+        return;
+      }
+      await commitMove(dragged, newStatus);
       return;
     }
 
@@ -765,13 +1658,12 @@ const KanbanPage = ({ shipments = [] }) => {
   };
 
   const handleMove = async (ticket, newStatus) => {
-    const colCards = tickets
-      .filter(t => t.status === newStatus)
-      .sort((a, b) => a.position - b.position);
-    const newPos = colCards.length > 0 ? colCards[colCards.length - 1].position + 1 : 0;
-    const updated = { ...ticket, status: newStatus, position: newPos };
-    setTickets(prev => prev.map(t => t.id === ticket.id ? updated : t));
-    await api.tickets.update(ticket.id, updated);
+    if (ticket.status === "In Testing" &&
+        (newStatus === "Ready to Deploy" || newStatus === "Testing Failed")) {
+      setTestOutcomePending(ticket);
+      return;
+    }
+    await commitMove(ticket, newStatus);
   };
 
   const handleDelete = async id => {
@@ -780,17 +1672,32 @@ const KanbanPage = ({ shipments = [] }) => {
     setPreviewId(p => p === id ? null : p);
   };
 
+  const handleTestOutcome = async ({ newStatus, testNotes }) => {
+    const ticket = testOutcomePending;
+    setTestOutcomePending(null);
+    if (!ticket) return;
+    await commitMove(ticket, newStatus, testNotes);
+  };
+
   const handleSave = async form => {
+    // Normalise empty strings to null so the server stores NULL in the DB.
+    const payload = {
+      ...form,
+      assigneeId: form.assigneeId || null,
+      dueDate:    form.dueDate    || null,
+      parentId:   form.parentId   || null,
+      testNotes:  form.testNotes  || null,
+    };
     if (modal === "add") {
-      await api.tickets.create(form);
+      await api.tickets.create(payload);
     } else {
-      await api.tickets.update(modal.id, { ...modal, ...form });
+      await api.tickets.update(modal.id, { ...modal, ...payload });
     }
     setModal(null);
     load();
   };
 
-  const totalOpen = tickets.filter(t => t.status !== "Released" && t.status !== "Testing Failed" && t.status !== "Done").length;
+  const totalOpen = tickets.filter(t => !["Released", "Testing Failed", "Ready to Deploy", "Done"].includes(t.status)).length;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 18, height: "100%" }}>
@@ -805,17 +1712,33 @@ const KanbanPage = ({ shipments = [] }) => {
             {dragId && <span style={{ color: T.textMuted, fontStyle: "italic" }}> · dragging…</span>}
           </p>
         </div>
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          {/* Type filter */}
+          <select value={filter.type} onChange={e => setFilter(f => ({ ...f, type: e.target.value }))}
+            style={{ ...inputBase, fontFamily: T.body, fontSize: 13, width: 140, cursor: "pointer" }}>
+            <option value="">All types</option>
+            {TYPES.map(t => <option key={t} value={t}>{TYPE_ICON[t]} {t}</option>)}
+          </select>
+          {/* Priority filter */}
           <select value={filter.priority} onChange={e => setFilter(f => ({ ...f, priority: e.target.value }))}
             style={{ ...inputBase, fontFamily: T.body, fontSize: 13, width: 130, cursor: "pointer" }}>
             <option value="">All priorities</option>
             {PRIORITIES.map(p => <option key={p} value={p}>{p}</option>)}
           </select>
+          {/* Section filter */}
           <select value={filter.section} onChange={e => setFilter(f => ({ ...f, section: e.target.value }))}
             style={{ ...inputBase, fontFamily: T.body, fontSize: 13, width: 150, cursor: "pointer" }}>
             <option value="">All sections</option>
             {SECTIONS.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
+          {/* Assignee filter — only shown when there are assigned users */}
+          {users.length > 0 && (
+            <select value={filter.assigneeId} onChange={e => setFilter(f => ({ ...f, assigneeId: e.target.value }))}
+              style={{ ...inputBase, fontFamily: T.body, fontSize: 13, width: 150, cursor: "pointer" }}>
+              <option value="">All assignees</option>
+              {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+            </select>
+          )}
           <button
             type="button"
             onClick={() => setShowReleased(v => !v)}
@@ -849,13 +1772,17 @@ const KanbanPage = ({ shipments = [] }) => {
               <KanbanColumn
                 key={col} status={col} colIndex={COLUMNS.indexOf(col)}
                 tickets={byStatus(col)}
+                allTickets={tickets}
                 onEdit={t => setModal(t)}
                 onDelete={handleDelete}
                 onMove={handleMove}
                 onDrop={handleDrop}
                 onPreview={t => setPreviewId(p => p === t.id ? null : t.id)}
+                onDiagram={t => setDiagramTicket(t)}
                 dragId={dragId}
                 previewId={previewId}
+                wipLimit={wipLimits[col] ?? null}
+                onSetWipLimit={limit => setWipLimit(col, limit)}
               />
             ))}
           </div>
@@ -867,10 +1794,13 @@ const KanbanPage = ({ shipments = [] }) => {
               colIndex={COLUMNS.indexOf(preview.status)}
               shipments={shipments}
               tickets={tickets}
+              users={users}
               onClose={() => setPreviewId(null)}
               onEdit={() => setModal(preview)}
               onMove={handleMove}
               onDelete={handleDelete}
+              onPreview={t => setPreviewId(t.id)}
+              onDiagram={t => setDiagramTicket(t)}
             />
           )}
         </div>
@@ -879,16 +1809,33 @@ const KanbanPage = ({ shipments = [] }) => {
       {modal && (
         <Modal
           title={modal === "add" ? "New Ticket" : `Edit — ${modal.id}`}
-          onClose={() => setModal(null)} width={520}
+          onClose={() => setModal(null)} width={560}
         >
           <TicketModal
             init={modal === "add" ? {} : modal}
             shipments={shipments}
             tickets={tickets}
+            users={users}
             onSave={handleSave}
             onCancel={() => setModal(null)}
           />
         </Modal>
+      )}
+
+      {diagramTicket && (
+        <TicketDiagramModal
+          ticket={diagramTicket}
+          allTickets={tickets}
+          onClose={() => setDiagramTicket(null)}
+        />
+      )}
+
+      {testOutcomePending && (
+        <TestOutcomeModal
+          ticket={testOutcomePending}
+          onConfirm={handleTestOutcome}
+          onCancel={() => setTestOutcomePending(null)}
+        />
       )}
     </div>
   );

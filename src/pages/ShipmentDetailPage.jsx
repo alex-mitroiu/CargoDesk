@@ -4,7 +4,6 @@ import { T, INCOTERMS_2020, teuOf,
          statusVariant, contractVariant, IMDG_CLASSES } from "../tokens";
 import { useAuth } from "../AuthContext";
 import { ContainerTypeField } from "../components/shared/ContainerTypePickerModal";
-import { ShipmentForm } from "./ShipmentsPage";
 import { VesselField } from "../components/shared/VesselCombobox";
 import { CommodityCombobox, GradePill } from "../components/shared/CommodityCombobox";
 import { api } from "../api";
@@ -16,6 +15,7 @@ import Badge from "../components/primitives/Badge";
 import {Inp, Sel, BtnToggle} from "../components/primitives/Form";
 import { Modal, ConfirmModal } from "../components/primitives/Modal";
 import DatePicker from "../components/primitives/DatePicker";
+import { generateBLDraft, generatePackingList, generateContainerManifest } from "../utils/documentGenerator";
 
 
 // ─── Section header with hover tooltip ───────────────────────────────────────
@@ -81,7 +81,7 @@ const SectionHeader = ({ n, title }) => {
 
 // ─── Container form ───────────────────────────────────────────────────────────
 
-const ContainerForm = ({ init = {}, onSave, onCancel, onDirtyChange, dgPolicy = null }) => {
+export const ContainerForm = ({ init = {}, onSave, onCancel, onDirtyChange, dgPolicy = null }) => {
   const initSnap = useRef({
     containerNumber:  init.containerNumber  || "",
     size:             init.size             || "",
@@ -426,9 +426,9 @@ const LinkVesselModal = ({ shipment, onSave, onClose }) => {
           vessel={vessel}
           onSelect={setVessel}
         />
-        <Inp label="Voyage" value={voyage} onChange={setVoyage}
+        <Inp label="Voyage/Loop" value={voyage} onChange={setVoyage}
           placeholder="e.g. 0123W" mono
-          hint="Voyage number for this sailing" />
+          hint="Voyage/loop identifier for this sailing" />
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", paddingTop: 4 }}>
           <Btn variant="secondary" onClick={onClose}>Cancel</Btn>
           <Btn onClick={handleSave} disabled={saving}>
@@ -462,7 +462,7 @@ const EVENT_CONFIG = {
 const FIELD_LABELS = {
   pol: "Port of Loading", pod: "Port of Discharge", status: "Status",
   etd: "Estimated Departure", eta: "Estimated Arrival", carrier_code: "Carrier",
-  vessel: "Vessel", vessel_imo: "Vessel IMO", voyage: "Voyage", incoterm: "Incoterm",
+  vessel: "Vessel", vessel_imo: "Vessel IMO", voyage: "Voyage/Loop", incoterm: "Incoterm",
   commodity_code: "Commodity", booking_ref: "Booking Reference", bl_number: "B/L Number",
   contract_type: "Contract Type", contract_id: "Contract ID",
   container_number: "Container Number", size: "Size", type: "Equipment Type",
@@ -921,11 +921,14 @@ const HistoryModal = ({ events, shipmentId, onClose }) => {
 
 // ─── Messages drawer ─────────────────────────────────────────────────────────
 
-const MessagesDrawer = ({ shipmentId, messages, onPost, onClose }) => {
+const MessagesDrawer = ({ shipment, messages, onPost, onClose }) => {
+  const { user, activeRole } = useAuth();
   const [body,    setBody]    = useState("");
   const [posting, setPosting] = useState(false);
   const [sortAsc, setSortAsc] = useState(true);
   const listRef = useRef(null);
+  const shipmentId = shipment.id;
+  const roleLabel = { admin: "Admin", operator: "Operator", viewer: "Viewer" }[activeRole] ?? activeRole;
 
   const sorted = sortAsc ? [...messages] : [...messages].reverse();
 
@@ -947,7 +950,11 @@ const MessagesDrawer = ({ shipmentId, messages, onPost, onClose }) => {
   const handlePost = async () => {
     if (!valid || posting) return;
     setPosting(true);
-    try { await onPost(body); setBody(""); } finally { setPosting(false); }
+    try {
+      await api.shipmentMessages.post(shipmentId, { body, author: user?.name || "User", role: roleLabel });
+      await onPost();
+      setBody("");
+    } finally { setPosting(false); }
   };
 
   const fmtTs = iso => {
@@ -970,16 +977,17 @@ const MessagesDrawer = ({ shipmentId, messages, onPost, onClose }) => {
         zIndex: 1101, display: "flex", flexDirection: "column",
       }}>
         {/* Header */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
-          padding: "16px 20px", borderBottom: `1px solid ${T.border}`, flexShrink: 0 }}>
-          <div>
-            <div style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text }}>
-              💬 Messages
+        <div style={{ borderBottom: `1px solid ${T.border}`, flexShrink: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+            padding: "16px 20px 12px" }}>
+            <div>
+              <div style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text }}>
+                💬 Messages
+              </div>
+              <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, marginTop: 2 }}>
+                {sorted.length} message{sorted.length !== 1 ? "s" : ""}
+              </div>
             </div>
-            <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, marginTop: 2 }}>
-              {shipmentId} · {sorted.length} message{sorted.length !== 1 ? "s" : ""}
-            </div>
-          </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <button
               onClick={() => setSortAsc(a => !a)}
@@ -1000,6 +1008,33 @@ const MessagesDrawer = ({ shipmentId, messages, onPost, onClose }) => {
             onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.textMuted; }}>
             ✕
           </button>
+          </div>
+          </div>
+          {/* Context strip */}
+          <div style={{ display: "flex", alignItems: "center", gap: 10,
+            padding: "8px 20px 12px", flexWrap: "wrap" }}>
+            <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, fontWeight: 600 }}>
+              {shipmentId}
+            </span>
+            <span style={{ color: T.border }}>·</span>
+            <span style={{ fontFamily: T.mono, fontSize: 11, color: T.text }}>
+              {shipment.pol} → {shipment.pod}
+            </span>
+            {(shipment.polName || shipment.podName) && (
+              <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
+                ({shipment.polName || shipment.pol} → {shipment.podName || shipment.pod})
+              </span>
+            )}
+            <span style={{ color: T.border }}>·</span>
+            <span style={{
+              fontFamily: T.body, fontSize: 10.5, fontWeight: 700,
+              color: statusVariant(shipment.status).color,
+              background: statusVariant(shipment.status).bg,
+              border: `1px solid ${statusVariant(shipment.status).color}44`,
+              borderRadius: 4, padding: "1px 7px",
+            }}>
+              {shipment.status}
+            </span>
           </div>
         </div>
 
@@ -2281,11 +2316,176 @@ const CostControl = ({ shipmentId, contractType, contractId, containers = [], op
   );
 };
 
-const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, onAddContainer, onEditContainer, onDeleteContainer, detailAction = null, onDetailActionConsumed }) => {
+// ─── Document Preview Modal ───────────────────────────────────────────────────
+// Shows the generated PDF in an iframe before the user commits to downloading.
+const DocumentPreviewModal = ({ dataUri, filename, onConfirm, onCancel }) => (
+  <div style={{ position: "fixed", inset: 0, zIndex: 10001,
+    background: "rgba(0,0,0,.72)", display: "flex", alignItems: "center",
+    justifyContent: "center" }}
+    onClick={e => { if (e.target === e.currentTarget) onCancel(); }}>
+    <div style={{ width: "min(96vw, 1000px)", height: "92vh", background: T.surface,
+      border: `1px solid ${T.border}`, borderRadius: 14, overflow: "hidden",
+      display: "flex", flexDirection: "column",
+      boxShadow: "0 28px 80px rgba(0,0,0,.6)" }}>
+
+      {/* Header */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+        padding: "12px 16px", borderBottom: `1px solid ${T.border}`, flexShrink: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 18 }}>📄</span>
+          <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>{filename}</span>
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={onCancel}
+            style={{ fontFamily: T.body, fontSize: 13, padding: "7px 16px",
+              background: "none", border: `1px solid ${T.border}`, borderRadius: 7,
+              color: T.textMuted, cursor: "pointer" }}>
+            Cancel
+          </button>
+          <button onClick={onConfirm}
+            style={{ fontFamily: T.body, fontSize: 13, fontWeight: 700,
+              padding: "7px 18px", background: T.accent, border: "none",
+              borderRadius: 7, color: "#fff", cursor: "pointer",
+              display: "flex", alignItems: "center", gap: 7 }}>
+            <span>💾</span> Download PDF
+          </button>
+        </div>
+      </div>
+
+      {/* PDF iframe */}
+      <iframe
+        src={dataUri}
+        title={filename}
+        style={{ flex: 1, border: "none", width: "100%" }}
+      />
+    </div>
+  </div>
+);
+
+// ─── Documents dropdown ───────────────────────────────────────────────────────
+// Generates PDFs client-side using jsPDF. No server round-trip needed.
+const DocumentsMenu = ({ shipment, containers: allContainers }) => {
+  const containers        = allContainers.filter(c => c.shipmentId === shipment.id);
+  const [open, setOpen]   = useState(false);
+  const [preview, setPreview] = useState(null); // { dataUri, filename, doc }
+  const ref               = useRef(null);
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return;
+    const handler = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  const openPreview = generator => {
+    setOpen(false);
+    const { doc, filename } = generator(shipment, containers);
+    setPreview({ doc, filename, dataUri: doc.output("datauristring") });
+  };
+
+  const docs = [
+    {
+      icon: "📋",
+      label: "B/L Draft",
+      hint: "House Bill of Lading (draft)",
+      action: () => openPreview(generateBLDraft),
+    },
+    {
+      icon: "📦",
+      label: "Packing List",
+      hint: "Per-container cargo lines",
+      action: () => openPreview(generatePackingList),
+    },
+    {
+      icon: "🗂",
+      label: "Container Manifest",
+      hint: "Full container listing for the voyage",
+      action: () => openPreview(generateContainerManifest),
+    },
+  ];
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button
+        onClick={() => setOpen(v => !v)}
+        style={{
+          fontFamily: T.body, fontSize: 12, fontWeight: 600, cursor: "pointer",
+          padding: "7px 12px", borderRadius: 8,
+          background: open ? `${T.accent}15` : "none",
+          border: `1px solid ${open ? T.accent : T.border}`,
+          color: open ? T.accent : T.text,
+          display: "flex", alignItems: "center", gap: 6,
+          transition: "border-color .15s, color .15s, background .15s",
+        }}
+        onMouseEnter={e => { if (!open) { e.currentTarget.style.borderColor = T.accent; e.currentTarget.style.color = T.accent; } }}
+        onMouseLeave={e => { if (!open) { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.text; } }}
+      >
+        <span>📄</span>
+        <span>Documents</span>
+        <span style={{ fontSize: 9, opacity: .6 }}>{open ? "▲" : "▼"}</span>
+      </button>
+
+      {open && (
+        <div style={{
+          position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 500,
+          background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
+          boxShadow: "0 8px 32px rgba(0,0,0,.35)", minWidth: 220, overflow: "hidden",
+        }}>
+          <div style={{ padding: "8px 14px 6px",
+            fontFamily: T.body, fontSize: 10, fontWeight: 700, color: T.textMuted,
+            textTransform: "uppercase", letterSpacing: ".07em", borderBottom: `1px solid ${T.border}22` }}>
+            Generate PDF
+          </div>
+          {docs.map(d => (
+            <button key={d.label}
+              onClick={containers.length > 0 ? d.action : undefined}
+              disabled={containers.length === 0}
+              style={{
+                display: "flex", alignItems: "center", gap: 10, width: "100%",
+                padding: "10px 14px", background: "none", border: "none",
+                cursor: containers.length > 0 ? "pointer" : "not-allowed",
+                textAlign: "left", transition: "background .1s",
+                opacity: containers.length === 0 ? 0.4 : 1,
+              }}
+              onMouseEnter={e => { if (containers.length > 0) e.currentTarget.style.background = `${T.accent}10`; }}
+              onMouseLeave={e => e.currentTarget.style.background = "none"}
+            >
+              <span style={{ fontSize: 18, flexShrink: 0 }}>{d.icon}</span>
+              <div>
+                <div style={{ fontFamily: T.body, fontSize: 13, fontWeight: 600, color: T.text }}>
+                  {d.label}
+                </div>
+                <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
+                  {d.hint}
+                </div>
+              </div>
+            </button>
+          ))}
+          {containers.length === 0 && (
+            <div style={{ padding: "4px 14px 12px",
+              fontFamily: T.body, fontSize: 11, color: T.warning, fontStyle: "italic" }}>
+              ⚠ Add containers first — documents use container data.
+            </div>
+          )}
+        </div>
+      )}
+      {preview && (
+        <DocumentPreviewModal
+          dataUri={preview.dataUri}
+          filename={preview.filename}
+          onConfirm={() => { preview.doc.save(preview.filename); setPreview(null); }}
+          onCancel={() => setPreview(null)}
+        />
+      )}
+    </div>
+  );
+};
+
+const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, onEdit, onAddContainer, onEditContainer, onDeleteContainer, detailAction = null, onDetailActionConsumed }) => {
   const { canEdit } = useAuth();
   const [ctrModal,       setCtrModal]       = useState(null);
   const [linkVesselOpen, setLinkVesselOpen] = useState(false);
-  const [editShp,        setEditShp]        = useState(false);
   const [confirmCtr,     setConfirmCtr]     = useState(null);
   const [statusLog,      setStatusLog]      = useState([]);
   const [historyOpen,    setHistoryOpen]    = useState(false);
@@ -2300,8 +2500,17 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
   const [complianceOpen, setComplianceOpen] = useState(false);
   const [contractOpen,   setContractOpen]   = useState(false);
   const [ctrListOpen,    setCtrListOpen]    = useState(false);
+  const [ctrFromList,    setCtrFromList]    = useState(false);
   const [dgPolicy,             setDgPolicy]             = useState(null);
+  const [contractCarrierCode,  setContractCarrierCode]  = useState("");
   const [openAccountingSignal, setOpenAccountingSignal] = useState(0);
+  const [legs,                 setLegs]                 = useState([]);
+
+  const closeCtrModal = (fromList = ctrFromList) => {
+    setCtrModal(null);
+    setCtrFromList(false);
+    if (fromList) setCtrListOpen(true);
+  };
 
   // Sidebar section link → open corresponding management panel
   useEffect(() => {
@@ -2404,12 +2613,28 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
   const carrier  = carriers.find(c => c.code === shipment.carrierCode);
   const ctrs     = containers.filter(c => c.shipmentId === shipment.id);
   const totalTEU = ctrs.reduce((s, c) => s + teuOf(c.size), 0);
+  const transitDays = (() => {
+    if (!shipment.etd || !shipment.eta) return null;
+    const d1 = new Date(shipment.etd), d2 = new Date(shipment.eta);
+    if (isNaN(d1) || isNaN(d2)) return null;
+    return Math.round((d2 - d1) / 864e5);
+  })();
+  const tsps = legs.length > 1
+    ? legs.slice(0, -1).map(l => ({ code: l.pod, name: l.podName })).filter(t => t.code)
+    : [];
 
   useEffect(() => {
-    if (!shipment.contractId) { setDgPolicy(null); return; }
+    api.legs.list(shipment.id).then(setLegs).catch(() => {});
+  }, [shipment.id]);
+
+  useEffect(() => {
+    if (!shipment.contractId) { setDgPolicy(null); setContractCarrierCode(""); return; }
     api.contracts.get(shipment.contractId)
-      .then(c => setDgPolicy({ dgAllowed: c.dgAllowed, imdgClasses: c.imdgClasses || [] }))
-      .catch(() => setDgPolicy(null));
+      .then(c => {
+        setDgPolicy({ dgAllowed: c.dgAllowed, imdgClasses: c.imdgClasses || [] });
+        setContractCarrierCode(c.carrierCode || "");
+      })
+      .catch(() => { setDgPolicy(null); setContractCarrierCode(""); });
   }, [shipment.contractId]);
 
   const ctrDgConflict = c => {
@@ -2530,7 +2755,8 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
             </span>
           )}
         </button>
-        {canEdit && <Btn variant="secondary" onClick={() => setEditShp(true)}>✎ Edit Shipment</Btn>}
+        <DocumentsMenu shipment={shipment} containers={containers} />
+        {canEdit && <Btn variant="secondary" onClick={() => onEdit?.()}>✎ Edit Shipment</Btn>}
       </div>
 
       {!canEdit && (
@@ -2543,6 +2769,84 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
           <strong>View Only</strong> — your account has read-only access. Contact an admin to request edit permissions.
         </div>
       )}
+
+      {/* Route summary grid */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr",
+        background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8,
+        overflow: "hidden", marginBottom: 14 }}>
+        <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 3 }}>
+          <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
+            letterSpacing: "0.09em", color: T.textMuted }}>Port of Loading</span>
+          <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700,
+            color: shipment.pol ? T.text : T.border }}>{shipment.pol || "—"}</span>
+          {shipment.polName && (
+            <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{shipment.polName}</span>
+          )}
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+          gap: 6, padding: "12px 24px",
+          borderLeft: `1px solid ${T.border}`, borderRight: `1px solid ${T.border}`,
+          background: T.surface }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
+              <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
+                letterSpacing: "0.09em", color: T.textMuted }}>ETD</span>
+              <span style={{ fontFamily: T.mono, fontSize: 12, color: shipment.etd ? T.text : T.border }}>
+                {shipment.etd || "—"}</span>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+              {transitDays !== null
+                ? <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: T.accent,
+                    background: T.accentBg, border: `1px solid ${T.accent}33`,
+                    borderRadius: 10, padding: "2px 10px", whiteSpace: "nowrap" }}>
+                    {transitDays}d transit
+                  </span>
+                : <span style={{ color: T.border, fontSize: 16 }}>→</span>}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
+              <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
+                letterSpacing: "0.09em", color: T.textMuted }}>ETA</span>
+              <span style={{ fontFamily: T.mono, fontSize: 12, color: shipment.eta ? T.text : T.border }}>
+                {shipment.eta || "—"}</span>
+            </div>
+          </div>
+          {tsps.length > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap", justifyContent: "center" }}>
+              {tsps.map((tsp, i) => (
+                <span key={`${tsp.code}-${i}`} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                  {i > 0 && <span style={{ color: T.textMuted, fontSize: 10 }}>›</span>}
+                  <span title={tsp.name || tsp.code}
+                    style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text,
+                      background: T.bg, border: `1px solid ${T.border}`, borderRadius: 4,
+                      padding: "1px 7px" }}>
+                    {tsp.code}
+                  </span>
+                </span>
+              ))}
+            </div>
+          )}
+          {(() => {
+            const displayCarrier = shipment.carrierCode || contractCarrierCode;
+            return (
+              <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700,
+                color: displayCarrier ? T.accent : T.border }}>
+                {displayCarrier || "—"}
+              </span>
+            );
+          })()}
+        </div>
+
+        <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 3, textAlign: "right" }}>
+          <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
+            letterSpacing: "0.09em", color: T.textMuted }}>Port of Discharge</span>
+          <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700,
+            color: shipment.pod ? T.text : T.border }}>{shipment.pod || "—"}</span>
+          {shipment.podName && (
+            <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{shipment.podName}</span>
+          )}
+        </div>
+      </div>
 
       {/* Info cards row 1 */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 14 }}>
@@ -2618,7 +2922,7 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
           )}
         </div>
 
-        <InfoCard label="Voyage" value={shipment.voyage || "—"} mono />
+        <InfoCard label="Voyage/Loop" value={shipment.voyage || "—"} mono />
       </div>
 
       {/* Linked space configuration */}
@@ -2893,7 +3197,7 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
                   </span>
                 )}
               </div>
-              {canEdit && <Btn onClick={() => { setCtrListOpen(false); setCtrModal("add"); }}>＋ Add Container</Btn>}
+              {canEdit && <Btn onClick={() => { setCtrListOpen(false); setCtrFromList(true); setCtrModal("add"); }}>＋ Add Container</Btn>}
             </div>
             {ctrs.length === 0 ? (
               <div style={{ padding: 32, textAlign: "center", fontFamily: T.body,
@@ -2970,7 +3274,7 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
                     {canEdit && (
                       <div style={{ width: 86, flexShrink: 0, display: "flex", gap: 5 }}>
                         <Btn size="sm" variant="secondary"
-                          onClick={() => { setCtrListOpen(false); setCtrModal(c); }}>Edit</Btn>
+                          onClick={() => { setCtrListOpen(false); setCtrFromList(true); setCtrModal(c); }}>Edit</Btn>
                         <Btn size="sm" variant="danger"
                           onClick={() => setConfirmCtr(c.id)}>✕</Btn>
                       </div>
@@ -2984,7 +3288,7 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
       )}
 
       {ctrModal && (
-        <Modal title={ctrModal === "add" ? "Add Container" : "Edit Container"} onClose={() => setCtrModal(null)}>
+        <Modal title={ctrModal === "add" ? "Add Container" : "Edit Container"} onClose={closeCtrModal}>
           <ContainerForm init={ctrModal === "add" ? {} : ctrModal}
             dgPolicy={dgPolicy}
             onDirtyChange={setIsDirty}
@@ -2994,11 +3298,11 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
                   ? await onAddContainer(shipment.id, form)
                   : await onEditContainer(ctrModal.id, form);
                 setIsDirty(false);
-                setCtrModal(null);
-              api.shipmentEvents.list(shipment.id).then(setEvents).catch(() => {});
+                api.shipmentEvents.list(shipment.id).then(setEvents).catch(() => {});
+                closeCtrModal();
               } catch { /* error already toasted by App.jsx handler */ }
             }}
-            onCancel={() => setCtrModal(null)} />
+            onCancel={closeCtrModal} />
         </Modal>
       )}
 
@@ -3016,17 +3320,6 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
           onClose={() => setLinkVesselOpen(false)}
         />
       )}
-      {editShp && (
-        <Modal title="Edit Shipment" onClose={() => setEditShp(false)} width={560}>
-          <ShipmentForm init={shipment}
-            onSave={async form => {
-              const res = await onUpdate(shipment.id, form);
-              if (res?.screening) setScreening(res.screening);
-              setEditShp(false);
-            }}
-            onCancel={() => setEditShp(false)} />
-        </Modal>
-      )}
       {confirmCtr && (
         <ConfirmModal
           message="Remove this container from the shipment?"
@@ -3036,10 +3329,9 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
 
       {/* ── Messages drawer ── */}
       {msgsOpen && <MessagesDrawer
-        shipmentId={shipment.id}
+        shipment={shipment}
         messages={messages}
         onPost={async (body) => {
-          await api.shipmentMessages.post(shipment.id, { body, author: "Alex Mitroiu", role: "Freight Manager" });
           loadMessages();
         }}
         onClose={() => setMsgsOpen(false)}

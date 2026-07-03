@@ -101,7 +101,7 @@ const ShipmentForm = ({ init = {}, onSave, onCancel }) => {
           vessel={f.vesselImo ? { imo: f.vesselImo, name: f.vessel } : null}
           onSelect={v => setF(p => ({ ...p, vessel: v ? v.name : "", vesselImo: v ? v.imo : "" }))}
         />
-        <Inp label="Voyage" value={f.voyage} onChange={set("voyage")} placeholder="423E" mono />
+        <Inp label="Voyage/Loop" value={f.voyage} onChange={set("voyage")} placeholder="423E" mono />
       </div>
 
       {/* Contract */}

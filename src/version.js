@@ -2,11 +2,17 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.19.0";
-export const BUILD     = "2026-07-02";
-export const CODENAME  = "Muster";
+export const VERSION   = "0.20.0";
+export const BUILD     = "2026-07-03";
+export const CODENAME  = "Lading";
 
 export const CHANGELOG = [
+  {
+    version:  "0.20.0",
+    date:     "2026-07-03",
+    codename: "Lading",
+    summary:  "Quick Container Setup: new Containers section in the new-shipment form (hidden in edit mode) — fields for Count, Container Type (ContainerTypeField typeahead + visual picker), Weight (kg), Volume (CBM), Distribution toggle (Total ÷ N or Per container copy), Cargo Description, and DG toggle with IMDG class picker; Generate button builds draft container objects shown as preview chips; containers are created sequentially via api.containers.create on shipment save and added to app state. Central Contract gate: selecting Central on a new shipment without containers queued shows a toast.warning directing the user to add cargo details first — ensures contract eligibility filtering has a container list to work with. Incoterm → Principal auto-default: changing the Incoterm field automatically sets the Principal party — C/D terms (CPT, CIP, CFR, CIF, DAP, DPU, DDP) map to the Shipper (seller pays, export-instructed); E/F terms (EXW, FCA, FAS, FOB) map to the Consignee (buyer arranges, import-instructed); only fires when the relevant party is already selected. Routing banner in ShipmentDetailPage: loads shipment legs via api.legs.list on mount to derive TSP chips (intermediate PODs); carrier code falls back to the linked contract's carrierCode when shipment.carrierCode is empty (contractCarrierCode state). Carrier code preservation fix (server): syncShipmentFromLegs now uses COALESCE(NULLIF(?, ''), carrier_code) so saving a leg with no carrier no longer overwrites the shipment's stored carrier_code with an empty string — previously cleared the carrier on any leg save.",
+  },
   {
     version:  "0.19.0",
     date:     "2026-07-02",

@@ -60,10 +60,11 @@ const Inp = ({ label, value, onChange, placeholder, mono, maxLength, required, h
   </Field>
 );
 
-const Sel = ({ label, value, onChange, options, required }) => (
+const Sel = ({ label, value, onChange, options, required, error }) => (
   <Field label={label} required={required}>
     <select value={value} onChange={e => onChange(e.target.value)}
-      style={{ ...inputBase, fontFamily: T.body, fontSize: 14, cursor: "pointer" }}>
+      style={{ ...inputBase, fontFamily: T.body, fontSize: 14, cursor: "pointer",
+        ...(error ? { borderColor: T.danger, boxShadow: `0 0 0 2px ${T.danger}44` } : {}) }}>
       {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
     </select>
   </Field>
