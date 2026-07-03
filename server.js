@@ -555,16 +555,17 @@ try { loadSanctionsIndex(); } catch {}
 
 // ─── OFAC SDN sync (extracted so route and scheduler both call it) ─────────────
 
-function httpsGetFollowRedirects(url, depth = 0) {
+function httpsGetFollowRedirects(url, depth = 0, reqHeaders = {}) {
   return new Promise((resolve, reject) => {
     if (depth > 5) return reject(new Error("Too many redirects"));
-    https.get(url, { rejectUnauthorized: false }, r => {
+    const opts = { rejectUnauthorized: false, headers: reqHeaders };
+    https.get(url, opts, r => {
       if (r.statusCode >= 300 && r.statusCode < 400 && r.headers.location) {
         r.resume();
         const next = r.headers.location.startsWith("http")
           ? r.headers.location
           : new URL(r.headers.location, url).href;
-        return resolve(httpsGetFollowRedirects(next, depth + 1));
+        return resolve(httpsGetFollowRedirects(next, depth + 1, reqHeaders));
       }
       if (r.statusCode !== 200) { r.resume(); return reject(new Error(`OFAC returned HTTP ${r.statusCode}`)); }
       resolve(r);
@@ -991,9 +992,9 @@ const auth = (roles = []) => (req, res, next) => {
 const requireRole = (roles) => (req, res, next) =>
   roles.includes(req.user?.role) ? next() : err(res, "Forbidden", 403);
 
-// Require valid token on all /api/* except /api/auth/*
+// Require valid token on all /api/* except /api/auth/* and /api/health
 app.use("/api", (req, res, next) =>
-  req.path.startsWith("/auth/") ? next() : auth()(req, res, next)
+  req.path.startsWith("/auth/") || req.path === "/health" ? next() : auth()(req, res, next)
 );
 
 // ─── Auth routes ──────────────────────────────────────────────────────────────
@@ -2288,7 +2289,7 @@ app.get("/api/health", (req, res) => {
     };
     ok(res, {
       status:        "ok",
-      version:       "0.16.0",
+      version:       "0.20.0",
       uptime:        Math.floor(process.uptime()),
       memoryMb:      Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
       fxCurrencies:  Object.keys(fxCache.rates).length,
@@ -2366,6 +2367,7 @@ app.post("/api/sanctions/sync", async (req, res) => {
     err(res, e.message, 502);
   }
 });
+
 
 // ─── OFAC CSV import ──────────────────────────────────────────────────────────
 // Parses OFAC sdn.csv — handles both formats:

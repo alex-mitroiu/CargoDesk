@@ -1,7 +1,7 @@
 ﻿import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import useSaving from "../hooks/useSaving";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid,
-         Tooltip, Legend, ResponsiveContainer } from "recharts";
+         Tooltip, Legend, ResponsiveContainer, ReferenceLine } from "recharts";
 import { T, STATUSES, statusVariant, contractVariant, addDays, diffDays,
          currentWeekStart, MAX_RANGE_DAYS, teuOf, LANE_BADGE_VARIANT, todayIso, parseIso } from "../tokens";
 import { api } from "../api";
@@ -1371,22 +1371,22 @@ const MarginView = ({ financeEnabled }) => {
         <p style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, margin: 0 }}>{subtitle}</p>
       </div>
       <ResponsiveContainer width="100%" height={220}>
-        <LineChart data={rows} margin={{ top: 4, right: 8, left: -8, bottom: 4 }}>
+        <BarChart data={rows} margin={{ top: 4, right: 8, left: -8, bottom: 4 }}>
           <CartesianGrid strokeDasharray="3 3" stroke={T.border} vertical={false} />
           <XAxis dataKey="week" tick={{ fontFamily: T.mono, fontSize: 10, fill: T.textMuted }} axisLine={{ stroke: T.border }} tickLine={false} />
           <YAxis tick={{ fontFamily: T.body, fontSize: 10, fill: T.textMuted }} axisLine={false} tickLine={false}
-            tickFormatter={v => `${v}%`} domain={[0, 100]} allowDecimals={false} />
+            tickFormatter={v => `${v}%`} domain={['auto', 'auto']} allowDecimals={false} />
+          <ReferenceLine y={0} stroke={T.border} strokeDasharray="3 3" />
           <Tooltip contentStyle={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, fontFamily: T.body, fontSize: 12 }}
             labelStyle={{ color: T.text, fontWeight: 600, marginBottom: 4 }} itemStyle={{ color: T.textMuted }}
-            formatter={(v, name) => [`${v}%`, name]} cursor={{ stroke: T.border }} />
+            formatter={(v, name) => [v != null ? `${v}%` : "—", name]} cursor={{ fill: `${T.accent}18` }} />
           <Legend wrapperStyle={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, paddingTop: 10 }} />
           {dataKeys.map((k, i) => (
-            <Line key={k} type="monotone" dataKey={k} name={k}
-              stroke={CHART_COLORS[i % CHART_COLORS.length]} strokeWidth={2}
-              dot={{ r: 3, fill: CHART_COLORS[i % CHART_COLORS.length] }}
-              activeDot={{ r: 5 }} connectNulls />
+            <Bar key={k} dataKey={k} name={k}
+              fill={CHART_COLORS[i % CHART_COLORS.length]}
+              radius={[3, 3, 0, 0]} maxBarSize={32} />
           ))}
-        </LineChart>
+        </BarChart>
       </ResponsiveContainer>
     </div>
   );
@@ -1513,6 +1513,151 @@ const MarginView = ({ financeEnabled }) => {
           })}
         </div>
       )}
+    </div>
+  );
+};
+
+// ─── Carrier Volumes tab ──────────────────────────────────────────────────────
+
+const CarrierView = ({ rangeShipments, containers, carriers, carrierTrends, rangeStart }) => {
+  const barData = useMemo(() => {
+    const m = {};
+    rangeShipments.forEach(s => {
+      if (!s.carrierCode) return;
+      const teu = containers
+        .filter(c => c.shipmentId === s.id)
+        .reduce((acc, c) => acc + teuOf(c.size), 0);
+      if (teu > 0) m[s.carrierCode] = (m[s.carrierCode] || 0) + teu;
+    });
+    return Object.entries(m)
+      .map(([code, teu]) => ({
+        carrier: code,
+        name: carriers.find(c => c.code === code)?.name || code,
+        teu,
+      }))
+      .sort((a, b) => b.teu - a.teu);
+  }, [rangeShipments, containers, carriers]);
+
+  const trendData = useMemo(() =>
+    Array.from({ length: 6 }, (_, i) => {
+      const wStart  = addDays(rangeStart, -(5 - i) * 7);
+      const weekEnd = addDays(wStart, 6);
+      const label   = parseIso(weekEnd).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+      const pt = { week: label };
+      barData.forEach(({ carrier: code }) => {
+        pt[code] = carrierTrends[code]?.sparkData[i] ?? 0;
+      });
+      return pt;
+    }),
+    [carrierTrends, barData, rangeStart]
+  );
+
+  const totalTEU = barData.reduce((s, r) => s + r.teu, 0);
+
+  if (barData.length === 0) return (
+    <div style={{ padding: 48, textAlign: "center", color: T.textMuted, fontFamily: T.body, fontSize: 14, fontStyle: "italic" }}>
+      No shipments with containers in the selected period.
+    </div>
+  );
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 22 }}>
+        <h2 style={{ fontFamily: T.head, fontSize: 19, fontWeight: 700, color: T.text, margin: 0 }}>Carrier Volumes</h2>
+        <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>All shipments · by carrier code · TEU</span>
+      </div>
+
+      {/* Charts — side by side */}
+      <div style={{ display: "grid", gridTemplateColumns: barData.length > 0 ? "1fr 1fr" : "1fr", gap: 16, marginBottom: 20 }}>
+
+        {/* Bar chart */}
+        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "20px 20px 14px" }}>
+          <div style={{ marginBottom: 14 }}>
+            <h3 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: "0 0 2px" }}>TEU by Carrier — Selected Period</h3>
+            <p style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, margin: 0 }}>Total: {totalTEU} TEU across {barData.length} carrier{barData.length !== 1 ? "s" : ""}</p>
+          </div>
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={barData} margin={{ top: 4, right: 8, left: -8, bottom: 4 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke={T.border} vertical={false} />
+              <XAxis dataKey="carrier" tick={{ fontFamily: T.mono, fontSize: 11, fill: T.textMuted }} axisLine={{ stroke: T.border }} tickLine={false} />
+              <YAxis tick={{ fontFamily: T.body, fontSize: 10, fill: T.textMuted }} axisLine={false} tickLine={false} allowDecimals={false} />
+              <Tooltip
+                contentStyle={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, fontFamily: T.body, fontSize: 12 }}
+                labelStyle={{ color: T.text, fontWeight: 600, marginBottom: 4 }}
+                itemStyle={{ color: T.textMuted }}
+                formatter={(v, _name, props) => [`${v} TEU`, props.payload.name || props.payload.carrier]}
+                cursor={{ fill: `${T.accent}18` }} />
+              <Bar dataKey="teu" name="TEU" fill={T.accent} radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+
+        {/* 6-week trend line chart */}
+        {barData.length > 0 && (
+          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "20px 20px 14px" }}>
+            <div style={{ marginBottom: 14 }}>
+              <h3 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: "0 0 2px" }}>6-Week Volume Trend</h3>
+              <p style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, margin: 0 }}>TEU shipped per carrier, calendar-week aligned</p>
+            </div>
+            <ResponsiveContainer width="100%" height={220}>
+              <LineChart data={trendData} margin={{ top: 4, right: 8, left: -8, bottom: 4 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={T.border} vertical={false} />
+                <XAxis dataKey="week" tick={{ fontFamily: T.mono, fontSize: 10, fill: T.textMuted }} axisLine={{ stroke: T.border }} tickLine={false} />
+                <YAxis tick={{ fontFamily: T.body, fontSize: 10, fill: T.textMuted }} axisLine={false} tickLine={false} allowDecimals={false} />
+                <Tooltip
+                  contentStyle={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, fontFamily: T.body, fontSize: 12 }}
+                  labelStyle={{ color: T.text, fontWeight: 600, marginBottom: 4 }}
+                  itemStyle={{ color: T.textMuted }}
+                  formatter={(v, name) => [`${v} TEU`, name]}
+                  cursor={{ stroke: T.border }} />
+                <Legend wrapperStyle={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, paddingTop: 10 }} />
+                {barData.map(({ carrier: code }, i) => (
+                  <Line key={code} type="monotone" dataKey={code} name={code}
+                    stroke={CHART_COLORS[i % CHART_COLORS.length]} strokeWidth={2}
+                    dot={{ r: 3, fill: CHART_COLORS[i % CHART_COLORS.length] }}
+                    activeDot={{ r: 5 }} connectNulls />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </div>
+
+      {/* Ranking table */}
+      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden" }}>
+        <div style={{ padding: "13px 20px", borderBottom: `1px solid ${T.border}` }}>
+          <h3 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: 0 }}>Carrier Rankings</h3>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "40px 100px 1fr 120px 120px",
+          padding: "8px 20px", borderBottom: `1px solid ${T.border}` }}>
+          {["#", "Code", "Carrier Name", "TEU", "Share"].map((h, i) => (
+            <div key={i} style={{ fontFamily: T.body, fontSize: 10, fontWeight: 600, color: T.textMuted,
+              textTransform: "uppercase", letterSpacing: ".07em" }}>{h}</div>
+          ))}
+        </div>
+        {barData.map(({ carrier: code, name, teu }, idx) => {
+          const share = totalTEU > 0 ? Math.round((teu / totalTEU) * 1000) / 10 : 0;
+          return (
+            <div key={code}
+              style={{ display: "grid", gridTemplateColumns: "40px 100px 1fr 120px 120px",
+                padding: "11px 20px", borderBottom: `1px solid ${T.border}22`, alignItems: "center",
+                transition: "background .1s" }}
+              onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
+              onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+              <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>{idx + 1}</span>
+              <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.accent }}>{code}</span>
+              <span style={{ fontFamily: T.body, fontSize: 13, color: T.text }}>{name}</span>
+              <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 600, color: T.text }}>{teu}</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ flex: 1, height: 6, background: T.border, borderRadius: 3, overflow: "hidden" }}>
+                  <div style={{ width: `${share}%`, height: "100%", background: T.accent, borderRadius: 3 }} />
+                </div>
+                <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, minWidth: 36, textAlign: "right" }}>{share}%</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 };
@@ -1768,12 +1913,17 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, financeEn
     const periodDays = diffDays(rangeStart, rangeEnd) + 1;
     const prevEnd    = addDays(rangeStart, -1);
     const prevStart  = addDays(prevEnd, -(periodDays - 1));
-    const allCodes   = [...new Set(allocations.map(a => a.carrierCode))];
-    const trends     = {};
+    // All carrier codes that appear in the selected range — not just allocated ones
+    const allCodes = [...new Set(rangeShipments.map(s => s.carrierCode).filter(Boolean))];
+    const trends   = {};
 
     allCodes.forEach(code => {
-      // Current TEU from consumedMap (already scoped to selected range)
-      const currentTEU = consumedMap[code] || 0;
+      // Current TEU — sum directly from range shipments for this carrier
+      const currentTEU = rangeShipments
+        .filter(s => s.carrierCode === code)
+        .reduce((acc, s) =>
+          acc + containers.filter(c => c.shipmentId === s.id)
+                          .reduce((a2, c) => a2 + teuOf(c.size), 0), 0);
 
       // Previous period TEU
       const prevTEU = shipments
@@ -1787,11 +1937,10 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, financeEn
         ? Math.round(((currentTEU - prevTEU) / prevTEU) * 100)
         : currentTEU > 0 ? 100 : 0;
 
-      // 6-week sparkline (fixed weekly buckets, most recent on right)
-      const today  = todayIso();
+      // 6-week sparkline — i=5 window starts at rangeStart, earlier windows go back 7 days each
       const sparkData = Array.from({ length: 6 }, (_, i) => {
-        const wEnd   = addDays(today, -(5 - i) * 7);
-        const wStart = addDays(wEnd, -6);
+        const wStart = addDays(rangeStart, -(5 - i) * 7);
+        const wEnd   = addDays(wStart, 6);
         return shipments
           .filter(s => s.carrierCode === code && s.etd >= wStart && s.etd <= wEnd)
           .reduce((acc, s) =>
@@ -1803,7 +1952,7 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, financeEn
     });
 
     return trends;
-  }, [allocations, shipments, containers, consumedMap, rangeStart, rangeEnd]);
+  }, [rangeShipments, shipments, containers, rangeStart, rangeEnd]);
 
   // Chart: group by carrier — consumption is total across all contract types
   const chartData = useMemo(() => {
@@ -1826,11 +1975,11 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, financeEn
 
   // Trend chart data: reshape sparkData arrays into recharts [{week, MAEU, HLCU, ...}]
   const trendChartData = useMemo(() => {
-    const today        = todayIso();
     const activeCodesSet = new Set(activeAllocations.map(a => a.carrierCode));
     const activeCodes  = [...activeCodesSet];
     return Array.from({ length: 6 }, (_, i) => {
-      const weekEnd = addDays(today, -(5 - i) * 7);
+      const wStart  = addDays(rangeStart, -(5 - i) * 7);
+      const weekEnd = addDays(wStart, 6);
       const label   = parseIso(weekEnd).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
       const pt      = { week: label };
       activeCodes.forEach(code => {
@@ -1838,7 +1987,7 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, financeEn
       });
       return pt;
     });
-  }, [carrierTrends, activeAllocations]);
+  }, [carrierTrends, activeAllocations, rangeStart]);
 
   const trendCarriers = [...new Set(activeAllocations.map(a => a.carrierCode))];
 
@@ -1848,10 +1997,9 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, financeEn
     const contractIds  = [...new Set(centralSh.map(s => s.contractId))];
     const refMap       = {};
     centralSh.forEach(s => { if (!refMap[s.contractId]) refMap[s.contractId] = s.contractRef || String(s.contractId); });
-    const todayStr = todayIso();
     const weeks = Array.from({ length: 6 }, (_, i) => {
-      const wEnd   = addDays(todayStr, -(5 - i) * 7);
-      const wStart = addDays(wEnd, -6);
+      const wStart = addDays(rangeStart, -(5 - i) * 7);
+      const wEnd   = addDays(wStart, 6);
       const label  = parseIso(wEnd).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
       const pt     = { week: label };
       contractIds.forEach(id => {
@@ -1863,7 +2011,7 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, financeEn
       return pt;
     });
     return { weeks, contractIds, refMap };
-  }, [shipments, containers]);
+  }, [shipments, containers, rangeStart]);
 
   const totalConsumed = chartData.reduce((s, d) => s + d.consumed, 0);
   const totalRemain   = Math.max(0, totalAlloc - totalConsumed);
@@ -1933,6 +2081,7 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, financeEn
         {[
           { key: "overview",   label: "Overview" },
           { key: "contracts",  label: "Contract Consumption" },
+          { key: "carriers",   label: "Carrier Volumes" },
           { key: "margin",     label: "Margin" },
           { key: "compliance", label: "Compliance Review", count: Array.isArray(compHits) ? compHits.length : null },
         ].map(tab => (
@@ -1966,7 +2115,7 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, financeEn
           {/* KPIs */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginBottom: 26 }}>
             {[
-              { label: "Total Allocated",    value: totalAlloc,    color: T.text,    sub: `${allocations.length} configuration${allocations.length !== 1 ? "s" : ""}` },
+              { label: "Total Allocated",    value: totalAlloc,    color: T.text,    sub: `${activeAllocations.length} configuration${activeAllocations.length !== 1 ? "s" : ""}` },
               { label: "Active Consumption", value: totalConsumed, color: T.success, sub: `${totalAlloc > 0 ? ((totalConsumed / totalAlloc) * 100).toFixed(1) : 0}% of total utilized` },
               { label: "Remaining Capacity", value: totalRemain,   color: T.accent,  sub: "available to book" },
             ].map((k, i) => (
@@ -2044,6 +2193,17 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, financeEn
           carriers={carriers}
           allocations={activeAllocations}
           contractTrendData={contractTrendData}
+        />
+      )}
+
+      {/* ── Carrier Volumes tab ── */}
+      {view === "carriers" && (
+        <CarrierView
+          rangeShipments={rangeShipments}
+          containers={containers}
+          carriers={carriers}
+          carrierTrends={carrierTrends}
+          rangeStart={rangeStart}
         />
       )}
 

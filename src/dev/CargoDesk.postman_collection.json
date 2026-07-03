@@ -1,7 +1,7 @@
 {
   "info": {
-    "name": "CargoDesk API v0.17.1",
-    "_postman_id": "cargodesk-v0-17-1",
+    "name": "CargoDesk API v0.20.0",
+    "_postman_id": "cargodesk-v0-20-0",
     "description": "Full REST API for CargoDesk freight management system. Import CargoDesk.postman_environment.json and set the active environment to use {{baseUrl}}.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },

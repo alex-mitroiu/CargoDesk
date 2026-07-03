@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { T } from "../tokens";
-import { api } from "../api";
+import { api, TOKEN_KEY } from "../api";
+import postmanCollection  from "../dev/CargoDesk.postman_collection.json";
+import postmanEnvironment from "../dev/CargoDesk.postman_environment.json";
 import { toast } from "../toast";
 import { useAuth } from "../AuthContext";
 import UserManagementPanel from "../components/UserManagementPanel";
@@ -147,7 +149,15 @@ function StatusDot({ result, testing }) {
 
 const TABS_BASE = ["API Controls", "Finance"];
 const TABS      = TABS_BASE; // extended with "Users" for admin below
-const API_SUBTABS = ["External APIs", "Internal APIs"];
+const API_SUBTABS = ["External APIs", "Internal APIs", "Developer"];
+
+const downloadJson = (data, filename) => {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const url  = URL.createObjectURL(blob);
+  const a    = Object.assign(document.createElement("a"), { href: url, download: filename });
+  a.click();
+  URL.revokeObjectURL(url);
+};
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
@@ -219,9 +229,11 @@ export default function AppSettingsPage() {
           label: info.entryCount > 0 ? `${info.entryCount.toLocaleString()} entries` : "No entries — sync required",
         }}));
       } else {
-        const ctrl = new AbortController();
-        const tmr  = setTimeout(() => ctrl.abort(), 7000);
-        const resp = await fetch(apiDef.testUrl, { signal: ctrl.signal });
+        const ctrl    = new AbortController();
+        const tmr     = setTimeout(() => ctrl.abort(), 7000);
+        const token   = localStorage.getItem(TOKEN_KEY);
+        const headers = token ? { Authorization: `Bearer ${token}` } : {};
+        const resp    = await fetch(apiDef.testUrl, { signal: ctrl.signal, headers });
         clearTimeout(tmr);
         setTestResults(r => ({ ...r, [apiDef.id]: { ok: resp.ok, latency: Date.now() - t0, status: resp.status } }));
       }
@@ -547,6 +559,88 @@ export default function AppSettingsPage() {
               {INTERNAL_APIS.map(a => <InternalCard key={a.id} apiDef={a} />)}
             </div>
           )}
+
+          {activeApiSub === "Developer" && (() => {
+            const collFolders  = postmanCollection.item?.length ?? 0;
+            const collRequests = postmanCollection.item?.reduce((s, f) => s + (f.item?.length ?? 0), 0) ?? 0;
+            const collBytes    = JSON.stringify(postmanCollection).length;
+            const envBytes     = JSON.stringify(postmanEnvironment).length;
+            const fmtKb = n => `${(n / 1024).toFixed(1)} KB`;
+
+            const fileCard = ({ badge, badgeColor, filename, description, meta, onDownload }) => (
+              <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, background: T.surface, overflow: "hidden" }}>
+                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", padding: "16px 20px" }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 6 }}>
+                      <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.text }}>{filename}</span>
+                      <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, letterSpacing: ".06em",
+                        color: badgeColor, background: `${badgeColor}18`,
+                        border: `1px solid ${badgeColor}40`, borderRadius: 4, padding: "2px 7px" }}>
+                        {badge}
+                      </span>
+                    </div>
+                    <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, lineHeight: 1.6, margin: "0 0 8px", maxWidth: 520 }}>
+                      {description}
+                    </p>
+                    <div style={{ display: "flex", gap: 14 }}>
+                      {meta.map(([label, value]) => (
+                        <span key={label} style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+                          <span style={{ color: T.text }}>{value}</span> {label}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  <button onClick={onDownload} type="button"
+                    style={{ flexShrink: 0, marginLeft: 24, padding: "7px 16px", borderRadius: 7,
+                      border: `1px solid ${T.accent}55`, background: T.accentBg, color: T.accent,
+                      fontFamily: T.mono, fontSize: 12, cursor: "pointer", whiteSpace: "nowrap" }}>
+                    ↓ Download
+                  </button>
+                </div>
+              </div>
+            );
+
+            return (
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+
+                <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, lineHeight: 1.6, margin: "0 0 4px" }}>
+                  Postman files for exploring and testing the CargoDesk REST API locally.
+                  Import both files into Postman, select the <strong style={{ color: T.text }}>CargoDesk Local</strong> environment, and authenticate via <code style={{ fontFamily: T.mono, fontSize: 11, color: T.success, background: `${T.success}12`, borderRadius: 3, padding: "1px 5px" }}>POST /api/auth/login</code> to get a Bearer token.
+                </p>
+
+                {fileCard({
+                  badge:       "COLLECTION",
+                  badgeColor:  T.accent,
+                  filename:    "CargoDesk.postman_collection.json",
+                  description: `Full REST API collection covering every endpoint in CargoDesk. Organised into ${collFolders} resource folders — Shipments, Containers, Contracts, Allocations, Carriers, Vessels, Ports, Customers, Sanctions, Kanban, Margin, and more. Each folder includes example request bodies with realistic placeholder values.`,
+                  meta:        [["folders", collFolders], ["requests", collRequests], ["size", fmtKb(collBytes)]],
+                  onDownload:  () => downloadJson(postmanCollection, "CargoDesk.postman_collection.json"),
+                })}
+
+                {fileCard({
+                  badge:       "ENVIRONMENT",
+                  badgeColor:  T.success,
+                  filename:    "CargoDesk.postman_environment.json",
+                  description: "Environment file pre-configured with the {{baseUrl}} variable pointing to the local Express server. Import alongside the collection and set it as the active environment. Change baseUrl to point at a remote instance if needed.",
+                  meta:        [["variable", "baseUrl"], ["default", "localhost:3001"], ["size", fmtKb(envBytes)]],
+                  onDownload:  () => downloadJson(postmanEnvironment, "CargoDesk.postman_environment.json"),
+                })}
+
+                {/* Auth note */}
+                <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
+                  padding: "14px 20px", display: "flex", flexDirection: "column", gap: 8 }}>
+                  <span style={{ fontFamily: T.body, fontSize: 11, fontWeight: 700, letterSpacing: ".09em",
+                    textTransform: "uppercase", color: T.textMuted }}>Authentication</span>
+                  <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, lineHeight: 1.6, margin: 0 }}>
+                    All endpoints except <code style={{ fontFamily: T.mono, fontSize: 11, color: T.success, background: `${T.success}12`, borderRadius: 3, padding: "1px 5px" }}>POST /api/auth/login</code> and <code style={{ fontFamily: T.mono, fontSize: 11, color: T.success, background: `${T.success}12`, borderRadius: 3, padding: "1px 5px" }}>GET /api/health</code> require a Bearer token.
+                    Add a <strong style={{ color: T.text }}>Collection-level Authorization</strong> header in Postman (Type: Bearer Token) and paste the token returned by the login call.
+                    Default dev credentials: <code style={{ fontFamily: T.mono, fontSize: 11, color: T.accent, background: `${T.accent}12`, borderRadius: 3, padding: "1px 5px" }}>admin@cargodesk.com</code> / <code style={{ fontFamily: T.mono, fontSize: 11, color: T.accent, background: `${T.accent}12`, borderRadius: 3, padding: "1px 5px" }}>admin123</code>
+                  </p>
+                </div>
+
+              </div>
+            );
+          })()}
         </>
       )}
 

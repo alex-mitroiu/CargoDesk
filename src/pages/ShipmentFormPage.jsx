@@ -677,6 +677,9 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
   const [legs,    setLegs]   = useState([]);
   const [touched, setTouch]  = useState({});
   const touch = k => setTouch(p => ({ ...p, [k]: true }));
+  const [sameNotify, setSameNotify] = useState(
+    !init.notifyId || init.notifyId === init.consigneeId
+  );
 
   const [f, setF] = useState({
     carrierCode:        init.carrierCode        || "",
@@ -784,6 +787,15 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
     onDirtyChange?.(true);
   }, [f]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Sync notify party to consignee when "same as consignee" is active
+  useEffect(() => {
+    if (!sameNotify) return;
+    setF(p => {
+      if (p.notifyId === p.consigneeId && p.notifyName === p.consigneeName) return p;
+      return { ...p, notifyId: p.consigneeId, notifyName: p.consigneeName };
+    });
+  }, [sameNotify, f.consigneeId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const firstLeg    = legs[0] || null;
   const lastLeg     = legs[legs.length - 1] || null;
   const derivedPol  = firstLeg?.pol || "";
@@ -803,11 +815,12 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
   const isCentral = f.contractType === "Central";
   const valid = f.incoterm !== ""
     && f.commodityCode.trim().length > 0
-    && (!isCentral || f.contractId.trim().length > 0);
+    && (!isCentral || f.contractId.trim().length > 0)
+    && (!init.id ? legs.length > 0 : true);
 
   const handleSave = () => {
     if (!valid) {
-      setTouch({ incoterm: true, commodityCode: true });
+      setTouch({ incoterm: true, commodityCode: true, legs: true });
       toast.error("Please fill in all required fields before saving.");
       return;
     }
@@ -853,9 +866,29 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
           value={{ id: f.principalId, name: f.principalName }}
           onChange={v => setF(p => ({ ...p, principalId: v.id, principalName: v.name }))} />
       </div>
-      <CustomerCombobox label="Notify Party"
-        value={{ id: f.notifyId, name: f.notifyName }}
-        onChange={v => setF(p => ({ ...p, notifyId: v.id, notifyName: v.name }))} />
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: "pointer",
+          fontFamily: T.body, fontSize: 12, color: T.textMuted, userSelect: "none", width: "fit-content" }}>
+          <input type="checkbox" checked={!sameNotify}
+            onChange={e => {
+              const diff = e.target.checked;
+              setSameNotify(!diff);
+              if (!diff) setF(p => ({ ...p, notifyId: p.consigneeId, notifyName: p.consigneeName }));
+            }}
+            style={{ accentColor: T.accent, width: 13, height: 13 }} />
+          Different notify party
+        </label>
+        {sameNotify
+          ? <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, fontStyle: "italic", paddingLeft: 2 }}>
+              {f.consigneeName
+                ? <>Notify → <span style={{ color: T.text, fontStyle: "normal" }}>{f.consigneeName}</span></>
+                : "Same as Consignee (select a Consignee above)"}
+            </div>
+          : <CustomerCombobox label="Notify Party"
+              value={{ id: f.notifyId, name: f.notifyName }}
+              onChange={v => setF(p => ({ ...p, notifyId: v.id, notifyName: v.name }))} />
+        }
+      </div>
 
       {/* ── Cargo ─────────────────────────────────────────────────────────────── */}
       <SectionDivider label="Cargo" />
@@ -1035,6 +1068,9 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
             : <span style={{ fontFamily: T.body, fontSize: 11, color: T.border, fontStyle: "italic" }}>Add a leg to set</span>}
         </div>
       </div>
+
+      <FieldError show={touched.legs && !init.id && legs.length === 0}
+        msg="At least one leg is required — add a leg to set Port of Loading, Port of Discharge, and ETD" />
 
       {/* ── Containers (new shipment only) ────────────────────────────────────── */}
       {!init.id && (
