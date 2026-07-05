@@ -297,6 +297,64 @@ import { VERSION, BUILD, CODENAME, CHANGELOG, COPYRIGHT_YEAR, COPYRIGHT_OWNER } 
     );
   };
 
+// ─── Changelog entry component ────────────────────────────────────────────────
+
+function ChangelogEntry({ entry, defaultOpen }) {
+  const [open, setOpen] = React.useState(defaultOpen);
+
+  // Split on ". " followed by an uppercase letter — each sentence is one feature bullet.
+  const raw = entry.summary.split(/\.\s+(?=[A-Z])/);
+  const bullets = raw.map((b, i) => (i < raw.length - 1 && !b.endsWith('.') ? b + '.' : b));
+
+  return (
+    <div style={{
+      border: `1px solid ${defaultOpen ? T.accent + "55" : T.border}`,
+      borderRadius: 10,
+      background: T.surface,
+      overflow: "hidden",
+    }}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        type="button"
+        style={{
+          width: "100%", display: "flex", alignItems: "center", gap: 10,
+          padding: "11px 16px", background: "none", border: "none",
+          cursor: "pointer", textAlign: "left",
+        }}
+      >
+        <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700,
+          color: defaultOpen ? T.accent : T.textMuted, minWidth: 56 }}>
+          v{entry.version}
+        </span>
+        {entry.codename && (
+          <span style={{ fontFamily: T.body, fontSize: 12, fontWeight: 600,
+            color: defaultOpen ? T.accent : T.text }}>
+            "{entry.codename}"
+          </span>
+        )}
+        {defaultOpen && <Badge variant="success">current</Badge>}
+        <span style={{ flex: 1 }} />
+        <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>{entry.date}</span>
+        <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, marginLeft: 8 }}>
+          {open ? "▲" : "▼"}
+        </span>
+      </button>
+
+      {open && (
+        <div style={{ borderTop: `1px solid ${T.border}33`, padding: "10px 18px 14px" }}>
+          <ul style={{ margin: 0, paddingLeft: 18, display: "flex", flexDirection: "column", gap: 5 }}>
+            {bullets.map((bullet, i) => (
+              <li key={i} style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, lineHeight: 1.6 }}>
+                {bullet}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const AboutPage = () => {
   const Section = ({ title, children }) => (
     <div style={{ marginBottom: 32 }}>
@@ -399,31 +457,9 @@ const AboutPage = () => {
 
       {/* Changelog */}
       <Section title="Changelog">
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           {CHANGELOG.map((entry, i) => (
-            <div key={entry.version}
-              style={{ display: "grid", gridTemplateColumns: "80px 90px 1fr", gap: 12,
-                padding: "12px 16px", background: T.surface, borderRadius: 10,
-                border: `1px solid ${i === 0 ? T.accent + "55" : T.border}`,
-                alignItems: "start" }}>
-              <div>
-                <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700,
-                  color: i === 0 ? T.accent : T.textMuted }}>
-                  v{entry.version}
-                </span>
-                {i === 0 && (
-                  <div style={{ marginTop: 4 }}>
-                    <Badge variant="success">current</Badge>
-                  </div>
-                )}
-              </div>
-              <span style={{ fontFamily: T.mono, fontSize: 11, color: T.border, paddingTop: 2 }}>
-                {entry.date}
-              </span>
-              <span style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, lineHeight: 1.6 }}>
-                {entry.summary}
-              </span>
-            </div>
+            <ChangelogEntry key={entry.version} entry={entry} defaultOpen={i === 0} />
           ))}
         </div>
       </Section>
