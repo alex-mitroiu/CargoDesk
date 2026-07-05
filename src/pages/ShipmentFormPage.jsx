@@ -17,6 +17,96 @@ import Spinner from "../components/primitives/Spinner";
 import Pagination from "../components/primitives/Pagination";
 import { ContainerTypeField } from "../components/shared/ContainerTypePickerModal";
 
+// ─── Draft Container Manager ──────────────────────────────────────────────────
+
+const BLANK_DRAFT_CTR = () => ({
+  _key: Date.now() + Math.random(),
+  size: '', type: '',
+  grossWeightKg: null, volumeCbm: null,
+  hsCode: '', cargoDescription: '',
+  isDg: false, dgClass: '',
+  containerNumber: '', sealNumber: '',
+});
+
+const DraftCtrRow = ({ idx, ctr, onChange, onRemove }) => (
+  <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px" }}>
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+      <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: T.textMuted }}>Container #{idx + 1}</span>
+      <button type="button" onClick={onRemove}
+        style={{ background: "none", border: "none", cursor: "pointer", color: T.textMuted, fontSize: 14, padding: "0 2px", lineHeight: 1 }}>✕</button>
+    </div>
+    <div style={{ display: "grid", gridTemplateColumns: "163px 1fr 1fr 1fr", gap: 10, marginBottom: 8 }}>
+      <div>
+        <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
+          textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 5 }}>Container Type</div>
+        <ContainerTypeField size={ctr.size} type={ctr.type} label={null}
+          onChange={opt => { onChange('size', opt?.size || ''); onChange('type', opt?.type || ''); }} />
+      </div>
+      <Inp label="Weight (kg)" value={ctr.grossWeightKg != null ? String(ctr.grossWeightKg) : ''} mono
+        onChange={v => onChange('grossWeightKg', v === '' ? null : parseFloat(v) || null)} placeholder="18000" />
+      <Inp label="Volume (CBM)" value={ctr.volumeCbm != null ? String(ctr.volumeCbm) : ''} mono
+        onChange={v => onChange('volumeCbm', v === '' ? null : parseFloat(v) || null)} placeholder="28" />
+      <Inp label="HS Code" value={ctr.hsCode} mono
+        onChange={v => onChange('hsCode', v)} placeholder="e.g. 8471.30" />
+    </div>
+    <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+      <div style={{ flex: 1 }}>
+        <Inp label="Cargo Description" value={ctr.cargoDescription}
+          onChange={v => onChange('cargoDescription', v)} placeholder="e.g. Electronics components" />
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, paddingTop: 20 }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer",
+          fontFamily: T.body, fontSize: 13, color: T.text, userSelect: "none", whiteSpace: "nowrap" }}>
+          <input type="checkbox" checked={ctr.isDg}
+            onChange={e => { onChange('isDg', e.target.checked); if (!e.target.checked) onChange('dgClass', ''); }}
+            style={{ accentColor: T.accent }} />
+          DG Cargo
+        </label>
+        {ctr.isDg && (
+          <select value={ctr.dgClass}
+            onChange={e => onChange('dgClass', e.target.value)}
+            style={{ ...inputBase, fontFamily: T.body, fontSize: 13, cursor: "pointer" }}>
+            <option value="">Select class…</option>
+            {IMDG_CLASSES.map(c => <option key={c.code} value={c.code}>{c.label} — {c.name}</option>)}
+          </select>
+        )}
+      </div>
+    </div>
+  </div>
+);
+
+const DraftContainerManagerModal = ({ containers, onSave, onClose }) => {
+  const [items, setItems] = useState(() =>
+    containers.length > 0
+      ? containers.map(c => ({ ...c, _key: Math.random() }))
+      : [BLANK_DRAFT_CTR()]
+  );
+  const add    = () => setItems(p => [...p, BLANK_DRAFT_CTR()]);
+  const remove = key => setItems(p => p.filter(c => c._key !== key));
+  const update = (key, field, value) =>
+    setItems(p => p.map(c => c._key === key ? { ...c, [field]: value } : c));
+
+  return (
+    <Modal title="Manage Containers" onClose={onClose} width={700}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {items.map((ctr, idx) => (
+          <DraftCtrRow key={ctr._key} idx={idx} ctr={ctr}
+            onChange={(f, v) => update(ctr._key, f, v)}
+            onRemove={() => remove(ctr._key)} />
+        ))}
+        <div>
+          <Btn variant="secondary" onClick={add}>+ Add Container</Btn>
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8,
+          borderTop: `1px solid ${T.border}`, paddingTop: 12, marginTop: 4 }}>
+          <Btn variant="secondary" onClick={onClose}>Cancel</Btn>
+          <Btn onClick={() => onSave(items.map(({ _key, ...rest }) => rest))}>Done</Btn>
+        </div>
+      </div>
+    </Modal>
+  );
+};
+
 // ─── Contract Picker Modal ────────────────────────────────────────────────────
 
 const SKIP_REASONS = [
@@ -263,7 +353,7 @@ const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0, onSel
 
 // ─── ContractField ────────────────────────────────────────────────────────────
 
-const ContractField = ({ value, onChange, pol, pod, etd, contractType }) => {
+const ContractField = ({ value, onChange, pol, pod, etd, crd, routingTerm, pkuLocation, delLocation, contractType, carrierCode }) => {
   const isCentral = contractType === "Central";
   const [matches,    setMatches]    = useState(null);
   const [allocs,     setAllocs]     = useState(null);
@@ -272,28 +362,36 @@ const ContractField = ({ value, onChange, pol, pod, etd, contractType }) => {
   const matchTimer   = useRef(null);
   const autoSelected = useRef(false);
 
+  const dateRef = crd || etd;
+
   useEffect(() => {
     clearTimeout(matchTimer.current);
     if (!isCentral) { setMatches(null); setAllocs(null); autoSelected.current = false; return; }
-    if (!pol || !pod || !etd) { setMatches(null); setAllocs(null); return; }
+    if (!pol || !pod) { setMatches(null); setAllocs(null); return; }
     setMatching(true);
     matchTimer.current = setTimeout(async () => {
       try {
+        const matchParams = { pol, pod, ...(dateRef && { crd: dateRef }),
+          ...(routingTerm && { routingTerm }),
+          ...(pkuLocation && { pkuLocation }),
+          ...(delLocation && { delLocation }) };
         const [contractRes, allocRes] = await Promise.all([
-          api.contracts.match({ pol, pod, etd }),
+          api.contracts.match(matchParams),
           api.allocations.match({ pol, pod, etd }),
         ]);
-        setMatches(contractRes);
-        setAllocs(allocRes);
-        if (allocRes.length === 0 && contractRes.length === 1 && !value.id && !autoSelected.current) {
+        const filteredContracts = carrierCode ? contractRes.filter(c => c.carrierCode === carrierCode) : contractRes;
+        const filteredAllocs    = carrierCode ? allocRes.filter(a => a.carrierCode === carrierCode)    : allocRes;
+        setMatches(filteredContracts);
+        setAllocs(filteredAllocs);
+        if (filteredAllocs.length === 0 && filteredContracts.length === 1 && !value.id && !autoSelected.current) {
           autoSelected.current = true;
-          onChange({ id: contractRes[0].id, ref: contractRes[0].contractNumber, carrierCode: contractRes[0].carrierCode, allocationId: "", spaceSkipReason: "", spaceOverageReason: "" });
+          onChange({ id: filteredContracts[0].id, ref: filteredContracts[0].contractNumber, carrierCode: filteredContracts[0].carrierCode, allocationId: "", spaceSkipReason: "", spaceOverageReason: "" });
         }
       } catch {
         setMatches([]); setAllocs([]);
       } finally { setMatching(false); }
     }, 400);
-  }, [isCentral, pol, pod, etd]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isCentral, pol, pod, dateRef, routingTerm, pkuLocation, delLocation, carrierCode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const clearContract = () => { onChange({ id: "", ref: "", carrierCode: null, allocationId: "", spaceSkipReason: "", spaceOverageReason: "" }); autoSelected.current = false; };
   const pickContract  = (c, skipReason = "") => { onChange({ id: c.id, ref: c.contractNumber, carrierCode: c.carrierCode, allocationId: "", spaceSkipReason: skipReason, spaceOverageReason: "" }); setPickerOpen(false); };
@@ -302,7 +400,7 @@ const ContractField = ({ value, onChange, pol, pod, etd, contractType }) => {
   if (!isCentral) return null;
 
   const hasAllocs = allocs && allocs.length > 0;
-  const missing   = !pol ? "POL" : !pod ? "POD" : !etd ? "ETD" : null;
+  const missing   = !pol ? "POL" : !pod ? "POD" : null;
   const browseDisabled = !!missing || (!hasAllocs && matches !== null && matches.length === 0);
   const browseLabel = missing
     ? `Set ${missing} first to search for contracts`
@@ -348,16 +446,25 @@ const ContractField = ({ value, onChange, pol, pod, etd, contractType }) => {
 
 // ─── Legs table ───────────────────────────────────────────────────────────────
 
-const MOT_OPTIONS = ["SEA", "ROAD", "AIR", "RAIL"];
-const MOT_COLOR   = { SEA: T.info, ROAD: T.warning, AIR: T.accent, RAIL: T.success };
+const LEG_TYPE_OPTIONS      = ["Pick-up", "SEA", "Delivery"];
+const MOVEMENT_TYPE_OPTIONS = ["Carrier's Haulage", "Merchant's Haulage", "Customer Arranged"];
+const LOC_TYPE_OPTIONS      = ["Door", "Terminal", "Container Yard", "CFS"];
+const MOVEMENT_BY_OPTIONS   = ["", "Barge", "Rail", "Truck", "Vessel", "Air"];
+const LEG_TYPE_COLOR        = { "Pick-up": T.accent, "SEA": T.info, "Delivery": T.textMuted };
+const LEG_LOC_ABBR_C        = { "Door": "DR", "Terminal": "PT", "Container Yard": "CY", "CFS": "CFS" };
+const LEG_TYPE_DEFAULT_MT   = { "Pick-up": "Carrier's Haulage", "SEA": "SEA", "Delivery": "Carrier's Haulage" };
 
 const LEG_COLS = [
-  { key: "mot",          label: "MoT",           w: 60  },
-  { key: "pol",          label: "POL *",         w: 170 },
-  { key: "etd",          label: "ETD",           w: 100 },
-  { key: "pod",          label: "POD *",         w: 170 },
-  { key: "eta",          label: "ETA",           w: 100 },
-  { key: "carrierCode",  label: "Carrier",       w: 138 },
+  { key: "legType",      label: "Leg Type",      w: 72  },
+  { key: "movementType", label: "Movement Type", w: 122 },
+  { key: "pol",          label: "From",          w: 150 },
+  { key: "polLocType",   label: "Loc. Type",     w: 82  },
+  { key: "etd",          label: "Date",          w: 100 },
+  { key: "pod",          label: "To",            w: 150 },
+  { key: "podLocType",   label: "Loc. Type",     w: 82  },
+  { key: "eta",          label: "Date",          w: 100 },
+  { key: "carrierCode",  label: "Carrier",       w: 90  },
+  { key: "movementBy",   label: "Movement by",   w: 80  },
   { key: "vessel",       label: "Vessel",        w: 88  },
   { key: "voyage",       label: "Voyage",        w: 66  },
   { key: "contractType", label: "Ctr. Type",     w: 66  },
@@ -370,26 +477,30 @@ const cellInput = {
   padding: 0,
 };
 
-const LegRow = ({ leg, onSave, onRemove, canEdit, widths, inheritedContractType, inheritedContractRef }) => {
+const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inheritedContractRef }) => {
   const [d, setD] = useState(leg);
   useEffect(() => setD(leg), [leg]);
-  const set  = k => v => setD(p => ({ ...p, [k]: v }));
+  const set   = k => v => setD(p => ({ ...p, [k]: v }));
   const flush = () => onSave(d);
+
+  const MONO_KEYS = new Set(["pol", "pod", "voyage", "carrierCode"]);
 
   if (!canEdit) {
     return (
       <div style={{ display: "flex", borderBottom: `1px solid ${T.border}` }}>
         {LEG_COLS.map((c, i) => (
           <div key={c.key} style={{ width: widths[i], minWidth: widths[i], padding: "10px 8px 10px 10px",
-            fontFamily: c.key === "pol" || c.key === "pod" || c.key === "voyage" || c.key === "carrierCode" ? T.mono : T.body,
-            fontSize: 12, color: c.key === "mot" ? (MOT_COLOR[d[c.key]] || T.textMuted) : T.text,
-            fontWeight: c.key === "mot" ? 700 : 400, borderRight: `1px solid ${T.border}22` }}>
+            fontFamily: MONO_KEYS.has(c.key) ? T.mono : T.body,
+            fontSize: 12,
+            color: c.key === "legType" ? (LEG_TYPE_COLOR[d[c.key]] || T.textMuted) : T.text,
+            fontWeight: c.key === "legType" ? 700 : 400,
+            borderRight: `1px solid ${T.border}22` }}>
             {c.key === "contractType" ? (inheritedContractType || "—")
               : c.key === "contractRef" ? (inheritedContractRef || "—")
+              : c.key === "carrierCode" && (d.legType === "Pick-up" || d.legType === "Delivery") ? "—"
               : (d[c.key] || "—")}
           </div>
         ))}
-        <div style={{ width: 36, minWidth: 36 }} />
       </div>
     );
   }
@@ -398,102 +509,150 @@ const LegRow = ({ leg, onSave, onRemove, canEdit, widths, inheritedContractType,
     <div style={{ display: "flex", borderBottom: `1px solid ${T.border}` }}
       onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget)) flush(); }}>
 
-      {/* MoT */}
+      {/* Leg Type */}
       <div style={{ width: widths[0], minWidth: widths[0], padding: "8px 0 8px 10px", borderRight: `1px solid ${T.border}33` }}>
-        <select value={d.mot} onChange={e => set("mot")(e.target.value)} onBlur={flush}
-          style={{ ...cellInput, cursor: "pointer", color: MOT_COLOR[d.mot] || T.textMuted, fontWeight: 700 }}>
-          {MOT_OPTIONS.map(m => <option key={m} value={m}>{m}</option>)}
+        <select value={d.legType || "SEA"} onChange={e => {
+          const lt = e.target.value;
+          const newD = { ...d, legType: lt, movementType: LEG_TYPE_DEFAULT_MT[lt] || d.movementType };
+          setD(newD); onSave(newD);
+        }} style={{ ...cellInput, cursor: "pointer", color: LEG_TYPE_COLOR[d.legType] || T.textMuted, fontWeight: 700 }}>
+          {LEG_TYPE_OPTIONS.map(m => <option key={m} value={m}>{m}</option>)}
         </select>
       </div>
 
-      {/* POL */}
-      <div style={{ width: widths[1], minWidth: widths[1], borderRight: `1px solid ${T.border}33`, overflow: "visible" }}>
+      {/* Movement Type */}
+      <div style={{ width: widths[1], minWidth: widths[1], padding: "8px 0 8px 10px", borderRight: `1px solid ${T.border}33` }}>
+        {(d.legType || "SEA") === "SEA"
+          ? <span style={{ fontFamily: T.body, fontSize: 12, color: T.border }}>—</span>
+          : <select value={d.movementType || "Carrier's Haulage"} onChange={e => set("movementType")(e.target.value)} onBlur={flush}
+              style={{ ...cellInput, cursor: "pointer" }}>
+              {MOVEMENT_TYPE_OPTIONS.map(m => <option key={m} value={m}>{m}</option>)}
+            </select>
+        }
+      </div>
+
+      {/* From (POL) */}
+      <div style={{ width: widths[2], minWidth: widths[2], borderRight: `1px solid ${T.border}33`, overflow: "visible" }}>
         <PortCombobox
           value={d.pol ? { unlocode: d.pol, name: d.polName || "" } : null}
           onChange={v => {
             const newD = { ...d, pol: v?.unlocode || "", polName: v?.name || "" };
-            setD(newD);
-            if (v?.unlocode) onSave(newD);
+            setD(newD); if (v?.unlocode) onSave(newD);
           }}
-          placeholder="Search POL…"
+          placeholder="Search From…"
         />
       </div>
 
-      {/* ETD */}
-      <div style={{ width: widths[2], minWidth: widths[2], padding: "8px 0 8px 10px", borderRight: `1px solid ${T.border}33` }}>
-        <input type="date" value={d.etd || ""} onChange={e => set("etd")(e.target.value || null)}
+      {/* Loc. Type (From) */}
+      <div style={{ width: widths[3], minWidth: widths[3], padding: "8px 0 8px 10px", borderRight: `1px solid ${T.border}33` }}>
+        <select value={d.polLocType || "Terminal"} onChange={e => set("polLocType")(e.target.value)} onBlur={flush}
+          style={{ ...cellInput, cursor: "pointer" }}>
+          {LOC_TYPE_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
+        </select>
+      </div>
+
+      {/* Date (ETD) */}
+      <div style={{ width: widths[4], minWidth: widths[4], padding: "8px 0 8px 10px", borderRight: `1px solid ${T.border}33` }}>
+        <input type="date" value={d.etd || ""} max={d.eta || undefined}
+          onChange={e => set("etd")(e.target.value || null)}
           onBlur={flush} style={cellInput} />
       </div>
 
-      {/* POD */}
-      <div style={{ width: widths[3], minWidth: widths[3], borderRight: `1px solid ${T.border}33`, overflow: "visible" }}>
+      {/* To (POD) */}
+      <div style={{ width: widths[5], minWidth: widths[5], borderRight: `1px solid ${T.border}33`, overflow: "visible" }}>
         <PortCombobox
           value={d.pod ? { unlocode: d.pod, name: d.podName || "" } : null}
           onChange={v => {
             const newD = { ...d, pod: v?.unlocode || "", podName: v?.name || "" };
-            setD(newD);
-            if (v?.unlocode) onSave(newD);
+            setD(newD); if (v?.unlocode) onSave(newD);
           }}
-          placeholder="Search POD…"
+          placeholder="Search To…"
         />
       </div>
 
-      {/* ETA */}
-      <div style={{ width: widths[4], minWidth: widths[4], padding: "8px 0 8px 10px", borderRight: `1px solid ${T.border}33` }}>
-        <input type="date" value={d.eta || ""} onChange={e => set("eta")(e.target.value || null)}
+      {/* Loc. Type (To) */}
+      <div style={{ width: widths[6], minWidth: widths[6], padding: "8px 0 8px 10px", borderRight: `1px solid ${T.border}33` }}>
+        <select value={d.podLocType || "Terminal"} onChange={e => set("podLocType")(e.target.value)} onBlur={flush}
+          style={{ ...cellInput, cursor: "pointer" }}>
+          {LOC_TYPE_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
+        </select>
+      </div>
+
+      {/* Date (ETA) */}
+      <div style={{ width: widths[7], minWidth: widths[7], padding: "8px 0 8px 10px", borderRight: `1px solid ${T.border}33` }}>
+        <input type="date" value={d.eta || ""} min={d.etd || undefined}
+          onChange={e => set("eta")(e.target.value || null)}
           onBlur={flush} style={cellInput} />
       </div>
 
-      {/* Carrier */}
-      <div style={{ width: widths[5], minWidth: widths[5], borderRight: `1px solid ${T.border}33`, overflow: "visible" }}>
-        <CarrierCombobox
-          value={d.carrierCode || ""}
-          onChange={v => {
-            const newD = { ...d, carrierCode: v };
-            setD(newD);
-            onSave(newD);
-          }}
-        />
+      {/* Carrier — only relevant for SEA legs */}
+      <div style={{ width: widths[8], minWidth: widths[8], borderRight: `1px solid ${T.border}33`, overflow: "visible" }}>
+        {d.legType === "Pick-up" || d.legType === "Delivery"
+          ? <span style={{ display: "block", padding: "10px 8px 10px 10px", fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>—</span>
+          : <CarrierCombobox
+              value={d.carrierCode || ""}
+              onChange={v => { const newD = { ...d, carrierCode: v }; setD(newD); onSave(newD); }}
+            />
+        }
+      </div>
+
+      {/* Movement by */}
+      <div style={{ width: widths[9], minWidth: widths[9], padding: "8px 0 8px 10px", borderRight: `1px solid ${T.border}33` }}>
+        {(d.legType || "SEA") === "SEA"
+          ? <span style={{ fontFamily: T.body, fontSize: 12, color: T.border }}>—</span>
+          : <select value={d.movementBy || ""} onChange={e => set("movementBy")(e.target.value)} onBlur={flush}
+              style={{ ...cellInput, cursor: "pointer" }}>
+              {MOVEMENT_BY_OPTIONS.map(b => <option key={b} value={b}>{b || "—"}</option>)}
+            </select>
+        }
       </div>
 
       {/* Vessel */}
-      <div style={{ width: widths[6], minWidth: widths[6], padding: "8px 0 8px 10px", borderRight: `1px solid ${T.border}33` }}>
-        <input value={d.vessel} onChange={e => set("vessel")(e.target.value)}
-          onBlur={flush} placeholder="Name…" style={{ ...cellInput, fontFamily: T.body }} />
-      </div>
+      {(() => {
+        const vesselDisabled = (d.legType === "Pick-up" || d.legType === "Delivery") && d.movementBy !== "Barge";
+        return (
+          <div style={{ width: widths[10], minWidth: widths[10], padding: "8px 0 8px 10px", borderRight: `1px solid ${T.border}33` }}>
+            {vesselDisabled
+              ? <span style={{ fontFamily: T.body, fontSize: 12, color: T.border }}>—</span>
+              : <input value={d.vessel} onChange={e => set("vessel")(e.target.value)}
+                  onBlur={flush} placeholder="Name…" style={{ ...cellInput, fontFamily: T.body }} />}
+          </div>
+        );
+      })()}
 
       {/* Voyage */}
-      <div style={{ width: widths[7], minWidth: widths[7], padding: "8px 0 8px 10px", borderRight: `1px solid ${T.border}33` }}>
-        <input value={d.voyage} onChange={e => set("voyage")(e.target.value)}
-          onBlur={flush} placeholder="423E" style={cellInput} />
-      </div>
+      {(() => {
+        const voyageDisabled = (d.legType === "Pick-up" || d.legType === "Delivery") && d.movementBy !== "Barge";
+        return (
+          <div style={{ width: widths[11], minWidth: widths[11], padding: "8px 0 8px 10px", borderRight: `1px solid ${T.border}33` }}>
+            {voyageDisabled
+              ? <span style={{ fontFamily: T.body, fontSize: 12, color: T.border }}>—</span>
+              : <input value={d.voyage} onChange={e => set("voyage")(e.target.value)}
+                  onBlur={flush} placeholder="423E" style={cellInput} />}
+          </div>
+        );
+      })()}
 
-      {/* Contract Type — read-only, inherited from shipment-level Contract Type field */}
-      <div style={{ width: widths[8], minWidth: widths[8], padding: "8px 0 8px 10px", borderRight: `1px solid ${T.border}33`,
+      {/* Contract Type — read-only, inherited */}
+      <div style={{ width: widths[12], minWidth: widths[12], padding: "8px 0 8px 10px", borderRight: `1px solid ${T.border}33`,
         fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
         {inheritedContractType || "—"}
       </div>
 
-      {/* Contract No. — read-only, inherited from shipment-level Contract No. field */}
-      <div style={{ width: widths[9], minWidth: widths[9], padding: "8px 0 8px 10px", borderRight: `1px solid ${T.border}33`,
+      {/* Contract No. — read-only, inherited */}
+      <div style={{ width: widths[13], minWidth: widths[13], padding: "8px 0 8px 10px", borderRight: `1px solid ${T.border}33`,
         fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>
         {inheritedContractRef || "—"}
       </div>
 
-      {/* Delete */}
-      <div style={{ width: 36, minWidth: 36, display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <button onClick={onRemove}
-          style={{ background: "none", border: "none", cursor: "pointer", color: T.textMuted, fontSize: 13, lineHeight: 1, padding: 4 }}
-          onMouseEnter={e => e.currentTarget.style.color = T.danger}
-          onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>✕</button>
-      </div>
     </div>
   );
 };
 
 const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChange, inheritedCarrier, inheritedContractType, inheritedContractRef, canEdit }) => {
-  const [legs,   setLegs]   = useState([]);
-  const [saving, setSaving] = useState(null);
+  const [legs,          setLegs]          = useState([]);
+  const [saving,        setSaving]        = useState(null);
+  const [selectedLegId, setSelectedLegId] = useState(null);
   const isDraft = !shipmentId;
   const { widths, startResize } = useResizableColumns("legs", LEG_COLS.map(c => c.w));
 
@@ -515,7 +674,7 @@ const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChange, inh
 
   const addLeg = async () => {
     const newLeg = {
-      mot: "SEA", pol: "", pod: "", etd: null, eta: null,
+      legType: "SEA", mot: "SEA", pol: "", pod: "", etd: null, eta: null,
       carrierCode: inheritedCarrier || "",
       vessel: "", vesselImo: "", voyage: "",
       contractType: inheritedContractType || "SPOT",
@@ -548,6 +707,7 @@ const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChange, inh
   };
 
   const removeLeg = async legId => {
+    setSelectedLegId(null);
     if (isDraft) {
       propagate(legs.filter(l => l.id !== legId));
     } else {
@@ -558,7 +718,7 @@ const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChange, inh
     }
   };
 
-  const totalCols = widths.reduce((s, w) => s + w, 0) + 36;
+  const totalCols = widths.reduce((s, w) => s + w, 0);
 
   return (
     <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden" }}>
@@ -580,42 +740,78 @@ const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChange, inh
                 {i < LEG_COLS.length - 1 && <ColResizer onStart={e => startResize(i, e)} />}
               </div>
             ))}
-            <div style={{ width: 36, minWidth: 36 }} />
           </div>
           {legs.length === 0 ? (
             <div style={{ padding: "14px 16px", fontFamily: T.body, fontSize: 12, color: T.textMuted, fontStyle: "italic" }}>
               No legs yet — add one below.
             </div>
-          ) : legs.map(leg => (
-            <div key={leg.id} style={{ position: "relative" }}>
-              {saving === leg.id && (
-                <div style={{ position: "absolute", inset: 0, background: T.accent + "08", zIndex: 1, pointerEvents: "none" }} />
-              )}
-              <LegRow leg={leg} onSave={saveLeg} onRemove={() => removeLeg(leg.id)} canEdit={canEdit} widths={widths} inheritedContractType={inheritedContractType} inheritedContractRef={inheritedContractRef} />
-            </div>
-          ))}
+          ) : legs.map(leg => {
+            const isSelected = selectedLegId === leg.id;
+            return (
+              <div key={leg.id}
+                onClick={() => canEdit && setSelectedLegId(id => id === leg.id ? null : leg.id)}
+                style={{ position: "relative", cursor: canEdit ? "pointer" : "default",
+                  borderLeft: isSelected ? `3px solid ${T.accent}` : "3px solid transparent",
+                  transition: "border-color .12s" }}>
+                {saving === leg.id && (
+                  <div style={{ position: "absolute", inset: 0, background: T.accent + "08", zIndex: 1, pointerEvents: "none" }} />
+                )}
+                {isSelected && (
+                  <div style={{ position: "absolute", inset: 0, background: T.accent + "06", pointerEvents: "none" }} />
+                )}
+                <LegRow leg={leg} onSave={saveLeg} canEdit={canEdit} widths={widths} inheritedContractType={inheritedContractType} inheritedContractRef={inheritedContractRef} />
+              </div>
+            );
+          })}
         </div>
       </div>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
-        padding: "8px 12px", borderTop: legs.length ? `1px solid ${T.border}` : "none", background: T.surface }}>
-        <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
-          {legs.length} leg{legs.length !== 1 ? "s" : ""}
-          {legs.length > 1 && (
-            <span style={{ marginLeft: 8, fontFamily: T.mono }}>
-              {legs[0]?.pol || "?"} → {legs[legs.length - 1]?.pod || "?"}
+      {(() => {
+        const cLegs = legs.filter(l => !["Merchant's Haulage", "Customer Arranged"].includes(l.movementType));
+        const routingChip = cLegs.length > 0
+          ? (LEG_LOC_ABBR_C[cLegs[0].polLocType] || cLegs[0].polLocType || "PT") + "-" +
+            (LEG_LOC_ABBR_C[cLegs[cLegs.length-1].podLocType] || cLegs[cLegs.length-1].podLocType || "PT")
+          : null;
+        return (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+            padding: "8px 12px", borderTop: legs.length ? `1px solid ${T.border}` : "none", background: T.surface }}>
+            <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, display: "flex", alignItems: "center", gap: 8 }}>
+              {legs.length} leg{legs.length !== 1 ? "s" : ""}
+              {legs.length > 1 && (
+                <span style={{ fontFamily: T.mono }}>
+                  {legs[0]?.pol || "?"} → {legs[legs.length - 1]?.pod || "?"}
+                </span>
+              )}
+              {routingChip && (
+                <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: T.accent,
+                  background: T.accentBg, borderRadius: 4, padding: "1px 7px", border: `1px solid ${T.accent}33` }}>
+                  {routingChip}
+                </span>
+              )}
             </span>
-          )}
-        </span>
-        {canEdit && (
-          <button onClick={addLeg}
-            style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 6,
-              padding: "4px 12px", fontFamily: T.body, fontSize: 12, color: T.accent, cursor: "pointer" }}
-            onMouseEnter={e => e.currentTarget.style.borderColor = T.accent}
-            onMouseLeave={e => e.currentTarget.style.borderColor = T.border}>
-            + Add leg
-          </button>
-        )}
-      </div>
+            {canEdit && (
+              <div style={{ display: "flex", gap: 6 }}>
+                <button onClick={addLeg}
+                  style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 6,
+                    padding: "4px 12px", fontFamily: T.body, fontSize: 12, color: T.accent, cursor: "pointer" }}
+                  onMouseEnter={e => e.currentTarget.style.borderColor = T.accent}
+                  onMouseLeave={e => e.currentTarget.style.borderColor = T.border}>
+                  + Add leg
+                </button>
+                <button
+                  disabled={!selectedLegId}
+                  onClick={() => selectedLegId && removeLeg(selectedLegId)}
+                  style={{ background: "none", borderRadius: 6, padding: "4px 12px",
+                    fontFamily: T.body, fontSize: 12, cursor: selectedLegId ? "pointer" : "default",
+                    border: `1px solid ${selectedLegId ? T.danger + "88" : T.border}`,
+                    color: selectedLegId ? T.danger : T.textMuted,
+                    opacity: selectedLegId ? 1 : 0.45, transition: "opacity .15s, border-color .15s, color .15s" }}>
+                  Remove leg
+                </button>
+              </div>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 };
@@ -655,8 +851,8 @@ const CommodityHint = () => {
   );
 };
 
-const SectionDivider = ({ label }) => (
-  <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "4px 0 0" }}>
+const SectionDivider = ({ label, id }) => (
+  <div id={id} style={{ display: "flex", alignItems: "center", gap: 10, margin: "4px 0 0" }}>
     <span style={{ fontFamily: T.body, fontSize: 10, fontWeight: 700, letterSpacing: "0.08em",
       color: T.textMuted, textTransform: "uppercase", whiteSpace: "nowrap" }}>{label}</span>
     <div style={{ flex: 1, height: 1, background: T.border }} />
@@ -672,7 +868,7 @@ const errRing = show => show
 
 // ─── ShipmentForm ─────────────────────────────────────────────────────────────
 
-const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onDraftLegsChange }) => {
+const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onDraftLegsChange, ctrManagerTrigger = 0 }) => {
   const { canEdit } = useAuth();
   const [legs,    setLegs]   = useState([]);
   const [touched, setTouch]  = useState({});
@@ -713,7 +909,9 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
     serviceType:        init.serviceType        || "Port-to-Port",
     placeOfReceipt:     init.placeOfReceipt     || "",
     placeOfDelivery:    init.placeOfDelivery    || "",
-    cargoReadyDate:     init.cargoReadyDate     || "",
+    cargoReadyDate:         init.cargoReadyDate         || "",
+    declaredValue:          init.declaredValue           != null ? String(init.declaredValue) : "",
+    declaredValueCurrency:  init.declaredValueCurrency  || "USD",
   });
   const [carrierUpdated, setCarrierUpdated] = useState("");
   const [isSaving, withSaving] = useSaving();
@@ -723,45 +921,27 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
     count: '', size: '', type: '', weight: '', volume: '',
     distribution: 'all', cargoDescription: '', isDg: false, dgClass: '',
   });
-  const [draftContainers,  setDraftContainers]  = useState([]);
+  const [draftContainers,       setDraftContainers]       = useState([]);
+  const [containerManagerOpen,  setContainerManagerOpen]  = useState(false);
+  const [useContainerManager,   setUseContainerManager]   = useState(false);
   const [contractDgPolicy, setContractDgPolicy] = useState(null); // { dgAllowed, imdgClasses }
 
-  // Keep already-generated containers in sync when the user edits cargo fields after clicking Generate.
-  // Uses functional updater so prev always reflects the latest state, not the stale closure.
+  // Open the container manager modal when the sidebar button fires the trigger.
+  const prevTriggerRef = useRef(0);
   useEffect(() => {
-    setDraftContainers(prev => {
-      if (prev.length === 0) return prev;
-      const n = prev.length;
-      const totalWeight = parseFloat(quickCargo.weight) || 0;
-      const totalVolume = parseFloat(quickCargo.volume) || 0;
-      const perWeight = quickCargo.distribution === 'all'
-        ? (totalWeight ? +((totalWeight / n).toFixed(2)) : null)
-        : (totalWeight || null);
-      const perVolume = quickCargo.distribution === 'all'
-        ? (totalVolume ? +((totalVolume / n).toFixed(2)) : null)
-        : (totalVolume || null);
-      return prev.map(c => ({ ...c, grossWeightKg: perWeight, volumeCbm: perVolume, cargoDescription: quickCargo.cargoDescription }));
-    });
-  }, [quickCargo.weight, quickCargo.volume, quickCargo.cargoDescription, quickCargo.distribution]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (ctrManagerTrigger > prevTriggerRef.current) {
+      setContainerManagerOpen(true);
+      prevTriggerRef.current = ctrManagerTrigger;
+    }
+  }, [ctrManagerTrigger]);
 
+  // Auto-compute preview chips whenever quickCargo changes (no Generate button needed).
   useEffect(() => {
-    if (!f.contractId) { setContractDgPolicy(null); return; }
-    api.contracts.get(f.contractId)
-      .then(c => setContractDgPolicy({ dgAllowed: c.dgAllowed, imdgClasses: c.imdgClasses || [] }))
-      .catch(() => setContractDgPolicy(null));
-  }, [f.contractId]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const generateContainers = () => {
+    if (useContainerManager) return;
     const n = parseInt(quickCargo.count, 10);
-    if (!n || n < 1 || n > 200) { toast.error("Enter a valid container count (1–200)"); return; }
-    if (!quickCargo.size || !quickCargo.type) { toast.error("Select a container type before generating"); return; }
-    if (quickCargo.isDg && contractDgPolicy) {
-      if (!contractDgPolicy.dgAllowed) {
-        toast.error("The selected contract does not permit DG cargo."); return;
-      }
-      if (contractDgPolicy.imdgClasses.length > 0 && quickCargo.dgClass && !contractDgPolicy.imdgClasses.includes(quickCargo.dgClass)) {
-        toast.error(`IMDG class ${quickCargo.dgClass} is not permitted by the selected contract (allowed: ${contractDgPolicy.imdgClasses.join(", ")}).`); return;
-      }
+    if (!n || n < 1 || n > 200 || !quickCargo.size || !quickCargo.type) {
+      setDraftContainers([]);
+      return;
     }
     const totalWeight = parseFloat(quickCargo.weight) || 0;
     const totalVolume = parseFloat(quickCargo.volume) || 0;
@@ -778,7 +958,14 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
       isDg: quickCargo.isDg, dgClass: quickCargo.isDg ? quickCargo.dgClass : '',
       containerNumber: '', sealNumber: '', hsCode: '',
     })));
-  };
+  }, [quickCargo.count, quickCargo.size, quickCargo.type, quickCargo.weight, quickCargo.volume, quickCargo.distribution, quickCargo.cargoDescription, quickCargo.isDg, quickCargo.dgClass, useContainerManager]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!f.contractId) { setContractDgPolicy(null); return; }
+    api.contracts.get(f.contractId)
+      .then(c => setContractDgPolicy({ dgAllowed: c.dgAllowed, imdgClasses: c.imdgClasses || [] }))
+      .catch(() => setContractDgPolicy(null));
+  }, [f.contractId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const prevFRef = useRef(f);
   useEffect(() => {
@@ -802,6 +989,23 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
   const derivedPod  = lastLeg?.pod  || "";
   const derivedEtd  = firstLeg?.etd || "";
   const derivedEta  = lastLeg?.eta  || "";
+
+  const seaLeg = legs.find(l => l.legType === "SEA");
+
+  // Contract match routing context — excludes Merchant's Haulage and Customer Arranged
+  const LEG_LOC_ABBR_C = { Door: "DR", Terminal: "PT", "Container Yard": "CY", CFS: "CFS" };
+  const cLegsForMatch = legs.filter(l => !["Merchant's Haulage", "Customer Arranged"].includes(l.movementType));
+  const contractMatchRoutingTerm = cLegsForMatch.length > 0
+    ? (LEG_LOC_ABBR_C[cLegsForMatch[0].polLocType] || "PT") + "-" + (LEG_LOC_ABBR_C[cLegsForMatch[cLegsForMatch.length - 1].podLocType] || "PT")
+    : "";
+  const pkuLeg = legs[0]?.legType === "Pick-up" && legs[0]?.movementType === "Carrier's Haulage" ? legs[0] : null;
+  const delLeg = legs[legs.length - 1]?.legType === "Delivery" && legs[legs.length - 1]?.movementType === "Carrier's Haulage" ? legs[legs.length - 1] : null;
+  const contractPkuLocation = pkuLeg?.pol || "";
+  const contractDelLocation = delLeg?.pod || "";
+  // Contract match uses the seaport POL/POD, not the door pickup/delivery location
+  const contractMatchPol = seaLeg?.pol || derivedPol;
+  const contractMatchPod = seaLeg?.pod || derivedPod;
+
   const transitDays = (() => {
     if (!derivedEtd || !derivedEta) return null;
     const d1 = new Date(derivedEtd), d2 = new Date(derivedEta);
@@ -813,19 +1017,51 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
     : [];
 
   const isCentral = f.contractType === "Central";
+  const effectiveCarrierCode = seaLeg?.carrierCode || firstLeg?.carrierCode || f.carrierCode || "";
   const valid = f.incoterm !== ""
     && f.commodityCode.trim().length > 0
+    && !!f.shipperId && !!f.consigneeId && !!f.principalId
     && (!isCentral || f.contractId.trim().length > 0)
-    && (!init.id ? legs.length > 0 : true);
+    && (!init.id ? (legs.length > 0 && !!derivedPol && !!derivedPod && !!effectiveCarrierCode) : true);
 
   const handleSave = () => {
     if (!valid) {
-      setTouch({ incoterm: true, commodityCode: true, legs: true });
-      toast.error("Please fill in all required fields before saving.");
+      setTouch({ incoterm: true, commodityCode: true, legs: true, parties: true });
+      const missing = [];
+      if (!f.shipperId || !f.consigneeId || !f.principalId) missing.push("Parties");
+      if (!f.incoterm) missing.push("Incoterm");
+      if (!f.commodityCode.trim()) missing.push("Commodity");
+      if (!init.id) {
+        if (legs.length === 0) missing.push("at least one Leg");
+        else if (!derivedPol || !derivedPod) missing.push("Leg POL/POD");
+        else if (!effectiveCarrierCode) missing.push("Carrier on leg");
+      }
+      if (isCentral && !f.contractId.trim()) missing.push("Contract (required for Central)");
+      toast.error(`Missing required fields: ${missing.join(", ") || "unknown"}.`);
       return;
     }
-    if (contractDgPolicy && draftContainers.some(c => c.isDg)) {
-      const dgContainers = draftContainers.filter(c => c.isDg);
+    // Containers managed via modal take priority; otherwise rebuild from quickCargo.
+    let containersToSave = draftContainers;
+    const qn = parseInt(quickCargo.count, 10);
+    if (!useContainerManager && !init.id && qn > 0 && quickCargo.size && quickCargo.type) {
+      const totalWeight = parseFloat(quickCargo.weight) || 0;
+      const totalVolume = parseFloat(quickCargo.volume) || 0;
+      const perWeight = quickCargo.distribution === 'all'
+        ? (totalWeight ? +((totalWeight / qn).toFixed(2)) : null)
+        : (totalWeight || null);
+      const perVolume = quickCargo.distribution === 'all'
+        ? (totalVolume ? +((totalVolume / qn).toFixed(2)) : null)
+        : (totalVolume || null);
+      containersToSave = Array.from({ length: qn }, () => ({
+        size: quickCargo.size, type: quickCargo.type,
+        grossWeightKg: perWeight, volumeCbm: perVolume,
+        cargoDescription: quickCargo.cargoDescription,
+        isDg: quickCargo.isDg, dgClass: quickCargo.isDg ? quickCargo.dgClass : '',
+        containerNumber: '', sealNumber: '', hsCode: '',
+      }));
+    }
+    if (contractDgPolicy && containersToSave.some(c => c.isDg)) {
+      const dgContainers = containersToSave.filter(c => c.isDg);
       if (!contractDgPolicy.dgAllowed) {
         toast.error("Cannot save: the selected contract does not permit DG cargo. Remove DG containers or change the contract.");
         return;
@@ -845,7 +1081,9 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
       pod: derivedPod,
       etd: derivedEtd,
       eta: derivedEta,
-    }, draftLegs || [], draftContainers));
+      carrierCode: effectiveCarrierCode,
+      declaredValue: f.declaredValue !== "" ? Number(f.declaredValue) : null,
+    }, draftLegs || [], containersToSave));
   };
 
   const statusColor = { Active: T.success, Completed: T.info, Cancelled: T.danger, "On Hold": T.warning }[f.status] || T.textMuted;
@@ -854,18 +1092,21 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
 
       {/* ── Parties ───────────────────────────────────────────────────────────── */}
-      <SectionDivider label="Parties" />
+      <SectionDivider label="Parties" id="shpform-parties" />
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-        <CustomerCombobox label="Shipper"
+        <CustomerCombobox label="Shipper" required
           value={{ id: f.shipperId, name: f.shipperName }}
           onChange={v => setF(p => ({ ...p, shipperId: v.id, shipperName: v.name }))} />
-        <CustomerCombobox label="Consignee"
+        <CustomerCombobox label="Consignee" required
           value={{ id: f.consigneeId, name: f.consigneeName }}
           onChange={v => setF(p => ({ ...p, consigneeId: v.id, consigneeName: v.name }))} />
-        <CustomerCombobox label="Principal"
+        <CustomerCombobox label="Principal" required
           value={{ id: f.principalId, name: f.principalName }}
           onChange={v => setF(p => ({ ...p, principalId: v.id, principalName: v.name }))} />
       </div>
+      {touched.parties && (!f.shipperId || !f.consigneeId || !f.principalId) && (
+        <FieldError show msg="Shipper, Consignee and Principal are required" />
+      )}
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: "pointer",
           fontFamily: T.body, fontSize: 12, color: T.textMuted, userSelect: "none", width: "fit-content" }}>
@@ -891,7 +1132,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
       </div>
 
       {/* ── Cargo ─────────────────────────────────────────────────────────────── */}
-      <SectionDivider label="Cargo" />
+      <SectionDivider label="Cargo" id="shpform-cargo" />
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <div>
           <Sel label="Incoterm" value={f.incoterm}
@@ -942,22 +1183,41 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
           ]}
         />
       </div>
-      <div>
-        <div style={errRing(touched.commodityCode && !f.commodityCode)}>
-          <Field label={
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-              Commodity <CommodityHint />
-            </span>
-          } required>
-            <CommodityCombobox value={f.commodityCode}
-              onChange={v => { set("commodityCode")(v); touch("commodityCode"); }} />
-          </Field>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <div>
+          <div style={errRing(touched.commodityCode && !f.commodityCode)}>
+            <Field label={
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                Commodity <CommodityHint />
+              </span>
+            } required>
+              <CommodityCombobox value={f.commodityCode}
+                onChange={v => { set("commodityCode")(v); touch("commodityCode"); }} />
+            </Field>
+          </div>
+          <FieldError show={touched.commodityCode && !f.commodityCode} msg="Commodity is required" />
         </div>
-        <FieldError show={touched.commodityCode && !f.commodityCode} msg="Commodity is required" />
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          <Inp label="Declared Value" value={f.declaredValue}
+            onChange={v => setF(p => ({ ...p, declaredValue: v }))}
+            placeholder="0.00" type="number" min="0" step="0.01"
+            hint="Customs / insured value of the goods" />
+          <div>
+            <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 4 }}>Currency</div>
+            <select value={f.declaredValueCurrency}
+              onChange={e => setF(p => ({ ...p, declaredValueCurrency: e.target.value }))}
+              style={{ fontFamily: T.mono, fontSize: 13, background: T.surface, color: T.text,
+                border: `1px solid ${T.border}`, borderRadius: 6, padding: "6px 8px",
+                width: "100%", cursor: "pointer" }}>
+              {["USD","EUR","GBP","CNY","JPY","AUD","CAD","CHF","SGD","HKD"].map(c =>
+                <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+        </div>
       </div>
 
       {/* ── Transport & References ─────────────────────────────────────────────── */}
-      <SectionDivider label="Transport & References" />
+      <SectionDivider label="Transport & References" id="shpform-transport" />
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <Inp label="Place of Receipt" value={f.placeOfReceipt} onChange={set("placeOfReceipt")}
           placeholder="e.g. Inland depot, city" hint="Where cargo is received from shipper" />
@@ -983,198 +1243,248 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
       />
 
       {/* ── Route summary (derived from legs) ─────────────────────────────────── */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr",
-        background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden" }}>
-        {/* POL */}
-        <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 3 }}>
-          <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
-            letterSpacing: "0.09em", color: T.textMuted }}>Port of Loading</span>
-          <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700,
-            color: derivedPol ? T.text : T.border }}>{derivedPol || "—"}</span>
-          {firstLeg?.polName
-            ? <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{firstLeg.polName}</span>
-            : <span style={{ fontFamily: T.body, fontSize: 11, color: T.border, fontStyle: "italic" }}>Add a leg to set</span>}
-        </div>
+      {(() => {
+        const seaPolCode = seaLeg?.pol || derivedPol;
+        const seaPodCode = seaLeg?.pod || derivedPod;
+        const seaPolName = seaLeg?.polName || (seaLeg ? null : firstLeg?.polName);
+        const seaPodName = seaLeg?.podName || (seaLeg ? null : lastLeg?.podName);
+        const gridCols = `${pkuLeg ? "auto " : ""}1fr auto 1fr${delLeg ? " auto" : ""}`;
+        const doorCell = { padding: "12px 14px", display: "flex", flexDirection: "column", gap: 3, background: T.surface };
+        const labelStyle = { fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
+          letterSpacing: "0.09em", color: T.textMuted };
+        return (
+          <div id="shpform-route" style={{ display: "grid", gridTemplateColumns: gridCols,
+            background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden" }}>
 
-        {/* Centre: ETD → transit → ETA */}
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-          gap: 6, padding: "12px 24px",
-          borderLeft: `1px solid ${T.border}`, borderRight: `1px solid ${T.border}`,
-          background: T.surface }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
-              <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
-                letterSpacing: "0.09em", color: T.textMuted }}>ETD</span>
-              <span style={{ fontFamily: T.mono, fontSize: 12, color: derivedEtd ? T.text : T.border }}>
-                {derivedEtd || "—"}</span>
+            {/* PKU flanking cell */}
+            {pkuLeg && (
+              <div style={{ ...doorCell, borderRight: `1px dashed ${T.border}` }}>
+                <span style={{ ...labelStyle, color: T.accent }}>Pick-up</span>
+                <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text }}>{pkuLeg.pol || "—"}</span>
+                {pkuLeg.polName && <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{pkuLeg.polName}</span>}
+                <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted }}>Carrier's Haulage →</span>
+              </div>
+            )}
+
+            {/* POL */}
+            <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 3 }}>
+              <span style={labelStyle}>Port of Loading</span>
+              <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700,
+                color: seaPolCode ? T.text : T.border }}>{seaPolCode || "—"}</span>
+              {seaPolName
+                ? <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{seaPolName}</span>
+                : <span style={{ fontFamily: T.body, fontSize: 11, color: T.border, fontStyle: "italic" }}>Add a leg to set</span>}
             </div>
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
-              {transitDays !== null
-                ? <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: T.accent,
-                    background: T.accentBg, border: `1px solid ${T.accent}33`,
-                    borderRadius: 10, padding: "2px 10px", whiteSpace: "nowrap" }}>
-                    {transitDays}d transit
+
+            {/* Centre: ETD → transit → ETA */}
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+              gap: 6, padding: "12px 24px",
+              borderLeft: `1px solid ${T.border}`, borderRight: `1px solid ${T.border}`,
+              background: T.surface }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
+                  <span style={labelStyle}>ETD</span>
+                  <span style={{ fontFamily: T.mono, fontSize: 12, color: derivedEtd ? T.text : T.border }}>
+                    {derivedEtd || "—"}</span>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+                  {transitDays !== null
+                    ? <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: T.accent,
+                        background: T.accentBg, border: `1px solid ${T.accent}33`,
+                        borderRadius: 10, padding: "2px 10px", whiteSpace: "nowrap" }}>
+                        {transitDays}d transit
+                      </span>
+                    : <span style={{ color: T.border, fontSize: 16 }}>→</span>}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
+                  <span style={labelStyle}>ETA</span>
+                  <span style={{ fontFamily: T.mono, fontSize: 12, color: derivedEta ? T.text : T.border }}>
+                    {derivedEta || "—"}</span>
+                </div>
+              </div>
+              {tsps.length > 0 && (
+                <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap", justifyContent: "center" }}>
+                  {tsps.map((tsp, i) => (
+                    <span key={`${tsp.code}-${i}`} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                      {i > 0 && <span style={{ color: T.textMuted, fontSize: 10 }}>›</span>}
+                      <span title={tsp.name || tsp.code}
+                        style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text,
+                          background: T.bg, border: `1px solid ${T.border}`, borderRadius: 4,
+                          padding: "1px 7px" }}>
+                        {tsp.code}
+                      </span>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                {(() => {
+                  const code = seaLeg?.carrierCode || firstLeg?.carrierCode || f.carrierCode;
+                  return (
+                    <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700,
+                      color: code ? T.accent : T.border }}>
+                      {code || "—"}
+                    </span>
+                  );
+                })()}
+                {legs.length > 1 && (
+                  <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted }}>
+                    · {legs.length} legs
                   </span>
-                : <span style={{ color: T.border, fontSize: 16 }}>→</span>}
+                )}
+              </div>
             </div>
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
-              <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
-                letterSpacing: "0.09em", color: T.textMuted }}>ETA</span>
-              <span style={{ fontFamily: T.mono, fontSize: 12, color: derivedEta ? T.text : T.border }}>
-                {derivedEta || "—"}</span>
+
+            {/* POD */}
+            <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 3, textAlign: "right" }}>
+              <span style={{ ...labelStyle, textAlign: "right" }}>Port of Discharge</span>
+              <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700,
+                color: seaPodCode ? T.text : T.border }}>{seaPodCode || "—"}</span>
+              {seaPodName
+                ? <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{seaPodName}</span>
+                : <span style={{ fontFamily: T.body, fontSize: 11, color: T.border, fontStyle: "italic" }}>Add a leg to set</span>}
             </div>
-          </div>
-          {tsps.length > 0 && (
-            <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap", justifyContent: "center" }}>
-              {tsps.map((tsp, i) => (
-                <span key={`${tsp.code}-${i}`} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                  {i > 0 && <span style={{ color: T.textMuted, fontSize: 10 }}>›</span>}
-                  <span title={tsp.name || tsp.code}
-                    style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text,
-                      background: T.bg, border: `1px solid ${T.border}`, borderRadius: 4,
-                      padding: "1px 7px" }}>
-                    {tsp.code}
-                  </span>
-                </span>
-              ))}
-            </div>
-          )}
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            {(() => {
-              const code = firstLeg?.carrierCode || f.carrierCode;
-              return (
-                <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700,
-                  color: code ? T.accent : T.border }}>
-                  {code || "—"}
-                </span>
-              );
-            })()}
-            {legs.length > 1 && (
-              <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted }}>
-                · {legs.length} legs
-              </span>
+
+            {/* DEL flanking cell */}
+            {delLeg && (
+              <div style={{ ...doorCell, borderLeft: `1px dashed ${T.border}`, textAlign: "right" }}>
+                <span style={{ ...labelStyle, color: T.accent }}>Delivery</span>
+                <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text }}>{delLeg.pod || "—"}</span>
+                {delLeg.podName && <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{delLeg.podName}</span>}
+                <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted }}>→ Carrier's Haulage</span>
+              </div>
             )}
           </div>
-        </div>
-
-        {/* POD */}
-        <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 3, textAlign: "right" }}>
-          <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
-            letterSpacing: "0.09em", color: T.textMuted }}>Port of Discharge</span>
-          <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700,
-            color: derivedPod ? T.text : T.border }}>{derivedPod || "—"}</span>
-          {lastLeg?.podName
-            ? <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{lastLeg.podName}</span>
-            : <span style={{ fontFamily: T.body, fontSize: 11, color: T.border, fontStyle: "italic" }}>Add a leg to set</span>}
-        </div>
-      </div>
+        );
+      })()}
 
       <FieldError show={touched.legs && !init.id && legs.length === 0}
         msg="At least one leg is required — add a leg to set Port of Loading, Port of Discharge, and ETD" />
 
-      {/* ── Containers (new shipment only) ────────────────────────────────────── */}
-      {!init.id && (
+      {/* ── Containers (new shipment only; hidden when manager has ≥1 container) ─ */}
+      {!init.id && useContainerManager && draftContainers.length >= 1 && (
         <>
-          <SectionDivider label="Containers" />
-
-          {/* Row 1: count · type · weight · volume · distribution */}
-          <div style={{ display: "grid", gridTemplateColumns: "80px 1fr 140px 130px 190px", gap: 12, alignItems: "end" }}>
-            <Inp label="Count" value={quickCargo.count}
-              onChange={v => setQuickCargo(q => ({ ...q, count: v.replace(/\D/g, '') }))}
-              placeholder="1" mono />
-            <div>
-              <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
-                textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 5 }}>
-                Container Type
-              </div>
-              <ContainerTypeField
-                size={quickCargo.size} type={quickCargo.type}
-                onChange={opt => setQuickCargo(q => ({ ...q, size: opt?.size || '20', type: opt?.type || 'DC' }))} />
-            </div>
-            <Inp label="Weight (kg)" value={quickCargo.weight}
-              onChange={v => setQuickCargo(q => ({ ...q, weight: v }))}
-              placeholder="e.g. 18000" mono />
-            <Inp label="Volume (CBM)" value={quickCargo.volume}
-              onChange={v => setQuickCargo(q => ({ ...q, volume: v }))}
-              placeholder="e.g. 28" mono />
-            <div>
-              <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
-                textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 5 }}>
-                Distribution
-              </div>
-              <select value={quickCargo.distribution}
-                onChange={e => setQuickCargo(q => ({ ...q, distribution: e.target.value }))}
-                style={{ ...inputBase, fontFamily: T.body, fontSize: 13, cursor: "pointer" }}>
-                <option value="all">Total — divide by N</option>
-                <option value="per">Per container — copy to each</option>
-              </select>
-            </div>
-          </div>
-
-          {/* Row 2: cargo description + DG on the same line */}
-          <div style={{ display: "flex", gap: 12, alignItems: "flex-end" }}>
-            <div style={{ flex: 1 }}>
-              <Inp label="Cargo Description"
-                value={quickCargo.cargoDescription}
-                onChange={v => setQuickCargo(q => ({ ...q, cargoDescription: v }))}
-                placeholder="e.g. Electronics components in cartons" />
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, paddingBottom: 9, flexShrink: 0 }}>
-              <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer",
-                fontFamily: T.body, fontSize: 13, color: T.text, userSelect: "none", whiteSpace: "nowrap" }}>
-                <input type="checkbox" checked={quickCargo.isDg}
-                  onChange={e => setQuickCargo(q => ({ ...q, isDg: e.target.checked, dgClass: '' }))} />
-                DG Cargo
-              </label>
-              {quickCargo.isDg && (
-                <>
-                  <select value={quickCargo.dgClass}
-                    onChange={e => setQuickCargo(q => ({ ...q, dgClass: e.target.value }))}
-                    style={{ ...inputBase, width: 220, fontFamily: T.body, fontSize: 13, cursor: "pointer" }}>
-                    <option value="">Select IMDG class…</option>
-                    {IMDG_CLASSES.map(c => <option key={c.code} value={c.code}>{c.label} — {c.name}</option>)}
-                  </select>
-                  {(() => {
-                    if (!contractDgPolicy) return null;
-                    if (!contractDgPolicy.dgAllowed)
-                      return <span style={{ fontFamily: T.body, fontSize: 11, color: T.danger, whiteSpace: "nowrap" }}>Contract blocks DG</span>;
-                    if (contractDgPolicy.imdgClasses.length > 0 && quickCargo.dgClass && !contractDgPolicy.imdgClasses.includes(quickCargo.dgClass))
-                      return <span style={{ fontFamily: T.body, fontSize: 11, color: T.danger, whiteSpace: "nowrap" }}>Class not permitted</span>;
-                    if (contractDgPolicy.dgAllowed)
-                      return <span style={{ fontFamily: T.body, fontSize: 11, color: T.success, whiteSpace: "nowrap" }}>✓ Permitted</span>;
-                    return null;
-                  })()}
-                </>
-              )}
-            </div>
-          </div>
-
-          {/* Row 4: generate button + summary */}
-          <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-            <Btn variant="secondary" onClick={generateContainers}>
-              Generate {quickCargo.count ? `${quickCargo.count} Container${+quickCargo.count !== 1 ? 's' : ''}` : 'Containers'}
-            </Btn>
-            {draftContainers.length > 0 && (
-              <>
-                <span style={{ fontFamily: T.body, fontSize: 12, color: T.success }}>
-                  ✓ {draftContainers.length} container{draftContainers.length !== 1 ? 's' : ''} queued
+          <SectionDivider label="Containers" id="shpform-containers" />
+          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px",
+            background: T.bg, border: `1px solid ${T.accent}33`, borderRadius: 8 }}>
+            <span style={{ fontFamily: T.mono, fontSize: 12, color: T.accent, fontWeight: 700 }}>
+              {draftContainers.length} container{draftContainers.length !== 1 ? 's' : ''} configured
+            </span>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, flex: 1 }}>
+              {draftContainers.map((c, i) => (
+                <span key={i} style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 600,
+                  background: T.accentBg, color: T.accent, border: `1px solid ${T.accent}44`,
+                  borderRadius: 6, padding: "2px 8px", whiteSpace: "nowrap" }}>
+                  #{i + 1} · {c.size}{c.type}{c.grossWeightKg ? ` · ${c.grossWeightKg} kg` : ''}{c.isDg ? ` · DG ${c.dgClass}` : ''}
                 </span>
-                <button onClick={() => setDraftContainers([])}
-                  style={{ background: "none", border: "none", cursor: "pointer",
-                    fontFamily: T.body, fontSize: 11, color: T.textMuted, padding: 0 }}>
-                  ✕ Clear
-                </button>
-              </>
-            )}
+              ))}
+            </div>
+            <button type="button" onClick={() => setContainerManagerOpen(true)}
+              style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 5,
+                cursor: "pointer", color: T.text, fontFamily: T.body, fontSize: 11,
+                padding: "4px 10px", whiteSpace: "nowrap" }}>
+              Edit
+            </button>
+          </div>
+        </>
+      )}
+      {!init.id && !(useContainerManager && draftContainers.length >= 1) && (
+        <>
+          <SectionDivider label="Containers" id="shpform-containers" />
+
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "start" }}>
+            {/* Left: cargo fields stacked */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {/* Row 1: Count · Type · Weight · Volume */}
+              <div style={{ display: "grid", gridTemplateColumns: "72px 163px 130px 120px", gap: 10, alignItems: "end" }}>
+                <Inp label="Count" value={quickCargo.count}
+                  onChange={v => setQuickCargo(q => ({ ...q, count: v.replace(/\D/g, '') }))}
+                  placeholder="1" mono />
+                <div>
+                  <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
+                    textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 5 }}>
+                    Container Type
+                  </div>
+                  <ContainerTypeField
+                    size={quickCargo.size} type={quickCargo.type}
+                    onChange={opt => setQuickCargo(q => ({ ...q, size: opt?.size || '20', type: opt?.type || 'DC' }))} />
+                </div>
+                <Inp label="Weight (kg)" value={quickCargo.weight}
+                  onChange={v => setQuickCargo(q => ({ ...q, weight: v }))}
+                  placeholder="e.g. 18000" mono />
+                <Inp label="Volume (CBM)" value={quickCargo.volume}
+                  onChange={v => setQuickCargo(q => ({ ...q, volume: v }))}
+                  placeholder="e.g. 28" mono />
+              </div>
+
+              {/* Row 2: Distribution + DG flag inline */}
+              <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+                <div>
+                  <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
+                    textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 5 }}>
+                    Distribution
+                  </div>
+                  <select value={quickCargo.distribution}
+                    onChange={e => setQuickCargo(q => ({ ...q, distribution: e.target.value }))}
+                    style={{ ...inputBase, fontFamily: T.body, fontSize: 13, cursor: "pointer", width: "fit-content" }}>
+                    <option value="all">Total ÷ N</option>
+                    <option value="per">Per container</option>
+                  </select>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, paddingTop: 20 }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer",
+                    fontFamily: T.body, fontSize: 13, color: T.text, userSelect: "none", whiteSpace: "nowrap" }}>
+                    <input type="checkbox" checked={quickCargo.isDg}
+                      onChange={e => setQuickCargo(q => ({ ...q, isDg: e.target.checked, dgClass: '' }))} />
+                    DG Cargo
+                  </label>
+                  {quickCargo.isDg && (
+                    <>
+                      <select value={quickCargo.dgClass}
+                        onChange={e => setQuickCargo(q => ({ ...q, dgClass: e.target.value }))}
+                        style={{ ...inputBase, fontFamily: T.body, fontSize: 13, cursor: "pointer" }}>
+                        <option value="">Select IMDG class…</option>
+                        {IMDG_CLASSES.map(c => <option key={c.code} value={c.code}>{c.label} — {c.name}</option>)}
+                      </select>
+                      {(() => {
+                        if (!contractDgPolicy) return null;
+                        if (!contractDgPolicy.dgAllowed)
+                          return <span style={{ fontFamily: T.body, fontSize: 11, color: T.danger, whiteSpace: "nowrap" }}>Contract blocks DG</span>;
+                        if (contractDgPolicy.imdgClasses.length > 0 && quickCargo.dgClass && !contractDgPolicy.imdgClasses.includes(quickCargo.dgClass))
+                          return <span style={{ fontFamily: T.body, fontSize: 11, color: T.danger, whiteSpace: "nowrap" }}>Class not permitted</span>;
+                        if (contractDgPolicy.dgAllowed)
+                          return <span style={{ fontFamily: T.body, fontSize: 11, color: T.success, whiteSpace: "nowrap" }}>✓ Permitted</span>;
+                        return null;
+                      })()}
+                    </>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Right: Cargo Description (tall textarea) */}
+            <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+              <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
+                textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 5 }}>
+                Cargo Description
+              </div>
+              <textarea
+                value={quickCargo.cargoDescription}
+                onChange={e => setQuickCargo(q => ({ ...q, cargoDescription: e.target.value }))}
+                placeholder="e.g. Electronics components in cartons"
+                rows={5}
+                style={{ ...inputBase, fontFamily: T.body, fontSize: 13, resize: "vertical",
+                  flex: 1, minHeight: 110, padding: "8px 10px", lineHeight: 1.5 }} />
+            </div>
           </div>
 
-          {/* Preview chips */}
+          {/* Preview chips — auto-updated as fields change */}
           {draftContainers.length > 0 && (() => {
             const c0 = draftContainers[0];
             const typeLabel = `${c0.size}${c0.type}`;
-            const wt = c0.grossWeightKg != null ? `${c0.grossWeightKg.toLocaleString()} kg` : null;
-            const vol = c0.volumeCbm != null ? `${c0.volumeCbm} CBM` : null;
-            const dg = c0.isDg ? (c0.dgClass ? `DG ${c0.dgClass}` : 'DG') : null;
+            const wt  = c0.grossWeightKg != null ? `${c0.grossWeightKg.toLocaleString()} kg` : null;
+            const vol = c0.volumeCbm     != null ? `${c0.volumeCbm} CBM` : null;
+            const dg  = c0.isDg ? (c0.dgClass ? `DG ${c0.dgClass}` : 'DG') : null;
             const parts = [typeLabel, wt, vol, dg].filter(Boolean);
             return (
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
@@ -1195,11 +1505,11 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
       )}
 
       {/* ── Contract ──────────────────────────────────────────────────────────── */}
-      <SectionDivider label="Contract" />
+      <SectionDivider label="Contract" id="shpform-contract" />
       <ContractTypeInput value={f.contractType} onChange={v => {
         if (v !== "Central") {
           setF(p => ({ ...p, contractType: v, contractId: "", contractRef: "", allocationId: "" }));
-        } else if (!init.id && draftContainers.length === 0) {
+        } else if (!init.id && !((useContainerManager && draftContainers.length >= 1) || (parseInt(quickCargo.count, 10) > 0 && quickCargo.size && quickCargo.type))) {
           toast.warning("Add containers first — Central Contract eligibility is verified against your cargo details.");
         } else {
           set("contractType")(v);
@@ -1224,10 +1534,15 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
             });
             if (carrierCode) onDraftLegsChange(draftLegs.map(leg => ({ ...leg, carrierCode })));
           }}
-          pol={derivedPol}
-          pod={derivedPod}
+          pol={contractMatchPol}
+          pod={contractMatchPod}
           etd={derivedEtd}
+          crd={f.cargoReadyDate || ""}
+          routingTerm={contractMatchRoutingTerm}
+          pkuLocation={contractPkuLocation}
+          delLocation={contractDelLocation}
           contractType={f.contractType}
+          carrierCode={effectiveCarrierCode || undefined}
         />
       )}
       {isCentral && carrierUpdated && (
@@ -1245,7 +1560,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
         placeholder="Optional reference, contract IDs, remarks…" rows={2} />
 
       {/* ── Status ────────────────────────────────────────────────────────────── */}
-      <SectionDivider label="Status" />
+      <SectionDivider label="Status" id="shpform-status" />
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
         <span style={{ width: 8, height: 8, borderRadius: "50%", background: statusColor,
           flexShrink: 0, boxShadow: `0 0 6px ${statusColor}88` }} />
@@ -1256,16 +1571,28 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
       </div>
 
       {/* ── Actions ───────────────────────────────────────────────────────────── */}
-      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", paddingTop: 8,
+      <div id="shpform-actions" style={{ display: "flex", gap: 8, justifyContent: "flex-end", paddingTop: 8,
         borderTop: `1px solid ${T.border}`, marginTop: 8 }}>
         <Btn variant="secondary" onClick={onBack}>Cancel</Btn>
-        <Btn onClick={handleSave} disabled={!valid}>
+        <Btn onClick={handleSave}>
           <span style={{ display: "flex", alignItems: "center", gap: 7 }}>
             {isSaving && <Spinner size="sm" color="currentColor" />}
             {isSaving ? "Saving…" : (init.id ? "Save Changes" : "Create Shipment")}
           </span>
         </Btn>
       </div>
+
+      {containerManagerOpen && (
+        <DraftContainerManagerModal
+          containers={draftContainers}
+          onSave={containers => {
+            setDraftContainers(containers);
+            setUseContainerManager(containers.length >= 1);
+            setContainerManagerOpen(false);
+          }}
+          onClose={() => setContainerManagerOpen(false)}
+        />
+      )}
     </div>
   );
 };
@@ -1274,13 +1601,15 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
 
 const BLANK_LEG = () => ({
   id: `draft_${Date.now()}`,
-  mot: "SEA", pol: "", polName: "", pod: "", podName: "",
+  legType: "SEA", movementType: "SEA", movementBy: "",
+  polLocType: "Terminal", podLocType: "Terminal",
+  pol: "", polName: "", pod: "", podName: "",
   etd: null, eta: null, carrierCode: "",
   vessel: "", vesselImo: "", voyage: "",
   contractType: "SPOT", contractRef: "",
 });
 
-const ShipmentFormPage = ({ mode, init = {}, onSave, onBack, onDirtyChange }) => {
+const ShipmentFormPage = ({ mode, init = {}, onSave, onBack, onDirtyChange, ctrManagerTrigger = 0 }) => {
   const [draftLegs, setDraftLegs] = useState(() => mode === "new" ? [BLANK_LEG()] : []);
 
   const isEdit = mode === "edit" && !!init.id;
@@ -1310,6 +1639,7 @@ const ShipmentFormPage = ({ mode, init = {}, onSave, onBack, onDirtyChange }) =>
           onDirtyChange={onDirtyChange}
           draftLegs={draftLegs}
           onDraftLegsChange={setDraftLegs}
+          ctrManagerTrigger={ctrManagerTrigger}
         />
       </div>
     </div>

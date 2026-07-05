@@ -2130,6 +2130,49 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, financeEn
             ))}
           </div>
 
+          {/* Shipment health: on-time vs overdue */}
+          {(() => {
+            const active   = shipments.filter(s => s.status === "Active");
+            const overdue  = active.filter(s => s.overdueCount > 0);
+            const onTime   = active.length - overdue.length;
+            const pct      = active.length > 0 ? Math.round((onTime / active.length) * 100) : null;
+            if (active.length === 0) return null;
+            const barW = pct ?? 100;
+            return (
+              <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12,
+                padding: "16px 24px", marginBottom: 26, display: "flex", alignItems: "center", gap: 32 }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
+                    textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 8 }}>
+                    Active Shipment Health
+                  </div>
+                  <div style={{ height: 8, background: T.bg, borderRadius: 4, overflow: "hidden" }}>
+                    <div style={{ height: "100%", width: `${barW}%`, background: overdue.length > 0 ? T.warning : T.success,
+                      borderRadius: 4, transition: "width .4s" }} />
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 24, flexShrink: 0 }}>
+                  <div style={{ textAlign: "center" }}>
+                    <div style={{ fontFamily: T.mono, fontSize: 26, fontWeight: 700, color: T.success }}>{onTime}</div>
+                    <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted }}>On Time</div>
+                  </div>
+                  <div style={{ textAlign: "center" }}>
+                    <div style={{ fontFamily: T.mono, fontSize: 26, fontWeight: 700,
+                      color: overdue.length > 0 ? T.danger : T.textMuted }}>{overdue.length}</div>
+                    <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted }}>Overdue</div>
+                  </div>
+                  {pct !== null && (
+                    <div style={{ textAlign: "center" }}>
+                      <div style={{ fontFamily: T.mono, fontSize: 26, fontWeight: 700,
+                        color: pct === 100 ? T.success : pct >= 80 ? T.warning : T.danger }}>{pct}%</div>
+                      <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted }}>On-Time Rate</div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Charts */}
           {chartData.length > 0 && (
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 22 }}>

@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CargoDesk — System Architecture</title>
+<style>
+:root {
+  --bg:      #07090f;
+  --surface: #0c1018;
+  --surf2:   #111827;
+  --border:  #1a2540;
+  --border2: #243358;
+  --text:    #d8e6f5;
+  --muted:   #4a6280;
+  --subtle:  #1e2e46;
+
+  --blue:       #5ba3ff;
+  --blue-dim:   #1b3a6a;
+  --blue-bg:    #08172c;
+
+  --violet:     #a78bfa;
+  --violet-dim: #3b2175;
+  --violet-bg:  #100920;
+
+  --teal:       #2dd4bf;
+  --teal-dim:   #0e3b34;
+  --teal-bg:    #051a17;
+
+  --amber:      #f59e0b;
+  --amber-dim:  #4a2d00;
+  --amber-bg:   #160d00;
+
+  --mono: ui-monospace,'Cascadia Code','JetBrains Mono','SF Mono',Menlo,monospace;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 32px 36px 48px;
+  min-width: 860px;
+}
+
+/* ── Header ─────────────────────────────────────────── */
+header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  margin-bottom: 32px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--border);
+}
+.h-title { font-size: 17px; font-weight: 700; color: var(--text); letter-spacing: -0.03em; }
+.h-sub   { font-size: 10px; color: var(--muted); margin-top: 4px; letter-spacing: 0.04em; }
+.h-badge {
+  font-size: 9px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--blue); background: var(--blue-bg);
+  border: 1px solid var(--blue-dim); padding: 4px 11px; border-radius: 3px;
+}
+
+/* ── Layer block ─────────────────────────────────────── */
+.layer {
+  border-radius: 9px;
+  border: 1px solid;
+  padding: 15px 17px 18px;
+}
+.layer + .layer { margin-top: 0; }
+
+.eyebrow {
+  font-size: 8px; font-weight: 700; letter-spacing: 0.15em; text-transform: uppercase;
+  margin-bottom: 13px;
+  display: flex; align-items: center; gap: 7px;
+}
+.eyebrow::after { content: ''; flex: 1; height: 1px; background: currentColor; opacity: 0.15; }
+
+/* layer themes */
+.l-blue   { border-color: var(--blue-dim);   background: color-mix(in srgb, var(--blue-bg)   65%, var(--surface)); }
+.l-violet { border-color: var(--violet-dim); background: color-mix(in srgb, var(--violet-bg) 65%, var(--surface)); }
+.l-teal   { border-color: var(--teal-dim);   background: color-mix(in srgb, var(--teal-bg)   65%, var(--surface)); }
+.l-amber  { border-color: var(--amber-dim);  background: color-mix(in srgb, var(--amber-bg)  65%, var(--surface)); }
+
+.e-blue   { color: var(--blue); }
+.e-violet { color: var(--violet); }
+.e-teal   { color: var(--teal); }
+.e-amber  { color: var(--amber); }
+
+/* ── Connector ───────────────────────────────────────── */
+.conn {
+  display: flex; align-items: center; justify-content: center;
+  height: 30px; gap: 0;
+}
+.conn::before, .conn::after {
+  content: ''; flex: 1; max-width: 80px; height: 1px; background: var(--border2);
+}
+.conn-pill {
+  font-size: 8.5px; font-weight: 600; letter-spacing: 0.06em;
+  color: var(--muted); background: var(--surface);
+  border: 1px solid var(--border2); border-radius: 20px; padding: 3px 11px;
+  white-space: nowrap;
+}
+
+/* ── Card ────────────────────────────────────────────── */
+.card { border: 1px solid; border-radius: 6px; padding: 9px 11px; }
+.card-lbl {
+  font-size: 7.5px; font-weight: 700; letter-spacing: 0.13em;
+  text-transform: uppercase; margin-bottom: 7px; opacity: 0.6;
+}
+.c-blue   { border-color: var(--blue-dim);   background: var(--blue-bg);   }
+.c-blue   .card-lbl { color: var(--blue); }
+.c-violet { border-color: var(--violet-dim); background: var(--violet-bg); }
+.c-violet .card-lbl { color: var(--violet); }
+.c-teal   { border-color: var(--teal-dim);   background: var(--teal-bg);   }
+.c-teal   .card-lbl { color: var(--teal); }
+.c-amber  { border-color: var(--amber-dim);  background: var(--amber-bg);  }
+.c-amber  .card-lbl { color: var(--amber); }
+.c-neutral{ border-color: var(--border2);    background: var(--surf2);     }
+.c-neutral .card-lbl { color: var(--muted); }
+
+/* ── Chips ───────────────────────────────────────────── */
+.chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.chip {
+  font-size: 10px; font-weight: 500;
+  padding: 2px 7px; border-radius: 3px; border: 1px solid; white-space: nowrap;
+}
+.k-blue   { background: color-mix(in srgb, var(--blue-bg)   80%, transparent); border-color: var(--blue-dim);   color: var(--blue); }
+.k-violet { background: color-mix(in srgb, var(--violet-bg) 80%, transparent); border-color: var(--violet-dim); color: var(--violet); }
+.k-teal   { background: color-mix(in srgb, var(--teal-bg)   80%, transparent); border-color: var(--teal-dim);   color: var(--teal); }
+.k-amber  { background: color-mix(in srgb, var(--amber-bg)  80%, transparent); border-color: var(--amber-dim);  color: var(--amber); }
+.k-neutral{ background: var(--subtle); border-color: var(--border2); color: var(--muted); }
+
+/* ── Grids ───────────────────────────────────────────── */
+.g2 { display: grid; grid-template-columns: 1fr 1fr;     gap: 7px; }
+.g3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 7px; }
+.g4 { display: grid; grid-template-columns: repeat(4,1fr);gap: 7px; }
+.fa { display: flex; gap: 7px; flex-wrap: wrap; }
+.fa > * { flex: 1; min-width: 0; }
+.stack { display: flex; flex-direction: column; gap: 7px; }
+
+/* ── Sub-label inside card ───────────────────────────── */
+.sub-lbl {
+  font-size: 7px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase;
+  margin-bottom: 4px; margin-top: 8px; opacity: 0.45;
+}
+.sub-lbl:first-child { margin-top: 0; }
+
+/* ── DB table manifest ───────────────────────────────── */
+.tbl-list { font-size: 10px; line-height: 2; color: var(--muted); }
+.tbl-list b { color: var(--text); font-weight: 500; }
+.tbl-list small { font-size: 9px; opacity: 0.5; }
+
+/* ── Legend ──────────────────────────────────────────── */
+footer {
+  margin-top: 22px; padding-top: 14px;
+  border-top: 1px solid var(--border);
+  display: flex; align-items: center; gap: 22px; flex-wrap: wrap;
+}
+.leg { display: flex; align-items: center; gap: 6px; font-size: 9.5px; color: var(--muted); }
+.leg-sq { width: 9px; height: 9px; border-radius: 2px; flex-shrink: 0; }
+.leg-line { width: 22px; height: 1px; background: var(--border2); }
+.ts { margin-left: auto; font-size: 9px; color: var(--muted); opacity: 0.5; }
+</style>
+</head>
+<body>
+
+<!-- ══ HEADER ══════════════════════════════════════════════════════════ -->
+<header>
+  <div>
+    <div class="h-title">CargoDesk — System Architecture</div>
+    <div class="h-sub">React 18 + Vite &nbsp;·&nbsp; Express + node:sqlite &nbsp;·&nbsp; 35 tables &nbsp;·&nbsp; 4 service layers</div>
+  </div>
+  <div class="h-badge">v0.22.0 "Crossroads"</div>
+</header>
+
+<!-- ══ EXTERNAL SERVICES ══════════════════════════════════════════════ -->
+<div class="layer l-amber">
+  <div class="eyebrow e-amber">External Services</div>
+  <div class="fa">
+    <div class="card c-amber">
+      <div class="card-lbl">FX Rates</div>
+      <div class="chips">
+        <span class="chip k-amber">frankfurter.app</span>
+        <span class="chip k-amber">HTTPS proxy via /api/fx/rates</span>
+        <span class="chip k-amber">auto-sync schedule</span>
+        <span class="chip k-amber">configurable recurrence</span>
+      </div>
+    </div>
+    <div class="card c-amber">
+      <div class="card-lbl">OFAC Sanctions Screening</div>
+      <div class="chips">
+        <span class="chip k-amber">treasury.gov SDN list</span>
+        <span class="chip k-amber">httpsGetFollowRedirects()</span>
+        <span class="chip k-amber">CSV bulk import (25 MB)</span>
+        <span class="chip k-amber">party screening on save</span>
+        <span class="chip k-amber">1h retry on failure</span>
+      </div>
+    </div>
+    <div class="card c-amber">
+      <div class="card-lbl">WebSocket</div>
+      <div class="chips">
+        <span class="chip k-amber">ws package on /ws path</span>
+        <span class="chip k-amber">shared HTTP server</span>
+        <span class="chip k-amber">real-time shipment messages</span>
+        <span class="chip k-amber">10 s poll fallback</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="conn">
+  <div class="conn-pill">HTTPS · WebSocket upgrade · Vite dev proxy passthrough</div>
+</div>
+
+<!-- ══ FRONTEND ════════════════════════════════════════════════════════ -->
+<div class="layer l-blue">
+  <div class="eyebrow e-blue">Frontend &nbsp; React 18 + Vite :5173</div>
+  <div class="stack">
+
+    <!-- Row 1: App core + Auth -->
+    <div class="g2">
+      <div class="card c-blue">
+        <div class="card-lbl">App Core — App.jsx</div>
+        <div class="chips">
+          <span class="chip k-blue">hash-based routing</span>
+          <span class="chip k-blue">parseHash + navigate()</span>
+          <span class="chip k-blue">hashchange listener</span>
+          <span class="chip k-blue">formDirtyRef guard</span>
+          <span class="chip k-blue">light / dark theme toggle</span>
+          <span class="chip k-blue">global containers state</span>
+          <span class="chip k-blue">role switcher (admin preview)</span>
+          <span class="chip k-blue">system messages poll</span>
+        </div>
+      </div>
+      <div class="card c-blue">
+        <div class="card-lbl">Auth &amp; RBAC — AuthContext.jsx</div>
+        <div class="chips">
+          <span class="chip k-blue">JWT in localStorage</span>
+          <span class="chip k-blue">cargodesk_token key</span>
+          <span class="chip k-blue">useAuth() hook</span>
+          <span class="chip k-blue">canEdit · isAdmin · isViewer</span>
+          <span class="chip k-blue">activeRole impersonation</span>
+          <span class="chip k-blue">admin › operator › viewer</span>
+          <span class="chip k-blue">401 → cargodesk:logout event</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Row 2: Pages -->
+    <div class="card c-blue">
+      <div class="card-lbl">Pages</div>
+      <div class="g3" style="gap:6px;">
+        <div>
+          <div class="sub-lbl e-blue">Shipment</div>
+          <div class="chips">
+            <span class="chip k-blue">ShipmentsPage</span>
+            <span class="chip k-blue">ShipmentDetailPage</span>
+            <span class="chip k-blue">ShipmentFormPage</span>
+          </div>
+        </div>
+        <div>
+          <div class="sub-lbl e-blue">Operations</div>
+          <div class="chips">
+            <span class="chip k-blue">DashboardPage</span>
+            <span class="chip k-blue">SpaceConfigurationsPage</span>
+            <span class="chip k-blue">DashboardArchivePage</span>
+            <span class="chip k-blue">KanbanPage</span>
+          </div>
+        </div>
+        <div>
+          <div class="sub-lbl e-blue">MDM · 10 modules</div>
+          <div class="chips">
+            <span class="chip k-blue">Port Locations</span>
+            <span class="chip k-blue">Vessels</span>
+            <span class="chip k-blue">Carriers</span>
+            <span class="chip k-blue">Contracts</span>
+            <span class="chip k-blue">Commodities</span>
+            <span class="chip k-blue">Countries</span>
+            <span class="chip k-blue">Regions</span>
+            <span class="chip k-blue">Trade Lanes</span>
+            <span class="chip k-blue">Customers</span>
+            <span class="chip k-blue">Linked Ports</span>
+          </div>
+        </div>
+        <div>
+          <div class="sub-lbl e-blue">ShipmentFormPage sections</div>
+          <div class="chips">
+            <span class="chip k-neutral">Parties</span>
+            <span class="chip k-neutral">Cargo + Incoterm → Principal</span>
+            <span class="chip k-neutral">Transport &amp; Legs</span>
+            <span class="chip k-neutral">Quick Container Setup</span>
+            <span class="chip k-neutral">Contract + DG gate</span>
+            <span class="chip k-neutral">Status</span>
+          </div>
+        </div>
+        <div>
+          <div class="sub-lbl e-blue">ShipmentDetailPage panels</div>
+          <div class="chips">
+            <span class="chip k-neutral">Routing Banner + TSPs</span>
+            <span class="chip k-neutral">Info Cards</span>
+            <span class="chip k-neutral">Containers</span>
+            <span class="chip k-neutral">Operational Accounting</span>
+            <span class="chip k-neutral">Milestones</span>
+            <span class="chip k-neutral">Shipment Timeline</span>
+            <span class="chip k-neutral">Messages</span>
+          </div>
+        </div>
+        <div>
+          <div class="sub-lbl e-blue">Platform</div>
+          <div class="chips">
+            <span class="chip k-blue">LoginPage</span>
+            <span class="chip k-blue">AppSettingsPage</span>
+            <span class="chip k-blue">AboutPage</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Row 3: Components + Utilities -->
+    <div class="g2">
+      <div class="card c-blue">
+        <div class="card-lbl">Components</div>
+        <div class="sub-lbl e-blue">Primitives</div>
+        <div class="chips">
+          <span class="chip k-neutral">Btn</span>
+          <span class="chip k-neutral">Modal · ConfirmModal</span>
+          <span class="chip k-neutral">Form · Field · Inp · Sel · Textarea</span>
+          <span class="chip k-neutral">ContractTypeInput · BtnToggle</span>
+          <span class="chip k-neutral">Badge</span>
+          <span class="chip k-neutral">Spinner</span>
+          <span class="chip k-neutral">DatePicker</span>
+          <span class="chip k-neutral">Pagination</span>
+          <span class="chip k-neutral">ActionMenu</span>
+          <span class="chip k-neutral">ToastContainer</span>
+          <span class="chip k-neutral">useResizableColumns · ColResizer</span>
+        </div>
+        <div class="sub-lbl e-blue" style="margin-top:8px;">Shared</div>
+        <div class="chips">
+          <span class="chip k-neutral">PortCombobox (position:fixed)</span>
+          <span class="chip k-neutral">CommodityCombobox · GradePill</span>
+          <span class="chip k-neutral">VesselCombobox · VesselField</span>
+          <span class="chip k-neutral">ContainerTypePickerModal · ContainerTypeField</span>
+          <span class="chip k-neutral">CarrierCombobox</span>
+          <span class="chip k-neutral">CustomerCombobox</span>
+          <span class="chip k-neutral">EntityHistoryModal</span>
+          <span class="chip k-neutral">UserManagementPanel</span>
+        </div>
+      </div>
+      <div class="card c-blue">
+        <div class="card-lbl">Utilities &amp; Design System</div>
+        <div class="sub-lbl e-blue">Core modules</div>
+        <div class="chips">
+          <span class="chip k-blue">api.js — all fetch wrappers</span>
+          <span class="chip k-blue">tokens.js — T object + applyTheme()</span>
+          <span class="chip k-blue">toast.js — pub-sub emitter</span>
+          <span class="chip k-blue">version.js — VERSION + CHANGELOG</span>
+          <span class="chip k-blue">AuthContext.jsx</span>
+          <span class="chip k-blue">useSaving.js</span>
+          <span class="chip k-blue">documentGenerator.js</span>
+        </div>
+        <div class="sub-lbl e-blue" style="margin-top:8px;">Design tokens (T object)</div>
+        <div class="chips">
+          <span class="chip k-neutral">T.surface · T.bg · T.text · T.textMuted</span>
+          <span class="chip k-neutral">T.accent · T.accentBg · T.border</span>
+          <span class="chip k-neutral">T.success · T.danger · T.warning · T.info</span>
+          <span class="chip k-neutral">T.mono · T.body · T.head</span>
+          <span class="chip k-neutral">IMDG_CLASSES · CONTAINER_OPTIONS</span>
+          <span class="chip k-neutral">INCOTERMS_2020 · CONTRACT_PRESETS</span>
+          <span class="chip k-neutral">allocationRouteMatch() · contractMatch()</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="conn">
+  <div class="conn-pill">HTTP REST &nbsp;·&nbsp; Bearer JWT &nbsp;·&nbsp; Express :3001 &nbsp;·&nbsp; /api/*</div>
+</div>
+
+<!-- ══ BACKEND ═════════════════════════════════════════════════════════ -->
+<div class="layer l-violet">
+  <div class="eyebrow e-violet">Backend &nbsp; Express :3001 + node:sqlite</div>
+  <div class="stack">
+
+    <!-- Middleware -->
+    <div class="card c-violet">
+      <div class="card-lbl">Middleware &amp; Server Patterns</div>
+      <div class="g2" style="gap:6px;">
+        <div>
+          <div class="sub-lbl e-violet">Request pipeline</div>
+          <div class="chips">
+            <span class="chip k-violet">cors()</span>
+            <span class="chip k-violet">express.json()</span>
+            <span class="chip k-violet">auth() JWT factory</span>
+            <span class="chip k-violet">jwt.verify() on /api/* (exempt: /api/auth/*)</span>
+            <span class="chip k-violet">OFAC party screening on create/update</span>
+            <span class="chip k-violet">Vite dev proxy (large-body plugin)</span>
+          </div>
+        </div>
+        <div>
+          <div class="sub-lbl e-violet">Server-side patterns</div>
+          <div class="chips">
+            <span class="chip k-neutral">migrations[] try/catch on startup</span>
+            <span class="chip k-neutral">backfillPortCountryCodes() IIFE</span>
+            <span class="chip k-neutral">syncShipmentFromLegs() → routing_term</span>
+            <span class="chip k-neutral">rebuildPortLanesMap() after lane mutations</span>
+            <span class="chip k-neutral">checkDgPolicy() per contract</span>
+            <span class="chip k-neutral">mapShipment() · mapShipmentLeg()</span>
+            <span class="chip k-neutral">TICKET_JOIN constant (shared SQL)</span>
+            <span class="chip k-neutral">admin seed on empty users table</span>
+            <span class="chip k-neutral">bcryptjs password hashing</span>
+            <span class="chip k-neutral">8h JWT expiry</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Routes -->
+    <div class="g4">
+      <div class="card c-violet">
+        <div class="card-lbl">Auth</div>
+        <div class="chips">
+          <span class="chip k-violet">POST /auth/login</span>
+          <span class="chip k-violet">GET  /auth/me</span>
+          <span class="chip k-violet">POST /auth/logout</span>
+        </div>
+      </div>
+      <div class="card c-violet">
+        <div class="card-lbl">Shipment Domain</div>
+        <div class="chips">
+          <span class="chip k-violet">/shipments CRUD</span>
+          <span class="chip k-violet">/containers CRUD</span>
+          <span class="chip k-violet">/shipments/:id/legs</span>
+          <span class="chip k-violet">/shipments/:id/cost-lines</span>
+          <span class="chip k-violet">/shipments/:id/milestones</span>
+          <span class="chip k-violet">/allocations</span>
+          <span class="chip k-violet">/shipment-events</span>
+        </div>
+      </div>
+      <div class="card c-violet">
+        <div class="card-lbl">MDM</div>
+        <div class="chips">
+          <span class="chip k-violet">/carriers</span>
+          <span class="chip k-violet">/vessels</span>
+          <span class="chip k-violet">/ports (search + paginate)</span>
+          <span class="chip k-violet">/contracts + /match</span>
+          <span class="chip k-violet">/contract-legs</span>
+          <span class="chip k-violet">/commodities</span>
+          <span class="chip k-violet">/customers</span>
+          <span class="chip k-violet">/countries</span>
+          <span class="chip k-violet">/trade-lanes</span>
+          <span class="chip k-violet">/regions</span>
+          <span class="chip k-violet">/linked-ports</span>
+        </div>
+      </div>
+      <div class="card c-violet">
+        <div class="card-lbl">Platform</div>
+        <div class="chips">
+          <span class="chip k-violet">/users CRUD</span>
+          <span class="chip k-violet">/tickets + parent_id</span>
+          <span class="chip k-violet">/system-messages</span>
+          <span class="chip k-violet">/entity-events</span>
+          <span class="chip k-violet">/fx/rates proxy</span>
+          <span class="chip k-violet">/sanctions (SDN)</span>
+          <span class="chip k-violet">WebSocketServer /ws</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div class="conn">
+  <div class="conn-pill">node:sqlite · DatabaseSync (synchronous, single-process)</div>
+</div>
+
+<!-- ══ DATA LAYER ══════════════════════════════════════════════════════ -->
+<div class="layer l-teal">
+  <div class="eyebrow e-teal">Data Layer &nbsp; SQLite · 35 tables</div>
+  <div class="g3">
+
+    <div class="card c-teal">
+      <div class="card-lbl">Shipment Domain · 12 tables</div>
+      <div class="tbl-list">
+        <div><b>shipments</b> <small>core records · routing_term · declared_value · OFAC screening</small></div>
+        <div><b>containers</b> <small>cargo units · DG · HS code · weight/volume</small></div>
+        <div><b>shipment_legs</b> <small>leg_type · movement_type · pol/pod_loc_type · movement_by</small></div>
+        <div><b>shipment_events</b> <small>full field-level audit log</small></div>
+        <div><b>shipment_cost_lines</b> <small>buy/sell · source · modified_at</small></div>
+        <div><b>shipment_messages</b> <small>threaded per-shipment notes</small></div>
+        <div><b>shipment_screenings</b> <small>OFAC SDN party screening results</small></div>
+        <div><b>shipment_documents</b> <small>document records</small></div>
+        <div><b>shipment_milestones</b> <small>per-shipment FCL workflow steps</small></div>
+        <div><b>milestone_templates</b> <small>default 9-step FCL template</small></div>
+        <div><b>allocations</b> <small>space configs · TEU · alert threshold</small></div>
+        <div><b>status_log</b> <small>legacy transitions · kept for compat</small></div>
+      </div>
+    </div>
+
+    <div class="card c-teal">
+      <div class="card-lbl">MDM · 13 tables</div>
+      <div class="tbl-list">
+        <div><b>carriers</b> <small>code · name · shortName</small></div>
+        <div><b>vessels</b> <small>349 IMO registry vessels</small></div>
+        <div><b>port_locations</b> <small>14,269 UN/LOCODE · last_synced_at</small></div>
+        <div><b>linked_ports</b> <small>equivalence pairs for route matching</small></div>
+        <div><b>commodities</b> <small>294 Maersk codes · grades M/K/E/S/Q</small></div>
+        <div><b>contracts</b> <small>carrier rate contracts · IMDG filters · dgAllowed</small></div>
+        <div><b>contract_legs</b> <small>POL/POD pairs · polLinkedAllowed · pol/pod_carrier_haulage</small></div>
+        <div><b>contract_rates</b> <small>rate entries per contract</small></div>
+        <div><b>customers</b> <small>shipper · consignee · full address</small></div>
+        <div><b>trade_lanes</b> <small>FIATA high-level lanes</small></div>
+        <div><b>country_trade_lanes</b> <small>country → lane assignments</small></div>
+        <div><b>regions</b> <small>region MDM</small></div>
+        <div><b>countries</b> <small>ISO 3166-1 · portCount via JOIN</small></div>
+      </div>
+    </div>
+
+    <div class="card c-teal">
+      <div class="card-lbl">Platform · 10 tables</div>
+      <div class="tbl-list">
+        <div><b>users</b> <small>email · password_hash · role (admin/operator/viewer) · is_active · last_login</small></div>
+        <div><b>tickets</b> <small>Kanban cards · parent_id FK (Epic→Story→task) · assignee_id · due_date · version</small></div>
+        <div><b>ticket_links</b> <small>ticket relationship pairs</small></div>
+        <div><b>entity_events</b> <small>generic audit log for allocations · carriers · contracts</small></div>
+        <div><b>system_messages</b> <small>operational notices · active date range · severity</small></div>
+        <div><b>app_settings</b> <small>key/value feature toggles · external API config</small></div>
+        <div><b>sanctions_entries</b> <small>OFAC SDN index · ~40k rows · normalised names</small></div>
+        <div><b>sanctions_syncs</b> <small>sync history · timestamps</small></div>
+        <div><b>user_access_configs</b> <small>per-user module access configuration</small></div>
+        <div><b>user_scope_items</b> <small>per-user scope/permission items</small></div>
+      </div>
+      <div style="margin-top:16px;">
+        <div class="card-lbl" style="margin-bottom:6px;">Key server constants</div>
+        <div class="chips">
+          <span class="chip k-teal">DatabaseSync (sync, no async)</span>
+          <span class="chip k-teal">migrations[] startup array</span>
+          <span class="chip k-teal">COALESCE for carrier preservation</span>
+          <span class="chip k-teal">NULLIF guard on empty strings</span>
+          <span class="chip k-teal">LEFT JOIN portCount on countries</span>
+          <span class="chip k-teal">IN-query batch for contracts</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ══ LEGEND ══════════════════════════════════════════════════════════ -->
+<footer>
+  <div class="leg">
+    <div class="leg-sq" style="background:var(--amber-dim);border:1px solid var(--amber);"></div>
+    External Services
+  </div>
+  <div class="leg">
+    <div class="leg-sq" style="background:var(--blue-dim);border:1px solid var(--blue);"></div>
+    Frontend &nbsp;React 18 + Vite :5173
+  </div>
+  <div class="leg">
+    <div class="leg-sq" style="background:var(--violet-dim);border:1px solid var(--violet);"></div>
+    Backend &nbsp;Express :3001
+  </div>
+  <div class="leg">
+    <div class="leg-sq" style="background:var(--teal-dim);border:1px solid var(--teal);"></div>
+    Data Layer &nbsp;SQLite · DatabaseSync
+  </div>
+  <div class="leg">
+    <div class="leg-line"></div>
+    Service boundary
+  </div>
+  <div class="ts">CargoDesk v0.22.0 "Crossroads" &nbsp;·&nbsp; 2026-07-05</div>
+</footer>
+
+</body>
+</html>

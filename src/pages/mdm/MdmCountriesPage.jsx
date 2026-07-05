@@ -19,7 +19,7 @@ import { useResizableColumns, ColResizer } from "../../components/primitives/use
 const LIMIT = 50;
 
 const MdmCountriesPage = () => {
-  const { canEdit } = useAuth();
+  const { canManageConfigs } = useAuth();
   const [countries,      setCountries]      = useState([]);
   const [total,          setTotal]          = useState(0);
   const [offset,         setOffset]         = useState(0);
@@ -142,7 +142,7 @@ const MdmCountriesPage = () => {
             {total} entr{total !== 1 ? "ies" : "y"} · ISO 3166-1 alpha-2 · with FIATA trade lane assignments
           </p>
         </div>
-        {canEdit && <Btn onClick={() => setModal("add")} size="lg">＋ Add Country</Btn>}
+        {canManageConfigs && <Btn onClick={() => setModal("add")} size="lg">＋ Add Country</Btn>}
       </div>
 
       <div style={{ marginBottom: 14 }}>
@@ -188,8 +188,8 @@ const MdmCountriesPage = () => {
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <ActionMenu items={[
                 ...((c.portCount ?? 0) > 0 ? [{ icon: "📍", label: "View Locations", onClick: () => setViewLocations(c) }] : []),
-                ...(canEdit ? [{ icon: "✎", label: "Edit",   onClick: () => setModal(c) }] : []),
-                ...(canEdit ? [{ icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(c.iso2) }] : []),
+                ...(canManageConfigs ? [{ icon: "✎", label: "Edit",   onClick: () => setModal(c) }] : []),
+                ...(canManageConfigs ? [{ icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(c.iso2) }] : []),
               ]} />
             </div>
           </div>

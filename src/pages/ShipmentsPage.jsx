@@ -16,8 +16,8 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
   const [filters,         setFilters]         = useState({ search: '', status: '', carrier: '' });
 
   const teuFor = id => containers.filter(c => c.shipmentId === id).reduce((s, c) => s + teuOf(c.size), 0);
-  const { template: shipTemplate, startResize: shipStartResize } = useResizableColumns("shipments", [140,70,70,150,165,46,60,80,130,90]);
-  const shipHeaders = ["Shipment ID","POL","POD","Carrier","Contract","TEU","Status","Margin","Actions"];
+  const { template: shipTemplate, startResize: shipStartResize } = useResizableColumns("shipments", [140,70,70,80,100,150,165,46,60,80,90]);
+  const shipHeaders = ["Shipment ID","POL","POD","Routing Term","Trade Lane","Carrier","Contract","TEU","Status","Margin","Actions"];
 
   const filtered = shipments.filter(s => {
     if (filters.status  && s.status      !== filters.status)  return false;
@@ -122,6 +122,16 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
               <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
                 <span style={{ fontFamily: T.mono, fontSize: 13, color: T.text, fontWeight: 700 }}>{s.pod}</span>
                 {s.podName && <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{s.podName}</span>}
+              </div>
+              <div>
+                {s.routingTerm
+                  ? <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, background: `${T.border}50`, borderRadius: 4, padding: "2px 6px", whiteSpace: "nowrap" }}>{s.routingTerm}</span>
+                  : <span style={{ fontFamily: T.mono, fontSize: 11, color: T.border }}>—</span>}
+              </div>
+              <div>
+                {s.tradeLane
+                  ? <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 600, color: T.text, whiteSpace: "nowrap" }}>{s.tradeLane}</span>
+                  : <span style={{ fontFamily: T.mono, fontSize: 11, color: T.border }}>—</span>}
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
                 <span style={{ fontFamily: T.mono, fontSize: 12, color: T.accent, fontWeight: 700 }}>{s.carrierCode}</span>

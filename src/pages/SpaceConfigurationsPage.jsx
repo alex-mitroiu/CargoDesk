@@ -547,7 +547,7 @@ const SpaceConfigurationsPage = ({
   pendingRenew, onPendingRenewClear,
   navigate,
 }) => {
-  const { canEdit } = useAuth();
+  const { canManageConfigs } = useAuth();
   const [allocModal,    setAllocModal]    = useState(null);
   const [confirmAlloc,  setConfirmAlloc]  = useState(null);
   const [renewInit,     setRenewInit]     = useState(null);
@@ -658,7 +658,7 @@ const SpaceConfigurationsPage = ({
         </div>
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
           <Btn variant="secondary" onClick={() => navigate("dashboard-archive")}>🗄 Archive</Btn>
-          {canEdit && <Btn onClick={() => setAllocModal("add")} disabled={carriers.length === 0}>＋ Add Configuration</Btn>}
+          {canManageConfigs && <Btn onClick={() => setAllocModal("add")} disabled={carriers.length === 0}>＋ Add Configuration</Btn>}
         </div>
       </div>
 
@@ -772,10 +772,10 @@ const SpaceConfigurationsPage = ({
               {/* Cog menu */}
               <div style={{ display: "flex", justifyContent: "flex-end" }}>
                 <ActionMenu items={[
-                  ...(canEdit ? [{ icon: "✎", label: "Edit", onClick: () => setAllocModal(a) }] : []),
+                  ...(canManageConfigs ? [{ icon: "✎", label: "Edit", onClick: () => setAllocModal(a) }] : []),
                   { icon: "🔗", label: "Linked Shipments",  onClick: () => setLinkedAlloc(a) },
                   { icon: "📋", label: "History",           onClick: () => setHistoryAlloc(a) },
-                  ...(canEdit ? [{ icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirmAlloc(a.id) }] : []),
+                  ...(canManageConfigs ? [{ icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirmAlloc(a.id) }] : []),
                 ]} />
               </div>
             </div>

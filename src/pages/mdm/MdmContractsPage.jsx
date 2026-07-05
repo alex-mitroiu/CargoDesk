@@ -154,7 +154,7 @@ const ContractModal = ({ editing, prefill, onSave, onClose }) => {
     setF(p => ({ ...p, legs: p.legs.map((l, idx) => idx === i ? { ...l, ...patch } : l) }));
 
   const addLeg = () =>
-    setF(p => ({ ...p, legs: [...p.legs, { pol:"", polName:"", pod:"", podName:"", transitDays:0, vesselService:"", polLinkedAllowed:false, podLinkedAllowed:false }] }));
+    setF(p => ({ ...p, legs: [...p.legs, { pol:"", polName:"", pod:"", podName:"", transitDays:0, vesselService:"", polLinkedAllowed:false, podLinkedAllowed:false, polCarrierHaulage:false, podCarrierHaulage:false, polHaulageLocations:"", podHaulageLocations:"" }] }));
 
   const removeLeg = i =>
     setF(p => ({ ...p, legs: p.legs.filter((_, idx) => idx !== i) }));
@@ -461,6 +461,49 @@ const ContractModal = ({ editing, prefill, onSave, onClose }) => {
                 style={{ ...inputBase, fontFamily: T.mono, fontSize: 12 }}
               />
             </div>
+
+            {/* Row 3: Carrier Haulage (PKU / DEL) */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 10,
+              paddingTop: 10, borderTop: `1px solid ${T.border}33` }}>
+              {/* PKU haulage */}
+              <div>
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 5, cursor: "pointer" }}>
+                  <input type="checkbox"
+                    checked={!!leg.polCarrierHaulage}
+                    onChange={e => updateLeg(i, { polCarrierHaulage: e.target.checked, polHaulageLocations: e.target.checked ? leg.polHaulageLocations || "" : "" })}
+                    style={{ width: 13, height: 13, accentColor: T.accent, cursor: "pointer" }}
+                  />
+                  <span style={{ fontFamily: T.body, fontSize: 11, color: T.text, fontWeight: 600 }}>PKU — Carrier's Haulage</span>
+                </label>
+                {leg.polCarrierHaulage && (
+                  <input
+                    value={leg.polHaulageLocations || ""}
+                    onChange={e => updateLeg(i, { polHaulageLocations: e.target.value })}
+                    placeholder="UN/LOCODEs e.g. NLAMS NLRTM DEBOC (leave blank for any)"
+                    style={{ ...inputBase, fontFamily: T.mono, fontSize: 11, marginTop: 5, width: "100%", boxSizing: "border-box" }}
+                  />
+                )}
+              </div>
+              {/* DEL haulage */}
+              <div>
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 5, cursor: "pointer" }}>
+                  <input type="checkbox"
+                    checked={!!leg.podCarrierHaulage}
+                    onChange={e => updateLeg(i, { podCarrierHaulage: e.target.checked, podHaulageLocations: e.target.checked ? leg.podHaulageLocations || "" : "" })}
+                    style={{ width: 13, height: 13, accentColor: T.accent, cursor: "pointer" }}
+                  />
+                  <span style={{ fontFamily: T.body, fontSize: 11, color: T.text, fontWeight: 600 }}>DEL — Carrier's Haulage</span>
+                </label>
+                {leg.podCarrierHaulage && (
+                  <input
+                    value={leg.podHaulageLocations || ""}
+                    onChange={e => updateLeg(i, { podHaulageLocations: e.target.value })}
+                    placeholder="UN/LOCODEs e.g. USCHI USLGB (leave blank for any)"
+                    style={{ ...inputBase, fontFamily: T.mono, fontSize: 11, marginTop: 5, width: "100%", boxSizing: "border-box" }}
+                  />
+                )}
+              </div>
+            </div>
           </div>
         ))}
         <div>
@@ -625,7 +668,7 @@ const ContractModal = ({ editing, prefill, onSave, onClose }) => {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 const MdmContractsPage = () => {
-  const { canEdit } = useAuth();
+  const { canManageConfigs } = useAuth();
   const [results, setResults] = useState([]);
   const [total,   setTotal]   = useState(0);
   const [offset,  setOffset]  = useState(0);
@@ -718,7 +761,7 @@ const MdmContractsPage = () => {
             {hasFilters ? " matching filters" : " in registry"}
           </p>
         </div>
-        {canEdit && <Btn size="lg" onClick={() => setModal("new")}>＋ New Contract</Btn>}
+        {canManageConfigs && <Btn size="lg" onClick={() => setModal("new")}>＋ New Contract</Btn>}
       </div>
 
       {/* Filter bar */}
@@ -888,10 +931,10 @@ const MdmContractsPage = () => {
               {/* Actions */}
               <div style={{ display: "flex", justifyContent: "flex-end" }}>
                 <ActionMenu items={[
-                  ...(canEdit ? [{ icon: "✎",  label: "Edit",      onClick: () => setModal(c) }] : []),
-                  ...(canEdit ? [{ icon: "⧉",  label: "Duplicate", onClick: () => handleDuplicate(c) }] : []),
+                  ...(canManageConfigs ? [{ icon: "✎",  label: "Edit",      onClick: () => setModal(c) }] : []),
+                  ...(canManageConfigs ? [{ icon: "⧉",  label: "Duplicate", onClick: () => handleDuplicate(c) }] : []),
                   { icon: "📋", label: "History",   onClick: () => setHistoryContract(c) },
-                  ...(canEdit ? [{ icon: "✕",  label: "Delete",    variant: "danger", onClick: () => handleDelete(c.id) }] : []),
+                  ...(canManageConfigs ? [{ icon: "✕",  label: "Delete",    variant: "danger", onClick: () => handleDelete(c.id) }] : []),
                 ]} />
               </div>
             </div>

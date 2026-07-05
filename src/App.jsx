@@ -1,10 +1,10 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { T, applyTheme } from "./tokens";
 import { toast } from "./toast";
 import ToastContainer from "./components/primitives/ToastContainer";
 import GlobalSavingOverlay from "./components/primitives/GlobalSavingOverlay";
 import { FullPageSpinner } from "./components/primitives/Spinner";
-import { api } from "./api";
+import { api, TOKEN_KEY, ACTIVE_ROLE_KEY } from "./api";
 import { AuthContext } from "./AuthContext";
 
 import Btn from "./components/primitives/Btn";
@@ -22,7 +22,6 @@ import AppSettingsPage     from "./pages/AppSettingsPage";
 import { VERSION, COPYRIGHT_YEAR, COPYRIGHT_OWNER } from "./version";
 import LandingPage         from "./pages/LandingPage";
 import LoginPage           from "./pages/LoginPage";
-import { TOKEN_KEY }       from "./api";
 import KanbanPage          from "./pages/KanbanPage";
 
 import MdmCarriersPage        from "./pages/mdm/MdmCarriersPage";
@@ -41,6 +40,1085 @@ import SpaceConfigurationsPage from "./pages/SpaceConfigurationsPage";
 import LicensePage             from "./pages/LicensePage";
 
 
+
+// ─── Documents Modal ──────────────────────────────────────────────────────────
+
+const DOC_TYPES = [
+  { code: "BL01", label: "Bill of Lading" },
+  { code: "CI01", label: "Commercial Invoice" },
+  { code: "CI02", label: "Commercial Invoice (Amendment)" },
+  { code: "FR01", label: "Freight Invoice" },
+  { code: "FR02", label: "Freight Invoice (Amendment)" },
+  { code: "PL01", label: "Packing List" },
+  { code: "CO01", label: "Certificate of Origin" },
+  { code: "CD01", label: "Customs Declaration" },
+  { code: "IC01", label: "Insurance Certificate" },
+  { code: "DG01", label: "Dangerous Goods Declaration" },
+  { code: "OT",   label: "Other" },
+];
+const DOC_TYPE_MAP   = Object.fromEntries(DOC_TYPES.map(t => [t.code, t.label]));
+const docTypeLabel   = code => DOC_TYPE_MAP[code] || code;
+
+const FILE_ICON = mime => {
+  if (!mime) return "📄";
+  if (mime.startsWith("image/"))       return "🖼";
+  if (mime === "application/pdf")      return "📑";
+  if (mime.includes("spreadsheet") || mime.includes("excel")) return "📊";
+  if (mime.includes("word") || mime.includes("document"))     return "📝";
+  return "📄";
+};
+
+const fmtBytes = b => b < 1024 ? `${b} B` : b < 1024 ** 2 ? `${(b/1024).toFixed(1)} KB` : `${(b/1024**2).toFixed(1)} MB`;
+const fmtDate  = s => s ? new Date(s).toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" }) : "—";
+
+// ─── Invoice generation helpers ───────────────────────────────────────────────
+
+const fmtCurr = (n, curr = "USD") =>
+  `${curr} ${(parseFloat(n) || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+const fmtAddrHtml = c => {
+  if (!c) return "";
+  return [c.companyName, c.address1, c.address2, [c.city, c.state].filter(Boolean).join(", "), [c.postalCode, c.countryIso2].filter(Boolean).join(" ")].filter(Boolean).join("<br>");
+};
+
+const INV_CSS = `
+  @page{margin:18mm}
+  @media print{.no-print{display:none!important}}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Helvetica Neue',Arial,sans-serif;font-size:13px;color:#111827;background:#fff;padding:32px;max-width:880px;margin:0 auto}
+  .no-print{display:block;margin:0 0 20px auto;width:fit-content;padding:9px 18px;background:#2563eb;color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer;letter-spacing:.3px}
+  .no-print:hover{background:#1d4ed8}
+  .header{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:22px;border-bottom:3px solid #2563eb;margin-bottom:28px}
+  .brand-name{font-size:26px;font-weight:900;color:#2563eb;letter-spacing:-1px}
+  .brand-tag{font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:1.5px;margin-top:3px}
+  .inv-info{text-align:right}
+  .inv-type{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:2.5px;color:#6b7280;margin-bottom:5px}
+  .inv-number{font-size:21px;font-weight:800;color:#111827;font-variant-numeric:tabular-nums;letter-spacing:-0.5px}
+  .inv-date{font-size:12px;color:#374151;margin-top:5px}
+  .parties{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px}
+  .party{background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px}
+  .party-label{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:2px;color:#9ca3af;margin-bottom:8px}
+  .party-name{font-size:14px;font-weight:700;color:#111827;margin-bottom:4px}
+  .party-addr{font-size:11px;color:#4b5563;line-height:1.7}
+  .shp-block{background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;margin-bottom:20px}
+  .block-label{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:2px;color:#9ca3af;margin-bottom:10px}
+  .details-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px 16px}
+  .detail-key{font-size:9px;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px}
+  .detail-val{font-size:12px;font-weight:600;color:#111827;font-variant-numeric:tabular-nums}
+  .section-label{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:2px;color:#9ca3af;margin-bottom:10px}
+  table{width:100%;border-collapse:collapse;margin-bottom:16px}
+  th{background:#111827;color:#fff;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;padding:10px 12px;text-align:left}
+  td{padding:9px 12px;font-size:12px;border-bottom:1px solid #e5e7eb;color:#111827}
+  tr:nth-child(even) td{background:#f9fafb}
+  .num{text-align:right;font-variant-numeric:tabular-nums;font-weight:600}
+  .code{font-family:monospace;font-weight:700;color:#2563eb}
+  .dg{background:#fee2e2;color:#dc2626;border-radius:3px;padding:1px 5px;font-size:10px;font-weight:700}
+  .totals{border-top:2px solid #111827;padding-top:12px;margin-bottom:20px}
+  .total-row{display:flex;justify-content:flex-end;gap:32px;padding:5px 0}
+  .total-row.grand{padding-top:10px;margin-top:6px;border-top:1px solid #d1d5db}
+  .total-label{font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;min-width:120px;text-align:right}
+  .total-amt{font-size:13px;font-weight:700;color:#111827;font-variant-numeric:tabular-nums;min-width:140px;text-align:right}
+  .grand .total-label{color:#111827;font-size:13px}
+  .grand .total-amt{font-size:16px}
+  .notes{background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:14px 16px;margin-bottom:20px}
+  .notes-label{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:2px;color:#9ca3af;margin-bottom:6px}
+  .notes-text{font-size:12px;color:#374151;line-height:1.7;white-space:pre-wrap}
+  .footer{margin-top:32px;padding-top:14px;border-top:1px solid #e5e7eb;text-align:center;font-size:10px;color:#9ca3af}
+`;
+
+const _invShell = (title, invType, invNumber, invDate, body) => `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>${title}</title><style>${INV_CSS}</style></head>
+<body>
+<button class="no-print" onclick="window.print()">🖨 Print / Save as PDF</button>
+<div class="header">
+  <div><div class="brand-name">CargoDesk</div><div class="brand-tag">Freight Management</div></div>
+  <div class="inv-info">
+    <div class="inv-type">${invType}</div>
+    <div class="inv-number">${invNumber}</div>
+    <div class="inv-date">Date: ${new Date(invDate + "T00:00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" })}</div>
+  </div>
+</div>
+${body}
+<div class="footer">Generated by CargoDesk &mdash; ${new Date().toLocaleString()}</div>
+</body></html>`;
+
+const buildFreightInvoiceHtml = ({ shipment: sh, invNumber, invDate, notes, costLines }) => {
+  const totals = {};
+  for (const cl of costLines) totals[cl.currency] = (totals[cl.currency] || 0) + (parseFloat(cl.amount) || 0);
+
+  const rows = costLines.length === 0
+    ? `<tr><td colspan="4" style="text-align:center;color:#9ca3af;padding:20px">No cost lines recorded for this shipment</td></tr>`
+    : costLines.map(cl => `<tr>
+        <td><span class="code">${cl.chargeCode || "—"}</span></td>
+        <td>${cl.type || "—"}${cl.notes ? `<br><span style="color:#6b7280;font-size:11px">${cl.notes}</span>` : ""}</td>
+        <td>${cl.currency}</td>
+        <td class="num">${fmtCurr(cl.amount, cl.currency)}</td>
+      </tr>`).join("");
+
+  const totalRows = Object.entries(totals).map(([c, a]) =>
+    `<div class="total-row"><span class="total-label">Total ${c}</span><span class="total-amt">${fmtCurr(a, c)}</span></div>`).join("") ||
+    `<div class="total-row"><span class="total-label">Total</span><span class="total-amt">—</span></div>`;
+
+  const detailItems = [
+    ["Shipment ID", sh.id], ["B/L Number", sh.blNumber || "—"], ["Booking Ref", sh.bookingRef || "—"],
+    ["Origin (POL)", `${sh.pol}${sh.polName ? " · " + sh.polName : ""}`],
+    ["Destination (POD)", `${sh.pod}${sh.podName ? " · " + sh.podName : ""}`],
+    ["Carrier", sh.carrierCode || "—"],
+    ["Vessel / Voyage", [sh.vessel, sh.voyage].filter(Boolean).join(" / ") || "—"],
+    ["ETD", sh.etd ? new Date(sh.etd).toLocaleDateString("en-GB") : "—"],
+    ["ETA", sh.eta ? new Date(sh.eta).toLocaleDateString("en-GB") : "—"],
+    ["Incoterm", sh.incoterm || "—"], ["Freight Terms", sh.freightTerms || "Prepaid"],
+    ["Declared Value", sh.declaredValue != null ? fmtCurr(sh.declaredValue, sh.declaredValueCurrency || "USD") : "—"],
+  ].map(([k, v]) => `<div><div class="detail-key">${k}</div><div class="detail-val">${v}</div></div>`).join("");
+
+  const body = `
+    <div class="parties">
+      <div class="party"><div class="party-label">Shipper / Exporter</div><div class="party-name">${sh.shipperName || "—"}</div></div>
+      <div class="party"><div class="party-label">Consignee / Bill To</div><div class="party-name">${sh.consigneeName || "—"}</div></div>
+    </div>
+    <div class="shp-block"><div class="block-label">Shipment Details</div><div class="details-grid">${detailItems}</div></div>
+    <div class="section-label">Charges</div>
+    <table><thead><tr><th>Code</th><th>Type / Description</th><th>Currency</th><th style="text-align:right">Amount</th></tr></thead>
+    <tbody>${rows}</tbody></table>
+    <div class="totals">${totalRows}</div>
+    ${notes ? `<div class="notes"><div class="notes-label">Notes</div><div class="notes-text">${_esc(notes)}</div></div>` : ""}`;
+
+  return _invShell(`Freight Invoice — ${invNumber}`, "FREIGHT INVOICE", invNumber, invDate, body);
+};
+
+const buildCommercialInvoiceHtml = ({ shipment: sh, invNumber, invDate, notes, containers, shipper, consignee }) => {
+  const rows = containers.length === 0
+    ? `<tr><td colspan="7" style="text-align:center;color:#9ca3af;padding:20px">No containers recorded</td></tr>`
+    : containers.map(c => `<tr>
+        <td><span class="code" style="font-size:11px">${c.containerNumber || "TBC"}</span></td>
+        <td>${c.size}ft ${c.type}${c.isDg ? ` <span class="dg">DG ${c.dgClass}</span>` : ""}</td>
+        <td class="num">${c.grossWeightKg != null ? Number(c.grossWeightKg).toLocaleString() + " kg" : "—"}</td>
+        <td class="num">${c.volumeCbm != null ? Number(c.volumeCbm).toLocaleString() + " CBM" : "—"}</td>
+        <td>${c.cargoDescription || "—"}</td>
+        <td>${c.hsCode || "—"}</td>
+        <td class="num">—</td>
+      </tr>`).join("");
+
+  const detailItems = [
+    ["Shipment ID", sh.id], ["B/L Number", sh.blNumber || "—"],
+    ["Origin (POL)", `${sh.pol}${sh.polName ? " · " + sh.polName : ""}`],
+    ["Destination (POD)", `${sh.pod}${sh.podName ? " · " + sh.podName : ""}`],
+    ["Carrier", sh.carrierCode || "—"],
+    ["Vessel / Voyage", [sh.vessel, sh.voyage].filter(Boolean).join(" / ") || "—"],
+    ["Incoterm", sh.incoterm || "—"],
+    ["ETD", sh.etd ? new Date(sh.etd).toLocaleDateString("en-GB") : "—"],
+    ["ETA", sh.eta ? new Date(sh.eta).toLocaleDateString("en-GB") : "—"],
+  ].map(([k, v]) => `<div><div class="detail-key">${k}</div><div class="detail-val">${v}</div></div>`).join("");
+
+  const sellerAddr = fmtAddrHtml(shipper);
+  const buyerAddr  = fmtAddrHtml(consignee);
+
+  const body = `
+    <div class="parties">
+      <div class="party"><div class="party-label">Seller / Exporter</div>
+        <div class="party-name">${sh.shipperName || shipper?.companyName || "—"}</div>
+        ${sellerAddr ? `<div class="party-addr">${sellerAddr}</div>` : ""}
+      </div>
+      <div class="party"><div class="party-label">Buyer / Importer</div>
+        <div class="party-name">${sh.consigneeName || consignee?.companyName || "—"}</div>
+        ${buyerAddr ? `<div class="party-addr">${buyerAddr}</div>` : ""}
+      </div>
+    </div>
+    <div class="shp-block"><div class="block-label">Shipment Details</div><div class="details-grid">${detailItems}</div></div>
+    <div class="section-label">Goods Description</div>
+    <table><thead><tr>
+      <th>Container #</th><th>Type</th><th style="text-align:right">Weight</th>
+      <th style="text-align:right">Volume</th><th>Description</th><th>HS Code</th>
+      <th style="text-align:right">Declared Value</th>
+    </tr></thead><tbody>${rows}</tbody></table>
+    <div class="totals">
+      <div class="total-row grand"><span class="total-label">Total Declared Value</span><span class="total-amt">As per attached</span></div>
+    </div>
+    ${notes ? `<div class="notes"><div class="notes-label">Notes</div><div class="notes-text">${_esc(notes)}</div></div>` : ""}`;
+
+  return _invShell(`Commercial Invoice — ${invNumber}`, "COMMERCIAL INVOICE", invNumber, invDate, body);
+};
+
+const _esc = s => String(s).replace(/[<>&]/g, c => ({"<":"&lt;",">":"&gt;","&":"&amp;"}[c]));
+const _detailGrid = items => items.map(([k, v]) => `<div><div class="detail-key">${k}</div><div class="detail-val">${v}</div></div>`).join("");
+const _ctrTotals = ctrs => {
+  const w = ctrs.reduce((s, c) => s + (parseFloat(c.grossWeightKg) || 0), 0);
+  const v = ctrs.reduce((s, c) => s + (parseFloat(c.volumeCbm) || 0), 0);
+  return { w, v };
+};
+
+const buildBillOfLadingHtml = ({ shipment: sh, invNumber, invDate, notes, containers, shipper, consignee }) => {
+  const { w: totalWeight, v: totalVolume } = _ctrTotals(containers);
+  const rows = containers.length === 0
+    ? `<tr><td colspan="7" style="text-align:center;color:#9ca3af;padding:16px">No containers recorded</td></tr>`
+    : containers.map(c => `<tr>
+        <td><span class="code">${_esc(c.containerNumber || "TBC")}</span></td>
+        <td>${_esc(c.sealNumber || "—")}</td>
+        <td>${_esc(c.size)}ft ${_esc(c.type)}${c.isDg ? ` <span class="dg">DG ${_esc(c.dgClass)}</span>` : ""}</td>
+        <td>${_esc(c.cargoDescription || "—")}</td>
+        <td class="num">${c.grossWeightKg != null ? Number(c.grossWeightKg).toLocaleString() + " kg" : "—"}</td>
+        <td class="num">${c.volumeCbm != null ? Number(c.volumeCbm) + " CBM" : "—"}</td>
+        <td>${c.hsCode ? `<span class="code" style="font-size:11px">${_esc(c.hsCode)}</span>` : "—"}</td>
+      </tr>`).join("");
+
+  const body = `
+    <div class="parties" style="grid-template-columns:1fr 1fr 1fr">
+      <div class="party"><div class="party-label">Shipper / Exporter</div>
+        <div class="party-name">${_esc(sh.shipperName || shipper?.companyName || "—")}</div>
+        ${fmtAddrHtml(shipper) ? `<div class="party-addr">${fmtAddrHtml(shipper)}</div>` : ""}
+      </div>
+      <div class="party"><div class="party-label">Consignee</div>
+        <div class="party-name">${_esc(sh.consigneeName || consignee?.companyName || "—")}</div>
+        ${fmtAddrHtml(consignee) ? `<div class="party-addr">${fmtAddrHtml(consignee)}</div>` : ""}
+      </div>
+      <div class="party"><div class="party-label">Notify Party</div>
+        <div class="party-name">${_esc(sh.notifyName || "—")}</div>
+      </div>
+    </div>
+    <div class="shp-block"><div class="block-label">Transport Details</div>
+      <div class="details-grid">${_detailGrid([
+        ["B/L Number", _esc(sh.blNumber || invNumber)], ["Booking Ref", _esc(sh.bookingRef || "—")],
+        ["Vessel", _esc(sh.vessel || "—")], ["Voyage", _esc(sh.voyage || "—")],
+        ["Port of Loading", `${_esc(sh.pol)}${sh.polName ? " · " + _esc(sh.polName) : ""}`],
+        ["Port of Discharge", `${_esc(sh.pod)}${sh.podName ? " · " + _esc(sh.podName) : ""}`],
+        ["ETD", sh.etd ? new Date(sh.etd).toLocaleDateString("en-GB") : "—"],
+        ["ETA", sh.eta ? new Date(sh.eta).toLocaleDateString("en-GB") : "—"],
+        ["Carrier", _esc(sh.carrierCode || "—")], ["Incoterm", _esc(sh.incoterm || "—")],
+        ["Freight Terms", _esc(sh.freightTerms || "Prepaid")], ["Movement", _esc(sh.movementType || "FCL")],
+        ["Declared Value", sh.declaredValue != null ? fmtCurr(sh.declaredValue, sh.declaredValueCurrency || "USD") : "—"],
+      ])}</div>
+    </div>
+    <div class="section-label">Containers / Cargo</div>
+    <table><thead><tr>
+      <th>Container #</th><th>Seal #</th><th>Type</th><th>Cargo Description</th>
+      <th style="text-align:right">Gross Weight</th><th style="text-align:right">Volume</th><th>HS Code</th>
+    </tr></thead><tbody>${rows}</tbody>
+    ${containers.length > 0 ? `<tfoot><tr>
+      <td colspan="4" style="font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.5px">
+        ${containers.length} container${containers.length > 1 ? "s" : ""} total
+      </td>
+      <td class="num" style="font-weight:700">${totalWeight > 0 ? totalWeight.toLocaleString() + " kg" : "—"}</td>
+      <td class="num" style="font-weight:700">${totalVolume > 0 ? totalVolume.toFixed(2) + " CBM" : "—"}</td>
+      <td></td>
+    </tr></tfoot>` : ""}
+    </table>
+    <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;margin-bottom:20px;font-size:11px;color:#374151;line-height:1.7">
+      <strong>SHIPPED ON BOARD</strong> the above named vessel in apparent good order and condition,
+      weight, measure, marks, numbers, quality, contents and value unknown. Freight and charges payable as indicated.
+      In accepting this Bill of Lading, the shipper, consignee and holder agree to be bound by all stipulations,
+      exceptions and conditions stated herein.
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
+      <div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px">
+        <div class="party-label">Place and Date of Issue</div>
+        <div style="font-size:12px;margin-top:4px">${_esc(sh.pol || "—")} / ${new Date(invDate + "T00:00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" })}</div>
+      </div>
+      <div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px">
+        <div class="party-label">Signed for the Carrier</div>
+        <div style="height:48px"></div>
+        <div style="border-top:1px solid #d1d5db;padding-top:8px;font-size:11px;color:#6b7280">Authorised Signatory</div>
+      </div>
+    </div>
+    ${notes ? `<div class="notes"><div class="notes-label">Notes / Special Instructions</div><div class="notes-text">${_esc(notes)}</div></div>` : ""}`;
+
+  return _invShell(`Bill of Lading — ${invNumber}`, "BILL OF LADING", invNumber, invDate, body);
+};
+
+const buildPackingListHtml = ({ shipment: sh, invNumber, invDate, notes, containers, shipper, consignee }) => {
+  const { w: totalWeight, v: totalVolume } = _ctrTotals(containers);
+  const rows = containers.length === 0
+    ? `<tr><td colspan="7" style="text-align:center;color:#9ca3af;padding:16px">No containers recorded</td></tr>`
+    : containers.map(c => `<tr>
+        <td><span class="code">${_esc(c.containerNumber || "TBC")}</span></td>
+        <td>${_esc(c.size)}ft ${_esc(c.type)}</td>
+        <td>${_esc(c.cargoDescription || "—")}</td>
+        <td>${c.hsCode ? `<span class="code" style="font-size:11px">${_esc(c.hsCode)}</span>` : "—"}</td>
+        <td class="num">${c.grossWeightKg != null ? Number(c.grossWeightKg).toLocaleString() + " kg" : "—"}</td>
+        <td class="num">${c.volumeCbm != null ? Number(c.volumeCbm) + " CBM" : "—"}</td>
+        <td>${c.isDg ? `<span class="dg">DG ${_esc(c.dgClass)}</span>` : "—"}</td>
+      </tr>`).join("");
+
+  const body = `
+    <div class="parties">
+      <div class="party"><div class="party-label">Shipper / Exporter</div>
+        <div class="party-name">${_esc(sh.shipperName || shipper?.companyName || "—")}</div>
+        ${fmtAddrHtml(shipper) ? `<div class="party-addr">${fmtAddrHtml(shipper)}</div>` : ""}
+      </div>
+      <div class="party"><div class="party-label">Consignee</div>
+        <div class="party-name">${_esc(sh.consigneeName || consignee?.companyName || "—")}</div>
+        ${fmtAddrHtml(consignee) ? `<div class="party-addr">${fmtAddrHtml(consignee)}</div>` : ""}
+      </div>
+    </div>
+    <div class="shp-block"><div class="block-label">Shipment Reference</div>
+      <div class="details-grid">${_detailGrid([
+        ["Shipment ID", sh.id], ["B/L Number", _esc(sh.blNumber || "—")], ["Booking Ref", _esc(sh.bookingRef || "—")],
+        ["Origin (POL)", `${_esc(sh.pol)}${sh.polName ? " · " + _esc(sh.polName) : ""}`],
+        ["Destination (POD)", `${_esc(sh.pod)}${sh.podName ? " · " + _esc(sh.podName) : ""}`],
+        ["Carrier", _esc(sh.carrierCode || "—")],
+        ["Vessel / Voyage", [sh.vessel, sh.voyage].filter(Boolean).map(_esc).join(" / ") || "—"],
+        ["ETD", sh.etd ? new Date(sh.etd).toLocaleDateString("en-GB") : "—"],
+        ["ETA", sh.eta ? new Date(sh.eta).toLocaleDateString("en-GB") : "—"],
+      ])}</div>
+    </div>
+    <div class="section-label">Packing Details</div>
+    <table><thead><tr>
+      <th>Container #</th><th>Type</th><th>Cargo Description</th><th>HS Code</th>
+      <th style="text-align:right">Gross Weight</th><th style="text-align:right">Volume</th><th>DG</th>
+    </tr></thead><tbody>${rows}</tbody>
+    ${containers.length > 0 ? `<tfoot><tr>
+      <td colspan="4" style="font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.5px">
+        Total — ${containers.length} container${containers.length > 1 ? "s" : ""}
+      </td>
+      <td class="num" style="font-weight:700">${totalWeight > 0 ? totalWeight.toLocaleString() + " kg" : "—"}</td>
+      <td class="num" style="font-weight:700">${totalVolume > 0 ? totalVolume.toFixed(2) + " CBM" : "—"}</td>
+      <td></td>
+    </tr></tfoot>` : ""}
+    </table>
+    ${notes ? `<div class="notes"><div class="notes-label">Notes</div><div class="notes-text">${_esc(notes)}</div></div>` : ""}`;
+
+  return _invShell(`Packing List — ${invNumber}`, "PACKING LIST", invNumber, invDate, body);
+};
+
+const buildCertOriginHtml = ({ shipment: sh, invNumber, invDate, notes, containers, shipper, consignee }) => {
+  const rows = containers.length === 0
+    ? `<tr><td colspan="4" style="text-align:center;color:#9ca3af;padding:16px">No cargo details</td></tr>`
+    : containers.map(c => `<tr>
+        <td>${_esc(c.cargoDescription || "—")}</td>
+        <td>${c.hsCode ? `<span class="code" style="font-size:11px">${_esc(c.hsCode)}</span>` : "—"}</td>
+        <td class="num">${c.grossWeightKg != null ? Number(c.grossWeightKg).toLocaleString() + " kg" : "—"}</td>
+        <td>Country of Origin</td>
+      </tr>`).join("");
+
+  const body = `
+    <div class="parties">
+      <div class="party"><div class="party-label">Exporter / Producer</div>
+        <div class="party-name">${_esc(sh.shipperName || shipper?.companyName || "—")}</div>
+        ${fmtAddrHtml(shipper) ? `<div class="party-addr">${fmtAddrHtml(shipper)}</div>` : ""}
+      </div>
+      <div class="party"><div class="party-label">Consignee / Importer</div>
+        <div class="party-name">${_esc(sh.consigneeName || consignee?.companyName || "—")}</div>
+        ${fmtAddrHtml(consignee) ? `<div class="party-addr">${fmtAddrHtml(consignee)}</div>` : ""}
+      </div>
+    </div>
+    <div class="shp-block"><div class="block-label">Transport</div>
+      <div class="details-grid">${_detailGrid([
+        ["Vessel / Voyage", [sh.vessel, sh.voyage].filter(Boolean).map(_esc).join(" / ") || "—"],
+        ["Port of Loading", `${_esc(sh.pol)}${sh.polName ? " · " + _esc(sh.polName) : ""}`],
+        ["Port of Discharge", `${_esc(sh.pod)}${sh.podName ? " · " + _esc(sh.podName) : ""}`],
+        ["Carrier", _esc(sh.carrierCode || "—")], ["B/L Number", _esc(sh.blNumber || "—")],
+        ["ETD", sh.etd ? new Date(sh.etd).toLocaleDateString("en-GB") : "—"],
+      ])}</div>
+    </div>
+    <div class="section-label">Goods Description</div>
+    <table><thead><tr>
+      <th>Description of Goods</th><th>HS Code</th><th style="text-align:right">Gross Weight</th><th>Country of Origin</th>
+    </tr></thead><tbody>${rows}</tbody></table>
+    <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;margin-bottom:20px;font-size:11px;color:#374151;line-height:1.7">
+      The undersigned hereby declares that the above details and statements are correct, that all the goods were produced
+      in the country shown and comply with the applicable origin requirements.
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
+      <div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px">
+        <div class="party-label">Certifying Authority — Stamp / Signature</div>
+        <div style="height:56px"></div>
+      </div>
+      <div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px">
+        <div class="party-label">Declaration by Exporter</div>
+        <div style="height:40px"></div>
+        <div style="border-top:1px solid #d1d5db;padding-top:8px;font-size:11px;color:#6b7280">
+          Place / Date: ${_esc(sh.pol || "—")} / ${new Date(invDate + "T00:00:00").toLocaleDateString("en-GB")}
+        </div>
+      </div>
+    </div>
+    ${notes ? `<div class="notes"><div class="notes-label">Notes</div><div class="notes-text">${_esc(notes)}</div></div>` : ""}`;
+
+  return _invShell(`Certificate of Origin — ${invNumber}`, "CERTIFICATE OF ORIGIN", invNumber, invDate, body);
+};
+
+const buildInsuranceCertHtml = ({ shipment: sh, invNumber, invDate, notes, containers, shipper }) => {
+  const { w: totalWeight } = _ctrTotals(containers);
+  const descriptions = [...new Set(containers.map(c => c.cargoDescription).filter(Boolean))].join("; ") || "As described in Bill of Lading";
+
+  const body = `
+    <div class="shp-block"><div class="block-label">Assured</div>
+      <div class="details-grid" style="grid-template-columns:repeat(2,1fr)">${_detailGrid([
+        ["Assured / Insured Party", _esc(sh.shipperName || shipper?.companyName || "—")],
+        ["Certificate Reference", _esc(invNumber)],
+      ])}</div>
+    </div>
+    <div class="shp-block"><div class="block-label">Shipment Details</div>
+      <div class="details-grid">${_detailGrid([
+        ["Shipment ID", sh.id], ["B/L Number", _esc(sh.blNumber || "—")],
+        ["Origin (POL)", `${_esc(sh.pol)}${sh.polName ? " · " + _esc(sh.polName) : ""}`],
+        ["Destination (POD)", `${_esc(sh.pod)}${sh.podName ? " · " + _esc(sh.podName) : ""}`],
+        ["Vessel / Voyage", [sh.vessel, sh.voyage].filter(Boolean).map(_esc).join(" / ") || "—"],
+        ["Carrier", _esc(sh.carrierCode || "—")],
+        ["ETD", sh.etd ? new Date(sh.etd).toLocaleDateString("en-GB") : "—"],
+        ["ETA", sh.eta ? new Date(sh.eta).toLocaleDateString("en-GB") : "—"],
+        ["Incoterm", _esc(sh.incoterm || "—")],
+      ])}</div>
+    </div>
+    <div class="shp-block"><div class="block-label">Coverage</div>
+      <div class="details-grid">${_detailGrid([
+        ["Cargo Description", _esc(descriptions)],
+        ["Total Gross Weight", totalWeight > 0 ? totalWeight.toLocaleString() + " kg" : "As per B/L"],
+        ["No. of Containers", containers.length > 0 ? `${containers.length} × FCL` : "—"],
+        ["Coverage Type", "All Risks (Institute Cargo Clauses A)"],
+        ["Sum Insured / Declared Value", sh.declaredValue != null ? fmtCurr(sh.declaredValue, sh.declaredValueCurrency || "USD") : "As declared — contact insurer"],
+        ["Policy / Cover Note", "To be confirmed"],
+      ])}</div>
+    </div>
+    <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;margin-bottom:20px;font-size:11px;color:#374151;line-height:1.7">
+      This is to certify that the above-described shipment has been insured under the terms and conditions of the Open Policy /
+      Cover Note as referenced. Claims, if any, are payable in the currency and country stipulated in the policy,
+      upon surrender of this certificate duly endorsed.
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
+      <div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px">
+        <div class="party-label">Authorised by Insurer — Signature / Stamp</div>
+        <div style="height:56px"></div>
+      </div>
+      <div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px">
+        <div class="party-label">Date of Issue</div>
+        <div style="font-size:12px;margin-top:6px">${new Date(invDate + "T00:00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" })}</div>
+      </div>
+    </div>
+    ${notes ? `<div class="notes"><div class="notes-label">Notes</div><div class="notes-text">${_esc(notes)}</div></div>` : ""}`;
+
+  return _invShell(`Insurance Certificate — ${invNumber}`, "INSURANCE CERTIFICATE", invNumber, invDate, body);
+};
+
+const buildDGDeclHtml = ({ shipment: sh, invNumber, invDate, notes, containers, shipper, consignee }) => {
+  const dgCtrs = containers.filter(c => c.isDg);
+  const rows = dgCtrs.length === 0
+    ? `<tr><td colspan="7" style="text-align:center;color:#dc2626;padding:16px;font-weight:600">No containers flagged as DG — verify cargo details</td></tr>`
+    : dgCtrs.map(c => `<tr>
+        <td><span class="code">${_esc(c.containerNumber || "TBC")}</span></td>
+        <td><span class="dg">DG ${_esc(c.dgClass)}</span></td>
+        <td>—</td><td>As per SDS</td><td>—</td>
+        <td class="num">${c.grossWeightKg != null ? Number(c.grossWeightKg).toLocaleString() + " kg" : "—"}</td>
+        <td>${_esc(c.cargoDescription || "—")}</td>
+      </tr>`).join("");
+
+  const body = `
+    <div style="background:#fef2f2;border:2px solid #dc2626;border-radius:8px;padding:12px 16px;margin-bottom:20px;display:flex;align-items:center;gap:12px">
+      <span style="font-size:22px">⚠</span>
+      <div>
+        <div style="font-size:12px;font-weight:700;color:#dc2626;text-transform:uppercase;letter-spacing:.5px">Dangerous Goods Declaration — IMDG Code</div>
+        <div style="font-size:11px;color:#7f1d1d;margin-top:2px">International Maritime Dangerous Goods</div>
+      </div>
+    </div>
+    <div class="parties">
+      <div class="party"><div class="party-label">Shipper / Consignor</div>
+        <div class="party-name">${_esc(sh.shipperName || shipper?.companyName || "—")}</div>
+        ${fmtAddrHtml(shipper) ? `<div class="party-addr">${fmtAddrHtml(shipper)}</div>` : ""}
+      </div>
+      <div class="party"><div class="party-label">Consignee</div>
+        <div class="party-name">${_esc(sh.consigneeName || consignee?.companyName || "—")}</div>
+        ${fmtAddrHtml(consignee) ? `<div class="party-addr">${fmtAddrHtml(consignee)}</div>` : ""}
+      </div>
+    </div>
+    <div class="shp-block"><div class="block-label">Transport Details</div>
+      <div class="details-grid">${_detailGrid([
+        ["Vessel / Voyage", [sh.vessel, sh.voyage].filter(Boolean).map(_esc).join(" / ") || "—"],
+        ["Port of Loading", `${_esc(sh.pol)}${sh.polName ? " · " + _esc(sh.polName) : ""}`],
+        ["Port of Discharge", `${_esc(sh.pod)}${sh.podName ? " · " + _esc(sh.podName) : ""}`],
+        ["Carrier", _esc(sh.carrierCode || "—")], ["B/L Number", _esc(sh.blNumber || "—")],
+        ["ETD", sh.etd ? new Date(sh.etd).toLocaleDateString("en-GB") : "—"],
+      ])}</div>
+    </div>
+    <div class="section-label">Dangerous Goods Details</div>
+    <table><thead><tr>
+      <th>Container #</th><th>DG Class</th><th>UN Number</th><th>Proper Shipping Name</th>
+      <th>Packing Group</th><th style="text-align:right">Net Weight</th><th>Description</th>
+    </tr></thead><tbody>${rows}</tbody></table>
+    <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;margin-bottom:20px;font-size:11px;color:#374151;line-height:1.7">
+      I hereby declare that the contents of this consignment are fully and accurately described above by the proper shipping name,
+      and are classified, packaged, marked and labelled/placarded, and are in all respects in proper condition for transport
+      according to applicable international and national governmental regulations.
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
+      <div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px">
+        <div class="party-label">Shipper's Declaration — Name / Signature / Date</div>
+        <div style="height:40px"></div>
+        <div style="border-top:1px solid #d1d5db;padding-top:8px;font-size:11px;color:#6b7280">
+          Date: ${new Date(invDate + "T00:00:00").toLocaleDateString("en-GB")}
+        </div>
+      </div>
+      <div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px">
+        <div class="party-label">Emergency Contact</div>
+        <div style="font-size:11px;color:#374151;margin-top:6px;line-height:1.8">
+          24hr Emergency: ___________<br>CHEMTREC: +1 703-527-3887<br>CANUTEC: +1 613-996-6666
+        </div>
+      </div>
+    </div>
+    ${notes ? `<div class="notes"><div class="notes-label">Special Instructions</div><div class="notes-text">${_esc(notes)}</div></div>` : ""}`;
+
+  return _invShell(`DG Declaration — ${invNumber}`, "DANGEROUS GOODS DECLARATION", invNumber, invDate, body);
+};
+
+const buildCustomsDeclHtml = ({ shipment: sh, invNumber, invDate, notes, containers, shipper, consignee }) => {
+  const rows = containers.length === 0
+    ? `<tr><td colspan="6" style="text-align:center;color:#9ca3af;padding:16px">No containers recorded</td></tr>`
+    : containers.map(c => `<tr>
+        <td><span class="code">${_esc(c.containerNumber || "TBC")}</span></td>
+        <td>${c.hsCode ? `<span class="code" style="font-size:11px">${_esc(c.hsCode)}</span>` : "—"}</td>
+        <td>${_esc(c.cargoDescription || "—")}</td>
+        <td class="num">${c.grossWeightKg != null ? Number(c.grossWeightKg).toLocaleString() + " kg" : "—"}</td>
+        <td class="num">—</td><td>—</td>
+      </tr>`).join("");
+
+  const body = `
+    <div class="parties">
+      <div class="party"><div class="party-label">Declarant / Exporter</div>
+        <div class="party-name">${_esc(sh.shipperName || shipper?.companyName || "—")}</div>
+        ${fmtAddrHtml(shipper) ? `<div class="party-addr">${fmtAddrHtml(shipper)}</div>` : ""}
+      </div>
+      <div class="party"><div class="party-label">Importer / Consignee</div>
+        <div class="party-name">${_esc(sh.consigneeName || consignee?.companyName || "—")}</div>
+        ${fmtAddrHtml(consignee) ? `<div class="party-addr">${fmtAddrHtml(consignee)}</div>` : ""}
+      </div>
+    </div>
+    <div class="shp-block"><div class="block-label">Shipment Reference</div>
+      <div class="details-grid">${_detailGrid([
+        ["Declaration Ref", _esc(invNumber)], ["B/L Number", _esc(sh.blNumber || "—")],
+        ["Origin (POL)", `${_esc(sh.pol)}${sh.polName ? " · " + _esc(sh.polName) : ""}`],
+        ["Destination (POD)", `${_esc(sh.pod)}${sh.podName ? " · " + _esc(sh.podName) : ""}`],
+        ["Carrier", _esc(sh.carrierCode || "—")],
+        ["Vessel / Voyage", [sh.vessel, sh.voyage].filter(Boolean).map(_esc).join(" / ") || "—"],
+        ["Incoterm", _esc(sh.incoterm || "—")],
+        ["Declared Value", sh.declaredValue != null ? fmtCurr(sh.declaredValue, sh.declaredValueCurrency || "USD") : "—"],
+        ["ETD", sh.etd ? new Date(sh.etd).toLocaleDateString("en-GB") : "—"],
+        ["ETA", sh.eta ? new Date(sh.eta).toLocaleDateString("en-GB") : "—"],
+      ])}</div>
+    </div>
+    <div class="section-label">Goods Declaration</div>
+    <table><thead><tr>
+      <th>Container #</th><th>HS Code</th><th>Description of Goods</th>
+      <th style="text-align:right">Gross Weight</th><th style="text-align:right">Declared Value</th><th>Country of Origin</th>
+    </tr></thead><tbody>${rows}</tbody></table>
+    <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;margin-bottom:20px;font-size:11px;color:#374151;line-height:1.7">
+      I hereby declare that the information provided is complete, true and correct. Any false declaration may result in
+      seizure of goods and/or legal action. Place/Date of declaration: ${_esc(sh.pod || "—")} / ${new Date(invDate + "T00:00:00").toLocaleDateString("en-GB")}
+    </div>
+    ${notes ? `<div class="notes"><div class="notes-label">Notes</div><div class="notes-text">${_esc(notes)}</div></div>` : ""}`;
+
+  return _invShell(`Customs Declaration — ${invNumber}`, "CUSTOMS DECLARATION", invNumber, invDate, body);
+};
+
+const buildGenericDocHtml = ({ shipment: sh, invNumber, invDate, notes }) => {
+  const body = `
+    <div class="shp-block"><div class="block-label">Shipment Details</div>
+      <div class="details-grid">${_detailGrid([
+        ["Shipment ID", sh.id], ["B/L Number", _esc(sh.blNumber || "—")], ["Booking Ref", _esc(sh.bookingRef || "—")],
+        ["Origin (POL)", `${_esc(sh.pol)}${sh.polName ? " · " + _esc(sh.polName) : ""}`],
+        ["Destination (POD)", `${_esc(sh.pod)}${sh.podName ? " · " + _esc(sh.podName) : ""}`],
+        ["Carrier", _esc(sh.carrierCode || "—")],
+        ["Vessel / Voyage", [sh.vessel, sh.voyage].filter(Boolean).map(_esc).join(" / ") || "—"],
+        ["Shipper", _esc(sh.shipperName || "—")], ["Consignee", _esc(sh.consigneeName || "—")],
+        ["ETD", sh.etd ? new Date(sh.etd).toLocaleDateString("en-GB") : "—"],
+        ["ETA", sh.eta ? new Date(sh.eta).toLocaleDateString("en-GB") : "—"],
+        ["Incoterm", _esc(sh.incoterm || "—")],
+      ])}</div>
+    </div>
+    ${notes
+      ? `<div class="notes"><div class="notes-label">Notes / Content</div><div class="notes-text">${_esc(notes)}</div></div>`
+      : `<div style="background:#f9fafb;border:2px dashed #d1d5db;border-radius:8px;padding:40px;text-align:center;color:#9ca3af;font-size:12px">Add content in the Notes field when generating this document</div>`}`;
+
+  return _invShell(`Document — ${invNumber}`, "DOCUMENT", invNumber, invDate, body);
+};
+
+const dispatchDocBuilder = (code, data) => {
+  switch (code) {
+    case "BL01":             return buildBillOfLadingHtml(data);
+    case "CI01": case "CI02": return buildCommercialInvoiceHtml(data);
+    case "FR01": case "FR02": return buildFreightInvoiceHtml(data);
+    case "PL01":             return buildPackingListHtml(data);
+    case "CO01":             return buildCertOriginHtml(data);
+    case "IC01":             return buildInsuranceCertHtml(data);
+    case "DG01":             return buildDGDeclHtml(data);
+    case "CD01":             return buildCustomsDeclHtml(data);
+    default:                 return buildGenericDocHtml(data);
+  }
+};
+
+const GenerateDocumentModal = ({ shipment, onClose, onSaved, defaultCode }) => {
+  const defaultNum = `${shipment.id}-${Date.now().toString(36).toUpperCase().slice(-6)}`;
+  const [docCode,  setDocCode]  = useState(defaultCode || DOC_TYPES[0].code);
+  const [docNum,   setDocNum]   = useState(defaultNum);
+  const [docDate,  setDocDate]  = useState(new Date().toISOString().slice(0, 10));
+  const [notes,    setNotes]    = useState("");
+  const [loading,  setLoading]  = useState(false);
+
+  const handlePreview = async () => {
+    setLoading(true);
+    try {
+      const needsCostLines = docCode === "FR01" || docCode === "FR02";
+      const [ctrsRaw, shipper, consignee, costLines] = await Promise.all([
+        api.containers.list(),
+        shipment.shipperId   ? api.customers.get(shipment.shipperId).catch(() => null)   : Promise.resolve(null),
+        shipment.consigneeId ? api.customers.get(shipment.consigneeId).catch(() => null) : Promise.resolve(null),
+        needsCostLines ? api.costLines.list(shipment.id).then(ls => ls.filter(l => l.type === "SELL")) : Promise.resolve([]),
+      ]);
+      const allCtrs    = Array.isArray(ctrsRaw) ? ctrsRaw : (ctrsRaw?.results ?? []);
+      const containers = allCtrs.filter(c => c.shipmentId === shipment.id);
+      const html = dispatchDocBuilder(docCode, {
+        shipment, invNumber: docNum, invDate: docDate, notes, containers, shipper, consignee, costLines,
+      });
+
+      // Save to shipment documents
+      const filename = `${docCode}-${docNum}-${docDate}.html`;
+      const base64   = btoa(unescape(encodeURIComponent(html)));
+      const saved    = await api.documents.upload(shipment.id, {
+        filename, mimeType: "text/html", docType: docCode, data: base64,
+      });
+      toast.success(`${docTypeLabel(docCode)} saved to Documents`);
+      onSaved?.(saved);
+    } catch (ex) { toast.error(ex.message); }
+    setLoading(false);
+  };
+
+  return (
+    <Modal title="Generate Document" onClose={onClose} width={480}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <div>
+          <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 6 }}>Document Type</div>
+          <select value={docCode} onChange={e => setDocCode(e.target.value)}
+            style={{ width: "100%", fontFamily: T.body, fontSize: 13, background: T.surface, color: T.text,
+              border: `1px solid ${T.border}`, borderRadius: 6, padding: "8px 10px", cursor: "pointer" }}>
+            {DOC_TYPES.map(t => <option key={t.code} value={t.code}>{t.code} · {t.label}</option>)}
+          </select>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <div>
+            <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 4 }}>Reference Number</div>
+            <input value={docNum} onChange={e => setDocNum(e.target.value)}
+              style={{ width: "100%", fontFamily: T.mono, fontSize: 12, background: T.surface, color: T.text,
+                border: `1px solid ${T.border}`, borderRadius: 6, padding: "7px 10px" }} />
+          </div>
+          <div>
+            <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 4 }}>Date</div>
+            <input type="date" value={docDate} onChange={e => setDocDate(e.target.value)}
+              style={{ width: "100%", fontFamily: T.body, fontSize: 13, background: T.surface, color: T.text,
+                border: `1px solid ${T.border}`, borderRadius: 6, padding: "7px 10px" }} />
+          </div>
+        </div>
+        <div>
+          <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 4 }}>Notes (optional)</div>
+          <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3}
+            placeholder="Additional notes to appear on the document…"
+            style={{ width: "100%", fontFamily: T.body, fontSize: 13, background: T.surface, color: T.text,
+              border: `1px solid ${T.border}`, borderRadius: 6, padding: "8px 10px", resize: "vertical", boxSizing: "border-box" }} />
+        </div>
+        <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
+          Opens in a new window — use your browser's Print dialog to save as PDF.
+        </div>
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", borderTop: `1px solid ${T.border}`, paddingTop: 14 }}>
+          <Btn variant="secondary" onClick={onClose}>Cancel</Btn>
+          <Btn onClick={handlePreview} disabled={loading || !docNum.trim()}>
+            {loading ? "Building…" : "Preview / Print →"}
+          </Btn>
+        </div>
+      </div>
+    </Modal>
+  );
+};
+
+// ─── In-app document preview ──────────────────────────────────────────────────
+
+const DocumentPreviewModal = ({ doc, onClose, onConfirm }) => {
+  const [src,       setSrc]       = useState(null);
+  const [confirming, setConfirming] = useState(false);
+
+  useEffect(() => {
+    const token = localStorage.getItem("cargodesk_token");
+    fetch(`/api/documents/${doc.id}/download`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.blob())
+      .then(blob => setSrc(URL.createObjectURL(blob)))
+      .catch(() => toast.error("Preview failed — try Download instead"));
+    return () => { setSrc(s => { if (s) URL.revokeObjectURL(s); return null; }); };
+  }, [doc.id]);
+
+  const handleConfirm = async () => {
+    setConfirming(true);
+    await onConfirm?.();
+    setConfirming(false);
+  };
+
+  const isConfirmed = doc.status === "confirmed";
+
+  return (
+    <Modal title={`${doc.docType} · ${doc.filename}`} onClose={onClose} width={960}>
+      {/* Status bar */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+        marginBottom: 12, padding: "8px 12px",
+        background: isConfirmed ? T.success + "14" : doc.isStale ? T.warning + "14" : T.bg,
+        border: `1px solid ${isConfirmed ? T.success + "44" : doc.isStale ? T.warning + "44" : T.border}`,
+        borderRadius: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700,
+            color: isConfirmed ? T.success : doc.isStale ? T.warning : T.textMuted }}>
+            {isConfirmed ? "✓ Confirmed" : doc.isStale ? "⚠ Outdated" : "Draft"}
+          </span>
+          {isConfirmed && doc.confirmedBy && (
+            <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
+              by {doc.confirmedBy} · {fmtDate(doc.confirmedAt)}
+            </span>
+          )}
+          {doc.isStale && (
+            <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
+              Shipment data changed after this document was generated
+            </span>
+          )}
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <Btn size="sm" variant="secondary"
+            onClick={() => api.documents.download(doc.id, doc.filename).catch(() => toast.error("Download failed"))}>
+            ↓ Download
+          </Btn>
+          {onConfirm && !isConfirmed && (
+            <Btn size="sm" onClick={handleConfirm} disabled={confirming}>
+              {confirming ? "Confirming…" : "✓ Confirm Document"}
+            </Btn>
+          )}
+        </div>
+      </div>
+
+      {src
+        ? <iframe src={src} title={doc.filename}
+            style={{ width: "100%", height: "68vh", border: "none", borderRadius: 6, background: "#fff" }} />
+        : <div style={{ height: "68vh", display: "flex", alignItems: "center", justifyContent: "center",
+            fontFamily: T.body, fontSize: 13, color: T.textMuted }}>Loading preview…</div>}
+    </Modal>
+  );
+};
+
+// ─── Documents Modal ──────────────────────────────────────────────────────────
+
+const DOC_STATUS_STYLE = {
+  draft:     { label: "Draft",     bg: "", color: T.textMuted, border: T.border },
+  confirmed: { label: "Confirmed", bg: "", color: T.success,   border: T.success + "66" },
+};
+
+const DOC_READINESS_COLOR = {
+  confirmed: "#34d399",
+  draft:     "#94a3b8",
+  outdated:  "#fbbf24",
+  missing:   "#f87171",
+};
+const DOC_READINESS_LABEL = {
+  confirmed: "✓ Confirmed",
+  draft:     "Draft",
+  outdated:  "⚠ Outdated",
+  missing:   "Missing",
+};
+
+const DocumentsModal = ({ shipment, canEdit, onClose }) => {
+  const [docs,           setDocs]           = useState([]);
+  const [loading,        setLoading]        = useState(true);
+  const [uploading,      setUploading]      = useState(false);
+  const [docType,        setDocType]        = useState(DOC_TYPES[0].code);
+  const [file,           setFile]           = useState(null);
+  const [genInvOpen,     setGenInvOpen]     = useState(false);
+  const [genDefaultCode, setGenDefaultCode] = useState(null);
+  const [previewDoc,     setPreviewDoc]     = useState(null);
+  const fileRef = useRef(null);
+
+  // Best doc per type: confirmed+fresh > confirmed+stale > draft+fresh > draft+stale
+  const latestByCode = useMemo(() => {
+    const map = {};
+    docs.forEach(doc => { (map[doc.docType] ||= []).push(doc); });
+    const result = {};
+    Object.entries(map).forEach(([code, list]) => {
+      const pri = d => (d.status === "confirmed" && !d.isStale) ? 0
+                     : (d.status === "confirmed")                ? 1
+                     : (!d.isStale)                              ? 2 : 3;
+      list.sort((a, b) => pri(a) - pri(b) || new Date(b.createdAt) - new Date(a.createdAt));
+      result[code] = list[0];
+    });
+    return result;
+  }, [docs]);
+
+  const typeStatus = code => {
+    const doc = latestByCode[code];
+    if (!doc)                                    return "missing";
+    if (doc.status === "confirmed" && !doc.isStale) return "confirmed";
+    if (doc.isStale)                             return "outdated";
+    return "draft";
+  };
+
+  const confirmedCount = DOC_TYPES.filter(t => typeStatus(t.code) === "confirmed").length;
+  const draftCount     = DOC_TYPES.filter(t => ["draft","outdated"].includes(typeStatus(t.code))).length;
+  const missingCount   = DOC_TYPES.filter(t => typeStatus(t.code) === "missing").length;
+  const total          = DOC_TYPES.length;
+
+  useEffect(() => {
+    api.documents.list(shipment.id)
+      .then(setDocs)
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [shipment.id]);
+
+  const handleUpload = async () => {
+    if (!file) return;
+    setUploading(true);
+    const reader = new FileReader();
+    reader.onload = async e => {
+      const base64 = e.target.result.split(",")[1];
+      try {
+        const doc = await api.documents.upload(shipment.id, {
+          filename: file.name, mimeType: file.type, docType, data: base64,
+        });
+        setDocs(p => [doc, ...p]);
+        setFile(null);
+        fileRef.current.value = "";
+        toast.success("Document uploaded");
+      } catch (ex) { toast.error(ex.message); }
+      setUploading(false);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleDelete = async id => {
+    if (!window.confirm("Remove this document?")) return;
+    try {
+      await api.documents.remove(id);
+      setDocs(p => p.filter(d => d.id !== id));
+      toast.success("Document removed");
+    } catch (ex) { toast.error(ex.message); }
+  };
+
+  const handleConfirm = async id => {
+    try {
+      const updated = await api.documents.patch(id, { status: "confirmed" });
+      setDocs(p => p.map(d => d.id === id ? updated : d));
+      setPreviewDoc(p => p?.id === id ? updated : p);
+      toast.success("Document confirmed");
+    } catch (ex) { toast.error(ex.message); }
+  };
+
+  const statusBadge = doc => {
+    if (doc.isStale) return (
+      <span title="Shipment data changed after this document was generated — consider regenerating"
+        style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, borderRadius: 4, padding: "1px 6px",
+          background: T.warning + "22", color: T.warning, border: `1px solid ${T.warning + "55"}` }}>
+        ⚠ Outdated
+      </span>
+    );
+    const s = DOC_STATUS_STYLE[doc.status] || DOC_STATUS_STYLE.draft;
+    return (
+      <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, borderRadius: 4, padding: "1px 6px",
+        background: doc.status === "confirmed" ? T.success + "18" : T.surface,
+        color: s.color, border: `1px solid ${s.border}` }}>
+        {doc.status === "confirmed" ? "✓ " : ""}{s.label}
+      </span>
+    );
+  };
+
+  return (
+    <Modal title={`Documents — ${shipment.id}`} onClose={onClose} width={720}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+
+        {/* Toolbar */}
+        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+          <Btn variant="secondary" onClick={() => { setGenDefaultCode(null); setGenInvOpen(true); }}>⚡ Generate Document</Btn>
+        </div>
+
+        {/* Document readiness overview */}
+        <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden" }}>
+          {/* Coverage bar */}
+          <div style={{ display: "flex", alignItems: "center", gap: 20,
+            padding: "14px 16px", borderBottom: `1px solid ${T.border}` }}>
+            <div style={{ display: "flex", gap: 20, flexShrink: 0 }}>
+              {[[confirmedCount, "Confirmed", DOC_READINESS_COLOR.confirmed],
+                [draftCount,     "Draft / Outdated", DOC_READINESS_COLOR.outdated],
+                [missingCount,   "Missing",   DOC_READINESS_COLOR.missing]].map(([n, lbl, color]) => (
+                <div key={lbl}>
+                  <div style={{ fontFamily: T.mono, fontSize: 20, fontWeight: 800,
+                    fontVariantNumeric: "tabular-nums", lineHeight: 1, color }}>{n}</div>
+                  <div style={{ fontFamily: T.body, fontSize: 10, fontWeight: 700,
+                    letterSpacing: ".08em", textTransform: "uppercase", color: T.textMuted }}>{lbl}</div>
+                </div>
+              ))}
+            </div>
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 5 }}>
+              <div style={{ height: 6, borderRadius: 3, background: T.border, overflow: "hidden", display: "flex" }}>
+                <div style={{ width: `${confirmedCount / total * 100}%`, background: DOC_READINESS_COLOR.confirmed }} />
+                <div style={{ width: `${draftCount     / total * 100}%`, background: DOC_READINESS_COLOR.outdated  }} />
+                <div style={{ width: `${missingCount   / total * 100}%`, background: DOC_READINESS_COLOR.missing   }} />
+              </div>
+              <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, textAlign: "right" }}>
+                {confirmedCount} / {total} confirmed
+              </div>
+            </div>
+          </div>
+
+          {/* Doc type rows */}
+          {DOC_TYPES.map((t, idx) => {
+            const doc  = latestByCode[t.code];
+            const stat = typeStatus(t.code);
+            const col  = DOC_READINESS_COLOR[stat];
+            const handleRowClick = () => {
+              if (doc) { setPreviewDoc(doc); }
+              else     { setGenDefaultCode(t.code); setGenInvOpen(true); }
+            };
+            return (
+              <div key={t.code}
+                onClick={handleRowClick}
+                style={{ display: "flex", alignItems: "center", gap: 10,
+                  padding: "8px 16px",
+                  borderBottom: idx < DOC_TYPES.length - 1 ? `1px solid ${T.border}22` : "none",
+                  cursor: "pointer", transition: "background .1s" }}
+                onMouseEnter={e => e.currentTarget.style.background = T.surface}
+                onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700,
+                  color: T.accent, background: T.accent + "18",
+                  border: `1px solid ${T.accent}33`, borderRadius: 4,
+                  padding: "1px 6px", flexShrink: 0, minWidth: 38, textAlign: "center" }}>
+                  {t.code}
+                </span>
+                <span style={{ fontFamily: T.body, fontSize: 12, color: T.text, flex: 1 }}>
+                  {t.label}
+                </span>
+                {doc && (
+                  <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, flexShrink: 0 }}>
+                    {fmtDate(doc.createdAt)}
+                  </span>
+                )}
+                <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700,
+                  color: col, background: col + "18", border: `1px solid ${col}44`,
+                  borderRadius: 4, padding: "1px 7px", flexShrink: 0, minWidth: 78, textAlign: "center" }}>
+                  {DOC_READINESS_LABEL[stat]}
+                </span>
+                {!doc && canEdit && (
+                  <span style={{ fontFamily: T.body, fontSize: 11, color: T.accent,
+                    background: T.accent + "15", border: `1px solid ${T.accent}44`,
+                    borderRadius: 4, padding: "1px 8px", flexShrink: 0 }}>
+                    ⚡ Generate
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Upload area — editors only */}
+        {canEdit && (
+          <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "14px 16px" }}>
+            <div style={{ fontFamily: T.body, fontSize: 11, fontWeight: 700, color: T.textMuted,
+              textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 10 }}>
+              Upload External Document
+            </div>
+            <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
+              <div style={{ flex: 1, minWidth: 180 }}>
+                <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 4 }}>File</div>
+                <input ref={fileRef} type="file" onChange={e => setFile(e.target.files[0] || null)}
+                  style={{ fontFamily: T.body, fontSize: 13, color: T.text, width: "100%" }} />
+              </div>
+              <div>
+                <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 4 }}>Document Type</div>
+                <select value={docType} onChange={e => setDocType(e.target.value)}
+                  style={{ fontFamily: T.body, fontSize: 13, background: T.surface, color: T.text,
+                    border: `1px solid ${T.border}`, borderRadius: 6, padding: "6px 10px", cursor: "pointer" }}>
+                  {DOC_TYPES.map(t => <option key={t.code} value={t.code}>{t.code} · {t.label}</option>)}
+                </select>
+              </div>
+              <Btn onClick={handleUpload} disabled={!file || uploading}>
+                {uploading ? "Uploading…" : "Upload"}
+              </Btn>
+            </div>
+          </div>
+        )}
+
+        {/* Document list */}
+        {loading ? (
+          <div style={{ padding: "32px 0", textAlign: "center", fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
+            Loading…
+          </div>
+        ) : docs.length === 0 ? (
+          <div style={{ padding: "40px 0", textAlign: "center" }}>
+            <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, marginBottom: 8 }}>
+              No documents yet.
+            </div>
+            <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
+              Use <strong>⚡ Generate Document</strong> to create a Bill of Lading, Invoice, Packing List and more.
+            </div>
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {docs.map(doc => (
+              <div key={doc.id} style={{ display: "flex", alignItems: "flex-start", gap: 12,
+                padding: "12px 14px", background: T.bg,
+                border: `1px solid ${doc.isStale ? T.warning + "55" : T.border}`,
+                borderRadius: 8, transition: "border-color .15s" }}>
+                <span style={{ fontSize: 20, flexShrink: 0, marginTop: 2 }}>{FILE_ICON(doc.mimeType)}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontFamily: T.body, fontSize: 13, fontWeight: 600, color: T.text,
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginBottom: 4 }}>
+                    {doc.filename}
+                  </div>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                    <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700,
+                      background: T.accent + "22", color: T.accent, borderRadius: 4, padding: "1px 6px" }}>
+                      {doc.docType}
+                    </span>
+                    <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
+                      {docTypeLabel(doc.docType)}
+                    </span>
+                    {statusBadge(doc)}
+                    <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
+                      {fmtBytes(doc.sizeBytes)} · {fmtDate(doc.createdAt)}
+                      {doc.uploadedBy && ` · ${doc.uploadedBy}`}
+                    </span>
+                    {doc.status === "confirmed" && doc.confirmedBy && (
+                      <span style={{ fontFamily: T.body, fontSize: 11, color: T.success }}>
+                        confirmed by {doc.confirmedBy}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 5, flexShrink: 0, alignItems: "center", marginTop: 1 }}>
+                  <Btn size="sm" variant="secondary" onClick={() => setPreviewDoc(doc)}>
+                    👁 Preview
+                  </Btn>
+                  <Btn size="sm" variant="secondary"
+                    onClick={() => api.documents.download(doc.id, doc.filename).catch(() => toast.error("Download failed"))}>
+                    ↓
+                  </Btn>
+                  {canEdit && doc.status !== "confirmed" && (
+                    <Btn size="sm" variant="secondary" onClick={() => handleConfirm(doc.id)}
+                      style={{ color: T.success, borderColor: T.success + "66" }}>
+                      ✓ Confirm
+                    </Btn>
+                  )}
+                  {canEdit && (
+                    <Btn size="sm" variant="danger" onClick={() => handleDelete(doc.id)}>✕</Btn>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {genInvOpen && (
+        <GenerateDocumentModal
+          shipment={shipment}
+          defaultCode={genDefaultCode}
+          onClose={() => { setGenInvOpen(false); setGenDefaultCode(null); }}
+          onSaved={doc => { setDocs(p => [doc, ...p]); setGenInvOpen(false); setGenDefaultCode(null); setPreviewDoc(doc); }}
+        />
+      )}
+      {previewDoc && (
+        <DocumentPreviewModal
+          doc={previewDoc}
+          onClose={() => setPreviewDoc(null)}
+          onConfirm={canEdit ? () => handleConfirm(previewDoc.id) : null}
+        />
+      )}
+    </Modal>
+  );
+};
 
 // ─── Health Modal ─────────────────────────────────────────────────────────────
 
@@ -64,12 +1142,16 @@ const HealthModal = ({ onClose }) => {
   const [settings, setSettings] = useState({});
 
   useEffect(() => {
-    fetch("/api/settings").then(r => r.ok ? r.json() : {}).then(s => setSettings(s)).catch(() => {});
+    const token = localStorage.getItem(TOKEN_KEY);
+    const headers = token ? { Authorization: `Bearer ${token}` } : {};
+    fetch("/api/settings", { headers }).then(r => r.ok ? r.json() : {}).then(s => setSettings(s)).catch(() => {});
   }, []);
 
   const runChecks = async () => {
     setRunning(true);
     setResults({});
+    const token   = localStorage.getItem(TOKEN_KEY);
+    const authHdr = token ? { Authorization: `Bearer ${token}` } : {};
     await Promise.all(HEALTH_CHECKS.map(async ({ id, url, type, settingKey }) => {
       // Respect user's enabled/disabled setting
       if (settingKey && settings[settingKey] === 'false') {
@@ -101,10 +1183,13 @@ const HealthModal = ({ onClose }) => {
         });
         return;
       }
+      // External URLs (absolute) don't need auth; internal /api/* paths do
+      const isInternal = url?.startsWith("/");
+      const headers = isInternal ? authHdr : {};
       try {
         const ctrl  = new AbortController();
         const timer = setTimeout(() => ctrl.abort(), 7000);
-        const r     = await fetch(url, { signal: ctrl.signal });
+        const r     = await fetch(url, { signal: ctrl.signal, headers });
         clearTimeout(timer);
         setResults(p => ({ ...p, [id]: { ok: r.ok, status: r.status, latency: Date.now() - t0 } }));
       } catch (e) {
@@ -254,7 +1339,7 @@ const ShipmentFormSidebar = ({ shipment, mode, navigate, onContainers }) => {
         ) : null}
       </div>
 
-      {mode === "edit" && shipment && (
+      {onContainers && (
         <div style={{ padding: "10px 16px", borderBottom: `1px solid ${T.border}` }}>
           <button onClick={onContainers} style={{
             display: "flex", alignItems: "center", gap: 8, width: "100%",
@@ -265,7 +1350,7 @@ const ShipmentFormSidebar = ({ shipment, mode, navigate, onContainers }) => {
           }}
           onMouseEnter={e => { e.currentTarget.style.borderColor = T.accent; e.currentTarget.style.background = T.accentBg; }}
           onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.background = "transparent"; }}>
-            📦 Containers
+            📦 {mode === "new" ? "Manage Containers" : "Containers"}
           </button>
         </div>
       )}
@@ -287,7 +1372,7 @@ const ShipmentFormSidebar = ({ shipment, mode, navigate, onContainers }) => {
 
 // ─── Shipment Detail Sidebar ──────────────────────────────────────────────────
 
-const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick }) => {
+const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, onDocuments }) => {
   const goBack = () => {
     if (window.opener) window.close();
     else navigate("shipments");
@@ -380,6 +1465,21 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick })
             ETD {shipment.etd}
           </div>
         )}
+      </div>
+
+      {/* Documents action */}
+      <div style={{ padding: "10px 16px", borderBottom: `1px solid ${T.border}` }}>
+        <button onClick={onDocuments} style={{
+          display: "flex", alignItems: "center", gap: 8, width: "100%",
+          padding: "8px 12px", borderRadius: 8, background: "transparent",
+          border: `1px solid ${T.border}`, fontFamily: T.body, fontSize: 13,
+          color: T.text, cursor: "pointer", fontWeight: 500, textAlign: "left",
+          transition: "border-color .15s, background .15s",
+        }}
+        onMouseEnter={e => { e.currentTarget.style.borderColor = T.accent; e.currentTarget.style.background = T.accentBg; }}
+        onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.background = "transparent"; }}>
+          📄 Documents
+        </button>
       </div>
 
       {/* Section nav */}
@@ -515,22 +1615,38 @@ function App() {
     return () => window.removeEventListener("cargodesk:logout", h);
   }, []);
 
-  const [activeRole, setActiveRole] = useState(null);
+  const [activeRole, setActiveRole] = useState(() => localStorage.getItem("cargodesk_active_role") || null);
+  const activeRoleInitialized = useRef(false);
+  useEffect(() => {
+    // Persist so api.js can attach X-Active-Role header on every request
+    if (activeRole) localStorage.setItem(ACTIVE_ROLE_KEY, activeRole);
+    else            localStorage.removeItem(ACTIVE_ROLE_KEY);
+    if (!activeRoleInitialized.current) { activeRoleInitialized.current = true; return; }
+    if (user) {
+      navigate("home");
+      // Re-fetch shipments so the server-side scope filter runs with the new role
+      api.shipments.list().then(setShipments).catch(() => {});
+    }
+  }, [activeRole]);
 
-  const ROLE_RANK   = { viewer: 0, operator: 1, admin: 2 };
-  const ROLE_LABELS = { admin: "Admin", operator: "Operator", viewer: "Viewer" };
-  const availableRoles = (role) =>
+  const ROLE_RANK   = { viewer: 0, occ_bk: 1, operator: 2, admin: 3 };
+  const ROLE_LABELS = { admin: "Admin", operator: "Operator", occ_bk: "OCC Booking", viewer: "Viewer" };
+  const primaryRole    = (roles) => [...(roles || [])].sort((a, b) => ROLE_RANK[b] - ROLE_RANK[a])[0] || 'viewer';
+  const availableRoles = (roles) =>
     Object.keys(ROLE_RANK)
-      .filter(r => ROLE_RANK[r] <= ROLE_RANK[role])
+      .filter(r => ROLE_RANK[r] <= ROLE_RANK[primaryRole(roles)])
       .sort((a, b) => ROLE_RANK[b] - ROLE_RANK[a]);
+  const userRoles       = Array.isArray(user?.roles) ? user.roles : (user?.role ? [user.role] : ['viewer']);
+  const userPrimaryRole = primaryRole(userRoles);
 
   const handleLogin  = (token, userData) => {
     localStorage.setItem(TOKEN_KEY, token);
     setUser(userData);
-    setActiveRole(userData.role);
+    setActiveRole(null);
   };
   const handleLogout = () => {
     localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(ACTIVE_ROLE_KEY);
     setUser(null);
     setActiveRole(null);
   };
@@ -558,8 +1674,10 @@ function App() {
 
   const selectedShipment = shipments.find(s => s.id === selectedId);
   const formDirtyRef = useRef(false);
-  const [formCtrListOpen, setFormCtrListOpen] = useState(false);
-  const [formCtrModal,    setFormCtrModal]    = useState(null);
+  const [formCtrListOpen,  setFormCtrListOpen]  = useState(false);
+  const [formCtrModal,     setFormCtrModal]     = useState(null);
+  const [newCtrSignal,     setNewCtrSignal]     = useState(0);
+  const [docsOpen,         setDocsOpen]         = useState(false);
 
   const isFormPage = p => p === "shipment-new" || p === "shipment-edit";
   const formHash   = (p, id) => p === "shipment-new" ? "shipments/new" : `shipments/${id}/edit`;
@@ -722,17 +1840,36 @@ function App() {
       return () => clearInterval(t);
     }, []);
 
+    const BELL_DISMISS_KEY = "cargodesk_dismissed_bell";
+    const todayStr = new Date().toISOString().split('T')[0];
+
+    const [dismissedBell, setDismissedBell] = useState(() => {
+      try {
+        const raw = JSON.parse(localStorage.getItem(BELL_DISMISS_KEY) || "{}");
+        // Drop stale (non-today) entries on load
+        return Object.fromEntries(Object.entries(raw).filter(([, d]) => d === todayStr));
+      } catch { return {}; }
+    });
+
+    const dismissBellItem = id => {
+      const next = { ...dismissedBell, [id]: todayStr };
+      setDismissedBell(next);
+      localStorage.setItem(BELL_DISMISS_KEY, JSON.stringify(next));
+      // Close panel if this was the last visible item and no system messages remain
+      const remainingBell = visibleBellItems.filter(a => a.id !== id);
+      if (remainingBell.length === 0 && activeSysMsgs.length === 0) setBellOpen(false);
+    };
+
     // Active allocations above their alert threshold, sorted worst-first (max 5 shown)
     const bellItems = (() => {
       if (!ready) return [];
-      const today = new Date().toISOString().split('T')[0];
       const consumed = {};
       shipments.forEach(s => {
         const teu = containers.filter(c => c.shipmentId === s.id).reduce((a, c) => a + (c.size === '40' ? 2 : 1), 0);
         consumed[s.carrierCode] = (consumed[s.carrierCode] || 0) + teu;
       });
       return allocations
-        .filter(a => a.endDate >= today && a.allocatedTEU > 0)
+        .filter(a => a.endDate >= todayStr && a.allocatedTEU > 0)
         .filter(a => (consumed[a.carrierCode] || 0) / a.allocatedTEU * 100 >= a.alertThreshold)
         .map(a => ({
           ...a,
@@ -741,7 +1878,8 @@ function App() {
         .sort((a, b) => b.pct - a.pct)
         .slice(0, 5);
     })();
-    const bellCount = bellItems.length + activeSysMsgs.length;
+    const visibleBellItems = bellItems.filter(a => !dismissedBell[a.id]);
+    const bellCount = visibleBellItems.length + activeSysMsgs.length;
 
     useEffect(() => {
       const h = e => {
@@ -892,7 +2030,7 @@ function App() {
                 })()}
 
                 {/* ── Allocation threshold section ── */}
-                {bellItems.length > 0 && (
+                {visibleBellItems.length > 0 && (
                   <>
                     <div style={{ padding: "10px 16px 8px",
                       borderBottom: `1px solid ${T.border}`,
@@ -901,32 +2039,46 @@ function App() {
                         ⚠ Above Threshold
                       </span>
                       <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted }}>
-                        {bellItems.length} allocation{bellItems.length > 1 ? "s" : ""}
+                        {visibleBellItems.length} allocation{visibleBellItems.length > 1 ? "s" : ""}
                       </span>
                     </div>
-                    {bellItems.map(a => (
-                      <button key={a.id} type="button"
-                        onClick={() => { navigate("dashboard"); setBellOpen(false); }}
-                        style={{
-                          display: "flex", alignItems: "center", justifyContent: "space-between",
-                          width: "100%", padding: "10px 16px", background: "none", border: "none",
-                          borderBottom: `1px solid ${T.border}22`, cursor: "pointer", textAlign: "left",
-                        }}
-                        onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
-                        onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                          <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.accent }}>
-                            {a.carrierCode}
+                    {visibleBellItems.map(a => (
+                      <div key={a.id} style={{
+                          display: "flex", alignItems: "center",
+                          borderBottom: `1px solid ${T.border}22`,
+                        }}>
+                        <button type="button"
+                          onClick={() => { navigate("dashboard"); setBellOpen(false); }}
+                          style={{
+                            display: "flex", alignItems: "center", justifyContent: "space-between",
+                            flex: 1, padding: "10px 12px 10px 16px", background: "none", border: "none",
+                            cursor: "pointer", textAlign: "left",
+                          }}
+                          onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
+                          onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                            <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.accent }}>
+                              {a.carrierCode}
+                            </span>
+                            <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+                              {a.pol} › {a.pod}
+                            </span>
+                          </div>
+                          <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700,
+                            color: a.pct >= 100 ? T.danger : T.warning }}>
+                            {a.pct}%
                           </span>
-                          <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
-                            {a.pol} › {a.pod}
-                          </span>
-                        </div>
-                        <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700,
-                          color: a.pct >= 100 ? T.danger : T.warning }}>
-                          {a.pct}%
-                        </span>
-                      </button>
+                        </button>
+                        <button type="button"
+                          onClick={() => dismissBellItem(a.id)}
+                          title="Dismiss until tomorrow"
+                          style={{ background: "none", border: "none", cursor: "pointer",
+                            color: T.textMuted, fontSize: 14, padding: "10px 12px", lineHeight: 1, flexShrink: 0 }}
+                          onMouseEnter={e => e.currentTarget.style.color = T.text}
+                          onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>
+                          ✕
+                        </button>
+                      </div>
                     ))}
                     <button type="button"
                       onClick={() => { navigate("dashboard"); setBellOpen(false); }}
@@ -954,26 +2106,27 @@ function App() {
             🏠
           </button>
 
-          {/* Role chip — visible at all times; amber when stepped down */}
-          {availableRoles(user.role).length > 1 && (() => {
-            const isSwitched = activeRole !== user.role;
-            const chipColor  = isSwitched ? T.warning : T.textMuted;
-            const chipBg     = isSwitched ? T.warning + "18" : "transparent";
-            const chipBorder = isSwitched ? T.warning + "55" : T.border;
+          {/* Role selector — inline dropdown in nav; amber when overriding primary */}
+          {availableRoles(userRoles).length > 1 && (() => {
+            const isSwitched = activeRole !== null;
             return (
-              <button type="button" onClick={() => setOpen(o => !o)}
-                title={isSwitched ? `Active role: ${ROLE_LABELS[activeRole]} (primary: ${ROLE_LABELS[user.role]})` : `Role: ${ROLE_LABELS[activeRole]}`}
+              <select
+                value={activeRole || ""}
+                onChange={e => setActiveRole(e.target.value || null)}
+                title={isSwitched ? `Viewing as ${ROLE_LABELS[activeRole]} — primary: ${ROLE_LABELS[userPrimaryRole]}` : `Roles: ${userRoles.map(r => ROLE_LABELS[r]).join(", ")}`}
                 style={{
-                  display: "flex", alignItems: "center", gap: 5,
-                  padding: "3px 9px 3px 8px", borderRadius: 20,
-                  border: `1px solid ${chipBorder}`, background: chipBg,
-                  fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: chipColor,
-                  cursor: "pointer", transition: "all .15s",
+                  padding: "3px 8px", borderRadius: 20,
+                  border: `1px solid ${isSwitched ? T.warning + "66" : T.border}`,
+                  background: isSwitched ? T.warning + "18" : "transparent",
+                  fontFamily: T.mono, fontSize: 11, fontWeight: 700,
+                  color: isSwitched ? T.warning : T.textMuted,
+                  cursor: "pointer", outline: "none",
                 }}>
-                {isSwitched && <span style={{ fontSize: 9 }}>●</span>}
-                {ROLE_LABELS[activeRole]}
-                <span style={{ fontSize: 9, opacity: .6 }}>▾</span>
-              </button>
+                <option value="">{ROLE_LABELS[userPrimaryRole]}</option>
+                {availableRoles(userRoles).filter(r => r !== userPrimaryRole).map(r => (
+                  <option key={r} value={r}>{ROLE_LABELS[r]}</option>
+                ))}
+              </select>
             );
           })()}
 
@@ -1010,11 +2163,13 @@ function App() {
                     <div style={{ fontFamily: T.head, fontSize: 14, fontWeight: 700, color: T.text }}>
                       {user.name}
                     </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                      <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, textTransform: "capitalize" }}>
-                        {ROLE_LABELS[user.role]}
-                      </span>
-                      {activeRole !== user.role && (
+                    <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+                      {userRoles.map(r => (
+                        <span key={r} style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted }}>
+                          {ROLE_LABELS[r]}
+                        </span>
+                      ))}
+                      {activeRole !== null && (
                         <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700,
                           color: T.warning, background: T.warning + "18",
                           borderRadius: 4, padding: "1px 6px", border: `1px solid ${T.warning}44` }}>
@@ -1034,58 +2189,6 @@ function App() {
                   </span>
                   <ThemeToggle />
                 </div>
-
-                {/* Role switcher — only when user has more than one available role */}
-                {availableRoles(user.role).length > 1 && (() => {
-                  const isSwitched = activeRole !== user.role;
-                  return (
-                    <>
-                      <Divider />
-                      <div style={{ padding: "8px 16px 12px" }}>
-                        <div style={{ fontFamily: T.mono, fontSize: 9.5, fontWeight: 700, color: T.border,
-                          textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 8,
-                          display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                          <span>Active Role</span>
-                          {isSwitched && (
-                            <button type="button" onClick={() => setActiveRole(user.role)}
-                              style={{ background: "none", border: "none", cursor: "pointer",
-                                fontFamily: T.mono, fontSize: 9, color: T.warning, padding: 0 }}>
-                              reset ↺
-                            </button>
-                          )}
-                        </div>
-                        <div style={{ display: "flex", gap: 5 }}>
-                          {availableRoles(user.role).map(r => {
-                            const isActive = activeRole === r;
-                            return (
-                              <button key={r} type="button"
-                                onClick={() => { setActiveRole(r); setOpen(false); }}
-                                style={{
-                                  flex: 1, padding: "6px 4px", borderRadius: 7, cursor: "pointer",
-                                  border: `1px solid ${isActive ? T.accent : T.border}`,
-                                  background: isActive ? T.accent + "22" : T.bg,
-                                  color: isActive ? T.accent : T.textMuted,
-                                  fontFamily: T.mono, fontSize: 11, fontWeight: 700,
-                                  textAlign: "center", transition: "all .12s",
-                                }}
-                                onMouseEnter={e => { if (!isActive) { e.currentTarget.style.borderColor = T.accent + "77"; e.currentTarget.style.color = T.text; } }}
-                                onMouseLeave={e => { if (!isActive) { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.textMuted; } }}>
-                                {isActive && "● "}{ROLE_LABELS[r]}
-                              </button>
-                            );
-                          })}
-                        </div>
-                        {isSwitched && (
-                          <div style={{ fontFamily: T.body, fontSize: 11, color: T.warning,
-                            marginTop: 8, display: "flex", alignItems: "center", gap: 5 }}>
-                            <span>⚠</span>
-                            <span>Viewing as {ROLE_LABELS[activeRole]} — server auth unchanged</span>
-                          </div>
-                        )}
-                      </div>
-                    </>
-                  );
-                })()}
 
                 <Divider />
 
@@ -1109,13 +2212,17 @@ function App() {
     );
   };
 
-  const effectiveRole = activeRole || user?.role || "viewer";
+  const effectiveRoles = activeRole ? [activeRole] : userRoles;
+  const effectiveRole  = activeRole || userPrimaryRole;
   const authCtxValue = {
     user,
-    activeRole: effectiveRole,
-    canEdit:    effectiveRole !== "viewer",
-    isAdmin:    effectiveRole === "admin",
-    isViewer:   effectiveRole === "viewer",
+    activeRole:       effectiveRole,
+    activeRoles:      effectiveRoles,
+    canEdit:          effectiveRoles.some(r => r !== 'viewer'),
+    canManageConfigs: effectiveRoles.some(r => ['admin', 'operator'].includes(r)),
+    isAdmin:          effectiveRoles.includes('admin'),
+    isViewer:         effectiveRoles.every(r => r === 'viewer'),
+    isOccBk:          effectiveRoles.includes('occ_bk'),
   };
 
   return (
@@ -1129,9 +2236,10 @@ function App() {
           ctrCount={containers.filter(c => c.shipmentId === selectedShipment.id).length}
           navigate={navigate}
           onSectionClick={setDetailAction}
+          onDocuments={() => setDocsOpen(true)}
         />
       ) : page === "shipment-new" ? (
-        <ShipmentFormSidebar mode="new" shipment={null} navigate={navigate} />
+        <ShipmentFormSidebar mode="new" shipment={null} navigate={navigate} onContainers={() => setNewCtrSignal(p => p + 1)} />
       ) : page === "shipment-edit" && selectedShipment ? (
         <ShipmentFormSidebar mode="edit" shipment={selectedShipment} navigate={navigate} onContainers={() => setFormCtrListOpen(true)} />
       ) : (
@@ -1262,6 +2370,7 @@ function App() {
           <ShipmentFormPage
             mode="new"
             init={{}}
+            ctrManagerTrigger={newCtrSignal}
             onDirtyChange={v => { formDirtyRef.current = v; }}
             onBack={() => navigate("shipments")}
             onSave={async (form, draftLegs = [], draftContainers = []) => {
@@ -1518,6 +2627,15 @@ function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── Documents modal ── */}
+      {docsOpen && selectedShipment && (
+        <DocumentsModal
+          shipment={selectedShipment}
+          canEdit={authCtxValue.canEdit}
+          onClose={() => setDocsOpen(false)}
+        />
       )}
 
       {/* ── Container list modal (triggered from edit-form sidebar) ── */}

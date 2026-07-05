@@ -3,6 +3,8 @@ import { T } from "../tokens";
 import { api, TOKEN_KEY } from "../api";
 import postmanCollection  from "../dev/CargoDesk.postman_collection.json";
 import postmanEnvironment from "../dev/CargoDesk.postman_environment.json";
+import archHtml           from "../dev/architecture.html?raw";
+import epicHtml           from "../dev/epic-TKT-D7AUBQ-coverage.html?raw";
 import { toast } from "../toast";
 import { useAuth } from "../AuthContext";
 import UserManagementPanel from "../components/UserManagementPanel";
@@ -147,9 +149,9 @@ function StatusDot({ result, testing }) {
   );
 }
 
-const TABS_BASE = ["API Controls", "Finance"];
-const TABS      = TABS_BASE; // extended with "Users" for admin below
-const API_SUBTABS = ["External APIs", "Internal APIs", "Developer"];
+const TABS_BASE = ["API Controls", "Finance", "Developer"];
+const TABS      = TABS_BASE; // extended with "Milestones" and "Users" for admin below
+const API_SUBTABS = ["External APIs", "Internal APIs"];
 
 const downloadJson = (data, filename) => {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
@@ -159,11 +161,221 @@ const downloadJson = (data, filename) => {
   URL.revokeObjectURL(url);
 };
 
+// ─── Milestone Template Manager ───────────────────────────────────────────────
+
+const MILESTONE_KEYS = [
+  { key: "booking_confirmed", label: "Booking Confirmed" },
+  { key: "si_submitted",      label: "SI Submitted" },
+  { key: "cargo_gated_in",    label: "Cargo Gated In" },
+  { key: "vessel_departed",   label: "Vessel Departed" },
+  { key: "bl_issued",         label: "B/L Issued" },
+  { key: "vessel_arrived",    label: "Vessel Arrived" },
+  { key: "customs_cleared",   label: "Customs Cleared" },
+  { key: "cargo_released",    label: "Cargo Released" },
+  { key: "delivered",         label: "Delivered" },
+];
+
+const inp = (extra = {}) => ({
+  fontFamily: T.body, fontSize: 12, padding: "5px 8px",
+  background: T.bg, border: `1px solid ${T.border}`, borderRadius: 6,
+  color: T.text, outline: "none", width: "100%", boxSizing: "border-box",
+  ...extra,
+});
+
+function MilestoneTemplatesPanel() {
+  const [templates, setTemplates] = useState([]);
+  const [loading,   setLoading]   = useState(true);
+  const [editId,    setEditId]    = useState(null);
+  const [addOpen,   setAddOpen]   = useState(false);
+  const blank = { templateKey: "FCL", carrierCode: "", tradeLane: "", milestoneKey: "booking_confirmed", label: "Booking Confirmed", sequenceOrder: 1 };
+  const [form, setForm] = useState(blank);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    api.milestoneTemplates.list()
+      .then(setTemplates)
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const setF = (k, v) => setForm(p => ({ ...p, [k]: v }));
+
+  const save = async () => {
+    try {
+      if (editId) {
+        const updated = await api.milestoneTemplates.update(editId, form);
+        setTemplates(p => p.map(t => t.id === editId ? updated : t));
+        toast.success("Template updated");
+      } else {
+        const created = await api.milestoneTemplates.create(form);
+        setTemplates(p => [...p, created]);
+        toast.success("Milestone added");
+      }
+      setEditId(null); setAddOpen(false); setForm(blank);
+    } catch (e) { toast.error(e.message); }
+  };
+
+  const remove = async (id) => {
+    try {
+      await api.milestoneTemplates.remove(id);
+      setTemplates(p => p.filter(t => t.id !== id));
+      toast.success("Removed");
+    } catch (e) { toast.error(e.message); }
+  };
+
+  const startEdit = (t) => {
+    setForm({ templateKey: t.templateKey, carrierCode: t.carrierCode, tradeLane: t.tradeLane,
+      milestoneKey: t.milestoneKey, label: t.label, sequenceOrder: t.sequenceOrder });
+    setEditId(t.id); setAddOpen(true);
+  };
+
+  const cancel = () => { setEditId(null); setAddOpen(false); setForm(blank); };
+
+  // Group by (templateKey, carrierCode, tradeLane) for display
+  const groups = templates.reduce((acc, t) => {
+    const key = `${t.templateKey}|${t.carrierCode || ""}|${t.tradeLane || ""}`;
+    if (!acc[key]) acc[key] = { templateKey: t.templateKey, carrierCode: t.carrierCode, tradeLane: t.tradeLane, items: [] };
+    acc[key].items.push(t);
+    return acc;
+  }, {});
+
+  const hdr = { fontFamily: T.body, fontSize: 10, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".08em", color: T.textMuted };
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <div>
+          <div style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text }}>Milestone Templates</div>
+          <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, marginTop: 2 }}>
+            Define milestone sequences per shipment type, carrier, or trade lane.
+          </div>
+        </div>
+        <button onClick={() => { cancel(); setAddOpen(true); }}
+          style={{ fontFamily: T.body, fontSize: 12, padding: "6px 14px", borderRadius: 6,
+            background: T.accent, color: "#fff", border: "none", cursor: "pointer" }}>
+          + Add Milestone
+        </button>
+      </div>
+
+      {addOpen && (
+        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
+          padding: 16, marginBottom: 20 }}>
+          <div style={{ fontFamily: T.body, fontSize: 12, fontWeight: 700, color: T.text, marginBottom: 12 }}>
+            {editId ? "Edit Milestone" : "New Milestone"}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr auto auto", gap: 8, alignItems: "end" }}>
+            <div>
+              <div style={{ ...hdr, marginBottom: 4 }}>Type</div>
+              <select value={form.templateKey} onChange={e => setF("templateKey", e.target.value)} style={inp()}>
+                <option value="FCL">FCL</option>
+                <option value="LCL">LCL</option>
+                <option value="AIR">AIR</option>
+              </select>
+            </div>
+            <div>
+              <div style={{ ...hdr, marginBottom: 4 }}>Carrier (opt.)</div>
+              <input value={form.carrierCode} onChange={e => setF("carrierCode", e.target.value.toUpperCase())}
+                placeholder="e.g. MSCU" style={inp({ fontFamily: T.mono })} />
+            </div>
+            <div>
+              <div style={{ ...hdr, marginBottom: 4 }}>Trade Lane (opt.)</div>
+              <input value={form.tradeLane} onChange={e => setF("tradeLane", e.target.value.toUpperCase())}
+                placeholder="e.g. EU-N" style={inp({ fontFamily: T.mono })} />
+            </div>
+            <div>
+              <div style={{ ...hdr, marginBottom: 4 }}>Seq.</div>
+              <input type="number" value={form.sequenceOrder} onChange={e => setF("sequenceOrder", Number(e.target.value))}
+                min={1} style={inp({ width: 64 })} />
+            </div>
+            <div style={{ gridColumn: "1 / -3" }}>
+              <div style={{ ...hdr, marginBottom: 4 }}>Milestone Key</div>
+              <select value={form.milestoneKey}
+                onChange={e => { const found = MILESTONE_KEYS.find(m => m.key === e.target.value); setForm(p => ({ ...p, milestoneKey: e.target.value, label: found?.label || p.label })); }}
+                style={inp()}>
+                {MILESTONE_KEYS.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
+                <option value="custom">Custom…</option>
+              </select>
+            </div>
+            <div>
+              <div style={{ ...hdr, marginBottom: 4 }}>Label</div>
+              <input value={form.label} onChange={e => setF("label", e.target.value)} style={inp()} />
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+            <button onClick={save}
+              style={{ fontFamily: T.body, fontSize: 12, padding: "5px 14px", borderRadius: 6,
+                background: T.accent, color: "#fff", border: "none", cursor: "pointer" }}>
+              {editId ? "Save Changes" : "Add"}
+            </button>
+            <button onClick={cancel}
+              style={{ fontFamily: T.body, fontSize: 12, padding: "5px 14px", borderRadius: 6,
+                background: "transparent", color: T.textMuted, border: `1px solid ${T.border}`, cursor: "pointer" }}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {loading ? (
+        <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, padding: 24, textAlign: "center" }}>Loading…</div>
+      ) : Object.keys(groups).length === 0 ? (
+        <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, padding: 24, textAlign: "center" }}>
+          No templates configured. Add a milestone above to get started.
+        </div>
+      ) : Object.values(groups).map((g, gi) => (
+        <div key={gi} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
+          marginBottom: 12, overflow: "hidden" }}>
+          <div style={{ padding: "10px 14px", background: T.bg, borderBottom: `1px solid ${T.border}`,
+            display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.text }}>{g.templateKey}</span>
+            {g.carrierCode && <span style={{ fontFamily: T.mono, fontSize: 11, color: T.accent, background: T.accent + "18", borderRadius: 4, padding: "1px 6px" }}>{g.carrierCode}</span>}
+            {g.tradeLane  && <span style={{ fontFamily: T.mono, fontSize: 11, color: T.info,   background: T.info   + "18", borderRadius: 4, padding: "1px 6px" }}>{g.tradeLane}</span>}
+            {!g.carrierCode && !g.tradeLane && <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>— base template</span>}
+            <span style={{ marginLeft: "auto", fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{g.items.length} milestone{g.items.length !== 1 ? "s" : ""}</span>
+          </div>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr style={{ borderBottom: `1px solid ${T.border}` }}>
+                {["Seq", "Key", "Label", ""].map(h => (
+                  <th key={h} style={{ ...hdr, padding: "6px 14px", textAlign: "left" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {g.items.sort((a, b) => a.sequenceOrder - b.sequenceOrder).map(t => (
+                <tr key={t.id} style={{ borderBottom: `1px solid ${T.border}` }}>
+                  <td style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, padding: "7px 14px", width: 40 }}>{t.sequenceOrder}</td>
+                  <td style={{ fontFamily: T.mono, fontSize: 11, color: T.text, padding: "7px 14px" }}>{t.milestoneKey}</td>
+                  <td style={{ fontFamily: T.body, fontSize: 12, color: T.text, padding: "7px 14px" }}>{t.label}</td>
+                  <td style={{ padding: "7px 14px", textAlign: "right", whiteSpace: "nowrap" }}>
+                    <button onClick={() => startEdit(t)}
+                      style={{ fontFamily: T.body, fontSize: 11, padding: "2px 10px", borderRadius: 4,
+                        background: "transparent", color: T.textMuted, border: `1px solid ${T.border}`, cursor: "pointer", marginRight: 6 }}>
+                      Edit
+                    </button>
+                    <button onClick={() => remove(t.id)}
+                      style={{ fontFamily: T.body, fontSize: 11, padding: "2px 10px", borderRadius: 4,
+                        background: "transparent", color: T.danger, border: `1px solid ${T.danger}44`, cursor: "pointer" }}>
+                      Remove
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function AppSettingsPage() {
   const { isAdmin } = useAuth();
-  const tabs = isAdmin ? [...TABS_BASE, "Users"] : TABS_BASE;
+  const tabs = isAdmin ? [...TABS_BASE, "Milestones", "Users"] : TABS_BASE;
   const [activeTab,      setActiveTab]      = useState("API Controls");
   const [activeApiSub,   setActiveApiSub]   = useState("External APIs");
   const [settings,       setSettings]       = useState(null);
@@ -173,6 +385,7 @@ export default function AppSettingsPage() {
   const [syncing,        setSyncing]        = useState(false);
   const fileInputRef = useRef(null);
   const saveTimers   = useRef({});
+  const [previewOpen, setPreviewOpen] = useState({});
 
   useEffect(() => {
     api.settings.get()
@@ -560,54 +773,151 @@ export default function AppSettingsPage() {
             </div>
           )}
 
-          {activeApiSub === "Developer" && (() => {
-            const collFolders  = postmanCollection.item?.length ?? 0;
-            const collRequests = postmanCollection.item?.reduce((s, f) => s + (f.item?.length ?? 0), 0) ?? 0;
-            const collBytes    = JSON.stringify(postmanCollection).length;
-            const envBytes     = JSON.stringify(postmanEnvironment).length;
-            const fmtKb = n => `${(n / 1024).toFixed(1)} KB`;
+        </>
+      )}
 
-            const fileCard = ({ badge, badgeColor, filename, description, meta, onDownload }) => (
-              <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, background: T.surface, overflow: "hidden" }}>
-                <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", padding: "16px 20px" }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 6 }}>
-                      <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.text }}>{filename}</span>
-                      <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, letterSpacing: ".06em",
-                        color: badgeColor, background: `${badgeColor}18`,
-                        border: `1px solid ${badgeColor}40`, borderRadius: 4, padding: "2px 7px" }}>
-                        {badge}
-                      </span>
-                    </div>
-                    <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, lineHeight: 1.6, margin: "0 0 8px", maxWidth: 520 }}>
-                      {description}
-                    </p>
-                    <div style={{ display: "flex", gap: 14 }}>
-                      {meta.map(([label, value]) => (
-                        <span key={label} style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
-                          <span style={{ color: T.text }}>{value}</span> {label}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                  <button onClick={onDownload} type="button"
-                    style={{ flexShrink: 0, marginLeft: 24, padding: "7px 16px", borderRadius: 7,
-                      border: `1px solid ${T.accent}55`, background: T.accentBg, color: T.accent,
-                      fontFamily: T.mono, fontSize: 12, cursor: "pointer", whiteSpace: "nowrap" }}>
-                    ↓ Download
-                  </button>
+      {activeTab === "Developer" && (() => {
+        const devDocs = [
+          {
+            id: "arch",
+            title: "System Architecture",
+            filename: "src/dev/architecture.html",
+            badge: "ARCHITECTURE",
+            badgeColor: T.accent,
+            description: "Interactive layer diagram covering all 4 service layers — External Services, React 18 frontend, Express backend (120+ routes), and SQLite data layer (35 tables). Includes auth/RBAC, multimodal leg engine, and portLanesMap. Current as of v0.22.0 “Crossroads”.",
+            html: archHtml,
+          },
+          {
+            id: "epic",
+            title: "Epic Coverage — TKT-D7AUBQ",
+            filename: "src/dev/epic-TKT-D7AUBQ-coverage.html",
+            badge: "EPIC REVIEW",
+            badgeColor: T.warning,
+            description: "Coverage analysis for the Shipment Entry form & data model epic. Tracks 11 story items across 3 phases — 8 done, 1 partial, 2 outstanding — plus bonus work shipped in v0.20.0, v0.21.0, and v0.22.0 beyond original scope.",
+            html: epicHtml,
+          },
+        ];
+
+        const openHtml = (html, title) => {
+          const blob = new Blob([html], { type: "text/html" });
+          const url  = URL.createObjectURL(blob);
+          window.open(url, "_blank");
+          setTimeout(() => URL.revokeObjectURL(url), 10000);
+        };
+
+        const collFolders  = postmanCollection.item?.length ?? 0;
+        const collRequests = postmanCollection.item?.reduce((s, f) => s + (f.item?.length ?? 0), 0) ?? 0;
+        const collBytes    = JSON.stringify(postmanCollection).length;
+        const envBytes     = JSON.stringify(postmanEnvironment).length;
+        const fmtKb = n => `${(n / 1024).toFixed(1)} KB`;
+
+        const fileCard = ({ badge, badgeColor, filename, description, meta, onDownload }) => (
+          <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, background: T.surface, overflow: "hidden" }}>
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", padding: "16px 20px" }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 6 }}>
+                  <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.text }}>{filename}</span>
+                  <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, letterSpacing: ".06em",
+                    color: badgeColor, background: `${badgeColor}18`,
+                    border: `1px solid ${badgeColor}40`, borderRadius: 4, padding: "2px 7px" }}>
+                    {badge}
+                  </span>
+                </div>
+                <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, lineHeight: 1.6, margin: "0 0 8px", maxWidth: 520 }}>
+                  {description}
+                </p>
+                <div style={{ display: "flex", gap: 14 }}>
+                  {meta.map(([label, value]) => (
+                    <span key={label} style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+                      <span style={{ color: T.text }}>{value}</span> {label}
+                    </span>
+                  ))}
                 </div>
               </div>
-            );
+              <button onClick={onDownload} type="button"
+                style={{ flexShrink: 0, marginLeft: 24, padding: "7px 16px", borderRadius: 7,
+                  border: `1px solid ${T.accent}55`, background: T.accentBg, color: T.accent,
+                  fontFamily: T.mono, fontSize: 12, cursor: "pointer", whiteSpace: "nowrap" }}>
+                ↓ Download
+              </button>
+            </div>
+          </div>
+        );
 
-            return (
+        return (
+          <div style={{ display: "flex", flexDirection: "column", gap: 32 }}>
+
+            {/* ── Developer Documents ── */}
+            <div>
+              <div style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, marginBottom: 4 }}>Developer Documents</div>
+              <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, lineHeight: 1.6, margin: "0 0 14px" }}>
+                Architecture reference and epic coverage reports stored in <code style={{ fontFamily: T.mono, fontSize: 11, color: T.accent, background: `${T.accent}12`, borderRadius: 3, padding: "1px 5px" }}>src/dev/</code>.
+                Click <strong style={{ color: T.text }}>Preview</strong> for an inline view, or <strong style={{ color: T.text }}>Open</strong> to launch full-page.
+              </p>
               <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                {devDocs.map(doc => (
+                  <div key={doc.id} style={{ border: `1px solid ${T.border}`, borderRadius: 10, background: T.surface, overflow: "hidden" }}>
+                    <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", padding: "16px 20px" }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 6 }}>
+                          <span style={{ fontFamily: T.body, fontSize: 14, fontWeight: 700, color: T.text }}>{doc.title}</span>
+                          <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, letterSpacing: ".06em",
+                            color: doc.badgeColor, background: `${doc.badgeColor}18`,
+                            border: `1px solid ${doc.badgeColor}40`, borderRadius: 4, padding: "2px 7px" }}>
+                            {doc.badge}
+                          </span>
+                        </div>
+                        <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, lineHeight: 1.6, margin: "0 0 8px", maxWidth: 510 }}>
+                          {doc.description}
+                        </p>
+                        <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>{doc.filename}</div>
+                      </div>
+                      <div style={{ display: "flex", gap: 8, flexShrink: 0, marginLeft: 24, alignItems: "flex-start" }}>
+                        <button
+                          onClick={() => setPreviewOpen(p => ({ ...p, [doc.id]: !p[doc.id] }))}
+                          type="button"
+                          style={{ padding: "6px 13px", borderRadius: 7,
+                            border: `1px solid ${previewOpen[doc.id] ? T.accent + "55" : T.border}`,
+                            background: previewOpen[doc.id] ? T.accentBg : T.bg,
+                            color: previewOpen[doc.id] ? T.accent : T.textMuted,
+                            fontFamily: T.mono, fontSize: 12, cursor: "pointer" }}>
+                          {previewOpen[doc.id] ? "▲ Hide" : "▼ Preview"}
+                        </button>
+                        <button onClick={() => openHtml(doc.html, doc.title)} type="button"
+                          style={{ padding: "6px 13px", borderRadius: 7,
+                            border: `1px solid ${T.accent}55`, background: T.accentBg, color: T.accent,
+                            fontFamily: T.mono, fontSize: 12, cursor: "pointer" }}>
+                          ↗ Open
+                        </button>
+                      </div>
+                    </div>
+                    {previewOpen[doc.id] && (
+                      <div style={{ borderTop: `1px solid ${T.border}`, height: 400, overflow: "hidden" }}>
+                        <iframe
+                          srcDoc={doc.html}
+                          style={{ width: "100%", height: "100%", border: "none", display: "block" }}
+                          sandbox="allow-scripts"
+                          title={doc.title}
+                        />
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
 
-                <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, lineHeight: 1.6, margin: "0 0 4px" }}>
-                  Postman files for exploring and testing the CargoDesk REST API locally.
-                  Import both files into Postman, select the <strong style={{ color: T.text }}>CargoDesk Local</strong> environment, and authenticate via <code style={{ fontFamily: T.mono, fontSize: 11, color: T.success, background: `${T.success}12`, borderRadius: 3, padding: "1px 5px" }}>POST /api/auth/login</code> to get a Bearer token.
-                </p>
+            {/* ── Divider ── */}
+            <div style={{ height: 1, background: T.border }} />
 
+            {/* ── API Development ── */}
+            <div>
+              <div style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, marginBottom: 4 }}>API Development</div>
+              <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, lineHeight: 1.6, margin: "0 0 14px" }}>
+                Postman files for exploring and testing the CargoDesk REST API locally.
+                Import both files into Postman, select the <strong style={{ color: T.text }}>CargoDesk Local</strong> environment,
+                and authenticate via <code style={{ fontFamily: T.mono, fontSize: 11, color: T.success, background: `${T.success}12`, borderRadius: 3, padding: "1px 5px" }}>POST /api/auth/login</code> to get a Bearer token.
+              </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                 {fileCard({
                   badge:       "COLLECTION",
                   badgeColor:  T.accent,
@@ -626,7 +936,6 @@ export default function AppSettingsPage() {
                   onDownload:  () => downloadJson(postmanEnvironment, "CargoDesk.postman_environment.json"),
                 })}
 
-                {/* Auth note */}
                 <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
                   padding: "14px 20px", display: "flex", flexDirection: "column", gap: 8 }}>
                   <span style={{ fontFamily: T.body, fontSize: 11, fontWeight: 700, letterSpacing: ".09em",
@@ -634,14 +943,21 @@ export default function AppSettingsPage() {
                   <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, lineHeight: 1.6, margin: 0 }}>
                     All endpoints except <code style={{ fontFamily: T.mono, fontSize: 11, color: T.success, background: `${T.success}12`, borderRadius: 3, padding: "1px 5px" }}>POST /api/auth/login</code> and <code style={{ fontFamily: T.mono, fontSize: 11, color: T.success, background: `${T.success}12`, borderRadius: 3, padding: "1px 5px" }}>GET /api/health</code> require a Bearer token.
                     Add a <strong style={{ color: T.text }}>Collection-level Authorization</strong> header in Postman (Type: Bearer Token) and paste the token returned by the login call.
-                    Default dev credentials: <code style={{ fontFamily: T.mono, fontSize: 11, color: T.accent, background: `${T.accent}12`, borderRadius: 3, padding: "1px 5px" }}>admin@cargodesk.com</code> / <code style={{ fontFamily: T.mono, fontSize: 11, color: T.accent, background: `${T.accent}12`, borderRadius: 3, padding: "1px 5px" }}>admin123</code>
+                    Default dev credentials:{" "}
+                    <code style={{ fontFamily: T.mono, fontSize: 11, color: T.accent, background: `${T.accent}12`, borderRadius: 3, padding: "1px 5px" }}>admin@cargodesk.com</code>
+                    {" / "}
+                    <code style={{ fontFamily: T.mono, fontSize: 11, color: T.accent, background: `${T.accent}12`, borderRadius: 3, padding: "1px 5px" }}>admin123</code>
                   </p>
                 </div>
-
               </div>
-            );
-          })()}
-        </>
+            </div>
+
+          </div>
+        );
+      })()}
+
+      {activeTab === "Milestones" && isAdmin && (
+        <MilestoneTemplatesPanel />
       )}
 
       {activeTab === "Users" && isAdmin && (

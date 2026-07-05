@@ -1136,6 +1136,42 @@ const ComplianceModal = ({ shipment, screening, onChange, onClose }) => {
   const effectiveResult = screening?.result === "CLEAR" && screening?.overriddenAt ? "OVERRIDE" : screening?.result;
   const rs = RESULT_STYLE[effectiveResult] || RESULT_STYLE.CLEAR;
 
+  // Phase-based check definitions
+  const PHASES = [
+    {
+      id: "parties", label: "Phase 1", title: "Parties",
+      checks: [
+        { field: "Shipper",   label: "Shipper",   value: shipment.shipperName,   desc: null },
+        { field: "Consignee", label: "Consignee", value: shipment.consigneeName, desc: null },
+        { field: "Principal", label: "Principal", value: shipment.principalName, desc: null },
+      ],
+    },
+    {
+      id: "routing", label: "Phase 2", title: "Routing",
+      checks: [
+        { field: "POL", label: "Port of Loading",    value: shipment.pol, desc: shipment.polName },
+        { field: "POD", label: "Port of Discharge",  value: shipment.pod, desc: shipment.podName },
+      ],
+    },
+  ];
+
+  const checkStatus = c => {
+    if (!c.value || !c.value.trim()) return "no_data";
+    if (!screening)                  return "pending";
+    return screening.hits?.some(h => h.field === c.field) ? "hit" : "clear";
+  };
+  const checkHit = c => screening?.hits?.find(h => h.field === c.field) || null;
+  const phaseRollup = phase => {
+    const ss = phase.checks.map(c => checkStatus(c));
+    if (ss.some(s => s === "hit"))    return "hit";
+    if (ss.every(s => s === "clear")) return "clear";
+    return "pending";
+  };
+
+  const CHECK_COLOR = { hit: "#f87171", clear: "#34d399", pending: "#94a3b8", no_data: "#64748b" };
+  const CHECK_ICON  = { hit: "✗", clear: "✓", pending: "◎", no_data: "—" };
+  const CHECK_LABEL = { hit: "HIT", clear: "Clear", pending: "Not Screened", no_data: "No Data" };
+
   const runScreen = async () => {
     setBusy(true);
     try {
@@ -1215,36 +1251,88 @@ const ComplianceModal = ({ shipment, screening, onChange, onClose }) => {
           </div>
         )}
 
-        {/* Hit list */}
-        {screening?.hits?.length > 0 && (
-          <div>
-            <div style={{ fontFamily: T.body, fontSize: 10, fontWeight: 700,
-              textTransform: "uppercase", letterSpacing: ".07em", color: T.textMuted, marginBottom: 8 }}>
-              {screening.hits.length} match{screening.hits.length !== 1 ? "es" : ""}
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {screening.hits.map((h, i) => (
-                <div key={i} style={{ padding: "10px 12px", background: T.bg,
-                  border: `1px solid ${T.danger}33`, borderLeft: `3px solid ${T.danger}`, borderRadius: 6 }}>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 5 }}>
-                    <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: T.danger,
-                      background: T.danger + "18", borderRadius: 3, padding: "1px 6px" }}>
-                      {h.field}
-                    </span>
-                    <span style={{ fontFamily: T.mono, fontSize: 13, color: T.text, fontWeight: 600 }}>
-                      {h.value}
-                    </span>
+        {/* Phase cards */}
+        {PHASES.map(phase => {
+          const rollup = phaseRollup(phase);
+          const rollupColor = CHECK_COLOR[rollup] || CHECK_COLOR.pending;
+          return (
+            <div key={phase.id} style={{ background: T.bg, border: `1px solid ${T.border}`,
+              borderRadius: 8, overflow: "hidden" }}>
+              {/* Phase header */}
+              <div style={{ display: "flex", alignItems: "center", gap: 10,
+                padding: "10px 14px", borderBottom: `1px solid ${T.border}`,
+                background: T.surface }}>
+                <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700,
+                  letterSpacing: ".1em", textTransform: "uppercase",
+                  color: T.textMuted, flexShrink: 0 }}>
+                  {phase.label}
+                </span>
+                <span style={{ fontFamily: T.body, fontSize: 13, fontWeight: 600,
+                  color: T.text, flex: 1 }}>
+                  {phase.title}
+                </span>
+                <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700,
+                  letterSpacing: ".06em", textTransform: "uppercase",
+                  color: rollupColor, background: rollupColor + "18",
+                  border: `1px solid ${rollupColor}44`, borderRadius: 4, padding: "2px 8px" }}>
+                  {rollup === "hit" ? "HIT" : rollup === "clear" ? "All Clear" : "Pending"}
+                </span>
+              </div>
+
+              {/* Check rows */}
+              {phase.checks.map((check, idx) => {
+                const stat = checkStatus(check);
+                const hit  = checkHit(check);
+                const col  = CHECK_COLOR[stat];
+                return (
+                  <div key={check.field} style={{ padding: "10px 14px",
+                    borderBottom: idx < phase.checks.length - 1 ? `1px solid ${T.border}22` : "none" }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "16px 88px 1fr auto",
+                      alignItems: "center", gap: "0 10px" }}>
+                      <span style={{ fontSize: 11, color: col, fontWeight: 700, textAlign: "center" }}>
+                        {CHECK_ICON[stat]}
+                      </span>
+                      <span style={{ fontFamily: T.body, fontSize: 12, fontWeight: 600,
+                        color: T.textMuted }}>
+                        {check.label}
+                      </span>
+                      <span style={{ fontFamily: T.body, fontSize: 12, color: T.text,
+                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {check.value
+                          ? <>{check.value}{check.desc && check.desc !== check.value &&
+                              <span style={{ color: T.textMuted, fontSize: 11, marginLeft: 5 }}>
+                                {check.desc}
+                              </span>}
+                            </>
+                          : <span style={{ color: T.textMuted, fontStyle: "italic" }}>—</span>
+                        }
+                      </span>
+                      <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700,
+                        letterSpacing: ".06em", textTransform: "uppercase",
+                        color: col, background: col + "15",
+                        border: `1px solid ${col}44`, borderRadius: 4,
+                        padding: "1px 6px", flexShrink: 0, minWidth: 72, textAlign: "center" }}>
+                        {CHECK_LABEL[stat]}
+                      </span>
+                    </div>
+                    {hit && (
+                      <div style={{ marginTop: 6, marginLeft: 26, padding: "7px 10px",
+                        background: T.danger + "10",
+                        border: `1px solid ${T.danger}30`,
+                        borderLeft: `3px solid ${T.danger}`,
+                        borderRadius: 4, fontFamily: T.body, fontSize: 11, color: T.text }}>
+                        Matched:{" "}
+                        <span style={{ fontWeight: 600 }}>{hit.matchedEntry}</span>
+                        {hit.program && <> · <span style={{ color: "#f59e0b" }}>{hit.program}</span></>}
+                        {hit.source  && <> · <span style={{ color: T.textMuted }}>{hit.source}</span></>}
+                      </div>
+                    )}
                   </div>
-                  <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, lineHeight: 1.5 }}>
-                    Matched: <span style={{ color: T.text, fontWeight: 600 }}>{h.matchedEntry}</span>
-                    {h.program && <> · <span style={{ color: "#f59e0b" }}>{h.program}</span></>}
-                    {h.source && <> · <span style={{ fontSize: 11 }}>{h.source}</span></>}
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
-          </div>
-        )}
+          );
+        })}
 
         {/* Override reason display */}
         {screening?.overrideReason && (
@@ -2733,9 +2821,18 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
               </span>
             )}
           </div>
-          <p style={{ fontFamily: T.mono, fontSize: 13, color: T.textMuted, margin: "3px 0 0" }}>
-{shipment.polName || shipment.pol} → {shipment.podName || shipment.pod} · created {shipment.createdAt}
-          </p>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 3 }}>
+            <span style={{ fontFamily: T.mono, fontSize: 13, color: T.textMuted }}>
+              {shipment.polName || shipment.pol} → {shipment.podName || shipment.pod} · created {shipment.createdAt}
+            </span>
+            {shipment.tradeLane && (
+              <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: T.text,
+                background: T.bg, border: `1px solid ${T.border}`, borderRadius: 4,
+                padding: "1px 8px", letterSpacing: ".04em", whiteSpace: "nowrap" }}>
+                {shipment.tradeLane}
+              </span>
+            )}
+          </div>
         </div>
         <button
           onClick={openMessages}
@@ -2771,85 +2868,139 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
       )}
 
       {/* Route summary grid */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr",
-        background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8,
-        overflow: "hidden", marginBottom: 14 }}>
-        <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 3 }}>
-          <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
-            letterSpacing: "0.09em", color: T.textMuted }}>Port of Loading</span>
-          <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700,
-            color: shipment.pol ? T.text : T.border }}>{shipment.pol || "—"}</span>
-          {shipment.polName && (
-            <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{shipment.polName}</span>
-          )}
-        </div>
+      {(() => {
+        const pkuLeg = legs.find(l => l.legType === "Pick-up" && l.movementType === "Carrier's Haulage");
+        const delLeg = [...legs].reverse().find(l => l.legType === "Delivery" && l.movementType === "Carrier's Haulage");
+        const gridCols = `${pkuLeg ? "auto " : ""}1fr auto 1fr${delLeg ? " auto" : ""}`;
+        const doorCell = { padding: "12px 14px", display: "flex", flexDirection: "column", gap: 3,
+          background: T.surface };
+        return (
+          <div id="shp-route" style={{ display: "grid", gridTemplateColumns: gridCols,
+            background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8,
+            overflow: "hidden", marginBottom: 14 }}>
 
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-          gap: 6, padding: "12px 24px",
-          borderLeft: `1px solid ${T.border}`, borderRight: `1px solid ${T.border}`,
-          background: T.surface }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
-              <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
-                letterSpacing: "0.09em", color: T.textMuted }}>ETD</span>
-              <span style={{ fontFamily: T.mono, fontSize: 12, color: shipment.etd ? T.text : T.border }}>
-                {shipment.etd || "—"}</span>
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
-              {transitDays !== null
-                ? <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: T.accent,
-                    background: T.accentBg, border: `1px solid ${T.accent}33`,
-                    borderRadius: 10, padding: "2px 10px", whiteSpace: "nowrap" }}>
-                    {transitDays}d transit
-                  </span>
-                : <span style={{ color: T.border, fontSize: 16 }}>→</span>}
-            </div>
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
-              <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
-                letterSpacing: "0.09em", color: T.textMuted }}>ETA</span>
-              <span style={{ fontFamily: T.mono, fontSize: 12, color: shipment.eta ? T.text : T.border }}>
-                {shipment.eta || "—"}</span>
-            </div>
-          </div>
-          {tsps.length > 0 && (
-            <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap", justifyContent: "center" }}>
-              {tsps.map((tsp, i) => (
-                <span key={`${tsp.code}-${i}`} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                  {i > 0 && <span style={{ color: T.textMuted, fontSize: 10 }}>›</span>}
-                  <span title={tsp.name || tsp.code}
-                    style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text,
-                      background: T.bg, border: `1px solid ${T.border}`, borderRadius: 4,
-                      padding: "1px 7px" }}>
-                    {tsp.code}
-                  </span>
+            {/* PKU door cell */}
+            {pkuLeg && (
+              <div style={{ ...doorCell, borderRight: `1px dashed ${T.border}` }}>
+                <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
+                  letterSpacing: "0.09em", color: T.accent }}>Pick-up</span>
+                <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text }}>
+                  {pkuLeg.pol || "—"}
                 </span>
-              ))}
-            </div>
-          )}
-          {(() => {
-            const displayCarrier = shipment.carrierCode || contractCarrierCode;
-            return (
-              <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700,
-                color: displayCarrier ? T.accent : T.border }}>
-                {displayCarrier || "—"}
-              </span>
-            );
-          })()}
-        </div>
+                {pkuLeg.polName && (
+                  <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{pkuLeg.polName}</span>
+                )}
+                <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted, marginTop: 2 }}>
+                  Carrier's Haulage →
+                </span>
+              </div>
+            )}
 
-        <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 3, textAlign: "right" }}>
-          <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
-            letterSpacing: "0.09em", color: T.textMuted }}>Port of Discharge</span>
-          <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700,
-            color: shipment.pod ? T.text : T.border }}>{shipment.pod || "—"}</span>
-          {shipment.podName && (
-            <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{shipment.podName}</span>
-          )}
-        </div>
-      </div>
+            {/* POL */}
+            <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 3 }}>
+              <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
+                letterSpacing: "0.09em", color: T.textMuted }}>Port of Loading</span>
+              <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700,
+                color: shipment.pol ? T.text : T.border }}>{shipment.pol || "—"}</span>
+              {shipment.polName && (
+                <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{shipment.polName}</span>
+              )}
+            </div>
+
+            {/* Centre: ETD / transit / ETA / carrier / routing term */}
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+              gap: 6, padding: "12px 24px",
+              borderLeft: `1px solid ${T.border}`, borderRight: `1px solid ${T.border}`,
+              background: T.surface }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
+                  <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
+                    letterSpacing: "0.09em", color: T.textMuted }}>ETD</span>
+                  <span style={{ fontFamily: T.mono, fontSize: 12, color: shipment.etd ? T.text : T.border }}>
+                    {shipment.etd || "—"}</span>
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+                  {transitDays !== null
+                    ? <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: T.accent,
+                        background: T.accentBg, border: `1px solid ${T.accent}33`,
+                        borderRadius: 10, padding: "2px 10px", whiteSpace: "nowrap" }}>
+                        {transitDays}d transit
+                      </span>
+                    : <span style={{ color: T.border, fontSize: 16 }}>→</span>}
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
+                  <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
+                    letterSpacing: "0.09em", color: T.textMuted }}>ETA</span>
+                  <span style={{ fontFamily: T.mono, fontSize: 12, color: shipment.eta ? T.text : T.border }}>
+                    {shipment.eta || "—"}</span>
+                </div>
+              </div>
+              {tsps.length > 0 && (
+                <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap", justifyContent: "center" }}>
+                  {tsps.map((tsp, i) => (
+                    <span key={`${tsp.code}-${i}`} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                      {i > 0 && <span style={{ color: T.textMuted, fontSize: 10 }}>›</span>}
+                      <span title={tsp.name || tsp.code}
+                        style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text,
+                          background: T.bg, border: `1px solid ${T.border}`, borderRadius: 4,
+                          padding: "1px 7px" }}>
+                        {tsp.code}
+                      </span>
+                    </span>
+                  ))}
+                </div>
+              )}
+              {(() => {
+                const displayCarrier = shipment.carrierCode || contractCarrierCode;
+                return (
+                  <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700,
+                    color: displayCarrier ? T.accent : T.border }}>
+                    {displayCarrier || "—"}
+                  </span>
+                );
+              })()}
+              {shipment.routingTerm && (
+                <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: T.text,
+                  background: T.bg, border: `1px solid ${T.border}`, borderRadius: 4, padding: "1px 7px" }}>
+                  {shipment.routingTerm}
+                </span>
+              )}
+            </div>
+
+            {/* POD */}
+            <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 3, textAlign: "right" }}>
+              <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
+                letterSpacing: "0.09em", color: T.textMuted }}>Port of Discharge</span>
+              <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700,
+                color: shipment.pod ? T.text : T.border }}>{shipment.pod || "—"}</span>
+              {shipment.podName && (
+                <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{shipment.podName}</span>
+              )}
+            </div>
+
+            {/* DEL door cell */}
+            {delLeg && (
+              <div style={{ ...doorCell, borderLeft: `1px dashed ${T.border}`, textAlign: "right" }}>
+                <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
+                  letterSpacing: "0.09em", color: T.accent }}>Delivery</span>
+                <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text }}>
+                  {delLeg.pod || "—"}
+                </span>
+                {delLeg.podName && (
+                  <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{delLeg.podName}</span>
+                )}
+                <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted, marginTop: 2 }}>
+                  → Carrier's Haulage
+                </span>
+              </div>
+            )}
+
+          </div>
+        );
+      })()}
 
       {/* Info cards row 1 */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 14 }}>
+      <div id="shp-info-ports" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 14 }}>
         <InfoCard label="Port of Loading"
           value={shipment.polName ? `${shipment.pol} — ${shipment.polName}` : shipment.pol}
           color={T.textCode} mono />
@@ -2861,7 +3012,7 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
       </div>
 
       {/* Info cards row 2 */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 22 }}>
+      <div id="shp-info-dates" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 22 }}>
         {/* ETD with GMT */}
         <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 10, padding: "14px 18px" }}>
           <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
@@ -2933,7 +3084,7 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
         const pct       = allocTEU > 0 ? Math.min(100, (shipTEU / allocTEU) * 100) : 0;
         const barColor  = pct >= 100 ? T.danger : pct >= thresh ? T.warning : T.success;
         return (
-          <div style={{ background: T.surface, border: `1px solid ${T.accent}44`,
+          <div id="shp-space" style={{ background: T.surface, border: `1px solid ${T.accent}44`,
             borderLeft: `3px solid ${T.accent}`, borderRadius: 10,
             padding: "14px 20px", marginBottom: 22,
             display: "flex", alignItems: "center", gap: 24, flexWrap: "wrap" }}>
@@ -3165,6 +3316,16 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
                 <div style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted, fontWeight: 600,
                   textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 8 }}>Commodity</div>
                 <CommodityDisplay code={shipment.commodityCode} />
+              </div>
+            )}
+            {shipment.declaredValue != null && (
+              <div style={{ paddingTop: 14, marginTop: 2, borderTop: `1px solid ${T.border}22` }}>
+                <div style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted, fontWeight: 600,
+                  textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 4 }}>Declared Value</div>
+                <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text }}>
+                  {(shipment.declaredValueCurrency || "USD")}{" "}
+                  {Number(shipment.declaredValue).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
               </div>
             )}
             {shipment.contractNotes && (

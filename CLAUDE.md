@@ -4,7 +4,7 @@
 Full-stack freight management app. React 18 + Vite frontend, Express + node:sqlite backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.20.0 "Lading"**
+- Version: **v0.22.0 "Crossroads"**
 - Run: `npm run dev` (runs server on :3001 + Vite on :5173 concurrently)
 - Seed: `npm run seed` (runs `scripts/import-mdm-data.js`)
 
@@ -98,7 +98,10 @@ src/
 - **Migrations**: safe `try/catch` array in server.js startup — add new columns there
 - **Backfill**: `backfillPortCountryCodes()` IIFE runs on startup
 - **Toast**: `import { toast } from './toast'` → `toast.success/error/warning/info(msg)`
-- **Version**: update `src/version.js` on every release
+- **Version**: update `src/version.js` + `CLAUDE.md` on every release
+- **Routing term**: computed in `syncShipmentFromLegs` from carrier-covered legs only — `legs.filter(l => l.movement_type !== "Merchant's Haulage" && l.movement_type !== "Customer Arranged")`; format `DR-CY`, `PT-PT`, `DR-DR`; `LEG_LOC_ABBR = { Door: DR, Terminal: PT, Container Yard: CY, CFS: CFS }`; stored as `routing_term` on shipments; `mapShipment` uses `r.routing_term || SVC_ABBR[r.service_type]`
+- **Leg schema (shipment_legs)**: `leg_type` (Pick-up/SEA/AIR/RAIL/Feeder/Delivery), `movement_type` (Carrier's Haulage/Merchant's Haulage/SEA/Air Freight/Rail/Feeder), `pol_loc_type`/`pod_loc_type` (Door/Terminal/Container Yard/CFS), `movement_by` (Barge/Rail/Truck/Vessel/Air); `LEG_TO_MOT` in server derives `mot` from `legType` (Pick-up/Delivery → ROAD, SEA → SEA) for the seaLeg sync lookup
+- **Trade lane column**: `longestLane(unlocode)` picks the most specific lane code (longest string) from `portLanesMap[unlocode]` Set; `tradeLane` in `mapShipment` = `polLane → podLane`; `SVC_ABBR` maps service_type to short codes: Port-to-Port→P2P, Door-to-Port→D2P, Port-to-Door→P2D, Door-to-Door→D2D
 - **Theme**: `T.surface`, `T.bg`, `T.text`, `T.textMuted`, `T.accent`, `T.border`, `T.success`, `T.danger`, `T.warning`, `T.info`
 - **VesselField**: named export `{ VesselField }` not default
 - **EntityHistoryModal**: accepts `entityType`, `entityId`, `title`, `headerContent`, `onClose`; bridges to `shipment_events` for type="shipment", else uses `entity_events`
@@ -119,10 +122,12 @@ src/
 - **Kanban WIP limits**: per-column Work-In-Progress limit set via ⚙ in the column header; persisted to `localStorage` under key `cargodesk_wip_limits`; count badge turns amber at limit, red when exceeded; `onSetWipLimit(null)` clears the limit
 - **TICKET_JOIN constant**: shared SQL fragment in server.js used by GET, POST response, and PUT response so the assignee JOIN is defined in one place
 
-## Recent changes (v0.20.0 "Lading")
-- **Quick Container Setup**: new Containers section in the new-shipment form (hidden on edit); fields: Count, Container Type (`ContainerTypeField`), Weight (kg), Volume (CBM), Distribution (`all` = total÷N, `per` = copy same to each), Cargo Description, DG toggle + IMDG class picker; Generate button builds draft container objects shown as preview chips; on save, containers are created via `api.containers.create({ shipmentId, ...ctr })` after legs and merged into `containers` state
-- **Central Contract gate**: clicking "Central" on a new shipment with no draft containers shows `toast.warning` directing the user to generate containers first — ensures contract eligibility can be filtered by cargo details
-- **Incoterm → Principal auto-default**: changing Incoterm automatically sets Principal — C/D terms (CPT, CIP, CFR, CIF, DAP, DPU, DDP) → Shipper; E/F terms (EXW, FCA, FAS, FOB) → Consignee; only fires when the relevant party is already selected; done in a single `setF` call for atomicity
-- **Routing banner — TSP chips**: `ShipmentDetailPage` loads legs via `api.legs.list` on mount; TSPs derived as `legs.slice(0,-1).map(l => l.pod)`; shown as monospaced chips in the banner centre panel
-- **Routing banner — carrier code fallback**: `contractCarrierCode` state populated from `api.contracts.get` fetch; banner displays `shipment.carrierCode || contractCarrierCode` so shipments with a linked contract always show a carrier even if `shipment.carrier_code` is empty
-- **`syncShipmentFromLegs` fix (server)**: leg save now uses `COALESCE(NULLIF(?, ''), carrier_code)` — a leg with no carrier no longer overwrites the shipment's stored `carrier_code` with an empty string
+## Recent changes (v0.22.0 "Crossroads")
+- **Multimodal leg UX hardening**: SEA leg Movement Type and Movement By are blank/blocked (show `—`, non-editable); Pick-up and Delivery legs show `—` in the Carrier column (code always derived from the SEA leg); Vessel and Voyage disabled for Pick-up/Delivery legs unless Movement By is Barge; new legs default to `legType: "SEA"`; column order: Leg Type → Movement Type → From → Loc. Type → ETD → To → Loc. Type → ETA → **Carrier** → Movement By → Vessel → Voyage → Ctr. Type → Contract No.
+- **Row selection + Remove Leg**: clicking a row highlights it with accent left-border + 6% tint; Remove Leg footer button activates (danger colour) when a row is selected; replaces inline × buttons — no selection = no removal
+- **PKU/DEL flanking cells**: both `shp-route` (ShipmentDetailPage) and `shpform-route` (ShipmentFormPage) use a dynamic grid (`${pkuLeg ? "auto " : ""}1fr auto 1fr${delLeg ? " auto" : ""}`) that adds door cells with dashed borders when Carrier's Haulage legs exist; seaport UNLOCODE (`seaLeg?.pol`) shown as Port of Loading — fixes prior mislabelling of door pickup locations as POL
+- **Contract matching improvements**: `GET /api/contracts/match` accepts `crd`, `routingTerm`, `pkuLocation`, `delLocation`; uses `seaLeg?.pol` as match POL (not the door UNLOCODE); inclusive haulage logic — contracts with haulage support shown for non-haulage shipments, excluded only when shipment needs haulage (DR routing term) but contract does not; ContractField guard relaxed to POL + POD only (not ETD)
+- **contract_legs extended**: `pol_carrier_haulage`, `pod_carrier_haulage`, `pol_haulage_locations`, `pod_haulage_locations` columns added via startup migration
+- **portLanesMap live rebuild**: `rebuildPortLanesMap()` called after every country-trade-lane mutation — trade lane assignments take effect immediately without server restart
+- **Section IDs**: ShipmentDetailPage (`shp-route`, `shp-info-ports`, `shp-info-dates`, `shp-space`) and ShipmentFormPage (`shpform-parties`, `shpform-cargo`, `shpform-transport`, `shpform-route`, `shpform-containers`, `shpform-contract`, `shpform-status`, `shpform-actions`)
+- **Trade lane badge** added to ShipmentDetailPage shipment subtitle

@@ -16,7 +16,7 @@ import { useResizableColumns, ColResizer } from "../../components/primitives/use
 const LP_LIMIT = 50;
 
 const MdmLinkedPortsPage = () => {
-  const { canEdit } = useAuth();
+  const { canManageConfigs } = useAuth();
   const [links,   setLinks]   = useState([]);
   const [offset,  setOffset]  = useState(0);
   const [loading, setLoading] = useState(true);
@@ -95,7 +95,7 @@ const MdmLinkedPortsPage = () => {
 
           </p>
         </div>
-        {canEdit && <Btn onClick={() => setModal("add")} size="lg">＋ Add Link</Btn>}
+        {canManageConfigs && <Btn onClick={() => setModal("add")} size="lg">＋ Add Link</Btn>}
       </div>
 
       {apiErr && (
@@ -138,8 +138,8 @@ const MdmLinkedPortsPage = () => {
             </span>
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <ActionMenu items={[
-                ...(canEdit ? [{ icon: "✎", label: "Edit Note", onClick: () => setModal(l) }] : []),
-                ...(canEdit ? [{ icon: "✕", label: "Delete",    variant: "danger", onClick: () => setConfirm(l.id) }] : []),
+                ...(canManageConfigs ? [{ icon: "✎", label: "Edit Note", onClick: () => setModal(l) }] : []),
+                ...(canManageConfigs ? [{ icon: "✕", label: "Delete",    variant: "danger", onClick: () => setConfirm(l.id) }] : []),
               ]} />
             </div>
           </div>

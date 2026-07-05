@@ -88,7 +88,7 @@ export const ContainerTypePickerModal = ({ current, onSelect, onClose }) => {
 //             + 🔍 button to open full visual picker.
 // Selected:   chip row (code · label · TEU badge · 🔍 · ✕).
 
-export const ContainerTypeField = ({ size, type, onChange, required = false }) => {
+export const ContainerTypeField = ({ size, type, onChange, required = false, label = "Equipment Type" }) => {
   const [query,       setQuery]       = useState("");
   const [dropOpen,    setDropOpen]    = useState(false);
   const [highlighted, setHighlighted] = useState(-1);
@@ -155,7 +155,7 @@ export const ContainerTypeField = ({ size, type, onChange, required = false }) =
   };
 
   return (
-    <Field label="Equipment Type" required={required}>
+    <Field label={label} required={required}>
       {selected ? (
         // ── Selected chip ─────────────────────────────────────────────────────
         <div style={{ ...inputBase, display: "flex", alignItems: "center", gap: 8,

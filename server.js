@@ -3,6 +3,7 @@ const express    = require("express");
 const http       = require("http");
 const https      = require("https");
 const path       = require("path");
+const fs         = require("fs");
 const { WebSocketServer } = require("ws");
 const { DatabaseSync } = require("node:sqlite");
 const bcrypt = require("bcryptjs");
@@ -381,8 +382,12 @@ const migrations = [
   "ALTER TABLE shipments   ADD COLUMN principal_id    TEXT    DEFAULT ''",
   "ALTER TABLE shipments   ADD COLUMN principal_name  TEXT    DEFAULT ''",
   "ALTER TABLE shipments   ADD COLUMN contract_ref    TEXT    DEFAULT ''",
-  "ALTER TABLE contract_legs ADD COLUMN pol_linked_allowed INTEGER DEFAULT 0",
-  "ALTER TABLE contract_legs ADD COLUMN pod_linked_allowed INTEGER DEFAULT 0",
+  "ALTER TABLE contract_legs ADD COLUMN pol_linked_allowed   INTEGER DEFAULT 0",
+  "ALTER TABLE contract_legs ADD COLUMN pod_linked_allowed   INTEGER DEFAULT 0",
+  "ALTER TABLE contract_legs ADD COLUMN pol_carrier_haulage  INTEGER DEFAULT 0",
+  "ALTER TABLE contract_legs ADD COLUMN pod_carrier_haulage  INTEGER DEFAULT 0",
+  "ALTER TABLE contract_legs ADD COLUMN pol_haulage_locations TEXT   DEFAULT ''",
+  "ALTER TABLE contract_legs ADD COLUMN pod_haulage_locations TEXT   DEFAULT ''",
   "ALTER TABLE allocations ADD COLUMN contract_id     TEXT DEFAULT ''",
   "ALTER TABLE allocations ADD COLUMN contract_number TEXT DEFAULT ''",
   "UPDATE shipments SET contract_type = 'Central' WHERE contract_type = 'Central Contract'",
@@ -446,13 +451,108 @@ const migrations = [
   "ALTER TABLE shipments ADD COLUMN place_of_receipt  TEXT DEFAULT ''",
   "ALTER TABLE shipments ADD COLUMN place_of_delivery TEXT DEFAULT ''",
   "ALTER TABLE shipments ADD COLUMN cargo_ready_date  TEXT DEFAULT NULL",
-  "ALTER TABLE shipments ADD COLUMN notify_id         TEXT DEFAULT ''",
-  "ALTER TABLE shipments ADD COLUMN notify_name       TEXT DEFAULT ''",
+  "ALTER TABLE shipments ADD COLUMN notify_id              TEXT    DEFAULT ''",
+  "ALTER TABLE shipments ADD COLUMN notify_name            TEXT    DEFAULT ''",
+  "ALTER TABLE shipments ADD COLUMN declared_value         REAL    DEFAULT NULL",
+  "ALTER TABLE shipments ADD COLUMN declared_value_currency TEXT   DEFAULT 'USD'",
+  "ALTER TABLE shipments ADD COLUMN routing_term           TEXT    DEFAULT NULL",
+  "ALTER TABLE shipment_legs ADD COLUMN leg_type      TEXT DEFAULT 'SEA'",
+  "ALTER TABLE shipment_legs ADD COLUMN movement_type TEXT DEFAULT 'SEA'",
+  "ALTER TABLE shipment_legs ADD COLUMN pol_loc_type  TEXT DEFAULT 'Terminal'",
+  "ALTER TABLE shipment_legs ADD COLUMN pod_loc_type  TEXT DEFAULT 'Terminal'",
+  "ALTER TABLE shipment_legs ADD COLUMN movement_by   TEXT DEFAULT ''",
+  // v0.21.0 — multi-role per user + data access scoping
+  "ALTER TABLE users ADD COLUMN roles TEXT DEFAULT NULL",
+  `CREATE TABLE IF NOT EXISTS user_scope_items (
+    id         TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    role       TEXT NOT NULL DEFAULT '',
+    item_type  TEXT NOT NULL,
+    value      TEXT NOT NULL,
+    label      TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
+  `CREATE TABLE IF NOT EXISTS user_access_configs (
+    id             TEXT PRIMARY KEY,
+    user_id        TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    label          TEXT NOT NULL DEFAULT '',
+    origin_lane    TEXT,
+    dest_lane      TEXT,
+    pol_codes      TEXT,
+    pod_codes      TEXT,
+    carrier_codes  TEXT,
+    created_at     TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
+  `CREATE TABLE IF NOT EXISTS shipment_documents (
+    id           TEXT PRIMARY KEY,
+    shipment_id  TEXT NOT NULL,
+    filename     TEXT NOT NULL,
+    stored_name  TEXT NOT NULL,
+    mime_type    TEXT NOT NULL DEFAULT '',
+    size_bytes   INTEGER NOT NULL DEFAULT 0,
+    doc_type     TEXT NOT NULL DEFAULT 'Other',
+    uploaded_by  TEXT NOT NULL DEFAULT '',
+    created_at   TEXT NOT NULL
+  )`,
+  "ALTER TABLE shipment_documents ADD COLUMN status        TEXT DEFAULT 'draft'",
+  "ALTER TABLE shipment_documents ADD COLUMN confirmed_at  TEXT DEFAULT NULL",
+  "ALTER TABLE shipment_documents ADD COLUMN confirmed_by  TEXT DEFAULT ''",
 ];
 
 for (const sql of migrations) {
   try { db.exec(sql); } catch {}
 }
+
+const UPLOADS_DIR = path.join(__dirname, "uploads", "documents");
+fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+
+// ─── Port → trade lane index (for access-scope filtering + tradeLane display) ─
+const portLanesMap = {};
+const PORT_LANES_SQL = `
+  SELECT DISTINCT pl.unlocode, tl.code AS lane_code
+  FROM port_locations pl
+  JOIN countries c ON c.iso2 = pl.country_code
+  JOIN country_trade_lanes ctl ON ctl.iso2 = c.iso2
+  JOIN trade_lanes tl ON tl.code = ctl.lane_code
+`;
+function rebuildPortLanesMap() {
+  try {
+    const plRows = db.prepare(PORT_LANES_SQL).all();
+    for (const key of Object.keys(portLanesMap)) delete portLanesMap[key];
+    for (const r of plRows) {
+      if (!portLanesMap[r.unlocode]) portLanesMap[r.unlocode] = new Set();
+      portLanesMap[r.unlocode].add(r.lane_code);
+    }
+    console.log(`  ✔ Port→lane index rebuilt for ${Object.keys(portLanesMap).length} ports`);
+  } catch (e) {
+    console.warn("  ⚠ Port→lane index failed:", e.message);
+  }
+}
+rebuildPortLanesMap();
+
+// ─── Port → country index (for country-code access filtering) ─────────────────
+const portCountryMap = {};
+try {
+  const pcRows = db.prepare(
+    "SELECT unlocode, country_code FROM port_locations WHERE country_code IS NOT NULL AND country_code != ''"
+  ).all();
+  for (const r of pcRows) portCountryMap[r.unlocode] = r.country_code;
+  console.log(`  ✔ Port→country map built for ${Object.keys(portCountryMap).length} ports`);
+} catch (e) {
+  console.warn("  ⚠ Port→country map failed:", e.message);
+}
+
+// ─── Backfill user roles array ────────────────────────────────────────────────
+;(function backfillUserRoles() {
+  try {
+    const toUpdate = db.prepare("SELECT id, role FROM users WHERE roles IS NULL OR roles = ''").all();
+    for (const u of toUpdate) {
+      db.prepare("UPDATE users SET roles = ? WHERE id = ?")
+        .run(JSON.stringify([u.role || 'viewer']), u.id);
+    }
+    if (toUpdate.length) console.log(`  ✔ Backfilled roles[] for ${toUpdate.length} user(s)`);
+  } catch (e) { console.warn("  ⚠ User roles backfill:", e.message); }
+})();
 
 // ─── Seed admin user ──────────────────────────────────────────────────────────
 
@@ -792,26 +892,46 @@ try { db.exec("UPDATE shipments SET vessel = '', vessel_imo = '' WHERE vessel_im
 
 // ─── Map functions ────────────────────────────────────────────────────────────
 
-const mapShipment     = r => ({ id: r.id, pol: r.pol, polName: r.pol_name || '', pod: r.pod, podName: r.pod_name || '', carrierCode: r.carrier_code, contractType: r.contract_type, contractNotes: r.contract_notes || '', status: r.status, createdAt: r.created_at, etd: r.etd || '', eta: r.eta || '', bookingRef: r.booking_ref || '', blNumber: r.bl_number || '', vessel: r.vessel || '', voyage: r.voyage || '', incoterm: r.incoterm || '', vesselImo: r.vessel_imo || '', contractId: r.contract_id || '', contractRef: r.contract_ref || '', commodityCode: r.commodity_code || '', shipperId: r.shipper_id || '', shipperName: r.shipper_name || '', consigneeId: r.consignee_id || '', consigneeName: r.consignee_name || '', principalId: r.principal_id || '', principalName: r.principal_name || '', allocationId: r.allocation_id || '', spaceSkipReason: r.space_skip_reason || '', spaceOverageReason: r.space_overage_reason || '', spaceBadge: r.space_badge || '', marginBuyUsd: r.margin_buy_usd ?? null, marginSellUsd: r.margin_sell_usd ?? null, overdueCount: r.overdue_count ?? 0, freightTerms: r.freight_terms || 'Prepaid', movementType: r.movement_type || 'FCL', serviceType: r.service_type || 'Port-to-Port', placeOfReceipt: r.place_of_receipt || '', placeOfDelivery: r.place_of_delivery || '', cargoReadyDate: r.cargo_ready_date || null, notifyId: r.notify_id || '', notifyName: r.notify_name || '' });
+const SVC_ABBR = { 'Port-to-Port': 'P2P', 'Door-to-Port': 'D2P', 'Port-to-Door': 'P2D', 'Door-to-Door': 'D2D' };
+function longestLane(un) {
+  const s = portLanesMap[un]; if (!s || !s.size) return ''; return [...s].sort((a, b) => b.length - a.length)[0];
+}
+
+const mapShipment     = r => { const polLane = longestLane(r.pol), podLane = longestLane(r.pod); return { id: r.id, pol: r.pol, polName: r.pol_name || '', pod: r.pod, podName: r.pod_name || '', carrierCode: r.carrier_code, contractType: r.contract_type, contractNotes: r.contract_notes || '', status: r.status, createdAt: r.created_at, etd: r.etd || '', eta: r.eta || '', bookingRef: r.booking_ref || '', blNumber: r.bl_number || '', vessel: r.vessel || '', voyage: r.voyage || '', incoterm: r.incoterm || '', vesselImo: r.vessel_imo || '', contractId: r.contract_id || '', contractRef: r.contract_ref || '', commodityCode: r.commodity_code || '', shipperId: r.shipper_id || '', shipperName: r.shipper_name || '', consigneeId: r.consignee_id || '', consigneeName: r.consignee_name || '', principalId: r.principal_id || '', principalName: r.principal_name || '', allocationId: r.allocation_id || '', spaceSkipReason: r.space_skip_reason || '', spaceOverageReason: r.space_overage_reason || '', spaceBadge: r.space_badge || '', marginBuyUsd: r.margin_buy_usd ?? null, marginSellUsd: r.margin_sell_usd ?? null, overdueCount: r.overdue_count ?? 0, freightTerms: r.freight_terms || 'Prepaid', movementType: r.movement_type || 'FCL', serviceType: r.service_type || 'Port-to-Port', placeOfReceipt: r.place_of_receipt || '', placeOfDelivery: r.place_of_delivery || '', cargoReadyDate: r.cargo_ready_date || null, notifyId: r.notify_id || '', notifyName: r.notify_name || '', declaredValue: r.declared_value ?? null, declaredValueCurrency: r.declared_value_currency || 'USD', routingTerm: r.routing_term || (SVC_ABBR[r.service_type] || 'P2P'), tradeLane: polLane && podLane ? polLane + ' → ' + podLane : '' }; };
 const mapShipmentLeg = r => ({
   id: r.id, shipmentId: r.shipment_id, legOrder: r.leg_order,
-  mot: r.mot || 'SEA', pol: r.pol || '', pod: r.pod || '',
+  mot: r.mot || 'SEA',
+  legType:      r.leg_type      || r.mot || 'SEA',
+  movementType: r.movement_type || r.mot || 'SEA',
+  pol: r.pol || '', pod: r.pod || '',
+  polLocType: r.pol_loc_type || 'Terminal', podLocType: r.pod_loc_type || 'Terminal',
   etd: r.etd || null, eta: r.eta || null,
   carrierCode: r.carrier_code || '', vessel: r.vessel || '', vesselImo: r.vessel_imo || '',
-  voyage: r.voyage || '', contractType: r.contract_type || '', contractRef: r.contract_ref || '',
+  voyage: r.voyage || '', movementBy: r.movement_by || '',
+  contractType: r.contract_type || '', contractRef: r.contract_ref || '',
   createdAt: r.created_at,
 });
+
+const LEG_LOC_ABBR = { 'Door': 'DR', 'Terminal': 'PT', 'Container Yard': 'CY', 'CFS': 'CFS' };
 
 const syncShipmentFromLegs = (shipmentId) => {
   const legs = db.prepare("SELECT * FROM shipment_legs WHERE shipment_id=? ORDER BY leg_order ASC").all(shipmentId);
   if (!legs.length) return;
   const first = legs[0], last = legs[legs.length - 1];
-  const seaLeg = legs.find(l => l.mot === 'SEA') || first;
+  const seaLeg = legs.find(l => l.leg_type === 'SEA' || l.mot === 'SEA') || first;
+  // Routing term: span from first carrier-arranged leg to last — Merchant's Haulage legs excluded
+  const cLegs = legs.filter(l => !["Merchant's Haulage", "Customer Arranged"].includes(l.movement_type || l.mot));
+  let routingTerm = null;
+  if (cLegs.length > 0) {
+    const a = cLegs[0].pol_loc_type || 'Terminal';
+    const b = cLegs[cLegs.length - 1].pod_loc_type || 'Terminal';
+    routingTerm = (LEG_LOC_ABBR[a] || a) + '-' + (LEG_LOC_ABBR[b] || b);
+  }
   // COALESCE(NULLIF(?, ''), carrier_code) preserves an existing carrier when the leg has none set
-  db.prepare(`UPDATE shipments SET pol=?, pod=?, etd=?, eta=?, carrier_code=COALESCE(NULLIF(?, ''), carrier_code), vessel=?, vessel_imo=?, voyage=? WHERE id=?`)
+  db.prepare(`UPDATE shipments SET pol=?, pod=?, etd=?, eta=?, carrier_code=COALESCE(NULLIF(?, ''), carrier_code), vessel=?, vessel_imo=?, voyage=?, routing_term=? WHERE id=?`)
     .run(first.pol || '', last.pod || '', first.etd || null, last.eta || null,
          seaLeg.carrier_code || '', seaLeg.vessel || '', seaLeg.vessel_imo || '',
-         seaLeg.voyage || '', shipmentId);
+         seaLeg.voyage || '', routingTerm, shipmentId);
 };
 
 const mapCostLine     = r => ({ id: r.id, shipmentId: r.shipment_id, type: r.type, chargeCode: r.charge_code, currency: r.currency, amount: r.amount, exchangeRate: r.exchange_rate, amountUsd: Math.round(r.amount * r.exchange_rate * 100) / 100, notes: r.notes || '', containerId: r.container_id || '', source: r.source || 'manual', modifiedAt: r.modified_at || null, createdAt: r.created_at });
@@ -822,6 +942,99 @@ const mapVessel       = r => ({ imo: r.imo, name: r.name, assetType: r.asset_typ
 const mapPortLocation = r => ({ unlocode: r.unlocode, name: r.name, latitude: r.latitude, longitude: r.longitude, countryCode: r.country_code, zoneCode: r.zone_code, lastSyncedAt: r.last_synced_at || null });
 const mapLinkedPort   = r => ({ id: r.id, primaryUnlocode: r.primary_unlocode, primaryName: r.primary_name || '', linkedUnlocode: r.linked_unlocode, linkedName: r.linked_name || '', note: r.note || '' });
 const mapTradeLane    = r => ({ code: r.code, name: r.name, description: r.description || '', countryCount: r.country_count ?? 0 });
+const mapScopeItem    = r => ({
+  id:        r.id,
+  userId:    r.user_id,
+  role:      r.role     || '',
+  itemType:  r.item_type,
+  value:     r.value,
+  label:     r.label    || '',
+  createdAt: r.created_at,
+});
+const mapAccessConfig = r => ({
+  id:           r.id,
+  userId:       r.user_id,
+  label:        r.label || '',
+  originLane:   r.origin_lane  || null,
+  destLane:     r.dest_lane    || null,
+  polCodes:     r.pol_codes      ? JSON.parse(r.pol_codes)      : [],
+  podCodes:     r.pod_codes      ? JSON.parse(r.pod_codes)      : [],
+  carrierCodes: r.carrier_codes  ? JSON.parse(r.carrier_codes)  : [],
+  createdAt:    r.created_at,
+});
+
+function shipmentMatchesAccessConfig(s, cfg) {
+  if (cfg.originLane) {
+    const polLanes = portLanesMap[s.pol] || new Set();
+    if (!polLanes.has(cfg.originLane)) return false;
+  }
+  if (cfg.destLane) {
+    const podLanes = portLanesMap[s.pod] || new Set();
+    if (!podLanes.has(cfg.destLane)) return false;
+  }
+  if (cfg.polCodes.length     && !cfg.polCodes.includes(s.pol))              return false;
+  if (cfg.podCodes.length     && !cfg.podCodes.includes(s.pod))              return false;
+  if (cfg.carrierCodes.length && !cfg.carrierCodes.includes(s.carrierCode))  return false;
+  return true;
+}
+
+function matchesScopeItem(s, item) {
+  if (item.item_type === 'trade_lane') {
+    try {
+      const { origin, dest } = JSON.parse(item.value);
+      const polLanes = portLanesMap[s.pol] || new Set();
+      const podLanes = portLanesMap[s.pod] || new Set();
+      return polLanes.has(origin) && podLanes.has(dest);
+    } catch { return false; }
+  }
+  if (item.item_type === 'pol')     return item.value === s.pol;
+  if (item.item_type === 'country') return portCountryMap[s.pol] === item.value;
+  return false;
+}
+
+function applyShipmentAccessFilter(shipments, user, req) {
+  if (!user) return shipments;
+
+  // Derive the highest-ranked role from the JWT roles array (works with both
+  // old tokens that have no 'role' field and new ones that do).
+  const jwtRoles = Array.isArray(user.roles) ? user.roles : (user.role ? [user.role] : ['viewer']);
+  const primaryRole = jwtRoles.reduce(
+    (best, r) => (ROLE_RANK_SV[r] ?? 0) > (ROLE_RANK_SV[best] ?? 0) ? r : best,
+    'viewer'
+  );
+
+  // When the user has switched to a lower role in the UI the frontend sends
+  // X-Active-Role. Only trust it if it's actually lower than the primary role.
+  const requestedRole = req?.headers?.['x-active-role'] || null;
+  const effectiveRole = (requestedRole && (ROLE_RANK_SV[requestedRole] ?? 0) < (ROLE_RANK_SV[primaryRole] ?? 0))
+    ? requestedRole
+    : primaryRole;
+
+  if (['admin', 'operator'].includes(effectiveRole)) return shipments;
+
+  const scopeItems = db.prepare("SELECT * FROM user_scope_items WHERE user_id=?").all(user.id);
+  const legacyCfgs = db.prepare("SELECT * FROM user_access_configs WHERE user_id=?")
+    .all(user.id).map(mapAccessConfig);
+
+  if (!scopeItems.length && !legacyCfgs.length) return shipments;
+
+  // Group scope items by type.
+  // Within each type: OR (any of the configured values may match).
+  // Across types: AND (every configured section must be satisfied).
+  // e.g. trade_lane EU-N→NAM AND pol=NLRTM → only NLRTM→NAM shipments.
+  const byType = {};
+  for (const item of scopeItems) {
+    (byType[item.item_type] = byType[item.item_type] || []).push(item);
+  }
+  const typeGroups = Object.values(byType);
+
+  return shipments.filter(s => {
+    const scopePass = typeGroups.length > 0 &&
+      typeGroups.every(group => group.some(item => matchesScopeItem(s, item)));
+    const legacyPass = legacyCfgs.some(c => shipmentMatchesAccessConfig(s, c));
+    return scopePass || legacyPass;
+  });
+}
 const mapRegion       = r => ({ code: r.code, name: r.name, description: r.description || '' });
 const mapCountry      = r => ({ iso2: r.iso2, name: r.name, unMember: r.un_member === 1, regionCode: r.region_code || '', portCount: r.port_count ?? 0 });
 const INVERSE_LINK_LABEL = { "Blocks": "Is blocked by", "Duplicates": "Is duplicated by", "Implements": "Is implemented by", "Relates to": "Relates to" };
@@ -882,10 +1095,14 @@ const mapLeg = r => ({
   polName:       r.pol_name,
   pod:           r.pod,
   podName:       r.pod_name,
-  transitDays:      r.transit_days,
-  vesselService:    r.vessel_service,
-  polLinkedAllowed: r.pol_linked_allowed === 1,
-  podLinkedAllowed: r.pod_linked_allowed === 1,
+  transitDays:         r.transit_days,
+  vesselService:       r.vessel_service,
+  polLinkedAllowed:    r.pol_linked_allowed   === 1,
+  podLinkedAllowed:    r.pod_linked_allowed   === 1,
+  polCarrierHaulage:   r.pol_carrier_haulage  === 1,
+  podCarrierHaulage:   r.pod_carrier_haulage  === 1,
+  polHaulageLocations: r.pol_haulage_locations || '',
+  podHaulageLocations: r.pod_haulage_locations || '',
 });
 const mapRate = r => ({
   id:            r.id,
@@ -976,12 +1193,15 @@ const checkOverlap = (carrierCode, effectiveDate, endDate, pol = '', pod = '', e
 
 // ─── Auth middleware ──────────────────────────────────────────────────────────
 
-const auth = (roles = []) => (req, res, next) => {
+const auth = (allowed = []) => (req, res, next) => {
   const header = req.headers["authorization"];
   if (!header?.startsWith("Bearer ")) return err(res, "Unauthorized", 401);
   try {
     const payload = jwt.verify(header.slice(7), JWT_SECRET);
-    if (roles.length && !roles.includes(payload.role))
+    // support old single-role tokens and new multi-role tokens
+    payload.roles = Array.isArray(payload.roles) ? payload.roles
+      : (payload.role ? [payload.role] : ['viewer']);
+    if (allowed.length && !allowed.some(r => payload.roles.includes(r)))
       return err(res, "Forbidden", 403);
     req.user = payload;
     next();
@@ -989,8 +1209,8 @@ const auth = (roles = []) => (req, res, next) => {
 };
 
 // Role check only (token already verified by global middleware)
-const requireRole = (roles) => (req, res, next) =>
-  roles.includes(req.user?.role) ? next() : err(res, "Forbidden", 403);
+const requireRole = (allowed) => (req, res, next) =>
+  req.user?.roles?.some(r => allowed.includes(r)) ? next() : err(res, "Forbidden", 403);
 
 // Require valid token on all /api/* except /api/auth/* and /api/health
 app.use("/api", (req, res, next) =>
@@ -1007,12 +1227,13 @@ app.post("/api/auth/login", (req, res) => {
   ).get(email.toLowerCase().trim());
   if (!user || !bcrypt.compareSync(password, user.password_hash))
     return err(res, "Invalid email or password", 401);
+  const roles = JSON.parse(user.roles || JSON.stringify([user.role || 'viewer']));
   const token = jwt.sign(
-    { id: user.id, email: user.email, name: user.name, role: user.role },
+    { id: user.id, email: user.email, name: user.name, role: user.role, roles },
     JWT_SECRET, { expiresIn: "8h" }
   );
   db.prepare("UPDATE users SET last_login = datetime('now') WHERE id = ?").run(user.id);
-  ok(res, { token, user: { id: user.id, email: user.email, name: user.name, role: user.role } });
+  ok(res, { token, user: { id: user.id, email: user.email, name: user.name, roles } });
 });
 
 app.get("/api/auth/me", auth(), (req, res) => {
@@ -1027,21 +1248,27 @@ app.post("/api/auth/logout", (req, res) => ok(res, { ok: true }));
 
 // ─── Users ────────────────────────────────────────────────────────────────────
 
+const VALID_ROLES  = ["admin", "operator", "occ_bk", "viewer"];
+const ROLE_RANK_SV = { viewer: 0, occ_bk: 1, operator: 2, admin: 3 };
+const primaryRoleSV = (roles) => [...roles].sort((a, b) => ROLE_RANK_SV[b] - ROLE_RANK_SV[a])[0] || 'viewer';
+const parseUserRoles = (u) => JSON.parse(u.roles || JSON.stringify([u.role || 'viewer']));
+
 app.get("/api/users", requireRole(["admin"]), (req, res) => {
   const rows = db.prepare(
-    "SELECT id, email, name, role, is_active, created_at, last_login FROM users ORDER BY created_at"
+    "SELECT id, email, name, role, roles, is_active, created_at, last_login FROM users ORDER BY created_at"
   ).all();
-  ok(res, rows);
+  ok(res, rows.map(r => ({ ...r, roles: parseUserRoles(r) })));
 });
 
 app.post("/api/users", requireRole(["admin"]), (req, res) => {
-  const { email, name, role = "viewer", password } = req.body || {};
+  const { email, name, roles = ["viewer"], password } = req.body || {};
   if (!email || !name || !password) return err(res, "email, name, and password are required");
-  if (!["admin", "operator", "viewer"].includes(role)) return err(res, "Invalid role");
+  if (!roles.length || !roles.every(r => VALID_ROLES.includes(r))) return err(res, "Invalid roles");
+  const primary = primaryRoleSV(roles);
   try {
     db.prepare(
-      "INSERT INTO users (id, email, name, password_hash, role, is_active, created_at) VALUES (?, ?, ?, ?, ?, 1, datetime('now'))"
-    ).run(`USR-${uid()}`, email.toLowerCase().trim(), name, bcrypt.hashSync(password, 10), role);
+      "INSERT INTO users (id, email, name, password_hash, role, roles, is_active, created_at) VALUES (?, ?, ?, ?, ?, ?, 1, datetime('now'))"
+    ).run(`USR-${uid()}`, email.toLowerCase().trim(), name, bcrypt.hashSync(password, 10), primary, JSON.stringify(roles));
     ok(res, { ok: true }, 201);
   } catch (e) {
     if (isUniqueViolation(e)) return err(res, "Email already in use");
@@ -1050,16 +1277,18 @@ app.post("/api/users", requireRole(["admin"]), (req, res) => {
 });
 
 app.patch("/api/users/:id", requireRole(["admin"]), (req, res) => {
-  const { name, role, is_active, password } = req.body || {};
+  const { name, roles, is_active, password } = req.body || {};
   const user = db.prepare("SELECT * FROM users WHERE id = ?").get(req.params.id);
   if (!user) return err(res, "User not found", 404);
   if (req.params.id === req.user.id && is_active === 0)
     return err(res, "Cannot deactivate your own account");
   const sets = [], vals = [];
-  if (name      !== undefined) { sets.push("name = ?");          vals.push(name); }
-  if (role      !== undefined) {
-    if (!["admin","operator","viewer"].includes(role)) return err(res, "Invalid role");
-    sets.push("role = ?"); vals.push(role);
+  if (name  !== undefined)     { sets.push("name = ?");          vals.push(name); }
+  if (roles !== undefined)     {
+    if (!Array.isArray(roles) || !roles.length || !roles.every(r => VALID_ROLES.includes(r)))
+      return err(res, "Invalid roles");
+    const primary = primaryRoleSV(roles);
+    sets.push("role = ?", "roles = ?"); vals.push(primary, JSON.stringify(roles));
   }
   if (is_active !== undefined) { sets.push("is_active = ?");     vals.push(is_active ? 1 : 0); }
   if (password)                { sets.push("password_hash = ?"); vals.push(bcrypt.hashSync(password, 10)); }
@@ -1074,6 +1303,69 @@ app.delete("/api/users/:id", requireRole(["admin"]), (req, res) => {
   const r = db.prepare("DELETE FROM users WHERE id = ?").run(req.params.id);
   if (!r.changes) return err(res, "User not found", 404);
   ok(res, { ok: true });
+});
+
+// ─── User Access Configs ──────────────────────────────────────────────────────
+
+app.get("/api/users/:id/access-configs", requireRole(["admin"]), (req, res) => {
+  const rows = db.prepare("SELECT * FROM user_access_configs WHERE user_id=? ORDER BY created_at ASC")
+    .all(req.params.id);
+  ok(res, rows.map(mapAccessConfig));
+});
+
+app.post("/api/users/:id/access-configs", requireRole(["admin"]), (req, res) => {
+  const user = db.prepare("SELECT id FROM users WHERE id=?").get(req.params.id);
+  if (!user) return err(res, "User not found", 404);
+  const { label = "", originLane, destLane, polCodes, podCodes, carrierCodes } = req.body || {};
+  const id  = `UAC-${uid()}`;
+  const now = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO user_access_configs (id, user_id, label, origin_lane, dest_lane, pol_codes, pod_codes, carrier_codes, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id, req.params.id, label.trim(),
+    originLane  || null,
+    destLane    || null,
+    polCodes?.length     ? JSON.stringify(polCodes.map(c => c.toUpperCase()))     : null,
+    podCodes?.length     ? JSON.stringify(podCodes.map(c => c.toUpperCase()))     : null,
+    carrierCodes?.length ? JSON.stringify(carrierCodes.map(c => c.toUpperCase())) : null,
+    now,
+  );
+  ok(res, mapAccessConfig(db.prepare("SELECT * FROM user_access_configs WHERE id=?").get(id)), 201);
+});
+
+app.delete("/api/access-configs/:configId", requireRole(["admin"]), (req, res) => {
+  const info = db.prepare("DELETE FROM user_access_configs WHERE id=?").run(req.params.configId);
+  if (!info.changes) return err(res, "Not found", 404);
+  ok(res, { deleted: req.params.configId });
+});
+
+// ─── User Scope Items ─────────────────────────────────────────────────────────
+
+app.get("/api/users/:id/scope", requireRole(["admin"]), (req, res) => {
+  const rows = db.prepare("SELECT * FROM user_scope_items WHERE user_id=? ORDER BY created_at ASC")
+    .all(req.params.id);
+  ok(res, rows.map(mapScopeItem));
+});
+
+app.post("/api/users/:id/scope", requireRole(["admin"]), (req, res) => {
+  const user = db.prepare("SELECT id FROM users WHERE id=?").get(req.params.id);
+  if (!user) return err(res, "User not found", 404);
+  const { role = "", itemType, value, label = "" } = req.body || {};
+  if (!itemType || !value) return err(res, "itemType and value are required");
+  if (!["trade_lane", "pol", "country"].includes(itemType)) return err(res, "Invalid itemType");
+  const id  = `USI-${uid()}`;
+  const now = new Date().toISOString();
+  db.prepare(
+    "INSERT INTO user_scope_items (id, user_id, role, item_type, value, label, created_at) VALUES (?,?,?,?,?,?,?)"
+  ).run(id, req.params.id, role, itemType, value, label, now);
+  ok(res, mapScopeItem(db.prepare("SELECT * FROM user_scope_items WHERE id=?").get(id)), 201);
+});
+
+app.delete("/api/scope-items/:itemId", requireRole(["admin"]), (req, res) => {
+  const info = db.prepare("DELETE FROM user_scope_items WHERE id=?").run(req.params.itemId);
+  if (!info.changes) return err(res, "Not found", 404);
+  ok(res, { deleted: req.params.itemId });
 });
 
 // ─── Shipments ────────────────────────────────────────────────────────────────
@@ -1102,7 +1394,7 @@ app.get("/api/shipments", (req, res) => {
            ON ms.shipment_id = s.id
     ORDER BY s.created_at DESC
   `).all();
-  ok(res, rows.map(mapShipment));
+  ok(res, applyShipmentAccessFilter(rows.map(mapShipment), req.user, req));
 });
 
 app.get("/api/shipments/compliance-hits", (req, res) => {
@@ -1136,7 +1428,9 @@ app.get("/api/shipments/:id", (req, res) => {
     WHERE s.id = ?
   `).get(req.params.id);
   if (!row) return err(res, "Not found", 404);
-  ok(res, mapShipment(row));
+  const s = mapShipment(row);
+  if (!applyShipmentAccessFilter([s], req.user, req).length) return err(res, "Not found", 404);
+  ok(res, s);
 });
 
 // Full shipment event history
@@ -1174,13 +1468,14 @@ app.post("/api/shipments", (req, res) => {
           allocationId = "", spaceSkipReason = "", spaceOverageReason = "",
           freightTerms = "Prepaid", movementType = "FCL", serviceType = "Port-to-Port",
           placeOfReceipt = "", placeOfDelivery = "", cargoReadyDate = null,
-          notifyId = "", notifyName = "" } = req.body;
+          notifyId = "", notifyName = "",
+          declaredValue = null, declaredValueCurrency = "USD" } = req.body;
   if (!pol || !pod || !carrierCode || !contractType) return err(res, "pol, pod, carrierCode, contractType required");
   const id = `SHP-${uid()}`;
   const polU = pol.toUpperCase(), podU = pod.toUpperCase();
   const createdAt = new Date().toISOString();
-  db.prepare("INSERT INTO shipments (id,pol,pod,carrier_code,contract_type,contract_notes,status,created_at,etd,eta,booking_ref,bl_number,vessel,voyage,incoterm,vessel_imo,contract_id,contract_ref,commodity_code,shipper_id,shipper_name,consignee_id,consignee_name,principal_id,principal_name,allocation_id,space_skip_reason,space_overage_reason,freight_terms,movement_type,service_type,place_of_receipt,place_of_delivery,cargo_ready_date,notify_id,notify_name) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-    .run(id, polU, podU, carrierCode, contractType, contractNotes, status, createdAt, etd, eta, bookingRef, blNumber, vessel, voyage, incoterm, vesselImo, contractId, contractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, allocationId, spaceSkipReason, spaceOverageReason, freightTerms, movementType, serviceType, placeOfReceipt, placeOfDelivery, cargoReadyDate || null, notifyId, notifyName);
+  db.prepare("INSERT INTO shipments (id,pol,pod,carrier_code,contract_type,contract_notes,status,created_at,etd,eta,booking_ref,bl_number,vessel,voyage,incoterm,vessel_imo,contract_id,contract_ref,commodity_code,shipper_id,shipper_name,consignee_id,consignee_name,principal_id,principal_name,allocation_id,space_skip_reason,space_overage_reason,freight_terms,movement_type,service_type,place_of_receipt,place_of_delivery,cargo_ready_date,notify_id,notify_name,declared_value,declared_value_currency) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    .run(id, polU, podU, carrierCode, contractType, contractNotes, status, createdAt, etd, eta, bookingRef, blNumber, vessel, voyage, incoterm, vesselImo, contractId, contractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, allocationId, spaceSkipReason, spaceOverageReason, freightTerms, movementType, serviceType, placeOfReceipt, placeOfDelivery, cargoReadyDate || null, notifyId, notifyName, (declaredValue !== null && declaredValue !== undefined && String(declaredValue).trim() !== '') ? Number(declaredValue) : null, declaredValueCurrency || "USD");
   logEvent(id, 'SHIPMENT_CREATED', null, null, null,
     JSON.stringify({ pol: polU, pod: podU, carrier: carrierCode, status, etd, contractType }));
   if (contractType === 'Central' && contractId) importContractRates(id);
@@ -1198,7 +1493,8 @@ app.put("/api/shipments/:id", (req, res) => {
           allocationId = "", spaceSkipReason = "", spaceOverageReason = "",
           freightTerms = "Prepaid", movementType = "FCL", serviceType = "Port-to-Port",
           placeOfReceipt = "", placeOfDelivery = "", cargoReadyDate = null,
-          notifyId = "", notifyName = "" } = req.body;
+          notifyId = "", notifyName = "",
+          declaredValue = null, declaredValueCurrency = "USD" } = req.body;
   const polU = pol.toUpperCase(), podU = pod.toUpperCase();
   const existing = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
   if (!existing) return err(res, "Not found", 404);
@@ -1208,8 +1504,9 @@ app.put("/api/shipments/:id", (req, res) => {
     shipper_id=?, shipper_name=?, consignee_id=?, consignee_name=?, principal_id=?, principal_name=?,
     allocation_id=?, space_skip_reason=?, space_overage_reason=?,
     freight_terms=?, movement_type=?, service_type=?, place_of_receipt=?, place_of_delivery=?,
-    cargo_ready_date=?, notify_id=?, notify_name=? WHERE id=?
-  `).run(polU, podU, carrierCode, contractType, contractNotes, status, etd, eta, bookingRef, blNumber, vessel, voyage, incoterm, vesselImo, contractId, contractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, allocationId, spaceSkipReason, spaceOverageReason, freightTerms, movementType, serviceType, placeOfReceipt, placeOfDelivery, cargoReadyDate || null, notifyId, notifyName, req.params.id);
+    cargo_ready_date=?, notify_id=?, notify_name=?,
+    declared_value=?, declared_value_currency=? WHERE id=?
+  `).run(polU, podU, carrierCode, contractType, contractNotes, status, etd, eta, bookingRef, blNumber, vessel, voyage, incoterm, vesselImo, contractId, contractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, allocationId, spaceSkipReason, spaceOverageReason, freightTerms, movementType, serviceType, placeOfReceipt, placeOfDelivery, cargoReadyDate || null, notifyId, notifyName, (declaredValue !== null && declaredValue !== undefined && String(declaredValue).trim() !== '') ? Number(declaredValue) : null, declaredValueCurrency || "USD", req.params.id);
   if (info.changes === 0) return err(res, "Not found", 404);
   // Log all changed fields
   const newVals = { pol: polU, pod: podU, status, etd, eta, carrier_code: carrierCode,
@@ -1627,6 +1924,7 @@ app.put("/api/trade-lanes/:code/countries", (req, res) => {
     const ins = db.prepare("INSERT OR IGNORE INTO country_trade_lanes (iso2, lane_code) VALUES (?, ?)");
     for (const iso2 of iso2s) ins.run(iso2.toUpperCase(), code);
     db.exec("COMMIT");
+    rebuildPortLanesMap();
     ok(res, { code, iso2s });
   } catch(e) { db.exec("ROLLBACK"); err(res, e.message); }
 });
@@ -1648,7 +1946,7 @@ app.get("/api/country-trade-lanes", (req, res) => ok(res, db.prepare("SELECT * F
 app.post("/api/country-trade-lanes", (req, res) => {
   const { iso2, laneCode } = req.body;
   if (!iso2 || !laneCode) return err(res, "iso2 and laneCode required");
-  try { db.prepare("INSERT INTO country_trade_lanes (iso2,lane_code) VALUES (?,?)").run(iso2.toUpperCase(), laneCode.toUpperCase()); ok(res, { iso2: iso2.toUpperCase(), laneCode: laneCode.toUpperCase() }, 201); }
+  try { db.prepare("INSERT INTO country_trade_lanes (iso2,lane_code) VALUES (?,?)").run(iso2.toUpperCase(), laneCode.toUpperCase()); rebuildPortLanesMap(); ok(res, { iso2: iso2.toUpperCase(), laneCode: laneCode.toUpperCase() }, 201); }
   catch(e) { err(res, isUniqueViolation(e) ? "Assignment already exists" : e.message); }
 });
 // Bulk replace all trade-lane assignments for a country
@@ -1661,11 +1959,12 @@ app.put("/api/countries/:iso2/trade-lanes", (req, res) => {
     const ins = db.prepare("INSERT OR IGNORE INTO country_trade_lanes (iso2, lane_code) VALUES (?, ?)");
     for (const lane of lanes) ins.run(iso2, lane.toUpperCase());
     db.exec("COMMIT");
+    rebuildPortLanesMap();
     ok(res, { iso2, lanes });
   } catch(e) { db.exec("ROLLBACK"); err(res, e.message); }
 });
 
-app.delete("/api/country-trade-lanes/:iso2/:laneCode", (req, res) => { db.prepare("DELETE FROM country_trade_lanes WHERE iso2=? AND lane_code=?").run(req.params.iso2, req.params.laneCode); ok(res, { deleted: true }); });
+app.delete("/api/country-trade-lanes/:iso2/:laneCode", (req, res) => { db.prepare("DELETE FROM country_trade_lanes WHERE iso2=? AND lane_code=?").run(req.params.iso2, req.params.laneCode); rebuildPortLanesMap(); ok(res, { deleted: true }); });
 
 // ─── Regions ──────────────────────────────────────────────────────────────────
 
@@ -1951,10 +2250,12 @@ function saveLegs(contractId, legs) {
   db.prepare("DELETE FROM contract_legs WHERE contract_id=?").run(contractId);
   legs.forEach((l, i) => {
     const legId = `CLEG-${uid()}`;
-    db.prepare(`INSERT INTO contract_legs (id,contract_id,leg_order,pol,pol_name,pod,pod_name,transit_days,vessel_service,pol_linked_allowed,pod_linked_allowed)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+    db.prepare(`INSERT INTO contract_legs (id,contract_id,leg_order,pol,pol_name,pod,pod_name,transit_days,vessel_service,pol_linked_allowed,pod_linked_allowed,pol_carrier_haulage,pod_carrier_haulage,pol_haulage_locations,pod_haulage_locations)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
       .run(legId, contractId, i, l.pol||"", l.polName||"", l.pod||"", l.podName||"", l.transitDays||0, l.vesselService||"",
-           l.polLinkedAllowed ? 1 : 0, l.podLinkedAllowed ? 1 : 0);
+           l.polLinkedAllowed ? 1 : 0, l.podLinkedAllowed ? 1 : 0,
+           l.polCarrierHaulage ? 1 : 0, l.podCarrierHaulage ? 1 : 0,
+           l.polHaulageLocations || "", l.podHaulageLocations || "");
   });
 }
 async function saveRates(contractId, rates) {
@@ -1987,11 +2288,20 @@ app.get("/api/contracts/search", (req, res) => {
 // Per-leg linked-port expansion: each leg's pol_linked_allowed / pod_linked_allowed
 // controls whether the shipment can match via a linked port on that side.
 app.get("/api/contracts/match", (req, res) => {
-  const { pol = "", pod = "", etd = "", carrier = "" } = req.query;
-  if (!pol || !pod || !etd) return ok(res, []);
+  const { pol = "", pod = "", etd = "", crd = "", carrier = "",
+          routingTerm = "", pkuLocation = "", delLocation = "" } = req.query;
+  if (!pol || !pod) return ok(res, []);
 
   const polU = pol.toUpperCase();
   const podU = pod.toUpperCase();
+  const pkuU = pkuLocation.toUpperCase();
+  const delU = delLocation.toUpperCase();
+  const dateRef = crd || etd; // prefer Cargo Ready Date; fall back to ETD
+
+  // Routing term components: e.g. "DR-PT" → polLoc="DR", podLoc="PT"
+  const [polLocAbbr = "", podLocAbbr = ""] = routingTerm.split("-");
+  const needsPolHaulage = polLocAbbr === "DR";
+  const needsPodHaulage = podLocAbbr === "DR";
 
   // Returns all ports bidirectionally linked to `code` (not including code itself)
   const linkedTo = code => db.prepare(`
@@ -1999,9 +2309,10 @@ app.get("/api/contracts/match", (req, res) => {
     FROM linked_ports WHERE primary_unlocode=? OR linked_unlocode=?
   `).all(code, code, code).map(r => r.code);
 
-  // Candidate contracts: validity window + carrier
-  const clauses = ["c.status='Active'", "c.valid_from<=? AND c.valid_to>=?"];
-  const params  = [etd, etd];
+  // Candidate contracts: validity window (if date provided) + carrier + active
+  const clauses = ["c.status='Active'"];
+  const params  = [];
+  if (dateRef) { clauses.push("c.valid_from<=? AND c.valid_to>=?"); params.push(dateRef, dateRef); }
   if (carrier.trim()) { clauses.push("c.carrier_code=?"); params.push(carrier.trim().toUpperCase()); }
 
   const candidates = db.prepare(
@@ -2013,17 +2324,30 @@ app.get("/api/contracts/match", (req, res) => {
     const legs = db.prepare("SELECT * FROM contract_legs WHERE contract_id=? ORDER BY leg_order").all(c.id);
 
     for (const leg of legs) {
-      // Build the set of ports this leg covers on each side
+      // POL/POD port matching (with linked-port expansion)
       const polSet = leg.pol_linked_allowed ? [leg.pol, ...linkedTo(leg.pol)] : [leg.pol];
       const podSet = leg.pod_linked_allowed ? [leg.pod, ...linkedTo(leg.pod)] : [leg.pod];
+      if (!polSet.includes(polU) || !podSet.includes(podU)) continue;
 
-      if (polSet.includes(polU) && podSet.includes(podU)) {
-        const matchKind    = (leg.pol === polU && leg.pod === podU) ? "exact" : "linked";
-        const linkedPolVia = leg.pol !== polU ? leg.pol : null;
-        const linkedPodVia = leg.pod !== podU ? leg.pod : null;
-        results.push({ ...mapContract(c), legs: legs.map(mapLeg), matchKind, linkedPolVia, linkedPodVia });
-        break; // first matching leg wins — don't add the same contract twice
+      // Carrier haulage (pickup) — inclusive: contract WITH haulage matches shipments that don't need it
+      if (needsPolHaulage && !leg.pol_carrier_haulage) continue;
+      if (needsPolHaulage && leg.pol_carrier_haulage && leg.pol_haulage_locations) {
+        const allowed = leg.pol_haulage_locations.split(/[\s,]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
+        if (allowed.length > 0 && pkuU && !allowed.includes(pkuU)) continue;
       }
+
+      // Carrier haulage (delivery) — same inclusive logic
+      if (needsPodHaulage && !leg.pod_carrier_haulage) continue;
+      if (needsPodHaulage && leg.pod_carrier_haulage && leg.pod_haulage_locations) {
+        const allowed = leg.pod_haulage_locations.split(/[\s,]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
+        if (allowed.length > 0 && delU && !allowed.includes(delU)) continue;
+      }
+
+      const matchKind    = (leg.pol === polU && leg.pod === podU) ? "exact" : "linked";
+      const linkedPolVia = leg.pol !== polU ? leg.pol : null;
+      const linkedPodVia = leg.pod !== podU ? leg.pod : null;
+      results.push({ ...mapContract(c), legs: legs.map(mapLeg), matchKind, linkedPolVia, linkedPodVia });
+      break; // first matching leg wins — don't add the same contract twice
     }
   }
 
@@ -2241,30 +2565,41 @@ app.get("/api/shipments/:id/legs", auth(), (req, res) => {
   ok(res, rows.map(mapShipmentLeg));
 });
 
+const LEG_TO_MOT = { 'SEA': 'SEA', 'AIR': 'AIR', 'RAIL': 'RAIL', 'Pick-up': 'ROAD', 'Delivery': 'ROAD', 'Feeder': 'SEA' };
+
 app.post("/api/shipments/:id/legs", auth(), (req, res) => {
-  const { mot='SEA', pol='', pod='', etd=null, eta=null, carrierCode='',
+  const { legType='SEA', movementType='SEA', movementBy='',
+          mot: rawMot, pol='', pod='', etd=null, eta=null, carrierCode='',
+          polLocType='Terminal', podLocType='Terminal',
           vessel='', vesselImo='', voyage='', contractType='', contractRef='' } = req.body;
+  const mot = rawMot || LEG_TO_MOT[legType] || 'SEA';
   const id = `LEG-${uid()}`;
   const maxOrder = db.prepare("SELECT MAX(leg_order) as m FROM shipment_legs WHERE shipment_id=?").get(req.params.id);
   const legOrder = (maxOrder?.m ?? -1) + 1;
   const createdAt = new Date().toISOString();
-  db.prepare(`INSERT INTO shipment_legs (id,shipment_id,leg_order,mot,pol,pod,etd,eta,carrier_code,vessel,vessel_imo,voyage,contract_type,contract_ref,created_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-    .run(id, req.params.id, legOrder, mot, pol.toUpperCase(), pod.toUpperCase(),
-         etd||null, eta||null, carrierCode, vessel, vesselImo, voyage, contractType, contractRef, createdAt);
+  db.prepare(`INSERT INTO shipment_legs (id,shipment_id,leg_order,mot,leg_type,movement_type,pol,pod,pol_loc_type,pod_loc_type,etd,eta,carrier_code,vessel,vessel_imo,voyage,movement_by,contract_type,contract_ref,created_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(id, req.params.id, legOrder, mot, legType, movementType,
+         pol.toUpperCase(), pod.toUpperCase(), polLocType, podLocType,
+         etd||null, eta||null, carrierCode, vessel, vesselImo, voyage, movementBy,
+         contractType, contractRef, createdAt);
   syncShipmentFromLegs(req.params.id);
   ok(res, mapShipmentLeg(db.prepare("SELECT * FROM shipment_legs WHERE id=?").get(id)), 201);
 });
 
 app.put("/api/shipments/:id/legs/:legId", auth(), (req, res) => {
-  const { mot='SEA', pol='', pod='', etd=null, eta=null, carrierCode='',
+  const { legType='SEA', movementType='SEA', movementBy='',
+          mot: rawMot, pol='', pod='', etd=null, eta=null, carrierCode='',
+          polLocType='Terminal', podLocType='Terminal',
           vessel='', vesselImo='', voyage='', contractType='', contractRef='', legOrder } = req.body;
+  const mot = rawMot || LEG_TO_MOT[legType] || 'SEA';
   const existing = db.prepare("SELECT * FROM shipment_legs WHERE id=? AND shipment_id=?").get(req.params.legId, req.params.id);
   if (!existing) return err(res, "Not found", 404);
-  db.prepare(`UPDATE shipment_legs SET mot=?,pol=?,pod=?,etd=?,eta=?,carrier_code=?,vessel=?,vessel_imo=?,voyage=?,contract_type=?,contract_ref=?,leg_order=? WHERE id=?`)
-    .run(mot, pol.toUpperCase(), pod.toUpperCase(), etd||null, eta||null,
-         carrierCode, vessel, vesselImo, voyage, contractType, contractRef,
-         legOrder ?? existing.leg_order, req.params.legId);
+  db.prepare(`UPDATE shipment_legs SET mot=?,leg_type=?,movement_type=?,pol=?,pod=?,pol_loc_type=?,pod_loc_type=?,etd=?,eta=?,carrier_code=?,vessel=?,vessel_imo=?,voyage=?,movement_by=?,contract_type=?,contract_ref=?,leg_order=? WHERE id=?`)
+    .run(mot, legType, movementType, pol.toUpperCase(), pod.toUpperCase(),
+         polLocType, podLocType, etd||null, eta||null,
+         carrierCode, vessel, vesselImo, voyage, movementBy,
+         contractType, contractRef, legOrder ?? existing.leg_order, req.params.legId);
   syncShipmentFromLegs(req.params.id);
   ok(res, mapShipmentLeg(db.prepare("SELECT * FROM shipment_legs WHERE id=?").get(req.params.legId)));
 });
@@ -2655,6 +2990,85 @@ app.delete("/api/milestones/:id", (req, res) => {
   if (!existing) return err(res, "Not found", 404);
   db.prepare("DELETE FROM shipment_milestones WHERE id=?").run(req.params.id);
   ok(res, { deleted: req.params.id });
+});
+
+// ─── Shipment Documents ───────────────────────────────────────────────────────
+
+const STALE_EVENTS = db.prepare(`
+  SELECT COUNT(*) as n FROM shipment_events
+  WHERE shipment_id = ? AND occurred_at > ?
+  AND event_type IN ('FIELD_UPDATED','CONTAINER_ADDED','CONTAINER_REMOVED','CONTAINER_UPDATED')
+`);
+
+const mapDoc = (r, shipmentId) => {
+  const sid = shipmentId || r.shipment_id;
+  const { n } = STALE_EVENTS.get(sid, r.created_at);
+  return {
+    id: r.id, shipmentId: r.shipment_id, filename: r.filename,
+    mimeType: r.mime_type, sizeBytes: r.size_bytes,
+    docType: r.doc_type, uploadedBy: r.uploaded_by, createdAt: r.created_at,
+    status: r.status || 'draft',
+    confirmedAt: r.confirmed_at || null, confirmedBy: r.confirmed_by || '',
+    isStale: n > 0,
+  };
+};
+
+app.get("/api/shipments/:id/documents", auth(), (req, res) => {
+  const rows = db.prepare(
+    "SELECT * FROM shipment_documents WHERE shipment_id = ? ORDER BY created_at DESC"
+  ).all(req.params.id);
+  ok(res, rows.map(r => mapDoc(r, req.params.id)));
+});
+
+app.post("/api/shipments/:id/documents", auth(), (req, res) => {
+  const { filename, mimeType, docType, data } = req.body;
+  if (!filename || !data) return err(res, "filename and data are required");
+  try {
+    const buf        = Buffer.from(data, "base64");
+    const ext        = path.extname(filename) || "";
+    const storedName = `${Date.now()}_${uid()}${ext}`;
+    fs.writeFileSync(path.join(UPLOADS_DIR, storedName), buf);
+    const id       = `DOC-${uid()}`;
+    const now      = new Date().toISOString();
+    const uploader = req.user?.name || req.user?.email || "";
+    db.prepare(`INSERT INTO shipment_documents
+      (id, shipment_id, filename, stored_name, mime_type, size_bytes, doc_type, uploaded_by, created_at, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')`)
+      .run(id, req.params.id, filename, storedName, mimeType || "", buf.length, docType || "OT", uploader, now);
+    const row = db.prepare("SELECT * FROM shipment_documents WHERE id = ?").get(id);
+    ok(res, mapDoc(row, req.params.id), 201);
+  } catch (e) { err(res, e.message, 500); }
+});
+
+app.patch("/api/documents/:docId", auth(), (req, res) => {
+  const doc = db.prepare("SELECT * FROM shipment_documents WHERE id = ?").get(req.params.docId);
+  if (!doc) return err(res, "Not found", 404);
+  const { status } = req.body;
+  if (!["draft", "confirmed"].includes(status)) return err(res, "status must be draft or confirmed");
+  const now = new Date().toISOString();
+  db.prepare("UPDATE shipment_documents SET status=?, confirmed_at=?, confirmed_by=? WHERE id=?")
+    .run(status, status === "confirmed" ? now : null, status === "confirmed" ? (req.user?.name || req.user?.email || "") : "", req.params.docId);
+  const updated = db.prepare("SELECT * FROM shipment_documents WHERE id = ?").get(req.params.docId);
+  ok(res, mapDoc(updated, updated.shipment_id));
+});
+
+app.get("/api/documents/:docId/download", auth(), (req, res) => {
+  const doc = db.prepare("SELECT * FROM shipment_documents WHERE id = ?").get(req.params.docId);
+  if (!doc) return err(res, "Not found", 404);
+  const filePath = path.join(UPLOADS_DIR, doc.stored_name);
+  if (!fs.existsSync(filePath)) return err(res, "File not found on disk", 404);
+  const inline = (doc.mime_type || "").startsWith("text/") || doc.mime_type === "application/pdf";
+  res.setHeader("Content-Disposition", `${inline ? "inline" : "attachment"}; filename="${doc.filename}"`);
+  res.setHeader("Content-Type", doc.mime_type || "application/octet-stream");
+  fs.createReadStream(filePath).pipe(res);
+});
+
+app.delete("/api/documents/:docId", auth(), (req, res) => {
+  const doc = db.prepare("SELECT * FROM shipment_documents WHERE id = ?").get(req.params.docId);
+  if (!doc) return err(res, "Not found", 404);
+  try { fs.unlinkSync(path.join(UPLOADS_DIR, doc.stored_name)); } catch {}
+  db.prepare("DELETE FROM shipment_documents WHERE id = ?").run(req.params.docId);
+  ok(res, { ok: true });
 });
 
 // ─── Milestone Templates ──────────────────────────────────────────────────────

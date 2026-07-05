@@ -1,5 +1,5 @@
 # CargoDesk — Architecture Reference
-**Version:** 0.17.1 "Sentry" · **Date:** 2026-07-02  
+**Version:** 0.22.0 "Crossroads" · **Date:** 2026-07-05  
 **Audience:** Software architects, senior engineers, technical reviewers
 
 ---
@@ -64,7 +64,7 @@ CargoDesk is a **single-tenant freight operations management system** designed f
 | Real-time | ws | 8.21 | WebSocket server on shared HTTP |
 | Dev tooling | concurrently | 8.2 | Runs server + Vite in parallel |
 
-**Notable absences (intentional):** no TypeScript, no CSS framework, no ORM, no test framework, no auth layer, no migration framework, no message queue.
+**Notable absences (intentional):** no TypeScript, no CSS framework, no ORM, no test framework, no migration framework, no message queue.
 
 ---
 
@@ -108,43 +108,49 @@ There is **no reverse proxy, container runtime, or process manager** defined. Si
 
 ```
 src/
-├─ App.jsx              (1,022 lines)  Root: routing, nav, settings state, theme
-├─ api.js               (182 lines)   All fetch wrappers — single source of truth
-├─ tokens.js            (278 lines)   Design tokens T{}, theme, route helpers
-├─ toast.js                           Pub-sub toast emitter
-├─ version.js                         VERSION, CODENAME, CHANGELOG
+├─ App.jsx              (2,515 lines)  Root: routing, nav, auth guards, role switcher, theme
+├─ api.js               (249 lines)    All fetch wrappers — single source of truth
+├─ tokens.js            (263 lines)    Design tokens T{}, theme, route helpers
+├─ AuthContext.jsx                     createContext + useAuth() hook
+├─ toast.js                            Pub-sub toast emitter
+├─ version.js                          VERSION, CODENAME, CHANGELOG
 │
 ├─ pages/
-│   ├─ LandingPage.jsx               Dashboard home — clock, weather, fleet KPIs
-│   ├─ ShipmentsPage.jsx   (588)      List + create/edit form
-│   ├─ ShipmentDetailPage.jsx (2,635) Detail view — largest file in codebase
-│   ├─ DashboardPage.jsx   (2,052)    Overview + Contract Consumption
-│   ├─ SpaceConfigurationsPage.jsx (920) Allocations CRUD + linked shipments
-│   ├─ DashboardArchivePage.jsx      Expired allocations + renew
-│   ├─ KanbanPage.jsx      (838)     Integration board, drag-to-reorder
-│   ├─ AppSettingsPage.jsx (550)     Feature toggles, external API controls
-│   ├─ AboutPage.jsx                 DB schema browser, changelog
-│   ├─ UserManualPage.jsx            Inline documentation
-│   └─ mdm/  (10 pages)             Master data management CRUD pages
+│   ├─ LoginPage.jsx                   Centered login form; jwt-based auth
+│   ├─ LandingPage.jsx                 Dashboard home — clock, weather, fleet KPIs
+│   ├─ ShipmentsPage.jsx   (192)       Shipment list + filters + CSV export
+│   ├─ ShipmentFormPage.jsx (1,544)    New + edit form — Parties, Cargo, Legs, Containers, Contract, Status
+│   ├─ ShipmentDetailPage.jsx (3,290)  Detail view — largest file in codebase
+│   ├─ DashboardPage.jsx   (2,097)     Overview + Contract Consumption tabs
+│   ├─ SpaceConfigurationsPage.jsx (862) Allocations CRUD + linked shipments
+│   ├─ DashboardArchivePage.jsx        Expired allocations + renew
+│   ├─ KanbanPage.jsx      (1,982)     Kanban board — Epic/Story/sub-task nesting, assignees, WIP limits
+│   ├─ AppSettingsPage.jsx (799)       Feature toggles, external APIs, user management
+│   ├─ AboutPage.jsx                   DB schema browser, changelog
+│   ├─ UserManualPage.jsx              Inline documentation
+│   └─ mdm/  (10 pages)               Master data management CRUD pages
 │
 └─ components/
     ├─ primitives/
-    │   ├─ ActionMenu.jsx            Cog-button context menu (position:fixed)
-    │   ├─ Btn.jsx                   Button primitive with size/variant
-    │   ├─ Modal.jsx                 Overlay modal
-    │   ├─ Form.jsx                  Form field helpers
-    │   ├─ Badge.jsx                 Status/label pill (size prop)
-    │   ├─ Spinner.jsx               Loading indicator
-    │   ├─ ToastContainer.jsx        Toast renderer
-    │   ├─ DatePicker.jsx            3-level calendar (Y/M/D)
-    │   ├─ Pagination.jsx            Page controls
-    │   └─ useResizableColumns.jsx   Drag-to-resize hook + localStorage
+    │   ├─ ActionMenu.jsx              Cog-button context menu (position:fixed)
+    │   ├─ Btn.jsx                     Button primitive with size/variant
+    │   ├─ Modal.jsx                   Overlay modal
+    │   ├─ Form.jsx                    Form field helpers
+    │   ├─ Badge.jsx                   Status/label pill (size prop)
+    │   ├─ Spinner.jsx                 Loading indicator
+    │   ├─ ToastContainer.jsx          Toast renderer
+    │   ├─ DatePicker.jsx              3-level calendar (Y/M/D)
+    │   ├─ Pagination.jsx              Page controls
+    │   └─ useResizableColumns.jsx     Drag-to-resize hook + localStorage
     │
     └─ shared/
-        ├─ PortCombobox.jsx          Typeahead (position:fixed dropdown)
-        ├─ CommodityCombobox.jsx     Typeahead + picker modal
-        ├─ VesselCombobox.jsx        Named exports: VesselCombobox, VesselField
-        └─ EntityHistoryModal.jsx    Generic audit timeline viewer
+        ├─ PortCombobox.jsx            Typeahead (position:fixed dropdown)
+        ├─ CommodityCombobox.jsx       Typeahead + CommodityPickerModal
+        ├─ VesselCombobox.jsx          Named exports: VesselCombobox, VesselField
+        ├─ CarrierCombobox.jsx         Typeahead for carrier code lookup
+        ├─ ContainerTypePickerModal.jsx Visual equipment picker; named export ContainerTypeField
+        ├─ EntityHistoryModal.jsx      Generic audit timeline viewer
+        └─ UserManagementPanel.jsx     Admin-only user CRUD table
 ```
 
 ### Routing
@@ -200,7 +206,7 @@ T.head       T.body       T.mono
 
 ## 5. Backend Architecture
 
-### server.js structure (2,241 lines)
+### server.js structure (2,923 lines)
 
 ```
 server.js
@@ -211,29 +217,35 @@ server.js
 │
 ├─ Database setup
 │   ├─ DatabaseSync('./cargodesk.db')
-│   ├─ Schema CREATE TABLE IF NOT EXISTS (28 tables)
+│   ├─ Schema CREATE TABLE IF NOT EXISTS (35 tables)
 │   └─ Migrations array  ← safe try/catch loop on startup
 │
 ├─ Startup routines
 │   ├─ seedDefaultSettings()     ← app_settings defaults
+│   ├─ seedDefaultAdmin()        ← seeds admin@cargodesk.com / admin123 if no users exist
 │   ├─ backfillPortCountryCodes() ← IIFE: fills country_code on port_locations
+│   ├─ rebuildPortLanesMap()     ← builds in-memory portLanesMap (unlocode → Set<laneCode>)
 │   └─ scheduleNextOfacSync()    ← reads settings, calls setTimeout
 │
 ├─ Helper functions
 │   ├─ uid()                     ← 6-char random hex ID
 │   ├─ ok(res, data, status)     ← JSON 200/201 response
 │   ├─ err(res, msg, status)     ← JSON error response
+│   ├─ auth()                    ← JWT middleware factory; verifies cargodesk_token; attaches req.user
 │   ├─ logEvent()                ← writes to shipment_events
 │   ├─ logEntityEvent()          ← writes to entity_events
 │   ├─ getSettings()             ← reads app_settings as key-value map
 │   ├─ httpsGetFollowRedirects() ← up to 5-hop redirect follower
 │   ├─ importContractRates()     ← contract → BUY cost lines
+│   ├─ syncShipmentFromLegs()    ← recomputes pol/pod/etd/eta/carrier + routing_term from legs
+│   ├─ rebuildPortLanesMap()     ← rebuilds in-memory portLanesMap after trade-lane mutations
 │   └─ map* functions            ← row → camelCase DTO (one per entity)
 │
 ├─ Express app
 │   ├─ express.json({ limit: '25mb' })
 │   ├─ cors()
-│   └─ 110 route handlers (see §7)
+│   └─ 120+ route handlers (see §7)
+│       └─ all /api/* routes gated by auth() middleware (exempt: /api/auth/*)
 │
 ├─ WebSocket server
 │   ├─ wss = new WebSocketServer({ server: httpServer })
@@ -300,7 +312,12 @@ shipments ───────────────────────�
     │   (pol/pod      FK→port_locations)                     │
     │   (commodity_code FK→commodities)                      │
     │   (shipper/consignee/principal FK→customers)           │
+    │   routing_term TEXT (DR-CY, PT-PT … computed by legs)  │
+    │   declared_value / declared_value_currency             │
     │                                                         │
+    ├──── shipment_legs         (multimodal leg records)     │
+    │         leg_type, movement_type, pol_loc_type, pod_loc_type, movement_by
+    │
     ├──── containers ──── shipment_cost_lines ───────────────┘
     │         (size+type matches contract_rates.container_type)
     │
@@ -308,26 +325,38 @@ shipments ───────────────────────�
     ├──── entity_events         (cost_line / alloc / contract events)
     ├──── shipment_messages     (threaded notes)
     ├──── shipment_screenings   (OFAC SDN results)
+    ├──── shipment_milestones   (per-step milestone tracking)
+    ├──── shipment_documents    (document records)
     └──── status_log            (legacy status transitions)
 
 OPERATIONS
 ──────────
-tickets ──── ticket_links       (Kanban board)
-    │
+tickets ──── ticket_links       (Kanban board; parent_id for Epic→Story→sub-task nesting)
+    │   (assignee_id FK→users)
     └── (shipment_id FK→shipments, optional)
 
 PLATFORM
 ────────
+users                           (authenticated users: email, password_hash, role, is_active)
 app_settings                    (key/value feature toggles)
 system_messages                 (operational notices)
+milestone_templates             (reusable milestone step definitions)
 sanctions_entries               (OFAC SDN index, ~40k rows)
 sanctions_syncs                 (sync history)
+user_access_configs             (per-user module access configuration)
+user_scope_items                (per-user scope/permission items)
 ```
 
 ### Core tables (columns)
 
-**shipments** — 25 columns  
-`id · pol · pod · carrier_code · contract_type · contract_id · contract_ref · status · etd · eta · booking_ref · bl_number · vessel · vessel_imo · voyage · incoterm · commodity_code · shipper_id · shipper_name · consignee_id · consignee_name · principal_id · principal_name · contract_notes · created_at`
+**shipments** — 28 columns  
+`id · pol · pod · carrier_code · contract_type · contract_id · contract_ref · status · etd · eta · booking_ref · bl_number · vessel · vessel_imo · voyage · incoterm · commodity_code · shipper_id · shipper_name · consignee_id · consignee_name · principal_id · principal_name · contract_notes · routing_term · declared_value · declared_value_currency · created_at`
+
+**shipment_legs** — 20 columns  
+`id · shipment_id · leg_order · mot · pol · pod · etd · eta · carrier_code · vessel · vessel_imo · voyage · contract_type · contract_ref · leg_type · movement_type · pol_loc_type · pod_loc_type · movement_by · created_at`
+
+**users** — 9 columns  
+`id · email · name · password_hash · role(admin|operator|viewer) · is_active · created_at · last_login · roles`
 
 **containers** — 13 columns  
 `id · shipment_id · container_number · size · type · hs_code · gross_weight_kg · volume_cbm · is_dg · dg_class · seal_number · commodity · cargo_description`
@@ -337,6 +366,9 @@ sanctions_syncs                 (sync history)
 
 **contracts** — 14 columns  
 `id · contract_number · carrier_code · named_account_id · named_account · movement_type · container_types(JSON) · dg_allowed · imdg_classes(JSON) · valid_from · valid_to · currency · status · notes · created_at`
+
+**contract_legs** — (pol, pod pairs per contract with haulage flags)  
+`id · contract_id · pol · pod · pol_linked_allowed · pod_linked_allowed · pol_carrier_haulage · pod_carrier_haulage · pol_haulage_locations · pod_haulage_locations`
 
 **contract_rates** — 11 columns  
 `id · contract_id · service_code · description · amount · currency · amount_usd · unit(per_container|per_bl|flat) · container_type · sort_order · notes`
@@ -374,12 +406,15 @@ All IDs are generated by `uid()` — 6 upper-hex characters prefixed by entity t
 ```
 Resource group              Endpoints   Notes
 ────────────────────────────────────────────────────────────────────
+/api/auth                   3           POST login, GET me, POST logout
+/api/users                  5           CRUD (admin only) — uses bcryptjs
 /api/shipments              8           CRUD + events + status-log + compliance-hits
+/api/shipments/:id/legs     4           GET list, POST, PUT, DELETE (multimodal legs)
 /api/containers             4           CRUD (shipment-scoped in practice)
 /api/shipment-cost-lines    5           CRUD + import-contract + cost-line-events
 /api/cost-lines             2           PUT (edit) + DELETE (by line ID)
 /api/margin                 1           Aggregated buy/sell/GP summary
-/api/contracts              6           CRUD + search + match
+/api/contracts              6           CRUD + search + match (crd, routingTerm, pkuLocation, delLocation)
 /api/allocations            5           CRUD + conflicts
 /api/carriers               5           CRUD + get-by-code
 /api/vessels                6           CRUD + search
@@ -559,7 +594,64 @@ Client (App.jsx):
   10-second poll fallback if WebSocket not connected
 ```
 
-### 8.7 Audit Logging — Two-Table Strategy
+### 8.7 Authentication & RBAC (added v0.19.0)
+
+```
+Login flow:
+  POST /api/auth/login { email, password }
+    ├─ bcryptjs.compare(password, user.password_hash)
+    ├─ jwt.sign({ userId, email, role }, JWT_SECRET, { expiresIn: '8h' })
+    └─ { token, user }  → stored in localStorage as 'cargodesk_token'
+
+Request auth:
+  auth() middleware → jwt.verify(token, JWT_SECRET)
+           → req.user = { userId, email, role }
+           → 401 if missing / expired / invalid
+
+AuthContext (client):
+  useAuth() → { user, activeRole, canEdit, isAdmin, isViewer }
+  canEdit = effectiveRole !== 'viewer'
+  activeRole overrides user.role when admin is impersonating a lower role
+
+Role hierarchy:
+  admin (2)    — full access + user management
+  operator (1) — create & edit; no user admin
+  viewer  (0)  — read-only; all write actions hidden; Kanban drag disabled
+
+Default admin:
+  On first startup with no users → seeds admin@cargodesk.com / admin123
+```
+
+### 8.8 Multimodal Legs & Routing Term Engine (added v0.20.0–0.22.0)
+
+```
+shipment_legs (per-shipment ordered rows)
+  ├─ leg_type:     Pick-up | SEA | AIR | RAIL | Feeder | Delivery
+  ├─ movement_type: Carrier's Haulage | Merchant's Haulage | Customer Arranged | …
+  ├─ pol_loc_type / pod_loc_type: Door | Terminal | Container Yard | CFS
+  └─ movement_by:  Barge | Rail | Truck | Vessel | Air
+
+syncShipmentFromLegs(shipmentId):
+  1. Load all legs ordered by leg_order
+  2. seaLeg = legs.find(leg_type = 'SEA' OR mot = 'SEA')
+  3. UPDATE shipments SET
+       pol = seaLeg.pol, pod = seaLeg.pod
+       etd = first non-null etd, eta = last non-null eta
+       carrier_code = COALESCE(NULLIF(seaLeg.carrier_code, ''), carrier_code)
+  4. Compute routing_term from carrier-covered legs only
+     (excludes movement_type IN ('Merchant's Haulage', 'Customer Arranged'))
+     → first_leg.pol_loc_type + last_leg.pod_loc_type via LEG_LOC_ABBR
+     → e.g. Door+CY → 'DR-CY', Terminal+Terminal → 'PT-PT'
+  5. UPDATE shipments SET routing_term = computed
+
+GET /api/contracts/match:
+  Accepts: pol, pod (seaport), crd, routingTerm, pkuLocation, delLocation, carrierCode
+  Guard:   pol + pod required
+  Logic:   filter contracts by carrier → validity window → DG class → haulage inclusion
+  Returns: ranked list of matching contracts
+```
+
+### 8.9 Audit Logging — Two-Table Strategy
 
 | Table | Written by | Used for |
 |---|---|---|
@@ -686,7 +778,7 @@ Settings save (AppSettingsPage):
 
 ### Authentication & authorisation
 
-**None implemented.** No session, no JWT, no API keys. All endpoints are fully open. `author` fields on messages/events are free-text strings passed by the client.
+JWT-based (added v0.19.0). `auth()` Express middleware factory verifies the `cargodesk_token` stored in the client's `localStorage`; attaches `req.user` for all protected routes. 8-hour token lifetime. RBAC enforced by role checks in route handlers and by `canEdit` / `isAdmin` / `isViewer` booleans in `AuthContext`. Unauthenticated requests receive HTTP 401; the client dispatches `cargodesk:logout` across all tabs.
 
 ### Pagination
 
@@ -706,16 +798,16 @@ No foreign-key constraints are enforced (SQLite FK pragma is not enabled). Refer
 | # | Issue | Impact | Suggested Fix |
 |---|---|---|---|
 | C1 | **No transactions** on multi-step writes (import-contract, batch deletes) | Data corruption on crash | Wrap in `db.exec('BEGIN')` / `COMMIT` / `ROLLBACK` |
-| C2 | **No authentication** — all 110 endpoints are unauthenticated | Full data exposure | Add JWT middleware; role-based access (ops / compliance / read-only) |
+| ~~C2~~ | ~~No authentication~~ | ~~Full data exposure~~ | **RESOLVED v0.19.0** — JWT middleware + bcryptjs RBAC |
 | C3 | **No FK constraints** (`PRAGMA foreign_keys = ON` never set) | Silent orphaned rows | Enable pragma + add FK definitions to schema |
-| C4 | **`server.js` is a 2,241-line monolith** | Merge conflicts, testability | Split into domain routers: `routes/shipments.js`, `routes/contracts.js`, etc. |
+| C4 | **`server.js` is a 2,923-line monolith** | Merge conflicts, testability | Split into domain routers: `routes/shipments.js`, `routes/contracts.js`, etc. |
 | C5 | **No test suite** | Regressions ship silently | Add Vitest for unit tests; Supertest for route integration tests |
 
 ### High
 
 | # | Issue | Impact | Suggested Fix |
 |---|---|---|---|
-| H1 | **ShipmentDetailPage.jsx is 2,635 lines** | Cognitive load, slow HMR | Extract `CostControl`, `CostLineHistoryModal`, `CompactHistory`, `ContainersCard`, `ContractCard` into their own files |
+| H1 | **ShipmentDetailPage.jsx is 3,290 lines** | Cognitive load, slow HMR | Extract `CostControl`, `CostLineHistoryModal`, `CompactHistory`, `ContainersCard`, `ContractCard` into their own files |
 | H2 | **No migration framework** — migrations are a bare try/catch array | Silent failures, no rollback, no versioning | Adopt `node-sqlite-migrations` or a hand-rolled version table |
 | H3 | **Full table scans on shipments/tickets/cost-lines** — no pagination | Will degrade at ~1,000+ rows | Add `LIMIT/OFFSET` to list endpoints; add indexes on `shipment_id`, `status`, `carrier_code` |
 | H4 | **JSON stored in columns** (`container_types`, `imdg_classes`) | Cannot query/index; no schema validation | Normalise to junction tables or use SQLite JSON functions with generated columns |
@@ -754,20 +846,21 @@ No foreign-key constraints are enforced (SQLite FK pragma is not enabled). Refer
 
 | File | Lines | Role |
 |---|---|---|
-| `server.js` | 2,241 | Entire backend |
-| `src/pages/ShipmentDetailPage.jsx` | 2,635 | Shipment detail UI |
-| `src/pages/DashboardPage.jsx` | 2,052 | Dashboard + Contract Consumption |
-| `src/App.jsx` | 1,022 | Root routing + nav |
-| `src/pages/SpaceConfigurationsPage.jsx` | 920 | Space configs CRUD |
-| `src/pages/KanbanPage.jsx` | 838 | Kanban board |
-| `src/pages/AppSettingsPage.jsx` | 550 | Feature toggles |
-| `src/pages/ShipmentsPage.jsx` | 588 | Shipment list |
-| `src/tokens.js` | 278 | Design system |
-| `src/api.js` | 182 | API client |
+| `server.js` | 2,923 | Entire backend |
+| `src/pages/ShipmentDetailPage.jsx` | 3,290 | Shipment detail UI |
+| `src/App.jsx` | 2,515 | Root routing + nav + auth guards + role switcher |
+| `src/pages/DashboardPage.jsx` | 2,097 | Dashboard + Contract Consumption |
+| `src/pages/KanbanPage.jsx` | 1,982 | Kanban board (Epic/Story nesting, WIP limits, assignees) |
+| `src/pages/ShipmentFormPage.jsx` | 1,544 | Shipment create/edit form with multimodal legs table |
+| `src/pages/SpaceConfigurationsPage.jsx` | 862 | Space configs CRUD |
+| `src/pages/AppSettingsPage.jsx` | 799 | Feature toggles + user management |
+| `src/pages/ShipmentsPage.jsx` | 192 | Shipment list (form extracted to ShipmentFormPage) |
+| `src/tokens.js` | 263 | Design system |
+| `src/api.js` | 249 | API client |
 
-**Total source files:** ~40 JSX/JS files  
-**Total DB tables:** 28  
-**Total API routes:** 110  
+**Total source files:** ~45 JSX/JS files  
+**Total DB tables:** 35  
+**Total API routes:** 120+  
 **Seed data:** 14,269 port locations · 349 vessels · 294 commodities · 69 carriers · 211 countries
 
 ---
@@ -802,5 +895,5 @@ Re-render:
 
 ---
 
-*Document generated from live codebase — CargoDesk v0.17.1 "Sentry"*  
-*Next scheduled review: on release of v0.18.0*
+*Document updated from live codebase — CargoDesk v0.22.0 "Crossroads" · 2026-07-05*  
+*Next scheduled review: on release of v0.23.0*

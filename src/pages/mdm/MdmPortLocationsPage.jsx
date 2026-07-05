@@ -14,7 +14,7 @@ import { useResizableColumns, ColResizer } from "../../components/primitives/use
 // ─── MDM: Port Locations Page ─────────────────────────────────────────────────
 
 const MdmPortLocationsPage = () => {
-  const { canEdit } = useAuth();
+  const { canManageConfigs } = useAuth();
   const [search,   setSearch]   = useState("");
   const [country,  setCountry]  = useState("");
   const [results,  setResults]  = useState([]);
@@ -98,7 +98,7 @@ const MdmPortLocationsPage = () => {
             {total.toLocaleString()} UN/LOCODE records · ISO 3166 country codes · coordinates
           </p>
         </div>
-        {canEdit && <Btn onClick={() => setModal("add")} size="lg">＋ Add Port</Btn>}
+        {canManageConfigs && <Btn onClick={() => setModal("add")} size="lg">＋ Add Port</Btn>}
       </div>
 
       {/* Search bar */}
@@ -147,8 +147,8 @@ const MdmPortLocationsPage = () => {
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <ActionMenu items={[
                 ...(p.latitude && p.longitude ? [{ icon: "📍", label: "Open Map", onClick: () => window.open(`https://www.google.com/maps/search/?api=1&query=${p.latitude}%2C${p.longitude}`, "_blank") }] : []),
-                ...(canEdit ? [{ icon: "✎", label: "Edit",   onClick: () => setModal(p) }] : []),
-                ...(canEdit ? [{ icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(p.unlocode) }] : []),
+                ...(canManageConfigs ? [{ icon: "✎", label: "Edit",   onClick: () => setModal(p) }] : []),
+                ...(canManageConfigs ? [{ icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(p.unlocode) }] : []),
               ]} />
             </div>
           </div>

@@ -1,13 +1,16 @@
 const BASE = "/api";
-export const TOKEN_KEY = "cargodesk_token";
+export const TOKEN_KEY    = "cargodesk_token";
+export const ACTIVE_ROLE_KEY = "cargodesk_active_role";
 
 import { toast } from "./toast";
 
 const req = async (method, path, body) => {
-  const token = localStorage.getItem(TOKEN_KEY);
+  const token      = localStorage.getItem(TOKEN_KEY);
+  const activeRole = localStorage.getItem(ACTIVE_ROLE_KEY);
   const headers = {};
-  if (body)  headers["Content-Type"]  = "application/json";
-  if (token) headers["Authorization"] = `Bearer ${token}`;
+  if (body)        headers["Content-Type"]   = "application/json";
+  if (token)       headers["Authorization"]  = `Bearer ${token}`;
+  if (activeRole)  headers["X-Active-Role"]  = activeRole;
 
   const res = await fetch(`${BASE}${path}`, {
     method,
@@ -103,7 +106,7 @@ export const api = {
     remove: (code)       => req("DELETE", `/regions/${code}`),
   },
   countries: {
-    list:   (p = {})     => req("GET",    `/countries?${new URLSearchParams(p)}`),
+    list:   (p = {})     => req("GET",    `/countries?${new URLSearchParams({ limit: 300, ...p })}`),
     create: (data)       => req("POST",   "/countries", data),
     update: (iso2, data) => req("PUT",    `/countries/${iso2}`, data),
     remove: (iso2)       => req("DELETE", `/countries/${iso2}`),
@@ -205,6 +208,34 @@ export const api = {
     create: (data)       => req("POST",   "/users", data),
     update: (id, data)   => req("PATCH",  `/users/${id}`, data),
     remove: (id)         => req("DELETE", `/users/${id}`),
+  },
+  userAccess: {
+    list:   (userId)       => req("GET",    `/users/${userId}/access-configs`),
+    create: (userId, data) => req("POST",   `/users/${userId}/access-configs`, data),
+    remove: (configId)     => req("DELETE", `/access-configs/${configId}`),
+  },
+  userScope: {
+    list:   (userId)       => req("GET",    `/users/${userId}/scope`),
+    create: (userId, data) => req("POST",   `/users/${userId}/scope`, data),
+    remove: (itemId)       => req("DELETE", `/scope-items/${itemId}`),
+  },
+  documents: {
+    list:     (shipmentId)       => req("GET",    `/shipments/${shipmentId}/documents`),
+    upload:   (shipmentId, data) => req("POST",   `/shipments/${shipmentId}/documents`, data),
+    patch:    (docId, data)      => req("PATCH",  `/documents/${docId}`, data),
+    remove:   (docId)            => req("DELETE", `/documents/${docId}`),
+    download: async (docId, filename) => {
+      const token = localStorage.getItem("cargodesk_token");
+      const res = await fetch(`/api/documents/${docId}/download`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("Download failed");
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href = url; a.download = filename; a.click();
+      URL.revokeObjectURL(url);
+    },
   },
   fx: {
     rates: () => req("GET", "/fx/rates"),

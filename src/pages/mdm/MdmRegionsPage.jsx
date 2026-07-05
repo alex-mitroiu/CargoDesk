@@ -12,7 +12,7 @@ import { useResizableColumns, ColResizer } from "../../components/primitives/use
 // ─── MDM Locations: Regions Page ──────────────────────────────────────────────
 
 const MdmRegionsPage = () => {
-  const { canEdit } = useAuth();
+  const { canManageConfigs } = useAuth();
   const [regions,  setRegions]  = useState([]);
   const [loading,  setLoading]  = useState(true);
   const [modal,    setModal]    = useState(null);
@@ -62,7 +62,7 @@ const MdmRegionsPage = () => {
             {regions.length} region{regions.length !== 1 ? "s" : ""} — derived from UN/LOCODE zone codes
           </p>
         </div>
-        {canEdit && <Btn onClick={() => setModal("add")} size="lg">＋ Add Region</Btn>}
+        {canManageConfigs && <Btn onClick={() => setModal("add")} size="lg">＋ Add Region</Btn>}
       </div>
 
       <div style={{ background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, overflow: "hidden" }}>
@@ -95,8 +95,8 @@ const MdmRegionsPage = () => {
             <span style={{ fontFamily: T.mono, fontSize: 13, color: T.text, fontWeight: 600 }}>{r.portCount.toLocaleString()}</span>
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <ActionMenu items={[
-                ...(canEdit ? [{ icon: "✎", label: "Edit",   onClick: () => setModal(r) }] : []),
-                ...(canEdit ? [{ icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(r.code) }] : []),
+                ...(canManageConfigs ? [{ icon: "✎", label: "Edit",   onClick: () => setModal(r) }] : []),
+                ...(canManageConfigs ? [{ icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(r.code) }] : []),
               ]} />
             </div>
           </div>
