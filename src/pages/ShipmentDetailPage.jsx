@@ -2004,7 +2004,7 @@ const CostControl = ({ shipmentId, contractType, contractId, containers = [], op
       } else {
         await api.costLines.update(shipmentId, lineModal.id, data);
         if (mirror) {
-          await api.costLines.create(shipmentId, { ...data, type: data.type === "BUY" ? "SELL" : "BUY" });
+          await api.costLines.create(shipmentId, { ...data, type: data.type === "BUY" ? "SELL" : "BUY", source: lineModal.source || 'manual' });
           toast.success(`Changes saved + mirrored as ${data.type === "BUY" ? "SELL" : "BUY"}`);
         } else {
           toast.success("Cost line updated");
@@ -2054,7 +2054,7 @@ const CostControl = ({ shipmentId, contractType, contractId, containers = [], op
       });
       toast.success(!isSplit
         ? `Split into ${imported} line${imported !== 1 ? "s" : ""} across ${containers.length} containers`
-        : `Aggregated to ${imported} BUY line${imported !== 1 ? "s" : ""}`
+        : `Aggregated to ${imported} line${imported !== 1 ? "s" : ""}`
       );
       setImportedForCount(containers.length);
       await load();

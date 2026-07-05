@@ -483,6 +483,24 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
   const set   = k => v => setD(p => ({ ...p, [k]: v }));
   const flush = () => onSave(d);
 
+  const [suggEta, setSuggEta] = useState(null);
+  const suggRef = useRef(null);
+  useEffect(() => {
+    const isSeaLeg = (d.legType || "SEA") === "SEA";
+    if (!isSeaLeg || !d.etd || !d.pol || !d.pod || d.eta) { setSuggEta(null); return; }
+    clearTimeout(suggRef.current);
+    suggRef.current = setTimeout(async () => {
+      try {
+        const r = await api.tradeLanes.transitSuggestion(d.pol, d.pod);
+        if (!r.days) { setSuggEta(null); return; }
+        const base = new Date(d.etd + "T00:00:00Z");
+        base.setUTCDate(base.getUTCDate() + r.days);
+        setSuggEta({ date: base.toISOString().slice(0, 10), days: r.days, lane: r.lane });
+      } catch { setSuggEta(null); }
+    }, 400);
+    return () => clearTimeout(suggRef.current);
+  }, [d.etd, d.pol, d.pod, d.legType, d.eta]);
+
   const MONO_KEYS = new Set(["pol", "pod", "voyage", "carrierCode"]);
 
   if (!canEdit) {
@@ -579,10 +597,20 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
       </div>
 
       {/* Date (ETA) */}
-      <div style={{ width: widths[7], minWidth: widths[7], padding: "8px 0 8px 10px", borderRight: `1px solid ${T.border}33` }}>
+      <div style={{ width: widths[7], minWidth: widths[7], padding: "8px 0 8px 10px", borderRight: `1px solid ${T.border}33`,
+        display: "flex", flexDirection: "column", gap: 3 }}>
         <input type="date" value={d.eta || ""} min={d.etd || undefined}
           onChange={e => set("eta")(e.target.value || null)}
           onBlur={flush} style={cellInput} />
+        {suggEta && (
+          <button type="button" title={`Based on ${suggEta.lane} average transit (${suggEta.days}d)`}
+            onClick={() => { const next = { ...d, eta: suggEta.date }; setD(next); onSave(next); setSuggEta(null); }}
+            style={{ background: "none", border: "none", padding: 0, cursor: "pointer",
+              fontFamily: T.mono, fontSize: 10, color: T.accent, textAlign: "left",
+              whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+            → {suggEta.date} ({suggEta.days}d)
+          </button>
+        )}
       </div>
 
       {/* Carrier — only relevant for SEA legs */}

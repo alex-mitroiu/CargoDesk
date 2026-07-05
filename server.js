@@ -497,6 +497,7 @@ const migrations = [
   "ALTER TABLE shipment_documents ADD COLUMN status        TEXT DEFAULT 'draft'",
   "ALTER TABLE shipment_documents ADD COLUMN confirmed_at  TEXT DEFAULT NULL",
   "ALTER TABLE shipment_documents ADD COLUMN confirmed_by  TEXT DEFAULT ''",
+  "ALTER TABLE trade_lanes ADD COLUMN transit_days INTEGER DEFAULT 0",
 ];
 
 for (const sql of migrations) {
@@ -941,7 +942,7 @@ const mapCarrier      = r => ({ code: r.code, name: r.name, shortName: r.short_n
 const mapVessel       = r => ({ imo: r.imo, name: r.name, assetType: r.asset_type || '', flagIso2: r.flag_iso2 || '', flagName: r.flag_name || '', buildYear: r.build_year, grossTonnage: r.gross_tonnage });
 const mapPortLocation = r => ({ unlocode: r.unlocode, name: r.name, latitude: r.latitude, longitude: r.longitude, countryCode: r.country_code, zoneCode: r.zone_code, lastSyncedAt: r.last_synced_at || null });
 const mapLinkedPort   = r => ({ id: r.id, primaryUnlocode: r.primary_unlocode, primaryName: r.primary_name || '', linkedUnlocode: r.linked_unlocode, linkedName: r.linked_name || '', note: r.note || '' });
-const mapTradeLane    = r => ({ code: r.code, name: r.name, description: r.description || '', countryCount: r.country_count ?? 0 });
+const mapTradeLane    = r => ({ code: r.code, name: r.name, description: r.description || '', countryCount: r.country_count ?? 0, transitDays: r.transit_days ?? 0 });
 const mapScopeItem    = r => ({
   id:        r.id,
   userId:    r.user_id,
@@ -1929,16 +1930,29 @@ app.put("/api/trade-lanes/:code/countries", (req, res) => {
   } catch(e) { db.exec("ROLLBACK"); err(res, e.message); }
 });
 app.post("/api/trade-lanes", (req, res) => {
-  const { code, name, description='' } = req.body;
+  const { code, name, description='', transitDays=0 } = req.body;
   if (!code || !name) return err(res, "code and name required");
-  try { db.prepare("INSERT INTO trade_lanes (code,name,description) VALUES (?,?,?)").run(code.toUpperCase().trim(), name.trim(), description.trim()); ok(res, { code: code.toUpperCase().trim(), name: name.trim(), description: description.trim() }, 201); }
-  catch(e) { err(res, isUniqueViolation(e) ? `Lane ${code} already exists` : e.message); }
+  try {
+    const c = code.toUpperCase().trim();
+    db.prepare("INSERT INTO trade_lanes (code,name,description,transit_days) VALUES (?,?,?,?)").run(c, name.trim(), description.trim(), Number(transitDays) || 0);
+    ok(res, { code: c, name: name.trim(), description: description.trim(), transitDays: Number(transitDays) || 0, countryCount: 0 }, 201);
+  } catch(e) { err(res, isUniqueViolation(e) ? `Lane ${code} already exists` : e.message); }
 });
 app.put("/api/trade-lanes/:code", (req, res) => {
-  const { name, description='' } = req.body;
-  const info = db.prepare("UPDATE trade_lanes SET name=?, description=? WHERE code=?").run(name, description, req.params.code);
+  const { name, description='', transitDays=0 } = req.body;
+  const info = db.prepare("UPDATE trade_lanes SET name=?, description=?, transit_days=? WHERE code=?").run(name, description, Number(transitDays) || 0, req.params.code);
   if (info.changes===0) return err(res,"Not found",404);
-  ok(res, { code: req.params.code, name, description });
+  ok(res, { code: req.params.code, name, description, transitDays: Number(transitDays) || 0 });
+});
+
+app.get("/api/trade-lanes/transit-suggestion", (req, res) => {
+  const { pol, pod } = req.query;
+  if (!pol || !pod) return ok(res, { days: null, lane: null });
+  const polLane = longestLane(pol.toUpperCase());
+  const podLane = longestLane(pod.toUpperCase());
+  if (!polLane || !podLane || polLane !== podLane) return ok(res, { days: null, lane: polLane && podLane ? `${polLane} → ${podLane}` : null });
+  const row = db.prepare("SELECT transit_days FROM trade_lanes WHERE code=?").get(polLane);
+  ok(res, { days: row?.transit_days || null, lane: polLane });
 });
 app.delete("/api/trade-lanes/:code", (req, res) => { const info = db.prepare("DELETE FROM trade_lanes WHERE code=?").run(req.params.code); if (info.changes===0) return err(res,"Not found",404); ok(res,{deleted:req.params.code}); });
 
@@ -2815,7 +2829,7 @@ const SERVICE_CODE_MAP = {
   INL: 'Inland', INLAND: 'Inland',
 };
 
-function importContractRates(shipmentId, { splitPerContainer = false } = {}) {
+function importContractRates(shipmentId, { splitPerContainer = false, includeSell = false } = {}) {
   const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(shipmentId);
   if (!shipment || shipment.contract_type !== 'Central' || !shipment.contract_id) return 0;
   const rates = db.prepare("SELECT * FROM contract_rates WHERE contract_id=? ORDER BY sort_order").all(shipment.contract_id);
@@ -2835,28 +2849,29 @@ function importContractRates(shipmentId, { splitPerContainer = false } = {}) {
       : ctrs;
     if (r.unit === 'per_container' && r.container_type && applicableCtrs.length === 0) continue;
 
+    const insertLine = (type, amount, notes, containerId) => {
+      const lineId = `CL-${uid()}`;
+      db.prepare("INSERT INTO shipment_cost_lines (id,shipment_id,type,charge_code,currency,amount,exchange_rate,notes,container_id,created_at,source) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+        .run(lineId, shipmentId, type, chargeCode, r.currency || 'USD', amount, exchangeRate, notes, containerId, now, 'contract');
+      logEntityEvent('cost_line', lineId, 'IMPORTED', null, null, null,
+        JSON.stringify({ shipmentId, chargeCode, currency: r.currency || 'USD', amount, exchangeRate, containerId }));
+      created++;
+    };
+
     if (r.unit === 'per_container' && splitPerContainer && applicableCtrs.length > 0) {
       for (const c of applicableCtrs) {
         const cLabel = c.container_number
           ? `${c.container_number}${c.size || c.type ? ` (${c.size}${c.type})` : ''}`
           : `(${c.size || ''}${c.type || ''})`;
         const notes = [cLabel, baseNotes].filter(Boolean).join(' — ');
-        const id    = `CL-${uid()}`;
-        db.prepare("INSERT INTO shipment_cost_lines (id,shipment_id,type,charge_code,currency,amount,exchange_rate,notes,container_id,created_at,source) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
-          .run(id, shipmentId, 'BUY', chargeCode, r.currency || 'USD', r.amount, exchangeRate, notes, c.id, now, 'contract');
-        logEntityEvent('cost_line', id, 'IMPORTED', null, null, null,
-          JSON.stringify({ shipmentId, chargeCode, currency: r.currency || 'USD', amount: r.amount, exchangeRate, containerId: c.id }));
-        created++;
+        insertLine('BUY', r.amount, notes, c.id);
+        if (includeSell) insertLine('SELL', r.amount, notes, c.id);
       }
     } else {
       const containerCount = r.unit === 'per_container' ? (applicableCtrs.length || 1) : 1;
       const amount = r.unit === 'per_container' ? r.amount * containerCount : r.amount;
-      const id     = `CL-${uid()}`;
-      db.prepare("INSERT INTO shipment_cost_lines (id,shipment_id,type,charge_code,currency,amount,exchange_rate,notes,container_id,created_at,source) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
-        .run(id, shipmentId, 'BUY', chargeCode, r.currency || 'USD', amount, exchangeRate, baseNotes, '', now, 'contract');
-      logEntityEvent('cost_line', id, 'IMPORTED', null, null, null,
-        JSON.stringify({ shipmentId, chargeCode, currency: r.currency || 'USD', amount, exchangeRate }));
-      created++;
+      insertLine('BUY', amount, baseNotes, '');
+      if (includeSell) insertLine('SELL', amount, baseNotes, '');
     }
   }
   return created;
@@ -2870,11 +2885,14 @@ app.post("/api/shipments/:id/cost-lines/import-contract", (req, res) => {
   if (!shipment) return err(res, "Shipment not found", 404);
   if (shipment.contract_type !== 'Central' || !shipment.contract_id)
     return err(res, "Shipment is not linked to a Central contract");
+  let includeSell = false;
   if (overwrite) {
-    const existing = db.prepare("SELECT id FROM shipment_cost_lines WHERE shipment_id=? AND type='BUY' AND source='contract'").all(req.params.id);
-    for (const row of existing) db.prepare("DELETE FROM shipment_cost_lines WHERE id=?").run(row.id);
+    const existingBuy  = db.prepare("SELECT id FROM shipment_cost_lines WHERE shipment_id=? AND type='BUY'  AND source='contract'").all(req.params.id);
+    const existingSell = db.prepare("SELECT id FROM shipment_cost_lines WHERE shipment_id=? AND type='SELL' AND source='contract'").all(req.params.id);
+    includeSell = existingSell.length > 0;
+    for (const row of [...existingBuy, ...existingSell]) db.prepare("DELETE FROM shipment_cost_lines WHERE id=?").run(row.id);
   }
-  const count = importContractRates(req.params.id, { splitPerContainer });
+  const count = importContractRates(req.params.id, { splitPerContainer, includeSell });
   ok(res, { imported: count });
 });
 
@@ -2886,16 +2904,17 @@ app.get("/api/shipments/:id/cost-lines", (req, res) => {
 });
 
 app.post("/api/shipments/:id/cost-lines", (req, res) => {
-  const { type, chargeCode, currency = 'USD', amount, exchangeRate = 1, notes = '', containerId = '' } = req.body;
+  const { type, chargeCode, currency = 'USD', amount, exchangeRate = 1, notes = '', containerId = '', source: rawSource } = req.body;
   if (!type || !chargeCode || amount == null) return err(res, "type, chargeCode, amount required");
   if (!['BUY','SELL'].includes(type)) return err(res, "type must be BUY or SELL");
+  const source = rawSource === 'contract' ? 'contract' : 'manual';
   const id  = `CL-${uid()}`;
   const now = new Date().toISOString();
-  db.prepare("INSERT INTO shipment_cost_lines (id,shipment_id,type,charge_code,currency,amount,exchange_rate,notes,container_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
-    .run(id, req.params.id, type, chargeCode, currency.toUpperCase(), Number(amount), Number(exchangeRate), notes, containerId, now);
+  db.prepare("INSERT INTO shipment_cost_lines (id,shipment_id,type,charge_code,currency,amount,exchange_rate,notes,container_id,created_at,source) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+    .run(id, req.params.id, type, chargeCode, currency.toUpperCase(), Number(amount), Number(exchangeRate), notes, containerId, now, source);
   logEntityEvent('cost_line', id, 'CREATED', null, null, null,
     JSON.stringify({ shipmentId: req.params.id, type, chargeCode, currency: currency.toUpperCase(), amount: Number(amount), exchangeRate: Number(exchangeRate) }));
-  ok(res, mapCostLine({ id, shipment_id: req.params.id, type, charge_code: chargeCode, currency: currency.toUpperCase(), amount: Number(amount), exchange_rate: Number(exchangeRate), notes, container_id: containerId, source: 'manual', modified_at: null, created_at: now }), 201);
+  ok(res, mapCostLine({ id, shipment_id: req.params.id, type, charge_code: chargeCode, currency: currency.toUpperCase(), amount: Number(amount), exchange_rate: Number(exchangeRate), notes, container_id: containerId, source, modified_at: null, created_at: now }), 201);
 });
 
 app.put("/api/shipments/:shipmentId/cost-lines/:id", (req, res) => {

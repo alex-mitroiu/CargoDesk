@@ -119,8 +119,9 @@ export const api = {
     create:        (data)          => req("POST",   "/trade-lanes", data),
     update:        (code, data)    => req("PUT",    `/trade-lanes/${code}`, data),
     remove:        (code)          => req("DELETE", `/trade-lanes/${code}`),
-    getCountries:  (code)          => req("GET",    `/trade-lanes/${code}/countries`),
-    setCountries:  (code, iso2s)   => req("PUT",    `/trade-lanes/${code}/countries`, { iso2s }),
+    getCountries:       (code)       => req("GET",    `/trade-lanes/${code}/countries`),
+    setCountries:       (code, iso2s)=> req("PUT",    `/trade-lanes/${code}/countries`, { iso2s }),
+    transitSuggestion:  (pol, pod)   => req("GET",    `/trade-lanes/transit-suggestion?pol=${pol}&pod=${pod}`),
   },
   countryLocations: {
     list: (iso2, p = {})      => req("GET",    `/countries/${iso2}/locations?${new URLSearchParams(p)}`),

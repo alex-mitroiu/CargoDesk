@@ -17,8 +17,8 @@ const MdmTradeLanesPage = () => {
   const [loading, setLoading] = useState(true);
   const [modal,   setModal]   = useState(null);
   const [confirm, setConfirm] = useState(null);
-  const { template, startResize } = useResizableColumns("mdm-tradelanes", [90,150,150,120,130]);
-  const headers = ["Code","Name","Description","Countries","Actions"];
+  const { template, startResize } = useResizableColumns("mdm-tradelanes", [90,150,150,100,100,130]);
+  const headers = ["Code","Name","Description","Countries","Transit Days","Actions"];
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -29,9 +29,10 @@ const MdmTradeLanesPage = () => {
   useEffect(() => { load(); }, []);
 
   const LaneForm = ({ init = {}, onSave, onCancel }) => {
-    const [code,      setCode]      = useState(init.code || "");
-    const [name,      setName]      = useState(init.name || "");
-    const [desc,      setDesc]      = useState(init.description || "");
+    const [code,        setCode]      = useState(init.code || "");
+    const [name,        setName]      = useState(init.name || "");
+    const [desc,        setDesc]      = useState(init.description || "");
+    const [transitDays, setTransitDays] = useState(init.transitDays ?? 0);
     const [countries, setCountries] = useState([]);   // assigned countries list
     const [loadingC,  setLoadingC]  = useState(false);
     const isEdit = !!init.code;
@@ -55,6 +56,7 @@ const MdmTradeLanesPage = () => {
         code: code.trim().toUpperCase(),
         name: name.trim(),
         description: desc,
+        transitDays: Number(transitDays) || 0,
         iso2s: countries.map(c => c.iso2),
       });
     };
@@ -78,6 +80,9 @@ const MdmTradeLanesPage = () => {
         {/* Name + description */}
         <Inp label="Trade Lane Name" value={name} onChange={setName} placeholder="Europe North" required />
         <Textarea label="Description" value={desc} onChange={setDesc} placeholder="Optional description…" rows={2} />
+        <Inp label="Default Transit Days" value={String(transitDays)}
+          onChange={v => setTransitDays(v.replace(/\D/g, ""))}
+          placeholder="e.g. 25" mono hint="Average sea transit days — used for ETA suggestion in shipment form" />
 
         {/* Country assignments — only when editing */}
         {isEdit && (
@@ -188,6 +193,9 @@ const MdmTradeLanesPage = () => {
             <span style={{ fontFamily: T.body, fontSize: 13, color: T.text, fontWeight: 600 }}>{l.name}</span>
             <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>{l.description || "—"}</span>
             <span style={{ fontFamily: T.mono, fontSize: 13, color: T.text }}>{l.countryCount} countries</span>
+            <span style={{ fontFamily: T.mono, fontSize: 13, color: l.transitDays ? T.text : T.border }}>
+              {l.transitDays ? `${l.transitDays}d` : "—"}
+            </span>
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <ActionMenu items={[
                 ...(canManageConfigs ? [{ icon: "✎", label: "Edit",   onClick: () => setModal(l) }] : []),
@@ -207,7 +215,7 @@ const MdmTradeLanesPage = () => {
         <Modal title="Edit Trade Lane" onClose={() => setModal(null)} width={600}>
           <LaneForm init={modal}
             onSave={async d => {
-              await api.tradeLanes.update(modal.code, { name: d.name, description: d.description });
+              await api.tradeLanes.update(modal.code, { name: d.name, description: d.description, transitDays: d.transitDays });
               await api.tradeLanes.setCountries(modal.code, d.iso2s);
               setModal(null);
               load();
