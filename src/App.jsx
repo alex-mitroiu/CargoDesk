@@ -38,6 +38,7 @@ import MdmSanctionedCustomersPage from "./pages/mdm/MdmSanctionedCustomersPage";
 import MdmContractsPage        from "./pages/mdm/MdmContractsPage";
 import SpaceConfigurationsPage from "./pages/SpaceConfigurationsPage";
 import LicensePage             from "./pages/LicensePage";
+import SchedulesPage           from "./pages/SchedulesPage";
 
 
 
@@ -1399,6 +1400,8 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, o
     { id: "shp-cargo",      icon: "📦", label: "Cargo",      badge: ctrCount || null },
     { id: "shp-milestones", icon: "⚑",  label: "Milestones" },
     { id: "shp-accounting", icon: "◈",  label: "Accounting" },
+    { id: "shp-schedules",  icon: "⚓", label: "Schedules" },
+    { id: "shp-tickets",    icon: "◩",  label: "Tickets" },
   ];
 
   return (
@@ -1789,6 +1792,7 @@ function App() {
     "mdm-customers":              "Master Data — Customers",
     "mdm-sanctioned-customers":  "Master Data — Sanctioned Customers",
     "mdm-contracts":    "Master Data — Contracts",
+    schedules:          "Schedule Search",
     manual:             "User Manual",
   };
 
@@ -2265,7 +2269,8 @@ function App() {
             <NavBtn pageKey="space-configs"  icon="⚡" label="Space Configurations" indent />
             <NavBtn pageKey="dashboard-archive" icon="🗄" label="Archive"           indent />
 
-            <NavBtn pageKey="kanban" icon="📋" label="Integration Board" />
+            <NavBtn pageKey="kanban"    icon="📋" label="Integration Board" />
+            <NavBtn pageKey="schedules" icon="🗓" label="Schedule Search" />
 
             {/* MDM section */}
             <div style={{ marginTop: 10 }}>
@@ -2373,7 +2378,7 @@ function App() {
             ctrManagerTrigger={newCtrSignal}
             onDirtyChange={v => { formDirtyRef.current = v; }}
             onBack={() => navigate("shipments")}
-            onSave={async (form, draftLegs = [], draftContainers = []) => {
+            onSave={async (form, draftLegs = [], draftContainers = [], selectedSailing = null) => {
               try {
                 const created = await api.shipments.create(form);
                 setShipments(p => [created, ...p]);
@@ -2388,6 +2393,9 @@ function App() {
                 for (const ctr of draftContainers) {
                   const newCtr = await api.containers.create({ shipmentId: created.id, ...ctr });
                   setContainers(p => [...p, newCtr]);
+                }
+                if (selectedSailing) {
+                  await api.schedules.save(created.id, selectedSailing).catch(() => {});
                 }
                 navigate("detail", created.id);
               } catch (e) { toast.error(e.message); throw e; }
@@ -2539,6 +2547,7 @@ function App() {
         {page === "mdm-customers"              && isEnabled("mdm-customers")             && <MdmCustomersPage />}
         {page === "mdm-sanctioned-customers"   && isEnabled("mdm-sanctioned-customers")  && <MdmSanctionedCustomersPage />}
         {page === "mdm-contracts"  && isEnabled("mdm-contracts")  && <MdmContractsPage />}
+        {page === "schedules"      && <SchedulesPage />}
         {page === "manual"         && <UserManualPage />}
         {page === "about"          && <AboutPage />}
         {page === "license"        && <LicensePage />}

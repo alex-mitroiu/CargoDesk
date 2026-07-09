@@ -826,6 +826,21 @@ export default function UserManagementPanel() {
     } finally { setDeleteTarget(null); }
   };
 
+  const handleUnlock = async (u) => {
+    try {
+      await api.users.update(u.id, { unlock: true });
+      toast.success(`${u.name} unlocked`);
+      load();
+    } catch (e) { toast.error(e.message); }
+  };
+
+  const handleRevoke = async (u) => {
+    try {
+      await api.users.revokeSessions(u.id);
+      toast.success(`Sessions revoked for ${u.name}`);
+    } catch (e) { toast.error(e.message); }
+  };
+
   const handleConfigure = (user) => {
     setSelectedUser(u => u?.id === user.id ? null : user);
     setTimeout(() => configPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
@@ -880,7 +895,7 @@ export default function UserManagementPanel() {
                 {colHd("Roles", 220)}
                 {colHd("Status", 90)}
                 {colHd("Last Login", 140)}
-                {colHd("", 110)}
+                {colHd("", 150)}
               </tr>
             </thead>
             <tbody>
@@ -918,15 +933,27 @@ export default function UserManagementPanel() {
                       </div>
                     </td>
                     <td style={{ padding: "10px 14px" }}>
-                      <span data-testid={`user-status-${u.id}`} style={{
-                        display: "inline-block", padding: "2px 9px", borderRadius: 20,
-                        fontFamily: T.mono, fontSize: 11, fontWeight: 600,
-                        background: u.is_active ? T.success + "18" : T.danger + "18",
-                        color: u.is_active ? T.success : T.danger,
-                        border: `1px solid ${u.is_active ? T.success + "44" : T.danger + "44"}`,
-                      }}>
-                        {u.is_active ? "Active" : "Inactive"}
-                      </span>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        <span data-testid={`user-status-${u.id}`} style={{
+                          display: "inline-block", padding: "2px 9px", borderRadius: 20,
+                          fontFamily: T.mono, fontSize: 11, fontWeight: 600,
+                          background: u.is_active ? T.success + "18" : T.danger + "18",
+                          color: u.is_active ? T.success : T.danger,
+                          border: `1px solid ${u.is_active ? T.success + "44" : T.danger + "44"}`,
+                        }}>
+                          {u.is_active ? "Active" : "Inactive"}
+                        </span>
+                        {u.lockedUntil && u.lockedUntil > new Date().toISOString() && (
+                          <span title={`Locked until ${new Date(u.lockedUntil).toLocaleString()}`} style={{
+                            display: "inline-block", padding: "2px 8px", borderRadius: 20,
+                            fontFamily: T.mono, fontSize: 10, fontWeight: 600,
+                            background: T.warning + "18", color: T.warning,
+                            border: `1px solid ${T.warning}44`,
+                          }}>
+                            Locked {u.failedAttempts ? `(${u.failedAttempts}×)` : ""}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td style={{ padding: "10px 14px", fontFamily: T.mono, fontSize: 11,
                       color: T.textMuted }}>
@@ -935,13 +962,27 @@ export default function UserManagementPanel() {
                         : <span style={{ color: T.border }}>Never</span>}
                     </td>
                     <td style={{ padding: "10px 14px" }} onClick={e => e.stopPropagation()}>
-                      <div style={{ display: "flex", gap: 5 }}>
+                      <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
                         <button data-testid={`edit-user-${u.id}`}
                           onClick={() => setEditTarget(u)} title="Edit profile"
                           style={{ padding: "3px 9px", borderRadius: 6, border: `1px solid ${T.border}`,
                             background: T.bg, color: T.textMuted, fontFamily: T.body, fontSize: 12,
                             cursor: "pointer" }}>
                           Edit
+                        </button>
+                        {u.lockedUntil && u.lockedUntil > new Date().toISOString() && (
+                          <button onClick={() => handleUnlock(u)} title="Unlock account"
+                            style={{ padding: "3px 9px", borderRadius: 6, border: `1px solid ${T.warning}44`,
+                              background: T.warning + "10", color: T.warning, fontFamily: T.body, fontSize: 12,
+                              cursor: "pointer" }}>
+                            Unlock
+                          </button>
+                        )}
+                        <button onClick={() => handleRevoke(u)} title="Invalidate all sessions"
+                          style={{ padding: "3px 9px", borderRadius: 6, border: `1px solid ${T.accent}44`,
+                            background: T.accent + "10", color: T.accent, fontFamily: T.body, fontSize: 12,
+                            cursor: "pointer" }}>
+                          Revoke
                         </button>
                         <button data-testid={`delete-user-${u.id}`}
                           onClick={() => { setDeleteTarget(u); if (selectedUser?.id === u.id) setSelectedUser(null); }}

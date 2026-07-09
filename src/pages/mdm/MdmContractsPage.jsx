@@ -154,7 +154,7 @@ const ContractModal = ({ editing, prefill, onSave, onClose }) => {
     setF(p => ({ ...p, legs: p.legs.map((l, idx) => idx === i ? { ...l, ...patch } : l) }));
 
   const addLeg = () =>
-    setF(p => ({ ...p, legs: [...p.legs, { pol:"", polName:"", pod:"", podName:"", transitDays:0, vesselService:"", polLinkedAllowed:false, podLinkedAllowed:false, polCarrierHaulage:false, podCarrierHaulage:false, polHaulageLocations:"", podHaulageLocations:"" }] }));
+    setF(p => ({ ...p, legs: [...p.legs, { pol:"", polName:"", pod:"", podName:"", transitDays:0, vesselService:"", polLinkedAllowed:false, podLinkedAllowed:false, polCarrierHaulage:false, podCarrierHaulage:false, polHaulageLocations:"", podHaulageLocations:"", polLocType:"Terminal", podLocType:"Terminal" }] }));
 
   const removeLeg = i =>
     setF(p => ({ ...p, legs: p.legs.filter((_, idx) => idx !== i) }));
@@ -390,21 +390,47 @@ const ContractModal = ({ editing, prefill, onSave, onClose }) => {
                     border: `1px solid ${T.accent}55`, borderRadius: 6, padding: "6px 10px" }}>
                     <span style={{ fontFamily: T.mono, fontSize: 12, color: T.accent, fontWeight: 700 }}>{leg.pol}</span>
                     {leg.polName && <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{leg.polName}</span>}
-                    <button type="button" onClick={() => updateLeg(i, { pol: "", polName: "", polLinkedAllowed: false })}
+                    <button type="button" onClick={() => updateLeg(i, { pol: "", polName: "", polLinkedAllowed: false, polCarrierHaulage: false, polHaulageLocations: "", polLocType: "Terminal" })}
                       style={{ background: "none", border: "none", cursor: "pointer", color: T.textMuted, fontSize: 10, padding: 0, flexShrink: 0 }}>✕</button>
                   </div>
                 ) : (
                   <PortCombobox placeholder="POL…" onChange={r => updateLeg(i, { pol: r.unlocode, polName: r.name })} />
                 )}
                 {leg.pol && (
-                  <label style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 5, cursor: "pointer" }}>
-                    <input type="checkbox"
-                      checked={!!leg.polLinkedAllowed}
-                      onChange={e => updateLeg(i, { polLinkedAllowed: e.target.checked })}
-                      style={{ width: 13, height: 13, accentColor: T.info, cursor: "pointer" }}
-                    />
-                    <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>Allow linked POL</span>
-                  </label>
+                  <div style={{ marginTop: 6 }}>
+                    <div style={{ display: "flex", gap: 0, borderRadius: 5, overflow: "hidden", border: `1px solid ${T.border}`, width: "fit-content" }}>
+                      {["Terminal","Door","CY"].map(lt => (
+                        <button key={lt} type="button"
+                          onClick={() => updateLeg(i, { polLocType: lt, polCarrierHaulage: lt !== "Terminal" })}
+                          style={{ fontFamily: T.body, fontSize: 11, padding: "3px 9px", border: "none", cursor: "pointer", borderRight: lt !== "CY" ? `1px solid ${T.border}` : "none",
+                            background: (leg.polLocType || "Terminal") === lt ? T.accent : T.surface,
+                            color: (leg.polLocType || "Terminal") === lt ? "#fff" : T.textMuted }}>
+                          {lt}
+                        </button>
+                      ))}
+                    </div>
+                    <label style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 5, cursor: "pointer" }}>
+                      <input type="checkbox"
+                        checked={!!leg.polLinkedAllowed}
+                        onChange={e => updateLeg(i, { polLinkedAllowed: e.target.checked })}
+                        style={{ width: 13, height: 13, accentColor: T.info, cursor: "pointer" }}
+                      />
+                      <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>Allow linked POL</span>
+                    </label>
+                    {(leg.polLocType === "Door" || leg.polLocType === "CY") && (
+                      <div style={{ marginTop: 5 }}>
+                        <input
+                          value={leg.polHaulageLocations || ""}
+                          onChange={e => updateLeg(i, { polHaulageLocations: e.target.value })}
+                          placeholder="UN/LOCODEs e.g. NLAMS NLRTM (leave blank for any)"
+                          style={{ ...inputBase, fontFamily: T.mono, fontSize: 11, width: "100%", boxSizing: "border-box" }}
+                        />
+                        <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted, marginTop: 2, display: "block" }}>
+                          Door and CY both enable Carrier's Haulage routing — leave blank to accept any location
+                        </span>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
 
@@ -417,21 +443,47 @@ const ContractModal = ({ editing, prefill, onSave, onClose }) => {
                     border: `1px solid ${T.accent}55`, borderRadius: 6, padding: "6px 10px" }}>
                     <span style={{ fontFamily: T.mono, fontSize: 12, color: T.accent, fontWeight: 700 }}>{leg.pod}</span>
                     {leg.podName && <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{leg.podName}</span>}
-                    <button type="button" onClick={() => updateLeg(i, { pod: "", podName: "", podLinkedAllowed: false })}
+                    <button type="button" onClick={() => updateLeg(i, { pod: "", podName: "", podLinkedAllowed: false, podCarrierHaulage: false, podHaulageLocations: "", podLocType: "Terminal" })}
                       style={{ background: "none", border: "none", cursor: "pointer", color: T.textMuted, fontSize: 10, padding: 0, flexShrink: 0 }}>✕</button>
                   </div>
                 ) : (
                   <PortCombobox placeholder="POD…" onChange={r => updateLeg(i, { pod: r.unlocode, podName: r.name })} />
                 )}
                 {leg.pod && (
-                  <label style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 5, cursor: "pointer" }}>
-                    <input type="checkbox"
-                      checked={!!leg.podLinkedAllowed}
-                      onChange={e => updateLeg(i, { podLinkedAllowed: e.target.checked })}
-                      style={{ width: 13, height: 13, accentColor: T.info, cursor: "pointer" }}
-                    />
-                    <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>Allow linked POD</span>
-                  </label>
+                  <div style={{ marginTop: 6 }}>
+                    <div style={{ display: "flex", gap: 0, borderRadius: 5, overflow: "hidden", border: `1px solid ${T.border}`, width: "fit-content" }}>
+                      {["Terminal","Door","CY"].map(lt => (
+                        <button key={lt} type="button"
+                          onClick={() => updateLeg(i, { podLocType: lt, podCarrierHaulage: lt !== "Terminal" })}
+                          style={{ fontFamily: T.body, fontSize: 11, padding: "3px 9px", border: "none", cursor: "pointer", borderRight: lt !== "CY" ? `1px solid ${T.border}` : "none",
+                            background: (leg.podLocType || "Terminal") === lt ? T.accent : T.surface,
+                            color: (leg.podLocType || "Terminal") === lt ? "#fff" : T.textMuted }}>
+                          {lt}
+                        </button>
+                      ))}
+                    </div>
+                    <label style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 5, cursor: "pointer" }}>
+                      <input type="checkbox"
+                        checked={!!leg.podLinkedAllowed}
+                        onChange={e => updateLeg(i, { podLinkedAllowed: e.target.checked })}
+                        style={{ width: 13, height: 13, accentColor: T.info, cursor: "pointer" }}
+                      />
+                      <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>Allow linked POD</span>
+                    </label>
+                    {(leg.podLocType === "Door" || leg.podLocType === "CY") && (
+                      <div style={{ marginTop: 5 }}>
+                        <input
+                          value={leg.podHaulageLocations || ""}
+                          onChange={e => updateLeg(i, { podHaulageLocations: e.target.value })}
+                          placeholder="UN/LOCODEs e.g. USCHI USLGB (leave blank for any)"
+                          style={{ ...inputBase, fontFamily: T.mono, fontSize: 11, width: "100%", boxSizing: "border-box" }}
+                        />
+                        <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted, marginTop: 2, display: "block" }}>
+                          Door and CY both enable Carrier's Haulage routing — leave blank to accept any location
+                        </span>
+                      </div>
+                    )}
+                  </div>
                 )}
               </div>
 
@@ -462,48 +514,6 @@ const ContractModal = ({ editing, prefill, onSave, onClose }) => {
               />
             </div>
 
-            {/* Row 3: Carrier Haulage (PKU / DEL) */}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 10,
-              paddingTop: 10, borderTop: `1px solid ${T.border}33` }}>
-              {/* PKU haulage */}
-              <div>
-                <label style={{ display: "inline-flex", alignItems: "center", gap: 5, cursor: "pointer" }}>
-                  <input type="checkbox"
-                    checked={!!leg.polCarrierHaulage}
-                    onChange={e => updateLeg(i, { polCarrierHaulage: e.target.checked, polHaulageLocations: e.target.checked ? leg.polHaulageLocations || "" : "" })}
-                    style={{ width: 13, height: 13, accentColor: T.accent, cursor: "pointer" }}
-                  />
-                  <span style={{ fontFamily: T.body, fontSize: 11, color: T.text, fontWeight: 600 }}>PKU — Carrier's Haulage</span>
-                </label>
-                {leg.polCarrierHaulage && (
-                  <input
-                    value={leg.polHaulageLocations || ""}
-                    onChange={e => updateLeg(i, { polHaulageLocations: e.target.value })}
-                    placeholder="UN/LOCODEs e.g. NLAMS NLRTM DEBOC (leave blank for any)"
-                    style={{ ...inputBase, fontFamily: T.mono, fontSize: 11, marginTop: 5, width: "100%", boxSizing: "border-box" }}
-                  />
-                )}
-              </div>
-              {/* DEL haulage */}
-              <div>
-                <label style={{ display: "inline-flex", alignItems: "center", gap: 5, cursor: "pointer" }}>
-                  <input type="checkbox"
-                    checked={!!leg.podCarrierHaulage}
-                    onChange={e => updateLeg(i, { podCarrierHaulage: e.target.checked, podHaulageLocations: e.target.checked ? leg.podHaulageLocations || "" : "" })}
-                    style={{ width: 13, height: 13, accentColor: T.accent, cursor: "pointer" }}
-                  />
-                  <span style={{ fontFamily: T.body, fontSize: 11, color: T.text, fontWeight: 600 }}>DEL — Carrier's Haulage</span>
-                </label>
-                {leg.podCarrierHaulage && (
-                  <input
-                    value={leg.podHaulageLocations || ""}
-                    onChange={e => updateLeg(i, { podHaulageLocations: e.target.value })}
-                    placeholder="UN/LOCODEs e.g. USCHI USLGB (leave blank for any)"
-                    style={{ ...inputBase, fontFamily: T.mono, fontSize: 11, marginTop: 5, width: "100%", boxSizing: "border-box" }}
-                  />
-                )}
-              </div>
-            </div>
           </div>
         ))}
         <div>
@@ -665,6 +675,178 @@ const ContractModal = ({ editing, prefill, onSave, onClose }) => {
   );
 };
 
+// ─── Schedules Modal ──────────────────────────────────────────────────────────
+
+const SchedulesModal = ({ contract, onClose }) => {
+  const [legs,     setLegs]     = useState(null);
+  const [weeks,    setWeeks]    = useState(4);
+  const [loading,  setLoading]  = useState(false);
+  const [result,   setResult]   = useState(null);
+
+  useEffect(() => {
+    api.contracts.get(contract.id)
+      .then(full => setLegs(full.legs || []))
+      .catch(() => setLegs([]));
+  }, [contract.id]);
+
+  // Derive the sea leg: first leg where POL side has no carrier haulage;
+  // fall back to first leg if all legs have haulage (single-leg contracts).
+  const seaLeg = legs && (legs.find(l => !l.polCarrierHaulage) || legs[0]);
+  const pol = seaLeg?.pol;
+  const pod = seaLeg?.pod;
+
+  const handleSearch = async () => {
+    if (!pol || !pod) return;
+    setLoading(true);
+    setResult(null);
+    try {
+      const r = await api.schedules.search({
+        pol, pod, carrierCode: contract.carrierCode, weeks,
+      });
+      setResult(r);
+    } catch (e) {
+      toast.error(e.message);
+    }
+    setLoading(false);
+  };
+
+  const colHead = { fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted,
+    textTransform: "uppercase", letterSpacing: ".08em", padding: "0 8px 8px", whiteSpace: "nowrap" };
+  const cell    = { fontFamily: T.mono, fontSize: 12, color: T.text, padding: "10px 8px",
+    borderTop: `1px solid ${T.border}22` };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+
+      {/* Route derivation */}
+      <div style={{ background: T.bg, border: `1px solid ${T.border}`,
+        borderRadius: 8, padding: "12px 16px" }}>
+        {legs === null ? (
+          <Spinner size="sm" />
+        ) : legs.length === 0 ? (
+          <span style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, fontStyle: "italic" }}>
+            No legs configured on this contract.
+          </span>
+        ) : !seaLeg ? null : (
+          <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+            <div>
+              <div style={{ fontFamily: T.body, fontSize: 10, fontWeight: 600, color: T.textMuted,
+                textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 2 }}>
+                Schedule POL
+              </div>
+              <span style={{ fontFamily: T.mono, fontSize: 16, fontWeight: 700, color: T.accent }}>
+                {pol}
+              </span>
+              {seaLeg.polName && (
+                <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginTop: 1 }}>
+                  {seaLeg.polName}
+                </div>
+              )}
+            </div>
+
+            <div style={{ fontSize: 18, color: T.border, flexShrink: 0 }}>›</div>
+
+            <div>
+              <div style={{ fontFamily: T.body, fontSize: 10, fontWeight: 600, color: T.textMuted,
+                textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 2 }}>
+                Schedule POD
+              </div>
+              <span style={{ fontFamily: T.mono, fontSize: 16, fontWeight: 700, color: T.accent }}>
+                {pod}
+              </span>
+              {seaLeg.podName && (
+                <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginTop: 1 }}>
+                  {seaLeg.podName}
+                </div>
+              )}
+            </div>
+
+            {legs.length > 1 && (
+              <div style={{ marginLeft: "auto", fontFamily: T.body, fontSize: 11, color: T.textMuted,
+                fontStyle: "italic" }}>
+                Using sea leg ({legs.indexOf(seaLeg) + 1} of {legs.length})
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Search controls */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <label style={{ fontFamily: T.body, fontSize: 13, color: T.text, display: "flex",
+          alignItems: "center", gap: 8 }}>
+          Weeks ahead
+          <select
+            value={weeks}
+            onChange={e => setWeeks(parseInt(e.target.value))}
+            disabled={loading}
+            style={{ ...inputBase, width: 70, cursor: "pointer" }}
+          >
+            {[1, 2, 4, 6, 8, 12].map(w => (
+              <option key={w} value={w}>{w}</option>
+            ))}
+          </select>
+        </label>
+
+        <Btn onClick={handleSearch} disabled={!pol || !pod || loading}>
+          {loading ? (
+            <span style={{ display: "flex", alignItems: "center", gap: 7 }}>
+              <Spinner size="sm" color="currentColor" /> Searching…
+            </span>
+          ) : "Search Sailings"}
+        </Btn>
+      </div>
+
+      {/* Mock banner */}
+      {result?.isMock && (
+        <div style={{ background: `${T.warning}18`, border: `1px solid ${T.warning}44`,
+          borderRadius: 6, padding: "8px 12px", fontFamily: T.body, fontSize: 12, color: T.warning }}>
+          Showing demo sailings. Configure a Maersk API key in Settings → API Controls to fetch live schedules.
+        </div>
+      )}
+
+      {/* Results */}
+      {result && (
+        <div style={{ background: T.surface, border: `1px solid ${T.border}`,
+          borderRadius: 8, overflow: "hidden" }}>
+          {result.sailings.length === 0 ? (
+            <div style={{ padding: "24px 16px", textAlign: "center", fontFamily: T.body,
+              fontSize: 13, color: T.textMuted, fontStyle: "italic" }}>
+              No sailings found for this route in the selected window.
+            </div>
+          ) : (
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr>
+                    {["Vessel","Voyage","Service","ETD","ETA","Transit"].map(h => (
+                      <th key={h} style={colHead}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.sailings.map((s, i) => (
+                    <tr key={i} style={{ background: i % 2 === 0 ? "transparent" : `${T.border}10` }}>
+                      <td style={{ ...cell, fontWeight: 600 }}>{s.vesselName}</td>
+                      <td style={cell}>{s.voyageNumber}</td>
+                      <td style={cell}>{s.service}</td>
+                      <td style={{ ...cell, color: T.accent }}>{s.etd || "—"}</td>
+                      <td style={{ ...cell, color: T.accent }}>{s.eta || "—"}</td>
+                      <td style={{ ...cell, color: T.textMuted }}>
+                        {s.transitDays ? `${s.transitDays}d` : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 const MdmContractsPage = () => {
@@ -676,8 +858,9 @@ const MdmContractsPage = () => {
   const [loading, setLoading] = useState(true);
   const [modal,            setModal]            = useState(null);
   const [cloneSource,      setCloneSource]      = useState(null);
-  const [historyContract,  setHistoryContract]  = useState(null);
-  const [routingContract,  setRoutingContract]  = useState(null);
+  const [historyContract,   setHistoryContract]   = useState(null);
+  const [routingContract,   setRoutingContract]   = useState(null);
+  const [schedulesContract, setSchedulesContract] = useState(null);
   const timer = useRef(null);
 
   const doLoad = useCallback(async (f, off) => {
@@ -933,6 +1116,7 @@ const MdmContractsPage = () => {
                 <ActionMenu items={[
                   ...(canManageConfigs ? [{ icon: "✎",  label: "Edit",      onClick: () => setModal(c) }] : []),
                   ...(canManageConfigs ? [{ icon: "⧉",  label: "Duplicate", onClick: () => handleDuplicate(c) }] : []),
+                  { icon: "🗓", label: "Schedules",  onClick: () => setSchedulesContract(c) },
                   { icon: "📋", label: "History",   onClick: () => setHistoryContract(c) },
                   ...(canManageConfigs ? [{ icon: "✕",  label: "Delete",    variant: "danger", onClick: () => handleDelete(c.id) }] : []),
                 ]} />
@@ -987,6 +1171,20 @@ const MdmContractsPage = () => {
             </>
           }
           onClose={() => setHistoryContract(null)} />
+      )}
+
+      {/* Schedules modal */}
+      {schedulesContract && (
+        <Modal
+          title={`Sailing Schedules — ${schedulesContract.contractNumber}`}
+          onClose={() => setSchedulesContract(null)}
+          width={700}
+        >
+          <SchedulesModal
+            contract={schedulesContract}
+            onClose={() => setSchedulesContract(null)}
+          />
+        </Modal>
       )}
 
       {/* Routings modal */}

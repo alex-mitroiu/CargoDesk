@@ -388,6 +388,10 @@ const migrations = [
   "ALTER TABLE contract_legs ADD COLUMN pod_carrier_haulage  INTEGER DEFAULT 0",
   "ALTER TABLE contract_legs ADD COLUMN pol_haulage_locations TEXT   DEFAULT ''",
   "ALTER TABLE contract_legs ADD COLUMN pod_haulage_locations TEXT   DEFAULT ''",
+  "ALTER TABLE contract_legs ADD COLUMN pol_loc_type          TEXT   DEFAULT 'Terminal'",
+  "ALTER TABLE contract_legs ADD COLUMN pod_loc_type          TEXT   DEFAULT 'Terminal'",
+  "UPDATE contract_legs SET pol_loc_type='Door' WHERE pol_carrier_haulage=1 AND pol_loc_type='Terminal'",
+  "UPDATE contract_legs SET pod_loc_type='Door' WHERE pod_carrier_haulage=1 AND pod_loc_type='Terminal'",
   "ALTER TABLE allocations ADD COLUMN contract_id     TEXT DEFAULT ''",
   "ALTER TABLE allocations ADD COLUMN contract_number TEXT DEFAULT ''",
   "UPDATE shipments SET contract_type = 'Central' WHERE contract_type = 'Central Contract'",
@@ -498,6 +502,82 @@ const migrations = [
   "ALTER TABLE shipment_documents ADD COLUMN confirmed_at  TEXT DEFAULT NULL",
   "ALTER TABLE shipment_documents ADD COLUMN confirmed_by  TEXT DEFAULT ''",
   "ALTER TABLE trade_lanes ADD COLUMN transit_days INTEGER DEFAULT 0",
+  // v0.24.0 — admin security hardening
+  "ALTER TABLE users ADD COLUMN failed_attempts INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE users ADD COLUMN locked_until    TEXT    NOT NULL DEFAULT ''",
+  "ALTER TABLE users ADD COLUMN token_version   INTEGER NOT NULL DEFAULT 0",
+  `CREATE TABLE IF NOT EXISTS admin_events (
+    id          TEXT PRIMARY KEY,
+    actor_id    TEXT NOT NULL DEFAULT '',
+    actor_email TEXT NOT NULL DEFAULT '',
+    action      TEXT NOT NULL,
+    target_type TEXT NOT NULL DEFAULT '',
+    target_id   TEXT NOT NULL DEFAULT '',
+    details     TEXT NOT NULL DEFAULT '{}',
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
+  // v0.25.0 — customer profiles enhancement
+  `CREATE TABLE IF NOT EXISTS customer_identifiers (
+    id           TEXT PRIMARY KEY,
+    customer_id  TEXT NOT NULL,
+    id_type      TEXT NOT NULL DEFAULT 'VAT',
+    id_code      TEXT NOT NULL DEFAULT '',
+    country_iso2 TEXT NOT NULL DEFAULT '',
+    label        TEXT NOT NULL DEFAULT '',
+    is_primary   INTEGER NOT NULL DEFAULT 0,
+    created_at   TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS customer_screenings (
+    id              TEXT PRIMARY KEY,
+    customer_id     TEXT NOT NULL,
+    screened_at     TEXT NOT NULL,
+    result          TEXT NOT NULL,
+    hits            TEXT DEFAULT '[]',
+    overridden_at   TEXT,
+    override_reason TEXT,
+    UNIQUE(customer_id)
+  )`,
+  `CREATE TABLE IF NOT EXISTS customer_documents (
+    id           TEXT PRIMARY KEY,
+    customer_id  TEXT NOT NULL,
+    filename     TEXT NOT NULL,
+    stored_name  TEXT NOT NULL,
+    mime_type    TEXT NOT NULL DEFAULT '',
+    size_bytes   INTEGER NOT NULL DEFAULT 0,
+    doc_type     TEXT NOT NULL DEFAULT 'Other',
+    uploaded_by  TEXT NOT NULL DEFAULT '',
+    created_at   TEXT NOT NULL
+  )`,
+  // seed security defaults (INSERT OR IGNORE so they only apply once)
+  "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('login_max_attempts','5')",
+  "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('login_lockout_minutes','30')",
+  "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('jwt_lifetime_hours','8')",
+  "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('sso_enabled','0')",
+  "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('sso_tenant_id','')",
+  "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('sso_client_id','')",
+  "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('sso_client_secret','')",
+  "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('sso_redirect_uri','')",
+  "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('sso_default_role','operator')",
+  "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('sso_frontend_url','http://localhost:5173')",
+  // v0.25.0 — VAT on cost lines
+  "ALTER TABLE shipment_cost_lines ADD COLUMN vat_rate REAL NOT NULL DEFAULT 0",
+  // v0.25.0 — Shipment-level schedule bookings
+  `CREATE TABLE IF NOT EXISTS shipment_schedules (
+    id            TEXT PRIMARY KEY,
+    shipment_id   TEXT NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
+    carrier       TEXT DEFAULT '',
+    vessel_name   TEXT DEFAULT '',
+    voyage_number TEXT DEFAULT '',
+    service       TEXT DEFAULT '',
+    pol           TEXT DEFAULT '',
+    pod           TEXT DEFAULT '',
+    etd           TEXT DEFAULT '',
+    eta           TEXT DEFAULT '',
+    transit_days  INTEGER DEFAULT 0,
+    is_mock       INTEGER DEFAULT 0,
+    saved_at      TEXT NOT NULL,
+    saved_by      TEXT NOT NULL DEFAULT ''
+  )`,
 ];
 
 for (const sql of migrations) {
@@ -542,6 +622,10 @@ try {
 } catch (e) {
   console.warn("  ⚠ Port→country map failed:", e.message);
 }
+
+// Pre-declared here so broadcastMessage / recomputeSpaceBadge (defined below) can close over it;
+// the WebSocket handler in this same file populates it after the server starts.
+const shipmentSubs = new Map();
 
 // ─── Backfill user roles array ────────────────────────────────────────────────
 ;(function backfillUserRoles() {
@@ -935,7 +1019,7 @@ const syncShipmentFromLegs = (shipmentId) => {
          seaLeg.voyage || '', routingTerm, shipmentId);
 };
 
-const mapCostLine     = r => ({ id: r.id, shipmentId: r.shipment_id, type: r.type, chargeCode: r.charge_code, currency: r.currency, amount: r.amount, exchangeRate: r.exchange_rate, amountUsd: Math.round(r.amount * r.exchange_rate * 100) / 100, notes: r.notes || '', containerId: r.container_id || '', source: r.source || 'manual', modifiedAt: r.modified_at || null, createdAt: r.created_at });
+const mapCostLine     = r => ({ id: r.id, shipmentId: r.shipment_id, type: r.type, chargeCode: r.charge_code, currency: r.currency, amount: r.amount, exchangeRate: r.exchange_rate, amountUsd: Math.round(r.amount * r.exchange_rate * 100) / 100, vatRate: r.vat_rate || 0, vatAmountUsd: Math.round(r.amount * r.exchange_rate * (r.vat_rate || 0) / 100 * 100) / 100, notes: r.notes || '', containerId: r.container_id || '', source: r.source || 'manual', modifiedAt: r.modified_at || null, createdAt: r.created_at });
 const mapContainer    = r => ({ id: r.id, shipmentId: r.shipment_id, containerNumber: r.container_number || '', sealNumber: r.seal_number || '', size: r.size, type: r.type, hsCode: r.hs_code || '', cargoDescription: r.cargo_description || '', grossWeightKg: r.gross_weight_kg ?? null, volumeCbm: r.volume_cbm ?? null, isDg: r.is_dg === 1, dgClass: r.dg_class || '' });
 const mapAllocation   = r => ({ id: r.id, carrierCode: r.carrier_code, allocatedTEU: r.allocated_teu, effectiveDate: r.effective_date || '', endDate: r.end_date || '', tradeLane: r.trade_lane || '', notes: r.notes || '', alertThreshold: r.alert_threshold ?? 80, pol: r.pol || '', pod: r.pod || '', originLane: r.origin_lane || '', destLane: r.dest_lane || '', coverageScope: r.coverage_scope || 'STRICT', contractId: r.contract_id || '', contractNumber: r.contract_number || '' });
 const mapCarrier      = r => ({ code: r.code, name: r.name, shortName: r.short_name || '' });
@@ -1061,7 +1145,10 @@ const mapTicket       = r => ({
   dueDate:         r.due_date        || null,
   testNotes:       r.test_notes      || null,
 });
-const mapCustomer     = r => ({ id: r.id, companyName: r.company_name, address1: r.address1 || '', address2: r.address2 || '', city: r.city || '', state: r.state || '', postalCode: r.postal_code || '', countryIso2: r.country_iso2 || '', phone: r.phone || '', fax: r.fax || '', email: r.email || '', website: r.website || '', notes: r.notes || '', createdAt: r.created_at });
+const mapCustomer            = r => ({ id: r.id, companyName: r.company_name, address1: r.address1 || '', address2: r.address2 || '', city: r.city || '', state: r.state || '', postalCode: r.postal_code || '', countryIso2: r.country_iso2 || '', phone: r.phone || '', fax: r.fax || '', email: r.email || '', website: r.website || '', notes: r.notes || '', createdAt: r.created_at, screeningResult: r.screening_result || null });
+const mapCustomerIdentifier  = r => ({ id: r.id, customerId: r.customer_id, idType: r.id_type, idCode: r.id_code, countryIso2: r.country_iso2 || '', label: r.label || '', isPrimary: !!r.is_primary, createdAt: r.created_at });
+const mapCustomerScreening   = r => ({ id: r.id, customerId: r.customer_id, screenedAt: r.screened_at, result: r.result, hits: JSON.parse(r.hits || '[]'), overriddenAt: r.overridden_at || null, overrideReason: r.override_reason || null });
+const mapCustomerDoc         = r => ({ id: r.id, customerId: r.customer_id, filename: r.filename, mimeType: r.mime_type, sizeBytes: r.size_bytes, docType: r.doc_type, uploadedBy: r.uploaded_by, createdAt: r.created_at });
 const mapCommodity    = r => ({ code: r.code, description: r.description, gradeCode: r.grade_code, gradeName: r.grade_name });
 const mapSystemMessage = r => ({
   id: r.id, title: r.title, body: r.body,
@@ -1104,6 +1191,8 @@ const mapLeg = r => ({
   podCarrierHaulage:   r.pod_carrier_haulage  === 1,
   polHaulageLocations: r.pol_haulage_locations || '',
   podHaulageLocations: r.pod_haulage_locations || '',
+  polLocType: r.pol_loc_type || (r.pol_carrier_haulage === 1 ? 'Door' : 'Terminal'),
+  podLocType: r.pod_loc_type || (r.pod_carrier_haulage === 1 ? 'Door' : 'Terminal'),
 });
 const mapRate = r => ({
   id:            r.id,
@@ -1131,6 +1220,18 @@ const logEntityEvent = (entityType, entityId, eventType, field = null, oldVal = 
       meta    ?? null,
       new Date().toISOString());
   } catch(e) { console.warn('logEntityEvent failed:', e.message); }
+};
+
+// ─── Admin event logger ───────────────────────────────────────────────────────
+const logAdminEvent = (actor, action, targetType = '', targetId = '', details = {}) => {
+  try {
+    db.prepare(
+      "INSERT INTO admin_events (id,actor_id,actor_email,action,target_type,target_id,details,created_at) VALUES (?,?,?,?,?,?,?,?)"
+    ).run(`AEV-${uid()}`,
+      actor?.id    ?? '', actor?.email ?? '',
+      action, targetType, targetId,
+      JSON.stringify(details), new Date().toISOString());
+  } catch(e) { console.warn('logAdminEvent failed:', e.message); }
 };
 
 // ─── Shipment event logger ────────────────────────────────────────────────────
@@ -1192,7 +1293,116 @@ const checkOverlap = (carrierCode, effectiveDate, endDate, pol = '', pod = '', e
 };
 
 
+// ─── Role helpers (hoisted from inline routes so ctx can include them) ────────
+
+const VALID_ROLES  = ["admin", "operator", "occ_bk", "viewer"];
+const ROLE_RANK_SV = { viewer: 0, occ_bk: 1, operator: 2, admin: 3 };
+const primaryRoleSV  = (roles) => [...roles].sort((a, b) => ROLE_RANK_SV[b] - ROLE_RANK_SV[a])[0] || 'viewer';
+const parseUserRoles = (u) => JSON.parse(u.roles || JSON.stringify([u.role || 'viewer']));
+
+// ─── WebSocket broadcast helpers (hoisted; shipmentSubs pre-declared above) ───
+
+const broadcastMessage = (shipmentId, payload) => {
+  const subs = shipmentSubs.get(shipmentId);
+  if (!subs) return;
+  const frame = JSON.stringify({ type: "new_message", message: payload });
+  for (const ws of subs) {
+    if (ws.readyState === ws.OPEN) ws.send(frame);
+  }
+};
+
+const recomputeSpaceBadge = shipmentId => {
+  try {
+    const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(shipmentId);
+    if (!shipment) return;
+    let badge = '';
+    if (shipment.allocation_id) {
+      const alloc = db.prepare("SELECT * FROM allocations WHERE id=?").get(shipment.allocation_id);
+      if (alloc) {
+        const { shipment_teu } = db.prepare(
+          "SELECT COALESCE(SUM(CASE WHEN size=20 THEN 1 WHEN size IN (40,45) THEN 2 ELSE 0 END),0) AS shipment_teu FROM containers WHERE shipment_id=?"
+        ).get(shipmentId);
+        const { other_teu } = db.prepare(
+          "SELECT COALESCE(SUM(CASE WHEN c.size=20 THEN 1 WHEN c.size IN (40,45) THEN 2 ELSE 0 END),0) AS other_teu FROM containers c JOIN shipments s ON s.id=c.shipment_id WHERE s.allocation_id=? AND s.id!=?"
+        ).get(shipment.allocation_id, shipmentId);
+        const remaining = Math.max(0, alloc.allocated_teu - other_teu);
+        if (shipment_teu > remaining)          badge = 'exceeded';
+        else if (shipment.space_overage_reason) badge = 'warning';
+      }
+    }
+    if (badge !== (shipment.space_badge || '')) {
+      db.prepare("UPDATE shipments SET space_badge=? WHERE id=?").run(badge, shipmentId);
+      const subs = shipmentSubs.get(shipmentId);
+      if (subs) {
+        const frame = JSON.stringify({ type: "space_badge_update", badge });
+        for (const ws of subs) if (ws.readyState === ws.OPEN) ws.send(frame);
+      }
+    }
+  } catch { /* non-fatal */ }
+};
+
+// ─── Contract rate → charge code mapping (hoisted so importContractRates + ctx are together) ─
+
+const SERVICE_CODE_MAP = {
+  OF: 'Ocean Freight', OCF: 'Ocean Freight',
+  BL: 'B/L Fee',  BLF: 'B/L Fee', DOC: 'B/L Fee',
+  THC: 'Origin THC', OTHC: 'Origin THC', ORI: 'Origin THC',
+  DTHC: 'Destination THC', DEST: 'Destination THC',
+  CUS: 'Customs', CUST: 'Customs',
+  INL: 'Inland', INLAND: 'Inland',
+};
+
+function importContractRates(shipmentId, { splitPerContainer = false, includeSell = false } = {}) {
+  const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(shipmentId);
+  if (!shipment || shipment.contract_type !== 'Central' || !shipment.contract_id) return 0;
+  const rates = db.prepare("SELECT * FROM contract_rates WHERE contract_id=? ORDER BY sort_order").all(shipment.contract_id);
+  if (!rates.length) return 0;
+  const ctrs = db.prepare("SELECT id, container_number, size, type FROM containers WHERE shipment_id=?").all(shipmentId);
+  const now = new Date().toISOString();
+  let created = 0;
+  for (const r of rates) {
+    const chargeCode   = SERVICE_CODE_MAP[r.service_code?.toUpperCase()] || 'Other';
+    const exchangeRate = (r.amount > 0 && r.amount_usd > 0) ? Math.round((r.amount_usd / r.amount) * 100000) / 100000 : 1;
+    const baseNotes    = [r.service_code, r.description].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(' — ');
+    const applicableCtrs = r.container_type
+      ? ctrs.filter(c => `${c.size || ''}${c.type || ''}`.toUpperCase() === r.container_type.toUpperCase())
+      : ctrs;
+    if (r.unit === 'per_container' && r.container_type && applicableCtrs.length === 0) continue;
+    const insertLine = (type, amount, notes, containerId) => {
+      const lineId = `CL-${uid()}`;
+      db.prepare("INSERT INTO shipment_cost_lines (id,shipment_id,type,charge_code,currency,amount,exchange_rate,notes,container_id,created_at,source) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+        .run(lineId, shipmentId, type, chargeCode, r.currency || 'USD', amount, exchangeRate, notes, containerId, now, 'contract');
+      logEntityEvent('cost_line', lineId, 'IMPORTED', null, null, null,
+        JSON.stringify({ shipmentId, chargeCode, currency: r.currency || 'USD', amount, exchangeRate, containerId }));
+      created++;
+    };
+    if (r.unit === 'per_container' && splitPerContainer && applicableCtrs.length > 0) {
+      for (const c of applicableCtrs) {
+        const cLabel = c.container_number
+          ? `${c.container_number}${c.size || c.type ? ` (${c.size}${c.type})` : ''}`
+          : `(${c.size || ''}${c.type || ''})`;
+        const notes = [cLabel, baseNotes].filter(Boolean).join(' — ');
+        insertLine('BUY', r.amount, notes, c.id);
+        if (includeSell) insertLine('SELL', r.amount, notes, c.id);
+      }
+    } else {
+      const containerCount = r.unit === 'per_container' ? (applicableCtrs.length || 1) : 1;
+      const amount = r.unit === 'per_container' ? r.amount * containerCount : r.amount;
+      insertLine('BUY', amount, baseNotes, '');
+      if (includeSell) insertLine('SELL', amount, baseNotes, '');
+    }
+  }
+  return created;
+}
+
 // ─── Auth middleware ──────────────────────────────────────────────────────────
+
+// In-memory nonce store for SSO OAuth2 state parameter (TTL = 5 min)
+const ssoNonces = new Map();
+setInterval(() => {
+  const cutoff = Date.now() - 5 * 60 * 1000;
+  for (const [k, v] of ssoNonces) if (v.ts < cutoff) ssoNonces.delete(k);
+}, 60_000);
 
 const auth = (allowed = []) => (req, res, next) => {
   const header = req.headers["authorization"];
@@ -1204,6 +1414,12 @@ const auth = (allowed = []) => (req, res, next) => {
       : (payload.role ? [payload.role] : ['viewer']);
     if (allowed.length && !allowed.some(r => payload.roles.includes(r)))
       return err(res, "Forbidden", 403);
+    // token_version check — invalidates tokens issued before a revoke
+    if (payload.tv != null) {
+      const row = db.prepare("SELECT token_version, is_active FROM users WHERE id=?").get(payload.id);
+      if (!row || !row.is_active) return err(res, "Account inactive", 401);
+      if (row.token_version !== payload.tv) return err(res, "Session revoked — please sign in again", 401);
+    }
     req.user = payload;
     next();
   } catch { err(res, "Invalid or expired token", 401); }
@@ -1217,6 +1433,50 @@ const requireRole = (allowed) => (req, res, next) =>
 app.use("/api", (req, res, next) =>
   req.path.startsWith("/auth/") || req.path === "/health" ? next() : auth()(req, res, next)
 );
+
+// ─── Shared context passed to every route module ───────────────────────────────
+
+const ctx = {
+  db, uid, ok, err, isUniqueViolation,
+  auth, requireRole,
+  portLanesMap, portCountryMap, rebuildPortLanesMap, longestLane,
+  applyShipmentAccessFilter,
+  fxCache, getFxRates, toUsd,
+  sanctionsMap, loadSanctionsIndex, syncOfacSdn, scheduleNextOfacSync,
+  normSanctionName, EMBARGOED_COUNTRIES,
+  getSettings,
+  shipmentSubs, broadcastMessage, recomputeSpaceBadge,
+  UPLOADS_DIR,
+  SVC_ABBR, LEG_LOC_ABBR,
+  VALID_ROLES, ROLE_RANK_SV, primaryRoleSV, parseUserRoles,
+  SERVICE_CODE_MAP, importContractRates,
+  mapShipment, mapShipmentLeg, mapCostLine, mapContainer, mapAllocation,
+  mapCarrier, mapVessel, mapPortLocation, mapLinkedPort, mapTradeLane,
+  mapScopeItem, mapAccessConfig, mapRegion, mapCountry, mapTicketLink, mapTicket,
+  mapCustomer, mapCustomerIdentifier, mapCustomerScreening, mapCustomerDoc,
+  mapCommodity, mapSystemMessage, mapMilestone, mapMilestoneTemplate,
+  mapContract, mapLeg, mapRate,
+  logEvent, logEntityEvent, logAdminEvent, TRACKED_FIELDS, TRACKED_CTR_FIELDS,
+  ssoNonces,
+  syncShipmentFromLegs,
+  checkOverlap,
+  screenShipmentById,
+  bcrypt, jwt, JWT_SECRET,
+  inverseLinkLabel,
+  fs, path,
+};
+
+require('./routes/auth')(app, ctx);
+require('./routes/shipments')(app, ctx);
+require('./routes/allocations')(app, ctx);
+require('./routes/mdm')(app, ctx);
+require('./routes/kanban')(app, ctx);
+require('./routes/customers')(app, ctx);
+require('./routes/contracts')(app, ctx);
+require('./routes/shipment-ops')(app, ctx);
+require('./routes/finance')(app, ctx);
+require('./routes/system')(app, ctx);
+require('./routes/export')(app, ctx);
 
 // ─── Auth routes ──────────────────────────────────────────────────────────────
 
@@ -1248,11 +1508,7 @@ app.get("/api/auth/me", auth(), (req, res) => {
 app.post("/api/auth/logout", (req, res) => ok(res, { ok: true }));
 
 // ─── Users ────────────────────────────────────────────────────────────────────
-
-const VALID_ROLES  = ["admin", "operator", "occ_bk", "viewer"];
-const ROLE_RANK_SV = { viewer: 0, occ_bk: 1, operator: 2, admin: 3 };
-const primaryRoleSV = (roles) => [...roles].sort((a, b) => ROLE_RANK_SV[b] - ROLE_RANK_SV[a])[0] || 'viewer';
-const parseUserRoles = (u) => JSON.parse(u.roles || JSON.stringify([u.role || 'viewer']));
+// NOTE: VALID_ROLES / ROLE_RANK_SV / primaryRoleSV / parseUserRoles hoisted above to shared helpers.
 
 app.get("/api/users", requireRole(["admin"]), (req, res) => {
   const rows = db.prepare(
@@ -2264,12 +2520,13 @@ function saveLegs(contractId, legs) {
   db.prepare("DELETE FROM contract_legs WHERE contract_id=?").run(contractId);
   legs.forEach((l, i) => {
     const legId = `CLEG-${uid()}`;
-    db.prepare(`INSERT INTO contract_legs (id,contract_id,leg_order,pol,pol_name,pod,pod_name,transit_days,vessel_service,pol_linked_allowed,pod_linked_allowed,pol_carrier_haulage,pod_carrier_haulage,pol_haulage_locations,pod_haulage_locations)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    db.prepare(`INSERT INTO contract_legs (id,contract_id,leg_order,pol,pol_name,pod,pod_name,transit_days,vessel_service,pol_linked_allowed,pod_linked_allowed,pol_carrier_haulage,pod_carrier_haulage,pol_haulage_locations,pod_haulage_locations,pol_loc_type,pod_loc_type)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
       .run(legId, contractId, i, l.pol||"", l.polName||"", l.pod||"", l.podName||"", l.transitDays||0, l.vesselService||"",
            l.polLinkedAllowed ? 1 : 0, l.podLinkedAllowed ? 1 : 0,
            l.polCarrierHaulage ? 1 : 0, l.podCarrierHaulage ? 1 : 0,
-           l.polHaulageLocations || "", l.podHaulageLocations || "");
+           l.polHaulageLocations || "", l.podHaulageLocations || "",
+           l.polLocType || 'Terminal', l.podLocType || 'Terminal');
   });
 }
 async function saveRates(contractId, rates) {
@@ -2384,14 +2641,54 @@ app.get("/api/contracts/match", (req, res) => {
 
 app.get("/api/contracts", (req, res) => {
   const { search="", carrier="", status="", dg="", asOf="", containerType="",
+          pol="", pod="", polOrigin="", podDestination="", routingTerm="",
+          namedAccount="",
           limit="50", offset="0" } = req.query;
   const lim = Math.min(parseInt(limit)||50, 200), off = parseInt(offset)||0;
   const clauses = [], params = [];
-  if (carrier.trim()) { clauses.push("c.carrier_code LIKE ?"); params.push(`%${carrier.trim()}%`); }
-  if (status.trim())  { clauses.push("c.status=?");            params.push(status.trim()); }
-  if (dg !== "")      { clauses.push("c.dg_allowed=?");         params.push(dg === "1" ? 1 : 0); }
-  if (asOf.trim())    { clauses.push("c.valid_from<=? AND c.valid_to>=?"); params.push(asOf, asOf); }
-  if (containerType.trim()) { clauses.push(`c.container_types LIKE ?`); params.push(`%"${containerType.trim()}"%`); }
+
+  if (carrier.trim()) {
+    const codes = carrier.split(",").map(c => c.trim().toUpperCase()).filter(Boolean);
+    if (codes.length === 1) { clauses.push("c.carrier_code LIKE ?"); params.push(`%${codes[0]}%`); }
+    else { clauses.push(`c.carrier_code IN (${codes.map(() => "?").join(",")})`); params.push(...codes); }
+  }
+  if (status.trim())        { clauses.push("c.status=?");               params.push(status.trim()); }
+  if (dg !== "")            { clauses.push("c.dg_allowed=?");           params.push(dg === "1" ? 1 : 0); }
+  if (asOf.trim())          { clauses.push("c.valid_from<=? AND c.valid_to>=?"); params.push(asOf, asOf); }
+  if (containerType.trim()) { clauses.push("c.container_types LIKE ?"); params.push(`%"${containerType.trim()}"%`); }
+  if (namedAccount.trim())  { clauses.push("(c.named_account LIKE ? OR c.named_account_id LIKE ?)"); const n = `%${namedAccount.trim()}%`; params.push(n, n); }
+
+  // Leg-based port filters
+  if (pol.trim()) {
+    clauses.push("EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND UPPER(l.pol)=UPPER(?))");
+    params.push(pol.trim());
+  }
+  if (pod.trim()) {
+    clauses.push("EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND UPPER(l.pod)=UPPER(?))");
+    params.push(pod.trim());
+  }
+  // Via origin: door/barge origin before the seaport POL (pol_carrier_haulage leg)
+  if (polOrigin.trim()) {
+    clauses.push("EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND UPPER(l.pol)=UPPER(?) AND l.pol_carrier_haulage=1)");
+    params.push(polOrigin.trim());
+  }
+  // Via destination: door/barge destination after the seaport POD (pod_carrier_haulage leg)
+  if (podDestination.trim()) {
+    clauses.push("EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND UPPER(l.pod)=UPPER(?) AND l.pod_carrier_haulage=1)");
+    params.push(podDestination.trim());
+  }
+  // Routing term filter based on haulage leg presence.
+  // CY and Door both use the same pol_carrier_haulage / pod_carrier_haulage flags for now;
+  // a future contract_legs.pol_loc_type column would allow exact CY vs Door distinction.
+  if (routingTerm.trim()) {
+    const hasPol = "EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND l.pol_carrier_haulage=1)";
+    const hasPod = "EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND l.pod_carrier_haulage=1)";
+    if (routingTerm === "P2P")                                  clauses.push(`NOT ${hasPol} AND NOT ${hasPod}`);
+    if (["D2P","CY2P"].includes(routingTerm))                   clauses.push(`${hasPol} AND NOT ${hasPod}`);
+    if (["P2D","P2CY"].includes(routingTerm))                   clauses.push(`NOT ${hasPol} AND ${hasPod}`);
+    if (["D2D","D2CY","CY2D","CY2CY"].includes(routingTerm))   clauses.push(`${hasPol} AND ${hasPod}`);
+  }
+
   if (search.trim()) {
     clauses.push(`(c.contract_number LIKE ? OR c.contract_ref LIKE ? OR c.named_account LIKE ? OR c.carrier_code LIKE ? OR EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND (l.pol LIKE ? OR l.pod LIKE ? OR l.pol_name LIKE ? OR l.pod_name LIKE ?)))`);
     const s = `%${search.trim()}%`;
@@ -2399,7 +2696,7 @@ app.get("/api/contracts", (req, res) => {
   }
   const where = clauses.length ? "WHERE " + clauses.join(" AND ") : "";
   const total = db.prepare(`SELECT COUNT(*) AS n FROM contracts c ${where}`).get(...params).n;
-  const rows  = db.prepare(`SELECT c.* FROM contracts c ${where} ORDER BY c.created_at DESC LIMIT ? OFFSET ?`).all(...params, lim, off);
+  const rows  = db.prepare(`SELECT c.* FROM contracts c ${where} ORDER BY c.valid_from DESC, c.created_at DESC LIMIT ? OFFSET ?`).all(...params, lim, off);
   // Attach legs in one IN query rather than N+1 queries
   const ids = rows.map(r => r.id);
   let legsMap = {};
@@ -2409,6 +2706,17 @@ app.get("/api/contracts", (req, res) => {
       .forEach(l => { (legsMap[l.contract_id] = legsMap[l.contract_id] || []).push(mapLeg(l)); });
   }
   ok(res, { results: rows.map(r => ({ ...mapContract(r), legs: legsMap[r.id] || [] })), total, limit: lim, offset: off });
+});
+
+// Pending-contract revalidation — exact match on contract_number, Active only.
+// Must be registered before /api/contracts/:id to avoid the param route swallowing it.
+app.get("/api/contracts/revalidate", (req, res) => {
+  const { ref = "" } = req.query;
+  if (!ref.trim()) return ok(res, []);
+  const rows = db.prepare(
+    "SELECT * FROM contracts WHERE LOWER(contract_number) = LOWER(?) AND status = 'Active' ORDER BY valid_from DESC"
+  ).all(ref.trim());
+  ok(res, rows.map(mapContract));
 });
 
 app.get("/api/contracts/:id", (req, res) => {
@@ -2505,51 +2813,7 @@ app.get("/api/entity-events/:type/:id", (req, res) => {
 });
 
 // ─── Shipment Messages ────────────────────────────────────────────────────────
-
-const broadcastMessage = (shipmentId, payload) => {
-  const subs = shipmentSubs.get(shipmentId);
-  if (!subs) return;
-  const frame = JSON.stringify({ type: "new_message", message: payload });
-  for (const ws of subs) {
-    if (ws.readyState === ws.OPEN) ws.send(frame);
-  }
-};
-
-// Recompute and persist space_badge after any container change; broadcast if changed.
-// NOTE: shipmentSubs is declared after this function — that's safe because this
-// function is only ever called at request-time, by which point all module-level
-// consts are initialised.
-const recomputeSpaceBadge = shipmentId => {
-  try {
-    const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(shipmentId);
-    if (!shipment) return;
-
-    let badge = '';
-    if (shipment.allocation_id) {
-      const alloc = db.prepare("SELECT * FROM allocations WHERE id=?").get(shipment.allocation_id);
-      if (alloc) {
-        const { shipment_teu } = db.prepare(
-          "SELECT COALESCE(SUM(CASE WHEN size=20 THEN 1 WHEN size IN (40,45) THEN 2 ELSE 0 END),0) AS shipment_teu FROM containers WHERE shipment_id=?"
-        ).get(shipmentId);
-        const { other_teu } = db.prepare(
-          "SELECT COALESCE(SUM(CASE WHEN c.size=20 THEN 1 WHEN c.size IN (40,45) THEN 2 ELSE 0 END),0) AS other_teu FROM containers c JOIN shipments s ON s.id=c.shipment_id WHERE s.allocation_id=? AND s.id!=?"
-        ).get(shipment.allocation_id, shipmentId);
-        const remaining = Math.max(0, alloc.allocated_teu - other_teu);
-        if (shipment_teu > remaining)          badge = 'exceeded';
-        else if (shipment.space_overage_reason) badge = 'warning';
-      }
-    }
-
-    if (badge !== (shipment.space_badge || '')) {
-      db.prepare("UPDATE shipments SET space_badge=? WHERE id=?").run(badge, shipmentId);
-      const subs = shipmentSubs.get(shipmentId);
-      if (subs) {
-        const frame = JSON.stringify({ type: "space_badge_update", badge });
-        for (const ws of subs) if (ws.readyState === ws.OPEN) ws.send(frame);
-      }
-    }
-  } catch { /* non-fatal */ }
-};
+// NOTE: broadcastMessage / recomputeSpaceBadge hoisted above to shared helpers.
 
 app.get("/api/shipments/:id/messages", (req, res) => {
   const rows = db.prepare(
@@ -2818,66 +3082,8 @@ app.post("/api/shipments/:id/screening/override", (req, res) => {
   ok(res, { overriddenAt: now, overrideReason: reason.trim() });
 });
 
-// ─── Contract rate → charge code mapping ─────────────────────────────────────
-
-const SERVICE_CODE_MAP = {
-  OF: 'Ocean Freight', OCF: 'Ocean Freight',
-  BL: 'B/L Fee',  BLF: 'B/L Fee', DOC: 'B/L Fee',
-  THC: 'Origin THC', OTHC: 'Origin THC', ORI: 'Origin THC',
-  DTHC: 'Destination THC', DEST: 'Destination THC',
-  CUS: 'Customs', CUST: 'Customs',
-  INL: 'Inland', INLAND: 'Inland',
-};
-
-function importContractRates(shipmentId, { splitPerContainer = false, includeSell = false } = {}) {
-  const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(shipmentId);
-  if (!shipment || shipment.contract_type !== 'Central' || !shipment.contract_id) return 0;
-  const rates = db.prepare("SELECT * FROM contract_rates WHERE contract_id=? ORDER BY sort_order").all(shipment.contract_id);
-  if (!rates.length) return 0;
-  const ctrs = db.prepare("SELECT id, container_number, size, type FROM containers WHERE shipment_id=?").all(shipmentId);
-  const now = new Date().toISOString();
-  let created = 0;
-  for (const r of rates) {
-    const chargeCode   = SERVICE_CODE_MAP[r.service_code?.toUpperCase()] || 'Other';
-    const exchangeRate = (r.amount > 0 && r.amount_usd > 0) ? Math.round((r.amount_usd / r.amount) * 100000) / 100000 : 1;
-    const baseNotes    = [r.service_code, r.description].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(' — ');
-
-    // When the rate targets a specific container type, only apply to matching containers.
-    // Skip entirely if none match — prevents phantom lines for unrelated container sizes.
-    const applicableCtrs = r.container_type
-      ? ctrs.filter(c => `${c.size || ''}${c.type || ''}`.toUpperCase() === r.container_type.toUpperCase())
-      : ctrs;
-    if (r.unit === 'per_container' && r.container_type && applicableCtrs.length === 0) continue;
-
-    const insertLine = (type, amount, notes, containerId) => {
-      const lineId = `CL-${uid()}`;
-      db.prepare("INSERT INTO shipment_cost_lines (id,shipment_id,type,charge_code,currency,amount,exchange_rate,notes,container_id,created_at,source) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
-        .run(lineId, shipmentId, type, chargeCode, r.currency || 'USD', amount, exchangeRate, notes, containerId, now, 'contract');
-      logEntityEvent('cost_line', lineId, 'IMPORTED', null, null, null,
-        JSON.stringify({ shipmentId, chargeCode, currency: r.currency || 'USD', amount, exchangeRate, containerId }));
-      created++;
-    };
-
-    if (r.unit === 'per_container' && splitPerContainer && applicableCtrs.length > 0) {
-      for (const c of applicableCtrs) {
-        const cLabel = c.container_number
-          ? `${c.container_number}${c.size || c.type ? ` (${c.size}${c.type})` : ''}`
-          : `(${c.size || ''}${c.type || ''})`;
-        const notes = [cLabel, baseNotes].filter(Boolean).join(' — ');
-        insertLine('BUY', r.amount, notes, c.id);
-        if (includeSell) insertLine('SELL', r.amount, notes, c.id);
-      }
-    } else {
-      const containerCount = r.unit === 'per_container' ? (applicableCtrs.length || 1) : 1;
-      const amount = r.unit === 'per_container' ? r.amount * containerCount : r.amount;
-      insertLine('BUY', amount, baseNotes, '');
-      if (includeSell) insertLine('SELL', amount, baseNotes, '');
-    }
-  }
-  return created;
-}
-
 // ─── Cost Lines ───────────────────────────────────────────────────────────────
+// NOTE: SERVICE_CODE_MAP / importContractRates hoisted above to shared helpers.
 
 app.post("/api/shipments/:id/cost-lines/import-contract", (req, res) => {
   const { overwrite = false, splitPerContainer = false } = req.body || {};
@@ -3203,13 +3409,88 @@ app.put("/api/settings", (req, res) => {
   ok(res, getSettings());
 });
 
+// ─── Schedules ────────────────────────────────────────────────────────────────
+
+// Carrier codes served by the Maersk Developer API
+const MAERSK_CODES = new Set(["CMDU", "MAEU", "SAFM", "MCPU"]);
+
+function mockSailings(pol, pod, carrierCode, weeks) {
+  const NAMES = ["ALLEGRO","BRAVURA","CADENZA","DULCIMER","ENSEMBLE","FANFARE","GRANDEUR","HARMONY"];
+  const today = new Date();
+  const count = Math.max(1, Math.round(weeks * 1.5));
+  return Array.from({ length: count }, (_, i) => {
+    const etd = new Date(today);
+    etd.setDate(etd.getDate() + 4 + i * Math.round(7 / 1.5));
+    const transit = 14 + Math.floor(Math.random() * 22);
+    const eta = new Date(etd);
+    eta.setDate(eta.getDate() + transit);
+    return {
+      carrier: carrierCode || "—",
+      vesselName: `DEMO ${NAMES[i % NAMES.length]}`,
+      voyageNumber: `DM${String(i + 1).padStart(3, "0")}W`,
+      service: "DEMO SERVICE",
+      pol, pod,
+      etd: etd.toISOString().slice(0, 10),
+      eta: eta.toISOString().slice(0, 10),
+      transitDays: transit,
+      isMock: true,
+    };
+  });
+}
+
+async function maerskSchedules(pol, pod, weeks) {
+  const key = getSettings().maersk_api_key;
+  if (!key) return null;
+  try {
+    const startDate = new Date().toISOString().slice(0, 10);
+    const qs = new URLSearchParams({
+      portOfOrigin: pol, portOfDestination: pod,
+      startDateType: "D", startDate, searchRange: String(weeks),
+    });
+    const r = await fetch(`https://api.maersk.com/schedules/point-to-point?${qs}`, {
+      headers: { "Consumer-Key": key, Accept: "application/json" },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!r.ok) return null;
+    const data = await r.json();
+    const items = Array.isArray(data) ? data : (data.sailings || []);
+    return items.map(s => {
+      const svc = (s.services || [])[0] || {};
+      return {
+        carrier: "CMDU",
+        vesselName: svc.vesselName || "—",
+        voyageNumber: svc.voyageNumber || "—",
+        service: svc.serviceCode || "—",
+        pol, pod,
+        etd: (s.originDepartureDateTimeLocal || "").slice(0, 10),
+        eta: (s.destinationArrivalDateTimeLocal || "").slice(0, 10),
+        transitDays: s.transitTime || 0,
+        isMock: false,
+      };
+    });
+  } catch { return null; }
+}
+
+app.get("/api/schedules/search", auth(), async (req, res) => {
+  const { pol, pod, carrierCode, weeks: w = "4" } = req.query;
+  if (!pol || !pod) return res.status(400).json({ error: "pol and pod are required" });
+  const weeks = Math.min(Math.max(parseInt(w) || 4, 1), 12);
+
+  let sailings = null;
+  if (MAERSK_CODES.has(carrierCode)) sailings = await maerskSchedules(pol, pod, weeks);
+
+  const isMock = !sailings;
+  if (isMock) sailings = mockSailings(pol, pod, carrierCode, weeks);
+
+  ok(res, { sailings, pol, pod, carrierCode, isMock });
+});
+
 // ─── WebSocket server ─────────────────────────────────────────────────────────
 
 const httpServer = http.createServer(app);
 const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
 
-// shipmentId → Set<WebSocket>
-const shipmentSubs = new Map();
+// shipmentSubs is pre-declared near portLanesMap above so route modules can receive it via ctx.
 
 wss.on("connection", ws => {
   let subscribedId = null;

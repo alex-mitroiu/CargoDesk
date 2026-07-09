@@ -1,19 +1,48 @@
-﻿import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { T } from "../../tokens";
 import { api } from "../../api";
 import { useAuth } from "../../AuthContext";
+import { toast } from "../../toast";
 import { PageSpinner } from "../../components/primitives/Spinner";
 import Btn from "../../components/primitives/Btn";
+import Badge from "../../components/primitives/Badge";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
 import Pagination from "../../components/primitives/Pagination";
 import ActionMenu from "../../components/primitives/ActionMenu";
-import { inputBase, Inp, Textarea, Field } from "../../components/primitives/Form";
+import { inputBase, Inp, Textarea } from "../../components/primitives/Form";
 import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns.jsx";
 
-// ─── Customer Form ────────────────────────────────────────────────────────────
+// ─── Constants ────────────────────────────────────────────────────────────────
 
-const CustomerForm = ({ init = {}, onSave, onCancel }) => {
-  const isEdit = !!init.id;
+const ID_TYPES  = ["VAT", "EORI", "Tax ID", "DUNS", "GLN", "Customs Reg", "Other"];
+const DOC_TYPES = ["KYC", "Commercial Contract", "Compliance Waiver", "Power of Attorney", "Other"];
+
+const SCREENING_VARIANT = { CLEAR: "success", HIT: "danger", OVERRIDDEN: "warning" };
+
+function ScreeningBadge({ result }) {
+  if (!result) return null;
+  const label = result === "HIT" ? "⚠ OFAC Hit" : result === "OVERRIDDEN" ? "↩ Overridden" : "✓ Clear";
+  return <Badge variant={SCREENING_VARIANT[result] || "default"}>{label}</Badge>;
+}
+
+function fmtBytes(n) {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function docIcon(mime) {
+  if (!mime) return "📄";
+  if (mime.includes("pdf")) return "📕";
+  if (mime.includes("word") || mime.includes("msword")) return "📘";
+  if (mime.includes("sheet") || mime.includes("excel")) return "📗";
+  if (mime.includes("image")) return "🖼";
+  return "📄";
+}
+
+// ─── Profile tab ──────────────────────────────────────────────────────────────
+
+const ProfileTab = ({ init = {}, onSave, saving }) => {
   const [f, setF] = useState({
     companyName: init.companyName || "",
     address1:    init.address1    || "",
@@ -39,21 +68,18 @@ const CustomerForm = ({ init = {}, onSave, onCancel }) => {
       <div style={{ fontFamily: T.mono, fontSize: 9.5, color: T.border, fontWeight: 700,
         textTransform: "uppercase", letterSpacing: ".12em", marginBottom: -6 }}>Address</div>
 
-      <Inp label="Address Line 1" value={f.address1} onChange={set("address1")}
-        placeholder="Wilhelminakade 123" />
-      <Inp label="Address Line 2" value={f.address2} onChange={set("address2")}
-        placeholder="Suite 4B" />
+      <Inp label="Address Line 1" value={f.address1} onChange={set("address1")} placeholder="Wilhelminakade 123" />
+      <Inp label="Address Line 2" value={f.address2} onChange={set("address2")} placeholder="Suite 4B" />
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <Inp label="City"             value={f.city}       onChange={set("city")}       placeholder="Rotterdam" />
-        <Inp label="State / Province" value={f.state}      onChange={set("state")}      placeholder="South Holland" />
+        <Inp label="City"             value={f.city}  onChange={set("city")}  placeholder="Rotterdam" />
+        <Inp label="State / Province" value={f.state} onChange={set("state")} placeholder="South Holland" />
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <Inp label="Postal Code"  value={f.postalCode}  onChange={set("postalCode")}  placeholder="3072 AP" mono />
+        <Inp label="Postal Code"    value={f.postalCode}  onChange={set("postalCode")}  placeholder="3072 AP" mono />
         <Inp label="Country (ISO2)" value={f.countryIso2}
-          onChange={v => setF(p => ({ ...p, countryIso2: v.toUpperCase().slice(0, 2) }))}
-          placeholder="NL" mono maxLength={2}
-          hint="2-letter ISO 3166-1 country code" />
+          onChange={v => setF(p => ({ ...p, countryIso2: v.toUpperCase().slice(0,2) }))}
+          placeholder="NL" mono maxLength={2} hint="2-letter ISO 3166-1" />
       </div>
 
       <div style={{ fontFamily: T.mono, fontSize: 9.5, color: T.border, fontWeight: 700,
@@ -71,13 +97,431 @@ const CustomerForm = ({ init = {}, onSave, onCancel }) => {
       <Textarea label="Notes" value={f.notes} onChange={set("notes")}
         placeholder="Internal notes, account manager, payment terms…" rows={3} />
 
-      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", paddingTop: 4 }}>
-        <Btn variant="secondary" onClick={onCancel}>Cancel</Btn>
-        <Btn disabled={!valid} onClick={() => onSave(f)}>
-          {isEdit ? "Save Changes" : "Add Customer"}
+      <div style={{ display: "flex", justifyContent: "flex-end", paddingTop: 4 }}>
+        <Btn disabled={!valid || saving} onClick={() => onSave(f)}>
+          {saving ? "Saving…" : "Save Profile"}
         </Btn>
       </div>
     </div>
+  );
+};
+
+// ─── Identifiers tab ──────────────────────────────────────────────────────────
+
+const IdentifierForm = ({ init = {}, onSave, onCancel, saving }) => {
+  const [f, setF] = useState({
+    idType:      init.idType      || "VAT",
+    idCode:      init.idCode      || "",
+    countryIso2: init.countryIso2 || "",
+    label:       init.label       || "",
+    isPrimary:   init.isPrimary   || false,
+  });
+  const set = k => v => setF(p => ({ ...p, [k]: v }));
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div>
+        <div style={{ fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted,
+          textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 4 }}>Type</div>
+        <select value={f.idType} onChange={e => set("idType")(e.target.value)}
+          style={{ ...inputBase, width: "100%", cursor: "pointer" }}>
+          {ID_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+        </select>
+      </div>
+      <Inp label="Code / Number" value={f.idCode} onChange={set("idCode")}
+        placeholder="NL123456789B01" mono required />
+      <Inp label="Country (ISO2)" value={f.countryIso2}
+        onChange={v => set("countryIso2")(v.toUpperCase().slice(0,2))}
+        placeholder="NL" mono maxLength={2} />
+      <Inp label="Label (optional)" value={f.label} onChange={set("label")}
+        placeholder="EU VAT — Netherlands" />
+      <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer",
+        fontFamily: T.body, fontSize: 13, color: T.text }}>
+        <input type="checkbox" checked={f.isPrimary}
+          onChange={e => set("isPrimary")(e.target.checked)} />
+        Mark as primary for this type
+      </label>
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", paddingTop: 4 }}>
+        <Btn variant="secondary" onClick={onCancel}>Cancel</Btn>
+        <Btn disabled={!f.idCode.trim() || saving} onClick={() => onSave(f)}>
+          {saving ? "Saving…" : "Save"}
+        </Btn>
+      </div>
+    </div>
+  );
+};
+
+const IdentifiersTab = ({ customerId, canEdit }) => {
+  const [items,   setItems]   = useState(null);
+  const [editing, setEditing] = useState(null);
+  const [confirm, setConfirm] = useState(null);
+  const [saving,  setSaving]  = useState(false);
+
+  const load = useCallback(async () => {
+    try { setItems(await api.customers.identifiers.list(customerId)); }
+    catch (e) { toast.error(e.message); }
+  }, [customerId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleSave = async f => {
+    setSaving(true);
+    try {
+      if (editing === "new") await api.customers.identifiers.create(customerId, f);
+      else await api.customers.identifiers.update(customerId, editing.id, f);
+      setEditing(null); load();
+    } catch (e) { toast.error(e.message); }
+    setSaving(false);
+  };
+
+  const handleDelete = async id => {
+    try { await api.customers.identifiers.remove(customerId, id); setConfirm(null); load(); }
+    catch (e) { toast.error(e.message); }
+  };
+
+  if (items === null) return <div style={{ padding: 24 }}><PageSpinner /></div>;
+
+  return (
+    <div>
+      {canEdit && (
+        <div style={{ marginBottom: 14 }}>
+          <Btn size="sm" onClick={() => setEditing("new")}>＋ Add Identifier</Btn>
+        </div>
+      )}
+
+      {items.length === 0 ? (
+        <div style={{ padding: "32px 0", textAlign: "center", fontFamily: T.body, fontSize: 13,
+          color: T.textMuted, fontStyle: "italic" }}>
+          No fiscal identifiers on file. Add VAT, EORI, or other IDs for this customer.
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {items.map(item => (
+            <div key={item.id} style={{
+              display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+              padding: "10px 14px", borderRadius: 8, background: T.bg, border: `1px solid ${T.border}`,
+            }}>
+              <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700,
+                background: T.accentBg, color: T.accent, border: `1px solid ${T.accent}44`,
+                borderRadius: 4, padding: "1px 7px" }}>{item.idType}</span>
+              <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.text }}>
+                {item.idCode}
+              </span>
+              {item.countryIso2 && (
+                <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>{item.countryIso2}</span>
+              )}
+              {item.label && (
+                <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>{item.label}</span>
+              )}
+              {item.isPrimary && (
+                <span style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 700,
+                  color: T.success, background: `${T.success}15`,
+                  border: `1px solid ${T.success}44`, borderRadius: 4, padding: "1px 5px" }}>PRIMARY</span>
+              )}
+              {canEdit && (
+                <div style={{ marginLeft: "auto" }}>
+                  <ActionMenu items={[
+                    { icon: "✎", label: "Edit",   onClick: () => setEditing(item) },
+                    { icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(item.id) },
+                  ]} />
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {editing && (
+        <Modal title={editing === "new" ? "Add Identifier" : "Edit Identifier"}
+          onClose={() => setEditing(null)} width={420}>
+          <IdentifierForm init={editing === "new" ? {} : editing}
+            onSave={handleSave} onCancel={() => setEditing(null)} saving={saving} />
+        </Modal>
+      )}
+      {confirm && (
+        <ConfirmModal message="Remove this identifier?" onConfirm={() => handleDelete(confirm)} onCancel={() => setConfirm(null)} />
+      )}
+    </div>
+  );
+};
+
+// ─── Compliance tab ───────────────────────────────────────────────────────────
+
+const ComplianceTab = ({ customerId, canEdit }) => {
+  const [screening, setScreening] = useState(undefined);
+  const [running,   setRunning]   = useState(false);
+  const [override,  setOverride]  = useState(false);
+  const [reason,    setReason]    = useState("");
+  const [saving,    setSaving]    = useState(false);
+
+  const load = useCallback(async () => {
+    try { setScreening(await api.customers.screening.get(customerId)); }
+    catch { setScreening(null); }
+  }, [customerId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleRun = async () => {
+    setRunning(true);
+    try { setScreening(await api.customers.screening.run(customerId)); toast.success("Screening complete"); }
+    catch (e) { toast.error(e.message); }
+    setRunning(false);
+  };
+
+  const handleOverride = async () => {
+    if (!reason.trim()) return;
+    setSaving(true);
+    try {
+      setScreening(await api.customers.screening.override(customerId, { reason }));
+      setOverride(false); setReason("");
+      toast.success("Override filed");
+    } catch (e) { toast.error(e.message); }
+    setSaving(false);
+  };
+
+  if (screening === undefined) return <div style={{ padding: 24 }}><PageSpinner /></div>;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {/* Status card */}
+      <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 10, padding: "16px 18px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10 }}>
+          <span style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600, color: T.textMuted,
+            textTransform: "uppercase", letterSpacing: ".07em" }}>OFAC / SDN Status</span>
+          {screening ? <ScreeningBadge result={screening.result} /> : <Badge variant="default">Not screened</Badge>}
+        </div>
+        {screening && (
+          <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+            Last checked: {new Date(screening.screenedAt).toLocaleString("en-GB")}
+            {screening.overriddenAt && (
+              <span style={{ marginLeft: 14, color: T.warning }}>
+                · Overridden {new Date(screening.overriddenAt).toLocaleString("en-GB")}
+              </span>
+            )}
+          </div>
+        )}
+        {screening?.overrideReason && (
+          <div style={{ marginTop: 8, fontFamily: T.body, fontSize: 12, color: T.text,
+            background: `${T.warning}15`, border: `1px solid ${T.warning}44`, borderRadius: 6, padding: "8px 12px" }}>
+            <strong>Override reason:</strong> {screening.overrideReason}
+          </div>
+        )}
+        {canEdit && (
+          <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+            <Btn size="sm" variant="secondary" onClick={handleRun} disabled={running}>
+              {running ? "Screening…" : "Re-screen Now"}
+            </Btn>
+            {screening?.result === "HIT" && !screening?.overriddenAt && (
+              <Btn size="sm" variant="ghost" onClick={() => setOverride(true)}>File Override</Btn>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Hits */}
+      {screening?.hits?.length > 0 && (
+        <div>
+          <div style={{ fontFamily: T.mono, fontSize: 9.5, fontWeight: 700, color: T.danger,
+            textTransform: "uppercase", letterSpacing: ".1em", marginBottom: 8 }}>Matched Entries</div>
+          {screening.hits.map((h, i) => (
+            <div key={i} style={{ padding: "10px 14px", borderRadius: 7, marginBottom: 6,
+              background: `${T.danger}0c`, border: `1px solid ${T.danger}33` }}>
+              <div style={{ fontFamily: T.body, fontSize: 13, fontWeight: 600, color: T.danger }}>{h.entityName}</div>
+              <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, marginTop: 2 }}>
+                {h.program} · {h.source}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Override form */}
+      {override && (
+        <div style={{ background: `${T.warning}0c`, border: `1px solid ${T.warning}44`,
+          borderRadius: 10, padding: "14px 16px" }}>
+          <div style={{ fontFamily: T.body, fontSize: 13, fontWeight: 600, color: T.text, marginBottom: 6 }}>
+            File Compliance Override
+          </div>
+          <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, marginBottom: 10 }}>
+            Document your reason for proceeding despite the OFAC match. Recorded for audit purposes.
+          </div>
+          <textarea value={reason} onChange={e => setReason(e.target.value)} rows={3}
+            placeholder="e.g. Confirmed different entity — same name, different country. Ref: compliance ticket #4521."
+            style={{ ...inputBase, width: "100%", boxSizing: "border-box", resize: "vertical" }} />
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 10 }}>
+            <Btn variant="secondary" onClick={() => { setOverride(false); setReason(""); }}>Cancel</Btn>
+            <Btn disabled={!reason.trim() || saving} onClick={handleOverride}>
+              {saving ? "Filing…" : "File Override"}
+            </Btn>
+          </div>
+        </div>
+      )}
+
+      {!screening && (
+        <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, fontStyle: "italic" }}>
+          This customer has not been screened yet.{canEdit && " Click Re-screen to run an OFAC check now."}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─── Documents tab ────────────────────────────────────────────────────────────
+
+const DocumentsTab = ({ customerId, canEdit }) => {
+  const [docs,      setDocs]      = useState(null);
+  const [confirm,   setConfirm]   = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [docType,   setDocType]   = useState("KYC");
+  const fileRef = useRef(null);
+
+  const load = useCallback(async () => {
+    try { setDocs(await api.customers.documents.list(customerId)); }
+    catch (e) { toast.error(e.message); }
+  }, [customerId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleUpload = async e => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const data = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload  = ev => resolve(ev.target.result.split(",")[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      await api.customers.documents.upload(customerId, {
+        filename: file.name, mimeType: file.type, docType, data,
+      });
+      toast.success("Document uploaded");
+      load();
+    } catch (ex) { toast.error(ex.message); }
+    setUploading(false);
+    e.target.value = "";
+  };
+
+  const handleDelete = async did => {
+    try { await api.customers.documents.remove(customerId, did); setConfirm(null); load(); }
+    catch (e) { toast.error(e.message); }
+  };
+
+  const handleDownload = doc => {
+    const a = document.createElement("a");
+    a.href     = api.customers.documents.downloadUrl(customerId, doc.id);
+    a.download = doc.filename;
+    a.click();
+  };
+
+  if (docs === null) return <div style={{ padding: 24 }}><PageSpinner /></div>;
+
+  return (
+    <div>
+      {canEdit && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
+          <select value={docType} onChange={e => setDocType(e.target.value)}
+            style={{ ...inputBase, width: 200, cursor: "pointer" }}>
+            {DOC_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+          <Btn size="sm" variant="secondary" onClick={() => fileRef.current?.click()} disabled={uploading}>
+            {uploading ? "Uploading…" : "⬆ Upload Document"}
+          </Btn>
+          <input ref={fileRef} type="file" style={{ display: "none" }} onChange={handleUpload}
+            accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg" />
+        </div>
+      )}
+
+      {docs.length === 0 ? (
+        <div style={{ padding: "32px 0", textAlign: "center", fontFamily: T.body, fontSize: 13,
+          color: T.textMuted, fontStyle: "italic" }}>
+          No documents on file. Upload KYC, contracts, or compliance waivers.
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {docs.map(doc => (
+            <div key={doc.id} style={{ display: "flex", alignItems: "center", gap: 10,
+              padding: "10px 14px", borderRadius: 8, background: T.bg, border: `1px solid ${T.border}` }}>
+              <span style={{ fontSize: 18 }}>{docIcon(doc.mimeType)}</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontFamily: T.body, fontSize: 13, fontWeight: 600, color: T.text,
+                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{doc.filename}</div>
+                <div style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted, marginTop: 2 }}>
+                  {doc.docType} · {fmtBytes(doc.sizeBytes)} · {doc.uploadedBy || "—"} · {new Date(doc.createdAt).toLocaleDateString("en-GB")}
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                <Btn size="sm" variant="ghost" onClick={() => handleDownload(doc)}>⬇</Btn>
+                {canEdit && (
+                  <Btn size="sm" variant="ghost" onClick={() => setConfirm(doc.id)}
+                    style={{ color: T.danger }}>✕</Btn>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {confirm && (
+        <ConfirmModal message="Remove this document?" onConfirm={() => handleDelete(confirm)} onCancel={() => setConfirm(null)} />
+      )}
+    </div>
+  );
+};
+
+// ─── Customer detail modal ────────────────────────────────────────────────────
+
+const TABS = ["Profile", "Identifiers", "Compliance", "Documents"];
+
+const CustomerDetailModal = ({ customer, isNew, onClose, onUpdated }) => {
+  const { canEdit } = useAuth();
+  const [tab,    setTab]    = useState("Profile");
+  const [saving, setSaving] = useState(false);
+
+  const handleProfileSave = async form => {
+    setSaving(true);
+    try {
+      const updated = isNew
+        ? await api.customers.create(form)
+        : await api.customers.update(customer.id, form);
+      toast.success(isNew ? "Customer created" : "Profile saved");
+      onUpdated(updated);
+      if (isNew) onClose();
+    } catch (e) { toast.error(e.message); }
+    setSaving(false);
+  };
+
+  const tabs = isNew ? ["Profile"] : TABS;
+
+  return (
+    <Modal title={isNew ? "Add Customer" : customer.companyName} onClose={onClose} width={620}>
+      {/* Tab bar */}
+      {!isNew && (
+        <div style={{ display: "flex", gap: 0, borderBottom: `1px solid ${T.border}`,
+          marginBottom: 20, marginTop: -4 }}>
+          {tabs.map(t => (
+            <button key={t} onClick={() => setTab(t)} style={{
+              padding: "8px 16px", fontFamily: T.body, fontSize: 13,
+              fontWeight: tab === t ? 700 : 400,
+              color: tab === t ? T.accent : T.textMuted,
+              background: "transparent", border: "none",
+              borderBottom: `2px solid ${tab === t ? T.accent : "transparent"}`,
+              cursor: "pointer", transition: "color .15s",
+            }}>{t}</button>
+          ))}
+          {customer.screeningResult && (
+            <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", paddingRight: 4 }}>
+              <ScreeningBadge result={customer.screeningResult} />
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === "Profile"     && <ProfileTab     init={customer}           onSave={handleProfileSave} saving={saving} />}
+      {tab === "Identifiers" && <IdentifiersTab  customerId={customer.id} canEdit={canEdit} />}
+      {tab === "Compliance"  && <ComplianceTab   customerId={customer.id} canEdit={canEdit} />}
+      {tab === "Documents"   && <DocumentsTab    customerId={customer.id} canEdit={canEdit} />}
+    </Modal>
   );
 };
 
@@ -92,7 +536,7 @@ const MdmCustomersPage = () => {
   const [offset,  setOffset]  = useState(0);
   const [search,  setSearch]  = useState("");
   const [loading, setLoading] = useState(true);
-  const [modal,   setModal]   = useState(null);   // null | "add" | customer obj
+  const [modal,   setModal]   = useState(null); // null | "new" | customer obj
   const [confirm, setConfirm] = useState(null);
   const timer = useRef(null);
 
@@ -120,38 +564,23 @@ const MdmCustomersPage = () => {
 
   const goPage = off => { setOffset(off); load({ offset: off }); };
 
-  const handleSave = async form => {
-    try {
-      if (modal === "add") {
-        await api.customers.create(form);
-      } else {
-        await api.customers.update(modal.id, form);
-      }
-      setModal(null);
-      load();
-    } catch (e) {
-      // surface server errors inside the modal — toast would work too
-      alert(e.message);
-    }
+  const handleUpdated = updated => {
+    setResults(prev => prev.map(c => c.id === updated.id ? updated : c));
+    setModal(prev => prev && typeof prev === "object" && prev.id === updated.id ? updated : prev);
   };
 
   const handleDelete = async id => {
-    try {
-      await api.customers.remove(id);
-      setConfirm(null);
-      load();
-    } catch {}
+    try { await api.customers.remove(id); setConfirm(null); load(); }
+    catch (e) { toast.error(e.message); }
   };
 
-  // Column header style
   const th = {
     position: "relative", paddingLeft: 6, fontFamily: T.body, fontSize: 10.5, fontWeight: 600,
     color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em",
   };
 
-  const { template: template, startResize } = useResizableColumns("mdm-customers", [220,160,80,160,160,130]);
-  const custHeaders = ["Company","City / Country","Phone","Email","Website","Actions"];
-  const COL = template;
+  const { template, startResize } = useResizableColumns("mdm-customers", [240, 130, 80, 160, 130, 90]);
+  const headers = ["Company", "City / Country", "Phone", "Email", "Website", "Actions"];
 
   return (
     <div>
@@ -165,27 +594,25 @@ const MdmCustomersPage = () => {
             {total} customer{total !== 1 ? "s" : ""} in registry
           </p>
         </div>
-        {canEdit && <Btn size="lg" onClick={() => setModal("add")}>＋ Add Customer</Btn>}
+        {canEdit && <Btn size="lg" onClick={() => setModal("new")}>＋ Add Customer</Btn>}
       </div>
 
       {/* Search */}
       <div style={{ marginBottom: 16 }}>
-        <input
-          value={search}
-          onChange={e => handleSearch(e.target.value)}
+        <input value={search} onChange={e => handleSearch(e.target.value)}
           placeholder="Search company, city, email, phone…"
-          style={{ ...inputBase, width: 320 }}
-        />
+          style={{ ...inputBase, width: 320 }} />
       </div>
 
       {/* Table */}
       <div style={{ background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, overflow: "hidden" }}>
-
-        {/* Column headers */}
-        <div style={{ display: "grid", gridTemplateColumns: COL,
+        <div style={{ display: "grid", gridTemplateColumns: template,
           padding: "10px 20px", borderBottom: `1px solid ${T.border}`, gap: 0 }}>
-          {custHeaders.map((h, i) => (
-            <div key={i} style={th}>{h}{i < custHeaders.length - 1 && <ColResizer onStart={e => startResize(i, e)} />}</div>
+          {headers.map((h, i) => (
+            <div key={i} style={th}>
+              {h}
+              {i < headers.length - 1 && <ColResizer onStart={e => startResize(i, e)} />}
+            </div>
           ))}
         </div>
 
@@ -198,18 +625,22 @@ const MdmCustomersPage = () => {
           </div>
         ) : results.map(c => (
           <div key={c.id}
-            style={{ display: "grid", gridTemplateColumns: COL,
+            style={{ display: "grid", gridTemplateColumns: template,
               padding: "13px 20px", borderBottom: `1px solid ${T.border}22`,
-              alignItems: "center", gap: 0 }}>
+              alignItems: "center", gap: 0, cursor: "pointer", transition: "background .1s" }}
+            onClick={() => setModal(c)}
+            onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
+            onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
 
-            {/* Company */}
+            {/* Company + screening badge */}
             <div>
-              <div style={{ fontFamily: T.body, fontSize: 13, fontWeight: 600, color: T.text }}>
-                {c.companyName}
+              <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                <span style={{ fontFamily: T.body, fontSize: 13, fontWeight: 600, color: T.text }}>
+                  {c.companyName}
+                </span>
+                <ScreeningBadge result={c.screeningResult} />
               </div>
-              <div style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted, marginTop: 2 }}>
-                {c.id}
-              </div>
+              <div style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted, marginTop: 2 }}>{c.id}</div>
             </div>
 
             {/* City / Country */}
@@ -223,8 +654,8 @@ const MdmCustomersPage = () => {
             </div>
 
             {/* Email */}
-            <div style={{ fontFamily: T.body, fontSize: 12, color: T.text,
-              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            <div style={{ fontFamily: T.body, fontSize: 12, overflow: "hidden",
+              textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {c.email
                 ? <a href={`mailto:${c.email}`} style={{ color: T.accent, textDecoration: "none" }}
                     onClick={e => e.stopPropagation()}>{c.email}</a>
@@ -238,9 +669,9 @@ const MdmCustomersPage = () => {
             </div>
 
             {/* Actions */}
-            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            <div style={{ display: "flex", justifyContent: "flex-end" }} onClick={e => e.stopPropagation()}>
               <ActionMenu items={[
-                ...(canEdit ? [{ icon: "✎", label: "Edit",   onClick: () => setModal(c) }] : []),
+                { icon: "✎", label: "Open", onClick: () => setModal(c) },
                 ...(canEdit ? [{ icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(c.id) }] : []),
               ]} />
             </div>
@@ -248,32 +679,24 @@ const MdmCustomersPage = () => {
         ))}
       </div>
 
-      {/* Pagination */}
       {total > LIMIT && (
         <div style={{ marginTop: 16 }}>
           <Pagination total={total} limit={LIMIT} offset={offset} onPage={goPage} />
         </div>
       )}
 
-      {/* Add / Edit modal */}
       {modal && (
-        <Modal
-          title={modal === "add" ? "Add Customer" : `Edit — ${modal.companyName}`}
-          onClose={() => setModal(null)}
-          width={560}
-        >
-          <CustomerForm
-            init={modal === "add" ? {} : modal}
-            onSave={handleSave}
-            onCancel={() => setModal(null)}
-          />
-        </Modal>
+        <CustomerDetailModal
+          customer={modal === "new" ? {} : modal}
+          isNew={modal === "new"}
+          onClose={() => { setModal(null); load(); }}
+          onUpdated={handleUpdated}
+        />
       )}
 
-      {/* Delete confirm */}
       {confirm && (
         <ConfirmModal
-          message={`Remove this customer? This cannot be undone.`}
+          message="Remove this customer and all associated identifiers, screenings, and documents?"
           onConfirm={() => handleDelete(confirm)}
           onCancel={() => setConfirm(null)}
         />

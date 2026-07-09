@@ -2,11 +2,29 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.22.0";
-export const BUILD     = "2026-07-05";
-export const CODENAME  = "Crossroads";
+export const VERSION   = "0.25.0";
+export const BUILD     = "2026-07-09";
+export const CODENAME  = "Voyage";
 
 export const CHANGELOG = [
+  {
+    version:  "0.25.0",
+    date:     "2026-07-09",
+    codename: "Voyage",
+    summary:  "Shipment-level schedule bookings: new shipment_schedules table (FK → shipments, CASCADE DELETE) storing carrier, vessel, voyage, ETD, ETA, transit days, and isMock flag. Three new REST endpoints under routes/shipment-ops.js: GET /api/shipments/:id/schedules, POST (save), DELETE (remove). api.schedules namespace extended with list/save/remove. Sailing section added to ShipmentForm after Contract: SailingPickerModal (shared, extracted to src/components/shared/SailingPickerModal.jsx) lets operators search sailings with a 2/4/8/12-week window picker; new-shipment mode holds the selection in state and saves it after creation in App.jsx; edit mode saves immediately. Mock-data banner when no Maersk API key is configured. 'Apply vessel & ETD to SEA leg' shortcut button appears below the selected sailing chip when a draft SEA leg exists — copies vesselName, voyageNumber, and ETD into the leg with one click. SchedulesPanel added to ShipmentDetailPage below MilestonePanel: lists all saved sailings with vessel, service, voyage, ETD/ETA, transit, isMock badge, and saved-by info; Add Sailing button opens the shared SailingPickerModal; remove via ConfirmModal. Related Tickets panel added to ShipmentDetailPage: GET /api/tickets?shipmentId= filter added to kanban.js; RelatedTicketsPanel shows linked tickets with status dot, ID, title, assignee, and priority colour. ShipmentDetailSidebar updated with Schedules (⚓) and Tickets (◩) nav links. Health endpoint version fixed: routes/system.js now uses require('../package.json').version instead of hardcoded '0.22.0'; package.json version synced to 0.25.0. SailingPickerModal extracted from both ShipmentFormPage and ShipmentDetailPage into src/components/shared/SailingPickerModal.jsx with a selectLabel prop eliminating ~240 lines of duplication.",
+  },
+  {
+    version:  "0.24.0",
+    date:     "2026-07-07",
+    codename: "Sentinel",
+    summary:  "Admin security hardening: login lockout (configurable max attempts and lockout duration), JWT lifetime configurable per app_settings; token revocation via token_version column — auth() middleware validates the tv claim against DB so deactivating or revoking a user immediately invalidates all their live tokens. Admin activity log: admin_events table records USER_CREATED/UPDATED/DELETED, SESSIONS_REVOKED, SETTINGS_UPDATED, SYSMSG_CREATED/DELETED, LOGIN_LOCKED events with actor, target, and JSON details — viewable in AppSettings > Activity Log tab. Azure AD / Entra ID SSO behind feature toggle: sso_enabled app_setting gates all /api/auth/sso/* endpoints; authorization code flow using built-in fetch (no MSAL); find-or-create user on callback; local login always available as fallback. Frontend: SecuritySettingsPanel (max attempts, lockout duration, JWT lifetime), SsoSettingsPanel (toggle + tenant/client config), AdminActivityLog (paginated table with action filter). UserManagementPanel: lock badge with attempt count, Unlock button for locked accounts, Revoke Sessions button per user. LoginPage: SSO button shown when enabled, sso_token / sso_error URL param handlers.",
+  },
+  {
+    version:  "0.23.0",
+    date:     "2026-07-07",
+    codename: "Portage",
+    summary:  "Route extraction: all 144 HTTP routes extracted from server.js into 11 domain-scoped route files (routes/auth, shipments, allocations, mdm, kanban, customers, contracts, shipment-ops, finance, system, export) using a shared ctx factory object; server.js is now a thin orchestrator (~1 400 lines of schema/helpers/startup, zero inline route handlers). Contract leg location types: pol_loc_type and pod_loc_type selectors added to MdmContractsPage leg editor; values persisted to contract_legs via startup migration; saveLegs updated to include the new columns. Export feature: three new endpoints in routes/export.js — GET /api/export/shipments.csv produces a 34-column access-filtered CSV (joins port names, containers, and cost totals server-side); GET /api/export/dashboard/xlsx generates a fully programmatic ExcelJS workbook (4 sheets: Summary with KPI block + 6-week trend table, By Carrier, By Lane, Shipment Detail with autofilter and frozen header); GET /api/export/dashboard/template loads exports/dashboard-template.xlsx, overwrites data cells, and returns the workbook (preserves any charts added in Excel). scripts/create-export-template.js (npm run export:template) generates the base template with named ranges WeeklySummary/ByCarrier/ByLane so Excel charts auto-update on export. api.export namespace added (shipmentsCSV, dashboardXlsx, dashboardTemplate). CSV button on ShipmentsPage header; two XLSX buttons (programmatic + template) on DashboardPage Margin Overview header for side-by-side evaluation.",
+  },
   {
     version:  "0.22.0",
     date:     "2026-07-05",

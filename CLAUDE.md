@@ -4,7 +4,7 @@
 Full-stack freight management app. React 18 + Vite frontend, Express + node:sqlite backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.22.0 "Crossroads"**
+- Version: **v0.25.0 "Voyage"**
 - Run: `npm run dev` (runs server on :3001 + Vite on :5173 concurrently)
 - Seed: `npm run seed` (runs `scripts/import-mdm-data.js`)
 
@@ -16,16 +16,37 @@ Full-stack freight management app. React 18 + Vite frontend, Express + node:sqli
 
 ## Key files
 ```
-server.js                          Express API + SQLite schema + all endpoints
+server.js                          Express entry point: SQLite schema, startup migrations,
+                                   shared helpers (mappers, auth middleware, broadcastMessage,
+                                   syncShipmentFromLegs, etc.), WebSocket server.
+                                   HTTP routes live in routes/ — server.js loads them via ctx.
+routes/
+  auth.js            /api/auth/*, /api/users/*, /api/access-configs/*, /api/scope-items/*
+  shipments.js       /api/shipments/* (CRUD, events, status-log, containers, messages, legs)
+  allocations.js     /api/allocations/* (CRUD, match, conflicts)
+  mdm.js             /api/carriers, /api/vessels, /api/port-locations, /api/linked-ports,
+                     /api/trade-lanes, /api/country-trade-lanes, /api/regions, /api/countries,
+                     /api/unlocodes, /api/commodities
+  kanban.js          /api/tickets/*, /api/ticket-links/*
+  customers.js       /api/customers/*, /api/sanctions/*, /api/fx/*
+  contracts.js       /api/contracts/*, /api/entity-events/*
+  shipment-ops.js    /api/shipments/:id/screening, cost-lines, milestones, documents
+  finance.js         /api/margin/summary
+  system.js          /api/health, /api/system-messages, /api/settings, /api/schedules/*
+  export.js          /api/export/shipments.csv, /api/export/dashboard/xlsx,
+                     /api/export/dashboard/template
 scripts/
   import-mdm-data.js               Seeds ports, carriers, vessels, commodities (npm run seed)
   seed-contracts.js                Seeds sample carrier contracts (npm run seed:contracts)
   checkdb.js                       Dev utility — inspects DB schema and row counts (npm run checkdb)
+  create-export-template.js        Generates exports/dashboard-template.xlsx (npm run export:template)
+exports/
+  dashboard-template.xlsx          Base XLSX template with named ranges for chart wiring
 sampleDB/
   cargodesk.db                     Pre-loaded sample DB — copy to project root to use
 src/
   App.jsx                          Root: routing, nav, state, theme toggle, auth guards, role switcher
-  api.js                           All fetch wrappers (api.shipments, api.ports, api.auth, api.users…)
+  api.js                           All fetch wrappers (api.shipments, api.export, api.auth, api.users…)
   tokens.js                        T object, theme colours, route-matching helpers
   toast.js                         Pub-sub toast emitter
   version.js                       VERSION, CODENAME, CHANGELOG
@@ -33,10 +54,10 @@ src/
                                    canEdit, isAdmin, isViewer to all components
   pages/
     LoginPage.jsx                  Centered login form; calls api.auth.login → onLogin(token, user)
-    ShipmentsPage.jsx              Shipment list + ShipmentForm (new/edit)
+    ShipmentsPage.jsx              Shipment list + filters + CSV export button + ShipmentForm (new/edit)
     ShipmentDetailPage.jsx         Detail view, ContainerForm + ContainerTypePickerModal,
                                    ShipmentTimeline (history tracker), LinkVesselModal
-    DashboardPage.jsx              Overview + Contract Consumption tabs, AllocationForm
+    DashboardPage.jsx              Overview + Contract Consumption + Margin (XLSX export) tabs
     SpaceConfigurationsPage.jsx    Standalone Space Configs page with Linked Shipments modal
     DashboardArchivePage.jsx       Expired allocations + renew flow
     KanbanPage.jsx                 Integration board with drag-to-reorder
@@ -44,7 +65,7 @@ src/
     AboutPage.jsx                  DB schema, features, changelog
     mdm/
       MdmCommoditiesPage.jsx       294 Maersk commodity codes
-      MdmContractsPage.jsx         Carrier contracts with legs and IMDG class filters
+      MdmContractsPage.jsx         Carrier contracts with legs (incl. pol/pod loc type) and IMDG filters
       MdmCountriesPage.jsx         Countries + port count + trade lane assignments
       MdmLinkedPortsPage.jsx       Linked port pairs
       MdmPortLocationsPage.jsx     14,269 UN/LOCODE ports
@@ -65,7 +86,42 @@ src/
       UserManagementPanel.jsx      Admin-only user CRUD table (name, email, role, status, last login)
 ```
 
-## Database — 21 tables
+## Route factory pattern
+All route files use `module.exports = function domainRoutes(app, ctx) { ... }`.
+The `ctx` object (built in server.js just before route registration) carries every shared
+dependency: `db`, mapper functions, middleware factories, helpers, and state:
+
+```js
+// Key ctx fields — see server.js for the full object
+{ db, uid, ok, err, isUniqueViolation,
+  auth, requireRole,
+  portLanesMap, portCountryMap, rebuildPortLanesMap, longestLane,
+  applyShipmentAccessFilter,
+  fxCache, getFxRates, toUsd,
+  sanctionsMap, loadSanctionsIndex, syncOfacSdn, scheduleNextOfacSync,
+  normSanctionName, EMBARGOED_COUNTRIES, getSettings,
+  shipmentSubs, broadcastMessage, recomputeSpaceBadge,
+  UPLOADS_DIR, SVC_ABBR, LEG_LOC_ABBR,
+  VALID_ROLES, ROLE_RANK_SV, primaryRoleSV, parseUserRoles,
+  SERVICE_CODE_MAP, importContractRates,
+  mapShipment, mapShipmentLeg, mapCostLine, mapContainer, mapAllocation,
+  mapCarrier, mapVessel, mapPortLocation, mapLinkedPort, mapTradeLane,
+  mapScopeItem, mapAccessConfig, mapRegion, mapCountry, mapTicketLink, mapTicket,
+  mapCustomer, mapCommodity, mapSystemMessage, mapMilestone, mapMilestoneTemplate,
+  mapContract, mapLeg, mapRate,
+  logEvent, logEntityEvent, TRACKED_FIELDS, TRACKED_CTR_FIELDS,
+  syncShipmentFromLegs, checkOverlap, screenShipmentById,
+  bcrypt, jwt, JWT_SECRET, inverseLinkLabel, fs, path }
+```
+
+`shipmentSubs` (Map) is pre-declared at module top — `broadcastMessage` and
+`recomputeSpaceBadge` close over it, so it must exist before those functions are defined.
+
+The original inline routes remain in server.js as **dead code** (route files register first;
+Express uses first-match). They act as a fallback and can be deleted once the extracted routes
+are fully validated.
+
+## Database — 35 tables
 | Table | Purpose |
 |---|---|
 | shipments | Core shipment records |
@@ -79,17 +135,30 @@ src/
 | country_trade_lanes | Country → lane assignments |
 | regions | Region MDM |
 | countries | ISO 3166-1 countries + portCount via JOIN |
-| tickets | Kanban board cards (shipment_id FK) |
-| status_log | Shipment status transitions (legacy, kept for compat) |
+| tickets | Kanban board cards (shipment_id FK, parent_id, assignee_id, due_date, version) |
+| ticket_links | Cross-ticket dependency relationships (blocks / is blocked by / etc.) |
 | shipment_events | Full audit log: FIELD_UPDATED, STATUS_CHANGED, CONTAINER_ADDED/REMOVED/UPDATED |
+| shipment_messages | Per-shipment threaded messages with author, role, timestamp |
+| shipment_legs | Multimodal legs: leg_type, movement_type, pol_loc_type, pod_loc_type, movement_by |
+| shipment_cost_lines | BUY/SELL cost lines per shipment with source tracking and FX |
+| shipment_milestones | Per-shipment milestone steps (estimated date, completion, note) |
+| shipment_screenings | OFAC/SDN screening results and override records |
+| shipment_documents | Uploaded documents metadata (filename, type, label) |
+| status_log | Shipment status transitions (legacy, kept for compat) |
 | entity_events | Generic audit log for allocations, carriers, contracts |
 | commodities | 294 Maersk freight commodity codes (Grades M/K/E/S/Q) |
 | customers | Customer records with full address and contact details |
 | contracts | Carrier rate contracts with IMDG class filters |
-| contract_legs | POL/POD pairs per contract with polLinkedAllowed / podLinkedAllowed flags |
+| contract_legs | POL/POD pairs per contract with linked-port flags + haulage columns + loc types |
 | contract_rates | Rate entries per contract |
+| milestone_templates | Reusable milestone step definitions grouped by template key/carrier/lane |
 | system_messages | Operational notices with severity and active date range |
-| users | Authenticated users: id, email, name, password_hash, role (admin/operator/viewer), is_active, created_at, last_login |
+| sanctions_entries | OFAC SDN entity records |
+| sanctions_syncs | OFAC sync history (timestamp, source, count) |
+| app_settings | Key-value store for server-side config (API keys, toggles, recurrence) |
+| users | Authenticated users: id, email, name, password_hash, role, is_active, last_login |
+| user_scope_items | Per-user shipment scope restrictions (carrier, POL, POD filters) |
+| user_access_configs | Per-user access configuration records |
 
 ## Key patterns
 - **PortCombobox dropdown**: always `position: fixed` with `getBoundingClientRect()` to escape modal `overflow:auto`
@@ -98,9 +167,10 @@ src/
 - **Migrations**: safe `try/catch` array in server.js startup — add new columns there
 - **Backfill**: `backfillPortCountryCodes()` IIFE runs on startup
 - **Toast**: `import { toast } from './toast'` → `toast.success/error/warning/info(msg)`
-- **Version**: update `src/version.js` + `CLAUDE.md` on every release
+- **Version**: update `src/version.js` + `CLAUDE.md` + `README.md` on every release
 - **Routing term**: computed in `syncShipmentFromLegs` from carrier-covered legs only — `legs.filter(l => l.movement_type !== "Merchant's Haulage" && l.movement_type !== "Customer Arranged")`; format `DR-CY`, `PT-PT`, `DR-DR`; `LEG_LOC_ABBR = { Door: DR, Terminal: PT, Container Yard: CY, CFS: CFS }`; stored as `routing_term` on shipments; `mapShipment` uses `r.routing_term || SVC_ABBR[r.service_type]`
-- **Leg schema (shipment_legs)**: `leg_type` (Pick-up/SEA/AIR/RAIL/Feeder/Delivery), `movement_type` (Carrier's Haulage/Merchant's Haulage/SEA/Air Freight/Rail/Feeder), `pol_loc_type`/`pod_loc_type` (Door/Terminal/Container Yard/CFS), `movement_by` (Barge/Rail/Truck/Vessel/Air); `LEG_TO_MOT` in server derives `mot` from `legType` (Pick-up/Delivery → ROAD, SEA → SEA) for the seaLeg sync lookup
+- **Leg schema (shipment_legs)**: `leg_type` (Pick-up/SEA/AIR/RAIL/Feeder/Delivery), `movement_type` (Carrier's Haulage/Merchant's Haulage/SEA/Air Freight/Rail/Feeder), `pol_loc_type`/`pod_loc_type` (Door/Terminal/Container Yard/CFS), `movement_by` (Barge/Rail/Truck/Vessel/Air); `LEG_TO_MOT` in routes/shipments.js derives `mot` from `legType` (Pick-up/Delivery → ROAD, SEA → SEA)
+- **Contract leg loc types**: `pol_loc_type` / `pod_loc_type` columns on `contract_legs` (Terminal default); selector in MdmContractsPage leg editor; persisted via `saveLegs` in routes/contracts.js
 - **Trade lane column**: `longestLane(unlocode)` picks the most specific lane code (longest string) from `portLanesMap[unlocode]` Set; `tradeLane` in `mapShipment` = `polLane → podLane`; `SVC_ABBR` maps service_type to short codes: Port-to-Port→P2P, Door-to-Port→D2P, Port-to-Door→P2D, Door-to-Door→D2D
 - **Theme**: `T.surface`, `T.bg`, `T.text`, `T.textMuted`, `T.accent`, `T.border`, `T.success`, `T.danger`, `T.warning`, `T.info`
 - **VesselField**: named export `{ VesselField }` not default
@@ -114,20 +184,23 @@ src/
 - **ActionMenu null guard**: ActionMenu returns `null` when `items` is empty — safe to always render it with conditional items spread: `...(canEdit ? [{ ...}] : [])`
 - **Admin seed**: on first startup, if no users exist, server seeds a default admin: `admin@cargodesk.com` / `admin123` — warn users to change this
 - **bcryptjs**: password hashing uses `bcryptjs` (pure JS, no native deps); `POST /api/users` returns `{ ok: true }`, not the created record — reload the list after create/edit
-- **Kanban ticket nesting**: `parent_id` self-referencing FK on `tickets` — Epic → Story → sub-task; parent picker in TicketModal (typeahead filtered to Epics/Stories); breadcrumb chip on TicketCard and TicketPreview; children list with progress bar in TicketPreview; clicking a child navigates the preview panel to that ticket
-- **Kanban Epic progress ring**: SVG ring on Epic cards showing X% of child tickets done (green at 100%, accent otherwise); computed from `allTickets` prop passed down from KanbanPage
-- **Kanban assignee**: `assignee_id` FK → `users.id`; `GET /api/tickets` LEFT JOINs users so `assignee_name` and `assignee_initial` are always in the response — no second round-trip needed on the client; avatar chip shown on card and preview
-- **Kanban due date**: `due_date` TEXT (YYYY-MM-DD); `isOverdue(d)` helper compares against today's ISO date prefix; overdue cards show red ⚠ badge
-- **Kanban avatar colour**: `avatarColor(id)` derives a deterministic colour from the user ID string by summing char codes mod palette length — same user always gets the same colour across sessions
-- **Kanban WIP limits**: per-column Work-In-Progress limit set via ⚙ in the column header; persisted to `localStorage` under key `cargodesk_wip_limits`; count badge turns amber at limit, red when exceeded; `onSetWipLimit(null)` clears the limit
-- **TICKET_JOIN constant**: shared SQL fragment in server.js used by GET, POST response, and PUT response so the assignee JOIN is defined in one place
+- **Kanban ticket nesting**: `parent_id` self-referencing FK on `tickets` — Epic → Story → sub-task; parent picker in TicketModal; breadcrumb chip on TicketCard and TicketPreview; children list with progress bar in TicketPreview; clicking a child navigates the preview panel
+- **Kanban Epic progress ring**: SVG ring on Epic cards showing X% of child tickets done; computed from `allTickets` prop passed down from KanbanPage
+- **Kanban assignee**: `assignee_id` FK → `users.id`; `GET /api/tickets` LEFT JOINs users so `assignee_name` and `assignee_initial` are always in the response; `TICKET_JOIN` SQL fragment defined in routes/kanban.js
+- **Kanban due date**: `due_date` TEXT (YYYY-MM-DD); `isOverdue(d)` helper; overdue cards show red ⚠ badge
+- **Kanban WIP limits**: per-column limit via ⚙; persisted to `localStorage` under key `cargodesk_wip_limits`; amber at limit, red when exceeded
+- **Export — CSV**: `GET /api/export/shipments.csv` — server-side, 34 columns, joins port names + container counts + cost totals, respects `applyShipmentAccessFilter`; `api.export.shipmentsCSV()` fetches as blob → `<a>.click()` download
+- **Export — XLSX programmatic**: `GET /api/export/dashboard/xlsx` — ExcelJS workbook, 4 sheets (Summary with KPI block + 6-week trend, By Carrier, By Lane, Shipment Detail with autofilter + frozen header), brand palette, formula-based totals; no charts (ExcelJS chart API unreliable)
+- **Export — XLSX template**: `GET /api/export/dashboard/template` — loads `exports/dashboard-template.xlsx`, overwrites data ranges (WeeklySummary A11:E16, ByCarrier, ByLane), preserves any Excel charts pre-wired to those named ranges; `npm run export:template` regenerates the base file
+- **Export api namespace**: `api.export.shipmentsCSV()`, `api.export.dashboardXlsx()`, `api.export.dashboardTemplate()` — all use direct `fetch` + `blob` → `<a>.click()` pattern (same as documents download)
 
-## Recent changes (v0.22.0 "Crossroads")
-- **Multimodal leg UX hardening**: SEA leg Movement Type and Movement By are blank/blocked (show `—`, non-editable); Pick-up and Delivery legs show `—` in the Carrier column (code always derived from the SEA leg); Vessel and Voyage disabled for Pick-up/Delivery legs unless Movement By is Barge; new legs default to `legType: "SEA"`; column order: Leg Type → Movement Type → From → Loc. Type → ETD → To → Loc. Type → ETA → **Carrier** → Movement By → Vessel → Voyage → Ctr. Type → Contract No.
-- **Row selection + Remove Leg**: clicking a row highlights it with accent left-border + 6% tint; Remove Leg footer button activates (danger colour) when a row is selected; replaces inline × buttons — no selection = no removal
-- **PKU/DEL flanking cells**: both `shp-route` (ShipmentDetailPage) and `shpform-route` (ShipmentFormPage) use a dynamic grid (`${pkuLeg ? "auto " : ""}1fr auto 1fr${delLeg ? " auto" : ""}`) that adds door cells with dashed borders when Carrier's Haulage legs exist; seaport UNLOCODE (`seaLeg?.pol`) shown as Port of Loading — fixes prior mislabelling of door pickup locations as POL
-- **Contract matching improvements**: `GET /api/contracts/match` accepts `crd`, `routingTerm`, `pkuLocation`, `delLocation`; uses `seaLeg?.pol` as match POL (not the door UNLOCODE); inclusive haulage logic — contracts with haulage support shown for non-haulage shipments, excluded only when shipment needs haulage (DR routing term) but contract does not; ContractField guard relaxed to POL + POD only (not ETD)
-- **contract_legs extended**: `pol_carrier_haulage`, `pod_carrier_haulage`, `pol_haulage_locations`, `pod_haulage_locations` columns added via startup migration
-- **portLanesMap live rebuild**: `rebuildPortLanesMap()` called after every country-trade-lane mutation — trade lane assignments take effect immediately without server restart
-- **Section IDs**: ShipmentDetailPage (`shp-route`, `shp-info-ports`, `shp-info-dates`, `shp-space`) and ShipmentFormPage (`shpform-parties`, `shpform-cargo`, `shpform-transport`, `shpform-route`, `shpform-containers`, `shpform-contract`, `shpform-status`, `shpform-actions`)
-- **Trade lane badge** added to ShipmentDetailPage shipment subtitle
+## Recent changes (v0.25.0 "Voyage")
+- **Shipment schedules**: new `shipment_schedules` table (FK → `shipments`, CASCADE DELETE) — columns: `carrier`, `vessel_name`, `voyage_number`, `service`, `pol`, `pod`, `etd`, `eta`, `transit_days`, `is_mock`, `saved_at`, `saved_by`; migration runs on startup
+- **Schedule routes**: `GET /api/shipments/:id/schedules`, `POST` (save), `DELETE /api/shipments/:id/schedules/:scheduleId` in `routes/shipment-ops.js`; `api.schedules.list/save/remove` in `api.js`
+- **Sailing section in ShipmentForm**: `SailingPickerModal` (shared component) with 2/4/8/12-week window selector; new-shipment mode holds selection in `selectedSailing` state and saves to DB after creation in `App.jsx`; edit mode saves immediately via `api.schedules.save(init.id, sailing)`; mock-data banner when no Maersk key is configured
+- **Apply to SEA leg shortcut**: when `selectedSailing` is set in new mode and a draft SEA leg exists, a button copies `vesselName → vessel`, `voyageNumber → voyage`, `etd` into the first SEA leg via `onDraftLegsChange`
+- **SchedulesPanel in ShipmentDetailPage**: lists saved sailings with vessel, service, voyage, ETD/ETA, transit days, isMock badge, and saved-by; Add Sailing opens shared `SailingPickerModal`; remove via `ConfirmModal`
+- **Related Tickets panel**: `RelatedTicketsPanel` component in `ShipmentDetailPage`; `GET /api/tickets?shipmentId=X` filter added to `routes/kanban.js`; `api.tickets.forShipment(shipmentId)` added to `api.js`; shows status dot, ticket ID, title, assignee, priority
+- **Shared SailingPickerModal**: extracted to `src/components/shared/SailingPickerModal.jsx` with `selectLabel` prop — eliminates ~240 lines of duplication between `ShipmentFormPage` and `ShipmentDetailPage`
+- **Sidebar nav**: `ShipmentDetailSidebar` sections array updated with `{ id: "shp-schedules", icon: "⚓", label: "Schedules" }` and `{ id: "shp-tickets", icon: "◩", label: "Tickets" }`
+- **Health endpoint fix**: `routes/system.js` now uses `require('../package.json').version` instead of hardcoded `"0.22.0"`; `package.json` version synced to `0.25.0`

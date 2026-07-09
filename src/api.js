@@ -137,21 +137,40 @@ export const api = {
     update:         (id, data) => req("PUT",    `/customers/${id}`, data),
     remove:         (id)       => req("DELETE", `/customers/${id}`),
     sanctionsCheck: ()         => req("GET",    "/customers/sanctions-check"),
+    identifiers: {
+      list:   (cid)            => req("GET",    `/customers/${cid}/identifiers`),
+      create: (cid, data)      => req("POST",   `/customers/${cid}/identifiers`, data),
+      update: (cid, iid, data) => req("PUT",    `/customers/${cid}/identifiers/${iid}`, data),
+      remove: (cid, iid)       => req("DELETE", `/customers/${cid}/identifiers/${iid}`),
+    },
+    screening: {
+      get:      (cid)       => req("GET",  `/customers/${cid}/screening`),
+      run:      (cid)       => req("POST", `/customers/${cid}/screen`, {}),
+      override: (cid, data) => req("POST", `/customers/${cid}/screening/override`, data),
+    },
+    documents: {
+      list:     (cid)           => req("GET",    `/customers/${cid}/documents`),
+      upload:   (cid, data)     => req("POST",   `/customers/${cid}/documents`, data),
+      remove:   (cid, did)      => req("DELETE", `/customers/${cid}/documents/${did}`),
+      downloadUrl: (cid, did)   => `/api/customers/${cid}/documents/${did}/download`,
+    },
   },
   tickets: {
-    list:       ()          => req("GET",    "/tickets"),
-    create:     (data)      => req("POST",   "/tickets", data),
-    update:     (id, data)  => req("PUT",    `/tickets/${id}`, data),
-    remove:     (id)        => req("DELETE", `/tickets/${id}`),
-    links:      (id)        => req("GET",    `/tickets/${id}/links`),
-    addLink:    (id, data)  => req("POST",   `/tickets/${id}/links`, data),
-    removeLink: (linkId)    => req("DELETE", `/ticket-links/${linkId}`),
+    list:          ()              => req("GET",    "/tickets"),
+    forShipment:   (shipmentId)   => req("GET",    `/tickets?shipmentId=${encodeURIComponent(shipmentId)}`),
+    create:        (data)         => req("POST",   "/tickets", data),
+    update:        (id, data)     => req("PUT",    `/tickets/${id}`, data),
+    remove:        (id)           => req("DELETE", `/tickets/${id}`),
+    links:         (id)           => req("GET",    `/tickets/${id}/links`),
+    addLink:       (id, data)     => req("POST",   `/tickets/${id}/links`, data),
+    removeLink:    (linkId)       => req("DELETE", `/ticket-links/${linkId}`),
   },
   contracts: {
-    search:  (p = {})     => req("GET",    `/contracts?${new URLSearchParams(p)}`),
-    find:    (p = {})     => req("GET",    `/contracts/search?${new URLSearchParams(p)}`),
-    match:   (p = {})     => req("GET",    `/contracts/match?${new URLSearchParams(p)}`),
-    get:     (id)         => req("GET",    `/contracts/${id}`),
+    search:     (p = {})  => req("GET",    `/contracts?${new URLSearchParams(p)}`),
+    find:       (p = {})  => req("GET",    `/contracts/search?${new URLSearchParams(p)}`),
+    match:      (p = {})  => req("GET",    `/contracts/match?${new URLSearchParams(p)}`),
+    revalidate: (ref)     => req("GET",    `/contracts/revalidate?ref=${encodeURIComponent(ref)}`),
+    get:        (id)      => req("GET",    `/contracts/${id}`),
     create:  (data)       => req("POST",   "/contracts", data),
     update:  (id, data)   => req("PUT",    `/contracts/${id}`, data),
     remove:  (id)         => req("DELETE", `/contracts/${id}`),
@@ -201,14 +220,19 @@ export const api = {
     remove: (id)   => req("DELETE", `/system-messages/${id}`),
   },
   auth: {
-    login: (email, password) => req("POST", "/auth/login", { email, password }),
-    me:    ()                => req("GET",  "/auth/me"),
+    login:     (email, password) => req("POST", "/auth/login", { email, password }),
+    me:        ()                => req("GET",  "/auth/me"),
+    ssoConfig: ()                => req("GET",  "/auth/sso/config"),
   },
   users: {
-    list:   ()           => req("GET",    "/users"),
-    create: (data)       => req("POST",   "/users", data),
-    update: (id, data)   => req("PATCH",  `/users/${id}`, data),
-    remove: (id)         => req("DELETE", `/users/${id}`),
+    list:           ()           => req("GET",    "/users"),
+    create:         (data)       => req("POST",   "/users", data),
+    update:         (id, data)   => req("PATCH",  `/users/${id}`, data),
+    remove:         (id)         => req("DELETE", `/users/${id}`),
+    revokeSessions: (id)         => req("POST",   `/users/${id}/revoke-sessions`),
+  },
+  adminEvents: {
+    list: (p = {}) => req("GET", `/admin/events?${new URLSearchParams(p)}`),
   },
   userAccess: {
     list:   (userId)       => req("GET",    `/users/${userId}/access-configs`),
@@ -245,6 +269,12 @@ export const api = {
     get:    ()       => req("GET", "/settings"),
     update: (data)   => req("PUT", "/settings", data),
   },
+  schedules: {
+    search:  (p = {})         => req("GET",    `/schedules/search?${new URLSearchParams(p)}`),
+    list:    (shipmentId)     => req("GET",    `/shipments/${shipmentId}/schedules`),
+    save:    (shipmentId, d)  => req("POST",   `/shipments/${shipmentId}/schedules`, d),
+    remove:  (shipmentId, id) => req("DELETE", `/shipments/${shipmentId}/schedules/${id}`),
+  },
   vessels: {
     search: (q = "")          => req("GET",    `/vessels/search?q=${encodeURIComponent(q)}`),
     list:   (p = {})          => req("GET",    `/vessels?${new URLSearchParams(p)}`),
@@ -252,5 +282,52 @@ export const api = {
     create: (data)            => req("POST",   "/vessels", data),
     update: (imo, data)       => req("PUT",    `/vessels/${imo}`, data),
     remove: (imo)             => req("DELETE", `/vessels/${imo}`),
+  },
+  export: {
+    shipmentsCSV: async () => {
+      const token = localStorage.getItem("cargodesk_token");
+      const activeRole = localStorage.getItem("cargodesk_active_role");
+      const headers = { Authorization: `Bearer ${token}` };
+      if (activeRole) headers["X-Active-Role"] = activeRole;
+      const res = await fetch("/api/export/shipments.csv", { headers });
+      if (!res.ok) throw new Error("CSV export failed");
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      const date = new Date().toISOString().slice(0, 10);
+      const a    = document.createElement("a");
+      a.href = url; a.download = `shipments-${date}.csv`; a.click();
+      URL.revokeObjectURL(url);
+    },
+    dashboardXlsx: async () => {
+      const token = localStorage.getItem("cargodesk_token");
+      const activeRole = localStorage.getItem("cargodesk_active_role");
+      const headers = { Authorization: `Bearer ${token}` };
+      if (activeRole) headers["X-Active-Role"] = activeRole;
+      const res = await fetch("/api/export/dashboard/xlsx", { headers });
+      if (!res.ok) throw new Error("XLSX export failed");
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      const date = new Date().toISOString().slice(0, 10);
+      const a    = document.createElement("a");
+      a.href = url; a.download = `cargodesk-dashboard-${date}.xlsx`; a.click();
+      URL.revokeObjectURL(url);
+    },
+    dashboardTemplate: async () => {
+      const token = localStorage.getItem("cargodesk_token");
+      const activeRole = localStorage.getItem("cargodesk_active_role");
+      const headers = { Authorization: `Bearer ${token}` };
+      if (activeRole) headers["X-Active-Role"] = activeRole;
+      const res = await fetch("/api/export/dashboard/template", { headers });
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        throw new Error(e.error || "Template export failed");
+      }
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      const date = new Date().toISOString().slice(0, 10);
+      const a    = document.createElement("a");
+      a.href = url; a.download = `cargodesk-dashboard-template-${date}.xlsx`; a.click();
+      URL.revokeObjectURL(url);
+    },
   },
 };

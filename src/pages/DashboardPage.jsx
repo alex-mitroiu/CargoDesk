@@ -1331,8 +1331,9 @@ const fmtUsd = v => v == null ? "—" : `$${Number(v).toLocaleString("en-US", { 
 const marginColor = pct => pct == null ? T.textMuted : pct >= 20 ? T.success : pct >= 10 ? T.warning : T.danger;
 
 const MarginView = ({ financeEnabled }) => {
-  const [data,    setData]    = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [data,      setData]      = useState(null);
+  const [loading,   setLoading]   = useState(true);
+  const [exporting, setExporting] = useState(null); // "xlsx" | "template" | null
 
   useEffect(() => {
     api.margin.summary()
@@ -1341,17 +1342,27 @@ const MarginView = ({ financeEnabled }) => {
       .finally(() => setLoading(false));
   }, []);
 
+  const handleExport = async (mode) => {
+    setExporting(mode);
+    try {
+      if (mode === "xlsx")     await api.export.dashboardXlsx();
+      if (mode === "template") await api.export.dashboardTemplate();
+    } catch (e) {
+      // Import toast lazily to avoid circular-dep risk
+      const { toast: t } = await import("../toast");
+      t.error(e.message);
+    } finally {
+      setExporting(null);
+    }
+  };
+
   if (loading) return (
     <div style={{ padding: 48, textAlign: "center", color: T.textMuted, fontFamily: T.body, fontSize: 14 }}>
       Loading margin data…
     </div>
   );
 
-  if (!data || (data.byCarrier.length === 0 && data.byLane.length === 0)) return (
-    <div style={{ padding: 48, textAlign: "center", color: T.textMuted, fontFamily: T.body, fontSize: 14, fontStyle: "italic" }}>
-      No cost lines recorded yet. Open a shipment and add BUY / SELL lines in Cost Control.
-    </div>
-  );
+  const noData = !data || (data.byCarrier.length === 0 && data.byLane.length === 0);
 
   const kpiStyle = { background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "20px 24px" };
   const kpiLabel = { fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".08em" };
@@ -1361,7 +1372,7 @@ const MarginView = ({ financeEnabled }) => {
     </div>
   );
 
-  const pct  = data.grossMarginPct;
+  const pct  = data?.grossMarginPct ?? null;
   const col  = marginColor(pct);
 
   const TrendChart = ({ rows, dataKeys, title, subtitle }) => (
@@ -1392,7 +1403,7 @@ const MarginView = ({ financeEnabled }) => {
   );
 
   // Build carrier margin % trend: weeks × carrier
-  const carrierWeekData = (() => {
+  const carrierWeekData = noData ? [] : (() => {
     const allWeeks = data.byCarrier[0]?.weeks || [];
     return allWeeks.map((w, wi) => {
       const pt = { week: w.week };
@@ -1405,7 +1416,7 @@ const MarginView = ({ financeEnabled }) => {
   })();
 
   // Build lane margin % trend: weeks × lane
-  const laneWeekData = (() => {
+  const laneWeekData = noData ? [] : (() => {
     const top5 = data.byLane.slice(0, 5);
     const allWeeks = top5[0]?.weeks || [];
     return allWeeks.map((w, wi) => {
@@ -1418,15 +1429,36 @@ const MarginView = ({ financeEnabled }) => {
     });
   })();
 
-  const carrierKeys = data.byCarrier.map(c => c.carrierCode);
-  const laneKeys    = data.byLane.slice(0, 5).map(l => l.lane);
+  const carrierKeys = noData ? [] : data.byCarrier.map(c => c.carrierCode);
+  const laneKeys    = noData ? [] : data.byLane.slice(0, 5).map(l => l.lane);
 
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 22 }}>
-        <h2 style={{ fontFamily: T.head, fontSize: 19, fontWeight: 700, color: T.text, margin: 0 }}>Margin Overview</h2>
-        <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>All time · base currency USD</span>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 22, flexWrap: "wrap", gap: 10 }}>
+        <div>
+          <h2 style={{ fontFamily: T.head, fontSize: 19, fontWeight: 700, color: T.text, margin: 0 }}>Margin Overview</h2>
+          <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>All time · base currency USD</span>
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <Btn size="sm" variant="ghost"
+            disabled={exporting === "xlsx"}
+            onClick={() => handleExport("xlsx")}>
+            {exporting === "xlsx" ? "Generating…" : "⬇ XLSX (programmatic)"}
+          </Btn>
+          <Btn size="sm" variant="ghost"
+            disabled={exporting === "template"}
+            onClick={() => handleExport("template")}>
+            {exporting === "template" ? "Generating…" : "⬇ XLSX (template)"}
+          </Btn>
+        </div>
       </div>
+
+      {noData ? (
+        <div style={{ padding: "48px 0", textAlign: "center", color: T.textMuted,
+          fontFamily: T.body, fontSize: 14, fontStyle: "italic" }}>
+          No cost lines recorded yet. Open a shipment and add BUY / SELL lines in Cost Control.
+        </div>
+      ) : <div>
 
       {/* KPIs */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 24 }}>
@@ -1513,6 +1545,7 @@ const MarginView = ({ financeEnabled }) => {
           })}
         </div>
       )}
+      </div>}
     </div>
   );
 };

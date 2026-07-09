@@ -16,6 +16,7 @@ import CustomerCombobox from "../components/shared/CustomerCombobox";
 import Spinner from "../components/primitives/Spinner";
 import Pagination from "../components/primitives/Pagination";
 import { ContainerTypeField } from "../components/shared/ContainerTypePickerModal";
+import SailingPickerModal from "../components/shared/SailingPickerModal";
 
 // ─── Draft Container Manager ──────────────────────────────────────────────────
 
@@ -953,6 +954,10 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
   const [containerManagerOpen,  setContainerManagerOpen]  = useState(false);
   const [useContainerManager,   setUseContainerManager]   = useState(false);
   const [contractDgPolicy, setContractDgPolicy] = useState(null); // { dgAllowed, imdgClasses }
+  const [selectedSailing,  setSelectedSailing]  = useState(null); // { carrier, vesselName, … }
+  const [sailingPickerOpen, setSailingPickerOpen] = useState(false);
+  const [savedSchedules,    setSavedSchedules]    = useState([]); // edit mode: persisted sailings
+  const [schedLoading,      setSchedLoading]      = useState(false);
 
   // Open the container manager modal when the sidebar button fires the trigger.
   const prevTriggerRef = useRef(0);
@@ -994,6 +999,16 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
       .then(c => setContractDgPolicy({ dgAllowed: c.dgAllowed, imdgClasses: c.imdgClasses || [] }))
       .catch(() => setContractDgPolicy(null));
   }, [f.contractId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Load persisted schedules for edit mode
+  useEffect(() => {
+    if (!init.id) return;
+    setSchedLoading(true);
+    api.schedules.list(init.id)
+      .then(setSavedSchedules)
+      .catch(() => {})
+      .finally(() => setSchedLoading(false));
+  }, [init.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const prevFRef = useRef(f);
   useEffect(() => {
@@ -1111,7 +1126,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
       eta: derivedEta,
       carrierCode: effectiveCarrierCode,
       declaredValue: f.declaredValue !== "" ? Number(f.declaredValue) : null,
-    }, draftLegs || [], containersToSave));
+    }, draftLegs || [], containersToSave, selectedSailing));
   };
 
   const statusColor = { Active: T.success, Completed: T.info, Cancelled: T.danger, "On Hold": T.warning }[f.status] || T.textMuted;
@@ -1586,6 +1601,176 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
       )}
       <Textarea label="Contract Notes" value={f.contractNotes} onChange={set("contractNotes")}
         placeholder="Optional reference, contract IDs, remarks…" rows={2} />
+
+      {/* ── Sailing ───────────────────────────────────────────────────────────── */}
+      <SectionDivider label="Sailing" id="shpform-sailing" />
+      {(() => {
+        const pol = contractMatchPol || derivedPol;
+        const pod = contractMatchPod || derivedPod;
+        const carrier = effectiveCarrierCode;
+        const canSearch = !!(pol && pod && carrier);
+
+        const handleSelectSailing = async (sailing) => {
+          setSailingPickerOpen(false);
+          if (init.id) {
+            // Edit mode: save directly
+            try {
+              const saved = await api.schedules.save(init.id, sailing);
+              setSavedSchedules(p => [saved, ...p]);
+              toast.success(`Sailing ${sailing.vesselName} saved`);
+            } catch (e) { toast.error(e.message); }
+          } else {
+            setSelectedSailing(sailing);
+          }
+        };
+
+        const removeSchedule = async (scheduleId) => {
+          try {
+            await api.schedules.remove(init.id, scheduleId);
+            setSavedSchedules(p => p.filter(s => s.id !== scheduleId));
+            toast.success("Sailing removed");
+          } catch (e) { toast.error(e.message); }
+        };
+
+        return (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+
+            {/* Edit mode: show persisted sailings */}
+            {init.id && (
+              schedLoading
+                ? <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>Loading…</div>
+                : savedSchedules.length > 0 ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {savedSchedules.map(s => (
+                      <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 10,
+                        padding: "10px 14px", background: T.bg,
+                        border: `1px solid ${T.border}`, borderRadius: 8 }}>
+                        <div style={{ flex: 1, display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
+                          <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.text }}>
+                            {s.vesselName || "—"}
+                          </span>
+                          <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
+                            Voy {s.voyageNumber}
+                          </span>
+                          <span style={{ fontFamily: T.mono, fontSize: 11, color: T.text }}>
+                            {s.etd} → {s.eta}
+                          </span>
+                          <span style={{ fontFamily: T.mono, fontSize: 11, color: T.accent,
+                            background: T.accentBg, borderRadius: 4, padding: "1px 7px",
+                            border: `1px solid ${T.accent}33` }}>
+                            {s.transitDays}d
+                          </span>
+                          {s.isMock && (
+                            <span style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 700,
+                              background: T.warning + "22", color: T.warning,
+                              border: `1px solid ${T.warning}44`, borderRadius: 4,
+                              padding: "1px 6px", textTransform: "uppercase" }}>Demo</span>
+                          )}
+                        </div>
+                        {canEdit && (
+                          <button type="button" onClick={() => removeSchedule(s.id)}
+                            style={{ background: "none", border: "none", cursor: "pointer",
+                              color: T.textMuted, fontSize: 14, padding: "0 2px", lineHeight: 1 }}
+                            title="Remove sailing">✕</button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, fontStyle: "italic" }}>
+                    No sailings saved — add one below.
+                  </div>
+                )
+            )}
+
+            {/* New mode: show selected sailing chip */}
+            {!init.id && selectedSailing && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px",
+                  background: T.accentBg, border: `1px solid ${T.accent}44`, borderRadius: 8 }}>
+                  <div style={{ flex: 1, display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
+                    <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.accent }}>
+                      {selectedSailing.vesselName}
+                    </span>
+                    <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
+                      Voy {selectedSailing.voyageNumber}
+                    </span>
+                    <span style={{ fontFamily: T.mono, fontSize: 11, color: T.text }}>
+                      {selectedSailing.etd} → {selectedSailing.eta}
+                    </span>
+                    <span style={{ fontFamily: T.mono, fontSize: 11, color: T.accent,
+                      background: T.accentBg, borderRadius: 4, padding: "1px 7px",
+                      border: `1px solid ${T.accent}33` }}>
+                      {selectedSailing.transitDays}d
+                    </span>
+                    {selectedSailing.isMock && (
+                      <span style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 700,
+                        background: T.warning + "22", color: T.warning,
+                        border: `1px solid ${T.warning}44`, borderRadius: 4,
+                        padding: "1px 6px", textTransform: "uppercase" }}>Demo</span>
+                    )}
+                  </div>
+                  <button type="button" onClick={() => setSelectedSailing(null)}
+                    style={{ background: "none", border: "none", cursor: "pointer",
+                      color: T.textMuted, fontSize: 14, padding: "0 2px", lineHeight: 1 }}>✕</button>
+                </div>
+                {(draftLegs || []).some(l => l.legType === "SEA") && (
+                  <button type="button"
+                    onClick={() => {
+                      const updated = (draftLegs || []).map(l =>
+                        l.legType === "SEA"
+                          ? { ...l, vessel: selectedSailing.vesselName || l.vessel,
+                                    voyage: selectedSailing.voyageNumber || l.voyage,
+                                    etd:    selectedSailing.etd || l.etd }
+                          : l
+                      );
+                      onDraftLegsChange(updated);
+                      toast.success("Applied sailing to SEA leg");
+                    }}
+                    style={{ alignSelf: "flex-start", background: "none",
+                      border: `1px solid ${T.border}`, borderRadius: 5,
+                      padding: "4px 12px", cursor: "pointer",
+                      fontFamily: T.body, fontSize: 12, color: T.textMuted }}
+                    onMouseEnter={e => { e.currentTarget.style.borderColor = T.accent; e.currentTarget.style.color = T.accent; }}
+                    onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.textMuted; }}>
+                    ↳ Apply vessel &amp; ETD to SEA leg
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Search button */}
+            {canEdit && (
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <button type="button"
+                  disabled={!canSearch}
+                  onClick={() => canSearch && setSailingPickerOpen(true)}
+                  style={{ background: canSearch ? T.surface : T.bg,
+                    border: `1px solid ${canSearch ? T.border : T.border}`,
+                    borderRadius: 6, padding: "7px 14px", cursor: canSearch ? "pointer" : "not-allowed",
+                    fontFamily: T.body, fontSize: 13, color: canSearch ? T.text : T.textMuted,
+                    opacity: canSearch ? 1 : 0.5, display: "flex", alignItems: "center", gap: 6 }}
+                  onMouseEnter={e => { if (canSearch) { e.currentTarget.style.borderColor = T.accent; e.currentTarget.style.color = T.accent; }}}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = canSearch ? T.text : T.textMuted; }}>
+                  ⚓ {init.id ? "Add Sailing" : (selectedSailing ? "Change Sailing" : "Search Sailings")}
+                </button>
+                {!canSearch && (
+                  <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
+                    Set POL, POD and carrier via legs first
+                  </span>
+                )}
+              </div>
+            )}
+
+            {sailingPickerOpen && canSearch && (
+              <SailingPickerModal
+                pol={pol} pod={pod} carrierCode={carrier}
+                onSelect={handleSelectSailing}
+                onClose={() => setSailingPickerOpen(false)} />
+            )}
+          </div>
+        );
+      })()}
 
       {/* ── Status ────────────────────────────────────────────────────────────── */}
       <SectionDivider label="Status" id="shpform-status" />

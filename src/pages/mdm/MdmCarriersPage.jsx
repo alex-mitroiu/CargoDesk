@@ -15,6 +15,67 @@ import DatePicker from "../../components/primitives/DatePicker";
 import PortField from "../../components/shared/PortField";
 import { VesselField } from "../../components/shared/VesselCombobox";
 
+// ─── Carrier groups (corporate ownership) ─────────────────────────────────────
+
+const CARRIER_GROUPS = {
+  "Maersk Group":               ["MAEU", "SAFM", "MCPU", "SGCA"],
+  "CMA CGM Group":              ["CMDU", "ANL", "APL", "CNC", "OOL"],
+  "MSC":                        ["MSCU"],
+  "Hapag-Lloyd":                ["HLCU"],
+  "Ocean Network Express (ONE)":["ONEY", "KKLU", "MSLU", "NYKU"],
+  "Evergreen Line":             ["EGLV"],
+  "Yang Ming":                  ["YMLU"],
+  "HMM (Hyundai Merchant Marine)": ["HDMU"],
+  "COSCO Group":                ["COSU", "OOLU", "GETU"],
+  "Zim":                        ["ZIMU"],
+  "Wan Hai Lines":              ["WHLC"],
+  "Pacific International Lines":["PILU"],
+};
+
+// Reverse lookup: carrier code → group name
+const CARRIER_GROUP_MAP = Object.fromEntries(
+  Object.entries(CARRIER_GROUPS).flatMap(([group, codes]) => codes.map(c => [c, group]))
+);
+
+const GroupMembersModal = ({ groupName, carriers, onClose }) => {
+  const members = CARRIER_GROUPS[groupName] || [];
+  const byCode = Object.fromEntries(carriers.map(c => [c.code, c]));
+
+  return (
+    <Modal title={groupName} onClose={onClose} width={420}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, marginBottom: 8 }}>
+          {members.length} known carrier code{members.length !== 1 ? "s" : ""} in this group
+        </div>
+        {members.map(code => {
+          const known = byCode[code];
+          return (
+            <div key={code} style={{
+              display: "flex", alignItems: "center", gap: 12,
+              padding: "9px 14px", borderRadius: 7,
+              background: known ? T.bg : "transparent",
+              border: `1px solid ${known ? T.border : T.border + "44"}`,
+              opacity: known ? 1 : 0.45,
+            }}>
+              <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700,
+                color: known ? T.accent : T.textMuted, minWidth: 46 }}>{code}</span>
+              <span style={{ fontFamily: T.body, fontSize: 13, color: known ? T.text : T.textMuted }}>
+                {known ? known.name : "not in registry"}
+              </span>
+            </div>
+          );
+        })}
+        <div style={{ marginTop: 8, fontFamily: T.body, fontSize: 11, color: T.textMuted,
+          borderTop: `1px solid ${T.border}`, paddingTop: 10 }}>
+          Greyed codes are not yet added to your carrier registry.
+        </div>
+      </div>
+    </Modal>
+  );
+};
+
+// ──────────────────────────────────────────────────────────────────────────────
+
 const CarrierForm = ({ init = {}, onSave, onCancel, existing = [] }) => {
   const [code, setCode] = useState(init.code || "");
   const [name, setName] = useState(init.name || "");
@@ -237,8 +298,9 @@ const CarriersPage = ({ carriers, onAdd, onEdit, onDelete }) => {
   const [modal,          setModal]          = useState(null);
   const [confirm,        setConfirm]        = useState(null);
   const [historyCarrier, setHistoryCarrier] = useState(null);
-  const { template, startResize } = useResizableColumns("mdm-carriers", [130,200,160]);
-  const headers = ["Code","Name","Actions"];
+  const [groupModal,     setGroupModal]     = useState(null);
+  const { template, startResize } = useResizableColumns("mdm-carriers-v2", [130, 200, 180, 160]);
+  const headers = ["Code", "Name", "Group", "Actions"];
 
   return (
     <div>
@@ -274,6 +336,21 @@ const CarriersPage = ({ carriers, onAdd, onEdit, onDelete }) => {
             onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
             <span style={{ fontFamily: T.mono, fontSize: 14, color: T.accent, fontWeight: 700 }}>{c.code}</span>
             <span style={{ fontFamily: T.body, fontSize: 14, color: T.text }}>{c.name}</span>
+            <div>
+              {CARRIER_GROUP_MAP[c.code] ? (
+                <button type="button" onClick={() => setGroupModal(CARRIER_GROUP_MAP[c.code])}
+                  style={{
+                    fontFamily: T.body, fontSize: 11, fontWeight: 600,
+                    color: T.accent, background: T.accentBg,
+                    border: `1px solid ${T.accent}44`, borderRadius: 5,
+                    padding: "2px 9px", cursor: "pointer",
+                  }}>
+                  {CARRIER_GROUP_MAP[c.code]}
+                </button>
+              ) : (
+                <span style={{ fontFamily: T.body, fontSize: 11, color: T.border }}>—</span>
+              )}
+            </div>
             <ActionMenu items={[
               ...(canManageConfigs ? [{ icon: "✎", label: "Edit", onClick: () => setModal(c) }] : []),
               { icon: "📋", label: "History", onClick: () => setHistoryCarrier(c) },
@@ -315,6 +392,12 @@ const CarriersPage = ({ carriers, onAdd, onEdit, onDelete }) => {
             </>
           }
           onClose={() => setHistoryCarrier(null)} />
+      )}
+      {groupModal && (
+        <GroupMembersModal
+          groupName={groupModal}
+          carriers={carriers}
+          onClose={() => setGroupModal(null)} />
       )}
     </div>
   );

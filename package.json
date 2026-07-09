@@ -1,6 +1,6 @@
 {
   "name": "cargodesk",
-  "version": "1.0.0",
+  "version": "0.25.0",
   "private": true,
   "engines": {
     "node": ">=22.5.0"
@@ -14,12 +14,18 @@
     "seed": "node scripts/import-mdm-data.js",
     "seed:contracts": "node scripts/seed-contracts.js",
     "checkdb": "node scripts/checkdb.js",
+    "export:template": "node scripts/create-export-template.js",
+    "test": "node tests/pending-revalidation.test.js && node tests/shipment-crud.test.js",
+    "test:revalidate": "node tests/pending-revalidation.test.js",
+    "test:shipment": "node tests/shipment-crud.test.js",
+    "kill": "scripts\\kill-server.bat",
     "cy:open": "concurrently --kill-others \"npm run dev\" \"cypress open\"",
     "cy:run": "concurrently --kill-others-on-fail \"npm run dev\" \"cypress run\""
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
+    "exceljs": "^4.4.0",
     "express": "^4.18.3",
     "jsonwebtoken": "^9.0.3",
     "jspdf": "^4.2.1",

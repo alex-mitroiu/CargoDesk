@@ -48,6 +48,16 @@ const EXTERNAL_APIS = [
     defaultUnit: "weeks",
     recurrenceLabel: "Sync every",
   },
+  {
+    id: "maersk",
+    name: "Maersk Schedules",
+    provider: "Maersk Line",
+    description: "Live point-to-point sailing schedules from Maersk's developer API. Active when searching MAEU, SAFM, or MCPU carriers in Schedule Search.",
+    testType: "maersk_schedule",
+    hasApiKey: true,
+    settingKey: "maersk_api_key",
+    hasRecurrence: false,
+  },
 ];
 
 // ─── Internal API definitions ──────────────────────────────────────────────────
@@ -149,9 +159,8 @@ function StatusDot({ result, testing }) {
   );
 }
 
-const TABS_BASE = ["API Controls", "Finance", "Developer"];
-const TABS      = TABS_BASE; // extended with "Milestones" and "Users" for admin below
-const API_SUBTABS = ["External APIs", "Internal APIs"];
+const TABS_BASE   = ["API Controls", "Finance", "Developer"];
+const API_SUBTABS = ["External APIs", "Internal APIs", "Security", "Single Sign-On"];
 
 const downloadJson = (data, filename) => {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
@@ -371,11 +380,254 @@ function MilestoneTemplatesPanel() {
   );
 }
 
+// ─── Security Settings Panel ──────────────────────────────────────────────────
+
+function SecuritySettingsPanel({ settings, onChange }) {
+  const sec = {
+    login_max_attempts:    settings.login_max_attempts    ?? '5',
+    login_lockout_minutes: settings.login_lockout_minutes ?? '30',
+    jwt_lifetime_hours:    settings.jwt_lifetime_hours    ?? '8',
+  };
+  const row = { display: "flex", alignItems: "center", gap: 14, marginBottom: 18 };
+  const lbl = { fontFamily: T.body, fontSize: 12, fontWeight: 600, color: T.textMuted,
+    width: 200, flexShrink: 0, textTransform: "uppercase", letterSpacing: ".06em" };
+  return (
+    <div style={{ maxWidth: 560 }}>
+      <h3 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, marginBottom: 20 }}>
+        Login Security
+      </h3>
+      {[
+        { key: "login_max_attempts",    label: "Max failed attempts",    hint: "Lockout after N failures (0 = disabled)" },
+        { key: "login_lockout_minutes", label: "Lockout duration (min)", hint: "How long the account stays locked" },
+        { key: "jwt_lifetime_hours",    label: "Session lifetime (hrs)", hint: "JWT token expiry; requires re-login" },
+      ].map(({ key, label, hint }) => (
+        <div key={key} style={row}>
+          <div style={lbl}>{label}</div>
+          <div style={{ flex: 1 }}>
+            <input
+              type="number" min="0" value={sec[key]}
+              onChange={e => onChange(key, e.target.value)}
+              style={{ ...inp(), width: 100 }}
+            />
+            <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginTop: 3 }}>{hint}</div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── SSO Settings Panel ───────────────────────────────────────────────────────
+
+function SsoSettingsPanel({ settings, onChange }) {
+  const [showSecret, setShowSecret] = useState(false);
+  const s = settings;
+  const enabled = s.sso_enabled === '1';
+  const fld = { marginBottom: 16 };
+  const lbl = { display: "block", fontFamily: T.body, fontSize: 11, fontWeight: 600,
+    color: T.textMuted, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 5 };
+  return (
+    <div style={{ maxWidth: 560 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
+        <h3 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: 0 }}>
+          Azure AD / Entra ID SSO
+        </h3>
+        <Toggle on={enabled} onChange={() => onChange('sso_enabled', enabled ? '0' : '1')} />
+      </div>
+
+      {!enabled && (
+        <div style={{ padding: "12px 16px", borderRadius: 8, background: T.border + "30",
+          fontFamily: T.body, fontSize: 13, color: T.textMuted, marginBottom: 20 }}>
+          Enable the toggle above to activate SSO. Local login always remains available as fallback.
+        </div>
+      )}
+
+      {[
+        { key: "sso_tenant_id",      label: "Tenant ID",      placeholder: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx", type: "text" },
+        { key: "sso_client_id",      label: "Client ID",      placeholder: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx", type: "text" },
+        { key: "sso_redirect_uri",   label: "Redirect URI",   placeholder: "https://yourapp.com/api/auth/sso/callback", type: "text" },
+        { key: "sso_frontend_url",   label: "Frontend URL",   placeholder: "http://localhost:5173", type: "text" },
+      ].map(({ key, label, placeholder, type }) => (
+        <div key={key} style={fld}>
+          <label style={lbl}>{label}</label>
+          <input type={type} value={s[key] || ''} placeholder={placeholder}
+            onChange={e => onChange(key, e.target.value)}
+            style={inp()} disabled={!enabled} />
+        </div>
+      ))}
+
+      <div style={fld}>
+        <label style={lbl}>Client Secret</label>
+        <div style={{ display: "flex", gap: 8 }}>
+          <input type={showSecret ? "text" : "password"} value={s.sso_client_secret || ''}
+            placeholder="Paste client secret…"
+            onChange={e => onChange('sso_client_secret', e.target.value)}
+            style={{ ...inp(), flex: 1 }} disabled={!enabled} />
+          <button type="button" onClick={() => setShowSecret(x => !x)}
+            style={{ ...inp(), width: 64, cursor: "pointer", flexShrink: 0 }}>
+            {showSecret ? "Hide" : "Show"}
+          </button>
+        </div>
+      </div>
+
+      <div style={fld}>
+        <label style={lbl}>Default role for new SSO users</label>
+        <select value={s.sso_default_role || 'operator'} disabled={!enabled}
+          onChange={e => onChange('sso_default_role', e.target.value)}
+          style={{ ...inp(), width: 180, cursor: "pointer" }}>
+          <option value="operator">Operator</option>
+          <option value="viewer">Viewer</option>
+          <option value="admin">Admin</option>
+        </select>
+      </div>
+
+      {enabled && (
+        <div style={{ padding: "12px 16px", borderRadius: 8, border: `1px solid ${T.accent}44`,
+          background: T.accent + "0a", fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
+          <strong style={{ color: T.text }}>Login URL:</strong>{" "}
+          <code style={{ fontFamily: T.mono, fontSize: 11 }}>/api/auth/sso/init</code>
+          {"  "}— link this from your identity provider or share with users.
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Admin Activity Log ───────────────────────────────────────────────────────
+
+const ACTION_LABELS = {
+  USER_CREATED:     { label: "User created",         color: "success" },
+  USER_CREATED_SSO: { label: "User created via SSO", color: "success" },
+  USER_UPDATED:     { label: "User updated",         color: "info"    },
+  USER_DELETED:     { label: "User deleted",         color: "danger"  },
+  SESSIONS_REVOKED: { label: "Sessions revoked",     color: "warning" },
+  LOGIN_LOCKED:     { label: "Account locked",       color: "warning" },
+  SYSMSG_CREATED:   { label: "System message posted",color: "info"    },
+  SYSMSG_DELETED:   { label: "System message deleted",color:"danger"  },
+  SETTINGS_UPDATED: { label: "Settings changed",     color: "info"    },
+};
+
+function AdminActivityLog() {
+  const [events,  setEvents]  = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [total,   setTotal]   = useState(0);
+  const [page,    setPage]    = useState(0);
+  const [filter,  setFilter]  = useState("");
+  const PAGE_SIZE = 50;
+
+  const load = useCallback((p = 0, f = "") => {
+    setLoading(true);
+    const params = { limit: PAGE_SIZE, offset: p * PAGE_SIZE };
+    if (f) params.action = f;
+    api.adminEvents.list(params)
+      .then(({ results, total }) => { setEvents(results); setTotal(total); })
+      .catch(() => toast.error("Failed to load activity log"))
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { load(0, filter); setPage(0); }, [filter, load]);
+
+  const fmtDate = (iso) => new Date(iso).toLocaleString("en-GB", {
+    day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+        <h3 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: 0 }}>
+          Admin Activity Log
+        </h3>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <select value={filter} onChange={e => setFilter(e.target.value)}
+            style={{ ...inp(), width: 200, cursor: "pointer" }}>
+            <option value="">All actions</option>
+            {Object.entries(ACTION_LABELS).map(([k, v]) => (
+              <option key={k} value={k}>{v.label}</option>
+            ))}
+          </select>
+          <button onClick={() => load(page, filter)} type="button"
+            style={{ ...inp(), width: 70, cursor: "pointer", textAlign: "center" }}>
+            Refresh
+          </button>
+        </div>
+      </div>
+
+      {loading ? (
+        <div style={{ padding: 40, textAlign: "center", color: T.textMuted, fontFamily: T.body, fontSize: 13 }}>
+          Loading…
+        </div>
+      ) : events.length === 0 ? (
+        <div style={{ padding: 40, textAlign: "center", color: T.textMuted, fontFamily: T.body, fontSize: 13, fontStyle: "italic" }}>
+          No admin events recorded yet.
+        </div>
+      ) : (
+        <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, overflow: "hidden" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: T.body, fontSize: 12 }}>
+            <thead>
+              <tr style={{ background: T.surface, borderBottom: `1px solid ${T.border}` }}>
+                {["Timestamp", "Actor", "Action", "Target", "Details"].map(h => (
+                  <th key={h} style={{ padding: "9px 12px", textAlign: "left", fontWeight: 600,
+                    color: T.textMuted, textTransform: "uppercase", letterSpacing: ".07em", fontSize: 10 }}>
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {events.map((ev, i) => {
+                const meta = ACTION_LABELS[ev.action] || { label: ev.action, color: "info" };
+                const colorKey = { success: T.success, danger: T.danger, warning: T.warning, info: T.accent }[meta.color] || T.accent;
+                return (
+                  <tr key={ev.id} style={{ borderBottom: `1px solid ${T.border}`,
+                    background: i % 2 === 0 ? "transparent" : T.surface + "80" }}>
+                    <td style={{ padding: "8px 12px", color: T.textMuted, whiteSpace: "nowrap" }}>
+                      {fmtDate(ev.created_at)}
+                    </td>
+                    <td style={{ padding: "8px 12px", color: T.text, fontFamily: T.mono, fontSize: 11 }}>
+                      {ev.actor_email || ev.actor_id || "—"}
+                    </td>
+                    <td style={{ padding: "8px 12px" }}>
+                      <span style={{ padding: "2px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600,
+                        background: colorKey + "18", color: colorKey }}>
+                        {meta.label}
+                      </span>
+                    </td>
+                    <td style={{ padding: "8px 12px", color: T.textMuted, fontFamily: T.mono, fontSize: 11 }}>
+                      {ev.target_type ? `${ev.target_type} ${ev.target_id}` : "—"}
+                    </td>
+                    <td style={{ padding: "8px 12px", color: T.textMuted, fontFamily: T.mono, fontSize: 10,
+                      maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {Object.keys(ev.details || {}).length
+                        ? JSON.stringify(ev.details)
+                        : "—"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {total > PAGE_SIZE && (
+        <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 16 }}>
+          <button disabled={page === 0} onClick={() => { const p = page - 1; setPage(p); load(p, filter); }}
+            style={{ ...inp(), width: 80, cursor: "pointer" }}>← Prev</button>
+          <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, padding: "5px 0" }}>
+            {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, total)} of {total}
+          </span>
+          <button disabled={(page + 1) * PAGE_SIZE >= total} onClick={() => { const p = page + 1; setPage(p); load(p, filter); }}
+            style={{ ...inp(), width: 80, cursor: "pointer" }}>Next →</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function AppSettingsPage() {
   const { isAdmin } = useAuth();
-  const tabs = isAdmin ? [...TABS_BASE, "Milestones", "Users"] : TABS_BASE;
+  const tabs = isAdmin ? [...TABS_BASE, "Milestones", "Users", "Activity Log"] : TABS_BASE;
   const [activeTab,      setActiveTab]      = useState("API Controls");
   const [activeApiSub,   setActiveApiSub]   = useState("External APIs");
   const [settings,       setSettings]       = useState(null);
@@ -441,6 +693,27 @@ export default function AppSettingsPage() {
           ok: true, latency: Date.now() - t0,
           label: info.entryCount > 0 ? `${info.entryCount.toLocaleString()} entries` : "No entries — sync required",
         }}));
+      } else if (apiDef.testType === "maersk_schedule") {
+        const ctrl  = new AbortController();
+        const tmr   = setTimeout(() => ctrl.abort(), 10000);
+        const token = localStorage.getItem(TOKEN_KEY);
+        const resp  = await fetch("/api/schedules/search?pol=NLRTM&pod=USNYC&carrierCode=MAEU&weeks=1", {
+          signal: ctrl.signal, headers: { Authorization: `Bearer ${token}` },
+        });
+        clearTimeout(tmr);
+        if (resp.ok) {
+          const data = await resp.json();
+          setTestResults(r => ({ ...r, [apiDef.id]: {
+            ok: !data.isMock,
+            latency: Date.now() - t0,
+            ...(data.isMock
+              ? { error: "No key — demo data only" }
+              : { label: `Live · ${data.sailings?.length ?? 0} sailing${(data.sailings?.length ?? 0) !== 1 ? "s" : ""} NLRTM→USNYC` }
+            ),
+          }}));
+        } else {
+          setTestResults(r => ({ ...r, [apiDef.id]: { ok: false, error: `HTTP ${resp.status}` } }));
+        }
       } else {
         const ctrl    = new AbortController();
         const tmr     = setTimeout(() => ctrl.abort(), 7000);
@@ -529,6 +802,7 @@ export default function AppSettingsPage() {
     const intervalUnit  = settings[`api_${apiDef.id}_interval_unit`]  ?? apiDef.defaultUnit  ?? 'days';
     const testResult    = testResults[apiDef.id];
     const isTesting     = testing[apiDef.id];
+    const [showKey, setShowKey] = useState(false);
 
     let ofacNextDue = null;
     if (apiDef.id === 'ofac' && sanctionsInfo?.syncs?.[0]?.synced_at) {
@@ -562,6 +836,41 @@ export default function AppSettingsPage() {
           </div>
           <Toggle on={enabled} onChange={() => toggle({ ...apiDef, settingKey: `api_${apiDef.id}_enabled` })} />
         </div>
+
+        {/* API key input */}
+        {apiDef.hasApiKey && (
+          <div style={{ padding: "12px 20px", borderTop: `1px solid ${T.border}22`, background: `${T.bg}88` }}>
+            <div style={{ fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted,
+              textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 6 }}>Consumer Key</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input
+                type={showKey ? "text" : "password"}
+                value={settings[apiDef.settingKey] || ""}
+                placeholder="Paste API key…"
+                onChange={e => {
+                  const v = e.target.value;
+                  setSettings(s => ({ ...s, [apiDef.settingKey]: v }));
+                  saveSetting(apiDef.settingKey, v);
+                }}
+                disabled={!enabled}
+                style={{ ...inp, flex: 1 }}
+              />
+              <button type="button" onClick={() => setShowKey(x => !x)}
+                style={{ ...inp, width: 64, cursor: "pointer", flexShrink: 0, textAlign: "center" }}>
+                {showKey ? "Hide" : "Show"}
+              </button>
+            </div>
+            {settings[apiDef.settingKey] ? (
+              <div style={{ fontFamily: T.mono, fontSize: 10.5, color: T.success, marginTop: 5 }}>
+                ● Key configured
+              </div>
+            ) : (
+              <div style={{ fontFamily: T.mono, fontSize: 10.5, color: T.textMuted, marginTop: 5 }}>
+                Register free at developer.maersk.com to get a Consumer Key.
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Recurrence */}
         {apiDef.hasRecurrence && (
@@ -773,6 +1082,20 @@ export default function AppSettingsPage() {
             </div>
           )}
 
+          {activeApiSub === "Security" && settings && (
+            <SecuritySettingsPanel settings={settings} onChange={(k, v) => {
+              setSettings(s => ({ ...s, [k]: v }));
+              saveSetting(k, v);
+            }} />
+          )}
+
+          {activeApiSub === "Single Sign-On" && settings && (
+            <SsoSettingsPanel settings={settings} onChange={(k, v) => {
+              setSettings(s => ({ ...s, [k]: v }));
+              saveSetting(k, v);
+            }} />
+          )}
+
         </>
       )}
 
@@ -962,6 +1285,10 @@ export default function AppSettingsPage() {
 
       {activeTab === "Users" && isAdmin && (
         <UserManagementPanel />
+      )}
+
+      {activeTab === "Activity Log" && isAdmin && (
+        <AdminActivityLog />
       )}
     </div>
   );

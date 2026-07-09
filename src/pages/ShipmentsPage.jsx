@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { T, STATUSES, statusVariant, contractVariant, teuOf } from "../tokens";
 import { useAuth } from "../AuthContext";
+import { api } from "../api";
+import { toast } from "../toast";
 import Btn from "../components/primitives/Btn";
 import Badge from "../components/primitives/Badge";
 import { ConfirmModal } from "../components/primitives/Modal";
@@ -14,6 +16,14 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
   const [confirm,         setConfirm]         = useState(null);
   const [historyShipment, setHistoryShipment] = useState(null);
   const [filters,         setFilters]         = useState({ search: '', status: '', carrier: '' });
+  const [exporting,       setExporting]       = useState(false);
+
+  const handleExportCSV = async () => {
+    setExporting(true);
+    try { await api.export.shipmentsCSV(); toast.success("CSV downloaded"); }
+    catch (e) { toast.error(e.message); }
+    finally { setExporting(false); }
+  };
 
   const teuFor = id => containers.filter(c => c.shipmentId === id).reduce((s, c) => s + teuOf(c.size), 0);
   const { template: shipTemplate, startResize: shipStartResize } = useResizableColumns("shipments", [140,70,70,80,100,150,165,46,60,80,90]);
@@ -45,7 +55,12 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
             · {shipments.filter(s => s.status === "Active").length} active
           </p>
         </div>
-        {canEdit && <Btn onClick={onNew} size="lg" disabled={carriers.length === 0}>＋ New Shipment</Btn>}
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <Btn onClick={handleExportCSV} size="sm" variant="ghost" disabled={exporting || shipments.length === 0}>
+            {exporting ? "Exporting…" : "⬇ CSV"}
+          </Btn>
+          {canEdit && <Btn onClick={onNew} size="lg" disabled={carriers.length === 0}>＋ New Shipment</Btn>}
+        </div>
       </div>
 
       {/* Filter bar */}
