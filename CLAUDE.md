@@ -4,7 +4,7 @@
 Full-stack freight management app. React 18 + Vite frontend, Express + node:sqlite backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.26.0 "Meridian II"**
+- Version: **v0.27.0 "Lookout"**
 - Run: `npm run dev` (runs server on :3001 + Vite on :5173 concurrently)
 - Seed: `npm run seed` (runs `scripts/import-mdm-data.js`)
 
@@ -194,11 +194,15 @@ are fully validated.
 - **Export — XLSX template**: `GET /api/export/dashboard/template` — loads `exports/dashboard-template.xlsx`, overwrites data ranges (WeeklySummary A11:E16, ByCarrier, ByLane), preserves any Excel charts pre-wired to those named ranges; `npm run export:template` regenerates the base file
 - **Export api namespace**: `api.export.shipmentsCSV()`, `api.export.dashboardXlsx()`, `api.export.dashboardTemplate()` — all use direct `fetch` + `blob` → `<a>.click()` pattern (same as documents download)
 
-## Recent changes (v0.26.0 "Meridian II")
-- **AI Agent**: `routes/ai.js` with `POST /api/ai/chat` (agentic tool-call loop: get_shipment, list_shipments, get_contract, get_allocation; max 3 iterations; OpenAI-compatible) and `GET /api/ai/settings`; gated by `ai_agent_enabled` app_setting; `api.ai.chat/settings` in `api.js`
-- **AI Chat Drawer**: `src/components/shared/AiChatDrawer.jsx` — right-side slide-in panel with user/assistant bubbles, typing indicator animation, Shift+Enter for newline; ✦ nav button in sidebar (only when `ai_agent_enabled=1`); passes active shipment ID as context
-- **AI Agent Settings**: new `AI Agent` subtab in AppSettings → API Controls; `AiAgentSettingsPanel` with provider presets (Anthropic, OpenRouter, Custom), endpoint/model/key/system-prompt fields, Test Connection button
-- **Per-user finance gating**: `can_view_finance INTEGER DEFAULT 0` migration on users; `mapUser` includes `canViewFinance`; PATCH /api/users/:id accepts `canViewFinance`; `financeEnabled` in App.jsx now = `global_toggle AND (isAdmin OR user.canViewFinance)`; Finance column in UserManagementPanel (clickable chip, toggles per-user)
-- **data-testid attributes**: `data-testid="user-avatar-btn"` on header avatar, `data-testid="main-nav"` on sidebar nav, `data-testid="license-modal"` on license overlay
-- **GitHub Actions CI**: `.github/workflows/cypress.yml` — runs on `pull_request`, installs deps, seeds DB, starts dev server, wait-on ports 3001/5173, `cypress run --browser chrome`, uploads screenshots on failure
-- **Schedule search journey breadcrumb**: `JourneyBreadcrumb` in `SailingPickerModal` renders door/CY/seaport nodes in correct journey order from `routingTerm` prop; `SchedulesModal` in MdmContractsPage renders nodes from seaLeg `polLocType`/`podLocType`
+## Recent changes (v0.27.0 "Lookout")
+- **Sailing management hardening**: `applySailingToLegs` sets ETA + carrierCode; TSP multi-leg support splices draft SEA legs for each voyage segment; edit-mode replace-not-append fixed (`Promise.all` deletes all existing schedules before saving new); active sailing highlighted green in `SailingPickerModal` (`✓ Active` badge, `voyageNumber` or `vesselName+etd` match) — applied in both `ShipmentFormPage` and `ShipmentDetailPage`; replace confirmation uses proper `<Modal>` overlay
+- **Negative transit days**: `transitDays < 0` renders `⚠ dates` amber badge with tooltip instead of a negative number (both ShipmentFormPage and ShipmentDetailPage)
+- **ShipmentsPage refresh**: background poll every 90 s detects new IDs not yet in view; `↻` button with orange badge showing unloaded count; `_overdue` pseudo-status filter chip ("⏰ Overdue") filters `etd < today && not Completed/Cancelled`
+- **ShipmentDetailPage refresh**: `↻` button in page header; calls `api.shipments.get(id)` and merges into app state via `onRefresh` prop; `RefreshBtn` component with CSS spin animation
+- **Dashboard Contract Consumption**: three-tier fallback (`contractMap → alloc → group.contractRef`) for `contractNumber` and `carrierCode` — contracts with no space config allocation now always resolve correctly
+- **Command Center — KPI filtering**: cards (Active / Pending / Review / TEU / Overdue) toggle local `activeFilter` state; shipments list filters and shows all matches; active card shows `✓` highlight + count header with `✕ clear`; `onNavigate` no longer called from cards
+- **Command Center — routing bar**: `ShipmentPreviewModal` parses `routingTerm` (e.g. `DR-PT`) to render `Door → POL ──carrier──  POD → Terminal` journey nodes; vessel/voyage + routing term in sub-row
+- **Command Center — Integration Board card**: `TicketAlertCard` component fetches `api.tickets.list()` on mount; tabs Overdue / Due This Week; rows show priority dot, ticket ID, title, status badge, days-late counter, assignee avatar; "View board ↗" navigates to Kanban; card only renders when there are overdue or due-soon tickets
+- **Command Center — layout**: wrapper changed to `position: fixed` (`top:46, bottom:36, left:240`) escaping `<main>`'s scroll container; CC uses `height: 100%` (dynamic, scales to any viewport); right panel gets `overflow: hidden` — AI chat composer stays visible at all resolutions
+- **AI chat drawer**: `overflow: hidden` on drawer panel + `minHeight: 0` on messages div — composer anchored at bottom of right panel
+- **api.shipments.get(id)**: `get: (id) => req("GET", \`/shipments/${id}\`)` added to shipments namespace in `api.js`

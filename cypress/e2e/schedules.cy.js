@@ -1,5 +1,5 @@
 /**
- * v0.25.0 — Shipment Schedules + Related Tickets + ETA recalc hint (Cypress)
+ * v0.27.0 — Shipment Schedules + Related Tickets + ETA recalc hint (Cypress)
  *
  * Prerequisites:
  *   - npm run dev  (Vite :5173 + Express :3001)

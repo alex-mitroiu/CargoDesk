@@ -1,11 +1,13 @@
 "use strict";
 
 module.exports = function shipmentOpsRoutes(app, ctx) {
-  const { db, ok, err, uid, auth,
+  const { db, ok, err, uid, auth, requireRole,
           mapCostLine, mapMilestone, mapMilestoneTemplate,
           sanctionsMap, screenShipmentById,
           logEntityEvent, importContractRates,
           UPLOADS_DIR, fs, path } = ctx;
+
+  const shipmentWrite = requireRole(["admin", "operator", "occ_bk"]);
 
   // Prepared statement declared at module scope for efficiency (re-used per mapDoc call)
   const STALE_EVENTS = db.prepare(`
@@ -56,7 +58,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
 
   // ─── Cost Lines ───────────────────────────────────────────────────────────
 
-  app.post("/api/shipments/:id/cost-lines/import-contract", (req, res) => {
+  app.post("/api/shipments/:id/cost-lines/import-contract", shipmentWrite, (req, res) => {
     const { overwrite = false, splitPerContainer = false } = req.body || {};
     const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
     if (!shipment) return err(res, "Shipment not found", 404);
@@ -78,7 +80,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     ok(res, rows.map(mapCostLine));
   });
 
-  app.post("/api/shipments/:id/cost-lines", (req, res) => {
+  app.post("/api/shipments/:id/cost-lines", shipmentWrite, (req, res) => {
     const { type, chargeCode, currency = 'USD', amount, exchangeRate = 1, vatRate = 0, notes = '', containerId = '', source: rawSource } = req.body;
     if (!type || !chargeCode || amount == null) return err(res, "type, chargeCode, amount required");
     if (!['BUY','SELL'].includes(type)) return err(res, "type must be BUY or SELL");
@@ -93,7 +95,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     ok(res, mapCostLine({ id, shipment_id: req.params.id, type, charge_code: chargeCode, currency: currency.toUpperCase(), amount: Number(amount), exchange_rate: Number(exchangeRate), vat_rate: vat, notes, container_id: containerId, source, modified_at: null, created_at: now }), 201);
   });
 
-  app.put("/api/shipments/:shipmentId/cost-lines/:id", (req, res) => {
+  app.put("/api/shipments/:shipmentId/cost-lines/:id", shipmentWrite, (req, res) => {
     const { type, chargeCode, currency = 'USD', amount, exchangeRate = 1, vatRate = 0, notes = '', containerId = '' } = req.body;
     if (!type || !chargeCode || amount == null) return err(res, "type, chargeCode, amount required");
     if (!['BUY','SELL'].includes(type)) return err(res, "type must be BUY or SELL");
@@ -120,7 +122,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     ok(res, mapCostLine({ id: req.params.id, shipment_id: existing.shipment_id, type, charge_code: chargeCode, currency: currency.toUpperCase(), amount: Number(amount), exchange_rate: Number(exchangeRate), vat_rate: vat, notes, container_id: containerId, source: existing.source || 'manual', modified_at: now, created_at: existing.created_at }));
   });
 
-  app.delete("/api/shipments/:shipmentId/cost-lines/:id", (req, res) => {
+  app.delete("/api/shipments/:shipmentId/cost-lines/:id", shipmentWrite, (req, res) => {
     const existing = db.prepare("SELECT * FROM shipment_cost_lines WHERE id=? AND shipment_id=?").get(req.params.id, req.params.shipmentId);
     if (!existing) return err(res, "Not found", 404);
     db.prepare("DELETE FROM shipment_cost_lines WHERE id=?").run(req.params.id);
@@ -146,7 +148,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     ok(res, rows.map(mapMilestone));
   });
 
-  app.post("/api/shipments/:id/milestones/init", (req, res) => {
+  app.post("/api/shipments/:id/milestones/init", shipmentWrite, (req, res) => {
     const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
     if (!shipment) return err(res, "Shipment not found", 404);
     const carrierCode = req.body?.carrierCode || shipment.carrier_code || '';
@@ -171,7 +173,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     ok(res, created, 201);
   });
 
-  app.put("/api/milestones/:id", (req, res) => {
+  app.put("/api/milestones/:id", shipmentWrite, (req, res) => {
     const { estimatedDate = '', completedAt = '', completedBy = '', note = '' } = req.body || {};
     const existing = db.prepare("SELECT * FROM shipment_milestones WHERE id=?").get(req.params.id);
     if (!existing) return err(res, "Not found", 404);
@@ -180,7 +182,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     ok(res, mapMilestone({ ...existing, estimated_date: estimatedDate, completed_at: completedAt, completed_by: completedBy, note }));
   });
 
-  app.delete("/api/milestones/:id", (req, res) => {
+  app.delete("/api/milestones/:id", shipmentWrite, (req, res) => {
     const existing = db.prepare("SELECT * FROM shipment_milestones WHERE id=?").get(req.params.id);
     if (!existing) return err(res, "Not found", 404);
     db.prepare("DELETE FROM shipment_milestones WHERE id=?").run(req.params.id);
@@ -194,7 +196,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     ok(res, rows.map(r => mapDoc(r, req.params.id)));
   });
 
-  app.post("/api/shipments/:id/documents", auth(), (req, res) => {
+  app.post("/api/shipments/:id/documents", shipmentWrite, (req, res) => {
     const { filename, mimeType, docType, data } = req.body;
     if (!filename || !data) return err(res, "filename and data are required");
     try {
@@ -214,7 +216,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     } catch (e) { err(res, e.message, 500); }
   });
 
-  app.patch("/api/documents/:docId", auth(), (req, res) => {
+  app.patch("/api/documents/:docId", shipmentWrite, (req, res) => {
     const doc = db.prepare("SELECT * FROM shipment_documents WHERE id = ?").get(req.params.docId);
     if (!doc) return err(res, "Not found", 404);
     const { status } = req.body;
@@ -237,7 +239,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     fs.createReadStream(filePath).pipe(res);
   });
 
-  app.delete("/api/documents/:docId", auth(), (req, res) => {
+  app.delete("/api/documents/:docId", shipmentWrite, (req, res) => {
     const doc = db.prepare("SELECT * FROM shipment_documents WHERE id = ?").get(req.params.docId);
     if (!doc) return err(res, "Not found", 404);
     try { fs.unlinkSync(path.join(UPLOADS_DIR, doc.stored_name)); } catch {}
@@ -252,7 +254,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     ok(res, rows.map(mapMilestoneTemplate));
   });
 
-  app.post("/api/milestone-templates", (req, res) => {
+  app.post("/api/milestone-templates", shipmentWrite, (req, res) => {
     const { templateKey = 'FCL', carrierCode = '', tradeLane = '', milestoneKey, label, sequenceOrder = 0 } = req.body || {};
     if (!milestoneKey || !label) return err(res, "milestoneKey and label required");
     const id = `MT-${uid()}`;
@@ -262,7 +264,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     ok(res, mapMilestoneTemplate({ id, template_key: templateKey, carrier_code: carrierCode, trade_lane: tradeLane, milestone_key: milestoneKey, label, sequence_order: Number(sequenceOrder), created_at: now }), 201);
   });
 
-  app.put("/api/milestone-templates/:id", (req, res) => {
+  app.put("/api/milestone-templates/:id", shipmentWrite, (req, res) => {
     const { templateKey, carrierCode = '', tradeLane = '', milestoneKey, label, sequenceOrder } = req.body || {};
     const existing = db.prepare("SELECT * FROM milestone_templates WHERE id=?").get(req.params.id);
     if (!existing) return err(res, "Not found", 404);
@@ -275,7 +277,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     ok(res, mapMilestoneTemplate({ id: req.params.id, template_key: tKey, carrier_code: carrierCode, trade_lane: tradeLane, milestone_key: mKey, label: lbl, sequence_order: seq, created_at: existing.created_at }));
   });
 
-  app.delete("/api/milestone-templates/:id", (req, res) => {
+  app.delete("/api/milestone-templates/:id", shipmentWrite, (req, res) => {
     const existing = db.prepare("SELECT * FROM milestone_templates WHERE id=?").get(req.params.id);
     if (!existing) return err(res, "Not found", 404);
     db.prepare("DELETE FROM milestone_templates WHERE id=?").run(req.params.id);
@@ -307,7 +309,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     ok(res, rows.map(mapSchedule));
   });
 
-  app.post("/api/shipments/:id/schedules", auth(), (req, res) => {
+  app.post("/api/shipments/:id/schedules", shipmentWrite, (req, res) => {
     if (!db.prepare("SELECT id FROM shipments WHERE id=?").get(req.params.id))
       return err(res, "Shipment not found", 404);
     const { carrier = "", vesselName = "", voyageNumber = "", service = "",
@@ -325,7 +327,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       transit_days: Number(transitDays), is_mock: isMock ? 1 : 0, saved_at: savedAt, saved_by: savedBy }), 201);
   });
 
-  app.delete("/api/shipments/:id/schedules/:scheduleId", auth(), (req, res) => {
+  app.delete("/api/shipments/:id/schedules/:scheduleId", shipmentWrite, (req, res) => {
     const info = db.prepare("DELETE FROM shipment_schedules WHERE id=? AND shipment_id=?")
       .run(req.params.scheduleId, req.params.id);
     if (info.changes === 0) return err(res, "Not found", 404);

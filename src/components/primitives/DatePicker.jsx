@@ -22,7 +22,7 @@ const DatePicker = ({
   value = "", onChange,
   minDate, maxDate,
   label, hint, placeholder = "Select date…",
-  disabled = false,
+  disabled = false, required = false,
 }) => {
   const today = todayIso();
   const init  = value ? parseIso(value) : new Date();
@@ -167,7 +167,7 @@ const DatePicker = ({
   const cells = buildGrid();
 
   return (
-    <Field label={label} hint={hint}>
+    <Field label={label} hint={hint} required={required}>
       <div ref={ref} style={{ position: "relative" }}>
 
         {/* Trigger */}

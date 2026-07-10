@@ -367,13 +367,13 @@ const ContractModal = ({ editing, prefill, onSave, onClose }) => {
       {/* ── Section 2: Validity ── */}
       <div style={sectionHeader()}>Validity</div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <DatePicker label="Valid From" value={f.validFrom} onChange={v => setF(p => ({ ...p, validFrom: v }))} />
-        <DatePicker label="Valid To"   value={f.validTo}   onChange={v => setF(p => ({ ...p, validTo: v }))}
+        <DatePicker label="Valid From" required value={f.validFrom} onChange={v => setF(p => ({ ...p, validFrom: v }))} />
+        <DatePicker label="Valid To"   required value={f.validTo}   onChange={v => setF(p => ({ ...p, validTo: v }))}
           minDate={f.validFrom || undefined} />
       </div>
 
       {/* ── Section 3: Routing ── */}
-      <div style={sectionHeader()}>Routing (Multi-Leg)</div>
+      <div style={sectionHeader()}>Routing (Multi-Leg) <span style={{ color: T.danger }}>*</span></div>
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {f.legs.map((leg, i) => (
           <div key={i} style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px" }}>

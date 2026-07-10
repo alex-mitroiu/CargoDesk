@@ -155,7 +155,7 @@ export default function AiChatDrawer({ open, onClose, shipmentId }) {
         position: "fixed", top: 0, right: 0, bottom: 0,
         width: 380, zIndex: 1200,
         background: T.bg, borderLeft: `1px solid ${T.border}`,
-        display: "flex", flexDirection: "column",
+        display: "flex", flexDirection: "column", overflow: "hidden",
         boxShadow: "-8px 0 32px rgba(0,0,0,.2)",
       }}>
         {/* Header */}
@@ -200,7 +200,7 @@ export default function AiChatDrawer({ open, onClose, shipmentId }) {
         )}
 
         {/* Messages */}
-        <div style={{ flex: 1, overflowY: "auto", padding: "16px 14px" }}>
+        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "16px 14px" }}>
           {messages.map((m, i) => <Bubble key={i} msg={m} />)}
           {loading && <TypingIndicator />}
           <div ref={bottomRef} />

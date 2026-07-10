@@ -10,12 +10,13 @@ const UserManualPage = () => {
   const [showIncoterms, setShowIncoterms] = useState(false);
 
   const SECTIONS = [
-    { id: "overview",   label: "Overview" },
-    { id: "shipments",  label: "Shipments" },
-    { id: "dashboard",  label: "Dashboard" },
-    { id: "mdm",        label: "Master Data" },
-    { id: "incoterms",  label: "Incoterms" },
-    { id: "dg-classes", label: "DG Classes ⚠" },
+    { id: "overview",        label: "Overview" },
+    { id: "shipments",       label: "Shipments" },
+    { id: "dashboard",       label: "Dashboard" },
+    { id: "command-center",  label: "Command Center" },
+    { id: "mdm",             label: "Master Data" },
+    { id: "incoterms",       label: "Incoterms" },
+    { id: "dg-classes",      label: "DG Classes ⚠" },
   ];
 
   const SectionBtn = ({ id, label }) => (
@@ -78,6 +79,24 @@ const UserManualPage = () => {
         <P><strong>Total Allocated</strong> — the sum of all configured space across all carriers and contract types. <strong>Active Consumption</strong> — TEU booked in the selected week. <strong>Remaining</strong> — how much space is still available.</P>
         <H3>Space Configurations</H3>
         <P>Click <strong>＋ Add Configuration</strong> to set the awarded TEU for a specific carrier and contract type combination — e.g. MAEU / Customer Own = 80 TEU. Edit or remove configurations at any time. The utilisation bar turns amber above 70% and red above 90%.</P>
+      </div>
+    ),
+    "command-center": (
+      <div>
+        <H2>Command Center</H2>
+        <P>The Command Center is an always-dark operational dashboard accessible from the <Tag>✦</Tag> button at the top of the sidebar. It gives a real-time overview of the entire shipment portfolio, active tickets, and AI assistance in a single full-screen view.</P>
+        <H3>KPI Cards</H3>
+        <P>Six metric cards run across the top: <Tag>Active</Tag>, <Tag>Overdue</Tag>, <Tag>Pending</Tag>, <Tag>Completed</Tag>, <Tag>Total TEU</Tag>, and <Tag>Carriers</Tag>. Click any card to <strong>filter the shipment list</strong> to that category — the list updates in-place without leaving the Command Center. Click the same card again, or the <strong>✕ clear</strong> button next to the section header, to return to the default view (Active + Pending shipments).</P>
+        <H3>Shipment List</H3>
+        <P>Displays the 10 most recent active/pending shipments by default, with overdue shipments sorted to the top. When a KPI filter is active, up to 50 matching shipments are shown. Click any row to open the <strong>Shipment Preview</strong> panel on the right side.</P>
+        <H3>Shipment Preview</H3>
+        <P>The preview panel shows the selected shipment's full routing bar — including <Tag>Door</Tag> or <Tag>CY</Tag> pickup/delivery nodes flanking the port-to-port leg when the routing term includes them. The carrier code, ETD, vessel, voyage, routing term, and trade lane appear below the routing diagram. Status, TEU count, and commodity are shown as chips.</P>
+        <H3>Integration Board Tickets Card</H3>
+        <P>When there are overdue or upcoming tickets on the Integration Board, a <strong>Ticket Alert</strong> card appears between the carrier/route metrics and the shipment list. It has two tabs: <Tag>Overdue</Tag> (tickets past their due date) and <Tag>Due this week</Tag> (tickets with a due date within the next 7 days). Each row shows the ticket's priority colour, title, status, and how many days late or remaining. Click <strong>View board ↗</strong> to navigate directly to the Integration Board (Kanban).</P>
+        <H3>AI Agent Panel</H3>
+        <P>The right-hand panel (below the Shipment Preview) hosts the AI Agent chat. Type a question or command and press <Tag>Enter</Tag> to send (<Tag>Shift+Enter</Tag> for a newline). The agent can look up individual shipments, list shipments matching criteria, and retrieve contract and allocation details. The AI Agent must be enabled in <strong>App Settings → API Controls → AI Agent</strong>, and requires a valid API key configured there.</P>
+        <H3>Carrier and Route Summary</H3>
+        <P>Below the KPI cards, two panels summarise the active portfolio by carrier (shipment count and TEU) and by trade lane. These update live as new data arrives via WebSocket.</P>
       </div>
     ),
     mdm: (

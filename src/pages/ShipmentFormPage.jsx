@@ -412,7 +412,7 @@ const ContractField = ({ value, onChange, pol, pod, etd, crd, routingTerm, pkuLo
     : `${matches.length} contract${matches.length !== 1 ? "s" : ""} found — click to select`;
 
   return (
-    <Field label="Contract Ref">
+    <Field label="Contract Ref" required={isCentral}>
       {value.id ? (
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px",
           background: T.bg, border: `1px solid ${T.accent}55`, borderRadius: 6 }}>
@@ -903,7 +903,7 @@ const errRing = show => show
 // ─── ShipmentForm ─────────────────────────────────────────────────────────────
 
 const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onDraftLegsChange, ctrManagerTrigger = 0 }) => {
-  const { canEdit } = useAuth();
+  const { canEdit, activeOffice, userOffices, allOffices } = useAuth();
   const [legs,    setLegs]   = useState([]);
   const [touched, setTouch]  = useState({});
   const touch = k => setTouch(p => ({ ...p, [k]: true }));
@@ -946,7 +946,34 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
     cargoReadyDate:         init.cargoReadyDate         || "",
     declaredValue:          init.declaredValue           != null ? String(init.declaredValue) : "",
     declaredValueCurrency:  init.declaredValueCurrency  || "USD",
+    emoOfficeId:            init.emoOfficeId            || "",
+    imoOfficeId:            init.imoOfficeId            || "",
+    controllingOfficeId:    init.controllingOfficeId    || "",
   });
+  const [offices, setOffices] = useState([]);
+  useEffect(() => { api.offices.list().then(setOffices).catch(() => {}); }, []);
+
+  // Smart-default offices when creating a new shipment based on user's active office
+  useEffect(() => {
+    if (init.id) return; // edit mode — don't override
+    if (!activeOffice) return;
+    setF(p => ({
+      ...p,
+      emoOfficeId: activeOffice.department === 'SE' ? activeOffice.id : (p.emoOfficeId || ""),
+      imoOfficeId: activeOffice.department === 'SI' ? activeOffice.id : (p.imoOfficeId || ""),
+    }));
+  }, [activeOffice?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // IMO office suggestion: when POD country matches an active SI office, suggest it
+  const [imoSuggestion, setImoSuggestion] = useState(null);
+  useEffect(() => {
+    if (init.id || f.imoOfficeId) { setImoSuggestion(null); return; }
+    const podCode = (legs[legs.length - 1]?.pod || "").slice(0, 2).toUpperCase();
+    if (!podCode) { setImoSuggestion(null); return; }
+    const match = offices.find(o => o.department === "SI" && o.isActive && (o.countryCode || "").toUpperCase() === podCode);
+    setImoSuggestion(match || null);
+  }, [legs, offices, f.imoOfficeId, init.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const [carrierUpdated, setCarrierUpdated] = useState("");
   const [isSaving, withSaving] = useSaving();
   const set = k => v => setF(p => ({ ...p, [k]: v }));
@@ -963,6 +990,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
   const [sailingPickerOpen, setSailingPickerOpen] = useState(false);
   const [savedSchedules,    setSavedSchedules]    = useState([]); // edit mode: persisted sailings
   const [schedLoading,      setSchedLoading]      = useState(false);
+  const [confirmSailing,    setConfirmSailing]    = useState(null); // pending sailing awaiting confirmation
 
   // Open the container manager modal when the sidebar button fires the trigger.
   const prevTriggerRef = useRef(0);
@@ -1074,7 +1102,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
 
   const handleSave = () => {
     if (!valid) {
-      setTouch({ incoterm: true, commodityCode: true, legs: true, parties: true });
+      setTouch({ incoterm: true, commodityCode: true, legs: true, parties: true, offices: true });
       const missing = [];
       if (!f.shipperId || !f.consigneeId || !f.principalId) missing.push("Parties");
       if (!f.incoterm) missing.push("Incoterm");
@@ -1138,6 +1166,59 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+
+      {/* ── Offices ───────────────────────────────────────────────────────────── */}
+      <SectionDivider label="Offices" id="shpform-offices" />
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+        {[
+          { key: "emoOfficeId", label: "Export Managing Office (EMO)", required: true,  dept: "SE" },
+          { key: "imoOfficeId", label: "Import Managing Office (IMO)", required: true,  dept: "SI" },
+          { key: "controllingOfficeId", label: "Controlling Office",   required: false, dept: null },
+        ].map(({ key, label, required, dept }) => {
+          const candidates = dept ? offices.filter(o => o.department === dept && o.isActive) : offices.filter(o => o.isActive);
+          return (
+            <div key={key}>
+              <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
+                textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 5 }}>
+                {label}{required && <span style={{ color: T.danger, marginLeft: 2 }}>*</span>}
+              </div>
+              <select value={f[key] || ""} onChange={e => setF(p => ({ ...p, [key]: e.target.value || null }))}
+                style={{ width: "100%", padding: "7px 10px", borderRadius: 7, fontFamily: T.mono, fontSize: 12,
+                  color: f[key] ? T.text : T.textMuted,
+                  border: `1px solid ${required && touched.offices && !f[key] ? T.danger : T.border}`,
+                  background: T.bg, outline: "none", cursor: "pointer", boxSizing: "border-box" }}>
+                <option value="">{required ? "Select office…" : "None (optional)"}</option>
+                {candidates.map(o => <option key={o.id} value={o.id}>{o.code} — {o.name}</option>)}
+              </select>
+              {key === "imoOfficeId" && imoSuggestion && !f.imoOfficeId && (
+                <div style={{ marginTop: 5, padding: "5px 9px", borderRadius: 7,
+                  background: T.info + "18", border: `1px solid ${T.info}44`,
+                  display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ fontFamily: T.body, fontSize: 11, color: T.info, flex: 1 }}>
+                    ✦ {imoSuggestion.code} — {imoSuggestion.name}
+                  </span>
+                  <button type="button"
+                    onClick={() => setF(p => ({ ...p, imoOfficeId: imoSuggestion.id }))}
+                    style={{ padding: "2px 8px", borderRadius: 5, border: "none", background: T.info,
+                      color: "#fff", cursor: "pointer", fontFamily: T.body, fontSize: 11, fontWeight: 600 }}>
+                    Use
+                  </button>
+                  <button type="button" onClick={() => setImoSuggestion(null)}
+                    style={{ padding: "2px 4px", borderRadius: 5, border: "none", background: "none",
+                      cursor: "pointer", fontFamily: T.body, fontSize: 13, color: T.textMuted, lineHeight: 1 }}>
+                    ✕
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {touched.offices && (!f.emoOfficeId || !f.imoOfficeId) && (
+        <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.danger, marginTop: -4 }}>
+          EMO and IMO are required
+        </div>
+      )}
 
       {/* ── Parties ───────────────────────────────────────────────────────────── */}
       <SectionDivider label="Parties" id="shpform-parties" />
@@ -1336,13 +1417,20 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
                     {derivedEtd || "—"}</span>
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
-                  {transitDays !== null
+                  {transitDays !== null && transitDays >= 0
                     ? <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: T.accent,
                         background: T.accentBg, border: `1px solid ${T.accent}33`,
                         borderRadius: 10, padding: "2px 10px", whiteSpace: "nowrap" }}>
                         {transitDays}d transit
                       </span>
-                    : <span style={{ color: T.border, fontSize: 16 }}>→</span>}
+                    : transitDays !== null && transitDays < 0
+                      ? <span title="ETA is before ETD — check leg dates" style={{ fontFamily: T.mono, fontSize: 11,
+                          fontWeight: 700, color: T.warning, background: T.warning + "18",
+                          border: `1px solid ${T.warning}44`, borderRadius: 10,
+                          padding: "2px 10px", whiteSpace: "nowrap", cursor: "default" }}>
+                          ⚠ dates
+                        </span>
+                      : <span style={{ color: T.border, fontSize: 16 }}>→</span>}
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
                   <span style={labelStyle}>ETA</span>
@@ -1615,17 +1703,86 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
         const carrier = effectiveCarrierCode;
         const canSearch = !!(pol && pod && carrier);
 
-        const handleSelectSailing = async (sailing) => {
-          setSailingPickerOpen(false);
+        const applySailingToLegs = (sailing) => {
+          const isTSP = sailing.legs && sailing.legs.length > 1;
+          if (isTSP) {
+            const firstSeaIdx = (draftLegs || []).findIndex(l => l.legType === "SEA");
+            if (firstSeaIdx === -1) return;
+            const seaLeg  = draftLegs[firstSeaIdx];
+            const newLegs = [...draftLegs];
+            newLegs[firstSeaIdx] = {
+              ...seaLeg,
+              vessel:      sailing.legs[0].vesselName   || seaLeg.vessel,
+              voyage:      sailing.legs[0].voyageNumber || seaLeg.voyage,
+              etd:         sailing.legs[0].etd          || seaLeg.etd,
+              eta:         sailing.legs[0].eta          || seaLeg.eta,
+              pod:         sailing.legs[0].pod          || seaLeg.pod,
+              podName:     sailing.legs[0].pod !== seaLeg.pod ? "" : seaLeg.podName,
+              carrierCode: sailing.carrier              || seaLeg.carrierCode,
+            };
+            const extraLegs = sailing.legs.slice(1).map((leg, i) => ({
+              id:           `draft_${Date.now() + i + 1}`,
+              legType:      "SEA",
+              movementType: "SEA",
+              movementBy:   "",
+              polLocType:   "Terminal",
+              podLocType:   "Terminal",
+              pol:          leg.pol,      polName: "",
+              pod:          leg.pod,      podName: "",
+              etd:          leg.etd,
+              eta:          leg.eta,
+              carrierCode:  sailing.carrier || "",
+              vessel:       leg.vesselName   || "",
+              vesselImo:    "",
+              voyage:       leg.voyageNumber || "",
+              contractType: seaLeg.contractType || "SPOT",
+              contractRef:  seaLeg.contractRef  || "",
+            }));
+            newLegs.splice(firstSeaIdx + 1, 0, ...extraLegs);
+            onDraftLegsChange(newLegs);
+            toast.success(`TSP sailing applied — ${sailing.legs.length} sea legs updated`);
+          } else {
+            const updated = (draftLegs || []).map(l =>
+              l.legType === "SEA"
+                ? { ...l,
+                    vessel:      sailing.vesselName   || l.vessel,
+                    voyage:      sailing.voyageNumber || l.voyage,
+                    etd:         sailing.etd          || l.etd,
+                    eta:         sailing.eta          || l.eta,
+                    carrierCode: sailing.carrier      || l.carrierCode }
+                : l
+            );
+            onDraftLegsChange(updated);
+            toast.success("Sailing applied to SEA leg");
+          }
+        };
+
+        const commitSailing = async (sailing) => {
           if (init.id) {
-            // Edit mode: save directly
             try {
+              await Promise.all(savedSchedules.map(s => api.schedules.remove(init.id, s.id)));
               const saved = await api.schedules.save(init.id, sailing);
-              setSavedSchedules(p => [saved, ...p]);
-              toast.success(`Sailing ${sailing.vesselName} saved`);
+              setSavedSchedules([saved]);
+              if ((draftLegs || []).some(l => l.legType === "SEA")) {
+                applySailingToLegs(sailing);
+              } else {
+                toast.success(`Sailing ${sailing.vesselName} saved`);
+              }
             } catch (e) { toast.error(e.message); }
           } else {
             setSelectedSailing(sailing);
+          }
+        };
+
+        const handleSelectSailing = (sailing) => {
+          setSailingPickerOpen(false);
+          const existingVoy = savedSchedules[0]?.voyageNumber || selectedSailing?.voyageNumber;
+          const isReplacing = !!(init.id ? savedSchedules.length > 0 : selectedSailing);
+          const isSameVoy   = existingVoy === sailing.voyageNumber;
+          if (isReplacing && !isSameVoy) {
+            setConfirmSailing(sailing); // show inline confirmation strip
+          } else {
+            commitSailing(sailing);
           }
         };
 
@@ -1672,6 +1829,23 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
                               padding: "1px 6px", textTransform: "uppercase" }}>Demo</span>
                           )}
                         </div>
+                        {canEdit && (draftLegs || []).some(l => l.legType === "SEA") && (
+                          <button type="button"
+                            onClick={() => applySailingToLegs({
+                              carrier:      s.carrier,
+                              vesselName:   s.vesselName,
+                              voyageNumber: s.voyageNumber,
+                              etd:          s.etd,
+                              eta:          s.eta,
+                              legs:         null,
+                            })}
+                            style={{ background: "none", border: `1px solid ${T.border}`,
+                              borderRadius: 4, cursor: "pointer", fontFamily: T.body,
+                              fontSize: 11, color: T.textMuted, padding: "2px 8px", flexShrink: 0 }}
+                            onMouseEnter={e => { e.currentTarget.style.borderColor = T.accent; e.currentTarget.style.color = T.accent; }}
+                            onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.textMuted; }}
+                            title="Apply vessel &amp; dates to SEA leg">↳ Apply</button>
+                        )}
                         {canEdit && (
                           <button type="button" onClick={() => removeSchedule(s.id)}
                             style={{ background: "none", border: "none", cursor: "pointer",
@@ -1721,27 +1895,38 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
                 </div>
                 {(draftLegs || []).some(l => l.legType === "SEA") && (
                   <button type="button"
-                    onClick={() => {
-                      const updated = (draftLegs || []).map(l =>
-                        l.legType === "SEA"
-                          ? { ...l, vessel: selectedSailing.vesselName || l.vessel,
-                                    voyage: selectedSailing.voyageNumber || l.voyage,
-                                    etd:    selectedSailing.etd || l.etd }
-                          : l
-                      );
-                      onDraftLegsChange(updated);
-                      toast.success("Applied sailing to SEA leg");
-                    }}
+                    onClick={() => applySailingToLegs(selectedSailing)}
                     style={{ alignSelf: "flex-start", background: "none",
                       border: `1px solid ${T.border}`, borderRadius: 5,
                       padding: "4px 12px", cursor: "pointer",
                       fontFamily: T.body, fontSize: 12, color: T.textMuted }}
                     onMouseEnter={e => { e.currentTarget.style.borderColor = T.accent; e.currentTarget.style.color = T.accent; }}
                     onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.textMuted; }}>
-                    ↳ Apply vessel &amp; ETD to SEA leg
+                    ↳ Apply sailing to SEA leg{selectedSailing?.legs?.length > 1 ? `s (TSP · ${selectedSailing.legs.length} legs)` : ""}
                   </button>
                 )}
               </div>
+            )}
+
+            {confirmSailing && (
+              <Modal title="Replace sailing?" onClose={() => setConfirmSailing(null)} width={420}>
+                <p style={{ fontFamily: T.body, fontSize: 14, color: T.text, margin: "0 0 6px", lineHeight: 1.6 }}>
+                  This will replace{" "}
+                  <strong style={{ fontFamily: T.mono }}>
+                    {savedSchedules[0]?.vesselName || selectedSailing?.vesselName || "the current sailing"}
+                  </strong>{" "}
+                  with{" "}
+                  <strong style={{ fontFamily: T.mono }}>{confirmSailing.vesselName}</strong>
+                  {" "}· Voy {confirmSailing.voyageNumber}.
+                </p>
+                <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, margin: "0 0 20px" }}>
+                  The sea leg dates will be updated automatically.
+                </p>
+                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                  <Btn variant="secondary" onClick={() => setConfirmSailing(null)}>Cancel</Btn>
+                  <Btn onClick={() => { commitSailing(confirmSailing); setConfirmSailing(null); }}>Replace</Btn>
+                </div>
+              </Modal>
             )}
 
             {/* Search button */}
@@ -1757,7 +1942,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
                     opacity: canSearch ? 1 : 0.5, display: "flex", alignItems: "center", gap: 6 }}
                   onMouseEnter={e => { if (canSearch) { e.currentTarget.style.borderColor = T.accent; e.currentTarget.style.color = T.accent; }}}
                   onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = canSearch ? T.text : T.textMuted; }}>
-                  ⚓ {init.id ? "Add Sailing" : (selectedSailing ? "Change Sailing" : "Search Sailings")}
+                  ⚓ {init.id ? (savedSchedules.length > 0 ? "Change Sailing" : "Add Sailing") : (selectedSailing ? "Change Sailing" : "Search Sailings")}
                 </button>
                 {!canSearch && (
                   <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
@@ -1770,6 +1955,8 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
             {sailingPickerOpen && canSearch && (
               <SailingPickerModal
                 pol={pol} pod={pod} carrierCode={carrier}
+                routingTerm={contractMatchRoutingTerm}
+                activeSailing={savedSchedules[0] || selectedSailing || null}
                 onSelect={handleSelectSailing}
                 onClose={() => setSailingPickerOpen(false)} />
             )}

@@ -8,6 +8,7 @@ import epicHtml           from "../dev/epic-TKT-D7AUBQ-coverage.html?raw";
 import { toast } from "../toast";
 import { useAuth } from "../AuthContext";
 import UserManagementPanel from "../components/UserManagementPanel";
+import { AiOrb, ORB_STYLES } from "../components/shared/AiOrb";
 
 // ─── External API definitions ─────────────────────────────────────────────────
 
@@ -627,9 +628,16 @@ function AdminActivityLog() {
 
 function AiAgentSettingsPanel({ settings, onChange }) {
   const [showKey,    setShowKey]    = useState(false);
-  const [testing,   setTesting]   = useState(false);
+  const [testing,   setTesting]    = useState(false);
   const [testResult, setTestResult] = useState(null);
+  const [orbStyle,  setOrbStyle]   = useState(() => localStorage.getItem("cc_orb_style") || "radar");
   const s = settings;
+
+  const applyOrbStyle = (id) => {
+    localStorage.setItem("cc_orb_style", id);
+    setOrbStyle(id);
+    window.dispatchEvent(new Event("cc-orb-style-changed"));
+  };
 
   const row  = { display: "flex", alignItems: "flex-start", gap: 14, marginBottom: 18 };
   const lbl  = { fontFamily: T.body, fontSize: 12, fontWeight: 600, color: T.textMuted,
@@ -756,6 +764,76 @@ function AiAgentSettingsPanel({ settings, onChange }) {
         </div>
       </div>
 
+      {/* Orb / indicator style picker */}
+      <div style={{ marginTop: 28, marginBottom: 8 }}>
+        <div style={{ fontFamily: T.head, fontSize: 13, fontWeight: 700, color: T.text, marginBottom: 4 }}>
+          Indicator Style
+        </div>
+        <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, marginBottom: 16, lineHeight: 1.5 }}>
+          Choose the visual design for the AI agent orb shown in the Command Center and chat drawer.
+          Changes take effect immediately.
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+          {ORB_STYLES.map(style => {
+            const active = orbStyle === style.id;
+            return (
+              <button key={style.id} type="button" onClick={() => applyOrbStyle(style.id)}
+                style={{
+                  padding: "0 0 14px",
+                  borderRadius: 12,
+                  border: `2px solid ${active ? "#f97316" : T.border}`,
+                  background: active ? "#f9731608" : T.bg,
+                  cursor: "pointer",
+                  display: "flex", flexDirection: "column", alignItems: "center",
+                  transition: "border-color .15s, background .15s",
+                  overflow: "hidden",
+                }}>
+                {/* Dark preview canvas */}
+                <div style={{
+                  width: "100%", paddingTop: "100%",
+                  position: "relative",
+                  background: "#030a14",
+                  marginBottom: 10,
+                  borderRadius: "10px 10px 0 0",
+                  backgroundImage: "radial-gradient(circle, #1a2f4a18 1px, transparent 1px)",
+                  backgroundSize: "16px 16px",
+                }}>
+                  <div style={{
+                    position: "absolute", inset: 0,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                  }}>
+                    <AiOrb size={80} orbStyle={style.id} />
+                  </div>
+                </div>
+                {/* Label */}
+                <div style={{
+                  fontFamily: T.head, fontSize: 12, fontWeight: 700,
+                  color: active ? "#f97316" : T.text, marginBottom: 2,
+                }}>
+                  {style.label}
+                </div>
+                <div style={{
+                  fontFamily: T.body, fontSize: 10.5,
+                  color: T.textMuted, textAlign: "center",
+                  padding: "0 8px", lineHeight: 1.4,
+                }}>
+                  {style.desc}
+                </div>
+                {active && (
+                  <div style={{
+                    marginTop: 6,
+                    fontSize: 10, fontFamily: T.mono,
+                    color: "#f97316", fontWeight: 700, letterSpacing: ".08em",
+                  }}>
+                    ✓ ACTIVE
+                  </div>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Test connection */}
       <div style={{ marginTop: 8 }}>
         <button type="button" onClick={handleTest} disabled={testing || s.ai_agent_enabled !== '1'}
@@ -778,11 +856,348 @@ function AiAgentSettingsPanel({ settings, onChange }) {
   );
 }
 
+// ─── Offices Panel ────────────────────────────────────────────────────────────
+
+const DEPT_LABELS = { SE: "Sea Export", SI: "Sea Import" };
+const DEPT_COLOR  = { SE: { bg: "#3b82f618", text: "#3b82f6" }, SI: { bg: "#10b98118", text: "#10b981" } };
+
+function OfficesPanel() {
+  const [offices,        setOffices]        = useState([]);
+  const [branches,       setBranches]       = useState([]);
+  const [loading,        setLoading]        = useState(true);
+  const [formOpen,       setFormOpen]       = useState(false);
+  const [editing,        setEditing]        = useState(null);
+  const [form,           setForm]           = useState({ unlocode: "", department: "SE", name: "", countryCode: "", branchId: "" });
+  const [saving,         setSaving]         = useState(false);
+  const [resolving,      setResolving]      = useState(false);
+  const [codePreview,    setCodePreview]    = useState("");
+  const [defaultOffice,  setDefaultOffice]  = useState("");   // app_settings default_office_id
+  const [allowAll,       setAllowAll]       = useState(false); // app_settings offices_allow_all
+  const [savingGlobal,   setSavingGlobal]   = useState(false);
+  const [grantingAll,    setGrantingAll]    = useState(false);
+
+  const load = () => {
+    setLoading(true);
+    Promise.all([
+      api.offices.list(),
+      api.branches.list(),
+      api.settings.get(),
+    ]).then(([list, br, s]) => {
+      setOffices(list);
+      setBranches(br);
+      setDefaultOffice(s.default_office_id || "");
+      setAllowAll(s.offices_allow_all === "1");
+    }).catch(() => {}).finally(() => setLoading(false));
+  };
+  useEffect(load, []);
+
+  // Auto-resolve LOCODE → country code + port name + code preview
+  const resolveLocode = async (raw) => {
+    const locode = raw.toUpperCase().trim();
+    const country = locode.length >= 2 ? locode.slice(0, 2) : "";
+    setForm(p => {
+      const dept = p.department;
+      setCodePreview(locode.length >= 3 ? `${country}-${locode}-${dept}` : "");
+      return { ...p, unlocode: locode, countryCode: country };
+    });
+    if (locode.length < 5) return;
+    setResolving(true);
+    try {
+      const port = await api.portLocations.get(locode);
+      if (port) {
+        const deptLabel = { SE: "Sea Export", SI: "Sea Import" };
+        setForm(p => ({
+          ...p,
+          name: p.name || `${port.name} ${deptLabel[p.department] || p.department}`,
+        }));
+      }
+    } catch { /* port not found, ignore */ } finally { setResolving(false); }
+  };
+
+  const openNew  = () => {
+    setEditing(null);
+    setForm({ unlocode: "", department: "SE", name: "", countryCode: "", branchId: "" });
+    setCodePreview("");
+    setFormOpen(true);
+  };
+  const openEdit = (o) => {
+    setEditing(o);
+    setForm({ unlocode: o.unlocode, department: o.department, name: o.name, countryCode: o.countryCode, branchId: o.branchId || "" });
+    setCodePreview("");
+    setFormOpen(true);
+  };
+
+  const handleSave = async () => {
+    if (!form.unlocode || !form.department || !form.name) return toast.error("All fields required");
+    setSaving(true);
+    try {
+      if (editing) {
+        await api.offices.update(editing.id, { name: form.name, isActive: true, branchId: form.branchId || null });
+        toast.success("Office updated");
+      } else {
+        await api.offices.create({ ...form, branchId: form.branchId || null });
+        toast.success("Office created");
+      }
+      setFormOpen(false); load();
+    } catch (e) { toast.error(e.message); } finally { setSaving(false); }
+  };
+
+  const handleDelete = async (o) => {
+    if (!window.confirm(`Delete office ${o.code}? This cannot be undone.`)) return;
+    try { await api.offices.remove(o.id); toast.success("Office deleted"); load(); }
+    catch (e) { toast.error(e.message); }
+  };
+
+  const toggleActive = async (o) => {
+    try { await api.offices.update(o.id, { name: o.name, isActive: !o.isActive }); load(); }
+    catch (e) { toast.error(e.message); }
+  };
+
+  const setAsDefault = async (officeId) => {
+    const next = defaultOffice === String(officeId) ? "" : String(officeId);
+    try {
+      await api.settings.update({ default_office_id: next });
+      setDefaultOffice(next);
+      toast.success(next ? "Default office updated" : "Default office cleared");
+    } catch (e) { toast.error(e.message); }
+  };
+
+  const toggleAllowAll = async () => {
+    setSavingGlobal(true);
+    const next = !allowAll;
+    try {
+      await api.settings.update({ offices_allow_all: next ? "1" : "0" });
+      setAllowAll(next);
+      toast.success(next ? "Global office access enabled for all users" : "Global access revoked — individual assignments apply");
+    } catch (e) { toast.error(e.message); } finally { setSavingGlobal(false); }
+  };
+
+  const grantAllUsersGlobal = async () => {
+    if (!window.confirm("Grant all_offices = true to every active user? This gives all users global office access.")) return;
+    setGrantingAll(true);
+    try {
+      const users = await api.users.list();
+      await Promise.all(users.map(u => api.users.update(u.id, { allOffices: true })));
+      toast.success(`Global access granted to ${users.length} user(s)`);
+    } catch (e) { toast.error(e.message); } finally { setGrantingAll(false); }
+  };
+
+  const inp = { width: "100%", padding: "7px 10px", borderRadius: 7, border: `1px solid ${T.border}`,
+    background: T.bg, fontFamily: T.body, fontSize: 13, color: T.text, outline: "none", boxSizing: "border-box" };
+
+  return (
+    <div>
+      {/* Header + global toggle */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
+        <div>
+          <div style={{ fontFamily: T.head, fontSize: 16, fontWeight: 700, color: T.text }}>Branch Offices</div>
+          <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, marginTop: 2 }}>
+            Offices are assigned to users and stamped on shipments as EMO / IMO / Controlling Office.
+          </div>
+        </div>
+        <button type="button" onClick={openNew}
+          style={{ padding: "7px 16px", borderRadius: 8, border: "none", cursor: "pointer",
+            background: T.accent, color: "#fff", fontFamily: T.body, fontSize: 13, fontWeight: 600, flexShrink: 0 }}>
+          ＋ New Office
+        </button>
+      </div>
+
+      {/* Allow all orgs toggle */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+        padding: "12px 16px", borderRadius: 10, marginBottom: 20,
+        background: allowAll ? T.accent + "12" : T.surface,
+        border: `1px solid ${allowAll ? T.accent + "55" : T.border}` }}>
+        <div>
+          <div style={{ fontFamily: T.body, fontSize: 13, fontWeight: 600, color: T.text }}>
+            Allow all orgs (global access)
+          </div>
+          <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, marginTop: 2 }}>
+            When enabled, all users can see shipments from every office — individual office assignments still apply for EMO/IMO defaults.
+          </div>
+        </div>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: savingGlobal ? "wait" : "pointer",
+          flexShrink: 0, marginLeft: 20 }}>
+          <input type="checkbox" checked={allowAll} disabled={savingGlobal}
+            onChange={toggleAllowAll} style={{ accentColor: T.accent, width: 16, height: 16 }} />
+          <span style={{ fontFamily: T.body, fontSize: 13, color: allowAll ? T.accent : T.textMuted, fontWeight: 600 }}>
+            {allowAll ? "Enabled" : "Disabled"}
+          </span>
+        </label>
+      </div>
+
+      {/* Bulk grant */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+        padding: "10px 16px", borderRadius: 10, marginBottom: 16,
+        background: T.surface, border: `1px solid ${T.border}` }}>
+        <div>
+          <div style={{ fontFamily: T.body, fontSize: 13, fontWeight: 600, color: T.text }}>Bulk grant global access</div>
+          <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, marginTop: 2 }}>
+            Set all_offices = true for every active user at once — useful during initial setup.
+          </div>
+        </div>
+        <button type="button" onClick={grantAllUsersGlobal} disabled={grantingAll}
+          style={{ padding: "7px 16px", borderRadius: 8, border: `1px solid ${T.accent}44`,
+            background: "none", cursor: grantingAll ? "wait" : "pointer", fontFamily: T.body, fontSize: 13,
+            color: T.accent, fontWeight: 600, flexShrink: 0, marginLeft: 20 }}>
+          {grantingAll ? "Granting…" : "Grant to all users"}
+        </button>
+      </div>
+
+      {/* Create / edit form */}
+      {formOpen && (
+        <div style={{ background: T.surface, border: `1px solid ${T.accent}44`, borderRadius: 10,
+          padding: "18px 20px", marginBottom: 20 }}>
+          <div style={{ fontFamily: T.head, fontSize: 14, fontWeight: 700, marginBottom: 14, color: T.text }}>
+            {editing ? `Edit: ${editing.code}` : "New Office"}
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "120px 120px 1fr 1fr", gap: 10, marginBottom: 4 }}>
+            <div>
+              <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 4 }}>UN/LOCODE <span style={{ color: T.danger }}>*</span></div>
+              <input value={form.unlocode} disabled={!!editing}
+                onChange={e => resolveLocode(e.target.value)}
+                placeholder="e.g. NLRTM"
+                style={{ ...inp, fontFamily: "monospace", opacity: editing ? 0.6 : 1 }} />
+            </div>
+            <div>
+              <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 4 }}>Department</div>
+              <select value={form.department} disabled={!!editing}
+                onChange={e => {
+                  const dept = e.target.value;
+                  setForm(p => ({ ...p, department: dept }));
+                  if (form.unlocode.length >= 3)
+                    setCodePreview(`${form.countryCode}-${form.unlocode}-${dept}`);
+                }}
+                style={{ ...inp, cursor: "pointer", opacity: editing ? 0.6 : 1 }}>
+                <option value="SE">SE — Sea Export</option>
+                <option value="SI">SI — Sea Import</option>
+              </select>
+            </div>
+            <div>
+              <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 4 }}>
+                Office Name <span style={{ color: T.danger }}>*</span>{resolving && <span style={{ color: T.accent }}> resolving…</span>}
+              </div>
+              <input value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
+                placeholder="e.g. Rotterdam Sea Export" style={inp} />
+            </div>
+            <div>
+              <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 4 }}>Branch</div>
+              <select value={form.branchId} onChange={e => setForm(p => ({ ...p, branchId: e.target.value }))}
+                style={{ ...inp, cursor: "pointer" }}>
+                <option value="">— None —</option>
+                {branches.filter(b => b.isActive).map(b => (
+                  <option key={b.id} value={b.id}>{b.code} — {b.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          {/* Code preview */}
+          {!editing && codePreview && (
+            <div style={{ marginBottom: 12, fontFamily: "monospace", fontSize: 12,
+              color: T.accent, padding: "4px 8px", background: T.accent + "10",
+              borderRadius: 5, display: "inline-block" }}>
+              Code will be: <strong>{codePreview}</strong>
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 8 }}>
+            <button type="button" onClick={() => setFormOpen(false)} disabled={saving}
+              style={{ padding: "6px 14px", borderRadius: 7, border: `1px solid ${T.border}`,
+                background: "none", cursor: "pointer", fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
+              Cancel
+            </button>
+            <button type="button" onClick={handleSave} disabled={saving}
+              style={{ padding: "6px 14px", borderRadius: 7, border: "none",
+                background: T.accent, color: "#fff", cursor: "pointer", fontFamily: T.body, fontSize: 13, fontWeight: 600 }}>
+              {saving ? "Saving…" : "Save"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Office list */}
+      {loading ? (
+        <div style={{ padding: "32px 0", textAlign: "center", fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
+          Loading…
+        </div>
+      ) : offices.length === 0 ? (
+        <div style={{ padding: "48px 0", textAlign: "center", fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
+          No offices configured yet. Create one above.
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {offices.map(o => {
+            const dc = DEPT_COLOR[o.department] || {};
+            const isDefault = defaultOffice === String(o.id);
+            const branch = o.branchId ? branches.find(b => b.id === o.branchId) : null;
+            return (
+              <div key={o.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 16px",
+                background: T.surface,
+                border: `1px solid ${isDefault ? T.accent + "66" : T.border}`,
+                borderRadius: 10, opacity: o.isActive ? 1 : 0.55 }}>
+                {/* Default checkbox */}
+                <label title="Set as org default office" style={{ display: "flex", alignItems: "center",
+                  cursor: "pointer", flexShrink: 0 }}>
+                  <input type="checkbox" checked={isDefault} onChange={() => setAsDefault(o.id)}
+                    style={{ accentColor: T.accent, width: 14, height: 14 }} />
+                </label>
+                <div style={{ fontFamily: "monospace", fontSize: 13, fontWeight: 700,
+                  color: isDefault ? T.accent : T.text, minWidth: 160 }}>
+                  {o.code}
+                  {isDefault && (
+                    <span style={{ marginLeft: 6, fontSize: 10, fontFamily: T.body, fontWeight: 700,
+                      color: T.accent, background: T.accent + "18", borderRadius: 4, padding: "1px 5px" }}>
+                      DEFAULT
+                    </span>
+                  )}
+                </div>
+                <span style={{ fontSize: 11, fontWeight: 700, borderRadius: 4, padding: "2px 8px",
+                  background: dc.bg || T.border + "20", color: dc.text || T.textMuted, flexShrink: 0 }}>
+                  {DEPT_LABELS[o.department] || o.department}
+                </span>
+                {branch && (
+                  <span style={{ fontSize: 11, fontFamily: "monospace", padding: "2px 7px", borderRadius: 4,
+                    background: T.bg, border: `1px solid ${T.border}`, color: T.textMuted, flexShrink: 0 }}>
+                    {branch.code}
+                  </span>
+                )}
+                <div style={{ flex: 1, fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
+                  {o.name}
+                </div>
+                {!o.isActive && (
+                  <span style={{ fontSize: 11, color: T.warning, background: T.warning + "18",
+                    borderRadius: 4, padding: "2px 6px", fontWeight: 600, flexShrink: 0 }}>Inactive</span>
+                )}
+                <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                  <button type="button" onClick={() => openEdit(o)}
+                    style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${T.border}`,
+                      background: "none", cursor: "pointer", fontFamily: T.body, fontSize: 12, color: T.text }}>
+                    Edit
+                  </button>
+                  <button type="button" onClick={() => toggleActive(o)}
+                    style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${T.border}`,
+                      background: "none", cursor: "pointer", fontFamily: T.body, fontSize: 12,
+                      color: o.isActive ? T.warning : T.success }}>
+                    {o.isActive ? "Deactivate" : "Activate"}
+                  </button>
+                  <button type="button" onClick={() => handleDelete(o)}
+                    style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${T.danger}44`,
+                      background: "none", cursor: "pointer", fontFamily: T.body, fontSize: 12, color: T.danger }}>
+                    Delete
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function AppSettingsPage() {
   const { isAdmin } = useAuth();
-  const tabs = isAdmin ? [...TABS_BASE, "Milestones", "Users", "Activity Log"] : TABS_BASE;
+  const tabs = isAdmin ? [...TABS_BASE, "Milestones", "Users", "Offices", "Activity Log"] : TABS_BASE;
   const [activeTab,      setActiveTab]      = useState("API Controls");
   const [activeApiSub,   setActiveApiSub]   = useState("External APIs");
   const [settings,       setSettings]       = useState(null);
@@ -1447,6 +1862,10 @@ export default function AppSettingsPage() {
 
       {activeTab === "Users" && isAdmin && (
         <UserManagementPanel />
+      )}
+
+      {activeTab === "Offices" && isAdmin && (
+        <OfficesPanel />
       )}
 
       {activeTab === "Activity Log" && isAdmin && (

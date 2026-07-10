@@ -1,16 +1,19 @@
 const BASE = "/api";
-export const TOKEN_KEY    = "cargodesk_token";
+export const TOKEN_KEY       = "cargodesk_token";
 export const ACTIVE_ROLE_KEY = "cargodesk_active_role";
+export const ACTIVE_OFFICE_KEY = "cargodesk_active_office";
 
 import { toast } from "./toast";
 
 const req = async (method, path, body) => {
   const token      = localStorage.getItem(TOKEN_KEY);
   const activeRole = localStorage.getItem(ACTIVE_ROLE_KEY);
+  const activeOffice = localStorage.getItem(ACTIVE_OFFICE_KEY);
   const headers = {};
-  if (body)        headers["Content-Type"]   = "application/json";
-  if (token)       headers["Authorization"]  = `Bearer ${token}`;
-  if (activeRole)  headers["X-Active-Role"]  = activeRole;
+  if (body)          headers["Content-Type"]   = "application/json";
+  if (token)         headers["Authorization"]  = `Bearer ${token}`;
+  if (activeRole)    headers["X-Active-Role"]  = activeRole;
+  if (activeOffice)  headers["X-Office-Id"]    = activeOffice;
 
   const res = await fetch(`${BASE}${path}`, {
     method,
@@ -58,6 +61,7 @@ export const api = {
   },
   shipments: {
     list:   ()        => req("GET",    "/shipments"),
+    get:    (id)      => req("GET",    `/shipments/${id}`),
     create: (data)    => req("POST",   "/shipments", data),
     update: (id, data)=> req("PUT",    `/shipments/${id}`, data),
     remove: (id)      => req("DELETE", `/shipments/${id}`),
@@ -334,5 +338,30 @@ export const api = {
   ai: {
     settings: () => req("GET", "/ai/settings"),
     chat:     (messages, context = {}) => req("POST", "/ai/chat", { messages, context }),
+  },
+  offices: {
+    list:           ()               => req("GET",    "/offices"),
+    create:         (data)           => req("POST",   "/offices", data),
+    update:         (id, data)       => req("PUT",    `/offices/${id}`, data),
+    remove:         (id)             => req("DELETE", `/offices/${id}`),
+    stats:          (id)             => req("GET",    `/offices/${id}/stats`),
+    userOffices:    (userId)         => req("GET",    `/users/${userId}/offices`),
+    assignOffice:   (userId, data)   => req("POST",   `/users/${userId}/offices`, data),
+    setDefault:     (userId, offId)  => req("PATCH",  `/users/${userId}/offices/${offId}/set-default`, {}),
+    removeOffice:   (userId, offId)  => req("DELETE", `/users/${userId}/offices/${offId}`),
+  },
+  branches: {
+    list:   ()           => req("GET",    "/branches"),
+    get:    (id)         => req("GET",    `/branches/${id}`),
+    offices:(id)         => req("GET",    `/branches/${id}/offices`),
+    create: (data)       => req("POST",   "/branches", data),
+    update: (id, data)   => req("PUT",    `/branches/${id}`, data),
+    remove: (id)         => req("DELETE", `/branches/${id}`),
+  },
+  orgCountries: {
+    list:   ()           => req("GET",    "/org-countries"),
+    create: (data)       => req("POST",   "/org-countries", data),
+    update: (code, data) => req("PUT",    `/org-countries/${code}`, data),
+    remove: (code)       => req("DELETE", `/org-countries/${code}`),
   },
 };

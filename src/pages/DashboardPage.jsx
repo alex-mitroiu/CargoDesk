@@ -1055,6 +1055,8 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocat
     ]);
     return Array.from(ids).map(id => {
       const alloc    = allocations.find(a => a.contractId === id);
+      const group    = groups.find(g => g.contractId === id);
+      const contract = contractMap[id] || null; // populated async by the useEffect below
       const allocated = allocByContract[id] || 0;
       const consumed  = consumedByContract[id] || 0;
       const pct       = allocated > 0 ? Math.round((consumed / allocated) * 100) : null;
@@ -1064,15 +1066,20 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocat
                       : T.success;
       return {
         contractId:     id,
-        contractNumber: alloc?.contractNumber || id,
-        carrierCode:    alloc?.carrierCode || "",
+        contractNumber: contract?.contractNumber || alloc?.contractNumber || group?.contractRef || id,
+        carrierCode:    contract?.carrierCode    || alloc?.carrierCode    || group?.carrierCode || "",
         allocated, consumed, pct, barColor,
       };
     }).sort((a, b) => (b.pct ?? -1) - (a.pct ?? -1));
-  }, [allocByContract, consumedByContract, allocations]);
+  }, [allocByContract, consumedByContract, allocations, groups, contractMap]);
 
   useEffect(() => {
-    const missing = groups.map(g => g.contractId).filter(id => !contractMap[id]);
+    // Fetch contract details for all IDs visible in the chart (shipment groups + allocation-only contracts)
+    const allIds = [
+      ...groups.map(g => g.contractId),
+      ...Object.keys(allocByContract),
+    ];
+    const missing = [...new Set(allIds)].filter(id => !contractMap[id]);
     if (!missing.length) return;
     setLoading(true);
     Promise.all(missing.map(id => api.contracts.get(id).catch(() => null)))
@@ -1084,7 +1091,7 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocat
         });
       })
       .finally(() => setLoading(false));
-  }, [groups]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [groups, allocByContract]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const teuFor = s => containers.filter(c => c.shipmentId === s.id).reduce((acc, c) => acc + teuOf(c.size), 0);
 

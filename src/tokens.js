@@ -17,6 +17,77 @@ export const CONTAINER_OPTIONS = [
   { code: "40TK", size: "40", type: "TK", teu: 2, label: "40ft Tank",          desc: "Liquid bulk — chemicals, food-grade liquids, petroleum products" },
 ];
 
+export const TIMEZONES = [
+  "UTC",
+  // Europe
+  "Europe/London",        "Europe/Dublin",       "Europe/Lisbon",       "Europe/Reykjavik",
+  "Europe/Madrid",        "Europe/Paris",        "Europe/Amsterdam",    "Europe/Brussels",
+  "Europe/Luxembourg",    "Europe/Monaco",       "Europe/Andorra",      "Europe/Zurich",
+  "Europe/Berlin",        "Europe/Vienna",       "Europe/Rome",         "Europe/Copenhagen",
+  "Europe/Stockholm",     "Europe/Oslo",         "Europe/Helsinki",     "Europe/Tallinn",
+  "Europe/Riga",          "Europe/Vilnius",      "Europe/Warsaw",       "Europe/Prague",
+  "Europe/Bratislava",    "Europe/Budapest",     "Europe/Ljubljana",    "Europe/Zagreb",
+  "Europe/Sarajevo",      "Europe/Belgrade",     "Europe/Tirane",       "Europe/Skopje",
+  "Europe/Podgorica",     "Europe/Bucharest",    "Europe/Sofia",        "Europe/Athens",
+  "Europe/Chisinau",      "Europe/Kiev",         "Europe/Minsk",        "Europe/Istanbul",
+  "Europe/Moscow",        "Europe/Samara",       "Europe/Volgograd",
+  // Americas – United States
+  "America/New_York",     "America/Detroit",     "America/Indiana/Indianapolis",
+  "America/Chicago",      "America/Menominee",   "America/Denver",      "America/Phoenix",
+  "America/Los_Angeles",  "America/Anchorage",   "America/Juneau",      "America/Honolulu",
+  // Americas – Canada
+  "America/Toronto",      "America/Montreal",    "America/Halifax",     "America/St_Johns",
+  "America/Winnipeg",     "America/Regina",      "America/Edmonton",    "America/Vancouver",
+  "America/Whitehorse",   "America/Yellowknife",
+  // Americas – Mexico & Caribbean
+  "America/Mexico_City",  "America/Cancun",      "America/Mazatlan",    "America/Tijuana",
+  "America/Havana",       "America/Jamaica",     "America/Port-au-Prince","America/Santo_Domingo",
+  "America/Nassau",       "America/Panama",      "America/Costa_Rica",  "America/Guatemala",
+  "America/Belize",       "America/Tegucigalpa", "America/Managua",     "America/El_Salvador",
+  // Americas – South America
+  "America/Bogota",       "America/Lima",        "America/Guayaquil",   "America/Caracas",
+  "America/La_Paz",       "America/Manaus",      "America/Belem",       "America/Fortaleza",
+  "America/Recife",       "America/Sao_Paulo",   "America/Montevideo",
+  "America/Argentina/Buenos_Aires",              "America/Asuncion",
+  "America/Guyana",       "America/Paramaribo",  "America/Cayenne",
+  // Africa
+  "Africa/Abidjan",       "Africa/Accra",        "Africa/Casablanca",   "Africa/Monrovia",
+  "Africa/Lagos",         "Africa/Douala",       "Africa/Kinshasa",     "Africa/Luanda",
+  "Africa/Algiers",       "Africa/Tunis",        "Africa/Tripoli",      "Africa/Cairo",
+  "Africa/Nairobi",       "Africa/Addis_Ababa",  "Africa/Dar_es_Salaam","Africa/Kampala",
+  "Africa/Kigali",        "Africa/Lusaka",       "Africa/Harare",       "Africa/Maputo",
+  "Africa/Johannesburg",  "Africa/Khartoum",
+  // Middle East
+  "Asia/Nicosia",         "Asia/Beirut",         "Asia/Damascus",       "Asia/Jerusalem",
+  "Asia/Amman",           "Asia/Riyadh",         "Asia/Kuwait",         "Asia/Qatar",
+  "Asia/Bahrain",         "Asia/Dubai",          "Asia/Muscat",         "Asia/Baghdad",
+  "Asia/Tehran",
+  // Asia – Caucasus & Central
+  "Asia/Baku",            "Asia/Tbilisi",        "Asia/Yerevan",
+  "Asia/Ashgabat",        "Asia/Tashkent",       "Asia/Dushanbe",       "Asia/Bishkek",
+  "Asia/Almaty",
+  // Asia – South & Southeast
+  "Asia/Kabul",           "Asia/Karachi",        "Asia/Kolkata",        "Asia/Colombo",
+  "Asia/Kathmandu",       "Asia/Dhaka",          "Asia/Thimphu",        "Asia/Rangoon",
+  "Asia/Bangkok",         "Asia/Ho_Chi_Minh",    "Asia/Phnom_Penh",     "Asia/Vientiane",
+  "Asia/Kuala_Lumpur",    "Asia/Singapore",      "Asia/Jakarta",        "Asia/Makassar",
+  "Asia/Jayapura",        "Asia/Manila",
+  // Asia – East
+  "Asia/Hong_Kong",       "Asia/Macau",          "Asia/Taipei",         "Asia/Shanghai",
+  "Asia/Ulaanbaatar",     "Asia/Seoul",          "Asia/Tokyo",
+  // Asia – Russia (east)
+  "Asia/Yekaterinburg",   "Asia/Omsk",           "Asia/Novosibirsk",    "Asia/Krasnoyarsk",
+  "Asia/Irkutsk",         "Asia/Chita",          "Asia/Yakutsk",        "Asia/Vladivostok",
+  "Asia/Magadan",         "Asia/Sakhalin",       "Asia/Kamchatka",
+  // Pacific & Oceania
+  "Australia/Perth",      "Australia/Darwin",    "Australia/Adelaide",  "Australia/Brisbane",
+  "Australia/Sydney",
+  "Pacific/Auckland",     "Pacific/Fiji",        "Pacific/Apia",        "Pacific/Tongatapu",
+  "Pacific/Port_Moresby", "Pacific/Guam",        "Pacific/Honolulu",
+  // Indian Ocean
+  "Indian/Maldives",      "Indian/Mauritius",    "Indian/Reunion",
+];
+
 // ─── Theme definitions ───────────────────────────────────────────────────────
 
 export const DARK_THEME = {

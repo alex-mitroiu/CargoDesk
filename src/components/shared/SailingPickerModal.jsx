@@ -48,7 +48,7 @@ const JourneyBreadcrumb = ({ pol, pod, routingTerm }) => {
   );
 };
 
-const SailingPickerModal = ({ pol, pod, carrierCode, routingTerm, onSelect, onClose, selectLabel = "Select →" }) => {
+const SailingPickerModal = ({ pol, pod, carrierCode, routingTerm, activeSailing, onSelect, onClose, selectLabel = "Select →" }) => {
   const [sailings, setSailings] = useState(null);
   const [loading,  setLoading]  = useState(true);
   const [error,    setError]    = useState(null);
@@ -126,57 +126,125 @@ const SailingPickerModal = ({ pol, pod, carrierCode, routingTerm, onSelect, onCl
               </div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {(sailings.sailings || []).map((s, i) => (
-                  <button key={i} type="button" onClick={() => onSelect(s)}
-                    style={{ display: "grid",
-                      gridTemplateColumns: "1fr 100px 100px 80px 1fr",
-                      gap: 12, alignItems: "center",
-                      padding: "12px 14px", textAlign: "left",
-                      background: T.bg, border: `1px solid ${T.border}`,
-                      borderRadius: 8, cursor: "pointer", width: "100%" }}
-                    onMouseEnter={e => { e.currentTarget.style.borderColor = T.accent; e.currentTarget.style.background = T.accentBg; }}
-                    onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.background = T.bg; }}>
+                {(sailings.sailings || []).map((s, i) => {
+                  const isTSP = s.legs && s.legs.length > 1;
+                  const isActive = activeSailing && (
+                    activeSailing.voyageNumber === s.voyageNumber ||
+                    (activeSailing.vesselName === s.vesselName && activeSailing.etd === s.etd)
+                  );
+                  const baseBorder = isActive ? T.success + "88" : isTSP ? T.warning + "55" : T.border;
+                  const baseBg    = isActive ? T.success + "0f" : T.bg;
+                  return (
+                    <button key={i} type="button" onClick={() => onSelect(s)}
+                      style={{ display: "flex", flexDirection: "column", gap: 6,
+                        padding: "12px 14px", textAlign: "left",
+                        background: baseBg, border: `1px solid ${baseBorder}`,
+                        borderRadius: 8, cursor: "pointer", width: "100%" }}
+                      onMouseEnter={e => { e.currentTarget.style.borderColor = isActive ? T.success : T.accent; e.currentTarget.style.background = isActive ? T.success + "18" : T.accentBg; }}
+                      onMouseLeave={e => { e.currentTarget.style.borderColor = baseBorder; e.currentTarget.style.background = baseBg; }}>
 
-                    <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
-                      <div style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.text,
-                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {s.vesselName}
-                        {s.isMock && <span style={{ marginLeft: 6 }}>{mockBadge()}</span>}
+                      {/* Main row */}
+                      <div style={{ display: "grid",
+                        gridTemplateColumns: "1fr 100px 100px 80px auto",
+                        gap: 12, alignItems: "center", width: "100%" }}>
+
+                        <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
+                          <div style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.text,
+                            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {s.vesselName}
+                            {s.isMock && <span style={{ marginLeft: 6 }}>{mockBadge()}</span>}
+                          </div>
+                          <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
+                            {s.service} · Voy {s.voyageNumber}
+                          </div>
+                        </div>
+
+                        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                          <div style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, color: T.textMuted,
+                            textTransform: "uppercase", letterSpacing: ".07em" }}>ETD</div>
+                          <div style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>{s.etd || "—"}</div>
+                        </div>
+
+                        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                          <div style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, color: T.textMuted,
+                            textTransform: "uppercase", letterSpacing: ".07em" }}>ETA</div>
+                          <div style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>{s.eta || "—"}</div>
+                        </div>
+
+                        <div style={{ display: "flex", flexDirection: "column", gap: 2, alignItems: "center" }}>
+                          <div style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, color: T.textMuted,
+                            textTransform: "uppercase", letterSpacing: ".07em" }}>Transit</div>
+                          <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.accent }}>
+                            {s.transitDays}d
+                          </span>
+                        </div>
+
+                        <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-end" }}>
+                          {isTSP && (
+                            <span style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 700,
+                              background: T.warning + "18", color: T.warning,
+                              border: `1px solid ${T.warning}44`,
+                              borderRadius: 4, padding: "1px 6px", textTransform: "uppercase",
+                              whiteSpace: "nowrap" }}>
+                              TSP · {s.legs.length} legs
+                            </span>
+                          )}
+                          {isActive
+                            ? <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700,
+                                color: T.success, background: T.success + "18",
+                                border: `1px solid ${T.success}55`, borderRadius: 4,
+                                padding: "2px 10px", whiteSpace: "nowrap" }}>
+                                ✓ Active
+                              </span>
+                            : <span style={{ fontFamily: T.body, fontSize: 11, color: T.accent,
+                                background: T.accentBg, borderRadius: 4, padding: "2px 10px",
+                                border: `1px solid ${T.accent}33`, whiteSpace: "nowrap" }}>
+                                {selectLabel}
+                              </span>
+                          }
+                        </div>
                       </div>
-                      <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
-                        {s.service} · Voy {s.voyageNumber}
-                      </div>
-                    </div>
 
-                    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                      <div style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, color: T.textMuted,
-                        textTransform: "uppercase", letterSpacing: ".07em" }}>ETD</div>
-                      <div style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>{s.etd || "—"}</div>
-                    </div>
-
-                    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                      <div style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, color: T.textMuted,
-                        textTransform: "uppercase", letterSpacing: ".07em" }}>ETA</div>
-                      <div style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>{s.eta || "—"}</div>
-                    </div>
-
-                    <div style={{ display: "flex", flexDirection: "column", gap: 2, alignItems: "center" }}>
-                      <div style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, color: T.textMuted,
-                        textTransform: "uppercase", letterSpacing: ".07em" }}>Transit</div>
-                      <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.accent }}>
-                        {s.transitDays}d
-                      </span>
-                    </div>
-
-                    <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                      <span style={{ fontFamily: T.body, fontSize: 11, color: T.accent,
-                        background: T.accentBg, borderRadius: 4, padding: "2px 10px",
-                        border: `1px solid ${T.accent}33` }}>
-                        {selectLabel}
-                      </span>
-                    </div>
-                  </button>
-                ))}
+                      {/* TSP leg breakdown */}
+                      {isTSP && (
+                        <div style={{ display: "flex", alignItems: "center", gap: 6,
+                          padding: "6px 8px", background: T.warning + "08",
+                          borderRadius: 5, border: `1px solid ${T.warning}22` }}>
+                          <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted,
+                            textTransform: "uppercase", letterSpacing: ".06em", flexShrink: 0 }}>
+                            Route:
+                          </span>
+                          {s.legs.map((leg, li) => (
+                            <span key={li} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                              <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700,
+                                color: T.text }}>{leg.pol}</span>
+                              <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted }}>→</span>
+                              {li === s.legs.length - 1 && (
+                                <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700,
+                                  color: T.text }}>{leg.pod}</span>
+                              )}
+                              {li < s.legs.length - 1 && (
+                                <span style={{ fontFamily: T.mono, fontSize: 11,
+                                  color: T.warning, fontWeight: 700,
+                                  background: T.warning + "18", borderRadius: 3,
+                                  padding: "0 5px" }}>{leg.pod}</span>
+                              )}
+                              {li < s.legs.length - 1 && (
+                                <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted }}>
+                                  ({leg.vesselName}) →
+                                </span>
+                              )}
+                            </span>
+                          ))}
+                          <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted,
+                            marginLeft: "auto", flexShrink: 0 }}>
+                            Will create {s.legs.length} sea legs
+                          </span>
+                        </div>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
             )}
           </>

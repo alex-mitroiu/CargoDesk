@@ -1,5 +1,5 @@
 /**
- * API Smoke Suite — v0.26.0 "Meridian II"
+ * API Smoke Suite — v0.27.0 "Lookout"
  *
  * One request per major endpoint group. No mutations. Verifies every
  * surface responds with 200 and the expected shape. Run this first as a

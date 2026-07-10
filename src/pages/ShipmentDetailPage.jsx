@@ -19,6 +19,35 @@ import { generateBLDraft, generatePackingList, generateContainerManifest } from 
 import SailingPickerModal from "../components/shared/SailingPickerModal";
 
 
+// ─── Refresh button ──────────────────────────────────────────────────────────
+const RefreshBtn = ({ onRefresh }) => {
+  const [spinning, setSpinning] = useState(false);
+  const handleClick = async () => {
+    if (spinning) return;
+    setSpinning(true);
+    try { await onRefresh?.(); } catch {} finally { setTimeout(() => setSpinning(false), 600); }
+  };
+  return (
+    <>
+      <style>{`@keyframes sdp-spin { to { transform: rotate(360deg); } }`}</style>
+      <button
+        type="button"
+        onClick={handleClick}
+        title="Refresh shipment"
+        style={{
+          background: "none", border: `1px solid ${T.border}`, borderRadius: 7,
+          padding: "6px 11px", cursor: "pointer", color: T.textMuted,
+          fontSize: 16, lineHeight: 1, display: "inline-flex", alignItems: "center",
+          transition: "color .12s, border-color .12s",
+        }}
+        onMouseEnter={e => { e.currentTarget.style.color = T.text; e.currentTarget.style.borderColor = T.border; }}
+        onMouseLeave={e => { e.currentTarget.style.color = T.textMuted; e.currentTarget.style.borderColor = T.border; }}>
+        <span style={{ display: "inline-block", animation: spinning ? "sdp-spin .7s linear infinite" : "none" }}>↻</span>
+      </button>
+    </>
+  );
+};
+
 // ─── Section header with hover tooltip ───────────────────────────────────────
 
 const SECTION_TIPS = {
@@ -2721,11 +2750,12 @@ const PendingRevalidationModal = ({ matches, contractRef, onAccept, onDismiss })
 // ─── Schedules Panel ──────────────────────────────────────────────────────────
 
 const SchedulesPanel = ({ shipment }) => {
-  const { canEdit } = useAuth();
-  const [schedules,  setSchedules]  = useState([]);
-  const [loading,    setLoading]    = useState(true);
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [confirm,    setConfirm]    = useState(null);
+  const { canEditShipments: canEdit } = useAuth();
+  const [schedules,      setSchedules]      = useState([]);
+  const [loading,        setLoading]        = useState(true);
+  const [pickerOpen,     setPickerOpen]     = useState(false);
+  const [confirm,        setConfirm]        = useState(null);
+  const [confirmSailing, setConfirmSailing] = useState(null); // pending replacement
 
   const load = () => {
     setLoading(true);
@@ -2737,13 +2767,23 @@ const SchedulesPanel = ({ shipment }) => {
 
   useEffect(load, [shipment.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleSelect = async (sailing) => {
-    setPickerOpen(false);
+  const commitSailing = async (sailing) => {
     try {
+      await Promise.all(schedules.map(s => api.schedules.remove(shipment.id, s.id)));
       const saved = await api.schedules.save(shipment.id, sailing);
-      setSchedules(p => [saved, ...p]);
+      setSchedules([saved]);
       toast.success(`Sailing ${sailing.vesselName} saved`);
     } catch (e) { toast.error(e.message); }
+  };
+
+  const handleSelect = (sailing) => {
+    setPickerOpen(false);
+    const existingVoy = schedules[0]?.voyageNumber;
+    if (schedules.length > 0 && existingVoy !== sailing.voyageNumber) {
+      setConfirmSailing(sailing);
+    } else {
+      commitSailing(sailing);
+    }
   };
 
   const handleRemove = async (id) => {
@@ -2852,10 +2892,30 @@ const SchedulesPanel = ({ shipment }) => {
         )}
       </div>
 
+      {confirmSailing && (
+        <Modal title="Replace sailing?" onClose={() => setConfirmSailing(null)} width={420}>
+          <p style={{ fontFamily: T.body, fontSize: 14, color: T.text, margin: "0 0 6px", lineHeight: 1.6 }}>
+            This will replace{" "}
+            <strong style={{ fontFamily: T.mono }}>{schedules[0]?.vesselName || "the current sailing"}</strong>
+            {" "}with{" "}
+            <strong style={{ fontFamily: T.mono }}>{confirmSailing.vesselName}</strong>
+            {" "}· Voy {confirmSailing.voyageNumber}.
+          </p>
+          <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, margin: "0 0 20px" }}>
+            The previous sailing record will be removed.
+          </p>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <Btn variant="secondary" onClick={() => setConfirmSailing(null)}>Cancel</Btn>
+            <Btn onClick={() => { commitSailing(confirmSailing); setConfirmSailing(null); }}>Replace</Btn>
+          </div>
+        </Modal>
+      )}
+
       {pickerOpen && (
         <SailingPickerModal
           pol={pol} pod={pod} carrierCode={carrier}
           routingTerm={shipment.routingTerm}
+          activeSailing={schedules[0] || null}
           onSelect={handleSelect}
           onClose={() => setPickerOpen(false)}
           selectLabel="Add →" />
@@ -2947,8 +3007,8 @@ const RelatedTicketsPanel = ({ shipmentId }) => {
 
 // ──────────────────────────────────────────────────────────────────────────────
 
-const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, onEdit, onAddContainer, onEditContainer, onDeleteContainer, detailAction = null, onDetailActionConsumed }) => {
-  const { canEdit } = useAuth();
+const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, onEdit, onRefresh, onAddContainer, onEditContainer, onDeleteContainer, detailAction = null, onDetailActionConsumed }) => {
+  const { canEditShipments: canEdit } = useAuth();
   const [ctrModal,       setCtrModal]       = useState(null);
   const [linkVesselOpen, setLinkVesselOpen] = useState(false);
   const [confirmCtr,     setConfirmCtr]     = useState(null);
@@ -3250,6 +3310,7 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
           } catch { toast.error("Failed to generate tracking link"); }
           finally { setShareLoading(false); }
         }}>🔗 Share</Btn>
+        {onRefresh && <RefreshBtn shipmentId={shipment.id} onRefresh={onRefresh} />}
         {canEdit && <Btn variant="secondary" onClick={() => onEdit?.()}>✎ Edit Shipment</Btn>}
       </div>
 
@@ -3317,13 +3378,20 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
                     {shipment.etd || "—"}</span>
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
-                  {transitDays !== null
+                  {transitDays !== null && transitDays >= 0
                     ? <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: T.accent,
                         background: T.accentBg, border: `1px solid ${T.accent}33`,
                         borderRadius: 10, padding: "2px 10px", whiteSpace: "nowrap" }}>
                         {transitDays}d transit
                       </span>
-                    : <span style={{ color: T.border, fontSize: 16 }}>→</span>}
+                    : transitDays !== null && transitDays < 0
+                      ? <span title="ETA is before ETD — check leg dates" style={{ fontFamily: T.mono, fontSize: 11,
+                          fontWeight: 700, color: T.warning, background: T.warning + "18",
+                          border: `1px solid ${T.warning}44`, borderRadius: 10,
+                          padding: "2px 10px", whiteSpace: "nowrap", cursor: "default" }}>
+                          ⚠ dates
+                        </span>
+                      : <span style={{ color: T.border, fontSize: 16 }}>→</span>}
                 </div>
                 <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
                   <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",

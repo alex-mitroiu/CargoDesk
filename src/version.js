@@ -2,11 +2,17 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.26.0";
-export const BUILD     = "2026-07-09";
-export const CODENAME  = "Meridian II";
+export const VERSION   = "0.27.0";
+export const BUILD     = "2026-07-10";
+export const CODENAME  = "Lookout";
 
 export const CHANGELOG = [
+  {
+    version:  "0.27.0",
+    date:     "2026-07-10",
+    codename: "Lookout",
+    summary:  "Sailing management hardening: applySailingToLegs now sets ETA and carrierCode; TSP multi-leg support splices draft SEA legs for each subsequent voyage segment; edit-mode replace-not-append fixed (Promise.all deletes all existing schedules before saving new one). Active sailing highlighted in green in SailingPickerModal (voyageNumber or vesselName+ETD match) with ✓ Active badge replacing Select → button, applied in both ShipmentFormPage and ShipmentDetailPage. Replace-sailing confirmation uses a proper Modal overlay (not inline strip) in both pages. Negative transit days show an ⚠ dates amber badge instead of a negative number. ShipmentsPage refresh button: background poll every 90 s detects new shipment IDs; orange badge on ↻ button shows unloaded count; _overdue pseudo-status filter chip added (⏰ Overdue). ShipmentDetailPage refresh button (↻) added to page header; calls api.shipments.get(id) and merges result into app state. Dashboard Contract Consumption three-tier fallback: contractNumber and carrierCode resolve from contractMap → alloc → group.contractRef so contracts with no space config never show blank. Command Center major rework: (1) KPI cards (Active / Pending / Review / TEU / Overdue) now filter the in-page shipments list rather than navigating away — active card shows ✓ highlight and count header with ✕ clear; (2) shipment preview routing bar parses routingTerm (e.g. DR-PT) to render Door/CY journey nodes flanking the POL → POD line; (3) new Integration Board ticket card (TicketAlertCard) fetched on mount via api.tickets.list — tabs between Overdue and Due This Week with priority dots, days-late counter, status badge, and assignee avatar; (4) layout changed to position:fixed wrapper (top:46, bottom:36, left:240) escaping <main> scroll container entirely — CC uses height:100% for dynamic sizing at any viewport resolution; right panel gets overflow:hidden so the AI chat composer stays visible at all screen sizes. api.shipments.get(id) single-shipment fetch added to api.js.",
+  },
   {
     version:  "0.26.0",
     date:     "2026-07-09",

@@ -580,6 +580,56 @@ const migrations = [
     saved_at      TEXT NOT NULL,
     saved_by      TEXT NOT NULL DEFAULT ''
   )`,
+  // v0.27.0 — Office-based login locations
+  `CREATE TABLE IF NOT EXISTS offices (
+    id           TEXT PRIMARY KEY,
+    code         TEXT UNIQUE NOT NULL,
+    country_code TEXT NOT NULL DEFAULT '',
+    unlocode     TEXT NOT NULL DEFAULT '',
+    department   TEXT NOT NULL DEFAULT 'SE',
+    name         TEXT NOT NULL DEFAULT '',
+    is_active    INTEGER DEFAULT 1,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
+  `CREATE TABLE IF NOT EXISTS user_offices (
+    id        TEXT PRIMARY KEY,
+    user_id   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    office_id TEXT NOT NULL REFERENCES offices(id) ON DELETE CASCADE,
+    is_default INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(user_id, office_id)
+  )`,
+  // DEFAULT 1 so all rows that exist at migration time get global access (preserves current behaviour)
+  "ALTER TABLE users     ADD COLUMN all_offices         INTEGER NOT NULL DEFAULT 1",
+  "ALTER TABLE shipments ADD COLUMN emo_office_id        TEXT DEFAULT NULL",
+  "ALTER TABLE shipments ADD COLUMN imo_office_id        TEXT DEFAULT NULL",
+  "ALTER TABLE shipments ADD COLUMN controlling_office_id TEXT DEFAULT NULL",
+  // Organisation hierarchy
+  `CREATE TABLE IF NOT EXISTS branches (
+    id          TEXT PRIMARY KEY,
+    code        TEXT NOT NULL UNIQUE,
+    name        TEXT NOT NULL,
+    country_code TEXT NOT NULL,
+    city        TEXT,
+    address     TEXT,
+    timezone    TEXT,
+    phone       TEXT,
+    email       TEXT,
+    is_active   INTEGER NOT NULL DEFAULT 1,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
+  `CREATE TABLE IF NOT EXISTS org_countries (
+    country_code      TEXT PRIMARY KEY,
+    default_currency  TEXT,
+    timezone          TEXT,
+    branch_id         TEXT REFERENCES branches(id),
+    compliance_notes  TEXT,
+    is_active         INTEGER NOT NULL DEFAULT 1,
+    added_at          TEXT NOT NULL DEFAULT (datetime('now'))
+  )`,
+  "ALTER TABLE offices ADD COLUMN branch_id TEXT REFERENCES branches(id)",
+  "ALTER TABLE branches ADD COLUMN locode TEXT",
+  "ALTER TABLE port_locations ADD COLUMN timezone TEXT",
 ];
 
 for (const sql of migrations) {
@@ -939,6 +989,164 @@ async function toUsd(amount, currency) {
     console.log(`  ✔ Backfilled country_code on ${info.changes.toLocaleString()} port rows`);
 })();
 
+// ─── Backfill timezone on port_locations ──────────────────────────────────────
+// Single-TZ countries use a direct IANA map; multi-TZ countries (US, CA, AU,
+// RU, BR, MX, ID) use longitude bands. Safe to re-run — only touches NULL rows.
+(function backfillPortTimezones() {
+  const nullCount = db.prepare(
+    "SELECT COUNT(*) AS n FROM port_locations WHERE timezone IS NULL OR timezone=''"
+  ).get().n;
+  if (nullCount === 0) return;
+
+  const COUNTRY_TZ = {
+    // Europe
+    AD:"Europe/Andorra",  AL:"Europe/Tirane",    AT:"Europe/Vienna",
+    BA:"Europe/Sarajevo", BE:"Europe/Brussels",  BG:"Europe/Sofia",
+    BY:"Europe/Minsk",    CH:"Europe/Zurich",    CZ:"Europe/Prague",
+    DE:"Europe/Berlin",   DK:"Europe/Copenhagen",EE:"Europe/Tallinn",
+    ES:"Europe/Madrid",   FI:"Europe/Helsinki",  FR:"Europe/Paris",
+    GB:"Europe/London",   GI:"Europe/Gibraltar", GR:"Europe/Athens",
+    HR:"Europe/Zagreb",   HU:"Europe/Budapest",  IE:"Europe/Dublin",
+    IS:"Atlantic/Reykjavik",IT:"Europe/Rome",    LI:"Europe/Vaduz",
+    LT:"Europe/Vilnius",  LU:"Europe/Luxembourg",LV:"Europe/Riga",
+    MC:"Europe/Monaco",   MD:"Europe/Chisinau",  ME:"Europe/Podgorica",
+    MK:"Europe/Skopje",   MT:"Europe/Malta",     NL:"Europe/Amsterdam",
+    NO:"Europe/Oslo",     PL:"Europe/Warsaw",    PT:"Europe/Lisbon",
+    RO:"Europe/Bucharest",RS:"Europe/Belgrade",  SE:"Europe/Stockholm",
+    SI:"Europe/Ljubljana",SK:"Europe/Bratislava",SM:"Europe/San_Marino",
+    TR:"Europe/Istanbul", UA:"Europe/Kiev",      XK:"Europe/Belgrade",
+    // Caucasus / Central Asia
+    AM:"Asia/Yerevan",    AZ:"Asia/Baku",        GE:"Asia/Tbilisi",
+    KG:"Asia/Bishkek",    TJ:"Asia/Dushanbe",    TM:"Asia/Ashgabat",
+    UZ:"Asia/Tashkent",   KZ:"Asia/Almaty",
+    // Middle East
+    AE:"Asia/Dubai",      AF:"Asia/Kabul",       BH:"Asia/Bahrain",
+    CY:"Asia/Nicosia",    IQ:"Asia/Baghdad",     IR:"Asia/Tehran",
+    IL:"Asia/Jerusalem",  JO:"Asia/Amman",       KW:"Asia/Kuwait",
+    LB:"Asia/Beirut",     OM:"Asia/Muscat",      QA:"Asia/Qatar",
+    SA:"Asia/Riyadh",     SY:"Asia/Damascus",    YE:"Asia/Aden",
+    // Asia (single-TZ)
+    BD:"Asia/Dhaka",      BN:"Asia/Brunei",      BT:"Asia/Thimphu",
+    CN:"Asia/Shanghai",   HK:"Asia/Hong_Kong",   JP:"Asia/Tokyo",
+    KH:"Asia/Phnom_Penh", KP:"Asia/Pyongyang",   KR:"Asia/Seoul",
+    LA:"Asia/Vientiane",  LK:"Asia/Colombo",     MM:"Asia/Rangoon",
+    MN:"Asia/Ulaanbaatar",MO:"Asia/Macau",       MV:"Indian/Maldives",
+    MY:"Asia/Kuala_Lumpur",NP:"Asia/Kathmandu",  PH:"Asia/Manila",
+    PK:"Asia/Karachi",    SG:"Asia/Singapore",   TH:"Asia/Bangkok",
+    TL:"Asia/Dili",       TW:"Asia/Taipei",      VN:"Asia/Ho_Chi_Minh",
+    // Africa
+    DZ:"Africa/Algiers",  EG:"Africa/Cairo",     ER:"Africa/Asmara",
+    ET:"Africa/Addis_Ababa",GH:"Africa/Accra",   KE:"Africa/Nairobi",
+    LY:"Africa/Tripoli",  MA:"Africa/Casablanca",MG:"Indian/Antananarivo",
+    MU:"Indian/Mauritius",MW:"Africa/Blantyre",  MZ:"Africa/Maputo",
+    NA:"Africa/Windhoek", NE:"Africa/Niamey",    NG:"Africa/Lagos",
+    RE:"Indian/Reunion",  RW:"Africa/Kigali",    SC:"Indian/Mahe",
+    SD:"Africa/Khartoum", SN:"Africa/Dakar",     SO:"Africa/Mogadishu",
+    SS:"Africa/Juba",     SZ:"Africa/Mbabane",   TD:"Africa/Ndjamena",
+    TG:"Africa/Lome",     TN:"Africa/Tunis",     TZ:"Africa/Dar_es_Salaam",
+    UG:"Africa/Kampala",  ZA:"Africa/Johannesburg",ZM:"Africa/Lusaka",
+    ZW:"Africa/Harare",   CI:"Africa/Abidjan",   CM:"Africa/Douala",
+    // Americas – single-TZ
+    AG:"America/Antigua", AW:"America/Aruba",    BB:"America/Barbados",
+    BL:"America/St_Barthelemy",BM:"America/Bermuda",BS:"America/Nassau",
+    BZ:"America/Belize",  BO:"America/La_Paz",   CO:"America/Bogota",
+    CR:"America/Costa_Rica",CU:"America/Havana",  DM:"America/Dominica",
+    DO:"America/Santo_Domingo",EC:"America/Guayaquil",FK:"Atlantic/Stanley",
+    GD:"America/Grenada", GF:"America/Cayenne",  GP:"America/Guadeloupe",
+    GT:"America/Guatemala",GY:"America/Guyana",  HN:"America/Tegucigalpa",
+    HT:"America/Port-au-Prince",JM:"America/Jamaica",KN:"America/St_Kitts",
+    KY:"America/Cayman",  LC:"America/St_Lucia", MQ:"America/Martinique",
+    MS:"America/Montserrat",NI:"America/Managua", PA:"America/Panama",
+    PE:"America/Lima",    PR:"America/Puerto_Rico",PY:"America/Asuncion",
+    SR:"America/Paramaribo",SV:"America/El_Salvador",TC:"America/Grand_Turk",
+    TT:"America/Port_of_Spain",UY:"America/Montevideo",VC:"America/St_Vincent",
+    VE:"America/Caracas", VG:"America/Tortola",  VI:"America/St_Thomas",
+    // Pacific
+    CK:"Pacific/Rarotonga",FJ:"Pacific/Fiji",    GU:"Pacific/Guam",
+    KI:"Pacific/Tarawa",  NC:"Pacific/Noumea",   NF:"Pacific/Norfolk",
+    NR:"Pacific/Nauru",   NU:"Pacific/Niue",     NZ:"Pacific/Auckland",
+    PF:"Pacific/Tahiti",  PG:"Pacific/Port_Moresby",PW:"Pacific/Palau",
+    SB:"Pacific/Guadalcanal",TO:"Pacific/Tongatapu",TV:"Pacific/Funafuti",
+    VU:"Pacific/Efate",   WS:"Pacific/Apia",
+  };
+
+  for (const [cc, tz] of Object.entries(COUNTRY_TZ)) {
+    db.prepare(
+      "UPDATE port_locations SET timezone=? WHERE SUBSTR(unlocode,1,2)=? AND (timezone IS NULL OR timezone='')"
+    ).run(tz, cc);
+  }
+
+  // US – longitude bands (Eastern / Central / Mountain / Pacific / Hawaii)
+  db.prepare(`UPDATE port_locations SET timezone = CASE
+    WHEN longitude <= -140 THEN 'America/Honolulu'
+    WHEN longitude <= -120 THEN 'America/Los_Angeles'
+    WHEN longitude <= -105 THEN 'America/Denver'
+    WHEN longitude <= -90  THEN 'America/Chicago'
+    ELSE 'America/New_York' END
+    WHERE SUBSTR(unlocode,1,2)='US' AND (timezone IS NULL OR timezone='') AND longitude IS NOT NULL`).run();
+  db.prepare("UPDATE port_locations SET timezone='America/New_York' WHERE SUBSTR(unlocode,1,2)='US' AND (timezone IS NULL OR timezone='')").run();
+
+  // Canada
+  db.prepare(`UPDATE port_locations SET timezone = CASE
+    WHEN longitude <= -120 THEN 'America/Vancouver'
+    WHEN longitude <= -95  THEN 'America/Winnipeg'
+    WHEN longitude <= -73  THEN 'America/Toronto'
+    ELSE 'America/Halifax' END
+    WHERE SUBSTR(unlocode,1,2)='CA' AND (timezone IS NULL OR timezone='') AND longitude IS NOT NULL`).run();
+  db.prepare("UPDATE port_locations SET timezone='America/Toronto' WHERE SUBSTR(unlocode,1,2)='CA' AND (timezone IS NULL OR timezone='')").run();
+
+  // Australia
+  db.prepare(`UPDATE port_locations SET timezone = CASE
+    WHEN longitude < 129 THEN 'Australia/Perth'
+    WHEN longitude < 138 THEN 'Australia/Darwin'
+    WHEN longitude < 141 THEN 'Australia/Adelaide'
+    ELSE 'Australia/Sydney' END
+    WHERE SUBSTR(unlocode,1,2)='AU' AND (timezone IS NULL OR timezone='') AND longitude IS NOT NULL`).run();
+  db.prepare("UPDATE port_locations SET timezone='Australia/Sydney' WHERE SUBSTR(unlocode,1,2)='AU' AND (timezone IS NULL OR timezone='')").run();
+
+  // Russia
+  db.prepare(`UPDATE port_locations SET timezone = CASE
+    WHEN longitude < 60  THEN 'Europe/Moscow'
+    WHEN longitude < 73  THEN 'Asia/Yekaterinburg'
+    WHEN longitude < 84  THEN 'Asia/Omsk'
+    WHEN longitude < 98  THEN 'Asia/Krasnoyarsk'
+    WHEN longitude < 114 THEN 'Asia/Irkutsk'
+    WHEN longitude < 130 THEN 'Asia/Yakutsk'
+    WHEN longitude < 143 THEN 'Asia/Vladivostok'
+    ELSE 'Asia/Magadan' END
+    WHERE SUBSTR(unlocode,1,2)='RU' AND (timezone IS NULL OR timezone='') AND longitude IS NOT NULL`).run();
+  db.prepare("UPDATE port_locations SET timezone='Europe/Moscow' WHERE SUBSTR(unlocode,1,2)='RU' AND (timezone IS NULL OR timezone='')").run();
+
+  // Brazil
+  db.prepare(`UPDATE port_locations SET timezone = CASE
+    WHEN longitude < -50 THEN 'America/Manaus'
+    ELSE 'America/Sao_Paulo' END
+    WHERE SUBSTR(unlocode,1,2)='BR' AND (timezone IS NULL OR timezone='') AND longitude IS NOT NULL`).run();
+  db.prepare("UPDATE port_locations SET timezone='America/Sao_Paulo' WHERE SUBSTR(unlocode,1,2)='BR' AND (timezone IS NULL OR timezone='')").run();
+
+  // Mexico
+  db.prepare(`UPDATE port_locations SET timezone = CASE
+    WHEN longitude < -106 THEN 'America/Tijuana'
+    WHEN longitude < -98  THEN 'America/Mazatlan'
+    ELSE 'America/Mexico_City' END
+    WHERE SUBSTR(unlocode,1,2)='MX' AND (timezone IS NULL OR timezone='') AND longitude IS NOT NULL`).run();
+  db.prepare("UPDATE port_locations SET timezone='America/Mexico_City' WHERE SUBSTR(unlocode,1,2)='MX' AND (timezone IS NULL OR timezone='')").run();
+
+  // Indonesia
+  db.prepare(`UPDATE port_locations SET timezone = CASE
+    WHEN longitude < 116 THEN 'Asia/Jakarta'
+    WHEN longitude < 124 THEN 'Asia/Makassar'
+    ELSE 'Asia/Jayapura' END
+    WHERE SUBSTR(unlocode,1,2)='ID' AND (timezone IS NULL OR timezone='') AND longitude IS NOT NULL`).run();
+  db.prepare("UPDATE port_locations SET timezone='Asia/Jakarta' WHERE SUBSTR(unlocode,1,2)='ID' AND (timezone IS NULL OR timezone='')").run();
+
+  const filled = nullCount - db.prepare(
+    "SELECT COUNT(*) AS n FROM port_locations WHERE timezone IS NULL OR timezone=''"
+  ).get().n;
+  if (filled > 0)
+    console.log(`  ✔ Backfilled timezone on ${filled.toLocaleString()} port rows`);
+})();
+
 // ─── Column rename migrations ─────────────────────────────────────────────────
 
 (function migrateContainersColumns() {
@@ -989,7 +1197,7 @@ function longestLane(un) {
   const s = portLanesMap[un]; if (!s || !s.size) return ''; return [...s].sort((a, b) => b.length - a.length)[0];
 }
 
-const mapShipment     = r => { const polLane = longestLane(r.pol), podLane = longestLane(r.pod); return { id: r.id, pol: r.pol, polName: r.pol_name || '', pod: r.pod, podName: r.pod_name || '', carrierCode: r.carrier_code, contractType: r.contract_type, contractNotes: r.contract_notes || '', status: r.status, createdAt: r.created_at, etd: r.etd || '', eta: r.eta || '', bookingRef: r.booking_ref || '', blNumber: r.bl_number || '', vessel: r.vessel || '', voyage: r.voyage || '', incoterm: r.incoterm || '', vesselImo: r.vessel_imo || '', contractId: r.contract_id || '', contractRef: r.contract_ref || '', commodityCode: r.commodity_code || '', shipperId: r.shipper_id || '', shipperName: r.shipper_name || '', consigneeId: r.consignee_id || '', consigneeName: r.consignee_name || '', principalId: r.principal_id || '', principalName: r.principal_name || '', allocationId: r.allocation_id || '', spaceSkipReason: r.space_skip_reason || '', spaceOverageReason: r.space_overage_reason || '', spaceBadge: r.space_badge || '', marginBuyUsd: r.margin_buy_usd ?? null, marginSellUsd: r.margin_sell_usd ?? null, overdueCount: r.overdue_count ?? 0, freightTerms: r.freight_terms || 'Prepaid', movementType: r.movement_type || 'FCL', serviceType: r.service_type || 'Port-to-Port', placeOfReceipt: r.place_of_receipt || '', placeOfDelivery: r.place_of_delivery || '', cargoReadyDate: r.cargo_ready_date || null, notifyId: r.notify_id || '', notifyName: r.notify_name || '', declaredValue: r.declared_value ?? null, declaredValueCurrency: r.declared_value_currency || 'USD', routingTerm: r.routing_term || (SVC_ABBR[r.service_type] || 'P2P'), tradeLane: polLane && podLane ? polLane + ' → ' + podLane : '' }; };
+const mapShipment     = r => { const polLane = longestLane(r.pol), podLane = longestLane(r.pod); return { id: r.id, pol: r.pol, polName: r.pol_name || '', pod: r.pod, podName: r.pod_name || '', carrierCode: r.carrier_code, contractType: r.contract_type, contractNotes: r.contract_notes || '', status: r.status, createdAt: r.created_at, etd: r.etd || '', eta: r.eta || '', bookingRef: r.booking_ref || '', blNumber: r.bl_number || '', vessel: r.vessel || '', voyage: r.voyage || '', incoterm: r.incoterm || '', vesselImo: r.vessel_imo || '', contractId: r.contract_id || '', contractRef: r.contract_ref || '', commodityCode: r.commodity_code || '', shipperId: r.shipper_id || '', shipperName: r.shipper_name || '', consigneeId: r.consignee_id || '', consigneeName: r.consignee_name || '', principalId: r.principal_id || '', principalName: r.principal_name || '', allocationId: r.allocation_id || '', spaceSkipReason: r.space_skip_reason || '', spaceOverageReason: r.space_overage_reason || '', spaceBadge: r.space_badge || '', marginBuyUsd: r.margin_buy_usd ?? null, marginSellUsd: r.margin_sell_usd ?? null, overdueCount: r.overdue_count ?? 0, freightTerms: r.freight_terms || 'Prepaid', movementType: r.movement_type || 'FCL', serviceType: r.service_type || 'Port-to-Port', placeOfReceipt: r.place_of_receipt || '', placeOfDelivery: r.place_of_delivery || '', cargoReadyDate: r.cargo_ready_date || null, notifyId: r.notify_id || '', notifyName: r.notify_name || '', declaredValue: r.declared_value ?? null, declaredValueCurrency: r.declared_value_currency || 'USD', routingTerm: r.routing_term || (SVC_ABBR[r.service_type] || 'P2P'), tradeLane: polLane && podLane ? polLane + ' → ' + podLane : '', emoOfficeId: r.emo_office_id || null, emoOfficeCode: r.emo_office_code || '', emoOfficeName: r.emo_office_name || '', imoOfficeId: r.imo_office_id || null, imoOfficeCode: r.imo_office_code || '', imoOfficeName: r.imo_office_name || '', controllingOfficeId: r.controlling_office_id || null, controllingOfficeCode: r.controlling_office_code || '', controllingOfficeName: r.controlling_office_name || '' }; };
 const mapShipmentLeg = r => ({
   id: r.id, shipmentId: r.shipment_id, legOrder: r.leg_order,
   mot: r.mot || 'SEA',
@@ -1031,7 +1239,7 @@ const mapContainer    = r => ({ id: r.id, shipmentId: r.shipment_id, containerNu
 const mapAllocation   = r => ({ id: r.id, carrierCode: r.carrier_code, allocatedTEU: r.allocated_teu, effectiveDate: r.effective_date || '', endDate: r.end_date || '', tradeLane: r.trade_lane || '', notes: r.notes || '', alertThreshold: r.alert_threshold ?? 80, pol: r.pol || '', pod: r.pod || '', originLane: r.origin_lane || '', destLane: r.dest_lane || '', coverageScope: r.coverage_scope || 'STRICT', contractId: r.contract_id || '', contractNumber: r.contract_number || '' });
 const mapCarrier      = r => ({ code: r.code, name: r.name, shortName: r.short_name || '' });
 const mapVessel       = r => ({ imo: r.imo, name: r.name, assetType: r.asset_type || '', flagIso2: r.flag_iso2 || '', flagName: r.flag_name || '', buildYear: r.build_year, grossTonnage: r.gross_tonnage });
-const mapPortLocation = r => ({ unlocode: r.unlocode, name: r.name, latitude: r.latitude, longitude: r.longitude, countryCode: r.country_code, zoneCode: r.zone_code, lastSyncedAt: r.last_synced_at || null });
+const mapPortLocation = r => ({ unlocode: r.unlocode, name: r.name, latitude: r.latitude, longitude: r.longitude, countryCode: r.country_code, zoneCode: r.zone_code, timezone: r.timezone || null, lastSyncedAt: r.last_synced_at || null });
 const mapLinkedPort   = r => ({ id: r.id, primaryUnlocode: r.primary_unlocode, primaryName: r.primary_name || '', linkedUnlocode: r.linked_unlocode, linkedName: r.linked_name || '', note: r.note || '' });
 const mapTradeLane    = r => ({ code: r.code, name: r.name, description: r.description || '', countryCount: r.country_count ?? 0, transitDays: r.transit_days ?? 0 });
 const mapScopeItem    = r => ({
@@ -1104,6 +1312,25 @@ function applyShipmentAccessFilter(shipments, user, req) {
 
   if (['admin', 'operator'].includes(effectiveRole)) return shipments;
 
+  // Office-based data segregation: filter by active office when the user is not global.
+  // Org-wide "offices_allow_all" setting bypasses this for all users.
+  const orgAllowAll = getSettings().offices_allow_all === "1";
+  if (!user.allOffices && !orgAllowAll) {
+    const activeOfficeId = req?.headers?.['x-office-id'] || null;
+    if (activeOfficeId) {
+      // Validate that this office is actually assigned to the user
+      const validOffice = db.prepare(
+        "SELECT id FROM user_offices WHERE user_id=? AND office_id=?"
+      ).get(user.id, activeOfficeId);
+      if (!validOffice) return [];
+      shipments = shipments.filter(s =>
+        s.emoOfficeId === activeOfficeId ||
+        s.imoOfficeId === activeOfficeId ||
+        s.controllingOfficeId === activeOfficeId
+      );
+    }
+  }
+
   const scopeItems = db.prepare("SELECT * FROM user_scope_items WHERE user_id=?").all(user.id);
   const legacyCfgs = db.prepare("SELECT * FROM user_access_configs WHERE user_id=?")
     .all(user.id).map(mapAccessConfig);
@@ -1127,6 +1354,9 @@ function applyShipmentAccessFilter(shipments, user, req) {
     return scopePass || legacyPass;
   });
 }
+const mapOffice       = r => ({ id: r.id, code: r.code, countryCode: r.country_code, unlocode: r.unlocode, department: r.department, name: r.name, isActive: !!r.is_active, branchId: r.branch_id || null, createdAt: r.created_at });
+const mapBranch       = r => ({ id: r.id, code: r.code, name: r.name, countryCode: r.country_code, locode: r.locode || null, city: r.city || null, address: r.address || null, timezone: r.timezone || null, phone: r.phone || null, email: r.email || null, isActive: !!r.is_active, createdAt: r.created_at });
+const mapOrgCountry   = r => ({ countryCode: r.country_code, countryName: r.country_name || null, defaultCurrency: r.default_currency || null, timezone: r.timezone || null, branchId: r.branch_id || null, branchCode: r.branch_code || null, branchName: r.branch_name || null, complianceNotes: r.compliance_notes || null, isActive: !!r.is_active, addedAt: r.added_at });
 const mapRegion       = r => ({ code: r.code, name: r.name, description: r.description || '' });
 const mapCountry      = r => ({ iso2: r.iso2, name: r.name, unMember: r.un_member === 1, regionCode: r.region_code || '', portCount: r.port_count ?? 0 });
 const INVERSE_LINK_LABEL = { "Blocks": "Is blocked by", "Duplicates": "Is duplicated by", "Implements": "Is implemented by", "Relates to": "Relates to" };
@@ -1302,8 +1532,8 @@ const checkOverlap = (carrierCode, effectiveDate, endDate, pol = '', pod = '', e
 
 // ─── Role helpers (hoisted from inline routes so ctx can include them) ────────
 
-const VALID_ROLES  = ["admin", "operator", "occ_bk", "viewer"];
-const ROLE_RANK_SV = { viewer: 0, occ_bk: 1, operator: 2, admin: 3 };
+const VALID_ROLES  = ["admin", "operator", "occ_bk", "trade_manager", "viewer"];
+const ROLE_RANK_SV = { viewer: 0, occ_bk: 1, trade_manager: 1, operator: 2, admin: 3 };
 const primaryRoleSV  = (roles) => [...roles].sort((a, b) => ROLE_RANK_SV[b] - ROLE_RANK_SV[a])[0] || 'viewer';
 const parseUserRoles = (u) => JSON.parse(u.roles || JSON.stringify([u.role || 'viewer']));
 
@@ -1459,7 +1689,7 @@ const ctx = {
   SERVICE_CODE_MAP, importContractRates,
   mapShipment, mapShipmentLeg, mapCostLine, mapContainer, mapAllocation,
   mapCarrier, mapVessel, mapPortLocation, mapLinkedPort, mapTradeLane,
-  mapScopeItem, mapAccessConfig, mapRegion, mapCountry, mapTicketLink, mapTicket,
+  mapScopeItem, mapAccessConfig, mapOffice, mapBranch, mapOrgCountry, mapRegion, mapCountry, mapTicketLink, mapTicket,
   mapCustomer, mapCustomerIdentifier, mapCustomerScreening, mapCustomerDoc,
   mapCommodity, mapSystemMessage, mapMilestone, mapMilestoneTemplate,
   mapContract, mapLeg, mapRate,
@@ -1486,6 +1716,8 @@ require('./routes/system')(app, ctx);
 require('./routes/export')(app, ctx);
 require('./routes/ai')(app, ctx);
 require('./routes/share')(app, ctx);
+require('./routes/offices')(app, ctx);
+require('./routes/organization')(app, ctx);
 
 // ─── Auth routes ──────────────────────────────────────────────────────────────
 
@@ -1498,12 +1730,18 @@ app.post("/api/auth/login", (req, res) => {
   if (!user || !bcrypt.compareSync(password, user.password_hash))
     return err(res, "Invalid email or password", 401);
   const roles = JSON.parse(user.roles || JSON.stringify([user.role || 'viewer']));
+  const allOffices = !!user.all_offices;
+  const userOffices = db.prepare(`
+    SELECT o.id, o.code, o.name, o.department, uo.is_default
+    FROM user_offices uo JOIN offices o ON o.id = uo.office_id
+    WHERE uo.user_id = ? ORDER BY uo.is_default DESC, o.code
+  `).all(user.id).map(r => ({ id: r.id, code: r.code, name: r.name, department: r.department, isDefault: !!r.is_default }));
   const token = jwt.sign(
-    { id: user.id, email: user.email, name: user.name, role: user.role, roles },
+    { id: user.id, email: user.email, name: user.name, role: user.role, roles, allOffices },
     JWT_SECRET, { expiresIn: "8h" }
   );
   db.prepare("UPDATE users SET last_login = datetime('now') WHERE id = ?").run(user.id);
-  ok(res, { token, user: { id: user.id, email: user.email, name: user.name, roles } });
+  ok(res, { token, user: { id: user.id, email: user.email, name: user.name, roles, allOffices, offices: userOffices } });
 });
 
 app.get("/api/auth/me", auth(), (req, res) => {

@@ -7,20 +7,22 @@ import Btn from "./primitives/Btn";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const ALL_ROLES = ["admin", "operator", "occ_bk", "viewer"];
-const ROLE_RANK = { viewer: 0, occ_bk: 1, operator: 2, admin: 3 };
+const ALL_ROLES = ["admin", "operator", "occ_bk", "trade_manager", "viewer"];
+const ROLE_RANK = { viewer: 0, occ_bk: 1, trade_manager: 1, operator: 2, admin: 3 };
 const ROLE_COLORS = {
-  admin:    { bg: "#3b82f618", text: "#3b82f6",  border: "#3b82f644" },
-  operator: { bg: "#10b98118", text: "#10b981",  border: "#10b98144" },
-  occ_bk:   { bg: "#f59e0b18", text: "#f59e0b",  border: "#f59e0b44" },
-  viewer:   { bg: T.border + "30", text: T.textMuted, border: T.border },
+  admin:         { bg: "#3b82f618", text: "#3b82f6",  border: "#3b82f644" },
+  operator:      { bg: "#10b98118", text: "#10b981",  border: "#10b98144" },
+  occ_bk:        { bg: "#f59e0b18", text: "#f59e0b",  border: "#f59e0b44" },
+  trade_manager: { bg: "#8b5cf618", text: "#8b5cf6",  border: "#8b5cf644" },
+  viewer:        { bg: T.border + "30", text: T.textMuted, border: T.border },
 };
-const ROLE_LABELS = { admin: "Admin", operator: "Operator", occ_bk: "OCC Booking", viewer: "Viewer" };
+const ROLE_LABELS = { admin: "Admin", operator: "Operator", occ_bk: "OCC Booking", trade_manager: "Trade Manager", viewer: "Viewer" };
 const ROLE_DESCRIPTIONS = {
-  admin:    "Full system access including user management",
-  operator: "Manage shipments, configs & MDM",
-  occ_bk:   "Place bookings and manage customers",
-  viewer:   "Read-only access to all data",
+  admin:         "Full system access including user management",
+  operator:      "Manage shipments, configs & MDM",
+  occ_bk:        "Place bookings and manage customers",
+  trade_manager: "Manage space configurations and contracts; read-only shipments",
+  viewer:        "Read-only access to all data",
 };
 
 // Roles where data scoping applies (admin and viewer are always unrestricted)
@@ -38,10 +40,10 @@ const inputStyle = () => ({
   outline: "none", boxSizing: "border-box",
 });
 
-const FieldLabel = ({ children }) => (
+const FieldLabel = ({ children, required }) => (
   <div style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: T.textMuted,
     textTransform: "uppercase", letterSpacing: ".09em", marginBottom: 5 }}>
-    {children}
+    {children}{required && <span style={{ color: T.danger }}> *</span>}
   </div>
 );
 
@@ -502,6 +504,56 @@ const UserConfigPanel = ({ user, onRolesConfigure }) => {
   const [countries,   setCountries]   = useState([]);
   const [loading,     setLoading]     = useState(true);
 
+  // Office assignment state
+  const [allOffices,    setAllOfficesState] = useState(!!user.allOffices);
+  const [userOffices,   setUserOffices]     = useState([]);
+  const [allOrgOffices, setAllOrgOffices]   = useState([]);
+  const [officeLoading, setOfficeLoading]   = useState(true);
+  const [togglingAll,   setTogglingAll]     = useState(false);
+
+  useEffect(() => {
+    setOfficeLoading(true);
+    Promise.all([
+      api.offices.list(),
+      api.offices.userOffices(user.id),
+    ]).then(([org, assigned]) => {
+      setAllOrgOffices(org);
+      setUserOffices(assigned);
+    }).catch(() => {}).finally(() => setOfficeLoading(false));
+  }, [user.id]);
+
+  const handleToggleAllOffices = async () => {
+    setTogglingAll(true);
+    try {
+      await api.users.update(user.id, { allOffices: !allOffices });
+      setAllOfficesState(v => !v);
+      toast.success(`Global office access ${!allOffices ? "granted" : "revoked"}`);
+    } catch (e) { toast.error(e.message); } finally { setTogglingAll(false); }
+  };
+
+  const assignOffice = async (officeId) => {
+    try {
+      await api.offices.assignOffice(user.id, { officeId });
+      const updated = await api.offices.userOffices(user.id);
+      setUserOffices(updated);
+    } catch (e) { toast.error(e.message); }
+  };
+
+  const removeOffice = async (officeId) => {
+    try {
+      await api.offices.removeOffice(user.id, officeId);
+      setUserOffices(p => p.filter(o => o.id !== officeId));
+    } catch (e) { toast.error(e.message); }
+  };
+
+  const setDefault = async (officeId) => {
+    try {
+      await api.offices.setDefault(user.id, officeId);
+      const updated = await api.offices.userOffices(user.id);
+      setUserOffices(updated);
+    } catch (e) { toast.error(e.message); }
+  };
+
   useEffect(() => {
     setLoading(true);
     Promise.all([
@@ -592,6 +644,56 @@ const UserConfigPanel = ({ user, onRolesConfigure }) => {
           })}
         </div>
       )}
+
+      {/* ── Office assignment ─────────────────────────────────────────────────── */}
+      <div style={{ padding: "14px 18px", borderBottom: `1px solid ${T.border}` }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+          <div style={{ fontFamily: T.head, fontSize: 13, fontWeight: 700, color: T.text }}>Office Assignments</div>
+          <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer",
+            fontFamily: T.body, fontSize: 12, color: allOffices ? T.accent : T.textMuted }}>
+            <input type="checkbox" checked={allOffices} disabled={togglingAll}
+              onChange={handleToggleAllOffices} style={{ accentColor: T.accent }} />
+            Global access (all offices)
+          </label>
+        </div>
+        {officeLoading ? (
+          <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>Loading…</div>
+        ) : (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+            {userOffices.map(o => (
+              <div key={o.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 10px",
+                borderRadius: 8, background: o.isDefault ? T.accent + "18" : T.bg,
+                border: `1px solid ${o.isDefault ? T.accent + "66" : T.border}` }}>
+                <span style={{ fontFamily: "monospace", fontSize: 11, fontWeight: 700,
+                  color: o.isDefault ? T.accent : T.text }}>{o.code}</span>
+                {!o.isDefault && (
+                  <button type="button" onClick={() => setDefault(o.id)}
+                    title="Set as default"
+                    style={{ background: "none", border: "none", cursor: "pointer",
+                      fontSize: 10, color: T.textMuted, padding: "0 2px" }}>★</button>
+                )}
+                <button type="button" onClick={() => removeOffice(o.id)}
+                  style={{ background: "none", border: "none", cursor: "pointer",
+                    fontSize: 11, color: T.danger, padding: "0 2px", lineHeight: 1 }}>✕</button>
+              </div>
+            ))}
+            {allOrgOffices.filter(o => !userOffices.find(u => u.id === o.id) && o.isActive).map(o => (
+              <button key={o.id} type="button" onClick={() => assignOffice(o.id)}
+                title={`Assign ${o.code} to this user`}
+                style={{ padding: "4px 10px", borderRadius: 8, border: `1px dashed ${T.border}`,
+                  background: "none", cursor: "pointer", fontFamily: "monospace", fontSize: 11,
+                  color: T.textMuted, display: "flex", alignItems: "center", gap: 4 }}>
+                <span style={{ fontSize: 10 }}>＋</span> {o.code}
+              </button>
+            ))}
+            {allOrgOffices.length === 0 && (
+              <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
+                No offices configured yet — create them in AppSettings → Offices.
+              </span>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Tab content */}
       <div style={{ padding: 18 }}>
@@ -692,21 +794,21 @@ const UserFormModal = ({ user: existing, onSave, onClose }) => {
         )}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <div>
-            <FieldLabel>Full Name</FieldLabel>
+            <FieldLabel required>Full Name</FieldLabel>
             <input value={name} onChange={e => setName(e.target.value)} style={inputStyle()}
               placeholder="Jane Smith"
               onFocus={e => e.currentTarget.style.borderColor = T.accent}
               onBlur={e  => e.currentTarget.style.borderColor = T.border} />
           </div>
           <div>
-            <FieldLabel>Email</FieldLabel>
+            <FieldLabel required>Email</FieldLabel>
             <input type="email" value={email} onChange={e => setEmail(e.target.value)} style={inputStyle()}
               placeholder="jane@example.com"
               onFocus={e => e.currentTarget.style.borderColor = T.accent}
               onBlur={e  => e.currentTarget.style.borderColor = T.border} />
           </div>
           <div>
-            <FieldLabel>{isNew ? "Password" : "New Password (blank to keep)"}</FieldLabel>
+            <FieldLabel required={isNew}>{isNew ? "Password" : "New Password (blank to keep)"}</FieldLabel>
             <input type="password" value={password} onChange={e => setPassword(e.target.value)} style={inputStyle()}
               placeholder={isNew ? "Set a password" : "Leave blank to keep"}
               onFocus={e => e.currentTarget.style.borderColor = T.accent}
@@ -724,7 +826,7 @@ const UserFormModal = ({ user: existing, onSave, onClose }) => {
           )}
         </div>
         <div>
-          <FieldLabel>Roles</FieldLabel>
+          <FieldLabel required>Roles</FieldLabel>
           <div style={{ display: "flex", gap: 7 }}>
             {ALL_ROLES.map(role => {
               const active = roles.includes(role);

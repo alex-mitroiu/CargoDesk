@@ -2,7 +2,7 @@
 
 > Freight management application for tracking ocean shipments, carrier space utilisation, contracts, and maritime master data.
 
-[![Version](https://img.shields.io/badge/version-0.26.0-blue)](.)
+[![Version](https://img.shields.io/badge/version-0.27.0-blue)](.)
 ![Node](https://img.shields.io/badge/node-22.5%2B-green)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
@@ -53,6 +53,8 @@
 - **Compliance Screening** — ComplianceModal Phase 1 (Parties) and Phase 2 (Routing) cards each show a roll-up status pill and per-check rows with field value, description, and status icon.
 - **Shipment Schedule Bookings** — Operators can search live (or demo) sailings directly from the create/edit shipment form. The Sailing section shows a 2/4/8/12-week search window picker; selecting a sailing attaches it to the shipment in the `shipment_schedules` table. A shortcut button copies the vessel name, voyage number, and ETD into the matching SEA leg with one click. The Schedules panel in the shipment detail view lists all saved sailings with vessel, service, voyage, ETD/ETA, transit days, and saved-by metadata; additional sailings can be added or removed from there too. A mock-data banner is shown when no Maersk API key is configured.
 - **Related Tickets Panel** — Shipment detail page shows a Related Tickets panel listing all Kanban tickets linked to the shipment (status dot, ticket ID, title, assignee, priority). Tickets are filtered server-side via `GET /api/tickets?shipmentId=X`.
+- **Sailing Management** — Active sailing highlighted in green in the sailing picker (voyageNumber or vesselName+ETD match); replacing an existing sailing requires confirmation via a proper modal overlay. Negative transit days (inconsistent ETD/ETA) surface an `⚠ dates` amber badge. TSP multi-leg sailings splice draft SEA legs for each voyage segment. Refresh button (↻) in the shipment detail header re-fetches the latest data on demand.
+- **Command Center** — Full-screen operational dashboard with live shipment KPI cards, status donut, monthly booking trend bars, expiring space config list, carrier TEU consumption ranking, top routes by volume, and an Integration Board ticket card (overdue and due-this-week tabs with priority dot, days-late counter, and assignee avatar). KPI cards filter the in-page shipments list rather than navigating away; active filter shows a count header with a ✕ clear. Shipment preview routing bar renders the full journey (Door / CY → POL → POD → Terminal / Door) parsed from `routingTerm`. Layout uses `position: fixed` for dynamic sizing at any viewport resolution — no page scroll at 1080p, 4K, or anywhere between.
 - **Authentication** — JWT-based login with `bcryptjs` password hashing. Token stored in `localStorage`; all API routes protected by `auth()` middleware. A default admin account (`admin@cargodesk.com` / `admin123`) is seeded on first startup when no users exist.
 - **User Management** — Admin-only Users tab in Application Settings: create, edit, deactivate, and delete user accounts. Role-coded badges (admin / operator / viewer). Passwords hashed, never exposed.
 - **RBAC — Three Roles** — admin (full access + user management), operator (full access, no user admin), viewer (read-only everywhere). All write actions (create, edit, delete, drag-to-reorder on Kanban) are hidden for viewers. A "👁 View Only" banner appears on the shipment detail page. Admins can impersonate lower roles via the nav role-switcher.

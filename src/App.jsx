@@ -4,7 +4,7 @@ import { toast } from "./toast";
 import ToastContainer from "./components/primitives/ToastContainer";
 import GlobalSavingOverlay from "./components/primitives/GlobalSavingOverlay";
 import { FullPageSpinner } from "./components/primitives/Spinner";
-import { api, TOKEN_KEY, ACTIVE_ROLE_KEY } from "./api";
+import { api, TOKEN_KEY, ACTIVE_ROLE_KEY, ACTIVE_OFFICE_KEY } from "./api";
 import { AuthContext } from "./AuthContext";
 
 import Btn from "./components/primitives/Btn";
@@ -36,6 +36,9 @@ import MdmCommoditiesPage     from "./pages/mdm/MdmCommoditiesPage";
 import MdmCustomersPage           from "./pages/mdm/MdmCustomersPage";
 import MdmSanctionedCustomersPage from "./pages/mdm/MdmSanctionedCustomersPage";
 import MdmContractsPage        from "./pages/mdm/MdmContractsPage";
+import BranchPage              from "./pages/org/BranchPage";
+import OfficePage              from "./pages/org/OfficePage";
+import CountryPage             from "./pages/org/CountryPage";
 import SpaceConfigurationsPage from "./pages/SpaceConfigurationsPage";
 import LicensePage             from "./pages/LicensePage";
 import SchedulesPage           from "./pages/SchedulesPage";
@@ -1522,6 +1525,35 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, o
   );
 };
 
+// ─── Under Construction ───────────────────────────────────────────────────────
+
+const ORG_LABELS = { "org-country": "Country", "org-branch": "Branch", "org-office": "Office" };
+const ORG_ICONS  = { "org-country": "🌍", "org-branch": "🏛️", "org-office": "🏢" };
+
+function UnderConstructionPage({ page }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center",
+      justifyContent: "center", minHeight: 420, gap: 16, textAlign: "center" }}>
+      <div style={{ fontSize: 52 }}>{ORG_ICONS[page] || "🚧"}</div>
+      <div style={{ fontFamily: T.head, fontSize: 24, fontWeight: 800, color: T.text }}>
+        {ORG_LABELS[page] || page}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 18px",
+        borderRadius: 20, background: T.warning + "18", border: `1px solid ${T.warning}44` }}>
+        <span style={{ fontSize: 14 }}>🚧</span>
+        <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700,
+          color: T.warning, textTransform: "uppercase", letterSpacing: ".08em" }}>
+          Under Construction
+        </span>
+      </div>
+      <div style={{ fontFamily: T.body, fontSize: 14, color: T.textMuted,
+        maxWidth: 380, lineHeight: 1.7, marginTop: 4 }}>
+        This module is being built. Check back in a future release.
+      </div>
+    </div>
+  );
+}
+
 // ─── Root App ─────────────────────────────────────────────────────────────────
 
 function App() {
@@ -1602,6 +1634,7 @@ function App() {
     setIsDark(next);                                            // trigger re-render (T already updated)
   };
   const [mdmOpen,      setMdmOpen]      = useState(true);
+  const [orgOpen,      setOrgOpen]      = useState(true);
   const [detailAction, setDetailAction] = useState(null);
   const [user,         setUser]         = useState(null);
   const [authLoading,  setAuthLoading]  = useState(true);
@@ -1636,8 +1669,63 @@ function App() {
     }
   }, [activeRole]);
 
-  const ROLE_RANK   = { viewer: 0, occ_bk: 1, operator: 2, admin: 3 };
-  const ROLE_LABELS = { admin: "Admin", operator: "Operator", occ_bk: "OCC Booking", viewer: "Viewer" };
+  // ── Office state ────────────────────────────────────────────────────────────
+  // ACTIVE_OFFICE_KEY ("cargodesk_active_office") stores the plain office ID for api.js headers.
+  // A separate key stores the full JSON object so we can restore the full office on reload.
+  const OFFICE_DATA_KEY     = "cargodesk_active_office_data";
+  const OFFICE_REMEMBER_KEY = "cargodesk_remember_office";
+  const [activeOffice,     setActiveOfficeState] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(OFFICE_DATA_KEY) || "null"); } catch { return null; }
+  });
+  const [officePicker,   setOfficePicker]   = useState(false);
+  const [rememberOffice, setRememberOffice] = useState(
+    () => localStorage.getItem(OFFICE_REMEMBER_KEY) === "1"
+  );
+
+  const setActiveOffice = (office) => {
+    setActiveOfficeState(office);
+    if (office) {
+      localStorage.setItem(ACTIVE_OFFICE_KEY, String(office.id));   // plain ID for api.js header
+      localStorage.setItem(OFFICE_DATA_KEY, JSON.stringify(office)); // full object for reload
+    } else {
+      localStorage.removeItem(ACTIVE_OFFICE_KEY);
+      localStorage.removeItem(OFFICE_DATA_KEY);
+    }
+  };
+
+  // Offices available in the picker:
+  // - allOffices users: all active org offices (fetched fresh after login)
+  // - regular users: only their assigned offices from the login response
+  const userOffices    = user?.offices || [];
+  const userAllOffices = !!user?.allOffices;
+  const [pickerOffices, setPickerOffices] = useState([]);
+
+  useEffect(() => {
+    if (!user) return;
+    // If a remembered office is already restored from localStorage, skip picker
+    if (activeOffice && localStorage.getItem(OFFICE_REMEMBER_KEY) === "1") return;
+    if (userAllOffices) {
+      api.offices.list()
+        .then(list => {
+          const active = list.filter(o => o.isActive);
+          setPickerOffices(active);
+          if (active.length > 0 && !activeOffice) setOfficePicker(true);
+        })
+        .catch(() => {});
+      return;
+    }
+    if (userOffices.length === 1 && !activeOffice) {
+      setActiveOffice(userOffices[0]);
+      return;
+    }
+    if (userOffices.length > 1 && !activeOffice) {
+      setPickerOffices(userOffices);
+      setOfficePicker(true);
+    }
+  }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const ROLE_RANK   = { viewer: 0, occ_bk: 1, trade_manager: 1, operator: 2, admin: 3 };
+  const ROLE_LABELS = { admin: "Admin", operator: "Operator", occ_bk: "OCC Booking", trade_manager: "Trade Manager", viewer: "Viewer" };
   const primaryRole    = (roles) => [...(roles || [])].sort((a, b) => ROLE_RANK[b] - ROLE_RANK[a])[0] || 'viewer';
   const availableRoles = (roles) =>
     Object.keys(ROLE_RANK)
@@ -1648,14 +1736,26 @@ function App() {
 
   const handleLogin  = (token, userData) => {
     localStorage.setItem(TOKEN_KEY, token);
+    // Only clear office selection if user hasn't opted to remember it
+    if (localStorage.getItem(OFFICE_REMEMBER_KEY) !== "1") {
+      localStorage.removeItem(ACTIVE_OFFICE_KEY);
+      localStorage.removeItem(OFFICE_DATA_KEY);
+      setActiveOfficeState(null);
+    }
     setUser(userData);
     setActiveRole(null);
   };
   const handleLogout = () => {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(ACTIVE_ROLE_KEY);
+    localStorage.removeItem(ACTIVE_OFFICE_KEY);
+    localStorage.removeItem(OFFICE_DATA_KEY);
+    localStorage.removeItem(OFFICE_REMEMBER_KEY);
+    setRememberOffice(false);
     setUser(null);
     setActiveRole(null);
+    setActiveOfficeState(null);
+    setPickerOffices([]);
   };
 
   // Load all data + settings — only after user is authenticated
@@ -1726,8 +1826,10 @@ function App() {
 
   // kanban is top-level, not MDM
   const MDM_PAGES = ["mdm-carriers", "mdm-ports", "mdm-linked", "mdm-vessels", "mdm-commodities", "mdm-tradelanes", "mdm-countries", "mdm-unlocodes", "mdm-customers", "mdm-sanctioned-customers", "mdm-contracts"];
-  const ALL_PAGES = [...MDM_PAGES, "manual"];
+  const ORG_PAGES = ["org-country", "org-branch", "org-office"];
+  const ALL_PAGES = [...MDM_PAGES, ...ORG_PAGES, "manual"];
   const isMdmActive = MDM_PAGES.includes(page);
+  const isOrgActive = ORG_PAGES.includes(page);
 
   if (page === "track") return <TrackingPage token={selectedId} />;
 
@@ -1798,6 +1900,9 @@ function App() {
     "mdm-customers":              "Master Data — Customers",
     "mdm-sanctioned-customers":  "Master Data — Sanctioned Customers",
     "mdm-contracts":    "Master Data — Contracts",
+    "org-country":      "Organization — Countries",
+    "org-branch":       "Organization — Branches",
+    "org-office":       "Organization — Offices",
     schedules:          "Schedule Search",
     manual:             "User Manual",
   };
@@ -2116,6 +2221,24 @@ function App() {
             🏠
           </button>
 
+          {/* Office switcher — shown when user has multiple offices or allOffices */}
+          {(userOffices.length > 1 || userAllOffices) && (
+            <button type="button"
+              onClick={() => setOfficePicker(true)}
+              title={activeOffice ? `Active office: ${activeOffice.code}` : "Select office"}
+              style={{
+                padding: "3px 10px", borderRadius: 20, cursor: "pointer",
+                border: `1px solid ${activeOffice ? T.accent + "66" : T.border}`,
+                background: activeOffice ? T.accent + "18" : "transparent",
+                fontFamily: T.mono, fontSize: 11, fontWeight: 700,
+                color: activeOffice ? T.accent : T.textMuted,
+                display: "flex", alignItems: "center", gap: 4,
+              }}>
+              <span style={{ fontSize: 12 }}>🏢</span>
+              {activeOffice ? activeOffice.code : (userAllOffices ? "Global" : "No office")}
+            </button>
+          )}
+
           {/* Role selector — inline dropdown in nav; amber when overriding primary */}
           {availableRoles(userRoles).length > 1 && (() => {
             const isSwitched = activeRole !== null;
@@ -2209,7 +2332,7 @@ function App() {
 
                 <Divider />
 
-                <MenuItem icon="⚙" label="Application Settings" onClick={() => navigate("settings")} />
+                {!authCtxValue.isTradeManager && <MenuItem icon="⚙" label="Application Settings" onClick={() => navigate("settings")} />}
 
                 <Divider />
 
@@ -2226,13 +2349,19 @@ function App() {
   const effectiveRole  = activeRole || userPrimaryRole;
   const authCtxValue = {
     user,
-    activeRole:       effectiveRole,
-    activeRoles:      effectiveRoles,
-    canEdit:          effectiveRoles.some(r => r !== 'viewer'),
-    canManageConfigs: effectiveRoles.some(r => ['admin', 'operator'].includes(r)),
-    isAdmin:          effectiveRoles.includes('admin'),
-    isViewer:         effectiveRoles.every(r => r === 'viewer'),
-    isOccBk:          effectiveRoles.includes('occ_bk'),
+    activeRole:         effectiveRole,
+    activeRoles:        effectiveRoles,
+    canEdit:            effectiveRoles.some(r => r !== 'viewer'),
+    canEditShipments:   effectiveRoles.some(r => ['admin', 'operator', 'occ_bk'].includes(r)),
+    canManageConfigs:   effectiveRoles.some(r => ['admin', 'operator', 'trade_manager'].includes(r)),
+    isAdmin:            effectiveRoles.includes('admin'),
+    isViewer:           effectiveRoles.every(r => r === 'viewer'),
+    isOccBk:            effectiveRoles.includes('occ_bk'),
+    isTradeManager:     effectiveRoles.includes('trade_manager'),
+    activeOffice,
+    userOffices,
+    allOffices:         userAllOffices,
+    setActiveOffice,
   };
 
   return (
@@ -2306,19 +2435,19 @@ function App() {
                 style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
                   width: "100%", padding: "6px 12px", background: "none", border: "none", cursor: "pointer",
                   marginBottom: 2 }}>
-                <span style={{ fontFamily: T.mono, fontSize: 9.5, color: isMdmActive ? T.accent : T.border,
+                <span style={{ fontFamily: T.mono, fontSize: 9.5, color: isMdmActive ? T.accent : T.textMuted,
                   fontWeight: 700, textTransform: "uppercase", letterSpacing: ".12em" }}>
                   Master Data
                 </span>
-                <span style={{ fontFamily: T.mono, fontSize: 10, color: T.border, transition: "transform .2s",
+                <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted, transition: "transform .2s",
                   display: "inline-block", transform: mdmOpen ? "rotate(90deg)" : "rotate(0deg)" }}>▶</span>
               </button>
 
               {mdmOpen && (
                 <div>
-                  {/* Directory */}
-                  <div style={{ fontFamily: T.mono, fontSize: 9, color: T.border, fontWeight: 700,
-                    textTransform: "uppercase", letterSpacing: ".1em", padding: "5px 12px 3px 28px" }}>Directory</div>
+                  {/* Sea Freight */}
+                  <div style={{ fontFamily: T.mono, fontSize: 9, color: T.textMuted, fontWeight: 700,
+                    textTransform: "uppercase", letterSpacing: ".1em", padding: "5px 12px 3px 28px" }}>Sea Freight</div>
                   <NavBtn pageKey="mdm-customers"            icon="👥" label="Customers"            indent />
                   <NavBtn pageKey="mdm-sanctioned-customers" icon="🔴" label="Sanctioned Customers" subIndent />
                   <NavBtn pageKey="mdm-contracts"   icon="📋" label="Contracts"       indent />
@@ -2329,11 +2458,33 @@ function App() {
                   <NavBtn pageKey="mdm-linked"   icon="🔗" label="Linked Ports"   indent />
 
                   {/* Locations sub-section */}
-                  <div style={{ fontFamily: T.mono, fontSize: 9, color: T.border, fontWeight: 700,
+                  <div style={{ fontFamily: T.mono, fontSize: 9, color: T.textMuted, fontWeight: 700,
                     textTransform: "uppercase", letterSpacing: ".1em", padding: "10px 12px 3px 28px" }}>Locations</div>
                   <NavBtn pageKey="mdm-tradelanes" icon="🌊" label="Trade Lanes"         indent />
                   <NavBtn pageKey="mdm-countries" icon="🏳" label="Countries"          indent />
                   <NavBtn pageKey="mdm-unlocodes" icon="🔢" label="UN Location Codes"  indent />
+                </div>
+              )}
+            </div>
+
+            {/* Organization section */}
+            <div style={{ marginTop: 10 }}>
+              <button onClick={() => setOrgOpen(o => !o)}
+                style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+                  width: "100%", padding: "6px 12px", background: "none", border: "none", cursor: "pointer",
+                  marginBottom: 2 }}>
+                <span style={{ fontFamily: T.mono, fontSize: 9.5, color: isOrgActive ? T.accent : T.textMuted,
+                  fontWeight: 700, textTransform: "uppercase", letterSpacing: ".12em" }}>
+                  Organization
+                </span>
+                <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted, transition: "transform .2s",
+                  display: "inline-block", transform: orgOpen ? "rotate(90deg)" : "rotate(0deg)" }}>▶</span>
+              </button>
+              {orgOpen && (
+                <div>
+                  <NavBtn pageKey="org-country" icon="🌍" label="Country"  indent />
+                  <NavBtn pageKey="org-branch"  icon="🏛️" label="Branch"   indent />
+                  <NavBtn pageKey="org-office"  icon="🏢" label="Office"   indent />
                 </div>
               )}
             </div>
@@ -2378,6 +2529,7 @@ function App() {
             allocations={allocations}
             navigate={navigate}
             onNewShipment={() => navigate("shipment-new")}
+            isDark={isDark}
           />
         )}
 
@@ -2395,7 +2547,8 @@ function App() {
                 toast.success("Shipment deleted");
               } catch (e) { toast.error(e.message); }
             }}
-            onNew={() => navigate("shipment-new")} />
+            onNew={() => navigate("shipment-new")}
+            onRefresh={() => api.shipments.list().then(setShipments).catch(() => {})} />
         )}
 
         {page === "shipment-new" && (
@@ -2459,6 +2612,10 @@ function App() {
             detailAction={detailAction} onDetailActionConsumed={() => setDetailAction(null)}
             onBack={() => navigate("shipments")}
             onEdit={() => navigate("shipment-edit", selectedShipment.id)}
+            onRefresh={async () => {
+              const fresh = await api.shipments.get(selectedShipment.id);
+              setShipments(p => p.map(s => s.id === fresh.id ? { ...s, ...fresh } : s));
+            }}
             onUpdate={async (id, form) => {
               try {
                 const updated = await api.shipments.update(id, form);
@@ -2574,6 +2731,9 @@ function App() {
         {page === "mdm-customers"              && isEnabled("mdm-customers")             && <MdmCustomersPage />}
         {page === "mdm-sanctioned-customers"   && isEnabled("mdm-sanctioned-customers")  && <MdmSanctionedCustomersPage />}
         {page === "mdm-contracts"  && isEnabled("mdm-contracts")  && <MdmContractsPage />}
+        {page === "org-country"    && <CountryPage />}
+        {page === "org-branch"     && <BranchPage />}
+        {page === "org-office"     && <OfficePage />}
         {page === "schedules"      && <SchedulesPage />}
         {page === "manual"         && <UserManualPage />}
         {page === "about"          && <AboutPage />}
@@ -2675,7 +2835,7 @@ function App() {
       {docsOpen && selectedShipment && (
         <DocumentsModal
           shipment={selectedShipment}
-          canEdit={authCtxValue.canEdit}
+          canEdit={authCtxValue.canEditShipments}
           onClose={() => setDocsOpen(false)}
         />
       )}
@@ -2751,6 +2911,87 @@ function App() {
           }}
           onCancel={() => { setFormCtrModal(null); setFormCtrListOpen(true); }}
         />
+      )}
+
+      {/* ── Office Picker Modal ─────────────────────────────────────────────── */}
+      {officePicker && (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 9000,
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <div style={{
+            background: T.surface, borderRadius: 16, border: `1px solid ${T.border}`,
+            padding: "32px 36px", maxWidth: 520, width: "90%", boxShadow: "0 20px 60px rgba(0,0,0,.3)",
+          }}>
+            <div style={{ fontFamily: T.head, fontSize: 20, fontWeight: 800, color: T.text, marginBottom: 6 }}>
+              Select Office
+            </div>
+            <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, marginBottom: 24 }}>
+              Choose the office you are logging in as. You can switch later from the header.
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {userAllOffices && (
+                <button type="button" onClick={() => { setActiveOffice(null); setOfficePicker(false); }}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 12, padding: "14px 18px",
+                    background: !activeOffice ? T.accent + "18" : T.bg,
+                    border: `1.5px solid ${!activeOffice ? T.accent : T.border}`,
+                    borderRadius: 10, cursor: "pointer", textAlign: "left", width: "100%",
+                  }}>
+                  <div style={{ fontSize: 22 }}>🌐</div>
+                  <div>
+                    <div style={{ fontFamily: T.head, fontSize: 13, fontWeight: 700, color: T.text }}>Global Access</div>
+                    <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>View all offices — no filter applied</div>
+                  </div>
+                </button>
+              )}
+              {pickerOffices.map(office => (
+                <button key={office.id} type="button"
+                  onClick={() => { setActiveOffice(office); setOfficePicker(false); }}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 12, padding: "14px 18px",
+                    background: activeOffice?.id === office.id ? T.accent + "18" : T.bg,
+                    border: `1.5px solid ${activeOffice?.id === office.id ? T.accent : T.border}`,
+                    borderRadius: 10, cursor: "pointer", textAlign: "left", width: "100%",
+                  }}>
+                  <div style={{ fontSize: 22 }}>{office.department === 'SE' ? '🚢' : '📦'}</div>
+                  <div>
+                    <div style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.text }}>
+                      {office.code}
+                      {office.isDefault && <span style={{ marginLeft: 8, fontFamily: T.body, fontSize: 10,
+                        color: T.accent, background: T.accent + "18", borderRadius: 4, padding: "1px 6px" }}>default</span>}
+                    </div>
+                    <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{office.name}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+            {/* Remember checkbox */}
+            <label style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 18,
+              cursor: "pointer", fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
+              <input type="checkbox" checked={rememberOffice}
+                onChange={e => {
+                  const val = e.target.checked;
+                  setRememberOffice(val);
+                  if (val) localStorage.setItem(OFFICE_REMEMBER_KEY, "1");
+                  else localStorage.removeItem(OFFICE_REMEMBER_KEY);
+                }}
+                style={{ accentColor: T.accent }} />
+              Remember my office selection until I switch or log out
+            </label>
+            {(activeOffice || userAllOffices) && (
+              <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end" }}>
+                <button type="button" onClick={() => setOfficePicker(false)}
+                  style={{
+                    fontFamily: T.body, fontSize: 13, fontWeight: 600, color: T.textMuted,
+                    background: "none", border: "none", cursor: "pointer", padding: "6px 12px",
+                  }}>
+                  Cancel
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
       )}
 
       <ToastContainer />

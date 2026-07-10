@@ -5,10 +5,16 @@ export const AuthContext = createContext({
   activeRole:       "viewer",
   activeRoles:      ["viewer"],
   canEdit:          false,
+  canEditShipments: false,
   canManageConfigs: false,
   isAdmin:          false,
   isViewer:         true,
   isOccBk:          false,
+  isTradeManager:   false,
+  activeOffice:     null,
+  userOffices:      [],
+  allOffices:       false,
+  setActiveOffice:  () => {},
 });
 
 export const useAuth = () => useContext(AuthContext);

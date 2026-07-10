@@ -1,12 +1,15 @@
 "use strict";
 
 module.exports = function shipmentsRoutes(app, ctx) {
-  const { db, ok, err, uid, auth,
+  const { db, ok, err, uid, auth, requireRole,
           mapShipment, mapShipmentLeg, mapContainer, mapAllocation,
           applyShipmentAccessFilter, syncShipmentFromLegs, importContractRates,
           broadcastMessage, recomputeSpaceBadge, screenShipmentById,
           logEvent, TRACKED_FIELDS, TRACKED_CTR_FIELDS,
           sanctionsMap } = ctx;
+
+  // trade_manager and viewer are read-only on all shipment write operations
+  const shipmentWrite = requireRole(["admin", "operator", "occ_bk"]);
 
   const LEG_TO_MOT = { 'SEA': 'SEA', 'AIR': 'AIR', 'RAIL': 'RAIL', 'Pick-up': 'ROAD', 'Delivery': 'ROAD', 'Feeder': 'SEA' };
 
@@ -31,12 +34,18 @@ module.exports = function shipmentsRoutes(app, ctx) {
       SELECT s.*,
              p1.name AS pol_name,
              p2.name AS pod_name,
+             emo.code AS emo_office_code, emo.name AS emo_office_name,
+             imo.code AS imo_office_code, imo.name AS imo_office_name,
+             ctrl.code AS controlling_office_code, ctrl.name AS controlling_office_name,
              COALESCE(buy.total, 0)  AS margin_buy_usd,
              COALESCE(sell.total, 0) AS margin_sell_usd,
              COALESCE(ms.overdue_count, 0) AS overdue_count
       FROM shipments s
       LEFT JOIN port_locations p1 ON p1.unlocode = s.pol
       LEFT JOIN port_locations p2 ON p2.unlocode = s.pod
+      LEFT JOIN offices emo  ON emo.id  = s.emo_office_id
+      LEFT JOIN offices imo  ON imo.id  = s.imo_office_id
+      LEFT JOIN offices ctrl ON ctrl.id = s.controlling_office_id
       LEFT JOIN (SELECT shipment_id, SUM(amount * exchange_rate) AS total
                  FROM shipment_cost_lines WHERE type='BUY' GROUP BY shipment_id) buy
              ON buy.shipment_id = s.id
@@ -77,10 +86,16 @@ module.exports = function shipmentsRoutes(app, ctx) {
 
   app.get("/api/shipments/:id", (req, res) => {
     const row = db.prepare(`
-      SELECT s.*, p1.name AS pol_name, p2.name AS pod_name
+      SELECT s.*, p1.name AS pol_name, p2.name AS pod_name,
+             emo.code AS emo_office_code, emo.name AS emo_office_name,
+             imo.code AS imo_office_code, imo.name AS imo_office_name,
+             ctrl.code AS controlling_office_code, ctrl.name AS controlling_office_name
       FROM shipments s
       LEFT JOIN port_locations p1 ON p1.unlocode = s.pol
       LEFT JOIN port_locations p2 ON p2.unlocode = s.pod
+      LEFT JOIN offices emo  ON emo.id  = s.emo_office_id
+      LEFT JOIN offices imo  ON imo.id  = s.imo_office_id
+      LEFT JOIN offices ctrl ON ctrl.id = s.controlling_office_id
       WHERE s.id = ?
     `).get(req.params.id);
     if (!row) return err(res, "Not found", 404);
@@ -113,7 +128,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     })));
   });
 
-  app.post("/api/shipments", (req, res) => {
+  app.post("/api/shipments", shipmentWrite, (req, res) => {
     const { pol, pod, carrierCode, contractType, contractNotes = "", status = "Active",
             etd = "", eta = "", bookingRef = "", blNumber = "", vessel = "", voyage = "",
             incoterm = "", vesselImo = "", contractId = "", contractRef = "", commodityCode = "",
@@ -123,13 +138,14 @@ module.exports = function shipmentsRoutes(app, ctx) {
             freightTerms = "Prepaid", movementType = "FCL", serviceType = "Port-to-Port",
             placeOfReceipt = "", placeOfDelivery = "", cargoReadyDate = null,
             notifyId = "", notifyName = "",
-            declaredValue = null, declaredValueCurrency = "USD" } = req.body;
+            declaredValue = null, declaredValueCurrency = "USD",
+            emoOfficeId = null, imoOfficeId = null, controllingOfficeId = null } = req.body;
     if (!pol || !pod || !carrierCode || !contractType) return err(res, "pol, pod, carrierCode, contractType required");
     const id = `SHP-${uid()}`;
     const polU = pol.toUpperCase(), podU = pod.toUpperCase();
     const createdAt = new Date().toISOString();
-    db.prepare("INSERT INTO shipments (id,pol,pod,carrier_code,contract_type,contract_notes,status,created_at,etd,eta,booking_ref,bl_number,vessel,voyage,incoterm,vessel_imo,contract_id,contract_ref,commodity_code,shipper_id,shipper_name,consignee_id,consignee_name,principal_id,principal_name,allocation_id,space_skip_reason,space_overage_reason,freight_terms,movement_type,service_type,place_of_receipt,place_of_delivery,cargo_ready_date,notify_id,notify_name,declared_value,declared_value_currency) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-      .run(id, polU, podU, carrierCode, contractType, contractNotes, status, createdAt, etd, eta, bookingRef, blNumber, vessel, voyage, incoterm, vesselImo, contractId, contractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, allocationId, spaceSkipReason, spaceOverageReason, freightTerms, movementType, serviceType, placeOfReceipt, placeOfDelivery, cargoReadyDate || null, notifyId, notifyName, (declaredValue !== null && declaredValue !== undefined && String(declaredValue).trim() !== '') ? Number(declaredValue) : null, declaredValueCurrency || "USD");
+    db.prepare("INSERT INTO shipments (id,pol,pod,carrier_code,contract_type,contract_notes,status,created_at,etd,eta,booking_ref,bl_number,vessel,voyage,incoterm,vessel_imo,contract_id,contract_ref,commodity_code,shipper_id,shipper_name,consignee_id,consignee_name,principal_id,principal_name,allocation_id,space_skip_reason,space_overage_reason,freight_terms,movement_type,service_type,place_of_receipt,place_of_delivery,cargo_ready_date,notify_id,notify_name,declared_value,declared_value_currency,emo_office_id,imo_office_id,controlling_office_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+      .run(id, polU, podU, carrierCode, contractType, contractNotes, status, createdAt, etd, eta, bookingRef, blNumber, vessel, voyage, incoterm, vesselImo, contractId, contractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, allocationId, spaceSkipReason, spaceOverageReason, freightTerms, movementType, serviceType, placeOfReceipt, placeOfDelivery, cargoReadyDate || null, notifyId, notifyName, (declaredValue !== null && declaredValue !== undefined && String(declaredValue).trim() !== '') ? Number(declaredValue) : null, declaredValueCurrency || "USD", emoOfficeId || null, imoOfficeId || null, controllingOfficeId || null);
     logEvent(id, 'SHIPMENT_CREATED', null, null, null,
       JSON.stringify({ pol: polU, pod: podU, carrier: carrierCode, status, etd, contractType }));
     if (contractType === 'Central' && contractId) importContractRates(id);
@@ -138,7 +154,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     ok(res, silentScreening ? { ...base, screening: silentScreening } : base, 201);
   });
 
-  app.put("/api/shipments/:id", (req, res) => {
+  app.put("/api/shipments/:id", shipmentWrite, (req, res) => {
     const { pol, pod, carrierCode, contractType, contractNotes = "", status,
             etd = "", eta = "", bookingRef = "", blNumber = "", vessel = "", voyage = "",
             incoterm = "", vesselImo = "", contractId = "", contractRef = "", commodityCode = "",
@@ -148,7 +164,8 @@ module.exports = function shipmentsRoutes(app, ctx) {
             freightTerms = "Prepaid", movementType = "FCL", serviceType = "Port-to-Port",
             placeOfReceipt = "", placeOfDelivery = "", cargoReadyDate = null,
             notifyId = "", notifyName = "",
-            declaredValue = null, declaredValueCurrency = "USD" } = req.body;
+            declaredValue = null, declaredValueCurrency = "USD",
+            emoOfficeId = null, imoOfficeId = null, controllingOfficeId = null } = req.body;
     const polU = pol.toUpperCase(), podU = pod.toUpperCase();
     const existing = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
     if (!existing) return err(res, "Not found", 404);
@@ -159,8 +176,9 @@ module.exports = function shipmentsRoutes(app, ctx) {
       allocation_id=?, space_skip_reason=?, space_overage_reason=?,
       freight_terms=?, movement_type=?, service_type=?, place_of_receipt=?, place_of_delivery=?,
       cargo_ready_date=?, notify_id=?, notify_name=?,
-      declared_value=?, declared_value_currency=? WHERE id=?
-    `).run(polU, podU, carrierCode, contractType, contractNotes, status, etd, eta, bookingRef, blNumber, vessel, voyage, incoterm, vesselImo, contractId, contractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, allocationId, spaceSkipReason, spaceOverageReason, freightTerms, movementType, serviceType, placeOfReceipt, placeOfDelivery, cargoReadyDate || null, notifyId, notifyName, (declaredValue !== null && declaredValue !== undefined && String(declaredValue).trim() !== '') ? Number(declaredValue) : null, declaredValueCurrency || "USD", req.params.id);
+      declared_value=?, declared_value_currency=?,
+      emo_office_id=?, imo_office_id=?, controlling_office_id=? WHERE id=?
+    `).run(polU, podU, carrierCode, contractType, contractNotes, status, etd, eta, bookingRef, blNumber, vessel, voyage, incoterm, vesselImo, contractId, contractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, allocationId, spaceSkipReason, spaceOverageReason, freightTerms, movementType, serviceType, placeOfReceipt, placeOfDelivery, cargoReadyDate || null, notifyId, notifyName, (declaredValue !== null && declaredValue !== undefined && String(declaredValue).trim() !== '') ? Number(declaredValue) : null, declaredValueCurrency || "USD", emoOfficeId || null, imoOfficeId || null, controllingOfficeId || null, req.params.id);
     if (info.changes === 0) return err(res, "Not found", 404);
     const newVals = { pol: polU, pod: podU, status, etd, eta, carrier_code: carrierCode,
       vessel, vessel_imo: vesselImo, voyage, incoterm, commodity_code: commodityCode,
@@ -186,10 +204,16 @@ module.exports = function shipmentsRoutes(app, ctx) {
         .run(`SL-${uid()}`, req.params.id, existing.status, status, new Date().toISOString(), "user");
     }
     const updated = db.prepare(`
-      SELECT s.*, p1.name AS pol_name, p2.name AS pod_name
+      SELECT s.*, p1.name AS pol_name, p2.name AS pod_name,
+             emo.code AS emo_office_code, emo.name AS emo_office_name,
+             imo.code AS imo_office_code, imo.name AS imo_office_name,
+             ctrl.code AS controlling_office_code, ctrl.name AS controlling_office_name
       FROM shipments s
       LEFT JOIN port_locations p1 ON p1.unlocode = s.pol
       LEFT JOIN port_locations p2 ON p2.unlocode = s.pod
+      LEFT JOIN offices emo  ON emo.id  = s.emo_office_id
+      LEFT JOIN offices imo  ON imo.id  = s.imo_office_id
+      LEFT JOIN offices ctrl ON ctrl.id = s.controlling_office_id
       WHERE s.id = ?
     `).get(req.params.id);
     let silentScreening = null;
@@ -207,7 +231,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     ok(res, silentScreening ? { ...mapShipment(updated), screening: silentScreening } : mapShipment(updated));
   });
 
-  app.delete("/api/shipments/:id", (req, res) => {
+  app.delete("/api/shipments/:id", shipmentWrite, (req, res) => {
     const info = db.prepare("DELETE FROM shipments WHERE id=?").run(req.params.id);
     if (info.changes === 0) return err(res, "Not found", 404);
     ok(res, { deleted: req.params.id });
@@ -222,7 +246,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     ok(res, rows.map(mapContainer));
   });
 
-  app.post("/api/containers", (req, res) => {
+  app.post("/api/containers", shipmentWrite, (req, res) => {
     const { shipmentId, containerNumber = "", sealNumber = "", size, type,
             hsCode = "", cargoDescription = "", grossWeightKg = null, volumeCbm = null, isDg = false, dgClass = "" } = req.body;
     if (!shipmentId || !size || !type) return err(res, "shipmentId, size, type required");
@@ -239,7 +263,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     ok(res, addedCtr, 201);
   });
 
-  app.put("/api/containers/:id", (req, res) => {
+  app.put("/api/containers/:id", shipmentWrite, (req, res) => {
     const { containerNumber = "", sealNumber = "", size, type,
             hsCode = "", cargoDescription = "", grossWeightKg = null, volumeCbm = null, isDg = false, dgClass = "" } = req.body;
     const cnU    = containerNumber.toUpperCase();
@@ -265,7 +289,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     ok(res, mapContainer(row));
   });
 
-  app.delete("/api/containers/:id", (req, res) => {
+  app.delete("/api/containers/:id", shipmentWrite, (req, res) => {
     const ctr = db.prepare("SELECT * FROM containers WHERE id=?").get(req.params.id);
     if (!ctr) return err(res, "Not found", 404);
     db.prepare("DELETE FROM containers WHERE id=?").run(req.params.id);
@@ -305,7 +329,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     ok(res, rows.map(ctx.mapShipmentLeg));
   });
 
-  app.post("/api/shipments/:id/legs", auth(), (req, res) => {
+  app.post("/api/shipments/:id/legs", shipmentWrite, (req, res) => {
     const { legType='SEA', movementType='SEA', movementBy='',
             mot: rawMot, pol='', pod='', etd=null, eta=null, carrierCode='',
             polLocType='Terminal', podLocType='Terminal',
@@ -325,7 +349,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     ok(res, ctx.mapShipmentLeg(db.prepare("SELECT * FROM shipment_legs WHERE id=?").get(id)), 201);
   });
 
-  app.put("/api/shipments/:id/legs/:legId", auth(), (req, res) => {
+  app.put("/api/shipments/:id/legs/:legId", shipmentWrite, (req, res) => {
     const { legType='SEA', movementType='SEA', movementBy='',
             mot: rawMot, pol='', pod='', etd=null, eta=null, carrierCode='',
             polLocType='Terminal', podLocType='Terminal',
@@ -342,7 +366,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     ok(res, ctx.mapShipmentLeg(db.prepare("SELECT * FROM shipment_legs WHERE id=?").get(req.params.legId)));
   });
 
-  app.delete("/api/shipments/:id/legs/:legId", auth(), (req, res) => {
+  app.delete("/api/shipments/:id/legs/:legId", shipmentWrite, (req, res) => {
     const info = db.prepare("DELETE FROM shipment_legs WHERE id=? AND shipment_id=?").run(req.params.legId, req.params.id);
     if (info.changes === 0) return err(res, "Not found", 404);
     syncShipmentFromLegs(req.params.id);

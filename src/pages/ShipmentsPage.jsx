@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { T, STATUSES, statusVariant, contractVariant, teuOf } from "../tokens";
 import { useAuth } from "../AuthContext";
 import { api } from "../api";
@@ -11,12 +11,58 @@ import { useResizableColumns, ColResizer } from "../components/primitives/useRes
 import ActionMenu from "../components/primitives/ActionMenu";
 import EntityHistoryModal from "../components/shared/EntityHistoryModal";
 
-const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, onNew, financeEnabled = true }) => {
-  const { canEdit } = useAuth();
+const SORT_OPTIONS = [
+  { value: "",         label: "Default order" },
+  { value: "etd_asc",  label: "ETD ↑ earliest" },
+  { value: "etd_desc", label: "ETD ↓ latest" },
+  { value: "eta_asc",  label: "ETA ↑ earliest" },
+  { value: "teu_desc", label: "TEU ↓ largest" },
+  { value: "status",   label: "Status A–Z" },
+];
+
+const STATUS_CHIPS = ["Active", "Pending", "Requires Review", "Completed", "Cancelled"];
+
+const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, onNew, onRefresh, financeEnabled = true }) => {
+  const { canEditShipments: canEdit } = useAuth();
   const [confirm,         setConfirm]         = useState(null);
   const [historyShipment, setHistoryShipment] = useState(null);
-  const [filters,         setFilters]         = useState({ search: '', status: '', carrier: '' });
+  const [filters,         setFilters]         = useState(() => {
+    try {
+      const pending = sessionStorage.getItem("cc_filter");
+      if (pending) { sessionStorage.removeItem("cc_filter"); return { search: '', carrier: '', ...JSON.parse(pending) }; }
+    } catch { /* ignore */ }
+    return { search: '', status: '', carrier: '' };
+  });
+  const [sort,            setSort]            = useState("");
   const [exporting,       setExporting]       = useState(false);
+  const [staleCount,      setStaleCount]      = useState(0);
+  const [refreshing,      setRefreshing]      = useState(false);
+  const knownIdsRef = useRef(new Set(shipments.map(s => s.id)));
+
+  // Sync known IDs when parent pushes a fresh list (after manual refresh or other updates)
+  useEffect(() => {
+    knownIdsRef.current = new Set(shipments.map(s => s.id));
+    setStaleCount(0);
+  }, [shipments]);
+
+  // Poll every 90 s for new shipments the parent hasn't loaded yet
+  useEffect(() => {
+    if (!onRefresh) return;
+    const id = setInterval(async () => {
+      try {
+        const fresh = await api.shipments.list();
+        const newIds = fresh.filter(s => !knownIdsRef.current.has(s.id));
+        if (newIds.length > 0) setStaleCount(newIds.length);
+      } catch { /* silent */ }
+    }, 90_000);
+    return () => clearInterval(id);
+  }, [onRefresh]);
+
+  const handleRefresh = async () => {
+    if (!onRefresh || refreshing) return;
+    setRefreshing(true);
+    try { await onRefresh(); } finally { setRefreshing(false); }
+  };
 
   const handleExportCSV = async () => {
     setExporting(true);
@@ -29,8 +75,14 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
   const { template: shipTemplate, startResize: shipStartResize } = useResizableColumns("shipments", [140,70,70,80,100,150,165,46,60,80,90]);
   const shipHeaders = ["Shipment ID","POL","POD","Routing Term","Trade Lane","Carrier","Contract","TEU","Status","Margin","Actions"];
 
+  const today = new Date().toISOString().slice(0, 10);
   const filtered = shipments.filter(s => {
-    if (filters.status  && s.status      !== filters.status)  return false;
+    if (filters.status === "_overdue") {
+      if (!s.etd || s.etd >= today) return false;
+      if (s.status === "Completed" || s.status === "Cancelled") return false;
+    } else if (filters.status) {
+      if (s.status !== filters.status) return false;
+    }
     if (filters.carrier && s.carrierCode !== filters.carrier) return false;
     if (filters.search) {
       const q = filters.search.toLowerCase();
@@ -45,17 +97,51 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
 
   const hasFilters = !!(filters.search || filters.status || filters.carrier);
 
+  const teuFor2 = s => containers.filter(c => c.shipmentId === s.id).reduce((n, c) => n + teuOf(c.size), 0);
+  const displayed = sort === "etd_asc"  ? [...filtered].sort((a,b) => (a.etd||"9").localeCompare(b.etd||"9"))
+                  : sort === "etd_desc" ? [...filtered].sort((a,b) => (b.etd||"0").localeCompare(a.etd||"0"))
+                  : sort === "eta_asc"  ? [...filtered].sort((a,b) => (a.eta||"9").localeCompare(b.eta||"9"))
+                  : sort === "teu_desc" ? [...filtered].sort((a,b) => teuFor2(b) - teuFor2(a))
+                  : sort === "status"   ? [...filtered].sort((a,b) => (a.status||"").localeCompare(b.status||""))
+                  : filtered;
+
   return (
     <div>
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 16 }}>
         <div>
           <h1 style={{ fontFamily: T.head, fontSize: 26, fontWeight: 800, color: T.text, margin: 0 }}>Shipments</h1>
           <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, margin: "4px 0 0" }}>
-            {hasFilters ? `${filtered.length} of ${shipments.length}` : shipments.length} total
+            {hasFilters ? `${displayed.length} of ${shipments.length}` : shipments.length} total
             · {shipments.filter(s => s.status === "Active").length} active
           </p>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {/* Refresh button — badge lights up when poll detects new shipments */}
+          <div style={{ position: "relative" }}>
+            <button
+              onClick={handleRefresh}
+              disabled={refreshing}
+              title={staleCount > 0 ? `${staleCount} new shipment${staleCount > 1 ? "s" : ""} available` : "Refresh shipments"}
+              style={{ background: "none", border: `1px solid ${staleCount > 0 ? T.accent : T.border}`,
+                borderRadius: 6, padding: "5px 9px", cursor: refreshing ? "wait" : "pointer",
+                fontFamily: T.mono, fontSize: 14, color: staleCount > 0 ? T.accent : T.textMuted,
+                lineHeight: 1, display: "flex", alignItems: "center", gap: 5,
+                transition: "border-color .15s, color .15s" }}
+              onMouseEnter={e => { if (!refreshing) { e.currentTarget.style.borderColor = T.accent; e.currentTarget.style.color = T.accent; }}}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = staleCount > 0 ? T.accent : T.border; e.currentTarget.style.color = staleCount > 0 ? T.accent : T.textMuted; }}>
+              {refreshing ? "↻" : "↻"}
+            </button>
+            {staleCount > 0 && (
+              <span style={{ position: "absolute", top: -6, right: -6,
+                background: T.accent, color: "#fff", borderRadius: "50%",
+                fontSize: 9, fontWeight: 700, fontFamily: T.mono,
+                minWidth: 16, height: 16, display: "flex", alignItems: "center",
+                justifyContent: "center", padding: "0 3px", lineHeight: 1,
+                boxShadow: `0 0 0 2px ${T.bg}` }}>
+                {staleCount}
+              </span>
+            )}
+          </div>
           <Btn onClick={handleExportCSV} size="sm" variant="ghost" disabled={exporting || shipments.length === 0}>
             {exporting ? "Exporting…" : "⬇ CSV"}
           </Btn>
@@ -64,21 +150,13 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
       </div>
 
       {/* Filter bar */}
-      <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
+      <div style={{ display: "flex", gap: 10, marginBottom: 8, flexWrap: "wrap", alignItems: "center" }}>
         <input
           value={filters.search}
           onChange={e => setFilters(f => ({ ...f, search: e.target.value }))}
           placeholder="Search ID, POL, POD, booking ref…"
           style={{ ...inputBase, flex: "1 1 200px", minWidth: 160 }}
         />
-        <select
-          value={filters.status}
-          onChange={e => setFilters(f => ({ ...f, status: e.target.value }))}
-          style={{ ...inputBase, width: 148, cursor: "pointer" }}
-        >
-          <option value="">All statuses</option>
-          {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-        </select>
         <select
           value={filters.carrier}
           onChange={e => setFilters(f => ({ ...f, carrier: e.target.value }))}
@@ -87,15 +165,54 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
           <option value="">All carriers</option>
           {carriers.map(c => <option key={c.code} value={c.code}>{c.code} – {c.name}</option>)}
         </select>
-        {hasFilters && (
+        <select
+          value={sort}
+          onChange={e => setSort(e.target.value)}
+          style={{ ...inputBase, width: 160, cursor: "pointer" }}
+        >
+          {SORT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+        {(hasFilters || sort) && (
           <button
-            onClick={() => setFilters({ search: '', status: '', carrier: '' })}
+            onClick={() => { setFilters({ search: '', status: '', carrier: '' }); setSort(""); }}
             style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 6,
               color: T.textMuted, cursor: "pointer", padding: "6px 12px",
               fontFamily: T.body, fontSize: 12, whiteSpace: "nowrap" }}>
             ✕ Clear
           </button>
         )}
+      </div>
+
+      {/* Quick-status chips */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
+        {["", ...STATUS_CHIPS, "_overdue"].map(s => {
+          const active = filters.status === s;
+          const colors = { Active:"#22c55e", Pending:"#f59e0b", "Requires Review":"#ef4444",
+                           Completed:"#3b82f6", Cancelled:"#64748b", _overdue:"#ef4444" };
+          const label = s === "_overdue" ? "⏰ Overdue" : (s || "All");
+          const col = s ? colors[s] || T.accent : T.textMuted;
+          return (
+            <button key={s || "all"} type="button"
+              onClick={() => setFilters(f => ({ ...f, status: s }))}
+              style={{ padding:"3px 11px", borderRadius:20,
+                border:`1px solid ${active ? col : T.border}`,
+                background: active ? `${col}18` : "none",
+                cursor:"pointer", fontFamily: T.body, fontSize: 11.5,
+                color: active ? col : T.textMuted, fontWeight: active ? 600 : 400,
+                transition:"all .12s", whiteSpace:"nowrap" }}>
+              {label}
+              {s && s !== "_overdue" && (() => {
+                const cnt = shipments.filter(x => x.status === s).length;
+                return cnt > 0 ? (
+                  <span style={{ marginLeft:5, fontFamily: T.mono, fontSize:10,
+                    color: active ? col : T.border }}>
+                    {cnt}
+                  </span>
+                ) : null;
+              })()}
+            </button>
+          );
+        })}
       </div>
 
       {carriers.length === 0 && (
@@ -115,11 +232,11 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
           ))}
         </div>
 
-        {filtered.length === 0 ? (
+        {displayed.length === 0 ? (
           <div style={{ padding: 48, textAlign: "center", color: T.textMuted, fontFamily: T.body, fontSize: 14 }}>
             {hasFilters ? "No shipments match your filters." : "No shipments yet. Create your first one above."}
           </div>
-        ) : filtered.map(s => {
+        ) : displayed.map(s => {
           const carrier = carriers.find(c => c.code === s.carrierCode);
           return (
             <div key={s.id} onDoubleClick={() => window.open(`#shipments/${s.id}`, "_blank")}

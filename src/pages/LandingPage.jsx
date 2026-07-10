@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { T, toIso, addDays } from "../tokens";
 import { api } from "../api";
+import CommandCenterView from "../components/shared/CommandCenterView";
 
 // ─── Quotes ───────────────────────────────────────────────────────────────────
 const QUOTES = [
@@ -46,7 +47,15 @@ const greeting = () => {
 };
 
 // ─── LandingPage ──────────────────────────────────────────────────────────────
-const LandingPage = ({ shipments = [], containers = [], carriers = [], allocations = [], onNewShipment, navigate }) => {
+const LandingPage = ({ shipments = [], containers = [], carriers = [], allocations = [], onNewShipment, navigate, isDark = true }) => {
+  // Command Center toggle — state only; early return is below all hooks
+  const [cmdCenter, setCmdCenter] = useState(() => localStorage.getItem("cc_active") === "1");
+  const toggleCC = () => setCmdCenter(p => {
+    const next = !p;
+    localStorage.setItem("cc_active", next ? "1" : "0");
+    return next;
+  });
+
   // Clock
   const [now, setNow] = useState(new Date());
   useEffect(() => {
@@ -227,18 +236,77 @@ const LandingPage = ({ shipments = [], containers = [], carriers = [], allocatio
     borderRadius: 12, padding: "20px 22px", ...extra,
   });
 
+  // Early return for Command Center — placed after all hooks
+  // Uses position:fixed to escape <main>'s scroll container entirely.
+  // top:46  = app header height
+  // bottom:36 = app footer height (padding 9+9 + ~16px text + 1px border)
+  // left:240  = sidebar width
+  if (cmdCenter) {
+    return (
+      <div style={{
+        position: "fixed", top: 46, bottom: 36, left: 240, right: 0,
+        zIndex: 150,
+      }}>
+        <CommandCenterView
+          shipments={shipments}
+          containers={containers}
+          carriers={carriers}
+          allocations={allocations}
+          isDark={isDark}
+          onExit={toggleCC}
+          onNavigate={(page, filter) => {
+            if (filter) sessionStorage.setItem("cc_filter", JSON.stringify(filter));
+            toggleCC();
+            navigate(page);
+          }}
+        />
+      </div>
+    );
+  }
+
   return (
     <div style={{ maxWidth: 980, margin: "0 auto" }}>
 
       {/* ── Hero greeting ── */}
-      <div style={{ marginBottom: 28 }}>
-        <h1 style={{ fontFamily: T.head, fontSize: 32, fontWeight: 800, color: T.text, margin: "0 0 6px" }}>
-          {greeting()} ⚓
-        </h1>
-        <div style={{ fontFamily: T.body, fontSize: 14, color: T.textMuted, maxWidth: 640, lineHeight: 1.6, fontStyle: "italic" }}>
-          "{quote.text}"
-          <span style={{ fontStyle: "normal", color: T.border, marginLeft: 8 }}>— {quote.author}</span>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 28, gap: 20 }}>
+        <div>
+          <h1 style={{ fontFamily: T.head, fontSize: 32, fontWeight: 800, color: T.text, margin: "0 0 6px" }}>
+            {greeting()} ⚓
+          </h1>
+          <div style={{ fontFamily: T.body, fontSize: 14, color: T.textMuted, maxWidth: 640, lineHeight: 1.6, fontStyle: "italic" }}>
+            "{quote.text}"
+            <span style={{ fontStyle: "normal", color: T.border, marginLeft: 8 }}>— {quote.author}</span>
+          </div>
         </div>
+        <button
+          type="button"
+          onClick={toggleCC}
+          style={{
+            flexShrink: 0,
+            display: "flex", alignItems: "center", gap: 7,
+            padding: "9px 16px",
+            borderRadius: 9,
+            border: "1px solid #f97316",
+            background: "none",
+            color: "#f97316",
+            cursor: "pointer",
+            fontFamily: T.mono,
+            fontSize: 13,
+            fontWeight: 700,
+            letterSpacing: ".04em",
+            boxShadow: "0 0 12px #f9731622",
+            transition: "all .15s",
+          }}
+          onMouseEnter={e => {
+            e.currentTarget.style.background = "#f9731614";
+            e.currentTarget.style.boxShadow  = "0 0 20px #f9731644";
+          }}
+          onMouseLeave={e => {
+            e.currentTarget.style.background = "none";
+            e.currentTarget.style.boxShadow  = "0 0 12px #f9731622";
+          }}>
+          ✦ Command Center
+        </button>
       </div>
 
       {/* ── Top row: clock / weather / quick stats ── */}

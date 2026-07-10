@@ -93,6 +93,9 @@ module.exports = function systemRoutes(app, ctx) {
 
   const MAERSK_CODES = new Set(["MAEU", "SAFM", "MCPU"]);
 
+  // Common TSP hubs used in mock data
+  const MOCK_TSP_HUBS = ["SGSIN", "AEDXB", "GBFXT", "DEHAM", "MAPTM"];
+
   function mockSailings(pol, pod, carrierCode, weeks) {
     const NAMES = ["ALLEGRO","BRAVURA","CADENZA","DULCIMER","ENSEMBLE","FANFARE","GRANDEUR","HARMONY"];
     const today = new Date();
@@ -103,15 +106,34 @@ module.exports = function systemRoutes(app, ctx) {
       const transit = 14 + Math.floor(Math.random() * 22);
       const eta = new Date(etd);
       eta.setDate(eta.getDate() + transit);
+      const etdStr = etd.toISOString().slice(0, 10);
+      const etaStr = eta.toISOString().slice(0, 10);
+
+      // Every 3rd sailing is a TSP (transshipment) sailing with two sea legs
+      const isTSP = (i % 3 === 2);
+      const tspHub = isTSP ? MOCK_TSP_HUBS[i % MOCK_TSP_HUBS.length] : null;
+      const leg1Transit = isTSP ? Math.round(transit * 0.55) : transit;
+      const tspEta     = isTSP ? (() => { const d = new Date(etd); d.setDate(d.getDate() + leg1Transit); return d.toISOString().slice(0, 10); })() : null;
+
+      const legs = isTSP ? [
+        { pol, pod: tspHub, etd: etdStr, eta: tspEta,
+          vesselName: `DEMO ${NAMES[i % NAMES.length]}`,
+          voyageNumber: `DM${String(i + 1).padStart(3, "0")}W`, service: "DEMO SERVICE" },
+        { pol: tspHub, pod, etd: tspEta, eta: etaStr,
+          vesselName: `DEMO ${NAMES[(i + 1) % NAMES.length]}`,
+          voyageNumber: `DM${String(i + 2).padStart(3, "0")}E`, service: "DEMO SERVICE" },
+      ] : null;
+
       return {
         carrier: carrierCode || "—",
         vesselName: `DEMO ${NAMES[i % NAMES.length]}`,
         voyageNumber: `DM${String(i + 1).padStart(3, "0")}W`,
         service: "DEMO SERVICE",
         pol, pod,
-        etd: etd.toISOString().slice(0, 10),
-        eta: eta.toISOString().slice(0, 10),
+        etd: etdStr,
+        eta: etaStr,
         transitDays: transit,
+        legs,          // null for direct, array for TSP
         isMock: true,
       };
     });
@@ -134,16 +156,30 @@ module.exports = function systemRoutes(app, ctx) {
       const data = await r.json();
       const items = Array.isArray(data) ? data : (data.sailings || []);
       return items.map(s => {
-        const svc = (s.services || [])[0] || {};
+        // services[]: one entry per sea leg (direct = 1, TSP = 2+)
+        const services = s.services || [];
+        const first    = services[0] || {};
+        const legs = services.length > 1
+          ? services.map(svc => ({
+              pol:          svc.fromLocation?.unloCode || pol,
+              pod:          svc.toLocation?.unloCode   || pod,
+              etd:          (svc.departureDateTime || "").slice(0, 10),
+              eta:          (svc.arrivalDateTime   || "").slice(0, 10),
+              vesselName:   svc.vesselName   || "—",
+              voyageNumber: svc.voyageNumber || "—",
+              service:      svc.serviceCode  || "—",
+            }))
+          : null;   // null = direct sailing, no TSP
         return {
-          carrier: carrierCode,
-          vesselName: svc.vesselName || "—",
-          voyageNumber: svc.voyageNumber || "—",
-          service: svc.serviceCode || "—",
+          carrier:      carrierCode,
+          vesselName:   first.vesselName   || "—",
+          voyageNumber: first.voyageNumber || "—",
+          service:      first.serviceCode  || "—",
           pol, pod,
-          etd: (s.originDepartureDateTimeLocal || "").slice(0, 10),
-          eta: (s.destinationArrivalDateTimeLocal || "").slice(0, 10),
-          transitDays: s.transitTime || 0,
+          etd:          (s.originDepartureDateTimeLocal      || "").slice(0, 10),
+          eta:          (s.destinationArrivalDateTimeLocal   || "").slice(0, 10),
+          transitDays:  s.transitTime || 0,
+          legs,
           isMock: false,
         };
       });
