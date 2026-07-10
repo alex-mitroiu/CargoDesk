@@ -4,7 +4,7 @@
 Full-stack freight management app. React 18 + Vite frontend, Express + node:sqlite backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.25.0 "Voyage"**
+- Version: **v0.26.0 "Meridian II"**
 - Run: `npm run dev` (runs server on :3001 + Vite on :5173 concurrently)
 - Seed: `npm run seed` (runs `scripts/import-mdm-data.js`)
 
@@ -194,13 +194,11 @@ are fully validated.
 - **Export — XLSX template**: `GET /api/export/dashboard/template` — loads `exports/dashboard-template.xlsx`, overwrites data ranges (WeeklySummary A11:E16, ByCarrier, ByLane), preserves any Excel charts pre-wired to those named ranges; `npm run export:template` regenerates the base file
 - **Export api namespace**: `api.export.shipmentsCSV()`, `api.export.dashboardXlsx()`, `api.export.dashboardTemplate()` — all use direct `fetch` + `blob` → `<a>.click()` pattern (same as documents download)
 
-## Recent changes (v0.25.0 "Voyage")
-- **Shipment schedules**: new `shipment_schedules` table (FK → `shipments`, CASCADE DELETE) — columns: `carrier`, `vessel_name`, `voyage_number`, `service`, `pol`, `pod`, `etd`, `eta`, `transit_days`, `is_mock`, `saved_at`, `saved_by`; migration runs on startup
-- **Schedule routes**: `GET /api/shipments/:id/schedules`, `POST` (save), `DELETE /api/shipments/:id/schedules/:scheduleId` in `routes/shipment-ops.js`; `api.schedules.list/save/remove` in `api.js`
-- **Sailing section in ShipmentForm**: `SailingPickerModal` (shared component) with 2/4/8/12-week window selector; new-shipment mode holds selection in `selectedSailing` state and saves to DB after creation in `App.jsx`; edit mode saves immediately via `api.schedules.save(init.id, sailing)`; mock-data banner when no Maersk key is configured
-- **Apply to SEA leg shortcut**: when `selectedSailing` is set in new mode and a draft SEA leg exists, a button copies `vesselName → vessel`, `voyageNumber → voyage`, `etd` into the first SEA leg via `onDraftLegsChange`
-- **SchedulesPanel in ShipmentDetailPage**: lists saved sailings with vessel, service, voyage, ETD/ETA, transit days, isMock badge, and saved-by; Add Sailing opens shared `SailingPickerModal`; remove via `ConfirmModal`
-- **Related Tickets panel**: `RelatedTicketsPanel` component in `ShipmentDetailPage`; `GET /api/tickets?shipmentId=X` filter added to `routes/kanban.js`; `api.tickets.forShipment(shipmentId)` added to `api.js`; shows status dot, ticket ID, title, assignee, priority
-- **Shared SailingPickerModal**: extracted to `src/components/shared/SailingPickerModal.jsx` with `selectLabel` prop — eliminates ~240 lines of duplication between `ShipmentFormPage` and `ShipmentDetailPage`
-- **Sidebar nav**: `ShipmentDetailSidebar` sections array updated with `{ id: "shp-schedules", icon: "⚓", label: "Schedules" }` and `{ id: "shp-tickets", icon: "◩", label: "Tickets" }`
-- **Health endpoint fix**: `routes/system.js` now uses `require('../package.json').version` instead of hardcoded `"0.22.0"`; `package.json` version synced to `0.25.0`
+## Recent changes (v0.26.0 "Meridian II")
+- **AI Agent**: `routes/ai.js` with `POST /api/ai/chat` (agentic tool-call loop: get_shipment, list_shipments, get_contract, get_allocation; max 3 iterations; OpenAI-compatible) and `GET /api/ai/settings`; gated by `ai_agent_enabled` app_setting; `api.ai.chat/settings` in `api.js`
+- **AI Chat Drawer**: `src/components/shared/AiChatDrawer.jsx` — right-side slide-in panel with user/assistant bubbles, typing indicator animation, Shift+Enter for newline; ✦ nav button in sidebar (only when `ai_agent_enabled=1`); passes active shipment ID as context
+- **AI Agent Settings**: new `AI Agent` subtab in AppSettings → API Controls; `AiAgentSettingsPanel` with provider presets (Anthropic, OpenRouter, Custom), endpoint/model/key/system-prompt fields, Test Connection button
+- **Per-user finance gating**: `can_view_finance INTEGER DEFAULT 0` migration on users; `mapUser` includes `canViewFinance`; PATCH /api/users/:id accepts `canViewFinance`; `financeEnabled` in App.jsx now = `global_toggle AND (isAdmin OR user.canViewFinance)`; Finance column in UserManagementPanel (clickable chip, toggles per-user)
+- **data-testid attributes**: `data-testid="user-avatar-btn"` on header avatar, `data-testid="main-nav"` on sidebar nav, `data-testid="license-modal"` on license overlay
+- **GitHub Actions CI**: `.github/workflows/cypress.yml` — runs on `pull_request`, installs deps, seeds DB, starts dev server, wait-on ports 3001/5173, `cypress run --browser chrome`, uploads screenshots on failure
+- **Schedule search journey breadcrumb**: `JourneyBreadcrumb` in `SailingPickerModal` renders door/CY/seaport nodes in correct journey order from `routingTerm` prop; `SchedulesModal` in MdmContractsPage renders nodes from seaLeg `polLocType`/`podLocType`

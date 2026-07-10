@@ -238,6 +238,32 @@ console.log('Importing regions...');
 const regionResult = importRegions();
 console.log(`  ✔ Regions:  ${regionResult.inserted} inserted, ${regionResult.skipped} skipped`);
 
+// ─── Seed default transit days per trade lane ──────────────────────────────────
+// Industry-standard average FCL sea transit times (days); safe to re-run (UPDATE only if 0).
+const TRANSIT_DEFAULTS = [
+  ["CAR", 20],  // Caribbean & Central America (from Europe ~20d, from US ~10d; mid estimate)
+  ["EAF", 22],  // East Africa
+  ["EU-N", 14], // Europe North
+  ["EU-S", 12], // Europe South
+  ["FE",  28],  // Far East (already set but included for completeness)
+  ["ISC", 20],  // Indian Subcontinent
+  ["ME",  18],  // Middle East (already set)
+  ["NAF", 16],  // North Africa
+  ["NAM", 21],  // North America
+  ["OCE", 35],  // Oceania
+  ["SAF", 20],  // South Africa
+  ["SAM", 25],  // South America
+  ["SEA", 22],  // Southeast Asia
+  ["WAF", 18],  // West Africa
+];
+const updateTl = db.prepare("UPDATE trade_lanes SET transit_days=? WHERE code=? AND (transit_days IS NULL OR transit_days=0)");
+let tlUpdated = 0;
+for (const [code, days] of TRANSIT_DEFAULTS) {
+  const info = updateTl.run(days, code);
+  if (info.changes > 0) tlUpdated++;
+}
+console.log(`  ✔ Transit days: ${tlUpdated} trade lanes updated`);
+
 const { n: totalPorts }    = db.prepare("SELECT COUNT(*) AS n FROM port_locations").get();
 const { n: totalCarriers } = db.prepare("SELECT COUNT(*) AS n FROM carriers").get();
 const { n: totalRegions }  = db.prepare("SELECT COUNT(*) AS n FROM regions").get();

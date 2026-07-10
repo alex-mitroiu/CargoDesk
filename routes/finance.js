@@ -1,9 +1,13 @@
 "use strict";
 
 module.exports = function financeRoutes(app, ctx) {
-  const { db, ok } = ctx;
+  const { db, ok, err, auth } = ctx;
 
-  app.get("/api/margin/summary", (req, res) => {
+  app.get("/api/margin/summary", auth(), (req, res) => {
+    const u = req.user;
+    const roles = Array.isArray(u.roles) ? u.roles : [u.role || 'viewer'];
+    if (!roles.includes('admin') && !u.canViewFinance)
+      return err(res, "Finance access not enabled for your account", 403);
     const lines = db.prepare(`
       SELECT cl.*, s.carrier_code, s.pol, s.pod, s.etd, s.created_at AS shp_created_at
       FROM shipment_cost_lines cl

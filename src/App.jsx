@@ -39,6 +39,8 @@ import MdmContractsPage        from "./pages/mdm/MdmContractsPage";
 import SpaceConfigurationsPage from "./pages/SpaceConfigurationsPage";
 import LicensePage             from "./pages/LicensePage";
 import SchedulesPage           from "./pages/SchedulesPage";
+import AiChatDrawer            from "./components/shared/AiChatDrawer";
+import TrackingPage            from "./pages/TrackingPage";
 
 
 
@@ -1540,6 +1542,7 @@ function App() {
   const [appSettings, setAppSettings] = useState({});
 
   const [healthOpen,       setHealthOpen]       = useState(false);
+  const [aiChatOpen,       setAiChatOpen]       = useState(false);
   const [licenseAccepted,  setLicenseAccepted]  = useState(
     () => !!localStorage.getItem("cargodesk_license_accepted")
   );
@@ -1571,6 +1574,7 @@ function App() {
     if (hash === "shipments/new") return { page: "shipment-new", selectedId: null };
     if (/^shipments\/[^/]+\/edit$/.test(hash)) return { page: "shipment-edit", selectedId: hash.split("/")[1] };
     if (hash.startsWith("shipments/")) return { page: "detail", selectedId: hash.split("/")[1] || null };
+    if (hash.startsWith("track/")) return { page: "track", selectedId: hash.slice(6) };
     return { page: hash, selectedId: null };
   };
 
@@ -1724,6 +1728,8 @@ function App() {
   const MDM_PAGES = ["mdm-carriers", "mdm-ports", "mdm-linked", "mdm-vessels", "mdm-commodities", "mdm-tradelanes", "mdm-countries", "mdm-unlocodes", "mdm-customers", "mdm-sanctioned-customers", "mdm-contracts"];
   const ALL_PAGES = [...MDM_PAGES, "manual"];
   const isMdmActive = MDM_PAGES.includes(page);
+
+  if (page === "track") return <TrackingPage token={selectedId} />;
 
   if (authLoading) return <FullPageSpinner />;
   if (!user)       return <LoginPage onLogin={handleLogin} />;
@@ -2136,7 +2142,7 @@ function App() {
 
           {/* User menu */}
           <div ref={menuRef} style={{ position: "relative" }}>
-            <button type="button" onClick={() => setOpen(o => !o)}
+            <button type="button" data-testid="user-avatar-btn" onClick={() => setOpen(o => !o)}
               style={{
                 width: 32, height: 32, borderRadius: "50%", border: "none",
                 background: T.accent, cursor: "pointer", flexShrink: 0,
@@ -2259,7 +2265,7 @@ function App() {
           </div>
 
           {/* Nav */}
-          <nav style={{ padding: "14px 12px", flex: 1, overflowY: "auto" }}>
+          <nav data-testid="main-nav" style={{ padding: "14px 12px", flex: 1, overflowY: "auto" }}>
 
             {/* Top-level items */}
             <NavBtn pageKey="shipments" icon="⛴" label="Shipments" />
@@ -2271,6 +2277,27 @@ function App() {
 
             <NavBtn pageKey="kanban"    icon="📋" label="Integration Board" />
             <NavBtn pageKey="schedules" icon="🗓" label="Schedule Search" />
+
+            {/* AI Chat button — only shown when ai_agent_enabled=1 */}
+            {appSettings.ai_agent_enabled === '1' && (
+              <button
+                type="button"
+                onClick={() => setAiChatOpen(true)}
+                title="Open AI Assistant"
+                style={{
+                  display: "flex", alignItems: "center", gap: 9,
+                  width: "100%", padding: "7px 12px", marginBottom: 2,
+                  background: aiChatOpen ? T.accentBg : "none",
+                  border: `1px solid ${aiChatOpen ? T.accent + "44" : "transparent"}`,
+                  borderRadius: 7, cursor: "pointer",
+                  fontFamily: T.body, fontSize: 13, fontWeight: 500,
+                  color: aiChatOpen ? T.accent : T.textMuted,
+                  transition: "background .12s, color .12s",
+                }}>
+                <span style={{ fontSize: 14 }}>✦</span>
+                AI Assistant
+              </button>
+            )}
 
             {/* MDM section */}
             <div style={{ marginTop: 10 }}>
@@ -2358,7 +2385,7 @@ function App() {
         {page === "shipments" && (
           <ShipmentsPage
             shipments={shipments} containers={containers} carriers={carriers}
-            financeEnabled={appSettings.finance_view_enabled !== 'false'}
+            financeEnabled={appSettings.finance_view_enabled !== 'false' && (effectiveRoles.includes('admin') || !!(user?.canViewFinance))}
             onSelect={id => navigate("detail", id)}
             onDelete={async id => {
               try {
@@ -2484,7 +2511,7 @@ function App() {
           <DashboardPage
             shipments={shipments} containers={containers} carriers={carriers}
             allocations={allocations}
-            financeEnabled={appSettings.finance_view_enabled !== 'false'} />
+            financeEnabled={appSettings.finance_view_enabled !== 'false' && (effectiveRoles.includes('admin') || !!(user?.canViewFinance))} />
         )}
 
         {page === "space-configs" && (
@@ -2591,8 +2618,14 @@ function App() {
 
       {healthOpen && <HealthModal onClose={() => setHealthOpen(false)} />}
 
+      <AiChatDrawer
+        open={aiChatOpen}
+        onClose={() => setAiChatOpen(false)}
+        shipmentId={page === "detail" ? selectedId : null}
+      />
+
       {!licenseAccepted && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 9000,
+        <div data-testid="license-modal" style={{ position: "fixed", inset: 0, zIndex: 9000,
           background: "rgba(0,0,0,.72)", display: "flex", alignItems: "center", justifyContent: "center" }}>
           <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12,
             padding: "32px 36px", maxWidth: 560, width: "calc(100% - 48px)", boxShadow: "0 24px 64px rgba(0,0,0,.5)" }}>

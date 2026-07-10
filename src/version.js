@@ -2,11 +2,17 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.25.0";
+export const VERSION   = "0.26.0";
 export const BUILD     = "2026-07-09";
-export const CODENAME  = "Voyage";
+export const CODENAME  = "Meridian II";
 
 export const CHANGELOG = [
+  {
+    version:  "0.26.0",
+    date:     "2026-07-09",
+    codename: "Meridian II",
+    summary:  "AI Agent integration: routes/ai.js adds POST /api/ai/chat proxy (OpenAI-compatible, tool-call agentic loop with get_shipment/list_shipments/get_contract/get_allocation tools, max 3 iterations) and GET /api/ai/settings; gated by ai_agent_enabled app_setting; AiChatDrawer right-side panel with user/assistant bubbles, typing indicator, Shift+Enter newline, and auto-scroll; ✦ nav button appears only when AI is enabled; context pill passes active shipment ID when viewing a detail page. AppSettings AI Agent subtab: provider presets (Anthropic, OpenRouter, Custom), endpoint/model/API key/system prompt fields, Test Connection button. Per-user finance access gating: can_view_finance column added to users (migration), mapUser includes canViewFinance, PATCH /api/users/:id accepts canViewFinance; financeEnabled in App.jsx now requires global toggle AND (isAdmin || user.canViewFinance); Finance column in UserManagementPanel shows Yes/No chip, clickable for admins to toggle per-user. data-testid attributes: data-testid='user-avatar-btn' on header avatar, data-testid='main-nav' on nav, data-testid='license-modal' on license overlay. GitHub Actions CI: .github/workflows/cypress.yml runs Cypress on pull_request — install, seed, start dev server, wait-on ports 3001/5173, cypress run --browser chrome, upload screenshots on failure. Schedule search journey breadcrumb: SailingPickerModal gains JourneyBreadcrumb that renders door/CY nodes in correct journey order (e.g. Door Origin → POL → POD) based on routingTerm prop; SchedulesModal in MdmContractsPage renders journey-ordered nodes from seaLeg.polLocType / podLocType.",
+  },
   {
     version:  "0.25.0",
     date:     "2026-07-09",

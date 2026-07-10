@@ -488,7 +488,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
   const suggRef = useRef(null);
   useEffect(() => {
     const isSeaLeg = (d.legType || "SEA") === "SEA";
-    if (!isSeaLeg || !d.etd || !d.pol || !d.pod || d.eta) { setSuggEta(null); return; }
+    if (!isSeaLeg || !d.etd || !d.pol || !d.pod) { setSuggEta(null); return; }
     clearTimeout(suggRef.current);
     suggRef.current = setTimeout(async () => {
       try {
@@ -496,7 +496,10 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
         if (!r.days) { setSuggEta(null); return; }
         const base = new Date(d.etd + "T00:00:00Z");
         base.setUTCDate(base.getUTCDate() + r.days);
-        setSuggEta({ date: base.toISOString().slice(0, 10), days: r.days, lane: r.lane });
+        const date = base.toISOString().slice(0, 10);
+        // Only show if different from current ETA (either unset or would change)
+        if (d.eta && d.eta === date) { setSuggEta(null); return; }
+        setSuggEta({ date, days: r.days, lane: r.lane, isRecalc: !!d.eta });
       } catch { setSuggEta(null); }
     }, 400);
     return () => clearTimeout(suggRef.current);
@@ -607,9 +610,11 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
           <button type="button" title={`Based on ${suggEta.lane} average transit (${suggEta.days}d)`}
             onClick={() => { const next = { ...d, eta: suggEta.date }; setD(next); onSave(next); setSuggEta(null); }}
             style={{ background: "none", border: "none", padding: 0, cursor: "pointer",
-              fontFamily: T.mono, fontSize: 10, color: T.accent, textAlign: "left",
+              fontFamily: T.mono, fontSize: 10,
+              color: suggEta.isRecalc ? T.warning : T.accent,
+              textAlign: "left",
               whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-            → {suggEta.date} ({suggEta.days}d)
+            {suggEta.isRecalc ? "↻ recalc:" : "→"} {suggEta.date} ({suggEta.days}d)
           </button>
         )}
       </div>

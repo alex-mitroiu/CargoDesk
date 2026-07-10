@@ -160,7 +160,7 @@ function StatusDot({ result, testing }) {
 }
 
 const TABS_BASE   = ["API Controls", "Finance", "Developer"];
-const API_SUBTABS = ["External APIs", "Internal APIs", "Security", "Single Sign-On"];
+const API_SUBTABS = ["External APIs", "Internal APIs", "Security", "Single Sign-On", "AI Agent"];
 
 const downloadJson = (data, filename) => {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
@@ -619,6 +619,161 @@ function AdminActivityLog() {
             style={{ ...inp(), width: 80, cursor: "pointer" }}>Next →</button>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── AI Agent Settings Panel ──────────────────────────────────────────────────
+
+function AiAgentSettingsPanel({ settings, onChange }) {
+  const [showKey,    setShowKey]    = useState(false);
+  const [testing,   setTesting]   = useState(false);
+  const [testResult, setTestResult] = useState(null);
+  const s = settings;
+
+  const row  = { display: "flex", alignItems: "flex-start", gap: 14, marginBottom: 18 };
+  const lbl  = { fontFamily: T.body, fontSize: 12, fontWeight: 600, color: T.textMuted,
+    width: 180, flexShrink: 0, textTransform: "uppercase", letterSpacing: ".06em", paddingTop: 6 };
+
+  const PROVIDERS = [
+    { label: "Anthropic Claude API", endpoint: "https://api.anthropic.com/v1/messages", model: "claude-haiku-4-5-20251001" },
+    { label: "OpenRouter",           endpoint: "https://openrouter.ai/api/v1/chat/completions", model: "anthropic/claude-haiku-4-5" },
+    { label: "Custom / Local",       endpoint: "", model: "" },
+  ];
+
+  const handleProviderSelect = (p) => {
+    if (p.endpoint) onChange("ai_endpoint", p.endpoint);
+    if (p.model)    onChange("ai_model",    p.model);
+  };
+
+  const handleTest = async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const res = await fetch("/api/ai/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${localStorage.getItem("cargodesk_token")}`,
+        },
+        body: JSON.stringify({ messages: [{ role: "user", content: "Hello! Reply with one sentence confirming you are connected." }] }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Connection failed");
+      setTestResult({ ok: true, msg: data.reply || "Connected!" });
+    } catch (e) {
+      setTestResult({ ok: false, msg: e.message });
+    }
+    setTesting(false);
+  };
+
+  return (
+    <div style={{ maxWidth: 620 }}>
+      <h3 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, marginBottom: 6 }}>
+        AI Agent
+      </h3>
+      <p style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, marginBottom: 24, lineHeight: 1.6 }}>
+        Enable the AI chat assistant and configure the LLM backend. The agent can query shipments,
+        contracts, and allocations using built-in tool definitions.
+      </p>
+
+      {/* Enable toggle */}
+      <div style={row}>
+        <div style={lbl}>Enabled</div>
+        <div>
+          <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer",
+            fontFamily: T.body, fontSize: 13, color: T.text }}>
+            <input type="checkbox"
+              checked={s.ai_agent_enabled === '1'}
+              onChange={e => onChange("ai_agent_enabled", e.target.checked ? '1' : '0')} />
+            Allow users to open the AI chat drawer
+          </label>
+        </div>
+      </div>
+
+      {/* Quick presets */}
+      <div style={row}>
+        <div style={lbl}>Provider preset</div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {PROVIDERS.map(p => (
+            <button key={p.label} type="button" onClick={() => handleProviderSelect(p)}
+              style={{ padding: "4px 12px", borderRadius: 6, border: `1px solid ${T.border}`,
+                background: (s.ai_endpoint || "") === p.endpoint && p.endpoint ? T.accentBg : T.bg,
+                color: (s.ai_endpoint || "") === p.endpoint && p.endpoint ? T.accent : T.text,
+                fontFamily: T.body, fontSize: 11, cursor: "pointer" }}>
+              {p.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Endpoint */}
+      <div style={row}>
+        <div style={lbl}>Endpoint URL</div>
+        <div style={{ flex: 1 }}>
+          <input type="url" value={s.ai_endpoint || ''} placeholder="https://api.anthropic.com/v1/messages"
+            onChange={e => onChange("ai_endpoint", e.target.value)}
+            style={{ ...inp(), width: "100%" }} />
+        </div>
+      </div>
+
+      {/* Model */}
+      <div style={row}>
+        <div style={lbl}>Model</div>
+        <div style={{ flex: 1 }}>
+          <input type="text" value={s.ai_model || ''} placeholder="claude-haiku-4-5-20251001"
+            onChange={e => onChange("ai_model", e.target.value)}
+            style={{ ...inp(), width: "100%" }} />
+        </div>
+      </div>
+
+      {/* API Key */}
+      <div style={row}>
+        <div style={lbl}>API Key</div>
+        <div style={{ flex: 1, display: "flex", gap: 8 }}>
+          <input type={showKey ? "text" : "password"} value={s.ai_api_key || ''} placeholder="sk-…"
+            onChange={e => onChange("ai_api_key", e.target.value)}
+            style={{ ...inp(), flex: 1 }} autoComplete="new-password" />
+          <button type="button" onClick={() => setShowKey(v => !v)}
+            style={{ padding: "4px 10px", border: `1px solid ${T.border}`, borderRadius: 6,
+              background: T.bg, color: T.textMuted, fontFamily: T.body, fontSize: 11, cursor: "pointer" }}>
+            {showKey ? "Hide" : "Show"}
+          </button>
+        </div>
+      </div>
+
+      {/* System prompt */}
+      <div style={row}>
+        <div style={lbl}>System prompt</div>
+        <div style={{ flex: 1 }}>
+          <textarea value={s.ai_system_prompt || ''}
+            onChange={e => onChange("ai_system_prompt", e.target.value)}
+            rows={4} placeholder="You are CargoDesk AI — an intelligent freight assistant…"
+            style={{ ...inp(), width: "100%", resize: "vertical", fontFamily: T.body, lineHeight: 1.5 }} />
+          <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginTop: 3 }}>
+            Leave blank to use the default CargoDesk prompt.
+          </div>
+        </div>
+      </div>
+
+      {/* Test connection */}
+      <div style={{ marginTop: 8 }}>
+        <button type="button" onClick={handleTest} disabled={testing || s.ai_agent_enabled !== '1'}
+          style={{ padding: "7px 18px", borderRadius: 7, border: `1px solid ${T.accent}44`,
+            background: T.accentBg, color: T.accent, fontFamily: T.body, fontSize: 13,
+            fontWeight: 600, cursor: testing ? "wait" : "pointer",
+            opacity: (testing || s.ai_agent_enabled !== '1') ? 0.6 : 1 }}>
+          {testing ? "Testing…" : "Test Connection"}
+        </button>
+        {testResult && (
+          <div style={{ marginTop: 10, padding: "8px 12px", borderRadius: 6, fontFamily: T.body, fontSize: 12,
+            background: testResult.ok ? T.success + "18" : T.danger + "18",
+            color: testResult.ok ? T.success : T.danger,
+            border: `1px solid ${testResult.ok ? T.success : T.danger}44` }}>
+            {testResult.msg}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1091,6 +1246,13 @@ export default function AppSettingsPage() {
 
           {activeApiSub === "Single Sign-On" && settings && (
             <SsoSettingsPanel settings={settings} onChange={(k, v) => {
+              setSettings(s => ({ ...s, [k]: v }));
+              saveSetting(k, v);
+            }} />
+          )}
+
+          {activeApiSub === "AI Agent" && settings && (
+            <AiAgentSettingsPanel settings={settings} onChange={(k, v) => {
               setSettings(s => ({ ...s, [k]: v }));
               saveSetting(k, v);
             }} />

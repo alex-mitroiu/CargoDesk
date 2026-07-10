@@ -561,6 +561,8 @@ const migrations = [
   "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('sso_frontend_url','http://localhost:5173')",
   // v0.25.0 — VAT on cost lines
   "ALTER TABLE shipment_cost_lines ADD COLUMN vat_rate REAL NOT NULL DEFAULT 0",
+  // v0.26.0 — per-user finance access flag
+  "ALTER TABLE users ADD COLUMN can_view_finance INTEGER NOT NULL DEFAULT 0",
   // v0.25.0 — Shipment-level schedule bookings
   `CREATE TABLE IF NOT EXISTS shipment_schedules (
     id            TEXT PRIMARY KEY,
@@ -683,6 +685,11 @@ const SETTING_DEFAULTS = {
   api_vessels_enabled:        'true',
   api_ports_enabled:          'true',
   api_sysmsg_enabled:         'true',
+  ai_agent_enabled:           '0',
+  ai_endpoint:                '',
+  ai_model:                   'claude-haiku-4-5-20251001',
+  ai_api_key:                 '',
+  ai_system_prompt:           '',
 };
 {
   const ins = db.prepare("INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)");
@@ -1429,9 +1436,9 @@ const auth = (allowed = []) => (req, res, next) => {
 const requireRole = (allowed) => (req, res, next) =>
   req.user?.roles?.some(r => allowed.includes(r)) ? next() : err(res, "Forbidden", 403);
 
-// Require valid token on all /api/* except /api/auth/* and /api/health
+// Require valid token on all /api/* except /api/auth/*, /api/health, and /api/share/* (public)
 app.use("/api", (req, res, next) =>
-  req.path.startsWith("/auth/") || req.path === "/health" ? next() : auth()(req, res, next)
+  req.path.startsWith("/auth/") || req.path === "/health" || req.path.startsWith("/share/") ? next() : auth()(req, res, next)
 );
 
 // ─── Shared context passed to every route module ───────────────────────────────
@@ -1477,6 +1484,8 @@ require('./routes/shipment-ops')(app, ctx);
 require('./routes/finance')(app, ctx);
 require('./routes/system')(app, ctx);
 require('./routes/export')(app, ctx);
+require('./routes/ai')(app, ctx);
+require('./routes/share')(app, ctx);
 
 // ─── Auth routes ──────────────────────────────────────────────────────────────
 
@@ -1858,6 +1867,27 @@ app.post("/api/containers", (req, res) => {
   logEvent(shipmentId, 'CONTAINER_ADDED', null, null, cnU,
     JSON.stringify({ size, type, hsCode, cargoDescription }));
   recomputeSpaceBadge(shipmentId);
+
+  // Auto-create per-container BUY lines when shipment is on a Central contract
+  const shipForSync = db.prepare("SELECT contract_type, contract_id FROM shipments WHERE id=?").get(shipmentId);
+  if (shipForSync?.contract_type === 'Central' && shipForSync?.contract_id) {
+    const perCtrRates = db.prepare(
+      "SELECT * FROM contract_rates WHERE contract_id=? AND unit='per_container' ORDER BY sort_order"
+    ).all(shipForSync.contract_id);
+    const now = new Date().toISOString();
+    for (const r of perCtrRates) {
+      const ctrKey = `${size || ''}${type || ''}`.toUpperCase();
+      const rateKey = (r.container_type || '').toUpperCase();
+      const matches = !rateKey || ctrKey === rateKey;
+      const chargeCode   = SERVICE_CODE_MAP[r.service_code?.toUpperCase()] || 'Other';
+      const exchangeRate = (r.amount > 0 && r.amount_usd > 0) ? Math.round((r.amount_usd / r.amount) * 100000) / 100000 : 1;
+      const notes = [r.service_code, r.description].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(' — ');
+      const lineId = `CL-${uid()}`;
+      db.prepare("INSERT INTO shipment_cost_lines (id,shipment_id,type,charge_code,currency,amount,exchange_rate,notes,container_id,created_at,source) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+        .run(lineId, shipmentId, 'BUY', chargeCode, r.currency || 'USD', matches ? r.amount : 0, exchangeRate, notes, id, now, 'contract');
+    }
+  }
+
   ok(res, addedCtr, 201);
 });
 
@@ -1890,6 +1920,8 @@ app.put("/api/containers/:id", (req, res) => {
 app.delete("/api/containers/:id", (req, res) => {
   const ctr = db.prepare("SELECT * FROM containers WHERE id=?").get(req.params.id);
   if (!ctr) return err(res, "Not found", 404);
+  // Remove contract-sourced BUY lines scoped to this container before deleting it
+  db.prepare("DELETE FROM shipment_cost_lines WHERE container_id=? AND source='contract' AND type='BUY'").run(req.params.id);
   db.prepare("DELETE FROM containers WHERE id=?").run(req.params.id);
   logEvent(ctr.shipment_id, 'CONTAINER_REMOVED', null, ctr.container_number, null,
     JSON.stringify({ size: ctr.size, type: ctr.type }));

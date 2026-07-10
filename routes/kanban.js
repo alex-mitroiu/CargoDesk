@@ -38,10 +38,13 @@ module.exports = function kanbanRoutes(app, ctx) {
   });
 
   app.put("/api/tickets/:id", (req, res) => {
+    const existing = db.prepare("SELECT * FROM tickets WHERE id=?").get(req.params.id);
+    if (!existing) return err(res, "Not found", 404);
     const {
-      title, section = '', description = '', priority = 'Medium', status = 'Ready', position = 0,
-      shipmentId = null, type = 'Task', version = '',
-      parentId = null, assigneeId = null, dueDate = null, testNotes = null,
+      title = existing.title, section = existing.section ?? '', description = existing.description ?? '',
+      priority = existing.priority ?? 'Medium', status = existing.status ?? 'Ready', position = existing.position ?? 0,
+      shipmentId = existing.shipment_id, type = existing.type ?? 'Task', version = existing.version ?? '',
+      parentId = existing.parent_id, assigneeId = existing.assignee_id, dueDate = existing.due_date, testNotes = existing.test_notes,
     } = req.body;
     const info = db.prepare(`
       UPDATE tickets

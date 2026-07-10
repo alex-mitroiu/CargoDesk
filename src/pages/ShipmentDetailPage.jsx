@@ -2151,8 +2151,12 @@ const CostControl = ({ shipmentId, contractType, contractId, containers = [], op
         )}
         {/* Amount */}
         <div style={{ width: showActions ? 110 : 80, flexShrink: 0,
-          fontFamily: T.mono, fontSize: 12, color: T.text, textAlign: "right", fontWeight: 600 }}>
-          {l.amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+          fontFamily: T.mono, fontSize: 12, textAlign: "right", fontWeight: 600,
+          color: (l.amount === 0 && l.source === 'contract' && l.type === 'BUY') ? T.warning : T.text }}>
+          {l.amount === 0 && l.source === 'contract' && l.type === 'BUY'
+            ? <span title="No matching rate for this container type — set manually">⚠ 0.00</span>
+            : l.amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+          }
         </div>
         {/* Actions */}
         {showActions && (
@@ -2851,6 +2855,7 @@ const SchedulesPanel = ({ shipment }) => {
       {pickerOpen && (
         <SailingPickerModal
           pol={pol} pod={pod} carrierCode={carrier}
+          routingTerm={shipment.routingTerm}
           onSelect={handleSelect}
           onClose={() => setPickerOpen(false)}
           selectLabel="Add →" />
@@ -2966,6 +2971,8 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
   const [openAccountingSignal, setOpenAccountingSignal] = useState(0);
   const [legs,                 setLegs]                 = useState([]);
   const [pendingMatches,       setPendingMatches]       = useState(null);
+  const [shareUrl,             setShareUrl]             = useState(null);
+  const [shareLoading,         setShareLoading]         = useState(false);
 
   const closeCtrModal = (fromList = ctrFromList) => {
     setCtrModal(null);
@@ -3235,6 +3242,14 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
           )}
         </button>
         <DocumentsMenu shipment={shipment} containers={containers} />
+        <Btn variant="secondary" disabled={shareLoading} onClick={async () => {
+          setShareLoading(true);
+          try {
+            const r = await api.shipments.shareToken(shipment.id);
+            setShareUrl(r.url);
+          } catch { toast.error("Failed to generate tracking link"); }
+          finally { setShareLoading(false); }
+        }}>🔗 Share</Btn>
         {canEdit && <Btn variant="secondary" onClick={() => onEdit?.()}>✎ Edit Shipment</Btn>}
       </div>
 
@@ -3899,6 +3914,25 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
           message="Remove this container from the shipment?"
           onConfirm={() => { onDeleteContainer(confirmCtr); setConfirmCtr(null); }}
           onCancel={() => setConfirmCtr(null)} />
+      )}
+
+      {/* Share link modal */}
+      {shareUrl && (
+        <Modal title="🔗 Customer Tracking Link" onClose={() => setShareUrl(null)} style={{ maxWidth: 520 }}>
+          <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, marginBottom: 12 }}>
+            Anyone with this link can view the shipment status and milestones — no login required.
+            Valid for 30 days.
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <input readOnly value={shareUrl} style={{
+              flex: 1, padding: "8px 10px", borderRadius: 6, border: `1px solid ${T.border}`,
+              background: T.surface, color: T.text, fontFamily: T.mono, fontSize: 12,
+            }} onFocus={e => e.target.select()} />
+            <Btn onClick={() => { navigator.clipboard.writeText(shareUrl); toast.success("Link copied!"); }}>
+              Copy
+            </Btn>
+          </div>
+        </Modal>
       )}
 
       {/* ── Messages drawer ── */}

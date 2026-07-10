@@ -28,9 +28,10 @@ module.exports = function authRoutes(app, ctx) {
     isActive:       !!r.is_active,
     createdAt:      r.created_at,
     lastLogin:      r.last_login,
-    failedAttempts: r.failed_attempts ?? 0,
-    lockedUntil:    r.locked_until   ?? '',
-    tokenVersion:   r.token_version  ?? 0,
+    failedAttempts: r.failed_attempts  ?? 0,
+    lockedUntil:    r.locked_until     ?? '',
+    tokenVersion:   r.token_version    ?? 0,
+    canViewFinance: !!r.can_view_finance,
   });
 
   // ─── Login ─────────────────────────────────────────────────────────────────
@@ -75,11 +76,13 @@ module.exports = function authRoutes(app, ctx) {
     const roles = JSON.parse(user.roles || JSON.stringify([user.role || 'viewer']));
     const token = jwt.sign(
       { id: user.id, email: user.email, name: user.name, role: user.role, roles,
+        canViewFinance: !!user.can_view_finance,
         tv: user.token_version ?? 0 },
       JWT_SECRET,
       { expiresIn: `${jwtHours}h` }
     );
-    ok(res, { token, user: { id: user.id, email: user.email, name: user.name, roles } });
+    ok(res, { token, user: { id: user.id, email: user.email, name: user.name, roles,
+      canViewFinance: !!user.can_view_finance } });
   });
 
   app.get("/api/auth/me", auth(), (req, res) => {
@@ -207,7 +210,7 @@ module.exports = function authRoutes(app, ctx) {
   app.get("/api/users", requireRole(["admin"]), (req, res) => {
     const rows = db.prepare(
       `SELECT id, email, name, role, roles, is_active, created_at, last_login,
-              failed_attempts, locked_until, token_version FROM users ORDER BY created_at`
+              failed_attempts, locked_until, token_version, can_view_finance FROM users ORDER BY created_at`
     ).all();
     ok(res, rows.map(mapUser));
   });
@@ -230,7 +233,7 @@ module.exports = function authRoutes(app, ctx) {
   });
 
   app.patch("/api/users/:id", requireRole(["admin"]), (req, res) => {
-    const { name, roles, password, isActive, unlock } = req.body || {};
+    const { name, roles, password, isActive, unlock, canViewFinance } = req.body || {};
     const existing = db.prepare("SELECT * FROM users WHERE id=?").get(req.params.id);
     if (!existing) return err(res, "Not found", 404);
 
@@ -247,11 +250,12 @@ module.exports = function authRoutes(app, ctx) {
     // Unlock clears lockout fields
     const failedAttempts = unlock ? 0 : (existing.failed_attempts ?? 0);
     const lockedUntil    = unlock ? '' : (existing.locked_until   ?? '');
+    const financeFlag    = canViewFinance !== undefined ? (canViewFinance ? 1 : 0) : (existing.can_view_finance ?? 0);
 
     db.prepare(`UPDATE users SET name=?, role=?, roles=?, is_active=?, password_hash=?,
-                  token_version=?, failed_attempts=?, locked_until=? WHERE id=?`)
+                  token_version=?, failed_attempts=?, locked_until=?, can_view_finance=? WHERE id=?`)
       .run(name || existing.name, primary, JSON.stringify(newRoles),
-           active, hash, newTokenVersion, failedAttempts, lockedUntil, req.params.id);
+           active, hash, newTokenVersion, failedAttempts, lockedUntil, financeFlag, req.params.id);
 
     // Log what changed
     const changes = {};

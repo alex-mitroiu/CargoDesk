@@ -841,6 +841,16 @@ export default function UserManagementPanel() {
     } catch (e) { toast.error(e.message); }
   };
 
+  const handleToggleFinance = async (u, e) => {
+    e.stopPropagation();
+    if (u.roles?.includes("admin")) return; // admins always have finance access
+    try {
+      await api.users.update(u.id, { canViewFinance: !u.canViewFinance });
+      toast.success(`Finance access ${!u.canViewFinance ? "granted to" : "revoked from"} ${u.name}`);
+      load();
+    } catch (err) { toast.error(err.message); }
+  };
+
   const handleConfigure = (user) => {
     setSelectedUser(u => u?.id === user.id ? null : user);
     setTimeout(() => configPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
@@ -892,7 +902,8 @@ export default function UserManagementPanel() {
               <tr>
                 {colHd("Name", 190)}
                 {colHd("Email", undefined)}
-                {colHd("Roles", 220)}
+                {colHd("Roles", 200)}
+                {colHd("Finance", 80)}
                 {colHd("Status", 90)}
                 {colHd("Last Login", 140)}
                 {colHd("", 150)}
@@ -931,6 +942,19 @@ export default function UserManagementPanel() {
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
                         {(u.roles || [u.role]).map(r => <RoleBadge key={r} role={r} />)}
                       </div>
+                    </td>
+                    <td style={{ padding: "10px 14px", textAlign: "center" }}
+                      onClick={e => handleToggleFinance(u, e)}
+                      title={u.roles?.includes("admin") ? "Admins always have finance access" : (u.canViewFinance ? "Click to revoke finance access" : "Click to grant finance access")}>
+                      <span style={{
+                        display: "inline-block", padding: "2px 8px", borderRadius: 20,
+                        fontFamily: T.mono, fontSize: 10, fontWeight: 600, cursor: u.roles?.includes("admin") ? "default" : "pointer",
+                        background: (u.roles?.includes("admin") || u.canViewFinance) ? T.success + "18" : T.bg,
+                        color:      (u.roles?.includes("admin") || u.canViewFinance) ? T.success : T.textMuted,
+                        border: `1px solid ${(u.roles?.includes("admin") || u.canViewFinance) ? T.success + "44" : T.border}`,
+                      }}>
+                        {u.roles?.includes("admin") ? "Yes" : (u.canViewFinance ? "Yes" : "No")}
+                      </span>
                     </td>
                     <td style={{ padding: "10px 14px" }}>
                       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>

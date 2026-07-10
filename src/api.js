@@ -61,6 +61,7 @@ export const api = {
     create: (data)    => req("POST",   "/shipments", data),
     update: (id, data)=> req("PUT",    `/shipments/${id}`, data),
     remove: (id)      => req("DELETE", `/shipments/${id}`),
+    shareToken: (id)  => req("POST",   `/shipments/${id}/share-token`),
   },
   containers: {
     list:   ()        => req("GET",    "/containers"),
@@ -329,5 +330,9 @@ export const api = {
       a.href = url; a.download = `cargodesk-dashboard-template-${date}.xlsx`; a.click();
       URL.revokeObjectURL(url);
     },
+  },
+  ai: {
+    settings: () => req("GET", "/ai/settings"),
+    chat:     (messages, context = {}) => req("POST", "/ai/chat", { messages, context }),
   },
 };

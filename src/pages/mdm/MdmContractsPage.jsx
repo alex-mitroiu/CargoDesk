@@ -718,7 +718,7 @@ const SchedulesModal = ({ contract, onClose }) => {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
 
-      {/* Route derivation */}
+      {/* Route derivation — rendered in journey order based on loc types */}
       <div style={{ background: T.bg, border: `1px solid ${T.border}`,
         borderRadius: 8, padding: "12px 16px" }}>
         {legs === null ? (
@@ -727,48 +727,58 @@ const SchedulesModal = ({ contract, onClose }) => {
           <span style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, fontStyle: "italic" }}>
             No legs configured on this contract.
           </span>
-        ) : !seaLeg ? null : (
-          <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+        ) : !seaLeg ? null : (() => {
+          const polIsDoor = seaLeg.polLocType === "Door";
+          const podIsDoor = seaLeg.podLocType === "Door";
+          const polIsCY   = seaLeg.polLocType === "Container Yard" || seaLeg.polLocType === "CFS";
+          const podIsCY   = seaLeg.podLocType === "Container Yard" || seaLeg.podLocType === "CFS";
+
+          const LegNode = ({ label, code, name, highlight }) => (
             <div>
               <div style={{ fontFamily: T.body, fontSize: 10, fontWeight: 600, color: T.textMuted,
-                textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 2 }}>
-                Schedule POL
-              </div>
-              <span style={{ fontFamily: T.mono, fontSize: 16, fontWeight: 700, color: T.accent }}>
-                {pol}
-              </span>
-              {seaLeg.polName && (
-                <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginTop: 1 }}>
-                  {seaLeg.polName}
+                textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 2 }}>{label}</div>
+              <span style={{ fontFamily: T.mono, fontSize: 16, fontWeight: 700,
+                color: highlight ? T.accent : T.text }}>{code || "—"}</span>
+              {name && (
+                <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginTop: 1 }}>{name}</div>
+              )}
+            </div>
+          );
+          const Arrow = () => (
+            <div style={{ fontSize: 18, color: T.border, flexShrink: 0, alignSelf: "center" }}>›</div>
+          );
+
+          // Build journey steps in correct order
+          const steps = [];
+          if (polIsDoor || polIsCY) steps.push(
+            <LegNode key="origin" label={polIsDoor ? "Origin (Door)" : "Origin (CY/CFS)"}
+              code={seaLeg.polCityCode || "—"} name={seaLeg.polCityName || null} highlight={false} />
+          );
+          steps.push(<LegNode key="pol" label="Port of Loading" code={pol} name={seaLeg.polName} highlight={true} />);
+          steps.push(<LegNode key="pod" label="Port of Discharge" code={pod} name={seaLeg.podName} highlight={true} />);
+          if (podIsDoor || podIsCY) steps.push(
+            <LegNode key="dest" label={podIsDoor ? "Destination (Door)" : "Destination (CY/CFS)"}
+              code={seaLeg.podCityCode || "—"} name={seaLeg.podCityName || null} highlight={false} />
+          );
+
+          const nodes = [];
+          steps.forEach((s, i) => {
+            nodes.push(s);
+            if (i < steps.length - 1) nodes.push(<Arrow key={`a${i}`} />);
+          });
+
+          return (
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
+              {nodes}
+              {legs.length > 1 && (
+                <div style={{ marginLeft: "auto", fontFamily: T.body, fontSize: 11, color: T.textMuted,
+                  fontStyle: "italic", alignSelf: "center" }}>
+                  Using sea leg ({legs.indexOf(seaLeg) + 1} of {legs.length})
                 </div>
               )}
             </div>
-
-            <div style={{ fontSize: 18, color: T.border, flexShrink: 0 }}>›</div>
-
-            <div>
-              <div style={{ fontFamily: T.body, fontSize: 10, fontWeight: 600, color: T.textMuted,
-                textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 2 }}>
-                Schedule POD
-              </div>
-              <span style={{ fontFamily: T.mono, fontSize: 16, fontWeight: 700, color: T.accent }}>
-                {pod}
-              </span>
-              {seaLeg.podName && (
-                <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginTop: 1 }}>
-                  {seaLeg.podName}
-                </div>
-              )}
-            </div>
-
-            {legs.length > 1 && (
-              <div style={{ marginLeft: "auto", fontFamily: T.body, fontSize: 11, color: T.textMuted,
-                fontStyle: "italic" }}>
-                Using sea leg ({legs.indexOf(seaLeg) + 1} of {legs.length})
-              </div>
-            )}
-          </div>
-        )}
+          );
+        })()}
       </div>
 
       {/* Search controls */}

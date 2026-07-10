@@ -4,7 +4,51 @@ import { api } from "../../api";
 import { Modal } from "../primitives/Modal";
 import Spinner from "../primitives/Spinner";
 
-const SailingPickerModal = ({ pol, pod, carrierCode, onSelect, onClose, selectLabel = "Select →" }) => {
+// Render the journey breadcrumb in the correct door-to-port order
+const JourneyBreadcrumb = ({ pol, pod, routingTerm }) => {
+  if (!routingTerm || routingTerm === "PT-PT") return null;
+  const hasDoorOrigin = routingTerm.startsWith("DR-");
+  const hasDoorDest   = routingTerm.endsWith("-DR");
+  const hasCYOrigin   = routingTerm.startsWith("CY-");
+  const hasCYDest     = routingTerm.endsWith("-CY");
+
+  const chip = (label, bold) => (
+    <span key={label} style={{
+      fontFamily: T.mono, fontSize: 11, fontWeight: bold ? 700 : 400,
+      color: bold ? T.accent : T.textMuted,
+      background: bold ? T.accentBg : T.bg,
+      border: `1px solid ${bold ? T.accent + "44" : T.border}`,
+      borderRadius: 4, padding: "1px 7px",
+    }}>{label}</span>
+  );
+  const arrow = (k) => (
+    <span key={k} style={{ color: T.border, fontSize: 14 }}>›</span>
+  );
+
+  const parts = [];
+  if (hasDoorOrigin || hasCYOrigin) parts.push(chip(hasDoorOrigin ? "Door Origin" : "CY Origin", false));
+  parts.push(chip(pol, true));
+  parts.push(chip(pod, true));
+  if (hasDoorDest || hasCYDest) parts.push(chip(hasDoorDest ? "Door Dest." : "CY Dest.", false));
+
+  const nodes = [];
+  parts.forEach((p, i) => {
+    nodes.push(p);
+    if (i < parts.length - 1) nodes.push(arrow(`a${i}`));
+  });
+
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap",
+      padding: "6px 10px", background: T.bg, border: `1px solid ${T.border}`,
+      borderRadius: 6, marginBottom: 2 }}>
+      <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted,
+        textTransform: "uppercase", letterSpacing: ".07em", marginRight: 4 }}>Journey:</span>
+      {nodes}
+    </div>
+  );
+};
+
+const SailingPickerModal = ({ pol, pod, carrierCode, routingTerm, onSelect, onClose, selectLabel = "Select →" }) => {
   const [sailings, setSailings] = useState(null);
   const [loading,  setLoading]  = useState(true);
   const [error,    setError]    = useState(null);
@@ -31,6 +75,9 @@ const SailingPickerModal = ({ pol, pod, carrierCode, onSelect, onClose, selectLa
   return (
     <Modal title={`Sailing Search — ${pol} → ${pod}`} onClose={onClose} width={760}>
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+
+        {/* Journey order breadcrumb */}
+        <JourneyBreadcrumb pol={pol} pod={pod} routingTerm={routingTerm} />
 
         {/* Controls row */}
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
