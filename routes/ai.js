@@ -9,64 +9,53 @@ module.exports = function aiRoutes(app, ctx) {
 
   // ─── Tool schemas exposed to the LLM ───────────────────────────────────────
 
+  // Anthropic tool format: { name, description, input_schema }
   const TOOLS = [
     {
-      type: "function",
-      function: {
-        name: "get_shipment",
-        description: "Retrieve a single CargoDesk shipment by its ID (e.g. SHP-XXXXX). Returns full shipment detail including status, POL, POD, carrier, containers, cost lines totals.",
-        parameters: {
-          type: "object",
-          properties: {
-            id: { type: "string", description: "Shipment ID, e.g. SHP-ABC12" },
-          },
-          required: ["id"],
+      name: "get_shipment",
+      description: "Retrieve a single CargoDesk shipment by its ID (e.g. SHP-XXXXX). Returns full shipment detail including status, POL, POD, carrier, containers, cost lines totals.",
+      input_schema: {
+        type: "object",
+        properties: {
+          id: { type: "string", description: "Shipment ID, e.g. SHP-ABC12" },
         },
+        required: ["id"],
       },
     },
     {
-      type: "function",
-      function: {
-        name: "list_shipments",
-        description: "List shipments with optional filters. Returns up to 50 results.",
-        parameters: {
-          type: "object",
-          properties: {
-            status:      { type: "string", description: "Filter by status: Active, Draft, Completed, Cancelled" },
-            carrierCode: { type: "string", description: "Filter by carrier SCAC code, e.g. MAEU" },
-            pol:         { type: "string", description: "Filter by port of loading UNLOCODE, e.g. CNSHA" },
-            pod:         { type: "string", description: "Filter by port of discharge UNLOCODE, e.g. DEHAM" },
-          },
-          required: [],
+      name: "list_shipments",
+      description: "List shipments with optional filters. Returns up to 50 results.",
+      input_schema: {
+        type: "object",
+        properties: {
+          status:      { type: "string", description: "Filter by status: Active, Draft, Completed, Cancelled" },
+          carrierCode: { type: "string", description: "Filter by carrier SCAC code, e.g. MAEU" },
+          pol:         { type: "string", description: "Filter by port of loading UNLOCODE, e.g. CNSHA" },
+          pod:         { type: "string", description: "Filter by port of discharge UNLOCODE, e.g. DEHAM" },
         },
+        required: [],
       },
     },
     {
-      type: "function",
-      function: {
-        name: "get_contract",
-        description: "Get a carrier contract by ID, including its legs and rates.",
-        parameters: {
-          type: "object",
-          properties: {
-            id: { type: "string", description: "Contract ID, e.g. CON-XXXXX" },
-          },
-          required: ["id"],
+      name: "get_contract",
+      description: "Get a carrier contract by ID, including its legs and rates.",
+      input_schema: {
+        type: "object",
+        properties: {
+          id: { type: "string", description: "Contract ID, e.g. CON-XXXXX" },
         },
+        required: ["id"],
       },
     },
     {
-      type: "function",
-      function: {
-        name: "get_allocation",
-        description: "Get a space allocation / configuration by ID.",
-        parameters: {
-          type: "object",
-          properties: {
-            id: { type: "string", description: "Allocation ID, e.g. ALC-XXXXX" },
-          },
-          required: ["id"],
+      name: "get_allocation",
+      description: "Get a space allocation / configuration by ID.",
+      input_schema: {
+        type: "object",
+        properties: {
+          id: { type: "string", description: "Allocation ID, e.g. ALC-XXXXX" },
         },
+        required: ["id"],
       },
     },
   ];
@@ -101,7 +90,7 @@ module.exports = function aiRoutes(app, ctx) {
       if (name === "get_contract") {
         const row = db.prepare("SELECT * FROM contracts WHERE id=?").get(args.id);
         if (!row) return { error: `Contract ${args.id} not found` };
-        const legs  = db.prepare("SELECT * FROM contract_legs WHERE contract_id=? ORDER BY sort_order").all(args.id);
+        const legs  = db.prepare("SELECT * FROM contract_legs  WHERE contract_id=? ORDER BY leg_order").all(args.id);
         const rates = db.prepare("SELECT * FROM contract_rates WHERE contract_id=? ORDER BY sort_order").all(args.id);
         return { ...row, legs, rates };
       }
@@ -146,14 +135,13 @@ module.exports = function aiRoutes(app, ctx) {
     }
     const systemPrompt = systemParts.join("\n");
 
-    // Build the request body (OpenAI-compatible format)
     const requestBody = {
       model,
       max_tokens: 1024,
       system: systemPrompt,
       messages,
       tools: TOOLS,
-      tool_choice: "auto",
+      tool_choice: { type: "auto" },   // Anthropic format
     };
 
     try {

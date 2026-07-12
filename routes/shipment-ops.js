@@ -153,6 +153,9 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     if (!shipment) return err(res, "Shipment not found", 404);
     const carrierCode = req.body?.carrierCode || shipment.carrier_code || '';
     const tradeLane   = req.body?.tradeLane || '';
+    const etd = req.body?.etd || shipment.etd || '';
+    const eta = req.body?.eta || shipment.eta || '';
+
     let templates = carrierCode
       ? db.prepare("SELECT * FROM milestone_templates WHERE carrier_code=? AND trade_lane=? ORDER BY sequence_order").all(carrierCode, tradeLane)
       : [];
@@ -161,14 +164,35 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     if (!templates.length)
       templates = db.prepare("SELECT * FROM milestone_templates WHERE template_key='FCL' AND carrier_code='' ORDER BY sequence_order").all();
     if (!templates.length) return err(res, "No milestone template found");
+
+    // Compute estimated dates relative to ETD/ETA when available
+    const DATE_OFFSETS = {
+      booking_confirmed: { base: etd, days: -21 },
+      si_submitted:      { base: etd, days: -14 },
+      cargo_gated_in:    { base: etd, days:  -5 },
+      vessel_departed:   { base: etd, days:   0 },
+      bl_issued:         { base: etd, days:   2 },
+      vessel_arrived:    { base: eta, days:   0 },
+      customs_cleared:   { base: eta, days:   1 },
+      cargo_released:    { base: eta, days:   2 },
+      delivered:         { base: eta, days:   3 },
+    };
+    const shiftDate = (d, days) => {
+      if (!d) return '';
+      try { const dt = new Date(d); dt.setDate(dt.getDate() + days); return dt.toISOString().slice(0, 10); }
+      catch { return ''; }
+    };
+
     db.prepare("DELETE FROM shipment_milestones WHERE shipment_id=?").run(req.params.id);
     const now = new Date().toISOString();
     const created = [];
     for (const t of templates) {
       const id = `MS-${uid()}`;
+      const off = DATE_OFFSETS[t.milestone_key];
+      const estimatedDate = off ? shiftDate(off.base, off.days) : '';
       db.prepare("INSERT INTO shipment_milestones (id,shipment_id,milestone_key,label,sequence_order,estimated_date,completed_at,completed_by,note,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
-        .run(id, req.params.id, t.milestone_key, t.label, t.sequence_order, '', '', '', '', now);
-      created.push(mapMilestone({ id, shipment_id: req.params.id, milestone_key: t.milestone_key, label: t.label, sequence_order: t.sequence_order, estimated_date: '', completed_at: '', completed_by: '', note: '', created_at: now }));
+        .run(id, req.params.id, t.milestone_key, t.label, t.sequence_order, estimatedDate, '', '', '', now);
+      created.push(mapMilestone({ id, shipment_id: req.params.id, milestone_key: t.milestone_key, label: t.label, sequence_order: t.sequence_order, estimated_date: estimatedDate, completed_at: '', completed_by: '', note: '', created_at: now }));
     }
     ok(res, created, 201);
   });

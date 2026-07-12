@@ -54,7 +54,7 @@ module.exports = function shareRoutes(app, ctx) {
       "SELECT size, type, container_number AS containerNumber, gross_weight_kg AS grossWeightKg FROM containers WHERE shipment_id=?"
     ).all(ship.id);
     const milestones = db.prepare(
-      "SELECT label, sequence_order, completed_at, estimated_date FROM shipment_milestones WHERE shipment_id=? ORDER BY sequence_order ASC"
+      "SELECT milestone_key, label, sequence_order, completed_at, estimated_date FROM shipment_milestones WHERE shipment_id=? ORDER BY sequence_order ASC"
     ).all(ship.id);
 
     ok(res, {

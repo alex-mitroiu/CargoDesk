@@ -416,6 +416,8 @@ const SearchForm = ({ onSearch, loading }) => {
     f.pol || f.polOrigin || f.podDestination || f.pod ||
     f.asOf || f.status !== "Active" || f.routingTerm !== "P2P";
 
+  const canSearch = !!f.pol && !!f.pod && !!f.asOf;
+
   const handleSearch = () => {
     onSearch({
       search:         f.contractNumber.trim(),
@@ -555,6 +557,31 @@ const SearchForm = ({ onSearch, loading }) => {
 
               {row}
 
+              {/* Containers — last element of this row */}
+              <div style={{ flexShrink: 0 }}>
+                {lbl("Containers")}
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <button type="button" onClick={() => setPickerOpen(true)}
+                    style={{ fontFamily: T.body, fontSize: 13,
+                      color: containers.length > 0 ? T.accent : T.textMuted,
+                      background: T.bg,
+                      border: `1px solid ${containers.length > 0 ? T.accent + "55" : T.border}`,
+                      borderRadius: 8, padding: "7px 14px", cursor: "pointer", textAlign: "left",
+                      minWidth: 160 }}>
+                    {containers.length > 0
+                      ? containers.map(c => `${c.qty}×${c.type}`).join(" + ")
+                      : "Containers…"}
+                  </button>
+                  {containers.length > 0 && (
+                    <button type="button" onClick={() => setContainers([])}
+                      style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted,
+                        background: "none", border: "none", cursor: "pointer", padding: "4px 0" }}>
+                      ✕
+                    </button>
+                  )}
+                </div>
+              </div>
+
             </div>
           </div>
         );
@@ -577,29 +604,6 @@ const SearchForm = ({ onSearch, loading }) => {
         </div>
       </div>
 
-      {/* Row 4: Containers */}
-      <div style={{ marginBottom: 16 }}>
-        {lbl("Containers (for rate estimation)")}
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <button type="button" onClick={() => setPickerOpen(true)}
-            style={{ fontFamily: T.body, fontSize: 13, color: containers.length > 0 ? T.accent : T.textMuted,
-              background: T.bg, border: `1px solid ${containers.length > 0 ? T.accent + "55" : T.border}`,
-              borderRadius: 8, padding: "7px 14px", cursor: "pointer", textAlign: "left",
-              minWidth: 200 }}>
-            {containers.length > 0
-              ? containers.map(c => `${c.qty}×${c.type}`).join("  +  ")
-              : "Select container types…"}
-          </button>
-          {containers.length > 0 && (
-            <button type="button" onClick={() => setContainers([])}
-              style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, background: "none",
-                border: "none", cursor: "pointer", padding: "4px 0" }}>
-              ✕ Clear
-            </button>
-          )}
-        </div>
-      </div>
-
       {pickerOpen && (
         <ContainerPickerModal
           selection={containers}
@@ -610,10 +614,15 @@ const SearchForm = ({ onSearch, loading }) => {
 
       {/* Actions */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 8 }}>
+        {!canSearch && (
+          <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
+            POL, POD and Valid as of are required
+          </span>
+        )}
         {hasFilters && (
           <Btn variant="secondary" onClick={handleClear} disabled={loading}>Clear</Btn>
         )}
-        <Btn onClick={handleSearch} disabled={loading}>
+        <Btn onClick={handleSearch} disabled={loading || !canSearch}>
           {loading ? (
             <span style={{ display: "flex", alignItems: "center", gap: 7 }}>
               <Spinner size="sm" color="currentColor" /> Searching…

@@ -161,7 +161,7 @@ export const api = {
     },
   },
   tickets: {
-    list:          ()              => req("GET",    "/tickets"),
+    list:          (p = {})       => req("GET",    `/tickets${Object.keys(p).length ? "?" + new URLSearchParams(p) : ""}`),
     forShipment:   (shipmentId)   => req("GET",    `/tickets?shipmentId=${encodeURIComponent(shipmentId)}`),
     create:        (data)         => req("POST",   "/tickets", data),
     update:        (id, data)     => req("PUT",    `/tickets/${id}`, data),
@@ -169,6 +169,25 @@ export const api = {
     links:         (id)           => req("GET",    `/tickets/${id}/links`),
     addLink:       (id, data)     => req("POST",   `/tickets/${id}/links`, data),
     removeLink:    (linkId)       => req("DELETE", `/ticket-links/${linkId}`),
+  },
+  kbProjects: {
+    list:   ()           => req("GET",    "/kb/projects"),
+    create: (data)       => req("POST",   "/kb/projects", data),
+    update: (id, data)   => req("PUT",    `/kb/projects/${id}`, data),
+    remove: (id)         => req("DELETE", `/kb/projects/${id}`),
+  },
+  kbVersions: {
+    list:   (projectId)       => req("GET",    `/kb/projects/${projectId}/versions`),
+    create: (projectId, data) => req("POST",   `/kb/projects/${projectId}/versions`, data),
+    update: (id, data)        => req("PUT",    `/kb/versions/${id}`, data),
+    remove: (id)              => req("DELETE", `/kb/versions/${id}`),
+  },
+  kbColumns: {
+    list:    (projectId)            => req("GET",   `/kb/projects/${projectId}/columns`),
+    create:  (projectId, data)      => req("POST",  `/kb/projects/${projectId}/columns`, data),
+    update:  (id, data)             => req("PUT",   `/kb/columns/${id}`, data),
+    reorder: (projectId, order)     => req("PATCH", `/kb/projects/${projectId}/columns`, { order }),
+    remove:  (id)                   => req("DELETE",`/kb/columns/${id}`),
   },
   contracts: {
     search:     (p = {})  => req("GET",    `/contracts?${new URLSearchParams(p)}`),

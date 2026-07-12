@@ -23,6 +23,10 @@ import { VERSION, COPYRIGHT_YEAR, COPYRIGHT_OWNER } from "./version";
 import LandingPage         from "./pages/LandingPage";
 import LoginPage           from "./pages/LoginPage";
 import KanbanPage          from "./pages/KanbanPage";
+import TestPlansPage        from "./pages/TestPlansPage";
+import TestRunsPage         from "./pages/TestRunsPage";
+import TestCasesPage        from "./pages/TestCasesPage";
+import ReleasesPage         from "./pages/ReleasesPage";
 
 import MdmCarriersPage        from "./pages/mdm/MdmCarriersPage";
 import MdmVesselsPage         from "./pages/mdm/MdmVesselsPage";
@@ -2404,8 +2408,12 @@ function App() {
             <NavBtn pageKey="space-configs"  icon="⚡" label="Space Configurations" indent />
             <NavBtn pageKey="dashboard-archive" icon="🗄" label="Archive"           indent />
 
-            <NavBtn pageKey="kanban"    icon="📋" label="Integration Board" />
-            <NavBtn pageKey="schedules" icon="🗓" label="Schedule Search" />
+            <NavBtn pageKey="kanban"      icon="📋" label="Integration Board" />
+            <NavBtn pageKey="releases"    icon="🏷" label="Releases"    indent />
+            <NavBtn pageKey="test-plans"  icon="🧪" label="Test Plans"  indent />
+            <NavBtn pageKey="test-runs"   icon="🔄" label="Test Runs"   indent />
+            <NavBtn pageKey="test-cases"  icon="✓"  label="Test Cases"  indent />
+            <NavBtn pageKey="schedules"  icon="🗓" label="Schedule Search" />
 
             {/* AI Chat button — only shown when ai_agent_enabled=1 */}
             {appSettings.ai_agent_enabled === '1' && (
@@ -2651,7 +2659,11 @@ function App() {
             }} />
         )}
 
-        {page === "kanban"    && isEnabled("kanban")    && <KanbanPage shipments={shipments} />}
+        {page === "kanban"      && isEnabled("kanban")    && <KanbanPage shipments={shipments} />}
+        {page === "releases"    && isEnabled("kanban")    && <ReleasesPage />}
+        {page === "test-plans"  && isEnabled("kanban")    && <TestPlansPage />}
+        {page === "test-runs"   && isEnabled("kanban")    && <TestRunsPage />}
+        {page === "test-cases"  && isEnabled("kanban")    && <TestCasesPage />}
 
         {page === "dashboard-archive" && (
           <DashboardArchive

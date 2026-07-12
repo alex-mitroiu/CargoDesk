@@ -752,13 +752,13 @@ const SchedulesModal = ({ contract, onClose }) => {
           const steps = [];
           if (polIsDoor || polIsCY) steps.push(
             <LegNode key="origin" label={polIsDoor ? "Origin (Door)" : "Origin (CY/CFS)"}
-              code={seaLeg.polCityCode || "—"} name={seaLeg.polCityName || null} highlight={false} />
+              code={polIsDoor ? "DOOR" : "CY"} name={seaLeg.polHaulageLocations || null} highlight={false} />
           );
           steps.push(<LegNode key="pol" label="Port of Loading" code={pol} name={seaLeg.polName} highlight={true} />);
           steps.push(<LegNode key="pod" label="Port of Discharge" code={pod} name={seaLeg.podName} highlight={true} />);
           if (podIsDoor || podIsCY) steps.push(
             <LegNode key="dest" label={podIsDoor ? "Destination (Door)" : "Destination (CY/CFS)"}
-              code={seaLeg.podCityCode || "—"} name={seaLeg.podCityName || null} highlight={false} />
+              code={podIsDoor ? "DOOR" : "CY"} name={seaLeg.podHaulageLocations || null} highlight={false} />
           );
 
           const nodes = [];

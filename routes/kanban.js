@@ -1,7 +1,13 @@
 "use strict";
 
 module.exports = function kanbanRoutes(app, ctx) {
-  const { db, ok, err, uid, mapTicket, mapTicketLink, inverseLinkLabel } = ctx;
+  const { db, ok, err, uid, auth, requireRole,
+          mapTicket, mapTicketLink, inverseLinkLabel,
+          mapKbProject, mapKbVersion, mapKbColumn } = ctx;
+
+  const shipmentWrite = ctx.requireRole ? requireRole(["operator", "admin"]) : auth();
+
+  // ─── Ticket helpers ───────────────────────────────────────────────────────
 
   const TICKET_JOIN = `
     SELECT t.*, u.name AS assignee_name
@@ -9,19 +15,25 @@ module.exports = function kanbanRoutes(app, ctx) {
     LEFT   JOIN users u ON t.assignee_id = u.id
   `;
 
-  app.get("/api/tickets", (req, res) => {
-    const { shipmentId } = req.query;
-    if (shipmentId) {
-      return ok(res, db.prepare(`${TICKET_JOIN} WHERE t.shipment_id=? ORDER BY t.status, t.position, t.created_at`).all(shipmentId).map(mapTicket));
-    }
-    ok(res, db.prepare(`${TICKET_JOIN} ORDER BY t.status, t.position, t.created_at`).all().map(mapTicket));
+  // ─── Tickets ──────────────────────────────────────────────────────────────
+
+  app.get("/api/tickets", auth(), (req, res) => {
+    const { shipmentId, projectId } = req.query;
+    let query = `${TICKET_JOIN} WHERE 1=1`;
+    const params = [];
+    if (shipmentId) { query += " AND t.shipment_id=?"; params.push(shipmentId); }
+    // Include tickets with no project_id so pre-migration tickets always appear.
+    if (projectId)  { query += " AND (t.project_id=? OR t.project_id IS NULL)"; params.push(projectId); }
+    query += " ORDER BY t.status, t.position, t.created_at";
+    ok(res, db.prepare(query).all(...params).map(mapTicket));
   });
 
-  app.post("/api/tickets", (req, res) => {
+  app.post("/api/tickets", shipmentWrite, (req, res) => {
     const {
       title, section = '', description = '', priority = 'Medium', status = 'Ready',
       shipmentId = null, type = 'Task', version = '',
       parentId = null, assigneeId = null, dueDate = null, testNotes = null,
+      projectId = null, versionId = null,
     } = req.body;
     if (!title) return err(res, "title required");
     const id  = `TKT-${uid()}`;
@@ -29,42 +41,47 @@ module.exports = function kanbanRoutes(app, ctx) {
     db.prepare(`
       INSERT INTO tickets
         (id, title, section, description, priority, status, position, created_at,
-         shipment_id, type, version, parent_id, assignee_id, due_date, test_notes)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         shipment_id, type, version, parent_id, assignee_id, due_date, test_notes,
+         project_id, version_id)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `).run(id, title, section, description, priority, status, pos, new Date().toISOString(),
            shipmentId || null, type, version, parentId || null, assigneeId || null, dueDate || null,
-           testNotes || null);
+           testNotes || null, projectId || null, versionId || null);
     ok(res, mapTicket(db.prepare(`${TICKET_JOIN} WHERE t.id=?`).get(id)), 201);
   });
 
-  app.put("/api/tickets/:id", (req, res) => {
+  app.put("/api/tickets/:id", shipmentWrite, (req, res) => {
     const existing = db.prepare("SELECT * FROM tickets WHERE id=?").get(req.params.id);
     if (!existing) return err(res, "Not found", 404);
     const {
       title = existing.title, section = existing.section ?? '', description = existing.description ?? '',
       priority = existing.priority ?? 'Medium', status = existing.status ?? 'Ready', position = existing.position ?? 0,
       shipmentId = existing.shipment_id, type = existing.type ?? 'Task', version = existing.version ?? '',
-      parentId = existing.parent_id, assigneeId = existing.assignee_id, dueDate = existing.due_date, testNotes = existing.test_notes,
+      parentId = existing.parent_id, assigneeId = existing.assignee_id, dueDate = existing.due_date,
+      testNotes = existing.test_notes, projectId = existing.project_id, versionId = existing.version_id,
     } = req.body;
     const info = db.prepare(`
       UPDATE tickets
       SET title=?, section=?, description=?, priority=?, status=?, position=?,
-          shipment_id=?, type=?, version=?, parent_id=?, assignee_id=?, due_date=?, test_notes=?
+          shipment_id=?, type=?, version=?, parent_id=?, assignee_id=?, due_date=?, test_notes=?,
+          project_id=?, version_id=?
       WHERE id=?
     `).run(title, section, description, priority, status, position,
            shipmentId || null, type, version, parentId || null, assigneeId || null, dueDate || null,
-           testNotes || null, req.params.id);
+           testNotes || null, projectId || null, versionId || null, req.params.id);
     if (info.changes === 0) return err(res, "Not found", 404);
     ok(res, mapTicket(db.prepare(`${TICKET_JOIN} WHERE t.id=?`).get(req.params.id)));
   });
 
-  app.delete("/api/tickets/:id", (req, res) => {
+  app.delete("/api/tickets/:id", shipmentWrite, (req, res) => {
     const info = db.prepare("DELETE FROM tickets WHERE id=?").run(req.params.id);
     if (info.changes === 0) return err(res, "Not found", 404);
     ok(res, { deleted: req.params.id });
   });
 
-  app.get("/api/tickets/:id/links", (req, res) => {
+  // ─── Ticket Links ─────────────────────────────────────────────────────────
+
+  app.get("/api/tickets/:id/links", auth(), (req, res) => {
     const rows = db.prepare("SELECT * FROM ticket_links WHERE from_id=? OR to_id=?").all(req.params.id, req.params.id);
     const result = rows.map(l => {
       const isOut   = l.from_id === req.params.id;
@@ -77,7 +94,7 @@ module.exports = function kanbanRoutes(app, ctx) {
     ok(res, result);
   });
 
-  app.post("/api/tickets/:id/links", (req, res) => {
+  app.post("/api/tickets/:id/links", shipmentWrite, (req, res) => {
     const { toId, linkType } = req.body || {};
     if (!toId || !linkType) return err(res, "toId and linkType required");
     if (!db.prepare("SELECT id FROM tickets WHERE id=?").get(toId)) return err(res, "Target ticket not found", 404);
@@ -88,9 +105,132 @@ module.exports = function kanbanRoutes(app, ctx) {
     ok(res, { id, fromId: req.params.id, toId, linkType }, 201);
   });
 
-  app.delete("/api/ticket-links/:id", (req, res) => {
+  app.delete("/api/ticket-links/:id", shipmentWrite, (req, res) => {
     const info = db.prepare("DELETE FROM ticket_links WHERE id=?").run(req.params.id);
     if (info.changes === 0) return err(res, "Not found", 404);
+    ok(res, { deleted: req.params.id });
+  });
+
+  // ─── Projects ─────────────────────────────────────────────────────────────
+
+  app.get("/api/kb/projects", auth(), (req, res) => {
+    ok(res, db.prepare("SELECT * FROM kb_projects ORDER BY created_at ASC").all().map(mapKbProject));
+  });
+
+  app.post("/api/kb/projects", shipmentWrite, (req, res) => {
+    const { name, key = '', color = '#6366f1', description = '' } = req.body || {};
+    if (!name) return err(res, "name required");
+    const id  = `PRJ-${uid()}`;
+    const now = new Date().toISOString();
+    const keyVal = key.trim().toUpperCase() || name.slice(0, 4).toUpperCase();
+    db.prepare("INSERT INTO kb_projects (id,name,key,color,description,created_at) VALUES (?,?,?,?,?,?)")
+      .run(id, name, keyVal, color, description, now);
+    // Seed default columns for the new project
+    const DEFAULT_COLUMNS = [
+      { name: 'Ready', color: '#6366f1' }, { name: 'In Progress', color: '#f59e0b' },
+      { name: 'In Testing', color: '#06b6d4' }, { name: 'Testing Failed', color: '#ef4444' },
+      { name: 'Ready to Deploy', color: '#f97316' }, { name: 'Done', color: '#22c55e' },
+      { name: 'Released', color: '#8b5cf6' },
+    ];
+    for (let i = 0; i < DEFAULT_COLUMNS.length; i++) {
+      db.prepare("INSERT INTO kb_columns (id,project_id,name,position,color,created_at) VALUES (?,?,?,?,?,?)")
+        .run(`COL-${uid()}`, id, DEFAULT_COLUMNS[i].name, i, DEFAULT_COLUMNS[i].color, now);
+    }
+    ok(res, mapKbProject(db.prepare("SELECT * FROM kb_projects WHERE id=?").get(id)), 201);
+  });
+
+  app.put("/api/kb/projects/:id", shipmentWrite, (req, res) => {
+    const existing = db.prepare("SELECT * FROM kb_projects WHERE id=?").get(req.params.id);
+    if (!existing) return err(res, "Not found", 404);
+    const { name = existing.name, key = existing.key, color = existing.color, description = existing.description } = req.body || {};
+    db.prepare("UPDATE kb_projects SET name=?,key=?,color=?,description=? WHERE id=?")
+      .run(name, key.toUpperCase(), color, description, req.params.id);
+    ok(res, mapKbProject(db.prepare("SELECT * FROM kb_projects WHERE id=?").get(req.params.id)));
+  });
+
+  app.delete("/api/kb/projects/:id", shipmentWrite, (req, res) => {
+    const count = db.prepare("SELECT COUNT(*) AS n FROM kb_projects").get().n;
+    if (count <= 1) return err(res, "Cannot delete the last project");
+    db.prepare("DELETE FROM kb_projects WHERE id=?").run(req.params.id);
+    ok(res, { deleted: req.params.id });
+  });
+
+  // ─── Versions ─────────────────────────────────────────────────────────────
+
+  app.get("/api/kb/projects/:id/versions", auth(), (req, res) => {
+    ok(res, db.prepare("SELECT * FROM kb_versions WHERE project_id=? ORDER BY created_at ASC").all(req.params.id).map(mapKbVersion));
+  });
+
+  app.post("/api/kb/projects/:id/versions", shipmentWrite, (req, res) => {
+    if (!db.prepare("SELECT id FROM kb_projects WHERE id=?").get(req.params.id)) return err(res, "Project not found", 404);
+    const { name, description = '', status = 'Planning', releaseDate = null } = req.body || {};
+    if (!name) return err(res, "name required");
+    const id  = `VER-${uid()}`;
+    const now = new Date().toISOString();
+    db.prepare("INSERT INTO kb_versions (id,project_id,name,description,status,release_date,created_at) VALUES (?,?,?,?,?,?,?)")
+      .run(id, req.params.id, name, description, status, releaseDate || null, now);
+    ok(res, mapKbVersion(db.prepare("SELECT * FROM kb_versions WHERE id=?").get(id)), 201);
+  });
+
+  app.put("/api/kb/versions/:id", shipmentWrite, (req, res) => {
+    const existing = db.prepare("SELECT * FROM kb_versions WHERE id=?").get(req.params.id);
+    if (!existing) return err(res, "Not found", 404);
+    const { name = existing.name, description = existing.description, status = existing.status, releaseDate = existing.release_date } = req.body || {};
+    db.prepare("UPDATE kb_versions SET name=?,description=?,status=?,release_date=? WHERE id=?")
+      .run(name, description, status, releaseDate || null, req.params.id);
+    ok(res, mapKbVersion(db.prepare("SELECT * FROM kb_versions WHERE id=?").get(req.params.id)));
+  });
+
+  app.delete("/api/kb/versions/:id", shipmentWrite, (req, res) => {
+    if (!db.prepare("SELECT id FROM kb_versions WHERE id=?").get(req.params.id)) return err(res, "Not found", 404);
+    db.prepare("UPDATE tickets SET version_id=NULL WHERE version_id=?").run(req.params.id);
+    db.prepare("DELETE FROM kb_versions WHERE id=?").run(req.params.id);
+    ok(res, { deleted: req.params.id });
+  });
+
+  // ─── Columns ─────────────────────────────────────────────────────────────
+
+  app.get("/api/kb/projects/:id/columns", auth(), (req, res) => {
+    ok(res, db.prepare("SELECT * FROM kb_columns WHERE project_id=? ORDER BY position ASC").all(req.params.id).map(mapKbColumn));
+  });
+
+  app.post("/api/kb/projects/:id/columns", shipmentWrite, (req, res) => {
+    if (!db.prepare("SELECT id FROM kb_projects WHERE id=?").get(req.params.id)) return err(res, "Project not found", 404);
+    const { name, color = '#6366f1', wipLimit = null } = req.body || {};
+    if (!name) return err(res, "name required");
+    const maxPos = db.prepare("SELECT MAX(position) AS m FROM kb_columns WHERE project_id=?").get(req.params.id)?.m ?? -1;
+    const id  = `COL-${uid()}`;
+    db.prepare("INSERT INTO kb_columns (id,project_id,name,position,color,wip_limit,created_at) VALUES (?,?,?,?,?,?,?)")
+      .run(id, req.params.id, name, maxPos + 1, color, wipLimit, new Date().toISOString());
+    ok(res, mapKbColumn(db.prepare("SELECT * FROM kb_columns WHERE id=?").get(id)), 201);
+  });
+
+  app.put("/api/kb/columns/:id", shipmentWrite, (req, res) => {
+    const existing = db.prepare("SELECT * FROM kb_columns WHERE id=?").get(req.params.id);
+    if (!existing) return err(res, "Not found", 404);
+    const { name = existing.name, color = existing.color, position = existing.position, wipLimit = existing.wip_limit } = req.body || {};
+    db.prepare("UPDATE kb_columns SET name=?,color=?,position=?,wip_limit=? WHERE id=?")
+      .run(name, color, position, wipLimit ?? null, req.params.id);
+    ok(res, mapKbColumn(db.prepare("SELECT * FROM kb_columns WHERE id=?").get(req.params.id)));
+  });
+
+  // Bulk reorder: PATCH /api/kb/projects/:id/columns with body { order: ["COL-x", "COL-y", ...] }
+  app.patch("/api/kb/projects/:id/columns", shipmentWrite, (req, res) => {
+    const { order = [] } = req.body || {};
+    for (let i = 0; i < order.length; i++) {
+      db.prepare("UPDATE kb_columns SET position=? WHERE id=? AND project_id=?").run(i, order[i], req.params.id);
+    }
+    ok(res, db.prepare("SELECT * FROM kb_columns WHERE project_id=? ORDER BY position ASC").all(req.params.id).map(mapKbColumn));
+  });
+
+  app.delete("/api/kb/columns/:id", shipmentWrite, (req, res) => {
+    const existing = db.prepare("SELECT * FROM kb_columns WHERE id=?").get(req.params.id);
+    if (!existing) return err(res, "Not found", 404);
+    const count = db.prepare("SELECT COUNT(*) AS n FROM kb_columns WHERE project_id=?").get(existing.project_id).n;
+    if (count <= 1) return err(res, "Cannot delete the last column");
+    const ticketCount = db.prepare("SELECT COUNT(*) AS n FROM tickets WHERE status=?").get(existing.name).n;
+    if (ticketCount > 0) return err(res, `Column has ${ticketCount} ticket(s) — move them first`);
+    db.prepare("DELETE FROM kb_columns WHERE id=?").run(req.params.id);
     ok(res, { deleted: req.params.id });
   });
 };

@@ -9,6 +9,17 @@ const STATUS_COLOR = {
 };
 
 const STEP_ICONS = {
+  // by milestoneKey (primary)
+  booking_confirmed: "📋",
+  si_submitted:      "📄",
+  cargo_gated_in:    "🏭",
+  vessel_departed:   "🚢",
+  bl_issued:         "📃",
+  vessel_arrived:    "⚓",
+  customs_cleared:   "✅",
+  cargo_released:    "📦",
+  delivered:         "🎯",
+  // by label (fallback for custom templates)
   "Booking Confirmed":  "📋",
   "SI Submitted":       "📄",
   "Cargo Gated In":     "🏭",
@@ -61,21 +72,46 @@ function Row({ label, value }) {
 function MilestoneTimeline({ milestones }) {
   if (!milestones?.length) return <p style={{ color: "#94a3b8", fontSize: 14 }}>No milestones available.</p>;
 
+  const completedCount = milestones.filter(m => !!m.completed_at).length;
+  const total = milestones.length;
+  const pct = total > 0 ? Math.round((completedCount / total) * 100) : 0;
+  const currentStep = milestones.find(m => !m.completed_at);
+
   return (
     <div>
+      {/* Progress summary */}
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: "#1e293b" }}>
+            {completedCount === total
+              ? "✓ Journey complete"
+              : currentStep
+                ? `${STEP_ICONS[currentStep.milestone_key] || STEP_ICONS[currentStep.label] || "→"} ${currentStep.label}`
+                : "In progress"}
+          </span>
+          <span style={{ fontSize: 12, color: "#64748b" }}>{completedCount}/{total} steps</span>
+        </div>
+        <div style={{ height: 6, background: "#e2e8f0", borderRadius: 3, overflow: "hidden" }}>
+          <div style={{ height: "100%", width: `${pct}%`, background: pct === 100 ? "#10b981" : "#3b82f6",
+            borderRadius: 3, transition: "width .4s ease" }} />
+        </div>
+      </div>
+
       {milestones.map((m, i) => {
         const done = !!m.completed_at;
-        const icon = STEP_ICONS[m.label] || "•";
+        const isCurrent = !done && i === milestones.findIndex(x => !x.completed_at);
+        const icon = STEP_ICONS[m.milestone_key] || STEP_ICONS[m.label] || "•";
         return (
           <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 14, marginBottom: 16 }}>
             {/* Circle */}
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
               <div style={{
                 width: 32, height: 32, borderRadius: 16,
-                background: done ? "#10b981" : "#e2e8f0",
+                background: done ? "#10b981" : isCurrent ? "#3b82f6" : "#e2e8f0",
                 display: "flex", alignItems: "center", justifyContent: "center",
                 fontSize: 15, flexShrink: 0,
-                border: done ? "2px solid #059669" : "2px solid #cbd5e1",
+                border: done ? "2px solid #059669" : isCurrent ? "2px solid #2563eb" : "2px solid #cbd5e1",
+                boxShadow: isCurrent ? "0 0 0 4px #3b82f620" : "none",
               }}>
                 {done ? "✓" : icon}
               </div>
@@ -85,11 +121,16 @@ function MilestoneTimeline({ milestones }) {
             </div>
             {/* Label */}
             <div style={{ paddingTop: 4 }}>
-              <div style={{ fontSize: 14, fontWeight: done ? 600 : 400, color: done ? "#1e293b" : "#94a3b8" }}>
+              <div style={{ fontSize: 14, fontWeight: done || isCurrent ? 600 : 400,
+                color: done ? "#1e293b" : isCurrent ? "#1d4ed8" : "#94a3b8" }}>
                 {m.label}
+                {isCurrent && <span style={{ fontSize: 11, fontWeight: 600, marginLeft: 8,
+                  background: "#3b82f620", color: "#2563eb", borderRadius: 4, padding: "1px 6px" }}>Current</span>}
               </div>
               {done
-                ? <div style={{ fontSize: 12, color: "#64748b" }}>Completed {fmt(m.completed_at)}</div>
+                ? <div style={{ fontSize: 12, color: "#64748b" }}>
+                    Completed {fmt(m.completed_at)}{m.completed_by ? ` · ${m.completed_by}` : ""}
+                  </div>
                 : m.estimated_date
                   ? <div style={{ fontSize: 12, color: "#94a3b8" }}>Est. {fmt(m.estimated_date)}</div>
                   : null

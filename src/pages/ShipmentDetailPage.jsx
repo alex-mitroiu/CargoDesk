@@ -1432,7 +1432,20 @@ const ComplianceModal = ({ shipment, screening, onChange, onClose }) => {
 
 // ─── Shipment Milestones ──────────────────────────────────────────────────────
 
-const MilestonePanel = ({ shipmentId, shipment }) => {
+const MILESTONE_ICONS = {
+  booking_confirmed: "📋",
+  si_submitted:      "📄",
+  cargo_gated_in:    "🏭",
+  vessel_departed:   "🚢",
+  bl_issued:         "📃",
+  vessel_arrived:    "⚓",
+  customs_cleared:   "✅",
+  cargo_released:    "📦",
+  delivered:         "🎯",
+};
+
+const MilestonePanel = ({ shipmentId, shipment, onProgress }) => {
+  const { user } = useAuth();
   const [milestones,   setMilestones]   = useState([]);
   const [loading,      setLoading]      = useState(true);
   const [initializing, setInitializing] = useState(false);
@@ -1446,8 +1459,11 @@ const MilestonePanel = ({ shipmentId, shipment }) => {
   const load = () => {
     setLoading(true);
     return api.milestones.list(shipmentId)
-      .then(m => setMilestones(m))
-      .catch(() => setMilestones([]))
+      .then(m => {
+        setMilestones(m);
+        onProgress?.({ done: m.filter(x => x.completedAt).length, total: m.length });
+      })
+      .catch(() => { setMilestones([]); onProgress?.({ done: 0, total: 0 }); })
       .finally(() => setLoading(false));
   };
 
@@ -1456,7 +1472,11 @@ const MilestonePanel = ({ shipmentId, shipment }) => {
   const handleInit = async (reset = false) => {
     setInitializing(true);
     try {
-      await api.milestones.init(shipmentId, { carrierCode: shipment?.carrierCode });
+      await api.milestones.init(shipmentId, {
+        carrierCode: shipment?.carrierCode,
+        etd: shipment?.etd || '',
+        eta: shipment?.eta || '',
+      });
       await load();
       toast.success(reset ? "Milestones reset" : "Milestones initialized");
     } catch (e) { toast.error(e.message); }
@@ -1467,11 +1487,12 @@ const MilestonePanel = ({ shipmentId, shipment }) => {
     setSaving(m.id);
     try {
       const completing = !m.completedAt;
+      const completedBy = completing ? (user?.name || user?.email || 'User') : '';
       await api.milestones.update(m.id, {
         estimatedDate: m.estimatedDate,
         note: m.note,
         completedAt: completing ? new Date().toISOString() : '',
-        completedBy: completing ? 'User' : '',
+        completedBy,
       });
       if (completing) setExpanded(null);
       await load();
@@ -1597,11 +1618,13 @@ const MilestonePanel = ({ shipmentId, shipment }) => {
                       border: `2px solid ${color}`,
                       display: "flex", alignItems: "center", justifyContent: "center",
                       color: state === 'upcoming' ? T.textMuted : "#fff",
-                      fontSize: 12, fontWeight: 700, flexShrink: 0,
+                      fontSize: state === 'completed' || state === 'overdue' ? 12 : 14,
+                      fontWeight: 700, flexShrink: 0,
                       cursor: state !== 'completed' ? "pointer" : "default",
                       boxShadow: state === 'current' ? `0 0 0 5px ${color}22` : "none",
+                      lineHeight: 1,
                     }}>
-                    {state === 'completed' ? "✓" : state === 'overdue' ? "!" : m.sequenceOrder}
+                    {state === 'completed' ? "✓" : state === 'overdue' ? "!" : (MILESTONE_ICONS[m.milestoneKey] || m.sequenceOrder)}
                   </div>
                   {!isLast && (
                     <div style={{ width: 2, flex: 1, minHeight: 28,
@@ -3033,6 +3056,7 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
   const [pendingMatches,       setPendingMatches]       = useState(null);
   const [shareUrl,             setShareUrl]             = useState(null);
   const [shareLoading,         setShareLoading]         = useState(false);
+  const [milestoneProg,        setMilestoneProg]        = useState(null);
 
   const closeCtrModal = (fromList = ctrFromList) => {
     setCtrModal(null);
@@ -3225,6 +3249,24 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
             <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700,
               background: "rgb(30,115,190)", color: "#fff",
               borderRadius: 4, padding: "2px 9px", letterSpacing: ".06em" }}>FCL</span>
+            {/* Milestone progress chip */}
+            {milestoneProg?.total > 0 && (
+              <a href="#shp-milestones" style={{ textDecoration: "none" }}>
+                <span title={`${milestoneProg.done} of ${milestoneProg.total} milestones complete`}
+                  style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, cursor: "pointer",
+                    borderRadius: 4, padding: "2px 9px", letterSpacing: ".06em", whiteSpace: "nowrap",
+                    border: milestoneProg.done === milestoneProg.total
+                      ? `1px solid ${T.success}55`
+                      : `1px solid ${T.border}`,
+                    background: milestoneProg.done === milestoneProg.total
+                      ? T.success + "20"
+                      : T.surface,
+                    color: milestoneProg.done === milestoneProg.total ? T.success : T.textMuted,
+                  }}>
+                  {milestoneProg.done === milestoneProg.total ? "✓ " : ""}⚑ {milestoneProg.done}/{milestoneProg.total}
+                </span>
+              </a>
+            )}
             {/* Compliance badge */}
             {(() => {
               const r        = screening?.result;
@@ -3739,7 +3781,7 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
 
       {/* Milestone Workflow */}
       <div id="shp-milestones" style={{ marginTop: 20 }}>
-        <MilestonePanel shipmentId={shipment.id} shipment={shipment} />
+        <MilestonePanel shipmentId={shipment.id} shipment={shipment} onProgress={setMilestoneProg} />
       </div>
 
       {/* Schedules */}

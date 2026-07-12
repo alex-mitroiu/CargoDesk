@@ -630,6 +630,35 @@ const migrations = [
   "ALTER TABLE offices ADD COLUMN branch_id TEXT REFERENCES branches(id)",
   "ALTER TABLE branches ADD COLUMN locode TEXT",
   "ALTER TABLE port_locations ADD COLUMN timezone TEXT",
+  // v0.28.0 — Project Board: multi-project support + structured versions
+  `CREATE TABLE IF NOT EXISTS kb_projects (
+    id          TEXT PRIMARY KEY,
+    name        TEXT NOT NULL,
+    key         TEXT NOT NULL,
+    color       TEXT DEFAULT '#6366f1',
+    description TEXT DEFAULT '',
+    created_at  TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS kb_versions (
+    id           TEXT PRIMARY KEY,
+    project_id   TEXT NOT NULL REFERENCES kb_projects(id) ON DELETE CASCADE,
+    name         TEXT NOT NULL,
+    description  TEXT DEFAULT '',
+    status       TEXT DEFAULT 'Planning',
+    release_date TEXT DEFAULT NULL,
+    created_at   TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS kb_columns (
+    id         TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES kb_projects(id) ON DELETE CASCADE,
+    name       TEXT NOT NULL,
+    position   INTEGER NOT NULL DEFAULT 0,
+    color      TEXT DEFAULT '#6366f1',
+    wip_limit  INTEGER DEFAULT NULL,
+    created_at TEXT NOT NULL
+  )`,
+  "ALTER TABLE tickets ADD COLUMN project_id TEXT DEFAULT NULL",
+  "ALTER TABLE tickets ADD COLUMN version_id TEXT DEFAULT NULL",
 ];
 
 for (const sql of migrations) {
@@ -1190,6 +1219,41 @@ try { db.exec("UPDATE shipments SET vessel = '', vessel_imo = '' WHERE vessel_im
   } catch (e) { console.warn('  ⚠ Could not seed milestone template:', e.message); }
 })();
 
+(function seedDefaultProject() {
+  try {
+    const existing = db.prepare("SELECT COUNT(*) as n FROM kb_projects").get();
+    if (existing.n > 0) return;
+    const projectId = `PRJ-${uid()}`;
+    const now = new Date().toISOString();
+    db.prepare("INSERT INTO kb_projects (id,name,key,color,description,created_at) VALUES (?,?,?,?,?,?)")
+      .run(projectId, 'Main Board', 'MAIN', '#6366f1', 'Default project board', now);
+    const DEFAULT_COLUMNS = [
+      { name: 'Ready',           color: '#6366f1' },
+      { name: 'In Progress',     color: '#f59e0b' },
+      { name: 'In Testing',      color: '#06b6d4' },
+      { name: 'Testing Failed',  color: '#ef4444' },
+      { name: 'Ready to Deploy', color: '#f97316' },
+      { name: 'Done',            color: '#22c55e' },
+      { name: 'Released',        color: '#8b5cf6' },
+    ];
+    for (let i = 0; i < DEFAULT_COLUMNS.length; i++) {
+      db.prepare("INSERT INTO kb_columns (id,project_id,name,position,color,created_at) VALUES (?,?,?,?,?,?)")
+        .run(`COL-${uid()}`, projectId, DEFAULT_COLUMNS[i].name, i, DEFAULT_COLUMNS[i].color, now);
+    }
+    console.log('  ✔ Seeded default project board with 7 columns');
+  } catch (e) { console.warn('  ⚠ Could not seed default project:', e.message); }
+})();
+
+// Assign any tickets that predate the project column to the first project.
+(function backfillTicketProjects() {
+  try {
+    const firstProject = db.prepare("SELECT id FROM kb_projects ORDER BY created_at ASC LIMIT 1").get();
+    if (!firstProject) return;
+    const info = db.prepare("UPDATE tickets SET project_id=? WHERE project_id IS NULL").run(firstProject.id);
+    if (info.changes > 0) console.log(`  ✔ Backfilled ${info.changes} ticket(s) → project ${firstProject.id}`);
+  } catch (e) { console.warn('  ⚠ Could not backfill ticket projects:', e.message); }
+})();
+
 // ─── Map functions ────────────────────────────────────────────────────────────
 
 const SVC_ABBR = { 'Port-to-Port': 'P2P', 'Door-to-Port': 'D2P', 'Port-to-Door': 'P2D', 'Door-to-Door': 'D2D' };
@@ -1381,7 +1445,12 @@ const mapTicket       = r => ({
   assigneeInitial: r.assignee_name   ? r.assignee_name.trim()[0].toUpperCase() : null,
   dueDate:         r.due_date        || null,
   testNotes:       r.test_notes      || null,
+  projectId:       r.project_id      || null,
+  versionId:       r.version_id      || null,
 });
+const mapKbProject = r => ({ id: r.id, name: r.name, key: r.key, color: r.color || '#6366f1', description: r.description || '', createdAt: r.created_at });
+const mapKbVersion = r => ({ id: r.id, projectId: r.project_id, name: r.name, description: r.description || '', status: r.status || 'Planning', releaseDate: r.release_date || null, createdAt: r.created_at });
+const mapKbColumn  = r => ({ id: r.id, projectId: r.project_id, name: r.name, position: r.position ?? 0, color: r.color || '#6366f1', wipLimit: r.wip_limit ?? null, createdAt: r.created_at });
 const mapCustomer            = r => ({ id: r.id, companyName: r.company_name, address1: r.address1 || '', address2: r.address2 || '', city: r.city || '', state: r.state || '', postalCode: r.postal_code || '', countryIso2: r.country_iso2 || '', phone: r.phone || '', fax: r.fax || '', email: r.email || '', website: r.website || '', notes: r.notes || '', createdAt: r.created_at, screeningResult: r.screening_result || null });
 const mapCustomerIdentifier  = r => ({ id: r.id, customerId: r.customer_id, idType: r.id_type, idCode: r.id_code, countryIso2: r.country_iso2 || '', label: r.label || '', isPrimary: !!r.is_primary, createdAt: r.created_at });
 const mapCustomerScreening   = r => ({ id: r.id, customerId: r.customer_id, screenedAt: r.screened_at, result: r.result, hits: JSON.parse(r.hits || '[]'), overriddenAt: r.overridden_at || null, overrideReason: r.override_reason || null });
@@ -1690,6 +1759,7 @@ const ctx = {
   mapShipment, mapShipmentLeg, mapCostLine, mapContainer, mapAllocation,
   mapCarrier, mapVessel, mapPortLocation, mapLinkedPort, mapTradeLane,
   mapScopeItem, mapAccessConfig, mapOffice, mapBranch, mapOrgCountry, mapRegion, mapCountry, mapTicketLink, mapTicket,
+  mapKbProject, mapKbVersion, mapKbColumn,
   mapCustomer, mapCustomerIdentifier, mapCustomerScreening, mapCustomerDoc,
   mapCommodity, mapSystemMessage, mapMilestone, mapMilestoneTemplate,
   mapContract, mapLeg, mapRate,
