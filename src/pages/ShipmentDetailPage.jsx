@@ -1149,6 +1149,152 @@ const MessagesDrawer = ({ shipment, messages, onPost, onClose }) => {
   );
 };
 
+// ─── EDI Messages Drawer ──────────────────────────────────────────────────────
+
+const EDI_BOOKABLE_CARRIERS = new Set(["MAEU", "SAFM", "MCPU"]);
+const EDI_STATUS_COLOR = {
+  pending: "#6b7280", sent: "#3b82f6", acknowledged: "#3b82f6",
+  confirmed: "#22c55e", rejected: "#ef4444", error: "#ef4444",
+};
+
+const EdiMessagesDrawer = ({ shipment, messages, onSend, onClose }) => {
+  const [sending,    setSending]    = useState(false);
+  const [expandedId, setExpandedId] = useState(null);
+  const listRef = useRef(null);
+  const bookable = EDI_BOOKABLE_CARRIERS.has(shipment.carrierCode);
+
+  const fmtTs = iso => {
+    const d = new Date(iso);
+    return d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) +
+      " · " + d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  };
+
+  const handleSend = async () => {
+    if (sending || !bookable) return;
+    setSending(true);
+    try { await onSend(); } finally { setSending(false); }
+  };
+
+  const payloadFor = m => {
+    const raw = m.direction === "out" ? m.rawPayload : (m.parsedPayload || m.rawPayload);
+    try { return JSON.stringify(JSON.parse(raw), null, 2); } catch { return raw || ""; }
+  };
+
+  return (
+    <>
+      {/* Backdrop — semi-transparent, click to close */}
+      <div onClick={onClose}
+        style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.25)", zIndex: 1100 }} />
+
+      {/* Drawer panel */}
+      <div style={{
+        position: "fixed", top: 0, right: 0, bottom: 0, width: 420,
+        background: T.surface, borderLeft: `1px solid ${T.border}`,
+        boxShadow: "-8px 0 32px rgba(0,0,0,.35)",
+        zIndex: 1101, display: "flex", flexDirection: "column",
+      }}>
+        {/* Header */}
+        <div style={{ borderBottom: `1px solid ${T.border}`, flexShrink: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+            padding: "16px 20px 12px" }}>
+            <div>
+              <div style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text }}>
+                📡 EDI Messages
+              </div>
+              <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, marginTop: 2 }}>
+                {messages.length} message{messages.length !== 1 ? "s" : ""}
+              </div>
+            </div>
+            <button onClick={onClose}
+              style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 6,
+                cursor: "pointer", color: T.textMuted, fontSize: 15, padding: "4px 10px",
+                lineHeight: 1 }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = T.danger; e.currentTarget.style.color = T.danger; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.textMuted; }}>
+              ✕
+            </button>
+          </div>
+          {/* Context strip */}
+          <div style={{ display: "flex", alignItems: "center", gap: 10,
+            padding: "8px 20px 12px", flexWrap: "wrap" }}>
+            <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, fontWeight: 600 }}>
+              {shipment.id}
+            </span>
+            <span style={{ color: T.border }}>·</span>
+            <span style={{ fontFamily: T.mono, fontSize: 11, color: T.text }}>
+              {shipment.carrierCode} · {shipment.pol} → {shipment.pod}
+            </span>
+          </div>
+        </div>
+
+        {/* Message list */}
+        <div ref={listRef} style={{ flex: 1, overflowY: "auto", padding: "16px 20px",
+          display: "flex", flexDirection: "column", gap: 14 }}>
+          {messages.length === 0 ? (
+            <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted,
+              fontStyle: "italic", textAlign: "center", marginTop: 40 }}>
+              No EDI messages yet. Send a booking request to get started.
+            </div>
+          ) : messages.map(m => {
+            const color = EDI_STATUS_COLOR[m.status] || T.textMuted;
+            const expanded = expandedId === m.id;
+            return (
+              <div key={m.id} style={{ background: T.bg, border: `1px solid ${T.border}`,
+                borderRadius: 10, padding: "12px 14px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+                  <span style={{ fontFamily: T.body, fontSize: 12, fontWeight: 700, color: T.text }}>
+                    {m.direction === "out" ? "📤 Sent" : "📥 Received"}
+                  </span>
+                  <span style={{ fontFamily: T.mono, fontSize: 10.5, color: T.textMuted }}>
+                    {m.messageType.replace(/_/g, " ")}
+                  </span>
+                  <span style={{ marginLeft: "auto", fontFamily: T.mono, fontSize: 10, fontWeight: 700,
+                    color, background: `${color}18`, border: `1px solid ${color}44`,
+                    borderRadius: 4, padding: "1px 7px", textTransform: "uppercase" }}>
+                    {m.status}{m.isMock ? " · demo" : ""}
+                  </span>
+                </div>
+                <div style={{ fontFamily: T.mono, fontSize: 10.5, color: T.textMuted, marginBottom: 8 }}>
+                  {fmtTs(m.createdAt)}
+                </div>
+                <button onClick={() => setExpandedId(expanded ? null : m.id)}
+                  style={{ background: "none", border: "none", cursor: "pointer", padding: 0,
+                    fontFamily: T.body, fontSize: 11, color: T.accent, textDecoration: "underline dotted" }}>
+                  {expanded ? "Hide payload" : "View payload"}
+                </button>
+                {expanded && (
+                  <pre style={{ marginTop: 8, fontFamily: T.mono, fontSize: 10.5, color: T.text,
+                    background: T.surface, border: `1px solid ${T.border}`, borderRadius: 6,
+                    padding: "10px 12px", overflowX: "auto", whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                    {payloadFor(m)}
+                  </pre>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Action bar */}
+        <div style={{ borderTop: `1px solid ${T.border}`, padding: "14px 20px",
+          display: "flex", flexDirection: "column", gap: 10, flexShrink: 0 }}>
+          {!bookable && (
+            <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted, lineHeight: 1.5 }}>
+              Booking requests aren't supported for carrier {shipment.carrierCode || "—"} yet.
+            </div>
+          )}
+          <button onClick={handleSend} disabled={!bookable || sending}
+            style={{ background: bookable ? T.accent : T.border, border: "none", borderRadius: 7,
+              color: bookable ? "#fff" : T.textMuted, cursor: bookable && !sending ? "pointer" : "default",
+              padding: "9px 20px", fontFamily: T.body, fontSize: 13, fontWeight: 700,
+              transition: "background .15s" }}>
+            {sending ? "Sending…" : "📤 Send Booking Request"}
+          </button>
+        </div>
+      </div>
+    </>
+  );
+};
+
 // ─── Compliance Modal ─────────────────────────────────────────────────────────
 
 const RESULT_STYLE = {
@@ -3043,6 +3189,8 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
   const [msgsOpen,       setMsgsOpen]       = useState(false);
   const [messages,       setMessages]       = useState([]);
   const [unreadCount,    setUnreadCount]    = useState(0);
+  const [ediOpen,        setEdiOpen]        = useState(false);
+  const [ediMessages,    setEdiMessages]    = useState([]);
   const [screening,      setScreening]      = useState(null);
   const [spaceBadge,     setSpaceBadge]     = useState(shipment.spaceBadge || "");
   const [complianceOpen, setComplianceOpen] = useState(false);
@@ -3161,6 +3309,46 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
     setMsgsOpen(true);
     localStorage.setItem(`msg_read_${shipment.id}`, new Date().toISOString());
     setUnreadCount(0);
+  };
+
+  const loadEdiMessagesRef = useRef(null);
+  const loadEdiMessages = () =>
+    api.ediMessages.list(shipment.id).then(setEdiMessages).catch(() => {});
+  loadEdiMessagesRef.current = loadEdiMessages;
+
+  useEffect(() => { loadEdiMessages(); }, [shipment.id]);
+
+  useEffect(() => {
+    if (!ediOpen) return;
+    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const wsHost = import.meta.env.DEV ? "localhost:3001" : window.location.host;
+    const ws = new WebSocket(`${proto}//${wsHost}/ws`);
+    let pollId;
+
+    ws.onopen = () => ws.send(JSON.stringify({ type: "subscribe", shipmentId: shipment.id }));
+    ws.onmessage = e => {
+      try {
+        const frame = JSON.parse(e.data);
+        if (frame.type === "new_edi_message") {
+          setEdiMessages(prev => prev.some(m => m.id === frame.message.id) ? prev : [frame.message, ...prev]);
+        }
+      } catch { /* ignore */ }
+    };
+    ws.onerror = () => { pollId = setInterval(() => loadEdiMessagesRef.current?.(), 10_000); };
+    ws.onclose = () => { if (pollId) clearInterval(pollId); };
+
+    return () => {
+      ws.close();
+      if (pollId) clearInterval(pollId);
+    };
+  }, [ediOpen, shipment.id]);
+
+  const handleSendBookingRequest = async () => {
+    try {
+      await api.ediMessages.sendBookingRequest(shipment.id);
+      await loadEdiMessages();
+      toast.success("Booking request sent");
+    } catch (e) { toast.error(e.message || "Failed to send booking request"); }
   };
   const carrier  = carriers.find(c => c.code === shipment.carrierCode);
   const ctrs     = containers.filter(c => c.shipmentId === shipment.id);
@@ -3342,6 +3530,16 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
               {unreadCount > 9 ? "9+" : unreadCount}
             </span>
           )}
+        </button>
+        <button
+          onClick={() => setEdiOpen(true)}
+          title="EDI messages"
+          style={{ position: "relative", background: "none", border: `1px solid ${T.border}`,
+            borderRadius: 8, cursor: "pointer", padding: "7px 12px", fontSize: 18, lineHeight: 1,
+            transition: "border-color .15s" }}
+          onMouseEnter={e => e.currentTarget.style.borderColor = T.accent}
+          onMouseLeave={e => e.currentTarget.style.borderColor = T.border}>
+          📡
         </button>
         <DocumentsMenu shipment={shipment} containers={containers} />
         <Btn variant="secondary" disabled={shareLoading} onClick={async () => {
@@ -4053,6 +4251,14 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
           loadMessages();
         }}
         onClose={() => setMsgsOpen(false)}
+      />}
+
+      {/* ── EDI messages drawer ── */}
+      {ediOpen && <EdiMessagesDrawer
+        shipment={shipment}
+        messages={ediMessages}
+        onSend={handleSendBookingRequest}
+        onClose={() => setEdiOpen(false)}
       />}
 
       {complianceOpen && (

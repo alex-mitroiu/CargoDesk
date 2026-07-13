@@ -28,6 +28,8 @@ routes/
                      /api/trade-lanes, /api/country-trade-lanes, /api/regions, /api/countries,
                      /api/unlocodes, /api/commodities
   kanban.js          /api/tickets/*, /api/ticket-links/*
+  testcases.js       /api/test-items/*, /api/tickets/:id/tested-by (Story↔TestCase links)
+  edi.js             /api/shipments/:id/edi-messages, /api/shipments/:id/edi-messages/booking-request
   customers.js       /api/customers/*, /api/sanctions/*, /api/fx/*
   contracts.js       /api/contracts/*, /api/entity-events/*
   shipment-ops.js    /api/shipments/:id/screening, cost-lines, milestones, documents
@@ -84,6 +86,7 @@ src/
       VesselCombobox.jsx           {VesselCombobox, VesselField} named exports
       EntityHistoryModal.jsx       Generic audit-log timeline viewer
       UserManagementPanel.jsx      Admin-only user CRUD table (name, email, role, status, last login)
+      TestCaseStoryLinksPanel.jsx  Search+add UI for linking a Test Case ↔ Story ticket (bidirectional)
 ```
 
 ## Route factory pattern
@@ -121,7 +124,7 @@ The original inline routes remain in server.js as **dead code** (route files reg
 Express uses first-match). They act as a fallback and can be deleted once the extracted routes
 are fully validated.
 
-## Database — 35 tables
+## Database — 38 tables
 | Table | Purpose |
 |---|---|
 | shipments | Core shipment records |
@@ -159,6 +162,9 @@ are fully validated.
 | users | Authenticated users: id, email, name, password_hash, role, is_active, last_login |
 | user_scope_items | Per-user shipment scope restrictions (carrier, POL, POD filters) |
 | user_access_configs | Per-user access configuration records |
+| test_items | Dedicated test-case repository (separate from `tickets`); optional `shipment_id` FK |
+| test_case_links | Test Case ↔ Story links ("tests" / "is tested by") |
+| edi_messages | Per-shipment carrier EDI log (direction out/in, raw/parsed payload, `is_mock`) |
 
 ## Key patterns
 - **PortCombobox dropdown**: always `position: fixed` with `getBoundingClientRect()` to escape modal `overflow:auto`
@@ -195,6 +201,8 @@ are fully validated.
 - **Export api namespace**: `api.export.shipmentsCSV()`, `api.export.dashboardXlsx()`, `api.export.dashboardTemplate()` — all use direct `fetch` + `blob` → `<a>.click()` pattern (same as documents download)
 
 ## Recent changes (v0.27.0 "Lookout")
+- **EDI Messaging (carrier booking communication)**: `edi_messages` table stores every outbound/inbound EDI exchange per shipment (`direction`, `message_type`, `status`, raw/parsed payload, `is_mock`); `routes/edi.js` — `GET /api/shipments/:id/edi-messages` + `POST .../booking-request`; `maerskBookingRequest()` mirrors `maerskSchedules()`'s real/mock-fallback shape exactly (reads `maersk_api_key`, `Consumer-Key` header, `AbortSignal.timeout(10s)`, returns `null` on any failure → falls back to `mockBookingResponse()`, tagged `is_mock=1`); confirmed bookings do a targeted `UPDATE shipments SET booking_ref=?`; broadcasts `{type:"new_edi_message"}` over the existing `shipmentSubs` WS infra. Frontend: `EdiMessagesDrawer` in `ShipmentDetailPage.jsx` (mirrors `MessagesDrawer`'s WS+polling-fallback shape; rows show a direction badge + status pill + raw/parsed payload toggle instead of chat bubbles), triggered by a 📡 icon in the shipment header. Settings: `maersk-booking` entry in `AppSettingsPage.jsx`'s `EXTERNAL_APIS` (shares the `maersk_api_key` setting with Maersk Schedules). Tracked under Kanban Epic `TKT-R2NCQJ`.
+- **Test-case repository separation + Story links**: test-case items live only in `test_items` (own repository, not mixed into `tickets`); `test_case_links` provides a bidirectional "tests" / "is tested by" link between a Test Case and a Story ticket, surfaced via the shared `TestCaseStoryLinksPanel.jsx` component (used in both `TestCasesPage.jsx` and `KanbanPage.jsx`'s ticket preview). `test_items` carries an optional `shipment_id` so a test case can be linked directly to a shipment.
 - **Sailing management hardening**: `applySailingToLegs` sets ETA + carrierCode; TSP multi-leg support splices draft SEA legs for each voyage segment; edit-mode replace-not-append fixed (`Promise.all` deletes all existing schedules before saving new); active sailing highlighted green in `SailingPickerModal` (`✓ Active` badge, `voyageNumber` or `vesselName+etd` match) — applied in both `ShipmentFormPage` and `ShipmentDetailPage`; replace confirmation uses proper `<Modal>` overlay
 - **Negative transit days**: `transitDays < 0` renders `⚠ dates` amber badge with tooltip instead of a negative number (both ShipmentFormPage and ShipmentDetailPage)
 - **ShipmentsPage refresh**: background poll every 90 s detects new IDs not yet in view; `↻` button with orange badge showing unloaded count; `_overdue` pseudo-status filter chip ("⏰ Overdue") filters `etd < today && not Completed/Cancelled`

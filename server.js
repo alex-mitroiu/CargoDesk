@@ -684,6 +684,22 @@ const migrations = [
     ticket_id  TEXT NOT NULL,
     created_at TEXT NOT NULL
   )`,
+  // vNext — EDI messaging: carrier booking requests/responses, stored per shipment.
+  `CREATE TABLE IF NOT EXISTS edi_messages (
+    id             TEXT PRIMARY KEY,
+    shipment_id    TEXT NOT NULL,
+    carrier_code   TEXT NOT NULL,
+    direction      TEXT NOT NULL,
+    message_type   TEXT NOT NULL,
+    format         TEXT NOT NULL DEFAULT 'JSON',
+    raw_payload    TEXT DEFAULT '',
+    parsed_payload TEXT DEFAULT '',
+    status         TEXT NOT NULL DEFAULT 'pending',
+    correlation_id TEXT DEFAULT '',
+    is_mock        INTEGER DEFAULT 0,
+    created_at     TEXT NOT NULL,
+    processed_at   TEXT DEFAULT NULL
+  )`,
 ];
 
 for (const sql of migrations) {
@@ -1540,6 +1556,21 @@ const mapTestItem     = r => ({
   versionId:       r.version_id      || null,
 });
 const mapTestCaseLink = r => ({ id: r.id, caseId: r.case_id, ticketId: r.ticket_id, createdAt: r.created_at });
+const mapEdiMessage = r => ({
+  id:            r.id,
+  shipmentId:    r.shipment_id,
+  carrierCode:   r.carrier_code,
+  direction:     r.direction,
+  messageType:   r.message_type,
+  format:        r.format || 'JSON',
+  rawPayload:    r.raw_payload    || '',
+  parsedPayload: r.parsed_payload || '',
+  status:        r.status || 'pending',
+  correlationId: r.correlation_id || '',
+  isMock:        !!r.is_mock,
+  createdAt:     r.created_at,
+  processedAt:   r.processed_at || null,
+});
 const mapKbProject = r => ({ id: r.id, name: r.name, key: r.key, color: r.color || '#6366f1', description: r.description || '', createdAt: r.created_at });
 const mapKbVersion = r => ({ id: r.id, projectId: r.project_id, name: r.name, description: r.description || '', status: r.status || 'Planning', releaseDate: r.release_date || null, createdAt: r.created_at });
 const mapKbColumn  = r => ({ id: r.id, projectId: r.project_id, name: r.name, position: r.position ?? 0, color: r.color || '#6366f1', wipLimit: r.wip_limit ?? null, createdAt: r.created_at });
@@ -1852,6 +1883,7 @@ const ctx = {
   mapCarrier, mapVessel, mapPortLocation, mapLinkedPort, mapTradeLane,
   mapScopeItem, mapAccessConfig, mapOffice, mapBranch, mapOrgCountry, mapRegion, mapCountry, mapTicketLink, mapTicket,
   mapTestItem, mapTestCaseLink,
+  mapEdiMessage,
   mapKbProject, mapKbVersion, mapKbColumn,
   mapCustomer, mapCustomerIdentifier, mapCustomerScreening, mapCustomerDoc,
   mapCommodity, mapSystemMessage, mapMilestone, mapMilestoneTemplate,
@@ -1872,6 +1904,7 @@ require('./routes/allocations')(app, ctx);
 require('./routes/mdm')(app, ctx);
 require('./routes/kanban')(app, ctx);
 require('./routes/testcases')(app, ctx);
+require('./routes/edi')(app, ctx);
 require('./routes/customers')(app, ctx);
 require('./routes/contracts')(app, ctx);
 require('./routes/shipment-ops')(app, ctx);

@@ -53,6 +53,10 @@ export const api = {
     list: (shipmentId)       => req("GET",  `/shipments/${shipmentId}/messages`),
     post: (shipmentId, data) => req("POST", `/shipments/${shipmentId}/messages`, data),
   },
+  ediMessages: {
+    list:               (shipmentId)       => req("GET",  `/shipments/${shipmentId}/edi-messages`),
+    sendBookingRequest: (shipmentId, data) => req("POST", `/shipments/${shipmentId}/edi-messages/booking-request`, data),
+  },
   legs: {
     list:   (shipmentId)              => req("GET",    `/shipments/${shipmentId}/legs`),
     create: (shipmentId, data)        => req("POST",   `/shipments/${shipmentId}/legs`, data),

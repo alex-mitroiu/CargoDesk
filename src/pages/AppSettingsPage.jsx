@@ -59,6 +59,16 @@ const EXTERNAL_APIS = [
     settingKey: "maersk_api_key",
     hasRecurrence: false,
   },
+  {
+    id: "maersk-booking",
+    name: "Maersk Booking (EDI)",
+    provider: "Maersk Line",
+    description: "Send booking requests and receive carrier responses for MAEU, SAFM, or MCPU shipments — stored per shipment in EDI Messages. Shares the same API key as Maersk Schedules.",
+    testType: "maersk_booking",
+    hasApiKey: true,
+    settingKey: "maersk_api_key",
+    hasRecurrence: false,
+  },
 ];
 
 // ─── Internal API definitions ──────────────────────────────────────────────────
@@ -1284,6 +1294,19 @@ export default function AppSettingsPage() {
         } else {
           setTestResults(r => ({ ...r, [apiDef.id]: { ok: false, error: `HTTP ${resp.status}` } }));
         }
+      } else if (apiDef.testType === "maersk_booking") {
+        // Sending a real booking request has side effects (creates EDI messages, can set a
+        // shipment's booking_ref), so this isn't a live call like the schedules test — it just
+        // confirms the shared key is configured. Actual API connectivity is exercised for real
+        // the first time a booking request is sent from a shipment.
+        const hasKey = !!settings?.maersk_api_key;
+        setTestResults(r => ({ ...r, [apiDef.id]: {
+          ok: hasKey, latency: Date.now() - t0,
+          ...(hasKey
+            ? { label: "Key configured — shared with Maersk Schedules" }
+            : { error: "No key — booking requests will use demo data" }
+          ),
+        }}));
       } else {
         const ctrl    = new AbortController();
         const tmr     = setTimeout(() => ctrl.abort(), 7000);
