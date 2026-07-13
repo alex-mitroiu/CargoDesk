@@ -169,6 +169,16 @@ export const api = {
     links:         (id)           => req("GET",    `/tickets/${id}/links`),
     addLink:       (id, data)     => req("POST",   `/tickets/${id}/links`, data),
     removeLink:    (linkId)       => req("DELETE", `/ticket-links/${linkId}`),
+    testedBy:      (id)           => req("GET",    `/tickets/${id}/tested-by`),
+  },
+  testItems: {
+    list:            (p = {})   => req("GET",    `/test-items${Object.keys(p).length ? "?" + new URLSearchParams(p) : ""}`),
+    create:          (data)     => req("POST",   "/test-items", data),
+    update:          (id, data) => req("PUT",    `/test-items/${id}`, data),
+    remove:          (id)       => req("DELETE", `/test-items/${id}`),
+    storyLinks:      (id)       => req("GET",    `/test-items/${id}/story-links`),
+    addStoryLink:    (id, data) => req("POST",   `/test-items/${id}/story-links`, data),
+    removeStoryLink: (id)       => req("DELETE", `/test-case-links/${id}`),
   },
   kbProjects: {
     list:   ()           => req("GET",    "/kb/projects"),

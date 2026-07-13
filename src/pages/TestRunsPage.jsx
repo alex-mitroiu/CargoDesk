@@ -73,7 +73,7 @@ export default function TestRunsPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    try { setTickets(await api.tickets.list()); }
+    try { setTickets(await api.testItems.list()); }
     catch { toast.error("Failed to load test runs"); }
     finally { setLoading(false); }
   }, []);
@@ -102,7 +102,7 @@ export default function TestRunsPage() {
     const t = tickets.find(x => x.id === id);
     if (!t) return;
     try {
-      await api.tickets.update(id, { ...t, status });
+      await api.testItems.update(id, { ...t, status });
       setTickets(p => p.map(x => x.id === id ? { ...x, status } : x));
     } catch { toast.error("Failed to update"); }
   };

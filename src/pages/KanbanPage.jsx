@@ -8,6 +8,7 @@ import { Modal, ConfirmModal } from "../components/primitives/Modal";
 import Btn from "../components/primitives/Btn";
 import Badge from "../components/primitives/Badge";
 import ActionMenu from "../components/primitives/ActionMenu";
+import TestCaseStoryLinksPanel from "../components/shared/TestCaseStoryLinksPanel";
 import { Inp, Sel, Textarea } from "../components/primitives/Form";
 import { toast } from "../toast";
 
@@ -24,7 +25,10 @@ const SECTIONS = [
 const LINK_TYPES = ["Relates to", "Blocks", "Duplicates", "Implements"];
 const INVERSE_LABEL = { "Blocks": "Is blocked by", "Duplicates": "Is duplicated by", "Implements": "Is implemented by", "Relates to": "Relates to" };
 
-const TYPES = ["Epic", "Story", "Feature", "Bug", "Improvement", "Task", "Chore", "Test Plan", "Test Run", "Test Case", "Test Folder"];
+const TYPES = ["Epic", "Story", "Feature", "Bug", "Improvement", "Task", "Chore"];
+const TEST_TYPES = ["Test Folder", "Test Plan", "Test Run", "Test Case"];
+const TEST_STATUSES = ["Ready", "In Progress", "In Testing", "Testing Failed", "Done", "Ready to Deploy", "Released", "Cancelled"];
+const TEST_PARENT_TYPES = { "Test Run": ["Test Plan"], "Test Case": ["Test Run", "Test Plan"] };
 
 const TYPE_ICON = {
   Epic:          "⚡",
@@ -856,11 +860,133 @@ const TicketLinksPanel = ({ ticketId, allTickets = [] }) => {
   );
 };
 
+// ─── Tested By Panel (reverse direction — shown on a Story) ──────────────────
+// Bidirectional from the start: a Story can search for and link an existing
+// Test Case directly, not just display links created from the Case side.
+
+const TestedByPanel = ({ ticketId, testItems = [] }) => {
+  const [links,    setLinks]    = useState([]);
+  const [adding,   setAdding]   = useState(false);
+  const [search,   setSearch]   = useState("");
+  const [selected, setSelected] = useState(null);
+
+  const load = () => api.tickets.testedBy(ticketId).then(setLinks).catch(() => {});
+  useEffect(() => { load(); }, [ticketId]);
+
+  const linkedIds = new Set(links.map(l => l.caseId));
+  const cases = testItems.filter(t => t.type === "Test Case");
+  const candidates = search.trim().length > 1
+    ? cases.filter(t =>
+        !linkedIds.has(t.id) &&
+        (t.id.toLowerCase().includes(search.toLowerCase()) ||
+         t.title.toLowerCase().includes(search.toLowerCase()))
+      ).slice(0, 6)
+    : [];
+
+  const handleAdd = async () => {
+    if (!selected) return;
+    try {
+      await api.testItems.addStoryLink(selected.id, { ticketId });
+      toast.success("Linked to test case");
+      setAdding(false); setSearch(""); setSelected(null);
+      load();
+    } catch (e) { toast.error(e.message); }
+  };
+
+  const handleRemove = async linkId => {
+    try {
+      await api.testItems.removeStoryLink(linkId);
+      setLinks(l => l.filter(x => x.id !== linkId));
+    } catch (e) { toast.error(e.message); }
+  };
+
+  const sectionLbl = { fontFamily: T.body, fontSize: 10, fontWeight: 700, color: T.textMuted,
+    textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 8 };
+  const inp = { fontFamily: T.body, fontSize: 12, color: T.text, background: T.bg,
+    border: `1px solid ${T.border}`, borderRadius: 7, padding: "6px 10px",
+    outline: "none", width: "100%", boxSizing: "border-box" };
+
+  return (
+    <div>
+      <div style={sectionLbl}>Tested By</div>
+
+      {links.map(l => (
+        <div key={l.id} style={{ display: "flex", alignItems: "center", gap: 8,
+          padding: "5px 10px", marginBottom: 4, borderRadius: 6,
+          background: T.bg, border: `1px solid ${T.border}` }}>
+          <span style={{ fontFamily: T.body, fontSize: 10, fontWeight: 600, color: T.textMuted,
+            background: T.surface, border: `1px solid ${T.border}`, borderRadius: 4,
+            padding: "1px 6px", flexShrink: 0, whiteSpace: "nowrap" }}>
+            Is tested by
+          </span>
+          <span style={{ fontFamily: T.mono, fontSize: 11, color: T.accent, flexShrink: 0 }}>
+            {l.caseId}
+          </span>
+          <span style={{ fontFamily: T.body, fontSize: 12, color: T.text, flex: 1,
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {l.case?.title || ""}
+          </span>
+          <button onClick={() => handleRemove(l.id)} title="Remove link"
+            style={{ background: "none", border: "none", cursor: "pointer",
+              color: T.textMuted, fontSize: 16, lineHeight: 1, padding: "0 2px", flexShrink: 0,
+              transition: "color .12s" }}
+            onMouseEnter={e => e.currentTarget.style.color = T.danger}
+            onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>
+            ×
+          </button>
+        </div>
+      ))}
+
+      {links.length === 0 && !adding && (
+        <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, fontStyle: "italic", marginBottom: 6 }}>
+          No test cases linked yet.
+        </div>
+      )}
+
+      {adding ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 6 }}>
+          <input value={search}
+            onChange={e => { setSearch(e.target.value); setSelected(null); }}
+            placeholder="Search test cases by ID or title…" style={inp} autoFocus />
+          {candidates.length > 0 && (
+            <div style={{ border: `1px solid ${T.border}`, borderRadius: 7, overflow: "hidden" }}>
+              {candidates.map((t, i) => (
+                <div key={t.id}
+                  onClick={() => { setSelected(t); setSearch(`${t.id} — ${t.title}`); }}
+                  style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px",
+                    cursor: "pointer", borderBottom: i < candidates.length - 1 ? `1px solid ${T.border}22` : "none",
+                    background: "transparent" }}
+                  onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
+                  onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                  <span style={{ fontFamily: T.mono, fontSize: 11, color: T.accent, flexShrink: 0 }}>{t.id}</span>
+                  <span style={{ fontFamily: T.body, fontSize: 12, color: T.text,
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.title}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <Btn size="sm" disabled={!selected} onClick={handleAdd}>Link</Btn>
+            <Btn size="sm" variant="secondary" onClick={() => { setAdding(false); setSearch(""); setSelected(null); }}>Cancel</Btn>
+          </div>
+        </div>
+      ) : (
+        <button type="button" onClick={() => setAdding(true)}
+          style={{ fontFamily: T.body, fontSize: 12, color: T.accent, background: "none",
+            border: `1px dashed ${T.accent}55`, borderRadius: 6, padding: "5px 12px",
+            cursor: "pointer", width: "100%", textAlign: "left", marginTop: links.length ? 6 : 0 }}>
+          ＋ Link test case
+        </button>
+      )}
+    </div>
+  );
+};
+
 // ─── Parent Picker Modal ──────────────────────────────────────────────────────
 // Full-screen picker for selecting a parent Epic or Story.
 // Supports free-text search across title + ID, and one-click type filtering.
 
-const PARENT_TYPES = ["Epic", "Story", "Test Plan", "Test Run"];
+const PARENT_TYPES = ["Epic", "Story"];
 
 const ParentPickerModal = ({ tickets = [], excludeId, onSelect, onClose, allowedTypes = PARENT_TYPES, initialTypeFilter = "" }) => {
   const [search,     setSearch]     = useState("");
@@ -983,7 +1109,7 @@ const ParentPickerModal = ({ tickets = [], excludeId, onSelect, onClose, allowed
 
 // ─── Ticket Modal ─────────────────────────────────────────────────────────────
 
-const TicketModal = ({ init = {}, shipments = [], tickets = [], users = [], versions = [], columns = COLUMNS, onSave, onCancel }) => {
+const TicketModal = ({ init = {}, shipments = [], tickets = [], testItems = [], users = [], versions = [], columns = COLUMNS, onSave, onCancel }) => {
   const isEdit = !!init.id;
   const [f, setF] = useState({
     title:       init.title       || "",
@@ -1005,16 +1131,8 @@ const TicketModal = ({ init = {}, shipments = [], tickets = [], users = [], vers
   const valid = f.title.trim().length > 0;
 
   const selectedParent = f.parentId ? tickets.find(t => t.id === f.parentId) : null;
-
-  // Restrict parent picker to types that make sense for the child type.
-  const allowedParentTypes =
-    f.type === "Test Run"  ? ["Test Plan"] :
-    f.type === "Test Case" ? ["Test Run", "Test Plan"] :
-    PARENT_TYPES;
-  const initialParentTypeFilter =
-    f.type === "Test Run"  ? "Test Plan" :
-    f.type === "Test Case" ? "Test Run" :
-    "";
+  const allowedParentTypes = PARENT_TYPES;
+  const initialParentTypeFilter = "";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -1048,7 +1166,7 @@ const TicketModal = ({ init = {}, shipments = [], tickets = [], users = [], vers
       </div>
 
       {/* Parent — lookup button opens ParentPickerModal */}
-      {f.type !== "Epic" && f.type !== "Test Plan" && (
+      {f.type !== "Epic" && (
         <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           <label style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600, color: T.textMuted,
             textTransform: "uppercase", letterSpacing: ".06em" }}>
@@ -1125,11 +1243,6 @@ const TicketModal = ({ init = {}, shipments = [], tickets = [], users = [], vers
       <Textarea label="Description" value={f.description} onChange={set("description")}
         placeholder="What needs to be done, acceptance criteria, notes…" rows={4} />
 
-      {f.type === "Test Case" && (
-        <Textarea label="Test Notes / Steps" value={f.testNotes} onChange={set("testNotes")}
-          placeholder={"Steps to reproduce or test steps:\n1. Navigate to…\n2. Enter…\n3. Verify that…"} rows={4} />
-      )}
-
       {isEdit && (
         <Sel label="Status" value={f.status} onChange={set("status")}
           options={columns.map(c => ({ value: c, label: c }))} />
@@ -1139,11 +1252,169 @@ const TicketModal = ({ init = {}, shipments = [], tickets = [], users = [], vers
           <TicketLinksPanel ticketId={init.id} allTickets={tickets} />
         </div>
       )}
+      {isEdit && f.type === "Story" && (
+        <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: 14 }}>
+          <TestedByPanel ticketId={init.id} testItems={testItems} />
+        </div>
+      )}
 
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", paddingTop: 4 }}>
         <Btn variant="secondary" onClick={onCancel}>Cancel</Btn>
         <Btn disabled={!valid} onClick={() => onSave(f)}>
           {isEdit ? "Save Changes" : "Create Ticket"}
+        </Btn>
+      </div>
+    </div>
+  );
+};
+
+// ─── Test Item Modal (Test Folder / Plan / Run / Case) ───────────────────────
+
+const TestItemModal = ({ init = {}, shipments = [], testItems = [], tickets = [], users = [], versions = [], onSave, onCancel }) => {
+  const isEdit = !!init.id;
+  const [f, setF] = useState({
+    title:       init.title       || "",
+    type:        init.type        || "Test Case",
+    description: init.description || "",
+    priority:    init.priority    || "Medium",
+    status:      init.status      || "Ready",
+    shipmentId:  init.shipmentId  || "",
+    versionId:   init.versionId   || "",
+    assigneeId:  init.assigneeId  || "",
+    dueDate:     init.dueDate     || "",
+    parentId:    init.parentId    || "",
+    testNotes:   init.testNotes   || "",
+  });
+  const [showParentPicker, setShowParentPicker] = useState(false);
+  const set = k => v => setF(p => ({ ...p, [k]: v }));
+  const valid = f.title.trim().length > 0;
+
+  const selectedParent = f.parentId ? testItems.find(t => t.id === f.parentId) : null;
+  // Test Folder/Plan are always roots — nesting for those happens only via drag-and-drop
+  // in the sidebar, matching the original tickets-based behavior.
+  const allowedParentTypes = TEST_PARENT_TYPES[f.type] || null;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <Inp label="Title" value={f.title} onChange={set("title")} placeholder="e.g. Verify login with valid credentials" required />
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <Sel label="Type" value={f.type} onChange={set("type")}
+          options={TEST_TYPES.map(t => ({ value: t, label: `${TYPE_ICON[t]} ${t}` }))} />
+        <Sel label="Priority" value={f.priority} onChange={set("priority")}
+          options={PRIORITIES.map(p => ({ value: p, label: p }))} />
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <Sel label="Assignee" value={f.assigneeId} onChange={set("assigneeId")}
+          options={[
+            { value: "", label: "— Unassigned —" },
+            ...users.filter(u => u.isActive !== false).map(u => ({ value: u.id, label: u.name })),
+          ]}
+        />
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <label style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600, color: T.textMuted,
+            textTransform: "uppercase", letterSpacing: ".06em" }}>Due Date</label>
+          <input type="date" value={f.dueDate} onChange={e => set("dueDate")(e.target.value)}
+            style={{ ...inputBase, fontFamily: T.mono, fontSize: 13, cursor: "pointer",
+              colorScheme: "dark" }} />
+        </div>
+      </div>
+
+      {allowedParentTypes && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <label style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600, color: T.textMuted,
+            textTransform: "uppercase", letterSpacing: ".06em" }}>
+            Parent <span style={{ fontWeight: 400, textTransform: "none" }}>(optional)</span>
+          </label>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, minHeight: 36,
+              background: T.bg, border: `1px solid ${selectedParent ? T.accent + "66" : T.border}`,
+              borderRadius: 7, padding: "6px 12px" }}>
+              {selectedParent ? (
+                <>
+                  <span style={{ fontSize: 15, flexShrink: 0 }}>{TYPE_ICON[selectedParent.type] || "📋"}</span>
+                  <Badge variant={TYPE_VARIANT[selectedParent.type] || "default"}>{selectedParent.type}</Badge>
+                  <span style={{ fontFamily: T.mono, fontSize: 11, color: T.accent, flexShrink: 0 }}>
+                    {selectedParent.id}
+                  </span>
+                  <span style={{ fontFamily: T.body, fontSize: 12, color: T.text, flex: 1,
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {selectedParent.title}
+                  </span>
+                  <button type="button" onClick={() => set("parentId")("")}
+                    style={{ background: "none", border: "none", cursor: "pointer",
+                      color: T.textMuted, fontSize: 16, lineHeight: 1, padding: "0 2px", flexShrink: 0 }}
+                    onMouseEnter={e => e.currentTarget.style.color = T.danger}
+                    onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>×</button>
+                </>
+              ) : (
+                <span style={{ fontFamily: T.body, fontSize: 12, color: T.border, fontStyle: "italic" }}>
+                  None — click 🔍 to search
+                </span>
+              )}
+            </div>
+            <button type="button" onClick={() => setShowParentPicker(true)}
+              title={`Search for a parent ${allowedParentTypes.join(" or ")}`}
+              style={{ background: T.accentBg, border: `1px solid ${T.accent}55`, borderRadius: 7,
+                color: T.accent, cursor: "pointer", fontSize: 16, padding: "6px 12px",
+                lineHeight: 1, flexShrink: 0, transition: "background .12s" }}
+              onMouseEnter={e => e.currentTarget.style.background = `${T.accent}33`}
+              onMouseLeave={e => e.currentTarget.style.background = T.accentBg}>
+              🔍
+            </button>
+          </div>
+        </div>
+      )}
+
+      {showParentPicker && (
+        <ParentPickerModal
+          tickets={testItems}
+          excludeId={init.id}
+          onSelect={t => set("parentId")(t.id)}
+          onClose={() => setShowParentPicker(false)}
+          allowedTypes={allowedParentTypes}
+          initialTypeFilter={allowedParentTypes.length === 1 ? allowedParentTypes[0] : ""}
+        />
+      )}
+
+      <Sel label="Linked Shipment (optional)" value={f.shipmentId} onChange={set("shipmentId")}
+        options={[
+          { value: "", label: "— None —" },
+          ...shipments.map(s => ({ value: s.id, label: `${s.id} · ${s.pol}→${s.pod} · ${s.carrierCode} (${s.status})` })),
+        ]}
+      />
+      {versions.length > 0 && (
+        <Sel label="Version (optional)" value={f.versionId} onChange={set("versionId")}
+          options={[
+            { value: "", label: "— Unversioned —" },
+            ...versions.map(v => ({ value: v.id, label: `${v.name}${v.status ? ` · ${v.status}` : ""}${v.releaseDate ? ` · ${v.releaseDate}` : ""}` })),
+          ]}
+        />
+      )}
+      <Textarea label="Description" value={f.description} onChange={set("description")}
+        placeholder="What is this verifying?" rows={4} />
+
+      {f.type === "Test Case" && (
+        <Textarea label="Test Notes / Steps" value={f.testNotes} onChange={set("testNotes")}
+          placeholder={"Steps to reproduce or test steps:\n1. Navigate to…\n2. Enter…\n3. Verify that…"} rows={4} />
+      )}
+
+      {isEdit && (
+        <Sel label="Status" value={f.status} onChange={set("status")}
+          options={TEST_STATUSES.map(s => ({ value: s, label: s }))} />
+      )}
+
+      {isEdit && f.type === "Test Case" && (
+        <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: 14 }}>
+          <TestCaseStoryLinksPanel caseId={init.id} tickets={tickets} />
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", paddingTop: 4 }}>
+        <Btn variant="secondary" onClick={onCancel}>Cancel</Btn>
+        <Btn disabled={!valid} onClick={() => onSave(f)}>
+          {isEdit ? "Save Changes" : "Create Test Item"}
         </Btn>
       </div>
     </div>
@@ -1390,7 +1661,7 @@ const TicketCard = ({ ticket, onEdit, onDelete, onMove, onPreview, onDiagram, on
 
 // ─── Ticket Preview Panel ─────────────────────────────────────────────────────
 
-const TicketPreview = ({ ticket, colIndex, shipments, tickets, users, onClose, onEdit, onMove, onDelete, onPreview, onDiagram, onCoverage, columns = COLUMNS }) => {
+const TicketPreview = ({ ticket, colIndex, shipments, tickets, testItems = [], users, onClose, onEdit, onMove, onDelete, onPreview, onDiagram, onCoverage, columns = COLUMNS }) => {
   const { canEdit } = useAuth();
   const [confirm,    setConfirm]    = useState(false);
   const [tab,        setTab]        = useState("overview"); // "overview" | "links" | "order"
@@ -1697,6 +1968,12 @@ const TicketPreview = ({ ticket, colIndex, shipments, tickets, users, onClose, o
           </div>
         ))}
 
+        {ticket.type === "Story" && (
+          <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: 12 }}>
+            <TestedByPanel ticketId={ticket.id} testItems={testItems} />
+          </div>
+        )}
+
         <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: 12 }}>
           <TicketLinksPanel ticketId={ticket.id} allTickets={tickets} />
         </div>
@@ -1898,9 +2175,21 @@ const TicketPreview = ({ ticket, colIndex, shipments, tickets, users, onClose, o
           onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
           {ticket.id}
         </span>
-        <button onClick={onClose}
-          style={{ background: "none", border: "none", cursor: "pointer",
-            color: T.textMuted, fontSize: 18, padding: "0 2px", lineHeight: 1 }}>×</button>
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          {canEdit && (
+            <ActionMenu items={[
+              { icon: "✎", label: "Edit", onClick: onEdit },
+              ...(ticket.type === "Epic" ? [
+                { icon: "📊", label: "Coverage", onClick: () => onCoverage?.(ticket) },
+                { icon: "🗺", label: "Diagram",  onClick: () => onDiagram?.(ticket)  },
+              ] : []),
+              { icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(true) },
+            ]} />
+          )}
+          <button onClick={onClose}
+            style={{ background: "none", border: "none", cursor: "pointer",
+              color: T.textMuted, fontSize: 18, padding: "0 2px", lineHeight: 1 }}>×</button>
+        </div>
       </div>
 
       {/* Tab bar */}
@@ -1920,7 +2209,7 @@ const TicketPreview = ({ ticket, colIndex, shipments, tickets, users, onClose, o
 
       {/* Actions footer */}
       <div style={{ padding: "10px 14px", borderTop: `1px solid ${T.border}`,
-        display: "flex", gap: 6, flexShrink: 0 }}>
+        display: "flex", gap: 6, alignItems: "center", flexShrink: 0 }}>
         {canEdit && !["Done", "Ready to Deploy", "Released", "Backlog"].includes(ticket.status) && (
           <button onClick={() => onMove(ticket, "Backlog")}
             style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 5,
@@ -1935,41 +2224,13 @@ const TicketPreview = ({ ticket, colIndex, shipments, tickets, users, onClose, o
             ← {columns[colIndex - 1].split(" ")[0]}
           </button>
         )}
-        {ticket.type === "Epic" && (
-          <button onClick={() => onCoverage?.(ticket)}
-            style={{ background: "none", border: `1px solid ${T.accent}55`, borderRadius: 5,
-              color: T.accent, cursor: "pointer", fontSize: 12, padding: "5px 10px", fontFamily: T.body }}>
-            📊 Coverage
-          </button>
-        )}
-        {ticket.type === "Epic" && (
-          <button onClick={() => onDiagram?.(ticket)}
-            style={{ background: "none", border: `1px solid ${T.accent}55`, borderRadius: 5,
-              color: T.accent, cursor: "pointer", fontSize: 12, padding: "5px 10px", fontFamily: T.body }}>
-            🗺 Diagram
-          </button>
-        )}
-        {canEdit && (
-          <button onClick={onEdit}
-            style={{ flex: 1, background: T.accentBg, border: `1px solid ${T.accent}55`, borderRadius: 5,
-              color: T.accent, cursor: "pointer", fontSize: 12, padding: "5px 10px",
-              fontFamily: T.body, fontWeight: 600 }}>
-            ✎ Edit
-          </button>
-        )}
+        <div style={{ flex: 1 }} />
         {canEdit && colIndex < columns.length - 1 && (
           <button onClick={() => onMove(ticket, columns[colIndex + 1])}
             style={{ background: T.accentBg, border: `1px solid ${T.accent}55`, borderRadius: 5,
               color: T.accent, cursor: "pointer", fontSize: 11, padding: "5px 10px",
               fontFamily: T.body, fontWeight: 600 }}>
             {columns[colIndex + 1].split(" ")[0]} →
-          </button>
-        )}
-        {canEdit && (
-          <button onClick={() => setConfirm(true)}
-            style={{ background: "none", border: `1px solid ${T.danger}44`, borderRadius: 5,
-              color: T.danger, cursor: "pointer", fontSize: 11, padding: "5px 10px", fontFamily: T.body }}>
-            ✕
           </button>
         )}
       </div>
@@ -2814,6 +3075,139 @@ const runStats = cases => {
   return { passed, failed, blocked, active, pending, total: cases.length };
 };
 
+// ─── Test Item Preview Panel ──────────────────────────────────────────────────
+// Lightweight, purpose-built preview for Test Folder/Plan/Run/Case — deliberately
+// separate from TicketPreview (which is deeply wired to board-ticket concepts like
+// Coverage/Diagram/columns/shipments) rather than forking that large component.
+
+const TestItemPreview = ({ item, testItems, tickets, onClose, onEdit, onDelete, onPreview }) => {
+  const [confirm, setConfirm] = useState(false);
+  const parent   = item.parentId ? testItems.find(t => t.id === item.parentId) : null;
+  const children = testItems.filter(t => t.parentId === item.id).sort((a, b) => a.position - b.position);
+  const lbl      = tcLabel(item.status);
+  const color    = tcStatusColor(item.status);
+
+  return (
+    <div style={{ width: 320, flexShrink: 0, alignSelf: "stretch", display: "flex", flexDirection: "column",
+      background: T.surface, border: `1px solid ${T.border}`, borderTop: `3px solid ${color}`,
+      borderRadius: 10, overflow: "hidden" }}>
+
+      {/* Header */}
+      <div style={{ padding: "14px 16px 12px", borderBottom: `1px solid ${T.border}`, flexShrink: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontSize: 15 }}>{TYPE_ICON[item.type] || "📋"}</span>
+            <Badge variant={TYPE_VARIANT[item.type] || "default"}>{item.type}</Badge>
+            <span style={{ fontFamily: T.mono, fontSize: 11, color: T.accent }}>{item.id}</span>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer",
+            color: T.textMuted, fontSize: 18, lineHeight: 1, padding: "0 2px" }}>×</button>
+        </div>
+        <div style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, lineHeight: 1.4 }}>
+          {item.title}
+        </div>
+      </div>
+
+      {/* Body */}
+      <div style={{ flex: 1, overflowY: "auto", padding: "14px 16px", display: "flex", flexDirection: "column", gap: 12 }}>
+        {parent && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <Badge variant={TYPE_VARIANT[parent.type] || "default"}>{parent.type}</Badge>
+            <button type="button" onClick={() => onPreview?.(parent)}
+              style={{ background: "none", border: "none", cursor: "pointer", padding: 0,
+                fontFamily: T.mono, fontSize: 11, color: T.accent, textDecoration: "underline dotted" }}>
+              {parent.id}
+            </button>
+            <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted,
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{parent.title}</span>
+          </div>
+        )}
+
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color,
+            background: `${color}18`, border: `1px solid ${color}44`, borderRadius: 10, padding: "2px 10px" }}>
+            {lbl}
+          </span>
+          <Badge variant={PRIORITY_VARIANT[item.priority] || "default"}>{item.priority}</Badge>
+        </div>
+
+        {item.assigneeName && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>Assignee:</span>
+            <span style={{ fontFamily: T.body, fontSize: 12, color: T.text }}>{item.assigneeName}</span>
+          </div>
+        )}
+
+        {item.dueDate && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>Due:</span>
+            <span style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>{item.dueDate}</span>
+          </div>
+        )}
+
+        {item.description && (
+          <div style={{ fontFamily: T.body, fontSize: 13, color: T.text, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
+            {item.description}
+          </div>
+        )}
+
+        {item.testNotes && (
+          <div>
+            <div style={{ fontFamily: T.body, fontSize: 10, fontWeight: 700, color: T.textMuted,
+              textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 6 }}>Test Steps</div>
+            <div style={{ fontFamily: T.body, fontSize: 13, color: T.text, lineHeight: 1.7, whiteSpace: "pre-wrap",
+              background: T.bg, border: `1px solid ${T.border}`, borderRadius: 7, padding: "10px 14px" }}>
+              {item.testNotes}
+            </div>
+          </div>
+        )}
+
+        {item.type === "Test Case" && (
+          <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: 12 }}>
+            <TestCaseStoryLinksPanel caseId={item.id} tickets={tickets} />
+          </div>
+        )}
+
+        {children.length > 0 && (
+          <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: 12 }}>
+            <div style={{ fontFamily: T.body, fontSize: 10, fontWeight: 700, color: T.textMuted,
+              textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 8 }}>
+              Children ({children.length})
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              {children.map(c => (
+                <div key={c.id} onClick={() => onPreview?.(c)}
+                  style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px",
+                    borderRadius: 6, background: T.bg, border: `1px solid ${T.border}`, cursor: "pointer" }}>
+                  <span style={{ fontSize: 12 }}>{TYPE_ICON[c.type] || "📋"}</span>
+                  <span style={{ fontFamily: T.body, fontSize: 12, color: T.text, flex: 1,
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.title}</span>
+                  <span style={{ fontFamily: T.mono, fontSize: 9, color: T.textMuted }}>{tcLabel(c.status)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Footer */}
+      <div style={{ padding: "10px 14px", borderTop: `1px solid ${T.border}`, display: "flex", gap: 6, flexShrink: 0 }}>
+        <ActionMenu items={[
+          { icon: "✎", label: "Edit", onClick: () => onEdit(item) },
+          { icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(true) },
+        ]} />
+      </div>
+
+      {confirm && (
+        <ConfirmModal
+          message={`Delete "${item.title}"?${children.length ? ` This will also delete ${children.length} child item(s).` : ""}`}
+          onConfirm={() => { setConfirm(false); onDelete(item.id); onClose(); }}
+          onCancel={() => setConfirm(false)} />
+      )}
+    </div>
+  );
+};
+
 const TestSuiteView = ({ tickets, onPreview, onEdit, onAdd, onExecute, onMoveCase, canEdit }) => {
   const [search,      setSearch]      = useState("");
   // navSel: { type: "all" | "folder" | "plan", id?: string }
@@ -3396,9 +3790,12 @@ const TestSuiteView = ({ tickets, onPreview, onEdit, onAdd, onExecute, onMoveCas
 const KanbanPage = ({ shipments = [] }) => {
   const { canEdit } = useAuth();
   const [tickets,       setTickets]       = useState([]);
+  const [testItems,     setTestItems]     = useState([]);
   const [users,         setUsers]         = useState([]);
   const [loading,       setLoading]       = useState(true);
   const [modal,         setModal]         = useState(null);
+  const [testModal,     setTestModal]     = useState(null);
+  const [testPreviewId, setTestPreviewId] = useState(null);
   const [filter,        setFilter]        = useState({ priority: "", section: "", type: "", assigneeId: "", versionId: "" });
   const [dragId,        setDragId]        = useState(null);
   const [previewId,     setPreviewId]     = useState(null);
@@ -3434,17 +3831,20 @@ const KanbanPage = ({ shipments = [] }) => {
     });
   };
 
-  const preview = previewId ? tickets.find(t => t.id === previewId) ?? null : null;
+  const preview     = previewId     ? tickets.find(t => t.id === previewId) ?? null : null;
+  const testPreview = testPreviewId ? testItems.find(t => t.id === testPreviewId) ?? null : null;
 
   const loadBoard = useCallback(async (proj) => {
     setLoading(true);
     const safe = p => p.catch(() => []);
-    const [tix, cols, vers] = await Promise.all([
+    const [tix, tst, cols, vers] = await Promise.all([
       safe(api.tickets.list(proj ? { projectId: proj.id } : {})),
+      safe(api.testItems.list(proj ? { projectId: proj.id } : {})),
       proj ? safe(api.kbColumns.list(proj.id))  : Promise.resolve([]),
       proj ? safe(api.kbVersions.list(proj.id)) : Promise.resolve([]),
     ]);
     setTickets(tix);
+    setTestItems(tst);
     setColumns(cols);
     setVersions(vers);
     setLoading(false);
@@ -3593,6 +3993,32 @@ const KanbanPage = ({ shipments = [] }) => {
     load();
   };
 
+  const handleTestItemSave = async form => {
+    const payload = {
+      ...form,
+      assigneeId: form.assigneeId || null,
+      dueDate:    form.dueDate    || null,
+      parentId:   form.parentId   || null,
+      testNotes:  form.testNotes  || null,
+      shipmentId: form.shipmentId || null,
+      versionId:  form.versionId  || null,
+      projectId:  currentProject?.id || null,
+    };
+    if (testModal?._action === "add") {
+      await api.testItems.create(payload);
+    } else {
+      await api.testItems.update(testModal.id, { ...testModal, ...payload });
+    }
+    setTestModal(null);
+    load();
+  };
+
+  const handleTestItemDelete = async id => {
+    await api.testItems.remove(id);
+    setTestItems(p => p.filter(t => t.id !== id));
+    setTestPreviewId(p => p === id ? null : p);
+  };
+
   const totalOpen      = tickets.filter(t => !["Released", "Testing Failed", "Ready to Deploy", "Done"].includes(t.status)).length;
   const backlogTickets = tickets.filter(t => t.status === "Backlog").sort((a, b) => a.position - b.position);
 
@@ -3703,7 +4129,9 @@ const KanbanPage = ({ shipments = [] }) => {
             </button>
           )}
           {canEdit && (
-            <Btn onClick={() => setModal("add")} size="sm">
+            <Btn onClick={() => boardView === "tests"
+              ? setTestModal({ _action: "add", type: "Test Plan" })
+              : setModal("add")} size="sm">
               {boardView === "tests" ? "＋ Test Plan" : "＋ Add Ticket"}
             </Btn>
           )}
@@ -3724,26 +4152,39 @@ const KanbanPage = ({ shipments = [] }) => {
           />
         </div>
       ) : boardView === "tests" ? (
-        <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-          <TestSuiteView
-            tickets={tickets}
-            canEdit={canEdit}
-            onPreview={t => setPreviewId(t.id)}
-            onEdit={t => setModal(t)}
-            onAdd={init => setModal({ _action: "add", ...init })}
-            onExecute={async (id, status) => {
-              const t = tickets.find(x => x.id === id);
-              if (!t) return;
-              await api.tickets.update(id, { ...t, status });
-              load();
-            }}
-            onMoveCase={async (id, newParentId) => {
-              const t = tickets.find(x => x.id === id);
-              if (!t) return;
-              await api.tickets.update(id, { ...t, parentId: newParentId });
-              load();
-            }}
-          />
+        <div style={{ flex: 1, minHeight: 0, display: "flex", gap: 14 }}>
+          <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}>
+            <TestSuiteView
+              tickets={testItems}
+              canEdit={canEdit}
+              onPreview={t => setTestPreviewId(t.id)}
+              onEdit={t => setTestModal(t)}
+              onAdd={init => setTestModal({ _action: "add", ...init })}
+              onExecute={async (id, status) => {
+                const t = testItems.find(x => x.id === id);
+                if (!t) return;
+                await api.testItems.update(id, { ...t, status });
+                load();
+              }}
+              onMoveCase={async (id, newParentId) => {
+                const t = testItems.find(x => x.id === id);
+                if (!t) return;
+                await api.testItems.update(id, { ...t, parentId: newParentId });
+                load();
+              }}
+            />
+          </div>
+          {testPreview && (
+            <TestItemPreview
+              item={testPreview}
+              testItems={testItems}
+              tickets={tickets}
+              onClose={() => setTestPreviewId(null)}
+              onEdit={t => setTestModal(t)}
+              onDelete={handleTestItemDelete}
+              onPreview={t => setTestPreviewId(t.id)}
+            />
+          )}
         </div>
       ) : (
         <div style={{ display: "flex", gap: 14, flex: 1, minHeight: 0 }}>
@@ -3784,6 +4225,7 @@ const KanbanPage = ({ shipments = [] }) => {
               columns={colNames}
               shipments={shipments}
               tickets={tickets}
+              testItems={testItems}
               users={users}
               onClose={() => setPreviewId(null)}
               onEdit={() => setModal(preview)}
@@ -3809,26 +4251,43 @@ const KanbanPage = ({ shipments = [] }) => {
 
       {modal && (
         <Modal
-          title={modal === "add"
-            ? (boardView === "tests" ? "New Test Plan" : "New Ticket")
+          title={modal === "add" ? "New Ticket"
             : modal === "add-backlog" ? "New Ticket"
             : modal?._action === "add" ? `New ${modal.type || "Ticket"}`
             : `Edit — ${modal.id}`}
           onClose={() => setModal(null)} width={560}
         >
           <TicketModal
-            init={modal === "add"
-              ? (boardView === "tests" ? { type: "Test Plan" } : {})
+            init={modal === "add" ? {}
               : modal === "add-backlog" ? { status: "Backlog" }
               : modal?._action === "add" ? (({ _action, ...rest }) => rest)(modal)
               : modal}
             shipments={shipments}
             tickets={tickets}
+            testItems={testItems}
             users={users}
             columns={colNames}
             versions={versions}
             onSave={handleSave}
             onCancel={() => setModal(null)}
+          />
+        </Modal>
+      )}
+
+      {testModal && (
+        <Modal
+          title={testModal?._action === "add" ? `New ${testModal.type || "Test Item"}` : `Edit — ${testModal.id}`}
+          onClose={() => setTestModal(null)} width={560}
+        >
+          <TestItemModal
+            init={testModal?._action === "add" ? (({ _action, ...rest }) => rest)(testModal) : testModal}
+            shipments={shipments}
+            testItems={testItems}
+            tickets={tickets}
+            users={users}
+            versions={versions}
+            onSave={handleTestItemSave}
+            onCancel={() => setTestModal(null)}
           />
         </Modal>
       )}

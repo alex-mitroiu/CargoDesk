@@ -4,6 +4,7 @@ import { api } from "../api";
 import { useAuth } from "../AuthContext";
 import { toast } from "../toast";
 import Spinner from "../components/primitives/Spinner";
+import TestCaseStoryLinksPanel from "../components/shared/TestCaseStoryLinksPanel";
 
 // ─── Status helpers ───────────────────────────────────────────────────────────
 
@@ -32,6 +33,7 @@ const tcColor = s => JIRA_COLOR[tcLabel(s)] ?? "#6b7280";
 export default function TestCasesPage() {
   const { canEdit } = useAuth();
   const [tickets,    setTickets]    = useState([]);
+  const [stories,    setStories]    = useState([]);
   const [loading,    setLoading]    = useState(true);
   const [search,     setSearch]     = useState("");
   const [navSel,     setNavSel]     = useState({ type: "all" });
@@ -43,12 +45,13 @@ export default function TestCasesPage() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    try { setTickets(await api.tickets.list()); }
+    try { setTickets(await api.testItems.list()); }
     catch { toast.error("Failed to load test cases"); }
     finally { setLoading(false); }
   }, []);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { api.tickets.list().then(setStories).catch(() => {}); }, []);
 
   const testFolders = useMemo(() => tickets.filter(t => t.type === "Test Folder"), [tickets]);
   const testPlans   = useMemo(() => tickets.filter(t => t.type === "Test Plan"),   [tickets]);
@@ -92,7 +95,7 @@ export default function TestCasesPage() {
     const t = tickets.find(x => x.id === id);
     if (!t) return;
     try {
-      await api.tickets.update(id, { ...t, status });
+      await api.testItems.update(id, { ...t, status });
       setTickets(p => p.map(x => x.id === id ? { ...x, status } : x));
     } catch { toast.error("Failed to update"); }
   };
@@ -202,10 +205,10 @@ export default function TestCasesPage() {
     try {
       if (editId) {
         const existing = tickets.find(t => t.id === editId);
-        const updated  = await api.tickets.update(editId, { ...existing, ...form });
+        const updated  = await api.testItems.update(editId, { ...existing, ...form });
         setTickets(p => p.map(t => t.id === editId ? updated : t));
       } else {
-        const created = await api.tickets.create({ status: "Ready", ...form });
+        const created = await api.testItems.create({ status: "Ready", ...form });
         setTickets(p => [...p, created]);
         if (form.type === "Test Case") setSelectedId(created.id);
       }
@@ -217,7 +220,7 @@ export default function TestCasesPage() {
   const deleteTicket = async id => {
     if (!window.confirm("Delete this test case? This cannot be undone.")) return;
     try {
-      await api.tickets.remove(id);
+      await api.testItems.remove(id);
       setTickets(p => p.filter(t => t.id !== id));
       if (selectedId === id) setSelectedId(null);
       toast.success("Deleted");
@@ -636,6 +639,10 @@ export default function TestCasesPage() {
                     <span style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>{selected.dueDate}</span>
                   </div>
                 )}
+              </div>
+
+              <div style={{ borderTop: `1px solid ${T.border}`, marginTop: 16, paddingTop: 16 }}>
+                <TestCaseStoryLinksPanel caseId={selected.id} tickets={stories} />
               </div>
             </div>
           </>

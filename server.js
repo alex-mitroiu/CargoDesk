@@ -659,6 +659,31 @@ const migrations = [
   )`,
   "ALTER TABLE tickets ADD COLUMN project_id TEXT DEFAULT NULL",
   "ALTER TABLE tickets ADD COLUMN version_id TEXT DEFAULT NULL",
+  // vNext — test-case repository separation: Test Folder/Plan/Run/Case move out of
+  // the shared tickets table into their own store (see backfillTestItems() below).
+  `CREATE TABLE IF NOT EXISTS test_items (
+    id           TEXT PRIMARY KEY,
+    type         TEXT NOT NULL,
+    title        TEXT NOT NULL,
+    description  TEXT DEFAULT '',
+    priority     TEXT DEFAULT 'Medium',
+    status       TEXT DEFAULT 'Ready',
+    position     INTEGER DEFAULT 0,
+    created_at   TEXT NOT NULL,
+    shipment_id  TEXT DEFAULT NULL,
+    parent_id    TEXT DEFAULT NULL,
+    assignee_id  TEXT DEFAULT NULL,
+    due_date     TEXT DEFAULT NULL,
+    test_notes   TEXT DEFAULT NULL,
+    project_id   TEXT DEFAULT NULL,
+    version_id   TEXT DEFAULT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS test_case_links (
+    id         TEXT PRIMARY KEY,
+    case_id    TEXT NOT NULL,
+    ticket_id  TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  )`,
 ];
 
 for (const sql of migrations) {
@@ -1254,6 +1279,53 @@ try { db.exec("UPDATE shipments SET vessel = '', vessel_imo = '' WHERE vessel_im
   } catch (e) { console.warn('  ⚠ Could not backfill ticket projects:', e.message); }
 })();
 
+(function backfillTestItems() {
+  try {
+    const testTypes = ["Test Folder", "Test Plan", "Test Run", "Test Case"];
+    const placeholders = testTypes.map(() => "?").join(",");
+    const rows = db.prepare(`SELECT * FROM tickets WHERE type IN (${placeholders})`).all(...testTypes);
+    if (rows.length === 0) return;
+
+    const migratedIds = new Set(rows.map(r => r.id));
+    db.exec("BEGIN");
+    try {
+      const insert = db.prepare(`
+        INSERT INTO test_items
+          (id, type, title, description, priority, status, position, created_at,
+           shipment_id, parent_id, assignee_id, due_date, test_notes, project_id, version_id)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      `);
+      let severedParents = 0;
+      for (const r of rows) {
+        const parentId = r.parent_id && migratedIds.has(r.parent_id) ? r.parent_id : null;
+        if (r.parent_id && !parentId) severedParents++;
+        insert.run(
+          r.id, r.type, r.title, r.description, r.priority, r.status, r.position, r.created_at,
+          r.shipment_id, parentId, r.assignee_id, r.due_date, r.test_notes, r.project_id, r.version_id
+        );
+      }
+
+      const idPlaceholders = rows.map(() => "?").join(",");
+      const linkRows = db.prepare(`
+        SELECT id FROM ticket_links WHERE from_id IN (${idPlaceholders}) OR to_id IN (${idPlaceholders})
+      `).all(...rows.map(r => r.id), ...rows.map(r => r.id));
+      const deleteLink = db.prepare("DELETE FROM ticket_links WHERE id=?");
+      for (const l of linkRows) deleteLink.run(l.id);
+
+      const deleteTicket = db.prepare("DELETE FROM tickets WHERE id=?");
+      for (const r of rows) deleteTicket.run(r.id);
+
+      db.exec("COMMIT");
+      console.log(`  ✔ Migrated ${rows.length} test artifact(s) to test_items` +
+        (severedParents ? `; severed ${severedParents} dangling parent link(s)` : "") +
+        (linkRows.length ? `; dropped ${linkRows.length} stale ticket_link(s)` : ""));
+    } catch (e) {
+      db.exec("ROLLBACK");
+      throw e;
+    }
+  } catch (e) { console.warn('  ⚠ test_items migration failed, rolled back:', e.message); }
+})();
+
 // ─── Map functions ────────────────────────────────────────────────────────────
 
 const SVC_ABBR = { 'Port-to-Port': 'P2P', 'Door-to-Port': 'D2P', 'Port-to-Door': 'P2D', 'Door-to-Door': 'D2D' };
@@ -1448,6 +1520,26 @@ const mapTicket       = r => ({
   projectId:       r.project_id      || null,
   versionId:       r.version_id      || null,
 });
+const mapTestItem     = r => ({
+  id:              r.id,
+  type:            r.type,
+  title:           r.title,
+  description:     r.description     || '',
+  priority:        r.priority        || 'Medium',
+  status:          r.status          || 'Ready',
+  position:        r.position        ?? 0,
+  createdAt:       r.created_at,
+  shipmentId:      r.shipment_id     || null,
+  parentId:        r.parent_id       || null,
+  assigneeId:      r.assignee_id     || null,
+  assigneeName:    r.assignee_name   || null,
+  assigneeInitial: r.assignee_name   ? r.assignee_name.trim()[0].toUpperCase() : null,
+  dueDate:         r.due_date        || null,
+  testNotes:       r.test_notes      || null,
+  projectId:       r.project_id      || null,
+  versionId:       r.version_id      || null,
+});
+const mapTestCaseLink = r => ({ id: r.id, caseId: r.case_id, ticketId: r.ticket_id, createdAt: r.created_at });
 const mapKbProject = r => ({ id: r.id, name: r.name, key: r.key, color: r.color || '#6366f1', description: r.description || '', createdAt: r.created_at });
 const mapKbVersion = r => ({ id: r.id, projectId: r.project_id, name: r.name, description: r.description || '', status: r.status || 'Planning', releaseDate: r.release_date || null, createdAt: r.created_at });
 const mapKbColumn  = r => ({ id: r.id, projectId: r.project_id, name: r.name, position: r.position ?? 0, color: r.color || '#6366f1', wipLimit: r.wip_limit ?? null, createdAt: r.created_at });
@@ -1759,6 +1851,7 @@ const ctx = {
   mapShipment, mapShipmentLeg, mapCostLine, mapContainer, mapAllocation,
   mapCarrier, mapVessel, mapPortLocation, mapLinkedPort, mapTradeLane,
   mapScopeItem, mapAccessConfig, mapOffice, mapBranch, mapOrgCountry, mapRegion, mapCountry, mapTicketLink, mapTicket,
+  mapTestItem, mapTestCaseLink,
   mapKbProject, mapKbVersion, mapKbColumn,
   mapCustomer, mapCustomerIdentifier, mapCustomerScreening, mapCustomerDoc,
   mapCommodity, mapSystemMessage, mapMilestone, mapMilestoneTemplate,
@@ -1778,6 +1871,7 @@ require('./routes/shipments')(app, ctx);
 require('./routes/allocations')(app, ctx);
 require('./routes/mdm')(app, ctx);
 require('./routes/kanban')(app, ctx);
+require('./routes/testcases')(app, ctx);
 require('./routes/customers')(app, ctx);
 require('./routes/contracts')(app, ctx);
 require('./routes/shipment-ops')(app, ctx);
