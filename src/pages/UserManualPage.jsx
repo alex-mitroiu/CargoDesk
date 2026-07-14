@@ -10,13 +10,14 @@ const UserManualPage = () => {
   const [showIncoterms, setShowIncoterms] = useState(false);
 
   const SECTIONS = [
-    { id: "overview",        label: "Overview" },
-    { id: "shipments",       label: "Shipments" },
-    { id: "dashboard",       label: "Dashboard" },
-    { id: "command-center",  label: "Command Center" },
-    { id: "mdm",             label: "Master Data" },
-    { id: "incoterms",       label: "Incoterms" },
-    { id: "dg-classes",      label: "DG Classes ⚠" },
+    { id: "overview",          label: "Overview" },
+    { id: "shipments",         label: "Shipments" },
+    { id: "dashboard",         label: "Dashboard" },
+    { id: "command-center",    label: "Command Center" },
+    { id: "integration-board", label: "Integration Board" },
+    { id: "mdm",               label: "Master Data" },
+    { id: "incoterms",         label: "Incoterms" },
+    { id: "dg-classes",        label: "DG Classes ⚠" },
   ];
 
   const SectionBtn = ({ id, label }) => (
@@ -67,6 +68,10 @@ const UserManualPage = () => {
         <P>Open a shipment to access Cargo Details. Add containers by specifying the container number, size (<Tag>20ft = 1 TEU</Tag>, <Tag>40ft = 2 TEU</Tag>), and equipment type (DC, RF, OT, FR, TK). TEU totals update instantly on the Dashboard.</P>
         <H3>Status workflow</H3>
         <P>Set the shipment status to <Tag>Active</Tag>, <Tag>Pending</Tag>, <Tag>Completed</Tag>, or <Tag>Cancelled</Tag> as it progresses.</P>
+        <H3>EDI Messages</H3>
+        <P>Click the <Tag>📡</Tag> icon in the shipment header to open the EDI Messages drawer. Sending a booking request to a supported carrier (currently <Tag>MAEU</Tag>, <Tag>SAFM</Tag>, <Tag>MCPU</Tag>) logs an outbound message and — once the carrier responds — an inbound confirmation or rejection, each with a raw/parsed payload toggle. Without a live carrier API key configured in App Settings, responses are generated as clearly-tagged demo data so the flow can be exercised end-to-end.</P>
+        <H3>Container Lifecycle Events (FCL)</H3>
+        <P>Each container tracks its own movement history — <Tag>Empty Pickup</Tag>, <Tag>Gate In</Tag>, <Tag>Loaded</Tag>, <Tag>Sailed</Tag>, <Tag>Discharged</Tag>, <Tag>Gate Out</Tag>, <Tag>Empty Return</Tag>. Open the full container list and click <Tag>📋</Tag> on any row to view or log an event — the form suggests the next stage in sequence. This is the foundation for upcoming demurrage/detention tracking.</P>
       </div>
     ),
     dashboard: (
@@ -97,6 +102,18 @@ const UserManualPage = () => {
         <P>The right-hand panel (below the Shipment Preview) hosts the AI Agent chat. Type a question or command and press <Tag>Enter</Tag> to send (<Tag>Shift+Enter</Tag> for a newline). The agent can look up individual shipments, list shipments matching criteria, and retrieve contract and allocation details. The AI Agent must be enabled in <strong>App Settings → API Controls → AI Agent</strong>, and requires a valid API key configured there.</P>
         <H3>Carrier and Route Summary</H3>
         <P>Below the KPI cards, two panels summarise the active portfolio by carrier (shipment count and TEU) and by trade lane. These update live as new data arrives via WebSocket.</P>
+      </div>
+    ),
+    "integration-board": (
+      <div>
+        <H2>Integration Board</H2>
+        <P>The Integration Board (<Tag>◩</Tag> in the sidebar) is a Kanban-style tracker for development, QA, and operational tasks, kept separate from shipment records.</P>
+        <H3>Tickets</H3>
+        <P>Tickets have a <Tag>type</Tag> (Epic, Story, Feature, Bug, Improvement, Task, Chore), a <Tag>priority</Tag>, and a status column. Drag a card between columns to change its status — drop indicators show exactly where it will land. Epics can nest Story and sub-task children; child progress shows as a ring on the Epic card and a breadcrumb chip on children. A ticket can optionally be linked to a shipment.</P>
+        <H3>Ticket Links</H3>
+        <P>Tickets can be linked to each other from the Links tab in the ticket preview: <Tag>Blocks</Tag>, <Tag>Is blocked by</Tag>, <Tag>Duplicates</Tag>, <Tag>Implements</Tag>.</P>
+        <H3>Test Cases</H3>
+        <P>Test Plans, Test Runs, and Test Cases live in their own dedicated pages, kept separate from the Integration Board so QA work doesn't clutter the dev ticket board. A Test Case can be linked to a Story via the <Tag>Tests</Tag> / <Tag>Is tested by</Tag> relationship, editable from either side — this gives lightweight requirement-to-test traceability without a full requirements-management module.</P>
       </div>
     ),
     mdm: (

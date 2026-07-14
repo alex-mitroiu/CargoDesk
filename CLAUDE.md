@@ -148,7 +148,7 @@ The original inline routes remain in server.js as **dead code** (route files reg
 Express uses first-match). They act as a fallback and can be deleted once the extracted routes
 are fully validated.
 
-## Database — 38 tables
+## Database — 39 tables
 | Table | Purpose |
 |---|---|
 | shipments | Core shipment records |
@@ -169,6 +169,7 @@ are fully validated.
 | shipment_legs | Multimodal legs: leg_type, movement_type, pol_loc_type, pod_loc_type, movement_by |
 | shipment_cost_lines | BUY/SELL cost lines per shipment with source tracking and FX |
 | shipment_milestones | Per-shipment milestone steps (estimated date, completion, note) |
+| shipment_schedules | Per-shipment saved sailings: carrier, vessel, voyage, ETD, ETA, transit days, isMock, savedBy |
 | shipment_screenings | OFAC/SDN screening results and override records |
 | shipment_documents | Uploaded documents metadata (filename, type, label) |
 | status_log | Shipment status transitions (legacy, kept for compat) |

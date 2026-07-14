@@ -2,7 +2,7 @@
 
 > Freight management application for tracking ocean shipments, carrier space utilisation, contracts, and maritime master data.
 
-[![Version](https://img.shields.io/badge/version-0.27.0-blue)](.)
+[![Version](https://img.shields.io/badge/version-0.28.0-blue)](.)
 ![Node](https://img.shields.io/badge/node-22.5%2B-green)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
@@ -287,7 +287,7 @@ CargoDesk/
 
 ## Database Schema
 
-36 tables total — schema declared in server.js startup, migrations applied automatically.
+40 tables total — schema declared in server.js startup, migrations applied automatically.
 
 | Table | Purpose |
 |---|---|
@@ -314,6 +314,10 @@ CargoDesk/
 | `shipment_documents` | Uploaded document metadata (filename, type, label, path) |
 | `status_log` | Shipment status transitions (legacy, kept for compatibility) |
 | `entity_events` | Generic audit log for allocations, carriers, and contracts |
+| `test_items` | Dedicated test-case repository (Test Folder/Plan/Run/Case) — separate from `tickets`, optional `shipment_id` FK |
+| `test_case_links` | Test Case ↔ Story links, bidirectional "Tests" / "Is tested by" relationship |
+| `edi_messages` | Per-shipment carrier EDI log — direction (out/in), message type, raw/parsed payload, `is_mock` flag |
+| `container_events` | Per-container FCL lifecycle log — event type, location, occurred at, recorded by |
 | `commodities` | 294 Maersk freight commodity codes (Grades M/K/E/S/Q) |
 | `customers` | Customer records with full address and contact details |
 | `contracts` | Carrier rate contracts with IMDG class filters and validity window |
@@ -336,6 +340,7 @@ See the built-in **About** page (i in the sidebar) for the full interactive sche
 
 | Version | Codename | Summary |
 |---------|----------|---------|
+| 0.28.0 | Waypoint | Test-case repository separation: test items (Test Folder/Plan/Run/Case) live only in their own `test_items` table, no longer mixed into the Integration Board's `tickets` data; `test_case_links` gives a bidirectional Test Case ↔ Story "Tests" / "Is tested by" relationship. TicketPreview footer redesigned — only Backlog and previous/next status stay visible by default, rest moved behind a header ⚙ ActionMenu. EDI Messaging: `edi_messages` table logs every outbound/inbound carrier EDI exchange per shipment; `POST /api/shipments/:id/edi-messages/booking-request` sends via `maerskBookingRequest()` (mirrors `maerskSchedules()`'s real/mock-fallback shape) for MAEU/SAFM/MCPU, falling back to tagged demo data without a live key; `EdiMessagesDrawer` (📡 icon) shows direction badges, status pills, raw/parsed payload toggle. FCL container lifecycle events: new `container_events` table logs per-container movement (Empty Pickup → Gate In → Loaded → Sailed → Discharged → Gate Out → Empty Return) — foundation for upcoming demurrage/detention tracking — via a new `ContainerEventsPanel` (📋 button per container row). Fixed `seal_number` data-entry gap (existed in schema/backend, never exposed in `ContainerForm`). New test coverage: `tests/container-events.test.js` + extended `cypress/e2e/containers.cy.js`. |
 | 0.27.0 | Lookout | Command Center overhaul: KPI cards toggle in-page shipment filter (Active / Pending / Review / TEU / Overdue); Integration Board ticket alert card (Overdue + Due This Week tabs with priority dot, status badge, days counter, assignee avatar); shipment preview routing bar renders Door/CY flanking nodes from routingTerm; CC layout changed to position:fixed escaping main scroll; AI chat composer anchored at bottom. Sailing management hardening: applySailingToLegs sets ETA + carrierCode; TSP multi-leg support; edit-mode replace-not-append; active sailing highlighted green in SailingPickerModal. ShipmentsPage 90s background poll with ↻ unloaded-count badge and ⏰ Overdue pseudo-filter. ShipmentDetailPage ↻ refresh button. Dashboard Contract Consumption three-tier fallback for contractNumber/carrierCode. api.shipments.get(id) added to api.js. Negative transit days render ⚠ dates amber badge. |
 | 0.26.0 | Meridian II | AI Agent: routes/ai.js with POST /api/ai/chat (agentic tool-call loop: get_shipment, list_shipments, get_contract, get_allocation; OpenAI-compatible; max 3 iterations) and GET /api/ai/settings; ai_agent_enabled app_setting toggle. AiChatDrawer right-side panel (user/assistant bubbles, typing indicator, Shift+Enter; ✦ nav button when enabled; active shipment context). AI Agent subtab in AppSettings (provider presets, endpoint/model/key/system-prompt, Test Connection). Per-user finance gating: can_view_finance column on users; Finance chip in UserManagementPanel; financeEnabled = global_toggle AND (isAdmin OR canViewFinance). data-testid attributes: user-avatar-btn, main-nav, license-modal. GitHub Actions CI: .github/workflows/cypress.yml (wait-on, cypress run, screenshot artefacts). Journey breadcrumb in SailingPickerModal (door/CY/port nodes in routing-term order); SchedulesModal in MdmContractsPage rendered from seaLeg loc types. |
 | 0.25.0 | Voyage | Shipment schedule bookings: shipment_schedules table; GET/POST/DELETE /api/shipments/:id/schedules in shipment-ops.js; api.schedules.list/save/remove. Sailing section in ShipmentForm with shared SailingPickerModal (2/4/8/12w picker, mock warning); new-shipment mode holds selection and saves post-create; edit mode saves directly. "Apply vessel & ETD to SEA leg" shortcut button. SchedulesPanel in ShipmentDetailPage. Related Tickets panel (GET /api/tickets?shipmentId= filter added to kanban.js; RelatedTicketsPanel component). ShipmentDetailSidebar gains Schedules (⚓) and Tickets (◩) nav links. SailingPickerModal extracted to src/components/shared/ (selectLabel prop, ~240 lines de-duped). Health endpoint version now uses require('../package.json').version; package.json synced to 0.25.0. |

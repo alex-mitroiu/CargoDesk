@@ -2,11 +2,17 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.27.0";
-export const BUILD     = "2026-07-10";
-export const CODENAME  = "Lookout";
+export const VERSION   = "0.28.0";
+export const BUILD     = "2026-07-15";
+export const CODENAME  = "Waypoint";
 
 export const CHANGELOG = [
+  {
+    version:  "0.28.0",
+    date:     "2026-07-15",
+    codename: "Waypoint",
+    summary:  "Test-case repository separation: test items (Test Folder/Plan/Run/Case) now live only in their own test_items table instead of being mixed into the tickets/Integration Board data — a dedicated Test Case ↔ Story link (test_case_links) gives lightweight requirement traceability via a \"Tests\" / \"Is tested by\" relationship, editable from either side. TicketPreview footer redesigned: only Backlog and previous/next status stay visible by default, with the rest of the actions moved behind a header ⚙ ActionMenu. EDI Messaging (carrier booking communication): new edi_messages table logs every outbound/inbound EDI exchange per shipment; POST /api/shipments/:id/edi-messages/booking-request validates the carrier is bookable (MAEU/SAFM/MCPU), sends via maerskBookingRequest() (mirrors the existing maerskSchedules() real/mock-fallback shape exactly), and falls back to a clearly-tagged demo confirmation when no live carrier key is configured; EdiMessagesDrawer (📡 icon in the shipment header) shows direction badges, status pills, and a raw/parsed payload toggle. FCL container lifecycle events: new container_events table logs per-container movement (Empty Pickup → Gate In → Loaded → Sailed → Discharged → Gate Out → Empty Return) — the foundation for upcoming demurrage/detention tracking — surfaced via a new ContainerEventsPanel opened from a 📋 button on each row in the container list. Fixed a data-entry gap where seal_number existed in the containers schema and backend routes but was never exposed in ContainerForm. New test coverage: tests/container-events.test.js (Node smoke test) and an extended cypress/e2e/containers.cy.js.",
+  },
   {
     version:  "0.27.0",
     date:     "2026-07-10",

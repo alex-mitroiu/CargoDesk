@@ -382,6 +382,9 @@ const AboutPage = () => {
     { icon: "🚢", title: "Vessel Registry",           desc: "349 vessels from the IMO registry, searchable by name, IMO number, or asset type, linked to country flags and integrated with the shipment form." },
     { icon: "📍", title: "Port & MDM Directory",      desc: "14,269 UN/LOCODE ports, carrier directory, trade lanes, linked ports, regions, countries, UN location codes, and commodity codes — all editable." },
     { icon: "📋", title: "Integration Board",         desc: "Kanban board (Ready / In Progress / Done / Released) for tracking development and integration tasks, with priority and section filters. Cards drag within columns with live drop indicators." },
+    { icon: "✓",  title: "Test Case Management",      desc: "Test Folders, Plans, Runs, and Cases live in their own dedicated repository, separate from the Integration Board. Test Cases link to Stories via a bidirectional Tests / Is tested by relationship for lightweight requirement traceability." },
+    { icon: "📡", title: "EDI Messaging",              desc: "Send carrier booking requests (MAEU, SAFM, MCPU) and receive confirmations directly from the shipment detail page. Every message — sent and received — is logged with a raw/parsed payload toggle; falls back to demo data without a live carrier key." },
+    { icon: "📋", title: "Container Lifecycle Events", desc: "Per-container FCL movement tracking — Empty Pickup, Gate In, Loaded, Sailed, Discharged, Gate Out, Empty Return — the foundation for upcoming demurrage/detention tracking." },
     { icon: "🌗", title: "Light / Dark Theme",        desc: "Apple HIG-compliant light theme alongside the CargoDesk dark theme. Instant toggle in the user menu, preference persisted to localStorage." },
     { icon: "📚", title: "User Manual",               desc: "Built-in documentation covering Incoterms® 2020 and IMDG dangerous goods classes (Classes 1–9, 20 sub-classes with full descriptions and source link)." },
   ];
