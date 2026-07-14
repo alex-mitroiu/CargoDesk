@@ -92,6 +92,7 @@ describe("Containers Suite", () => {
         shipmentId: spotShipmentId,
         size: "20", type: "GP",
         containerNumber: "CMDU1234560",
+        sealNumber: "SL7788990",
         cargoDescription: "General cargo",
       }).then(res => {
         expect(res.status).to.eq(201);
@@ -99,6 +100,7 @@ describe("Containers Suite", () => {
         expect(res.body.shipmentId).to.eq(spotShipmentId);
         expect(res.body.size).to.eq("20");
         expect(res.body.type).to.eq("GP");
+        expect(res.body.sealNumber).to.eq("SL7788990");
         containerId = res.body.id;
       });
     });
@@ -212,6 +214,92 @@ describe("Containers Suite", () => {
       api("DELETE", `/shipments/${spotShipmentId}/legs/${legId}`).then(res => {
         expect(res.status).to.eq(200);
         legId = null;
+      });
+    });
+  });
+
+  // ── Container Lifecycle Events (FCL) ────────────────────────────────────────
+
+  context("Container lifecycle events", () => {
+    let evCtrId;
+    let eventId;
+
+    before(() => {
+      api("POST", "/containers", {
+        shipmentId: spotShipmentId, size: "40", type: "DC",
+        containerNumber: "CMDU2223334",
+      }).then(res => { evCtrId = res.body.id; });
+    });
+
+    after(() => {
+      if (evCtrId) api("DELETE", `/containers/${evCtrId}`);
+    });
+
+    it("POST with invalid eventType → 400", () => {
+      api("POST", `/containers/${evCtrId}/events`, {
+        eventType: "Not A Real Type", occurredAt: "2026-10-01",
+      }).then(res => expect(res.status).to.eq(400));
+    });
+
+    it("POST without occurredAt → 400", () => {
+      api("POST", `/containers/${evCtrId}/events`, { eventType: "Gate In" })
+        .then(res => expect(res.status).to.eq(400));
+    });
+
+    it("GET on a fresh container returns an empty array", () => {
+      api("GET", `/containers/${evCtrId}/events`).then(res => {
+        expect(res.status).to.eq(200);
+        expect(res.body).to.be.an("array").that.is.empty;
+      });
+    });
+
+    it("POST Empty Pickup → 201 with containerId/shipmentId/recordedBy", () => {
+      api("POST", `/containers/${evCtrId}/events`, {
+        eventType: "Empty Pickup", occurredAt: "2026-10-01", location: "Shanghai Depot",
+      }).then(res => {
+        expect(res.status).to.eq(201);
+        expect(res.body.eventType).to.eq("Empty Pickup");
+        expect(res.body.containerId).to.eq(evCtrId);
+        expect(res.body.shipmentId).to.eq(spotShipmentId);
+        expect(res.body.recordedBy).to.not.be.empty;
+        eventId = res.body.id;
+      });
+    });
+
+    it("POST Gate In → 201, list returns both events ordered by occurredAt", () => {
+      api("POST", `/containers/${evCtrId}/events`, {
+        eventType: "Gate In", occurredAt: "2026-10-03", location: "CNSHA Terminal",
+      }).then(() => {
+        api("GET", `/containers/${evCtrId}/events`).then(res => {
+          expect(res.status).to.eq(200);
+          expect(res.body).to.have.length(2);
+          expect(res.body[0].eventType).to.eq("Empty Pickup");
+          expect(res.body[1].eventType).to.eq("Gate In");
+        });
+      });
+    });
+
+    it("CONTAINER_EVENT_ADDED appears in the shipment audit log", () => {
+      api("GET", `/shipments/${spotShipmentId}/events`).then(res => {
+        expect(res.status).to.eq(200);
+        const found = res.body.find(e => e.eventType === "CONTAINER_EVENT_ADDED");
+        expect(found).to.not.be.undefined;
+      });
+    });
+
+    it("DELETE /api/container-events/:id → 200, one event remains", () => {
+      api("DELETE", `/container-events/${eventId}`).then(res => {
+        expect(res.status).to.eq(200);
+        api("GET", `/containers/${evCtrId}/events`).then(list => {
+          expect(list.body).to.have.length(1);
+          expect(list.body[0].eventType).to.eq("Gate In");
+        });
+      });
+    });
+
+    it("DELETE non-existent event → 404", () => {
+      api("DELETE", "/container-events/DOESNOTEXIST-999").then(res => {
+        expect(res.status).to.eq(404);
       });
     });
   });

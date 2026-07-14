@@ -2,7 +2,7 @@
 
 module.exports = function shipmentsRoutes(app, ctx) {
   const { db, ok, err, uid, auth, requireRole,
-          mapShipment, mapShipmentLeg, mapContainer, mapAllocation,
+          mapShipment, mapShipmentLeg, mapContainer, mapContainerEvent, mapAllocation,
           applyShipmentAccessFilter, syncShipmentFromLegs, importContractRates,
           broadcastMessage, recomputeSpaceBadge, screenShipmentById,
           logEvent, TRACKED_FIELDS, TRACKED_CTR_FIELDS,
@@ -296,6 +296,43 @@ module.exports = function shipmentsRoutes(app, ctx) {
     logEvent(ctr.shipment_id, 'CONTAINER_REMOVED', null, ctr.container_number, null,
       JSON.stringify({ size: ctr.size, type: ctr.type }));
     recomputeSpaceBadge(ctr.shipment_id);
+    ok(res, { deleted: req.params.id });
+  });
+
+  // ─── Container Events (FCL lifecycle: Empty Pickup → Gate In → Loaded → Sailed →
+  //     Discharged → Gate Out → Empty Return) ────────────────────────────────
+
+  const CONTAINER_EVENT_TYPES = ["Empty Pickup", "Gate In", "Loaded", "Sailed", "Discharged", "Gate Out", "Empty Return"];
+
+  app.get("/api/containers/:id/events", auth(), (req, res) => {
+    const rows = db.prepare("SELECT * FROM container_events WHERE container_id=? ORDER BY occurred_at ASC, created_at ASC").all(req.params.id);
+    ok(res, rows.map(mapContainerEvent));
+  });
+
+  app.post("/api/containers/:id/events", shipmentWrite, (req, res) => {
+    const { eventType, occurredAt, location = "", notes = "" } = req.body || {};
+    if (!eventType || !CONTAINER_EVENT_TYPES.includes(eventType))
+      return err(res, `eventType must be one of: ${CONTAINER_EVENT_TYPES.join(", ")}`);
+    if (!occurredAt) return err(res, "occurredAt required");
+    const ctr = db.prepare("SELECT * FROM containers WHERE id=?").get(req.params.id);
+    if (!ctr) return err(res, "Container not found", 404);
+    const id = `CEV-${uid()}`;
+    const now = new Date().toISOString();
+    const recordedBy = req.user?.name || req.user?.email || "";
+    db.prepare(`INSERT INTO container_events
+      (id, container_id, shipment_id, event_type, location, occurred_at, recorded_by, notes, created_at)
+      VALUES (?,?,?,?,?,?,?,?,?)`)
+      .run(id, req.params.id, ctr.shipment_id, eventType, location, occurredAt, recordedBy, notes, now);
+    const event = mapContainerEvent(db.prepare("SELECT * FROM container_events WHERE id=?").get(id));
+    logEvent(ctr.shipment_id, 'CONTAINER_EVENT_ADDED', null, null, `${eventType} — ${ctr.container_number}`,
+      JSON.stringify({ containerId: req.params.id, eventType, occurredAt }));
+    ok(res, event, 201);
+  });
+
+  app.delete("/api/container-events/:id", shipmentWrite, (req, res) => {
+    const ev = db.prepare("SELECT * FROM container_events WHERE id=?").get(req.params.id);
+    if (!ev) return err(res, "Not found", 404);
+    db.prepare("DELETE FROM container_events WHERE id=?").run(req.params.id);
     ok(res, { deleted: req.params.id });
   });
 

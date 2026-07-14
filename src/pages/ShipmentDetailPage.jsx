@@ -17,6 +17,7 @@ import { Modal, ConfirmModal } from "../components/primitives/Modal";
 import DatePicker from "../components/primitives/DatePicker";
 import { generateBLDraft, generatePackingList, generateContainerManifest } from "../utils/documentGenerator";
 import SailingPickerModal from "../components/shared/SailingPickerModal";
+import ContainerEventsPanel from "../components/shared/ContainerEventsPanel";
 
 
 // ─── Refresh button ──────────────────────────────────────────────────────────
@@ -114,6 +115,7 @@ const SectionHeader = ({ n, title }) => {
 export const ContainerForm = ({ init = {}, onSave, onCancel, onDirtyChange, dgPolicy = null }) => {
   const initSnap = useRef({
     containerNumber:  init.containerNumber  || "",
+    sealNumber:       init.sealNumber       || "",
     size:             init.size             || "",
     type:             init.type             || "",
     hsCode:           init.hsCode           || "",
@@ -132,7 +134,8 @@ export const ContainerForm = ({ init = {}, onSave, onCancel, onDirtyChange, dgPo
   // Notify parent when form diverges from its initial values
   useEffect(() => {
     const s = initSnap.current;
-    const dirty = f.containerNumber !== s.containerNumber || f.size !== s.size ||
+    const dirty = f.containerNumber !== s.containerNumber || f.sealNumber !== s.sealNumber ||
+      f.size !== s.size ||
       f.type !== s.type || f.hsCode !== s.hsCode || f.cargoDescription !== s.cargoDescription ||
       f.grossWeightKg !== s.grossWeightKg || f.volumeCbm !== s.volumeCbm ||
       f.isDg !== s.isDg || f.dgClass !== s.dgClass;
@@ -170,10 +173,16 @@ export const ContainerForm = ({ init = {}, onSave, onCancel, onDirtyChange, dgPo
       {/* ① Container Identity */}
       <SectionHeader n="①" title="Container Identity" />
 
-      <Inp label="Container Number" value={f.containerNumber}
-        onChange={v => set("containerNumber")(v.toUpperCase().replace(/\s/g, ""))}
-        placeholder="MAEU1234567" mono required
-        hint="ISO 6346 container ID" />
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <Inp label="Container Number" value={f.containerNumber}
+          onChange={v => set("containerNumber")(v.toUpperCase().replace(/\s/g, ""))}
+          placeholder="MAEU1234567" mono required
+          hint="ISO 6346 container ID" />
+        <Inp label="Seal Number" value={f.sealNumber}
+          onChange={v => set("sealNumber")(v.toUpperCase().replace(/\s/g, ""))}
+          placeholder="SL1234567" mono
+          hint="Carrier or shipper seal" />
+      </div>
 
       <ContainerTypeField
         size={f.size} type={f.type} required
@@ -290,7 +299,7 @@ export const ContainerForm = ({ init = {}, onSave, onCancel, onDirtyChange, dgPo
             setTouched({ weight: true, volume: true, hsCode: true, desc: true });
             if (!valid) return;
             withSaving(() => onSave({
-              containerNumber: f.containerNumber, size: f.size, type: f.type,
+              containerNumber: f.containerNumber, sealNumber: f.sealNumber, size: f.size, type: f.type,
               hsCode: f.hsCode, cargoDescription: f.cargoDescription,
               grossWeightKg: f.grossWeightKg ? parseFloat(f.grossWeightKg) : null,
               volumeCbm:     f.volumeCbm     ? parseFloat(f.volumeCbm)     : null,
@@ -3197,6 +3206,7 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
   const [contractOpen,   setContractOpen]   = useState(false);
   const [ctrListOpen,    setCtrListOpen]    = useState(false);
   const [ctrFromList,    setCtrFromList]    = useState(false);
+  const [eventsCtr,      setEventsCtr]      = useState(null);
   const [dgPolicy,             setDgPolicy]             = useState(null);
   const [contractCarrierCode,  setContractCarrierCode]  = useState("");
   const [openAccountingSignal, setOpenAccountingSignal] = useState(0);
@@ -4117,7 +4127,7 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
                       <div style={{ ...thStyle, flex: 1 }}>Cargo Description</div>
                       <div style={{ ...thStyle, width: 88,  flexShrink: 0 }}>Wt / Vol</div>
                       <div style={{ ...thStyle, width: 64,  flexShrink: 0 }}>DG</div>
-                      <div style={{ ...thStyle, width: 86,  flexShrink: 0 }} />
+                      <div style={{ ...thStyle, width: canEdit ? 132 : 60, flexShrink: 0 }} />
                     </div>
                   );
                 })()}
@@ -4168,14 +4178,17 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
                         </span>
                       )}
                     </div>
-                    {canEdit && (
-                      <div style={{ width: 86, flexShrink: 0, display: "flex", gap: 5 }}>
-                        <Btn size="sm" variant="secondary"
-                          onClick={() => { setCtrListOpen(false); setCtrFromList(true); setCtrModal(c); }}>Edit</Btn>
-                        <Btn size="sm" variant="danger"
-                          onClick={() => setConfirmCtr(c.id)}>✕</Btn>
-                      </div>
-                    )}
+                    <div style={{ width: canEdit ? 132 : 60, flexShrink: 0, display: "flex", gap: 5 }}>
+                      <Btn size="sm" variant="secondary" onClick={() => setEventsCtr(c)}>📋</Btn>
+                      {canEdit && (
+                        <>
+                          <Btn size="sm" variant="secondary"
+                            onClick={() => { setCtrListOpen(false); setCtrFromList(true); setCtrModal(c); }}>Edit</Btn>
+                          <Btn size="sm" variant="danger"
+                            onClick={() => setConfirmCtr(c.id)}>✕</Btn>
+                        </>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -4200,6 +4213,13 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
               } catch { /* error already toasted by App.jsx handler */ }
             }}
             onCancel={closeCtrModal} />
+        </Modal>
+      )}
+
+      {eventsCtr && (
+        <Modal title={`Lifecycle Events — ${eventsCtr.containerNumber || eventsCtr.id}`}
+          onClose={() => setEventsCtr(null)} width={480}>
+          <ContainerEventsPanel containerId={eventsCtr.id} containerNumber={eventsCtr.containerNumber} />
         </Modal>
       )}
 

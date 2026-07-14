@@ -700,6 +700,19 @@ const migrations = [
     created_at     TEXT NOT NULL,
     processed_at   TEXT DEFAULT NULL
   )`,
+  // vNext — FCL container-level lifecycle events (Empty Pickup, Gate In, Loaded, Sailed,
+  // Discharged, Gate Out, Empty Return). Foundation for demurrage/detention tracking.
+  `CREATE TABLE IF NOT EXISTS container_events (
+    id           TEXT PRIMARY KEY,
+    container_id TEXT NOT NULL,
+    shipment_id  TEXT NOT NULL,
+    event_type   TEXT NOT NULL,
+    location     TEXT DEFAULT '',
+    occurred_at  TEXT NOT NULL,
+    recorded_by  TEXT DEFAULT '',
+    notes        TEXT DEFAULT '',
+    created_at   TEXT NOT NULL
+  )`,
 ];
 
 for (const sql of migrations) {
@@ -1388,6 +1401,7 @@ const syncShipmentFromLegs = (shipmentId) => {
 
 const mapCostLine     = r => ({ id: r.id, shipmentId: r.shipment_id, type: r.type, chargeCode: r.charge_code, currency: r.currency, amount: r.amount, exchangeRate: r.exchange_rate, amountUsd: Math.round(r.amount * r.exchange_rate * 100) / 100, vatRate: r.vat_rate || 0, vatAmountUsd: Math.round(r.amount * r.exchange_rate * (r.vat_rate || 0) / 100 * 100) / 100, notes: r.notes || '', containerId: r.container_id || '', source: r.source || 'manual', modifiedAt: r.modified_at || null, createdAt: r.created_at });
 const mapContainer    = r => ({ id: r.id, shipmentId: r.shipment_id, containerNumber: r.container_number || '', sealNumber: r.seal_number || '', size: r.size, type: r.type, hsCode: r.hs_code || '', cargoDescription: r.cargo_description || '', grossWeightKg: r.gross_weight_kg ?? null, volumeCbm: r.volume_cbm ?? null, isDg: r.is_dg === 1, dgClass: r.dg_class || '' });
+const mapContainerEvent = r => ({ id: r.id, containerId: r.container_id, shipmentId: r.shipment_id, eventType: r.event_type, location: r.location || '', occurredAt: r.occurred_at, recordedBy: r.recorded_by || '', notes: r.notes || '', createdAt: r.created_at });
 const mapAllocation   = r => ({ id: r.id, carrierCode: r.carrier_code, allocatedTEU: r.allocated_teu, effectiveDate: r.effective_date || '', endDate: r.end_date || '', tradeLane: r.trade_lane || '', notes: r.notes || '', alertThreshold: r.alert_threshold ?? 80, pol: r.pol || '', pod: r.pod || '', originLane: r.origin_lane || '', destLane: r.dest_lane || '', coverageScope: r.coverage_scope || 'STRICT', contractId: r.contract_id || '', contractNumber: r.contract_number || '' });
 const mapCarrier      = r => ({ code: r.code, name: r.name, shortName: r.short_name || '' });
 const mapVessel       = r => ({ imo: r.imo, name: r.name, assetType: r.asset_type || '', flagIso2: r.flag_iso2 || '', flagName: r.flag_name || '', buildYear: r.build_year, grossTonnage: r.gross_tonnage });
@@ -1879,7 +1893,7 @@ const ctx = {
   SVC_ABBR, LEG_LOC_ABBR,
   VALID_ROLES, ROLE_RANK_SV, primaryRoleSV, parseUserRoles,
   SERVICE_CODE_MAP, importContractRates,
-  mapShipment, mapShipmentLeg, mapCostLine, mapContainer, mapAllocation,
+  mapShipment, mapShipmentLeg, mapCostLine, mapContainer, mapContainerEvent, mapAllocation,
   mapCarrier, mapVessel, mapPortLocation, mapLinkedPort, mapTradeLane,
   mapScopeItem, mapAccessConfig, mapOffice, mapBranch, mapOrgCountry, mapRegion, mapCountry, mapTicketLink, mapTicket,
   mapTestItem, mapTestCaseLink,

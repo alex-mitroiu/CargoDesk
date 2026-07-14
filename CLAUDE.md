@@ -22,7 +22,10 @@ server.js                          Express entry point: SQLite schema, startup m
                                    HTTP routes live in routes/ — server.js loads them via ctx.
 routes/
   auth.js            /api/auth/*, /api/users/*, /api/access-configs/*, /api/scope-items/*
-  shipments.js       /api/shipments/* (CRUD, events, status-log, containers, messages, legs)
+  shipments.js       /api/shipments/* (CRUD, events, status-log, containers, messages, legs,
+                     container-events — FCL lifecycle: Empty Pickup/Gate In/Loaded/Sailed/
+                     Discharged/Gate Out/Empty Return, GET+POST /api/containers/:id/events,
+                     DELETE /api/container-events/:id)
   allocations.js     /api/allocations/* (CRUD, match, conflicts)
   mdm.js             /api/carriers, /api/vessels, /api/port-locations, /api/linked-ports,
                      /api/trade-lanes, /api/country-trade-lanes, /api/regions, /api/countries,
@@ -47,7 +50,10 @@ exports/
 sampleDB/
   cargodesk.db                     Pre-loaded sample DB — copy to project root to use
 src/
-  App.jsx                          Root: routing, nav, state, theme toggle, auth guards, role switcher
+  App.jsx                          Root: routing, nav, state, theme toggle, auth guards, role switcher;
+                                   also hosts ShipmentDetailSidebar (~1385-1530, anchor-scroll section
+                                   nav for ShipmentDetailPage — see Key patterns) and the DOC_TYPES
+                                   document-tracking system (~line 56, "⚡ Generate Document" modal)
   api.js                           All fetch wrappers (api.shipments, api.export, api.auth, api.users…)
   tokens.js                        T object, theme colours, route-matching helpers
   toast.js                         Pub-sub toast emitter
@@ -57,8 +63,24 @@ src/
   pages/
     LoginPage.jsx                  Centered login form; calls api.auth.login → onLogin(token, user)
     ShipmentsPage.jsx              Shipment list + filters + CSV export button + ShipmentForm (new/edit)
-    ShipmentDetailPage.jsx         Detail view, ContainerForm + ContainerTypePickerModal,
-                                   ShipmentTimeline (history tracker), LinkVesselModal
+    ShipmentDetailPage.jsx         Detail view (4275 lines, single flat component 3179-4275).
+                                   No renderX() pattern — each "section" is an anchor div
+                                   (id="shp-overview" 3425, "shp-route" 3576, "shp-info-ports" 3708,
+                                   "shp-info-dates" 3720, "shp-space" 3792, "shp-cargo" 3842,
+                                   "shp-accounting" 3974, "shp-milestones" 3981, "shp-schedules" 3986,
+                                   "shp-tickets" 3991) scrolled to by ShipmentDetailSidebar in App.jsx.
+                                   Sub-components defined earlier in the file: ContainerForm (114-308,
+                                   editable fields: containerNumber/size/type/hsCode/cargoDescription/
+                                   grossWeightKg/volumeCbm/isDg/dgClass — seal_number exists in the DB
+                                   but is NOT exposed in this form), CommodityDisplay (313-327),
+                                   StatusTimeline (330-~600), MessagesDrawer (954-~1155),
+                                   EdiMessagesDrawer (1160-~1578), MilestonePanel (1593-~1870, the
+                                   precedent for any future lifecycle-stage stepper — see Key patterns),
+                                   CostControl/Operational Accounting (1873-~2711), DocumentsMenu
+                                   (2711-2919, jsPDF dropdown — B/L Draft/Packing List/Container
+                                   Manifest, DIFFERENT system from App.jsx's DOC_TYPES tracker, see
+                                   Key patterns), SchedulesPanel (2919-3102), RelatedTicketsPanel
+                                   (3102-3179). Container list modal 4081, add/edit modal 4188-4189.
     DashboardPage.jsx              Overview + Contract Consumption + Margin (XLSX export) tabs
     SpaceConfigurationsPage.jsx    Standalone Space Configs page with Linked Shipments modal
     DashboardArchivePage.jsx       Expired allocations + renew flow
@@ -87,6 +109,8 @@ src/
       EntityHistoryModal.jsx       Generic audit-log timeline viewer
       UserManagementPanel.jsx      Admin-only user CRUD table (name, email, role, status, last login)
       TestCaseStoryLinksPanel.jsx  Search+add UI for linking a Test Case ↔ Story ticket (bidirectional)
+      ContainerEventsPanel.jsx     FCL container lifecycle log — self-fetching, opened in a Modal
+                                   from the container list row's 📋 button in ShipmentDetailPage.jsx
 ```
 
 ## Route factory pattern
@@ -165,6 +189,7 @@ are fully validated.
 | test_items | Dedicated test-case repository (separate from `tickets`); optional `shipment_id` FK |
 | test_case_links | Test Case ↔ Story links ("tests" / "is tested by") |
 | edi_messages | Per-shipment carrier EDI log (direction out/in, raw/parsed payload, `is_mock`) |
+| container_events | FCL container lifecycle log (event_type, location, occurred_at, recorded_by) — Epic TKT-A5LUPD |
 
 ## Key patterns
 - **PortCombobox dropdown**: always `position: fixed` with `getBoundingClientRect()` to escape modal `overflow:auto`
@@ -199,8 +224,13 @@ are fully validated.
 - **Export — XLSX programmatic**: `GET /api/export/dashboard/xlsx` — ExcelJS workbook, 4 sheets (Summary with KPI block + 6-week trend, By Carrier, By Lane, Shipment Detail with autofilter + frozen header), brand palette, formula-based totals; no charts (ExcelJS chart API unreliable)
 - **Export — XLSX template**: `GET /api/export/dashboard/template` — loads `exports/dashboard-template.xlsx`, overwrites data ranges (WeeklySummary A11:E16, ByCarrier, ByLane), preserves any Excel charts pre-wired to those named ranges; `npm run export:template` regenerates the base file
 - **Export api namespace**: `api.export.shipmentsCSV()`, `api.export.dashboardXlsx()`, `api.export.dashboardTemplate()` — all use direct `fetch` + `blob` → `<a>.click()` pattern (same as documents download)
+- **ShipmentDetailPage section nav**: NOT a React tab/state pattern — `ShipmentDetailSidebar` in App.jsx (~1385-1530) is a hardcoded `sections` array (`{id, icon, label, badge?}`, App.jsx:1407-1414) rendered as a list; clicking calls `scrollTo(id)` (App.jsx:1394-1397) → `document.getElementById(id)?.scrollIntoView(...)`. Adding/reordering a section means editing the App.jsx array AND moving the matching `id="shp-*"` anchor div inside ShipmentDetailPage.jsx — the two files must stay in sync manually, there's no shared source of truth
+- **Two independent "document" systems** (naming collision, easy to confuse): (1) `DocumentsMenu` inside ShipmentDetailPage.jsx (2711-2919) — a header dropdown that generates B/L Draft/Packing List/Container Manifest client-side via jsPDF, no persistence/tracking. (2) `DOC_TYPES` in App.jsx (~line 56: BL01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). When asked to "add a document type" or "generate a document," clarify which system — they don't share code
+- **Lifecycle-stage stepper precedent**: no dedicated stepper component exists yet; `MilestonePanel` (ShipmentDetailPage.jsx 1593-~1870) is the closest analog — linear progress bar (1734-1738, `width: ${progress}%`) plus per-step state coloring via `milestoneState()`/`stateColor()` (1666-1676: completed/overdue/current/upcoming) driven by `shipment_milestones` rows (`id, label, estimatedDate, note, completedAt, completedBy`, fixed step keys `booking_confirmed, si_submitted, cargo_gated_in, vessel_departed, bl_issued, vessel_arrived, customs_cleared, cargo_released, delivered`). Any new per-container lifecycle/stage UI should reuse this state-coloring pattern rather than inventing a new visual language
+- **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages 3516-3533, 📡 EDI 3534-3543, then `DocumentsMenu` at 3544). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
 
 ## Recent changes (v0.27.0 "Lookout")
+- **FCL container lifecycle events** (first piece of the FCL shipment-management push, Epic `TKT-A5LUPD`): `container_events` table logs per-container movement (`Empty Pickup → Gate In → Loaded → Sailed → Discharged → Gate Out → Empty Return`), replacing shipment-level-only milestones as the foundation for demurrage/detention tracking. Routes in `routes/shipments.js` — `GET`/`POST /api/containers/:id/events`, `DELETE /api/container-events/:id`; POST validates `eventType` against the fixed list and logs a `CONTAINER_EVENT_ADDED` row to `shipment_events` (audit trail, same as `CONTAINER_ADDED`/`CONTAINER_UPDATED`). Frontend: new shared `ContainerEventsPanel.jsx` (self-fetching, chronological list + inline log-event form that suggests the next unused event type), opened via a 📋 button on each row in the container list modal (`ShipmentDetailPage.jsx` ~4181). Also fixed a data-entry gap found while building this: `seal_number` existed in the `containers` schema and backend routes but was never exposed in `ContainerForm` — added as a field next to Container Number. Remaining Epic stories (demurrage/detention, VGM, CY cutoff/empty equipment, sequential detail-page reorg) are logged and in Ready.
 - **EDI Messaging (carrier booking communication)**: `edi_messages` table stores every outbound/inbound EDI exchange per shipment (`direction`, `message_type`, `status`, raw/parsed payload, `is_mock`); `routes/edi.js` — `GET /api/shipments/:id/edi-messages` + `POST .../booking-request`; `maerskBookingRequest()` mirrors `maerskSchedules()`'s real/mock-fallback shape exactly (reads `maersk_api_key`, `Consumer-Key` header, `AbortSignal.timeout(10s)`, returns `null` on any failure → falls back to `mockBookingResponse()`, tagged `is_mock=1`); confirmed bookings do a targeted `UPDATE shipments SET booking_ref=?`; broadcasts `{type:"new_edi_message"}` over the existing `shipmentSubs` WS infra. Frontend: `EdiMessagesDrawer` in `ShipmentDetailPage.jsx` (mirrors `MessagesDrawer`'s WS+polling-fallback shape; rows show a direction badge + status pill + raw/parsed payload toggle instead of chat bubbles), triggered by a 📡 icon in the shipment header. Settings: `maersk-booking` entry in `AppSettingsPage.jsx`'s `EXTERNAL_APIS` (shares the `maersk_api_key` setting with Maersk Schedules). Tracked under Kanban Epic `TKT-R2NCQJ`.
 - **Test-case repository separation + Story links**: test-case items live only in `test_items` (own repository, not mixed into `tickets`); `test_case_links` provides a bidirectional "tests" / "is tested by" link between a Test Case and a Story ticket, surfaced via the shared `TestCaseStoryLinksPanel.jsx` component (used in both `TestCasesPage.jsx` and `KanbanPage.jsx`'s ticket preview). `test_items` carries an optional `shipment_id` so a test case can be linked directly to a shipment.
 - **Sailing management hardening**: `applySailingToLegs` sets ETA + carrierCode; TSP multi-leg support splices draft SEA legs for each voyage segment; edit-mode replace-not-append fixed (`Promise.all` deletes all existing schedules before saving new); active sailing highlighted green in `SailingPickerModal` (`✓ Active` badge, `voyageNumber` or `vesselName+etd` match) — applied in both `ShipmentFormPage` and `ShipmentDetailPage`; replace confirmation uses proper `<Modal>` overlay

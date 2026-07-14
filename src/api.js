@@ -76,6 +76,9 @@ export const api = {
     create: (data)    => req("POST",   "/containers", data),
     update: (id, data)=> req("PUT",    `/containers/${id}`, data),
     remove: (id)      => req("DELETE", `/containers/${id}`),
+    events:      (id)       => req("GET",    `/containers/${id}/events`),
+    addEvent:    (id, data) => req("POST",   `/containers/${id}/events`, data),
+    removeEvent: (eventId)  => req("DELETE", `/container-events/${eventId}`),
   },
   commodities: {
     list:   (p = {}) => req("GET",    `/commodities?${new URLSearchParams(p)}`),

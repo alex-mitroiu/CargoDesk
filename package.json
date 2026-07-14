@@ -15,10 +15,11 @@
     "seed:contracts": "node scripts/seed-contracts.js",
     "checkdb": "node scripts/checkdb.js",
     "export:template": "node scripts/create-export-template.js",
-    "test": "node tests/pending-revalidation.test.js && node tests/shipment-crud.test.js && node tests/schedules.test.js",
+    "test": "node tests/pending-revalidation.test.js && node tests/shipment-crud.test.js && node tests/schedules.test.js && node tests/container-events.test.js",
     "test:schedules": "node tests/schedules.test.js",
     "test:revalidate": "node tests/pending-revalidation.test.js",
     "test:shipment": "node tests/shipment-crud.test.js",
+    "test:container-events": "node tests/container-events.test.js",
     "kill": "scripts\\kill-server.bat",
     "cy:open": "concurrently --kill-others \"npm run dev\" \"cypress open\"",
     "cy:run": "concurrently --kill-others-on-fail \"npm run dev\" \"cypress run\""
