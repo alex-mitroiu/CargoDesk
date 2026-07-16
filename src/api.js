@@ -237,7 +237,16 @@ export const api = {
     update:         (shipmentId, lineId, d)    => req("PUT",    `/shipments/${shipmentId}/cost-lines/${lineId}`, d),
     remove:         (shipmentId, lineId)       => req("DELETE", `/shipments/${shipmentId}/cost-lines/${lineId}`),
     importContract: (shipmentId, d = {})       => req("POST",   `/shipments/${shipmentId}/cost-lines/import-contract`, d),
+    resetToContract:    (shipmentId, d = {})   => req("POST",   `/shipments/${shipmentId}/cost-lines/reset-to-contract`, d),
+    updateCarrierCosts: (shipmentId, d = {})   => req("POST",   `/shipments/${shipmentId}/cost-lines/update-carrier-costs`, d),
+    rateSnapshots:      (shipmentId)           => req("GET",    `/shipments/${shipmentId}/rate-snapshots`),
     events:         (shipmentId)               => req("GET",    `/shipments/${shipmentId}/cost-line-events`),
+  },
+  services: {
+    list:   (shipmentId)             => req("GET",    `/shipments/${shipmentId}/services`),
+    create: (shipmentId, d)          => req("POST",   `/shipments/${shipmentId}/services`, d),
+    update: (shipmentId, serviceId, d) => req("PATCH", `/shipments/${shipmentId}/services/${serviceId}`, d),
+    remove: (shipmentId, serviceId)  => req("DELETE", `/shipments/${shipmentId}/services/${serviceId}`),
   },
   milestones: {
     list:   (shipmentId)       => req("GET",    `/shipments/${shipmentId}/milestones`),
@@ -315,6 +324,7 @@ export const api = {
     list:    (shipmentId)     => req("GET",    `/shipments/${shipmentId}/schedules`),
     save:    (shipmentId, d)  => req("POST",   `/shipments/${shipmentId}/schedules`, d),
     remove:  (shipmentId, id) => req("DELETE", `/shipments/${shipmentId}/schedules/${id}`),
+    events:  (shipmentId)     => req("GET",    `/shipments/${shipmentId}/schedule-events`),
   },
   vessels: {
     search: (q = "")          => req("GET",    `/vessels/search?q=${encodeURIComponent(q)}`),

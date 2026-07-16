@@ -10,10 +10,21 @@ import { AuthContext } from "./AuthContext";
 import Btn from "./components/primitives/Btn";
 import { Modal } from "./components/primitives/Modal";
 import { Field } from "./components/primitives/Form";
+import TrackedDocPreviewModal from "./components/shared/TrackedDocPreviewModal";
+import { fmtCurr, _esc, _invShell, buildFreightInvoiceHtml } from "./utils/invoiceGenerator";
 
 import ShipmentsPage     from "./pages/ShipmentsPage";
 import ShipmentFormPage  from "./pages/ShipmentFormPage";
 import ShipmentDetailPage, { ContainerForm } from "./pages/ShipmentDetailPage";
+import ShipmentContainersPage from "./pages/ShipmentContainersPage";
+import ShipmentPartiesPage from "./pages/ShipmentPartiesPage";
+import ShipmentSchedulesPage from "./pages/ShipmentSchedulesPage";
+import ShipmentMilestonesPage from "./pages/ShipmentMilestonesPage";
+import ShipmentTicketsPage from "./pages/ShipmentTicketsPage";
+import ShipmentAccountingCostsPage from "./pages/ShipmentAccountingCostsPage";
+import ShipmentAccountingInvoicesPage from "./pages/ShipmentAccountingInvoicesPage";
+import ShipmentAccountingGpPage from "./pages/ShipmentAccountingGpPage";
+import ShipmentHeaderBar from "./components/shared/ShipmentHeaderBar";
 import DashboardPage       from "./pages/DashboardPage";
 import DashboardArchive    from "./pages/DashboardArchivePage";
 import UserManualPage      from "./pages/UserManualPage";
@@ -82,118 +93,13 @@ const fmtBytes = b => b < 1024 ? `${b} B` : b < 1024 ** 2 ? `${(b/1024).toFixed(
 const fmtDate  = s => s ? new Date(s).toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" }) : "—";
 
 // ─── Invoice generation helpers ───────────────────────────────────────────────
-
-const fmtCurr = (n, curr = "USD") =>
-  `${curr} ${(parseFloat(n) || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+// fmtCurr / _esc / INV_CSS / _invShell / buildFreightInvoiceHtml now live in
+// src/utils/invoiceGenerator.js (shared with ShipmentAccountingInvoicesPage.jsx,
+// which can't import them back from here without a circular dependency).
 
 const fmtAddrHtml = c => {
   if (!c) return "";
   return [c.companyName, c.address1, c.address2, [c.city, c.state].filter(Boolean).join(", "), [c.postalCode, c.countryIso2].filter(Boolean).join(" ")].filter(Boolean).join("<br>");
-};
-
-const INV_CSS = `
-  @page{margin:18mm}
-  @media print{.no-print{display:none!important}}
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:'Helvetica Neue',Arial,sans-serif;font-size:13px;color:#111827;background:#fff;padding:32px;max-width:880px;margin:0 auto}
-  .no-print{display:block;margin:0 0 20px auto;width:fit-content;padding:9px 18px;background:#2563eb;color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer;letter-spacing:.3px}
-  .no-print:hover{background:#1d4ed8}
-  .header{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:22px;border-bottom:3px solid #2563eb;margin-bottom:28px}
-  .brand-name{font-size:26px;font-weight:900;color:#2563eb;letter-spacing:-1px}
-  .brand-tag{font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:1.5px;margin-top:3px}
-  .inv-info{text-align:right}
-  .inv-type{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:2.5px;color:#6b7280;margin-bottom:5px}
-  .inv-number{font-size:21px;font-weight:800;color:#111827;font-variant-numeric:tabular-nums;letter-spacing:-0.5px}
-  .inv-date{font-size:12px;color:#374151;margin-top:5px}
-  .parties{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px}
-  .party{background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px}
-  .party-label{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:2px;color:#9ca3af;margin-bottom:8px}
-  .party-name{font-size:14px;font-weight:700;color:#111827;margin-bottom:4px}
-  .party-addr{font-size:11px;color:#4b5563;line-height:1.7}
-  .shp-block{background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;margin-bottom:20px}
-  .block-label{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:2px;color:#9ca3af;margin-bottom:10px}
-  .details-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px 16px}
-  .detail-key{font-size:9px;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px}
-  .detail-val{font-size:12px;font-weight:600;color:#111827;font-variant-numeric:tabular-nums}
-  .section-label{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:2px;color:#9ca3af;margin-bottom:10px}
-  table{width:100%;border-collapse:collapse;margin-bottom:16px}
-  th{background:#111827;color:#fff;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1px;padding:10px 12px;text-align:left}
-  td{padding:9px 12px;font-size:12px;border-bottom:1px solid #e5e7eb;color:#111827}
-  tr:nth-child(even) td{background:#f9fafb}
-  .num{text-align:right;font-variant-numeric:tabular-nums;font-weight:600}
-  .code{font-family:monospace;font-weight:700;color:#2563eb}
-  .dg{background:#fee2e2;color:#dc2626;border-radius:3px;padding:1px 5px;font-size:10px;font-weight:700}
-  .totals{border-top:2px solid #111827;padding-top:12px;margin-bottom:20px}
-  .total-row{display:flex;justify-content:flex-end;gap:32px;padding:5px 0}
-  .total-row.grand{padding-top:10px;margin-top:6px;border-top:1px solid #d1d5db}
-  .total-label{font-size:11px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;min-width:120px;text-align:right}
-  .total-amt{font-size:13px;font-weight:700;color:#111827;font-variant-numeric:tabular-nums;min-width:140px;text-align:right}
-  .grand .total-label{color:#111827;font-size:13px}
-  .grand .total-amt{font-size:16px}
-  .notes{background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:14px 16px;margin-bottom:20px}
-  .notes-label{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:2px;color:#9ca3af;margin-bottom:6px}
-  .notes-text{font-size:12px;color:#374151;line-height:1.7;white-space:pre-wrap}
-  .footer{margin-top:32px;padding-top:14px;border-top:1px solid #e5e7eb;text-align:center;font-size:10px;color:#9ca3af}
-`;
-
-const _invShell = (title, invType, invNumber, invDate, body) => `<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"><title>${title}</title><style>${INV_CSS}</style></head>
-<body>
-<button class="no-print" onclick="window.print()">🖨 Print / Save as PDF</button>
-<div class="header">
-  <div><div class="brand-name">CargoDesk</div><div class="brand-tag">Freight Management</div></div>
-  <div class="inv-info">
-    <div class="inv-type">${invType}</div>
-    <div class="inv-number">${invNumber}</div>
-    <div class="inv-date">Date: ${new Date(invDate + "T00:00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" })}</div>
-  </div>
-</div>
-${body}
-<div class="footer">Generated by CargoDesk &mdash; ${new Date().toLocaleString()}</div>
-</body></html>`;
-
-const buildFreightInvoiceHtml = ({ shipment: sh, invNumber, invDate, notes, costLines }) => {
-  const totals = {};
-  for (const cl of costLines) totals[cl.currency] = (totals[cl.currency] || 0) + (parseFloat(cl.amount) || 0);
-
-  const rows = costLines.length === 0
-    ? `<tr><td colspan="4" style="text-align:center;color:#9ca3af;padding:20px">No cost lines recorded for this shipment</td></tr>`
-    : costLines.map(cl => `<tr>
-        <td><span class="code">${cl.chargeCode || "—"}</span></td>
-        <td>${cl.type || "—"}${cl.notes ? `<br><span style="color:#6b7280;font-size:11px">${cl.notes}</span>` : ""}</td>
-        <td>${cl.currency}</td>
-        <td class="num">${fmtCurr(cl.amount, cl.currency)}</td>
-      </tr>`).join("");
-
-  const totalRows = Object.entries(totals).map(([c, a]) =>
-    `<div class="total-row"><span class="total-label">Total ${c}</span><span class="total-amt">${fmtCurr(a, c)}</span></div>`).join("") ||
-    `<div class="total-row"><span class="total-label">Total</span><span class="total-amt">—</span></div>`;
-
-  const detailItems = [
-    ["Shipment ID", sh.id], ["B/L Number", sh.blNumber || "—"], ["Booking Ref", sh.bookingRef || "—"],
-    ["Origin (POL)", `${sh.pol}${sh.polName ? " · " + sh.polName : ""}`],
-    ["Destination (POD)", `${sh.pod}${sh.podName ? " · " + sh.podName : ""}`],
-    ["Carrier", sh.carrierCode || "—"],
-    ["Vessel / Voyage", [sh.vessel, sh.voyage].filter(Boolean).join(" / ") || "—"],
-    ["ETD", sh.etd ? new Date(sh.etd).toLocaleDateString("en-GB") : "—"],
-    ["ETA", sh.eta ? new Date(sh.eta).toLocaleDateString("en-GB") : "—"],
-    ["Incoterm", sh.incoterm || "—"], ["Freight Terms", sh.freightTerms || "Prepaid"],
-    ["Declared Value", sh.declaredValue != null ? fmtCurr(sh.declaredValue, sh.declaredValueCurrency || "USD") : "—"],
-  ].map(([k, v]) => `<div><div class="detail-key">${k}</div><div class="detail-val">${v}</div></div>`).join("");
-
-  const body = `
-    <div class="parties">
-      <div class="party"><div class="party-label">Shipper / Exporter</div><div class="party-name">${sh.shipperName || "—"}</div></div>
-      <div class="party"><div class="party-label">Consignee / Bill To</div><div class="party-name">${sh.consigneeName || "—"}</div></div>
-    </div>
-    <div class="shp-block"><div class="block-label">Shipment Details</div><div class="details-grid">${detailItems}</div></div>
-    <div class="section-label">Charges</div>
-    <table><thead><tr><th>Code</th><th>Type / Description</th><th>Currency</th><th style="text-align:right">Amount</th></tr></thead>
-    <tbody>${rows}</tbody></table>
-    <div class="totals">${totalRows}</div>
-    ${notes ? `<div class="notes"><div class="notes-label">Notes</div><div class="notes-text">${_esc(notes)}</div></div>` : ""}`;
-
-  return _invShell(`Freight Invoice — ${invNumber}`, "FREIGHT INVOICE", invNumber, invDate, body);
 };
 
 const buildCommercialInvoiceHtml = ({ shipment: sh, invNumber, invDate, notes, containers, shipper, consignee }) => {
@@ -249,7 +155,6 @@ const buildCommercialInvoiceHtml = ({ shipment: sh, invNumber, invDate, notes, c
   return _invShell(`Commercial Invoice — ${invNumber}`, "COMMERCIAL INVOICE", invNumber, invDate, body);
 };
 
-const _esc = s => String(s).replace(/[<>&]/g, c => ({"<":"&lt;",">":"&gt;","&":"&amp;"}[c]));
 const _detailGrid = items => items.map(([k, v]) => `<div><div class="detail-key">${k}</div><div class="detail-val">${v}</div></div>`).join("");
 const _ctrTotals = ctrs => {
   const w = ctrs.reduce((s, c) => s + (parseFloat(c.grossWeightKg) || 0), 0);
@@ -670,6 +575,11 @@ const GenerateDocumentModal = ({ shipment, onClose, onSaved, defaultCode }) => {
         shipment.consigneeId ? api.customers.get(shipment.consigneeId).catch(() => null) : Promise.resolve(null),
         needsCostLines ? api.costLines.list(shipment.id).then(ls => ls.filter(l => l.type === "SELL")) : Promise.resolve([]),
       ]);
+      if (needsCostLines && costLines.length === 0) {
+        toast.error("At least one valid charge line needs to be present to generate an invoice.");
+        setLoading(false);
+        return;
+      }
       const allCtrs    = Array.isArray(ctrsRaw) ? ctrsRaw : (ctrsRaw?.results ?? []);
       const containers = allCtrs.filter(c => c.shipmentId === shipment.id);
       const html = dispatchDocBuilder(docCode, {
@@ -734,76 +644,10 @@ const GenerateDocumentModal = ({ shipment, onClose, onSaved, defaultCode }) => {
   );
 };
 
-// ─── In-app document preview ──────────────────────────────────────────────────
-
-const DocumentPreviewModal = ({ doc, onClose, onConfirm }) => {
-  const [src,       setSrc]       = useState(null);
-  const [confirming, setConfirming] = useState(false);
-
-  useEffect(() => {
-    const token = localStorage.getItem("cargodesk_token");
-    fetch(`/api/documents/${doc.id}/download`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => r.blob())
-      .then(blob => setSrc(URL.createObjectURL(blob)))
-      .catch(() => toast.error("Preview failed — try Download instead"));
-    return () => { setSrc(s => { if (s) URL.revokeObjectURL(s); return null; }); };
-  }, [doc.id]);
-
-  const handleConfirm = async () => {
-    setConfirming(true);
-    await onConfirm?.();
-    setConfirming(false);
-  };
-
-  const isConfirmed = doc.status === "confirmed";
-
-  return (
-    <Modal title={`${doc.docType} · ${doc.filename}`} onClose={onClose} width={960}>
-      {/* Status bar */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
-        marginBottom: 12, padding: "8px 12px",
-        background: isConfirmed ? T.success + "14" : doc.isStale ? T.warning + "14" : T.bg,
-        border: `1px solid ${isConfirmed ? T.success + "44" : doc.isStale ? T.warning + "44" : T.border}`,
-        borderRadius: 8 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700,
-            color: isConfirmed ? T.success : doc.isStale ? T.warning : T.textMuted }}>
-            {isConfirmed ? "✓ Confirmed" : doc.isStale ? "⚠ Outdated" : "Draft"}
-          </span>
-          {isConfirmed && doc.confirmedBy && (
-            <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
-              by {doc.confirmedBy} · {fmtDate(doc.confirmedAt)}
-            </span>
-          )}
-          {doc.isStale && (
-            <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
-              Shipment data changed after this document was generated
-            </span>
-          )}
-        </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <Btn size="sm" variant="secondary"
-            onClick={() => api.documents.download(doc.id, doc.filename).catch(() => toast.error("Download failed"))}>
-            ↓ Download
-          </Btn>
-          {onConfirm && !isConfirmed && (
-            <Btn size="sm" onClick={handleConfirm} disabled={confirming}>
-              {confirming ? "Confirming…" : "✓ Confirm Document"}
-            </Btn>
-          )}
-        </div>
-      </div>
-
-      {src
-        ? <iframe src={src} title={doc.filename}
-            style={{ width: "100%", height: "68vh", border: "none", borderRadius: 6, background: "#fff" }} />
-        : <div style={{ height: "68vh", display: "flex", alignItems: "center", justifyContent: "center",
-            fontFamily: T.body, fontSize: 13, color: T.textMuted }}>Loading preview…</div>}
-    </Modal>
-  );
-};
-
 // ─── Documents Modal ──────────────────────────────────────────────────────────
+// TrackedDocPreviewModal (in-app preview) now lives in
+// src/components/shared/TrackedDocPreviewModal.jsx — shared with the Accounting
+// Invoice Entry page, which can't import it back from here.
 
 const DOC_STATUS_STYLE = {
   draft:     { label: "Draft",     bg: "", color: T.textMuted, border: T.border },
@@ -1120,7 +964,7 @@ const DocumentsModal = ({ shipment, canEdit, onClose }) => {
         />
       )}
       {previewDoc && (
-        <DocumentPreviewModal
+        <TrackedDocPreviewModal
           doc={previewDoc}
           onClose={() => setPreviewDoc(null)}
           onConfirm={canEdit ? () => handleConfirm(previewDoc.id) : null}
@@ -1382,7 +1226,7 @@ const ShipmentFormSidebar = ({ shipment, mode, navigate, onContainers }) => {
 
 // ─── Shipment Detail Sidebar ──────────────────────────────────────────────────
 
-const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, onDocuments }) => {
+const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, onDocuments, currentPage = "detail" }) => {
   const goBack = () => {
     if (window.opener) window.close();
     else navigate("shipments");
@@ -1391,7 +1235,33 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, o
   const scrollTo = (id) =>
     document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
 
+  // Promoted sections are real sub-pages now — every other section (just
+  // Overview at this point) is still an anchor inside the Overview page, so a
+  // cross-page click lands on Overview and a same-page click just scrolls.
+  // Accounting is the first *nested* promotion — the parent row and all three
+  // children route via this same map, so handleSection needs no special-casing.
+  const PROMOTED_ROUTES = {
+    "shp-cargo":      "shipment-containers",
+    "shp-parties":    "shipment-parties",
+    "shp-schedules":  "shipment-schedules",
+    "shp-milestones": "shipment-milestones",
+    "shp-tickets":    "shipment-tickets",
+    "shp-accounting":          "shipment-accounting-invoices", // parent row → first child
+    "shp-accounting-invoices": "shipment-accounting-invoices",
+    "shp-accounting-costs":    "shipment-accounting-costs",
+    "shp-accounting-gp":       "shipment-accounting-gp",
+  };
+  const ACCOUNTING_ROUTES = ["shipment-accounting-invoices", "shipment-accounting-costs", "shipment-accounting-gp"];
   const handleSection = (id) => {
+    const route = PROMOTED_ROUTES[id];
+    if (route) {
+      navigate(route, shipment.id);
+      return;
+    }
+    if (currentPage !== "detail") {
+      navigate("detail", shipment.id);
+      return;
+    }
     scrollTo(id);
     onSectionClick(id);
   };
@@ -1406,11 +1276,19 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, o
 
   const sections = [
     { id: "shp-overview",   icon: "◎",  label: "Overview" },
+    { id: "shp-parties",    icon: "👥", label: "Parties & Offices" },
     { id: "shp-cargo",      icon: "📦", label: "Cargo",      badge: ctrCount || null },
+    { id: "shp-schedules",  icon: "⚓", label: "Contracts & Schedules" },
     { id: "shp-milestones", icon: "⚑",  label: "Milestones" },
-    { id: "shp-accounting", icon: "◈",  label: "Accounting" },
-    { id: "shp-schedules",  icon: "⚓", label: "Schedules" },
+    { id: "shp-services",   icon: "🧰", label: "Services" },
+  ];
+  const sectionsAfterAccounting = [
     { id: "shp-tickets",    icon: "◩",  label: "Tickets" },
+  ];
+  const accountingChildren = [
+    { id: "shp-accounting-invoices", icon: "🧾", label: "Invoice Entry" },
+    { id: "shp-accounting-costs",    icon: "💰", label: "Cost Entry" },
+    { id: "shp-accounting-gp",       icon: "📊", label: "GP Overview" },
   ];
 
   return (
@@ -1494,36 +1372,77 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, o
         </button>
       </div>
 
-      {/* Section nav */}
+      {/* Section nav — Explorer-tree pattern, same visual language as TestCasesPage's folder tree */}
       <nav style={{ padding: "14px 12px", flex: 1, overflowY: "auto" }}>
         <div style={{ fontFamily: T.mono, fontSize: 9.5, color: T.border, fontWeight: 700,
           textTransform: "uppercase", letterSpacing: ".12em", padding: "0 12px", marginBottom: 8 }}>
-          Sections
+          Explorer
         </div>
-        {sections.map(({ id, icon, label, badge }) => (
-          <button key={id} onClick={() => handleSection(id)}
-            style={{
-              display: "flex", alignItems: "center", justifyContent: "space-between",
-              width: "100%", padding: "8px 12px", borderRadius: 8,
-              background: "none", border: "none", cursor: "pointer",
-              fontFamily: T.body, fontSize: 13, color: T.text,
-              marginBottom: 2,
-            }}
-            onMouseEnter={e => e.currentTarget.style.background = T.bg}
-            onMouseLeave={e => e.currentTarget.style.background = "none"}
-          >
-            <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ width: 18, textAlign: "center", fontSize: 14 }}>{icon}</span>
-              <span>{label}</span>
-            </span>
-            {badge != null && (
-              <span style={{ fontFamily: T.mono, fontSize: 11, background: T.accent + "22",
-                color: T.accent, borderRadius: 10, padding: "1px 7px", fontWeight: 700 }}>
-                {badge}
+        {/* Root node — the shipment in focus */}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px",
+          fontFamily: T.body, fontSize: 12, fontWeight: 700, color: T.textMuted }}>
+          <span style={{ fontSize: 11, width: 10, textAlign: "center" }}>▾</span>
+          <span style={{ fontSize: 13 }}>🚢</span>
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{shipment.id}</span>
+        </div>
+        {/* NavRow — depth-aware row renderer, same visual/indentation pattern as
+            TestCasesPage.jsx's NavRow/NavFolderNode. Accounting is the only nested
+            entry today (a fixed, always-expanded 3-child subtree — no collapse state
+            needed for a subtree this small; more restructuring planned later). */}
+        {(() => {
+          const NavRow = ({ id, icon, label, badge, depth = 0, selected, promoted, onClick }) => (
+            <div key={id} onClick={onClick}
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "space-between",
+                padding: `5px 8px 5px ${32 + depth * 14}px`, borderRadius: 5, cursor: "pointer", userSelect: "none",
+                background: selected ? T.accent + "22" : "transparent",
+                color: selected ? T.accent : T.text,
+                fontFamily: T.body, fontSize: 13, fontWeight: selected ? 600 : 400,
+                borderLeft: selected ? `2px solid ${T.accent}` : "2px solid transparent",
+                marginBottom: 1,
+              }}
+              onMouseEnter={e => { if (!selected) e.currentTarget.style.background = T.bg; }}
+              onMouseLeave={e => { if (!selected) e.currentTarget.style.background = "transparent"; }}
+            >
+              <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                <span style={{ width: 16, textAlign: "center", fontSize: 13, flexShrink: 0 }}>{icon}</span>
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
+                {promoted && <span style={{ fontSize: 9, color: T.border }}>↗</span>}
               </span>
-            )}
-          </button>
-        ))}
+              {badge != null && (
+                <span style={{ fontFamily: T.mono, fontSize: 11, background: T.accent + "22",
+                  color: T.accent, borderRadius: 10, padding: "1px 7px", fontWeight: 700, flexShrink: 0 }}>
+                  {badge}
+                </span>
+              )}
+            </div>
+          );
+
+          const renderSection = ({ id, icon, label, badge }) => {
+            const promotedRoute = PROMOTED_ROUTES[id];
+            const isPromotedNode = !!promotedRoute;
+            const selected = isPromotedNode
+              ? currentPage === promotedRoute
+              : currentPage === "detail" && id === "shp-overview"; // best-effort default highlight
+            return <NavRow key={id} id={id} icon={icon} label={label} badge={badge} depth={0}
+              selected={selected} promoted={isPromotedNode} onClick={() => handleSection(id)} />;
+          };
+
+          return (
+            <>
+              {sections.map(renderSection)}
+              <NavRow id="shp-accounting" icon="◈" label="Accounting" depth={0}
+                selected={ACCOUNTING_ROUTES.includes(currentPage)} promoted
+                onClick={() => handleSection("shp-accounting")} />
+              {accountingChildren.map(({ id, icon, label }) => (
+                <NavRow key={id} id={id} icon={icon} label={label} depth={1}
+                  selected={currentPage === PROMOTED_ROUTES[id]} promoted
+                  onClick={() => handleSection(id)} />
+              ))}
+              {sectionsAfterAccounting.map(renderSection)}
+            </>
+          );
+        })()}
       </nav>
     </aside>
   );
@@ -1591,6 +1510,16 @@ function App() {
     dashboard:         "api_shipments_enabled",
     "space-configs":   "api_shipments_enabled",
     "dashboard-archive":"api_shipments_enabled",
+    // Promoted shipment sub-pages inherit the same gate "detail" uses — otherwise
+    // disabling the Shipments module only hides Overview, not Cargo/Accounting/etc.
+    "shipment-containers":          "api_shipments_enabled",
+    "shipment-parties":             "api_shipments_enabled",
+    "shipment-schedules":           "api_shipments_enabled",
+    "shipment-milestones":          "api_shipments_enabled",
+    "shipment-tickets":             "api_shipments_enabled",
+    "shipment-accounting-invoices": "api_shipments_enabled",
+    "shipment-accounting-costs":    "api_shipments_enabled",
+    "shipment-accounting-gp":       "api_shipments_enabled",
     "mdm-contracts":   "api_contracts_enabled",
     "mdm-customers":              "api_customers_enabled",
     "mdm-sanctioned-customers":  "api_customers_enabled",
@@ -1605,10 +1534,36 @@ function App() {
     return !k || appSettings[k] !== 'false';
   };
 
+  // Promoted shipment sub-pages — suffix in the hash maps to a page key.
+  const SHIPMENT_SUBPAGES = {
+    containers: "shipment-containers",
+    parties:    "shipment-parties",
+    schedules:  "shipment-schedules",
+    milestones: "shipment-milestones",
+    tickets:    "shipment-tickets",
+  };
+  const SHIPMENT_SUBPAGE_HASHES = Object.fromEntries(
+    Object.entries(SHIPMENT_SUBPAGES).map(([suffix, key]) => [key, suffix])
+  );
+  // Accounting sub-pages live under a two-segment hash (shipments/:id/accounting/:child) since
+  // Accounting is a nested parent with children, unlike the single-segment promoted sections above.
+  const ACCOUNTING_SUBPAGES = {
+    costs:    "shipment-accounting-costs",
+    invoices: "shipment-accounting-invoices",
+    gp:       "shipment-accounting-gp",
+  };
+  const ACCOUNTING_SUBPAGE_HASHES = Object.fromEntries(
+    Object.entries(ACCOUNTING_SUBPAGES).map(([suffix, key]) => [key, suffix])
+  );
+
   const parseHash = hash => {
     if (!hash) return { page: "home", selectedId: null };
     if (hash === "shipments/new") return { page: "shipment-new", selectedId: null };
     if (/^shipments\/[^/]+\/edit$/.test(hash)) return { page: "shipment-edit", selectedId: hash.split("/")[1] };
+    const acctMatch = hash.match(/^shipments\/([^/]+)\/accounting\/(costs|invoices|gp)$/);
+    if (acctMatch) return { page: ACCOUNTING_SUBPAGES[acctMatch[2]], selectedId: acctMatch[1] };
+    const subMatch = hash.match(/^shipments\/([^/]+)\/(containers|parties|schedules|milestones|tickets)$/);
+    if (subMatch) return { page: SHIPMENT_SUBPAGES[subMatch[2]], selectedId: subMatch[1] };
     if (hash.startsWith("shipments/")) return { page: "detail", selectedId: hash.split("/")[1] || null };
     if (hash.startsWith("track/")) return { page: "track", selectedId: hash.slice(6) };
     return { page: hash, selectedId: null };
@@ -1784,6 +1739,44 @@ function App() {
   }, [user?.id]);
 
   const selectedShipment = shipments.find(s => s.id === selectedId);
+
+  // Shared by ShipmentDetailPage and its promoted sub-pages (e.g. ShipmentPartiesPage) — same shipment PUT, multiple entry points.
+  const handleUpdateShipment = async (id, form) => {
+    try {
+      const updated = await api.shipments.update(id, form);
+      setShipments(p => p.map(s => s.id === id ? { ...s, ...updated } : s));
+      toast.success("Shipment updated");
+      if (updated.screening?.result === "HIT") {
+        const parties = (updated.screening.hits || []).map(h => `${h.field}: ${h.value}`).join(", ");
+        toast.warning(`Compliance review required — sanctioned party detected${parties ? ` (${parties})` : ""}`);
+      }
+      return updated;
+    } catch (e) { toast.error(e.message); throw e; }
+  };
+
+  // Shared by ShipmentDetailPage and ShipmentContainersPage — same container CRUD, two entry points.
+  const handleAddContainer = async (shipmentId, form) => {
+    try {
+      const created = await api.containers.create({ shipmentId, ...form });
+      setContainers(p => [...p, created]);
+      toast.success("Container added");
+    } catch (e) { toast.error(e.message); throw e; }
+  };
+  const handleEditContainer = async (id, form) => {
+    try {
+      const updated = await api.containers.update(id, form);
+      setContainers(p => p.map(c => c.id === id ? { ...c, ...updated } : c));
+      toast.success("Container updated");
+    } catch (e) { toast.error(e.message); throw e; }
+  };
+  const handleDeleteContainer = async id => {
+    try {
+      await api.containers.remove(id);
+      setContainers(p => p.filter(c => c.id !== id));
+      toast.success("Container removed");
+    } catch (e) { toast.error(e.message); }
+  };
+
   const formDirtyRef = useRef(false);
   const [formCtrListOpen,  setFormCtrListOpen]  = useState(false);
   const [formCtrModal,     setFormCtrModal]     = useState(null);
@@ -1802,10 +1795,12 @@ function App() {
       api.settings.get().then(s => setAppSettings(s)).catch(() => {});
     setPage(key);
     setSelectedId(id);
-    if (key === "shipment-new")             window.location.hash = "shipments/new";
-    else if (key === "shipment-edit" && id) window.location.hash = `shipments/${id}/edit`;
-    else if (key === "detail" && id)        window.location.hash = `shipments/${id}`;
-    else                                    window.location.hash = key;
+    if (key === "shipment-new")                          window.location.hash = "shipments/new";
+    else if (key === "shipment-edit" && id)              window.location.hash = `shipments/${id}/edit`;
+    else if (SHIPMENT_SUBPAGE_HASHES[key] && id)         window.location.hash = `shipments/${id}/${SHIPMENT_SUBPAGE_HASHES[key]}`;
+    else if (ACCOUNTING_SUBPAGE_HASHES[key] && id)       window.location.hash = `shipments/${id}/accounting/${ACCOUNTING_SUBPAGE_HASHES[key]}`;
+    else if (key === "detail" && id)                     window.location.hash = `shipments/${id}`;
+    else                                                  window.location.hash = key;
   };
 
   // Browser back/forward
@@ -1909,6 +1904,19 @@ function App() {
     "org-office":       "Organization — Offices",
     schedules:          "Schedule Search",
     manual:             "User Manual",
+  };
+
+  // Breadcrumb label for each promoted shipment sub-page — without this the
+  // header falls back to the raw page key (e.g. "shipment-accounting-gp").
+  const SHIPMENT_SUBPAGE_LABELS = {
+    "shipment-containers":         "Cargo",
+    "shipment-parties":            "Parties & Offices",
+    "shipment-schedules":          "Contracts & Schedules",
+    "shipment-milestones":         "Milestones",
+    "shipment-tickets":            "Tickets",
+    "shipment-accounting-invoices":"Invoice Entry",
+    "shipment-accounting-costs":   "Cost Entry",
+    "shipment-accounting-gp":      "GP Overview",
   };
 
   // ── iOS-style theme toggle pill ────────────────────────────────────────────
@@ -2045,7 +2053,7 @@ function App() {
         {/* Left — breadcrumb */}
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ fontFamily: T.body, fontSize: 12, color: T.border }}>CargoDesk</span>
-          {page === "detail" && selectedShipment ? (
+          {(page === "detail" || SHIPMENT_SUBPAGE_LABELS[page]) && selectedShipment ? (
             <>
               <span style={{ fontFamily: T.mono, fontSize: 10, color: T.border }}>›</span>
               <button onClick={() => navigate("shipments")}
@@ -2061,7 +2069,7 @@ function App() {
               </span>
               <span style={{ fontFamily: T.mono, fontSize: 10, color: T.border }}>›</span>
               <span style={{ fontFamily: T.body, fontSize: 13, fontWeight: 600, color: T.textMuted }}>
-                Details
+                {SHIPMENT_SUBPAGE_LABELS[page] || "Details"}
               </span>
             </>
           ) : (
@@ -2373,13 +2381,14 @@ function App() {
     <div style={{ display: "flex", minHeight: "100vh", background: T.bg, fontFamily: T.body, color: T.text }}>
 
       {/* ── Sidebar ── */}
-      {page === "detail" && selectedShipment ? (
+      {(page === "detail" || Object.values(SHIPMENT_SUBPAGES).includes(page) || Object.values(ACCOUNTING_SUBPAGES).includes(page)) && selectedShipment ? (
         <ShipmentDetailSidebar
           shipment={selectedShipment}
           ctrCount={containers.filter(c => c.shipmentId === selectedShipment.id).length}
           navigate={navigate}
           onSectionClick={setDetailAction}
           onDocuments={() => setDocsOpen(true)}
+          currentPage={page}
         />
       ) : page === "shipment-new" ? (
         <ShipmentFormSidebar mode="new" shipment={null} navigate={navigate} onContainers={() => setNewCtrSignal(p => p + 1)} />
@@ -2506,6 +2515,12 @@ function App() {
         <Header />
         <main style={{ flex: 1, padding: "28px 36px 60px", overflow: "auto" }}>
 
+        {(page === "detail" || SHIPMENT_SUBPAGE_LABELS[page]) && selectedShipment && isEnabled(page) && (
+          <ShipmentHeaderBar shipment={selectedShipment} containers={containers}
+            onNavigateToSchedules={() => navigate("shipment-schedules", selectedShipment.id)}
+            onUpdate={handleUpdateShipment} />
+        )}
+
         {/* Disabled module fallback */}
         {!isEnabled(page) && (
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center",
@@ -2624,39 +2639,75 @@ function App() {
               const fresh = await api.shipments.get(selectedShipment.id);
               setShipments(p => p.map(s => s.id === fresh.id ? { ...s, ...fresh } : s));
             }}
-            onUpdate={async (id, form) => {
-              try {
-                const updated = await api.shipments.update(id, form);
-                setShipments(p => p.map(s => s.id === id ? { ...s, ...updated } : s));
-                toast.success("Shipment updated");
-                if (updated.screening?.result === "HIT") {
-                  const parties = (updated.screening.hits || []).map(h => `${h.field}: ${h.value}`).join(", ");
-                  toast.warning(`Compliance review required — sanctioned party detected${parties ? ` (${parties})` : ""}`);
-                }
-                return updated;
-              } catch (e) { toast.error(e.message); throw e; }
-            }}
-            onAddContainer={async (shipmentId, form) => {
-              try {
-                const created = await api.containers.create({ shipmentId, ...form });
-                setContainers(p => [...p, created]);
-                toast.success("Container added");
-              } catch (e) { toast.error(e.message); throw e; }
-            }}
-            onEditContainer={async (id, form) => {
-              try {
-                const updated = await api.containers.update(id, form);
-                setContainers(p => p.map(c => c.id === id ? { ...c, ...updated } : c));
-                toast.success("Container updated");
-              } catch (e) { toast.error(e.message); throw e; }
-            }}
-            onDeleteContainer={async id => {
-              try {
-                await api.containers.remove(id);
-                setContainers(p => p.filter(c => c.id !== id));
-                toast.success("Container removed");
-              } catch (e) { toast.error(e.message); }
+            onUpdate={handleUpdateShipment}
+            onAddContainer={handleAddContainer}
+            onEditContainer={handleEditContainer}
+            onDeleteContainer={handleDeleteContainer}
+            onManageContainers={() => navigate("shipment-containers", selectedShipment.id)}
+            onManagePartiesOffices={() => navigate("shipment-parties", selectedShipment.id)}
+            onManageSchedules={() => navigate("shipment-schedules", selectedShipment.id)}
+            onManageMilestones={() => navigate("shipment-milestones", selectedShipment.id)}
+            onManageTickets={() => navigate("shipment-tickets", selectedShipment.id)}
+            onManageAccountingCosts={() => navigate("shipment-accounting-costs", selectedShipment.id)}
+            onManageAccountingInvoices={() => navigate("shipment-accounting-invoices", selectedShipment.id)}
+            onManageAccountingGp={() => navigate("shipment-accounting-gp", selectedShipment.id)} />
+        )}
+
+        {page === "shipment-containers" && selectedShipment && (
+          <ShipmentContainersPage
+            shipment={selectedShipment} containers={containers}
+            onBack={() => navigate("detail", selectedShipment.id)}
+            onAddContainer={handleAddContainer}
+            onEditContainer={handleEditContainer}
+            onDeleteContainer={handleDeleteContainer} />
+        )}
+
+        {page === "shipment-parties" && selectedShipment && (
+          <ShipmentPartiesPage
+            shipment={selectedShipment}
+            onBack={() => navigate("detail", selectedShipment.id)}
+            onUpdate={handleUpdateShipment} />
+        )}
+
+        {page === "shipment-schedules" && selectedShipment && (
+          <ShipmentSchedulesPage
+            shipment={selectedShipment}
+            onBack={() => navigate("detail", selectedShipment.id)}
+            onUpdate={handleUpdateShipment}
+            onRefresh={async () => {
+              const fresh = await api.shipments.get(selectedShipment.id);
+              setShipments(p => p.map(s => s.id === fresh.id ? { ...s, ...fresh } : s));
             }} />
+        )}
+
+        {page === "shipment-milestones" && selectedShipment && (
+          <ShipmentMilestonesPage
+            shipment={selectedShipment}
+            onBack={() => navigate("detail", selectedShipment.id)} />
+        )}
+
+        {page === "shipment-tickets" && selectedShipment && (
+          <ShipmentTicketsPage
+            shipment={selectedShipment}
+            onBack={() => navigate("detail", selectedShipment.id)} />
+        )}
+
+        {page === "shipment-accounting-costs" && selectedShipment && (
+          <ShipmentAccountingCostsPage
+            shipment={selectedShipment} containers={containers}
+            onBack={() => navigate("detail", selectedShipment.id)} />
+        )}
+
+        {page === "shipment-accounting-invoices" && selectedShipment && (
+          <ShipmentAccountingInvoicesPage
+            shipment={selectedShipment} containers={containers}
+            onBack={() => navigate("detail", selectedShipment.id)} />
+        )}
+
+        {page === "shipment-accounting-gp" && selectedShipment && (
+          <ShipmentAccountingGpPage
+            shipment={selectedShipment}
+            onBack={() => navigate("detail", selectedShipment.id)} />
         )}
 
         {page === "kanban"      && isEnabled("kanban")    && <KanbanPage shipments={shipments} />}
@@ -2793,7 +2844,7 @@ function App() {
       <AiChatDrawer
         open={aiChatOpen}
         onClose={() => setAiChatOpen(false)}
-        shipmentId={page === "detail" ? selectedId : null}
+        shipmentId={(page === "detail" || SHIPMENT_SUBPAGE_LABELS[page]) ? selectedId : null}
       />
 
       {!licenseAccepted && (

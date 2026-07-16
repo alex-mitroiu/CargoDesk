@@ -2,7 +2,7 @@
 
 > Freight management application for tracking ocean shipments, carrier space utilisation, contracts, and maritime master data.
 
-[![Version](https://img.shields.io/badge/version-0.28.0-blue)](.)
+[![Version](https://img.shields.io/badge/version-0.29.0-blue)](.)
 ![Node](https://img.shields.io/badge/node-22.5%2B-green)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
@@ -58,6 +58,9 @@
 - **Authentication** — JWT-based login with `bcryptjs` password hashing. Token stored in `localStorage`; all API routes protected by `auth()` middleware. A default admin account (`admin@cargodesk.com` / `admin123`) is seeded on first startup when no users exist.
 - **User Management** — Admin-only Users tab in Application Settings: create, edit, deactivate, and delete user accounts. Role-coded badges (admin / operator / viewer). Passwords hashed, never exposed.
 - **RBAC — Three Roles** — admin (full access + user management), operator (full access, no user admin), viewer (read-only everywhere). All write actions (create, edit, delete, drag-to-reorder on Kanban) are hidden for viewers. A "👁 View Only" banner appears on the shipment detail page. Admins can impersonate lower roles via the nav role-switcher.
+- **Persistent Shipment Header** — `ShipmentHeaderBar` is visible on the Overview page and all 8 promoted sub-pages: shipment ID (click-to-copy), FCL/LCL, route, dates, Incoterm, routing term, vessel, shipper/consignee, contract, TEU, and Loop Code, plus a Door → POL → POD → Terminal journey bar that resolves the actual SEA leg(s) rather than assuming the shipment's top-level POL/POD is the sea port — correct even for Door pickups and multi-leg transshipment (TSP) routings.
+- **Dedicated Services** — Export/Import services dashboard (VGM, Haulage, Fumigation, Storage, Customs Clearance, and more) embedded on the shipment Overview page. Each service has a vendor, an office defaulted from the shipment's Export/Import Managing Office, and a Requested → Confirmed → Completed/Cancelled status lifecycle, fully audit-logged.
+- **Schedules Page Overhaul** — Route Legs are now editable directly on the Schedules page; new legs auto-order Pick-up-first / Delivery-last. "Add Sailing" is transshipment-aware — picking a multi-leg sailing updates every affected leg, not just the first. The old Sailings list is now a read-only Schedule History audit trail.
 
 ---
 
@@ -287,7 +290,7 @@ CargoDesk/
 
 ## Database Schema
 
-40 tables total — schema declared in server.js startup, migrations applied automatically.
+55 tables total — schema declared in server.js startup, migrations applied automatically. See the About page's **Architectural Details** tab for the full domain-grouped list; the table below covers the core/most-referenced ones.
 
 | Table | Purpose |
 |---|---|
@@ -310,6 +313,7 @@ CargoDesk/
 | `shipment_cost_lines` | BUY and SELL cost lines per shipment with source tracking (`source`, `modified_at`) |
 | `shipment_milestones` | Per-shipment milestone steps with estimated date, completion timestamp, and note |
 | `shipment_schedules` | Per-shipment saved sailings: carrier, vessel, voyage, ETD, ETA, transit days, isMock flag, saved by |
+| `shipment_services` | Dedicated Services (Export/Import): service type, status lifecycle, vendor, office, dates |
 | `shipment_screenings` | OFAC/SDN screening results and manual override records |
 | `shipment_documents` | Uploaded document metadata (filename, type, label, path) |
 | `status_log` | Shipment status transitions (legacy, kept for compatibility) |
@@ -340,6 +344,7 @@ See the built-in **About** page (i in the sidebar) for the full interactive sche
 
 | Version | Codename | Summary |
 |---------|----------|---------|
+| 0.29.0 | Bearing | Persistent Shipment Header (`ShipmentHeaderBar`) visible on Overview + all 8 promoted sub-pages, with a Door → POL → POD → Terminal journey bar that's TSP/Door-pickup aware (resolves the real SEA leg instead of assuming `shipment.pol`/`pod` is the sea port). Dedicated Services: new `shipment_services` table + routes back a two-column Export/Import dashboard (`ServicesPanel`) embedded on Overview — vendor, EMO/IMO-defaulted office, Requested→Confirmed→Completed/Cancelled lifecycle, fully audit-logged. Schedules page overhaul: Route Legs table now lives here directly with auto-ordering (Pick-up first, Delivery last); "Add Sailing" is now fully TSP-aware (previously only ever touched the first leg, or nothing at all, on an existing shipment) and correctly resets POL/POD when switching from a transshipment sailing back to a direct one; the old Sailings box is now a read-only Schedule History audit panel. `RouteSummaryBar` relocated from Overview to the Schedules page. About page gains an Architectural Details tab. |
 | 0.28.0 | Waypoint | Test-case repository separation: test items (Test Folder/Plan/Run/Case) live only in their own `test_items` table, no longer mixed into the Integration Board's `tickets` data; `test_case_links` gives a bidirectional Test Case ↔ Story "Tests" / "Is tested by" relationship. TicketPreview footer redesigned — only Backlog and previous/next status stay visible by default, rest moved behind a header ⚙ ActionMenu. EDI Messaging: `edi_messages` table logs every outbound/inbound carrier EDI exchange per shipment; `POST /api/shipments/:id/edi-messages/booking-request` sends via `maerskBookingRequest()` (mirrors `maerskSchedules()`'s real/mock-fallback shape) for MAEU/SAFM/MCPU, falling back to tagged demo data without a live key; `EdiMessagesDrawer` (📡 icon) shows direction badges, status pills, raw/parsed payload toggle. FCL container lifecycle events: new `container_events` table logs per-container movement (Empty Pickup → Gate In → Loaded → Sailed → Discharged → Gate Out → Empty Return) — foundation for upcoming demurrage/detention tracking — via a new `ContainerEventsPanel` (📋 button per container row). Fixed `seal_number` data-entry gap (existed in schema/backend, never exposed in `ContainerForm`). New test coverage: `tests/container-events.test.js` + extended `cypress/e2e/containers.cy.js`. |
 | 0.27.0 | Lookout | Command Center overhaul: KPI cards toggle in-page shipment filter (Active / Pending / Review / TEU / Overdue); Integration Board ticket alert card (Overdue + Due This Week tabs with priority dot, status badge, days counter, assignee avatar); shipment preview routing bar renders Door/CY flanking nodes from routingTerm; CC layout changed to position:fixed escaping main scroll; AI chat composer anchored at bottom. Sailing management hardening: applySailingToLegs sets ETA + carrierCode; TSP multi-leg support; edit-mode replace-not-append; active sailing highlighted green in SailingPickerModal. ShipmentsPage 90s background poll with ↻ unloaded-count badge and ⏰ Overdue pseudo-filter. ShipmentDetailPage ↻ refresh button. Dashboard Contract Consumption three-tier fallback for contractNumber/carrierCode. api.shipments.get(id) added to api.js. Negative transit days render ⚠ dates amber badge. |
 | 0.26.0 | Meridian II | AI Agent: routes/ai.js with POST /api/ai/chat (agentic tool-call loop: get_shipment, list_shipments, get_contract, get_allocation; OpenAI-compatible; max 3 iterations) and GET /api/ai/settings; ai_agent_enabled app_setting toggle. AiChatDrawer right-side panel (user/assistant bubbles, typing indicator, Shift+Enter; ✦ nav button when enabled; active shipment context). AI Agent subtab in AppSettings (provider presets, endpoint/model/key/system-prompt, Test Connection). Per-user finance gating: can_view_finance column on users; Finance chip in UserManagementPanel; financeEnabled = global_toggle AND (isAdmin OR canViewFinance). data-testid attributes: user-avatar-btn, main-nav, license-modal. GitHub Actions CI: .github/workflows/cypress.yml (wait-on, cypress run, screenshot artefacts). Journey breadcrumb in SailingPickerModal (door/CY/port nodes in routing-term order); SchedulesModal in MdmContractsPage rendered from seaLeg loc types. |

@@ -52,9 +52,9 @@ export const inputBase = {
   outline: "none", width: "100%", boxSizing: "border-box",
 };
 
-const Inp = ({ label, value, onChange, placeholder, mono, maxLength, required, hint, type = "text", inputMode }) => (
+const Inp = ({ label, value, onChange, onBlur, placeholder, mono, maxLength, required, hint, type = "text", inputMode }) => (
   <Field label={label} required={required} hint={hint}>
-    <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+    <input value={value} onChange={e => onChange(e.target.value)} onBlur={onBlur} placeholder={placeholder}
       maxLength={maxLength} type={type} inputMode={inputMode}
       style={{ ...inputBase, fontFamily: mono ? T.mono : T.body, fontSize: mono ? 13 : 14 }} />
   </Field>

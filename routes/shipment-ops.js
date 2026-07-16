@@ -2,9 +2,10 @@
 
 module.exports = function shipmentOpsRoutes(app, ctx) {
   const { db, ok, err, uid, auth, requireRole,
-          mapCostLine, mapMilestone, mapMilestoneTemplate,
+          mapCostLine, mapService, mapMilestone, mapMilestoneTemplate,
           sanctionsMap, screenShipmentById,
-          logEntityEvent, importContractRates,
+          logEntityEvent, importContractRates, createRateSnapshot, generateCostLinesFromSnapshot,
+          mapRateSnapshot,
           UPLOADS_DIR, fs, path } = ctx;
 
   const shipmentWrite = requireRole(["admin", "operator", "occ_bk"]);
@@ -26,6 +27,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       status: r.status || 'draft',
       confirmedAt: r.confirmed_at || null, confirmedBy: r.confirmed_by || '',
       isStale: n > 0,
+      containerId: r.container_id || '', responsibleParty: r.responsible_party || '',
     };
   };
 
@@ -75,6 +77,48 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     ok(res, { imported: count });
   });
 
+  // Replays the shipment's existing frozen rate snapshot — does NOT read live contract_rates,
+  // so a reset never silently changes what was already committed to the client.
+  app.post("/api/shipments/:id/cost-lines/reset-to-contract", shipmentWrite, (req, res) => {
+    const { splitPerContainer = false } = req.body || {};
+    const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
+    if (!shipment) return err(res, "Shipment not found", 404);
+    if (shipment.contract_type !== 'Central' || !shipment.contract_id)
+      return err(res, "Shipment is not linked to a Central contract");
+    const snapshot = db.prepare("SELECT id FROM shipment_rate_snapshots WHERE shipment_id=? ORDER BY generated_at DESC LIMIT 1").get(req.params.id);
+    if (!snapshot) return err(res, "No rate snapshot found for this shipment — use Import from Contract first");
+    const existingSell = db.prepare("SELECT id FROM shipment_cost_lines WHERE shipment_id=? AND type='SELL' AND source='contract'").all(req.params.id);
+    const includeSell = existingSell.length > 0;
+    for (const row of db.prepare("SELECT id FROM shipment_cost_lines WHERE shipment_id=? AND source='contract'").all(req.params.id))
+      db.prepare("DELETE FROM shipment_cost_lines WHERE id=?").run(row.id);
+    const count = generateCostLinesFromSnapshot(req.params.id, snapshot.id, { splitPerContainer, includeSell });
+    ok(res, { imported: count, snapshotId: snapshot.id });
+  });
+
+  // Pulls CURRENT live contract_rates into a NEW frozen snapshot, then regenerates cost lines
+  // from it — the only action that changes the committed rate (carrier rates can move; this is
+  // how that gets picked up deliberately, with a record of when/why it happened).
+  app.post("/api/shipments/:id/cost-lines/update-carrier-costs", shipmentWrite, (req, res) => {
+    const { splitPerContainer = false } = req.body || {};
+    const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
+    if (!shipment) return err(res, "Shipment not found", 404);
+    if (shipment.contract_type !== 'Central' || !shipment.contract_id)
+      return err(res, "Shipment is not linked to a Central contract");
+    const snapshotId = createRateSnapshot(req.params.id, shipment.contract_id, 'carrier_update', req.user?.email || '');
+    if (!snapshotId) return err(res, "Contract has no rates to snapshot");
+    const existingSell = db.prepare("SELECT id FROM shipment_cost_lines WHERE shipment_id=? AND type='SELL' AND source='contract'").all(req.params.id);
+    const includeSell = existingSell.length > 0;
+    for (const row of db.prepare("SELECT id FROM shipment_cost_lines WHERE shipment_id=? AND source='contract'").all(req.params.id))
+      db.prepare("DELETE FROM shipment_cost_lines WHERE id=?").run(row.id);
+    const count = generateCostLinesFromSnapshot(req.params.id, snapshotId, { splitPerContainer, includeSell });
+    ok(res, { imported: count, snapshotId });
+  });
+
+  app.get("/api/shipments/:id/rate-snapshots", (req, res) => {
+    const rows = db.prepare("SELECT * FROM shipment_rate_snapshots WHERE shipment_id=? ORDER BY generated_at DESC").all(req.params.id);
+    ok(res, rows.map(mapRateSnapshot));
+  });
+
   app.get("/api/shipments/:id/cost-lines", (req, res) => {
     const rows = db.prepare("SELECT * FROM shipment_cost_lines WHERE shipment_id=? ORDER BY type, created_at ASC").all(req.params.id);
     ok(res, rows.map(mapCostLine));
@@ -84,7 +128,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     const { type, chargeCode, currency = 'USD', amount, exchangeRate = 1, vatRate = 0, notes = '', containerId = '', source: rawSource } = req.body;
     if (!type || !chargeCode || amount == null) return err(res, "type, chargeCode, amount required");
     if (!['BUY','SELL'].includes(type)) return err(res, "type must be BUY or SELL");
-    const source = rawSource === 'contract' ? 'contract' : 'manual';
+    const source = ['contract', 'mirror'].includes(rawSource) ? rawSource : 'manual';
     const vat = type === 'SELL' ? Number(vatRate) || 0 : 0;
     const id  = `CL-${uid()}`;
     const now = new Date().toISOString();
@@ -128,17 +172,147 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     db.prepare("DELETE FROM shipment_cost_lines WHERE id=?").run(req.params.id);
     logEntityEvent('cost_line', req.params.id, 'DELETED', null, null, null,
       JSON.stringify({ shipmentId: existing.shipment_id, type: existing.type, chargeCode: existing.charge_code, amount: existing.amount, currency: existing.currency, source: existing.source || 'manual' }));
+
+    // If this was the last SELL line for its scope, any still-draft invoice generated for
+    // that scope is now backed by nothing — clean it up so it doesn't sit there looking
+    // valid. Consolidated invoices (container_id='') cover ALL SELL lines regardless of
+    // container tag, so they only clear when the shipment has none left at all; a
+    // per-container invoice clears as soon as ITS container has no SELL lines left. A
+    // CONFIRMED invoice is never touched here — that's the record of what was sent.
+    if (existing.type === 'SELL') {
+      const scopesToClean = [];
+      const remainingTotal = db.prepare("SELECT COUNT(*) as n FROM shipment_cost_lines WHERE shipment_id=? AND type='SELL'")
+        .get(req.params.shipmentId).n;
+      if (remainingTotal === 0) scopesToClean.push('');
+      if (existing.container_id) {
+        const remainingForContainer = db.prepare("SELECT COUNT(*) as n FROM shipment_cost_lines WHERE shipment_id=? AND type='SELL' AND container_id=?")
+          .get(req.params.shipmentId, existing.container_id).n;
+        if (remainingForContainer === 0) scopesToClean.push(existing.container_id);
+      }
+      for (const scope of scopesToClean) {
+        const orphaned = db.prepare(`SELECT * FROM shipment_documents
+          WHERE shipment_id=? AND (doc_type='FR01' OR doc_type='FR02') AND container_id=? AND status != 'confirmed'`)
+          .all(req.params.shipmentId, scope);
+        for (const doc of orphaned) {
+          try { fs.unlinkSync(path.join(UPLOADS_DIR, doc.stored_name)); } catch {}
+          db.prepare("DELETE FROM shipment_documents WHERE id=?").run(doc.id);
+          logEntityEvent('document', doc.id, 'AUTO_REMOVED', null, null, null,
+            JSON.stringify({ shipmentId: req.params.shipmentId, docType: doc.doc_type, filename: doc.filename,
+              containerId: doc.container_id || '', reason: 'No remaining charge lines for this scope' }));
+        }
+      }
+    }
     ok(res, { deleted: req.params.id });
   });
 
+  // Despite the route name (kept for backward compatibility with existing frontend calls),
+  // this also returns 'document' entity_events — the Accounting History modal covers both
+  // cost/invoice lines AND generated invoice documents (generated/confirmed/deleted).
   app.get("/api/shipments/:id/cost-line-events", (req, res) => {
     const rows = db.prepare(`
       SELECT * FROM entity_events
-      WHERE entity_type = 'cost_line'
+      WHERE entity_type IN ('cost_line', 'document')
       AND json_extract(meta, '$.shipmentId') = ?
       ORDER BY created_at DESC
     `).all(req.params.id);
     ok(res, rows);
+  });
+
+  // ─── Dedicated Services (TKT-9DGDNP) ───────────────────────────────────────
+  // Ancillary services (VGM, Haulage, Fumigation, Storage, Customs, ...) ordered
+  // independently per Export/Import side, with a Requested→Confirmed→Completed
+  // (or Cancelled) lifecycle. Deliberately independent of shipment_legs — see
+  // plan notes; a leg tracks physical routing, a service tracks who's ordering
+  // an ancillary activity and its status.
+  const SERVICE_STATUSES = ["Requested", "Confirmed", "Completed", "Cancelled"];
+
+  const SERVICE_SELECT = `
+    SELECT ss.*, o.code AS office_code, o.name AS office_name
+    FROM shipment_services ss
+    LEFT JOIN offices o ON o.id = ss.office_id
+  `;
+
+  app.get("/api/shipments/:id/services", auth(), (req, res) => {
+    const rows = db.prepare(`${SERVICE_SELECT} WHERE ss.shipment_id=? ORDER BY ss.side, ss.created_at ASC`)
+      .all(req.params.id);
+    ok(res, rows.map(mapService));
+  });
+
+  app.post("/api/shipments/:id/services", shipmentWrite, (req, res) => {
+    const { side, serviceType, vendorId = '', vendorName = '', officeId = '',
+            requestedDate = '', notes = '' } = req.body;
+    if (!side || !serviceType) return err(res, "side, serviceType required");
+    if (!['Export', 'Import'].includes(side)) return err(res, "side must be Export or Import");
+    const id  = `SVC-${uid()}`;
+    const now = new Date().toISOString();
+    const createdBy = req.user?.name || req.user?.email || "";
+    db.prepare(`INSERT INTO shipment_services
+      (id, shipment_id, side, service_type, status, vendor_id, vendor_name, office_id,
+       requested_date, notes, created_at, created_by)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(id, req.params.id, side, serviceType, 'Requested', vendorId, vendorName, officeId,
+           requestedDate, notes, now, createdBy);
+    logEntityEvent('service', id, 'REQUESTED', null, null, null,
+      JSON.stringify({ shipmentId: req.params.id, side, serviceType, vendorName }));
+    const row = db.prepare(`${SERVICE_SELECT} WHERE ss.id=?`).get(id);
+    ok(res, mapService(row), 201);
+  });
+
+  app.patch("/api/shipments/:shipmentId/services/:id", shipmentWrite, (req, res) => {
+    const existing = db.prepare("SELECT * FROM shipment_services WHERE id=? AND shipment_id=?")
+      .get(req.params.id, req.params.shipmentId);
+    if (!existing) return err(res, "Not found", 404);
+
+    if (req.body.status && !SERVICE_STATUSES.includes(req.body.status))
+      return err(res, `status must be one of ${SERVICE_STATUSES.join(", ")}`);
+
+    // req.body is camelCase (API convention); existing is a raw snake_case DB row —
+    // map each field explicitly rather than spreading the two together, which would
+    // silently leave e.g. `officeId` sitting unused next to the untouched `office_id`.
+    const side          = req.body.side          !== undefined ? req.body.side          : existing.side;
+    const serviceType   = req.body.serviceType   !== undefined ? req.body.serviceType   : existing.service_type;
+    const status         = req.body.status         !== undefined ? req.body.status         : existing.status;
+    const vendorId        = req.body.vendorId        !== undefined ? req.body.vendorId        : existing.vendor_id;
+    const vendorName      = req.body.vendorName      !== undefined ? req.body.vendorName      : existing.vendor_name;
+    const officeId         = req.body.officeId         !== undefined ? req.body.officeId         : existing.office_id;
+    const requestedDate     = req.body.requestedDate     !== undefined ? req.body.requestedDate     : existing.requested_date;
+    const notes              = req.body.notes              !== undefined ? req.body.notes              : existing.notes;
+
+    const today = new Date().toISOString().slice(0, 10);
+    let confirmedDate = existing.confirmed_date;
+    let completedDate = existing.completed_date;
+    if (status === 'Confirmed' && !confirmedDate) confirmedDate = today;
+    if (status === 'Completed' && !completedDate) completedDate = today;
+
+    db.prepare(`UPDATE shipment_services SET side=?, service_type=?, status=?, vendor_id=?,
+      vendor_name=?, office_id=?, requested_date=?, confirmed_date=?, completed_date=?, notes=?
+      WHERE id=?`)
+      .run(side, serviceType, status, vendorId, vendorName, officeId, requestedDate,
+           confirmedDate, completedDate, notes, req.params.id);
+
+    for (const [field, oldV, newV] of [
+      ['status',       existing.status,        status],
+      ['vendor_name',  existing.vendor_name,    vendorName],
+      ['office_id',    existing.office_id,      officeId],
+      ['notes',        existing.notes || '',    notes || ''],
+    ]) {
+      if (String(oldV || '') !== String(newV || ''))
+        logEntityEvent('service', req.params.id, 'UPDATED', field, oldV, newV,
+          JSON.stringify({ shipmentId: existing.shipment_id, side, serviceType }));
+    }
+
+    const row = db.prepare(`${SERVICE_SELECT} WHERE ss.id=?`).get(req.params.id);
+    ok(res, mapService(row));
+  });
+
+  app.delete("/api/shipments/:shipmentId/services/:id", shipmentWrite, (req, res) => {
+    const existing = db.prepare("SELECT * FROM shipment_services WHERE id=? AND shipment_id=?")
+      .get(req.params.id, req.params.shipmentId);
+    if (!existing) return err(res, "Not found", 404);
+    db.prepare("DELETE FROM shipment_services WHERE id=?").run(req.params.id);
+    logEntityEvent('service', req.params.id, 'DELETED', null, null, null,
+      JSON.stringify({ shipmentId: existing.shipment_id, side: existing.side, serviceType: existing.service_type }));
+    ok(res, { deleted: req.params.id });
   });
 
   // ─── Milestones ───────────────────────────────────────────────────────────
@@ -221,7 +395,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   });
 
   app.post("/api/shipments/:id/documents", shipmentWrite, (req, res) => {
-    const { filename, mimeType, docType, data } = req.body;
+    const { filename, mimeType, docType, data, containerId = '', responsibleParty = '' } = req.body;
     if (!filename || !data) return err(res, "filename and data are required");
     try {
       const buf        = Buffer.from(data, "base64");
@@ -232,9 +406,11 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       const now      = new Date().toISOString();
       const uploader = req.user?.name || req.user?.email || "";
       db.prepare(`INSERT INTO shipment_documents
-        (id, shipment_id, filename, stored_name, mime_type, size_bytes, doc_type, uploaded_by, created_at, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft')`)
-        .run(id, req.params.id, filename, storedName, mimeType || "", buf.length, docType || "OT", uploader, now);
+        (id, shipment_id, filename, stored_name, mime_type, size_bytes, doc_type, uploaded_by, created_at, status, container_id, responsible_party)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)`)
+        .run(id, req.params.id, filename, storedName, mimeType || "", buf.length, docType || "OT", uploader, now, containerId, responsibleParty);
+      logEntityEvent('document', id, 'GENERATED', null, null, null,
+        JSON.stringify({ shipmentId: req.params.id, docType: docType || "OT", filename, containerId }));
       const row = db.prepare("SELECT * FROM shipment_documents WHERE id = ?").get(id);
       ok(res, mapDoc(row, req.params.id), 201);
     } catch (e) { err(res, e.message, 500); }
@@ -248,6 +424,10 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     const now = new Date().toISOString();
     db.prepare("UPDATE shipment_documents SET status=?, confirmed_at=?, confirmed_by=? WHERE id=?")
       .run(status, status === "confirmed" ? now : null, status === "confirmed" ? (req.user?.name || req.user?.email || "") : "", req.params.docId);
+    if (status === "confirmed" && doc.status !== "confirmed") {
+      logEntityEvent('document', req.params.docId, 'CONFIRMED', null, null, null,
+        JSON.stringify({ shipmentId: doc.shipment_id, docType: doc.doc_type, filename: doc.filename, containerId: doc.container_id || '' }));
+    }
     const updated = db.prepare("SELECT * FROM shipment_documents WHERE id = ?").get(req.params.docId);
     ok(res, mapDoc(updated, updated.shipment_id));
   });
@@ -268,6 +448,8 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     if (!doc) return err(res, "Not found", 404);
     try { fs.unlinkSync(path.join(UPLOADS_DIR, doc.stored_name)); } catch {}
     db.prepare("DELETE FROM shipment_documents WHERE id = ?").run(req.params.docId);
+    logEntityEvent('document', req.params.docId, 'DELETED', null, null, null,
+      JSON.stringify({ shipmentId: doc.shipment_id, docType: doc.doc_type, filename: doc.filename, containerId: doc.container_id || '' }));
     ok(res, { ok: true });
   });
 
@@ -346,15 +528,32 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
       .run(id, req.params.id, carrier, vesselName, voyageNumber, service, pol, pod, etd, eta,
            Number(transitDays), isMock ? 1 : 0, savedAt, savedBy);
+    logEntityEvent('schedule', id, 'SAVED', null, null, null,
+      JSON.stringify({ shipmentId: req.params.id, carrier, vesselName, voyageNumber, service, pol, pod, etd, eta, actor: savedBy }));
     ok(res, mapSchedule({ id, shipment_id: req.params.id, carrier, vessel_name: vesselName,
       voyage_number: voyageNumber, service, pol, pod, etd, eta,
       transit_days: Number(transitDays), is_mock: isMock ? 1 : 0, saved_at: savedAt, saved_by: savedBy }), 201);
   });
 
   app.delete("/api/shipments/:id/schedules/:scheduleId", shipmentWrite, (req, res) => {
-    const info = db.prepare("DELETE FROM shipment_schedules WHERE id=? AND shipment_id=?")
-      .run(req.params.scheduleId, req.params.id);
-    if (info.changes === 0) return err(res, "Not found", 404);
+    const existing = db.prepare("SELECT * FROM shipment_schedules WHERE id=? AND shipment_id=?")
+      .get(req.params.scheduleId, req.params.id);
+    if (!existing) return err(res, "Not found", 404);
+    db.prepare("DELETE FROM shipment_schedules WHERE id=?").run(req.params.scheduleId);
+    logEntityEvent('schedule', req.params.scheduleId, 'REMOVED', null, null, null,
+      JSON.stringify({ shipmentId: req.params.id, carrier: existing.carrier, vesselName: existing.vessel_name,
+        voyageNumber: existing.voyage_number, service: existing.service, pol: existing.pol, pod: existing.pod,
+        actor: req.user?.name || req.user?.email || "" }));
     ok(res, { deleted: req.params.scheduleId });
+  });
+
+  app.get("/api/shipments/:id/schedule-events", (req, res) => {
+    const rows = db.prepare(`
+      SELECT * FROM entity_events
+      WHERE entity_type = 'schedule'
+      AND json_extract(meta, '$.shipmentId') = ?
+      ORDER BY created_at DESC
+    `).all(req.params.id);
+    ok(res, rows);
   });
 };

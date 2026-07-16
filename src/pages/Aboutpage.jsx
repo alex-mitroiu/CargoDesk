@@ -355,22 +355,192 @@ function ChangelogEntry({ entry, defaultOpen }) {
   );
 }
 
-const AboutPage = () => {
-  const Section = ({ title, children }) => (
-    <div style={{ marginBottom: 32 }}>
-      <h2 style={{ fontFamily: T.head, fontSize: 18, fontWeight: 800, color: T.text,
-        margin: "0 0 12px", paddingBottom: 8, borderBottom: `1px solid ${T.border}` }}>
-        {title}
-      </h2>
-      {children}
+// ─── Architectural Details tab ─────────────────────────────────────────────
+// In-app companion to the full interactive diagram artifact — same content,
+// native components instead of Mermaid, so it stays available without a
+// external dependency. See ARCHITECTURE_ARTIFACT_URL below for the diagram version.
+
+const ARCHITECTURE_ARTIFACT_URL = "https://claude.ai/code/artifact/9515fbd6-accd-4295-93c6-cd54882d3abb";
+
+const FRONTEND_DOMAINS = [
+  { name: "Shipment Core", color: "#e8a217", items: ["ShipmentsPage", "ShipmentFormPage + LegsTable", "ShipmentDetailPage (Overview)"] },
+  { name: "Embedded on Overview", color: "#4db3e8", items: ["ServicesPanel", "ShipmentHeaderBar", "MilestonePanel", "DocumentsMenu", "MessagesDrawer / EdiMessagesDrawer"] },
+  { name: "Promoted Sub-pages (8)", color: "#2dcc8f", items: ["Cargo / Containers", "Parties & Offices", "Schedules + ScheduleHistoryPanel", "Milestones", "Tickets", "Invoice Entry", "Cost Entry", "GP Overview"] },
+  { name: "Dashboards, MDM & Admin", color: "#a855f7", items: ["DashboardPage + Command Center", "12 × MdmXPage reference data", "Kanban / Test Cases · Plans · Runs", "AppSettingsPage"] },
+];
+
+const BACKEND_DOMAINS = [
+  { name: "shipments.js", items: "CRUD, legs, containers, container-events, messages" },
+  { name: "shipment-ops.js", items: "cost-lines, milestones, documents, services, schedules" },
+  { name: "contracts.js", items: "contracts, entity-events" },
+  { name: "allocations.js", items: "space configurations" },
+  { name: "customers.js", items: "customers, sanctions, FX" },
+  { name: "mdm.js", items: "carriers, vessels, ports, lanes, commodities" },
+  { name: "kanban.js / testcases.js", items: "tickets, test items" },
+  { name: "edi.js", items: "carrier EDI log" },
+  { name: "auth.js / offices.js / organization.js", items: "users, offices, branches" },
+  { name: "system.js", items: "health, settings, schedule search" },
+  { name: "ai.js", items: "AI agent chat proxy" },
+  { name: "finance.js / export.js / share.js", items: "margin, CSV/XLSX, public tracking" },
+];
+
+const DB_DOMAINS = [
+  { name: "Shipment Core", color: "#e8a217", tables: "shipments · shipment_legs · containers · shipment_events · status_log · container_events" },
+  { name: "Shipment Ops", color: "#e8a217", tables: "shipment_cost_lines · shipment_milestones · shipment_documents · shipment_services · shipment_schedules · shipment_rate_snapshots(_lines) · shipment_screenings · shipment_messages" },
+  { name: "Contracts & Rates", color: "#2dcc8f", tables: "contracts · contract_legs · contract_rates · entity_events" },
+  { name: "Allocations", color: "#2dcc8f", tables: "allocations" },
+  { name: "Customers & Compliance", color: "#a855f7", tables: "customers · customer_documents · customer_identifiers · customer_screenings · sanctions_entries · sanctions_syncs" },
+  { name: "MDM Reference Data", color: "#a855f7", tables: "carriers · vessels · port_locations · linked_ports · trade_lanes · country_trade_lanes · regions · countries · commodities" },
+  { name: "Kanban & Testing", color: "#4db3e8", tables: "tickets · ticket_links · test_items · test_case_links · kb_projects · kb_columns · kb_versions" },
+  { name: "EDI Messaging", color: "#4db3e8", tables: "edi_messages" },
+  { name: "Auth & Organization", color: "#f5b84c", tables: "users · user_offices · user_scope_items · user_access_configs · offices · branches · org_countries" },
+  { name: "System & Admin", color: "#f5b84c", tables: "app_settings · system_messages · admin_events" },
+];
+
+const ARCH_PATTERNS = [
+  { name: "Route factory + ctx injection", desc: "Every route file is module.exports = (app, ctx) => {...}. ctx is assembled once in server.js and carries db, every mapX function, auth middleware, and shared helpers — a route never imports its own DB handle or writes its own mapper." },
+  { name: "Mapper convention", desc: "One function per table (mapShipment, mapCostLine, mapService…), snake_case DB row → camelCase API shape. The frontend never sees a snake_case field from a mapped response — except raw entity_events rows, the one deliberate exception." },
+  { name: "Generic audit log — entity_events", desc: "One shared table covers cost lines, documents, services, and schedules, tagged by entity_type. History views read it directly, unmapped — event_type / created_at, not the camelCase you'd expect everywhere else." },
+  { name: "Self-fetching shared panels", desc: "ServicesPanel, ContainerEventsPanel, ScheduleHistoryPanel, and ShipmentHeaderBar take just a shipment/id prop and fetch their own data — drop-in anywhere without wiring a parent-level loader." },
+  { name: "WebSocket broadcast — shipmentSubs", desc: "A per-shipment subscriber map drives live updates. Drawers fall back to 10s polling if the socket errors, so the feature degrades instead of breaking." },
+];
+
+const ARCH_GOTCHAS = [
+  { name: "Two independent \"document\" systems", desc: "DocumentsMenu (client-side jsPDF, no persistence) and the DOC_TYPES tracker (server-uploaded, draft/confirmed lifecycle) look similar but share no code. Always clarify which one before touching \"documents.\"" },
+  { name: "shipment.pol/pod isn't always the SEA leg", desc: "They're the journey's overall bookends (legs[0]/legs[-1]) — with a Door pickup or a multi-leg TSP journey, that's not the same as the SEA leg's own pol/pod. Anything showing \"the port\" should resolve the actual SEA leg(s)." },
+  { name: "VGM isn't linked to a weight field", desc: "VGM is a valid Dedicated Services type (order it, track its status) but nothing connects a confirmed VGM to containers.grossWeightKg or a verified-weight cutoff date yet." },
+  { name: "Service vendors aren't sanctions-screened", desc: "screenShipmentById only checks shipper/consignee/principal by a hardcoded field list. A vendor picked via the Services panel gets zero compliance coverage today — deliberate scope cut, tracked in TKT-9DGDNP." },
+  { name: "Contract rate auto-import is BUY-only", desc: "importContractRates populates BUY lines from a carrier contract automatically. SELL lines have no contract-driven equivalent — manual entry or mirrored line-by-line from a BUY line." },
+];
+
+const Section = ({ title, children }) => (
+  <div style={{ marginBottom: 32 }}>
+    <h2 style={{ fontFamily: T.head, fontSize: 18, fontWeight: 800, color: T.text,
+      margin: "0 0 12px", paddingBottom: 8, borderBottom: `1px solid ${T.border}` }}>
+      {title}
+    </h2>
+    {children}
+  </div>
+);
+
+const P = ({ children }) => (
+  <p style={{ fontFamily: T.body, fontSize: 14, color: T.textMuted, lineHeight: 1.75, margin: "0 0 10px" }}>
+    {children}
+  </p>
+);
+
+const ArchitecturalDetailsTab = () => {
+  const domainCard = (color) => ({
+    background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
+    padding: "14px 16px", borderTop: `3px solid ${color}`,
+  });
+
+  return (
+    <div>
+      <div style={{ background: T.surface, border: `1px solid ${T.accent}55`, borderRadius: 10,
+        padding: "14px 18px", marginBottom: 28, display: "flex", alignItems: "center",
+        justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+        <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, margin: 0, lineHeight: 1.6, maxWidth: 480 }}>
+          This tab is a native summary. The full reference — with system, frontend, backend, and
+          workflow diagrams — lives in a linked interactive document.
+        </p>
+        <a href={ARCHITECTURE_ARTIFACT_URL} target="_blank" rel="noopener noreferrer"
+          style={{ fontFamily: T.body, fontSize: 13, fontWeight: 700, color: T.accent,
+            background: T.accentBg, border: `1px solid ${T.accent}55`, borderRadius: 8,
+            padding: "9px 16px", textDecoration: "none", whiteSpace: "nowrap" }}>
+          View interactive diagrams ↗
+        </a>
+      </div>
+
+      <Section title="System Overview">
+        <div style={{ background: T.surface, borderRadius: 10, border: `1px solid ${T.border}`, overflow: "hidden" }}>
+          {[
+            ["Browser", "React 18 + Vite, hash-based routing (App.jsx) — no React Router"],
+            ["Transport", "fetch() for JSON requests; a WebSocket (shipmentSubs) for live updates"],
+            ["Server", "server.js — schema, startup migrations, mapper functions, assembled into ctx"],
+            ["Routes", "17 route files, module.exports = (app, ctx) => {...}"],
+            ["Database", "SQLite via node:sqlite — 55 tables, no ORM, prepared statements only"],
+          ].map(([label, val], i, arr) => (
+            <div key={label} style={{ display: "grid", gridTemplateColumns: "120px 1fr",
+              padding: "12px 16px", borderBottom: i < arr.length - 1 ? `1px solid ${T.border}22` : "none",
+              alignItems: "center", gap: 12 }}>
+              <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.accent }}>{label}</span>
+              <span style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted }}>{val}</span>
+            </div>
+          ))}
+        </div>
+      </Section>
+
+      <Section title="Frontend — by domain">
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          {FRONTEND_DOMAINS.map(d => (
+            <div key={d.name} style={domainCard(d.color)}>
+              <div style={{ fontFamily: T.mono, fontSize: 10, textTransform: "uppercase", letterSpacing: ".07em",
+                color: d.color, fontWeight: 700, marginBottom: 8 }}>{d.name}</div>
+              <div style={{ fontFamily: T.mono, fontSize: 11.5, color: T.text, lineHeight: 1.9 }}>
+                {d.items.join(" · ")}
+              </div>
+            </div>
+          ))}
+        </div>
+      </Section>
+
+      <Section title="Backend Routes — by domain">
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          {BACKEND_DOMAINS.map(d => (
+            <div key={d.name} style={{ background: T.surface, border: `1px solid ${T.border}`,
+              borderRadius: 10, padding: "12px 16px" }}>
+              <div style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.textCode, marginBottom: 4 }}>{d.name}</div>
+              <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>{d.items}</div>
+            </div>
+          ))}
+        </div>
+      </Section>
+
+      <Section title="Database — by domain">
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          {DB_DOMAINS.map(d => (
+            <div key={d.name} style={domainCard(d.color)}>
+              <div style={{ fontFamily: T.mono, fontSize: 10, textTransform: "uppercase", letterSpacing: ".07em",
+                color: d.color, fontWeight: 700, marginBottom: 8 }}>{d.name}</div>
+              <div style={{ fontFamily: T.mono, fontSize: 11.5, color: T.text, lineHeight: 1.7 }}>{d.tables}</div>
+            </div>
+          ))}
+        </div>
+      </Section>
+
+      <Section title="Cross-cutting Patterns">
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {ARCH_PATTERNS.map(p => (
+            <div key={p.name} style={{ background: T.surface, border: `1px solid ${T.border}`,
+              borderRadius: 10, padding: "13px 18px" }}>
+              <div style={{ fontFamily: T.head, fontSize: 13.5, fontWeight: 700, color: T.text, marginBottom: 4 }}>{p.name}</div>
+              <p style={{ fontFamily: T.body, fontSize: 12.5, color: T.textMuted, lineHeight: 1.6, margin: 0 }}>{p.desc}</p>
+            </div>
+          ))}
+        </div>
+      </Section>
+
+      <Section title="Known Gaps — from the functional workflow">
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {ARCH_GOTCHAS.map(p => (
+            <div key={p.name} style={{ background: T.surface, borderLeft: `3px solid ${T.warning}`,
+              border: `1px solid ${T.border}`, borderRadius: 10, padding: "13px 18px" }}>
+              <div style={{ fontFamily: T.head, fontSize: 13.5, fontWeight: 700, color: T.text,
+                marginBottom: 4, display: "flex", alignItems: "center", gap: 7 }}>
+                <span style={{ color: T.warning }}>⚠</span>{p.name}
+              </div>
+              <p style={{ fontFamily: T.body, fontSize: 12.5, color: T.textMuted, lineHeight: 1.6, margin: 0 }}>{p.desc}</p>
+            </div>
+          ))}
+        </div>
+      </Section>
     </div>
   );
+};
 
-  const P = ({ children }) => (
-    <p style={{ fontFamily: T.body, fontSize: 14, color: T.textMuted, lineHeight: 1.75, margin: "0 0 10px" }}>
-      {children}
-    </p>
-  );
+const AboutPage = () => {
+  const [tab, setTab] = React.useState("Overview");
 
   const features = [
     { icon: "📦", title: "Shipment Tracking",         desc: "Create and manage ocean freight shipments with container-level detail: HS Code, gross weight, volume, IMDG dangerous goods class, and Maersk commodity type. Full status audit trail with timestamped transitions." },
@@ -387,6 +557,9 @@ const AboutPage = () => {
     { icon: "📋", title: "Container Lifecycle Events", desc: "Per-container FCL movement tracking — Empty Pickup, Gate In, Loaded, Sailed, Discharged, Gate Out, Empty Return — the foundation for upcoming demurrage/detention tracking." },
     { icon: "🌗", title: "Light / Dark Theme",        desc: "Apple HIG-compliant light theme alongside the CargoDesk dark theme. Instant toggle in the user menu, preference persisted to localStorage." },
     { icon: "📚", title: "User Manual",               desc: "Built-in documentation covering Incoterms® 2020 and IMDG dangerous goods classes (Classes 1–9, 20 sub-classes with full descriptions and source link)." },
+    { icon: "🧭", title: "Persistent Shipment Header", desc: "Visible on the Overview page and all 8 promoted sub-pages: ID (click-to-copy), route, dates, Incoterm, vessel, parties, contract, TEU, Loop Code, and a Door → POL → POD → Terminal journey bar that resolves the actual SEA leg — correct even for Door pickups and multi-leg transshipment routings." },
+    { icon: "🧰", title: "Dedicated Services",         desc: "Export/Import services dashboard on the shipment Overview page — VGM, Haulage, Fumigation, Storage, Customs Clearance, and more. Each service carries a vendor, an office defaulted from the shipment's Export/Import Managing Office, and a Requested → Confirmed → Completed/Cancelled lifecycle, fully audit-logged." },
+    { icon: "⚓", title: "Schedules Page Overhaul",     desc: "Route Legs are now editable directly on the Schedules page with auto-ordering (Pick-up first, Delivery last). Add Sailing is transshipment-aware — a multi-leg sailing updates every affected leg. The old Sailings list is now a read-only Schedule History audit trail." },
   ];
 
   const stack = [
@@ -420,6 +593,26 @@ const AboutPage = () => {
           cloud dependencies beyond the optional weather widget.
         </P>
       </div>
+
+      {/* Tab bar */}
+      <div style={{ display: "flex", borderBottom: `2px solid ${T.border}`, marginBottom: 24 }}>
+        {["Overview", "Architectural Details"].map(t => (
+          <button key={t} onClick={() => setTab(t)} type="button"
+            style={{
+              padding: "9px 20px", border: "none", cursor: "pointer", background: "none",
+              fontFamily: T.body, fontSize: 14, fontWeight: t === tab ? 700 : 400,
+              color: t === tab ? T.accent : T.textMuted,
+              borderBottom: `2px solid ${t === tab ? T.accent : "transparent"}`,
+              marginBottom: -2,
+            }}>
+            {t}
+          </button>
+        ))}
+      </div>
+
+      {tab === "Architectural Details" && <ArchitecturalDetailsTab />}
+
+      {tab === "Overview" && <>
 
       {/* Features */}
       <Section title="Features">
@@ -483,6 +676,8 @@ const AboutPage = () => {
           </div>
         ))}
       </div>
+
+      </>}
 
     </div>
   );

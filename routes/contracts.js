@@ -1,7 +1,7 @@
 "use strict";
 
 module.exports = function contractsRoutes(app, ctx) {
-  const { db, ok, err, uid, mapContract, mapLeg, mapRate, logEntityEvent, toUsd } = ctx;
+  const { db, ok, err, uid, mapContract, mapLeg, mapRate, logEntityEvent, toUsd, findMatchingContractLeg } = ctx;
 
   function saveLegs(contractId, legs) {
     db.prepare("DELETE FROM contract_legs WHERE contract_id=?").run(contractId);
@@ -44,22 +44,20 @@ module.exports = function contractsRoutes(app, ctx) {
   });
 
   // Contract route-match — MUST be before /api/contracts/:id
+  // needsPolHaulage/needsPodHaulage are booleans the caller already knows (derived straight
+  // from the shipment's own Pick-up/Delivery legs) rather than an encoded routingTerm string
+  // this endpoint would have to re-parse — see findMatchingContractLeg in server.js, shared
+  // with /api/allocations/match so a contract and its own space-config allocations are judged
+  // by the identical rule. Deliberately NOT shared with GET /api/contracts (#schedules search).
   app.get("/api/contracts/match", (req, res) => {
     const { pol = "", pod = "", etd = "", crd = "", carrier = "",
-            routingTerm = "", pkuLocation = "", delLocation = "" } = req.query;
+            needsPolHaulage = "", needsPodHaulage = "", pkuLocation = "", delLocation = "" } = req.query;
     if (!pol || !pod) return ok(res, []);
 
     const polU = pol.toUpperCase(), podU = pod.toUpperCase();
-    const pkuU = pkuLocation.toUpperCase(), delU = delLocation.toUpperCase();
     const dateRef = crd || etd;
-    const [polLocAbbr = "", podLocAbbr = ""] = routingTerm.split("-");
-    const needsPolHaulage = polLocAbbr === "DR";
-    const needsPodHaulage = podLocAbbr === "DR";
-
-    const linkedTo = code => db.prepare(`
-      SELECT CASE WHEN primary_unlocode=? THEN linked_unlocode ELSE primary_unlocode END AS code
-      FROM linked_ports WHERE primary_unlocode=? OR linked_unlocode=?
-    `).all(code, code, code).map(r => r.code);
+    const needsPol = needsPolHaulage === "1" || needsPolHaulage === "true";
+    const needsPod = needsPodHaulage === "1" || needsPodHaulage === "true";
 
     const clauses = ["c.status='Active'"];
     const params  = [];
@@ -73,25 +71,11 @@ module.exports = function contractsRoutes(app, ctx) {
     const results = [];
     for (const c of candidates) {
       const legs = db.prepare("SELECT * FROM contract_legs WHERE contract_id=? ORDER BY leg_order").all(c.id);
-      for (const leg of legs) {
-        const polSet = leg.pol_linked_allowed ? [leg.pol, ...linkedTo(leg.pol)] : [leg.pol];
-        const podSet = leg.pod_linked_allowed ? [leg.pod, ...linkedTo(leg.pod)] : [leg.pod];
-        if (!polSet.includes(polU) || !podSet.includes(podU)) continue;
-        if (needsPolHaulage && !leg.pol_carrier_haulage) continue;
-        if (needsPolHaulage && leg.pol_carrier_haulage && leg.pol_haulage_locations) {
-          const allowed = leg.pol_haulage_locations.split(/[\s,]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
-          if (allowed.length > 0 && pkuU && !allowed.includes(pkuU)) continue;
-        }
-        if (needsPodHaulage && !leg.pod_carrier_haulage) continue;
-        if (needsPodHaulage && leg.pod_carrier_haulage && leg.pod_haulage_locations) {
-          const allowed = leg.pod_haulage_locations.split(/[\s,]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
-          if (allowed.length > 0 && delU && !allowed.includes(delU)) continue;
-        }
-        const matchKind = (leg.pol === polU && leg.pod === podU) ? "exact" : "linked";
-        results.push({ ...mapContract(c), legs: legs.map(mapLeg), matchKind,
-          linkedPolVia: leg.pol !== polU ? leg.pol : null, linkedPodVia: leg.pod !== podU ? leg.pod : null });
-        break;
-      }
+      const match = findMatchingContractLeg(legs, { pol, pod, needsPolHaulage: needsPol, needsPodHaulage: needsPod, pkuLocation, delLocation });
+      if (!match) continue;
+      results.push({ ...mapContract(c), legs: legs.map(mapLeg), matchKind: match.matchKind,
+        linkedPolVia: match.firstLeg.pol !== polU ? match.firstLeg.pol : null,
+        linkedPodVia: match.lastLeg.pod !== podU ? match.lastLeg.pod : null });
     }
 
     if (results.length > 0) {

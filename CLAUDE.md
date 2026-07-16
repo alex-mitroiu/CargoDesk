@@ -4,7 +4,7 @@
 Full-stack freight management app. React 18 + Vite frontend, Express + node:sqlite backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.27.0 "Lookout"**
+- Version: **v0.29.0 "Bearing"**
 - Run: `npm run dev` (runs server on :3001 + Vite on :5173 concurrently)
 - Seed: `npm run seed` (runs `scripts/import-mdm-data.js`)
 
@@ -111,6 +111,10 @@ src/
       TestCaseStoryLinksPanel.jsx  Search+add UI for linking a Test Case ↔ Story ticket (bidirectional)
       ContainerEventsPanel.jsx     FCL container lifecycle log — self-fetching, opened in a Modal
                                    from the container list row's 📋 button in ShipmentDetailPage.jsx
+      ShipmentHeaderBar.jsx        Persistent shipment header — mounted once in App.jsx, visible on
+                                   Overview + all 8 promoted sub-pages (see Recent changes)
+      ServicesPanel.jsx            Dedicated Services Export/Import dashboard, embedded on Overview
+                                   (see Recent changes)
 ```
 
 ## Route factory pattern
@@ -131,7 +135,7 @@ dependency: `db`, mapper functions, middleware factories, helpers, and state:
   UPLOADS_DIR, SVC_ABBR, LEG_LOC_ABBR,
   VALID_ROLES, ROLE_RANK_SV, primaryRoleSV, parseUserRoles,
   SERVICE_CODE_MAP, importContractRates,
-  mapShipment, mapShipmentLeg, mapCostLine, mapContainer, mapAllocation,
+  mapShipment, mapShipmentLeg, mapCostLine, mapService, mapContainer, mapAllocation,
   mapCarrier, mapVessel, mapPortLocation, mapLinkedPort, mapTradeLane,
   mapScopeItem, mapAccessConfig, mapRegion, mapCountry, mapTicketLink, mapTicket,
   mapCustomer, mapCommodity, mapSystemMessage, mapMilestone, mapMilestoneTemplate,
@@ -148,7 +152,7 @@ The original inline routes remain in server.js as **dead code** (route files reg
 Express uses first-match). They act as a fallback and can be deleted once the extracted routes
 are fully validated.
 
-## Database — 39 tables
+## Database — 40 tables listed below (55 total — see the About page's Architectural Details tab for the full domain-grouped list)
 | Table | Purpose |
 |---|---|
 | shipments | Core shipment records |
@@ -170,6 +174,7 @@ are fully validated.
 | shipment_cost_lines | BUY/SELL cost lines per shipment with source tracking and FX |
 | shipment_milestones | Per-shipment milestone steps (estimated date, completion, note) |
 | shipment_schedules | Per-shipment saved sailings: carrier, vessel, voyage, ETD, ETA, transit days, isMock, savedBy |
+| shipment_services | Dedicated Services (Export/Import): side, service_type, status lifecycle, vendor, office, dates — Epic TKT-A5LUPD |
 | shipment_screenings | OFAC/SDN screening results and override records |
 | shipment_documents | Uploaded documents metadata (filename, type, label) |
 | status_log | Shipment status transitions (legacy, kept for compat) |
@@ -229,6 +234,12 @@ are fully validated.
 - **Two independent "document" systems** (naming collision, easy to confuse): (1) `DocumentsMenu` inside ShipmentDetailPage.jsx (2711-2919) — a header dropdown that generates B/L Draft/Packing List/Container Manifest client-side via jsPDF, no persistence/tracking. (2) `DOC_TYPES` in App.jsx (~line 56: BL01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). When asked to "add a document type" or "generate a document," clarify which system — they don't share code
 - **Lifecycle-stage stepper precedent**: no dedicated stepper component exists yet; `MilestonePanel` (ShipmentDetailPage.jsx 1593-~1870) is the closest analog — linear progress bar (1734-1738, `width: ${progress}%`) plus per-step state coloring via `milestoneState()`/`stateColor()` (1666-1676: completed/overdue/current/upcoming) driven by `shipment_milestones` rows (`id, label, estimatedDate, note, completedAt, completedBy`, fixed step keys `booking_confirmed, si_submitted, cargo_gated_in, vessel_departed, bl_issued, vessel_arrived, customs_cleared, cargo_released, delivered`). Any new per-container lifecycle/stage UI should reuse this state-coloring pattern rather than inventing a new visual language
 - **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages 3516-3533, 📡 EDI 3534-3543, then `DocumentsMenu` at 3544). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
+
+## Recent changes (v0.29.0 "Bearing")
+- **Persistent Shipment Header**: `src/components/shared/ShipmentHeaderBar.jsx` mounts once in `App.jsx` (above the page switch, guarded by `(page === "detail" || SHIPMENT_SUBPAGE_LABELS[page]) && selectedShipment && isEnabled(page)`) so it's visible on Overview and all 8 promoted sub-pages. Row 1: ID (📋 copy-to-clipboard) · FCL/LCL · POL→POD · ETD/ETA · DG badge (only when a container is flagged). Row 2: Incoterm, Routing (`routingTerm`), Vessel/Voyage, Shipper, Consignee, Contract, TEU, Loop (`shipment_schedules[0].service` — self-fetched, no dedicated `loopCode` field exists). Row 3: a Door → POL ──carrier── POD → Terminal journey bar reusing `CommandCenterView`'s existing node visual language (same `LOC_FULL`/routingTerm-split parsing) rather than a new one — location type (Door/CY/CFS) labeled above the dot only for inland extensions, full location names primary with UNLOCODE demoted to a caption. Self-fetches `shipment_legs` to resolve the actual first/last **SEA** leg for the Port nodes and carrier caption — `shipment.pol`/`pod` are the journey's overall bookends (`legs[0]`/`legs[-1]`), not the same thing when there's a Door pickup or a multi-leg TSP journey.
+- **Dedicated Services** (Epic `TKT-A5LUPD` → Story `TKT-9DGDNP`): new `shipment_services` table (`side` Export/Import, `service_type`, `status` Requested→Confirmed→Completed/Cancelled, `vendor_id`/`vendor_name`, `office_id`, `requested_date`/`confirmed_date`/`completed_date`, `notes`) with `GET`/`POST`/`PATCH`/`DELETE /api/shipments/:id/services` in `routes/shipment-ops.js`, `mapService` joining `office_code`/`office_name`. `src/components/shared/ServicesPanel.jsx` — self-fetching, embedded directly on the Overview page (deliberately **not** a promoted sub-page, per explicit user direction — it's meant to stay visible as a dashboard, unlike everything else that got promoted this session) — renders two columns (Export/Import), each with a "+ Request Service" modal (service type, vendor via `CustomerCombobox`, office defaulted to `shipment.emoOfficeId`/`imoOfficeId` per side via the same `offices.filter(o => o.department === 'SE'|'SI' && o.isActive)` pattern already used in `ShipmentFormPage.jsx`, requested date, notes) and inline Confirm/Complete/Cancel status buttons. Status transitions stamp `confirmed_date`/`completed_date` server-side and log through `logEntityEvent('service', ...)` — same generic audit mechanism as cost lines/documents. Deliberately **not** linked to `shipment_legs` (a leg tracks physical routing, a service tracks commercial ordering/vendor/status) and vendor rows are **not** sanctions-screened (`screenShipmentById` only checks shipper/consignee/principal by a hardcoded field list) — both documented as known follow-ups in `TKT-E64LKG`.
+- **Schedules page overhaul** (`ShipmentSchedulesPage.jsx`): now shows **Route Legs** (`LegsTable`, imported from `ShipmentFormPage.jsx` — the exact same live-editing component used in the full shipment form, `showContractCols={false}` hides Contract Type/No. here), **Schedule History**, then `RouteSummaryBar` (relocated from Overview — see below). Two real bugs fixed: (1) legs now **auto-order** Pick-up-first/SEA-middle/Delivery-last on every `addLeg`/`saveLeg` (`orderLegs()` helper, stable sort by `LEG_TYPE_RANK`, re-stamps `legOrder` and persists via `Promise.all(api.legs.update(...))`) — previously a new leg always appended at the end regardless of type, landing after an existing Delivery leg; (2) **"Add Sailing" is TSP-aware** — `applySailingToLegs()` (now living in `ShipmentSchedulesPage.jsx`, not `SchedulesPanel`) mirrors `ShipmentFormPage`'s own `applySailingToLegs` but operates via live `api.legs.*` calls against an **existing** shipment's already-persisted legs instead of local draft state; a multi-leg (`sailing.legs.length > 1`) sailing updates the first SEA leg and replaces any trailing ones with fresh legs per remaining segment, while a direct sailing collapses back to one SEA leg **and resets pol/pod** (previously left pod stuck on a stale TSP transshipment hub if a direct sailing was picked after a TSP one). "Add Sailing" button moved next to the Route Legs section header. The old always-expanded Sailings box is renamed `ScheduleHistoryPanel` (still exported from `ShipmentDetailPage.jsx`) — now a **read-only** SAVED/REMOVED audit trail (`GET /api/shipments/:id/schedule-events` reads `entity_events WHERE entity_type='schedule'`, unmapped/snake_case rows same as `cost-line-events`) instead of the add/remove UI, which moved to `ShipmentSchedulesPage.jsx` itself. Follow-up ticket `TKT-E64LKG` tracks renaming the page to "Contracts & Schedules", adding contract attachment here, and converting history to a button-opens-modal pattern.
+- **`RouteSummaryBar`** (`ShipmentDetailPage.jsx`, exported): the old grid-based Pick-up/POL/POD/Delivery route panel, extracted out of the Overview page entirely (self-fetches `shipment_legs` + contract carrier fallback) and relocated to the Schedules page only.
 
 ## Recent changes (v0.27.0 "Lookout")
 - **FCL container lifecycle events** (first piece of the FCL shipment-management push, Epic `TKT-A5LUPD`): `container_events` table logs per-container movement (`Empty Pickup → Gate In → Loaded → Sailed → Discharged → Gate Out → Empty Return`), replacing shipment-level-only milestones as the foundation for demurrage/detention tracking. Routes in `routes/shipments.js` — `GET`/`POST /api/containers/:id/events`, `DELETE /api/container-events/:id`; POST validates `eventType` against the fixed list and logs a `CONTAINER_EVENT_ADDED` row to `shipment_events` (audit trail, same as `CONTAINER_ADDED`/`CONTAINER_UPDATED`). Frontend: new shared `ContainerEventsPanel.jsx` (self-fetching, chronological list + inline log-event form that suggests the next unused event type), opened via a 📋 button on each row in the container list modal (`ShipmentDetailPage.jsx` ~4181). Also fixed a data-entry gap found while building this: `seal_number` existed in the `containers` schema and backend routes but was never exposed in `ContainerForm` — added as a field next to Container Number. Remaining Epic stories (demurrage/detention, VGM, CY cutoff/empty equipment, sequential detail-page reorg) are logged and in Ready.

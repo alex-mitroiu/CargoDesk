@@ -9,13 +9,14 @@ import Badge from "../../components/primitives/Badge";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
 import Pagination from "../../components/primitives/Pagination";
 import ActionMenu from "../../components/primitives/ActionMenu";
-import { inputBase, Inp, Textarea } from "../../components/primitives/Form";
+import { inputBase, Inp, Sel, Textarea } from "../../components/primitives/Form";
 import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns.jsx";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const ID_TYPES  = ["VAT", "EORI", "Tax ID", "DUNS", "GLN", "Customs Reg", "Other"];
 const DOC_TYPES = ["KYC", "Commercial Contract", "Compliance Waiver", "Power of Attorney", "Other"];
+const CURRENCIES = ["USD", "EUR", "GBP", "CNY", "SGD", "JPY", "AED", "CHF"];
 
 const SCREENING_VARIANT = { CLEAR: "success", HIT: "danger", OVERRIDDEN: "warning" };
 
@@ -56,6 +57,7 @@ const ProfileTab = ({ init = {}, onSave, saving }) => {
     email:       init.email       || "",
     website:     init.website     || "",
     notes:       init.notes       || "",
+    currency:    init.currency    || "USD",
   });
   const set   = k => v => setF(p => ({ ...p, [k]: v }));
   const valid = f.companyName.trim().length > 0;
@@ -93,6 +95,12 @@ const ProfileTab = ({ init = {}, onSave, saving }) => {
         <Inp label="Email"   value={f.email}   onChange={set("email")}   placeholder="ops@acme-freight.com" />
         <Inp label="Website" value={f.website} onChange={set("website")} placeholder="https://acme-freight.com" />
       </div>
+
+      <div style={{ fontFamily: T.mono, fontSize: 9.5, color: T.border, fontWeight: 700,
+        textTransform: "uppercase", letterSpacing: ".12em", marginBottom: -6 }}>Billing</div>
+
+      <Sel label="Currency" value={f.currency} onChange={set("currency")}
+        options={CURRENCIES.map(c => ({ value: c, label: c }))} />
 
       <Textarea label="Notes" value={f.notes} onChange={set("notes")}
         placeholder="Internal notes, account manager, payment terms…" rows={3} />

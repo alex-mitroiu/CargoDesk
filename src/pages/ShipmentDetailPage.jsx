@@ -6,6 +6,8 @@ import { useAuth } from "../AuthContext";
 import { ContainerTypeField } from "../components/shared/ContainerTypePickerModal";
 import { VesselField } from "../components/shared/VesselCombobox";
 import { CommodityCombobox, GradePill } from "../components/shared/CommodityCombobox";
+import CustomerCombobox from "../components/shared/CustomerCombobox";
+import ServicesPanel from "../components/shared/ServicesPanel";
 import { api } from "../api";
 import { toast } from "../toast";
 import Btn from "../components/primitives/Btn";
@@ -1312,7 +1314,7 @@ const RESULT_STYLE = {
   OVERRIDE: { color: "#f59e0b", bg: "#f59e0b15", border: "#f59e0b44" },
 };
 
-const ComplianceModal = ({ shipment, screening, onChange, onClose }) => {
+export const ComplianceModal = ({ shipment, screening, onChange, onClose }) => {
   const [busy,           setBusy]           = useState(false);
   const [syncing,        setSyncing]        = useState(false);
   const [overrideOpen,   setOverrideOpen]   = useState(false);
@@ -1599,7 +1601,188 @@ const MILESTONE_ICONS = {
   delivered:         "🎯",
 };
 
-const MilestonePanel = ({ shipmentId, shipment, onProgress }) => {
+// ─── Parties & Offices Panel ───────────────────────────────────────────────────
+
+const PartiesOfficesCard = ({ label, value }) => (
+  <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 10, padding: "14px 18px" }}>
+    <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
+      textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 6 }}>{label}</div>
+    <div style={{ fontFamily: T.body, fontSize: 16, fontWeight: 700,
+      color: value ? T.text : T.border, wordBreak: "break-word" }}>{value || "—"}</div>
+  </div>
+);
+
+// Edit form — reuses the same CustomerCombobox / department-filtered-office-select
+// patterns as ShipmentFormPage's Parties & Offices sections, self-contained so it
+// can be opened from the dedicated Parties & Offices sub-page.
+const PartiesOfficesForm = ({ shipment, onSave, onCancel }) => {
+  const [offices, setOffices] = useState([]);
+  useEffect(() => { api.offices.list().then(setOffices).catch(() => {}); }, []);
+
+  const [f, setF] = useState({
+    shipperId:           shipment.shipperId           || "",
+    shipperName:         shipment.shipperName         || "",
+    consigneeId:         shipment.consigneeId         || "",
+    consigneeName:       shipment.consigneeName       || "",
+    notifyId:            shipment.notifyId            || "",
+    notifyName:          shipment.notifyName          || "",
+    principalId:         shipment.principalId         || "",
+    principalName:       shipment.principalName       || "",
+    emoOfficeId:          shipment.emoOfficeId          || "",
+    imoOfficeId:          shipment.imoOfficeId          || "",
+    controllingOfficeId:  shipment.controllingOfficeId  || "",
+  });
+  const [sameNotify, setSameNotify] = useState(
+    !shipment.notifyId || shipment.notifyId === shipment.consigneeId
+  );
+  const [isSaving, withSaving] = useSaving();
+
+  const OFFICE_FIELDS = [
+    { key: "emoOfficeId",         label: "Export Managing Office (EMO)", required: true,  dept: "SE" },
+    { key: "imoOfficeId",         label: "Import Managing Office (IMO)", required: true,  dept: "SI" },
+    { key: "controllingOfficeId", label: "Controlling Office",           required: false, dept: null },
+  ];
+
+  // The shipment PUT endpoint replaces the full record (not a PATCH), so every
+  // other field must ride along unchanged — only the party/office keys differ.
+  const handleSave = () => withSaving(() => onSave({
+    ...shipment,
+    ...f,
+    notifyId:   sameNotify ? f.consigneeId   : f.notifyId,
+    notifyName: sameNotify ? f.consigneeName : f.notifyName,
+  }));
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div>
+        <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 700,
+          textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 8 }}>
+          Parties
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <CustomerCombobox label="Shipper" required
+            value={{ id: f.shipperId, name: f.shipperName }}
+            onChange={v => setF(p => ({ ...p, shipperId: v.id, shipperName: v.name }))} />
+          <CustomerCombobox label="Consignee" required
+            value={{ id: f.consigneeId, name: f.consigneeName }}
+            onChange={v => setF(p => ({ ...p, consigneeId: v.id, consigneeName: v.name }))} />
+          <CustomerCombobox label="Principal" required
+            value={{ id: f.principalId, name: f.principalName }}
+            onChange={v => setF(p => ({ ...p, principalId: v.id, principalName: v.name }))} />
+        </div>
+        <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: "pointer",
+            fontFamily: T.body, fontSize: 12, color: T.textMuted, userSelect: "none", width: "fit-content" }}>
+            <input type="checkbox" checked={!sameNotify}
+              onChange={e => {
+                const diff = e.target.checked;
+                setSameNotify(!diff);
+                if (!diff) setF(p => ({ ...p, notifyId: p.consigneeId, notifyName: p.consigneeName }));
+              }}
+              style={{ accentColor: T.accent, width: 13, height: 13 }} />
+            Different notify party
+          </label>
+          {sameNotify
+            ? <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, fontStyle: "italic", paddingLeft: 2 }}>
+                {f.consigneeName
+                  ? <>Notify → <span style={{ color: T.text, fontStyle: "normal" }}>{f.consigneeName}</span></>
+                  : "Same as Consignee (select a Consignee above)"}
+              </div>
+            : <CustomerCombobox label="Notify Party"
+                value={{ id: f.notifyId, name: f.notifyName }}
+                onChange={v => setF(p => ({ ...p, notifyId: v.id, notifyName: v.name }))} />
+          }
+        </div>
+      </div>
+
+      {/* Offices — stacked in a single column; layout/logic to be revisited later */}
+      <div>
+        <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 700,
+          textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 8 }}>
+          Offices — split by Export / Import
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {OFFICE_FIELDS.map(({ key, label, required, dept }) => {
+            const candidates = dept ? offices.filter(o => o.department === dept && o.isActive) : offices.filter(o => o.isActive);
+            return (
+              <div key={key}>
+                <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
+                  textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 5 }}>
+                  {label}{required && <span style={{ color: T.danger, marginLeft: 2 }}>*</span>}
+                </div>
+                <select value={f[key] || ""} onChange={e => setF(p => ({ ...p, [key]: e.target.value || "" }))}
+                  style={{ width: "100%", padding: "7px 10px", borderRadius: 7, fontFamily: T.mono, fontSize: 12,
+                    color: f[key] ? T.text : T.textMuted, border: `1px solid ${T.border}`,
+                    background: T.bg, outline: "none", cursor: "pointer", boxSizing: "border-box" }}>
+                  <option value="">{required ? "Select office…" : "None (optional)"}</option>
+                  {candidates.map(o => <option key={o.id} value={o.id}>{o.code} — {o.name}</option>)}
+                </select>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
+        <Btn variant="secondary" onClick={onCancel} disabled={isSaving}>Cancel</Btn>
+        <Btn onClick={handleSave} disabled={isSaving}>{isSaving ? "Saving…" : "Save"}</Btn>
+      </div>
+    </div>
+  );
+};
+
+export const PartiesOfficesPanel = ({ shipment, onUpdate }) => {
+  const { canEditShipments: canEdit } = useAuth();
+  const [editing, setEditing] = useState(false);
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+        <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 700,
+          textTransform: "uppercase", letterSpacing: ".08em" }}>
+          Parties
+        </div>
+        {canEdit && onUpdate && (
+          <Btn size="sm" variant="secondary" onClick={() => setEditing(true)}>✎ Edit</Btn>
+        )}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 18 }}>
+        <PartiesOfficesCard label="Shipper"      value={shipment.shipperName} />
+        <PartiesOfficesCard label="Consignee"    value={shipment.consigneeName} />
+        <PartiesOfficesCard label="Notify Party" value={shipment.notifyName} />
+        <PartiesOfficesCard label="Principal"    value={shipment.principalName} />
+      </div>
+      <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 700,
+        textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 8 }}>
+        Offices — split by Export / Import
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <PartiesOfficesCard label="Export Managing Office (EMO)"
+          value={shipment.emoOfficeName ? `${shipment.emoOfficeName}${shipment.emoOfficeCode ? ` (${shipment.emoOfficeCode})` : ""}` : ""} />
+        <PartiesOfficesCard label="Import Managing Office (IMO)"
+          value={shipment.imoOfficeName ? `${shipment.imoOfficeName}${shipment.imoOfficeCode ? ` (${shipment.imoOfficeCode})` : ""}` : ""} />
+        <PartiesOfficesCard label="Controlling Office"
+          value={shipment.controllingOfficeName ? `${shipment.controllingOfficeName}${shipment.controllingOfficeCode ? ` (${shipment.controllingOfficeCode})` : ""}` : ""} />
+      </div>
+
+      {editing && (
+        <Modal title="Edit Parties & Offices" onClose={() => setEditing(false)} width={620}>
+          <PartiesOfficesForm
+            shipment={shipment}
+            onCancel={() => setEditing(false)}
+            onSave={async form => {
+              try {
+                await onUpdate(shipment.id, form);
+                setEditing(false);
+              } catch { /* error already toasted by caller */ }
+            }} />
+        </Modal>
+      )}
+    </div>
+  );
+};
+
+export const MilestonePanel = ({ shipmentId, shipment, onProgress }) => {
   const { user } = useAuth();
   const [milestones,   setMilestones]   = useState([]);
   const [loading,      setLoading]      = useState(true);
@@ -1889,8 +2072,8 @@ const marginVariant = pct => pct == null ? "default" : pct >= 20 ? "success" : p
 
 const fmtUsd = v => v == null ? "—" : `$${Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-const CostLineForm = ({ init = {}, fxRates = {}, containers = [], onSave, onSaveAndMirror, onCancel }) => {
-  const [type,         setType]         = useState(init.type         || "BUY");
+export const CostLineForm = ({ init = {}, fxRates = {}, containers = [], lockType = null, onSave, onSaveAndMirror, onCancel }) => {
+  const [type,         setType]         = useState(lockType || init.type || "BUY");
   const [chargeCode,   setChargeCode]   = useState(init.chargeCode   || "Ocean Freight");
   const [currency,     setCurrency]     = useState(init.currency     || "USD");
   const [amount,       setAmount]       = useState(init.amount       != null ? String(init.amount) : "");
@@ -1923,14 +2106,16 @@ const CostLineForm = ({ init = {}, fxRates = {}, containers = [], onSave, onSave
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14, padding: "4px 0" }}>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <div>
-          <div style={lbl}>Type</div>
-          <select value={type} onChange={e => setType(e.target.value)} style={inp}>
-            <option value="BUY">BUY (Cost)</option>
-            <option value="SELL">SELL (Revenue)</option>
-          </select>
-        </div>
+      <div style={{ display: "grid", gridTemplateColumns: lockType ? "1fr" : "1fr 1fr", gap: 12 }}>
+        {!lockType && (
+          <div>
+            <div style={lbl}>Type</div>
+            <select value={type} onChange={e => setType(e.target.value)} style={inp}>
+              <option value="BUY">BUY (Cost)</option>
+              <option value="SELL">SELL (Revenue)</option>
+            </select>
+          </div>
+        )}
         <div>
           <div style={lbl}>Charge Code</div>
           <select value={chargeCode} onChange={e => setChargeCode(e.target.value)} style={inp}>
@@ -2015,11 +2200,11 @@ const CL_FIELD_LABELS = {
   amount: "Amount", exchange_rate: "Exchange Rate", notes: "Notes", container_id: "Container",
 };
 
-const CostLineHistoryModal = ({ shipmentId, onClose }) => {
+export const CostLineHistoryModal = ({ shipmentId, onClose }) => {
   const [events,    setEvents]    = useState([]);
   const [lineIndex, setLineIndex] = useState({});
   const [loading,   setLoading]   = useState(true);
-  const [filter,    setFilter]    = useState(new Set(["CREATED","IMPORTED","UPDATED","DELETED"]));
+  const [filter,    setFilter]    = useState(new Set(["CREATED","IMPORTED","UPDATED","DELETED","GENERATED","CONFIRMED","AUTO_REMOVED"]));
 
   useEffect(() => {
     Promise.all([api.costLines.events(shipmentId), api.costLines.list(shipmentId)])
@@ -2036,11 +2221,20 @@ const CostLineHistoryModal = ({ shipmentId, onClose }) => {
 
   const visible = events.filter(e => filter.has(e.event_type));
 
-  const evtColor = t => ({ CREATED: T.success, IMPORTED: T.info, UPDATED: T.warning, DELETED: T.danger }[t] || T.textMuted);
+  const evtColor = t => ({
+    CREATED: T.success, IMPORTED: T.info, UPDATED: T.warning, DELETED: T.danger,
+    GENERATED: T.info, CONFIRMED: T.success, AUTO_REMOVED: T.warning,
+  }[t] || T.textMuted);
 
-  const resolveCharge = ev => {
+  // Cost/invoice lines show their charge code; generated invoice documents (a different
+  // entity_type sharing this same history feed) show their doc type + scope instead.
+  const resolveLabel = ev => {
     try {
       const m = JSON.parse(ev.meta || "{}");
+      if (ev.entity_type === "document") {
+        const scope = m.containerId ? `Container ${m.containerId}` : "Consolidated";
+        return `${m.docType || "Doc"} — ${scope}`;
+      }
       if (m.chargeCode) return m.chargeCode;
     } catch {}
     return lineIndex[ev.entity_id]?.chargeCode || ev.entity_id;
@@ -2053,9 +2247,9 @@ const CostLineHistoryModal = ({ shipmentId, onClose }) => {
   };
 
   const exportCsv = () => {
-    const rows = [["Time","Event","Charge Code","Field","Old Value","New Value","Line ID"]];
+    const rows = [["Time","Event","Item","Field","Old Value","New Value","ID"]];
     visible.forEach(e => rows.push([
-      e.created_at, e.event_type, resolveCharge(e),
+      e.created_at, e.event_type, resolveLabel(e),
       CL_FIELD_LABELS[e.field] || e.field || "",
       fmtVal(e.field, e.old_value), fmtVal(e.field, e.new_value), e.entity_id,
     ]));
@@ -2069,8 +2263,11 @@ const CostLineHistoryModal = ({ shipmentId, onClose }) => {
   const th = { fontFamily: T.body, fontSize: 10, fontWeight: 600, color: T.textMuted,
     textTransform: "uppercase", letterSpacing: ".07em" };
 
-  const TYPE_LABELS = { CREATED: "Created", IMPORTED: "Imported", UPDATED: "Updated", DELETED: "Deleted" };
-  const ALL_TYPES   = ["CREATED","IMPORTED","UPDATED","DELETED"];
+  const TYPE_LABELS = {
+    CREATED: "Created", IMPORTED: "Imported", UPDATED: "Updated", DELETED: "Deleted",
+    GENERATED: "Generated", CONFIRMED: "Confirmed", AUTO_REMOVED: "Auto-removed",
+  };
+  const ALL_TYPES = ["CREATED","IMPORTED","UPDATED","DELETED","GENERATED","CONFIRMED","AUTO_REMOVED"];
 
   return (
     <Modal title={`Accounting History — ${shipmentId}`} onClose={onClose} width={860}>
@@ -2111,14 +2308,14 @@ const CostLineHistoryModal = ({ shipmentId, onClose }) => {
               background: T.bg, borderBottom: `1px solid ${T.border}33` }}>
               <div style={{ ...th, width: 150, flexShrink: 0 }}>Time</div>
               <div style={{ ...th, width: 100, flexShrink: 0 }}>Event</div>
-              <div style={{ ...th, flex: 1 }}>Charge Code</div>
+              <div style={{ ...th, flex: 1 }}>Item</div>
               <div style={{ ...th, width: 110, flexShrink: 0 }}>Field</div>
               <div style={{ ...th, width: 130, flexShrink: 0 }}>Old Value</div>
               <div style={{ ...th, width: 130, flexShrink: 0 }}>New Value</div>
             </div>
             <div style={{ maxHeight: 460, overflowY: "auto" }}>
               {visible.map(ev => {
-                const charge = resolveCharge(ev);
+                const charge = resolveLabel(ev);
                 const fieldLabel = CL_FIELD_LABELS[ev.field] || ev.field || null;
                 const isUpdate = ev.event_type === "UPDATED";
                 return (
@@ -2150,13 +2347,17 @@ const CostLineHistoryModal = ({ shipmentId, onClose }) => {
                       color: T.danger, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {isUpdate ? fmtVal(ev.field, ev.old_value) : ""}
                     </div>
-                    <div style={{ width: 130, flexShrink: 0, fontFamily: T.mono, fontSize: 11,
+                    <div title={ev.event_type === "AUTO_REMOVED" ? "No charge lines remained for this invoice's scope, so it was removed automatically" : undefined}
+                      style={{ width: 130, flexShrink: 0, fontFamily: T.mono, fontSize: 11,
                       color: isUpdate ? T.success : T.textMuted,
                       overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {isUpdate ? fmtVal(ev.field, ev.new_value) : (
-                        ev.event_type === "CREATED"  ? "Manual entry" :
-                        ev.event_type === "IMPORTED" ? "From contract" :
-                        ev.event_type === "DELETED"  ? "Removed" : ""
+                        ev.event_type === "CREATED"      ? "Manual entry" :
+                        ev.event_type === "IMPORTED"     ? "From contract" :
+                        ev.event_type === "DELETED"      ? "Removed" :
+                        ev.event_type === "GENERATED"    ? "Invoice generated" :
+                        ev.event_type === "CONFIRMED"    ? "Marked confirmed" :
+                        ev.event_type === "AUTO_REMOVED" ? "Orphaned, removed" : ""
                       )}
                     </div>
                   </div>
@@ -2176,498 +2377,87 @@ const CostLineHistoryModal = ({ shipmentId, onClose }) => {
   );
 };
 
-const CostControl = ({ shipmentId, contractType, contractId, containers = [], openSignal = 0 }) => {
-  const [lines,            setLines]            = useState([]);
-  const [loading,          setLoading]          = useState(false);
-  const [lineModal,        setLineModal]        = useState(null);
-  const [confirm,          setConfirm]          = useState(null);
-  const [fxRates,          setFxRates]          = useState({});
-  const [importing,        setImporting]        = useState(false);
-  const [splitting,        setSplitting]        = useState(false);
-  const [importOpts,       setImportOpts]       = useState(false);
-  const [splitPerCtr,      setSplitPerCtr]      = useState(false);
-  const [importedForCount, setImportedForCount] = useState(null);
-  const [ccOpen,           setCcOpen]           = useState(false);
-  const [clHistOpen,       setClHistOpen]       = useState(false);
-
-  useEffect(() => { if (openSignal > 0) setCcOpen(true); }, [openSignal]);
-
-  const isCentral   = contractType === "Central" && !!contractId;
-  const hasBuyLines = lines.some(l => l.type === "BUY");
-  const isSplit     = lines.some(l => l.containerId);
-  const isStale     = importedForCount !== null && importedForCount !== containers.length;
-  const canSplitOrAggregate = isCentral && (isSplit || containers.length > 0);
-
-  const buy     = lines.filter(l => l.type === "BUY").reduce((s, l) => s + l.amountUsd, 0);
-  const sell    = lines.filter(l => l.type === "SELL").reduce((s, l) => s + l.amountUsd, 0);
-  const vatTotal = lines.filter(l => l.type === "SELL").reduce((s, l) => s + (l.vatAmountUsd || 0), 0);
-  const hasVat  = vatTotal > 0;
-  const sellInclVat = sell + vatTotal;
-  const gp   = sell - buy;
-  const pct  = sell > 0 ? Math.round((gp / sell) * 1000) / 10 : null;
-
-  const load = () => {
-    setLoading(true);
-    return api.costLines.list(shipmentId)
-      .then(setLines)
-      .catch(() => setLines([]))
-      .finally(() => setLoading(false));
-  };
-
-  useEffect(() => {
-    load();
-    api.fx.rates().then(d => setFxRates(d.rates || {})).catch(() => {});
-  }, [shipmentId]);
-
-  const handleSave = async (data, mirror = false) => {
-    try {
-      if (lineModal === "add") {
-        await api.costLines.create(shipmentId, data);
-        if (mirror) {
-          await api.costLines.create(shipmentId, { ...data, type: data.type === "BUY" ? "SELL" : "BUY" });
-          toast.success(`Cost line added + mirrored as ${data.type === "BUY" ? "SELL" : "BUY"}`);
-        } else {
-          toast.success("Cost line added");
-        }
-      } else {
-        await api.costLines.update(shipmentId, lineModal.id, data);
-        if (mirror) {
-          await api.costLines.create(shipmentId, { ...data, type: data.type === "BUY" ? "SELL" : "BUY", source: lineModal.source || 'manual' });
-          toast.success(`Changes saved + mirrored as ${data.type === "BUY" ? "SELL" : "BUY"}`);
-        } else {
-          toast.success("Cost line updated");
-        }
-      }
-      setLineModal(null);
-      load();
-    } catch (e) { toast.error(e.message); }
-  };
-
-  const handleDelete = async id => {
-    try {
-      await api.costLines.remove(shipmentId, id);
-      toast.success("Cost line removed");
-      setConfirm(null);
-      load();
-    } catch (e) { toast.error(e.message); }
-  };
-
-  const handleImport = async (overwrite = false) => {
-    setImporting(true);
-    setImportOpts(false);
-    try {
-      const { imported } = await api.costLines.importContract(shipmentId, { overwrite, splitPerContainer: splitPerCtr });
-      toast.success(`${imported} BUY line${imported !== 1 ? "s" : ""} imported from contract`);
-      setImportedForCount(containers.length);
-      await load();
-    } catch (e) { toast.error(e.message); }
-    setImporting(false);
-  };
-
-  const openImport = () => {
-    if (hasBuyLines || containers.length > 1) {
-      setSplitPerCtr(containers.length > 1);
-      setImportOpts(true);
-    } else {
-      handleImport(false);
-    }
-  };
-
-  const handleToggleSplit = async () => {
-    setSplitting(true);
-    try {
-      const { imported } = await api.costLines.importContract(shipmentId, {
-        overwrite: true,
-        splitPerContainer: !isSplit,
-      });
-      toast.success(!isSplit
-        ? `Split into ${imported} line${imported !== 1 ? "s" : ""} across ${containers.length} containers`
-        : `Aggregated to ${imported} line${imported !== 1 ? "s" : ""}`
-      );
-      setImportedForCount(containers.length);
-      await load();
-    } catch (e) { toast.error(e.message); }
-    setSplitting(false);
-  };
-
-  const PREVIEW = 5;
-  const preview = lines.slice(0, PREVIEW);
-
-  const th = { fontFamily: T.body, fontSize: 10, fontWeight: 600, color: T.textMuted,
-    textTransform: "uppercase", letterSpacing: ".07em" };
-
-  const sourceInfo = l => {
-    if (l.source === "contract" && l.modifiedAt) return { label: "Contract (Modified)", color: T.warning };
-    if (l.source === "contract")                  return { label: "Contract",            color: T.info    };
-    return                                               { label: "Manual",              color: T.textMuted };
-  };
-
-  const renderTableRow = (l, showActions = false) => {
-    const ctr = l.containerId ? containers.find(c => c.id === l.containerId) : null;
-    const ctrLabel = ctr ? (ctr.containerNumber || `(${ctr.size || ""}${ctr.type || ""})`) : null;
-    const src = sourceInfo(l);
-    return (
-      <div key={l.id}
-        style={{ display: "flex", alignItems: "center", padding: showActions ? "9px 16px" : "8px 18px",
-          borderBottom: `1px solid ${T.border}22` }}
-        onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
-        onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-        {/* Type */}
-        <div style={{ width: showActions ? 60 : 46, flexShrink: 0 }}>
-          <Badge variant={l.type === "BUY" ? "warning" : "success"}>{l.type}</Badge>
-        </div>
-        {/* Charge */}
-        <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 6 }}>
-          <div style={{ fontFamily: T.body, fontSize: 12, color: T.text,
-            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.chargeCode}</div>
-          {l.type === "SELL" && l.vatRate > 0 && (
-            <span style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 700, color: T.info,
-              background: `${T.info}18`, border: `1px solid ${T.info}44`,
-              borderRadius: 4, padding: "1px 5px", whiteSpace: "nowrap", flexShrink: 0 }}>
-              VAT {l.vatRate}%
-            </span>
-          )}
-        </div>
-        {/* Container */}
-        <div style={{ width: showActions ? 100 : 80, flexShrink: 0, paddingLeft: 4,
-          fontFamily: T.mono, fontSize: showActions ? 11 : 10,
-          color: ctrLabel ? T.accent : T.border,
-          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {ctrLabel || "—"}
-        </div>
-        {/* Source (modal only) */}
-        {showActions && (
-          <div style={{ width: 130, flexShrink: 0, paddingLeft: 4 }}>
-            <span style={{ fontFamily: T.body, fontSize: 10, fontWeight: 600,
-              color: src.color, background: `${src.color}18`,
-              border: `1px solid ${src.color}44`,
-              borderRadius: 6, padding: "2px 7px", whiteSpace: "nowrap" }}>
-              {src.label}
-            </span>
-          </div>
-        )}
-        {/* Currency */}
-        <div style={{ width: showActions ? 80 : 60, flexShrink: 0,
-          fontFamily: T.mono, fontSize: 11, color: T.text }}>{l.currency}</div>
-        {/* Exch. Rate */}
-        {showActions && (
-          <div style={{ width: 100, flexShrink: 0,
-            fontFamily: T.mono, fontSize: 11, color: T.textMuted, textAlign: "right" }}>
-            {l.exchangeRate === 1 ? "1.0000" : l.exchangeRate.toFixed(4)}
-          </div>
-        )}
-        {/* Amount */}
-        <div style={{ width: showActions ? 110 : 80, flexShrink: 0,
-          fontFamily: T.mono, fontSize: 12, textAlign: "right", fontWeight: 600,
-          color: (l.amount === 0 && l.source === 'contract' && l.type === 'BUY') ? T.warning : T.text }}>
-          {l.amount === 0 && l.source === 'contract' && l.type === 'BUY'
-            ? <span title="No matching rate for this container type — set manually">⚠ 0.00</span>
-            : l.amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-          }
-        </div>
-        {/* Actions */}
-        {showActions && (
-          <div style={{ width: 36, flexShrink: 0 }}>
-            <ActionMenu items={[
-              { icon: "✎", label: "Edit",   onClick: () => setLineModal(l) },
-              { icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(l.id) },
-            ]} />
-          </div>
-        )}
-      </div>
-    );
-  };
-
+// Single cost-line row — shared by the Overview preview card and the dedicated
+// Cost Entry / Invoice Entry pages' full tables.
+export const CostLineRow = ({ line: l, containers = [], showActions = false, onEdit, onDelete }) => {
+  const ctr = l.containerId ? containers.find(c => c.id === l.containerId) : null;
+  const ctrLabel = ctr ? (ctr.containerNumber || `(${ctr.size || ""}${ctr.type || ""})`) : null;
+  // Mirror direction is derived from the line's own type, not stored separately: a
+  // SELL line tagged 'mirror' was created BY mirroring a BUY line (Cost Entry), and
+  // vice versa — that's the only way a mirrored line comes into existence.
+  const src = l.source === "contract" && l.modifiedAt ? { label: "Contract (Modified)", color: T.warning }
+    : l.source === "contract" ? { label: "Contract", color: T.info }
+    : l.source === "mirror" ? { label: l.type === "SELL" ? "Mirrored ← Cost Entry" : "Mirrored ← Invoice Entry", color: T.accent }
+    : { label: "Manual", color: T.textMuted };
   return (
-    <>
-      {/* ── Compact card ── */}
-      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
-        overflow: "hidden", display: "flex", flexDirection: "column" }}>
-
-        {/* Header */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
-          padding: "14px 18px", borderBottom: `1px solid ${T.border}33`, flexShrink: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text }}>Operational Accounting - Masha's Domain</span>
-            <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted,
-              background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "1px 7px" }}>
-              {lines.length}
-            </span>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            {canSplitOrAggregate && (
-              <button type="button" onClick={handleToggleSplit} disabled={splitting}
-                style={{ fontFamily: T.body, fontSize: 11,
-                  color: isSplit ? T.warning : T.info,
-                  background: "none",
-                  border: `1px solid ${isSplit ? T.warning + "55" : T.info + "55"}`,
-                  borderRadius: 7, padding: "4px 10px",
-                  cursor: splitting ? "not-allowed" : "pointer",
-                  opacity: splitting ? 0.6 : 1 }}>
-                {splitting ? "Working…" : isSplit ? "⊞ Aggregate" : "◫ Split / container"}
-              </button>
-            )}
-            <button type="button" onClick={() => setLineModal("add")}
-              style={{ fontFamily: T.body, fontSize: 12, color: T.accent, background: "none",
-                border: `1px solid ${T.accent}55`, borderRadius: 7, padding: "4px 11px", cursor: "pointer" }}>
-              + Add
-            </button>
-          </div>
-        </div>
-
-        {/* Lines preview */}
-        <div style={{ flex: 1, overflow: "hidden" }}>
-          {loading ? (
-            <div style={{ padding: "20px 18px", fontFamily: T.body, fontSize: 12, color: T.textMuted }}>Loading…</div>
-          ) : lines.length === 0 ? (
-            <div style={{ padding: "20px 18px", fontFamily: T.body, fontSize: 12,
-              color: T.textMuted, fontStyle: "italic" }}>No cost lines yet.</div>
-          ) : preview.map(l => renderTableRow(l, false))}
-        </div>
-
-        {/* Summary — always rendered to keep card height stable */}
-        <div style={{ borderTop: `1px solid ${T.border}`, padding: "10px 18px",
-          background: T.bg, flexShrink: 0, display: "flex", gap: 18, alignItems: "center", flexWrap: "wrap" }}>
-          <div>
-            <div style={{ ...th, marginBottom: 2, fontSize: 9 }}>Total Buy</div>
-            <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700,
-              color: lines.length > 0 ? T.warning : T.border }}>
-              {lines.length > 0 ? fmtUsd(buy) : "—"}
-            </span>
-          </div>
-          <div>
-            <div style={{ ...th, marginBottom: 2, fontSize: 9 }}>{hasVat ? "Sell ex. VAT" : "Total Sell"}</div>
-            <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700,
-              color: lines.length > 0 ? T.success : T.border }}>
-              {lines.length > 0 ? fmtUsd(sell) : "—"}
-            </span>
-          </div>
-          {hasVat && (
-            <div>
-              <div style={{ ...th, marginBottom: 2, fontSize: 9 }}>VAT</div>
-              <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.info }}>
-                +{fmtUsd(vatTotal)}
-              </span>
-            </div>
-          )}
-          {hasVat && (
-            <div>
-              <div style={{ ...th, marginBottom: 2, fontSize: 9 }}>Sell incl. VAT</div>
-              <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.success }}>
-                {fmtUsd(sellInclVat)}
-              </span>
-            </div>
-          )}
-          <div>
-            <div style={{ ...th, marginBottom: 2, fontSize: 9 }}>Gross Profit</div>
-            <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700,
-              color: lines.length > 0 ? (gp >= 0 ? T.success : T.danger) : T.border }}>
-              {lines.length > 0 ? `${gp >= 0 ? "+" : ""}${fmtUsd(gp)}` : "—"}
-            </span>
-          </div>
-          <div style={{ marginLeft: "auto" }}>
-            <div style={{ ...th, marginBottom: 2, fontSize: 9 }}>Gross Margin</div>
-            {pct != null ? (
-              <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 800, color: marginColor(pct),
-                background: `${marginColor(pct)}18`, borderRadius: 7, padding: "2px 10px" }}>
-                {pct}%
-              </span>
-            ) : (
-              <span style={{ fontFamily: T.mono, fontSize: 13, color: T.border }}>—</span>
-            )}
-          </div>
-        </div>
-
-        {/* Show all footer */}
-        <button type="button" onClick={() => setCcOpen(true)}
-          style={{ display: "block", width: "100%", padding: "10px 18px", textAlign: "center",
-            fontFamily: T.body, fontSize: 12, background: T.bg, flexShrink: 0,
-            border: "none", borderTop: `1px solid ${T.border}22`, cursor: "pointer",
-            color: T.textMuted }}
-          onMouseEnter={e => e.currentTarget.style.color = T.accent}
-          onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>
-          {lines.length > PREVIEW
-            ? `${lines.length - PREVIEW} more line${lines.length - PREVIEW !== 1 ? "s" : ""} — Show all →`
-            : lines.length > 0 ? "Manage all lines →" : "Open Operational Accounting →"}
-        </button>
+    <div key={l.id}
+      style={{ display: "flex", alignItems: "center", padding: showActions ? "9px 16px" : "8px 18px",
+        borderBottom: `1px solid ${T.border}22` }}
+      onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
+      onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+      {/* Type */}
+      <div style={{ width: showActions ? 60 : 46, flexShrink: 0 }}>
+        <Badge variant={l.type === "BUY" ? "warning" : "success"}>{l.type}</Badge>
       </div>
-
-      {/* ── Full Cost Control modal ── */}
-      {ccOpen && (
-        <Modal title={`Operational Accounting — ${shipmentId}`} onClose={() => setCcOpen(false)} width={880}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-
-            {/* Toolbar */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                {isCentral && (
-                  <button type="button" onClick={openImport} disabled={importing}
-                    style={{ fontFamily: T.body, fontSize: 12, color: T.accent, background: "none",
-                      border: `1px solid ${T.accent}44`, borderRadius: 7, padding: "5px 12px",
-                      cursor: importing ? "not-allowed" : "pointer", opacity: importing ? 0.6 : 1 }}>
-                    {importing ? "Importing…" : hasBuyLines ? "↻ Recalculate from contract" : "⬇ Import from contract"}
-                  </button>
-                )}
-                {isStale && (
-                  <span style={{ fontFamily: T.body, fontSize: 11, color: T.warning }}>
-                    ⚠ Container count changed — recalculate to update
-                  </span>
-                )}
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <button type="button" onClick={() => setClHistOpen(true)}
-                  style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, background: "none",
-                    border: `1px solid ${T.border}`, borderRadius: 7, padding: "5px 12px", cursor: "pointer" }}
-                  onMouseEnter={e => e.currentTarget.style.color = T.text}
-                  onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>
-                  ⏱ History
-                </button>
-                <Btn size="sm" onClick={() => setLineModal("add")}>＋ Add Line</Btn>
-              </div>
-            </div>
-
-            {/* Table */}
-            {loading ? (
-              <div style={{ padding: 24, textAlign: "center", color: T.textMuted, fontFamily: T.body, fontSize: 13 }}>Loading…</div>
-            ) : lines.length === 0 ? (
-              <div style={{ padding: 24, textAlign: "center", color: T.textMuted, fontFamily: T.body,
-                fontSize: 13, fontStyle: "italic" }}>
-                No cost lines yet. Add a BUY or SELL line above.
-              </div>
-            ) : (
-              <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden" }}>
-                {/* Table header */}
-                <div style={{ display: "flex", alignItems: "center", padding: "6px 16px",
-                  borderBottom: `1px solid ${T.border}33`, background: T.bg }}>
-                  <div style={{ ...th, width: 60, flexShrink: 0 }}>Type</div>
-                  <div style={{ ...th, flex: 1 }}>Charge</div>
-                  <div style={{ ...th, width: 100, flexShrink: 0 }}>Container</div>
-                  <div style={{ ...th, width: 130, flexShrink: 0 }}>Source</div>
-                  <div style={{ ...th, width: 80, flexShrink: 0 }}>Currency</div>
-                  <div style={{ ...th, width: 100, textAlign: "right", flexShrink: 0 }}>Exch. Rate</div>
-                  <div style={{ ...th, width: 110, textAlign: "right", flexShrink: 0 }}>Amount</div>
-                  <div style={{ width: 36, flexShrink: 0 }} />
-                </div>
-                {/* Table rows */}
-                {lines.map(l => renderTableRow(l, true))}
-                {/* Summary */}
-                <div style={{ padding: "14px 16px", borderTop: `1px solid ${T.border}`,
-                  display: "flex", gap: 28, alignItems: "center", flexWrap: "wrap", background: T.bg }}>
-                  <div>
-                    <div style={{ ...th, marginBottom: 3 }}>Total Buy (USD)</div>
-                    <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.warning }}>{fmtUsd(buy)}</span>
-                  </div>
-                  <div>
-                    <div style={{ ...th, marginBottom: 3 }}>{hasVat ? "Sell ex. VAT (USD)" : "Total Sell (USD)"}</div>
-                    <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.success }}>{fmtUsd(sell)}</span>
-                  </div>
-                  {hasVat && (
-                    <div>
-                      <div style={{ ...th, marginBottom: 3 }}>VAT (USD)</div>
-                      <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.info }}>+{fmtUsd(vatTotal)}</span>
-                    </div>
-                  )}
-                  {hasVat && (
-                    <div>
-                      <div style={{ ...th, marginBottom: 3 }}>Sell incl. VAT (USD)</div>
-                      <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.success }}>{fmtUsd(sellInclVat)}</span>
-                    </div>
-                  )}
-                  <div>
-                    <div style={{ ...th, marginBottom: 3 }}>Gross Profit</div>
-                    <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: gp >= 0 ? T.success : T.danger }}>
-                      {gp >= 0 ? "+" : ""}{fmtUsd(gp)}
-                    </span>
-                  </div>
-                  <div style={{ marginLeft: "auto" }}>
-                    <div style={{ ...th, marginBottom: 3 }}>Gross Margin</div>
-                    {pct == null ? (
-                      <span style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, fontStyle: "italic" }}>No sell lines</span>
-                    ) : (
-                      <span style={{ fontFamily: T.mono, fontSize: 18, fontWeight: 800, color: marginColor(pct),
-                        background: `${marginColor(pct)}18`, borderRadius: 8, padding: "2px 12px" }}>
-                        {pct}%
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        </Modal>
+      {/* Charge */}
+      <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 6 }}>
+        <div style={{ fontFamily: T.body, fontSize: 12, color: T.text,
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{l.chargeCode}</div>
+        {l.type === "SELL" && l.vatRate > 0 && (
+          <span style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 700, color: T.info,
+            background: `${T.info}18`, border: `1px solid ${T.info}44`,
+            borderRadius: 4, padding: "1px 5px", whiteSpace: "nowrap", flexShrink: 0 }}>
+            VAT {l.vatRate}%
+          </span>
+        )}
+      </div>
+      {/* Container */}
+      <div style={{ width: showActions ? 100 : 80, flexShrink: 0, paddingLeft: 4,
+        fontFamily: T.mono, fontSize: showActions ? 11 : 10,
+        color: ctrLabel ? T.accent : T.border,
+        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {ctrLabel || "—"}
+      </div>
+      {/* Source (modal only) */}
+      {showActions && (
+        <div style={{ width: 160, flexShrink: 0, paddingLeft: 4 }}>
+          <span style={{ fontFamily: T.body, fontSize: 10, fontWeight: 600,
+            color: src.color, background: `${src.color}18`,
+            border: `1px solid ${src.color}44`,
+            borderRadius: 6, padding: "2px 7px", whiteSpace: "nowrap" }}>
+            {src.label}
+          </span>
+        </div>
       )}
-
-      {clHistOpen && (
-        <CostLineHistoryModal shipmentId={shipmentId} onClose={() => setClHistOpen(false)} />
+      {/* Currency */}
+      <div style={{ width: showActions ? 80 : 60, flexShrink: 0,
+        fontFamily: T.mono, fontSize: 11, color: T.text }}>{l.currency}</div>
+      {/* Exch. Rate */}
+      {showActions && (
+        <div style={{ width: 100, flexShrink: 0,
+          fontFamily: T.mono, fontSize: 11, color: T.textMuted, textAlign: "right" }}>
+          {l.exchangeRate === 1 ? "1.0000" : l.exchangeRate.toFixed(4)}
+        </div>
       )}
-
-      {/* Add / Edit line modal */}
-      {lineModal && (
-        <Modal
-          title={lineModal === "add" ? "Add Cost Line" : `Edit — ${lineModal.chargeCode}`}
-          onClose={() => setLineModal(null)} width={500}>
-          <CostLineForm
-            init={lineModal === "add" ? {} : lineModal}
-            fxRates={fxRates}
-            containers={containers}
-            onSave={handleSave}
-            onSaveAndMirror={data => handleSave(data, true)}
-            onCancel={() => setLineModal(null)} />
-        </Modal>
+      {/* Amount */}
+      <div style={{ width: showActions ? 110 : 80, flexShrink: 0,
+        fontFamily: T.mono, fontSize: 12, textAlign: "right", fontWeight: 600,
+        color: (l.amount === 0 && l.source === 'contract' && l.type === 'BUY') ? T.warning : T.text }}>
+        {l.amount === 0 && l.source === 'contract' && l.type === 'BUY'
+          ? <span title="No matching rate for this container type — set manually">⚠ 0.00</span>
+          : l.amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+        }
+      </div>
+      {/* Actions */}
+      {showActions && (
+        <div style={{ width: 36, flexShrink: 0 }}>
+          <ActionMenu items={[
+            { icon: "✎", label: "Edit",   onClick: onEdit },
+            { icon: "✕", label: "Delete", variant: "danger", onClick: onDelete },
+          ]} />
+        </div>
       )}
-
-      {confirm && (
-        <ConfirmModal
-          message="Remove this cost line? This cannot be undone."
-          onConfirm={() => handleDelete(confirm)}
-          onCancel={() => setConfirm(null)} />
-      )}
-
-      {importOpts && (
-        <Modal title="Import from Contract" onClose={() => setImportOpts(false)} width={440}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            {hasBuyLines && (
-              <div style={{ background: `${T.warning}18`, border: `1px solid ${T.warning}44`,
-                borderRadius: 8, padding: "10px 14px", fontFamily: T.body, fontSize: 12, color: T.text }}>
-                ⚠ Existing BUY lines will be replaced with the current contract rates.
-              </div>
-            )}
-            {containers.length > 1 && (
-              <div>
-                <div style={{ fontFamily: T.body, fontSize: 12, fontWeight: 600, color: T.text, marginBottom: 10 }}>
-                  Per-container rate lines — {containers.length} containers
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {[
-                    { val: false, title: `Aggregate (1 line × ${containers.length})`, desc: "One combined line with the multiplied amount" },
-                    { val: true,  title: `Split per container (${containers.length} lines per rate)`, desc: "Individual line per container at the unit rate" },
-                  ].map(({ val, title, desc }) => (
-                    <label key={String(val)}
-                      style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer",
-                        background: splitPerCtr === val ? `${T.accent}12` : T.bg,
-                        border: `1px solid ${splitPerCtr === val ? T.accent + "55" : T.border}`,
-                        borderRadius: 8, padding: "10px 14px" }}>
-                      <input type="radio" checked={splitPerCtr === val} onChange={() => setSplitPerCtr(val)}
-                        style={{ marginTop: 2, accentColor: T.accent }} />
-                      <div>
-                        <div style={{ fontFamily: T.body, fontSize: 12, fontWeight: 600, color: T.text }}>{title}</div>
-                        <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginTop: 2 }}>{desc}</div>
-                      </div>
-                    </label>
-                  ))}
-                </div>
-              </div>
-            )}
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, paddingTop: 4 }}>
-              <Btn variant="secondary" onClick={() => setImportOpts(false)}>Cancel</Btn>
-              <Btn onClick={() => handleImport(hasBuyLines)}>
-                {hasBuyLines ? "Replace & Import" : "Import"}
-              </Btn>
-            </div>
-          </div>
-        </Modal>
-      )}
-    </>
+    </div>
   );
 };
 
@@ -2925,184 +2715,277 @@ const PendingRevalidationModal = ({ matches, contractRef, onAccept, onDismiss })
   );
 };
 
-// ─── Schedules Panel ──────────────────────────────────────────────────────────
+// ─── Route Summary Bar ────────────────────────────────────────────────────────
+// Extracted from the Overview page's old "shp-route" anchor section and moved
+// exclusively to the Schedules page — self-fetching (legs + contract carrier
+// fallback) so it drops in with just a `shipment` prop, same pattern as
+// ScheduleHistoryPanel below.
 
-const SchedulesPanel = ({ shipment }) => {
-  const { canEditShipments: canEdit } = useAuth();
-  const [schedules,      setSchedules]      = useState([]);
-  const [loading,        setLoading]        = useState(true);
-  const [pickerOpen,     setPickerOpen]     = useState(false);
-  const [confirm,        setConfirm]        = useState(null);
-  const [confirmSailing, setConfirmSailing] = useState(null); // pending replacement
+export const RouteSummaryBar = ({ shipment }) => {
+  const [legs, setLegs] = useState([]);
+  const [contractCarrierCode, setContractCarrierCode] = useState("");
 
-  const load = () => {
-    setLoading(true);
-    api.schedules.list(shipment.id)
-      .then(setSchedules)
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  };
+  useEffect(() => {
+    api.legs.list(shipment.id).then(setLegs).catch(() => {});
+  }, [shipment.id]);
 
-  useEffect(load, [shipment.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!shipment.contractId) { setContractCarrierCode(""); return; }
+    api.contracts.get(shipment.contractId)
+      .then(c => setContractCarrierCode(c.carrierCode || ""))
+      .catch(() => setContractCarrierCode(""));
+  }, [shipment.contractId]);
 
-  const commitSailing = async (sailing) => {
-    try {
-      await Promise.all(schedules.map(s => api.schedules.remove(shipment.id, s.id)));
-      const saved = await api.schedules.save(shipment.id, sailing);
-      setSchedules([saved]);
-      toast.success(`Sailing ${sailing.vesselName} saved`);
-    } catch (e) { toast.error(e.message); }
-  };
-
-  const handleSelect = (sailing) => {
-    setPickerOpen(false);
-    const existingVoy = schedules[0]?.voyageNumber;
-    if (schedules.length > 0 && existingVoy !== sailing.voyageNumber) {
-      setConfirmSailing(sailing);
-    } else {
-      commitSailing(sailing);
-    }
-  };
-
-  const handleRemove = async (id) => {
-    try {
-      await api.schedules.remove(shipment.id, id);
-      setSchedules(p => p.filter(s => s.id !== id));
-      toast.success("Sailing removed");
-    } catch (e) { toast.error(e.message); }
-    setConfirm(null);
-  };
-
-  const pol = shipment.pol || "";
-  const pod = shipment.pod || "";
-  const carrier = shipment.carrierCode || "";
-  const canSearch = !!(pol && pod && carrier);
-
-  const mockBadge = () => (
-    <span style={{ fontFamily: "var(--mono, monospace)", fontSize: 9, fontWeight: 700,
-      background: T.warning + "22", color: T.warning, border: `1px solid ${T.warning}44`,
-      borderRadius: 4, padding: "1px 6px", textTransform: "uppercase" }}>Demo</span>
-  );
+  const transitDays = (() => {
+    if (!shipment.etd || !shipment.eta) return null;
+    const d1 = new Date(shipment.etd), d2 = new Date(shipment.eta);
+    if (isNaN(d1) || isNaN(d2)) return null;
+    return Math.round((d2 - d1) / 864e5);
+  })();
+  const pkuLeg = legs.find(l => l.legType === "Pick-up" && l.movementType === "Carrier's Haulage");
+  const delLeg = [...legs].reverse().find(l => l.legType === "Delivery" && l.movementType === "Carrier's Haulage");
+  // shipment.pol/pod are the journey's overall bookends — with a Door pickup leg (or a
+  // multi-leg TSP journey) that's not the same as the actual SEA leg's own pol/pod, so the
+  // Port of Loading/Discharge cells must resolve the real SEA leg or they show the door
+  // location instead of the port (and duplicate the PKU/DEL door cell alongside it).
+  const seaLegs = legs.filter(l => l.legType === "SEA");
+  // Intermediate transshipment hubs only — built from seaLegs (not all legs), and dropping
+  // the last one, so this never re-shows the Pick-up leg's pod (== the POL cell) or the
+  // final SEA leg's own pod (== the POD cell) a second time in the breadcrumb.
+  const tsps = seaLegs.length > 1
+    ? seaLegs.slice(0, -1).map(l => ({ code: l.pod, name: l.podName })).filter(t => t.code)
+    : [];
+  const firstSeaLeg = seaLegs[0];
+  const lastSeaLeg = seaLegs[seaLegs.length - 1];
+  const portPol = firstSeaLeg?.pol || shipment.pol;
+  const portPolName = firstSeaLeg ? firstSeaLeg.polName : shipment.polName;
+  const portPod = lastSeaLeg?.pod || shipment.pod;
+  const portPodName = lastSeaLeg ? lastSeaLeg.podName : shipment.podName;
+  const gridCols = `${pkuLeg ? "auto " : ""}1fr auto 1fr${delLeg ? " auto" : ""}`;
+  const doorCell = { padding: "12px 14px", display: "flex", flexDirection: "column", gap: 3, background: T.surface };
 
   return (
-    <div style={{ background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, overflow: "hidden" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
-        padding: "14px 20px", borderBottom: `1px solid ${T.border}` }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontFamily: T.head, fontSize: 15, fontWeight: 800, color: T.text }}>Schedules</span>
-          {schedules.length > 0 && (
-            <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700,
-              background: T.accentBg, color: T.accent, border: `1px solid ${T.accent}33`,
-              borderRadius: 4, padding: "1px 7px" }}>{schedules.length}</span>
+    <div style={{ display: "grid", gridTemplateColumns: gridCols,
+      background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8,
+      overflow: "hidden", marginBottom: 22 }}>
+
+      {/* PKU door cell */}
+      {pkuLeg && (
+        <div style={{ ...doorCell, borderRight: `1px dashed ${T.border}` }}>
+          <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
+            letterSpacing: "0.09em", color: T.accent }}>Pick-up</span>
+          <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text }}>
+            {pkuLeg.pol || "—"}
+          </span>
+          {pkuLeg.polName && (
+            <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{pkuLeg.polName}</span>
           )}
+          <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted, marginTop: 2 }}>
+            Carrier's Haulage →
+          </span>
         </div>
-        {canEdit && (
-          <button type="button"
-            disabled={!canSearch}
-            onClick={() => canSearch && setPickerOpen(true)}
-            style={{ background: "none", border: `1px solid ${canSearch ? T.border : T.border}`,
-              borderRadius: 6, padding: "5px 12px", cursor: canSearch ? "pointer" : "not-allowed",
-              fontFamily: T.body, fontSize: 12, color: canSearch ? T.text : T.textMuted,
-              opacity: canSearch ? 1 : 0.5 }}
-            onMouseEnter={e => { if (canSearch) { e.currentTarget.style.borderColor = T.accent; e.currentTarget.style.color = T.accent; }}}
-            onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = canSearch ? T.text : T.textMuted; }}
-            title={canSearch ? "Search and add a sailing" : "POL, POD and carrier must be set"}>
-            ⚓ Add Sailing
-          </button>
+      )}
+
+      {/* POL */}
+      <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 3 }}>
+        <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
+          letterSpacing: "0.09em", color: T.textMuted }}>Port of Loading</span>
+        <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700,
+          color: portPol ? T.text : T.border }}>{portPol || "—"}</span>
+        {portPolName && (
+          <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{portPolName}</span>
         )}
       </div>
 
+      {/* Centre: ETD / transit / ETA / carrier / routing term */}
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+        gap: 6, padding: "12px 24px",
+        borderLeft: `1px solid ${T.border}`, borderRight: `1px solid ${T.border}`,
+        background: T.surface }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
+            <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
+              letterSpacing: "0.09em", color: T.textMuted }}>ETD</span>
+            <span style={{ fontFamily: T.mono, fontSize: 12, color: shipment.etd ? T.text : T.border }}>
+              {shipment.etd || "—"}</span>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+            {transitDays !== null && transitDays >= 0
+              ? <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: T.accent,
+                  background: T.accentBg, border: `1px solid ${T.accent}33`,
+                  borderRadius: 10, padding: "2px 10px", whiteSpace: "nowrap" }}>
+                  {transitDays}d transit
+                </span>
+              : transitDays !== null && transitDays < 0
+                ? <span title="ETA is before ETD — check leg dates" style={{ fontFamily: T.mono, fontSize: 11,
+                    fontWeight: 700, color: T.warning, background: T.warning + "18",
+                    border: `1px solid ${T.warning}44`, borderRadius: 10,
+                    padding: "2px 10px", whiteSpace: "nowrap", cursor: "default" }}>
+                    ⚠ dates
+                  </span>
+                : <span style={{ color: T.border, fontSize: 16 }}>→</span>}
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
+            <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
+              letterSpacing: "0.09em", color: T.textMuted }}>ETA</span>
+            <span style={{ fontFamily: T.mono, fontSize: 12, color: shipment.eta ? T.text : T.border }}>
+              {shipment.eta || "—"}</span>
+          </div>
+        </div>
+        {tsps.length > 0 && (
+          <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap", justifyContent: "center" }}>
+            {tsps.map((tsp, i) => (
+              <span key={`${tsp.code}-${i}`} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                {i > 0 && <span style={{ color: T.textMuted, fontSize: 10 }}>›</span>}
+                <span title={tsp.name || tsp.code}
+                  style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text,
+                    background: T.bg, border: `1px solid ${T.border}`, borderRadius: 4,
+                    padding: "1px 7px" }}>
+                  {tsp.code}
+                </span>
+              </span>
+            ))}
+          </div>
+        )}
+        {(() => {
+          const displayCarrier = shipment.carrierCode || contractCarrierCode;
+          return (
+            <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700,
+              color: displayCarrier ? T.accent : T.border }}>
+              {displayCarrier || "—"}
+            </span>
+          );
+        })()}
+        {shipment.routingTerm && (
+          <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: T.text,
+            background: T.bg, border: `1px solid ${T.border}`, borderRadius: 4, padding: "1px 7px" }}>
+            {shipment.routingTerm}
+          </span>
+        )}
+      </div>
+
+      {/* POD */}
+      <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 3, textAlign: "right" }}>
+        <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
+          letterSpacing: "0.09em", color: T.textMuted }}>Port of Discharge</span>
+        <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700,
+          color: portPod ? T.text : T.border }}>{portPod || "—"}</span>
+        {portPodName && (
+          <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{portPodName}</span>
+        )}
+      </div>
+
+      {/* DEL door cell */}
+      {delLeg && (
+        <div style={{ ...doorCell, borderLeft: `1px dashed ${T.border}`, textAlign: "right" }}>
+          <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
+            letterSpacing: "0.09em", color: T.accent }}>Delivery</span>
+          <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text }}>
+            {delLeg.pod || "—"}
+          </span>
+          {delLeg.podName && (
+            <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{delLeg.podName}</span>
+          )}
+          <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted, marginTop: 2 }}>
+            → Carrier's Haulage
+          </span>
+        </div>
+      )}
+
+    </div>
+  );
+};
+
+// ─── Schedules Panel ──────────────────────────────────────────────────────────
+
+// Sailing search/apply mechanics (SailingPickerModal, applySailingToLegs, commitSailing)
+// live in ShipmentSchedulesPage now, next to the Route Legs section its "Add Sailing"
+// button belongs to. This panel is purely a read-only log of what changed and when —
+// same entity_events idiom already used for cost lines/documents/services.
+export const ScheduleHistoryPanel = ({ shipment }) => {
+  const [events,   setEvents]   = useState([]);
+  const [loading,  setLoading]  = useState(true);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    setLoading(true);
+    api.schedules.events(shipment.id)
+      .then(setEvents)
+      .catch(() => setEvents([]))
+      .finally(() => setLoading(false));
+  }, [shipment.id]);
+
+  const EVENT_COLOR = { SAVED: T.success, REMOVED: T.danger };
+
+  return (
+    <div style={{ background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, overflow: "hidden" }}>
+      <button type="button" onClick={() => setExpanded(o => !o)}
+        style={{ display: "flex", alignItems: "center", gap: 10, width: "100%",
+          padding: "14px 20px", background: "none", border: "none", cursor: "pointer", textAlign: "left",
+          borderBottom: expanded ? `1px solid ${T.border}` : "none" }}>
+        <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.textMuted }}>
+          {expanded ? "▾" : "▸"}
+        </span>
+        <span style={{ fontFamily: T.head, fontSize: 15, fontWeight: 800, color: T.text }}>Schedule History</span>
+        {events.length > 0 && (
+          <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700,
+            background: T.accentBg, color: T.accent, border: `1px solid ${T.accent}33`,
+            borderRadius: 4, padding: "1px 7px" }}>{events.length}</span>
+        )}
+      </button>
+
+      {expanded && (
       <div style={{ padding: "14px 20px" }}>
         {loading ? (
           <div style={{ display: "flex", alignItems: "center", gap: 8, color: T.textMuted,
             fontFamily: T.body, fontSize: 12 }}>
             <Spinner size="sm" /> Loading…
           </div>
-        ) : schedules.length === 0 ? (
-          <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, fontStyle: "italic",
-            padding: "8px 0" }}>
-            No sailings saved.
-            {canSearch && canEdit ? " Click 'Add Sailing' to search." : ""}
+        ) : events.length === 0 ? (
+          <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, fontStyle: "italic", padding: "8px 0" }}>
+            No schedule changes yet — sailings picked via "Add Sailing" will show up here.
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {schedules.map(s => (
-              <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 12,
-                padding: "10px 14px", background: T.bg,
-                border: `1px solid ${T.border}`, borderRadius: 8 }}>
-                <div style={{ flex: 1, display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 120 }}>
-                    <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.text }}>
-                      {s.vesselName || "—"}
-                    </span>
-                    <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
-                      {s.service} · Voy {s.voyageNumber}
-                    </span>
-                  </div>
-                  <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-                    <span style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>
-                      {s.etd || "—"} → {s.eta || "—"}
-                    </span>
-                    <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: T.accent,
-                      background: T.accentBg, borderRadius: 4, padding: "1px 7px",
-                      border: `1px solid ${T.accent}33` }}>
-                      {s.transitDays}d
-                    </span>
-                    {s.isMock && mockBadge()}
-                  </div>
-                  <span style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, marginLeft: "auto" }}>
-                    Saved {new Date(s.savedAt).toLocaleDateString("en-GB")}
-                    {s.savedBy ? ` by ${s.savedBy}` : ""}
+            {events.map(ev => {
+              const m = ev.meta ? JSON.parse(ev.meta) : {};
+              const color = EVENT_COLOR[ev.event_type] || T.textMuted;
+              return (
+                <div key={ev.id} style={{ display: "flex", alignItems: "center", gap: 12,
+                  padding: "10px 14px", background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8 }}>
+                  <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, letterSpacing: "0.03em",
+                    padding: "2px 8px", borderRadius: 4, textTransform: "uppercase",
+                    background: color + "22", color, border: `1px solid ${color}55`, flexShrink: 0 }}>
+                    {ev.event_type}
                   </span>
+                  <div style={{ flex: 1, display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center", minWidth: 0 }}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 120 }}>
+                      <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.text }}>
+                        {m.vesselName || "—"}
+                      </span>
+                      <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
+                        {m.service || "—"}{m.voyageNumber ? ` · Voy ${m.voyageNumber}` : ""}
+                      </span>
+                    </div>
+                    <span style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>
+                      {m.pol || "—"} → {m.pod || "—"}
+                    </span>
+                    {(m.etd || m.eta) && (
+                      <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+                        {m.etd || "—"} → {m.eta || "—"}
+                      </span>
+                    )}
+                    <span style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, marginLeft: "auto", whiteSpace: "nowrap" }}>
+                      {new Date(ev.created_at).toLocaleDateString("en-GB")}
+                      {m.actor ? ` by ${m.actor}` : ""}
+                    </span>
+                  </div>
                 </div>
-                {canEdit && (
-                  <button type="button" onClick={() => setConfirm(s.id)}
-                    style={{ background: "none", border: "none", cursor: "pointer",
-                      color: T.textMuted, fontSize: 14, padding: "0 4px", lineHeight: 1,
-                      flexShrink: 0 }}
-                    onMouseEnter={e => { e.currentTarget.style.color = T.danger; }}
-                    onMouseLeave={e => { e.currentTarget.style.color = T.textMuted; }}
-                    title="Remove sailing">✕</button>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
-
-      {confirmSailing && (
-        <Modal title="Replace sailing?" onClose={() => setConfirmSailing(null)} width={420}>
-          <p style={{ fontFamily: T.body, fontSize: 14, color: T.text, margin: "0 0 6px", lineHeight: 1.6 }}>
-            This will replace{" "}
-            <strong style={{ fontFamily: T.mono }}>{schedules[0]?.vesselName || "the current sailing"}</strong>
-            {" "}with{" "}
-            <strong style={{ fontFamily: T.mono }}>{confirmSailing.vesselName}</strong>
-            {" "}· Voy {confirmSailing.voyageNumber}.
-          </p>
-          <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, margin: "0 0 20px" }}>
-            The previous sailing record will be removed.
-          </p>
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <Btn variant="secondary" onClick={() => setConfirmSailing(null)}>Cancel</Btn>
-            <Btn onClick={() => { commitSailing(confirmSailing); setConfirmSailing(null); }}>Replace</Btn>
-          </div>
-        </Modal>
-      )}
-
-      {pickerOpen && (
-        <SailingPickerModal
-          pol={pol} pod={pod} carrierCode={carrier}
-          routingTerm={shipment.routingTerm}
-          activeSailing={schedules[0] || null}
-          onSelect={handleSelect}
-          onClose={() => setPickerOpen(false)}
-          selectLabel="Add →" />
-      )}
-      {confirm && (
-        <ConfirmModal
-          message="Remove this sailing from the shipment?"
-          onConfirm={() => handleRemove(confirm)}
-          onCancel={() => setConfirm(null)} />
       )}
     </div>
   );
@@ -3113,7 +2996,7 @@ const SchedulesPanel = ({ shipment }) => {
 const PRIORITY_COLOR = { High: T.danger, Medium: T.warning, Low: T.textMuted, Critical: "#f97316" };
 const STATUS_DOT = { Done: T.success, "In Progress": T.accent, Ready: T.textMuted, Blocked: T.danger };
 
-const RelatedTicketsPanel = ({ shipmentId }) => {
+export const RelatedTicketsPanel = ({ shipmentId }) => {
   const [tickets,  setTickets]  = useState([]);
   const [loading,  setLoading]  = useState(true);
 
@@ -3185,7 +3068,7 @@ const RelatedTicketsPanel = ({ shipmentId }) => {
 
 // ──────────────────────────────────────────────────────────────────────────────
 
-const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, onEdit, onRefresh, onAddContainer, onEditContainer, onDeleteContainer, detailAction = null, onDetailActionConsumed }) => {
+const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, onEdit, onRefresh, onAddContainer, onEditContainer, onDeleteContainer, onManageContainers, onManagePartiesOffices, onManageSchedules, onManageMilestones, onManageTickets, onManageAccountingCosts, onManageAccountingInvoices, onManageAccountingGp, detailAction = null, onDetailActionConsumed }) => {
   const { canEditShipments: canEdit } = useAuth();
   const [ctrModal,       setCtrModal]       = useState(null);
   const [linkVesselOpen, setLinkVesselOpen] = useState(false);
@@ -3200,21 +3083,24 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
   const [unreadCount,    setUnreadCount]    = useState(0);
   const [ediOpen,        setEdiOpen]        = useState(false);
   const [ediMessages,    setEdiMessages]    = useState([]);
-  const [screening,      setScreening]      = useState(null);
   const [spaceBadge,     setSpaceBadge]     = useState(shipment.spaceBadge || "");
-  const [complianceOpen, setComplianceOpen] = useState(false);
   const [contractOpen,   setContractOpen]   = useState(false);
   const [ctrListOpen,    setCtrListOpen]    = useState(false);
   const [ctrFromList,    setCtrFromList]    = useState(false);
   const [eventsCtr,      setEventsCtr]      = useState(null);
   const [dgPolicy,             setDgPolicy]             = useState(null);
-  const [contractCarrierCode,  setContractCarrierCode]  = useState("");
-  const [openAccountingSignal, setOpenAccountingSignal] = useState(0);
-  const [legs,                 setLegs]                 = useState([]);
   const [pendingMatches,       setPendingMatches]       = useState(null);
   const [shareUrl,             setShareUrl]             = useState(null);
   const [shareLoading,         setShareLoading]         = useState(false);
   const [milestoneProg,        setMilestoneProg]        = useState(null);
+
+  // Milestones are now a promoted sub-page, so the header progress chip needs
+  // its own lightweight fetch instead of relying on MilestonePanel's onProgress.
+  useEffect(() => {
+    api.milestones.list(shipment.id)
+      .then(m => setMilestoneProg({ done: m.filter(x => x.completedAt).length, total: m.length }))
+      .catch(() => setMilestoneProg({ done: 0, total: 0 }));
+  }, [shipment.id]);
 
   const closeCtrModal = (fromList = ctrFromList) => {
     setCtrModal(null);
@@ -3226,7 +3112,6 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
   useEffect(() => {
     if (!detailAction) return;
     if (detailAction === "shp-cargo")      setCtrListOpen(true);
-    if (detailAction === "shp-accounting") setOpenAccountingSignal(s => s + 1);
     onDetailActionConsumed?.();
   }, [detailAction]);
 
@@ -3234,11 +3119,6 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
   useEffect(() => {
     document.title = `${shipment.id} · CargoDesk`;
     return () => { document.title = "CargoDesk"; };
-  }, [shipment.id]);
-
-  // Load latest screening result on mount
-  useEffect(() => {
-    api.screening.get(shipment.id).then(s => setScreening(s)).catch(() => {});
   }, [shipment.id]);
 
   // Warn before closing tab when a form has unsaved changes
@@ -3363,28 +3243,12 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
   const carrier  = carriers.find(c => c.code === shipment.carrierCode);
   const ctrs     = containers.filter(c => c.shipmentId === shipment.id);
   const totalTEU = ctrs.reduce((s, c) => s + teuOf(c.size), 0);
-  const transitDays = (() => {
-    if (!shipment.etd || !shipment.eta) return null;
-    const d1 = new Date(shipment.etd), d2 = new Date(shipment.eta);
-    if (isNaN(d1) || isNaN(d2)) return null;
-    return Math.round((d2 - d1) / 864e5);
-  })();
-  const tsps = legs.length > 1
-    ? legs.slice(0, -1).map(l => ({ code: l.pod, name: l.podName })).filter(t => t.code)
-    : [];
 
   useEffect(() => {
-    api.legs.list(shipment.id).then(setLegs).catch(() => {});
-  }, [shipment.id]);
-
-  useEffect(() => {
-    if (!shipment.contractId) { setDgPolicy(null); setContractCarrierCode(""); return; }
+    if (!shipment.contractId) { setDgPolicy(null); return; }
     api.contracts.get(shipment.contractId)
-      .then(c => {
-        setDgPolicy({ dgAllowed: c.dgAllowed, imdgClasses: c.imdgClasses || [] });
-        setContractCarrierCode(c.carrierCode || "");
-      })
-      .catch(() => { setDgPolicy(null); setContractCarrierCode(""); });
+      .then(c => setDgPolicy({ dgAllowed: c.dgAllowed, imdgClasses: c.imdgClasses || [] }))
+      .catch(() => setDgPolicy(null));
   }, [shipment.contractId]);
 
   // Silent pending-contract revalidation: when a Pending shipment has a contractRef,
@@ -3449,49 +3313,21 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
               borderRadius: 4, padding: "2px 9px", letterSpacing: ".06em" }}>FCL</span>
             {/* Milestone progress chip */}
             {milestoneProg?.total > 0 && (
-              <a href="#shp-milestones" style={{ textDecoration: "none" }}>
-                <span title={`${milestoneProg.done} of ${milestoneProg.total} milestones complete`}
-                  style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, cursor: "pointer",
-                    borderRadius: 4, padding: "2px 9px", letterSpacing: ".06em", whiteSpace: "nowrap",
-                    border: milestoneProg.done === milestoneProg.total
-                      ? `1px solid ${T.success}55`
-                      : `1px solid ${T.border}`,
-                    background: milestoneProg.done === milestoneProg.total
-                      ? T.success + "20"
-                      : T.surface,
-                    color: milestoneProg.done === milestoneProg.total ? T.success : T.textMuted,
-                  }}>
-                  {milestoneProg.done === milestoneProg.total ? "✓ " : ""}⚑ {milestoneProg.done}/{milestoneProg.total}
-                </span>
-              </a>
+              <span onClick={() => onManageMilestones ? onManageMilestones() : null}
+                title={`${milestoneProg.done} of ${milestoneProg.total} milestones complete`}
+                style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, cursor: "pointer",
+                  borderRadius: 4, padding: "2px 9px", letterSpacing: ".06em", whiteSpace: "nowrap",
+                  border: milestoneProg.done === milestoneProg.total
+                    ? `1px solid ${T.success}55`
+                    : `1px solid ${T.border}`,
+                  background: milestoneProg.done === milestoneProg.total
+                    ? T.success + "20"
+                    : T.surface,
+                  color: milestoneProg.done === milestoneProg.total ? T.success : T.textMuted,
+                }}>
+                {milestoneProg.done === milestoneProg.total ? "✓ " : ""}⚑ {milestoneProg.done}/{milestoneProg.total}
+              </span>
             )}
-            {/* Compliance badge */}
-            {(() => {
-              const r        = screening?.result;
-              const isHit    = r === "HIT";
-              const overridden = screening?.overriddenAt;
-              const bg    = !r ? T.border + "33" : isHit ? "#ef444420" : "#22c55e20";
-              const color = !r ? T.textMuted    : isHit ? "#ef4444"   : "#22c55e";
-              const label = !r ? "UNSCREENED" : isHit ? "⚠ Compliance review required" : overridden ? "✓ CLEAR*" : "✓ CLEAR";
-              const hitLines = isHit && screening?.hits?.length
-                ? screening.hits.map(h => `${h.field}: ${h.value}`).join("\n")
-                : null;
-              const tooltipText = !r ? "Run compliance screening"
-                : isHit ? `Sanctioned party detected:\n${hitLines}\n\nClick to review`
-                : overridden ? "Cleared via manual override"
-                : "Compliance clear";
-              return (
-                <button onClick={() => setComplianceOpen(true)}
-                  title={tooltipText}
-                  style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, cursor: "pointer",
-                    borderRadius: 4, padding: "2px 9px", letterSpacing: ".06em",
-                    border: `1px solid ${!r ? T.border : isHit ? "#ef444444" : "#22c55e44"}`,
-                    background: bg, color, transition: "opacity .15s",
-                    whiteSpace: "nowrap" }}>
-                  {label}
-                </button>
-              );
-            })()}
             {/* Space badge */}
             {spaceBadge === "exceeded" && (
               <span title="Shipment TEU exceeds remaining space on the linked allocation — no overage reason on record"
@@ -3574,145 +3410,6 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
           <strong>View Only</strong> — your account has read-only access. Contact an admin to request edit permissions.
         </div>
       )}
-
-      {/* Route summary grid */}
-      {(() => {
-        const pkuLeg = legs.find(l => l.legType === "Pick-up" && l.movementType === "Carrier's Haulage");
-        const delLeg = [...legs].reverse().find(l => l.legType === "Delivery" && l.movementType === "Carrier's Haulage");
-        const gridCols = `${pkuLeg ? "auto " : ""}1fr auto 1fr${delLeg ? " auto" : ""}`;
-        const doorCell = { padding: "12px 14px", display: "flex", flexDirection: "column", gap: 3,
-          background: T.surface };
-        return (
-          <div id="shp-route" style={{ display: "grid", gridTemplateColumns: gridCols,
-            background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8,
-            overflow: "hidden", marginBottom: 14 }}>
-
-            {/* PKU door cell */}
-            {pkuLeg && (
-              <div style={{ ...doorCell, borderRight: `1px dashed ${T.border}` }}>
-                <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
-                  letterSpacing: "0.09em", color: T.accent }}>Pick-up</span>
-                <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text }}>
-                  {pkuLeg.pol || "—"}
-                </span>
-                {pkuLeg.polName && (
-                  <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{pkuLeg.polName}</span>
-                )}
-                <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted, marginTop: 2 }}>
-                  Carrier's Haulage →
-                </span>
-              </div>
-            )}
-
-            {/* POL */}
-            <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 3 }}>
-              <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
-                letterSpacing: "0.09em", color: T.textMuted }}>Port of Loading</span>
-              <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700,
-                color: shipment.pol ? T.text : T.border }}>{shipment.pol || "—"}</span>
-              {shipment.polName && (
-                <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{shipment.polName}</span>
-              )}
-            </div>
-
-            {/* Centre: ETD / transit / ETA / carrier / routing term */}
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-              gap: 6, padding: "12px 24px",
-              borderLeft: `1px solid ${T.border}`, borderRight: `1px solid ${T.border}`,
-              background: T.surface }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
-                  <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
-                    letterSpacing: "0.09em", color: T.textMuted }}>ETD</span>
-                  <span style={{ fontFamily: T.mono, fontSize: 12, color: shipment.etd ? T.text : T.border }}>
-                    {shipment.etd || "—"}</span>
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
-                  {transitDays !== null && transitDays >= 0
-                    ? <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: T.accent,
-                        background: T.accentBg, border: `1px solid ${T.accent}33`,
-                        borderRadius: 10, padding: "2px 10px", whiteSpace: "nowrap" }}>
-                        {transitDays}d transit
-                      </span>
-                    : transitDays !== null && transitDays < 0
-                      ? <span title="ETA is before ETD — check leg dates" style={{ fontFamily: T.mono, fontSize: 11,
-                          fontWeight: 700, color: T.warning, background: T.warning + "18",
-                          border: `1px solid ${T.warning}44`, borderRadius: 10,
-                          padding: "2px 10px", whiteSpace: "nowrap", cursor: "default" }}>
-                          ⚠ dates
-                        </span>
-                      : <span style={{ color: T.border, fontSize: 16 }}>→</span>}
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
-                  <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
-                    letterSpacing: "0.09em", color: T.textMuted }}>ETA</span>
-                  <span style={{ fontFamily: T.mono, fontSize: 12, color: shipment.eta ? T.text : T.border }}>
-                    {shipment.eta || "—"}</span>
-                </div>
-              </div>
-              {tsps.length > 0 && (
-                <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap", justifyContent: "center" }}>
-                  {tsps.map((tsp, i) => (
-                    <span key={`${tsp.code}-${i}`} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                      {i > 0 && <span style={{ color: T.textMuted, fontSize: 10 }}>›</span>}
-                      <span title={tsp.name || tsp.code}
-                        style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text,
-                          background: T.bg, border: `1px solid ${T.border}`, borderRadius: 4,
-                          padding: "1px 7px" }}>
-                        {tsp.code}
-                      </span>
-                    </span>
-                  ))}
-                </div>
-              )}
-              {(() => {
-                const displayCarrier = shipment.carrierCode || contractCarrierCode;
-                return (
-                  <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700,
-                    color: displayCarrier ? T.accent : T.border }}>
-                    {displayCarrier || "—"}
-                  </span>
-                );
-              })()}
-              {shipment.routingTerm && (
-                <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: T.text,
-                  background: T.bg, border: `1px solid ${T.border}`, borderRadius: 4, padding: "1px 7px" }}>
-                  {shipment.routingTerm}
-                </span>
-              )}
-            </div>
-
-            {/* POD */}
-            <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 3, textAlign: "right" }}>
-              <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
-                letterSpacing: "0.09em", color: T.textMuted }}>Port of Discharge</span>
-              <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700,
-                color: shipment.pod ? T.text : T.border }}>{shipment.pod || "—"}</span>
-              {shipment.podName && (
-                <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{shipment.podName}</span>
-              )}
-            </div>
-
-            {/* DEL door cell */}
-            {delLeg && (
-              <div style={{ ...doorCell, borderLeft: `1px dashed ${T.border}`, textAlign: "right" }}>
-                <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
-                  letterSpacing: "0.09em", color: T.accent }}>Delivery</span>
-                <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text }}>
-                  {delLeg.pod || "—"}
-                </span>
-                {delLeg.podName && (
-                  <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{delLeg.podName}</span>
-                )}
-                <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted, marginTop: 2 }}>
-                  → Carrier's Haulage
-                </span>
-              </div>
-            )}
-
-          </div>
-        );
-      })()}
 
       {/* Info cards row 1 */}
       <div id="shp-info-ports" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 14 }}>
@@ -3848,6 +3545,18 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
         </div>
       ))}
 
+      {/* Parties & Offices */}
+      <div id="shp-parties" style={{ marginBottom: 22 }}>
+        <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
+          {shipment.shipperName || shipment.consigneeName ? "Parties on file — " : "No parties on file yet — "}
+          <button type="button" onClick={() => onManagePartiesOffices ? onManagePartiesOffices() : null}
+            style={{ background: "none", border: "none", color: T.accent, cursor: "pointer",
+              fontFamily: T.body, fontSize: 12, padding: 0, textDecoration: "underline" }}>
+            View Parties &amp; Offices →
+          </button>
+        </div>
+      </div>
+
       {/* Contract & References  ·  Cargo Details — side by side */}
       <div id="shp-cargo" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12, alignItems: "stretch" }}>
 
@@ -3966,7 +3675,7 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
             </div>
           ))}
         </div>
-        <button type="button" onClick={() => setCtrListOpen(true)}
+        <button type="button" onClick={() => onManageContainers ? onManageContainers() : setCtrListOpen(true)}
           style={{ display: "block", width: "100%", padding: "10px 18px", textAlign: "center",
             fontFamily: T.body, fontSize: 12, color: T.textMuted, background: T.bg, flexShrink: 0,
             border: "none", borderTop: `1px solid ${T.border}22`, cursor: "pointer" }}
@@ -3980,26 +3689,63 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
 
       </div>{/* end 1fr 1fr grid */}
 
-      {/* History + Cost Control side-by-side */}
-      <div id="shp-accounting" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, alignItems: "stretch" }}>
+      <div id="shp-services" style={{ marginBottom: 20 }}>
+        <ServicesPanel shipment={shipment} />
+      </div>
+
+      <div style={{ maxWidth: 560 }}>
         <CompactHistory events={events} onShowAll={() => setHistoryOpen(true)} />
-        <CostControl shipmentId={shipment.id} contractType={shipment.contractType} contractId={shipment.contractId} containers={ctrs} openSignal={openAccountingSignal} />
       </div>
       {historyOpen && <HistoryModal events={events} shipmentId={shipment.id} onClose={() => setHistoryOpen(false)} />}
 
-      {/* Milestone Workflow */}
-      <div id="shp-milestones" style={{ marginTop: 20 }}>
-        <MilestonePanel shipmentId={shipment.id} shipment={shipment} onProgress={setMilestoneProg} />
+      {/* Accounting — promoted to dedicated sub-pages (Invoice Entry / Cost Entry / GP Overview) */}
+      <div id="shp-accounting" style={{ marginTop: 20, fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
+        Cost &amp; revenue lines —{" "}
+        <button type="button" onClick={() => onManageAccountingInvoices ? onManageAccountingInvoices() : null}
+          style={{ background: "none", border: "none", color: T.accent, cursor: "pointer",
+            fontFamily: T.body, fontSize: 12, padding: 0, textDecoration: "underline" }}>
+          View Invoice Entry →
+        </button>
+        {" · "}
+        <button type="button" onClick={() => onManageAccountingCosts ? onManageAccountingCosts() : null}
+          style={{ background: "none", border: "none", color: T.accent, cursor: "pointer",
+            fontFamily: T.body, fontSize: 12, padding: 0, textDecoration: "underline" }}>
+          View Cost Entry →
+        </button>
+        {" · "}
+        <button type="button" onClick={() => onManageAccountingGp ? onManageAccountingGp() : null}
+          style={{ background: "none", border: "none", color: T.accent, cursor: "pointer",
+            fontFamily: T.body, fontSize: 12, padding: 0, textDecoration: "underline" }}>
+          View GP Overview →
+        </button>
       </div>
 
-      {/* Schedules */}
-      <div id="shp-schedules" style={{ marginTop: 20 }}>
-        <SchedulesPanel shipment={shipment} />
+      {/* Schedules, Milestones, Tickets — promoted to dedicated sub-pages */}
+      <div id="shp-schedules" style={{ marginTop: 20, fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
+        Carrier schedule —{" "}
+        <button type="button" onClick={() => onManageSchedules ? onManageSchedules() : null}
+          style={{ background: "none", border: "none", color: T.accent, cursor: "pointer",
+            fontFamily: T.body, fontSize: 12, padding: 0, textDecoration: "underline" }}>
+          View Schedules →
+        </button>
       </div>
 
-      {/* Related Tickets */}
-      <div id="shp-tickets" style={{ marginTop: 20 }}>
-        <RelatedTicketsPanel shipmentId={shipment.id} />
+      <div id="shp-milestones" style={{ marginTop: 12, fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
+        {milestoneProg?.total > 0 ? `${milestoneProg.done}/${milestoneProg.total} milestones complete — ` : "No milestones on file yet — "}
+        <button type="button" onClick={() => onManageMilestones ? onManageMilestones() : null}
+          style={{ background: "none", border: "none", color: T.accent, cursor: "pointer",
+            fontFamily: T.body, fontSize: 12, padding: 0, textDecoration: "underline" }}>
+          View Milestones →
+        </button>
+      </div>
+
+      <div id="shp-tickets" style={{ marginTop: 12, fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
+        Related tickets —{" "}
+        <button type="button" onClick={() => onManageTickets ? onManageTickets() : null}
+          style={{ background: "none", border: "none", color: T.accent, cursor: "pointer",
+            fontFamily: T.body, fontSize: 12, padding: 0, textDecoration: "underline" }}>
+          View Tickets →
+        </button>
       </div>
 
       {/* Modals */}
@@ -4281,14 +4027,6 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
         onClose={() => setEdiOpen(false)}
       />}
 
-      {complianceOpen && (
-        <ComplianceModal
-          shipment={shipment}
-          screening={screening}
-          onChange={s => setScreening(s)}
-          onClose={() => setComplianceOpen(false)}
-        />
-      )}
     </div>
   );
 };

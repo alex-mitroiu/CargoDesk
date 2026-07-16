@@ -115,13 +115,13 @@ module.exports = function customersRoutes(app, ctx) {
 
   app.post("/api/customers", auth(), (req, res) => {
     const { companyName, address1='', address2='', city='', state='', postalCode='',
-            countryIso2='', phone='', fax='', email='', website='', notes='' } = req.body;
+            countryIso2='', phone='', fax='', email='', website='', notes='', currency='USD' } = req.body;
     if (!companyName?.trim()) return err(res, "companyName required");
     const id = `CUS-${uid()}`;
     const createdAt = new Date().toISOString();
     const ccU = countryIso2.toUpperCase().trim();
-    db.prepare("INSERT INTO customers (id,company_name,address1,address2,city,state,postal_code,country_iso2,phone,fax,email,website,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-      .run(id, companyName.trim(), address1, address2, city, state, postalCode, ccU, phone, fax, email, website, notes, createdAt);
+    db.prepare("INSERT INTO customers (id,company_name,address1,address2,city,state,postal_code,country_iso2,phone,fax,email,website,notes,created_at,currency) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+      .run(id, companyName.trim(), address1, address2, city, state, postalCode, ccU, phone, fax, email, website, notes, createdAt, (currency || 'USD').toUpperCase().trim());
     if (sanctionsMap.size > 0) screenCustomer(id);
     const row = db.prepare(`${CUST_JOIN} WHERE c.id=?`).get(id);
     ok(res, mapCustomer(row), 201);
@@ -129,12 +129,12 @@ module.exports = function customersRoutes(app, ctx) {
 
   app.put("/api/customers/:id", auth(), (req, res) => {
     const { companyName, address1='', address2='', city='', state='', postalCode='',
-            countryIso2='', phone='', fax='', email='', website='', notes='' } = req.body;
+            countryIso2='', phone='', fax='', email='', website='', notes='', currency='USD' } = req.body;
     if (!companyName?.trim()) return err(res, "companyName required");
     const ccU = countryIso2.toUpperCase().trim();
     const info = db.prepare(`UPDATE customers SET company_name=?,address1=?,address2=?,city=?,state=?,
-      postal_code=?,country_iso2=?,phone=?,fax=?,email=?,website=?,notes=? WHERE id=?`)
-      .run(companyName.trim(), address1, address2, city, state, postalCode, ccU, phone, fax, email, website, notes, req.params.id);
+      postal_code=?,country_iso2=?,phone=?,fax=?,email=?,website=?,notes=?,currency=? WHERE id=?`)
+      .run(companyName.trim(), address1, address2, city, state, postalCode, ccU, phone, fax, email, website, notes, (currency || 'USD').toUpperCase().trim(), req.params.id);
     if (info.changes === 0) return err(res, "Not found", 404);
     if (sanctionsMap.size > 0) screenCustomer(req.params.id);
     const row = db.prepare(`${CUST_JOIN} WHERE c.id=?`).get(req.params.id);

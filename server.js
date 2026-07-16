@@ -409,6 +409,22 @@ const migrations = [
   "ALTER TABLE shipment_cost_lines ADD COLUMN container_id TEXT DEFAULT ''",
   "ALTER TABLE shipment_cost_lines ADD COLUMN source TEXT DEFAULT 'manual'",
   "ALTER TABLE shipment_cost_lines ADD COLUMN modified_at TEXT",
+  `CREATE TABLE IF NOT EXISTS shipment_services (
+    id             TEXT PRIMARY KEY,
+    shipment_id    TEXT NOT NULL,
+    side           TEXT NOT NULL,
+    service_type   TEXT NOT NULL,
+    status         TEXT NOT NULL DEFAULT 'Requested',
+    vendor_id      TEXT DEFAULT '',
+    vendor_name    TEXT DEFAULT '',
+    office_id      TEXT DEFAULT '',
+    requested_date TEXT DEFAULT '',
+    confirmed_date TEXT DEFAULT '',
+    completed_date TEXT DEFAULT '',
+    notes          TEXT DEFAULT '',
+    created_at     TEXT NOT NULL,
+    created_by     TEXT DEFAULT ''
+  )`,
   `CREATE TABLE IF NOT EXISTS ticket_links (
     id         TEXT PRIMARY KEY,
     from_id    TEXT NOT NULL,
@@ -713,6 +729,38 @@ const migrations = [
     notes        TEXT DEFAULT '',
     created_at   TEXT NOT NULL
   )`,
+  // Rate snapshots — frozen copies of contract_rates at the point they're committed to a
+  // shipment, so a later "Reset to Contract" replays what was actually quoted rather than
+  // silently picking up live carrier rate changes. See TKT-6QT30S.
+  `CREATE TABLE IF NOT EXISTS shipment_rate_snapshots (
+    id            TEXT PRIMARY KEY,
+    shipment_id   TEXT NOT NULL,
+    contract_id   TEXT NOT NULL,
+    generated_at  TEXT NOT NULL,
+    generated_by  TEXT DEFAULT '',
+    reason        TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS shipment_rate_snapshot_lines (
+    id             TEXT PRIMARY KEY,
+    snapshot_id    TEXT NOT NULL,
+    service_code   TEXT DEFAULT '',
+    description    TEXT DEFAULT '',
+    amount         REAL DEFAULT 0,
+    currency       TEXT DEFAULT 'USD',
+    amount_usd     REAL DEFAULT 0,
+    unit           TEXT DEFAULT 'per_container',
+    container_type TEXT DEFAULT '',
+    notes          TEXT DEFAULT ''
+  )`,
+  "ALTER TABLE shipment_cost_lines ADD COLUMN rate_snapshot_id TEXT DEFAULT ''",
+  // Per-container invoice support — a generated FR01/FR02 document can now be scoped to a
+  // single container (container_id set) instead of the whole shipment (container_id empty).
+  // responsible_party is a frozen snapshot of the shipment's Principal at generation time.
+  "ALTER TABLE shipment_documents ADD COLUMN container_id      TEXT DEFAULT ''",
+  "ALTER TABLE shipment_documents ADD COLUMN responsible_party TEXT DEFAULT ''",
+  // Customer's main currency — used to resolve a single grand total on a generated invoice
+  // when its charge lines span multiple currencies, instead of showing several totals.
+  "ALTER TABLE customers ADD COLUMN currency TEXT DEFAULT 'USD'",
 ];
 
 for (const sql of migrations) {
@@ -1399,7 +1447,10 @@ const syncShipmentFromLegs = (shipmentId) => {
          seaLeg.voyage || '', routingTerm, shipmentId);
 };
 
-const mapCostLine     = r => ({ id: r.id, shipmentId: r.shipment_id, type: r.type, chargeCode: r.charge_code, currency: r.currency, amount: r.amount, exchangeRate: r.exchange_rate, amountUsd: Math.round(r.amount * r.exchange_rate * 100) / 100, vatRate: r.vat_rate || 0, vatAmountUsd: Math.round(r.amount * r.exchange_rate * (r.vat_rate || 0) / 100 * 100) / 100, notes: r.notes || '', containerId: r.container_id || '', source: r.source || 'manual', modifiedAt: r.modified_at || null, createdAt: r.created_at });
+const mapCostLine     = r => ({ id: r.id, shipmentId: r.shipment_id, type: r.type, chargeCode: r.charge_code, currency: r.currency, amount: r.amount, exchangeRate: r.exchange_rate, amountUsd: Math.round(r.amount * r.exchange_rate * 100) / 100, vatRate: r.vat_rate || 0, vatAmountUsd: Math.round(r.amount * r.exchange_rate * (r.vat_rate || 0) / 100 * 100) / 100, notes: r.notes || '', containerId: r.container_id || '', source: r.source || 'manual', modifiedAt: r.modified_at || null, createdAt: r.created_at, rateSnapshotId: r.rate_snapshot_id || '' });
+const mapService      = r => ({ id: r.id, shipmentId: r.shipment_id, side: r.side, serviceType: r.service_type, status: r.status, vendorId: r.vendor_id || '', vendorName: r.vendor_name || '', officeId: r.office_id || '', officeCode: r.office_code || '', officeName: r.office_name || '', requestedDate: r.requested_date || '', confirmedDate: r.confirmed_date || '', completedDate: r.completed_date || '', notes: r.notes || '', createdAt: r.created_at, createdBy: r.created_by || '' });
+const mapRateSnapshot     = r => ({ id: r.id, shipmentId: r.shipment_id, contractId: r.contract_id, generatedAt: r.generated_at, generatedBy: r.generated_by || '', reason: r.reason });
+const mapRateSnapshotLine = r => ({ id: r.id, snapshotId: r.snapshot_id, serviceCode: r.service_code || '', description: r.description || '', amount: r.amount, currency: r.currency, amountUsd: r.amount_usd, unit: r.unit || 'per_container', containerType: r.container_type || '', notes: r.notes || '' });
 const mapContainer    = r => ({ id: r.id, shipmentId: r.shipment_id, containerNumber: r.container_number || '', sealNumber: r.seal_number || '', size: r.size, type: r.type, hsCode: r.hs_code || '', cargoDescription: r.cargo_description || '', grossWeightKg: r.gross_weight_kg ?? null, volumeCbm: r.volume_cbm ?? null, isDg: r.is_dg === 1, dgClass: r.dg_class || '' });
 const mapContainerEvent = r => ({ id: r.id, containerId: r.container_id, shipmentId: r.shipment_id, eventType: r.event_type, location: r.location || '', occurredAt: r.occurred_at, recordedBy: r.recorded_by || '', notes: r.notes || '', createdAt: r.created_at });
 const mapAllocation   = r => ({ id: r.id, carrierCode: r.carrier_code, allocatedTEU: r.allocated_teu, effectiveDate: r.effective_date || '', endDate: r.end_date || '', tradeLane: r.trade_lane || '', notes: r.notes || '', alertThreshold: r.alert_threshold ?? 80, pol: r.pol || '', pod: r.pod || '', originLane: r.origin_lane || '', destLane: r.dest_lane || '', coverageScope: r.coverage_scope || 'STRICT', contractId: r.contract_id || '', contractNumber: r.contract_number || '' });
@@ -1588,7 +1639,7 @@ const mapEdiMessage = r => ({
 const mapKbProject = r => ({ id: r.id, name: r.name, key: r.key, color: r.color || '#6366f1', description: r.description || '', createdAt: r.created_at });
 const mapKbVersion = r => ({ id: r.id, projectId: r.project_id, name: r.name, description: r.description || '', status: r.status || 'Planning', releaseDate: r.release_date || null, createdAt: r.created_at });
 const mapKbColumn  = r => ({ id: r.id, projectId: r.project_id, name: r.name, position: r.position ?? 0, color: r.color || '#6366f1', wipLimit: r.wip_limit ?? null, createdAt: r.created_at });
-const mapCustomer            = r => ({ id: r.id, companyName: r.company_name, address1: r.address1 || '', address2: r.address2 || '', city: r.city || '', state: r.state || '', postalCode: r.postal_code || '', countryIso2: r.country_iso2 || '', phone: r.phone || '', fax: r.fax || '', email: r.email || '', website: r.website || '', notes: r.notes || '', createdAt: r.created_at, screeningResult: r.screening_result || null });
+const mapCustomer            = r => ({ id: r.id, companyName: r.company_name, address1: r.address1 || '', address2: r.address2 || '', city: r.city || '', state: r.state || '', postalCode: r.postal_code || '', countryIso2: r.country_iso2 || '', phone: r.phone || '', fax: r.fax || '', email: r.email || '', website: r.website || '', notes: r.notes || '', createdAt: r.created_at, screeningResult: r.screening_result || null, currency: r.currency || 'USD' });
 const mapCustomerIdentifier  = r => ({ id: r.id, customerId: r.customer_id, idType: r.id_type, idCode: r.id_code, countryIso2: r.country_iso2 || '', label: r.label || '', isPrimary: !!r.is_primary, createdAt: r.created_at });
 const mapCustomerScreening   = r => ({ id: r.id, customerId: r.customer_id, screenedAt: r.screened_at, result: r.result, hits: JSON.parse(r.hits || '[]'), overriddenAt: r.overridden_at || null, overrideReason: r.override_reason || null });
 const mapCustomerDoc         = r => ({ id: r.id, customerId: r.customer_id, filename: r.filename, mimeType: r.mime_type, sizeBytes: r.size_bytes, docType: r.doc_type, uploadedBy: r.uploaded_by, createdAt: r.created_at });
@@ -1735,6 +1786,75 @@ const checkOverlap = (carrierCode, effectiveDate, endDate, pol = '', pod = '', e
   return rows.length > 0;
 };
 
+// ─── Shared route/haulage matching (contracts + allocations) ──────────────────
+// One codepath for "does this leg actually cover the requested route + haulage",
+// shared by /api/contracts/match and /api/allocations/match so a Central contract
+// and its own space-config allocations are judged by the identical rule — not two
+// endpoints quietly disagreeing. Deliberately separate from GET /api/contracts
+// (the #schedules search page), which has its own independent-EXISTS-clause
+// logic and is left untouched.
+const linkedPortCodes = code => db.prepare(`
+  SELECT CASE WHEN primary_unlocode=? THEN linked_unlocode ELSE primary_unlocode END AS code
+  FROM linked_ports WHERE primary_unlocode=? OR linked_unlocode=?
+`).all(code, code, code).map(r => r.code);
+
+// Finds a run of legs covering pol->pod as one connected journey. Contracts in this app
+// store legs in two different shapes: sequential TSP hops of ONE journey (leg[i].pod ===
+// leg[i+1].pol, e.g. NLRTM->BEANR->USNYC) and independent ALTERNATE LANES bundled under a
+// single contract (unrelated pol/pod pairs, e.g. an Asia-Europe lane and a separate
+// Europe-US lane on the same contract) — a fixed "whole array is one chain" assumption
+// breaks the second shape. So: try every possible starting leg whose pol matches the query,
+// walk forward only while consecutive legs actually connect, and stop as soon as that
+// walked run's pod reaches the query pod — that's the natural boundary of one lane. Haulage
+// only attaches at the outer edges of the matched run: the first leg's POL haulage
+// (pre-carriage into the run's own first port) and the last leg's POD haulage (on-carriage
+// out of its own last port) — never the legs in between. A single-leg run is the simple case.
+const findMatchingContractLeg = (legs, { pol, pod, needsPolHaulage, needsPodHaulage, pkuLocation = '', delLocation = '' }) => {
+  if (legs.length === 0) return null;
+  const polU = pol.toUpperCase(), podU = pod.toUpperCase();
+  const pkuU = pkuLocation.toUpperCase(), delU = delLocation.toUpperCase();
+  const ordered = [...legs].sort((a, b) => a.leg_order - b.leg_order);
+
+  const polMatches = leg => (leg.pol_linked_allowed ? [leg.pol, ...linkedPortCodes(leg.pol)] : [leg.pol]).includes(polU);
+  const podMatches = leg => (leg.pod_linked_allowed ? [leg.pod, ...linkedPortCodes(leg.pod)] : [leg.pod]).includes(podU);
+
+  const haulageOk = (first, last) => {
+    if (needsPolHaulage) {
+      if (!first.pol_carrier_haulage) return false;
+      if (first.pol_haulage_locations) {
+        const allowed = first.pol_haulage_locations.split(/[\s,]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
+        if (allowed.length > 0 && pkuU && !allowed.includes(pkuU)) return false;
+      }
+    }
+    if (needsPodHaulage) {
+      if (!last.pod_carrier_haulage) return false;
+      if (last.pod_haulage_locations) {
+        const allowed = last.pod_haulage_locations.split(/[\s,]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
+        if (allowed.length > 0 && delU && !allowed.includes(delU)) return false;
+      }
+    }
+    return true;
+  };
+
+  for (let i = 0; i < ordered.length; i++) {
+    if (!polMatches(ordered[i])) continue;
+    let j = i;
+    for (;;) {
+      if (podMatches(ordered[j])) {
+        if (haulageOk(ordered[i], ordered[j])) {
+          return { legs: ordered.slice(i, j + 1), firstLeg: ordered[i], lastLeg: ordered[j],
+            matchKind: (ordered[i].pol === polU && ordered[j].pod === podU) ? "exact" : "linked" };
+        }
+        break; // reached the query pod but haulage failed — this lane is done, try the next start
+      }
+      const next = ordered[j + 1];
+      if (!next || ordered[j].pod !== next.pol) break; // chain doesn't continue — dead end
+      j++;
+    }
+  }
+  return null;
+};
+
 
 // ─── Role helpers (hoisted from inline routes so ctx can include them) ────────
 
@@ -1795,15 +1915,38 @@ const SERVICE_CODE_MAP = {
   INL: 'Inland', INLAND: 'Inland',
 };
 
-function importContractRates(shipmentId, { splitPerContainer = false, includeSell = false } = {}) {
-  const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(shipmentId);
-  if (!shipment || shipment.contract_type !== 'Central' || !shipment.contract_id) return 0;
-  const rates = db.prepare("SELECT * FROM contract_rates WHERE contract_id=? ORDER BY sort_order").all(shipment.contract_id);
-  if (!rates.length) return 0;
+// Freezes a copy of contract_rates at the point they're committed to a shipment. Later edits to
+// contract_rates in MDM never rewrite what was already quoted — "Reset to Contract" replays this
+// frozen snapshot, and "Update Carrier Costs" is the only action that generates a new one. See TKT-6QT30S.
+function createRateSnapshot(shipmentId, contractId, reason, generatedBy = '') {
+  const rates = db.prepare("SELECT * FROM contract_rates WHERE contract_id=? ORDER BY sort_order").all(contractId);
+  if (!rates.length) return null;
+  const snapshotId = `RATE-${uid()}`;
+  const now = new Date().toISOString();
+  db.prepare("INSERT INTO shipment_rate_snapshots (id,shipment_id,contract_id,generated_at,generated_by,reason) VALUES (?,?,?,?,?,?)")
+    .run(snapshotId, shipmentId, contractId, now, generatedBy, reason);
+  for (const r of rates) {
+    db.prepare(`INSERT INTO shipment_rate_snapshot_lines
+      (id,snapshot_id,service_code,description,amount,currency,amount_usd,unit,container_type,notes)
+      VALUES (?,?,?,?,?,?,?,?,?,?)`)
+      .run(`RSL-${uid()}`, snapshotId, r.service_code || '', r.description || '', r.amount,
+           r.currency || 'USD', r.amount_usd, r.unit || 'per_container', r.container_type || '', r.notes || '');
+  }
+  logEntityEvent('rate_snapshot', snapshotId, 'GENERATED', null, null, null,
+    JSON.stringify({ shipmentId, contractId, reason, lineCount: rates.length }));
+  return snapshotId;
+}
+
+// Generates shipment_cost_lines from a frozen rate snapshot (not live contract_rates). Same
+// line-generation logic importContractRates always used — container matching, per-container
+// split, SERVICE_CODE_MAP lookup — just sourced from shipment_rate_snapshot_lines.
+function generateCostLinesFromSnapshot(shipmentId, snapshotId, { splitPerContainer = false, includeSell = false } = {}) {
+  const lines = db.prepare("SELECT * FROM shipment_rate_snapshot_lines WHERE snapshot_id=?").all(snapshotId);
+  if (!lines.length) return 0;
   const ctrs = db.prepare("SELECT id, container_number, size, type FROM containers WHERE shipment_id=?").all(shipmentId);
   const now = new Date().toISOString();
   let created = 0;
-  for (const r of rates) {
+  for (const r of lines) {
     const chargeCode   = SERVICE_CODE_MAP[r.service_code?.toUpperCase()] || 'Other';
     const exchangeRate = (r.amount > 0 && r.amount_usd > 0) ? Math.round((r.amount_usd / r.amount) * 100000) / 100000 : 1;
     const baseNotes    = [r.service_code, r.description].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(' — ');
@@ -1813,10 +1956,10 @@ function importContractRates(shipmentId, { splitPerContainer = false, includeSel
     if (r.unit === 'per_container' && r.container_type && applicableCtrs.length === 0) continue;
     const insertLine = (type, amount, notes, containerId) => {
       const lineId = `CL-${uid()}`;
-      db.prepare("INSERT INTO shipment_cost_lines (id,shipment_id,type,charge_code,currency,amount,exchange_rate,notes,container_id,created_at,source) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
-        .run(lineId, shipmentId, type, chargeCode, r.currency || 'USD', amount, exchangeRate, notes, containerId, now, 'contract');
+      db.prepare("INSERT INTO shipment_cost_lines (id,shipment_id,type,charge_code,currency,amount,exchange_rate,notes,container_id,created_at,source,rate_snapshot_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
+        .run(lineId, shipmentId, type, chargeCode, r.currency || 'USD', amount, exchangeRate, notes, containerId, now, 'contract', snapshotId);
       logEntityEvent('cost_line', lineId, 'IMPORTED', null, null, null,
-        JSON.stringify({ shipmentId, chargeCode, currency: r.currency || 'USD', amount, exchangeRate, containerId }));
+        JSON.stringify({ shipmentId, chargeCode, currency: r.currency || 'USD', amount, exchangeRate, containerId, snapshotId }));
       created++;
     };
     if (r.unit === 'per_container' && splitPerContainer && applicableCtrs.length > 0) {
@@ -1836,6 +1979,21 @@ function importContractRates(shipmentId, { splitPerContainer = false, includeSel
     }
   }
   return created;
+}
+
+// Thin wrapper for the "first import" case — if the shipment has no rate snapshot yet, creates
+// an 'initial' one, then generates cost lines from it. Existing callers (shipment creation with a
+// Central contract, the one-time import-contract endpoint) go through this unchanged; they don't
+// need to know about snapshots. Reset/Update Carrier Costs (routes/shipment-ops.js) call
+// createRateSnapshot/generateCostLinesFromSnapshot directly since they need explicit control over
+// which snapshot is used.
+function importContractRates(shipmentId, opts = {}) {
+  const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(shipmentId);
+  if (!shipment || shipment.contract_type !== 'Central' || !shipment.contract_id) return 0;
+  const existing = db.prepare("SELECT id FROM shipment_rate_snapshots WHERE shipment_id=? ORDER BY generated_at DESC LIMIT 1").get(shipmentId);
+  const snapshotId = existing ? existing.id : createRateSnapshot(shipmentId, shipment.contract_id, 'initial');
+  if (!snapshotId) return 0;
+  return generateCostLinesFromSnapshot(shipmentId, snapshotId, opts);
 }
 
 // ─── Auth middleware ──────────────────────────────────────────────────────────
@@ -1892,8 +2050,9 @@ const ctx = {
   UPLOADS_DIR,
   SVC_ABBR, LEG_LOC_ABBR,
   VALID_ROLES, ROLE_RANK_SV, primaryRoleSV, parseUserRoles,
-  SERVICE_CODE_MAP, importContractRates,
-  mapShipment, mapShipmentLeg, mapCostLine, mapContainer, mapContainerEvent, mapAllocation,
+  SERVICE_CODE_MAP, importContractRates, createRateSnapshot, generateCostLinesFromSnapshot,
+  mapShipment, mapShipmentLeg, mapCostLine, mapService, mapContainer, mapContainerEvent, mapAllocation,
+  mapRateSnapshot, mapRateSnapshotLine,
   mapCarrier, mapVessel, mapPortLocation, mapLinkedPort, mapTradeLane,
   mapScopeItem, mapAccessConfig, mapOffice, mapBranch, mapOrgCountry, mapRegion, mapCountry, mapTicketLink, mapTicket,
   mapTestItem, mapTestCaseLink,
@@ -1906,6 +2065,7 @@ const ctx = {
   ssoNonces,
   syncShipmentFromLegs,
   checkOverlap,
+  linkedPortCodes, findMatchingContractLeg,
   screenShipmentById,
   bcrypt, jwt, JWT_SECRET,
   inverseLinkLabel,

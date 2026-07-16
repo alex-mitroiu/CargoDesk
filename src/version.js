@@ -2,11 +2,17 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.28.0";
+export const VERSION   = "0.29.0";
 export const BUILD     = "2026-07-15";
-export const CODENAME  = "Waypoint";
+export const CODENAME  = "Bearing";
 
 export const CHANGELOG = [
+  {
+    version:  "0.29.0",
+    date:     "2026-07-15",
+    codename: "Bearing",
+    summary:  "Persistent Shipment Header: ShipmentHeaderBar now sits above the Overview page and all 8 promoted sub-pages — shipment ID (with copy-to-clipboard), FCL/LCL, route, dates, Incoterm, routing term, vessel, shipper/consignee, contract, TEU, and Loop Code, plus a Door → POL ──carrier── POD → Terminal journey bar reusing the Command Center's existing node visual language rather than inventing a new one. The journey bar is TSP-aware — it resolves the actual first/last SEA leg instead of assuming shipment.pol/pod is the sea port, since a Door pickup or multi-leg transshipment journey makes those two different things. Dedicated Services (TKT-9DGDNP): new shipment_services table and GET/POST/PATCH/DELETE routes back a two-column Export/Import ServicesPanel dashboard embedded on Overview — each service (VGM, Haulage, Fumigation, Storage, Customs Clearance, ...) carries a vendor (CustomerCombobox), an office defaulted from the shipment's EMO/IMO per side, and a Requested → Confirmed → Completed/Cancelled lifecycle logged through the existing entity_events audit mechanism. Schedules page overhaul: Route Legs (the same LegsTable used in the full shipment form, Contract Type/No. columns hidden here) is now exposed directly on this page with two real fixes — legs auto-order Pick-up-first/Delivery-last on every add or type change (previously new legs just appended, landing after an existing Delivery leg), and \"Add Sailing\" is now fully TSP-aware: picking a multi-leg sailing updates every affected SEA leg (previously only ever touched shipment_schedules and the first leg, never the rest), and switching from a TSP sailing back to a direct one correctly resets the leg's POD instead of leaving it stuck on the old transshipment hub. \"Add Sailing\" moved next to Route Legs; the old always-expanded Sailings box is now a read-only Schedule History panel — a proper SAVED/REMOVED audit trail with actor and timestamp, same entity_events idiom as cost lines and documents. RouteSummaryBar relocated from Overview to the Schedules page, next to the legs and sailings it summarizes. About page gains an Architectural Details tab with an in-app system/database/workflow reference plus a link to the full interactive diagram.",
+  },
   {
     version:  "0.28.0",
     date:     "2026-07-15",

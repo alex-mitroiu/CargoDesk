@@ -1,7 +1,7 @@
 "use strict";
 
 module.exports = function allocationsRoutes(app, ctx) {
-  const { db, ok, err, uid, mapAllocation, checkOverlap, logEntityEvent } = ctx;
+  const { db, ok, err, uid, mapAllocation, checkOverlap, logEntityEvent, linkedPortCodes, findMatchingContractLeg } = ctx;
 
   app.get("/api/allocations", (req, res) => {
     ok(res, db.prepare("SELECT * FROM allocations ORDER BY effective_date DESC").all().map(mapAllocation));
@@ -52,16 +52,21 @@ module.exports = function allocationsRoutes(app, ctx) {
   });
 
   // Match allocations for a shipment (placed before /conflicts so static segment wins)
+  // needsPolHaulage/needsPodHaulage mirror /api/contracts/match's params exactly — an
+  // allocation is only as good as the contract behind it, so when the shipment needs carrier
+  // haulage this checks the allocation's OWN linked contract's leg for that same coverage
+  // (via the shared findMatchingContractLeg), instead of treating a pol/pod match alone as
+  // sufficient. An allocation with no linked contract_id can't be verified either way, so it's
+  // passed through rather than penalized — same "don't disprove it" default as an unscreened party.
   app.get("/api/allocations/match", (req, res) => {
-    const { pol = "", pod = "", etd = "" } = req.query;
+    const { pol = "", pod = "", etd = "", needsPolHaulage = "", needsPodHaulage = "",
+            pkuLocation = "", delLocation = "" } = req.query;
     if (!pol || !pod || !etd) return ok(res, []);
     const polU = pol.toUpperCase(), podU = pod.toUpperCase();
-    const linkedTo = code => db.prepare(`
-      SELECT CASE WHEN primary_unlocode=? THEN linked_unlocode ELSE primary_unlocode END AS code
-      FROM linked_ports WHERE primary_unlocode=? OR linked_unlocode=?
-    `).all(code, code, code).map(r => r.code);
-    const polAll = [polU, ...linkedTo(polU)];
-    const podAll = [podU, ...linkedTo(podU)];
+    const needsPol = needsPolHaulage === "1" || needsPolHaulage === "true";
+    const needsPod = needsPodHaulage === "1" || needsPodHaulage === "true";
+    const polAll = [polU, ...linkedPortCodes(polU)];
+    const podAll = [podU, ...linkedPortCodes(podU)];
     const ph = arr => arr.map(() => "?").join(",");
     const allocs = db.prepare(`
       SELECT * FROM allocations
@@ -69,18 +74,25 @@ module.exports = function allocationsRoutes(app, ctx) {
       AND effective_date <= ? AND end_date >= ?
       ORDER BY effective_date DESC
     `).all(...polAll, ...podAll, etd, etd);
-    const results = allocs.map(a => {
-      const { consumed_teu } = db.prepare(`
-        SELECT COALESCE(SUM(CASE WHEN c.size=20 THEN 1 WHEN c.size IN (40,45) THEN 2 ELSE 0 END), 0) AS consumed_teu
-        FROM containers c
-        JOIN shipments s ON s.id = c.shipment_id
-        WHERE s.allocation_id = ?
-      `).get(a.id);
-      const base      = mapAllocation(a);
-      const matchKind = (a.pol === polU && a.pod === podU) ? "exact" : "linked";
-      return { ...base, consumedTEU: consumed_teu, remainingTEU: Math.max(0, base.allocatedTEU - consumed_teu),
-               matchKind, linkedPolVia: a.pol !== polU ? a.pol : null, linkedPodVia: a.pod !== podU ? a.pod : null };
-    });
+    const results = allocs
+      .filter(a => {
+        if (!needsPol && !needsPod) return true;
+        if (!a.contract_id) return true;
+        const legs = db.prepare("SELECT * FROM contract_legs WHERE contract_id=?").all(a.contract_id);
+        return !!findMatchingContractLeg(legs, { pol: a.pol, pod: a.pod, needsPolHaulage: needsPol, needsPodHaulage: needsPod, pkuLocation, delLocation });
+      })
+      .map(a => {
+        const { consumed_teu } = db.prepare(`
+          SELECT COALESCE(SUM(CASE WHEN c.size=20 THEN 1 WHEN c.size IN (40,45) THEN 2 ELSE 0 END), 0) AS consumed_teu
+          FROM containers c
+          JOIN shipments s ON s.id = c.shipment_id
+          WHERE s.allocation_id = ?
+        `).get(a.id);
+        const base      = mapAllocation(a);
+        const matchKind = (a.pol === polU && a.pod === podU) ? "exact" : "linked";
+        return { ...base, consumedTEU: consumed_teu, remainingTEU: Math.max(0, base.allocatedTEU - consumed_teu),
+                 matchKind, linkedPolVia: a.pol !== polU ? a.pol : null, linkedPodVia: a.pod !== podU ? a.pod : null };
+      });
     ok(res, results);
   });
 

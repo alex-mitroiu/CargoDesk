@@ -1,7 +1,7 @@
 import { T } from "../../tokens";
 import Btn from "./Btn";
 
-const Modal = ({ title, onClose, children, width = 520, minHeight }) => (
+const Modal = ({ title, onClose, children, width = 520, minHeight, hideClose = false }) => (
   <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.78)", display: "flex",
       alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20 }}>
     <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12,
@@ -11,11 +11,13 @@ const Modal = ({ title, onClose, children, width = 520, minHeight }) => (
       <div style={{ padding: "18px 24px", borderBottom: `1px solid ${T.border}`,
         display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <h2 style={{ fontFamily: T.head, fontSize: 18, fontWeight: 700, color: T.text, margin: 0 }}>{title}</h2>
-        <button onClick={onClose} style={{ background: "none", border: "none", color: T.textMuted,
-          cursor: "pointer", fontSize: 22, lineHeight: 1, padding: "0 4px",
-          borderRadius: 4, transition: "color 0.14s" }}
-          onMouseEnter={e => e.currentTarget.style.color = T.text}
-          onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>×</button>
+        {!hideClose && (
+          <button onClick={onClose} style={{ background: "none", border: "none", color: T.textMuted,
+            cursor: "pointer", fontSize: 22, lineHeight: 1, padding: "0 4px",
+            borderRadius: 4, transition: "color 0.14s" }}
+            onMouseEnter={e => e.currentTarget.style.color = T.text}
+            onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>×</button>
+        )}
       </div>
       <div style={{ padding: "22px 24px" }}>{children}</div>
     </div>
