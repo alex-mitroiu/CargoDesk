@@ -1,10 +1,10 @@
-﻿import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import useSaving from "../hooks/useSaving";
 import { T, INCOTERMS_2020, teuOf,
-         statusVariant, contractVariant, IMDG_CLASSES } from "../tokens";
+         statusVariant, contractVariant, IMDG_CLASSES,
+         worstComplianceState, CUTOFF_STATE_VARIANT, COMPLIANCE_STATE_LABEL } from "../tokens";
 import { useAuth } from "../AuthContext";
 import { ContainerTypeField } from "../components/shared/ContainerTypePickerModal";
-import { VesselField } from "../components/shared/VesselCombobox";
 import { CommodityCombobox, GradePill } from "../components/shared/CommodityCombobox";
 import CustomerCombobox from "../components/shared/CustomerCombobox";
 import ServicesPanel from "../components/shared/ServicesPanel";
@@ -17,39 +17,9 @@ import Badge from "../components/primitives/Badge";
 import {Inp, Sel, BtnToggle} from "../components/primitives/Form";
 import { Modal, ConfirmModal } from "../components/primitives/Modal";
 import DatePicker from "../components/primitives/DatePicker";
-import { generateBLDraft, generatePackingList, generateContainerManifest } from "../utils/documentGenerator";
 import SailingPickerModal from "../components/shared/SailingPickerModal";
 import ContainerEventsPanel from "../components/shared/ContainerEventsPanel";
 
-
-// ─── Refresh button ──────────────────────────────────────────────────────────
-const RefreshBtn = ({ onRefresh }) => {
-  const [spinning, setSpinning] = useState(false);
-  const handleClick = async () => {
-    if (spinning) return;
-    setSpinning(true);
-    try { await onRefresh?.(); } catch {} finally { setTimeout(() => setSpinning(false), 600); }
-  };
-  return (
-    <>
-      <style>{`@keyframes sdp-spin { to { transform: rotate(360deg); } }`}</style>
-      <button
-        type="button"
-        onClick={handleClick}
-        title="Refresh shipment"
-        style={{
-          background: "none", border: `1px solid ${T.border}`, borderRadius: 7,
-          padding: "6px 11px", cursor: "pointer", color: T.textMuted,
-          fontSize: 16, lineHeight: 1, display: "inline-flex", alignItems: "center",
-          transition: "color .12s, border-color .12s",
-        }}
-        onMouseEnter={e => { e.currentTarget.style.color = T.text; e.currentTarget.style.borderColor = T.border; }}
-        onMouseLeave={e => { e.currentTarget.style.color = T.textMuted; e.currentTarget.style.borderColor = T.border; }}>
-        <span style={{ display: "inline-block", animation: spinning ? "sdp-spin .7s linear infinite" : "none" }}>↻</span>
-      </button>
-    </>
-  );
-};
 
 // ─── Section header with hover tooltip ───────────────────────────────────────
 
@@ -58,6 +28,8 @@ const SECTION_TIPS = {
   "②": "HS Code (Harmonized System customs tariff number) and a plain-language description of the cargo contents. Both are mandatory for booking and BL documentation.",
   "③": "Gross weight in kilograms (total including packaging and dunnage) and cargo volume in cubic metres. Required for vessel stowage planning and weight declarations.",
   "④": "IMDG (International Maritime Dangerous Goods) classification. Enable only if this container carries hazardous materials — additional documentation and placarding will be required.",
+  "⑤": "Verified Gross Mass (VGM) declaration and Container Yard cutoff — carrier-facing compliance deadlines for FCL export. Both optional; leave blank if not yet known.",
+  "⑥": "Free-time windows before demurrage (holding the box at the terminal) or detention (holding it outside the terminal) charges start accruing. Origin is counted from Gate In, destination from Discharged — see the container's Lifecycle Events for actual dates. Leave blank if not tracked for this container.",
 };
 
 const SectionHeader = ({ n, title }) => {
@@ -126,6 +98,12 @@ export const ContainerForm = ({ init = {}, onSave, onCancel, onDirtyChange, dgPo
     volumeCbm:        init.volumeCbm        != null ? String(init.volumeCbm)     : "",
     isDg:             init.isDg             || false,
     dgClass:          init.dgClass          || "",
+    vgmWeightKg:      init.vgmWeightKg      != null ? String(init.vgmWeightKg) : "",
+    vgmStatus:        init.vgmStatus        || "Pending",
+    vgmCutoff:        init.vgmCutoff        || "",
+    cyCutoff:         init.cyCutoff         || "",
+    originFreeTimeDays: init.originFreeTimeDays != null ? String(init.originFreeTimeDays) : "",
+    destFreeTimeDays:   init.destFreeTimeDays   != null ? String(init.destFreeTimeDays)   : "",
   });
   const [f, setF] = useState({ ...initSnap.current });
   const set = k => v => setF(p => ({ ...p, [k]: v }));
@@ -140,7 +118,9 @@ export const ContainerForm = ({ init = {}, onSave, onCancel, onDirtyChange, dgPo
       f.size !== s.size ||
       f.type !== s.type || f.hsCode !== s.hsCode || f.cargoDescription !== s.cargoDescription ||
       f.grossWeightKg !== s.grossWeightKg || f.volumeCbm !== s.volumeCbm ||
-      f.isDg !== s.isDg || f.dgClass !== s.dgClass;
+      f.isDg !== s.isDg || f.dgClass !== s.dgClass ||
+      f.vgmWeightKg !== s.vgmWeightKg || f.vgmStatus !== s.vgmStatus || f.vgmCutoff !== s.vgmCutoff ||
+      f.cyCutoff !== s.cyCutoff || f.originFreeTimeDays !== s.originFreeTimeDays || f.destFreeTimeDays !== s.destFreeTimeDays;
     onDirtyChange?.(dirty);
   }, [f]);
 
@@ -292,6 +272,42 @@ export const ContainerForm = ({ init = {}, onSave, onCancel, onDirtyChange, dgPo
         )}
       </div>
 
+      {/* ⑤ Compliance & Cutoffs */}
+      <SectionHeader n="⑤" title="Compliance & Cutoffs" />
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <Inp label="VGM Weight (kg)" value={f.vgmWeightKg}
+          onChange={v => { if (v === "" || /^\d*\.?\d*$/.test(v)) set("vgmWeightKg")(v); }}
+          type="text" inputMode="decimal" placeholder="18 500"
+          hint="Verified Gross Mass — declared for carrier submission" />
+        <Sel label="VGM Status" value={f.vgmStatus} onChange={set("vgmStatus")}
+          hint="Has the VGM been submitted to the carrier?"
+          options={[{ value: "Pending", label: "Pending" }, { value: "Submitted", label: "Submitted" }]} />
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <DatePicker label="VGM Cutoff" value={f.vgmCutoff} onChange={set("vgmCutoff")}
+          hint="Carrier deadline for VGM submission" />
+        <DatePicker label="CY Cutoff" value={f.cyCutoff} onChange={set("cyCutoff")}
+          hint="Container yard / terminal receiving cutoff" />
+      </div>
+
+      {/* ⑥ Demurrage & Detention — Free Time */}
+      <SectionHeader n="⑥" title="Demurrage & Detention — Free Time" />
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <Inp label="Origin Free Time (days)" value={f.originFreeTimeDays}
+          onChange={v => { if (v === "" || /^\d*$/.test(v)) set("originFreeTimeDays")(v); }}
+          type="text" inputMode="numeric" placeholder="e.g. 5"
+          hint="Days allowed from Gate In before origin charges start" />
+        <Inp label="Destination Free Time (days)" value={f.destFreeTimeDays}
+          onChange={v => { if (v === "" || /^\d*$/.test(v)) set("destFreeTimeDays")(v); }}
+          type="text" inputMode="numeric" placeholder="e.g. 5"
+          hint="Days allowed from Discharged before destination charges start" />
+      </div>
+      <div style={{ fontFamily: T.body, fontSize: 11, color: T.border, marginTop: -4 }}>
+        Counted from this container's Lifecycle Events (Gate In / Discharged) — see the 📋 button on the container list.
+      </div>
+
       {/* Actions */}
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", paddingTop: 4 }}>
         <Btn variant="secondary" onClick={onCancel}>Cancel</Btn>
@@ -306,6 +322,10 @@ export const ContainerForm = ({ init = {}, onSave, onCancel, onDirtyChange, dgPo
               grossWeightKg: f.grossWeightKg ? parseFloat(f.grossWeightKg) : null,
               volumeCbm:     f.volumeCbm     ? parseFloat(f.volumeCbm)     : null,
               isDg: f.isDg, dgClass: f.dgClass,
+              vgmWeightKg: f.vgmWeightKg ? parseFloat(f.vgmWeightKg) : null,
+              vgmStatus: f.vgmStatus, vgmCutoff: f.vgmCutoff, cyCutoff: f.cyCutoff,
+              originFreeTimeDays: f.originFreeTimeDays ? parseInt(f.originFreeTimeDays, 10) : null,
+              destFreeTimeDays:   f.destFreeTimeDays   ? parseInt(f.destFreeTimeDays, 10)   : null,
             }));
           }}>
           <span style={{ display: "flex", alignItems: "center", gap: 7 }}>
@@ -321,7 +341,7 @@ export const ContainerForm = ({ init = {}, onSave, onCancel, onDirtyChange, dgPo
 // ─── Page: Shipment Detail ────────────────────────────────────────────────────
 
 // ─── Inline commodity display ─────────────────────────────────────────────────
-const CommodityDisplay = ({ code }) => {
+export const CommodityDisplay = ({ code }) => {
   const [comm, setComm] = React.useState(null);
   React.useEffect(() => {
     if (!code) return;
@@ -345,7 +365,7 @@ const STATUS_ICON = {
   Arrived: "⚓", Completed: "✓", Cancelled: "✕",
 };
 
-const relTime = iso => {
+export const relTime = iso => {
   const d = Math.floor((Date.now() - new Date(iso)) / 1000);
   if (d < 60)    return "just now";
   if (d < 3600)  return `${Math.floor(d / 60)}m ago`;
@@ -353,7 +373,7 @@ const relTime = iso => {
   return `${Math.floor(d / 86400)}d ago`;
 };
 
-const fmtDateTime = iso => new Date(iso).toLocaleString("en-GB", {
+export const fmtDateTime = iso => new Date(iso).toLocaleString("en-GB", {
   day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
 });
 
@@ -448,46 +468,9 @@ const StatusTimeline = ({ log, currentStatus, open, onToggle }) => (
 );
 
 
-// ─── Link Vessel Modal ────────────────────────────────────────────────────────
-
-const LinkVesselModal = ({ shipment, onSave, onClose }) => {
-  const [vessel,  setVessel]  = React.useState(
-    shipment.vesselImo ? { imo: shipment.vesselImo, name: shipment.vessel || "" } : null
-  );
-  const [voyage,  setVoyage]  = React.useState(shipment.voyage || "");
-  const [saving, withSaving] = useSaving();
-
-  const handleSave = () =>
-    withSaving(() => onSave(vessel?.imo || "", vessel?.name || "", voyage));
-
-  return (
-    <Modal title="Link Vessel" onClose={onClose} width={440}>
-      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-        <VesselField
-          vessel={vessel}
-          onSelect={setVessel}
-        />
-        <Inp label="Voyage/Loop" value={voyage} onChange={setVoyage}
-          placeholder="e.g. 0123W" mono
-          hint="Voyage/loop identifier for this sailing" />
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", paddingTop: 4 }}>
-          <Btn variant="secondary" onClick={onClose}>Cancel</Btn>
-          <Btn onClick={handleSave} disabled={saving}>
-            <span style={{ display: "flex", alignItems: "center", gap: 7 }}>
-            {saving && <Spinner size="sm" color="currentColor" />}
-            {saving ? "Saving…" : "Save Vessel"}
-          </span>
-          </Btn>
-        </div>
-      </div>
-    </Modal>
-  );
-};
-
-
 // ─── Shipment History Timeline ────────────────────────────────────────────────
 
-const EVENT_CONFIG = {
+export const EVENT_CONFIG = {
   SHIPMENT_CREATED:  { icon: "🚢",  label: "Shipment created",       color: () => T.success  },
   STATUS_CHANGED:    { icon: "🔄", label: "Status changed",          color: () => T.accent   },
   FIELD_UPDATED:     { icon: "✏️",  label: "Field updated",           color: () => T.info     },
@@ -500,7 +483,7 @@ const EVENT_CONFIG = {
   COST_LINE_REMOVED: { icon: "✕",   label: "Cost line removed",        color: () => T.danger   },
 };
 
-const FIELD_LABELS = {
+export const FIELD_LABELS = {
   pol: "Port of Loading", pod: "Port of Discharge", status: "Status",
   etd: "Estimated Departure", eta: "Estimated Arrival", carrier_code: "Carrier",
   vessel: "Vessel", vessel_imo: "Vessel IMO", voyage: "Voyage/Loop", incoterm: "Incoterm",
@@ -609,7 +592,7 @@ const EventRow = ({ ev }) => {
   );
 };
 
-const getEventSummary = ev => {
+export const getEventSummary = ev => {
   const field = ev.field ? (FIELD_LABELS[ev.field] || ev.field) : null;
   if (ev.eventType === "SHIPMENT_CREATED") {
     const m = ev.meta || {};
@@ -651,318 +634,9 @@ const getEventSummary = ev => {
   return field ? `${field}: ${ev.oldValue ? `${ev.oldValue} → ` : ""}${ev.newValue || "—"}` : "";
 };
 
-const CompactHistory = ({ events, onShowAll }) => {
-  const sorted = [...events].sort((a, b) => new Date(b.occurredAt) - new Date(a.occurredAt));
-  const preview = sorted.slice(0, 6);
-  return (
-    <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
-      overflow: "hidden", display: "flex", flexDirection: "column" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
-        padding: "14px 18px", borderBottom: `1px solid ${T.border}33`, flexShrink: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text }}>Shipment History</span>
-          <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted,
-            background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "1px 7px" }}>
-            {events.length}
-          </span>
-        </div>
-        {events.length > 0 && (
-          <button type="button" onClick={onShowAll}
-            style={{ fontFamily: T.body, fontSize: 12, color: T.accent, background: "none",
-              border: `1px solid ${T.accent}55`, borderRadius: 7, padding: "4px 11px", cursor: "pointer" }}>
-            Show all →
-          </button>
-        )}
-      </div>
-      {events.length === 0 ? (
-        <div style={{ padding: "20px 18px", fontFamily: T.body, fontSize: 12,
-          color: T.textMuted, fontStyle: "italic", flex: 1 }}>
-          No history yet.
-        </div>
-      ) : (
-        <div style={{ flex: 1 }}>
-          {preview.map((ev, i) => {
-            const cfg = EVENT_CONFIG[ev.eventType] ?? { icon: "·", label: ev.eventType, color: () => T.textMuted };
-            const color = cfg.color();
-            const sum = getEventSummary(ev);
-            return (
-              <div key={ev.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 18px",
-                borderBottom: i < preview.length - 1 ? `1px solid ${T.border}22` : "none" }}>
-                <div style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
-                  background: color, boxShadow: `0 0 0 2px ${color}33` }} />
-                <span style={{ fontSize: 13, flexShrink: 0, lineHeight: 1 }}>{cfg.icon}</span>
-                <span style={{ fontFamily: T.body, fontSize: 12, fontWeight: 600, color, flexShrink: 0, width: 110 }}>
-                  {cfg.label}
-                </span>
-                {sum && (
-                  <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted,
-                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
-                    {sum}
-                  </span>
-                )}
-                <span style={{ fontFamily: T.mono, fontSize: 10, color: T.border, flexShrink: 0, marginLeft: "auto" }}>
-                  {relTime(ev.occurredAt)}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      )}
-      <button type="button" onClick={onShowAll} disabled={events.length === 0}
-        style={{ display: "block", width: "100%", padding: "10px 18px", textAlign: "center",
-          fontFamily: T.body, fontSize: 12, background: T.bg, flexShrink: 0,
-          border: "none", borderTop: `1px solid ${T.border}22`, cursor: events.length === 0 ? "default" : "pointer",
-          color: events.length === 0 ? T.border : T.textMuted }}
-        onMouseEnter={e => { if (events.length > 0) e.currentTarget.style.color = T.accent; }}
-        onMouseLeave={e => { e.currentTarget.style.color = events.length === 0 ? T.border : T.textMuted; }}>
-        {events.length > 6
-          ? `${events.length - 6} more event${events.length - 6 !== 1 ? "s" : ""} — Show all →`
-          : events.length > 0 ? "Show all →" : "No events yet"}
-      </button>
-    </div>
-  );
-};
-
-const HistoryModal = ({ events, shipmentId, onClose }) => {
-  const PAGE_SIZE = 15;
-  const TYPE_GROUPS = {
-    Shipment:     ["SHIPMENT_CREATED", "STATUS_CHANGED"],
-    Fields:       ["FIELD_UPDATED"],
-    Container:    ["CONTAINER_ADDED", "CONTAINER_REMOVED", "CONTAINER_UPDATED"],
-    Compliance:   ["COMPLIANCE_HIT"],
-    "Cost Lines": ["COST_LINE_ADDED", "COST_LINE_UPDATED", "COST_LINE_REMOVED"],
-  };
-  const GROUP_NAMES = Object.keys(TYPE_GROUPS);
-
-  const [activeGroups, setActiveGroups] = useState(() => new Set(GROUP_NAMES));
-  const [dateRange,    setDateRange]    = useState("all");
-  const [search,       setSearch]       = useState("");
-  const [sortDir,      setSortDir]      = useState("desc");
-  const [page,         setPage]         = useState(0);
-  const [expanded,     setExpanded]     = useState(() => new Set());
-
-  const toggleGroup = g => setActiveGroups(prev => {
-    const next = new Set(prev);
-    next.has(g) ? next.delete(g) : next.add(g);
-    setPage(0);
-    return next;
-  });
-
-  const activeTypes = new Set(GROUP_NAMES.filter(g => activeGroups.has(g)).flatMap(g => TYPE_GROUPS[g]));
-  const today = new Date().toISOString().slice(0, 10);
-  const sevenDaysAgo = new Date(Date.now() - 7 * 86400000).toISOString();
-
-  const filtered = events
-    .filter(ev => activeTypes.has(ev.eventType))
-    .filter(ev => dateRange === "today" ? ev.occurredAt.startsWith(today)
-                : dateRange === "7d"    ? ev.occurredAt >= sevenDaysAgo
-                : true)
-    .filter(ev => {
-      if (!search.trim()) return true;
-      const q = search.toLowerCase();
-      return getEventSummary(ev).toLowerCase().includes(q)
-          || (EVENT_CONFIG[ev.eventType]?.label || ev.eventType).toLowerCase().includes(q)
-          || (ev.field && (FIELD_LABELS[ev.field] || ev.field).toLowerCase().includes(q));
-    })
-    .sort((a, b) => sortDir === "desc"
-      ? new Date(b.occurredAt) - new Date(a.occurredAt)
-      : new Date(a.occurredAt) - new Date(b.occurredAt));
-
-  // Group consecutive FIELD_UPDATED within 3 seconds
-  const grouped = [];
-  let gi = 0;
-  while (gi < filtered.length) {
-    const ev = filtered[gi];
-    if (ev.eventType === "FIELD_UPDATED") {
-      const batch = [ev];
-      const t0 = new Date(ev.occurredAt).getTime();
-      let gj = gi + 1;
-      while (gj < filtered.length
-          && filtered[gj].eventType === "FIELD_UPDATED"
-          && Math.abs(new Date(filtered[gj].occurredAt).getTime() - t0) < 3000) {
-        batch.push(filtered[gj]);
-        gj++;
-      }
-      grouped.push(batch.length > 1
-        ? { _isGroup: true, id: `grp-${ev.id}`, events: batch, occurredAt: ev.occurredAt, actor: ev.actor }
-        : ev);
-      gi = gj;
-    } else {
-      grouped.push(ev);
-      gi++;
-    }
-  }
-
-  const totalPages = Math.ceil(grouped.length / PAGE_SIZE);
-  const pageItems  = grouped.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
-
-  const exportCSV = () => {
-    const rows = [["Event Type", "Summary", "Date/Time", "Actor"]];
-    filtered.forEach(ev => rows.push([
-      EVENT_CONFIG[ev.eventType]?.label || ev.eventType,
-      `"${getEventSummary(ev).replace(/"/g, '""')}"`,
-      fmtDateTime(ev.occurredAt),
-      ev.actor || "system",
-    ]));
-    const csv = rows.map(r => r.join(",")).join("\n");
-    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
-    const a = document.createElement("a");
-    a.href = url; a.download = `${shipmentId}-history.csv`; a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const th  = { fontFamily: T.body, fontSize: 10, fontWeight: 700, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".07em" };
-  const inp = { fontFamily: T.body, fontSize: 12, color: T.text, background: T.bg, border: `1px solid ${T.border}`, borderRadius: 7, padding: "5px 10px", outline: "none" };
-
-  return (
-    <Modal title={`Shipment History — ${shipmentId}`} onClose={onClose} width={820}>
-      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-
-        {/* Toolbar */}
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          {GROUP_NAMES.map(g => {
-            const on = activeGroups.has(g);
-            return (
-              <button key={g} type="button" onClick={() => toggleGroup(g)}
-                style={{ fontFamily: T.body, fontSize: 11, padding: "3px 10px", borderRadius: 20,
-                  border: `1px solid ${on ? T.accent + "66" : T.border}`,
-                  background: on ? T.accentBg : "transparent",
-                  color: on ? T.accent : T.textMuted, cursor: "pointer" }}>
-                {g}
-              </button>
-            );
-          })}
-          <div style={{ width: 1, height: 18, background: T.border, flexShrink: 0 }} />
-          <div style={{ display: "flex", borderRadius: 7, overflow: "hidden", border: `1px solid ${T.border}` }}>
-            {[["all","All time"],["today","Today"],["7d","7 days"]].map(([r, label], idx) => (
-              <button key={r} type="button" onClick={() => { setDateRange(r); setPage(0); }}
-                style={{ fontFamily: T.body, fontSize: 11, padding: "4px 10px",
-                  background: dateRange === r ? T.accent : "transparent",
-                  color: dateRange === r ? T.btnPrimaryText : T.textMuted,
-                  border: "none", borderRight: idx < 2 ? `1px solid ${T.border}` : "none", cursor: "pointer" }}>
-                {label}
-              </button>
-            ))}
-          </div>
-          <input value={search} onChange={e => { setSearch(e.target.value); setPage(0); }}
-            placeholder="Search events…" style={{ ...inp, minWidth: 150 }} />
-          <div style={{ flex: 1 }} />
-          <button type="button" onClick={exportCSV}
-            style={{ ...inp, cursor: "pointer", color: T.textMuted, padding: "5px 12px" }}>
-            ⬇ Export CSV
-          </button>
-        </div>
-
-        <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
-          {grouped.length} row{grouped.length !== 1 ? "s" : ""}
-          {grouped.length !== events.length ? ` (filtered from ${events.length})` : ""}
-        </div>
-
-        {/* Table */}
-        <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden" }}>
-          <div style={{ display: "flex", alignItems: "center", padding: "7px 14px",
-            borderBottom: `1px solid ${T.border}`, background: T.bg, gap: 10 }}>
-            <div style={{ ...th, width: 160, flexShrink: 0 }}>Event Type</div>
-            <div style={{ ...th, flex: 1 }}>Summary</div>
-            <div style={{ ...th, width: 160, flexShrink: 0, cursor: "pointer", userSelect: "none",
-              display: "flex", alignItems: "center", gap: 4 }}
-              onClick={() => { setSortDir(d => d === "desc" ? "asc" : "desc"); setPage(0); }}>
-              Date / Time {sortDir === "desc" ? "↓" : "↑"}
-            </div>
-            <div style={{ ...th, width: 70, flexShrink: 0 }}>Actor</div>
-          </div>
-
-          {pageItems.length === 0 ? (
-            <div style={{ padding: 32, textAlign: "center", fontFamily: T.body,
-              fontSize: 13, color: T.textMuted, fontStyle: "italic" }}>
-              No events match the current filters.
-            </div>
-          ) : pageItems.map(item => {
-            if (item._isGroup) {
-              const isOpen = expanded.has(item.id);
-              return (
-                <React.Fragment key={item.id}>
-                  <div
-                    onClick={() => setExpanded(prev => { const n = new Set(prev); isOpen ? n.delete(item.id) : n.add(item.id); return n; })}
-                    style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px",
-                      borderBottom: `1px solid ${T.border}22`, cursor: "pointer" }}
-                    onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
-                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                    <div style={{ width: 160, flexShrink: 0 }}>
-                      <Badge variant="info">Fields</Badge>
-                    </div>
-                    <div style={{ flex: 1, fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
-                      {isOpen ? "▾" : "▸"} {item.events.length} field update{item.events.length !== 1 ? "s" : ""}
-                    </div>
-                    <div style={{ width: 160, flexShrink: 0, fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
-                      {fmtDateTime(item.occurredAt)}
-                    </div>
-                    <div style={{ width: 70, flexShrink: 0, fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
-                      {item.actor || "—"}
-                    </div>
-                  </div>
-                  {isOpen && item.events.map(subEv => (
-                    <div key={subEv.id} style={{ display: "flex", alignItems: "center", gap: 10,
-                      padding: "7px 14px 7px 36px",
-                      borderBottom: `1px solid ${T.border}22`, background: `${T.accent}06` }}>
-                      <div style={{ width: 144, flexShrink: 0 }} />
-                      <div style={{ flex: 1, fontFamily: T.mono, fontSize: 11, color: T.textMuted,
-                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {getEventSummary(subEv)}
-                      </div>
-                      <div style={{ width: 160, flexShrink: 0, fontFamily: T.mono, fontSize: 10, color: T.border }}>
-                        {fmtDateTime(subEv.occurredAt)}
-                      </div>
-                      <div style={{ width: 70, flexShrink: 0 }} />
-                    </div>
-                  ))}
-                </React.Fragment>
-              );
-            }
-            const cfg = EVENT_CONFIG[item.eventType] ?? { icon: "·", label: item.eventType, color: () => T.textMuted };
-            const color = cfg.color();
-            return (
-              <div key={item.id}
-                style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px",
-                  borderBottom: `1px solid ${T.border}22` }}
-                onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
-                onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                <div style={{ width: 160, flexShrink: 0, display: "flex", alignItems: "center", gap: 6 }}>
-                  <span style={{ fontSize: 13 }}>{cfg.icon}</span>
-                  <span style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600, color }}>{cfg.label}</span>
-                </div>
-                <div style={{ flex: 1, fontFamily: T.mono, fontSize: 11, color: T.textMuted,
-                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {getEventSummary(item)}
-                </div>
-                <div style={{ width: 160, flexShrink: 0, fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
-                  {fmtDateTime(item.occurredAt)}
-                </div>
-                <div style={{ width: 70, flexShrink: 0, fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
-                  {item.actor || "—"}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        {totalPages > 1 && (
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
-            <button type="button" disabled={page === 0} onClick={() => setPage(p => p - 1)}
-              style={{ ...inp, cursor: page === 0 ? "default" : "pointer", opacity: page === 0 ? .4 : 1, padding: "4px 12px" }}>←</button>
-            <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>{page + 1} / {totalPages}</span>
-            <button type="button" disabled={page === totalPages - 1} onClick={() => setPage(p => p + 1)}
-              style={{ ...inp, cursor: page === totalPages - 1 ? "default" : "pointer", opacity: page === totalPages - 1 ? .4 : 1, padding: "4px 12px" }}>→</button>
-          </div>
-        )}
-      </div>
-    </Modal>
-  );
-};
-
 // ─── Messages drawer ─────────────────────────────────────────────────────────
 
-const MessagesDrawer = ({ shipment, messages, onPost, onClose }) => {
+export const MessagesDrawer = ({ shipment, messages, onPost, onClose }) => {
   const { user, activeRole } = useAuth();
   const [body,    setBody]    = useState("");
   const [posting, setPosting] = useState(false);
@@ -1168,7 +842,7 @@ const EDI_STATUS_COLOR = {
   confirmed: "#22c55e", rejected: "#ef4444", error: "#ef4444",
 };
 
-const EdiMessagesDrawer = ({ shipment, messages, onSend, onClose }) => {
+export const EdiMessagesDrawer = ({ shipment, messages, onSend, onClose }) => {
   const [sending,    setSending]    = useState(false);
   const [expandedId, setExpandedId] = useState(null);
   const listRef = useRef(null);
@@ -2461,172 +2135,6 @@ export const CostLineRow = ({ line: l, containers = [], showActions = false, onE
   );
 };
 
-// ─── Document Preview Modal ───────────────────────────────────────────────────
-// Shows the generated PDF in an iframe before the user commits to downloading.
-const DocumentPreviewModal = ({ dataUri, filename, onConfirm, onCancel }) => (
-  <div style={{ position: "fixed", inset: 0, zIndex: 10001,
-    background: "rgba(0,0,0,.72)", display: "flex", alignItems: "center",
-    justifyContent: "center" }}
-    onClick={e => { if (e.target === e.currentTarget) onCancel(); }}>
-    <div style={{ width: "min(96vw, 1000px)", height: "92vh", background: T.surface,
-      border: `1px solid ${T.border}`, borderRadius: 14, overflow: "hidden",
-      display: "flex", flexDirection: "column",
-      boxShadow: "0 28px 80px rgba(0,0,0,.6)" }}>
-
-      {/* Header */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
-        padding: "12px 16px", borderBottom: `1px solid ${T.border}`, flexShrink: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontSize: 18 }}>📄</span>
-          <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>{filename}</span>
-        </div>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={onCancel}
-            style={{ fontFamily: T.body, fontSize: 13, padding: "7px 16px",
-              background: "none", border: `1px solid ${T.border}`, borderRadius: 7,
-              color: T.textMuted, cursor: "pointer" }}>
-            Cancel
-          </button>
-          <button onClick={onConfirm}
-            style={{ fontFamily: T.body, fontSize: 13, fontWeight: 700,
-              padding: "7px 18px", background: T.accent, border: "none",
-              borderRadius: 7, color: "#fff", cursor: "pointer",
-              display: "flex", alignItems: "center", gap: 7 }}>
-            <span>💾</span> Download PDF
-          </button>
-        </div>
-      </div>
-
-      {/* PDF iframe */}
-      <iframe
-        src={dataUri}
-        title={filename}
-        style={{ flex: 1, border: "none", width: "100%" }}
-      />
-    </div>
-  </div>
-);
-
-// ─── Documents dropdown ───────────────────────────────────────────────────────
-// Generates PDFs client-side using jsPDF. No server round-trip needed.
-const DocumentsMenu = ({ shipment, containers: allContainers }) => {
-  const containers        = allContainers.filter(c => c.shipmentId === shipment.id);
-  const [open, setOpen]   = useState(false);
-  const [preview, setPreview] = useState(null); // { dataUri, filename, doc }
-  const ref               = useRef(null);
-
-  // Close on outside click
-  useEffect(() => {
-    if (!open) return;
-    const handler = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [open]);
-
-  const openPreview = generator => {
-    setOpen(false);
-    const { doc, filename } = generator(shipment, containers);
-    setPreview({ doc, filename, dataUri: doc.output("datauristring") });
-  };
-
-  const docs = [
-    {
-      icon: "📋",
-      label: "B/L Draft",
-      hint: "House Bill of Lading (draft)",
-      action: () => openPreview(generateBLDraft),
-    },
-    {
-      icon: "📦",
-      label: "Packing List",
-      hint: "Per-container cargo lines",
-      action: () => openPreview(generatePackingList),
-    },
-    {
-      icon: "🗂",
-      label: "Container Manifest",
-      hint: "Full container listing for the voyage",
-      action: () => openPreview(generateContainerManifest),
-    },
-  ];
-
-  return (
-    <div ref={ref} style={{ position: "relative" }}>
-      <button
-        onClick={() => setOpen(v => !v)}
-        style={{
-          fontFamily: T.body, fontSize: 12, fontWeight: 600, cursor: "pointer",
-          padding: "7px 12px", borderRadius: 8,
-          background: open ? `${T.accent}15` : "none",
-          border: `1px solid ${open ? T.accent : T.border}`,
-          color: open ? T.accent : T.text,
-          display: "flex", alignItems: "center", gap: 6,
-          transition: "border-color .15s, color .15s, background .15s",
-        }}
-        onMouseEnter={e => { if (!open) { e.currentTarget.style.borderColor = T.accent; e.currentTarget.style.color = T.accent; } }}
-        onMouseLeave={e => { if (!open) { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.text; } }}
-      >
-        <span>📄</span>
-        <span>Documents</span>
-        <span style={{ fontSize: 9, opacity: .6 }}>{open ? "▲" : "▼"}</span>
-      </button>
-
-      {open && (
-        <div style={{
-          position: "absolute", top: "calc(100% + 6px)", right: 0, zIndex: 500,
-          background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
-          boxShadow: "0 8px 32px rgba(0,0,0,.35)", minWidth: 220, overflow: "hidden",
-        }}>
-          <div style={{ padding: "8px 14px 6px",
-            fontFamily: T.body, fontSize: 10, fontWeight: 700, color: T.textMuted,
-            textTransform: "uppercase", letterSpacing: ".07em", borderBottom: `1px solid ${T.border}22` }}>
-            Generate PDF
-          </div>
-          {docs.map(d => (
-            <button key={d.label}
-              onClick={containers.length > 0 ? d.action : undefined}
-              disabled={containers.length === 0}
-              style={{
-                display: "flex", alignItems: "center", gap: 10, width: "100%",
-                padding: "10px 14px", background: "none", border: "none",
-                cursor: containers.length > 0 ? "pointer" : "not-allowed",
-                textAlign: "left", transition: "background .1s",
-                opacity: containers.length === 0 ? 0.4 : 1,
-              }}
-              onMouseEnter={e => { if (containers.length > 0) e.currentTarget.style.background = `${T.accent}10`; }}
-              onMouseLeave={e => e.currentTarget.style.background = "none"}
-            >
-              <span style={{ fontSize: 18, flexShrink: 0 }}>{d.icon}</span>
-              <div>
-                <div style={{ fontFamily: T.body, fontSize: 13, fontWeight: 600, color: T.text }}>
-                  {d.label}
-                </div>
-                <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
-                  {d.hint}
-                </div>
-              </div>
-            </button>
-          ))}
-          {containers.length === 0 && (
-            <div style={{ padding: "4px 14px 12px",
-              fontFamily: T.body, fontSize: 11, color: T.warning, fontStyle: "italic" }}>
-              ⚠ Add containers first — documents use container data.
-            </div>
-          )}
-        </div>
-      )}
-      {preview && (
-        <DocumentPreviewModal
-          dataUri={preview.dataUri}
-          filename={preview.filename}
-          onConfirm={() => { preview.doc.save(preview.filename); setPreview(null); }}
-          onCancel={() => setPreview(null)}
-        />
-      )}
-    </div>
-  );
-};
-
 // ─── Pending contract revalidation modal ──────────────────────────────────────
 
 const ContractCard = ({ contract, selected, onSelect }) => {
@@ -2670,7 +2178,7 @@ const ContractCard = ({ contract, selected, onSelect }) => {
   );
 };
 
-const PendingRevalidationModal = ({ matches, contractRef, onAccept, onDismiss }) => {
+export const PendingRevalidationModal = ({ matches, contractRef, onAccept, onDismiss }) => {
   const [selected, setSelected] = useState(matches.length === 1 ? matches[0].id : null);
   const single = matches.length === 1;
   const selectedContract = matches.find(c => c.id === selected) || null;
@@ -2902,10 +2410,14 @@ export const RouteSummaryBar = ({ shipment }) => {
 // live in ShipmentSchedulesPage now, next to the Route Legs section its "Add Sailing"
 // button belongs to. This panel is purely a read-only log of what changed and when —
 // same entity_events idiom already used for cost lines/documents/services.
-export const ScheduleHistoryPanel = ({ shipment }) => {
+// forceOpen: skip the header/toggle/outer-card chrome and render just the body —
+// used when this panel is already inside its own container (e.g. a Modal on
+// ShipmentSchedulesPage) so the "Schedule History" title/toggle isn't shown twice.
+// Fetch logic and the event-card rendering below are unchanged either way.
+export const ScheduleHistoryPanel = ({ shipment, forceOpen = false }) => {
   const [events,   setEvents]   = useState([]);
   const [loading,  setLoading]  = useState(true);
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(forceOpen);
 
   useEffect(() => {
     setLoading(true);
@@ -2916,6 +2428,62 @@ export const ScheduleHistoryPanel = ({ shipment }) => {
   }, [shipment.id]);
 
   const EVENT_COLOR = { SAVED: T.success, REMOVED: T.danger };
+
+  const body = (
+    <>
+      {loading ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, color: T.textMuted,
+          fontFamily: T.body, fontSize: 12 }}>
+          <Spinner size="sm" /> Loading…
+        </div>
+      ) : events.length === 0 ? (
+        <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, fontStyle: "italic", padding: "8px 0" }}>
+          No schedule changes yet — sailings picked via "Add Sailing" will show up here.
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {events.map(ev => {
+            const m = ev.meta ? JSON.parse(ev.meta) : {};
+            const color = EVENT_COLOR[ev.event_type] || T.textMuted;
+            return (
+              <div key={ev.id} style={{ display: "flex", alignItems: "center", gap: 12,
+                padding: "10px 14px", background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8 }}>
+                <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, letterSpacing: "0.03em",
+                  padding: "2px 8px", borderRadius: 4, textTransform: "uppercase",
+                  background: color + "22", color, border: `1px solid ${color}55`, flexShrink: 0 }}>
+                  {ev.event_type}
+                </span>
+                <div style={{ flex: 1, display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center", minWidth: 0 }}>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 120 }}>
+                    <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.text }}>
+                      {m.vesselName || "—"}
+                    </span>
+                    <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
+                      {m.service || "—"}{m.voyageNumber ? ` · Voy ${m.voyageNumber}` : ""}
+                    </span>
+                  </div>
+                  <span style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>
+                    {m.pol || "—"} → {m.pod || "—"}
+                  </span>
+                  {(m.etd || m.eta) && (
+                    <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+                      {m.etd || "—"} → {m.eta || "—"}
+                    </span>
+                  )}
+                  <span style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, marginLeft: "auto", whiteSpace: "nowrap" }}>
+                    {new Date(ev.created_at).toLocaleDateString("en-GB")}
+                    {m.actor ? ` by ${m.actor}` : ""}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </>
+  );
+
+  if (forceOpen) return body;
 
   return (
     <div style={{ background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, overflow: "hidden" }}>
@@ -2934,59 +2502,7 @@ export const ScheduleHistoryPanel = ({ shipment }) => {
         )}
       </button>
 
-      {expanded && (
-      <div style={{ padding: "14px 20px" }}>
-        {loading ? (
-          <div style={{ display: "flex", alignItems: "center", gap: 8, color: T.textMuted,
-            fontFamily: T.body, fontSize: 12 }}>
-            <Spinner size="sm" /> Loading…
-          </div>
-        ) : events.length === 0 ? (
-          <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, fontStyle: "italic", padding: "8px 0" }}>
-            No schedule changes yet — sailings picked via "Add Sailing" will show up here.
-          </div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {events.map(ev => {
-              const m = ev.meta ? JSON.parse(ev.meta) : {};
-              const color = EVENT_COLOR[ev.event_type] || T.textMuted;
-              return (
-                <div key={ev.id} style={{ display: "flex", alignItems: "center", gap: 12,
-                  padding: "10px 14px", background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8 }}>
-                  <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, letterSpacing: "0.03em",
-                    padding: "2px 8px", borderRadius: 4, textTransform: "uppercase",
-                    background: color + "22", color, border: `1px solid ${color}55`, flexShrink: 0 }}>
-                    {ev.event_type}
-                  </span>
-                  <div style={{ flex: 1, display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center", minWidth: 0 }}>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 120 }}>
-                      <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.text }}>
-                        {m.vesselName || "—"}
-                      </span>
-                      <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
-                        {m.service || "—"}{m.voyageNumber ? ` · Voy ${m.voyageNumber}` : ""}
-                      </span>
-                    </div>
-                    <span style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>
-                      {m.pol || "—"} → {m.pod || "—"}
-                    </span>
-                    {(m.etd || m.eta) && (
-                      <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
-                        {m.etd || "—"} → {m.eta || "—"}
-                      </span>
-                    )}
-                    <span style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, marginLeft: "auto", whiteSpace: "nowrap" }}>
-                      {new Date(ev.created_at).toLocaleDateString("en-GB")}
-                      {m.actor ? ` by ${m.actor}` : ""}
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-      )}
+      {expanded && <div style={{ padding: "14px 20px" }}>{body}</div>}
     </div>
   );
 };
@@ -3070,50 +2586,7 @@ export const RelatedTicketsPanel = ({ shipmentId }) => {
 
 const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, onEdit, onRefresh, onAddContainer, onEditContainer, onDeleteContainer, onManageContainers, onManagePartiesOffices, onManageSchedules, onManageMilestones, onManageTickets, onManageAccountingCosts, onManageAccountingInvoices, onManageAccountingGp, detailAction = null, onDetailActionConsumed }) => {
   const { canEditShipments: canEdit } = useAuth();
-  const [ctrModal,       setCtrModal]       = useState(null);
-  const [linkVesselOpen, setLinkVesselOpen] = useState(false);
-  const [confirmCtr,     setConfirmCtr]     = useState(null);
   const [statusLog,      setStatusLog]      = useState([]);
-  const [historyOpen,    setHistoryOpen]    = useState(false);
-  const [events,         setEvents]         = useState([]);
-  const [allocations,    setAllocations]    = useState([]);
-  const [isDirty,        setIsDirty]        = useState(false);
-  const [msgsOpen,       setMsgsOpen]       = useState(false);
-  const [messages,       setMessages]       = useState([]);
-  const [unreadCount,    setUnreadCount]    = useState(0);
-  const [ediOpen,        setEdiOpen]        = useState(false);
-  const [ediMessages,    setEdiMessages]    = useState([]);
-  const [spaceBadge,     setSpaceBadge]     = useState(shipment.spaceBadge || "");
-  const [contractOpen,   setContractOpen]   = useState(false);
-  const [ctrListOpen,    setCtrListOpen]    = useState(false);
-  const [ctrFromList,    setCtrFromList]    = useState(false);
-  const [eventsCtr,      setEventsCtr]      = useState(null);
-  const [dgPolicy,             setDgPolicy]             = useState(null);
-  const [pendingMatches,       setPendingMatches]       = useState(null);
-  const [shareUrl,             setShareUrl]             = useState(null);
-  const [shareLoading,         setShareLoading]         = useState(false);
-  const [milestoneProg,        setMilestoneProg]        = useState(null);
-
-  // Milestones are now a promoted sub-page, so the header progress chip needs
-  // its own lightweight fetch instead of relying on MilestonePanel's onProgress.
-  useEffect(() => {
-    api.milestones.list(shipment.id)
-      .then(m => setMilestoneProg({ done: m.filter(x => x.completedAt).length, total: m.length }))
-      .catch(() => setMilestoneProg({ done: 0, total: 0 }));
-  }, [shipment.id]);
-
-  const closeCtrModal = (fromList = ctrFromList) => {
-    setCtrModal(null);
-    setCtrFromList(false);
-    if (fromList) setCtrListOpen(true);
-  };
-
-  // Sidebar section link → open corresponding management panel
-  useEffect(() => {
-    if (!detailAction) return;
-    if (detailAction === "shp-cargo")      setCtrListOpen(true);
-    onDetailActionConsumed?.();
-  }, [detailAction]);
 
   // Tab title — show shipment ID so multi-tab workflows are easy to navigate
   useEffect(() => {
@@ -3121,284 +2594,17 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
     return () => { document.title = "CargoDesk"; };
   }, [shipment.id]);
 
-  // Warn before closing tab when a form has unsaved changes
-  useEffect(() => {
-    const handler = e => { if (isDirty) { e.preventDefault(); e.returnValue = ""; } };
-    window.addEventListener("beforeunload", handler);
-    return () => window.removeEventListener("beforeunload", handler);
-  }, [isDirty]);
-
   useEffect(() => {
     if (!shipment?.id) return;
     api.statusLog.list(shipment.id).then(setStatusLog).catch(() => setStatusLog([]));
-    api.shipmentEvents.list(shipment.id).then(setEvents).catch(() => setEvents([]));
   }, [shipment?.id, shipment?.status]);
-
-  useEffect(() => { api.allocations.list().then(setAllocations).catch(() => {}); }, []);
-
-  const loadMessagesRef = useRef(null);
-  const loadMessages = () =>
-    api.shipmentMessages.list(shipment.id).then(msgs => {
-      setMessages(msgs);
-      const lastRead = localStorage.getItem(`msg_read_${shipment.id}`) || "";
-      setUnreadCount(msgs.filter(m => m.createdAt > lastRead).length);
-    }).catch(() => {});
-  loadMessagesRef.current = loadMessages;
-
-  useEffect(() => { loadMessages(); }, [shipment.id]);
-
-  // Keep space badge in sync whenever the shipment prop is replaced by the parent
-  useEffect(() => { setSpaceBadge(shipment.spaceBadge || ""); }, [shipment.id, shipment.spaceBadge]);
-
-  // Always-on WS subscription for space badge updates
-  useEffect(() => {
-    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsHost = import.meta.env.DEV ? "localhost:3001" : window.location.host;
-    const ws = new WebSocket(`${proto}//${wsHost}/ws`);
-    ws.onopen = () => ws.send(JSON.stringify({ type: "subscribe", shipmentId: shipment.id }));
-    ws.onmessage = e => {
-      try {
-        const frame = JSON.parse(e.data);
-        if (frame.type === "space_badge_update") setSpaceBadge(frame.badge || "");
-      } catch { /* ignore */ }
-    };
-    return () => ws.close();
-  }, [shipment.id]);
-
-  useEffect(() => {
-    if (!msgsOpen) return;
-    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsHost = import.meta.env.DEV ? "localhost:3001" : window.location.host;
-    const ws = new WebSocket(`${proto}//${wsHost}/ws`);
-    let pollId;
-
-    ws.onopen = () => ws.send(JSON.stringify({ type: "subscribe", shipmentId: shipment.id }));
-    ws.onmessage = e => {
-      try {
-        const frame = JSON.parse(e.data);
-        if (frame.type === "new_message") {
-          setMessages(prev => {
-            if (prev.some(m => m.id === frame.message.id)) return prev;
-            const lastRead = localStorage.getItem(`msg_read_${shipment.id}`) || "";
-            if (frame.message.createdAt > lastRead) setUnreadCount(n => n + 1);
-            return [...prev, frame.message];
-          });
-        }
-      } catch { /* ignore */ }
-    };
-    ws.onerror = () => { pollId = setInterval(() => loadMessagesRef.current?.(), 10_000); };
-    ws.onclose = () => { if (pollId) clearInterval(pollId); };
-
-    return () => {
-      ws.close();
-      if (pollId) clearInterval(pollId);
-    };
-  }, [msgsOpen, shipment.id]);
-
-  const openMessages = () => {
-    setMsgsOpen(true);
-    localStorage.setItem(`msg_read_${shipment.id}`, new Date().toISOString());
-    setUnreadCount(0);
-  };
-
-  const loadEdiMessagesRef = useRef(null);
-  const loadEdiMessages = () =>
-    api.ediMessages.list(shipment.id).then(setEdiMessages).catch(() => {});
-  loadEdiMessagesRef.current = loadEdiMessages;
-
-  useEffect(() => { loadEdiMessages(); }, [shipment.id]);
-
-  useEffect(() => {
-    if (!ediOpen) return;
-    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsHost = import.meta.env.DEV ? "localhost:3001" : window.location.host;
-    const ws = new WebSocket(`${proto}//${wsHost}/ws`);
-    let pollId;
-
-    ws.onopen = () => ws.send(JSON.stringify({ type: "subscribe", shipmentId: shipment.id }));
-    ws.onmessage = e => {
-      try {
-        const frame = JSON.parse(e.data);
-        if (frame.type === "new_edi_message") {
-          setEdiMessages(prev => prev.some(m => m.id === frame.message.id) ? prev : [frame.message, ...prev]);
-        }
-      } catch { /* ignore */ }
-    };
-    ws.onerror = () => { pollId = setInterval(() => loadEdiMessagesRef.current?.(), 10_000); };
-    ws.onclose = () => { if (pollId) clearInterval(pollId); };
-
-    return () => {
-      ws.close();
-      if (pollId) clearInterval(pollId);
-    };
-  }, [ediOpen, shipment.id]);
-
-  const handleSendBookingRequest = async () => {
-    try {
-      await api.ediMessages.sendBookingRequest(shipment.id);
-      await loadEdiMessages();
-      toast.success("Booking request sent");
-    } catch (e) { toast.error(e.message || "Failed to send booking request"); }
-  };
-  const carrier  = carriers.find(c => c.code === shipment.carrierCode);
-  const ctrs     = containers.filter(c => c.shipmentId === shipment.id);
-  const totalTEU = ctrs.reduce((s, c) => s + teuOf(c.size), 0);
-
-  useEffect(() => {
-    if (!shipment.contractId) { setDgPolicy(null); return; }
-    api.contracts.get(shipment.contractId)
-      .then(c => setDgPolicy({ dgAllowed: c.dgAllowed, imdgClasses: c.imdgClasses || [] }))
-      .catch(() => setDgPolicy(null));
-  }, [shipment.contractId]);
-
-  // Silent pending-contract revalidation: when a Pending shipment has a contractRef,
-  // check on every load whether a matching Active Central contract now exists.
-  useEffect(() => {
-    if (shipment.contractType !== "Pending" || !shipment.contractRef) { setPendingMatches(null); return; }
-    api.contracts.revalidate(shipment.contractRef)
-      .then(matches => setPendingMatches(matches.length > 0 ? matches : null))
-      .catch(() => {});
-  }, [shipment.id, shipment.contractType, shipment.contractRef]);
-
-  const ctrDgConflict = c => {
-    if (!c.isDg || !c.dgClass || !dgPolicy) return null;
-    if (!dgPolicy.dgAllowed) return `Contract does not permit DG cargo`;
-    if (dgPolicy.imdgClasses.length > 0 && !dgPolicy.imdgClasses.includes(c.dgClass))
-      return `IMO class ${c.dgClass} not permitted by contract (allowed: ${dgPolicy.imdgClasses.join(", ")})`;
-    return null;
-  };
-
-  const dgConflicts = ctrs.filter(c => ctrDgConflict(c)).length;
-
-  const allocContractMatch = (s, a) => {
-    if (a.contractId)     return s.contractId === a.contractId;
-    if (a.contractNumber) return s.contractRef === a.contractNumber;
-    return s.contractType === "Central";
-  };
-  const todayStr = new Date().toISOString().slice(0, 10);
-  const linkedAlloc = allocations.find(a =>
-    a.carrierCode === shipment.carrierCode &&
-    a.effectiveDate <= todayStr && a.endDate >= todayStr &&
-    allocContractMatch(shipment, a) &&
-    (!a.pol || a.pol === shipment.pol) &&
-    (!a.pod || a.pod === shipment.pod)
-  ) || null;
-
-  const InfoCard = ({ label, value, color, mono }) => (
-    <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 10, padding: "14px 18px" }}>
-      <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
-        textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 6 }}>{label}</div>
-      <div style={{ fontFamily: mono ? T.mono : T.body, fontSize: 16, fontWeight: 700,
-        color: color || T.text, wordBreak: "break-word" }}>{value}</div>
-    </div>
-  );
 
   return (
     <div>
-      {/* Header */}
-      <div id="shp-overview" style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 24 }}>
-        <Btn variant="secondary" onClick={onBack}>← Back</Btn>
-        <div style={{ flex: 1 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <h1
-              title="Click to copy shipment ID"
-              onClick={() => navigator.clipboard.writeText(shipment.id).then(() => toast.success(`Copied ${shipment.id}`))}
-              style={{ fontFamily: T.head, fontSize: 24, fontWeight: 800, color: T.text, margin: 0,
-                cursor: "pointer", userSelect: "none" }}>
-              {shipment.id}
-            </h1>
-            <Badge variant={statusVariant(shipment.status)} size={12}>{shipment.status}</Badge>
-            <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700,
-              background: "rgb(30,115,190)", color: "#fff",
-              borderRadius: 4, padding: "2px 9px", letterSpacing: ".06em" }}>FCL</span>
-            {/* Milestone progress chip */}
-            {milestoneProg?.total > 0 && (
-              <span onClick={() => onManageMilestones ? onManageMilestones() : null}
-                title={`${milestoneProg.done} of ${milestoneProg.total} milestones complete`}
-                style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, cursor: "pointer",
-                  borderRadius: 4, padding: "2px 9px", letterSpacing: ".06em", whiteSpace: "nowrap",
-                  border: milestoneProg.done === milestoneProg.total
-                    ? `1px solid ${T.success}55`
-                    : `1px solid ${T.border}`,
-                  background: milestoneProg.done === milestoneProg.total
-                    ? T.success + "20"
-                    : T.surface,
-                  color: milestoneProg.done === milestoneProg.total ? T.success : T.textMuted,
-                }}>
-                {milestoneProg.done === milestoneProg.total ? "✓ " : ""}⚑ {milestoneProg.done}/{milestoneProg.total}
-              </span>
-            )}
-            {/* Space badge */}
-            {spaceBadge === "exceeded" && (
-              <span title="Shipment TEU exceeds remaining space on the linked allocation — no overage reason on record"
-                style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, whiteSpace: "nowrap",
-                  borderRadius: 4, padding: "2px 9px", letterSpacing: ".06em",
-                  border: `1px solid ${T.danger}55`, background: T.danger + "20", color: T.danger }}>
-                ⚠ Space exceeded
-              </span>
-            )}
-            {spaceBadge === "warning" && (
-              <span title="Shipment TEU exceeds allocation space — overage reason on file"
-                style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, whiteSpace: "nowrap",
-                  borderRadius: 4, padding: "2px 9px", letterSpacing: ".06em",
-                  border: `1px solid ${T.warning}55`, background: T.warning + "20", color: T.warning }}>
-                ⚠ Space warning
-              </span>
-            )}
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 3 }}>
-            <span style={{ fontFamily: T.mono, fontSize: 13, color: T.textMuted }}>
-              {shipment.polName || shipment.pol} → {shipment.podName || shipment.pod} · created {shipment.createdAt}
-            </span>
-            {shipment.tradeLane && (
-              <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: T.text,
-                background: T.bg, border: `1px solid ${T.border}`, borderRadius: 4,
-                padding: "1px 8px", letterSpacing: ".04em", whiteSpace: "nowrap" }}>
-                {shipment.tradeLane}
-              </span>
-            )}
-          </div>
-        </div>
-        <button
-          onClick={openMessages}
-          title={unreadCount > 0 ? `${unreadCount} unread message${unreadCount > 1 ? "s" : ""}` : "Shipment messages"}
-          style={{ position: "relative", background: "none", border: `1px solid ${T.border}`,
-            borderRadius: 8, cursor: "pointer", padding: "7px 12px", fontSize: 18, lineHeight: 1,
-            transition: "border-color .15s" }}
-          onMouseEnter={e => e.currentTarget.style.borderColor = T.accent}
-          onMouseLeave={e => e.currentTarget.style.borderColor = T.border}>
-          {unreadCount > 0 ? "📩" : "✉️"}
-          {unreadCount > 0 && (
-            <span style={{ position: "absolute", top: -5, right: -5,
-              background: T.danger, color: "#fff", borderRadius: "50%",
-              width: 17, height: 17, display: "flex", alignItems: "center", justifyContent: "center",
-              fontFamily: T.mono, fontSize: 9, fontWeight: 700, lineHeight: 1 }}>
-              {unreadCount > 9 ? "9+" : unreadCount}
-            </span>
-          )}
-        </button>
-        <button
-          onClick={() => setEdiOpen(true)}
-          title="EDI messages"
-          style={{ position: "relative", background: "none", border: `1px solid ${T.border}`,
-            borderRadius: 8, cursor: "pointer", padding: "7px 12px", fontSize: 18, lineHeight: 1,
-            transition: "border-color .15s" }}
-          onMouseEnter={e => e.currentTarget.style.borderColor = T.accent}
-          onMouseLeave={e => e.currentTarget.style.borderColor = T.border}>
-          📡
-        </button>
-        <DocumentsMenu shipment={shipment} containers={containers} />
-        <Btn variant="secondary" disabled={shareLoading} onClick={async () => {
-          setShareLoading(true);
-          try {
-            const r = await api.shipments.shareToken(shipment.id);
-            setShareUrl(r.url);
-          } catch { toast.error("Failed to generate tracking link"); }
-          finally { setShareLoading(false); }
-        }}>🔗 Share</Btn>
-        {onRefresh && <RefreshBtn shipmentId={shipment.id} onRefresh={onRefresh} />}
-        {canEdit && <Btn variant="secondary" onClick={() => onEdit?.()}>✎ Edit Shipment</Btn>}
-      </div>
+      {/* Overview anchor — identity/route/actions now live in the persistent ShipmentHeaderBar
+          (mounted once in App.jsx above this page), so there's nothing left to render here
+          except the scroll target the sidebar's "Overview" link points at. */}
+      <div id="shp-overview" />
 
       {!canEdit && (
         <div style={{
@@ -3411,622 +2617,13 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
         </div>
       )}
 
-      {/* Info cards row 1 */}
-      <div id="shp-info-ports" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 14 }}>
-        <InfoCard label="Port of Loading"
-          value={shipment.polName ? `${shipment.pol} — ${shipment.polName}` : shipment.pol}
-          color={T.textCode} mono />
-        <InfoCard label="Port of Discharge"
-          value={shipment.podName ? `${shipment.pod} — ${shipment.podName}` : shipment.pod}
-          color={T.textCode} mono />
-        <InfoCard label="Carrier" value={`${shipment.carrierCode}${carrier ? ` · ${carrier.name}` : ""}`} color={T.accent} mono />
-        <InfoCard label="Total TEU" value={`${totalTEU} TEU`} mono />
-      </div>
-
-      {/* Info cards row 2 */}
-      <div id="shp-info-dates" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 22 }}>
-        {/* ETD with GMT */}
-        <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 10, padding: "14px 18px" }}>
-          <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
-            textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 6 }}>ETD</div>
-          <div style={{ fontFamily: T.mono, fontSize: 16, fontWeight: 700, color: T.text }}>
-            {shipment.etd || "—"}
-          </div>
-          {shipment.etd && (
-            <div style={{ fontFamily: T.mono, fontSize: 10.5, color: T.textMuted, marginTop: 3 }}>
-              {new Date(shipment.etd + "T00:00:00Z").toLocaleDateString("en-GB",
-                { weekday: "short", day: "2-digit", month: "short", timeZone: "UTC" })} · GMT
-            </div>
-          )}
-        </div>
-        {/* ETA with GMT */}
-        <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 10, padding: "14px 18px" }}>
-          <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
-            textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 6 }}>ETA</div>
-          <div style={{ fontFamily: T.mono, fontSize: 16, fontWeight: 700, color: T.text }}>
-            {shipment.eta || "—"}
-          </div>
-          {shipment.eta && (
-            <div style={{ fontFamily: T.mono, fontSize: 10.5, color: T.textMuted, marginTop: 3 }}>
-              {new Date(shipment.eta + "T00:00:00Z").toLocaleDateString("en-GB",
-                { weekday: "short", day: "2-digit", month: "short", timeZone: "UTC" })} · GMT
-            </div>
-          )}
-        </div>
-        {/* Vessel card with Link action */}
-        <div style={{ background: T.bg, border: `1px solid ${(!shipment.vessel && !shipment.vesselImo) ? T.warning + "88" : T.border}`,
-          borderRadius: 10, padding: "14px 18px", position: "relative" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-            <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
-              textTransform: "uppercase", letterSpacing: ".08em" }}>Vessel</div>
-            {canEdit && (
-              <button type="button" onClick={() => setLinkVesselOpen(true)}
-                style={{ fontFamily: T.body, fontSize: 10.5, color: T.accent, background: "none",
-                  border: "none", cursor: "pointer", padding: 0, fontWeight: 600 }}>
-                {shipment.vessel || shipment.vesselImo ? "✎ Change" : "＋ Link Vessel"}
-              </button>
-            )}
-          </div>
-          {shipment.vessel || shipment.vesselImo ? (
-            <>
-              <div style={{ fontFamily: T.body, fontSize: 15, fontWeight: 700, color: T.text }}>
-                {shipment.vessel || "—"}
-              </div>
-              {shipment.vesselImo && (
-                <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, marginTop: 2 }}>
-                  IMO {shipment.vesselImo}
-                </div>
-              )}
-            </>
-          ) : (
-            <div style={{ fontFamily: T.body, fontSize: 13, color: T.warning, fontStyle: "italic" }}>
-              Not assigned
-            </div>
-          )}
-        </div>
-
-        <InfoCard label="Voyage/Loop" value={shipment.voyage || "—"} mono />
-      </div>
-
-      {/* Linked space configuration */}
-      {allocations.length > 0 && (linkedAlloc ? (() => {
-        const allocTEU  = linkedAlloc.allocatedTEU || 0;
-        const thresh    = linkedAlloc.alertThreshold ?? 80;
-        const shipTEU   = totalTEU;
-        const pct       = allocTEU > 0 ? Math.min(100, (shipTEU / allocTEU) * 100) : 0;
-        const barColor  = pct >= 100 ? T.danger : pct >= thresh ? T.warning : T.success;
-        return (
-          <div id="shp-space" style={{ background: T.surface, border: `1px solid ${T.accent}44`,
-            borderLeft: `3px solid ${T.accent}`, borderRadius: 10,
-            padding: "14px 20px", marginBottom: 22,
-            display: "flex", alignItems: "center", gap: 24, flexWrap: "wrap" }}>
-            <div>
-              <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
-                textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 5 }}>Space Configuration</div>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <span style={{ fontFamily: T.mono, fontSize: 14, fontWeight: 700, color: T.accent }}>
-                  {linkedAlloc.carrierCode}
-                </span>
-                {linkedAlloc.pol && linkedAlloc.pod && (
-                  <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>
-                    {linkedAlloc.pol} <span style={{ color: T.border }}>›</span> {linkedAlloc.pod}
-                  </span>
-                )}
-                {linkedAlloc.contractNumber && (
-                  <span style={{ fontFamily: T.mono, fontSize: 11, color: T.accent, fontWeight: 600,
-                    background: T.accentBg, borderRadius: 4, padding: "1px 7px" }}>
-                    {linkedAlloc.contractNumber}
-                  </span>
-                )}
-              </div>
-            </div>
-            <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
-              {linkedAlloc.effectiveDate} → {linkedAlloc.endDate}
-            </div>
-            <div style={{ marginLeft: "auto", display: "flex", flexDirection: "column", gap: 4, minWidth: 140 }}>
-              <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
-                  This shipment: {shipTEU} / {allocTEU} TEU
-                </span>
-                <span style={{ fontFamily: T.mono, fontSize: 11, color: barColor, fontWeight: 600 }}>
-                  {pct.toFixed(0)}%
-                </span>
-              </div>
-              <div style={{ background: T.border, borderRadius: 4, height: 5, overflow: "hidden" }}>
-                <div style={{ height: "100%", width: `${pct}%`, background: barColor, transition: "width .4s" }} />
-              </div>
-            </div>
-          </div>
-        );
-      })() : (
-        <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, fontStyle: "italic",
-          marginBottom: 14 }}>
-          No active space configuration matches this shipment.
-        </div>
-      ))}
-
-      {/* Parties & Offices */}
-      <div id="shp-parties" style={{ marginBottom: 22 }}>
-        <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
-          {shipment.shipperName || shipment.consigneeName ? "Parties on file — " : "No parties on file yet — "}
-          <button type="button" onClick={() => onManagePartiesOffices ? onManagePartiesOffices() : null}
-            style={{ background: "none", border: "none", color: T.accent, cursor: "pointer",
-              fontFamily: T.body, fontSize: 12, padding: 0, textDecoration: "underline" }}>
-            View Parties &amp; Offices →
-          </button>
-        </div>
-      </div>
-
-      {/* Contract & References  ·  Cargo Details — side by side */}
-      <div id="shp-cargo" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12, alignItems: "stretch" }}>
-
-      {/* Contract & References compact card */}
-      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
-        overflow: "hidden", display: "flex", flexDirection: "column" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
-          padding: "14px 18px", borderBottom: `1px solid ${T.border}33`, flexShrink: 0 }}>
-          <span style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text }}>
-            Contract &amp; References
-          </span>
-        </div>
-        <div style={{ flex: 1 }}>
-          {[
-            { label: "Contract Type", node: (
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <Badge variant={contractVariant(shipment.contractType)}>{shipment.contractType}</Badge>
-                  {shipment.contractRef && <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>{shipment.contractRef}</span>}
-                </div>
-              ) },
-            { label: "Incoterm", node: shipment.incoterm
-                ? <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textCode, fontWeight: 700 }}>
-                    {shipment.incoterm}
-                    <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, fontWeight: 400, marginLeft: 6 }}>
-                      {INCOTERMS_2020.find(t => t.code === shipment.incoterm)?.name || ""}
-                    </span>
-                  </span>
-                : <span style={{ fontFamily: T.body, fontSize: 12, color: T.border }}>—</span> },
-            { label: "Booking Ref", node: <span style={{ fontFamily: T.mono, fontSize: 12, color: shipment.bookingRef ? T.textCode : T.border }}>{shipment.bookingRef || "—"}</span> },
-            { label: "B/L Number",  node: <span style={{ fontFamily: T.mono, fontSize: 12, color: shipment.blNumber  ? T.textCode : T.border }}>{shipment.blNumber  || "—"}</span> },
-          ].map(({ label, node }, i, arr) => (
-            <div key={label} style={{ display: "flex", alignItems: "center", gap: 12, padding: "9px 18px",
-              borderBottom: i < arr.length - 1 ? `1px solid ${T.border}22` : "none" }}>
-              <span style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
-                textTransform: "uppercase", letterSpacing: ".06em", width: 96, flexShrink: 0 }}>
-                {label}
-              </span>
-              {node}
-            </div>
-          ))}
-        </div>
-        <button type="button" onClick={() => setContractOpen(true)}
-          style={{ display: "block", width: "100%", padding: "10px 18px", textAlign: "center",
-            fontFamily: T.body, fontSize: 12, color: T.textMuted, background: T.bg, flexShrink: 0,
-            border: "none", borderTop: `1px solid ${T.border}22`, cursor: "pointer" }}
-          onMouseEnter={e => e.currentTarget.style.color = T.accent}
-          onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>
-          Show all details →
-        </button>
-      </div>
-
-      {/* Cargo Details compact card */}
-      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
-        overflow: "hidden", display: "flex", flexDirection: "column" }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
-          padding: "14px 18px", borderBottom: `1px solid ${T.border}33`, flexShrink: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <span style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text }}>Cargo Details</span>
-            <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted,
-              background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "1px 7px" }}>
-              {ctrs.length}
-            </span>
-            {totalTEU > 0 && (
-              <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>· {totalTEU} TEU</span>
-            )}
-            {dgConflicts > 0 && (
-              <span title={`${dgConflicts} container${dgConflicts !== 1 ? "s" : ""} with DG class not permitted by contract`}
-                style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600, color: T.warning,
-                  background: T.warning + "18", border: `1px solid ${T.warning}55`,
-                  borderRadius: 6, padding: "1px 8px", cursor: "default" }}>
-                ⚠ {dgConflicts} DG conflict{dgConflicts !== 1 ? "s" : ""}
-              </span>
-            )}
-          </div>
-          <button type="button" onClick={() => setCtrModal("add")}
-            style={{ fontFamily: T.body, fontSize: 12, color: T.accent, background: "none",
-              border: `1px solid ${T.accent}55`, borderRadius: 7, padding: "4px 11px", cursor: "pointer" }}>
-            + Add
-          </button>
-        </div>
-        <div style={{ flex: 1 }}>
-          {ctrs.length === 0 ? (
-            <div style={{ padding: "20px 18px", fontFamily: T.body, fontSize: 12,
-              color: T.textMuted, fontStyle: "italic" }}>No containers yet.</div>
-          ) : ctrs.slice(0, 3).map((c, i) => (
-            <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 18px",
-              borderBottom: i < Math.min(ctrs.length, 3) - 1 ? `1px solid ${T.border}22` : "none" }}>
-              <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textCode, fontWeight: 600,
-                width: 128, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {c.containerNumber || "—"}
-              </span>
-              <span style={{ fontFamily: T.mono, fontSize: 11, color: T.text, flexShrink: 0, width: 32 }}>
-                {c.size}ft
-              </span>
-              <div style={{ flexShrink: 0 }}><Badge>{c.type}</Badge></div>
-              {c.isDg && c.dgClass && (
-                <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: "#fff",
-                  background: T.danger, borderRadius: 4, padding: "1px 6px", flexShrink: 0 }}>
-                  IMO {c.dgClass}
-                </span>
-              )}
-              {ctrDgConflict(c) && (
-                <span title={ctrDgConflict(c)}
-                  style={{ fontFamily: T.body, fontSize: 10, fontWeight: 700, color: T.warning,
-                    background: T.warning + "18", border: `1px solid ${T.warning}55`,
-                    borderRadius: 4, padding: "1px 6px", flexShrink: 0, cursor: "default" }}>
-                  ⚠ DG conflict
-                </span>
-              )}
-              <span style={{ fontFamily: T.body, fontSize: 12, flex: 1,
-                color: c.cargoDescription ? T.textMuted : T.border,
-                fontStyle: c.cargoDescription ? "normal" : "italic",
-                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {c.cargoDescription || "No description"}
-              </span>
-            </div>
-          ))}
-        </div>
-        <button type="button" onClick={() => onManageContainers ? onManageContainers() : setCtrListOpen(true)}
-          style={{ display: "block", width: "100%", padding: "10px 18px", textAlign: "center",
-            fontFamily: T.body, fontSize: 12, color: T.textMuted, background: T.bg, flexShrink: 0,
-            border: "none", borderTop: `1px solid ${T.border}22`, cursor: "pointer" }}
-          onMouseEnter={e => e.currentTarget.style.color = T.accent}
-          onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>
-          {ctrs.length > 3
-            ? `${ctrs.length - 3} more container${ctrs.length - 3 !== 1 ? "s" : ""} — Show all →`
-            : ctrs.length > 0 ? "Manage containers →" : "Open containers →"}
-        </button>
-      </div>
-
-      </div>{/* end 1fr 1fr grid */}
-
       <div id="shp-services" style={{ marginBottom: 20 }}>
         <ServicesPanel shipment={shipment} />
       </div>
 
-      <div style={{ maxWidth: 560 }}>
-        <CompactHistory events={events} onShowAll={() => setHistoryOpen(true)} />
-      </div>
-      {historyOpen && <HistoryModal events={events} shipmentId={shipment.id} onClose={() => setHistoryOpen(false)} />}
-
-      {/* Accounting — promoted to dedicated sub-pages (Invoice Entry / Cost Entry / GP Overview) */}
-      <div id="shp-accounting" style={{ marginTop: 20, fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
-        Cost &amp; revenue lines —{" "}
-        <button type="button" onClick={() => onManageAccountingInvoices ? onManageAccountingInvoices() : null}
-          style={{ background: "none", border: "none", color: T.accent, cursor: "pointer",
-            fontFamily: T.body, fontSize: 12, padding: 0, textDecoration: "underline" }}>
-          View Invoice Entry →
-        </button>
-        {" · "}
-        <button type="button" onClick={() => onManageAccountingCosts ? onManageAccountingCosts() : null}
-          style={{ background: "none", border: "none", color: T.accent, cursor: "pointer",
-            fontFamily: T.body, fontSize: 12, padding: 0, textDecoration: "underline" }}>
-          View Cost Entry →
-        </button>
-        {" · "}
-        <button type="button" onClick={() => onManageAccountingGp ? onManageAccountingGp() : null}
-          style={{ background: "none", border: "none", color: T.accent, cursor: "pointer",
-            fontFamily: T.body, fontSize: 12, padding: 0, textDecoration: "underline" }}>
-          View GP Overview →
-        </button>
-      </div>
-
-      {/* Schedules, Milestones, Tickets — promoted to dedicated sub-pages */}
-      <div id="shp-schedules" style={{ marginTop: 20, fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
-        Carrier schedule —{" "}
-        <button type="button" onClick={() => onManageSchedules ? onManageSchedules() : null}
-          style={{ background: "none", border: "none", color: T.accent, cursor: "pointer",
-            fontFamily: T.body, fontSize: 12, padding: 0, textDecoration: "underline" }}>
-          View Schedules →
-        </button>
-      </div>
-
-      <div id="shp-milestones" style={{ marginTop: 12, fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
-        {milestoneProg?.total > 0 ? `${milestoneProg.done}/${milestoneProg.total} milestones complete — ` : "No milestones on file yet — "}
-        <button type="button" onClick={() => onManageMilestones ? onManageMilestones() : null}
-          style={{ background: "none", border: "none", color: T.accent, cursor: "pointer",
-            fontFamily: T.body, fontSize: 12, padding: 0, textDecoration: "underline" }}>
-          View Milestones →
-        </button>
-      </div>
-
-      <div id="shp-tickets" style={{ marginTop: 12, fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
-        Related tickets —{" "}
-        <button type="button" onClick={() => onManageTickets ? onManageTickets() : null}
-          style={{ background: "none", border: "none", color: T.accent, cursor: "pointer",
-            fontFamily: T.body, fontSize: 12, padding: 0, textDecoration: "underline" }}>
-          View Tickets →
-        </button>
-      </div>
-
       {/* Modals */}
 
-      {/* Pending contract revalidation */}
-      {pendingMatches && canEdit && (
-        <PendingRevalidationModal
-          matches={pendingMatches}
-          contractRef={shipment.contractRef}
-          onAccept={async contract => {
-            try {
-              await onUpdate(shipment.id, {
-                ...shipment,
-                contractType: "Central",
-                contractId:   contract.id,
-                contractRef:  contract.contractNumber,
-              });
-            } finally {
-              setPendingMatches(null);
-            }
-          }}
-          onDismiss={() => setPendingMatches(null)}
-        />
-      )}
-
-      {/* Contract & References — full details */}
-      {contractOpen && (
-        <Modal title="Contract &amp; References" onClose={() => setContractOpen(false)} width={520}>
-          <div style={{ display: "flex", flexDirection: "column" }}>
-            {[
-              { label: "Contract Type", node: (
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <Badge variant={contractVariant(shipment.contractType)}>{shipment.contractType}</Badge>
-                    {shipment.contractRef && <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>{shipment.contractRef}</span>}
-                  </div>
-                ) },
-              { label: "Contract ID", node: <span style={{ fontFamily: T.mono, fontSize: 13, color: shipment.contractId ? T.textCode : T.border }}>{shipment.contractId || "—"}</span> },
-              { label: "Incoterm", node: shipment.incoterm
-                  ? <span style={{ fontFamily: T.mono, fontSize: 13, color: T.textCode, fontWeight: 700 }}>
-                      {shipment.incoterm}
-                      <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, fontWeight: 400, marginLeft: 8 }}>
-                        {INCOTERMS_2020.find(t => t.code === shipment.incoterm)?.name || ""}
-                      </span>
-                    </span>
-                  : <span style={{ fontFamily: T.body, fontSize: 13, color: T.border }}>—</span> },
-              { label: "Booking Ref", node: <span style={{ fontFamily: T.mono, fontSize: 13, color: shipment.bookingRef ? T.textCode : T.border }}>{shipment.bookingRef || "—"}</span> },
-              { label: "B/L Number",  node: <span style={{ fontFamily: T.mono, fontSize: 13, color: shipment.blNumber  ? T.textCode : T.border }}>{shipment.blNumber  || "—"}</span> },
-            ].map(({ label, node }, i, arr) => (
-              <div key={label} style={{ display: "flex", alignItems: "center", gap: 16, padding: "11px 0",
-                borderBottom: i < arr.length - 1 ? `1px solid ${T.border}22` : "none" }}>
-                <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, fontWeight: 600,
-                  textTransform: "uppercase", letterSpacing: ".06em", width: 110, flexShrink: 0 }}>
-                  {label}
-                </span>
-                {node}
-              </div>
-            ))}
-            {shipment.commodityCode && (
-              <div style={{ paddingTop: 14, marginTop: 2, borderTop: `1px solid ${T.border}22` }}>
-                <div style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted, fontWeight: 600,
-                  textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 8 }}>Commodity</div>
-                <CommodityDisplay code={shipment.commodityCode} />
-              </div>
-            )}
-            {shipment.declaredValue != null && (
-              <div style={{ paddingTop: 14, marginTop: 2, borderTop: `1px solid ${T.border}22` }}>
-                <div style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted, fontWeight: 600,
-                  textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 4 }}>Declared Value</div>
-                <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text }}>
-                  {(shipment.declaredValueCurrency || "USD")}{" "}
-                  {Number(shipment.declaredValue).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </span>
-              </div>
-            )}
-            {shipment.contractNotes && (
-              <div style={{ paddingTop: 14, marginTop: 2, borderTop: `1px solid ${T.border}22` }}>
-                <div style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted, fontWeight: 600,
-                  textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 6 }}>Notes</div>
-                <p style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.6, margin: 0 }}>
-                  {shipment.contractNotes}
-                </p>
-              </div>
-            )}
-          </div>
-        </Modal>
-      )}
-
       {/* Containers — full list for selection / edit / delete */}
-      {ctrListOpen && (
-        <Modal title={`Containers — ${shipment.id}`} onClose={() => setCtrListOpen(false)} width={820}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
-                  {ctrs.length} container{ctrs.length !== 1 ? "s" : ""} · {totalTEU} TEU total
-                </span>
-                {dgConflicts > 0 && (
-                  <span style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600, color: T.warning,
-                    background: T.warning + "18", border: `1px solid ${T.warning}55`,
-                    borderRadius: 6, padding: "2px 8px" }}>
-                    ⚠ {dgConflicts} DG conflict{dgConflicts !== 1 ? "s" : ""} — review required
-                  </span>
-                )}
-              </div>
-              {canEdit && <Btn onClick={() => { setCtrListOpen(false); setCtrFromList(true); setCtrModal("add"); }}>＋ Add Container</Btn>}
-            </div>
-            {ctrs.length === 0 ? (
-              <div style={{ padding: 32, textAlign: "center", fontFamily: T.body,
-                fontSize: 13, color: T.textMuted, fontStyle: "italic" }}>
-                No containers yet.
-              </div>
-            ) : (
-              <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden" }}>
-                {/* Header */}
-                {(() => {
-                  const thStyle = { fontFamily: T.body, fontSize: 10, fontWeight: 700,
-                    color: T.textMuted, textTransform: "uppercase", letterSpacing: ".07em" };
-                  return (
-                    <div style={{ display: "flex", alignItems: "center", padding: "7px 14px",
-                      borderBottom: `1px solid ${T.border}`, background: T.bg }}>
-                      <div style={{ ...thStyle, width: 140, flexShrink: 0 }}>Container No.</div>
-                      <div style={{ ...thStyle, width: 104, flexShrink: 0 }}>Size / Type</div>
-                      <div style={{ ...thStyle, width: 44,  flexShrink: 0 }}>TEU</div>
-                      <div style={{ ...thStyle, width: 84,  flexShrink: 0 }}>HS Code</div>
-                      <div style={{ ...thStyle, flex: 1 }}>Cargo Description</div>
-                      <div style={{ ...thStyle, width: 88,  flexShrink: 0 }}>Wt / Vol</div>
-                      <div style={{ ...thStyle, width: 64,  flexShrink: 0 }}>DG</div>
-                      <div style={{ ...thStyle, width: canEdit ? 132 : 60, flexShrink: 0 }} />
-                    </div>
-                  );
-                })()}
-                {/* Rows */}
-                {ctrs.map(c => (
-                  <div key={c.id} style={{ display: "flex", alignItems: "center", padding: "10px 14px",
-                    borderBottom: `1px solid ${T.border}22` }}
-                    onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
-                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                    <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textCode, fontWeight: 600,
-                      width: 140, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {c.containerNumber || "—"}
-                    </span>
-                    <div style={{ width: 104, flexShrink: 0, display: "flex", alignItems: "center", gap: 5 }}>
-                      <span style={{ fontFamily: T.mono, fontSize: 11, color: T.text }}>{c.size}ft</span>
-                      <Badge>{c.type}</Badge>
-                    </div>
-                    <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.text,
-                      width: 44, flexShrink: 0 }}>{teuOf(c.size)}</span>
-                    <span style={{ fontFamily: T.mono, fontSize: 11, color: c.hsCode ? T.textCode : T.border,
-                      width: 84, flexShrink: 0 }}>{c.hsCode || "—"}</span>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontFamily: T.body, fontSize: 12,
-                        color: c.cargoDescription ? T.text : T.border,
-                        fontStyle: c.cargoDescription ? "normal" : "italic",
-                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {c.cargoDescription || "—"}
-                      </div>
-                    </div>
-                    <div style={{ width: 88, flexShrink: 0, display: "flex", flexDirection: "column", gap: 2 }}>
-                      {c.grossWeightKg != null && <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted }}>{c.grossWeightKg.toLocaleString()} kg</span>}
-                      {c.volumeCbm    != null && <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted }}>{c.volumeCbm} m³</span>}
-                      {c.grossWeightKg == null && c.volumeCbm == null && <span style={{ fontFamily: T.mono, fontSize: 11, color: T.border }}>—</span>}
-                    </div>
-                    <div style={{ width: 64, flexShrink: 0, display: "flex", flexDirection: "column", gap: 3 }}>
-                      {c.isDg && c.dgClass
-                        ? <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700,
-                            color: "#fff", background: T.danger, borderRadius: 4, padding: "2px 7px" }}>
-                            IMO {c.dgClass}
-                          </span>
-                        : <span style={{ fontFamily: T.mono, fontSize: 11, color: T.border }}>—</span>}
-                      {ctrDgConflict(c) && (
-                        <span title={ctrDgConflict(c)}
-                          style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, color: T.warning,
-                            background: T.warning + "18", border: `1px solid ${T.warning}55`,
-                            borderRadius: 4, padding: "1px 5px", cursor: "default", whiteSpace: "nowrap" }}>
-                          ⚠ conflict
-                        </span>
-                      )}
-                    </div>
-                    <div style={{ width: canEdit ? 132 : 60, flexShrink: 0, display: "flex", gap: 5 }}>
-                      <Btn size="sm" variant="secondary" onClick={() => setEventsCtr(c)}>📋</Btn>
-                      {canEdit && (
-                        <>
-                          <Btn size="sm" variant="secondary"
-                            onClick={() => { setCtrListOpen(false); setCtrFromList(true); setCtrModal(c); }}>Edit</Btn>
-                          <Btn size="sm" variant="danger"
-                            onClick={() => setConfirmCtr(c.id)}>✕</Btn>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </Modal>
-      )}
-
-      {ctrModal && (
-        <Modal title={ctrModal === "add" ? "Add Container" : "Edit Container"} onClose={closeCtrModal}>
-          <ContainerForm init={ctrModal === "add" ? {} : ctrModal}
-            dgPolicy={dgPolicy}
-            onDirtyChange={setIsDirty}
-            onSave={async form => {
-              try {
-                ctrModal === "add"
-                  ? await onAddContainer(shipment.id, form)
-                  : await onEditContainer(ctrModal.id, form);
-                setIsDirty(false);
-                api.shipmentEvents.list(shipment.id).then(setEvents).catch(() => {});
-                closeCtrModal();
-              } catch { /* error already toasted by App.jsx handler */ }
-            }}
-            onCancel={closeCtrModal} />
-        </Modal>
-      )}
-
-      {eventsCtr && (
-        <Modal title={`Lifecycle Events — ${eventsCtr.containerNumber || eventsCtr.id}`}
-          onClose={() => setEventsCtr(null)} width={480}>
-          <ContainerEventsPanel containerId={eventsCtr.id} containerNumber={eventsCtr.containerNumber} />
-        </Modal>
-      )}
-
-      {/* Link Vessel modal */}
-      {linkVesselOpen && (
-        <LinkVesselModal
-          shipment={shipment}
-          onSave={async (vesselImo, vesselName, voyage) => {
-            await onUpdate(shipment.id, {
-              ...shipment,
-              vesselImo, vessel: vesselName, voyage,
-            });
-            setLinkVesselOpen(false);
-          }}
-          onClose={() => setLinkVesselOpen(false)}
-        />
-      )}
-      {confirmCtr && (
-        <ConfirmModal
-          message="Remove this container from the shipment?"
-          onConfirm={() => { onDeleteContainer(confirmCtr); setConfirmCtr(null); }}
-          onCancel={() => setConfirmCtr(null)} />
-      )}
-
-      {/* Share link modal */}
-      {shareUrl && (
-        <Modal title="🔗 Customer Tracking Link" onClose={() => setShareUrl(null)} style={{ maxWidth: 520 }}>
-          <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, marginBottom: 12 }}>
-            Anyone with this link can view the shipment status and milestones — no login required.
-            Valid for 30 days.
-          </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <input readOnly value={shareUrl} style={{
-              flex: 1, padding: "8px 10px", borderRadius: 6, border: `1px solid ${T.border}`,
-              background: T.surface, color: T.text, fontFamily: T.mono, fontSize: 12,
-            }} onFocus={e => e.target.select()} />
-            <Btn onClick={() => { navigator.clipboard.writeText(shareUrl); toast.success("Link copied!"); }}>
-              Copy
-            </Btn>
-          </div>
-        </Modal>
-      )}
-
-      {/* ── Messages drawer ── */}
-      {msgsOpen && <MessagesDrawer
-        shipment={shipment}
-        messages={messages}
-        onPost={async (body) => {
-          loadMessages();
-        }}
-        onClose={() => setMsgsOpen(false)}
-      />}
-
-      {/* ── EDI messages drawer ── */}
-      {ediOpen && <EdiMessagesDrawer
-        shipment={shipment}
-        messages={ediMessages}
-        onSend={handleSendBookingRequest}
-        onClose={() => setEdiOpen(false)}
-      />}
-
     </div>
   );
 };

@@ -266,7 +266,7 @@ const PortCombobox = ({ value = null, onChange, placeholder = "Search port or LO
       ) : (
         // ── Search input ───────────────────────────────────────────────────────
         <>
-          <div style={{ position: "relative" }}>
+          <div style={{ position: "relative", paddingTop: 5, paddingBottom: 5 }}>
             <input
               ref={inputRef}
               value={query}

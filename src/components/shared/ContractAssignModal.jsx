@@ -60,19 +60,26 @@ const ContractAssignModal = ({ shipment, legs, pol, pod, onUpdate, onDone, onClo
     return () => { live = false; };
   }, [step, pol, pod, needsPolHaulage, needsPodHaulage, pkuLocation, delLocation]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const finish = fields => {
+  const finish = (fields, matchedRoute = null) => {
     onUpdate(shipment.id, { ...shipment, contractType: type, ...fields });
     onDone({ isCentral: type === "Central", contractPicked: !!fields.contractId,
-      carrierCode: fields.carrierCode || shipment.carrierCode || "" });
+      carrierCode: fields.carrierCode || shipment.carrierCode || "", matchedRoute });
   };
 
   const pickContract = (c, skipReason = "") => {
+    // matchedLegs is the specific run of legs that satisfied THIS search — not the contract's
+    // full leg list, which can include unrelated alternate lanes — so the chained sailing
+    // search (if one follows) scopes to the route this contract actually covers, not the
+    // shipment's generic SEA-leg span.
+    const chain = c.matchedLegs || [];
+    const matchedRoute = chain.length > 0 ? { pol: chain[0].pol, pod: chain[chain.length - 1].pod } : null;
     finish({ contractId: c.id, contractRef: c.contractNumber, carrierCode: c.carrierCode || shipment.carrierCode,
-      allocationId: "", spaceSkipReason: skipReason, spaceOverageReason: "" });
+      allocationId: "", spaceSkipReason: skipReason, spaceOverageReason: "" }, matchedRoute);
   };
   const pickAllocation = (alloc, overageReason = "") => {
     finish({ contractId: alloc.contractId, contractRef: alloc.contractNumber, carrierCode: alloc.carrierCode || shipment.carrierCode,
-      allocationId: alloc.id, spaceSkipReason: "", spaceOverageReason: overageReason });
+      allocationId: alloc.id, spaceSkipReason: "", spaceOverageReason: overageReason },
+      { pol: alloc.pol, pod: alloc.pod });
   };
   const saveRef = () => {
     finish({ contractId: "", allocationId: "", contractRef: refVal });
@@ -93,7 +100,8 @@ const ContractAssignModal = ({ shipment, legs, pol, pod, onUpdate, onDone, onClo
     }
     return (
       <ContractPickerModal pol={pol} pod={pod} matches={matches} allocs={allocs}
-        onSelectContract={pickContract} onSelectAllocation={pickAllocation} onClose={onClose} />
+        onSelectContract={pickContract} onSelectAllocation={pickAllocation} onClose={onClose}
+        onBack={() => setStep("type")} />
     );
   }
 

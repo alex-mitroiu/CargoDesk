@@ -16,6 +16,7 @@ import { fmtCurr, _esc, _invShell, buildFreightInvoiceHtml } from "./utils/invoi
 import ShipmentsPage     from "./pages/ShipmentsPage";
 import ShipmentFormPage  from "./pages/ShipmentFormPage";
 import ShipmentDetailPage, { ContainerForm } from "./pages/ShipmentDetailPage";
+import ShipmentConditionsPage from "./pages/ShipmentConditionsPage";
 import ShipmentContainersPage from "./pages/ShipmentContainersPage";
 import ShipmentPartiesPage from "./pages/ShipmentPartiesPage";
 import ShipmentSchedulesPage from "./pages/ShipmentSchedulesPage";
@@ -24,6 +25,7 @@ import ShipmentTicketsPage from "./pages/ShipmentTicketsPage";
 import ShipmentAccountingCostsPage from "./pages/ShipmentAccountingCostsPage";
 import ShipmentAccountingInvoicesPage from "./pages/ShipmentAccountingInvoicesPage";
 import ShipmentAccountingGpPage from "./pages/ShipmentAccountingGpPage";
+import ShipmentHistoryPage from "./pages/ShipmentHistoryPage";
 import ShipmentHeaderBar from "./components/shared/ShipmentHeaderBar";
 import DashboardPage       from "./pages/DashboardPage";
 import DashboardArchive    from "./pages/DashboardArchivePage";
@@ -1241,6 +1243,7 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, o
   // Accounting is the first *nested* promotion — the parent row and all three
   // children route via this same map, so handleSection needs no special-casing.
   const PROMOTED_ROUTES = {
+    "shp-conditions": "shipment-conditions",
     "shp-cargo":      "shipment-containers",
     "shp-parties":    "shipment-parties",
     "shp-schedules":  "shipment-schedules",
@@ -1250,6 +1253,7 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, o
     "shp-accounting-invoices": "shipment-accounting-invoices",
     "shp-accounting-costs":    "shipment-accounting-costs",
     "shp-accounting-gp":       "shipment-accounting-gp",
+    "shp-history":    "shipment-history",
   };
   const ACCOUNTING_ROUTES = ["shipment-accounting-invoices", "shipment-accounting-costs", "shipment-accounting-gp"];
   const handleSection = (id) => {
@@ -1276,14 +1280,15 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, o
 
   const sections = [
     { id: "shp-overview",   icon: "◎",  label: "Overview" },
+    { id: "shp-conditions", icon: "📜", label: "Conditions" },
     { id: "shp-parties",    icon: "👥", label: "Parties & Offices" },
     { id: "shp-cargo",      icon: "📦", label: "Cargo",      badge: ctrCount || null },
     { id: "shp-schedules",  icon: "⚓", label: "Contracts & Schedules" },
     { id: "shp-milestones", icon: "⚑",  label: "Milestones" },
-    { id: "shp-services",   icon: "🧰", label: "Services" },
   ];
   const sectionsAfterAccounting = [
     { id: "shp-tickets",    icon: "◩",  label: "Tickets" },
+    { id: "shp-history",    icon: "🕐", label: "History" },
   ];
   const accountingChildren = [
     { id: "shp-accounting-invoices", icon: "🧾", label: "Invoice Entry" },
@@ -1512,6 +1517,7 @@ function App() {
     "dashboard-archive":"api_shipments_enabled",
     // Promoted shipment sub-pages inherit the same gate "detail" uses — otherwise
     // disabling the Shipments module only hides Overview, not Cargo/Accounting/etc.
+    "shipment-conditions":          "api_shipments_enabled",
     "shipment-containers":          "api_shipments_enabled",
     "shipment-parties":             "api_shipments_enabled",
     "shipment-schedules":           "api_shipments_enabled",
@@ -1520,6 +1526,7 @@ function App() {
     "shipment-accounting-invoices": "api_shipments_enabled",
     "shipment-accounting-costs":    "api_shipments_enabled",
     "shipment-accounting-gp":       "api_shipments_enabled",
+    "shipment-history":             "api_shipments_enabled",
     "mdm-contracts":   "api_contracts_enabled",
     "mdm-customers":              "api_customers_enabled",
     "mdm-sanctioned-customers":  "api_customers_enabled",
@@ -1536,11 +1543,13 @@ function App() {
 
   // Promoted shipment sub-pages — suffix in the hash maps to a page key.
   const SHIPMENT_SUBPAGES = {
+    conditions: "shipment-conditions",
     containers: "shipment-containers",
     parties:    "shipment-parties",
     schedules:  "shipment-schedules",
     milestones: "shipment-milestones",
     tickets:    "shipment-tickets",
+    history:    "shipment-history",
   };
   const SHIPMENT_SUBPAGE_HASHES = Object.fromEntries(
     Object.entries(SHIPMENT_SUBPAGES).map(([suffix, key]) => [key, suffix])
@@ -1562,7 +1571,7 @@ function App() {
     if (/^shipments\/[^/]+\/edit$/.test(hash)) return { page: "shipment-edit", selectedId: hash.split("/")[1] };
     const acctMatch = hash.match(/^shipments\/([^/]+)\/accounting\/(costs|invoices|gp)$/);
     if (acctMatch) return { page: ACCOUNTING_SUBPAGES[acctMatch[2]], selectedId: acctMatch[1] };
-    const subMatch = hash.match(/^shipments\/([^/]+)\/(containers|parties|schedules|milestones|tickets)$/);
+    const subMatch = hash.match(/^shipments\/([^/]+)\/(conditions|containers|parties|schedules|milestones|tickets|history)$/);
     if (subMatch) return { page: SHIPMENT_SUBPAGES[subMatch[2]], selectedId: subMatch[1] };
     if (hash.startsWith("shipments/")) return { page: "detail", selectedId: hash.split("/")[1] || null };
     if (hash.startsWith("track/")) return { page: "track", selectedId: hash.slice(6) };
@@ -1909,6 +1918,7 @@ function App() {
   // Breadcrumb label for each promoted shipment sub-page — without this the
   // header falls back to the raw page key (e.g. "shipment-accounting-gp").
   const SHIPMENT_SUBPAGE_LABELS = {
+    "shipment-conditions":         "Conditions",
     "shipment-containers":         "Cargo",
     "shipment-parties":            "Parties & Offices",
     "shipment-schedules":          "Contracts & Schedules",
@@ -1917,6 +1927,7 @@ function App() {
     "shipment-accounting-invoices":"Invoice Entry",
     "shipment-accounting-costs":   "Cost Entry",
     "shipment-accounting-gp":      "GP Overview",
+    "shipment-history":            "History",
   };
 
   // ── iOS-style theme toggle pill ────────────────────────────────────────────
@@ -2518,7 +2529,12 @@ function App() {
         {(page === "detail" || SHIPMENT_SUBPAGE_LABELS[page]) && selectedShipment && isEnabled(page) && (
           <ShipmentHeaderBar shipment={selectedShipment} containers={containers}
             onNavigateToSchedules={() => navigate("shipment-schedules", selectedShipment.id)}
-            onUpdate={handleUpdateShipment} />
+            onUpdate={handleUpdateShipment}
+            onEdit={() => navigate("shipment-edit", selectedShipment.id)}
+            onRefresh={async () => {
+              const fresh = await api.shipments.get(selectedShipment.id);
+              setShipments(p => p.map(s => s.id === fresh.id ? { ...s, ...fresh } : s));
+            }} />
         )}
 
         {/* Disabled module fallback */}
@@ -2653,6 +2669,10 @@ function App() {
             onManageAccountingGp={() => navigate("shipment-accounting-gp", selectedShipment.id)} />
         )}
 
+        {page === "shipment-conditions" && selectedShipment && (
+          <ShipmentConditionsPage shipment={selectedShipment} />
+        )}
+
         {page === "shipment-containers" && selectedShipment && (
           <ShipmentContainersPage
             shipment={selectedShipment} containers={containers}
@@ -2690,6 +2710,10 @@ function App() {
           <ShipmentTicketsPage
             shipment={selectedShipment}
             onBack={() => navigate("detail", selectedShipment.id)} />
+        )}
+
+        {page === "shipment-history" && selectedShipment && (
+          <ShipmentHistoryPage shipment={selectedShipment} />
         )}
 
         {page === "shipment-accounting-costs" && selectedShipment && (

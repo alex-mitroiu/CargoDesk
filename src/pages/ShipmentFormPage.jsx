@@ -123,7 +123,7 @@ const OVERAGE_REASONS = [
   { value: "agreed_uplift",  label: "Agreed uplift" },
 ];
 
-export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0, onSelectContract, onSelectAllocation, onClose }) => {
+export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0, onSelectContract, onSelectAllocation, onClose, onBack }) => {
   const [expandedGroups, setExpandedGroups] = useState(new Set());
   const [skipMode,       setSkipMode]       = useState(false);
   const [skipReason,     setSkipReason]     = useState("");
@@ -256,6 +256,16 @@ export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0
   return (
     <Modal title={`Select Contract — ${pol} → ${pod}`} onClose={onClose} width={680}>
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {onBack && (
+          <button type="button" onClick={onBack}
+            style={{ alignSelf: "flex-start", background: T.bg, border: `1px solid ${T.border}`,
+              borderRadius: 7, cursor: "pointer", color: T.text, fontFamily: T.body, fontSize: 12,
+              fontWeight: 600, padding: "6px 12px", marginBottom: 2 }}
+            onMouseEnter={e => { e.currentTarget.style.borderColor = T.accent; e.currentTarget.style.color = T.accent; }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.text; }}>
+            ← Change contract type (SPOT / Pending / Customer Own)
+          </button>
+        )}
         {isLoading && <div style={{ padding: 40, display: "flex", justifyContent: "center" }}><Spinner /></div>}
         {!isLoading && (
           <>
@@ -551,7 +561,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
             : c.key === "carrierCode" && (d.legType === "Pick-up" || d.legType === "Delivery") ? "—"
             : (d[c.key] || "—");
           return (
-            <div key={c.key} style={{ width: widths[i], minWidth: widths[i], padding: "8px 8px 8px 10px",
+            <div key={c.key} id={`leg-${d.id}-${c.key}`} style={{ width: widths[i], minWidth: widths[i], padding: "8px 8px 8px 10px",
               display: "flex", alignItems: "center", borderRight: `1px solid ${T.border}22` }}>
               {/* Ports get the same bordered chip weight as the editable PortCombobox, so a
                   locked row doesn't look visually "cheaper" than an editable one beside it. */}
@@ -588,7 +598,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
       onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget)) flush(); }}>
 
       {/* Leg Type */}
-      <div style={{ width: widths[0], minWidth: widths[0], padding: "0 0 0 10px",
+      <div id={`leg-${d.id}-legType`} style={{ width: widths[0], minWidth: widths[0], padding: "0 0 0 10px",
         display: "flex", alignItems: "center", borderRight: `1px solid ${T.border}33` }}>
         <select value={d.legType || "SEA"} onChange={e => {
           const lt = e.target.value;
@@ -600,7 +610,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
       </div>
 
       {/* Movement Type */}
-      <div style={{ width: widths[1], minWidth: widths[1], padding: "0 0 0 10px",
+      <div id={`leg-${d.id}-movementType`} style={{ width: widths[1], minWidth: widths[1], padding: "0 0 0 10px",
         display: "flex", alignItems: "center", borderRight: `1px solid ${T.border}33` }}>
         {(d.legType || "SEA") === "SEA"
           ? <span style={{ fontFamily: T.body, fontSize: 12, color: T.border }}>—</span>
@@ -612,7 +622,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
       </div>
 
       {/* From (POL) */}
-      <div style={{ width: widths[2], minWidth: widths[2], borderRight: `1px solid ${T.border}33`, overflow: "visible" }}>
+      <div id={`leg-${d.id}-pol`} style={{ width: widths[2], minWidth: widths[2], borderRight: `1px solid ${T.border}33`, overflow: "visible" }}>
         <PortCombobox
           value={d.pol ? { unlocode: d.pol, name: d.polName || "" } : null}
           onChange={v => {
@@ -624,7 +634,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
       </div>
 
       {/* Loc. Type (From) */}
-      <div style={{ width: widths[3], minWidth: widths[3], padding: "0 0 0 10px",
+      <div id={`leg-${d.id}-polLocType`} style={{ width: widths[3], minWidth: widths[3], padding: "0 0 0 10px",
         display: "flex", alignItems: "center", borderRight: `1px solid ${T.border}33` }}>
         <select value={d.polLocType || "Terminal"} onChange={e => set("polLocType")(e.target.value)} onBlur={flush}
           style={{ ...cellInput, cursor: "pointer" }}>
@@ -633,7 +643,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
       </div>
 
       {/* Date (ETD) */}
-      <div style={{ width: widths[4], minWidth: widths[4], padding: "0 0 0 10px",
+      <div id={`leg-${d.id}-etd`} style={{ width: widths[4], minWidth: widths[4], padding: "0 0 0 10px",
         display: "flex", alignItems: "center", borderRight: `1px solid ${T.border}33` }}>
         <input type="date" value={d.etd || ""} max={d.eta || undefined}
           onChange={e => set("etd")(e.target.value || null)}
@@ -641,7 +651,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
       </div>
 
       {/* To (POD) */}
-      <div style={{ width: widths[5], minWidth: widths[5], borderRight: `1px solid ${T.border}33`, overflow: "visible" }}>
+      <div id={`leg-${d.id}-pod`} style={{ width: widths[5], minWidth: widths[5], borderRight: `1px solid ${T.border}33`, overflow: "visible" }}>
         <PortCombobox
           value={d.pod ? { unlocode: d.pod, name: d.podName || "" } : null}
           onChange={v => {
@@ -653,7 +663,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
       </div>
 
       {/* Loc. Type (To) */}
-      <div style={{ width: widths[6], minWidth: widths[6], padding: "0 0 0 10px",
+      <div id={`leg-${d.id}-podLocType`} style={{ width: widths[6], minWidth: widths[6], padding: "0 0 0 10px",
         display: "flex", alignItems: "center", borderRight: `1px solid ${T.border}33` }}>
         <select value={d.podLocType || "Terminal"} onChange={e => set("podLocType")(e.target.value)} onBlur={flush}
           style={{ ...cellInput, cursor: "pointer" }}>
@@ -662,7 +672,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
       </div>
 
       {/* Date (ETA) */}
-      <div style={{ width: widths[7], minWidth: widths[7], padding: "0 0 0 10px", borderRight: `1px solid ${T.border}33`,
+      <div id={`leg-${d.id}-eta`} style={{ width: widths[7], minWidth: widths[7], padding: "0 0 0 10px", borderRight: `1px solid ${T.border}33`,
         display: "flex", flexDirection: "column", justifyContent: "center", gap: 3 }}>
         <input type="date" value={d.eta || ""} min={d.etd || undefined}
           onChange={e => set("eta")(e.target.value || null)}
@@ -681,7 +691,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
       </div>
 
       {/* Carrier — only relevant for SEA legs */}
-      <div style={{ width: widths[8], minWidth: widths[8], borderRight: `1px solid ${T.border}33`, overflow: "visible",
+      <div id={`leg-${d.id}-carrierCode`} style={{ width: widths[8], minWidth: widths[8], borderRight: `1px solid ${T.border}33`, overflow: "visible",
         display: "flex", alignItems: "center" }}>
         {d.legType === "Pick-up" || d.legType === "Delivery"
           ? <span style={{ display: "block", padding: "0 8px 0 10px", fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>—</span>
@@ -693,7 +703,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
       </div>
 
       {/* Movement by */}
-      <div style={{ width: widths[9], minWidth: widths[9], padding: "0 0 0 10px",
+      <div id={`leg-${d.id}-movementBy`} style={{ width: widths[9], minWidth: widths[9], padding: "0 0 0 10px",
         display: "flex", alignItems: "center", borderRight: `1px solid ${T.border}33` }}>
         {(d.legType || "SEA") === "SEA"
           ? <span style={{ fontFamily: T.body, fontSize: 12, color: T.border }}>—</span>
@@ -708,7 +718,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
       {(() => {
         const vesselDisabled = (d.legType === "Pick-up" || d.legType === "Delivery") && d.movementBy !== "Barge";
         return (
-          <div style={{ width: widths[10], minWidth: widths[10], padding: "0 0 0 10px",
+          <div id={`leg-${d.id}-vessel`} style={{ width: widths[10], minWidth: widths[10], padding: "0 0 0 10px",
             display: "flex", alignItems: "center", borderRight: `1px solid ${T.border}33` }}>
             {vesselDisabled
               ? <span style={{ fontFamily: T.body, fontSize: 12, color: T.border }}>—</span>
@@ -722,7 +732,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
       {(() => {
         const voyageDisabled = (d.legType === "Pick-up" || d.legType === "Delivery") && d.movementBy !== "Barge";
         return (
-          <div style={{ width: widths[11], minWidth: widths[11], padding: "0 0 0 10px",
+          <div id={`leg-${d.id}-voyage`} style={{ width: widths[11], minWidth: widths[11], padding: "0 0 0 10px",
             display: "flex", alignItems: "center", borderRight: `1px solid ${T.border}33` }}>
             {voyageDisabled
               ? <span style={{ fontFamily: T.body, fontSize: 12, color: T.border }}>—</span>
@@ -735,14 +745,14 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
       {showContractCols && (
         <>
           {/* Contract Type — read-only, inherited */}
-          <div style={{ width: widths[12], minWidth: widths[12], padding: "0 0 0 10px",
+          <div id={`leg-${d.id}-contractType`} style={{ width: widths[12], minWidth: widths[12], padding: "0 0 0 10px",
             display: "flex", alignItems: "center", borderRight: `1px solid ${T.border}33`,
             fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
             {inheritedContractType || "—"}
           </div>
 
           {/* Contract No. — read-only, inherited */}
-          <div style={{ width: widths[13], minWidth: widths[13], padding: "0 0 0 10px",
+          <div id={`leg-${d.id}-contractRef`} style={{ width: widths[13], minWidth: widths[13], padding: "0 0 0 10px",
             display: "flex", alignItems: "center", borderRight: `1px solid ${T.border}33`,
             fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>
             {inheritedContractRef || "—"}
@@ -877,7 +887,7 @@ export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChan
           ) : legs.map(leg => {
             const isSelected = selectedLegId === leg.id;
             return (
-              <div key={leg.id}
+              <div key={leg.id} id={`leg-row-${leg.id}`}
                 onClick={() => canEdit && setSelectedLegId(id => id === leg.id ? null : leg.id)}
                 style={{ position: "relative", cursor: canEdit ? "pointer" : "default",
                   borderLeft: isSelected ? `3px solid ${T.accent}` : "3px solid transparent",
@@ -907,7 +917,7 @@ export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChan
               {legs.length} leg{legs.length !== 1 ? "s" : ""}
               {legs.length > 1 && (
                 <span style={{ fontFamily: T.mono }}>
-                  {legs[0]?.pol || "?"} → {legs[legs.length - 1]?.pod || "?"}
+                  {(cLegs[0]?.pol || legs[0]?.pol) || "?"} → {(cLegs[cLegs.length - 1]?.pod || legs[legs.length - 1]?.pod) || "?"}
                 </span>
               )}
               {routingChip && (
@@ -1184,16 +1194,29 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
 
   const firstLeg    = legs[0] || null;
   const lastLeg     = legs[legs.length - 1] || null;
-  const derivedPol  = firstLeg?.pol || "";
-  const derivedPod  = lastLeg?.pod  || "";
+  // Merchant's Haulage and Customer Arranged legs are the customer's own responsibility —
+  // we're not the carrier and don't arrange that haulage, so an incomplete one shouldn't
+  // block saving the shipment or count as a missing POL/POD. Derive the shipment's own
+  // door-to-door bookend from the first/last leg we're actually responsible for instead —
+  // same filter already used for contractMatchRoutingTerm below, just computed earlier so
+  // derivedPol/derivedPod can use it too.
+  const cLegsForMatch = legs.filter(l => !["Merchant's Haulage", "Customer Arranged"].includes(l.movementType));
+  const derivedPol  = cLegsForMatch[0]?.pol || firstLeg?.pol || "";
+  const derivedPod  = cLegsForMatch[cLegsForMatch.length - 1]?.pod || lastLeg?.pod || "";
   const derivedEtd  = firstLeg?.etd || "";
   const derivedEta  = lastLeg?.eta  || "";
 
-  const seaLeg = legs.find(l => l.legType === "SEA");
+  // A journey can have more than one SEA leg (TSP/transshipment routing, e.g. from a
+  // Central contract's own multi-leg contract_legs) — legs.find() would silently grab
+  // only the FIRST one, giving the wrong Port of Discharge and sailing-search target for
+  // anything past a single-hop route. Mirrors RouteSummaryBar's seaLegs/firstSeaLeg
+  // pattern in ShipmentDetailPage.jsx.
+  const seaLegs     = legs.filter(l => l.legType === "SEA");
+  const firstSeaLeg = seaLegs[0] || null;
+  const lastSeaLeg  = seaLegs[seaLegs.length - 1] || null;
 
   // Contract match routing context — excludes Merchant's Haulage and Customer Arranged
   const LEG_LOC_ABBR_C = { Door: "DR", Terminal: "PT", "Container Yard": "CY", CFS: "CFS" };
-  const cLegsForMatch = legs.filter(l => !["Merchant's Haulage", "Customer Arranged"].includes(l.movementType));
   const contractMatchRoutingTerm = cLegsForMatch.length > 0
     ? (LEG_LOC_ABBR_C[cLegsForMatch[0].polLocType] || "PT") + "-" + (LEG_LOC_ABBR_C[cLegsForMatch[cLegsForMatch.length - 1].podLocType] || "PT")
     : "";
@@ -1201,9 +1224,11 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
   const delLeg = legs[legs.length - 1]?.legType === "Delivery" && legs[legs.length - 1]?.movementType === "Carrier's Haulage" ? legs[legs.length - 1] : null;
   const contractPkuLocation = pkuLeg?.pol || "";
   const contractDelLocation = delLeg?.pod || "";
-  // Contract match uses the seaport POL/POD, not the door pickup/delivery location
-  const contractMatchPol = seaLeg?.pol || derivedPol;
-  const contractMatchPod = seaLeg?.pod || derivedPod;
+  // Contract match uses the seaport POL/POD, not the door pickup/delivery location —
+  // POL from the first SEA leg, POD from the last, so a multi-leg TSP journey resolves
+  // to its true end-to-end sea route instead of just the first hop.
+  const contractMatchPol = firstSeaLeg?.pol || derivedPol;
+  const contractMatchPod = lastSeaLeg?.pod  || derivedPod;
 
   const transitDays = (() => {
     if (!derivedEtd || !derivedEta) return null;
@@ -1216,7 +1241,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
     : [];
 
   const isCentral = f.contractType === "Central";
-  const effectiveCarrierCode = seaLeg?.carrierCode || firstLeg?.carrierCode || f.carrierCode || "";
+  const effectiveCarrierCode = firstSeaLeg?.carrierCode || firstLeg?.carrierCode || f.carrierCode || "";
   const valid = f.incoterm !== ""
     && f.commodityCode.trim().length > 0
     && !!f.shipperId && !!f.consigneeId && !!f.principalId
@@ -1289,59 +1314,6 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-
-      {/* ── Offices ───────────────────────────────────────────────────────────── */}
-      <SectionDivider label="Offices" id="shpform-offices" />
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
-        {[
-          { key: "emoOfficeId", label: "Export Managing Office (EMO)", required: true,  dept: "SE" },
-          { key: "imoOfficeId", label: "Import Managing Office (IMO)", required: true,  dept: "SI" },
-          { key: "controllingOfficeId", label: "Controlling Office",   required: false, dept: null },
-        ].map(({ key, label, required, dept }) => {
-          const candidates = dept ? offices.filter(o => o.department === dept && o.isActive) : offices.filter(o => o.isActive);
-          return (
-            <div key={key}>
-              <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
-                textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 5 }}>
-                {label}{required && <span style={{ color: T.danger, marginLeft: 2 }}>*</span>}
-              </div>
-              <select value={f[key] || ""} onChange={e => setF(p => ({ ...p, [key]: e.target.value || null }))}
-                style={{ width: "100%", padding: "7px 10px", borderRadius: 7, fontFamily: T.mono, fontSize: 12,
-                  color: f[key] ? T.text : T.textMuted,
-                  border: `1px solid ${required && touched.offices && !f[key] ? T.danger : T.border}`,
-                  background: T.bg, outline: "none", cursor: "pointer", boxSizing: "border-box" }}>
-                <option value="">{required ? "Select office…" : "None (optional)"}</option>
-                {candidates.map(o => <option key={o.id} value={o.id}>{o.code} — {o.name}</option>)}
-              </select>
-              {key === "imoOfficeId" && imoSuggestion && !f.imoOfficeId && (
-                <div style={{ marginTop: 5, padding: "5px 9px", borderRadius: 7,
-                  background: T.info + "18", border: `1px solid ${T.info}44`,
-                  display: "flex", alignItems: "center", gap: 6 }}>
-                  <span style={{ fontFamily: T.body, fontSize: 11, color: T.info, flex: 1 }}>
-                    ✦ {imoSuggestion.code} — {imoSuggestion.name}
-                  </span>
-                  <button type="button"
-                    onClick={() => setF(p => ({ ...p, imoOfficeId: imoSuggestion.id }))}
-                    style={{ padding: "2px 8px", borderRadius: 5, border: "none", background: T.info,
-                      color: "#fff", cursor: "pointer", fontFamily: T.body, fontSize: 11, fontWeight: 600 }}>
-                    Use
-                  </button>
-                  <button type="button" onClick={() => setImoSuggestion(null)}
-                    style={{ padding: "2px 4px", borderRadius: 5, border: "none", background: "none",
-                      cursor: "pointer", fontFamily: T.body, fontSize: 13, color: T.textMuted, lineHeight: 1 }}>
-                    ✕
-                  </button>
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-      {touched.offices && (!f.emoOfficeId || !f.imoOfficeId) && (
-        <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.danger, marginTop: -4 }}>
-          EMO and IMO are required
-        </div>
-      )}
 
       {/* ── Parties ───────────────────────────────────────────────────────────── */}
       <SectionDivider label="Parties" id="shpform-parties" />
@@ -1468,6 +1440,59 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
         </div>
       </div>
 
+      {/* ── Offices ───────────────────────────────────────────────────────────── */}
+      <SectionDivider label="Offices" id="shpform-offices" />
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+        {[
+          { key: "emoOfficeId", label: "Export Managing Office (EMO)", required: true,  dept: "SE" },
+          { key: "imoOfficeId", label: "Import Managing Office (IMO)", required: true,  dept: "SI" },
+          { key: "controllingOfficeId", label: "Controlling Office",   required: false, dept: null },
+        ].map(({ key, label, required, dept }) => {
+          const candidates = dept ? offices.filter(o => o.department === dept && o.isActive) : offices.filter(o => o.isActive);
+          return (
+            <div key={key}>
+              <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
+                textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 5 }}>
+                {label}{required && <span style={{ color: T.danger, marginLeft: 2 }}>*</span>}
+              </div>
+              <select value={f[key] || ""} onChange={e => setF(p => ({ ...p, [key]: e.target.value || null }))}
+                style={{ width: "100%", padding: "7px 10px", borderRadius: 7, fontFamily: T.mono, fontSize: 12,
+                  color: f[key] ? T.text : T.textMuted,
+                  border: `1px solid ${required && touched.offices && !f[key] ? T.danger : T.border}`,
+                  background: T.bg, outline: "none", cursor: "pointer", boxSizing: "border-box" }}>
+                <option value="">{required ? "Select office…" : "None (optional)"}</option>
+                {candidates.map(o => <option key={o.id} value={o.id}>{o.code} — {o.name}</option>)}
+              </select>
+              {key === "imoOfficeId" && imoSuggestion && !f.imoOfficeId && (
+                <div style={{ marginTop: 5, padding: "5px 9px", borderRadius: 7,
+                  background: T.info + "18", border: `1px solid ${T.info}44`,
+                  display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ fontFamily: T.body, fontSize: 11, color: T.info, flex: 1 }}>
+                    ✦ {imoSuggestion.code} — {imoSuggestion.name}
+                  </span>
+                  <button type="button"
+                    onClick={() => setF(p => ({ ...p, imoOfficeId: imoSuggestion.id }))}
+                    style={{ padding: "2px 8px", borderRadius: 5, border: "none", background: T.info,
+                      color: "#fff", cursor: "pointer", fontFamily: T.body, fontSize: 11, fontWeight: 600 }}>
+                    Use
+                  </button>
+                  <button type="button" onClick={() => setImoSuggestion(null)}
+                    style={{ padding: "2px 4px", borderRadius: 5, border: "none", background: "none",
+                      cursor: "pointer", fontFamily: T.body, fontSize: 13, color: T.textMuted, lineHeight: 1 }}>
+                    ✕
+                  </button>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {touched.offices && (!f.emoOfficeId || !f.imoOfficeId) && (
+        <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.danger, marginTop: -4 }}>
+          EMO and IMO are required
+        </div>
+      )}
+
       {/* ── Transport & References ─────────────────────────────────────────────── */}
       <SectionDivider label="Transport & References" id="shpform-transport" />
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
@@ -1496,10 +1521,10 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
 
       {/* ── Route summary (derived from legs) ─────────────────────────────────── */}
       {(() => {
-        const seaPolCode = seaLeg?.pol || derivedPol;
-        const seaPodCode = seaLeg?.pod || derivedPod;
-        const seaPolName = seaLeg?.polName || (seaLeg ? null : firstLeg?.polName);
-        const seaPodName = seaLeg?.podName || (seaLeg ? null : lastLeg?.podName);
+        const seaPolCode = firstSeaLeg?.pol || derivedPol;
+        const seaPodCode = lastSeaLeg?.pod  || derivedPod;
+        const seaPolName = firstSeaLeg?.polName || (firstSeaLeg ? null : firstLeg?.polName);
+        const seaPodName = lastSeaLeg?.podName  || (lastSeaLeg  ? null : lastLeg?.podName);
         const gridCols = `${pkuLeg ? "auto " : ""}1fr auto 1fr${delLeg ? " auto" : ""}`;
         const doorCell = { padding: "12px 14px", display: "flex", flexDirection: "column", gap: 3, background: T.surface };
         const labelStyle = { fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
@@ -1510,7 +1535,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
 
             {/* PKU flanking cell */}
             {pkuLeg && (
-              <div style={{ ...doorCell, borderRight: `1px dashed ${T.border}` }}>
+              <div id="shpform-route-pku" style={{ ...doorCell, borderRight: `1px dashed ${T.border}` }}>
                 <span style={{ ...labelStyle, color: T.accent }}>Pick-up</span>
                 <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text }}>{pkuLeg.pol || "—"}</span>
                 {pkuLeg.polName && <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{pkuLeg.polName}</span>}
@@ -1519,7 +1544,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
             )}
 
             {/* POL */}
-            <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 3 }}>
+            <div id="shpform-route-pol" style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 3 }}>
               <span style={labelStyle}>Port of Loading</span>
               <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700,
                 color: seaPolCode ? T.text : T.border }}>{seaPolCode || "—"}</span>
@@ -1529,7 +1554,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
             </div>
 
             {/* Centre: ETD → transit → ETA */}
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+            <div id="shpform-route-transit" style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
               gap: 6, padding: "12px 24px",
               borderLeft: `1px solid ${T.border}`, borderRight: `1px solid ${T.border}`,
               background: T.surface }}>
@@ -1578,7 +1603,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
               )}
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 {(() => {
-                  const code = seaLeg?.carrierCode || firstLeg?.carrierCode || f.carrierCode;
+                  const code = firstSeaLeg?.carrierCode || firstLeg?.carrierCode || f.carrierCode;
                   return (
                     <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700,
                       color: code ? T.accent : T.border }}>
@@ -1595,7 +1620,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
             </div>
 
             {/* POD */}
-            <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 3, textAlign: "right" }}>
+            <div id="shpform-route-pod" style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 3, textAlign: "right" }}>
               <span style={{ ...labelStyle, textAlign: "right" }}>Port of Discharge</span>
               <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700,
                 color: seaPodCode ? T.text : T.border }}>{seaPodCode || "—"}</span>
@@ -1606,7 +1631,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
 
             {/* DEL flanking cell */}
             {delLeg && (
-              <div style={{ ...doorCell, borderLeft: `1px dashed ${T.border}`, textAlign: "right" }}>
+              <div id="shpform-route-del" style={{ ...doorCell, borderLeft: `1px dashed ${T.border}`, textAlign: "right" }}>
                 <span style={{ ...labelStyle, color: T.accent }}>Delivery</span>
                 <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text }}>{delLeg.pod || "—"}</span>
                 {delLeg.podName && <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{delLeg.podName}</span>}
@@ -1828,21 +1853,28 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
         const canSearch = !!(pol && pod && carrier);
 
         const applySailingToLegs = (sailing) => {
+          const list = draftLegs || [];
+          const firstSeaIdx = list.findIndex(l => l.legType === "SEA");
+          if (firstSeaIdx === -1) return;
+          const firstSeaLeg = list[firstSeaIdx];
+          // Drop every SEA leg AFTER the first one — they belong to whatever routing was
+          // there before (including a contract's own pre-populated multi-leg legs), and
+          // would otherwise sit stale alongside whatever this sailing applies next. Mirrors
+          // ShipmentSchedulesPage.jsx's applySailingToLegs, which already gets this right
+          // for existing shipments.
+          const base = list.filter((l, i) => i === firstSeaIdx || l.legType !== "SEA");
+          const baseFirstIdx = base.indexOf(firstSeaLeg);
           const isTSP = sailing.legs && sailing.legs.length > 1;
           if (isTSP) {
-            const firstSeaIdx = (draftLegs || []).findIndex(l => l.legType === "SEA");
-            if (firstSeaIdx === -1) return;
-            const seaLeg  = draftLegs[firstSeaIdx];
-            const newLegs = [...draftLegs];
-            newLegs[firstSeaIdx] = {
-              ...seaLeg,
-              vessel:      sailing.legs[0].vesselName   || seaLeg.vessel,
-              voyage:      sailing.legs[0].voyageNumber || seaLeg.voyage,
-              etd:         sailing.legs[0].etd          || seaLeg.etd,
-              eta:         sailing.legs[0].eta          || seaLeg.eta,
-              pod:         sailing.legs[0].pod          || seaLeg.pod,
-              podName:     sailing.legs[0].pod !== seaLeg.pod ? "" : seaLeg.podName,
-              carrierCode: sailing.carrier              || seaLeg.carrierCode,
+            const updatedFirst = {
+              ...firstSeaLeg,
+              vessel:      sailing.legs[0].vesselName   || firstSeaLeg.vessel,
+              voyage:      sailing.legs[0].voyageNumber || firstSeaLeg.voyage,
+              etd:         sailing.legs[0].etd          || firstSeaLeg.etd,
+              eta:         sailing.legs[0].eta          || firstSeaLeg.eta,
+              pod:         sailing.legs[0].pod          || firstSeaLeg.pod,
+              podName:     sailing.legs[0].pod !== firstSeaLeg.pod ? "" : firstSeaLeg.podName,
+              carrierCode: sailing.carrier              || firstSeaLeg.carrierCode,
             };
             const extraLegs = sailing.legs.slice(1).map((leg, i) => ({
               id:           `draft_${Date.now() + i + 1}`,
@@ -1859,23 +1891,31 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
               vessel:       leg.vesselName   || "",
               vesselImo:    "",
               voyage:       leg.voyageNumber || "",
-              contractType: seaLeg.contractType || "SPOT",
-              contractRef:  seaLeg.contractRef  || "",
+              contractType: firstSeaLeg.contractType || "SPOT",
+              contractRef:  firstSeaLeg.contractRef  || "",
             }));
-            newLegs.splice(firstSeaIdx + 1, 0, ...extraLegs);
+            const newLegs = [...base];
+            newLegs[baseFirstIdx] = updatedFirst;
+            newLegs.splice(baseFirstIdx + 1, 0, ...extraLegs);
             onDraftLegsChange(newLegs);
             toast.success(`TSP sailing applied — ${sailing.legs.length} sea legs updated`);
           } else {
-            const updated = (draftLegs || []).map(l =>
-              l.legType === "SEA"
-                ? { ...l,
-                    vessel:      sailing.vesselName   || l.vessel,
-                    voyage:      sailing.voyageNumber || l.voyage,
-                    etd:         sailing.etd          || l.etd,
-                    eta:         sailing.eta          || l.eta,
-                    carrierCode: sailing.carrier      || l.carrierCode }
-                : l
-            );
+            // A direct sailing's own pol/pod are always the true door-to-door endpoints —
+            // reset both in case this leg currently holds a TSP hub from a previously
+            // applied sailing (or a contract's own multi-leg routing being collapsed).
+            const updatedFirst = {
+              ...firstSeaLeg,
+              vessel:      sailing.vesselName   || firstSeaLeg.vessel,
+              voyage:      sailing.voyageNumber || firstSeaLeg.voyage,
+              etd:         sailing.etd          || firstSeaLeg.etd,
+              eta:         sailing.eta          || firstSeaLeg.eta,
+              carrierCode: sailing.carrier      || firstSeaLeg.carrierCode,
+              pol:         sailing.pol          || firstSeaLeg.pol,
+              pod:         sailing.pod          || firstSeaLeg.pod,
+              polName:     sailing.pol !== firstSeaLeg.pol ? "" : firstSeaLeg.polName,
+              podName:     sailing.pod !== firstSeaLeg.pod ? "" : firstSeaLeg.podName,
+            };
+            const updated = base.map((l, i) => i === baseFirstIdx ? updatedFirst : l);
             onDraftLegsChange(updated);
             toast.success("Sailing applied to SEA leg");
           }

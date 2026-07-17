@@ -2,7 +2,7 @@
 
 > Freight management application for tracking ocean shipments, carrier space utilisation, contracts, and maritime master data.
 
-[![Version](https://img.shields.io/badge/version-0.29.0-blue)](.)
+[![Version](https://img.shields.io/badge/version-0.30.0-blue)](.)
 ![Node](https://img.shields.io/badge/node-22.5%2B-green)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
@@ -264,7 +264,16 @@ CargoDesk/
         ├── LoginPage.jsx                # Centered login form; calls api.auth.login → onLogin(token, user)
         ├── LandingPage.jsx              # Fleet KPIs, weather, FX, calendar week, system messages
         ├── ShipmentsPage.jsx            # Shipment list + filters + ⬇ CSV export + ShipmentForm
-        ├── ShipmentDetailPage.jsx       # Detail view, MessagesDrawer (WebSocket), ContainerForm, timeline
+        ├── ShipmentFormPage.jsx         # New/edit shipment form; LegsTable (shared with Contracts & Schedules)
+        ├── ShipmentDetailPage.jsx       # Overview — View Only banner + ServicesPanel; ContainerForm, MessagesDrawer (WebSocket)
+        ├── ShipmentConditionsPage.jsx   # Contract Type, Incoterm, Booking Ref, B/L, commodity, declared value
+        ├── ShipmentContainersPage.jsx   # Cargo — container CRUD, VGM/CY-cutoff/Demurrage Compliance column
+        ├── ShipmentPartiesPage.jsx      # Parties & Offices
+        ├── ShipmentSchedulesPage.jsx    # Contracts & Schedules — Route Legs, contract attach, Space Config, Schedule History modal
+        ├── ShipmentMilestonesPage.jsx   # Milestone stepper
+        ├── ShipmentAccounting{Costs,Invoices,Gp}Page.jsx  # Cost Entry / Invoice Entry / GP Overview
+        ├── ShipmentTicketsPage.jsx      # Linked Integration Board tickets
+        ├── ShipmentHistoryPage.jsx      # Paginated shipment event log
         ├── DashboardPage.jsx            # Overview + Contract Consumption + Margin (⬇ XLSX) tabs
         ├── SpaceConfigurationsPage.jsx  # Standalone Space Configs page with Linked Shipments modal
         ├── DashboardArchivePage.jsx     # Expired allocations + renew flow
@@ -295,7 +304,7 @@ CargoDesk/
 | Table | Purpose |
 |---|---|
 | `shipments` | Core shipment records with party fields (shipper, consignee, principal) |
-| `containers` | Container-level cargo detail |
+| `containers` | Container-level cargo detail, plus VGM/CY-cutoff/Demurrage-Detention compliance fields (v0.30.0) |
 | `allocations` | Space configurations (TEU per carrier / route / contract) |
 | `carriers` | Carrier MDM |
 | `vessels` | Vessel MDM (IMO registry) |
@@ -344,6 +353,7 @@ See the built-in **About** page (i in the sidebar) for the full interactive sche
 
 | Version | Codename | Summary |
 |---------|----------|---------|
+| 0.30.0 | Fairway | FCL container compliance trio: VGM tracking, CY cutoff, and Demurrage/Detention free-time countdowns (origin anchored on Gate In→Sailed, destination on Discharged→Gate Out), computed server-side in one batched query per container list fetch; new Compliance & Cutoffs / Free Time sections in `ContainerForm`, a stacked-badge Compliance column on the Cargo page. Contracts & Schedules polish: Schedule History collapsed into a button + modal (same panel, `forceOpen` prop, not rewritten); Contract/Space Configuration render side-by-side; Route Legs table no longer capped at 1100px, now matches the header bar's width. Shipments list POD/routing accuracy fix: the list, search, and CSV export now resolve each row's real sea Port of Loading/Discharge from its SEA legs instead of the door-to-door bookend fields, which could show an inland city under "POD" for a shipment with a trucked final delivery leg. New-shipment form: the same first-vs-last-SEA-leg bug that caused the POD issue also broke the sailing search and Route Summary — fixed identically; `applySailingToLegs` now correctly replaces every trailing SEA leg instead of splicing on top of them; a Customer Arranged Pick-up/Delivery leg no longer blocks Create Shipment when left incomplete. Overview page further consolidated: Contract & References and Cargo Details cards removed (Contract & References promoted to a new "Conditions" nav page; the redundant "Services" sidebar entry removed since Services already lives in-page on Overview). |
 | 0.29.0 | Bearing | Persistent Shipment Header (`ShipmentHeaderBar`) visible on Overview + all 8 promoted sub-pages, with a Door → POL → POD → Terminal journey bar that's TSP/Door-pickup aware (resolves the real SEA leg instead of assuming `shipment.pol`/`pod` is the sea port). Dedicated Services: new `shipment_services` table + routes back a two-column Export/Import dashboard (`ServicesPanel`) embedded on Overview — vendor, EMO/IMO-defaulted office, Requested→Confirmed→Completed/Cancelled lifecycle, fully audit-logged. Schedules page overhaul: Route Legs table now lives here directly with auto-ordering (Pick-up first, Delivery last); "Add Sailing" is now fully TSP-aware (previously only ever touched the first leg, or nothing at all, on an existing shipment) and correctly resets POL/POD when switching from a transshipment sailing back to a direct one; the old Sailings box is now a read-only Schedule History audit panel. `RouteSummaryBar` relocated from Overview to the Schedules page. About page gains an Architectural Details tab. |
 | 0.28.0 | Waypoint | Test-case repository separation: test items (Test Folder/Plan/Run/Case) live only in their own `test_items` table, no longer mixed into the Integration Board's `tickets` data; `test_case_links` gives a bidirectional Test Case ↔ Story "Tests" / "Is tested by" relationship. TicketPreview footer redesigned — only Backlog and previous/next status stay visible by default, rest moved behind a header ⚙ ActionMenu. EDI Messaging: `edi_messages` table logs every outbound/inbound carrier EDI exchange per shipment; `POST /api/shipments/:id/edi-messages/booking-request` sends via `maerskBookingRequest()` (mirrors `maerskSchedules()`'s real/mock-fallback shape) for MAEU/SAFM/MCPU, falling back to tagged demo data without a live key; `EdiMessagesDrawer` (📡 icon) shows direction badges, status pills, raw/parsed payload toggle. FCL container lifecycle events: new `container_events` table logs per-container movement (Empty Pickup → Gate In → Loaded → Sailed → Discharged → Gate Out → Empty Return) — foundation for upcoming demurrage/detention tracking — via a new `ContainerEventsPanel` (📋 button per container row). Fixed `seal_number` data-entry gap (existed in schema/backend, never exposed in `ContainerForm`). New test coverage: `tests/container-events.test.js` + extended `cypress/e2e/containers.cy.js`. |
 | 0.27.0 | Lookout | Command Center overhaul: KPI cards toggle in-page shipment filter (Active / Pending / Review / TEU / Overdue); Integration Board ticket alert card (Overdue + Due This Week tabs with priority dot, status badge, days counter, assignee avatar); shipment preview routing bar renders Door/CY flanking nodes from routingTerm; CC layout changed to position:fixed escaping main scroll; AI chat composer anchored at bottom. Sailing management hardening: applySailingToLegs sets ETA + carrierCode; TSP multi-leg support; edit-mode replace-not-append; active sailing highlighted green in SailingPickerModal. ShipmentsPage 90s background poll with ↻ unloaded-count badge and ⏰ Overdue pseudo-filter. ShipmentDetailPage ↻ refresh button. Dashboard Contract Consumption three-tier fallback for contractNumber/carrierCode. api.shipments.get(id) added to api.js. Negative transit days render ⚠ dates amber badge. |

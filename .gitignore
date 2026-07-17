@@ -148,3 +148,6 @@ cargodesk.db
 *.db-wal
 !sampleDB/cargodesk.db
 .env
+
+# Claude Code local agent state (worktrees, local settings) — never project source
+.claude/

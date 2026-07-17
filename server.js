@@ -370,6 +370,12 @@ const migrations = [
   "ALTER TABLE containers  ADD COLUMN is_dg           INTEGER DEFAULT 0",
   "ALTER TABLE containers  ADD COLUMN dg_class        TEXT    DEFAULT ''",
   "ALTER TABLE containers  ADD COLUMN cargo_description TEXT    DEFAULT ''",
+  "ALTER TABLE containers  ADD COLUMN vgm_weight_kg        REAL    DEFAULT NULL",
+  "ALTER TABLE containers  ADD COLUMN vgm_status            TEXT    DEFAULT 'Pending'",
+  "ALTER TABLE containers  ADD COLUMN vgm_cutoff            TEXT    DEFAULT NULL",
+  "ALTER TABLE containers  ADD COLUMN cy_cutoff             TEXT    DEFAULT NULL",
+  "ALTER TABLE containers  ADD COLUMN origin_free_time_days INTEGER DEFAULT NULL",
+  "ALTER TABLE containers  ADD COLUMN dest_free_time_days   INTEGER DEFAULT NULL",
   "ALTER TABLE port_locations ADD COLUMN last_synced_at TEXT DEFAULT NULL",
   "ALTER TABLE carriers    ADD COLUMN short_name      TEXT    DEFAULT ''",
   "ALTER TABLE tickets     ADD COLUMN shipment_id     TEXT    DEFAULT NULL",
@@ -1451,7 +1457,23 @@ const mapCostLine     = r => ({ id: r.id, shipmentId: r.shipment_id, type: r.typ
 const mapService      = r => ({ id: r.id, shipmentId: r.shipment_id, side: r.side, serviceType: r.service_type, status: r.status, vendorId: r.vendor_id || '', vendorName: r.vendor_name || '', officeId: r.office_id || '', officeCode: r.office_code || '', officeName: r.office_name || '', requestedDate: r.requested_date || '', confirmedDate: r.confirmed_date || '', completedDate: r.completed_date || '', notes: r.notes || '', createdAt: r.created_at, createdBy: r.created_by || '' });
 const mapRateSnapshot     = r => ({ id: r.id, shipmentId: r.shipment_id, contractId: r.contract_id, generatedAt: r.generated_at, generatedBy: r.generated_by || '', reason: r.reason });
 const mapRateSnapshotLine = r => ({ id: r.id, snapshotId: r.snapshot_id, serviceCode: r.service_code || '', description: r.description || '', amount: r.amount, currency: r.currency, amountUsd: r.amount_usd, unit: r.unit || 'per_container', containerType: r.container_type || '', notes: r.notes || '' });
-const mapContainer    = r => ({ id: r.id, shipmentId: r.shipment_id, containerNumber: r.container_number || '', sealNumber: r.seal_number || '', size: r.size, type: r.type, hsCode: r.hs_code || '', cargoDescription: r.cargo_description || '', grossWeightKg: r.gross_weight_kg ?? null, volumeCbm: r.volume_cbm ?? null, isDg: r.is_dg === 1, dgClass: r.dg_class || '' });
+// Fixed-deadline compliance badge (VGM/CY cutoff): 'none' when unset, 'closed-ok'
+// once resolved (e.g. VGM Submitted) regardless of date, else 'ok'/'amber'/'red'
+// against CUTOFF_WARNING_DAYS. Pure function of the date + today — no DB join needed,
+// so it's cheap enough to run inline in mapContainer on every read.
+const cutoffState = (dateStr, resolved) => {
+  if (resolved) return 'closed-ok';
+  if (!dateStr) return 'none';
+  const parsed = new Date(dateStr);
+  if (isNaN(parsed)) return 'none';
+  const days = Math.round((parsed - new Date(new Date().toISOString().slice(0, 10))) / 86400000);
+  return days < 0 ? 'red' : days <= CUTOFF_WARNING_DAYS ? 'amber' : 'ok';
+};
+const mapContainer    = r => ({ id: r.id, shipmentId: r.shipment_id, containerNumber: r.container_number || '', sealNumber: r.seal_number || '', size: r.size, type: r.type, hsCode: r.hs_code || '', cargoDescription: r.cargo_description || '', grossWeightKg: r.gross_weight_kg ?? null, volumeCbm: r.volume_cbm ?? null, isDg: r.is_dg === 1, dgClass: r.dg_class || '',
+  vgmWeightKg: r.vgm_weight_kg ?? null, vgmStatus: r.vgm_status || 'Pending', vgmCutoff: r.vgm_cutoff || '',
+  vgmCutoffState: cutoffState(r.vgm_cutoff, (r.vgm_status || 'Pending') === 'Submitted'),
+  cyCutoff: r.cy_cutoff || '', cyCutoffState: cutoffState(r.cy_cutoff, false),
+  originFreeTimeDays: r.origin_free_time_days ?? null, destFreeTimeDays: r.dest_free_time_days ?? null });
 const mapContainerEvent = r => ({ id: r.id, containerId: r.container_id, shipmentId: r.shipment_id, eventType: r.event_type, location: r.location || '', occurredAt: r.occurred_at, recordedBy: r.recorded_by || '', notes: r.notes || '', createdAt: r.created_at });
 const mapAllocation   = r => ({ id: r.id, carrierCode: r.carrier_code, allocatedTEU: r.allocated_teu, effectiveDate: r.effective_date || '', endDate: r.end_date || '', tradeLane: r.trade_lane || '', notes: r.notes || '', alertThreshold: r.alert_threshold ?? 80, pol: r.pol || '', pod: r.pod || '', originLane: r.origin_lane || '', destLane: r.dest_lane || '', coverageScope: r.coverage_scope || 'STRICT', contractId: r.contract_id || '', contractNumber: r.contract_number || '' });
 const mapCarrier      = r => ({ code: r.code, name: r.name, shortName: r.short_name || '' });
@@ -1772,7 +1794,20 @@ const TRACKED_CTR_FIELDS = {
   volume_cbm:        'Volume (CBM)',
   is_dg:             'Dangerous Goods',
   dg_class:          'DG Class',
+  vgm_weight_kg:        'VGM Weight (kg)',
+  vgm_status:            'VGM Status',
+  vgm_cutoff:            'VGM Cutoff',
+  cy_cutoff:             'CY Cutoff',
+  origin_free_time_days: 'Origin Free Time (days)',
+  dest_free_time_days:   'Destination Free Time (days)',
 };
+
+// Compliance-badge thresholds: how many days out a fixed cutoff (VGM/CY) or a
+// container-events-derived free-time window (demurrage/detention) turns amber
+// before it's overdue. Free time windows are themselves usually only 3-7 days,
+// so they get a tighter warning window than a fixed planning-deadline cutoff.
+const CUTOFF_WARNING_DAYS = 3;
+const FREE_TIME_WARNING_DAYS = 2;
 
 // ─── Allocation conflict helpers ──────────────────────────────────────────────
 
@@ -2062,6 +2097,7 @@ const ctx = {
   mapCommodity, mapSystemMessage, mapMilestone, mapMilestoneTemplate,
   mapContract, mapLeg, mapRate,
   logEvent, logEntityEvent, logAdminEvent, TRACKED_FIELDS, TRACKED_CTR_FIELDS,
+  CUTOFF_WARNING_DAYS, FREE_TIME_WARNING_DAYS,
   ssoNonces,
   syncShipmentFromLegs,
   checkOverlap,

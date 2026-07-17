@@ -207,6 +207,39 @@ export const allocationRouteMatch = (s, a, contractsById, linkedPortIdx) => {
   return (!a.pol || s.pol === a.pol) && (!a.pod || s.pod === a.pod);
 };
 
+// Maps a container compliance-badge state (VGM/CY cutoff via cutoffState, or a
+// demurrage/detention free-time window via deriveFreeTime — both server.js /
+// routes/shipments.js) to a <Badge> variant. 'none'/'no-window'/'not-started'
+// mean "nothing to show yet" — callers should skip rendering a badge for those
+// rather than showing a default/grey one, to keep the compliance column quiet
+// until there's actually something to track.
+export const CUTOFF_STATE_VARIANT = {
+  ok: "success", amber: "warning", red: "danger",
+  "closed-ok": "default", "closed-late": "danger",
+};
+
+export const COMPLIANCE_STATE_LABEL = {
+  ok: "On track", amber: "Due soon", red: "Overdue",
+  "closed-ok": "Cleared", "closed-late": "Cleared late",
+};
+
+const STATE_RANK = { red: 3, "closed-late": 3, amber: 2, ok: 1, "closed-ok": 0 };
+
+// Picks the most urgent of a list of compliance states (untracked ones —
+// 'none'/'no-window'/'not-started' — are ignored). Returns null if nothing in
+// the list is actually tracked, so callers know to render no badge at all.
+export const worstState = states => {
+  const tracked = states.filter(s => STATE_RANK[s] !== undefined);
+  if (tracked.length === 0) return null;
+  return tracked.reduce((worst, s) => (STATE_RANK[s] > STATE_RANK[worst] ? s : worst), tracked[0]);
+};
+
+// Worst of a container's VGM cutoff / CY cutoff / origin+dest free-time states,
+// for a single compact indicator where showing all 4 separately doesn't fit
+// (e.g. the Overview page's 3-row Cargo Details preview).
+export const worstComplianceState = c =>
+  worstState([c.vgmCutoffState, c.cyCutoffState, c.originFreeTimeState, c.destFreeTimeState]);
+
 
 export const INCOTERMS_2020 = [
   {

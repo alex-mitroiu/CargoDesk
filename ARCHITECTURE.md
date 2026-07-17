@@ -1,6 +1,17 @@
 # CargoDesk — Architecture Reference
-**Version:** 0.27.0 "Lookout" · **Date:** 2026-07-14  
+**Version:** 0.30.0 "Fairway" · **Date:** 2026-07-17  
 **Audience:** Software architects, senior engineers, technical reviewers
+
+> Since v0.27.0: the Shipment Detail experience was restructured from a single
+> long anchor-scroll page into a persistent `ShipmentHeaderBar` (identity,
+> route, status, a compact icon-cluster of actions) mounted above a set of
+> promoted sub-pages (Conditions, Cargo, Parties & Offices, Contracts &
+> Schedules, Milestones, Accounting, Tickets, History) — the old Overview page
+> now only hosts a View Only banner and the embedded Services dashboard. FCL
+> container tracking gained VGM, CY-cutoff, and Demurrage/Detention
+> compliance fields (v0.30.0), computed server-side via a batched
+> `container_events` join. See `CLAUDE.md`'s "Recent changes" sections
+> (v0.28.0 through v0.30.0) for the full detail this summary doesn't restate.
 
 ---
 
@@ -954,8 +965,8 @@ No foreign-key constraints are enforced (SQLite FK pragma is not enabled). Refer
 | `src/tokens.js` | 263 | Design system |
 | `src/api.js` | 249 | API client |
 
-**Total source files:** ~45 JSX/JS files  
-**Total DB tables:** 35  
+**Total source files:** ~70 JSX/JS files (as of v0.30.0 — grown substantially since this table was last measured)  
+**Total DB tables:** 54  
 **Total API routes:** 120+  
 **Seed data:** 14,269 port locations · 349 vessels · 294 commodities · 69 carriers · 211 countries
 

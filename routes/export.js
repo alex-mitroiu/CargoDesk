@@ -44,6 +44,37 @@ module.exports = function exportRoutes(app, ctx) {
 
   // ─── Shared data queries ──────────────────────────────────────────────────
 
+  // shipment.pol/pod are the journey's overall DOOR-TO-DOOR bookends, not necessarily
+  // the real sea Port of Loading/Discharge (a Door pickup or trucked final Delivery leg
+  // can put an inland city there instead) — same gap fixed for the shipments list in
+  // routes/shipments.js's resolveSeaPorts, duplicated here (small per-file helper,
+  // matching this codebase's existing precedent) so exports show a real sea port under
+  // "POL"/"POD" rather than an inland city.
+  function resolveSeaPorts(shipmentIds) {
+    if (!shipmentIds.length) return {};
+    const legs = db.prepare(`
+      SELECT shipment_id, pol, pod FROM shipment_legs
+      WHERE leg_type='SEA' AND shipment_id IN (${shipmentIds.map(() => '?').join(',')})
+      ORDER BY leg_order ASC
+    `).all(...shipmentIds);
+    const bySeaShipment = {};
+    for (const l of legs) {
+      const g = (bySeaShipment[l.shipment_id] ??= { seaPol: l.pol, seaPod: l.pod });
+      g.seaPod = l.pod;
+    }
+    const codes = [...new Set(Object.values(bySeaShipment).flatMap(g => [g.seaPol, g.seaPod]).filter(Boolean))];
+    const names = {};
+    if (codes.length) {
+      db.prepare(`SELECT unlocode, name FROM port_locations WHERE unlocode IN (${codes.map(() => '?').join(',')})`)
+        .all(...codes).forEach(r => { names[r.unlocode] = r.name; });
+    }
+    for (const g of Object.values(bySeaShipment)) {
+      g.seaPolName = names[g.seaPol] || '';
+      g.seaPodName = names[g.seaPod] || '';
+    }
+    return bySeaShipment;
+  }
+
   function queryShipmentRows(user, req) {
     const rows = db.prepare(`
       SELECT s.*,
@@ -68,12 +99,14 @@ module.exports = function exportRoutes(app, ctx) {
              ON ctr.shipment_id = s.id
       ORDER BY s.created_at DESC
     `).all();
+    const seaPorts = resolveSeaPorts(rows.map(r => r.id));
     return applyShipmentAccessFilter(rows.map(r => ({
       ...mapShipment(r),
       totalTeu:       r.total_teu,
       containerCount: r.container_count,
       marginBuyUsd:   usd(r.margin_buy_usd),
       marginSellUsd:  usd(r.margin_sell_usd),
+      ...(seaPorts[r.id] || { seaPol: r.pol, seaPod: r.pod, seaPolName: r.pol_name || '', seaPodName: r.pod_name || '' }),
     })), user, req);
   }
 
@@ -141,10 +174,12 @@ module.exports = function exportRoutes(app, ctx) {
   const CSV_COLS = [
     ["id",              r => r.id],
     ["Status",          r => r.status],
-    ["POL",             r => r.pol],
-    ["POL Name",        r => r.polName],
-    ["POD",             r => r.pod],
-    ["POD Name",        r => r.podName],
+    ["POL",             r => r.seaPol || r.pol],
+    ["POL Name",        r => r.seaPolName || r.polName],
+    ["POD",             r => r.seaPod || r.pod],
+    ["POD Name",        r => r.seaPodName || r.podName],
+    ["Door Pickup",     r => r.seaPol && r.seaPol !== r.pol ? r.pol : ""],
+    ["Door Delivery",   r => r.seaPod && r.seaPod !== r.pod ? r.pod : ""],
     ["Carrier",         r => r.carrierCode],
     ["Contract Type",   r => r.contractType],
     ["Contract Ref",    r => r.contractRef],

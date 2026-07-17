@@ -73,7 +73,13 @@ module.exports = function contractsRoutes(app, ctx) {
       const legs = db.prepare("SELECT * FROM contract_legs WHERE contract_id=? ORDER BY leg_order").all(c.id);
       const match = findMatchingContractLeg(legs, { pol, pod, needsPolHaulage: needsPol, needsPodHaulage: needsPod, pkuLocation, delLocation });
       if (!match) continue;
-      results.push({ ...mapContract(c), legs: legs.map(mapLeg), matchKind: match.matchKind,
+      // matchedLegs is the specific contiguous run that satisfied the query — NOT the
+      // contract's full leg list, which may include unrelated alternate lanes (see
+      // findMatchingContractLeg). Callers that chain into a sailing search after picking
+      // this contract need matchedLegs' own first pol/last pod, not the shipment's generic
+      // SEA-leg span, so the search reflects the specific route this contract was rated for.
+      results.push({ ...mapContract(c), legs: legs.map(mapLeg), matchedLegs: match.legs.map(mapLeg),
+        matchKind: match.matchKind,
         linkedPolVia: match.firstLeg.pol !== polU ? match.firstLeg.pol : null,
         linkedPodVia: match.lastLeg.pod !== podU ? match.lastLeg.pod : null });
     }

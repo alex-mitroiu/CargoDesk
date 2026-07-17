@@ -47,7 +47,7 @@ export const api = {
     list: (shipmentId) => req("GET", `/shipments/${shipmentId}/status-log`),
   },
   shipmentEvents: {
-    list: (shipmentId) => req("GET", `/shipments/${shipmentId}/events`),
+    list: (shipmentId, params = {}) => req("GET", `/shipments/${shipmentId}/events?${new URLSearchParams(params)}`),
   },
   shipmentMessages: {
     list: (shipmentId)       => req("GET",  `/shipments/${shipmentId}/messages`),

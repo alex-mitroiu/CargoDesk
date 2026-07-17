@@ -5,7 +5,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
           mapShipment, mapShipmentLeg, mapContainer, mapContainerEvent, mapAllocation,
           applyShipmentAccessFilter, syncShipmentFromLegs, importContractRates,
           broadcastMessage, recomputeSpaceBadge, screenShipmentById,
-          logEvent, TRACKED_FIELDS, TRACKED_CTR_FIELDS,
+          logEvent, TRACKED_FIELDS, TRACKED_CTR_FIELDS, FREE_TIME_WARNING_DAYS,
           sanctionsMap } = ctx;
 
   // trade_manager and viewer are read-only on all shipment write operations
@@ -27,7 +27,86 @@ module.exports = function shipmentsRoutes(app, ctx) {
     return null;
   };
 
+  // Demurrage/detention free-time window: a countdown from a container-events
+  // anchor (Gate In for origin, Discharged for destination) to a configured
+  // free_time_days deadline, closed out once the matching "moved on" event
+  // fires (Sailed for origin, Gate Out for destination). ASSUMPTION: this
+  // origin/destination split follows the ticket's literal wording ("counted
+  // from gate-in/discharge events") rather than the more classical trade
+  // definition (origin free time = Empty Pickup -> Gate In) — flagged for
+  // review, cheap to swap the anchor event names below if wrong.
+  const freeTimeWindow = (freeDays, startAt, closeAt, warnDays) => {
+    if (freeDays == null) return { state: 'no-window', expiresAt: null, daysRemaining: null };
+    const startParsed = startAt ? new Date(startAt) : null;
+    if (!startParsed || isNaN(startParsed)) return { state: 'not-started', expiresAt: null, daysRemaining: null };
+    const expiresAt = new Date(startParsed.getTime() + freeDays * 86400000);
+    const closeParsed = closeAt ? new Date(closeAt) : null;
+    if (closeParsed && !isNaN(closeParsed)) {
+      const daysRemaining = Math.round((expiresAt - closeParsed) / 86400000);
+      return { state: daysRemaining >= 0 ? 'closed-ok' : 'closed-late', expiresAt: expiresAt.toISOString().slice(0, 10), daysRemaining };
+    }
+    const today = new Date(new Date().toISOString().slice(0, 10));
+    const daysRemaining = Math.round((expiresAt - today) / 86400000);
+    const state = daysRemaining < 0 ? 'red' : daysRemaining <= warnDays ? 'amber' : 'ok';
+    return { state, expiresAt: expiresAt.toISOString().slice(0, 10), daysRemaining };
+  };
+
+  // eventsByType: { [eventType]: occurredAt } for ONE container's events (latest
+  // occurrence per type, since a type could in principle be logged more than once).
+  const deriveFreeTime = (ctr, eventsByType, latest) => ({
+    ...(() => { const w = freeTimeWindow(ctr.origin_free_time_days, eventsByType['Gate In'], eventsByType['Sailed'], FREE_TIME_WARNING_DAYS);
+      return { originFreeTimeState: w.state, originFreeTimeExpiresAt: w.expiresAt, originFreeTimeDaysRemaining: w.daysRemaining }; })(),
+    ...(() => { const w = freeTimeWindow(ctr.dest_free_time_days, eventsByType['Discharged'], eventsByType['Gate Out'], FREE_TIME_WARNING_DAYS);
+      return { destFreeTimeState: w.state, destFreeTimeExpiresAt: w.expiresAt, destFreeTimeDaysRemaining: w.daysRemaining }; })(),
+    latestEventType: latest?.type || '', latestEventLocation: latest?.location || '', latestEventAt: latest?.at || '',
+  });
+
+  // Groups a flat container_events result set (batched across many containers)
+  // into per-container { byType, latest } — one query total instead of N+1.
+  const groupContainerEvents = rows => {
+    const byContainer = {};
+    for (const r of rows) {
+      const g = (byContainer[r.container_id] ??= { byType: {}, latest: null });
+      g.byType[r.event_type] = r.occurred_at;
+      if (!g.latest || r.occurred_at >= g.latest.at) g.latest = { type: r.event_type, location: r.location || '', at: r.occurred_at };
+    }
+    return byContainer;
+  };
+
   // ─── Shipments ─────────────────────────────────────────────────────────────
+
+  // shipment.pol/pod are the journey's overall DOOR-TO-DOOR bookends — for a shipment
+  // with a Door pickup and/or a trucked final Delivery leg, that's not the same as the
+  // real SEA leg's pol/pod (e.g. a Delivery leg to an inland city like Chicago shows up
+  // as shipment.pod, even though the actual sea Port of Discharge is New York). Several
+  // single-shipment views (RouteSummaryBar, ShipmentHeaderBar, the sailing search on
+  // ShipmentSchedulesPage) already resolve this themselves by self-fetching legs — this
+  // does the same resolution in bulk for the shipments LIST, one batched query across
+  // all shipments instead of N+1 (same pattern as the container-events join above).
+  const resolveSeaPorts = shipmentIds => {
+    if (!shipmentIds.length) return {};
+    const legs = db.prepare(`
+      SELECT shipment_id, pol, pod FROM shipment_legs
+      WHERE leg_type='SEA' AND shipment_id IN (${shipmentIds.map(() => '?').join(',')})
+      ORDER BY leg_order ASC
+    `).all(...shipmentIds);
+    const bySeaShipment = {};
+    for (const l of legs) {
+      const g = (bySeaShipment[l.shipment_id] ??= { seaPol: l.pol, seaPod: l.pod });
+      g.seaPod = l.pod; // last SEA leg in leg_order wins
+    }
+    const codes = [...new Set(Object.values(bySeaShipment).flatMap(g => [g.seaPol, g.seaPod]).filter(Boolean))];
+    const names = {};
+    if (codes.length) {
+      db.prepare(`SELECT unlocode, name FROM port_locations WHERE unlocode IN (${codes.map(() => '?').join(',')})`)
+        .all(...codes).forEach(r => { names[r.unlocode] = r.name; });
+    }
+    for (const g of Object.values(bySeaShipment)) {
+      g.seaPolName = names[g.seaPol] || '';
+      g.seaPodName = names[g.seaPod] || '';
+    }
+    return bySeaShipment;
+  };
 
   app.get("/api/shipments", (req, res) => {
     const rows = db.prepare(`
@@ -59,7 +138,9 @@ module.exports = function shipmentsRoutes(app, ctx) {
              ON ms.shipment_id = s.id
       ORDER BY s.created_at DESC
     `).all();
-    ok(res, applyShipmentAccessFilter(rows.map(mapShipment), req.user, req));
+    const seaPorts = resolveSeaPorts(rows.map(r => r.id));
+    const mapped = rows.map(r => ({ ...mapShipment(r), ...(seaPorts[r.id] || { seaPol: r.pol, seaPod: r.pod, seaPolName: r.pol_name || '', seaPodName: r.pod_name || '' }) }));
+    ok(res, applyShipmentAccessFilter(mapped, req.user, req));
   });
 
   app.get("/api/shipments/compliance-hits", (req, res) => {
@@ -104,17 +185,42 @@ module.exports = function shipmentsRoutes(app, ctx) {
     ok(res, s);
   });
 
+  // Global-pagination shape ({results, total, limit, offset}) — same contract as every other
+  // paginated list endpoint (GET /api/contracts, /api/port-locations, etc). types/search/dateRange
+  // filter server-side so `total` always reflects what's actually being paged through, not just
+  // the unfiltered row count.
   app.get("/api/shipments/:id/events", (req, res) => {
-    const rows = db.prepare(
-      "SELECT * FROM shipment_events WHERE shipment_id=? ORDER BY occurred_at ASC"
-    ).all(req.params.id);
-    ok(res, rows.map(r => ({
-      id: r.id, shipmentId: r.shipment_id,
-      eventType: r.event_type, field: r.field,
-      oldValue: r.old_value, newValue: r.new_value,
-      actor: r.actor, occurredAt: r.occurred_at,
-      meta: r.meta ? JSON.parse(r.meta) : {},
-    })));
+    const { limit = "50", offset = "0", types = "", search = "", dateRange = "", sort = "desc" } = req.query;
+    const lim = Math.min(parseInt(limit) || 50, 200), off = parseInt(offset) || 0;
+    const clauses = ["shipment_id=?"];
+    const params = [req.params.id];
+    if (types.trim()) {
+      const typeList = types.split(",").map(t => t.trim()).filter(Boolean);
+      if (typeList.length) { clauses.push(`event_type IN (${typeList.map(() => "?").join(",")})`); params.push(...typeList); }
+    }
+    if (dateRange === "today") {
+      clauses.push("occurred_at >= ?"); params.push(new Date().toISOString().slice(0, 10));
+    } else if (dateRange === "7d") {
+      clauses.push("occurred_at >= ?"); params.push(new Date(Date.now() - 7 * 86400000).toISOString());
+    }
+    if (search.trim()) {
+      clauses.push("(field LIKE ? OR old_value LIKE ? OR new_value LIKE ? OR meta LIKE ? OR event_type LIKE ?)");
+      const s = `%${search.trim()}%`; params.push(s, s, s, s, s);
+    }
+    const where = "WHERE " + clauses.join(" AND ");
+    const total = db.prepare(`SELECT COUNT(*) AS n FROM shipment_events ${where}`).get(...params).n;
+    const dir = sort === "asc" ? "ASC" : "DESC";
+    const rows = db.prepare(`SELECT * FROM shipment_events ${where} ORDER BY occurred_at ${dir} LIMIT ? OFFSET ?`).all(...params, lim, off);
+    ok(res, {
+      results: rows.map(r => ({
+        id: r.id, shipmentId: r.shipment_id,
+        eventType: r.event_type, field: r.field,
+        oldValue: r.old_value, newValue: r.new_value,
+        actor: r.actor, occurredAt: r.occurred_at,
+        meta: r.meta ? JSON.parse(r.meta) : {},
+      })),
+      total, limit: lim, offset: off,
+    });
   });
 
   app.get("/api/shipments/:id/status-log", (req, res) => {
@@ -243,20 +349,37 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const rows = req.query.shipmentId
       ? db.prepare("SELECT * FROM containers WHERE shipment_id=?").all(req.query.shipmentId)
       : db.prepare("SELECT * FROM containers").all();
-    ok(res, rows.map(mapContainer));
+    const ids = rows.map(r => r.id);
+    const evRows = ids.length
+      ? db.prepare(`SELECT container_id, event_type, location, occurred_at FROM container_events
+                    WHERE container_id IN (${ids.map(() => '?').join(',')}) ORDER BY occurred_at ASC`).all(...ids)
+      : [];
+    const byContainer = groupContainerEvents(evRows);
+    ok(res, rows.map(r => {
+      const g = byContainer[r.id] || { byType: {}, latest: null };
+      return { ...mapContainer(r), ...deriveFreeTime(r, g.byType, g.latest) };
+    }));
   });
 
   app.post("/api/containers", shipmentWrite, (req, res) => {
     const { shipmentId, containerNumber = "", sealNumber = "", size, type,
-            hsCode = "", cargoDescription = "", grossWeightKg = null, volumeCbm = null, isDg = false, dgClass = "" } = req.body;
+            hsCode = "", cargoDescription = "", grossWeightKg = null, volumeCbm = null, isDg = false, dgClass = "",
+            vgmWeightKg = null, vgmStatus = "Pending", vgmCutoff = "", cyCutoff = "",
+            originFreeTimeDays = null, destFreeTimeDays = null } = req.body;
     if (!shipmentId || !size || !type) return err(res, "shipmentId, size, type required");
     const dgErr = checkDgPolicy(shipmentId, isDg, dgClass);
     if (dgErr) return err(res, dgErr, 422);
     const id  = `CTR-${uid()}`;
     const cnU = containerNumber.toUpperCase();
-    db.prepare("INSERT INTO containers (id,shipment_id,container_number,seal_number,size,type,hs_code,cargo_description,gross_weight_kg,volume_cbm,is_dg,dg_class) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
-      .run(id, shipmentId, cnU, sealNumber, size, type, hsCode, cargoDescription, grossWeightKg, volumeCbm, isDg ? 1 : 0, dgClass);
-    const addedCtr = mapContainer({ id, shipment_id: shipmentId, container_number: cnU, seal_number: sealNumber, size, type, hs_code: hsCode, cargo_description: cargoDescription, gross_weight_kg: grossWeightKg, volume_cbm: volumeCbm, is_dg: isDg ? 1 : 0, dg_class: dgClass });
+    db.prepare(`INSERT INTO containers (id,shipment_id,container_number,seal_number,size,type,hs_code,cargo_description,gross_weight_kg,volume_cbm,is_dg,dg_class,
+                vgm_weight_kg,vgm_status,vgm_cutoff,cy_cutoff,origin_free_time_days,dest_free_time_days) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(id, shipmentId, cnU, sealNumber, size, type, hsCode, cargoDescription, grossWeightKg, volumeCbm, isDg ? 1 : 0, dgClass,
+           vgmWeightKg, vgmStatus, vgmCutoff || null, cyCutoff || null, originFreeTimeDays, destFreeTimeDays);
+    const ctrRow = { id, shipment_id: shipmentId, container_number: cnU, seal_number: sealNumber, size, type, hs_code: hsCode, cargo_description: cargoDescription, gross_weight_kg: grossWeightKg, volume_cbm: volumeCbm, is_dg: isDg ? 1 : 0, dg_class: dgClass,
+      vgm_weight_kg: vgmWeightKg, vgm_status: vgmStatus, vgm_cutoff: vgmCutoff || null, cy_cutoff: cyCutoff || null,
+      origin_free_time_days: originFreeTimeDays, dest_free_time_days: destFreeTimeDays };
+    // Brand-new container has no events yet — skip the query, free-time windows start 'not-started'.
+    const addedCtr = { ...mapContainer(ctrRow), ...deriveFreeTime(ctrRow, {}, null) };
     logEvent(shipmentId, 'CONTAINER_ADDED', null, null, cnU,
       JSON.stringify({ size, type, hsCode, cargoDescription }));
     recomputeSpaceBadge(shipmentId);
@@ -265,18 +388,24 @@ module.exports = function shipmentsRoutes(app, ctx) {
 
   app.put("/api/containers/:id", shipmentWrite, (req, res) => {
     const { containerNumber = "", sealNumber = "", size, type,
-            hsCode = "", cargoDescription = "", grossWeightKg = null, volumeCbm = null, isDg = false, dgClass = "" } = req.body;
+            hsCode = "", cargoDescription = "", grossWeightKg = null, volumeCbm = null, isDg = false, dgClass = "",
+            vgmWeightKg = null, vgmStatus = "Pending", vgmCutoff = "", cyCutoff = "",
+            originFreeTimeDays = null, destFreeTimeDays = null } = req.body;
     const cnU    = containerNumber.toUpperCase();
     const oldCtr = db.prepare("SELECT * FROM containers WHERE id=?").get(req.params.id);
     if (!oldCtr) return err(res, "Not found", 404);
     const dgErr = checkDgPolicy(oldCtr.shipment_id, isDg, dgClass);
     if (dgErr) return err(res, dgErr, 422);
-    const info = db.prepare("UPDATE containers SET container_number=?, seal_number=?, size=?, type=?, hs_code=?, cargo_description=?, gross_weight_kg=?, volume_cbm=?, is_dg=?, dg_class=? WHERE id=?")
-      .run(cnU, sealNumber, size, type, hsCode, cargoDescription, grossWeightKg, volumeCbm, isDg ? 1 : 0, dgClass, req.params.id);
+    const info = db.prepare(`UPDATE containers SET container_number=?, seal_number=?, size=?, type=?, hs_code=?, cargo_description=?, gross_weight_kg=?, volume_cbm=?, is_dg=?, dg_class=?,
+                vgm_weight_kg=?, vgm_status=?, vgm_cutoff=?, cy_cutoff=?, origin_free_time_days=?, dest_free_time_days=? WHERE id=?`)
+      .run(cnU, sealNumber, size, type, hsCode, cargoDescription, grossWeightKg, volumeCbm, isDg ? 1 : 0, dgClass,
+           vgmWeightKg, vgmStatus, vgmCutoff || null, cyCutoff || null, originFreeTimeDays, destFreeTimeDays, req.params.id);
     if (info.changes === 0) return err(res, "Not found", 404);
     const newVals = { container_number: cnU, size, type, hs_code: hsCode,
       cargo_description: cargoDescription, gross_weight_kg: grossWeightKg,
-      volume_cbm: volumeCbm, is_dg: isDg ? 1 : 0, dg_class: dgClass };
+      volume_cbm: volumeCbm, is_dg: isDg ? 1 : 0, dg_class: dgClass,
+      vgm_weight_kg: vgmWeightKg, vgm_status: vgmStatus, vgm_cutoff: vgmCutoff || null, cy_cutoff: cyCutoff || null,
+      origin_free_time_days: originFreeTimeDays, dest_free_time_days: destFreeTimeDays };
     const meta = JSON.stringify({ containerNumber: cnU });
     for (const [col] of Object.entries(TRACKED_CTR_FIELDS)) {
       const o = String(oldCtr[col] ?? ''), n = String(newVals[col] ?? '');
@@ -285,8 +414,10 @@ module.exports = function shipmentsRoutes(app, ctx) {
       }
     }
     const row = db.prepare("SELECT * FROM containers WHERE id=?").get(req.params.id);
+    const evRows = db.prepare("SELECT container_id, event_type, location, occurred_at FROM container_events WHERE container_id=? ORDER BY occurred_at ASC").all(req.params.id);
+    const g = groupContainerEvents(evRows)[req.params.id] || { byType: {}, latest: null };
     recomputeSpaceBadge(oldCtr.shipment_id);
-    ok(res, mapContainer(row));
+    ok(res, { ...mapContainer(row), ...deriveFreeTime(row, g.byType, g.latest) });
   });
 
   app.delete("/api/containers/:id", shipmentWrite, (req, res) => {

@@ -2,11 +2,17 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.29.0";
-export const BUILD     = "2026-07-15";
-export const CODENAME  = "Bearing";
+export const VERSION   = "0.30.0";
+export const BUILD     = "2026-07-17";
+export const CODENAME  = "Fairway";
 
 export const CHANGELOG = [
+  {
+    version:  "0.30.0",
+    date:     "2026-07-17",
+    codename: "Fairway",
+    summary:  "FCL container compliance trio (Epic TKT-A5LUPD): six new columns on containers (vgm_weight_kg/vgm_status/vgm_cutoff, cy_cutoff, origin_free_time_days/dest_free_time_days) back three features — VGM tracking, CY cutoff, and Demurrage/Detention free-time countdowns computed server-side from container_events (origin anchored on Gate In, closing at Sailed; destination anchored on Discharged, closing at Gate Out — one batched query across all containers in GET /api/containers, not N+1, mirrored in POST/PUT for the single-row case). ContainerForm gains two new sections (Compliance & Cutoffs; Demurrage & Detention — Free Time); ShipmentContainersPage shows a stacked-badge Compliance column, the Overview cargo preview shows a single worst-state badge instead. Contracts & Schedules polish (TKT-E64LKG): Schedule History collapsed from an always-expanded box into a compact button that opens the exact same panel inside a Modal (ScheduleHistoryPanel gained a forceOpen prop rather than being rewritten); Contract and Space Configuration now render side-by-side when a space config is linked; the Route Legs table no longer sits inside a 1100px-capped wrapper, so it renders at essentially the same width as the persistent header bar above it. Shipments list POD/routing accuracy fix: GET /api/shipments and the CSV export now resolve each row's real sea Port of Loading/Discharge from its SEA legs (batched join, same pattern as the container-compliance query) instead of showing shipment.pol/pod — which are door-to-door bookends and could show an inland city (e.g. Chicago) under a \"POD\" column for a shipment with a trucked final Delivery leg; the door-to-door values are kept as a secondary caption, not discarded, and the CSV gets dedicated Door Pickup/Door Delivery columns. New-shipment form: the sailing-search and Route Summary Port of Discharge suffered the same first-vs-last SEA leg bug (legs.find() only ever found the first SEA leg of a multi-leg TSP journey) — fixed the same way, and applySailingToLegs now correctly replaces every trailing SEA leg instead of splicing on top of them when a sailing is (re)applied to an already multi-leg draft. A Customer Arranged Pick-up/Delivery leg — the customer's own responsibility, not ours — no longer blocks Create Shipment when left incomplete. Overview page further consolidated: Contract & References and Cargo Details cards removed (Contract & References promoted to its own \"Conditions\" nav page; Cargo Details was a redundant preview of the dedicated Cargo page); the redundant \"Services\" sidebar entry removed since it pointed at the same in-page dashboard Overview already shows. Minor polish: PortCombobox search input gained vertical padding for a less cramped routing table; LegsTable row cells gained stable id attributes for easier inspection.",
+  },
   {
     version:  "0.29.0",
     date:     "2026-07-15",

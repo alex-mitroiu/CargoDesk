@@ -2617,9 +2617,9 @@ const BmEditForm = ({ onSave, onCancel, saving, children }) => (
 // ─── Board Manager Modal ──────────────────────────────────────────────────────
 // Tabbed manager for Projects, Columns, and Versions.
 
-const BoardManagerModal = ({ projects, currentProject, columns, versions, onClose, onRefresh, onProjectChange }) => {
-  const [tab,        setTab]        = useState("columns");
-  const [editItem,   setEditItem]   = useState(null);   // item being edited or "new"
+const BoardManagerModal = ({ projects, currentProject, columns, versions, initialTab = "columns", onClose, onRefresh, onProjectChange }) => {
+  const [tab,        setTab]        = useState(initialTab);
+  const [editItem,   setEditItem]   = useState(initialTab === "versions" ? "new" : null);   // item being edited or "new"
   const [form,       setForm]       = useState({});
   const [saving,     setSaving]     = useState(false);
   const [dragIdx,    setDragIdx]    = useState(null);
@@ -2929,12 +2929,17 @@ const BoardManagerModal = ({ projects, currentProject, columns, versions, onClos
 
 const DONE_STATUSES = new Set(["Done", "Ready to Deploy", "Released"]);
 
-const RoadmapView = ({ tickets, versions, onPreview }) => {
+const RoadmapView = ({ tickets, versions, onPreview, onManageVersions }) => {
   if (versions.length === 0) return (
     <div style={{ padding: "60px 24px", textAlign: "center", fontFamily: T.body, fontSize: 14, color: T.textMuted }}>
       <div style={{ fontSize: 40, marginBottom: 12 }}>🏷</div>
       <div style={{ fontWeight: 600, color: T.text, marginBottom: 6 }}>No versions defined</div>
-      <div>Create versions in <strong>Board Settings → Versions</strong> to organise your roadmap.</div>
+      <div style={{ marginBottom: 16 }}>Create a version to organise your roadmap.</div>
+      <button type="button" onClick={onManageVersions}
+        style={{ fontFamily: T.body, fontSize: 13, color: T.accent, background: "none",
+          border: `1px dashed ${T.accent}55`, borderRadius: 7, padding: "8px 18px", cursor: "pointer" }}>
+        ＋ Add Version
+      </button>
     </div>
   );
 
@@ -3021,6 +3026,13 @@ const RoadmapView = ({ tickets, versions, onPreview }) => {
 
   return (
     <div style={{ overflowY: "auto", paddingBottom: 24 }}>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
+        <button type="button" onClick={onManageVersions}
+          style={{ fontFamily: T.body, fontSize: 12, color: T.accent, background: "none",
+            border: `1px solid ${T.accent}44`, borderRadius: 7, padding: "5px 12px", cursor: "pointer" }}>
+          ＋ Add Version
+        </button>
+      </div>
       {versions.map(ver => (
         <VersionLane key={ver.id} ver={ver} tix={versionTickets(ver.id)} />
       ))}
@@ -4149,6 +4161,7 @@ const KanbanPage = ({ shipments = [] }) => {
             tickets={tickets}
             versions={versions}
             onPreview={t => setPreviewId(t.id)}
+            onManageVersions={() => setBoardMgr("versions")}
           />
         </div>
       ) : boardView === "tests" ? (
@@ -4298,6 +4311,7 @@ const KanbanPage = ({ shipments = [] }) => {
           currentProject={currentProject}
           columns={columns}
           versions={versions}
+          initialTab={boardMgr === true ? "columns" : boardMgr}
           onClose={() => setBoardMgr(false)}
           onRefresh={load}
           onProjectChange={switchProject}

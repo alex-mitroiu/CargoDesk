@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { T, teuOf } from "../tokens";
+import { T, teuOf, CUTOFF_STATE_VARIANT, COMPLIANCE_STATE_LABEL, worstState } from "../tokens";
 import { useAuth } from "../AuthContext";
 import Btn from "../components/primitives/Btn";
 import Badge from "../components/primitives/Badge";
@@ -81,6 +81,7 @@ const ShipmentContainersPage = ({ shipment, containers, onBack, onAddContainer, 
             <div style={{ ...thStyle, flex: 1 }}>Cargo Description</div>
             <div style={{ ...thStyle, width: 88,  flexShrink: 0 }}>Wt / Vol</div>
             <div style={{ ...thStyle, width: 64,  flexShrink: 0 }}>DG</div>
+            <div style={{ ...thStyle, width: 110, flexShrink: 0 }}>Compliance</div>
             <div style={{ ...thStyle, width: canEdit ? 132 : 60, flexShrink: 0 }} />
           </div>
           {ctrs.map(c => (
@@ -129,8 +130,28 @@ const ShipmentContainersPage = ({ shipment, containers, onBack, onAddContainer, 
                   </span>
                 )}
               </div>
+              <div style={{ width: 110, flexShrink: 0, display: "flex", flexDirection: "column", gap: 3 }}>
+                {c.vgmCutoffState && c.vgmCutoffState !== "none" && (
+                  <div title={`VGM: ${COMPLIANCE_STATE_LABEL[c.vgmCutoffState]}${c.vgmCutoff ? ` (cutoff ${c.vgmCutoff})` : ""}`}>
+                    <Badge variant={CUTOFF_STATE_VARIANT[c.vgmCutoffState]} size={9.5}>VGM · {COMPLIANCE_STATE_LABEL[c.vgmCutoffState]}</Badge>
+                  </div>
+                )}
+                {c.cyCutoffState && c.cyCutoffState !== "none" && (
+                  <div title={`CY cutoff: ${COMPLIANCE_STATE_LABEL[c.cyCutoffState]}${c.cyCutoff ? ` (${c.cyCutoff})` : ""}`}>
+                    <Badge variant={CUTOFF_STATE_VARIANT[c.cyCutoffState]} size={9.5}>CY · {COMPLIANCE_STATE_LABEL[c.cyCutoffState]}</Badge>
+                  </div>
+                )}
+                {worstState([c.originFreeTimeState, c.destFreeTimeState]) && (
+                  <div title={`Origin free time: ${c.originFreeTimeState || "not tracked"}${c.originFreeTimeDaysRemaining != null ? ` (${c.originFreeTimeDaysRemaining}d)` : ""} · Destination: ${c.destFreeTimeState || "not tracked"}${c.destFreeTimeDaysRemaining != null ? ` (${c.destFreeTimeDaysRemaining}d)` : ""}`}>
+                    <Badge variant={CUTOFF_STATE_VARIANT[worstState([c.originFreeTimeState, c.destFreeTimeState])]} size={9.5}>
+                      FT · {COMPLIANCE_STATE_LABEL[worstState([c.originFreeTimeState, c.destFreeTimeState])]}
+                    </Badge>
+                  </div>
+                )}
+              </div>
               <div style={{ width: canEdit ? 132 : 60, flexShrink: 0, display: "flex", gap: 5 }}>
-                <Btn size="sm" variant="secondary" onClick={() => setEventsCtr(c)}>📋</Btn>
+                <Btn size="sm" variant="secondary" onClick={() => setEventsCtr(c)}
+                  title={c.latestEventType ? `Latest: ${c.latestEventType}${c.latestEventLocation ? ` @ ${c.latestEventLocation}` : ""} (${c.latestEventAt || ""})` : "No lifecycle events yet"}>📋</Btn>
                 {canEdit && (
                   <>
                     <Btn size="sm" variant="secondary" onClick={() => setCtrModal(c)}>Edit</Btn>

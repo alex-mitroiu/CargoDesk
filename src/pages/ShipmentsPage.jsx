@@ -89,6 +89,8 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
       if (!s.id.toLowerCase().includes(q)
         && !s.pol.toLowerCase().includes(q)
         && !s.pod.toLowerCase().includes(q)
+        && !(s.seaPol || '').toLowerCase().includes(q)
+        && !(s.seaPod || '').toLowerCase().includes(q)
         && !(s.bookingRef || '').toLowerCase().includes(q)
         && !(s.blNumber   || '').toLowerCase().includes(q)) return false;
     }
@@ -247,13 +249,21 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
               onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
               onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
               <span style={{ fontFamily: T.mono, fontSize: 11.5, color: T.textCode, fontWeight: 700 }}>{s.id}</span>
-              <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-                <span style={{ fontFamily: T.mono, fontSize: 13, color: T.text, fontWeight: 700 }}>{s.pol}</span>
-                {s.polName && <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{s.polName}</span>}
+              <div style={{ display: "flex", flexDirection: "column", gap: 1 }}
+                title={s.seaPol && s.seaPol !== s.pol ? `Door pickup: ${s.pol}${s.polName ? ` (${s.polName})` : ""}` : undefined}>
+                <span style={{ fontFamily: T.mono, fontSize: 13, color: T.text, fontWeight: 700 }}>{s.seaPol || s.pol}</span>
+                {(s.seaPolName || s.polName) && <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{s.seaPolName || s.polName}</span>}
+                {s.seaPol && s.seaPol !== s.pol && (
+                  <span style={{ fontFamily: T.mono, fontSize: 9.5, color: T.border }}>Door: {s.pol}</span>
+                )}
               </div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-                <span style={{ fontFamily: T.mono, fontSize: 13, color: T.text, fontWeight: 700 }}>{s.pod}</span>
-                {s.podName && <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{s.podName}</span>}
+              <div style={{ display: "flex", flexDirection: "column", gap: 1 }}
+                title={s.seaPod && s.seaPod !== s.pod ? `Final delivery: ${s.pod}${s.podName ? ` (${s.podName})` : ""}` : undefined}>
+                <span style={{ fontFamily: T.mono, fontSize: 13, color: T.text, fontWeight: 700 }}>{s.seaPod || s.pod}</span>
+                {(s.seaPodName || s.podName) && <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{s.seaPodName || s.podName}</span>}
+                {s.seaPod && s.seaPod !== s.pod && (
+                  <span style={{ fontFamily: T.mono, fontSize: 9.5, color: T.border }}>→ {s.pod}</span>
+                )}
               </div>
               <div>
                 {s.routingTerm
