@@ -48,11 +48,22 @@ const JourneyBreadcrumb = ({ pol, pod, routingTerm }) => {
   );
 };
 
-const SailingPickerModal = ({ pol, pod, carrierCode, routingTerm, activeSailing, onSelect, onClose, selectLabel = "Select →" }) => {
+const SailingPickerModal = ({ pol, pod, carrierCode, routingTerm, activeSailing, onSelect, onClose,
+  selectLabel = "Select →", expectedHub = null, expectedService = null }) => {
   const [sailings, setSailings] = useState(null);
   const [loading,  setLoading]  = useState(true);
   const [error,    setError]    = useState(null);
   const [weeks,    setWeeks]    = useState(4);
+
+  // Soft-match only — a hard filter would risk dead-ending demo/mock data (which generates
+  // hubs/services unrelated to any real contract), so this sorts likely matches first and
+  // badges them, rather than excluding anything the search itself already returned.
+  const matchesContract = (s) => {
+    if (expectedHub) return !!(s.legs && s.legs.some(l => l.pod === expectedHub));
+    if (expectedService) return s.service === expectedService;
+    return false;
+  };
+  const hasExpectation = !!(expectedHub || expectedService);
 
   const search = async (w) => {
     setLoading(true); setError(null);
@@ -78,6 +89,16 @@ const SailingPickerModal = ({ pol, pod, carrierCode, routingTerm, activeSailing,
 
         {/* Journey order breadcrumb */}
         <JourneyBreadcrumb pol={pol} pod={pod} routingTerm={routingTerm} />
+
+        {hasExpectation && (
+          <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted,
+            padding: "6px 10px", background: T.accentBg, border: `1px solid ${T.accent}33`,
+            borderRadius: 6 }}>
+            Contract routing: {expectedHub ? <>via <strong style={{ fontFamily: T.mono, color: T.text }}>{expectedHub}</strong></> : "direct"}
+            {expectedService ? <> · <strong style={{ fontFamily: T.mono, color: T.text }}>{expectedService}</strong></> : ""}
+            {" — "}matching sailings below are sorted first.
+          </div>
+        )}
 
         {/* Controls row */}
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -126,8 +147,12 @@ const SailingPickerModal = ({ pol, pod, carrierCode, routingTerm, activeSailing,
               </div>
             ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {(sailings.sailings || []).map((s, i) => {
+                {[...(sailings.sailings || [])]
+                  .map((s, i) => ({ s, i }))
+                  .sort((a, b) => (hasExpectation ? (matchesContract(b.s) - matchesContract(a.s)) : 0))
+                  .map(({ s, i }) => {
                   const isTSP = s.legs && s.legs.length > 1;
+                  const isContractMatch = hasExpectation && matchesContract(s);
                   const isActive = activeSailing && (
                     activeSailing.voyageNumber === s.voyageNumber ||
                     (activeSailing.vesselName === s.vesselName && activeSailing.etd === s.etd)
@@ -180,6 +205,15 @@ const SailingPickerModal = ({ pol, pod, carrierCode, routingTerm, activeSailing,
                         </div>
 
                         <div style={{ display: "flex", flexDirection: "column", gap: 4, alignItems: "flex-end" }}>
+                          {isContractMatch && (
+                            <span style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 700,
+                              background: T.info + "18", color: T.info,
+                              border: `1px solid ${T.info}44`,
+                              borderRadius: 4, padding: "1px 6px", textTransform: "uppercase",
+                              whiteSpace: "nowrap" }}>
+                              ✓ Matches contract
+                            </span>
+                          )}
                           {isTSP && (
                             <span style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 700,
                               background: T.warning + "18", color: T.warning,

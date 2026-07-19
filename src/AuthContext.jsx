@@ -7,6 +7,8 @@ export const AuthContext = createContext({
   canEdit:          false,
   canEditShipments: false,
   canManageConfigs: false,
+  canManageMdm:     false,
+  canEditKanban:    false,
   isAdmin:          false,
   isViewer:         true,
   isOccBk:          false,

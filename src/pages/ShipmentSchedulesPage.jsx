@@ -5,6 +5,8 @@ import { api } from "../api";
 import { toast } from "../toast";
 import Btn from "../components/primitives/Btn";
 import { Modal } from "../components/primitives/Modal";
+import { Inp } from "../components/primitives/Form";
+import DatePicker from "../components/primitives/DatePicker";
 import SailingPickerModal from "../components/shared/SailingPickerModal";
 import ContractAssignModal from "../components/shared/ContractAssignModal";
 import { ScheduleHistoryPanel, PendingRevalidationModal } from "./ShipmentDetailPage";
@@ -20,6 +22,8 @@ import { LegsTable, deriveHaulageNeeds } from "./ShipmentFormPage";
 
 const sectionLabel = { fontFamily: T.mono, fontSize: 10.5, fontWeight: 700, textTransform: "uppercase",
   letterSpacing: "0.08em", color: T.textMuted, marginBottom: 10 };
+
+const todayStr = new Date().toISOString().slice(0, 10);
 
 const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
   const { canEditShipments: canEdit } = useAuth();
@@ -42,10 +46,38 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
   // A plain "Add Sailing" click (no pending contract commit) can close freely, as before.
   const [chainedFromContract, setChainedFromContract] = useState(false);
   const [confirmCloseSailing, setConfirmCloseSailing] = useState(false);
+  // Lightweight correction for an already-saved sailing (e.g. a carrier-driven ETD/ETA shift) —
+  // replaces the previous only-option of removing the SEA leg entirely (which cascades to
+  // delete the schedule, unlock everything, and force a full re-search).
+  const [updateScheduleLeg, setUpdateScheduleLeg] = useState(null);
+  const [scheduleForm, setScheduleForm] = useState(null);
 
   useEffect(() => {
     api.schedules.list(shipment.id).then(setSchedules).catch(() => {});
   }, [shipment.id, historyVersion]);
+
+  const openUpdateSchedule = (leg) => {
+    const sched = schedules[0];
+    if (!sched) return;
+    setUpdateScheduleLeg(leg);
+    setScheduleForm({ vesselName: sched.vesselName, voyageNumber: sched.voyageNumber,
+      etd: sched.etd, eta: sched.eta, carrier: sched.carrier });
+  };
+
+  const saveScheduleUpdate = async () => {
+    const sched = schedules[0];
+    if (!sched || !scheduleForm) return;
+    try {
+      const updated = await api.schedules.update(shipment.id, sched.id, scheduleForm);
+      setSchedules([updated]);
+      setUpdateScheduleLeg(null);
+      setScheduleForm(null);
+      setLegsVersion(v => v + 1);
+      setHistoryVersion(v => v + 1);
+      await onRefresh?.();
+      toast.success("Schedule updated");
+    } catch (e) { toast.error(e.message); }
+  };
 
   // Mirrors ShipmentFormPage's applySailingToLegs, but against an EXISTING shipment's
   // already-persisted legs (live api.legs.* calls) instead of local draft state.
@@ -253,17 +285,20 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
   const hasSpaceConfig = shipment.contractType === "Central" && shipment.allocationId;
 
   return (
-    <div>
-      <div style={sectionLabel}>Route Legs</div>
-      <LegsTable key={`legs-${legsVersion}`} shipmentId={shipment.id} canEdit={canEdit} showContractCols={false}
-        extraAction={addSailingBtn} lockedSeaLegs={schedules.length > 0} onLegsChange={handleLegsChange} />
+    <div id="shpsched-page">
+      <div id="shpsched-legs-section">
+        <div style={sectionLabel}>Route Legs</div>
+        <LegsTable key={`legs-${legsVersion}`} shipmentId={shipment.id} canEdit={canEdit} showContractCols={false}
+          extraAction={addSailingBtn} lockedSeaLegs={schedules.length > 0} onLegsChange={handleLegsChange}
+          onUpdateSchedule={canEdit ? openUpdateSchedule : null} />
+      </div>
 
       <div style={{ marginTop: 22, marginBottom: 22,
         ...(hasSpaceConfig ? { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 } : {}) }}>
-        <div>
+        <div id="shpsched-contract-section">
           <div style={sectionLabel}>Contract</div>
           {contractMismatch && (
-            <div style={{ background: T.danger + "12", border: `1px solid ${T.danger}55`, borderLeft: `3px solid ${T.danger}`,
+            <div id="shpsched-contract-mismatch" style={{ background: T.danger + "12", border: `1px solid ${T.danger}55`, borderLeft: `3px solid ${T.danger}`,
               borderRadius: 8, padding: "12px 16px", marginBottom: 12,
               display: "flex", alignItems: "flex-start", gap: 10 }}>
               <span style={{ color: T.danger, fontSize: 15, lineHeight: 1.4 }}>⚠</span>
@@ -280,7 +315,7 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
             </div>
           )}
           <div style={{ display: "flex", alignItems: "center", gap: 14, maxWidth: hasSpaceConfig ? "none" : 480 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", flex: 1,
+            <div id="shpsched-contract-summary" style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", flex: 1,
               background: T.bg, border: `1px solid ${contractMismatch ? T.danger + "66" : T.border}`, borderRadius: 8 }}>
               <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, letterSpacing: "0.04em",
                 padding: "2px 8px", borderRadius: 4, background: T.accentBg, color: T.accent, flexShrink: 0 }}>
@@ -295,9 +330,14 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
                 <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, background: T.success + "22", color: T.success,
                   border: `1px solid ${T.success}44`, borderRadius: 4, padding: "2px 8px", flexShrink: 0 }}>📦 Space config</span>
               )}
+              {shipment.contractType !== "Central" && shipment.contractValidTo && shipment.contractValidTo < todayStr && (
+                <span title={`Expired ${shipment.contractValidTo}`}
+                  style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, background: T.warning + "22", color: T.warning,
+                  border: `1px solid ${T.warning}44`, borderRadius: 4, padding: "2px 8px", flexShrink: 0 }}>⚠ Expired</span>
+              )}
             </div>
             {canEdit && (
-              <Btn size="sm" variant="secondary" onClick={() => setContractModalOpen(true)}>
+              <Btn id="shpsched-contract-btn" size="sm" variant="secondary" onClick={() => setContractModalOpen(true)}>
                 {shipment.contractRef ? "Change Contract" : "+ Add Contract"}
               </Btn>
             )}
@@ -305,7 +345,7 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
         </div>
 
         {hasSpaceConfig && (
-          <div>
+          <div id="shpsched-space-config-section">
             <div style={sectionLabel}>Space Configuration</div>
             {linkedAlloc ? (
               <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "12px 14px" }}>
@@ -341,7 +381,7 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
       </div>
 
       <div style={{ display: "flex", justifyContent: "flex-end" }}>
-        <Btn size="sm" variant="secondary" onClick={() => setHistOpen(true)}>⏱ History</Btn>
+        <Btn id="shpsched-history-btn" size="sm" variant="secondary" onClick={() => setHistOpen(true)}>⏱ History</Btn>
       </div>
       {histOpen && (
         <Modal title="Schedule History" onClose={() => setHistOpen(false)} width={640}>
@@ -372,6 +412,7 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
         <SailingPickerModal
           pol={sailingPol} pod={sailingPod} carrierCode={carrier}
           routingTerm={shipment.routingTerm}
+          expectedHub={routeOverride?.hub || null} expectedService={routeOverride?.service || null}
           activeSailing={schedules[0] || null}
           onSelect={handleSelectSailing}
           onClose={() => {
@@ -441,6 +482,36 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
           }}
           onDismiss={() => setPendingMatches(null)}
         />
+      )}
+
+      {updateScheduleLeg && scheduleForm && (
+        <Modal title="Update Schedule" onClose={() => { setUpdateScheduleLeg(null); setScheduleForm(null); }} width={440}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, margin: 0, lineHeight: 1.5 }}>
+              Correct the vessel, voyage or dates for the currently assigned sailing — e.g. a
+              carrier-driven ETD/ETA shift. This updates the SEA leg in place without unlinking
+              the schedule, and logs the change in Schedule History.
+            </p>
+            <Inp id="shpsched-update-vessel" label="Vessel" value={scheduleForm.vesselName}
+              onChange={v => setScheduleForm(f => ({ ...f, vesselName: v }))} />
+            <Inp id="shpsched-update-voyage" label="Voyage" value={scheduleForm.voyageNumber} mono
+              onChange={v => setScheduleForm(f => ({ ...f, voyageNumber: v }))} />
+            <div style={{ display: "flex", gap: 12 }}>
+              <div style={{ flex: 1 }}>
+                <DatePicker id="shpsched-update-etd" label="ETD" value={scheduleForm.etd}
+                  onChange={v => setScheduleForm(f => ({ ...f, etd: v }))} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <DatePicker id="shpsched-update-eta" label="ETA" value={scheduleForm.eta} minDate={scheduleForm.etd || undefined}
+                  onChange={v => setScheduleForm(f => ({ ...f, eta: v }))} />
+              </div>
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <Btn id="shpsched-update-cancel-btn" variant="secondary" onClick={() => { setUpdateScheduleLeg(null); setScheduleForm(null); }}>Cancel</Btn>
+              <Btn id="shpsched-update-save-btn" onClick={saveScheduleUpdate}>Save</Btn>
+            </div>
+          </div>
+        </Modal>
       )}
     </div>
   );

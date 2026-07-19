@@ -1,13 +1,17 @@
 "use strict";
 
 module.exports = function allocationsRoutes(app, ctx) {
-  const { db, ok, err, uid, mapAllocation, checkOverlap, logEntityEvent, linkedPortCodes, findMatchingContractLeg } = ctx;
+  const { db, ok, err, uid, requireRole, mapAllocation, checkOverlap, logEntityEvent, linkedPortCodes, findMatchingContractLeg } = ctx;
+
+  // Space configurations are full-CRUD for trade_manager alongside admin/operator —
+  // previously these write routes had no role gate at all.
+  const write = requireRole(["admin", "operator", "trade_manager"]);
 
   app.get("/api/allocations", (req, res) => {
     ok(res, db.prepare("SELECT * FROM allocations ORDER BY effective_date DESC").all().map(mapAllocation));
   });
 
-  app.post("/api/allocations", (req, res) => {
+  app.post("/api/allocations", write, (req, res) => {
     const { carrierCode, allocatedTEU, effectiveDate, endDate, tradeLane = '', notes = '',
             alertThreshold = 80, pol = '', pod = '', originLane = '', destLane = '', coverageScope = 'STRICT',
             contractId = '', contractNumber = '' } = req.body;
@@ -25,7 +29,7 @@ module.exports = function allocationsRoutes(app, ctx) {
     ok(res, mapAllocation({ id, carrier_code: carrierCode, allocated_teu: allocatedTEU, effective_date: effectiveDate, end_date: endDate, trade_lane: tradeLane, notes, alert_threshold: alertThreshold, pol: pol.toUpperCase(), pod: pod.toUpperCase(), origin_lane: originLane, dest_lane: destLane, coverage_scope: coverageScope, contract_id: contractId, contract_number: contractNumber }), 201);
   });
 
-  app.put("/api/allocations/:id", (req, res) => {
+  app.put("/api/allocations/:id", write, (req, res) => {
     const { carrierCode, allocatedTEU, effectiveDate, endDate, tradeLane = '', notes = '',
             alertThreshold = 80, pol = '', pod = '', originLane = '', destLane = '',
             contractId = '', contractNumber = '' } = req.body;
@@ -42,7 +46,7 @@ module.exports = function allocationsRoutes(app, ctx) {
     ok(res, mapAllocation({ id: req.params.id, carrier_code: carrierCode, allocated_teu: allocatedTEU, effective_date: effectiveDate, end_date: endDate, trade_lane: tradeLane, notes, alert_threshold: alertThreshold, pol: pol.toUpperCase(), pod: pod.toUpperCase(), origin_lane: originLane, dest_lane: destLane, contract_id: contractId, contract_number: contractNumber }));
   });
 
-  app.delete("/api/allocations/:id", (req, res) => {
+  app.delete("/api/allocations/:id", write, (req, res) => {
     const existing = db.prepare("SELECT * FROM allocations WHERE id=?").get(req.params.id);
     const info = db.prepare("DELETE FROM allocations WHERE id=?").run(req.params.id);
     if (info.changes === 0) return err(res, "Not found", 404);

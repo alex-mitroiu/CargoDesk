@@ -1,7 +1,7 @@
 "use strict";
 
 module.exports = function ediRoutes(app, ctx) {
-  const { db, ok, err, uid, auth, requireRole, getSettings, shipmentSubs, mapEdiMessage } = ctx;
+  const { db, ok, err, uid, auth, requireRole, getSettings, shipmentSubs, mapEdiMessage, autoCompleteMilestone } = ctx;
 
   const write = requireRole(["operator", "admin"]);
 
@@ -111,6 +111,11 @@ module.exports = function ediRoutes(app, ctx) {
 
     if (response.status === "confirmed" && response.bookingRef) {
       db.prepare("UPDATE shipments SET booking_ref=? WHERE id=?").run(response.bookingRef, shipment.id);
+      // TKT-OZD4V8: a carrier booking confirmation is exactly what the booking_confirmed
+      // milestone step represents — complete it automatically instead of requiring the
+      // user to also go mark it by hand.
+      autoCompleteMilestone(shipment.id, 'booking_confirmed',
+        `Auto-completed on carrier booking confirmation (ref ${response.bookingRef})`);
     }
 
     const inMsg = mapEdiMessage(db.prepare("SELECT * FROM edi_messages WHERE id=?").get(inId));

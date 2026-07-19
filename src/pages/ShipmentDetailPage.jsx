@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle } from "react";
 import useSaving from "../hooks/useSaving";
 import { T, INCOTERMS_2020, teuOf,
          statusVariant, contractVariant, IMDG_CLASSES,
@@ -18,7 +18,7 @@ import {Inp, Sel, BtnToggle} from "../components/primitives/Form";
 import { Modal, ConfirmModal } from "../components/primitives/Modal";
 import DatePicker from "../components/primitives/DatePicker";
 import SailingPickerModal from "../components/shared/SailingPickerModal";
-import ContainerEventsPanel from "../components/shared/ContainerEventsPanel";
+import ContainerEventsPanel, { CONTAINER_EVENT_TYPES } from "../components/shared/ContainerEventsPanel";
 
 
 // ─── Section header with hover tooltip ───────────────────────────────────────
@@ -86,7 +86,11 @@ const SectionHeader = ({ n, title }) => {
 
 // ─── Container form ───────────────────────────────────────────────────────────
 
-export const ContainerForm = ({ init = {}, onSave, onCancel, onDirtyChange, dgPolicy = null }) => {
+// forwardRef + useImperativeHandle exposes trySave() to a parent page's navigation
+// guard (TKT-OJYO71, src/navigationGuard.js) — attempting away-navigation while this
+// form is open and dirty auto-validates + auto-saves rather than silently discarding
+// or just showing a generic "unsaved changes" warning (see ShipmentContainersPage.jsx).
+export const ContainerForm = forwardRef(({ init = {}, onSave, onCancel, onDirtyChange, dgPolicy = null }, ref) => {
   const initSnap = useRef({
     containerNumber:  init.containerNumber  || "",
     sealNumber:       init.sealNumber       || "",
@@ -148,6 +152,42 @@ export const ContainerForm = ({ init = {}, onSave, onCancel, onDirtyChange, dgPo
   const FieldErr = ({ show, msg }) => show
     ? <div style={{ fontFamily: T.body, fontSize: 11, color: T.danger, marginTop: 3 }}>{msg}</div>
     : null;
+
+  const buildPayload = () => ({
+    containerNumber: f.containerNumber, sealNumber: f.sealNumber, size: f.size, type: f.type,
+    hsCode: f.hsCode, cargoDescription: f.cargoDescription,
+    grossWeightKg: f.grossWeightKg ? parseFloat(f.grossWeightKg) : null,
+    volumeCbm:     f.volumeCbm     ? parseFloat(f.volumeCbm)     : null,
+    isDg: f.isDg, dgClass: f.dgClass,
+    vgmWeightKg: f.vgmWeightKg ? parseFloat(f.vgmWeightKg) : null,
+    vgmStatus: f.vgmStatus, vgmCutoff: f.vgmCutoff, cyCutoff: f.cyCutoff,
+    originFreeTimeDays: f.originFreeTimeDays ? parseInt(f.originFreeTimeDays, 10) : null,
+    destFreeTimeDays:   f.destFreeTimeDays   ? parseInt(f.destFreeTimeDays, 10)   : null,
+  });
+
+  // Exposed to a parent's navigation guard — touches every mandatory field (so
+  // FieldErr messages surface, same as clicking Save) and reports back exactly
+  // what's missing instead of silently discarding or saving partial data.
+  useImperativeHandle(ref, () => ({
+    trySave: async () => {
+      setTouched({ weight: true, volume: true, hsCode: true, desc: true });
+      if (!valid) {
+        const missing = [
+          !f.containerNumber || f.containerNumber.length < 4 ? "Container Number" : null,
+          !f.size || !f.type ? "Container Type" : null,
+          !hsOk   ? "HS Code" : null,
+          !descOk ? "Cargo Description" : null,
+          !weightOk ? "Gross Weight" : null,
+          !volumeOk ? "Volume" : null,
+          f.isDg && !f.dgClass ? "IMDG Class" : null,
+          dgConflict,
+        ].filter(Boolean);
+        return { ok: false, error: `Container form has incomplete/invalid fields: ${missing.join(", ")}` };
+      }
+      await onSave(buildPayload());
+      return { ok: true };
+    },
+  }));
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -316,17 +356,7 @@ export const ContainerForm = ({ init = {}, onSave, onCancel, onDirtyChange, dgPo
           onClick={() => {
             setTouched({ weight: true, volume: true, hsCode: true, desc: true });
             if (!valid) return;
-            withSaving(() => onSave({
-              containerNumber: f.containerNumber, sealNumber: f.sealNumber, size: f.size, type: f.type,
-              hsCode: f.hsCode, cargoDescription: f.cargoDescription,
-              grossWeightKg: f.grossWeightKg ? parseFloat(f.grossWeightKg) : null,
-              volumeCbm:     f.volumeCbm     ? parseFloat(f.volumeCbm)     : null,
-              isDg: f.isDg, dgClass: f.dgClass,
-              vgmWeightKg: f.vgmWeightKg ? parseFloat(f.vgmWeightKg) : null,
-              vgmStatus: f.vgmStatus, vgmCutoff: f.vgmCutoff, cyCutoff: f.cyCutoff,
-              originFreeTimeDays: f.originFreeTimeDays ? parseInt(f.originFreeTimeDays, 10) : null,
-              destFreeTimeDays:   f.destFreeTimeDays   ? parseInt(f.destFreeTimeDays, 10)   : null,
-            }));
+            withSaving(() => onSave(buildPayload()));
           }}>
           <span style={{ display: "flex", alignItems: "center", gap: 7 }}>
             {isSaving && <Spinner size="sm" color="currentColor" />}
@@ -336,7 +366,7 @@ export const ContainerForm = ({ init = {}, onSave, onCancel, onDirtyChange, dgPo
       </div>
     </div>
   );
-};
+});
 
 // ─── Page: Shipment Detail ────────────────────────────────────────────────────
 
@@ -1277,8 +1307,8 @@ const MILESTONE_ICONS = {
 
 // ─── Parties & Offices Panel ───────────────────────────────────────────────────
 
-const PartiesOfficesCard = ({ label, value }) => (
-  <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 10, padding: "14px 18px" }}>
+const PartiesOfficesCard = ({ id, label, value }) => (
+  <div id={id} style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 10, padding: "14px 18px" }}>
     <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
       textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 6 }}>{label}</div>
     <div style={{ fontFamily: T.body, fontSize: 16, fontWeight: 700,
@@ -1286,39 +1316,30 @@ const PartiesOfficesCard = ({ label, value }) => (
   </div>
 );
 
-// Edit form — reuses the same CustomerCombobox / department-filtered-office-select
-// patterns as ShipmentFormPage's Parties & Offices sections, self-contained so it
-// can be opened from the dedicated Parties & Offices sub-page.
-const PartiesOfficesForm = ({ shipment, onSave, onCancel }) => {
-  const [offices, setOffices] = useState([]);
-  useEffect(() => { api.offices.list().then(setOffices).catch(() => {}); }, []);
-
+// Edit form — PARTIES ONLY (Shipper/Consignee/Notify/Principal). Reuses the same
+// CustomerCombobox pattern as ShipmentFormPage's Parties section. Offices moved out
+// to inline-editable selects directly on PartiesOfficesPanel (TKT-PNFO5O) — the
+// CustomerCombobox search+pick flow benefits from a focused modal, but a plain
+// department-filtered <select> doesn't need one, so the modal stays for parties only
+// per explicit direction, not dropped project-wide.
+const PartiesEditForm = ({ shipment, onSave, onCancel }) => {
   const [f, setF] = useState({
-    shipperId:           shipment.shipperId           || "",
-    shipperName:         shipment.shipperName         || "",
-    consigneeId:         shipment.consigneeId         || "",
-    consigneeName:       shipment.consigneeName       || "",
-    notifyId:            shipment.notifyId            || "",
-    notifyName:          shipment.notifyName          || "",
-    principalId:         shipment.principalId         || "",
-    principalName:       shipment.principalName       || "",
-    emoOfficeId:          shipment.emoOfficeId          || "",
-    imoOfficeId:          shipment.imoOfficeId          || "",
-    controllingOfficeId:  shipment.controllingOfficeId  || "",
+    shipperId:     shipment.shipperId     || "",
+    shipperName:   shipment.shipperName   || "",
+    consigneeId:   shipment.consigneeId   || "",
+    consigneeName: shipment.consigneeName || "",
+    notifyId:      shipment.notifyId      || "",
+    notifyName:    shipment.notifyName    || "",
+    principalId:   shipment.principalId   || "",
+    principalName: shipment.principalName || "",
   });
   const [sameNotify, setSameNotify] = useState(
     !shipment.notifyId || shipment.notifyId === shipment.consigneeId
   );
   const [isSaving, withSaving] = useSaving();
 
-  const OFFICE_FIELDS = [
-    { key: "emoOfficeId",         label: "Export Managing Office (EMO)", required: true,  dept: "SE" },
-    { key: "imoOfficeId",         label: "Import Managing Office (IMO)", required: true,  dept: "SI" },
-    { key: "controllingOfficeId", label: "Controlling Office",           required: false, dept: null },
-  ];
-
   // The shipment PUT endpoint replaces the full record (not a PATCH), so every
-  // other field must ride along unchanged — only the party/office keys differ.
+  // other field must ride along unchanged — only the party keys differ.
   const handleSave = () => withSaving(() => onSave({
     ...shipment,
     ...f,
@@ -1328,79 +1349,90 @@ const PartiesOfficesForm = ({ shipment, onSave, onCancel }) => {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div>
-        <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 700,
-          textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 8 }}>
-          Parties
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-          <CustomerCombobox label="Shipper" required
-            value={{ id: f.shipperId, name: f.shipperName }}
-            onChange={v => setF(p => ({ ...p, shipperId: v.id, shipperName: v.name }))} />
-          <CustomerCombobox label="Consignee" required
-            value={{ id: f.consigneeId, name: f.consigneeName }}
-            onChange={v => setF(p => ({ ...p, consigneeId: v.id, consigneeName: v.name }))} />
-          <CustomerCombobox label="Principal" required
-            value={{ id: f.principalId, name: f.principalName }}
-            onChange={v => setF(p => ({ ...p, principalId: v.id, principalName: v.name }))} />
-        </div>
-        <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
-          <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: "pointer",
-            fontFamily: T.body, fontSize: 12, color: T.textMuted, userSelect: "none", width: "fit-content" }}>
-            <input type="checkbox" checked={!sameNotify}
-              onChange={e => {
-                const diff = e.target.checked;
-                setSameNotify(!diff);
-                if (!diff) setF(p => ({ ...p, notifyId: p.consigneeId, notifyName: p.consigneeName }));
-              }}
-              style={{ accentColor: T.accent, width: 13, height: 13 }} />
-            Different notify party
-          </label>
-          {sameNotify
-            ? <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, fontStyle: "italic", paddingLeft: 2 }}>
-                {f.consigneeName
-                  ? <>Notify → <span style={{ color: T.text, fontStyle: "normal" }}>{f.consigneeName}</span></>
-                  : "Same as Consignee (select a Consignee above)"}
-              </div>
-            : <CustomerCombobox label="Notify Party"
-                value={{ id: f.notifyId, name: f.notifyName }}
-                onChange={v => setF(p => ({ ...p, notifyId: v.id, notifyName: v.name }))} />
-          }
-        </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <CustomerCombobox label="Shipper" required
+          value={{ id: f.shipperId, name: f.shipperName }}
+          onChange={v => setF(p => ({ ...p, shipperId: v.id, shipperName: v.name }))} />
+        <CustomerCombobox label="Consignee" required
+          value={{ id: f.consigneeId, name: f.consigneeName }}
+          onChange={v => setF(p => ({ ...p, consigneeId: v.id, consigneeName: v.name }))} />
+        <CustomerCombobox label="Principal" required
+          value={{ id: f.principalId, name: f.principalName }}
+          onChange={v => setF(p => ({ ...p, principalId: v.id, principalName: v.name }))} />
       </div>
-
-      {/* Offices — stacked in a single column; layout/logic to be revisited later */}
-      <div>
-        <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 700,
-          textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 8 }}>
-          Offices — split by Export / Import
-        </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          {OFFICE_FIELDS.map(({ key, label, required, dept }) => {
-            const candidates = dept ? offices.filter(o => o.department === dept && o.isActive) : offices.filter(o => o.isActive);
-            return (
-              <div key={key}>
-                <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
-                  textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 5 }}>
-                  {label}{required && <span style={{ color: T.danger, marginLeft: 2 }}>*</span>}
-                </div>
-                <select value={f[key] || ""} onChange={e => setF(p => ({ ...p, [key]: e.target.value || "" }))}
-                  style={{ width: "100%", padding: "7px 10px", borderRadius: 7, fontFamily: T.mono, fontSize: 12,
-                    color: f[key] ? T.text : T.textMuted, border: `1px solid ${T.border}`,
-                    background: T.bg, outline: "none", cursor: "pointer", boxSizing: "border-box" }}>
-                  <option value="">{required ? "Select office…" : "None (optional)"}</option>
-                  {candidates.map(o => <option key={o.id} value={o.id}>{o.code} — {o.name}</option>)}
-                </select>
-              </div>
-            );
-          })}
-        </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: "pointer",
+          fontFamily: T.body, fontSize: 12, color: T.textMuted, userSelect: "none", width: "fit-content" }}>
+          <input type="checkbox" checked={!sameNotify}
+            onChange={e => {
+              const diff = e.target.checked;
+              setSameNotify(!diff);
+              if (!diff) setF(p => ({ ...p, notifyId: p.consigneeId, notifyName: p.consigneeName }));
+            }}
+            style={{ accentColor: T.accent, width: 13, height: 13 }} />
+          Different notify party
+        </label>
+        {sameNotify
+          ? <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, fontStyle: "italic", paddingLeft: 2 }}>
+              {f.consigneeName
+                ? <>Notify → <span style={{ color: T.text, fontStyle: "normal" }}>{f.consigneeName}</span></>
+                : "Same as Consignee (select a Consignee above)"}
+            </div>
+          : <CustomerCombobox label="Notify Party"
+              value={{ id: f.notifyId, name: f.notifyName }}
+              onChange={v => setF(p => ({ ...p, notifyId: v.id, notifyName: v.name }))} />
+        }
       </div>
 
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
-        <Btn variant="secondary" onClick={onCancel} disabled={isSaving}>Cancel</Btn>
-        <Btn onClick={handleSave} disabled={isSaving}>{isSaving ? "Saving…" : "Save"}</Btn>
+        <Btn id="shpparties-form-cancel-btn" variant="secondary" onClick={onCancel} disabled={isSaving}>Cancel</Btn>
+        <Btn id="shpparties-form-save-btn" onClick={handleSave} disabled={isSaving}>{isSaving ? "Saving…" : "Save"}</Btn>
       </div>
+    </div>
+  );
+};
+
+// Offices — inline select, no modal (TKT-PNFO5O). Commits immediately on change
+// (same "changing it IS the save" idiom as ServicesPanel's status-advance buttons)
+// rather than needing a separate dirty-state/Save affordance for a single dropdown.
+const OFFICE_FIELDS = [
+  { key: "emoOfficeId",         nameKey: "emoOfficeName",         codeKey: "emoOfficeCode",         label: "Export Managing Office (EMO)", required: true,  dept: "SE" },
+  { key: "imoOfficeId",         nameKey: "imoOfficeName",         codeKey: "imoOfficeCode",         label: "Import Managing Office (IMO)", required: true,  dept: "SI" },
+  { key: "controllingOfficeId", nameKey: "controllingOfficeName", codeKey: "controllingOfficeCode", label: "Controlling Office",           required: false, dept: null },
+];
+
+const OfficeInlineSelect = ({ id, field, shipment, offices, canEdit, onUpdate }) => {
+  const [saving, setSaving] = useState(false);
+  const candidates = field.dept ? offices.filter(o => o.department === field.dept && o.isActive) : offices.filter(o => o.isActive);
+  const value = shipment[field.key] || "";
+
+  const handleChange = async e => {
+    const next = e.target.value;
+    setSaving(true);
+    try { await onUpdate(shipment.id, { ...shipment, [field.key]: next }); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div id={id}>
+      <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
+        textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 5 }}>
+        {field.label}{field.required && <span style={{ color: T.danger, marginLeft: 2 }}>*</span>}
+      </div>
+      {canEdit ? (
+        <select value={value} disabled={saving} onChange={handleChange}
+          style={{ width: "100%", maxWidth: 420, padding: "7px 10px", borderRadius: 7, fontFamily: T.mono, fontSize: 12,
+            color: value ? T.text : T.textMuted, border: `1px solid ${T.border}`,
+            background: T.bg, outline: "none", cursor: saving ? "wait" : "pointer", boxSizing: "border-box" }}>
+          <option value="">{field.required ? "Select office…" : "None (optional)"}</option>
+          {candidates.map(o => <option key={o.id} value={o.id}>{o.code} — {o.name}</option>)}
+        </select>
+      ) : (
+        <div style={{ fontFamily: T.body, fontSize: 16, fontWeight: 700,
+          color: shipment[field.nameKey] ? T.text : T.border }}>
+          {shipment[field.nameKey] ? `${shipment[field.nameKey]}${shipment[field.codeKey] ? ` (${shipment[field.codeKey]})` : ""}` : "—"}
+        </div>
+      )}
     </div>
   );
 };
@@ -1408,40 +1440,40 @@ const PartiesOfficesForm = ({ shipment, onSave, onCancel }) => {
 export const PartiesOfficesPanel = ({ shipment, onUpdate }) => {
   const { canEditShipments: canEdit } = useAuth();
   const [editing, setEditing] = useState(false);
+  const [offices, setOffices] = useState([]);
+  useEffect(() => { api.offices.list().then(setOffices).catch(() => {}); }, []);
 
   return (
-    <div>
+    <div id="shpparties-panel">
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
         <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 700,
           textTransform: "uppercase", letterSpacing: ".08em" }}>
           Parties
         </div>
         {canEdit && onUpdate && (
-          <Btn size="sm" variant="secondary" onClick={() => setEditing(true)}>✎ Edit</Btn>
+          <Btn id="shpparties-edit-btn" size="sm" variant="secondary" onClick={() => setEditing(true)}>✎ Edit</Btn>
         )}
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 18 }}>
-        <PartiesOfficesCard label="Shipper"      value={shipment.shipperName} />
-        <PartiesOfficesCard label="Consignee"    value={shipment.consigneeName} />
-        <PartiesOfficesCard label="Notify Party" value={shipment.notifyName} />
-        <PartiesOfficesCard label="Principal"    value={shipment.principalName} />
+        <PartiesOfficesCard id="shpparties-shipper"   label="Shipper"      value={shipment.shipperName} />
+        <PartiesOfficesCard id="shpparties-consignee" label="Consignee"    value={shipment.consigneeName} />
+        <PartiesOfficesCard id="shpparties-notify"    label="Notify Party" value={shipment.notifyName} />
+        <PartiesOfficesCard id="shpparties-principal" label="Principal"    value={shipment.principalName} />
       </div>
       <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 700,
         textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 8 }}>
         Offices — split by Export / Import
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        <PartiesOfficesCard label="Export Managing Office (EMO)"
-          value={shipment.emoOfficeName ? `${shipment.emoOfficeName}${shipment.emoOfficeCode ? ` (${shipment.emoOfficeCode})` : ""}` : ""} />
-        <PartiesOfficesCard label="Import Managing Office (IMO)"
-          value={shipment.imoOfficeName ? `${shipment.imoOfficeName}${shipment.imoOfficeCode ? ` (${shipment.imoOfficeCode})` : ""}` : ""} />
-        <PartiesOfficesCard label="Controlling Office"
-          value={shipment.controllingOfficeName ? `${shipment.controllingOfficeName}${shipment.controllingOfficeCode ? ` (${shipment.controllingOfficeCode})` : ""}` : ""} />
+        {OFFICE_FIELDS.map(field => (
+          <OfficeInlineSelect key={field.key} id={`shpparties-${field.key}`} field={field}
+            shipment={shipment} offices={offices} canEdit={canEdit && !!onUpdate} onUpdate={onUpdate} />
+        ))}
       </div>
 
       {editing && (
-        <Modal title="Edit Parties & Offices" onClose={() => setEditing(false)} width={620}>
-          <PartiesOfficesForm
+        <Modal title="Edit Parties" onClose={() => setEditing(false)} width={560}>
+          <PartiesEditForm
             shipment={shipment}
             onCancel={() => setEditing(false)}
             onSave={async form => {
@@ -1549,7 +1581,7 @@ export const MilestonePanel = ({ shipmentId, shipment, onProgress }) => {
     new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 
   return (
-    <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, overflow: "hidden" }}>
+    <div id="shpmiles-panel" style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, overflow: "hidden" }}>
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
         padding: "14px 18px", borderBottom: collapsed ? "none" : `1px solid ${T.border}33`,
@@ -1568,7 +1600,7 @@ export const MilestonePanel = ({ shipmentId, shipment, onProgress }) => {
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           {milestones.length > 0 && (
-            <button type="button" onClick={e => { e.stopPropagation(); handleInit(true); }} disabled={initializing}
+            <button id="shpmiles-reset-btn" type="button" onClick={e => { e.stopPropagation(); handleInit(true); }} disabled={initializing}
               style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, background: "none",
                 border: `1px solid ${T.border}`, borderRadius: 7, padding: "3px 10px",
                 cursor: initializing ? "not-allowed" : "pointer" }}>
@@ -1587,16 +1619,16 @@ export const MilestonePanel = ({ shipmentId, shipment, onProgress }) => {
           Loading…
         </div>
       ) : milestones.length === 0 ? (
-        <div style={{ padding: "32px 18px", display: "flex", flexDirection: "column", alignItems: "center", gap: 14 }}>
+        <div id="shpmiles-empty" style={{ padding: "32px 18px", display: "flex", flexDirection: "column", alignItems: "center", gap: 14 }}>
           <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
             No milestones set for this shipment.
           </div>
-          <Btn onClick={() => handleInit(false)} disabled={initializing}>
+          <Btn id="shpmiles-init-btn" onClick={() => handleInit(false)} disabled={initializing}>
             {initializing ? "Initializing…" : "⚑ Initialize Milestones"}
           </Btn>
         </div>
       ) : (
-        <div style={{ padding: "18px 18px 10px" }}>
+        <div id="shpmiles-steps" style={{ padding: "18px 18px 10px" }}>
           {/* Progress bar */}
           <div style={{ marginBottom: 18 }}>
             <div style={{ height: 4, background: T.border, borderRadius: 2, overflow: "hidden" }}>
@@ -1618,7 +1650,7 @@ export const MilestonePanel = ({ shipmentId, shipment, onProgress }) => {
             const f          = fields[m.id] || {};
 
             return (
-              <div key={m.id} style={{ display: "flex", gap: 14 }}>
+              <div key={m.id} id={`shpmiles-step-${m.milestoneKey}`} style={{ display: "flex", gap: 14 }}>
                 {/* Timeline column */}
                 <div style={{ display: "flex", flexDirection: "column", alignItems: "center",
                   flexShrink: 0, width: 30 }}>
@@ -1703,10 +1735,10 @@ export const MilestonePanel = ({ shipmentId, shipment, onProgress }) => {
                         </div>
                       </div>
                       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                        <Btn size="sm" onClick={() => handleSaveFields(m)} disabled={isBusy}>
+                        <Btn id={`shpmiles-step-${m.milestoneKey}-save-btn`} size="sm" onClick={() => handleSaveFields(m)} disabled={isBusy}>
                           {isBusy ? "Saving…" : "Save"}
                         </Btn>
-                        <Btn size="sm" variant="success" onClick={() => handleToggleComplete(m)} disabled={isBusy}>
+                        <Btn id={`shpmiles-step-${m.milestoneKey}-complete-btn`} size="sm" variant="success" onClick={() => handleToggleComplete(m)} disabled={isBusy}>
                           ✓ Mark Complete
                         </Btn>
                         <button type="button" onClick={() => setExpanded(null)}
@@ -1720,7 +1752,7 @@ export const MilestonePanel = ({ shipmentId, shipment, onProgress }) => {
 
                   {/* Undo for completed */}
                   {m.completedAt && (
-                    <button type="button" onClick={() => handleToggleComplete(m)} disabled={isBusy}
+                    <button id={`shpmiles-step-${m.milestoneKey}-undo-btn`} type="button" onClick={() => handleToggleComplete(m)} disabled={isBusy}
                       style={{ marginTop: 3, fontFamily: T.body, fontSize: 10, color: T.textMuted,
                         background: "none", border: "none", cursor: "pointer", padding: 0 }}>
                       {isBusy ? "Undoing…" : "↩ Undo"}
@@ -1732,6 +1764,93 @@ export const MilestonePanel = ({ shipmentId, shipment, onProgress }) => {
           })}
         </div>
       ))}
+    </div>
+  );
+};
+
+// ─── Container Events Stepper ─────────────────────────────────────────────────
+// Reuses MilestonePanel's state-coloring palette and progress-bar idiom, but is a
+// separate component rather than a literal reuse of MilestonePanel itself:
+// container_events is per-container (a shipment with N containers has N independent
+// lifecycle timelines, each potentially at a different point), unlike
+// shipment_milestones' single shipment-wide linear sequence that MilestonePanel's
+// "current = first incomplete row" logic assumes. Rendered once per container, in a
+// compact horizontal strip rather than MilestonePanel's vertical layout, since N of
+// these stack on the page. No "overdue" state — container_events has no due-date
+// field to compare against (unlike shipment_milestones.estimatedDate).
+const ContainerEventsStepper = ({ container }) => {
+  const [events, setEvents] = useState(null);
+
+  useEffect(() => {
+    api.containers.events(container.id).then(setEvents).catch(() => setEvents([]));
+  }, [container.id]);
+
+  const stateColor = st => ({ completed: T.success, current: T.accent, upcoming: T.border }[st]);
+
+  if (events === null) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 8, color: T.textMuted,
+        fontFamily: T.body, fontSize: 12, padding: "8px 0" }}>
+        <Spinner size="sm" /> Loading…
+      </div>
+    );
+  }
+
+  const loggedTypes = new Set(events.map(e => e.eventType));
+  const firstIncompleteIdx = CONTAINER_EVENT_TYPES.findIndex(t => !loggedTypes.has(t));
+  const stepState = (type, idx) => loggedTypes.has(type) ? 'completed' : idx === firstIncompleteIdx ? 'current' : 'upcoming';
+  const completedCount = CONTAINER_EVENT_TYPES.filter(t => loggedTypes.has(t)).length;
+  const progress = Math.round((completedCount / CONTAINER_EVENT_TYPES.length) * 100);
+
+  return (
+    <div id={`shpmiles-ctrstepper-${container.id}`} style={{ marginBottom: 18, paddingBottom: 18, borderBottom: `1px solid ${T.border}` }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+        <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.text }}>
+          {container.containerNumber || container.id}
+        </span>
+        <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted }}>{completedCount}/{CONTAINER_EVENT_TYPES.length} complete</span>
+      </div>
+      <div style={{ height: 4, background: T.border, borderRadius: 2, overflow: "hidden", marginBottom: 12 }}>
+        <div style={{ height: "100%", width: `${progress}%`, background: T.success, transition: "width .3s ease", borderRadius: 2 }} />
+      </div>
+      <div style={{ display: "flex", gap: 4 }}>
+        {CONTAINER_EVENT_TYPES.map((type, idx) => {
+          const state = stepState(type, idx);
+          const color = stateColor(state);
+          return (
+            <div key={type} title={type} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4, minWidth: 0 }}>
+              <div style={{
+                width: 22, height: 22, borderRadius: "50%", flexShrink: 0,
+                background: state === 'upcoming' ? T.surface : color,
+                border: `2px solid ${color}`,
+                display: "flex", alignItems: "center", justifyContent: "center",
+                color: state === 'upcoming' ? T.textMuted : "#fff",
+                fontSize: 10, fontWeight: 700, lineHeight: 1,
+                boxShadow: state === 'current' ? `0 0 0 4px ${color}22` : "none",
+              }}>
+                {state === 'completed' ? "✓" : idx + 1}
+              </div>
+              <span style={{ fontFamily: T.body, fontSize: 9, color: T.textMuted, textAlign: "center",
+                lineHeight: 1.2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", width: "100%" }}>
+                {type}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+};
+
+export const ContainerEventsSteppers = ({ shipment, containers }) => {
+  const ctrs = containers.filter(c => c.shipmentId === shipment.id);
+  if (ctrs.length === 0) return null;
+  return (
+    <div id="shpmiles-ctrsteppers" style={{ background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, padding: "18px 20px", marginTop: 20 }}>
+      <div style={{ fontFamily: T.head, fontSize: 15, fontWeight: 800, color: T.text, marginBottom: 16 }}>
+        Container Events
+      </div>
+      {ctrs.map(c => <ContainerEventsStepper key={c.id} container={c} />)}
     </div>
   );
 };
@@ -1755,6 +1874,7 @@ export const CostLineForm = ({ init = {}, fxRates = {}, containers = [], lockTyp
   const [vatRate,      setVatRate]      = useState(init.vatRate      != null ? String(init.vatRate) : "0");
   const [notes,        setNotes]        = useState(init.notes        || "");
   const [containerId,  setContainerId]  = useState(init.containerId  || "");
+  const [paymentIndicator, setPaymentIndicator] = useState(init.paymentIndicator || "Prepaid");
   const isEdit = !!init.id;
 
   // Auto-fill exchange rate when currency changes (rates are FROM USD: 1 USD = X ccy)
@@ -1853,15 +1973,22 @@ export const CostLineForm = ({ init = {}, fxRates = {}, containers = [], lockTyp
         <input value={notes} onChange={e => setNotes(e.target.value)}
           placeholder="Optional notes…" style={inp} />
       </div>
+      <div>
+        <div style={lbl}>Carrier Payment Indicator (CPI)</div>
+        <select value={paymentIndicator} onChange={e => setPaymentIndicator(e.target.value)} style={inp}>
+          <option value="Prepaid">Prepaid — paid at origin</option>
+          <option value="Collect">Collect — paid at destination</option>
+        </select>
+      </div>
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
         <Btn variant="secondary" onClick={onCancel}>Cancel</Btn>
         <Btn variant="secondary"
-          onClick={() => onSaveAndMirror({ type, chargeCode, currency, amount: amtNum, exchangeRate: rateNum, vatRate: vatNum, notes, containerId })}
+          onClick={() => onSaveAndMirror({ type, chargeCode, currency, amount: amtNum, exchangeRate: rateNum, vatRate: vatNum, notes, containerId, paymentIndicator })}
           disabled={!valid}
           title={`Save this line and create a mirrored ${type === "BUY" ? "SELL" : "BUY"} line with the same values`}>
           ⇄ Mirror as {type === "BUY" ? "SELL" : "BUY"}
         </Btn>
-        <Btn onClick={() => onSave({ type, chargeCode, currency, amount: amtNum, exchangeRate: rateNum, vatRate: vatNum, notes, containerId })} disabled={!valid}>
+        <Btn onClick={() => onSave({ type, chargeCode, currency, amount: amtNum, exchangeRate: rateNum, vatRate: vatNum, notes, containerId, paymentIndicator })} disabled={!valid}>
           {isEdit ? "Save Changes" : "Add Line"}
         </Btn>
       </div>
@@ -2053,7 +2180,15 @@ export const CostLineHistoryModal = ({ shipmentId, onClose }) => {
 
 // Single cost-line row — shared by the Overview preview card and the dedicated
 // Cost Entry / Invoice Entry pages' full tables.
-export const CostLineRow = ({ line: l, containers = [], showActions = false, onEdit, onDelete }) => {
+// TKT-83O41G status badge — accrued (default, no badge needed) is the unmarked
+// state; actualized/posted get a small pill so a glance at the list shows what's
+// still an estimate vs what's been reconciled against a real invoice or pushed to GL.
+const COST_LINE_STATUS_STYLE = {
+  actualized: { label: "Actualized", color: T.info },
+  posted:     { label: "Posted",     color: T.textMuted },
+};
+
+export const CostLineRow = ({ line: l, containers = [], showActions = false, onEdit, onDelete, onActualize, onPost }) => {
   const ctr = l.containerId ? containers.find(c => c.id === l.containerId) : null;
   const ctrLabel = ctr ? (ctr.containerNumber || `(${ctr.size || ""}${ctr.type || ""})`) : null;
   // Mirror direction is derived from the line's own type, not stored separately: a
@@ -2062,9 +2197,10 @@ export const CostLineRow = ({ line: l, containers = [], showActions = false, onE
   const src = l.source === "contract" && l.modifiedAt ? { label: "Contract (Modified)", color: T.warning }
     : l.source === "contract" ? { label: "Contract", color: T.info }
     : l.source === "mirror" ? { label: l.type === "SELL" ? "Mirrored ← Cost Entry" : "Mirrored ← Invoice Entry", color: T.accent }
+    : l.source === "automated" ? { label: "Automated", color: T.success }
     : { label: "Manual", color: T.textMuted };
   return (
-    <div key={l.id}
+    <div key={l.id} id={`costline-${l.id}-row`}
       style={{ display: "flex", alignItems: "center", padding: showActions ? "9px 16px" : "8px 18px",
         borderBottom: `1px solid ${T.border}22` }}
       onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
@@ -2082,6 +2218,14 @@ export const CostLineRow = ({ line: l, containers = [], showActions = false, onE
             background: `${T.info}18`, border: `1px solid ${T.info}44`,
             borderRadius: 4, padding: "1px 5px", whiteSpace: "nowrap", flexShrink: 0 }}>
             VAT {l.vatRate}%
+          </span>
+        )}
+        {l.paymentIndicator === "Collect" && (
+          <span title="Carrier Payment Indicator: Collect — paid at destination"
+            style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 700, color: T.warning,
+            background: `${T.warning}18`, border: `1px solid ${T.warning}44`,
+            borderRadius: 4, padding: "1px 5px", whiteSpace: "nowrap", flexShrink: 0 }}>
+            COLLECT
           </span>
         )}
       </div>
@@ -2122,16 +2266,62 @@ export const CostLineRow = ({ line: l, containers = [], showActions = false, onE
           : l.amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
         }
       </div>
+      {/* Status (TKT-83O41G) */}
+      {showActions && (
+        <div style={{ width: 100, flexShrink: 0, paddingLeft: 8 }}>
+          {l.status && l.status !== 'accrued' && (
+            <span title={l.varianceUsd != null ? `Variance: ${l.varianceUsd > 0 ? "+" : ""}$${l.varianceUsd.toFixed(2)}` : undefined}
+              style={{ fontFamily: T.mono, fontSize: 9.5, fontWeight: 700,
+                color: COST_LINE_STATUS_STYLE[l.status].color, background: `${COST_LINE_STATUS_STYLE[l.status].color}18`,
+                border: `1px solid ${COST_LINE_STATUS_STYLE[l.status].color}44`,
+                borderRadius: 4, padding: "2px 7px", whiteSpace: "nowrap" }}>
+              {COST_LINE_STATUS_STYLE[l.status].label}
+            </span>
+          )}
+        </div>
+      )}
       {/* Actions */}
       {showActions && (
         <div style={{ width: 36, flexShrink: 0 }}>
           <ActionMenu items={[
-            { icon: "✎", label: "Edit",   onClick: onEdit },
-            { icon: "✕", label: "Delete", variant: "danger", onClick: onDelete },
+            ...(l.status !== 'posted' ? [
+              { icon: "✎", label: "Edit", onClick: onEdit },
+              { icon: "✕", label: "Delete", variant: "danger", onClick: onDelete },
+            ] : []),
+            ...(l.status === 'accrued' && onActualize ? [{ icon: "◐", label: "Actualize", onClick: onActualize }] : []),
+            ...(l.status !== 'posted' && onPost ? [{ icon: "🔒", label: "Post", onClick: onPost }] : []),
           ]} />
         </div>
       )}
     </div>
+  );
+};
+
+// Shared by Cost Entry + Invoice Entry pages (TKT-83O41G) — enters the real AP/AR
+// amount once an actual invoice has come in, without overwriting the original
+// accrued amount/exchange_rate (kept separately so variance stays computable).
+export const CostLineActualizeModal = ({ line, onSave, onClose }) => {
+  const [amount, setAmount] = useState(String(line.amount));
+  const [isSaving, withSaving] = useSaving();
+  const parsed = parseFloat(amount);
+  const valid = !isNaN(parsed) && parsed >= 0;
+  return (
+    <Modal title={`Actualize — ${line.chargeCode}`} onClose={onClose} width={420}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, lineHeight: 1.5 }}>
+          Accrued (estimated) amount: <strong style={{ color: T.text, fontFamily: T.mono }}>{line.currency} {line.amount.toFixed(2)}</strong>.
+          Enter the real invoiced amount — the accrued estimate is kept as-is so the variance stays visible.
+        </div>
+        <Inp label={`Actual Amount (${line.currency})`} value={amount} onChange={setAmount} mono required />
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <Btn variant="secondary" onClick={onClose} disabled={isSaving}>Cancel</Btn>
+          <Btn disabled={!valid || isSaving}
+            onClick={() => withSaving(() => onSave({ actualAmount: parsed, actualExchangeRate: line.exchangeRate }))}>
+            {isSaving ? "Saving…" : "Mark Actualized"}
+          </Btn>
+        </div>
+      </div>
+    </Modal>
   );
 };
 
@@ -2427,7 +2617,8 @@ export const ScheduleHistoryPanel = ({ shipment, forceOpen = false }) => {
       .finally(() => setLoading(false));
   }, [shipment.id]);
 
-  const EVENT_COLOR = { SAVED: T.success, REMOVED: T.danger };
+  const EVENT_COLOR = { SAVED: T.success, REMOVED: T.danger, UPDATED: T.warning };
+  const SCHED_FIELD_LABELS = { vessel_name: "Vessel", voyage_number: "Voyage", etd: "ETD", eta: "ETA", carrier: "Carrier" };
 
   const body = (
     <>
@@ -2445,6 +2636,7 @@ export const ScheduleHistoryPanel = ({ shipment, forceOpen = false }) => {
           {events.map(ev => {
             const m = ev.meta ? JSON.parse(ev.meta) : {};
             const color = EVENT_COLOR[ev.event_type] || T.textMuted;
+            const isUpdate = ev.event_type === "UPDATED";
             return (
               <div key={ev.id} style={{ display: "flex", alignItems: "center", gap: 12,
                 padding: "10px 14px", background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8 }}>
@@ -2453,28 +2645,47 @@ export const ScheduleHistoryPanel = ({ shipment, forceOpen = false }) => {
                   background: color + "22", color, border: `1px solid ${color}55`, flexShrink: 0 }}>
                   {ev.event_type}
                 </span>
-                <div style={{ flex: 1, display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center", minWidth: 0 }}>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 120 }}>
-                    <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.text }}>
-                      {m.vesselName || "—"}
+                {isUpdate ? (
+                  <div style={{ flex: 1, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", minWidth: 0 }}>
+                    <span style={{ fontFamily: T.body, fontSize: 12, fontWeight: 700, color: T.text, minWidth: 60 }}>
+                      {SCHED_FIELD_LABELS[ev.field] || ev.field}
                     </span>
-                    <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
-                      {m.service || "—"}{m.voyageNumber ? ` · Voy ${m.voyageNumber}` : ""}
+                    <span style={{ fontFamily: T.mono, fontSize: 12, color: T.danger, textDecoration: "line-through" }}>
+                      {ev.old_value || "—"}
+                    </span>
+                    <span style={{ color: T.textMuted, fontSize: 12 }}>→</span>
+                    <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.success }}>
+                      {ev.new_value || "—"}
+                    </span>
+                    <span style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, marginLeft: "auto", whiteSpace: "nowrap" }}>
+                      {new Date(ev.created_at).toLocaleDateString("en-GB")}
+                      {m.actor ? ` by ${m.actor}` : ""}
                     </span>
                   </div>
-                  <span style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>
-                    {m.pol || "—"} → {m.pod || "—"}
-                  </span>
-                  {(m.etd || m.eta) && (
-                    <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
-                      {m.etd || "—"} → {m.eta || "—"}
+                ) : (
+                  <div style={{ flex: 1, display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center", minWidth: 0 }}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 120 }}>
+                      <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.text }}>
+                        {m.vesselName || "—"}
+                      </span>
+                      <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
+                        {m.service || "—"}{m.voyageNumber ? ` · Voy ${m.voyageNumber}` : ""}
+                      </span>
+                    </div>
+                    <span style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>
+                      {m.pol || "—"} → {m.pod || "—"}
                     </span>
-                  )}
-                  <span style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, marginLeft: "auto", whiteSpace: "nowrap" }}>
-                    {new Date(ev.created_at).toLocaleDateString("en-GB")}
-                    {m.actor ? ` by ${m.actor}` : ""}
-                  </span>
-                </div>
+                    {(m.etd || m.eta) && (
+                      <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+                        {m.etd || "—"} → {m.eta || "—"}
+                      </span>
+                    )}
+                    <span style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, marginLeft: "auto", whiteSpace: "nowrap" }}>
+                      {new Date(ev.created_at).toLocaleDateString("en-GB")}
+                      {m.actor ? ` by ${m.actor}` : ""}
+                    </span>
+                  </div>
+                )}
               </div>
             );
           })}
@@ -2512,7 +2723,11 @@ export const ScheduleHistoryPanel = ({ shipment, forceOpen = false }) => {
 const PRIORITY_COLOR = { High: T.danger, Medium: T.warning, Low: T.textMuted, Critical: "#f97316" };
 const STATUS_DOT = { Done: T.success, "In Progress": T.accent, Ready: T.textMuted, Blocked: T.danger };
 
-export const RelatedTicketsPanel = ({ shipmentId }) => {
+// embedded=true skips the outer card + "Related Tickets" header (used by TicketsDrawer,
+// which supplies its own drawer header/title) and renders just the list body — same
+// presentation-only-wrap precedent as ScheduleHistoryPanel's forceOpen prop; the fetch/
+// render logic itself is untouched either way.
+export const RelatedTicketsPanel = ({ shipmentId, embedded = false }) => {
   const [tickets,  setTickets]  = useState([]);
   const [loading,  setLoading]  = useState(true);
 
@@ -2522,6 +2737,53 @@ export const RelatedTicketsPanel = ({ shipmentId }) => {
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [shipmentId]);
+
+  const body = (
+    <div style={{ padding: embedded ? 0 : "14px 20px" }}>
+      {loading ? (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, color: T.textMuted,
+          fontFamily: T.body, fontSize: 12 }}>
+          <Spinner size="sm" /> Loading…
+        </div>
+      ) : tickets.length === 0 ? (
+        <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, fontStyle: "italic", padding: "8px 0" }}>
+          No tickets linked to this shipment.
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {tickets.map(t => (
+            <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 12,
+              padding: "9px 14px", background: T.bg,
+              border: `1px solid ${T.border}`, borderRadius: 8 }}>
+              <span style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
+                background: STATUS_DOT[t.status] || T.textMuted }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontFamily: T.body, fontSize: 13, color: T.text,
+                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {t.title}
+                </div>
+                <div style={{ display: "flex", gap: 8, marginTop: 2, alignItems: "center", flexWrap: "wrap" }}>
+                  <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted }}>{t.id}</span>
+                  <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted }}>{t.status}</span>
+                  {t.assigneeName && (
+                    <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted }}>
+                      → {t.assigneeName}
+                    </span>
+                  )}
+                </div>
+              </div>
+              <span style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600, flexShrink: 0,
+                color: PRIORITY_COLOR[t.priority] || T.textMuted }}>
+                {t.priority}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
+  if (embedded) return body;
 
   return (
     <div style={{ background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, overflow: "hidden" }}>
@@ -2536,51 +2798,75 @@ export const RelatedTicketsPanel = ({ shipmentId }) => {
           )}
         </div>
       </div>
-      <div style={{ padding: "14px 20px" }}>
-        {loading ? (
-          <div style={{ display: "flex", alignItems: "center", gap: 8, color: T.textMuted,
-            fontFamily: T.body, fontSize: 12 }}>
-            <Spinner size="sm" /> Loading…
-          </div>
-        ) : tickets.length === 0 ? (
-          <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, fontStyle: "italic", padding: "8px 0" }}>
-            No tickets linked to this shipment.
-          </div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {tickets.map(t => (
-              <div key={t.id} style={{ display: "flex", alignItems: "center", gap: 12,
-                padding: "9px 14px", background: T.bg,
-                border: `1px solid ${T.border}`, borderRadius: 8 }}>
-                <span style={{ width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
-                  background: STATUS_DOT[t.status] || T.textMuted }} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontFamily: T.body, fontSize: 13, color: T.text,
-                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {t.title}
-                  </div>
-                  <div style={{ display: "flex", gap: 8, marginTop: 2, alignItems: "center", flexWrap: "wrap" }}>
-                    <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted }}>{t.id}</span>
-                    <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted }}>{t.status}</span>
-                    {t.assigneeName && (
-                      <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted }}>
-                        → {t.assigneeName}
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <span style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600, flexShrink: 0,
-                  color: PRIORITY_COLOR[t.priority] || T.textMuted }}>
-                  {t.priority}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      {body}
     </div>
   );
 };
+
+// ─── Tickets Drawer ────────────────────────────────────────────────────────────
+// Matches MessagesDrawer/EdiMessagesDrawer's exact shell (420px right panel, backdrop,
+// header + context strip + scrollable body) — structural parity only, not a full 1:1
+// behavioral match: no WS subscription here (no ticket_updated broadcast type exists
+// today; inventing one is a separate feature, not implied by "move into a drawer").
+// The list itself is RelatedTicketsPanel's existing fetch/render, unchanged, just
+// embedded without its own card chrome (same wrap-only precedent as ScheduleHistoryPanel).
+export const TicketsDrawer = ({ shipment, onClose }) => (
+  <>
+    <div onClick={onClose}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.25)", zIndex: 1100 }} />
+
+    <div style={{
+      position: "fixed", top: 0, right: 0, bottom: 0, width: 420,
+      background: T.surface, borderLeft: `1px solid ${T.border}`,
+      boxShadow: "-8px 0 32px rgba(0,0,0,.35)",
+      zIndex: 1101, display: "flex", flexDirection: "column",
+    }}>
+      {/* Header */}
+      <div style={{ borderBottom: `1px solid ${T.border}`, flexShrink: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+          padding: "16px 20px 12px" }}>
+          <div style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text }}>
+            ◩ Tickets
+          </div>
+          <button onClick={onClose}
+            style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 6,
+              cursor: "pointer", color: T.textMuted, fontSize: 15, padding: "4px 10px",
+              lineHeight: 1 }}
+            onMouseEnter={e => { e.currentTarget.style.borderColor = T.danger; e.currentTarget.style.color = T.danger; }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.textMuted; }}>
+            ✕
+          </button>
+        </div>
+        {/* Context strip */}
+        <div style={{ display: "flex", alignItems: "center", gap: 10,
+          padding: "8px 20px 12px", flexWrap: "wrap" }}>
+          <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, fontWeight: 600 }}>
+            {shipment.id}
+          </span>
+          <span style={{ color: T.border }}>·</span>
+          <span style={{ fontFamily: T.mono, fontSize: 11, color: T.text }}>
+            {shipment.pol} → {shipment.pod}
+          </span>
+          <span style={{ color: T.border }}>·</span>
+          <span style={{
+            fontFamily: T.body, fontSize: 10.5, fontWeight: 700,
+            color: statusVariant(shipment.status).color,
+            background: statusVariant(shipment.status).bg,
+            border: `1px solid ${statusVariant(shipment.status).color}44`,
+            borderRadius: 4, padding: "1px 7px",
+          }}>
+            {shipment.status}
+          </span>
+        </div>
+      </div>
+
+      {/* Body — scrollable */}
+      <div style={{ flex: 1, overflowY: "auto", padding: "16px 20px" }}>
+        <RelatedTicketsPanel shipmentId={shipment.id} embedded />
+      </div>
+    </div>
+  </>
+);
 
 // ──────────────────────────────────────────────────────────────────────────────
 
@@ -2607,7 +2893,7 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
       <div id="shp-overview" />
 
       {!canEdit && (
-        <div style={{
+        <div id="shpoverview-viewonly-banner" style={{
           display: "flex", alignItems: "center", gap: 9, padding: "9px 16px",
           borderRadius: 8, background: T.info + "15", border: `1px solid ${T.info}44`,
           fontFamily: T.body, fontSize: 12, color: T.info, marginBottom: 16,

@@ -15,6 +15,7 @@ const UserManualPage = () => {
     { id: "dashboard",         label: "Dashboard" },
     { id: "command-center",    label: "Command Center" },
     { id: "integration-board", label: "Integration Board" },
+    { id: "ai-agent",          label: "AI Agent" },
     { id: "mdm",               label: "Master Data" },
     { id: "incoterms",         label: "Incoterms" },
     { id: "dg-classes",        label: "DG Classes ⚠" },
@@ -114,6 +115,29 @@ const UserManualPage = () => {
         <P>Tickets can be linked to each other from the Links tab in the ticket preview: <Tag>Blocks</Tag>, <Tag>Is blocked by</Tag>, <Tag>Duplicates</Tag>, <Tag>Implements</Tag>.</P>
         <H3>Test Cases</H3>
         <P>Test Plans, Test Runs, and Test Cases live in their own dedicated pages, kept separate from the Integration Board so QA work doesn't clutter the dev ticket board. A Test Case can be linked to a Story via the <Tag>Tests</Tag> / <Tag>Is tested by</Tag> relationship, editable from either side — this gives lightweight requirement-to-test traceability without a full requirements-management module.</P>
+      </div>
+    ),
+    "ai-agent": (
+      <div>
+        <H2>AI Agent</H2>
+        <P>The AI Agent (<Tag>✦</Tag> chat drawer, also embedded in the Command Center) answers questions about shipments, contracts, and allocations using a tool-calling loop against CargoDesk's own API. It must be enabled and configured in <strong>App Settings → API Controls → AI Agent</strong> before it appears anywhere in the app.</P>
+        <H3>Provider presets</H3>
+        <P>Three presets are available: <Tag>Anthropic</Tag> (Claude models, Messages API), <Tag>OpenRouter</Tag> (any model OpenRouter hosts, OpenAI-compatible Chat Completions API), and <Tag>Custom / Local</Tag> (any OpenAI-compatible endpoint you provide — including a model you run yourself). The backend detects which format to speak from the endpoint URL, so switching presets never needs a code change.</P>
+        <H3>Running a model locally (no subscription cost)</H3>
+        <P>The <Tag>Custom / Local</Tag> preset works with any locally-hosted, OpenAI-compatible endpoint. Two options that work out of the box:</P>
+        <P><strong>Ollama</strong> — if already installed, run <Tag>ollama serve</Tag>, pull a model (e.g. <Tag>ollama pull llama3.1</Tag>), then set the Custom / Local endpoint to <Tag>http://localhost:11434/v1</Tag> in App Settings.</P>
+        <P><strong>Hermes Agent</strong> (Nous Research, open-source, MIT-licensed, github.com/NousResearch/hermes-agent) — a self-hosted agent with persistent memory and a built-in skill system, not just a bare chat model. Install natively on Windows with:</P>
+        <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 6, padding: "10px 14px", margin: "0 0 10px" }}>
+          <code style={{ fontFamily: T.mono, fontSize: 12.5, color: T.textCode }}>iex (irm https://hermes-agent.nousresearch.com/install.ps1)</code>
+        </div>
+        <P>On Linux, macOS, WSL2, or Termux, use the bash installer instead:</P>
+        <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 6, padding: "10px 14px", margin: "0 0 10px" }}>
+          <code style={{ fontFamily: T.mono, fontSize: 12.5, color: T.textCode }}>curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash</code>
+        </div>
+        <P>The Windows installer is user-scoped (installs under <Tag>%LOCALAPPDATA%\hermes</Tag> — portable Python, Node, and Git) and needs no admin rights; it only creates an autostart entry if you explicitly pass <Tag>-IncludeDesktop</Tag>. Review any installer script before running it, same as you would for any third-party software.</P>
+        <P>Once running, point the <Tag>Custom / Local</Tag> endpoint at whatever base URL Hermes Agent's gateway exposes on your machine, save, and use <strong>Test Connection</strong> in App Settings to confirm CargoDesk can reach it before enabling the feature for other users.</P>
+        <H3>Context awareness</H3>
+        <P>When the chat is opened from a shipment's detail page, its ID is passed as context automatically, so you can ask things like "what's the status of this shipment" without repeating the ID.</P>
       </div>
     ),
     mdm: (

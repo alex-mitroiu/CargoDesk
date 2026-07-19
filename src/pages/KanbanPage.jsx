@@ -1439,7 +1439,7 @@ const TicketCard = ({ ticket, onEdit, onDelete, onMove, onPreview, onDiagram, on
                       isSelected, isDragging, dropIndicator,
                       onDragStart, onDragEnd, onDragOver,
                       allTickets = [], columns = COLUMNS }) => {
-  const { canEdit } = useAuth();
+  const { canEditKanban: canEdit } = useAuth();
   const [confirm, setConfirm] = useState(false);
   const cardRef  = useRef(null);
   const dragged  = useRef(false);
@@ -1662,7 +1662,7 @@ const TicketCard = ({ ticket, onEdit, onDelete, onMove, onPreview, onDiagram, on
 // ─── Ticket Preview Panel ─────────────────────────────────────────────────────
 
 const TicketPreview = ({ ticket, colIndex, shipments, tickets, testItems = [], users, onClose, onEdit, onMove, onDelete, onPreview, onDiagram, onCoverage, columns = COLUMNS }) => {
-  const { canEdit } = useAuth();
+  const { canEditKanban: canEdit } = useAuth();
   const [confirm,    setConfirm]    = useState(false);
   const [tab,        setTab]        = useState("overview"); // "overview" | "links" | "order"
   const [links,      setLinks]      = useState(null);       // null = not yet fetched
@@ -3800,7 +3800,7 @@ const TestSuiteView = ({ tickets, onPreview, onEdit, onAdd, onExecute, onMoveCas
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 const KanbanPage = ({ shipments = [] }) => {
-  const { canEdit } = useAuth();
+  const { canEditKanban: canEdit } = useAuth();
   const [tickets,       setTickets]       = useState([]);
   const [testItems,     setTestItems]     = useState([]);
   const [users,         setUsers]         = useState([]);

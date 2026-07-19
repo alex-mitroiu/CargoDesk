@@ -5,10 +5,21 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
           mapCostLine, mapService, mapMilestone, mapMilestoneTemplate,
           sanctionsMap, screenShipmentById,
           logEntityEvent, importContractRates, createRateSnapshot, generateCostLinesFromSnapshot,
-          mapRateSnapshot,
+          mapRateSnapshot, syncShipmentFromLegs,
           UPLOADS_DIR, fs, path } = ctx;
 
   const shipmentWrite = requireRole(["admin", "operator", "occ_bk"]);
+
+  // Cost lines are hidden from trade_manager (and viewer) unless canViewFinance is set on
+  // their account — mirrors routes/finance.js's inline margin-access check, but admin/
+  // operator/occ_bk always pass since they need cost-line data for normal shipment ops,
+  // unlike the Finance/Margin dashboard which defaults to admin-only.
+  const costLineRead = (req, res, next) => {
+    const roles = Array.isArray(req.user?.roles) ? req.user.roles : [req.user?.role || 'viewer'];
+    const hasOpsAccess = roles.some(r => ['admin', 'operator', 'occ_bk'].includes(r));
+    if (!hasOpsAccess && !req.user?.canViewFinance) return err(res, "Cost line access not enabled for your account", 403);
+    next();
+  };
 
   // Prepared statement declared at module scope for efficiency (re-used per mapDoc call)
   const STALE_EVENTS = db.prepare(`
@@ -114,41 +125,44 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     ok(res, { imported: count, snapshotId });
   });
 
-  app.get("/api/shipments/:id/rate-snapshots", (req, res) => {
+  app.get("/api/shipments/:id/rate-snapshots", costLineRead, (req, res) => {
     const rows = db.prepare("SELECT * FROM shipment_rate_snapshots WHERE shipment_id=? ORDER BY generated_at DESC").all(req.params.id);
     ok(res, rows.map(mapRateSnapshot));
   });
 
-  app.get("/api/shipments/:id/cost-lines", (req, res) => {
+  app.get("/api/shipments/:id/cost-lines", costLineRead, (req, res) => {
     const rows = db.prepare("SELECT * FROM shipment_cost_lines WHERE shipment_id=? ORDER BY type, created_at ASC").all(req.params.id);
     ok(res, rows.map(mapCostLine));
   });
 
   app.post("/api/shipments/:id/cost-lines", shipmentWrite, (req, res) => {
-    const { type, chargeCode, currency = 'USD', amount, exchangeRate = 1, vatRate = 0, notes = '', containerId = '', source: rawSource } = req.body;
+    const { type, chargeCode, currency = 'USD', amount, exchangeRate = 1, vatRate = 0, notes = '', containerId = '', source: rawSource, paymentIndicator: rawPI } = req.body;
     if (!type || !chargeCode || amount == null) return err(res, "type, chargeCode, amount required");
     if (!['BUY','SELL'].includes(type)) return err(res, "type must be BUY or SELL");
-    const source = ['contract', 'mirror'].includes(rawSource) ? rawSource : 'manual';
+    const source = ['contract', 'mirror', 'automated'].includes(rawSource) ? rawSource : 'manual';
+    const paymentIndicator = rawPI === 'Collect' ? 'Collect' : 'Prepaid';
     const vat = type === 'SELL' ? Number(vatRate) || 0 : 0;
     const id  = `CL-${uid()}`;
     const now = new Date().toISOString();
-    db.prepare("INSERT INTO shipment_cost_lines (id,shipment_id,type,charge_code,currency,amount,exchange_rate,vat_rate,notes,container_id,created_at,source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
-      .run(id, req.params.id, type, chargeCode, currency.toUpperCase(), Number(amount), Number(exchangeRate), vat, notes, containerId, now, source);
+    db.prepare("INSERT INTO shipment_cost_lines (id,shipment_id,type,charge_code,currency,amount,exchange_rate,vat_rate,notes,container_id,created_at,source,payment_indicator) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
+      .run(id, req.params.id, type, chargeCode, currency.toUpperCase(), Number(amount), Number(exchangeRate), vat, notes, containerId, now, source, paymentIndicator);
     logEntityEvent('cost_line', id, 'CREATED', null, null, null,
       JSON.stringify({ shipmentId: req.params.id, type, chargeCode, currency: currency.toUpperCase(), amount: Number(amount), exchangeRate: Number(exchangeRate), vatRate: vat }));
-    ok(res, mapCostLine({ id, shipment_id: req.params.id, type, charge_code: chargeCode, currency: currency.toUpperCase(), amount: Number(amount), exchange_rate: Number(exchangeRate), vat_rate: vat, notes, container_id: containerId, source, modified_at: null, created_at: now }), 201);
+    ok(res, mapCostLine({ id, shipment_id: req.params.id, type, charge_code: chargeCode, currency: currency.toUpperCase(), amount: Number(amount), exchange_rate: Number(exchangeRate), vat_rate: vat, notes, container_id: containerId, source, payment_indicator: paymentIndicator, modified_at: null, created_at: now }), 201);
   });
 
   app.put("/api/shipments/:shipmentId/cost-lines/:id", shipmentWrite, (req, res) => {
-    const { type, chargeCode, currency = 'USD', amount, exchangeRate = 1, vatRate = 0, notes = '', containerId = '' } = req.body;
+    const { type, chargeCode, currency = 'USD', amount, exchangeRate = 1, vatRate = 0, notes = '', containerId = '', paymentIndicator: rawPI } = req.body;
     if (!type || !chargeCode || amount == null) return err(res, "type, chargeCode, amount required");
     if (!['BUY','SELL'].includes(type)) return err(res, "type must be BUY or SELL");
     const existing = db.prepare("SELECT * FROM shipment_cost_lines WHERE id=? AND shipment_id=?").get(req.params.id, req.params.shipmentId);
     if (!existing) return err(res, "Not found", 404);
+    if (existing.status === 'posted') return err(res, "This line is posted and locked — add a new adjusting line instead of editing it", 409);
+    const paymentIndicator = rawPI === 'Collect' ? 'Collect' : 'Prepaid';
     const vat = type === 'SELL' ? Number(vatRate) || 0 : 0;
     const now = new Date().toISOString();
-    db.prepare("UPDATE shipment_cost_lines SET type=?,charge_code=?,currency=?,amount=?,exchange_rate=?,vat_rate=?,notes=?,container_id=?,modified_at=? WHERE id=?")
-      .run(type, chargeCode, currency.toUpperCase(), Number(amount), Number(exchangeRate), vat, notes, containerId, now, req.params.id);
+    db.prepare("UPDATE shipment_cost_lines SET type=?,charge_code=?,currency=?,amount=?,exchange_rate=?,vat_rate=?,notes=?,container_id=?,payment_indicator=?,modified_at=? WHERE id=?")
+      .run(type, chargeCode, currency.toUpperCase(), Number(amount), Number(exchangeRate), vat, notes, containerId, paymentIndicator, now, req.params.id);
     for (const [field, oldV, newV] of [
       ['type',          existing.type,          type],
       ['charge_code',   existing.charge_code,   chargeCode],
@@ -158,17 +172,77 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       ['vat_rate',      String(existing.vat_rate || 0), String(vat)],
       ['notes',         existing.notes || '',   notes],
       ['container_id',  existing.container_id || '', containerId],
+      ['payment_indicator', existing.payment_indicator || 'Prepaid', paymentIndicator],
     ]) {
       if (String(oldV) !== String(newV))
         logEntityEvent('cost_line', req.params.id, 'UPDATED', field, oldV, newV,
           JSON.stringify({ shipmentId: existing.shipment_id, chargeCode, type }));
     }
-    ok(res, mapCostLine({ id: req.params.id, shipment_id: existing.shipment_id, type, charge_code: chargeCode, currency: currency.toUpperCase(), amount: Number(amount), exchange_rate: Number(exchangeRate), vat_rate: vat, notes, container_id: containerId, source: existing.source || 'manual', modified_at: now, created_at: existing.created_at }));
+    ok(res, mapCostLine({ id: req.params.id, shipment_id: existing.shipment_id, type, charge_code: chargeCode, currency: currency.toUpperCase(), amount: Number(amount), exchange_rate: Number(exchangeRate), vat_rate: vat, notes, container_id: containerId, source: existing.source || 'manual', payment_indicator: paymentIndicator, modified_at: now, created_at: existing.created_at }));
+  });
+
+  // ─── Accrual / posting state machine (TKT-83O41G) ──────────────────────────
+  const postGate = requireRole(["admin", "operator"]);
+
+  app.patch("/api/shipments/:shipmentId/cost-lines/:id/actualize", shipmentWrite, (req, res) => {
+    const existing = db.prepare("SELECT * FROM shipment_cost_lines WHERE id=? AND shipment_id=?").get(req.params.id, req.params.shipmentId);
+    if (!existing) return err(res, "Not found", 404);
+    if (existing.status === 'posted') return err(res, "This line is posted and locked", 409);
+    const { actualAmount, actualExchangeRate = existing.exchange_rate } = req.body || {};
+    if (actualAmount == null) return err(res, "actualAmount required");
+    const now = new Date().toISOString();
+    const actor = req.user?.name || req.user?.email || "";
+    db.prepare(`UPDATE shipment_cost_lines
+      SET status='actualized', actual_amount=?, actual_exchange_rate=?, actualized_at=?, actualized_by=?
+      WHERE id=?`)
+      .run(Number(actualAmount), Number(actualExchangeRate), now, actor, req.params.id);
+    logEntityEvent('cost_line', req.params.id, 'ACTUALIZED', 'status', existing.status, 'actualized',
+      JSON.stringify({ shipmentId: existing.shipment_id, chargeCode: existing.charge_code, type: existing.type,
+        accruedAmount: existing.amount, actualAmount: Number(actualAmount) }));
+    const row = db.prepare("SELECT * FROM shipment_cost_lines WHERE id=?").get(req.params.id);
+    ok(res, mapCostLine(row));
+  });
+
+  app.patch("/api/shipments/:shipmentId/cost-lines/:id/post", postGate, (req, res) => {
+    const existing = db.prepare("SELECT * FROM shipment_cost_lines WHERE id=? AND shipment_id=?").get(req.params.id, req.params.shipmentId);
+    if (!existing) return err(res, "Not found", 404);
+    if (existing.status === 'posted') return err(res, "Already posted", 409);
+    const now = new Date().toISOString();
+    const actor = req.user?.name || req.user?.email || "";
+    db.prepare("UPDATE shipment_cost_lines SET status='posted', posted_at=?, posted_by=? WHERE id=?")
+      .run(now, actor, req.params.id);
+    logEntityEvent('cost_line', req.params.id, 'POSTED', 'status', existing.status, 'posted',
+      JSON.stringify({ shipmentId: existing.shipment_id, chargeCode: existing.charge_code, type: existing.type }));
+    const row = db.prepare("SELECT * FROM shipment_cost_lines WHERE id=?").get(req.params.id);
+    ok(res, mapCostLine(row));
+  });
+
+  // Batch post — same lock/role semantics as the single-line Post above, one entity
+  // event per line so the audit trail still reads as individual postings.
+  app.post("/api/shipments/:shipmentId/cost-lines/post-batch", postGate, (req, res) => {
+    const { ids = [] } = req.body || {};
+    if (!Array.isArray(ids) || ids.length === 0) return err(res, "ids required");
+    const now = new Date().toISOString();
+    const actor = req.user?.name || req.user?.email || "";
+    const posted = [];
+    for (const id of ids) {
+      const existing = db.prepare("SELECT * FROM shipment_cost_lines WHERE id=? AND shipment_id=?").get(id, req.params.shipmentId);
+      if (!existing || existing.status === 'posted') continue;
+      db.prepare("UPDATE shipment_cost_lines SET status='posted', posted_at=?, posted_by=? WHERE id=?").run(now, actor, id);
+      logEntityEvent('cost_line', id, 'POSTED', 'status', existing.status, 'posted',
+        JSON.stringify({ shipmentId: existing.shipment_id, chargeCode: existing.charge_code, type: existing.type }));
+      posted.push(id);
+    }
+    const rows = posted.length
+      ? db.prepare(`SELECT * FROM shipment_cost_lines WHERE id IN (${posted.map(() => '?').join(',')})`).all(...posted)
+      : [];
+    ok(res, rows.map(mapCostLine));
   });
 
   app.delete("/api/shipments/:shipmentId/cost-lines/:id", shipmentWrite, (req, res) => {
     const existing = db.prepare("SELECT * FROM shipment_cost_lines WHERE id=? AND shipment_id=?").get(req.params.id, req.params.shipmentId);
     if (!existing) return err(res, "Not found", 404);
+    if (existing.status === 'posted') return err(res, "This line is posted and locked — add a new adjusting line instead of deleting it", 409);
     db.prepare("DELETE FROM shipment_cost_lines WHERE id=?").run(req.params.id);
     logEntityEvent('cost_line', req.params.id, 'DELETED', null, null, null,
       JSON.stringify({ shipmentId: existing.shipment_id, type: existing.type, chargeCode: existing.charge_code, amount: existing.amount, currency: existing.currency, source: existing.source || 'manual' }));
@@ -208,7 +282,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   // Despite the route name (kept for backward compatibility with existing frontend calls),
   // this also returns 'document' entity_events — the Accounting History modal covers both
   // cost/invoice lines AND generated invoice documents (generated/confirmed/deleted).
-  app.get("/api/shipments/:id/cost-line-events", (req, res) => {
+  app.get("/api/shipments/:id/cost-line-events", costLineRead, (req, res) => {
     const rows = db.prepare(`
       SELECT * FROM entity_events
       WHERE entity_type IN ('cost_line', 'document')
@@ -313,6 +387,71 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     logEntityEvent('service', req.params.id, 'DELETED', null, null, null,
       JSON.stringify({ shipmentId: existing.shipment_id, side: existing.side, serviceType: existing.service_type }));
     ok(res, { deleted: req.params.id });
+  });
+
+  // ─── Loading Plan (per-container, TKT-TR6OBR) ──────────────────────────────
+  // Always returns one row per CURRENT container on the shipment (LEFT JOIN),
+  // even if no plan data has been entered yet, so the frontend table never needs
+  // separate provisioning logic — same "list what should exist, backed by a
+  // maybe-absent row" idiom container compliance state already uses.
+
+  const mapLoadingPlanLine = r => ({
+    containerId:     r.container_id,
+    containerNumber: r.container_number || '',
+    size: r.size, type: r.type,
+    plannedDate:     r.planned_date || '',
+    sequenceOrder:   r.sequence_order ?? 0,
+    notes:           r.notes || '',
+    updatedAt:       r.updated_at || null,
+  });
+
+  const LOADING_PLAN_SELECT = `
+    SELECT c.id AS container_id, c.container_number, c.size, c.type,
+           l.planned_date, l.sequence_order, l.notes, l.updated_at
+    FROM containers c
+    LEFT JOIN shipment_loading_plan_lines l ON l.container_id = c.id AND l.service_id = ?
+    WHERE c.shipment_id = ?
+  `;
+
+  app.get("/api/shipments/:shipmentId/services/:serviceId/loading-plan", auth(), (req, res) => {
+    const service = db.prepare("SELECT * FROM shipment_services WHERE id=? AND shipment_id=?")
+      .get(req.params.serviceId, req.params.shipmentId);
+    if (!service) return err(res, "Service not found", 404);
+    const rows = db.prepare(`${LOADING_PLAN_SELECT}
+      ORDER BY (l.sequence_order IS NULL), l.sequence_order ASC, c.container_number ASC`)
+      .all(req.params.serviceId, req.params.shipmentId);
+    ok(res, rows.map(mapLoadingPlanLine));
+  });
+
+  app.put("/api/shipments/:shipmentId/services/:serviceId/loading-plan/:containerId", shipmentWrite, (req, res) => {
+    const service = db.prepare("SELECT * FROM shipment_services WHERE id=? AND shipment_id=?")
+      .get(req.params.serviceId, req.params.shipmentId);
+    if (!service) return err(res, "Service not found", 404);
+    const container = db.prepare("SELECT * FROM containers WHERE id=? AND shipment_id=?")
+      .get(req.params.containerId, req.params.shipmentId);
+    if (!container) return err(res, "Container not found", 404);
+
+    const { plannedDate = '', sequenceOrder = 0, notes = '' } = req.body || {};
+    const now = new Date().toISOString();
+    const existing = db.prepare("SELECT 1 FROM shipment_loading_plan_lines WHERE service_id=? AND container_id=?")
+      .get(req.params.serviceId, req.params.containerId);
+    if (existing) {
+      db.prepare(`UPDATE shipment_loading_plan_lines SET planned_date=?, sequence_order=?, notes=?, updated_at=?
+        WHERE service_id=? AND container_id=?`)
+        .run(plannedDate, sequenceOrder, notes, now, req.params.serviceId, req.params.containerId);
+    } else {
+      db.prepare(`INSERT INTO shipment_loading_plan_lines
+        (service_id, container_id, planned_date, sequence_order, notes, created_at, updated_at)
+        VALUES (?,?,?,?,?,?,?)`)
+        .run(req.params.serviceId, req.params.containerId, plannedDate, sequenceOrder, notes, now, now);
+    }
+    logEntityEvent('loading_plan_line', `${req.params.serviceId}:${req.params.containerId}`, 'UPDATED', null, null, null,
+      JSON.stringify({ shipmentId: req.params.shipmentId, serviceId: req.params.serviceId,
+        containerId: req.params.containerId, plannedDate }));
+
+    const row = db.prepare(`${LOADING_PLAN_SELECT.replace("WHERE c.shipment_id = ?", "WHERE c.id = ?")}`)
+      .get(req.params.serviceId, req.params.containerId);
+    ok(res, mapLoadingPlanLine(row));
   });
 
   // ─── Milestones ───────────────────────────────────────────────────────────
@@ -533,6 +672,52 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     ok(res, mapSchedule({ id, shipment_id: req.params.id, carrier, vessel_name: vesselName,
       voyage_number: voyageNumber, service, pol, pod, etd, eta,
       transit_days: Number(transitDays), is_mock: isMock ? 1 : 0, saved_at: savedAt, saved_by: savedBy }), 201);
+  });
+
+  // Lightweight correction for an already-saved sailing (e.g. a carrier-driven ETD/ETA shift) —
+  // keeps shipment_schedules AND the backing SEA leg(s) in lockstep in one action, instead of
+  // the only previous option (remove the SEA leg entirely, which cascades to delete the
+  // schedule, unlock everything, and force a full re-search). Logs one field-level 'UPDATED'
+  // entity event per changed value, mirroring the cost-line history pattern, so ScheduleHistory
+  // shows a real old→new diff rather than the schedule record silently going stale.
+  app.put("/api/shipments/:id/schedules/:scheduleId", shipmentWrite, (req, res) => {
+    const existing = db.prepare("SELECT * FROM shipment_schedules WHERE id=? AND shipment_id=?")
+      .get(req.params.scheduleId, req.params.id);
+    if (!existing) return err(res, "Not found", 404);
+    const { vesselName = existing.vessel_name, voyageNumber = existing.voyage_number,
+            etd = existing.etd, eta = existing.eta, carrier = existing.carrier } = req.body;
+    const actor = req.user?.name || req.user?.email || "";
+
+    const changes = [
+      ['vessel_name',   existing.vessel_name,   vesselName],
+      ['voyage_number', existing.voyage_number, voyageNumber],
+      ['etd',           existing.etd,           etd],
+      ['eta',           existing.eta,           eta],
+      ['carrier',       existing.carrier,       carrier],
+    ].filter(([, o, n]) => String(o || '') !== String(n || ''));
+
+    db.prepare("UPDATE shipment_schedules SET vessel_name=?, voyage_number=?, etd=?, eta=?, carrier=? WHERE id=?")
+      .run(vesselName, voyageNumber, etd, eta, carrier, req.params.scheduleId);
+
+    for (const [field, oldVal, newVal] of changes) {
+      logEntityEvent('schedule', req.params.scheduleId, 'UPDATED', field, oldVal, newVal,
+        JSON.stringify({ shipmentId: req.params.id, actor }));
+    }
+
+    // Keep the SEA leg(s) backing this schedule in lockstep — first leg carries
+    // vessel/voyage/etd/carrier, last leg carries eta (handles both direct and TSP sailings,
+    // matching the first/last-leg convention already used by applySailingToLegs elsewhere).
+    const legs = db.prepare("SELECT * FROM shipment_legs WHERE shipment_id=? ORDER BY leg_order ASC").all(req.params.id);
+    const seaLegs = legs.filter(l => l.leg_type === 'SEA');
+    if (seaLegs.length > 0) {
+      const first = seaLegs[0], last = seaLegs[seaLegs.length - 1];
+      db.prepare("UPDATE shipment_legs SET vessel=?, voyage=?, etd=?, carrier_code=? WHERE id=?")
+        .run(vesselName, voyageNumber, etd, carrier, first.id);
+      db.prepare("UPDATE shipment_legs SET eta=? WHERE id=?").run(eta, last.id);
+      syncShipmentFromLegs(req.params.id);
+    }
+
+    ok(res, mapSchedule(db.prepare("SELECT * FROM shipment_schedules WHERE id=?").get(req.params.scheduleId)));
   });
 
   app.delete("/api/shipments/:id/schedules/:scheduleId", shipmentWrite, (req, res) => {

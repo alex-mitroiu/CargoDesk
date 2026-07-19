@@ -14,7 +14,7 @@ import { useResizableColumns, ColResizer } from "../../components/primitives/use
 // ─── MDM: Vessels Page ────────────────────────────────────────────────────────
 
 const MdmVesselsPage = () => {
-  const { canManageConfigs } = useAuth();
+  const { canManageMdm } = useAuth();
   const [results, setResults]  = useState([]);
   const [total,   setTotal]    = useState(0);
   const [offset,  setOffset]   = useState(0);
@@ -103,7 +103,7 @@ const MdmVesselsPage = () => {
             {total.toLocaleString()} vessel{total !== 1 ? "s" : ""} · IMO registry · linked to country flags
           </p>
         </div>
-        {canManageConfigs && <Btn onClick={() => setModal("add")} size="lg">＋ Add Vessel</Btn>}
+        {canManageMdm && <Btn onClick={() => setModal("add")} size="lg">＋ Add Vessel</Btn>}
       </div>
 
       {/* Search */}
@@ -150,8 +150,8 @@ const MdmVesselsPage = () => {
             <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>{v.grossTonnage ? v.grossTonnage.toLocaleString() : "—"}</span>
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <ActionMenu items={[
-                ...(canManageConfigs ? [{ icon: "✎", label: "Edit",   onClick: () => setModal(v) }] : []),
-                ...(canManageConfigs ? [{ icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(v.imo) }] : []),
+                ...(canManageMdm ? [{ icon: "✎", label: "Edit",   onClick: () => setModal(v) }] : []),
+                ...(canManageMdm ? [{ icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(v.imo) }] : []),
               ]} />
             </div>
           </div>

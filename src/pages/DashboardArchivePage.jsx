@@ -30,7 +30,10 @@ const expiredAgo = endDate => {
 // Pure display component — receives data and callbacks from DashboardPage.
 
 const DashboardArchive = ({ allocations = [], carriers = [], onRenew, onDelete, standalone = false }) => {
-  const { canEdit } = useAuth();
+  // Renewing/deleting an archived allocation is a space-config action — use the same
+  // canManageConfigs gate SpaceConfigurationsPage uses, not the generic canEdit (which
+  // incorrectly also granted occ_bk allocation-write rights here).
+  const { canManageConfigs: canEdit } = useAuth();
   const [open, setOpen] = useState(false);
 
   if (!standalone && allocations.length === 0) return null;

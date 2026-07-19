@@ -6,6 +6,16 @@ import { inputBase } from "./Form";
 // ─── DatePicker ───────────────────────────────────────────────────────────────
 // Three-level navigation: Days → Months → Years (click the header to go up).
 // Controlled: value = ISO "YYYY-MM-DD" or "". minDate/maxDate also ISO strings.
+//
+// withTime: value becomes "YYYY-MM-DDTHH:mm" — the calendar itself still operates
+// on just the date part (datePart below) so parseIso/cellIso/etc. are untouched;
+// a native <input type="time"> row (rendered whenever the popover is open, not
+// just on the days view) supplies/edits the time part. Picking a day combines it
+// with the current time part (defaulting to DEFAULT_TIME the first time) and
+// still closes the popover, same one-click UX as date-only — reopening lets the
+// time be adjusted independently without re-picking the date.
+
+const DEFAULT_TIME = "09:00";
 
 const fmtIso = iso => {
   if (!iso) return "";
@@ -19,13 +29,16 @@ const isoYMD = (y, m, d) => `${y}-${String(m + 1).padStart(2, "0")}-${String(d).
 const YEARS_PER_PAGE = 12; // 3 × 4 grid
 
 const DatePicker = ({
-  value = "", onChange,
+  id, value = "", onChange,
   minDate, maxDate,
-  label, hint, placeholder = "Select date…",
+  label, hint, placeholder,
   disabled = false, required = false,
+  withTime = false,
 }) => {
   const today = todayIso();
-  const init  = value ? parseIso(value) : new Date();
+  const datePart = value ? value.slice(0, 10) : "";
+  const timePart = withTime && value.length > 10 ? value.slice(11, 16) : "";
+  const init  = datePart ? parseIso(datePart) : new Date();
 
   const [open,      setOpen]      = useState(false);
   const [openUp,    setOpenUp]    = useState(false);
@@ -36,14 +49,14 @@ const DatePicker = ({
   const [yearBase,  setYearBase]  = useState(() => Math.floor(init.getFullYear() / YEARS_PER_PAGE) * YEARS_PER_PAGE);
   const ref = useRef(null);
 
-  // Sync view when value changes externally
+  // Sync view when the date part changes externally
   useEffect(() => {
-    if (value) {
-      const d = parseIso(value);
+    if (datePart) {
+      const d = parseIso(datePart);
       setViewYear(d.getFullYear()); setViewMonth(d.getMonth());
       setYearBase(Math.floor(d.getFullYear() / YEARS_PER_PAGE) * YEARS_PER_PAGE);
     }
-  }, [value]);
+  }, [datePart]);
 
   // Close on outside click
   useEffect(() => {
@@ -63,7 +76,11 @@ const DatePicker = ({
     setOpen(o => !o);
   };
   const close      = ()  => { setOpen(false); setView("days"); };
-  const pick       = iso => { onChange(iso); close(); };
+  const pick       = iso => {
+    onChange(withTime ? `${iso}T${timePart || DEFAULT_TIME}` : iso);
+    close();
+  };
+  const pickTime   = t => { if (datePart) onChange(`${datePart}T${t}`); };
   const clear      = ()  => { onChange(""); close(); };
 
   // ── Navigation helpers ──────────────────────────────────────────────────────
@@ -98,7 +115,7 @@ const DatePicker = ({
     if (maxDate && startMon > maxDate) return true;
     return false;
   };
-  const monthIsActive = mIdx => value && parseIso(value).getFullYear() === viewYear && parseIso(value).getMonth() === mIdx;
+  const monthIsActive = mIdx => datePart && parseIso(datePart).getFullYear() === viewYear && parseIso(datePart).getMonth() === mIdx;
   const monthIsCurrent = mIdx => {
     const t = new Date(); return t.getFullYear() === viewYear && t.getMonth() === mIdx;
   };
@@ -111,7 +128,7 @@ const DatePicker = ({
     if (maxDate && y > parseInt(maxDate.slice(0, 4))) return true;
     return false;
   };
-  const yearIsActive  = y => value && parseInt(value.slice(0, 4)) === y;
+  const yearIsActive  = y => datePart && parseInt(datePart.slice(0, 4)) === y;
   const yearIsCurrent = y => new Date().getFullYear() === y;
 
   const selectYear = y => { setViewYear(y); setYearBase(Math.floor(y / YEARS_PER_PAGE) * YEARS_PER_PAGE); setView("months"); };
@@ -168,18 +185,18 @@ const DatePicker = ({
 
   return (
     <Field label={label} hint={hint} required={required}>
-      <div ref={ref} style={{ position: "relative" }}>
+      <div id={id} ref={ref} style={{ position: "relative" }}>
 
         {/* Trigger */}
         <button type="button" ref={triggerRef} disabled={disabled} onClick={openPicker}
           style={{
             ...inputBase, display: "flex", alignItems: "center", justifyContent: "space-between",
             cursor: disabled ? "not-allowed" : "pointer",
-            fontFamily: value ? T.mono : T.body, fontSize: 13,
-            color: value ? T.text : T.border, opacity: disabled ? 0.45 : 1,
+            fontFamily: datePart ? T.mono : T.body, fontSize: 13,
+            color: datePart ? T.text : T.border, opacity: disabled ? 0.45 : 1,
             border: open ? `1px solid ${T.accent}` : inputBase.border, transition: "border-color .12s",
           }}>
-          <span>{value ? fmtIso(value) : placeholder}</span>
+          <span>{datePart ? `${fmtIso(datePart)}${withTime && timePart ? ` · ${timePart}` : ""}` : (placeholder || (withTime ? "Select date & time…" : "Select date…"))}</span>
           <span style={{ color: T.textMuted, fontSize: 13 }}>▾</span>
         </button>
 
@@ -190,6 +207,17 @@ const DatePicker = ({
             top:    openUp ? "auto" : "calc(100% + 6px)",
             bottom: openUp ? "calc(100% + 6px)" : "auto",
           }}>
+
+            {withTime && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12,
+                paddingBottom: 12, borderBottom: `1px solid ${T.border}` }}>
+                <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, flexShrink: 0 }}>Time</span>
+                <input type="time" value={timePart} disabled={!datePart}
+                  onChange={e => pickTime(e.target.value)}
+                  style={{ ...inputBase, flex: 1, fontFamily: T.mono, fontSize: 12.5, padding: "5px 8px",
+                    opacity: datePart ? 1 : 0.45, cursor: datePart ? "text" : "not-allowed" }} />
+              </div>
+            )}
 
             {/* ── DAYS VIEW ── */}
             {view === "days" && (
@@ -215,7 +243,7 @@ const DatePicker = ({
                     const iso = cellIso(cell);
                     return gridCell({
                       cellKey: iso || i, label: cell.d,
-                      isSelected:  iso === value,
+                      isSelected:  iso === datePart,
                       isCurrent:   iso === today && !cell.outside,
                       isDisabled:  isDisabled(cell),
                       onClick:     () => { if (!isDisabled(cell)) pick(iso); },
@@ -232,7 +260,7 @@ const DatePicker = ({
                       color: T.textMuted, fontFamily: T.body, fontSize: 11.5, cursor: "pointer" }}>
                     Today
                   </button>
-                  {value && (
+                  {datePart && (
                     <button type="button" onClick={clear}
                       style={{ flex: 1, padding: "5px 0", background: "none",
                         border: `1px solid ${T.border}`, borderRadius: 6,

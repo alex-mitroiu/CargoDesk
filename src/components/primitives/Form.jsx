@@ -52,17 +52,17 @@ export const inputBase = {
   outline: "none", width: "100%", boxSizing: "border-box",
 };
 
-const Inp = ({ label, value, onChange, onBlur, placeholder, mono, maxLength, required, hint, type = "text", inputMode }) => (
+const Inp = ({ id, label, value, onChange, onBlur, placeholder, mono, maxLength, required, hint, type = "text", inputMode }) => (
   <Field label={label} required={required} hint={hint}>
-    <input value={value} onChange={e => onChange(e.target.value)} onBlur={onBlur} placeholder={placeholder}
+    <input id={id} value={value} onChange={e => onChange(e.target.value)} onBlur={onBlur} placeholder={placeholder}
       maxLength={maxLength} type={type} inputMode={inputMode}
       style={{ ...inputBase, fontFamily: mono ? T.mono : T.body, fontSize: mono ? 13 : 14 }} />
   </Field>
 );
 
-const Sel = ({ label, value, onChange, options, required, error }) => (
+const Sel = ({ id, label, value, onChange, options, required, error }) => (
   <Field label={label} required={required}>
-    <select value={value} onChange={e => onChange(e.target.value)}
+    <select id={id} value={value} onChange={e => onChange(e.target.value)}
       style={{ ...inputBase, fontFamily: T.body, fontSize: 14, cursor: "pointer",
         ...(error ? { borderColor: T.danger, boxShadow: `0 0 0 2px ${T.danger}44` } : {}) }}>
       {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -70,10 +70,10 @@ const Sel = ({ label, value, onChange, options, required, error }) => (
   </Field>
 );
 
-const Textarea = ({ label, value, onChange, placeholder, rows = 3 }) => (
+const Textarea = ({ label, value, onChange, placeholder, rows = 3, disabled = false }) => (
   <Field label={label}>
-    <textarea value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} rows={rows}
-      style={{ ...inputBase, fontFamily: T.body, fontSize: 14, resize: "vertical" }} />
+    <textarea value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} rows={rows} disabled={disabled}
+      style={{ ...inputBase, fontFamily: T.body, fontSize: 14, resize: "vertical", opacity: disabled ? 0.6 : 1 }} />
   </Field>
 );
 

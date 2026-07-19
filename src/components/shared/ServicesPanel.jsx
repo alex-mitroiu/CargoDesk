@@ -8,6 +8,9 @@ import { Modal, ConfirmModal } from "../primitives/Modal";
 import DatePicker from "../primitives/DatePicker";
 import { Inp, Sel, Textarea } from "../primitives/Form";
 import CustomerCombobox from "./CustomerCombobox";
+import Spinner from "../primitives/Spinner";
+import { SERVICE_TYPES } from "../../shipmentServicePages";
+import { emitServicesChanged } from "../../servicesBus";
 
 // ─── Dedicated Services panel (TKT-9DGDNP) ─────────────────────────────────
 // Ancillary services (VGM, Haulage, Fumigation, Storage, Customs, ...) ordered
@@ -16,9 +19,13 @@ import CustomerCombobox from "./CustomerCombobox";
 // independent of shipment_legs — a leg tracks physical routing, a service
 // tracks who's ordering an ancillary activity and its status. Embedded
 // directly on the Overview page as a dashboard (not a promoted sub-page).
-
-const SERVICE_TYPES = ["VGM", "Haulage", "Fumigation", "Storage", "CY Storage",
-  "Warehousing", "Pickup/Delivery", "Loading/Unloading", "Customs Clearance", "Other"];
+//
+// SERVICE_TYPES now lives in shipmentServicePages.js — shared with the dedicated
+// per-service nav/routing pattern (Epic TKT-TBS7QD), which needs the same catalog.
+// "Loading/Unloading" was split into separate "Loading"/"Unloading" entries there
+// (TKT-6292VK) so each can get its own dedicated page and be ordered/tracked
+// independently; existing rows saved with the old combined label are free text
+// and simply keep displaying it — no data migration needed.
 
 const STATUS_COLOR = { Requested: T.warning, Confirmed: T.info, Completed: T.success, Cancelled: T.textMuted };
 const NEXT_STATUS   = { Requested: "Confirmed", Confirmed: "Completed" };
@@ -62,21 +69,21 @@ const ServiceForm = ({ side, offices, shipment, onSave, onCancel }) => {
 
   return (
     <Modal title={`Request ${side} Service`} onClose={onCancel} width={480}>
-      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-        <Sel label="Service Type" value={serviceType} onChange={setServiceType} required
+      <div id="svcform" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <Sel id="svcform-type" label="Service Type" value={serviceType} onChange={setServiceType} required
           options={SERVICE_TYPES.map(t => ({ value: t, label: t }))} />
         {serviceType === "Other" && (
-          <Inp label="Specify Service" value={otherType} onChange={setOtherType} placeholder="e.g. Inspection" required />
+          <Inp id="svcform-other-type" label="Specify Service" value={otherType} onChange={setOtherType} placeholder="e.g. Inspection" required />
         )}
         <CustomerCombobox label="Vendor" value={vendor} onChange={setVendor} />
-        <Sel label={`Office (${side === "Export" ? "EMO" : "IMO"})`} value={officeId} onChange={setOfficeId}
+        <Sel id="svcform-office" label={`Office (${side === "Export" ? "EMO" : "IMO"})`} value={officeId} onChange={setOfficeId}
           options={[{ value: "", label: "None (optional)" },
             ...candidates.map(o => ({ value: o.id, label: `${o.code} — ${o.name}` }))]} />
-        <DatePicker label="Requested Date" value={requestedDate} onChange={setRequestedDate} />
-        <Textarea label="Notes" value={notes} onChange={setNotes} placeholder="Optional instructions…" />
+        <DatePicker id="svcform-requested-date" label="Requested Date" value={requestedDate} onChange={setRequestedDate} />
+        <Textarea id="svcform-notes" label="Notes" value={notes} onChange={setNotes} placeholder="Optional instructions…" />
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 6 }}>
-          <Btn variant="secondary" onClick={onCancel}>Cancel</Btn>
-          <Btn onClick={handleSave} disabled={!valid || saving}>
+          <Btn id="svcform-cancel-btn" variant="secondary" onClick={onCancel}>Cancel</Btn>
+          <Btn id="svcform-save-btn" onClick={handleSave} disabled={!valid || saving}>
             {saving ? "Saving…" : "Request Service"}
           </Btn>
         </div>
@@ -88,7 +95,7 @@ const ServiceForm = ({ side, offices, shipment, onSave, onCancel }) => {
 const ServiceRow = ({ service, canEdit, onAdvance, onCancelService, onDelete }) => {
   const nextStatus = NEXT_STATUS[service.status];
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px",
+    <div id={`svcpanel-row-${service.id}`} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px",
       background: T.bg, border: `1px solid ${T.border}`, borderRadius: 7 }}>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -106,7 +113,7 @@ const ServiceRow = ({ service, canEdit, onAdvance, onCancelService, onDelete }) 
       {canEdit && (
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
           {nextStatus && (
-            <button type="button" onClick={() => onAdvance(service, nextStatus)}
+            <button id={`svcpanel-row-${service.id}-advance-btn`} type="button" onClick={() => onAdvance(service, nextStatus)}
               style={{ background: "none", border: `1px solid ${T.accent}66`, color: T.accent,
                 borderRadius: 5, padding: "3px 9px", fontFamily: T.body, fontSize: 11,
                 fontWeight: 600, cursor: "pointer" }}>
@@ -114,14 +121,14 @@ const ServiceRow = ({ service, canEdit, onAdvance, onCancelService, onDelete }) 
             </button>
           )}
           {(service.status === "Requested" || service.status === "Confirmed") && (
-            <button type="button" onClick={() => onCancelService(service)}
+            <button id={`svcpanel-row-${service.id}-cancel-btn`} type="button" onClick={() => onCancelService(service)}
               title="Cancel service"
               style={{ background: "none", border: "none", color: T.textMuted,
                 cursor: "pointer", fontFamily: T.body, fontSize: 11, padding: "3px 4px" }}>
               Cancel
             </button>
           )}
-          <button type="button" onClick={() => onDelete(service)}
+          <button id={`svcpanel-row-${service.id}-delete-btn`} type="button" onClick={() => onDelete(service)}
             title="Delete service"
             style={{ background: "none", border: "none", color: T.textMuted,
               cursor: "pointer", fontSize: 13, padding: "3px 4px", lineHeight: 1 }}
@@ -135,15 +142,15 @@ const ServiceRow = ({ service, canEdit, onAdvance, onCancelService, onDelete }) 
   );
 };
 
-const ServiceColumn = ({ side, services, canEdit, onRequest, onAdvance, onCancelService, onDelete }) => (
-  <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, overflow: "hidden" }}>
+const ServiceColumn = ({ side, services, loading, canEdit, onRequest, onAdvance, onCancelService, onDelete }) => (
+  <div id={`svcpanel-${side.toLowerCase()}-column`} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, overflow: "hidden" }}>
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
       padding: "12px 14px", borderBottom: `1px solid ${T.border}` }}>
       <span style={{ fontFamily: T.head, fontSize: 14, fontWeight: 800, color: T.text }}>
         {side} Services
       </span>
       {canEdit && (
-        <button type="button" onClick={onRequest}
+        <button id={`svcpanel-${side.toLowerCase()}-request-btn`} type="button" onClick={onRequest}
           style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 6,
             padding: "5px 11px", cursor: "pointer", fontFamily: T.body, fontSize: 11.5, color: T.text }}
           onMouseEnter={e => { e.currentTarget.style.borderColor = T.accent; e.currentTarget.style.color = T.accent; }}
@@ -153,8 +160,12 @@ const ServiceColumn = ({ side, services, canEdit, onRequest, onAdvance, onCancel
       )}
     </div>
     <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
-      {services.length === 0 ? (
-        <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, fontStyle: "italic", padding: "6px 2px" }}>
+      {loading ? (
+        <div style={{ display: "flex", justifyContent: "center", padding: "14px 2px" }}>
+          <Spinner size="sm" />
+        </div>
+      ) : services.length === 0 ? (
+        <div id={`svcpanel-${side.toLowerCase()}-empty`} style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, fontStyle: "italic", padding: "6px 2px" }}>
           No {side.toLowerCase()} services ordered yet.
         </div>
       ) : services.map(s => (
@@ -167,20 +178,28 @@ const ServiceColumn = ({ side, services, canEdit, onRequest, onAdvance, onCancel
 
 const ServicesPanel = ({ shipment }) => {
   const { canEditShipments: canEdit } = useAuth();
-  const [services, setServices] = useState([]);
+  // null = not yet loaded (distinct from [] = loaded and genuinely empty) — without this
+  // distinction the fetch's first second or two renders "No services ordered yet" even
+  // when services do exist, since an empty initial array is indistinguishable from a
+  // confirmed-empty one.
+  const [services, setServices] = useState(null);
   const [offices,  setOffices]  = useState([]);
   const [requestSide, setRequestSide] = useState(null); // null | "Export" | "Import"
   const [confirmDelete, setConfirmDelete] = useState(null); // service pending delete
 
-  const load = () => api.services.list(shipment.id).then(setServices).catch(() => setServices([]));
+  const load = () => api.services.list(shipment.id)
+    .then(list => { setServices(list); emitServicesChanged(shipment.id); })
+    .catch(() => setServices([]));
 
   useEffect(() => {
+    setServices(null);
     load();
     api.offices.list().then(setOffices).catch(() => {});
   }, [shipment.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const exportServices = services.filter(s => s.side === "Export");
-  const importServices = services.filter(s => s.side === "Import");
+  const loading = services === null;
+  const exportServices = loading ? [] : services.filter(s => s.side === "Export");
+  const importServices = loading ? [] : services.filter(s => s.side === "Import");
 
   const handleCreate = async (payload) => {
     try {
@@ -218,13 +237,13 @@ const ServicesPanel = ({ shipment }) => {
   };
 
   return (
-    <div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-        <ServiceColumn side="Export" services={exportServices} canEdit={canEdit}
+    <div id="svcpanel">
+      <div id="svcpanel-columns" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        <ServiceColumn side="Export" services={exportServices} loading={loading} canEdit={canEdit}
           onRequest={() => setRequestSide("Export")}
           onAdvance={handleAdvance} onCancelService={handleCancelService}
           onDelete={setConfirmDelete} />
-        <ServiceColumn side="Import" services={importServices} canEdit={canEdit}
+        <ServiceColumn side="Import" services={importServices} loading={loading} canEdit={canEdit}
           onRequest={() => setRequestSide("Import")}
           onAdvance={handleAdvance} onCancelService={handleCancelService}
           onDelete={setConfirmDelete} />

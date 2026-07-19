@@ -514,7 +514,7 @@ const cellInput = {
   padding: 0,
 };
 
-const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inheritedContractRef, showContractCols = true, locked = false }) => {
+const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inheritedContractRef, showContractCols = true, locked = false, onUpdateSchedule = null }) => {
   const [d, setD] = useState(leg);
   useEffect(() => setD(leg), [leg]);
   const set   = k => v => setD(p => ({ ...p, [k]: v }));
@@ -550,8 +550,17 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
       <div style={{ display: "flex", borderBottom: `1px solid ${T.border}` }}
         title={locked && canEdit ? "Locked — linked to an assigned schedule. Remove this leg to unlink and edit again." : undefined}>
         {locked && canEdit && (
-          <div style={{ width: 18, minWidth: 18, display: "flex", alignItems: "center", justifyContent: "center",
-            borderRight: `1px solid ${T.border}22`, color: T.textMuted, fontSize: 11 }}>🔒</div>
+          <div style={{ width: onUpdateSchedule && d.legType === "SEA" ? 40 : 18, minWidth: onUpdateSchedule && d.legType === "SEA" ? 40 : 18,
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 4,
+            borderRight: `1px solid ${T.border}22`, color: T.textMuted, fontSize: 11 }}>
+            🔒
+            {onUpdateSchedule && d.legType === "SEA" && (
+              <button type="button" onClick={e => { e.stopPropagation(); onUpdateSchedule(d); }}
+                title="Update schedule — correct vessel/voyage/dates without unlinking"
+                style={{ background: "none", border: "none", cursor: "pointer", padding: 0,
+                  fontSize: 12, lineHeight: 1, color: T.accent }}>✎</button>
+            )}
+          </div>
         )}
         {visibleCols.map((c, i) => {
           const isPort = c.key === "pol" || c.key === "pod";
@@ -772,7 +781,7 @@ const LEG_TYPE_RANK = { "Pick-up": 0, "Delivery": 2 };
 const orderLegs = legsArr => [...legsArr].sort((a, b) =>
   (LEG_TYPE_RANK[a.legType] ?? 1) - (LEG_TYPE_RANK[b.legType] ?? 1));
 
-export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChange, inheritedCarrier, inheritedContractType, inheritedContractRef, canEdit, showContractCols = true, extraAction = null, lockedSeaLegs = false }) => {
+export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChange, inheritedCarrier, inheritedContractType, inheritedContractRef, canEdit, showContractCols = true, extraAction = null, lockedSeaLegs = false, onUpdateSchedule = null }) => {
   const [legs,          setLegs]          = useState([]);
   const [saving,        setSaving]        = useState(null);
   const [selectedLegId, setSelectedLegId] = useState(null);
@@ -898,7 +907,7 @@ export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChan
                 {isSelected && (
                   <div style={{ position: "absolute", inset: 0, background: T.accent + "06", pointerEvents: "none" }} />
                 )}
-                <LegRow leg={leg} onSave={saveLeg} canEdit={canEdit} widths={widths} inheritedContractType={inheritedContractType} inheritedContractRef={inheritedContractRef} showContractCols={showContractCols} locked={lockedSeaLegs && leg.legType === "SEA"} />
+                <LegRow leg={leg} onSave={saveLeg} canEdit={canEdit} widths={widths} inheritedContractType={inheritedContractType} inheritedContractRef={inheritedContractRef} showContractCols={showContractCols} locked={lockedSeaLegs && leg.legType === "SEA"} onUpdateSchedule={onUpdateSchedule} />
               </div>
             );
           })}

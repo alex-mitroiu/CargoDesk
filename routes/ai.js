@@ -8,9 +8,12 @@ module.exports = function aiRoutes(app, ctx) {
   const { db, ok, err, auth, getSettings } = ctx;
 
   // ─── Tool schemas exposed to the LLM ───────────────────────────────────────
+  // Anthropic tool format: { name, description, input_schema }. This is the
+  // source of truth — TOOLS_OPENAI below is derived from it for OpenAI-
+  // compatible endpoints (OpenRouter, Custom/Local presets in AppSettingsPage),
+  // which expect { type: "function", function: { name, description, parameters } }.
 
-  // Anthropic tool format: { name, description, input_schema }
-  const TOOLS = [
+  const TOOLS_ANTHROPIC = [
     {
       name: "get_shipment",
       description: "Retrieve a single CargoDesk shipment by its ID (e.g. SHP-XXXXX). Returns full shipment detail including status, POL, POD, carrier, containers, cost lines totals.",
@@ -60,6 +63,17 @@ module.exports = function aiRoutes(app, ctx) {
     },
   ];
 
+  const TOOLS_OPENAI = TOOLS_ANTHROPIC.map(t => ({
+    type: "function",
+    function: { name: t.name, description: t.description, parameters: t.input_schema },
+  }));
+
+  // Anthropic's Messages API lives at api.anthropic.com — every other configured
+  // endpoint (OpenRouter, a local proxy, any other Custom preset) is treated as
+  // OpenAI-compatible Chat Completions, matching the two non-Anthropic presets
+  // AppSettingsPage's AI Agent tab actually offers today.
+  const isAnthropicEndpoint = ep => /anthropic\.com/i.test(ep || "");
+
   // ─── Tool execution (server-side tool calls) ────────────────────────────────
 
   function executeTool(name, args) {
@@ -105,6 +119,53 @@ module.exports = function aiRoutes(app, ctx) {
     }
   }
 
+  // ─── Provider-specific request/response shaping ─────────────────────────────
+  // Anthropic (Messages API) and OpenAI-compatible (Chat Completions) diverge on
+  // every part of the tool-calling contract: request shape, stop condition, tool
+  // call extraction, follow-up message shape, and reply extraction. Branching
+  // once per concern here (rather than threading isAnthropic through the whole
+  // handler ad hoc) keeps each provider's shape in one place.
+
+  function buildRequest(isAnthropic, { model, systemPrompt, messages }) {
+    if (isAnthropic) {
+      return {
+        body: { model, max_tokens: 1024, system: systemPrompt, messages, tools: TOOLS_ANTHROPIC, tool_choice: { type: "auto" } },
+        headers: { "Content-Type": "application/json", "anthropic-version": "2023-06-01", "x-api-key": undefined /* set by caller */ },
+      };
+    }
+    return {
+      body: { model, max_tokens: 1024, messages: [{ role: "system", content: systemPrompt }, ...messages], tools: TOOLS_OPENAI, tool_choice: "auto" },
+      headers: { "Content-Type": "application/json", "Authorization": undefined /* set by caller */ },
+    };
+  }
+
+  const isToolUseStop = (isAnthropic, data) => isAnthropic
+    ? data?.stop_reason === "tool_use" && Array.isArray(data?.content)
+    : data?.choices?.[0]?.finish_reason === "tool_calls" && Array.isArray(data?.choices?.[0]?.message?.tool_calls);
+
+  // Normalises both providers' tool-call shapes to a common { id, name, args } list.
+  const extractToolCalls = (isAnthropic, data) => isAnthropic
+    ? data.content.filter(b => b.type === "tool_use").map(tu => ({ id: tu.id, name: tu.name, args: tu.input || {} }))
+    : data.choices[0].message.tool_calls.map(tc => ({ id: tc.id, name: tc.function.name, args: JSON.parse(tc.function.arguments || "{}") }));
+
+  // Appends the assistant's tool-call turn plus the tool results, in whichever
+  // shape the provider expects, to build the next request's messages array.
+  function appendToolResults(isAnthropic, currentMessages, data, toolCalls, results) {
+    if (isAnthropic) {
+      const toolResults = toolCalls.map((tc, i) => ({ type: "tool_result", tool_use_id: tc.id, content: JSON.stringify(results[i]) }));
+      return [...currentMessages, { role: "assistant", content: data.content }, { role: "user", content: toolResults }];
+    }
+    return [
+      ...currentMessages,
+      data.choices[0].message,
+      ...toolCalls.map((tc, i) => ({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(results[i]) })),
+    ];
+  }
+
+  const extractReply = (isAnthropic, data) => isAnthropic
+    ? (data.content || []).find(b => b.type === "text")?.text || ""
+    : data.choices?.[0]?.message?.content || "";
+
   // ─── POST /api/ai/chat ──────────────────────────────────────────────────────
 
   app.post("/api/ai/chat", auth(), async (req, res) => {
@@ -135,27 +196,14 @@ module.exports = function aiRoutes(app, ctx) {
     }
     const systemPrompt = systemParts.join("\n");
 
-    const requestBody = {
-      model,
-      max_tokens: 1024,
-      system: systemPrompt,
-      messages,
-      tools: TOOLS,
-      tool_choice: { type: "auto" },   // Anthropic format
-    };
+    const isAnthropic = isAnthropicEndpoint(endpoint);
+    const { body: requestBody, headers: baseHeaders } = buildRequest(isAnthropic, { model, systemPrompt, messages });
+    const headers = isAnthropic
+      ? { ...baseHeaders, "x-api-key": apiKey }
+      : { ...baseHeaders, "Authorization": `Bearer ${apiKey}` };
 
     try {
-      const aiRes = await fetch(endpoint, {
-        method: "POST",
-        headers: {
-          "Content-Type":  "application/json",
-          "Authorization": `Bearer ${apiKey}`,
-          "anthropic-version": "2023-06-01",
-          "x-api-key": apiKey,
-        },
-        body: JSON.stringify(requestBody),
-      });
-
+      const aiRes = await fetch(endpoint, { method: "POST", headers, body: JSON.stringify(requestBody) });
       const data = await aiRes.json();
 
       if (!aiRes.ok) {
@@ -167,46 +215,23 @@ module.exports = function aiRoutes(app, ctx) {
       let iterations   = 0;
       let currentMessages = [...messages];
 
-      while (
-        iterations < 3 &&
-        responseData.stop_reason === "tool_use" &&
-        Array.isArray(responseData.content)
-      ) {
-        const toolUses = responseData.content.filter(b => b.type === "tool_use");
-        if (!toolUses.length) break;
+      while (iterations < 3 && isToolUseStop(isAnthropic, responseData)) {
+        const toolCalls = extractToolCalls(isAnthropic, responseData);
+        if (!toolCalls.length) break;
 
-        // Execute all tool calls
-        const toolResults = toolUses.map(tu => ({
-          type:       "tool_result",
-          tool_use_id: tu.id,
-          content:    JSON.stringify(executeTool(tu.name, tu.input || {})),
-        }));
-
-        currentMessages = [
-          ...currentMessages,
-          { role: "assistant", content: responseData.content },
-          { role: "user",      content: toolResults },
-        ];
+        const results = toolCalls.map(tc => executeTool(tc.name, tc.args));
+        currentMessages = appendToolResults(isAnthropic, currentMessages, responseData, toolCalls, results);
 
         const loopRes = await fetch(endpoint, {
           method: "POST",
-          headers: {
-            "Content-Type":  "application/json",
-            "Authorization": `Bearer ${apiKey}`,
-            "anthropic-version": "2023-06-01",
-            "x-api-key": apiKey,
-          },
+          headers,
           body: JSON.stringify({ ...requestBody, messages: currentMessages }),
         });
         responseData = await loopRes.json();
         iterations++;
       }
 
-      // Extract text reply
-      const textBlock = (responseData.content || []).find(b => b.type === "text");
-      const reply = textBlock?.text || responseData.choices?.[0]?.message?.content || "";
-
-      ok(res, { reply, raw: responseData });
+      ok(res, { reply: extractReply(isAnthropic, responseData), raw: responseData });
     } catch (e) {
       err(res, `AI proxy error: ${e.message}`, 502);
     }

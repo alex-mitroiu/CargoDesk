@@ -3,9 +3,24 @@ import { T, applyTheme } from "./tokens";
 import { toast } from "./toast";
 import ToastContainer from "./components/primitives/ToastContainer";
 import GlobalSavingOverlay from "./components/primitives/GlobalSavingOverlay";
-import { FullPageSpinner } from "./components/primitives/Spinner";
+import Spinner, { FullPageSpinner } from "./components/primitives/Spinner";
 import { api, TOKEN_KEY, ACTIVE_ROLE_KEY, ACTIVE_OFFICE_KEY } from "./api";
-import { AuthContext } from "./AuthContext";
+import { AuthContext, useAuth } from "./AuthContext";
+import {
+  SHIPMENT_SECTIONS, SHIPMENT_SECTIONS_AFTER_ACCOUNTING, SHIPMENT_PROMOTED_ROUTES,
+  SHIPMENT_SUBPAGES as SHARED_SHIPMENT_SUBPAGES, SHIPMENT_SUBPAGE_HASHES as SHARED_SHIPMENT_SUBPAGE_HASHES,
+  SHIPMENT_SUBPAGE_LABELS as SHARED_SHIPMENT_SUBPAGE_LABELS, SHIPMENT_PAGE_KEYS, SHIPMENT_SUBPAGE_HASH_PATTERN,
+} from "./shipmentSections";
+import {
+  SERVICE_TYPES, SERVICE_TYPE_ICON, SERVICE_PAGE_KEYS, SERVICE_SUBPAGES,
+  SERVICE_SUBPAGE_HASHES, SERVICE_SUBPAGE_LABELS, SERVICE_PAGE_INFO,
+  isBespokeServiceType, servicePageKey,
+} from "./shipmentServicePages";
+import { onServicesChanged } from "./servicesBus";
+import { runNavigationGuard } from "./navigationGuard";
+import { buildLoadingPlanHtml } from "./utils/invoiceGenerator";
+import LoadingServicePage from "./pages/LoadingServicePage";
+import GenericServicePage from "./pages/GenericServicePage";
 
 import Btn from "./components/primitives/Btn";
 import { Modal } from "./components/primitives/Modal";
@@ -21,7 +36,6 @@ import ShipmentContainersPage from "./pages/ShipmentContainersPage";
 import ShipmentPartiesPage from "./pages/ShipmentPartiesPage";
 import ShipmentSchedulesPage from "./pages/ShipmentSchedulesPage";
 import ShipmentMilestonesPage from "./pages/ShipmentMilestonesPage";
-import ShipmentTicketsPage from "./pages/ShipmentTicketsPage";
 import ShipmentAccountingCostsPage from "./pages/ShipmentAccountingCostsPage";
 import ShipmentAccountingInvoicesPage from "./pages/ShipmentAccountingInvoicesPage";
 import ShipmentAccountingGpPage from "./pages/ShipmentAccountingGpPage";
@@ -50,6 +64,7 @@ import MdmRegionsPage         from "./pages/mdm/MdmRegionsPage";
 import MdmCountriesPage       from "./pages/mdm/MdmCountriesPage";
 import MdmUNLocationCodesPage  from "./pages/mdm/MdmUNLocationCodesPage";
 import MdmCommoditiesPage     from "./pages/mdm/MdmCommoditiesPage";
+import MdmChargeCodesPage     from "./pages/mdm/MdmChargeCodesPage";
 import MdmCustomersPage           from "./pages/mdm/MdmCustomersPage";
 import MdmSanctionedCustomersPage from "./pages/mdm/MdmSanctionedCustomersPage";
 import MdmContractsPage        from "./pages/mdm/MdmContractsPage";
@@ -77,6 +92,8 @@ const DOC_TYPES = [
   { code: "CD01", label: "Customs Declaration" },
   { code: "IC01", label: "Insurance Certificate" },
   { code: "DG01", label: "Dangerous Goods Declaration" },
+  { code: "LP01", label: "Loading Plan" },
+  { code: "UP01", label: "Unloading Plan" },
   { code: "OT",   label: "Other" },
 ];
 const DOC_TYPE_MAP   = Object.fromEntries(DOC_TYPES.map(t => [t.code, t.label]));
@@ -555,6 +572,12 @@ const dispatchDocBuilder = (code, data) => {
     case "IC01":             return buildInsuranceCertHtml(data);
     case "DG01":             return buildDGDeclHtml(data);
     case "CD01":             return buildCustomsDeclHtml(data);
+    // No loadingPlanLines from the generic picker (it has no concept of "service") —
+    // buildLoadingPlanHtml still renders a sensible template with blank planned dates;
+    // the rich version comes from the dedicated Loading/Unloading Service page
+    // (LoadingServicePage.jsx), which fetches and passes the real per-container lines.
+    case "LP01":             return buildLoadingPlanHtml(data);
+    case "UP01":             return buildLoadingPlanHtml({ ...data, planLabel: "Unloading Plan" });
     default:                 return buildGenericDocHtml(data);
   }
 };
@@ -669,7 +692,12 @@ const DOC_READINESS_LABEL = {
   missing:   "Missing",
 };
 
-const DocumentsModal = ({ shipment, canEdit, onClose }) => {
+// Kept in App.jsx (not a separate src/pages/ file) — GenerateDocumentModal here depends on
+// ~450 lines of buildXHtml/dispatchDocBuilder template functions defined earlier in this
+// file (lines ~74-566); a separate page file would need to import them back from App.jsx,
+// a circular import no other page in this codebase does. standalone=true renders the
+// Documents section's body directly in the routing switch below instead.
+const DocumentsModal = ({ shipment, canEdit, onClose, standalone = false }) => {
   const [docs,           setDocs]           = useState([]);
   const [loading,        setLoading]        = useState(true);
   const [uploading,      setUploading]      = useState(false);
@@ -771,8 +799,7 @@ const DocumentsModal = ({ shipment, canEdit, onClose }) => {
     );
   };
 
-  return (
-    <Modal title={`Documents — ${shipment.id}`} onClose={onClose} width={720}>
+  const body = (
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
 
         {/* Toolbar */}
@@ -956,7 +983,13 @@ const DocumentsModal = ({ shipment, canEdit, onClose }) => {
           </div>
         )}
       </div>
+  );
 
+  return (
+    <>
+      {standalone ? body : (
+        <Modal title={`Documents — ${shipment.id}`} onClose={onClose} width={720}>{body}</Modal>
+      )}
       {genInvOpen && (
         <GenerateDocumentModal
           shipment={shipment}
@@ -972,7 +1005,7 @@ const DocumentsModal = ({ shipment, canEdit, onClose }) => {
           onConfirm={canEdit ? () => handleConfirm(previewDoc.id) : null}
         />
       )}
-    </Modal>
+    </>
   );
 };
 
@@ -1228,7 +1261,38 @@ const ShipmentFormSidebar = ({ shipment, mode, navigate, onContainers }) => {
 
 // ─── Shipment Detail Sidebar ──────────────────────────────────────────────────
 
-const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, onDocuments, currentPage = "detail" }) => {
+const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, currentPage = "detail" }) => {
+  const { isTradeManager } = useAuth();
+
+  // Self-fetches shipment_services (Epic TKT-TBS7QD) purely to decide which Export/Import
+  // Services nav rows are visible — separate from ServicesPanel's own copy on Overview
+  // (cousins, not parent/child). Refetches on every subpage nav (cheap, small per-shipment
+  // list) and also on the servicesBus signal so ordering a service on Overview updates the
+  // nav immediately instead of only on the next navigation. null (not []) while the FIRST
+  // fetch for this shipment is in flight, so the nav can show a brief loading placeholder
+  // instead of silently omitting the Export/Import Services group — which otherwise looks
+  // identical to "nothing was ordered" for the second or so the request takes.
+  const [services, setServices] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => api.services.list(shipment.id).then(list => !cancelled && setServices(list)).catch(() => !cancelled && setServices([]));
+    load();
+    const unsub = onServicesChanged(sid => { if (sid === shipment.id) load(); });
+    return () => { cancelled = true; unsub(); };
+  }, [shipment.id, currentPage]);
+
+  const servicesLoading = services === null;
+
+  // One nav row per distinct, non-cancelled ordered type per side, in canonical
+  // SERVICE_TYPES order (not order-ordered) for predictable placement.
+  const orderedTypesFor = (side) => {
+    if (servicesLoading) return [];
+    const ordered = new Set(services.filter(s => s.side === side && s.status !== "Cancelled").map(s => s.serviceType));
+    return SERVICE_TYPES.filter(t => t !== "Other" && ordered.has(t));
+  };
+  const exportTypes = orderedTypesFor("Export");
+  const importTypes = orderedTypesFor("Import");
+
   const goBack = () => {
     if (window.opener) window.close();
     else navigate("shipments");
@@ -1240,20 +1304,25 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, o
   // Promoted sections are real sub-pages now — every other section (just
   // Overview at this point) is still an anchor inside the Overview page, so a
   // cross-page click lands on Overview and a same-page click just scrolls.
-  // Accounting is the first *nested* promotion — the parent row and all three
+  // Accounting is the only *nested* promotion — the parent row and all three
   // children route via this same map, so handleSection needs no special-casing.
+  // The flat (non-Accounting) entries come from the shared config (shipmentSections.js)
+  // so this page and the hash-parsing/labels below can't silently drift apart (see M9,
+  // ARCHITECTURE.md §11) — Accounting's own two-segment-hash entries are merged in here
+  // since its parent+children shape doesn't fit that shared flat array.
   const PROMOTED_ROUTES = {
-    "shp-conditions": "shipment-conditions",
-    "shp-cargo":      "shipment-containers",
-    "shp-parties":    "shipment-parties",
-    "shp-schedules":  "shipment-schedules",
-    "shp-milestones": "shipment-milestones",
-    "shp-tickets":    "shipment-tickets",
+    ...SHIPMENT_PROMOTED_ROUTES,
     "shp-accounting":          "shipment-accounting-invoices", // parent row → first child
     "shp-accounting-invoices": "shipment-accounting-invoices",
     "shp-accounting-costs":    "shipment-accounting-costs",
     "shp-accounting-gp":       "shipment-accounting-gp",
-    "shp-history":    "shipment-history",
+    // Export/Import Services parent rows route to their side's first ordered type
+    // (canonical SERVICE_TYPES order) — same "parent row → first child" idiom as
+    // Accounting above. Children route to their own dedicated/WIP page directly.
+    ...(exportTypes.length > 0 ? { "shp-export-services": servicePageKey("Export", exportTypes[0]) } : {}),
+    ...(importTypes.length > 0 ? { "shp-import-services": servicePageKey("Import", importTypes[0]) } : {}),
+    ...Object.fromEntries(exportTypes.map(t => [servicePageKey("Export", t), servicePageKey("Export", t)])),
+    ...Object.fromEntries(importTypes.map(t => [servicePageKey("Import", t), servicePageKey("Import", t)])),
   };
   const ACCOUNTING_ROUTES = ["shipment-accounting-invoices", "shipment-accounting-costs", "shipment-accounting-gp"];
   const handleSection = (id) => {
@@ -1278,18 +1347,18 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, o
   };
   const sc = STATUS_COLORS[shipment.status] || STATUS_COLORS.DRAFT;
 
+  // ctrCount (the only per-render dynamic value among these) is spliced onto the Cargo
+  // entry here rather than baked into the static shared config.
   const sections = [
-    { id: "shp-overview",   icon: "◎",  label: "Overview" },
-    { id: "shp-conditions", icon: "📜", label: "Conditions" },
-    { id: "shp-parties",    icon: "👥", label: "Parties & Offices" },
-    { id: "shp-cargo",      icon: "📦", label: "Cargo",      badge: ctrCount || null },
-    { id: "shp-schedules",  icon: "⚓", label: "Contracts & Schedules" },
-    { id: "shp-milestones", icon: "⚑",  label: "Milestones" },
+    { id: "shp-overview", icon: "◎", label: "Overview" },
+    ...SHIPMENT_SECTIONS.map(s => s.id === "shp-cargo" ? { ...s, badge: ctrCount || null } : s),
   ];
-  const sectionsAfterAccounting = [
-    { id: "shp-tickets",    icon: "◩",  label: "Tickets" },
-    { id: "shp-history",    icon: "🕐", label: "History" },
-  ];
+  // Export/Import Services (dynamic, per-shipment — see above) render between Cargo and
+  // Milestones & Events: services are ordered against containers that must already exist.
+  const cargoIdx = sections.findIndex(s => s.id === "shp-cargo");
+  const sectionsBeforeServices = sections.slice(0, cargoIdx + 1);
+  const sectionsAfterServices  = sections.slice(cargoIdx + 1);
+  const sectionsAfterAccounting = SHIPMENT_SECTIONS_AFTER_ACCOUNTING;
   const accountingChildren = [
     { id: "shp-accounting-invoices", icon: "🧾", label: "Invoice Entry" },
     { id: "shp-accounting-costs",    icon: "💰", label: "Cost Entry" },
@@ -1362,21 +1431,6 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, o
         )}
       </div>
 
-      {/* Documents action */}
-      <div style={{ padding: "10px 16px", borderBottom: `1px solid ${T.border}` }}>
-        <button onClick={onDocuments} style={{
-          display: "flex", alignItems: "center", gap: 8, width: "100%",
-          padding: "8px 12px", borderRadius: 8, background: "transparent",
-          border: `1px solid ${T.border}`, fontFamily: T.body, fontSize: 13,
-          color: T.text, cursor: "pointer", fontWeight: 500, textAlign: "left",
-          transition: "border-color .15s, background .15s",
-        }}
-        onMouseEnter={e => { e.currentTarget.style.borderColor = T.accent; e.currentTarget.style.background = T.accentBg; }}
-        onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.background = "transparent"; }}>
-          📄 Documents
-        </button>
-      </div>
-
       {/* Section nav — Explorer-tree pattern, same visual language as TestCasesPage's folder tree */}
       <nav style={{ padding: "14px 12px", flex: 1, overflowY: "auto" }}>
         <div style={{ fontFamily: T.mono, fontSize: 9.5, color: T.border, fontWeight: 700,
@@ -1433,17 +1487,57 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, o
               selected={selected} promoted={isPromotedNode} onClick={() => handleSection(id)} />;
           };
 
+          // Export/Import Services parent + dynamic children (Epic TKT-TBS7QD) — visible
+          // only once at least one service is ordered on that side, per the user's own
+          // framing ("the sidebar nav menu makes visible" the page). Genuinely dynamic
+          // per-shipment nav shape, unlike the fixed shipmentSections.js array, so it's
+          // handled here as its own block — same special-case precedent as Accounting.
+          const renderServiceGroup = (side, types, icon) => types.length === 0 ? null : (
+            <>
+              <NavRow id={`shp-${side.toLowerCase()}-services`} icon={icon} label={`${side} Services`} depth={0}
+                selected={types.some(t => currentPage === servicePageKey(side, t))} promoted
+                onClick={() => handleSection(`shp-${side.toLowerCase()}-services`)} />
+              {types.map(type => (
+                <NavRow key={servicePageKey(side, type)} id={servicePageKey(side, type)}
+                  icon={SERVICE_TYPE_ICON[type] || "•"} label={type} depth={1}
+                  selected={currentPage === servicePageKey(side, type)} promoted
+                  onClick={() => handleSection(servicePageKey(side, type))} />
+              ))}
+            </>
+          );
+
           return (
             <>
-              {sections.map(renderSection)}
-              <NavRow id="shp-accounting" icon="◈" label="Accounting" depth={0}
-                selected={ACCOUNTING_ROUTES.includes(currentPage)} promoted
-                onClick={() => handleSection("shp-accounting")} />
-              {accountingChildren.map(({ id, icon, label }) => (
-                <NavRow key={id} id={id} icon={icon} label={label} depth={1}
-                  selected={currentPage === PROMOTED_ROUTES[id]} promoted
-                  onClick={() => handleSection(id)} />
-              ))}
+              {sectionsBeforeServices.map(renderSection)}
+              {servicesLoading ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 8,
+                  padding: "5px 8px 5px 32px", marginBottom: 1 }}>
+                  <Spinner size="sm" />
+                  <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, fontStyle: "italic" }}>
+                    Loading services…
+                  </span>
+                </div>
+              ) : (
+                <>
+                  {renderServiceGroup("Export", exportTypes, "📤")}
+                  {renderServiceGroup("Import", importTypes, "📥")}
+                </>
+              )}
+              {sectionsAfterServices.map(renderSection)}
+              {/* Shipment cost lines are hidden from trade_manager entirely — not just the
+                  Finance/Margin dashboard's canViewFinance gate, per the role spec. */}
+              {!isTradeManager && (
+                <>
+                  <NavRow id="shp-accounting" icon="◈" label="Accounting" depth={0}
+                    selected={ACCOUNTING_ROUTES.includes(currentPage)} promoted
+                    onClick={() => handleSection("shp-accounting")} />
+                  {accountingChildren.map(({ id, icon, label }) => (
+                    <NavRow key={id} id={id} icon={icon} label={label} depth={1}
+                      selected={currentPage === PROMOTED_ROUTES[id]} promoted
+                      onClick={() => handleSection(id)} />
+                  ))}
+                </>
+              )}
               {sectionsAfterAccounting.map(renderSection)}
             </>
           );
@@ -1517,16 +1611,15 @@ function App() {
     "dashboard-archive":"api_shipments_enabled",
     // Promoted shipment sub-pages inherit the same gate "detail" uses — otherwise
     // disabling the Shipments module only hides Overview, not Cargo/Accounting/etc.
-    "shipment-conditions":          "api_shipments_enabled",
-    "shipment-containers":          "api_shipments_enabled",
-    "shipment-parties":             "api_shipments_enabled",
-    "shipment-schedules":           "api_shipments_enabled",
-    "shipment-milestones":          "api_shipments_enabled",
-    "shipment-tickets":             "api_shipments_enabled",
+    // Flat (non-Accounting) entries come from the shared config; Accounting's own
+    // 3 keys are merged in below since they're not part of that shared array (see M9).
+    ...Object.fromEntries(SHIPMENT_PAGE_KEYS.map(k => [k, "api_shipments_enabled"])),
     "shipment-accounting-invoices": "api_shipments_enabled",
     "shipment-accounting-costs":    "api_shipments_enabled",
     "shipment-accounting-gp":       "api_shipments_enabled",
-    "shipment-history":             "api_shipments_enabled",
+    // Export/Import Services dedicated pages (Epic TKT-TBS7QD) — same gate, not part
+    // of the shared shipmentSections.js array since they're a dynamic combinatorial set.
+    ...Object.fromEntries(SERVICE_PAGE_KEYS.map(k => [k, "api_shipments_enabled"])),
     "mdm-contracts":   "api_contracts_enabled",
     "mdm-customers":              "api_customers_enabled",
     "mdm-sanctioned-customers":  "api_customers_enabled",
@@ -1541,19 +1634,11 @@ function App() {
     return !k || appSettings[k] !== 'false';
   };
 
-  // Promoted shipment sub-pages — suffix in the hash maps to a page key.
-  const SHIPMENT_SUBPAGES = {
-    conditions: "shipment-conditions",
-    containers: "shipment-containers",
-    parties:    "shipment-parties",
-    schedules:  "shipment-schedules",
-    milestones: "shipment-milestones",
-    tickets:    "shipment-tickets",
-    history:    "shipment-history",
-  };
-  const SHIPMENT_SUBPAGE_HASHES = Object.fromEntries(
-    Object.entries(SHIPMENT_SUBPAGES).map(([suffix, key]) => [key, suffix])
-  );
+  // Promoted shipment sub-pages — suffix in the hash maps to a page key. Sourced from the
+  // shared config (shipmentSections.js) so this and parseHash's regex below can't drift
+  // from the sidebar nav the way the old hand-typed version could (see M9).
+  const SHIPMENT_SUBPAGES = SHARED_SHIPMENT_SUBPAGES;
+  const SHIPMENT_SUBPAGE_HASHES = SHARED_SHIPMENT_SUBPAGE_HASHES;
   // Accounting sub-pages live under a two-segment hash (shipments/:id/accounting/:child) since
   // Accounting is a nested parent with children, unlike the single-segment promoted sections above.
   const ACCOUNTING_SUBPAGES = {
@@ -1571,7 +1656,14 @@ function App() {
     if (/^shipments\/[^/]+\/edit$/.test(hash)) return { page: "shipment-edit", selectedId: hash.split("/")[1] };
     const acctMatch = hash.match(/^shipments\/([^/]+)\/accounting\/(costs|invoices|gp)$/);
     if (acctMatch) return { page: ACCOUNTING_SUBPAGES[acctMatch[2]], selectedId: acctMatch[1] };
-    const subMatch = hash.match(/^shipments\/([^/]+)\/(conditions|containers|parties|schedules|milestones|tickets|history)$/);
+    // Export/Import Services — two-segment hash (shipments/:id/services/:side/:type),
+    // same shape as Accounting's, since it's also a nested parent+children page family.
+    const svcMatch = hash.match(/^shipments\/([^/]+)\/services\/(export|import)\/([a-z0-9-]+)$/i);
+    if (svcMatch) {
+      const pageKey = SERVICE_SUBPAGES[`${svcMatch[2].toLowerCase()}/${svcMatch[3].toLowerCase()}`];
+      if (pageKey) return { page: pageKey, selectedId: svcMatch[1] };
+    }
+    const subMatch = hash.match(new RegExp(`^shipments/([^/]+)/(${SHIPMENT_SUBPAGE_HASH_PATTERN})$`));
     if (subMatch) return { page: SHIPMENT_SUBPAGES[subMatch[2]], selectedId: subMatch[1] };
     if (hash.startsWith("shipments/")) return { page: "detail", selectedId: hash.split("/")[1] || null };
     if (hash.startsWith("track/")) return { page: "track", selectedId: hash.slice(6) };
@@ -1790,12 +1882,18 @@ function App() {
   const [formCtrListOpen,  setFormCtrListOpen]  = useState(false);
   const [formCtrModal,     setFormCtrModal]     = useState(null);
   const [newCtrSignal,     setNewCtrSignal]     = useState(0);
-  const [docsOpen,         setDocsOpen]         = useState(false);
 
   const isFormPage = p => p === "shipment-new" || p === "shipment-edit";
   const formHash   = (p, id) => p === "shipment-new" ? "shipments/new" : `shipments/${id}/edit`;
 
-  const navigate = (key, id = null) => {
+  // TKT-OJYO71: a dirty in-page form (e.g. Add/Edit Container on the Cargo page) can
+  // register a navigation guard that auto-validates + auto-saves before letting a
+  // section switch through, rather than silently discarding it — distinct from the
+  // isFormPage/formDirtyRef check right below, which is the older, separate
+  // confirm-then-discard mechanism for the standalone shipment create/edit page.
+  const navigate = async (key, id = null) => {
+    const guardResult = await runNavigationGuard();
+    if (!guardResult.proceed) { toast.error(guardResult.error); return; }
     if (isFormPage(page) && formDirtyRef.current) {
       if (!window.confirm("You have unsaved changes. Leave and discard them?")) return;
     }
@@ -1808,6 +1906,7 @@ function App() {
     else if (key === "shipment-edit" && id)              window.location.hash = `shipments/${id}/edit`;
     else if (SHIPMENT_SUBPAGE_HASHES[key] && id)         window.location.hash = `shipments/${id}/${SHIPMENT_SUBPAGE_HASHES[key]}`;
     else if (ACCOUNTING_SUBPAGE_HASHES[key] && id)       window.location.hash = `shipments/${id}/accounting/${ACCOUNTING_SUBPAGE_HASHES[key]}`;
+    else if (SERVICE_SUBPAGE_HASHES[key] && id)          window.location.hash = `shipments/${id}/services/${SERVICE_SUBPAGE_HASHES[key]}`;
     else if (key === "detail" && id)                     window.location.hash = `shipments/${id}`;
     else                                                  window.location.hash = key;
   };
@@ -1833,7 +1932,7 @@ function App() {
   }, [page, selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // kanban is top-level, not MDM
-  const MDM_PAGES = ["mdm-carriers", "mdm-ports", "mdm-linked", "mdm-vessels", "mdm-commodities", "mdm-tradelanes", "mdm-countries", "mdm-unlocodes", "mdm-customers", "mdm-sanctioned-customers", "mdm-contracts"];
+  const MDM_PAGES = ["mdm-carriers", "mdm-ports", "mdm-linked", "mdm-vessels", "mdm-commodities", "mdm-tradelanes", "mdm-countries", "mdm-unlocodes", "mdm-customers", "mdm-sanctioned-customers", "mdm-contracts", "mdm-charge-codes"];
   const ORG_PAGES = ["org-country", "org-branch", "org-office"];
   const ALL_PAGES = [...MDM_PAGES, ...ORG_PAGES, "manual"];
   const isMdmActive = MDM_PAGES.includes(page);
@@ -1908,6 +2007,7 @@ function App() {
     "mdm-customers":              "Master Data — Customers",
     "mdm-sanctioned-customers":  "Master Data — Sanctioned Customers",
     "mdm-contracts":    "Master Data — Contracts",
+    "mdm-charge-codes": "Master Data — Automated Charge Codes",
     "org-country":      "Organization — Countries",
     "org-branch":       "Organization — Branches",
     "org-office":       "Organization — Offices",
@@ -1917,17 +2017,13 @@ function App() {
 
   // Breadcrumb label for each promoted shipment sub-page — without this the
   // header falls back to the raw page key (e.g. "shipment-accounting-gp").
+  // Flat entries from the shared config; Accounting's 3 keys merged in (see M9 note above).
   const SHIPMENT_SUBPAGE_LABELS = {
-    "shipment-conditions":         "Conditions",
-    "shipment-containers":         "Cargo",
-    "shipment-parties":            "Parties & Offices",
-    "shipment-schedules":          "Contracts & Schedules",
-    "shipment-milestones":         "Milestones",
-    "shipment-tickets":            "Tickets",
+    ...SHARED_SHIPMENT_SUBPAGE_LABELS,
     "shipment-accounting-invoices":"Invoice Entry",
     "shipment-accounting-costs":   "Cost Entry",
     "shipment-accounting-gp":      "GP Overview",
-    "shipment-history":            "History",
+    ...SERVICE_SUBPAGE_LABELS,
   };
 
   // ── iOS-style theme toggle pill ────────────────────────────────────────────
@@ -2377,6 +2473,11 @@ function App() {
     canEdit:            effectiveRoles.some(r => r !== 'viewer'),
     canEditShipments:   effectiveRoles.some(r => ['admin', 'operator', 'occ_bk'].includes(r)),
     canManageConfigs:   effectiveRoles.some(r => ['admin', 'operator', 'trade_manager'].includes(r)),
+    // MDM reference data (carriers/vessels/ports/lanes/countries/regions/commodities/linked
+    // ports) is read-only for trade_manager — they manage Contracts/Allocations (above), not
+    // the underlying reference data those entities point to.
+    canManageMdm:       effectiveRoles.some(r => ['admin', 'operator'].includes(r)),
+    canEditKanban:      effectiveRoles.some(r => ['admin', 'operator'].includes(r)),
     isAdmin:            effectiveRoles.includes('admin'),
     isViewer:           effectiveRoles.every(r => r === 'viewer'),
     isOccBk:            effectiveRoles.includes('occ_bk'),
@@ -2392,13 +2493,12 @@ function App() {
     <div style={{ display: "flex", minHeight: "100vh", background: T.bg, fontFamily: T.body, color: T.text }}>
 
       {/* ── Sidebar ── */}
-      {(page === "detail" || Object.values(SHIPMENT_SUBPAGES).includes(page) || Object.values(ACCOUNTING_SUBPAGES).includes(page)) && selectedShipment ? (
+      {(page === "detail" || Object.values(SHIPMENT_SUBPAGES).includes(page) || Object.values(ACCOUNTING_SUBPAGES).includes(page) || SERVICE_PAGE_KEYS.includes(page)) && selectedShipment ? (
         <ShipmentDetailSidebar
           shipment={selectedShipment}
           ctrCount={containers.filter(c => c.shipmentId === selectedShipment.id).length}
           navigate={navigate}
           onSectionClick={setDetailAction}
-          onDocuments={() => setDocsOpen(true)}
           currentPage={page}
         />
       ) : page === "shipment-new" ? (
@@ -2479,6 +2579,7 @@ function App() {
                   <NavBtn pageKey="mdm-customers"            icon="👥" label="Customers"            indent />
                   <NavBtn pageKey="mdm-sanctioned-customers" icon="🔴" label="Sanctioned Customers" subIndent />
                   <NavBtn pageKey="mdm-contracts"   icon="📋" label="Contracts"       indent />
+                  <NavBtn pageKey="mdm-charge-codes" icon="🏷" label="Charge Codes"    indent />
                   <NavBtn pageKey="mdm-carriers" icon="🏢" label="Carriers"       indent />
                   <NavBtn pageKey="mdm-vessels"      icon="🚢" label="Vessels"         indent />
                   <NavBtn pageKey="mdm-commodities" icon="📦" label="Commodities"     indent />
@@ -2663,7 +2764,6 @@ function App() {
             onManagePartiesOffices={() => navigate("shipment-parties", selectedShipment.id)}
             onManageSchedules={() => navigate("shipment-schedules", selectedShipment.id)}
             onManageMilestones={() => navigate("shipment-milestones", selectedShipment.id)}
-            onManageTickets={() => navigate("shipment-tickets", selectedShipment.id)}
             onManageAccountingCosts={() => navigate("shipment-accounting-costs", selectedShipment.id)}
             onManageAccountingInvoices={() => navigate("shipment-accounting-invoices", selectedShipment.id)}
             onManageAccountingGp={() => navigate("shipment-accounting-gp", selectedShipment.id)} />
@@ -2702,19 +2802,38 @@ function App() {
 
         {page === "shipment-milestones" && selectedShipment && (
           <ShipmentMilestonesPage
-            shipment={selectedShipment}
+            shipment={selectedShipment} containers={containers}
             onBack={() => navigate("detail", selectedShipment.id)} />
         )}
 
-        {page === "shipment-tickets" && selectedShipment && (
-          <ShipmentTicketsPage
-            shipment={selectedShipment}
-            onBack={() => navigate("detail", selectedShipment.id)} />
+        {page === "shipment-documents" && selectedShipment && (
+          <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+            <DocumentsModal shipment={selectedShipment} canEdit={authCtxValue.canEditShipments} standalone />
+          </div>
         )}
 
         {page === "shipment-history" && selectedShipment && (
           <ShipmentHistoryPage shipment={selectedShipment} />
         )}
+
+        {/* Export/Import Services dedicated pages (Epic TKT-TBS7QD) — one generic block
+            handles all side x type combinations rather than one hardcoded JSX block per
+            type. Loading/Unloading share LoadingServicePage.jsx (identical per-container
+            date/time-plan shape); every other type gets GenericServicePage.jsx. */}
+        {SERVICE_PAGE_INFO[page] && selectedShipment && (() => {
+          const { side, type } = SERVICE_PAGE_INFO[page];
+          return isBespokeServiceType(type) ? (
+            <LoadingServicePage
+              shipment={selectedShipment} containers={containers} side={side} serviceType={type}
+              canEdit={authCtxValue.canEditShipments}
+              onViewDocuments={() => navigate("shipment-documents", selectedShipment.id)} />
+          ) : (
+            <GenericServicePage
+              shipment={selectedShipment} side={side} serviceType={type}
+              canEdit={authCtxValue.canEditShipments}
+              onViewDocuments={() => navigate("shipment-documents", selectedShipment.id)} />
+          );
+        })()}
 
         {page === "shipment-accounting-costs" && selectedShipment && (
           <ShipmentAccountingCostsPage
@@ -2815,6 +2934,7 @@ function App() {
         {page === "mdm-countries"  &&                                 <MdmCountriesPage />}
         {page === "mdm-unlocodes"  &&                                 <MdmUNLocationCodesPage />}
         {page === "mdm-commodities"&&                                 <MdmCommoditiesPage />}
+        {page === "mdm-charge-codes"&&                                <MdmChargeCodesPage />}
         {page === "mdm-customers"              && isEnabled("mdm-customers")             && <MdmCustomersPage />}
         {page === "mdm-sanctioned-customers"   && isEnabled("mdm-sanctioned-customers")  && <MdmSanctionedCustomersPage />}
         {page === "mdm-contracts"  && isEnabled("mdm-contracts")  && <MdmContractsPage />}
@@ -2825,7 +2945,7 @@ function App() {
         {page === "manual"         && <UserManualPage />}
         {page === "about"          && <AboutPage />}
         {page === "license"        && <LicensePage />}
-        {page === "settings"       && <AppSettingsPage />}
+        {page === "settings" && !authCtxValue.isTradeManager && <AppSettingsPage />}
 
         </main>
       </div>
@@ -2916,15 +3036,6 @@ function App() {
             </div>
           </div>
         </div>
-      )}
-
-      {/* ── Documents modal ── */}
-      {docsOpen && selectedShipment && (
-        <DocumentsModal
-          shipment={selectedShipment}
-          canEdit={authCtxValue.canEditShipments}
-          onClose={() => setDocsOpen(false)}
-        />
       )}
 
       {/* ── Container list modal (triggered from edit-form sidebar) ── */}

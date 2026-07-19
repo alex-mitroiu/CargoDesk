@@ -5,7 +5,7 @@ import { toast } from "../../toast";
 import { useAuth } from "../../AuthContext";
 import { Modal } from "../primitives/Modal";
 import Btn from "../primitives/Btn";
-import { ComplianceModal, RouteSummaryBar, MessagesDrawer, EdiMessagesDrawer } from "../../pages/ShipmentDetailPage";
+import { ComplianceModal, RouteSummaryBar, MessagesDrawer, EdiMessagesDrawer, TicketsDrawer } from "../../pages/ShipmentDetailPage";
 import { deriveHaulageNeeds } from "../../pages/ShipmentFormPage";
 import ContractMismatchModal from "./ContractMismatchModal";
 
@@ -22,7 +22,7 @@ import ContractMismatchModal from "./ContractMismatchModal";
 // every page rather than four separate buttons duplicated per page.
 
 const Field = ({ label, value, first }) => (
-  <div style={{
+  <div id={`shphdr-field-${label.toLowerCase().replace(/\s+/g, "-")}`} style={{
     display: "flex", alignItems: "baseline", gap: 6,
     padding: "0 14px", margin: first ? "0 14px 0 0" : 0,
     borderLeft: first ? "none" : `1px solid ${T.border}`,
@@ -49,14 +49,14 @@ const IconTile = ({ items }) => {
   const [hovered, setHovered] = useState(null);
   const cols = Math.max(2, Math.ceil(items.length / 2));
   return (
-    <div style={{
+    <div id="shphdr-icontile" style={{
       display: "grid", gridTemplateColumns: `repeat(${cols}, 26px)`, gridAutoRows: "26px", gap: 3,
       background: T.bg, border: `1px solid ${T.border}`, borderRadius: 10,
       padding: 4, flexShrink: 0,
     }}>
       <style>{`@keyframes shb-spin { to { transform: rotate(360deg); } }`}</style>
       {items.map(it => (
-        <div key={it.key} style={{ position: "relative" }}
+        <div key={it.key} id={`shphdr-icontile-${it.key}`} style={{ position: "relative" }}
           onMouseEnter={() => setHovered(it.key)}
           onMouseLeave={() => setHovered(null)}>
           <button type="button" onClick={it.onClick}
@@ -177,6 +177,21 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
     return () => { ws.close(); if (pollId) clearInterval(pollId); };
   }, [ediOpen, shipment.id]);
 
+  // ── Tickets ──
+  // No WS subscription (unlike Messages/EDI above) — no ticket_updated broadcast type
+  // exists today; this just fetches once per shipment for the open-count badge, same as
+  // Messages' initial unread-count fetch, and again whenever the drawer opens.
+  const [ticketsOpen, setTicketsOpen] = useState(false);
+  const [openTicketCount, setOpenTicketCount] = useState(0);
+  const DONE_TICKET_STATUSES = ["Done", "Ready to Deploy", "Released", "Cancelled"];
+  useEffect(() => {
+    let live = true;
+    api.tickets.forShipment(shipment.id)
+      .then(rows => { if (live) setOpenTicketCount(rows.filter(t => !DONE_TICKET_STATUSES.includes(t.status)).length); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [shipment.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const handleSendBookingRequest = async () => {
     try {
       await api.ediMessages.sendBookingRequest(shipment.id);
@@ -281,16 +296,16 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
   };
 
   return (
-    <div style={{
+    <div id="shphdr" style={{
       background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12,
       padding: "14px 22px", marginBottom: 22, position: "sticky", top: 0, zIndex: 5,
     }}>
       {/* Row 1 — identity, route, dates, DG */}
-      <div style={{ display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
-        <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+      <div id="shphdr-row1" style={{ display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
+        <span id="shphdr-id" style={{ display: "flex", alignItems: "center", gap: 5 }}>
           <span style={{ fontFamily: T.mono, fontWeight: 700, fontSize: 17, color: T.text,
             letterSpacing: "0.01em" }}>{shipment.id}</span>
-          <button type="button" onClick={copyId} title="Copy shipment ID"
+          <button id="shphdr-copy-id-btn" type="button" onClick={copyId} title="Copy shipment ID"
             style={{ background: "none", border: "none", cursor: "pointer", padding: "2px 3px",
               display: "flex", alignItems: "center", fontSize: 12, lineHeight: 1, color: T.textMuted }}
             onMouseEnter={e => { e.currentTarget.style.color = T.accent; }}
@@ -298,7 +313,7 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
             📋
           </button>
         </span>
-        <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 600, letterSpacing: "0.03em",
+        <span id="shphdr-movement-type" style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 600, letterSpacing: "0.03em",
           padding: "3px 9px", borderRadius: 5, background: T.accentBg, color: T.accent,
           border: `1px solid ${T.accent}66` }}>{shipment.movementType || "FCL"}</span>
 
@@ -317,7 +332,7 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
             : overridden ? "Cleared via manual override"
             : "Compliance clear";
           return (
-            <button type="button" onClick={() => setComplianceOpen(true)}
+            <button id="shphdr-compliance-btn" type="button" onClick={() => setComplianceOpen(true)}
               title={tooltipText}
               style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, cursor: "pointer",
                 borderRadius: 5, padding: "3px 9px", letterSpacing: "0.03em", whiteSpace: "nowrap",
@@ -330,7 +345,7 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
 
         <div style={{ width: 1, alignSelf: "stretch", background: T.border }} />
 
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div id="shphdr-route" style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div style={{ display: "flex", flexDirection: "column" }}>
             <span style={{ fontFamily: T.mono, fontWeight: 700, fontSize: 15, color: T.text }}>{shipment.pol || "—"}</span>
             <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{shipment.polName || ""}</span>
@@ -344,7 +359,7 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
 
         <div style={{ width: 1, alignSelf: "stretch", background: T.border }} />
 
-        <div style={{ display: "flex", gap: 16 }}>
+        <div id="shphdr-dates" style={{ display: "flex", gap: 16 }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
             <span style={{ fontFamily: T.mono, fontSize: 10, textTransform: "uppercase",
               letterSpacing: "0.08em", color: T.textMuted }}>ETD</span>
@@ -370,11 +385,14 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
           { key: "refresh", icon: "↻", spinning: refreshing,
             title: "Refresh shipment", onClick: handleRefresh },
           { key: "edi", icon: "📡", title: "EDI messages", onClick: () => setEdiOpen(true) },
+          { key: "tickets", icon: "◩", badge: openTicketCount,
+            title: openTicketCount > 0 ? `${openTicketCount} open ticket${openTicketCount > 1 ? "s" : ""}` : "Related tickets",
+            onClick: () => setTicketsOpen(true) },
           ...(canEdit ? [{ key: "edit", icon: "✎", title: "Edit Shipment", onClick: () => onEdit?.() }] : []),
         ]} />
 
         {contractMismatch && (
-          <button type="button" onClick={onNavigateToSchedules}
+          <button id="shphdr-contract-mismatch-badge" type="button" onClick={onNavigateToSchedules}
             title={`${shipment.contractRef || "The attached contract"} no longer covers ${matchPol} → ${matchPod} — click to resolve`}
             style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, letterSpacing: "0.03em",
               padding: "3px 9px", borderRadius: 5, background: T.danger + "22", color: T.danger,
@@ -384,7 +402,7 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
         )}
 
         {pendingMatches && (
-          <button type="button" onClick={onNavigateToSchedules}
+          <button id="shphdr-contract-match-badge" type="button" onClick={onNavigateToSchedules}
             title={`${pendingMatches.length} active contract${pendingMatches.length !== 1 ? "s" : ""} match${pendingMatches.length === 1 ? "es" : ""} "${shipment.contractRef}" — click to review`}
             style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, letterSpacing: "0.03em",
               padding: "3px 9px", borderRadius: 5, background: T.info + "22", color: T.info,
@@ -394,7 +412,7 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
         )}
 
         {isDg && (
-          <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, letterSpacing: "0.03em",
+          <span id="shphdr-dg-badge" style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, letterSpacing: "0.03em",
             padding: "3px 9px", borderRadius: 5, background: T.danger + "22", color: T.danger,
             border: `1px solid ${T.danger}66`, whiteSpace: "nowrap" }}>
             ⚠ DG{dgClasses.length ? ` · CLASS ${dgClasses.join("/")}` : ""}
@@ -403,7 +421,7 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
       </div>
 
       {/* Row 2 — secondary facts */}
-      <div style={{ display: "flex", flexWrap: "wrap", rowGap: 6,
+      <div id="shphdr-row2" style={{ display: "flex", flexWrap: "wrap", rowGap: 6,
         marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.border}` }}>
         <Field first label="Incoterm" value={shipment.incoterm} />
         <Field label="Routing" value={shipment.routingTerm} />
@@ -419,7 +437,7 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
       {/* Row 3 — the same route summary panel shown on the Schedules page (Pick-up/POL,
           ETD/transit/ETA/carrier/routing-term, POD/Delivery) — one visual for one concept
           instead of a second, different journey diagram. */}
-      <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.border}` }}>
+      <div id="shphdr-row3" style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.border}` }}>
         <RouteSummaryBar shipment={shipment} />
       </div>
 
@@ -463,6 +481,8 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
         onPost={async () => { loadMessages(); }}
         onClose={() => setMsgsOpen(false)}
       />}
+
+      {ticketsOpen && <TicketsDrawer shipment={shipment} onClose={() => setTicketsOpen(false)} />}
 
       {ediOpen && <EdiMessagesDrawer
         shipment={shipment}

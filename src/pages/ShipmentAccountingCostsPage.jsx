@@ -3,7 +3,7 @@ import { T } from "../tokens";
 import { useAuth } from "../AuthContext";
 import Btn from "../components/primitives/Btn";
 import { Modal, ConfirmModal } from "../components/primitives/Modal";
-import { CostLineForm, CostLineHistoryModal, CostLineRow } from "./ShipmentDetailPage";
+import { CostLineForm, CostLineHistoryModal, CostLineRow, CostLineActualizeModal } from "./ShipmentDetailPage";
 import { api } from "../api";
 import { toast } from "../toast";
 
@@ -30,6 +30,8 @@ const ShipmentAccountingCostsPage = ({ shipment, containers, onBack }) => {
   const [actionModal, setActionModal] = useState(null); // null | "import" | "reset" | "update"
   const [splitPerCtr, setSplitPerCtr] = useState(false);
   const [busy,        setBusy]        = useState(false);
+  const [actualizeLine, setActualizeLine] = useState(null); // line pending actualization
+  const [confirmPost,   setConfirmPost]   = useState(null); // line pending Post confirmation
 
   const isCentral = shipment.contractType === "Central" && !!shipment.contractId;
 
@@ -89,6 +91,25 @@ const ShipmentAccountingCostsPage = ({ shipment, containers, onBack }) => {
     } catch (e) { toast.error(e.message); }
   };
 
+  const handleActualize = async data => {
+    try {
+      await api.costLines.actualize(shipment.id, actualizeLine.id, data);
+      toast.success("Cost line actualized");
+      setActualizeLine(null);
+      load();
+    } catch (e) { toast.error(e.message); }
+  };
+
+  const handlePost = async () => {
+    const line = confirmPost;
+    setConfirmPost(null);
+    try {
+      await api.costLines.post(shipment.id, line.id);
+      toast.success("Cost line posted — now locked");
+      load();
+    } catch (e) { toast.error(e.message); }
+  };
+
   const openAction = mode => {
     setSplitPerCtr(ctrs.length > 1);
     setActionModal(mode);
@@ -123,35 +144,35 @@ const ShipmentAccountingCostsPage = ({ shipment, containers, onBack }) => {
   };
 
   return (
-    <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+    <div id="shpacct-costs-page" style={{ maxWidth: 1100, margin: "0 auto" }}>
       {isCentral && latestSnapshot && (
         <div style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted, marginBottom: 14 }}>
           Rates confirmed {new Date(latestSnapshot.generatedAt).toLocaleDateString()} ({latestSnapshot.reason})
         </div>
       )}
 
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
+      <div id="shpacct-costs-toolbar" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
           <span style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
             {buyLines.length} line{buyLines.length !== 1 ? "s" : ""}
           </span>
-          <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text }}>
+          <span id="shpacct-costs-total-buy" style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text }}>
             Total Buy: {fmtUsd(totalBuy)}
           </span>
         </div>
         {canEdit && (
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <Btn size="sm" variant="secondary" onClick={() => setHistOpen(true)}>⏱ History</Btn>
+            <Btn id="shpacct-costs-history-btn" size="sm" variant="secondary" onClick={() => setHistOpen(true)}>⏱ History</Btn>
             {isCentral && !hasContractLines && (
-              <Btn size="sm" variant="secondary" onClick={() => openAction("import")}>⬇ Import from Contract</Btn>
+              <Btn id="shpacct-costs-import-btn" size="sm" variant="secondary" onClick={() => openAction("import")}>⬇ Import from Contract</Btn>
             )}
             {isCentral && hasContractLines && (
               <>
-                <Btn size="sm" variant="secondary" onClick={() => openAction("reset")}>↺ Reset to Contract</Btn>
-                <Btn size="sm" variant="secondary" onClick={() => openAction("update")}>⇪ Update Carrier Costs</Btn>
+                <Btn id="shpacct-costs-reset-btn" size="sm" variant="secondary" onClick={() => openAction("reset")}>↺ Reset to Contract</Btn>
+                <Btn id="shpacct-costs-update-btn" size="sm" variant="secondary" onClick={() => openAction("update")}>⇪ Update Carrier Costs</Btn>
               </>
             )}
-            <Btn size="sm" onClick={() => setLineModal("add")}>＋ Add Line</Btn>
+            <Btn id="shpacct-costs-add-btn" size="sm" onClick={() => setLineModal("add")}>＋ Add Line</Btn>
           </div>
         )}
       </div>
@@ -159,13 +180,13 @@ const ShipmentAccountingCostsPage = ({ shipment, containers, onBack }) => {
       {loading ? (
         <div style={{ padding: 40, textAlign: "center", fontFamily: T.body, fontSize: 13, color: T.textMuted }}>Loading…</div>
       ) : buyLines.length === 0 ? (
-        <div style={{ padding: 48, textAlign: "center", fontFamily: T.body,
+        <div id="shpacct-costs-empty" style={{ padding: 48, textAlign: "center", fontFamily: T.body,
           fontSize: 13, color: T.textMuted, fontStyle: "italic",
           background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10 }}>
           No cost lines yet.
         </div>
       ) : (
-        <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden", background: T.surface }}>
+        <div id="shpacct-costs-table" style={{ border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden", background: T.surface }}>
           <div style={{ display: "flex", alignItems: "center", padding: "7px 16px",
             borderBottom: `1px solid ${T.border}`, background: T.bg }}>
             <div style={{ ...th, width: 60 }}>Type</div>
@@ -175,11 +196,13 @@ const ShipmentAccountingCostsPage = ({ shipment, containers, onBack }) => {
             <div style={{ ...th, width: 80 }}>Currency</div>
             <div style={{ ...th, width: 100, textAlign: "right" }}>Exch. Rate</div>
             <div style={{ ...th, width: 110, textAlign: "right" }}>Amount (USD)</div>
+            <div style={{ ...th, width: 100, paddingLeft: 8 }}>Status</div>
             <div style={{ width: 36 }} />
           </div>
           {buyLines.map(l => (
             <CostLineRow key={l.id} line={l} containers={ctrs} showActions
-              onEdit={() => setLineModal(l)} onDelete={() => setConfirm(l.id)} />
+              onEdit={() => setLineModal(l)} onDelete={() => setConfirm(l.id)}
+              onActualize={() => setActualizeLine(l)} onPost={() => setConfirmPost(l)} />
           ))}
         </div>
       )}
@@ -226,6 +249,17 @@ const ShipmentAccountingCostsPage = ({ shipment, containers, onBack }) => {
       )}
 
       {histOpen && <CostLineHistoryModal shipmentId={shipment.id} onClose={() => setHistOpen(false)} />}
+
+      {actualizeLine && (
+        <CostLineActualizeModal line={actualizeLine} onClose={() => setActualizeLine(null)} onSave={handleActualize} />
+      )}
+
+      {confirmPost && (
+        <ConfirmModal
+          message={`Post this ${confirmPost.chargeCode} line? Posted lines are locked — any correction after this needs a new adjusting line, not an edit.`}
+          onConfirm={handlePost}
+          onCancel={() => setConfirmPost(null)} />
+      )}
 
       {confirm && (
         <ConfirmModal

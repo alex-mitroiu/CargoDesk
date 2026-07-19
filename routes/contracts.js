@@ -1,7 +1,11 @@
 "use strict";
 
 module.exports = function contractsRoutes(app, ctx) {
-  const { db, ok, err, uid, mapContract, mapLeg, mapRate, logEntityEvent, toUsd, findMatchingContractLeg } = ctx;
+  const { db, ok, err, uid, requireRole, mapContract, mapLeg, mapRate, logEntityEvent, toUsd, findMatchingContractLeg } = ctx;
+
+  // Contracts are full-CRUD for trade_manager alongside admin/operator — previously these
+  // write routes had no role gate at all (any authenticated user, including viewer, could write).
+  const write = requireRole(["admin", "operator", "trade_manager"]);
 
   function saveLegs(contractId, legs) {
     db.prepare("DELETE FROM contract_legs WHERE contract_id=?").run(contractId);
@@ -166,7 +170,7 @@ module.exports = function contractsRoutes(app, ctx) {
     ok(res, { ...mapContract(c), legs: legs.map(mapLeg), rates: rates.map(mapRate) });
   });
 
-  app.post("/api/contracts", async (req, res) => {
+  app.post("/api/contracts", write, async (req, res) => {
     const { contractNumber="", contractRef="", carrierCode="", namedAccountId="", namedAccount="",
             movementType="FCL", containerTypes=[], dgAllowed=false, imdgClasses=[],
             validFrom="", validTo="", currency="USD", status="Active", notes="",
@@ -190,7 +194,7 @@ module.exports = function contractsRoutes(app, ctx) {
     ok(res, { ...mapContract(c), legs: lgs.map(mapLeg), rates: rts.map(mapRate) }, 201);
   });
 
-  app.put("/api/contracts/:id", async (req, res) => {
+  app.put("/api/contracts/:id", write, async (req, res) => {
     const { contractNumber="", contractRef="", carrierCode="", namedAccountId="", namedAccount="",
             movementType="FCL", containerTypes=[], dgAllowed=false, imdgClasses=[],
             validFrom="", validTo="", currency="USD", status="Active", notes="",
@@ -214,7 +218,7 @@ module.exports = function contractsRoutes(app, ctx) {
     ok(res, { ...mapContract(c), legs: lgs.map(mapLeg), rates: rts.map(mapRate) });
   });
 
-  app.delete("/api/contracts/:id", (req, res) => {
+  app.delete("/api/contracts/:id", write, (req, res) => {
     const existing = db.prepare("SELECT * FROM contracts WHERE id=?").get(req.params.id);
     const info = db.prepare("DELETE FROM contracts WHERE id=?").run(req.params.id);
     if (info.changes === 0) return err(res, "Not found", 404);

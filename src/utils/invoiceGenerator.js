@@ -139,6 +139,96 @@ export const buildFreightInvoiceHtml = ({ shipment: sh, invNumber, invDate, note
   return _invShell(`Freight Invoice — ${displayNumber}`, invType, displayNumber, invDate, body);
 };
 
+// Builds the produced "Loading Plan" (LP01) / "Unloading Plan" (UP01) document from the
+// per-container structured data (Epic TKT-TBS7QD / TKT-X3SA2E, reused for Unloading — same
+// per-container date/time-plan shape for both directions) — one row per container with its
+// planned date, merged against the shipment's current container list so a container with no
+// plan line yet still shows (blank date) rather than being silently omitted. Lives here (not
+// App.jsx) for the same reason buildFreightInvoiceHtml does — the dedicated Loading/Unloading
+// Service page (src/pages/LoadingServicePage.jsx) needs to call it too, and App.jsx imports
+// that page, so a circular import isn't possible the other way around. Usable both from that
+// dedicated page (passes real loadingPlanLines) and the generic Documents "⚡ Generate" picker
+// in App.jsx (passes containers only — blank dates, a starting template).
+export const buildLoadingPlanHtml = ({ shipment: sh, invNumber, invDate, notes, side = "Export", planLabel = "Loading Plan", containers = [], loadingPlanLines = [] }) => {
+  const lineByContainer = Object.fromEntries(loadingPlanLines.map(l => [l.containerId, l]));
+  const sortedContainers = [...containers].sort((a, b) => {
+    const la = lineByContainer[a.id], lb = lineByContainer[b.id];
+    const sa = la?.sequenceOrder ?? 0, sb = lb?.sequenceOrder ?? 0;
+    return sa - sb || String(a.containerNumber || "").localeCompare(String(b.containerNumber || ""));
+  });
+
+  const rows = sortedContainers.length === 0
+    ? `<tr><td colspan="5" style="text-align:center;color:#9ca3af;padding:16px">No containers recorded</td></tr>`
+    : sortedContainers.map(c => {
+        const line = lineByContainer[c.id];
+        // plannedDate is "YYYY-MM-DDTHH:mm" (date + time, see DatePicker's withTime) — older
+        // date-only values ("YYYY-MM-DD", 10 chars) still render fine, just with no time shown.
+        const dateCell = line?.plannedDate
+          ? (line.plannedDate.length > 10
+              ? new Date(line.plannedDate).toLocaleString("en-GB", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })
+              : new Date(line.plannedDate + "T00:00:00").toLocaleDateString("en-GB"))
+          : `<span style="color:#dc2626">Not yet planned</span>`;
+        return `<tr>
+          <td><span class="code">${_esc(c.containerNumber || "TBC")}</span></td>
+          <td>${_esc(c.size)}ft ${_esc(c.type)}</td>
+          <td class="num">${line?.sequenceOrder ?? "—"}</td>
+          <td>${dateCell}</td>
+          <td>${_esc(line?.notes || "—")}</td>
+        </tr>`;
+      }).join("");
+
+  const detailItems = [
+    ["Shipment ID", sh.id],
+    ["Carrier", _esc(sh.carrierCode || "—")],
+    ["Vessel / Voyage", [sh.vessel, sh.voyage].filter(Boolean).map(_esc).join(" / ") || "—"],
+    ["Origin (POL)", `${_esc(sh.pol)}${sh.polName ? " · " + _esc(sh.polName) : ""}`],
+    ["Destination (POD)", `${_esc(sh.pod)}${sh.podName ? " · " + _esc(sh.podName) : ""}`],
+    ["ETD", sh.etd ? new Date(sh.etd).toLocaleDateString("en-GB") : "—"],
+  ].map(([k, v]) => `<div><div class="detail-key">${k}</div><div class="detail-val">${v}</div></div>`).join("");
+
+  const body = `
+    <div class="shp-block"><div class="block-label">${_esc(side)} ${_esc(planLabel.replace(" Plan", ""))} — Shipment Reference</div>
+      <div class="details-grid">${detailItems}</div>
+    </div>
+    <div class="section-label">Container ${_esc(planLabel)}</div>
+    <table><thead><tr>
+      <th>Container #</th><th>Type</th><th style="text-align:right">Sequence</th><th>Planned Date & Time</th><th>Notes</th>
+    </tr></thead><tbody>${rows}</tbody></table>
+    ${notes ? `<div class="notes"><div class="notes-label">Notes</div><div class="notes-text">${_esc(notes)}</div></div>` : ""}`;
+
+  return _invShell(`${planLabel} — ${invNumber}`, planLabel.toUpperCase(), invNumber, invDate, body);
+};
+
+// Generic produced document for every ordered service type without a bespoke page (i.e.
+// everything except Loading/Unloading — see BESPOKE_SERVICE_TYPES in shipmentServicePages.js).
+// Deliberately not tailored per type: a vendor/status/dates recap plus whatever free-text
+// detail was entered on GenericServicePage.jsx's Details field (the same shipment_services.notes
+// column ServicesPanel shows, just with more room to write). Saved under the catch-all "OT"
+// (Other) doc type rather than inventing a new tracked type per service type, which would
+// either collide across services sharing one global doc-type slot or require statically
+// pre-registering many more rows on every shipment's Documents page regardless of relevance.
+export const buildGenericServiceDocHtml = ({ shipment: sh, invNumber, invDate, side, serviceType, service }) => {
+  const detailItems = [
+    ["Shipment ID", sh.id],
+    ["Service", `${_esc(side)} · ${_esc(serviceType)}`],
+    ["Vendor", _esc(service?.vendorName || "—")],
+    ["Status", _esc(service?.status || "—")],
+    ["Requested Date", _esc(service?.requestedDate || "—")],
+    ["Confirmed Date", _esc(service?.confirmedDate || "—")],
+    ["Completed Date", _esc(service?.completedDate || "—")],
+  ].map(([k, v]) => `<div><div class="detail-key">${k}</div><div class="detail-val">${v}</div></div>`).join("");
+
+  const body = `
+    <div class="shp-block"><div class="block-label">Service Summary</div>
+      <div class="details-grid">${detailItems}</div>
+    </div>
+    ${service?.notes ? `<div class="notes"><div class="notes-label">Details</div><div class="notes-text">${_esc(service.notes)}</div></div>`
+      : `<div style="background:#f9fafb;border:2px dashed #d1d5db;border-radius:8px;padding:40px;text-align:center;color:#9ca3af;font-size:12px">No details entered yet</div>`}`;
+
+  const label = `${side} · ${serviceType} Service`;
+  return _invShell(`${label} — ${invNumber}`, label.toUpperCase(), invNumber, invDate, body);
+};
+
 // Resolves which currency to use for the grand total when a generated invoice's charge
 // lines span multiple currencies. Reads the shipment's Principal customer profile — falls
 // back to USD (flagged via isFallback) when no Principal is set, since there's nothing to
@@ -165,7 +255,32 @@ export async function resolveInvoiceCurrency(shipment) {
 // resolveInvoiceCurrency() and fxRates via api.fx.rates() before calling this, since the
 // caller is expected to confirm the conversion with the user first when it applies.
 export async function generateInvoices(shipment, { containers = [], costLines, splitPerContainer = false, targetCurrency = "USD", fxRates = {} }) {
-  const sellLines         = costLines.filter(cl => cl.type === "SELL");
+  // Automated charge-code registry (TKT-OK5H34): when splitting per container, any active
+  // charge-code definition whose trigger is 'per_container_split' gets auto-injected as a
+  // SELL cost line for every container that doesn't already have one from that definition —
+  // e.g. a $10/container "Containerized Invoicing" fee. This runs before sellLines/targets
+  // are computed below so a container whose only charge is the automated one still gets its
+  // own invoice, matching "5 containers -> 5 invoices" even with no manual lines tagged yet.
+  let workingLines = costLines;
+  if (splitPerContainer && containers.length > 0) {
+    const defs = await api.chargeCodes.list().catch(() => []);
+    const triggered = defs.filter(d => d.isActive && d.trigger === "per_container_split");
+    for (const def of triggered) {
+      for (const container of containers) {
+        const already = workingLines.some(cl => cl.type === "SELL" && cl.containerId === container.id
+          && cl.source === "automated" && cl.chargeCode === def.label);
+        if (already) continue;
+        const created = await api.costLines.create(shipment.id, {
+          type: "SELL", chargeCode: def.label, currency: def.currency,
+          amount: def.amount, exchangeRate: 1, vatRate: 0, notes: "",
+          containerId: container.id, source: "automated",
+        });
+        workingLines = [...workingLines, created];
+      }
+    }
+  }
+
+  const sellLines         = workingLines.filter(cl => cl.type === "SELL");
   const responsibleParty  = shipment.principalName || shipment.consigneeName || "";
   const now               = new Date();
   const invDate           = now.toISOString().slice(0, 10);

@@ -2,11 +2,11 @@
 
 module.exports = function shipmentsRoutes(app, ctx) {
   const { db, ok, err, uid, auth, requireRole,
-          mapShipment, mapShipmentLeg, mapContainer, mapContainerEvent, mapAllocation,
+          mapShipment, mapShipmentLeg, mapContainer, mapContainerEvent, mapContainerPackage, mapAllocation,
           applyShipmentAccessFilter, syncShipmentFromLegs, importContractRates,
           broadcastMessage, recomputeSpaceBadge, screenShipmentById,
-          logEvent, TRACKED_FIELDS, TRACKED_CTR_FIELDS, FREE_TIME_WARNING_DAYS,
-          sanctionsMap } = ctx;
+          logEvent, logEntityEvent, TRACKED_FIELDS, TRACKED_CTR_FIELDS, FREE_TIME_WARNING_DAYS,
+          sanctionsMap, autoCompleteMilestone } = ctx;
 
   // trade_manager and viewer are read-only on all shipment write operations
   const shipmentWrite = requireRole(["admin", "operator", "occ_bk"]);
@@ -271,10 +271,37 @@ module.exports = function shipmentsRoutes(app, ctx) {
             placeOfReceipt = "", placeOfDelivery = "", cargoReadyDate = null,
             notifyId = "", notifyName = "",
             declaredValue = null, declaredValueCurrency = "USD",
-            emoOfficeId = null, imoOfficeId = null, controllingOfficeId = null } = req.body;
+            emoOfficeId = null, imoOfficeId = null, controllingOfficeId = null,
+            contractValidFrom = "", contractValidTo = "" } = req.body;
     const polU = pol.toUpperCase(), podU = pod.toUpperCase();
     const existing = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
     if (!existing) return err(res, "Not found", 404);
+
+    // CRD-vs-ETD guard: cargo can't be ready after the vessel has already sailed, so a Cargo
+    // Ready Date edit that now falls after ETD invalidates whatever schedule/contract was
+    // already booked against the old CRD. Only acts when there's actually something booked —
+    // a plain CRD/ETD mismatch on a shipment with no contract/schedule yet isn't this rule's
+    // concern. contractType is deliberately left as-is (see CLAUDE.md-adjacent plan notes) —
+    // this lands on the same "contract type set, no ref yet" empty state already handled by
+    // ShipmentSchedulesPage.jsx for a fresh shipment.
+    let effContractId = contractId, effContractRef = contractRef, effAllocationId = allocationId;
+    let effStatus = status;
+    let scheduleDropped = false;
+    const existingSchedules = db.prepare("SELECT * FROM shipment_schedules WHERE shipment_id=?").all(req.params.id);
+    if (cargoReadyDate && etd && cargoReadyDate > etd && (contractId || existingSchedules.length > 0)) {
+      effContractId = ""; effContractRef = ""; effAllocationId = "";
+      effStatus = "Requires Review";
+      scheduleDropped = true;
+      const actor = req.user?.name || req.user?.email || "";
+      for (const s of existingSchedules) {
+        db.prepare("DELETE FROM shipment_schedules WHERE id=?").run(s.id);
+        logEntityEvent('schedule', s.id, 'REMOVED', null, null, null,
+          JSON.stringify({ shipmentId: req.params.id, carrier: s.carrier, vesselName: s.vessel_name,
+            voyageNumber: s.voyage_number, service: s.service, pol: s.pol, pod: s.pod,
+            actor, reason: 'CRD updated past ETD' }));
+      }
+    }
+
     const info = db.prepare(`
       UPDATE shipments SET pol=?, pod=?, carrier_code=?, contract_type=?, contract_notes=?, status=?,
       etd=?, eta=?, booking_ref=?, bl_number=?, vessel=?, voyage=?, incoterm=?, vessel_imo=?, contract_id=?, contract_ref=?, commodity_code=?,
@@ -283,13 +310,14 @@ module.exports = function shipmentsRoutes(app, ctx) {
       freight_terms=?, movement_type=?, service_type=?, place_of_receipt=?, place_of_delivery=?,
       cargo_ready_date=?, notify_id=?, notify_name=?,
       declared_value=?, declared_value_currency=?,
-      emo_office_id=?, imo_office_id=?, controlling_office_id=? WHERE id=?
-    `).run(polU, podU, carrierCode, contractType, contractNotes, status, etd, eta, bookingRef, blNumber, vessel, voyage, incoterm, vesselImo, contractId, contractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, allocationId, spaceSkipReason, spaceOverageReason, freightTerms, movementType, serviceType, placeOfReceipt, placeOfDelivery, cargoReadyDate || null, notifyId, notifyName, (declaredValue !== null && declaredValue !== undefined && String(declaredValue).trim() !== '') ? Number(declaredValue) : null, declaredValueCurrency || "USD", emoOfficeId || null, imoOfficeId || null, controllingOfficeId || null, req.params.id);
+      emo_office_id=?, imo_office_id=?, controlling_office_id=?,
+      contract_valid_from=?, contract_valid_to=? WHERE id=?
+    `).run(polU, podU, carrierCode, contractType, contractNotes, effStatus, etd, eta, bookingRef, blNumber, vessel, voyage, incoterm, vesselImo, effContractId, effContractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, effAllocationId, spaceSkipReason, spaceOverageReason, freightTerms, movementType, serviceType, placeOfReceipt, placeOfDelivery, cargoReadyDate || null, notifyId, notifyName, (declaredValue !== null && declaredValue !== undefined && String(declaredValue).trim() !== '') ? Number(declaredValue) : null, declaredValueCurrency || "USD", emoOfficeId || null, imoOfficeId || null, controllingOfficeId || null, contractValidFrom || null, contractValidTo || null, req.params.id);
     if (info.changes === 0) return err(res, "Not found", 404);
-    const newVals = { pol: polU, pod: podU, status, etd, eta, carrier_code: carrierCode,
+    const newVals = { pol: polU, pod: podU, status: effStatus, etd, eta, carrier_code: carrierCode,
       vessel, vessel_imo: vesselImo, voyage, incoterm, commodity_code: commodityCode,
       booking_ref: bookingRef, bl_number: blNumber, contract_type: contractType,
-      contract_id: contractId, contract_ref: contractRef, allocation_id: allocationId };
+      contract_id: effContractId, contract_ref: effContractRef, allocation_id: effAllocationId };
     for (const [col] of Object.entries(TRACKED_FIELDS)) {
       const o = String(existing[col] || ''), n = String(newVals[col] || '');
       if (o !== n) {
@@ -305,9 +333,9 @@ module.exports = function shipmentsRoutes(app, ctx) {
       logEvent(req.params.id, 'SPACE_OVERAGE', 'space_overage_reason', null, spaceOverageReason,
         JSON.stringify({ allocationId }));
     }
-    if (existing.status !== status) {
+    if (existing.status !== effStatus) {
       db.prepare("INSERT INTO status_log (id,shipment_id,from_status,to_status,changed_at,changed_by) VALUES (?,?,?,?,?,?)")
-        .run(`SL-${uid()}`, req.params.id, existing.status, status, new Date().toISOString(), "user");
+        .run(`SL-${uid()}`, req.params.id, existing.status, effStatus, new Date().toISOString(), "user");
     }
     const updated = db.prepare(`
       SELECT s.*, p1.name AS pol_name, p2.name AS pod_name,
@@ -334,7 +362,8 @@ module.exports = function shipmentsRoutes(app, ctx) {
         || existing.pod            !== podU;
       if (!isOverridden && partyOrRouteChanged) silentScreening = screenShipmentById(req.params.id);
     }
-    ok(res, silentScreening ? { ...mapShipment(updated), screening: silentScreening } : mapShipment(updated));
+    const body = mapShipment(updated);
+    ok(res, { ...body, ...(silentScreening ? { screening: silentScreening } : {}), ...(scheduleDropped ? { scheduleDropped: true } : {}) });
   });
 
   app.delete("/api/shipments/:id", shipmentWrite, (req, res) => {
@@ -417,6 +446,17 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const evRows = db.prepare("SELECT container_id, event_type, location, occurred_at FROM container_events WHERE container_id=? ORDER BY occurred_at ASC").all(req.params.id);
     const g = groupContainerEvents(evRows)[req.params.id] || { byType: {}, latest: null };
     recomputeSpaceBadge(oldCtr.shipment_id);
+
+    // TKT-OZD4V8: VGM is declared alongside Shipping Instructions in real booking
+    // workflows — once every container on the shipment has VGM Submitted, treat that
+    // as the si_submitted milestone step firing, rather than a separate untracked step.
+    if (oldCtr.vgm_status !== 'Submitted' && vgmStatus === 'Submitted') {
+      const allCtrs = db.prepare("SELECT vgm_status FROM containers WHERE shipment_id=?").all(oldCtr.shipment_id);
+      if (allCtrs.length > 0 && allCtrs.every(c => c.vgm_status === 'Submitted')) {
+        autoCompleteMilestone(oldCtr.shipment_id, 'si_submitted',
+          `Auto-completed — VGM submitted for all ${allCtrs.length} container(s)`);
+      }
+    }
     ok(res, { ...mapContainer(row), ...deriveFreeTime(row, g.byType, g.latest) });
   });
 
@@ -457,6 +497,20 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const event = mapContainerEvent(db.prepare("SELECT * FROM container_events WHERE id=?").get(id));
     logEvent(ctr.shipment_id, 'CONTAINER_EVENT_ADDED', null, null, `${eventType} — ${ctr.container_number}`,
       JSON.stringify({ containerId: req.params.id, eventType, occurredAt }));
+
+    // TKT-OZD4V8: once every container on the shipment has logged the same lifecycle
+    // event, that's the real-world signal the corresponding milestone step represents —
+    // Gate In (origin) -> cargo_gated_in, Gate Out (destination) -> cargo_released.
+    const MILESTONE_BY_EVENT = { 'Gate In': 'cargo_gated_in', 'Gate Out': 'cargo_released' };
+    const milestoneKey = MILESTONE_BY_EVENT[eventType];
+    if (milestoneKey) {
+      const allCtrs = db.prepare("SELECT id FROM containers WHERE shipment_id=?").all(ctr.shipment_id);
+      const withEvent = db.prepare("SELECT DISTINCT container_id FROM container_events WHERE shipment_id=? AND event_type=?").all(ctr.shipment_id, eventType);
+      if (allCtrs.length > 0 && withEvent.length >= allCtrs.length) {
+        autoCompleteMilestone(ctr.shipment_id, milestoneKey,
+          `Auto-completed — all ${allCtrs.length} container(s) logged "${eventType}"`);
+      }
+    }
     ok(res, event, 201);
   });
 
@@ -465,6 +519,63 @@ module.exports = function shipmentsRoutes(app, ctx) {
     if (!ev) return err(res, "Not found", 404);
     db.prepare("DELETE FROM container_events WHERE id=?").run(req.params.id);
     ok(res, { deleted: req.params.id });
+  });
+
+  // ─── Container cargo manifest: pallet/box sub-level breakdown (TKT-EMFIBR) ─
+  // Self-referencing tree, arbitrary depth. Returned as a flat list ordered by
+  // position — the client builds the tree from parentId itself (same idiom as
+  // Kanban's parent_id ticket nesting).
+
+  app.get("/api/containers/:id/packages", auth(), (req, res) => {
+    const rows = db.prepare("SELECT * FROM container_packages WHERE container_id=? ORDER BY position ASC, created_at ASC").all(req.params.id);
+    ok(res, rows.map(mapContainerPackage));
+  });
+
+  app.post("/api/containers/:id/packages", shipmentWrite, (req, res) => {
+    const { parentId = null, description, quantity = 1 } = req.body || {};
+    if (!description || !description.trim()) return err(res, "description required");
+    const qty = parseInt(quantity, 10);
+    if (!Number.isFinite(qty) || qty < 1) return err(res, "quantity must be a positive integer");
+    const ctr = db.prepare("SELECT id FROM containers WHERE id=?").get(req.params.id);
+    if (!ctr) return err(res, "Container not found", 404);
+    if (parentId) {
+      const parent = db.prepare("SELECT id FROM container_packages WHERE id=? AND container_id=?").get(parentId, req.params.id);
+      if (!parent) return err(res, "Parent package not found on this container", 404);
+    }
+    const siblingCount = db.prepare("SELECT COUNT(*) AS n FROM container_packages WHERE container_id=? AND parent_id IS ?").get(req.params.id, parentId).n;
+    const id = `PKG-${uid()}`;
+    const now = new Date().toISOString();
+    db.prepare(`INSERT INTO container_packages (id, container_id, parent_id, description, quantity, position, created_at)
+      VALUES (?,?,?,?,?,?,?)`)
+      .run(id, req.params.id, parentId, description.trim(), qty, siblingCount, now);
+    ok(res, mapContainerPackage(db.prepare("SELECT * FROM container_packages WHERE id=?").get(id)), 201);
+  });
+
+  app.put("/api/container-packages/:id", shipmentWrite, (req, res) => {
+    const existing = db.prepare("SELECT * FROM container_packages WHERE id=?").get(req.params.id);
+    if (!existing) return err(res, "Not found", 404);
+    const { description, quantity } = req.body || {};
+    if (!description || !description.trim()) return err(res, "description required");
+    const qty = parseInt(quantity, 10);
+    if (!Number.isFinite(qty) || qty < 1) return err(res, "quantity must be a positive integer");
+    db.prepare("UPDATE container_packages SET description=?, quantity=? WHERE id=?")
+      .run(description.trim(), qty, req.params.id);
+    ok(res, mapContainerPackage({ ...existing, description: description.trim(), quantity: qty }));
+  });
+
+  // Deletes the package and its entire sub-tree (a package with children removed on
+  // its own would otherwise orphan them with a dangling parent_id).
+  app.delete("/api/container-packages/:id", shipmentWrite, (req, res) => {
+    const existing = db.prepare("SELECT * FROM container_packages WHERE id=?").get(req.params.id);
+    if (!existing) return err(res, "Not found", 404);
+    const toDelete = [req.params.id];
+    for (let i = 0; i < toDelete.length; i++) {
+      const children = db.prepare("SELECT id FROM container_packages WHERE parent_id=?").all(toDelete[i]);
+      toDelete.push(...children.map(c => c.id));
+    }
+    const placeholders = toDelete.map(() => '?').join(',');
+    db.prepare(`DELETE FROM container_packages WHERE id IN (${placeholders})`).run(...toDelete);
+    ok(res, { deleted: toDelete });
   });
 
   // ─── Shipment Messages ────────────────────────────────────────────────────

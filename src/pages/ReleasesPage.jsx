@@ -69,8 +69,8 @@ const VersionModal = ({ init, projectId, onSave, onCancel }) => {
     try {
       const payload = { ...f, name: f.name.trim(), releaseDate: f.releaseDate || null };
       const saved = init?.id
-        ? await api.versions.update(init.id, payload)
-        : await api.versions.create(projectId, payload);
+        ? await api.kbVersions.update(init.id, payload)
+        : await api.kbVersions.create(projectId, payload);
       onSave(saved);
     } catch { toast.error("Failed to save version"); }
     finally { setSaving(false); }
@@ -196,7 +196,7 @@ export default function ReleasesPage() {
     setLoading(true);
     try {
       const [vers, tix] = await Promise.all([
-        api.versions.list(pid),
+        api.kbVersions.list(pid),
         api.tickets.list({ projectId: pid }),
       ]);
       setVersions(vers);
@@ -212,7 +212,7 @@ export default function ReleasesPage() {
   useEffect(() => {
     (async () => {
       try {
-        const projs = await api.projects.list();
+        const projs = await api.kbProjects.list();
         setProjects(projs);
         if (projs.length) {
           setProjId(projs[0].id);
@@ -244,7 +244,7 @@ export default function ReleasesPage() {
   const handleDelete = async (ver) => {
     if (!window.confirm(`Delete version "${ver.name}"? Tickets will become unversioned.`)) return;
     try {
-      await api.versions.remove(ver.id);
+      await api.kbVersions.remove(ver.id);
       const next = versions.filter(v => v.id !== ver.id);
       setVersions(next);
       setSelVer(next[0] || null);

@@ -6,7 +6,7 @@ import { PartiesOfficesPanel } from "./ShipmentDetailPage";
 
 const ShipmentPartiesPage = ({ shipment, onBack, onUpdate }) => {
   return (
-    <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+    <div id="shpparties-page" style={{ maxWidth: 1100, margin: "0 auto" }}>
       <PartiesOfficesPanel shipment={shipment} onUpdate={onUpdate} />
     </div>
   );

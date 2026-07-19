@@ -63,7 +63,7 @@ const CommodityForm = ({ init = {}, onSave, onCancel }) => {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 const MdmCommoditiesPage = () => {
-  const { canManageConfigs } = useAuth();
+  const { canManageMdm } = useAuth();
   const [results, setResults] = useState([]);
   const [total,   setTotal]   = useState(0);
   const [offset,  setOffset]  = useState(0);
@@ -113,7 +113,7 @@ const MdmCommoditiesPage = () => {
             {total.toLocaleString()} Maersk commodity codes · source: lista-de-commodities-y-grado-de-unidad
           </p>
         </div>
-        {canManageConfigs && <Btn onClick={() => setModal("add")} size="lg">＋ Add Commodity</Btn>}
+        {canManageMdm && <Btn onClick={() => setModal("add")} size="lg">＋ Add Commodity</Btn>}
       </div>
 
       {/* Search + grade filter */}
@@ -157,8 +157,8 @@ const MdmCommoditiesPage = () => {
             <div style={{ display: "flex" }}><GradePill code={c.gradeCode} name={c.gradeName} /></div>
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <ActionMenu items={[
-                ...(canManageConfigs ? [{ icon: "✎", label: "Edit",   onClick: () => setModal(c) }] : []),
-                ...(canManageConfigs ? [{ icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(c.code) }] : []),
+                ...(canManageMdm ? [{ icon: "✎", label: "Edit",   onClick: () => setModal(c) }] : []),
+                ...(canManageMdm ? [{ icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(c.code) }] : []),
               ]} />
             </div>
           </div>

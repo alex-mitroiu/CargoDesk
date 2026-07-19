@@ -4,6 +4,8 @@ import { api } from "../../api";
 import { Modal } from "../primitives/Modal";
 import Btn from "../primitives/Btn";
 import { Inp, ContractTypeInput } from "../primitives/Form";
+import DatePicker from "../primitives/DatePicker";
+import CarrierCombobox from "./CarrierCombobox";
 import { ContractPickerModal, deriveHaulageNeeds } from "../../pages/ShipmentFormPage";
 
 // ─── Contract Assign Modal ──────────────────────────────────────────────────
@@ -27,6 +29,9 @@ const ContractAssignModal = ({ shipment, legs, pol, pod, onUpdate, onDone, onClo
   const [type, setType] = useState(shipment.contractType === "Central" ? "Central" : (shipment.contractType || "Central"));
   const [step, setStep] = useState(shipment.contractType === "Central" ? "contract" : "type");
   const [refVal, setRefVal] = useState(shipment.contractRef || "");
+  const [carrierVal, setCarrierVal] = useState(shipment.contractType === "Central" ? "" : (shipment.carrierCode || ""));
+  const [validFrom, setValidFrom] = useState(shipment.contractValidFrom || "");
+  const [validTo, setValidTo] = useState(shipment.contractValidTo || "");
   const [matches, setMatches] = useState(null);
   const [allocs, setAllocs] = useState(null);
 
@@ -72,7 +77,10 @@ const ContractAssignModal = ({ shipment, legs, pol, pod, onUpdate, onDone, onClo
     // search (if one follows) scopes to the route this contract actually covers, not the
     // shipment's generic SEA-leg span.
     const chain = c.matchedLegs || [];
-    const matchedRoute = chain.length > 0 ? { pol: chain[0].pol, pod: chain[chain.length - 1].pod } : null;
+    // hub/service are informational only (see SailingPickerModal's soft-match hint) — a TSP
+    // contract's specific transshipment port and vessel service, dropped by pol/pod alone.
+    const matchedRoute = chain.length > 0 ? { pol: chain[0].pol, pod: chain[chain.length - 1].pod,
+      hub: chain.length > 1 ? chain[0].pod : null, service: chain[0].vesselService || null } : null;
     finish({ contractId: c.id, contractRef: c.contractNumber, carrierCode: c.carrierCode || shipment.carrierCode,
       allocationId: "", spaceSkipReason: skipReason, spaceOverageReason: "" }, matchedRoute);
   };
@@ -82,7 +90,8 @@ const ContractAssignModal = ({ shipment, legs, pol, pod, onUpdate, onDone, onClo
       { pol: alloc.pol, pod: alloc.pod });
   };
   const saveRef = () => {
-    finish({ contractId: "", allocationId: "", contractRef: refVal });
+    finish({ contractId: "", allocationId: "", contractRef: refVal, carrierCode: carrierVal,
+      contractValidFrom: validFrom, contractValidTo: validTo });
   };
 
   if (step === "contract") {
@@ -115,6 +124,18 @@ const ContractAssignModal = ({ shipment, legs, pol, pod, onUpdate, onDone, onClo
           <>
             <Inp label="Contract Reference" value={refVal} onChange={setRefVal}
               placeholder="e.g. SPOT-2025-001" mono hint="Free-text reference for this contract arrangement" />
+            <div>
+              <div style={{ fontFamily: T.body, fontSize: 12, fontWeight: 600, color: T.textMuted, marginBottom: 6 }}>Carrier</div>
+              <CarrierCombobox value={carrierVal} onChange={setCarrierVal} />
+            </div>
+            <div style={{ display: "flex", gap: 12 }}>
+              <div style={{ flex: 1 }}>
+                <DatePicker label="Valid From" value={validFrom} onChange={setValidFrom} maxDate={validTo || undefined} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <DatePicker label="Valid To" value={validTo} onChange={setValidTo} minDate={validFrom || undefined} />
+              </div>
+            </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
               <Btn variant="secondary" onClick={onClose}>Cancel</Btn>
               <Btn onClick={saveRef}>Save</Btn>

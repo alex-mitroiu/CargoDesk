@@ -415,6 +415,20 @@ const migrations = [
   "ALTER TABLE shipment_cost_lines ADD COLUMN container_id TEXT DEFAULT ''",
   "ALTER TABLE shipment_cost_lines ADD COLUMN source TEXT DEFAULT 'manual'",
   "ALTER TABLE shipment_cost_lines ADD COLUMN modified_at TEXT",
+  // Accrual/posting state machine + GP variance (TKT-83O41G, TKT-6QT30S phase 2).
+  // accrued (default) = the estimate, recognized before any real invoice exists.
+  // actualized = the real AP/AR invoice has come in — actual_amount/actual_exchange_rate
+  // are kept SEPARATE from amount/exchange_rate (the original accrual) so variance =
+  // actual - accrued stays computable rather than overwriting the estimate silently.
+  // posted = pushed to GL via an explicit admin/operator-only action; a posted line is
+  // locked (PUT/DELETE reject it) — any correction is a new adjusting line, never a rewrite.
+  "ALTER TABLE shipment_cost_lines ADD COLUMN status TEXT DEFAULT 'accrued'",
+  "ALTER TABLE shipment_cost_lines ADD COLUMN actual_amount REAL DEFAULT NULL",
+  "ALTER TABLE shipment_cost_lines ADD COLUMN actual_exchange_rate REAL DEFAULT NULL",
+  "ALTER TABLE shipment_cost_lines ADD COLUMN actualized_at TEXT DEFAULT NULL",
+  "ALTER TABLE shipment_cost_lines ADD COLUMN actualized_by TEXT DEFAULT ''",
+  "ALTER TABLE shipment_cost_lines ADD COLUMN posted_at TEXT DEFAULT NULL",
+  "ALTER TABLE shipment_cost_lines ADD COLUMN posted_by TEXT DEFAULT ''",
   `CREATE TABLE IF NOT EXISTS shipment_services (
     id             TEXT PRIMARY KEY,
     shipment_id    TEXT NOT NULL,
@@ -767,6 +781,60 @@ const migrations = [
   // Customer's main currency — used to resolve a single grand total on a generated invoice
   // when its charge lines span multiple currencies, instead of showing several totals.
   "ALTER TABLE customers ADD COLUMN currency TEXT DEFAULT 'USD'",
+  // Manual contract types (SPOT/Pending/Customer Own) — validity window, TKT-UONN72
+  "ALTER TABLE shipments ADD COLUMN contract_valid_from TEXT DEFAULT NULL",
+  "ALTER TABLE shipments ADD COLUMN contract_valid_to   TEXT DEFAULT NULL",
+  // Loading Service dedicated page (Epic TKT-TBS7QD, Story TKT-TR6OBR) — one row per
+  // container per service, the carrier's planned loading date reduced to structured
+  // data. Keyed by (service_id, container_id) rather than a synthetic id since a
+  // container only ever has one plan line per service.
+  `CREATE TABLE IF NOT EXISTS shipment_loading_plan_lines (
+    service_id     TEXT NOT NULL,
+    container_id   TEXT NOT NULL,
+    planned_date   TEXT DEFAULT '',
+    sequence_order INTEGER DEFAULT 0,
+    notes          TEXT DEFAULT '',
+    created_at     TEXT NOT NULL,
+    updated_at     TEXT,
+    PRIMARY KEY (service_id, container_id)
+  )`,
+  // Automated charge-code registry (TKT-OK5H34) — admin-maintained definitions that get
+  // auto-injected as SELL cost lines when their trigger fires. Only trigger today is
+  // 'per_container_split' (fired from generateInvoices() when splitting an invoice per
+  // container), but the column exists so more triggers can be added later without a
+  // schema change.
+  `CREATE TABLE IF NOT EXISTS charge_code_definitions (
+    id         TEXT PRIMARY KEY,
+    code       TEXT NOT NULL,
+    label      TEXT NOT NULL,
+    trigger    TEXT NOT NULL DEFAULT 'per_container_split',
+    amount     REAL NOT NULL DEFAULT 0,
+    currency   TEXT NOT NULL DEFAULT 'USD',
+    unit       TEXT NOT NULL DEFAULT 'per_container',
+    is_active  INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL
+  )`,
+  // source='automated' — cost lines auto-injected by a charge-code-definition trigger,
+  // distinct from 'manual'/'contract'/'mirror'. Column already exists (TEXT, no enum), this
+  // is just documenting the new value it can hold.
+  // Carrier Payment Indicator (CPI) — per cost-line, not per-shipment, since a shipment
+  // can mix Prepaid and Collect charges (TKT-OZD4V8, decision confirmed with user).
+  "ALTER TABLE shipment_cost_lines ADD COLUMN payment_indicator TEXT DEFAULT 'Prepaid'",
+  // Container cargo manifest: pallet/box sub-level breakdown (TKT-EMFIBR). Self-referencing
+  // so nesting depth is arbitrary (not a fixed Pallet->Box model, per the 2026-07-17 scoping
+  // decision) — container_id is denormalized onto every row (not just roots) so the whole
+  // tree for a container is one flat query; parent_id=NULL marks a top-level package.
+  // Independent of containers.cargo_description/gross_weight_kg/volume_cbm, which remain
+  // the source of truth elsewhere in the app — this is a supplementary detail view only.
+  `CREATE TABLE IF NOT EXISTS container_packages (
+    id           TEXT PRIMARY KEY,
+    container_id TEXT NOT NULL,
+    parent_id    TEXT DEFAULT NULL,
+    description  TEXT NOT NULL,
+    quantity     INTEGER NOT NULL DEFAULT 1,
+    position     INTEGER NOT NULL DEFAULT 0,
+    created_at   TEXT NOT NULL
+  )`,
 ];
 
 for (const sql of migrations) {
@@ -1416,7 +1484,7 @@ function longestLane(un) {
   const s = portLanesMap[un]; if (!s || !s.size) return ''; return [...s].sort((a, b) => b.length - a.length)[0];
 }
 
-const mapShipment     = r => { const polLane = longestLane(r.pol), podLane = longestLane(r.pod); return { id: r.id, pol: r.pol, polName: r.pol_name || '', pod: r.pod, podName: r.pod_name || '', carrierCode: r.carrier_code, contractType: r.contract_type, contractNotes: r.contract_notes || '', status: r.status, createdAt: r.created_at, etd: r.etd || '', eta: r.eta || '', bookingRef: r.booking_ref || '', blNumber: r.bl_number || '', vessel: r.vessel || '', voyage: r.voyage || '', incoterm: r.incoterm || '', vesselImo: r.vessel_imo || '', contractId: r.contract_id || '', contractRef: r.contract_ref || '', commodityCode: r.commodity_code || '', shipperId: r.shipper_id || '', shipperName: r.shipper_name || '', consigneeId: r.consignee_id || '', consigneeName: r.consignee_name || '', principalId: r.principal_id || '', principalName: r.principal_name || '', allocationId: r.allocation_id || '', spaceSkipReason: r.space_skip_reason || '', spaceOverageReason: r.space_overage_reason || '', spaceBadge: r.space_badge || '', marginBuyUsd: r.margin_buy_usd ?? null, marginSellUsd: r.margin_sell_usd ?? null, overdueCount: r.overdue_count ?? 0, freightTerms: r.freight_terms || 'Prepaid', movementType: r.movement_type || 'FCL', serviceType: r.service_type || 'Port-to-Port', placeOfReceipt: r.place_of_receipt || '', placeOfDelivery: r.place_of_delivery || '', cargoReadyDate: r.cargo_ready_date || null, notifyId: r.notify_id || '', notifyName: r.notify_name || '', declaredValue: r.declared_value ?? null, declaredValueCurrency: r.declared_value_currency || 'USD', routingTerm: r.routing_term || (SVC_ABBR[r.service_type] || 'P2P'), tradeLane: polLane && podLane ? polLane + ' → ' + podLane : '', emoOfficeId: r.emo_office_id || null, emoOfficeCode: r.emo_office_code || '', emoOfficeName: r.emo_office_name || '', imoOfficeId: r.imo_office_id || null, imoOfficeCode: r.imo_office_code || '', imoOfficeName: r.imo_office_name || '', controllingOfficeId: r.controlling_office_id || null, controllingOfficeCode: r.controlling_office_code || '', controllingOfficeName: r.controlling_office_name || '' }; };
+const mapShipment     = r => { const polLane = longestLane(r.pol), podLane = longestLane(r.pod); return { id: r.id, pol: r.pol, polName: r.pol_name || '', pod: r.pod, podName: r.pod_name || '', carrierCode: r.carrier_code, contractType: r.contract_type, contractNotes: r.contract_notes || '', status: r.status, createdAt: r.created_at, etd: r.etd || '', eta: r.eta || '', bookingRef: r.booking_ref || '', blNumber: r.bl_number || '', vessel: r.vessel || '', voyage: r.voyage || '', incoterm: r.incoterm || '', vesselImo: r.vessel_imo || '', contractId: r.contract_id || '', contractRef: r.contract_ref || '', commodityCode: r.commodity_code || '', shipperId: r.shipper_id || '', shipperName: r.shipper_name || '', consigneeId: r.consignee_id || '', consigneeName: r.consignee_name || '', principalId: r.principal_id || '', principalName: r.principal_name || '', allocationId: r.allocation_id || '', spaceSkipReason: r.space_skip_reason || '', spaceOverageReason: r.space_overage_reason || '', spaceBadge: r.space_badge || '', marginBuyUsd: r.margin_buy_usd ?? null, marginSellUsd: r.margin_sell_usd ?? null, overdueCount: r.overdue_count ?? 0, freightTerms: r.freight_terms || 'Prepaid', movementType: r.movement_type || 'FCL', serviceType: r.service_type || 'Port-to-Port', placeOfReceipt: r.place_of_receipt || '', placeOfDelivery: r.place_of_delivery || '', cargoReadyDate: r.cargo_ready_date || null, notifyId: r.notify_id || '', notifyName: r.notify_name || '', declaredValue: r.declared_value ?? null, declaredValueCurrency: r.declared_value_currency || 'USD', routingTerm: r.routing_term || (SVC_ABBR[r.service_type] || 'P2P'), tradeLane: polLane && podLane ? polLane + ' → ' + podLane : '', emoOfficeId: r.emo_office_id || null, emoOfficeCode: r.emo_office_code || '', emoOfficeName: r.emo_office_name || '', imoOfficeId: r.imo_office_id || null, imoOfficeCode: r.imo_office_code || '', imoOfficeName: r.imo_office_name || '', controllingOfficeId: r.controlling_office_id || null, controllingOfficeCode: r.controlling_office_code || '', controllingOfficeName: r.controlling_office_name || '', contractValidFrom: r.contract_valid_from || '', contractValidTo: r.contract_valid_to || '' }; };
 const mapShipmentLeg = r => ({
   id: r.id, shipmentId: r.shipment_id, legOrder: r.leg_order,
   mot: r.mot || 'SEA',
@@ -1453,10 +1521,29 @@ const syncShipmentFromLegs = (shipmentId) => {
          seaLeg.voyage || '', routingTerm, shipmentId);
 };
 
-const mapCostLine     = r => ({ id: r.id, shipmentId: r.shipment_id, type: r.type, chargeCode: r.charge_code, currency: r.currency, amount: r.amount, exchangeRate: r.exchange_rate, amountUsd: Math.round(r.amount * r.exchange_rate * 100) / 100, vatRate: r.vat_rate || 0, vatAmountUsd: Math.round(r.amount * r.exchange_rate * (r.vat_rate || 0) / 100 * 100) / 100, notes: r.notes || '', containerId: r.container_id || '', source: r.source || 'manual', modifiedAt: r.modified_at || null, createdAt: r.created_at, rateSnapshotId: r.rate_snapshot_id || '' });
+const mapCostLine     = r => {
+  const amountUsd = Math.round(r.amount * r.exchange_rate * 100) / 100;
+  const actualAmountUsd = r.actual_amount != null
+    ? Math.round(r.actual_amount * (r.actual_exchange_rate ?? r.exchange_rate) * 100) / 100
+    : null;
+  return {
+    id: r.id, shipmentId: r.shipment_id, type: r.type, chargeCode: r.charge_code, currency: r.currency,
+    amount: r.amount, exchangeRate: r.exchange_rate, amountUsd,
+    vatRate: r.vat_rate || 0, vatAmountUsd: Math.round(r.amount * r.exchange_rate * (r.vat_rate || 0) / 100 * 100) / 100,
+    notes: r.notes || '', containerId: r.container_id || '', source: r.source || 'manual',
+    paymentIndicator: r.payment_indicator || 'Prepaid',
+    modifiedAt: r.modified_at || null, createdAt: r.created_at, rateSnapshotId: r.rate_snapshot_id || '',
+    status: r.status || 'accrued',
+    actualAmount: r.actual_amount, actualExchangeRate: r.actual_exchange_rate, actualAmountUsd,
+    actualizedAt: r.actualized_at || null, actualizedBy: r.actualized_by || '',
+    postedAt: r.posted_at || null, postedBy: r.posted_by || '',
+    varianceUsd: actualAmountUsd != null ? Math.round((actualAmountUsd - amountUsd) * 100) / 100 : null,
+  };
+};
 const mapService      = r => ({ id: r.id, shipmentId: r.shipment_id, side: r.side, serviceType: r.service_type, status: r.status, vendorId: r.vendor_id || '', vendorName: r.vendor_name || '', officeId: r.office_id || '', officeCode: r.office_code || '', officeName: r.office_name || '', requestedDate: r.requested_date || '', confirmedDate: r.confirmed_date || '', completedDate: r.completed_date || '', notes: r.notes || '', createdAt: r.created_at, createdBy: r.created_by || '' });
 const mapRateSnapshot     = r => ({ id: r.id, shipmentId: r.shipment_id, contractId: r.contract_id, generatedAt: r.generated_at, generatedBy: r.generated_by || '', reason: r.reason });
 const mapRateSnapshotLine = r => ({ id: r.id, snapshotId: r.snapshot_id, serviceCode: r.service_code || '', description: r.description || '', amount: r.amount, currency: r.currency, amountUsd: r.amount_usd, unit: r.unit || 'per_container', containerType: r.container_type || '', notes: r.notes || '' });
+const mapChargeCodeDefinition = r => ({ id: r.id, code: r.code, label: r.label, trigger: r.trigger, amount: r.amount, currency: r.currency, unit: r.unit, isActive: r.is_active === 1, createdAt: r.created_at });
 // Fixed-deadline compliance badge (VGM/CY cutoff): 'none' when unset, 'closed-ok'
 // once resolved (e.g. VGM Submitted) regardless of date, else 'ok'/'amber'/'red'
 // against CUTOFF_WARNING_DAYS. Pure function of the date + today — no DB join needed,
@@ -1475,6 +1562,7 @@ const mapContainer    = r => ({ id: r.id, shipmentId: r.shipment_id, containerNu
   cyCutoff: r.cy_cutoff || '', cyCutoffState: cutoffState(r.cy_cutoff, false),
   originFreeTimeDays: r.origin_free_time_days ?? null, destFreeTimeDays: r.dest_free_time_days ?? null });
 const mapContainerEvent = r => ({ id: r.id, containerId: r.container_id, shipmentId: r.shipment_id, eventType: r.event_type, location: r.location || '', occurredAt: r.occurred_at, recordedBy: r.recorded_by || '', notes: r.notes || '', createdAt: r.created_at });
+const mapContainerPackage = r => ({ id: r.id, containerId: r.container_id, parentId: r.parent_id || null, description: r.description, quantity: r.quantity, position: r.position, createdAt: r.created_at });
 const mapAllocation   = r => ({ id: r.id, carrierCode: r.carrier_code, allocatedTEU: r.allocated_teu, effectiveDate: r.effective_date || '', endDate: r.end_date || '', tradeLane: r.trade_lane || '', notes: r.notes || '', alertThreshold: r.alert_threshold ?? 80, pol: r.pol || '', pod: r.pod || '', originLane: r.origin_lane || '', destLane: r.dest_lane || '', coverageScope: r.coverage_scope || 'STRICT', contractId: r.contract_id || '', contractNumber: r.contract_number || '' });
 const mapCarrier      = r => ({ code: r.code, name: r.name, shortName: r.short_name || '' });
 const mapVessel       = r => ({ imo: r.imo, name: r.name, assetType: r.asset_type || '', flagIso2: r.flag_iso2 || '', flagName: r.flag_name || '', buildYear: r.build_year, grossTonnage: r.gross_tonnage });
@@ -1809,6 +1897,20 @@ const TRACKED_CTR_FIELDS = {
 const CUTOFF_WARNING_DAYS = 3;
 const FREE_TIME_WARNING_DAYS = 2;
 
+// ─── Milestone auto-completion (TKT-OZD4V8) ────────────────────────────────────
+// Wires external events (EDI booking confirmation, container Gate In/Out, VGM
+// submission) into the existing shipment_milestones lifecycle instead of requiring a
+// manual completion for things the system already knows happened. No-ops if the
+// milestone row doesn't exist yet (init hasn't run) or is already completed — a manual
+// completion (with its own note/date) is never silently overwritten by an auto one.
+const autoCompleteMilestone = (shipmentId, milestoneKey, note) => {
+  const row = db.prepare("SELECT * FROM shipment_milestones WHERE shipment_id=? AND milestone_key=?").get(shipmentId, milestoneKey);
+  if (!row || row.completed_at) return;
+  const now = new Date().toISOString();
+  db.prepare("UPDATE shipment_milestones SET completed_at=?, completed_by=?, note=? WHERE id=?")
+    .run(now, 'System (Auto)', note, row.id);
+};
+
 // ─── Allocation conflict helpers ──────────────────────────────────────────────
 
 const checkOverlap = (carrierCode, effectiveDate, endDate, pol = '', pod = '', excludeId = null) => {
@@ -2086,8 +2188,8 @@ const ctx = {
   SVC_ABBR, LEG_LOC_ABBR,
   VALID_ROLES, ROLE_RANK_SV, primaryRoleSV, parseUserRoles,
   SERVICE_CODE_MAP, importContractRates, createRateSnapshot, generateCostLinesFromSnapshot,
-  mapShipment, mapShipmentLeg, mapCostLine, mapService, mapContainer, mapContainerEvent, mapAllocation,
-  mapRateSnapshot, mapRateSnapshotLine,
+  mapShipment, mapShipmentLeg, mapCostLine, mapService, mapContainer, mapContainerEvent, mapContainerPackage, mapAllocation,
+  mapRateSnapshot, mapRateSnapshotLine, mapChargeCodeDefinition,
   mapCarrier, mapVessel, mapPortLocation, mapLinkedPort, mapTradeLane,
   mapScopeItem, mapAccessConfig, mapOffice, mapBranch, mapOrgCountry, mapRegion, mapCountry, mapTicketLink, mapTicket,
   mapTestItem, mapTestCaseLink,
@@ -2101,6 +2203,7 @@ const ctx = {
   ssoNonces,
   syncShipmentFromLegs,
   checkOverlap,
+  autoCompleteMilestone,
   linkedPortCodes, findMatchingContractLeg,
   screenShipmentById,
   bcrypt, jwt, JWT_SECRET,
@@ -2125,6 +2228,7 @@ require('./routes/ai')(app, ctx);
 require('./routes/share')(app, ctx);
 require('./routes/offices')(app, ctx);
 require('./routes/organization')(app, ctx);
+require('./routes/charge-codes')(app, ctx);
 
 // ─── Auth routes ──────────────────────────────────────────────────────────────
 

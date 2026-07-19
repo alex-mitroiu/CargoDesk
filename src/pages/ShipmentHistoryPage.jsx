@@ -83,13 +83,13 @@ const ShipmentHistoryPage = ({ shipment }) => {
   const inp = { fontFamily: T.body, fontSize: 12, color: T.text, background: T.bg, border: `1px solid ${T.border}`, borderRadius: 7, padding: "5px 10px", outline: "none" };
 
   return (
-    <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+    <div id="shphist-page" style={{ maxWidth: 1100, margin: "0 auto" }}>
       {/* Toolbar */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
+      <div id="shphist-toolbar" style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
         {GROUP_NAMES.map(g => {
           const on = activeGroups.has(g);
           return (
-            <button key={g} type="button" onClick={() => toggleGroup(g)}
+            <button key={g} id={`shphist-group-${g.toLowerCase().replace(/\s+/g, "-")}`} type="button" onClick={() => toggleGroup(g)}
               style={{ fontFamily: T.body, fontSize: 11, padding: "3px 10px", borderRadius: 20,
                 border: `1px solid ${on ? T.accent + "66" : T.border}`,
                 background: on ? T.accentBg : "transparent",
@@ -99,7 +99,7 @@ const ShipmentHistoryPage = ({ shipment }) => {
           );
         })}
         <div style={{ width: 1, height: 18, background: T.border, flexShrink: 0 }} />
-        <div style={{ display: "flex", borderRadius: 7, overflow: "hidden", border: `1px solid ${T.border}` }}>
+        <div id="shphist-date-range" style={{ display: "flex", borderRadius: 7, overflow: "hidden", border: `1px solid ${T.border}` }}>
           {[["all", "All time"], ["today", "Today"], ["7d", "7 days"]].map(([r, label], idx) => (
             <button key={r} type="button" onClick={() => setDateRange(r)}
               style={{ fontFamily: T.body, fontSize: 11, padding: "4px 10px",
@@ -110,22 +110,22 @@ const ShipmentHistoryPage = ({ shipment }) => {
             </button>
           ))}
         </div>
-        <input value={search} onChange={e => setSearch(e.target.value)}
+        <input id="shphist-search" value={search} onChange={e => setSearch(e.target.value)}
           placeholder="Search events…" style={{ ...inp, minWidth: 180 }} />
         <div style={{ flex: 1 }} />
-        <button type="button" onClick={exportCSV} disabled={results.length === 0}
+        <button id="shphist-export-btn" type="button" onClick={exportCSV} disabled={results.length === 0}
           style={{ ...inp, cursor: results.length === 0 ? "default" : "pointer",
             color: results.length === 0 ? T.border : T.textMuted, padding: "5px 12px" }}>
           ⬇ Export page as CSV
         </button>
       </div>
 
-      <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, marginBottom: 10 }}>
+      <div id="shphist-count" style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, marginBottom: 10 }}>
         {loading ? "Loading…" : `${total} event${total !== 1 ? "s" : ""}`}
       </div>
 
       {/* Table */}
-      <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden", background: T.surface }}>
+      <div id="shphist-table" style={{ border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden", background: T.surface }}>
         <div style={{ display: "flex", alignItems: "center", padding: "7px 14px",
           borderBottom: `1px solid ${T.border}`, background: T.bg, gap: 10 }}>
           <div style={{ ...th, width: 160, flexShrink: 0 }}>Event Type</div>
@@ -141,7 +141,7 @@ const ShipmentHistoryPage = ({ shipment }) => {
         {loading ? (
           <div style={{ padding: 40, display: "flex", justifyContent: "center" }}><Spinner /></div>
         ) : results.length === 0 ? (
-          <div style={{ padding: 32, textAlign: "center", fontFamily: T.body,
+          <div id="shphist-empty" style={{ padding: 32, textAlign: "center", fontFamily: T.body,
             fontSize: 13, color: T.textMuted, fontStyle: "italic" }}>
             No events match the current filters.
           </div>
@@ -149,7 +149,7 @@ const ShipmentHistoryPage = ({ shipment }) => {
           const cfg = EVENT_CONFIG[ev.eventType] ?? { icon: "·", label: ev.eventType, color: () => T.textMuted };
           const color = cfg.color();
           return (
-            <div key={ev.id}
+            <div key={ev.id} id={`shphist-event-${ev.id}`}
               style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 14px",
                 borderBottom: `1px solid ${T.border}22` }}
               onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
@@ -174,7 +174,9 @@ const ShipmentHistoryPage = ({ shipment }) => {
         })}
       </div>
 
-      <Pagination total={total} limit={LIMIT} offset={offset} onPage={load} />
+      <div id="shphist-pagination">
+        <Pagination total={total} limit={LIMIT} offset={offset} onPage={load} />
+      </div>
     </div>
   );
 };

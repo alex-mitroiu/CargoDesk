@@ -1,16 +1,21 @@
 "use strict";
 
 module.exports = function mdmRoutes(app, ctx) {
-  const { db, ok, err, uid, isUniqueViolation,
+  const { db, ok, err, uid, isUniqueViolation, requireRole,
           mapCarrier, mapVessel, mapPortLocation, mapLinkedPort, mapTradeLane,
           mapCountry, mapRegion, mapCommodity,
           logEntityEvent, rebuildPortLanesMap, longestLane } = ctx;
+
+  // MDM reference data (carriers/vessels/ports/lanes/countries/regions/commodities) is
+  // read-only for trade_manager — they own Contracts/Allocations, not the underlying
+  // reference data those entities point to.
+  const write = requireRole(["admin", "operator"]);
 
   // ─── Carriers ─────────────────────────────────────────────────────────────
 
   app.get("/api/carriers", (req, res) => ok(res, db.prepare("SELECT * FROM carriers ORDER BY name").all().map(mapCarrier)));
   app.get("/api/carriers/:code", (req, res) => { const r = db.prepare("SELECT * FROM carriers WHERE code=?").get(req.params.code); if (!r) return err(res,"Not found",404); ok(res,mapCarrier(r)); });
-  app.post("/api/carriers", (req, res) => {
+  app.post("/api/carriers", write, (req, res) => {
     const { code, name, shortName = '' } = req.body;
     if (!code || !name) return err(res, "code and name required");
     try {
@@ -20,7 +25,7 @@ module.exports = function mdmRoutes(app, ctx) {
       ok(res, mapCarrier({ code: codeU, name: name.trim(), short_name: shortName.trim() }), 201);
     } catch(e) { err(res, isUniqueViolation(e) ? `Carrier ${code} already exists` : e.message); }
   });
-  app.put("/api/carriers/:code", (req, res) => {
+  app.put("/api/carriers/:code", write, (req, res) => {
     const { name, shortName = '' } = req.body;
     const existing = db.prepare("SELECT * FROM carriers WHERE code=?").get(req.params.code);
     const info = db.prepare("UPDATE carriers SET name=?, short_name=? WHERE code=?").run(name, shortName, req.params.code);
@@ -28,7 +33,7 @@ module.exports = function mdmRoutes(app, ctx) {
     if (existing && existing.name !== name) logEntityEvent('carrier', req.params.code, 'UPDATED', 'name', existing.name, name);
     ok(res, mapCarrier({ code: req.params.code, name, short_name: shortName }));
   });
-  app.delete("/api/carriers/:code", (req, res) => {
+  app.delete("/api/carriers/:code", write, (req, res) => {
     const existing = db.prepare("SELECT * FROM carriers WHERE code=?").get(req.params.code);
     const info = db.prepare("DELETE FROM carriers WHERE code=?").run(req.params.code);
     if (info.changes===0) return err(res,"Not found",404);
@@ -53,19 +58,19 @@ module.exports = function mdmRoutes(app, ctx) {
     ok(res, db.prepare("SELECT * FROM vessels WHERE name LIKE ? OR imo LIKE ? LIMIT 12").all(`%${q}%`, `%${q}%`).map(mapVessel));
   });
   app.get("/api/vessels/:imo", (req, res) => { const r = db.prepare("SELECT * FROM vessels WHERE imo=?").get(req.params.imo); if (!r) return err(res,"Not found",404); ok(res,mapVessel(r)); });
-  app.post("/api/vessels", (req, res) => {
+  app.post("/api/vessels", write, (req, res) => {
     const { imo, name, assetType='', flagIso2='', flagName='', buildYear=null, grossTonnage=null } = req.body;
     if (!imo || !name) return err(res, "imo and name required");
     try { db.prepare("INSERT INTO vessels (imo,name,asset_type,flag_iso2,flag_name,build_year,gross_tonnage) VALUES (?,?,?,?,?,?,?)").run(imo.trim(), name.trim(), assetType, flagIso2, flagName, buildYear, grossTonnage); ok(res, mapVessel({ imo: imo.trim(), name: name.trim(), asset_type: assetType, flag_iso2: flagIso2, flag_name: flagName, build_year: buildYear, gross_tonnage: grossTonnage }), 201); }
     catch(e) { err(res, isUniqueViolation(e) ? `Vessel ${imo} already exists` : e.message); }
   });
-  app.put("/api/vessels/:imo", (req, res) => {
+  app.put("/api/vessels/:imo", write, (req, res) => {
     const { name, assetType='', flagIso2='', flagName='', buildYear=null, grossTonnage=null } = req.body;
     const info = db.prepare("UPDATE vessels SET name=?, asset_type=?, flag_iso2=?, flag_name=?, build_year=?, gross_tonnage=? WHERE imo=?").run(name, assetType, flagIso2, flagName, buildYear, grossTonnage, req.params.imo);
     if (info.changes===0) return err(res,"Not found",404);
     ok(res, mapVessel({ imo: req.params.imo, name, asset_type: assetType, flag_iso2: flagIso2, flag_name: flagName, build_year: buildYear, gross_tonnage: grossTonnage }));
   });
-  app.delete("/api/vessels/:imo", (req, res) => { const info = db.prepare("DELETE FROM vessels WHERE imo=?").run(req.params.imo); if (info.changes===0) return err(res,"Not found",404); ok(res,{deleted:req.params.imo}); });
+  app.delete("/api/vessels/:imo", write, (req, res) => { const info = db.prepare("DELETE FROM vessels WHERE imo=?").run(req.params.imo); if (info.changes===0) return err(res,"Not found",404); ok(res,{deleted:req.params.imo}); });
 
   // ─── Port Locations ───────────────────────────────────────────────────────
 
@@ -93,7 +98,7 @@ module.exports = function mdmRoutes(app, ctx) {
     ok(res, { lanes, primary: lanes[0]?.code || null });
   });
   app.get("/api/port-locations/:unlocode", (req, res) => { const r = db.prepare("SELECT * FROM port_locations WHERE unlocode=?").get(req.params.unlocode.toUpperCase()); if (!r) return err(res,"Not found",404); ok(res,mapPortLocation(r)); });
-  app.post("/api/port-locations", (req, res) => {
+  app.post("/api/port-locations", write, (req, res) => {
     const { unlocode, name, latitude=0, longitude=0, countryCode='', zoneCode='' } = req.body;
     if (!unlocode || !name) return err(res, "unlocode and name required");
     const code = unlocode.toUpperCase().trim();
@@ -103,14 +108,14 @@ module.exports = function mdmRoutes(app, ctx) {
     try { db.prepare("INSERT INTO port_locations (unlocode,name,latitude,longitude,country_code,zone_code,last_synced_at) VALUES (?,?,?,?,?,?,?)").run(code, name.trim(), latitude, longitude, finalCC, zoneCode.trim(), now); ok(res, mapPortLocation({ unlocode: code, name: name.trim(), latitude, longitude, country_code: finalCC, zone_code: zoneCode.trim(), last_synced_at: now }), 201); }
     catch(e) { err(res, isUniqueViolation(e) ? `Port ${unlocode} already exists` : e.message); }
   });
-  app.put("/api/port-locations/:unlocode", (req, res) => {
+  app.put("/api/port-locations/:unlocode", write, (req, res) => {
     const { name, latitude=0, longitude=0, countryCode='', zoneCode='' } = req.body;
     const cc = countryCode.toUpperCase() || req.params.unlocode.slice(0, 2).toUpperCase();
     const info = db.prepare("UPDATE port_locations SET name=?, latitude=?, longitude=?, country_code=?, zone_code=?, last_synced_at=? WHERE unlocode=?").run(name, latitude, longitude, cc, zoneCode, new Date().toISOString(), req.params.unlocode.toUpperCase());
     if (info.changes===0) return err(res,"Not found",404);
     ok(res, mapPortLocation({ unlocode: req.params.unlocode.toUpperCase(), name, latitude, longitude, country_code: countryCode.toUpperCase(), zone_code: zoneCode }));
   });
-  app.delete("/api/port-locations/:unlocode", (req, res) => { const info = db.prepare("DELETE FROM port_locations WHERE unlocode=?").run(req.params.unlocode.toUpperCase()); if (info.changes===0) return err(res,"Not found",404); ok(res,{deleted:req.params.unlocode}); });
+  app.delete("/api/port-locations/:unlocode", write, (req, res) => { const info = db.prepare("DELETE FROM port_locations WHERE unlocode=?").run(req.params.unlocode.toUpperCase()); if (info.changes===0) return err(res,"Not found",404); ok(res,{deleted:req.params.unlocode}); });
 
   // ─── Linked Ports ─────────────────────────────────────────────────────────
 
@@ -118,7 +123,7 @@ module.exports = function mdmRoutes(app, ctx) {
     const rows = db.prepare(`SELECT lp.*, p1.name AS primary_name, p2.name AS linked_name FROM linked_ports lp LEFT JOIN port_locations p1 ON p1.unlocode=lp.primary_unlocode LEFT JOIN port_locations p2 ON p2.unlocode=lp.linked_unlocode ORDER BY lp.primary_unlocode`).all();
     ok(res, rows.map(mapLinkedPort));
   });
-  app.post("/api/linked-ports", (req, res) => {
+  app.post("/api/linked-ports", write, (req, res) => {
     const { primaryUnlocode, linkedUnlocode, note='' } = req.body;
     if (!primaryUnlocode || !linkedUnlocode) return err(res, "primaryUnlocode and linkedUnlocode required");
     if (primaryUnlocode.toUpperCase() === linkedUnlocode.toUpperCase()) return err(res, "A port cannot be linked to itself");
@@ -126,14 +131,14 @@ module.exports = function mdmRoutes(app, ctx) {
     try { db.prepare("INSERT INTO linked_ports (id,primary_unlocode,linked_unlocode,note) VALUES (?,?,?,?)").run(id, primaryUnlocode.toUpperCase(), linkedUnlocode.toUpperCase(), note); ok(res, { id, primaryUnlocode: primaryUnlocode.toUpperCase(), linkedUnlocode: linkedUnlocode.toUpperCase(), note }, 201); }
     catch(e) { err(res, isUniqueViolation(e) ? "This port link already exists" : e.message); }
   });
-  app.put("/api/linked-ports/:id", (req, res) => {
+  app.put("/api/linked-ports/:id", write, (req, res) => {
     const { note='' } = req.body;
     const info = db.prepare("UPDATE linked_ports SET note=? WHERE id=?").run(note, req.params.id);
     if (info.changes===0) return err(res,"Not found",404);
     const r = db.prepare("SELECT lp.*, p1.name AS primary_name, p2.name AS linked_name FROM linked_ports lp LEFT JOIN port_locations p1 ON p1.unlocode=lp.primary_unlocode LEFT JOIN port_locations p2 ON p2.unlocode=lp.linked_unlocode WHERE lp.id=?").get(req.params.id);
     ok(res, mapLinkedPort(r));
   });
-  app.delete("/api/linked-ports/:id", (req, res) => { const info = db.prepare("DELETE FROM linked_ports WHERE id=?").run(req.params.id); if (info.changes===0) return err(res,"Not found",404); ok(res,{deleted:req.params.id}); });
+  app.delete("/api/linked-ports/:id", write, (req, res) => { const info = db.prepare("DELETE FROM linked_ports WHERE id=?").run(req.params.id); if (info.changes===0) return err(res,"Not found",404); ok(res,{deleted:req.params.id}); });
 
   // ─── Trade Lanes ──────────────────────────────────────────────────────────
 
@@ -156,7 +161,7 @@ module.exports = function mdmRoutes(app, ctx) {
     ok(res, rows.map(mapCountry));
   });
 
-  app.put("/api/trade-lanes/:code/countries", (req, res) => {
+  app.put("/api/trade-lanes/:code/countries", write, (req, res) => {
     const code  = req.params.code.toUpperCase();
     const iso2s = Array.isArray(req.body.iso2s) ? req.body.iso2s : [];
     db.exec("BEGIN");
@@ -170,7 +175,7 @@ module.exports = function mdmRoutes(app, ctx) {
     } catch(e) { db.exec("ROLLBACK"); err(res, e.message); }
   });
 
-  app.post("/api/trade-lanes", (req, res) => {
+  app.post("/api/trade-lanes", write, (req, res) => {
     const { code, name, description='', transitDays=0 } = req.body;
     if (!code || !name) return err(res, "code and name required");
     try {
@@ -179,7 +184,7 @@ module.exports = function mdmRoutes(app, ctx) {
       ok(res, { code: c, name: name.trim(), description: description.trim(), transitDays: Number(transitDays) || 0, countryCount: 0 }, 201);
     } catch(e) { err(res, isUniqueViolation(e) ? `Lane ${code} already exists` : e.message); }
   });
-  app.put("/api/trade-lanes/:code", (req, res) => {
+  app.put("/api/trade-lanes/:code", write, (req, res) => {
     const { name, description='', transitDays=0 } = req.body;
     const info = db.prepare("UPDATE trade_lanes SET name=?, description=?, transit_days=? WHERE code=?").run(name, description, Number(transitDays) || 0, req.params.code);
     if (info.changes===0) return err(res,"Not found",404);
@@ -194,16 +199,16 @@ module.exports = function mdmRoutes(app, ctx) {
     const row = db.prepare("SELECT transit_days FROM trade_lanes WHERE code=?").get(polLane);
     ok(res, { days: row?.transit_days || null, lane: polLane });
   });
-  app.delete("/api/trade-lanes/:code", (req, res) => { const info = db.prepare("DELETE FROM trade_lanes WHERE code=?").run(req.params.code); if (info.changes===0) return err(res,"Not found",404); ok(res,{deleted:req.params.code}); });
+  app.delete("/api/trade-lanes/:code", write, (req, res) => { const info = db.prepare("DELETE FROM trade_lanes WHERE code=?").run(req.params.code); if (info.changes===0) return err(res,"Not found",404); ok(res,{deleted:req.params.code}); });
 
   app.get("/api/country-trade-lanes", (req, res) => ok(res, db.prepare("SELECT * FROM country_trade_lanes").all()));
-  app.post("/api/country-trade-lanes", (req, res) => {
+  app.post("/api/country-trade-lanes", write, (req, res) => {
     const { iso2, laneCode } = req.body;
     if (!iso2 || !laneCode) return err(res, "iso2 and laneCode required");
     try { db.prepare("INSERT INTO country_trade_lanes (iso2,lane_code) VALUES (?,?)").run(iso2.toUpperCase(), laneCode.toUpperCase()); rebuildPortLanesMap(); ok(res, { iso2: iso2.toUpperCase(), laneCode: laneCode.toUpperCase() }, 201); }
     catch(e) { err(res, isUniqueViolation(e) ? "Assignment already exists" : e.message); }
   });
-  app.put("/api/countries/:iso2/trade-lanes", (req, res) => {
+  app.put("/api/countries/:iso2/trade-lanes", write, (req, res) => {
     const iso2  = req.params.iso2.toUpperCase();
     const lanes = Array.isArray(req.body.lanes) ? req.body.lanes : [];
     db.exec("BEGIN");
@@ -216,24 +221,24 @@ module.exports = function mdmRoutes(app, ctx) {
       ok(res, { iso2, lanes });
     } catch(e) { db.exec("ROLLBACK"); err(res, e.message); }
   });
-  app.delete("/api/country-trade-lanes/:iso2/:laneCode", (req, res) => { db.prepare("DELETE FROM country_trade_lanes WHERE iso2=? AND lane_code=?").run(req.params.iso2, req.params.laneCode); rebuildPortLanesMap(); ok(res, { deleted: true }); });
+  app.delete("/api/country-trade-lanes/:iso2/:laneCode", write, (req, res) => { db.prepare("DELETE FROM country_trade_lanes WHERE iso2=? AND lane_code=?").run(req.params.iso2, req.params.laneCode); rebuildPortLanesMap(); ok(res, { deleted: true }); });
 
   // ─── Regions ──────────────────────────────────────────────────────────────
 
   app.get("/api/regions", (req, res) => ok(res, db.prepare("SELECT * FROM regions ORDER BY code").all().map(mapRegion)));
-  app.post("/api/regions", (req, res) => {
+  app.post("/api/regions", write, (req, res) => {
     const { code, name, description='' } = req.body;
     if (!code || !name) return err(res, "code and name required");
     try { db.prepare("INSERT INTO regions (code,name,description) VALUES (?,?,?)").run(code.toUpperCase().trim(), name.trim(), description.trim()); ok(res, { code: code.toUpperCase().trim(), name: name.trim(), description: description.trim() }, 201); }
     catch(e) { err(res, isUniqueViolation(e) ? `Region ${code} already exists` : e.message); }
   });
-  app.put("/api/regions/:code", (req, res) => {
+  app.put("/api/regions/:code", write, (req, res) => {
     const { name, description='' } = req.body;
     const info = db.prepare("UPDATE regions SET name=?, description=? WHERE code=?").run(name, description, req.params.code);
     if (info.changes===0) return err(res,"Not found",404);
     ok(res, { code: req.params.code, name, description });
   });
-  app.delete("/api/regions/:code", (req, res) => { const info = db.prepare("DELETE FROM regions WHERE code=?").run(req.params.code); if (info.changes===0) return err(res,"Not found",404); ok(res,{deleted:req.params.code}); });
+  app.delete("/api/regions/:code", write, (req, res) => { const info = db.prepare("DELETE FROM regions WHERE code=?").run(req.params.code); if (info.changes===0) return err(res,"Not found",404); ok(res,{deleted:req.params.code}); });
 
   // ─── Countries ────────────────────────────────────────────────────────────
 
@@ -254,19 +259,19 @@ module.exports = function mdmRoutes(app, ctx) {
     `).all(...params, lim, off);
     ok(res, { results: rows.map(mapCountry), total, limit: lim, offset: off });
   });
-  app.post("/api/countries", (req, res) => {
+  app.post("/api/countries", write, (req, res) => {
     const { iso2, name, unMember=1, regionCode='' } = req.body;
     if (!iso2 || !name) return err(res, "iso2 and name required");
     try { db.prepare("INSERT INTO countries (iso2,name,un_member,region_code) VALUES (?,?,?,?)").run(iso2.toUpperCase().trim(), name.trim(), unMember ? 1 : 0, regionCode.trim()); ok(res, mapCountry({ iso2: iso2.toUpperCase().trim(), name: name.trim(), un_member: unMember ? 1 : 0, region_code: regionCode.trim() }), 201); }
     catch(e) { err(res, isUniqueViolation(e) ? `Country ${iso2} already exists` : e.message); }
   });
-  app.put("/api/countries/:iso2", (req, res) => {
+  app.put("/api/countries/:iso2", write, (req, res) => {
     const { name, unMember=1, regionCode='' } = req.body;
     const info = db.prepare("UPDATE countries SET name=?, un_member=?, region_code=? WHERE iso2=?").run(name, unMember ? 1 : 0, regionCode, req.params.iso2.toUpperCase());
     if (info.changes===0) return err(res,"Not found",404);
     ok(res, mapCountry({ iso2: req.params.iso2.toUpperCase(), name, un_member: unMember ? 1 : 0, region_code: regionCode }));
   });
-  app.delete("/api/countries/:iso2", (req, res) => { const info = db.prepare("DELETE FROM countries WHERE iso2=?").run(req.params.iso2.toUpperCase()); if (info.changes===0) return err(res,"Not found",404); ok(res,{deleted:req.params.iso2}); });
+  app.delete("/api/countries/:iso2", write, (req, res) => { const info = db.prepare("DELETE FROM countries WHERE iso2=?").run(req.params.iso2.toUpperCase()); if (info.changes===0) return err(res,"Not found",404); ok(res,{deleted:req.params.iso2}); });
   app.get("/api/countries/:iso2/locations", (req, res) => {
     const iso2   = req.params.iso2.toUpperCase();
     const search = (req.query.search || "").trim();
@@ -311,17 +316,17 @@ module.exports = function mdmRoutes(app, ctx) {
     ok(res, db.prepare("SELECT * FROM commodities WHERE code LIKE ? OR description LIKE ? ORDER BY code LIMIT 12").all(`%${q}%`, `%${q}%`).map(mapCommodity));
   });
   app.get("/api/commodities/:code", (req, res) => { const r = db.prepare("SELECT * FROM commodities WHERE code=?").get(req.params.code); if (!r) return err(res,"Not found",404); ok(res,mapCommodity(r)); });
-  app.post("/api/commodities", (req, res) => {
+  app.post("/api/commodities", write, (req, res) => {
     const { code, description, gradeCode='E', gradeName='General Cargo' } = req.body;
     if (!code || !description) return err(res, "code and description required");
     try { db.prepare("INSERT INTO commodities (code,description,grade_code,grade_name) VALUES (?,?,?,?)").run(code.trim(), description.trim(), gradeCode, gradeName); ok(res, mapCommodity({ code: code.trim(), description: description.trim(), grade_code: gradeCode, grade_name: gradeName }), 201); }
     catch(e) { err(res, isUniqueViolation(e) ? `Commodity ${code} already exists` : e.message); }
   });
-  app.put("/api/commodities/:code", (req, res) => {
+  app.put("/api/commodities/:code", write, (req, res) => {
     const { description, gradeCode='E', gradeName='General Cargo' } = req.body;
     const info = db.prepare("UPDATE commodities SET description=?, grade_code=?, grade_name=? WHERE code=?").run(description, gradeCode, gradeName, req.params.code);
     if (info.changes===0) return err(res,"Not found",404);
     ok(res, mapCommodity({ code: req.params.code, description, grade_code: gradeCode, grade_name: gradeName }));
   });
-  app.delete("/api/commodities/:code", (req, res) => { const info = db.prepare("DELETE FROM commodities WHERE code=?").run(req.params.code); if (info.changes===0) return err(res,"Not found",404); ok(res,{deleted:req.params.code}); });
+  app.delete("/api/commodities/:code", write, (req, res) => { const info = db.prepare("DELETE FROM commodities WHERE code=?").run(req.params.code); if (info.changes===0) return err(res,"Not found",404); ok(res,{deleted:req.params.code}); });
 };

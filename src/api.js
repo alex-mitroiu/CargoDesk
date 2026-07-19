@@ -241,12 +241,32 @@ export const api = {
     updateCarrierCosts: (shipmentId, d = {})   => req("POST",   `/shipments/${shipmentId}/cost-lines/update-carrier-costs`, d),
     rateSnapshots:      (shipmentId)           => req("GET",    `/shipments/${shipmentId}/rate-snapshots`),
     events:         (shipmentId)               => req("GET",    `/shipments/${shipmentId}/cost-line-events`),
+    actualize:      (shipmentId, lineId, d)    => req("PATCH",  `/shipments/${shipmentId}/cost-lines/${lineId}/actualize`, d),
+    post:           (shipmentId, lineId)       => req("PATCH",  `/shipments/${shipmentId}/cost-lines/${lineId}/post`, {}),
+    postBatch:      (shipmentId, ids)          => req("POST",   `/shipments/${shipmentId}/cost-lines/post-batch`, { ids }),
+  },
+  containerPackages: {
+    list:   (containerId)     => req("GET",    `/containers/${containerId}/packages`),
+    create: (containerId, d) => req("POST",   `/containers/${containerId}/packages`, d),
+    update: (id, d)           => req("PUT",    `/container-packages/${id}`, d),
+    remove: (id)              => req("DELETE", `/container-packages/${id}`),
+  },
+  chargeCodes: {
+    list:   ()      => req("GET",    "/charge-code-definitions"),
+    create: (d)     => req("POST",   "/charge-code-definitions", d),
+    update: (id, d) => req("PUT",    `/charge-code-definitions/${id}`, d),
+    remove: (id)    => req("DELETE", `/charge-code-definitions/${id}`),
   },
   services: {
     list:   (shipmentId)             => req("GET",    `/shipments/${shipmentId}/services`),
     create: (shipmentId, d)          => req("POST",   `/shipments/${shipmentId}/services`, d),
     update: (shipmentId, serviceId, d) => req("PATCH", `/shipments/${shipmentId}/services/${serviceId}`, d),
     remove: (shipmentId, serviceId)  => req("DELETE", `/shipments/${shipmentId}/services/${serviceId}`),
+  },
+  loadingPlan: {
+    list:   (shipmentId, serviceId)      => req("GET", `/shipments/${shipmentId}/services/${serviceId}/loading-plan`),
+    update: (shipmentId, serviceId, containerId, d) =>
+      req("PUT", `/shipments/${shipmentId}/services/${serviceId}/loading-plan/${containerId}`, d),
   },
   milestones: {
     list:   (shipmentId)       => req("GET",    `/shipments/${shipmentId}/milestones`),
@@ -323,6 +343,7 @@ export const api = {
     search:  (p = {})         => req("GET",    `/schedules/search?${new URLSearchParams(p)}`),
     list:    (shipmentId)     => req("GET",    `/shipments/${shipmentId}/schedules`),
     save:    (shipmentId, d)  => req("POST",   `/shipments/${shipmentId}/schedules`, d),
+    update:  (shipmentId, id, d) => req("PUT", `/shipments/${shipmentId}/schedules/${id}`, d),
     remove:  (shipmentId, id) => req("DELETE", `/shipments/${shipmentId}/schedules/${id}`),
     events:  (shipmentId)     => req("GET",    `/shipments/${shipmentId}/schedule-events`),
   },

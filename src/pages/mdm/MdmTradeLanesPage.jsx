@@ -12,7 +12,7 @@ import { PageSpinner } from "../../components/primitives/Spinner";
 import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns.jsx";
 
 const MdmTradeLanesPage = () => {
-  const { canManageConfigs } = useAuth();
+  const { canManageMdm } = useAuth();
   const [lanes,   setLanes]   = useState([]);
   const [loading, setLoading] = useState(true);
   const [modal,   setModal]   = useState(null);
@@ -164,7 +164,7 @@ const MdmTradeLanesPage = () => {
             {lanes.length} FIATA high-level trade lanes · linked to countries
           </p>
         </div>
-        {canManageConfigs && <Btn onClick={() => setModal("add")} size="lg">＋ Add Lane</Btn>}
+        {canManageMdm && <Btn onClick={() => setModal("add")} size="lg">＋ Add Lane</Btn>}
       </div>
 
       <div style={{ background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, overflow: "hidden" }}>
@@ -198,8 +198,8 @@ const MdmTradeLanesPage = () => {
             </span>
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <ActionMenu items={[
-                ...(canManageConfigs ? [{ icon: "✎", label: "Edit",   onClick: () => setModal(l) }] : []),
-                ...(canManageConfigs ? [{ icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(l.code) }] : []),
+                ...(canManageMdm ? [{ icon: "✎", label: "Edit",   onClick: () => setModal(l) }] : []),
+                ...(canManageMdm ? [{ icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(l.code) }] : []),
               ]} />
             </div>
           </div>

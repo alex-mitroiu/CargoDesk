@@ -1,7 +1,7 @@
 "use strict";
 
 module.exports = function systemRoutes(app, ctx) {
-  const { db, ok, err, auth,
+  const { db, ok, err, auth, requireRole,
           mapSystemMessage, getSettings, scheduleNextOfacSync, fxCache,
           logAdminEvent } = ctx;
 
@@ -70,7 +70,9 @@ module.exports = function systemRoutes(app, ctx) {
 
   app.get("/api/settings", (req, res) => ok(res, getSettings()));
 
-  app.put("/api/settings", auth(), (req, res) => {
+  // Excludes trade_manager/viewer specifically, without changing behavior for admin/operator/
+  // occ_bk who already have unrestricted settings access today.
+  app.put("/api/settings", auth(), requireRole(["admin", "operator", "occ_bk"]), (req, res) => {
     const updates = req.body;
     if (!updates || typeof updates !== "object" || Array.isArray(updates))
       return err(res, "Expected JSON object of { key: value } pairs");

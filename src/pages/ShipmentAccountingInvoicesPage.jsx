@@ -4,7 +4,7 @@ import { useAuth } from "../AuthContext";
 import Btn from "../components/primitives/Btn";
 import { Modal, ConfirmModal } from "../components/primitives/Modal";
 import TrackedDocPreviewModal from "../components/shared/TrackedDocPreviewModal";
-import { CostLineForm, CostLineHistoryModal, CostLineRow } from "./ShipmentDetailPage";
+import { CostLineForm, CostLineHistoryModal, CostLineRow, CostLineActualizeModal } from "./ShipmentDetailPage";
 import { generateInvoices, resolveInvoiceCurrency } from "../utils/invoiceGenerator";
 import { api } from "../api";
 import { toast } from "../toast";
@@ -37,6 +37,8 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
   const [splitConfirm,  setSplitConfirm] = useState(false);
   const [splitBusy,     setSplitBusy]    = useState(false);
   const [currencyModal, setCurrencyModal] = useState(null); // { splitPerContainer, distinctCurrencies, currency, isFallback, principalName }
+  const [actualizeLine, setActualizeLine] = useState(null); // line pending actualization
+  const [confirmPost,   setConfirmPost]   = useState(null); // line pending Post confirmation
 
   const load = () => {
     setLoading(true);
@@ -95,6 +97,10 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
     try {
       const created = await generateInvoices(shipment, { containers: ctrs, costLines: lines, splitPerContainer, targetCurrency, fxRates });
       toast.success(`${created.length} invoice${created.length !== 1 ? "s" : ""} generated`);
+      // generateInvoices() may have auto-injected new automated charge-code cost lines
+      // (TKT-OK5H34) — reload lines too, not just docs, so a second Generate click on
+      // this same page instance sees them and doesn't inject duplicates.
+      load();
       loadDocs();
     } catch (e) { toast.error(e.message); }
     setGenBusy(false);
@@ -194,18 +200,37 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
     } catch (e) { toast.error(e.message); }
   };
 
+  const handleActualize = async data => {
+    try {
+      await api.costLines.actualize(shipment.id, actualizeLine.id, data);
+      toast.success("Invoice line actualized");
+      setActualizeLine(null);
+      load();
+    } catch (e) { toast.error(e.message); }
+  };
+
+  const handlePost = async () => {
+    const line = confirmPost;
+    setConfirmPost(null);
+    try {
+      await api.costLines.post(shipment.id, line.id);
+      toast.success("Invoice line posted — now locked");
+      load();
+    } catch (e) { toast.error(e.message); }
+  };
+
   const th = { fontFamily: T.body, fontSize: 10, fontWeight: 600, color: T.textMuted,
     textTransform: "uppercase", letterSpacing: ".07em" };
 
   return (
-    <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+    <div id="shpacct-invoices-page" style={{ maxWidth: 1100, margin: "0 auto" }}>
       {/* Invoice lines — the charge lines an invoice is generated from */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
+      <div id="shpacct-invoices-toolbar" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, flexWrap: "wrap", gap: 8 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
           <span style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
             {sellLines.length} line{sellLines.length !== 1 ? "s" : ""}
           </span>
-          <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text }}>
+          <span id="shpacct-invoices-total-sell" style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text }}>
             Total Sell: {fmtUsd(totalSell)}
           </span>
           {hasVat && (
@@ -216,13 +241,13 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
         </div>
         {canEdit && (
           <div style={{ display: "flex", gap: 8 }}>
-            <Btn size="sm" variant="secondary" disabled={!canSplit}
+            <Btn id="shpacct-invoices-split-btn" size="sm" variant="secondary" disabled={!canSplit}
               title={!canSplit ? "No shipment-level lines to split — either none exist or all are already container-tagged" : undefined}
               onClick={() => setSplitConfirm(true)}>
               ◫ Split per Container
             </Btn>
-            <Btn size="sm" variant="secondary" onClick={() => setHistOpen(true)}>⏱ History</Btn>
-            <Btn size="sm" onClick={() => setLineModal("add")}>＋ Add Line</Btn>
+            <Btn id="shpacct-invoices-history-btn" size="sm" variant="secondary" onClick={() => setHistOpen(true)}>⏱ History</Btn>
+            <Btn id="shpacct-invoices-add-btn" size="sm" onClick={() => setLineModal("add")}>＋ Add Line</Btn>
           </div>
         )}
       </div>
@@ -230,13 +255,13 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
       {loading ? (
         <div style={{ padding: 40, textAlign: "center", fontFamily: T.body, fontSize: 13, color: T.textMuted, marginBottom: 22 }}>Loading…</div>
       ) : sellLines.length === 0 ? (
-        <div style={{ padding: 48, textAlign: "center", fontFamily: T.body,
+        <div id="shpacct-invoices-lines-empty" style={{ padding: 48, textAlign: "center", fontFamily: T.body,
           fontSize: 13, color: T.textMuted, fontStyle: "italic", marginBottom: 22,
           background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10 }}>
           No invoice lines yet.
         </div>
       ) : (
-        <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden", background: T.surface, marginBottom: 22 }}>
+        <div id="shpacct-invoices-lines-table" style={{ border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden", background: T.surface, marginBottom: 22 }}>
           <div style={{ display: "flex", alignItems: "center", padding: "7px 16px",
             borderBottom: `1px solid ${T.border}`, background: T.bg }}>
             <div style={{ ...th, width: 60 }}>Type</div>
@@ -246,29 +271,31 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
             <div style={{ ...th, width: 80 }}>Currency</div>
             <div style={{ ...th, width: 100, textAlign: "right" }}>Exch. Rate</div>
             <div style={{ ...th, width: 110, textAlign: "right" }}>Amount (USD)</div>
+            <div style={{ ...th, width: 100, paddingLeft: 8 }}>Status</div>
             <div style={{ width: 36 }} />
           </div>
           {sellLines.map(l => (
             <CostLineRow key={l.id} line={l} containers={ctrs} showActions
-              onEdit={() => setLineModal(l)} onDelete={() => setConfirm(l.id)} />
+              onEdit={() => setLineModal(l)} onDelete={() => setConfirm(l.id)}
+              onActualize={() => setActualizeLine(l)} onPost={() => setConfirmPost(l)} />
           ))}
         </div>
       )}
 
       {/* Invoices — generated FR01/FR02 documents, one consolidated or one per container.
           Generation is disabled entirely while there are no charge lines above. */}
-      <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 700,
+      <div id="shpacct-invoices-docs-header" style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 700,
         textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 8, display: "flex",
         alignItems: "center", justifyContent: "space-between" }}>
         <span>Invoices</span>
         {canEdit && (
           <div style={{ display: "flex", gap: 8, textTransform: "none", letterSpacing: 0 }}>
-            <Btn size="sm" variant="secondary" disabled={genBusy || loading || !hasChargeLines}
+            <Btn id="shpacct-invoices-generate-btn" size="sm" variant="secondary" disabled={genBusy || loading || !hasChargeLines}
               title={!hasChargeLines ? "Add at least one charge line first" : undefined}
               onClick={() => handleGenerate(false)}>
               🧾 Generate Invoice
             </Btn>
-            <Btn size="sm" variant="secondary" disabled={genBusy || loading || !hasChargeLines || ctrs.length === 0}
+            <Btn id="shpacct-invoices-generate-percontainer-btn" size="sm" variant="secondary" disabled={genBusy || loading || !hasChargeLines || ctrs.length === 0}
               title={!hasChargeLines ? "Add at least one charge line first" : undefined}
               onClick={() => handleGenerate(true)}>
               📦 Generate Per-Container Invoices
@@ -279,13 +306,13 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
       {docsLoading ? (
         <div style={{ padding: 24, textAlign: "center", fontFamily: T.body, fontSize: 13, color: T.textMuted }}>Loading…</div>
       ) : docs.length === 0 ? (
-        <div style={{ padding: 32, textAlign: "center", fontFamily: T.body,
+        <div id="shpacct-invoices-docs-empty" style={{ padding: 32, textAlign: "center", fontFamily: T.body,
           fontSize: 13, color: T.textMuted, fontStyle: "italic",
           background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10 }}>
           No invoices generated yet.
         </div>
       ) : (
-        <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden", background: T.surface }}>
+        <div id="shpacct-invoices-docs-table" style={{ border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden", background: T.surface }}>
           <div style={{ display: "flex", alignItems: "center", padding: "7px 16px",
             borderBottom: `1px solid ${T.border}`, background: T.bg }}>
             <div style={{ ...th, width: 60 }}>Type</div>
@@ -296,7 +323,7 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
             <div style={{ width: 130 }} />
           </div>
           {docs.map(doc => (
-            <div key={doc.id}
+            <div key={doc.id} id={`shpacct-invoices-doc-${doc.id}`}
               onDoubleClick={() => setPreviewDoc(doc)}
               style={{ display: "flex", alignItems: "center", padding: "9px 16px",
                 borderBottom: `1px solid ${T.border}22`, cursor: "pointer" }}
@@ -374,6 +401,17 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
             </div>
           </div>
         </Modal>
+      )}
+
+      {actualizeLine && (
+        <CostLineActualizeModal line={actualizeLine} onClose={() => setActualizeLine(null)} onSave={handleActualize} />
+      )}
+
+      {confirmPost && (
+        <ConfirmModal
+          message={`Post this ${confirmPost.chargeCode} line? Posted lines are locked — any correction after this needs a new adjusting line, not an edit.`}
+          onConfirm={handlePost}
+          onCancel={() => setConfirmPost(null)} />
       )}
 
       {confirm && (
