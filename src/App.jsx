@@ -25,6 +25,12 @@ import GenericServicePage from "./pages/GenericServicePage";
 import Btn from "./components/primitives/Btn";
 import { Modal } from "./components/primitives/Modal";
 import { Field } from "./components/primitives/Form";
+import {
+  IconSailboat, IconDashboard, IconFlash, IconArchive, IconClipboard, IconTag,
+  IconFlask, IconRefresh, IconCheck, IconCalendar, IconGroup, IconCircle,
+  IconBuilding, IconShip, IconPackage, IconMapPin, IconLink, IconRoute,
+  IconFlag, IconHashtag, IconEarth, IconGovernment, IconSettings, AnyIcon,
+} from "./components/primitives/Icon";
 import TrackedDocPreviewModal from "./components/shared/TrackedDocPreviewModal";
 import { fmtCurr, _esc, _invShell, buildFreightInvoiceHtml } from "./utils/invoiceGenerator";
 
@@ -1961,7 +1967,7 @@ function App() {
   if (!ready) return <FullPageSpinner label="Connecting to database…" />;
 
   // ── Shared nav button style ──
-  const NavBtn = ({ pageKey, icon, label, indent = false, subIndent = false }) => {
+  const NavBtn = ({ pageKey, icon: IconComp, iconColor, label, indent = false, subIndent = false }) => {
     if (!isEnabled(pageKey)) return null;
     const active = page === pageKey || (pageKey === "shipments" && (page === "detail" || page === "shipment-new" || page === "shipment-edit"));
     const pad = subIndent ? "6px 12px 6px 44px" : indent ? "7px 12px 7px 28px" : "9px 12px";
@@ -1975,7 +1981,7 @@ function App() {
           color: active ? T.accent : T.textMuted,
           fontFamily: T.body, fontSize: fs, fontWeight: active ? 600 : 400,
           borderLeft: `3px solid ${active ? T.accent : "transparent"}` }}>
-        <span style={{ fontSize: fs }}>{icon}</span>
+        <IconComp size={fs + 3} color={iconColor} style={{ flexShrink: 0 }} />
         {label}
       </button>
     );
@@ -2134,7 +2140,9 @@ function App() {
         }}
         onMouseEnter={e => { if (!disabled) e.currentTarget.style.background = T.surfaceHover; }}
         onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-        <span style={{ fontSize: 14, width: 18, textAlign: "center", flexShrink: 0 }}>{icon}</span>
+        <span style={{ width: 18, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <AnyIcon icon={icon} size={14} />
+        </span>
         <div>
           <div style={{ fontFamily: T.body, fontSize: 13, color: disabled ? T.textMuted : T.text, fontWeight: 500 }}>
             {label}
@@ -2451,7 +2459,7 @@ function App() {
 
                 <Divider />
 
-                {!authCtxValue.isTradeManager && <MenuItem icon="⚙" label="Application Settings" onClick={() => navigate("settings")} />}
+                {!authCtxValue.isTradeManager && <MenuItem icon={IconSettings} label="Application Settings" onClick={() => navigate("settings")} />}
 
                 <Divider />
 
@@ -2521,19 +2529,19 @@ function App() {
           <nav data-testid="main-nav" style={{ padding: "14px 12px", flex: 1, overflowY: "auto" }}>
 
             {/* Top-level items */}
-            <NavBtn pageKey="shipments" icon="⛴" label="Shipments" />
+            <NavBtn pageKey="shipments" icon={IconSailboat} label="Shipments" />
 
             {/* Dashboard sub-group */}
-            <NavBtn pageKey="dashboard"      icon="◈"  label="Dashboard" />
-            <NavBtn pageKey="space-configs"  icon="⚡" label="Space Configurations" indent />
-            <NavBtn pageKey="dashboard-archive" icon="🗄" label="Archive"           indent />
+            <NavBtn pageKey="dashboard"      icon={IconDashboard}  label="Dashboard" />
+            <NavBtn pageKey="space-configs"  icon={IconFlash} label="Space Configurations" indent />
+            <NavBtn pageKey="dashboard-archive" icon={IconArchive} label="Archive"           indent />
 
-            <NavBtn pageKey="kanban"      icon="📋" label="Integration Board" />
-            <NavBtn pageKey="releases"    icon="🏷" label="Releases"    indent />
-            <NavBtn pageKey="test-plans"  icon="🧪" label="Test Plans"  indent />
-            <NavBtn pageKey="test-runs"   icon="🔄" label="Test Runs"   indent />
-            <NavBtn pageKey="test-cases"  icon="✓"  label="Test Cases"  indent />
-            <NavBtn pageKey="schedules"  icon="🗓" label="Schedule Search" />
+            <NavBtn pageKey="kanban"      icon={IconClipboard} label="Integration Board" />
+            <NavBtn pageKey="releases"    icon={IconTag} label="Releases"    indent />
+            <NavBtn pageKey="test-plans"  icon={IconFlask} label="Test Plans"  indent />
+            <NavBtn pageKey="test-runs"   icon={IconRefresh} label="Test Runs"   indent />
+            <NavBtn pageKey="test-cases"  icon={IconCheck}  label="Test Cases"  indent />
+            <NavBtn pageKey="schedules"  icon={IconCalendar} label="Schedule Search" />
 
             {/* AI Chat button — only shown when ai_agent_enabled=1 */}
             {appSettings.ai_agent_enabled === '1' && (
@@ -2576,22 +2584,22 @@ function App() {
                   {/* Sea Freight */}
                   <div style={{ fontFamily: T.mono, fontSize: 9, color: T.textMuted, fontWeight: 700,
                     textTransform: "uppercase", letterSpacing: ".1em", padding: "5px 12px 3px 28px" }}>Sea Freight</div>
-                  <NavBtn pageKey="mdm-customers"            icon="👥" label="Customers"            indent />
-                  <NavBtn pageKey="mdm-sanctioned-customers" icon="🔴" label="Sanctioned Customers" subIndent />
-                  <NavBtn pageKey="mdm-contracts"   icon="📋" label="Contracts"       indent />
-                  <NavBtn pageKey="mdm-charge-codes" icon="🏷" label="Charge Codes"    indent />
-                  <NavBtn pageKey="mdm-carriers" icon="🏢" label="Carriers"       indent />
-                  <NavBtn pageKey="mdm-vessels"      icon="🚢" label="Vessels"         indent />
-                  <NavBtn pageKey="mdm-commodities" icon="📦" label="Commodities"     indent />
-                  <NavBtn pageKey="mdm-ports"    icon="📍" label="Port Locations" indent />
-                  <NavBtn pageKey="mdm-linked"   icon="🔗" label="Linked Ports"   indent />
+                  <NavBtn pageKey="mdm-customers"            icon={IconGroup} label="Customers"            indent />
+                  <NavBtn pageKey="mdm-sanctioned-customers" icon={IconCircle} iconColor="#ef4444" label="Sanctioned Customers" subIndent />
+                  <NavBtn pageKey="mdm-contracts"   icon={IconClipboard} label="Contracts"       indent />
+                  <NavBtn pageKey="mdm-charge-codes" icon={IconTag} label="Charge Codes"    indent />
+                  <NavBtn pageKey="mdm-carriers" icon={IconBuilding} label="Carriers"       indent />
+                  <NavBtn pageKey="mdm-vessels"      icon={IconShip} label="Vessels"         indent />
+                  <NavBtn pageKey="mdm-commodities" icon={IconPackage} label="Commodities"     indent />
+                  <NavBtn pageKey="mdm-ports"    icon={IconMapPin} label="Port Locations" indent />
+                  <NavBtn pageKey="mdm-linked"   icon={IconLink} label="Linked Ports"   indent />
 
                   {/* Locations sub-section */}
                   <div style={{ fontFamily: T.mono, fontSize: 9, color: T.textMuted, fontWeight: 700,
                     textTransform: "uppercase", letterSpacing: ".1em", padding: "10px 12px 3px 28px" }}>Locations</div>
-                  <NavBtn pageKey="mdm-tradelanes" icon="🌊" label="Trade Lanes"         indent />
-                  <NavBtn pageKey="mdm-countries" icon="🏳" label="Countries"          indent />
-                  <NavBtn pageKey="mdm-unlocodes" icon="🔢" label="UN Location Codes"  indent />
+                  <NavBtn pageKey="mdm-tradelanes" icon={IconRoute} label="Trade Lanes"         indent />
+                  <NavBtn pageKey="mdm-countries" icon={IconFlag} label="Countries"          indent />
+                  <NavBtn pageKey="mdm-unlocodes" icon={IconHashtag} label="UN Location Codes"  indent />
                 </div>
               )}
             </div>
@@ -2611,9 +2619,9 @@ function App() {
               </button>
               {orgOpen && (
                 <div>
-                  <NavBtn pageKey="org-country" icon="🌍" label="Country"  indent />
-                  <NavBtn pageKey="org-branch"  icon="🏛️" label="Branch"   indent />
-                  <NavBtn pageKey="org-office"  icon="🏢" label="Office"   indent />
+                  <NavBtn pageKey="org-country" icon={IconEarth} label="Country"  indent />
+                  <NavBtn pageKey="org-branch"  icon={IconGovernment} label="Branch"   indent />
+                  <NavBtn pageKey="org-office"  icon={IconBuilding} label="Office"   indent />
                 </div>
               )}
             </div>

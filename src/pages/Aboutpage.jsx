@@ -2,6 +2,7 @@ import { T } from "../tokens";
 import Badge from "../components/primitives/Badge";
 import React from "react";
 import { VERSION, BUILD, CODENAME, CHANGELOG, COPYRIGHT_YEAR, COPYRIGHT_OWNER } from "../version";
+import { IconSettings, AnyIcon } from "../components/primitives/Icon";
 
 // ─── About Page ───────────────────────────────────────────────────────────────
 
@@ -539,6 +540,220 @@ const ArchitecturalDetailsTab = () => {
   );
 };
 
+// ─── Research tab — external dataset findings ─────────────────────────────
+// Logged after checking openml.org, kaggle.com, and datasetsearch.research.google.com
+// for datasets that could enrich or extend CargoDesk's own data model. Exploratory
+// only — nothing listed here has been imported; these are candidates, not commitments.
+
+const RESEARCH_DATE = "2026-07-20";
+
+const DATASET_GROUPS = [
+  {
+    name: "Ports & Vessels",
+    color: "#4db3e8",
+    blurb: "Cross-checks and possible enrichment for the 349-vessel IMO registry and the 14,269 UN/LOCODE port table.",
+    items: [
+      {
+        name: "Piraeus AIS Dataset",
+        source: "Academic — ScienceDirect (open access)",
+        stats: "244M AIS records · May 2017 – Dec 2019",
+        relevance: "Real vessel position/trajectory data — a foundation for a live transit map or transit-time estimation, beyond the static vessel list.",
+        url: "https://www.sciencedirect.com/science/article/pii/S2352340921010568",
+      },
+      {
+        name: "Global Cargo Ships Dataset",
+        source: "Kaggle",
+        stats: "~4,000 ships · company, build year, gross tonnage, deadweight, length/width",
+        relevance: "vessels is thin on specs today (name, asset type, flag, build year, gross tonnage) — this could backfill deadweight and dimensions.",
+        url: "https://www.kaggle.com/datasets/ibrahimonmars/global-cargo-ships-dataset",
+      },
+      {
+        name: "Ports AIS Dataset",
+        source: "Kaggle",
+        stats: "Per-port AIS coverage",
+        relevance: "A cross-check against port_locations lat/long, not a wholesale replacement for the seeded UN/LOCODE table.",
+        url: "https://www.kaggle.com/datasets/marwaashraf5814/ports-ais",
+      },
+      {
+        name: "Shipping Ports Around The World",
+        source: "Kaggle",
+        stats: "450+ ports",
+        relevance: "Same use — a spot-check set for port_locations.",
+        url: "https://www.kaggle.com/datasets/sanjeetsinghnaik/ship-ports",
+      },
+      {
+        name: "Global Daily Port Activity and Trade Estimates",
+        source: "Kaggle (IMF-sourced)",
+        stats: "Daily port call counts + trade-flow estimates, per port",
+        relevance: "Could seed a port congestion/activity indicator next to the existing Schedules feature.",
+        url: "https://www.kaggle.com/datasets/arunvithyasegar/daily-port-activity-data-and-trade-estimates",
+      },
+    ],
+  },
+  {
+    name: "Commodities / HS Codes",
+    color: "#a855f7",
+    blurb: "commodities only covers 294 Maersk-specific codes today — these broaden it to the full international standard.",
+    items: [
+      {
+        name: "Harmonized System (HS) as a datapackage",
+        source: "GitHub — datasets/harmonized-system",
+        stats: "Full 6-digit international HS classification tree",
+        relevance: "Most direct way to extend commodities beyond Maersk-only codes, if customers ever need non-Maersk commodity lookups.",
+        url: "https://github.com/datasets/harmonized-system",
+      },
+      {
+        name: "WCO HS Codes CSV",
+        source: "GitHub — warrantgroup/WCO-HS-Codes",
+        stats: "World Customs Organization source list",
+        relevance: "Alternate source for the same HS tree — useful for cross-checking the datapackage above.",
+        url: "https://github.com/warrantgroup/WCO-HS-Codes/blob/master/data/hscodes.csv",
+      },
+      {
+        name: "UN Comtrade",
+        source: "United Nations (comtrade.un.org)",
+        stats: "HS-coded global trade volume by country pair",
+        relevance: "Overkill for MDM, but could feed a 'trade lane popularity' stat against trade_lanes later.",
+        url: "https://comtrade.un.org/",
+      },
+    ],
+  },
+  {
+    name: "Sanctions Screening",
+    color: "#2dcc8f",
+    blurb: "The strongest, most actionable find of the three sources — worth a real look, not just a toy dataset.",
+    items: [
+      {
+        name: "OpenSanctions — US OFAC SDN",
+        source: "opensanctions.org",
+        stats: "~18,700 entities · aggregates 412+ global sanctions/PEP/watchlist sources · free for non-commercial use · bulk JSON/CSV + API",
+        relevance: "sanctions_entries currently screens against raw OFAC SDN data. OpenSanctions gives the same coverage pre-normalized and deduped against other watchlists, plus vessel-specific sanctions entries that line up with the vessels table.",
+        url: "https://www.opensanctions.org/datasets/us_ofac_sdn/",
+      },
+    ],
+  },
+  {
+    name: "FX Rates",
+    color: "#f5b84c",
+    blurb: "Historical backfill for the live FX feature — not a replacement for it.",
+    items: [
+      {
+        name: "Currency Foreign Exchange Rates",
+        source: "Kaggle (dhruvildave)",
+        stats: "Historical daily rate table",
+        relevance: "Rate-on-date lookups for past shipments/invoices, where the live feed has no history.",
+        url: "https://www.kaggle.com/datasets/dhruvildave/currency-exchange-rates",
+      },
+      {
+        name: "Forex Exchange Rates Since 2004 (updated daily)",
+        source: "Kaggle (asaniczka)",
+        stats: "Daily rates, 2004–present",
+        relevance: "Same use, longer history.",
+        url: "https://www.kaggle.com/datasets/asaniczka/forex-exchange-rate-since-2004-updated-daily",
+      },
+    ],
+  },
+  {
+    name: "Supply Chain / Delay Prediction",
+    color: "#e8a217",
+    blurb: "A realistic sandbox for prototyping a delay-risk feature, before CargoDesk has enough of its own historical data to train on.",
+    items: [
+      {
+        name: "DataCo Smart Supply Chain Dataset",
+        source: "Kaggle (shashwatwork)",
+        stats: "18,000+ orders · 50+ features · shipping mode, scheduled vs. actual days, late-delivery label",
+        relevance: "Structured close to the shipment/milestone model (order → ship → deliver, with a late/on-time label) — the best candidate for prototyping a 'predicted delay risk' feature on shipments.",
+        url: "https://www.kaggle.com/datasets/shashwatwork/dataco-smart-supply-chain-for-big-data-analysis",
+      },
+      {
+        name: "Supply Chain Order Delay Risk Analysis",
+        source: "Kaggle (jayjoshi37)",
+        stats: "Smaller, simpler variant of the above",
+        relevance: "Same idea, lighter weight if the full DataCo set is more than needed for a first experiment.",
+        url: "https://www.kaggle.com/datasets/jayjoshi37/supply-chain-order-delay-risk-analysis",
+      },
+    ],
+  },
+];
+
+const RESEARCH_PICKS = [
+  { name: "OpenSanctions (US OFAC SDN)", why: "Upgrades a feature CargoDesk already has — pre-normalized, deduped sanctions data instead of raw Treasury XML." },
+  { name: "DataCo Smart Supply Chain Dataset", why: "Gives a realistic sandbox for a delay-prediction feature CargoDesk doesn't have yet." },
+];
+
+const DatasetCard = ({ item }) => (
+  <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "12px 14px" }}>
+    <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10,
+      flexWrap: "wrap", marginBottom: 4 }}>
+      <span style={{ fontFamily: T.head, fontSize: 13.5, fontWeight: 700, color: T.text }}>{item.name}</span>
+      <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted, textTransform: "uppercase",
+        letterSpacing: ".05em" }}>{item.source}</span>
+    </div>
+    <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, marginBottom: 6 }}>{item.stats}</div>
+    <p style={{ fontFamily: T.body, fontSize: 12.5, color: T.textMuted, lineHeight: 1.6, margin: "0 0 8px" }}>
+      {item.relevance}
+    </p>
+    <a href={item.url} target="_blank" rel="noopener noreferrer"
+      style={{ fontFamily: T.body, fontSize: 11.5, fontWeight: 700, color: T.accent, textDecoration: "none" }}>
+      View dataset ↗
+    </a>
+  </div>
+);
+
+const ResearchTab = () => (
+  <div>
+    <div style={{ background: T.surface, border: `1px solid ${T.accent}55`, borderRadius: 10,
+      padding: "14px 18px", marginBottom: 28 }}>
+      <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, margin: 0, lineHeight: 1.6 }}>
+        Exploratory research, logged {RESEARCH_DATE} — datasets checked across openml.org, kaggle.com, and
+        Google Dataset Search for anything that could enrich or extend CargoDesk's own data model. Nothing
+        listed here has been imported; these are candidates, not commitments.
+      </p>
+    </div>
+
+    <Section title="Top Picks">
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {RESEARCH_PICKS.map(p => (
+          <div key={p.name} style={{ background: T.surface, borderLeft: `3px solid ${T.accent}`,
+            border: `1px solid ${T.border}`, borderRadius: 10, padding: "13px 18px" }}>
+            <div style={{ fontFamily: T.head, fontSize: 13.5, fontWeight: 700, color: T.text, marginBottom: 4 }}>
+              {p.name}
+            </div>
+            <p style={{ fontFamily: T.body, fontSize: 12.5, color: T.textMuted, lineHeight: 1.6, margin: 0 }}>
+              {p.why}
+            </p>
+          </div>
+        ))}
+      </div>
+    </Section>
+
+    {DATASET_GROUPS.map(group => (
+      <Section key={group.name} title={group.name}>
+        <p style={{ fontFamily: T.body, fontSize: 12.5, color: T.textMuted, lineHeight: 1.6, margin: "0 0 12px" }}>
+          {group.blurb}
+        </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {group.items.map(item => <DatasetCard key={item.name} item={item} />)}
+        </div>
+      </Section>
+    ))}
+
+    <Section title="openml.org — dead end for this purpose">
+      <div style={{ background: T.surface, borderLeft: `3px solid ${T.warning}`,
+        border: `1px solid ${T.border}`, borderRadius: 10, padding: "13px 18px" }}>
+        <p style={{ fontFamily: T.body, fontSize: 12.5, color: T.textMuted, lineHeight: 1.6, margin: 0 }}>
+          <span style={{ color: T.warning }}>⚠</span>{" "}
+          OpenML is a generic ML-benchmark repository — mostly UCI-style tabular classification/regression
+          sets for algorithm comparison — not a domain-data source. Every search variant tried (site-scoped,
+          keyword, "supply chain" / "logistics" / "delivery") redirected to the same Kaggle/GitHub/ScienceDirect
+          datasets listed above rather than surfacing anything freight-specific hosted on OpenML itself. Not
+          worth revisiting for this purpose.
+        </p>
+      </div>
+    </Section>
+  </div>
+);
+
 const AboutPage = () => {
   const [tab, setTab] = React.useState("Overview");
 
@@ -546,7 +761,7 @@ const AboutPage = () => {
     { icon: "📦", title: "Shipment Tracking",         desc: "Create and manage ocean freight shipments with container-level detail: HS Code, gross weight, volume, IMDG dangerous goods class, and Maersk commodity type. Full status audit trail with timestamped transitions." },
     { icon: "◈",  title: "Consumption Dashboard",     desc: "TEU utilisation heatmap per carrier and route, date-range picker, and a dedicated Contract Consumption breakdown tab. Space Configurations now live on their own sidebar page." },
     { icon: "⚡", title: "Space Configurations",      desc: "Standalone page (Dashboard › Space Configurations) for managing carrier TEU allocations. Per-allocation lifetime consumption bars, 6-week sparklines, mandatory contract picker, conflict detection, and a full ActionMenu per row (Edit, History, Delete)." },
-    { icon: "⚙",  title: "Action Menus & Audit Log",  desc: "Cog (⚙) ActionMenu replaces individual buttons across Shipments, Carriers, and Contracts. Clicking History opens EntityHistoryModal — a timestamped timeline of CREATED/UPDATED/DELETED events with field diffs and meta pills, backed by the new entity_events table." },
+    { icon: IconSettings,  title: "Action Menus & Audit Log",  desc: "The settings-icon ActionMenu replaces individual buttons across Shipments, Carriers, and Contracts. Clicking History opens EntityHistoryModal — a timestamped timeline of CREATED/UPDATED/DELETED events with field diffs and meta pills, backed by the new entity_events table." },
     { icon: "📜", title: "Shipment History Tracker",  desc: "Full audit trail for every shipment: field changes, container additions/removals/updates, and status transitions logged automatically — rendered as a colour-coded timeline on the detail page. Bridged into the unified entity-events endpoint." },
     { icon: "📦", title: "Commodities MDM",           desc: "294 Maersk freight commodity codes (Grades M/K/E/S/Q) with full-text typeahead search. Mandatory on every shipment booking — determines handling requirements and documentation." },
     { icon: "🚢", title: "Vessel Registry",           desc: "349 vessels from the IMO registry, searchable by name, IMO number, or asset type, linked to country flags and integrated with the shipment form." },
@@ -596,7 +811,7 @@ const AboutPage = () => {
 
       {/* Tab bar */}
       <div style={{ display: "flex", borderBottom: `2px solid ${T.border}`, marginBottom: 24 }}>
-        {["Overview", "Architectural Details"].map(t => (
+        {["Overview", "Architectural Details", "Research"].map(t => (
           <button key={t} onClick={() => setTab(t)} type="button"
             style={{
               padding: "9px 20px", border: "none", cursor: "pointer", background: "none",
@@ -612,6 +827,8 @@ const AboutPage = () => {
 
       {tab === "Architectural Details" && <ArchitecturalDetailsTab />}
 
+      {tab === "Research" && <ResearchTab />}
+
       {tab === "Overview" && <>
 
       {/* Features */}
@@ -621,7 +838,7 @@ const AboutPage = () => {
             <div key={f.title} style={{ background: T.surface, border: `1px solid ${T.border}`,
               borderRadius: 10, padding: "14px 16px" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                <span style={{ fontSize: 18 }}>{f.icon}</span>
+                <span style={{ fontSize: 18, display: "inline-flex" }}><AnyIcon icon={f.icon} size={18} /></span>
                 <span style={{ fontFamily: T.head, fontSize: 14, fontWeight: 700, color: T.text }}>{f.title}</span>
               </div>
               <p style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, lineHeight: 1.65, margin: 0 }}>

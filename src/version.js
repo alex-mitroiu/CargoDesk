@@ -2,11 +2,17 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.34.0";
-export const BUILD     = "2026-07-19";
+export const VERSION   = "0.34.1";
+export const BUILD     = "2026-07-20";
 export const CODENAME  = "Ledger";
 
 export const CHANGELOG = [
+  {
+    version:  "0.34.1",
+    date:     "2026-07-20",
+    codename: "Ledger",
+    summary:  "Sidebar icon set replaced: every nav item's emoji swapped for a proper line-style icon from MingCute (Apache-2.0), rendered as real SVG via a new shared Icon component (components/primitives/Icon.jsx) instead of relying on the OS's emoji font — consistent weight and sizing across every browser/platform instead of emoji rendering differently (or missing) depending on the system font. The ⚙ settings/cog glyph got the same treatment everywhere it appears — the shared ActionMenu trigger (used across Shipments/Carriers/Contracts/etc.), the header's Application Settings menu item, the command palette, the Kanban WIP-limit and Board Settings buttons — using MingCute's actual gear-shaped settings icon rather than its sliders-style alternate, to stay a literal cog. Only the source SVGs actually used were kept in the vendored mingcute-icons-main reference folder (~24MB trimmed to under 1MB); everything else — the npm workspace tooling, other icon styles, and the ~3,300 unused icons — was removed since the paths are now self-contained in Icon.jsx. Scoped to sidebar navigation and the settings icon for this pass; the many smaller inline symbols used elsewhere (edit/delete/warning glyphs, status badges) remain emoji for now, a natural follow-on rather than done here.",
+  },
   {
     version:  "0.34.0",
     date:     "2026-07-19",

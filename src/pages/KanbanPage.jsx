@@ -11,6 +11,7 @@ import ActionMenu from "../components/primitives/ActionMenu";
 import TestCaseStoryLinksPanel from "../components/shared/TestCaseStoryLinksPanel";
 import { Inp, Sel, Textarea } from "../components/primitives/Form";
 import { toast } from "../toast";
+import { IconSettings } from "../components/primitives/Icon";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -2345,11 +2346,11 @@ const KanbanColumn = ({ status, tickets, allTickets, onEdit, onDelete, onMove, o
             <button type="button" onClick={() => { setWipInput(wipLimit ?? ""); setEditingWip(true); }}
               title={wipLimit ? `WIP limit: ${wipLimit} — click to change` : "Set WIP limit"}
               style={{ background: "none", border: "none", cursor: "pointer",
-                color: wipLimit ? T.accent : T.border, fontSize: 13, lineHeight: 1,
+                color: wipLimit ? T.accent : T.border, lineHeight: 1, display: "flex", alignItems: "center",
                 padding: "2px 4px", opacity: 0.7, transition: "opacity .15s, color .15s" }}
               onMouseEnter={e => e.currentTarget.style.opacity = "1"}
               onMouseLeave={e => e.currentTarget.style.opacity = "0.7"}>
-              ⚙
+              <IconSettings size={13} />
             </button>
           )}
         </div>
@@ -4134,10 +4135,11 @@ const KanbanPage = ({ shipments = [] }) => {
               title="Board settings — projects, columns, versions"
               style={{ fontFamily: T.body, fontSize: 12, padding: "5px 11px", borderRadius: 7,
                 background: "none", border: `1px solid ${T.border}`, color: T.textMuted,
-                cursor: "pointer", transition: "color .12s, border-color .12s" }}
+                cursor: "pointer", display: "flex", alignItems: "center", gap: 5,
+                transition: "color .12s, border-color .12s" }}
               onMouseEnter={e => { e.currentTarget.style.color = T.text; e.currentTarget.style.borderColor = T.text; }}
               onMouseLeave={e => { e.currentTarget.style.color = T.textMuted; e.currentTarget.style.borderColor = T.border; }}>
-              ⚙ Board
+              <IconSettings size={13} /> Board
             </button>
           )}
           {canEdit && (

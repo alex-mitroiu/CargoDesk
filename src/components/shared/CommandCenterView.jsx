@@ -3,6 +3,7 @@ import { T } from "../../tokens";
 import { api } from "../../api";
 import { toast } from "../../toast";
 import { AiOrb } from "./AiOrb";
+import { IconSettings, AnyIcon } from "../primitives/Icon";
 
 // Palette — mutable module vars so sub-components defined outside the main function see the
 // correct values. Updated at the start of each CommandCenterView render based on isDark prop.
@@ -129,7 +130,7 @@ const CMDS = [
   { icon: "📋", label: "Carrier Contracts",     key: "mdm-contracts" },
   { icon: "⚓", label: "Port Locations",        key: "mdm-ports"     },
   { icon: "🏢", label: "Branches & Offices",    key: "org-branch"    },
-  { icon: "⚙",  label: "App Settings",          key: "settings"      },
+  { icon: IconSettings,  label: "App Settings",          key: "settings"      },
 ];
 function CommandPalette({ onClose }) {
   const [q, setQ] = useState("");
@@ -171,7 +172,7 @@ function CommandPalette({ onClose }) {
                 cursor:"pointer", background: i===idx ? `${CC}12` : "none",
                 borderLeft:`3px solid ${i===idx ? CC : "transparent"}` }}
               onMouseEnter={() => setIdx(i)} onClick={() => go(c)}>
-              <span style={{ fontSize:16, width:24, textAlign:"center" }}>{c.icon}</span>
+              <span style={{ width:24, display:"flex", alignItems:"center", justifyContent:"center" }}><AnyIcon icon={c.icon} size={16} /></span>
               <span style={{ fontFamily:"sans-serif", fontSize:14, color:TEXT, flex:1 }}>{c.label}</span>
             </div>
           ))}

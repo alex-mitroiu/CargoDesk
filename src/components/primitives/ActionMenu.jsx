@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { T } from "../../tokens";
+import { IconSettings } from "./Icon";
 
 const ActionMenu = ({ items }) => {
   if (!items || items.length === 0) return null;
@@ -32,11 +33,12 @@ const ActionMenu = ({ items }) => {
           background: "none", border: `1px solid ${T.border}`, borderRadius: 6,
           color: T.textMuted, cursor: "pointer", padding: "5px 10px",
           fontSize: 14, fontFamily: T.body, lineHeight: 1,
+          display: "flex", alignItems: "center",
           transition: "border-color .12s, color .12s, background .12s",
         }}
         onMouseEnter={e => { e.currentTarget.style.borderColor = T.accent; e.currentTarget.style.color = T.accent; e.currentTarget.style.background = T.accentBg; }}
         onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.textMuted; e.currentTarget.style.background = "none"; }}>
-        ⚙
+        <IconSettings size={14} />
       </button>
       {open && (
         <div ref={menuRef}
