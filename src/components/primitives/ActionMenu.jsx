@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { T } from "../../tokens";
-import { IconSettings } from "./Icon";
+import { IconSettings, AnyIcon } from "./Icon";
 
 const ActionMenu = ({ items }) => {
   if (!items || items.length === 0) return null;
@@ -60,7 +60,7 @@ const ActionMenu = ({ items }) => {
               }}
               onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
               onMouseLeave={e => e.currentTarget.style.background = "none"}>
-              {item.icon && <span style={{ fontSize: 13, opacity: .7 }}>{item.icon}</span>}
+              {item.icon && <span style={{ fontSize: 13, opacity: .7, display: "inline-flex", alignItems: "center" }}><AnyIcon icon={item.icon} size={13} /></span>}
               {item.label}
             </button>
           ))}

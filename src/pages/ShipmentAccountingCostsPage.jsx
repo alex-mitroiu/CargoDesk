@@ -6,6 +6,7 @@ import { Modal, ConfirmModal } from "../components/primitives/Modal";
 import { CostLineForm, CostLineHistoryModal, CostLineRow, CostLineActualizeModal } from "./ShipmentDetailPage";
 import { api } from "../api";
 import { toast } from "../toast";
+import { IconClipboard, IconArrowDown, IconArrowUp, IconRefresh } from "../components/primitives/Icon";
 
 const fmtUsd = v => v == null ? "—" : `$${Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -162,14 +163,14 @@ const ShipmentAccountingCostsPage = ({ shipment, containers, onBack }) => {
         </div>
         {canEdit && (
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <Btn id="shpacct-costs-history-btn" size="sm" variant="secondary" onClick={() => setHistOpen(true)}>⏱ History</Btn>
+            <Btn id="shpacct-costs-history-btn" size="sm" variant="secondary" onClick={() => setHistOpen(true)}><IconClipboard size={12} />History</Btn>
             {isCentral && !hasContractLines && (
-              <Btn id="shpacct-costs-import-btn" size="sm" variant="secondary" onClick={() => openAction("import")}>⬇ Import from Contract</Btn>
+              <Btn id="shpacct-costs-import-btn" size="sm" variant="secondary" onClick={() => openAction("import")}><IconArrowDown size={12} />Import from Contract</Btn>
             )}
             {isCentral && hasContractLines && (
               <>
-                <Btn id="shpacct-costs-reset-btn" size="sm" variant="secondary" onClick={() => openAction("reset")}>↺ Reset to Contract</Btn>
-                <Btn id="shpacct-costs-update-btn" size="sm" variant="secondary" onClick={() => openAction("update")}>⇪ Update Carrier Costs</Btn>
+                <Btn id="shpacct-costs-reset-btn" size="sm" variant="secondary" onClick={() => openAction("reset")}><IconRefresh size={12} />Reset to Contract</Btn>
+                <Btn id="shpacct-costs-update-btn" size="sm" variant="secondary" onClick={() => openAction("update")}><IconArrowUp size={12} />Update Carrier Costs</Btn>
               </>
             )}
             <Btn id="shpacct-costs-add-btn" size="sm" onClick={() => setLineModal("add")}>＋ Add Line</Btn>

@@ -17,6 +17,7 @@ import Spinner from "../components/primitives/Spinner";
 import Pagination from "../components/primitives/Pagination";
 import { ContainerTypeField } from "../components/shared/ContainerTypePickerModal";
 import SailingPickerModal from "../components/shared/SailingPickerModal";
+import { IconClose, IconWarning, IconPackage, IconPencil, IconCheck, IconRefresh, IconLock } from "../components/primitives/Icon";
 
 // ─── Draft Container Manager ──────────────────────────────────────────────────
 
@@ -34,7 +35,8 @@ const DraftCtrRow = ({ idx, ctr, onChange, onRemove }) => (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
       <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: T.textMuted }}>Container #{idx + 1}</span>
       <button type="button" onClick={onRemove}
-        style={{ background: "none", border: "none", cursor: "pointer", color: T.textMuted, fontSize: 14, padding: "0 2px", lineHeight: 1 }}>✕</button>
+        style={{ background: "none", border: "none", cursor: "pointer", color: T.textMuted, fontSize: 14, padding: "0 2px", lineHeight: 1,
+          display: "inline-flex", alignItems: "center" }}><IconClose size={12} /></button>
     </div>
     <div style={{ display: "grid", gridTemplateColumns: "163px 1fr 1fr 1fr", gap: 10, marginBottom: 8 }}>
       <div>
@@ -170,8 +172,9 @@ export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0
         </div>
         {overage && (
           <div style={{ background: T.warning + "15", border: `1px solid ${T.warning}55`, borderRadius: 6, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
-            <div style={{ fontFamily: T.body, fontSize: 12, color: T.warning, fontWeight: 600 }}>
-              ⚠ Shipment is {shipmentTEU} TEU — only {alloc.remainingTEU} TEU remaining
+            <div style={{ fontFamily: T.body, fontSize: 12, color: T.warning, fontWeight: 600,
+              display: "flex", alignItems: "center", gap: 5 }}>
+              <IconWarning size={12} />Shipment is {shipmentTEU} TEU — only {alloc.remainingTEU} TEU remaining
             </div>
             <select value={reason} onChange={e => setOverageReasons(p => ({ ...p, [alloc.id]: e.target.value }))}
               style={{ ...inputBase, fontFamily: T.body, fontSize: 13 }}>
@@ -271,7 +274,8 @@ export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0
           <>
             {hasAllocs && (
               <>
-                <div style={{ fontFamily: T.body, fontSize: 12, fontWeight: 600, color: T.text }}>📦 Space Configurations</div>
+                <div style={{ fontFamily: T.body, fontSize: 12, fontWeight: 600, color: T.text,
+                  display: "flex", alignItems: "center", gap: 5 }}><IconPackage size={13} />Space Configurations</div>
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>{allocs.map(renderAllocCard)}</div>
                 <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "2px 0" }}>
                   <div style={{ flex: 1, height: 1, background: T.border }} />
@@ -303,7 +307,7 @@ export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0
                   </div>
                 ) : (
                   <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", background: T.success + "18", border: `1px solid ${T.success}44`, borderRadius: 8 }}>
-                    <span style={{ color: T.success, fontSize: 14 }}>✓</span>
+                    <IconCheck size={13} color={T.success} />
                     <span style={{ fontFamily: T.body, fontSize: 13, color: T.text, flex: 1 }}>
                       Skipping: <strong>{SKIP_REASONS.find(r => r.value === skipReason)?.label}</strong>
                     </span>
@@ -450,13 +454,15 @@ export const ContractField = ({ value, onChange, pol, pod, etd, crd, needsPolHau
           <span style={{ fontFamily: T.mono, fontSize: 13, color: T.accent, fontWeight: 700, flex: 1 }}>{value.ref}</span>
           {value.allocationId && (
             <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, background: T.success + "22", color: T.success,
-              border: `1px solid ${T.success}44`, borderRadius: 4, padding: "2px 8px" }}>📦 Space config</span>
+              border: `1px solid ${T.success}44`, borderRadius: 4, padding: "2px 8px",
+              display: "inline-flex", alignItems: "center", gap: 3 }}><IconPackage size={10} />Space config</span>
           )}
           <button type="button" onClick={() => setPickerOpen(true)}
             style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 4, cursor: "pointer",
               color: T.text, fontFamily: T.body, fontSize: 11, padding: "2px 8px" }}>Change</button>
           <button type="button" onClick={clearContract}
-            style={{ background: "none", border: "none", cursor: "pointer", color: T.textMuted, fontSize: 13, padding: "0 2px", lineHeight: 1 }}>✕</button>
+            style={{ background: "none", border: "none", cursor: "pointer", color: T.textMuted, fontSize: 13, padding: "0 2px", lineHeight: 1,
+              display: "inline-flex", alignItems: "center" }}><IconClose size={11} /></button>
         </div>
       ) : (
         <button type="button" onClick={() => !browseDisabled && setPickerOpen(true)}
@@ -553,12 +559,13 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
           <div style={{ width: onUpdateSchedule && d.legType === "SEA" ? 40 : 18, minWidth: onUpdateSchedule && d.legType === "SEA" ? 40 : 18,
             display: "flex", alignItems: "center", justifyContent: "center", gap: 4,
             borderRight: `1px solid ${T.border}22`, color: T.textMuted, fontSize: 11 }}>
-            🔒
+            <IconLock size={11} />
             {onUpdateSchedule && d.legType === "SEA" && (
               <button type="button" onClick={e => { e.stopPropagation(); onUpdateSchedule(d); }}
                 title="Update schedule — correct vessel/voyage/dates without unlinking"
                 style={{ background: "none", border: "none", cursor: "pointer", padding: 0,
-                  fontSize: 12, lineHeight: 1, color: T.accent }}>✎</button>
+                  fontSize: 12, lineHeight: 1, color: T.accent,
+                  display: "inline-flex", alignItems: "center" }}><IconPencil size={11} /></button>
             )}
           </div>
         )}
@@ -694,7 +701,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
               color: suggEta.isRecalc ? T.warning : T.accent,
               textAlign: "left",
               whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-            {suggEta.isRecalc ? "↻ recalc:" : "→"} {suggEta.date} ({suggEta.days}d)
+            {suggEta.isRecalc ? <><IconRefresh size={9} style={{ marginRight: 2 }} />recalc:</> : "→"} {suggEta.date} ({suggEta.days}d)
           </button>
         )}
       </div>
@@ -1487,8 +1494,9 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
                   </button>
                   <button type="button" onClick={() => setImoSuggestion(null)}
                     style={{ padding: "2px 4px", borderRadius: 5, border: "none", background: "none",
-                      cursor: "pointer", fontFamily: T.body, fontSize: 13, color: T.textMuted, lineHeight: 1 }}>
-                    ✕
+                      cursor: "pointer", fontFamily: T.body, fontSize: 13, color: T.textMuted, lineHeight: 1,
+                      display: "inline-flex", alignItems: "center" }}>
+                    <IconClose size={11} />
                   </button>
                 </div>
               )}
@@ -1584,8 +1592,9 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
                       ? <span title="ETA is before ETD — check leg dates" style={{ fontFamily: T.mono, fontSize: 11,
                           fontWeight: 700, color: T.warning, background: T.warning + "18",
                           border: `1px solid ${T.warning}44`, borderRadius: 10,
-                          padding: "2px 10px", whiteSpace: "nowrap", cursor: "default" }}>
-                          ⚠ dates
+                          padding: "2px 10px", whiteSpace: "nowrap", cursor: "default",
+                          display: "inline-flex", alignItems: "center", gap: 3 }}>
+                          <IconWarning size={10} />dates
                         </span>
                       : <span style={{ color: T.border, fontSize: 16 }}>→</span>}
                 </div>
@@ -1746,7 +1755,8 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
                         if (contractDgPolicy.imdgClasses.length > 0 && quickCargo.dgClass && !contractDgPolicy.imdgClasses.includes(quickCargo.dgClass))
                           return <span style={{ fontFamily: T.body, fontSize: 11, color: T.danger, whiteSpace: "nowrap" }}>Class not permitted</span>;
                         if (contractDgPolicy.dgAllowed)
-                          return <span style={{ fontFamily: T.body, fontSize: 11, color: T.success, whiteSpace: "nowrap" }}>✓ Permitted</span>;
+                          return <span style={{ fontFamily: T.body, fontSize: 11, color: T.success, whiteSpace: "nowrap",
+                            display: "inline-flex", alignItems: "center", gap: 3 }}><IconCheck size={10} />Permitted</span>;
                         return null;
                       })()}
                     </>
@@ -2022,8 +2032,9 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
                         {canEdit && (
                           <button type="button" onClick={() => removeSchedule(s.id)}
                             style={{ background: "none", border: "none", cursor: "pointer",
-                              color: T.textMuted, fontSize: 14, padding: "0 2px", lineHeight: 1 }}
-                            title="Remove sailing">✕</button>
+                              color: T.textMuted, fontSize: 14, padding: "0 2px", lineHeight: 1,
+                              display: "inline-flex", alignItems: "center" }}
+                            title="Remove sailing"><IconClose size={12} /></button>
                         )}
                       </div>
                     ))}
@@ -2064,7 +2075,8 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
                   </div>
                   <button type="button" onClick={() => setSelectedSailing(null)}
                     style={{ background: "none", border: "none", cursor: "pointer",
-                      color: T.textMuted, fontSize: 14, padding: "0 2px", lineHeight: 1 }}>✕</button>
+                      color: T.textMuted, fontSize: 14, padding: "0 2px", lineHeight: 1,
+                      display: "inline-flex", alignItems: "center" }}><IconClose size={12} /></button>
                 </div>
                 {(draftLegs || []).some(l => l.legType === "SEA") && (
                   <button type="button"

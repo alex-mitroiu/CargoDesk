@@ -3,6 +3,7 @@ import { T, LANE_BADGE_VARIANT, diffDays, todayIso } from "../tokens";
 import Btn from "../components/primitives/Btn";
 import Badge from "../components/primitives/Badge";
 import { useAuth } from "../AuthContext";
+import { IconRefresh, IconClose } from "../components/primitives/Icon";
 
 // ─── Lane pair (local — mirrors DashboardPage) ────────────────────────────────
 const LanePair = ({ origin, dest }) => (
@@ -100,8 +101,8 @@ const DashboardArchive = ({ allocations = [], carriers = [], onRenew, onDelete, 
             </div>
             {canEdit && (
               <div style={{ display: "flex", gap: 6 }}>
-                <Btn size="sm" variant="secondary" onClick={() => onRenew(a)}>↻ Renew</Btn>
-                <Btn size="sm" variant="danger"    onClick={() => onDelete(a.id)}>✕</Btn>
+                <Btn size="sm" variant="secondary" onClick={() => onRenew(a)}><IconRefresh size={11} />Renew</Btn>
+                <Btn size="sm" variant="danger"    onClick={() => onDelete(a.id)}><IconClose size={11} /></Btn>
               </div>
             )}
           </div>
@@ -116,7 +117,7 @@ const DashboardArchive = ({ allocations = [], carriers = [], onRenew, onDelete, 
         <h1 style={{ fontFamily: T.head, fontSize: 26, fontWeight: 800, color: T.text, margin: 0 }}>Archive</h1>
         <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, margin: "4px 0 0" }}>
           {allocations.length} expired space configuration{allocations.length !== 1 ? "s" : ""}
-          · click <strong>↻ Renew</strong> to create a new configuration based on an expired one
+          · click <strong>Renew</strong> to create a new configuration based on an expired one
         </p>
       </div>
       {tableContent}
@@ -216,8 +217,8 @@ const DashboardArchive = ({ allocations = [], carriers = [], onRenew, onDelete, 
 
                 {/* Actions */}
                 <div style={{ display: "flex", gap: 6 }}>
-                  <Btn size="sm" variant="secondary" onClick={() => onRenew(a)}>↻ Renew</Btn>
-                  <Btn size="sm" variant="danger"    onClick={() => onDelete(a.id)}>✕</Btn>
+                  <Btn size="sm" variant="secondary" onClick={() => onRenew(a)}><IconRefresh size={11} />Renew</Btn>
+                  <Btn size="sm" variant="danger"    onClick={() => onDelete(a.id)}><IconClose size={11} /></Btn>
                 </div>
               </div>
             );

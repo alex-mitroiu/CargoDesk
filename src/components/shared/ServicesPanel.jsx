@@ -11,6 +11,7 @@ import CustomerCombobox from "./CustomerCombobox";
 import Spinner from "../primitives/Spinner";
 import { SERVICE_TYPES } from "../../shipmentServicePages";
 import { emitServicesChanged } from "../../servicesBus";
+import { IconClose } from "../primitives/Icon";
 
 // ─── Dedicated Services panel (TKT-9DGDNP) ─────────────────────────────────
 // Ancillary services (VGM, Haulage, Fumigation, Storage, Customs, ...) ordered
@@ -134,7 +135,7 @@ const ServiceRow = ({ service, canEdit, onAdvance, onCancelService, onDelete }) 
               cursor: "pointer", fontSize: 13, padding: "3px 4px", lineHeight: 1 }}
             onMouseEnter={e => e.currentTarget.style.color = T.danger}
             onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>
-            ✕
+            <IconClose size={12} />
           </button>
         </div>
       )}

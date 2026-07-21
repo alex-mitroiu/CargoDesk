@@ -9,6 +9,7 @@ import ContainerEventsPanel from "../components/shared/ContainerEventsPanel";
 import ContainerPackagesPanel from "../components/shared/ContainerPackagesPanel";
 import { api } from "../api";
 import { setNavigationGuard, clearNavigationGuard } from "../navigationGuard";
+import { IconWarning, IconClipboard, IconPackage, IconClose } from "../components/primitives/Icon";
 
 // ─── Shipment Containers Page ─────────────────────────────────────────────────
 // Dedicated sub-page for FCL container management, promoted out of the
@@ -76,8 +77,8 @@ const ShipmentContainersPage = ({ shipment, containers, onBack, onAddContainer, 
           {dgConflicts > 0 && (
             <span id="shpctr-dg-conflicts" style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600, color: T.warning,
               background: T.warning + "18", border: `1px solid ${T.warning}55`,
-              borderRadius: 6, padding: "2px 8px" }}>
-              ⚠ {dgConflicts} DG conflict{dgConflicts !== 1 ? "s" : ""} — review required
+              borderRadius: 6, padding: "2px 8px", display: "inline-flex", alignItems: "center", gap: 5 }}>
+              <IconWarning size={11} />{dgConflicts} DG conflict{dgConflicts !== 1 ? "s" : ""} — review required
             </span>
           )}
         </div>
@@ -146,8 +147,9 @@ const ShipmentContainersPage = ({ shipment, containers, onBack, onAddContainer, 
                   <span title={ctrDgConflict(c)}
                     style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, color: T.warning,
                       background: T.warning + "18", border: `1px solid ${T.warning}55`,
-                      borderRadius: 4, padding: "1px 5px", cursor: "default", whiteSpace: "nowrap" }}>
-                    ⚠ conflict
+                      borderRadius: 4, padding: "1px 5px", cursor: "default", whiteSpace: "nowrap",
+                      display: "inline-flex", alignItems: "center", gap: 3 }}>
+                    <IconWarning size={9} />conflict
                   </span>
                 )}
               </div>
@@ -172,13 +174,13 @@ const ShipmentContainersPage = ({ shipment, containers, onBack, onAddContainer, 
               </div>
               <div style={{ width: canEdit ? 168 : 96, flexShrink: 0, display: "flex", gap: 5 }}>
                 <Btn id={`shpctr-${c.id}-events-btn`} size="sm" variant="secondary" onClick={() => setEventsCtr(c)}
-                  title={c.latestEventType ? `Latest: ${c.latestEventType}${c.latestEventLocation ? ` @ ${c.latestEventLocation}` : ""} (${c.latestEventAt || ""})` : "No lifecycle events yet"}>📋</Btn>
+                  title={c.latestEventType ? `Latest: ${c.latestEventType}${c.latestEventLocation ? ` @ ${c.latestEventLocation}` : ""} (${c.latestEventAt || ""})` : "No lifecycle events yet"}><IconClipboard size={12} /></Btn>
                 <Btn id={`shpctr-${c.id}-packages-btn`} size="sm" variant="secondary" onClick={() => setPkgsCtr(c)}
-                  title="Cargo manifest — pallet/box breakdown">📦</Btn>
+                  title="Cargo manifest — pallet/box breakdown"><IconPackage size={12} /></Btn>
                 {canEdit && (
                   <>
                     <Btn id={`shpctr-${c.id}-edit-btn`} size="sm" variant="secondary" onClick={() => setCtrModal(c)}>Edit</Btn>
-                    <Btn id={`shpctr-${c.id}-delete-btn`} size="sm" variant="danger" onClick={() => setConfirmCtr(c.id)}>✕</Btn>
+                    <Btn id={`shpctr-${c.id}-delete-btn`} size="sm" variant="danger" onClick={() => setConfirmCtr(c.id)}><IconClose size={11} /></Btn>
                   </>
                 )}
               </div>

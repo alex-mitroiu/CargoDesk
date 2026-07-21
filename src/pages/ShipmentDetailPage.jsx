@@ -19,6 +19,9 @@ import { Modal, ConfirmModal } from "../components/primitives/Modal";
 import DatePicker from "../components/primitives/DatePicker";
 import SailingPickerModal from "../components/shared/SailingPickerModal";
 import ContainerEventsPanel, { CONTAINER_EVENT_TYPES } from "../components/shared/ContainerEventsPanel";
+import { AnyIcon, IconClose, IconWarning, IconPackage, IconPencil, IconCheck, IconClipboard,
+  IconRefresh, IconShip, IconLock, IconUnlock, IconEye, IconArrowUp, IconArrowDown, IconForbid,
+  IconLink } from "../components/primitives/Icon";
 
 
 // ─── Section header with hover tooltip ───────────────────────────────────────
@@ -261,7 +264,7 @@ export const ContainerForm = forwardRef(({ init = {}, onSave, onCancel, onDirtyC
             <div style={{ fontFamily: T.body, fontSize: 10.5,
               color: f.isDg ? T.danger : T.textMuted,
               fontWeight: 600, textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 3 }}>
-              ⚠ IMDG Classified Cargo
+              <IconWarning size={11} style={{ marginRight: 4, position: "relative", top: 1 }} /> IMDG Classified Cargo
             </div>
             {!f.isDg && (
               <div style={{ fontFamily: T.body, fontSize: 11, color: T.border }}>
@@ -306,7 +309,7 @@ export const ContainerForm = forwardRef(({ init = {}, onSave, onCancel, onDirtyC
             border: `1px solid ${T.danger}55`,
             fontFamily: T.body, fontSize: 12, color: T.danger,
             display: "flex", alignItems: "flex-start", gap: 7 }}>
-            <span style={{ flexShrink: 0, fontWeight: 700 }}>⛔</span>
+            <IconForbid size={14} style={{ flexShrink: 0 }} />
             <span>{dgConflict}</span>
           </div>
         )}
@@ -391,8 +394,8 @@ export const CommodityDisplay = ({ code }) => {
 // ─── Status Timeline ──────────────────────────────────────────────────────────
 
 const STATUS_ICON = {
-  Active: "🟢", Pending: "🟡", Sailed: "🚢",
-  Arrived: "⚓", Completed: "✓", Cancelled: "✕",
+  Active: "🟢", Pending: "🟡", Sailed: IconShip,
+  Arrived: "⚓", Completed: IconCheck, Cancelled: IconClose,
 };
 
 export const relTime = iso => {
@@ -447,13 +450,15 @@ const StatusTimeline = ({ log, currentStatus, open, onToggle }) => (
                   <div style={{ flex: 1 }}>
                     <div style={{ display: "flex", alignItems: "center",
                       gap: 8, flexWrap: "wrap" }}>
-                      <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>
-                        {STATUS_ICON[entry.fromStatus] || "○"} {entry.fromStatus}
+                      <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted,
+                        display: "inline-flex", alignItems: "center", gap: 4 }}>
+                        <AnyIcon icon={STATUS_ICON[entry.fromStatus] || "○"} size={11} /> {entry.fromStatus}
                       </span>
                       <span style={{ fontFamily: T.mono, fontSize: 12, color: T.border }}>→</span>
                       <span style={{ fontFamily: T.mono, fontSize: 12,
-                        color: T.accent, fontWeight: 700 }}>
-                        {STATUS_ICON[entry.toStatus] || "○"} {entry.toStatus}
+                        color: T.accent, fontWeight: 700,
+                        display: "inline-flex", alignItems: "center", gap: 4 }}>
+                        <AnyIcon icon={STATUS_ICON[entry.toStatus] || "○"} size={11} /> {entry.toStatus}
                       </span>
                     </div>
                     <div style={{ display: "flex", gap: 10, marginTop: 3, flexWrap: "wrap" }}>
@@ -482,8 +487,9 @@ const StatusTimeline = ({ log, currentStatus, open, onToggle }) => (
                 </div>
                 <div>
                   <div style={{ fontFamily: T.mono, fontSize: 12,
-                    color: T.success, fontWeight: 700 }}>
-                    {STATUS_ICON[currentStatus] || "○"} {currentStatus}
+                    color: T.success, fontWeight: 700,
+                    display: "flex", alignItems: "center", gap: 4 }}>
+                    <AnyIcon icon={STATUS_ICON[currentStatus] || "○"} size={12} /> {currentStatus}
                   </div>
                   <div style={{ fontFamily: T.body, fontSize: 11,
                     color: T.textMuted, marginTop: 2 }}>Current status</div>
@@ -501,16 +507,16 @@ const StatusTimeline = ({ log, currentStatus, open, onToggle }) => (
 // ─── Shipment History Timeline ────────────────────────────────────────────────
 
 export const EVENT_CONFIG = {
-  SHIPMENT_CREATED:  { icon: "🚢",  label: "Shipment created",       color: () => T.success  },
-  STATUS_CHANGED:    { icon: "🔄", label: "Status changed",          color: () => T.accent   },
-  FIELD_UPDATED:     { icon: "✏️",  label: "Field updated",           color: () => T.info     },
+  SHIPMENT_CREATED:  { icon: IconShip,    label: "Shipment created",       color: () => T.success  },
+  STATUS_CHANGED:    { icon: IconRefresh, label: "Status changed",          color: () => T.accent   },
+  FIELD_UPDATED:     { icon: IconPencil,  label: "Field updated",           color: () => T.info     },
   CONTAINER_ADDED:   { icon: "➕",  label: "Container added",         color: () => T.success  },
   CONTAINER_REMOVED: { icon: "➖",  label: "Container removed",       color: () => T.danger   },
-  CONTAINER_UPDATED: { icon: "📦",  label: "Container updated",       color: () => T.warning  },
-  COMPLIANCE_HIT:    { icon: "⚠️",  label: "Compliance hit detected", color: () => T.danger   },
+  CONTAINER_UPDATED: { icon: IconPackage, label: "Container updated",       color: () => T.warning  },
+  COMPLIANCE_HIT:    { icon: IconWarning, label: "Compliance hit detected", color: () => T.danger   },
   COST_LINE_ADDED:   { icon: "＋",  label: "Cost line added",          color: () => T.success  },
-  COST_LINE_UPDATED: { icon: "✏️",  label: "Cost line updated",        color: () => T.info     },
-  COST_LINE_REMOVED: { icon: "✕",   label: "Cost line removed",        color: () => T.danger   },
+  COST_LINE_UPDATED: { icon: IconPencil,  label: "Cost line updated",        color: () => T.info     },
+  COST_LINE_REMOVED: { icon: IconClose,   label: "Cost line removed",        color: () => T.danger   },
 };
 
 export const FIELD_LABELS = {
@@ -574,7 +580,7 @@ const EventRow = ({ ev }) => {
       {/* Content */}
       <div style={{ flex: 1 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 13 }}>{cfg.icon}</span>
+          <span style={{ fontSize: 13, display: "inline-flex", alignItems: "center" }}><AnyIcon icon={cfg.icon} size={13} /></span>
           <span style={{ fontFamily: T.body, fontSize: 12, fontWeight: 700, color }}>
             {cfg.label}
           </span>
@@ -743,15 +749,17 @@ export const MessagesDrawer = ({ shipment, messages, onPost, onClose }) => {
                 transition: "border-color .15s, color .15s" }}
               onMouseEnter={e => { e.currentTarget.style.borderColor = T.accent; e.currentTarget.style.color = T.accent; }}
               onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.textMuted; }}>
-              {sortAsc ? "↑ Oldest first" : "↓ Newest first"}
+              {sortAsc
+                ? <><IconArrowUp size={11} style={{ marginRight: 4 }} />Oldest first</>
+                : <><IconArrowDown size={11} style={{ marginRight: 4 }} />Newest first</>}
             </button>
             <button onClick={onClose}
             style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 6,
               cursor: "pointer", color: T.textMuted, fontSize: 15, padding: "4px 10px",
-              lineHeight: 1 }}
+              lineHeight: 1, display: "inline-flex", alignItems: "center" }}
             onMouseEnter={e => { e.currentTarget.style.borderColor = T.danger; e.currentTarget.style.color = T.danger; }}
             onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.textMuted; }}>
-            ✕
+            <IconClose size={13} />
           </button>
           </div>
           </div>
@@ -923,10 +931,10 @@ export const EdiMessagesDrawer = ({ shipment, messages, onSend, onClose }) => {
             <button onClick={onClose}
               style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 6,
                 cursor: "pointer", color: T.textMuted, fontSize: 15, padding: "4px 10px",
-                lineHeight: 1 }}
+                lineHeight: 1, display: "inline-flex", alignItems: "center" }}
               onMouseEnter={e => { e.currentTarget.style.borderColor = T.danger; e.currentTarget.style.color = T.danger; }}
               onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.textMuted; }}>
-              ✕
+              <IconClose size={13} />
             </button>
           </div>
           {/* Context strip */}
@@ -1273,17 +1281,21 @@ export const ComplianceModal = ({ shipment, screening, onChange, onClose }) => {
           <button onClick={() => csvInputRef.current?.click()} disabled={syncing}
             style={{ fontFamily: T.body, fontSize: 12, background: "none",
               border: `1px solid ${T.border}`, borderRadius: 6, padding: "6px 12px",
-              color: T.textMuted, cursor: syncing ? "default" : "pointer" }}>
-            {syncing ? "Working…" : "⤒ Import sdn.csv"}
+              color: T.textMuted, cursor: syncing ? "default" : "pointer",
+              display: "inline-flex", alignItems: "center", gap: 5 }}>
+            {syncing ? "Working…" : <><IconArrowUp size={12} />Import sdn.csv</>}
           </button>
           <button onClick={syncFromSource} disabled={syncing}
             style={{ fontFamily: T.body, fontSize: 12, background: "none",
               border: `1px solid ${T.border}`, borderRadius: 6, padding: "6px 12px",
-              color: T.textMuted, cursor: syncing ? "default" : "pointer" }}>
-            {syncing ? "Working…" : "↻ Sync from source"}
+              color: T.textMuted, cursor: syncing ? "default" : "pointer",
+              display: "inline-flex", alignItems: "center", gap: 5 }}>
+            {syncing ? "Working…" : <><IconRefresh size={12} />Sync from source</>}
           </button>
           <Btn onClick={runScreen} disabled={busy} style={{ marginLeft: "auto" }}>
-            {busy ? "Screening…" : screening ? "↻ Re-screen" : "Run Screening"}
+            {busy ? "Screening…" : screening
+              ? <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><IconRefresh size={12} />Re-screen</span>
+              : "Run Screening"}
           </Btn>
         </div>
       </div>
@@ -1294,14 +1306,14 @@ export const ComplianceModal = ({ shipment, screening, onChange, onClose }) => {
 // ─── Shipment Milestones ──────────────────────────────────────────────────────
 
 const MILESTONE_ICONS = {
-  booking_confirmed: "📋",
+  booking_confirmed: IconClipboard,
   si_submitted:      "📄",
   cargo_gated_in:    "🏭",
-  vessel_departed:   "🚢",
+  vessel_departed:   IconShip,
   bl_issued:         "📃",
   vessel_arrived:    "⚓",
-  customs_cleared:   "✅",
-  cargo_released:    "📦",
+  customs_cleared:   IconCheck,
+  cargo_released:    IconPackage,
   delivered:         "🎯",
 };
 
@@ -1451,7 +1463,9 @@ export const PartiesOfficesPanel = ({ shipment, onUpdate }) => {
           Parties
         </div>
         {canEdit && onUpdate && (
-          <Btn id="shpparties-edit-btn" size="sm" variant="secondary" onClick={() => setEditing(true)}>✎ Edit</Btn>
+          <Btn id="shpparties-edit-btn" size="sm" variant="secondary" onClick={() => setEditing(true)}>
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><IconPencil size={12} />Edit</span>
+          </Btn>
         )}
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 18 }}>
@@ -1668,7 +1682,8 @@ export const MilestonePanel = ({ shipmentId, shipment, onProgress }) => {
                       boxShadow: state === 'current' ? `0 0 0 5px ${color}22` : "none",
                       lineHeight: 1,
                     }}>
-                    {state === 'completed' ? "✓" : state === 'overdue' ? "!" : (MILESTONE_ICONS[m.milestoneKey] || m.sequenceOrder)}
+                    {state === 'completed' ? <IconCheck size={13} /> : state === 'overdue' ? "!" :
+                      MILESTONE_ICONS[m.milestoneKey] ? <AnyIcon icon={MILESTONE_ICONS[m.milestoneKey]} size={13} /> : m.sequenceOrder}
                   </div>
                   {!isLast && (
                     <div style={{ width: 2, flex: 1, minHeight: 28,
@@ -1739,7 +1754,7 @@ export const MilestonePanel = ({ shipmentId, shipment, onProgress }) => {
                           {isBusy ? "Saving…" : "Save"}
                         </Btn>
                         <Btn id={`shpmiles-step-${m.milestoneKey}-complete-btn`} size="sm" variant="success" onClick={() => handleToggleComplete(m)} disabled={isBusy}>
-                          ✓ Mark Complete
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><IconCheck size={12} />Mark Complete</span>
                         </Btn>
                         <button type="button" onClick={() => setExpanded(null)}
                           style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted,
@@ -1828,7 +1843,7 @@ const ContainerEventsStepper = ({ container }) => {
                 fontSize: 10, fontWeight: 700, lineHeight: 1,
                 boxShadow: state === 'current' ? `0 0 0 4px ${color}22` : "none",
               }}>
-                {state === 'completed' ? "✓" : idx + 1}
+                {state === 'completed' ? <IconCheck size={11} /> : idx + 1}
               </div>
               <span style={{ fontFamily: T.body, fontSize: 9, color: T.textMuted, textAlign: "center",
                 lineHeight: 1.2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", width: "100%" }}>
@@ -2091,8 +2106,9 @@ export const CostLineHistoryModal = ({ shipmentId, onClose }) => {
           </div>
           <button type="button" onClick={exportCsv}
             style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, background: "none",
-              border: `1px solid ${T.border}`, borderRadius: 7, padding: "4px 12px", cursor: "pointer" }}>
-            ⬇ CSV
+              border: `1px solid ${T.border}`, borderRadius: 7, padding: "4px 12px", cursor: "pointer",
+              display: "inline-flex", alignItems: "center", gap: 4 }}>
+            <IconArrowDown size={11} />CSV
           </button>
         </div>
 
@@ -2262,7 +2278,8 @@ export const CostLineRow = ({ line: l, containers = [], showActions = false, onE
         fontFamily: T.mono, fontSize: 12, textAlign: "right", fontWeight: 600,
         color: (l.amount === 0 && l.source === 'contract' && l.type === 'BUY') ? T.warning : T.text }}>
         {l.amount === 0 && l.source === 'contract' && l.type === 'BUY'
-          ? <span title="No matching rate for this container type — set manually">⚠ 0.00</span>
+          ? <span title="No matching rate for this container type — set manually"
+              style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><IconWarning size={11} />0.00</span>
           : l.amount.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
         }
       </div>
@@ -2285,11 +2302,11 @@ export const CostLineRow = ({ line: l, containers = [], showActions = false, onE
         <div style={{ width: 36, flexShrink: 0 }}>
           <ActionMenu items={[
             ...(l.status !== 'posted' ? [
-              { icon: "✎", label: "Edit", onClick: onEdit },
-              { icon: "✕", label: "Delete", variant: "danger", onClick: onDelete },
+              { icon: IconPencil, label: "Edit", onClick: onEdit },
+              { icon: IconClose, label: "Delete", variant: "danger", onClick: onDelete },
             ] : []),
             ...(l.status === 'accrued' && onActualize ? [{ icon: "◐", label: "Actualize", onClick: onActualize }] : []),
-            ...(l.status !== 'posted' && onPost ? [{ icon: "🔒", label: "Post", onClick: onPost }] : []),
+            ...(l.status !== 'posted' && onPost ? [{ icon: IconLock, label: "Post", onClick: onPost }] : []),
           ]} />
         </div>
       )}
@@ -2518,8 +2535,9 @@ export const RouteSummaryBar = ({ shipment }) => {
                 ? <span title="ETA is before ETD — check leg dates" style={{ fontFamily: T.mono, fontSize: 11,
                     fontWeight: 700, color: T.warning, background: T.warning + "18",
                     border: `1px solid ${T.warning}44`, borderRadius: 10,
-                    padding: "2px 10px", whiteSpace: "nowrap", cursor: "default" }}>
-                    ⚠ dates
+                    padding: "2px 10px", whiteSpace: "nowrap", cursor: "default",
+                    display: "inline-flex", alignItems: "center", gap: 3 }}>
+                    <IconWarning size={10} />dates
                   </span>
                 : <span style={{ color: T.border, fontSize: 16 }}>→</span>}
           </div>
@@ -2831,10 +2849,10 @@ export const TicketsDrawer = ({ shipment, onClose }) => (
           <button onClick={onClose}
             style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 6,
               cursor: "pointer", color: T.textMuted, fontSize: 15, padding: "4px 10px",
-              lineHeight: 1 }}
+              lineHeight: 1, display: "inline-flex", alignItems: "center" }}
             onMouseEnter={e => { e.currentTarget.style.borderColor = T.danger; e.currentTarget.style.color = T.danger; }}
             onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.textMuted; }}>
-            ✕
+            <IconClose size={13} />
           </button>
         </div>
         {/* Context strip */}
@@ -2898,7 +2916,7 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
           borderRadius: 8, background: T.info + "15", border: `1px solid ${T.info}44`,
           fontFamily: T.body, fontSize: 12, color: T.info, marginBottom: 16,
         }}>
-          <span style={{ fontSize: 14 }}>👁</span>
+          <IconEye size={14} />
           <strong>View Only</strong> — your account has read-only access. Contact an admin to request edit permissions.
         </div>
       )}

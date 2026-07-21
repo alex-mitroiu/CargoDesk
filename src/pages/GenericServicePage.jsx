@@ -5,6 +5,7 @@ import { toast } from "../toast";
 import Btn from "../components/primitives/Btn";
 import { Textarea } from "../components/primitives/Form";
 import { buildGenericServiceDocHtml } from "../utils/invoiceGenerator";
+import { IconFlash, IconFolder } from "../components/primitives/Icon";
 
 // ─── Generic Service Detail page (Epic TKT-TBS7QD) ────────────────────────────
 // Dedicated page for every ordered service type without a bespoke page — everything
@@ -90,7 +91,7 @@ const GenericServicePage = ({ shipment, side, serviceType, canEdit, onViewDocume
   if (service === null) {
     return (
       <div id="svcgen-notfound" style={{ maxWidth: 700, margin: "60px auto", textAlign: "center" }}>
-        <div style={{ fontSize: 40, marginBottom: 12 }}>📭</div>
+        <div style={{ marginBottom: 12, color: T.textMuted }}><IconFolder size={40} /></div>
         <div style={{ fontFamily: T.head, fontSize: 18, fontWeight: 800, color: T.text, marginBottom: 8 }}>
           No {side} {serviceType} service found
         </div>
@@ -170,7 +171,7 @@ const GenericServicePage = ({ shipment, side, serviceType, canEdit, onViewDocume
               </Btn>
             </div>
             <Btn id="svcgen-generate-btn" onClick={handleGenerate} disabled={generating}>
-              {generating ? "Generating…" : "⚡ Generate Document"}
+              {generating ? "Generating…" : <><IconFlash size={13} />Generate Document</>}
             </Btn>
           </div>
         )}

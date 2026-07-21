@@ -2,11 +2,23 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.34.1";
-export const BUILD     = "2026-07-20";
+export const VERSION   = "0.34.3";
+export const BUILD     = "2026-07-21";
 export const CODENAME  = "Ledger";
 
 export const CHANGELOG = [
+  {
+    version:  "0.34.3",
+    date:     "2026-07-21",
+    codename: "Ledger",
+    summary:  "Icon replacement pass three — the remaining shipment sub-pages and shared panels that v0.34.2 disclosed as left out: Contracts & Schedules (contract-mismatch warning, Space config / Expired badges), Cost Entry (History/Import/Reset/Update buttons), Invoice Entry (status pills, History/Generate/Per-Container/Preview buttons), Loading & Generic Service pages (empty-state, Generate buttons, confirmed labels), Space Configurations (conflict banners, contract picker, lane override, copy chip, Archive button, the row action menu, and the inline ⚙ hint in the subtitle), Dashboard Archive (Renew/delete), Cargo page (DG-conflict badges, events/manifest/delete row buttons), and the Services / Container Events / Container Packages shared panels. Seven more MingCute icons joined the shared set (door, receipt, coin, time, file, file-certificate, plus the existing folder reused for empty states), which also completed the shipment Explorer sidebar — Conditions, Documents, History, Invoice Entry, and Cost Entry now render real SVGs, leaving only the anchor (no MingCute equivalent exists) as emoji. Container lifecycle events (Empty Pickup → Gate In → Loaded → Sailed → Discharged → Gate Out → Empty Return) each got a matching icon in place of their emoji strip. Separately, the nav fold state added in v0.34.2 now persists per group in localStorage (cd_navfold_*, same idiom as the theme preference): a group you expand stays expanded across reloads, while the default for a fresh browser remains all-collapsed.",
+  },
+  {
+    version:  "0.34.2",
+    date:     "2026-07-21",
+    codename: "Ledger",
+    summary:  "Main nav gets its own scrollbar instead of silently clipping: the sidebar had no explicit height, so on shorter screens (e.g. a MacBook's reduced viewport height) it just grew taller than the window with the last item pushed off-screen and unreachable — fixed by pinning the sidebar to the viewport height and letting its own nav list scroll internally. The Dashboard and Integration Board nav groups also gained the same collapse/expand chevron the Master Data and Organization groups already had, and every top-level group now starts collapsed by default instead of expanded, so the nav reads as a short list of headings rather than a long wall of items. Same fix applied to the shipment detail page's own Explorer sidebar, which had the identical unbounded-height gap. Icon set replacement continued beyond the sidebar/settings-only scope of v0.34.1: shipment entry and detail pages, the Dashboard, and the persistent shipment header now use real MingCute SVG icons in place of emoji for close/warning/package/edit/check/clipboard/refresh/ship glyphs everywhere they recur, plus six new icons (lock, unlock, eye, up/down arrow, forbid) added to the shared Icon component for lock/unlock, view-only, import/export, and blocked-conflict indicators. ActionMenu's per-item icon slot and the shipment header's icon-tile row now both accept either an emoji string or a real icon component from the same list slot, so mixed old/new content upgrades without a full rewrite. Smaller one-off glyphs (anchor, messaging/EDI icons, and several page-specific symbols with no suitable MingCute equivalent found) remain emoji for now — a disclosed, deliberate scope boundary rather than an oversight.",
+  },
   {
     version:  "0.34.1",
     date:     "2026-07-20",

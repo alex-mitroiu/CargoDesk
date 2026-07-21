@@ -29,7 +29,8 @@ import {
   IconSailboat, IconDashboard, IconFlash, IconArchive, IconClipboard, IconTag,
   IconFlask, IconRefresh, IconCheck, IconCalendar, IconGroup, IconCircle,
   IconBuilding, IconShip, IconPackage, IconMapPin, IconLink, IconRoute,
-  IconFlag, IconHashtag, IconEarth, IconGovernment, IconSettings, AnyIcon,
+  IconFlag, IconHashtag, IconEarth, IconGovernment, IconSettings, IconChartBar, AnyIcon,
+  IconReceipt, IconCoin,
 } from "./components/primitives/Icon";
 import TrackedDocPreviewModal from "./components/shared/TrackedDocPreviewModal";
 import { fmtCurr, _esc, _invShell, buildFreightInvoiceHtml } from "./utils/invoiceGenerator";
@@ -1366,14 +1367,15 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
   const sectionsAfterServices  = sections.slice(cargoIdx + 1);
   const sectionsAfterAccounting = SHIPMENT_SECTIONS_AFTER_ACCOUNTING;
   const accountingChildren = [
-    { id: "shp-accounting-invoices", icon: "🧾", label: "Invoice Entry" },
-    { id: "shp-accounting-costs",    icon: "💰", label: "Cost Entry" },
-    { id: "shp-accounting-gp",       icon: "📊", label: "GP Overview" },
+    { id: "shp-accounting-invoices", icon: IconReceipt, label: "Invoice Entry" },
+    { id: "shp-accounting-costs",    icon: IconCoin, label: "Cost Entry" },
+    { id: "shp-accounting-gp",       icon: IconChartBar, label: "GP Overview" },
   ];
 
   return (
-    <aside style={{ width: 240, background: T.surface, borderRight: `1px solid ${T.border}`,
-      display: "flex", flexDirection: "column", flexShrink: 0 }}>
+    <aside style={{ width: 240, height: "100vh", position: "sticky", top: 0,
+      background: T.surface, borderRight: `1px solid ${T.border}`,
+      display: "flex", flexDirection: "column", flexShrink: 0, overflow: "hidden" }}>
 
       {/* Logo */}
       <div style={{ padding: "22px 20px 18px", borderBottom: `1px solid ${T.border}` }}>
@@ -1470,7 +1472,7 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
               onMouseLeave={e => { if (!selected) e.currentTarget.style.background = "transparent"; }}
             >
               <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-                <span style={{ width: 16, textAlign: "center", fontSize: 13, flexShrink: 0 }}>{icon}</span>
+                <span style={{ width: 16, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, flexShrink: 0 }}><AnyIcon icon={icon} size={13} /></span>
                 <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
                 {promoted && <span style={{ fontSize: 9, color: T.border }}>↗</span>}
               </span>
@@ -1699,8 +1701,17 @@ function App() {
     localStorage.setItem("cd_theme", next ? "dark" : "light"); // persist
     setIsDark(next);                                            // trigger re-render (T already updated)
   };
-  const [mdmOpen,      setMdmOpen]      = useState(true);
-  const [orgOpen,      setOrgOpen]      = useState(true);
+  // Nav fold state persists per group (cd_navfold_*, same idiom as cd_theme) so an
+  // expanded group survives reload; absent key = collapsed, the all-minimized default.
+  const useFoldState = (storageKey) => {
+    const [open, setOpen] = useState(() => localStorage.getItem(storageKey) === "1");
+    useEffect(() => { localStorage.setItem(storageKey, open ? "1" : "0"); }, [open, storageKey]);
+    return [open, setOpen];
+  };
+  const [mdmOpen,      setMdmOpen]      = useFoldState("cd_navfold_mdm");
+  const [orgOpen,      setOrgOpen]      = useFoldState("cd_navfold_org");
+  const [dashboardNavOpen, setDashboardNavOpen] = useFoldState("cd_navfold_dashboard");
+  const [kanbanNavOpen,    setKanbanNavOpen]    = useFoldState("cd_navfold_kanban");
   const [detailAction, setDetailAction] = useState(null);
   const [user,         setUser]         = useState(null);
   const [authLoading,  setAuthLoading]  = useState(true);
@@ -1967,9 +1978,10 @@ function App() {
   if (!ready) return <FullPageSpinner label="Connecting to database…" />;
 
   // ── Shared nav button style ──
-  const NavBtn = ({ pageKey, icon: IconComp, iconColor, label, indent = false, subIndent = false }) => {
+  const NavBtn = ({ pageKey, icon: IconComp, iconColor, label, indent = false, subIndent = false,
+                    activeExtra = false, foldable = false, open, onToggleFold }) => {
     if (!isEnabled(pageKey)) return null;
-    const active = page === pageKey || (pageKey === "shipments" && (page === "detail" || page === "shipment-new" || page === "shipment-edit"));
+    const active = page === pageKey || activeExtra || (pageKey === "shipments" && (page === "detail" || page === "shipment-new" || page === "shipment-edit"));
     const pad = subIndent ? "6px 12px 6px 44px" : indent ? "7px 12px 7px 28px" : "9px 12px";
     const fs  = subIndent ? 12 : indent ? 13 : 14;
     return (
@@ -1982,7 +1994,14 @@ function App() {
           fontFamily: T.body, fontSize: fs, fontWeight: active ? 600 : 400,
           borderLeft: `3px solid ${active ? T.accent : "transparent"}` }}>
         <IconComp size={fs + 3} color={iconColor} style={{ flexShrink: 0 }} />
-        {label}
+        <span style={{ flex: 1 }}>{label}</span>
+        {foldable && (
+          <span onClick={e => { e.stopPropagation(); onToggleFold(); }}
+            title={open ? "Collapse" : "Expand"}
+            style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted, transition: "transform .2s",
+              display: "inline-block", padding: "3px 4px", marginRight: -4, flexShrink: 0,
+              transform: open ? "rotate(90deg)" : "rotate(0deg)" }}>▶</span>
+        )}
       </button>
     );
   };
@@ -2514,8 +2533,9 @@ function App() {
       ) : page === "shipment-edit" && selectedShipment ? (
         <ShipmentFormSidebar mode="edit" shipment={selectedShipment} navigate={navigate} onContainers={() => setFormCtrListOpen(true)} />
       ) : (
-        <aside style={{ width: 240, background: T.surface, borderRight: `1px solid ${T.border}`,
-          display: "flex", flexDirection: "column", flexShrink: 0 }}>
+        <aside style={{ width: 240, height: "100vh", position: "sticky", top: 0,
+          background: T.surface, borderRight: `1px solid ${T.border}`,
+          display: "flex", flexDirection: "column", flexShrink: 0, overflow: "hidden" }}>
 
           {/* Logo — click to go home */}
           <div style={{ padding: "22px 20px 20px", borderBottom: `1px solid ${T.border}` }}>
@@ -2531,16 +2551,28 @@ function App() {
             {/* Top-level items */}
             <NavBtn pageKey="shipments" icon={IconSailboat} label="Shipments" />
 
-            {/* Dashboard sub-group */}
-            <NavBtn pageKey="dashboard"      icon={IconDashboard}  label="Dashboard" />
-            <NavBtn pageKey="space-configs"  icon={IconFlash} label="Space Configurations" indent />
-            <NavBtn pageKey="dashboard-archive" icon={IconArchive} label="Archive"           indent />
+            {/* Dashboard sub-group — folded by default (see NavBtn's foldable prop) */}
+            <NavBtn pageKey="dashboard" icon={IconDashboard} label="Dashboard"
+              activeExtra={["space-configs", "dashboard-archive"].includes(page)}
+              foldable open={dashboardNavOpen} onToggleFold={() => setDashboardNavOpen(o => !o)} />
+            {dashboardNavOpen && (
+              <>
+                <NavBtn pageKey="space-configs"  icon={IconFlash} label="Space Configurations" indent />
+                <NavBtn pageKey="dashboard-archive" icon={IconArchive} label="Archive"           indent />
+              </>
+            )}
 
-            <NavBtn pageKey="kanban"      icon={IconClipboard} label="Integration Board" />
-            <NavBtn pageKey="releases"    icon={IconTag} label="Releases"    indent />
-            <NavBtn pageKey="test-plans"  icon={IconFlask} label="Test Plans"  indent />
-            <NavBtn pageKey="test-runs"   icon={IconRefresh} label="Test Runs"   indent />
-            <NavBtn pageKey="test-cases"  icon={IconCheck}  label="Test Cases"  indent />
+            <NavBtn pageKey="kanban" icon={IconClipboard} label="Integration Board"
+              activeExtra={["releases", "test-plans", "test-runs", "test-cases"].includes(page)}
+              foldable open={kanbanNavOpen} onToggleFold={() => setKanbanNavOpen(o => !o)} />
+            {kanbanNavOpen && (
+              <>
+                <NavBtn pageKey="releases"    icon={IconTag} label="Releases"    indent />
+                <NavBtn pageKey="test-plans"  icon={IconFlask} label="Test Plans"  indent />
+                <NavBtn pageKey="test-runs"   icon={IconRefresh} label="Test Runs"   indent />
+                <NavBtn pageKey="test-cases"  icon={IconCheck}  label="Test Cases"  indent />
+              </>
+            )}
             <NavBtn pageKey="schedules"  icon={IconCalendar} label="Schedule Search" />
 
             {/* AI Chat button — only shown when ai_agent_enabled=1 */}

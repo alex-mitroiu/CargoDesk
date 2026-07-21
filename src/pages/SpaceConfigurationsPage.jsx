@@ -16,6 +16,8 @@ import DatePicker from "../components/primitives/DatePicker";
 import { useResizableColumns, ColResizer } from "../components/primitives/useResizableColumns.jsx";
 import ActionMenu from "../components/primitives/ActionMenu";
 import EntityHistoryModal from "../components/shared/EntityHistoryModal";
+import { IconCheck, IconClose, IconPencil, IconWarning, IconForbid, IconLink,
+  IconClipboard, IconArchive, IconSettings } from "../components/primitives/Icon";
 
 // ─── Config ID chip with copy-to-clipboard ───────────────────────────────────
 const IdChip = ({ id }) => {
@@ -38,7 +40,7 @@ const IdChip = ({ id }) => {
           fontFamily: T.mono, fontSize: 10,
           color: copied ? T.success : T.textMuted,
           padding: "2px 8px", transition: "all .15s", flexShrink: 0 }}>
-        {copied ? "✓ copied" : "copy"}
+        {copied ? <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}><IconCheck size={9} />copied</span> : "copy"}
       </button>
     </div>
   );
@@ -137,24 +139,27 @@ const ConflictBanner = ({ conflicts, loading }) => {
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       {hasExact && (
         <div style={{ background: T.dangerBg, border: `1px solid ${T.danger}55`, borderRadius: 8, overflow: "hidden" }}>
-          <div style={{ padding: "8px 12px", fontFamily: T.body, fontSize: 12, color: T.danger, fontWeight: 600 }}>
-            ⛔ {conflicts.exact.length} duplicate conflict{conflicts.exact.length > 1 ? "s" : ""} — same carrier, route, contract and overlapping period. Cannot save.
+          <div style={{ padding: "8px 12px", fontFamily: T.body, fontSize: 12, color: T.danger, fontWeight: 600,
+            display: "flex", alignItems: "center", gap: 6 }}>
+            <IconForbid size={13} />{conflicts.exact.length} duplicate conflict{conflicts.exact.length > 1 ? "s" : ""} — same carrier, route, contract and overlapping period. Cannot save.
           </div>
           {conflicts.exact.map(a => <ConflictRow key={a.id} a={a} kind="exact" />)}
         </div>
       )}
       {hasCrossContract && (
         <div style={{ background: T.warningBg, border: `1px solid ${T.warning}55`, borderRadius: 8, overflow: "hidden" }}>
-          <div style={{ padding: "8px 12px", fontFamily: T.body, fontSize: 12, color: T.warning, fontWeight: 600 }}>
-            ⚠ {conflicts.crossContract.length} overlapping allocation{conflicts.crossContract.length > 1 ? "s" : ""} on this lane under a different contract — allowed, but review intentional.
+          <div style={{ padding: "8px 12px", fontFamily: T.body, fontSize: 12, color: T.warning, fontWeight: 600,
+            display: "flex", alignItems: "center", gap: 6 }}>
+            <IconWarning size={13} />{conflicts.crossContract.length} overlapping allocation{conflicts.crossContract.length > 1 ? "s" : ""} on this lane under a different contract — allowed, but review intentional.
           </div>
           {conflicts.crossContract.map(a => <ConflictRow key={a.id} a={a} kind="linked" />)}
         </div>
       )}
       {hasLinked && (
         <div style={{ background: T.warningBg, border: `1px solid ${T.warning}55`, borderRadius: 8, overflow: "hidden" }}>
-          <div style={{ padding: "8px 12px 6px", fontFamily: T.body, fontSize: 12, color: T.warning, fontWeight: 600 }}>
-            ⚠ {conflicts.linked.length} linked-port overlap{conflicts.linked.length > 1 ? "s" : ""}
+          <div style={{ padding: "8px 12px 6px", fontFamily: T.body, fontSize: 12, color: T.warning, fontWeight: 600,
+            display: "flex", alignItems: "center", gap: 6 }}>
+            <IconWarning size={13} />{conflicts.linked.length} linked-port overlap{conflicts.linked.length > 1 ? "s" : ""}
           </div>
           {conflicts.linked.map(a => <ConflictRow key={a.id} a={a} kind="linked" />)}
         </div>
@@ -404,7 +409,9 @@ const AllocationForm = ({ init = {}, tradeLanes = [], onSave, onCancel }) => {
               style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 5,
                 color: T.textMuted, cursor: "pointer", padding: "4px 10px",
                 fontFamily: T.body, fontSize: 11, flexShrink: 0 }}>
-              {laneOverride ? "✓ Done" : "✎ Override"}
+              {laneOverride
+                ? <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><IconCheck size={10} />Done</span>
+                : <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><IconPencil size={10} />Override</span>}
             </button>
           </div>
           {laneOverride && (
@@ -426,7 +433,7 @@ const AllocationForm = ({ init = {}, tradeLanes = [], onSave, onCancel }) => {
         {contractId ? (
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.success }}>✓</span>
+              <IconCheck size={13} color={T.success} />
               <span style={{ fontFamily: T.mono, fontSize: 13, color: T.text, fontWeight: 600 }}>{contractNumber}</span>
             </div>
             <div style={{ display: "flex", gap: 8 }}>
@@ -437,8 +444,9 @@ const AllocationForm = ({ init = {}, tradeLanes = [], onSave, onCancel }) => {
               </button>
               <button type="button" onClick={() => { setContractId(""); setContractNumber(""); autoContractSelected.current = false; }}
                 style={{ fontFamily: T.body, fontSize: 12, color: T.danger, background: "none",
-                  border: `1px solid ${T.danger}44`, borderRadius: 5, padding: "4px 10px", cursor: "pointer" }}>
-                ✕
+                  border: `1px solid ${T.danger}44`, borderRadius: 5, padding: "4px 10px", cursor: "pointer",
+                  display: "inline-flex", alignItems: "center" }}>
+                <IconClose size={11} />
               </button>
             </div>
           </div>
@@ -653,11 +661,11 @@ const SpaceConfigurationsPage = ({
           </div>
           <h1 style={{ fontFamily: T.head, fontSize: 26, fontWeight: 800, color: T.text, margin: 0 }}>Space Configurations</h1>
           <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, margin: "4px 0 0" }}>
-            {currentAllocs.length} active configuration{currentAllocs.length !== 1 ? "s" : ""} · click ⚙ to edit or view history
+            {currentAllocs.length} active configuration{currentAllocs.length !== 1 ? "s" : ""} · click <IconSettings size={12} style={{ position: "relative", top: 2 }} /> to edit or view history
           </p>
         </div>
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          <Btn variant="secondary" onClick={() => navigate("dashboard-archive")}>🗄 Archive</Btn>
+          <Btn variant="secondary" onClick={() => navigate("dashboard-archive")}><IconArchive size={13} />Archive</Btn>
           {canManageConfigs && <Btn onClick={() => setAllocModal("add")} disabled={carriers.length === 0}>＋ Add Configuration</Btn>}
         </div>
       </div>
@@ -772,10 +780,10 @@ const SpaceConfigurationsPage = ({
               {/* Cog menu */}
               <div style={{ display: "flex", justifyContent: "flex-end" }}>
                 <ActionMenu items={[
-                  ...(canManageConfigs ? [{ icon: "✎", label: "Edit", onClick: () => setAllocModal(a) }] : []),
-                  { icon: "🔗", label: "Linked Shipments",  onClick: () => setLinkedAlloc(a) },
-                  { icon: "📋", label: "History",           onClick: () => setHistoryAlloc(a) },
-                  ...(canManageConfigs ? [{ icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirmAlloc(a.id) }] : []),
+                  ...(canManageConfigs ? [{ icon: IconPencil, label: "Edit", onClick: () => setAllocModal(a) }] : []),
+                  { icon: IconLink,      label: "Linked Shipments",  onClick: () => setLinkedAlloc(a) },
+                  { icon: IconClipboard, label: "History",           onClick: () => setHistoryAlloc(a) },
+                  ...(canManageConfigs ? [{ icon: IconClose, label: "Delete", variant: "danger", onClick: () => setConfirmAlloc(a.id) }] : []),
                 ]} />
               </div>
             </div>

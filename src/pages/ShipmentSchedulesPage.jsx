@@ -11,6 +11,7 @@ import SailingPickerModal from "../components/shared/SailingPickerModal";
 import ContractAssignModal from "../components/shared/ContractAssignModal";
 import { ScheduleHistoryPanel, PendingRevalidationModal } from "./ShipmentDetailPage";
 import { LegsTable, deriveHaulageNeeds } from "./ShipmentFormPage";
+import { IconWarning, IconPackage } from "../components/primitives/Icon";
 
 // ─── Shipment Schedules Page ──────────────────────────────────────────────
 // Dedicated sub-page for carrier schedule/booking management, promoted out
@@ -301,7 +302,7 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
             <div id="shpsched-contract-mismatch" style={{ background: T.danger + "12", border: `1px solid ${T.danger}55`, borderLeft: `3px solid ${T.danger}`,
               borderRadius: 8, padding: "12px 16px", marginBottom: 12,
               display: "flex", alignItems: "flex-start", gap: 10 }}>
-              <span style={{ color: T.danger, fontSize: 15, lineHeight: 1.4 }}>⚠</span>
+              <span style={{ color: T.danger, fontSize: 15, lineHeight: 1.4, display: "inline-flex" }}><IconWarning size={15} /></span>
               <div>
                 <div style={{ fontFamily: T.body, fontSize: 13, fontWeight: 700, color: T.danger, marginBottom: 3 }}>
                   Contract doesn't cover this route
@@ -328,12 +329,12 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
               </span>
               {shipment.allocationId && (
                 <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, background: T.success + "22", color: T.success,
-                  border: `1px solid ${T.success}44`, borderRadius: 4, padding: "2px 8px", flexShrink: 0 }}>📦 Space config</span>
+                  border: `1px solid ${T.success}44`, borderRadius: 4, padding: "2px 8px", flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 4 }}><IconPackage size={10} /> Space config</span>
               )}
               {shipment.contractType !== "Central" && shipment.contractValidTo && shipment.contractValidTo < todayStr && (
                 <span title={`Expired ${shipment.contractValidTo}`}
                   style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, background: T.warning + "22", color: T.warning,
-                  border: `1px solid ${T.warning}44`, borderRadius: 4, padding: "2px 8px", flexShrink: 0 }}>⚠ Expired</span>
+                  border: `1px solid ${T.warning}44`, borderRadius: 4, padding: "2px 8px", flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 4 }}><IconWarning size={10} /> Expired</span>
               )}
             </div>
             {canEdit && (

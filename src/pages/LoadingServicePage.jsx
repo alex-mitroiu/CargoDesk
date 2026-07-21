@@ -6,6 +6,7 @@ import Btn from "../components/primitives/Btn";
 import DatePicker from "../components/primitives/DatePicker";
 import { inputBase } from "../components/primitives/Form";
 import { buildLoadingPlanHtml } from "../utils/invoiceGenerator";
+import { IconCheck, IconFlash, IconFolder } from "../components/primitives/Icon";
 
 // ─── Loading / Unloading Service page (Epic TKT-TBS7QD, Stories TKT-TR6OBR /
 //     TKT-X3SA2E / follow-up Unloading reuse) ──────────────────────────────
@@ -165,7 +166,7 @@ const LoadingServicePage = ({ shipment, containers = [], side, serviceType = "Lo
   if (service === null) {
     return (
       <div id="svcplan-notfound" style={{ maxWidth: 700, margin: "60px auto", textAlign: "center" }}>
-        <div style={{ fontSize: 40, marginBottom: 12 }}>📭</div>
+        <div style={{ marginBottom: 12, color: T.textMuted }}><IconFolder size={40} /></div>
         <div style={{ fontFamily: T.head, fontSize: 18, fontWeight: 800, color: T.text, marginBottom: 8 }}>
           No {side} {serviceType} service found
         </div>
@@ -241,7 +242,7 @@ const LoadingServicePage = ({ shipment, containers = [], side, serviceType = "Lo
         {latestDoc ? (
           <div id="svcplan-doc-latest" style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, marginBottom: 12 }}>
             Latest: <strong style={{ color: T.text }}>{latestDoc.filename}</strong>
-            {" · "}{latestDoc.status === "confirmed" ? "✓ Confirmed" : "Draft"}
+            {" · "}{latestDoc.status === "confirmed" ? <span style={{ color: T.success, display: "inline-flex", alignItems: "center", gap: 3 }}><IconCheck size={10} />Confirmed</span> : "Draft"}
             {" · "}{new Date(latestDoc.createdAt).toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" })}
             {onViewDocuments && (
               <button id="svcplan-view-documents-btn" type="button" onClick={onViewDocuments}
@@ -272,7 +273,7 @@ const LoadingServicePage = ({ shipment, containers = [], side, serviceType = "Lo
               </Btn>
             </div>
             <Btn id="svcplan-generate-btn" onClick={handleGenerate} disabled={generating}>
-              {generating ? "Generating…" : `⚡ Generate ${planLabel}`}
+              {generating ? "Generating…" : <><IconFlash size={13} />Generate {planLabel}</>}
             </Btn>
           </div>
         )}

@@ -4,6 +4,7 @@ import { api } from "../api";
 import Spinner from "../components/primitives/Spinner";
 import Pagination from "../components/primitives/Pagination";
 import { EVENT_CONFIG, getEventSummary, fmtDateTime } from "./ShipmentDetailPage";
+import { AnyIcon, IconArrowDown, IconArrowUp } from "../components/primitives/Icon";
 
 // ─── Shipment History Page ─────────────────────────────────────────────────
 // Promoted out of the Overview page's CompactHistory/HistoryModal (client-side
@@ -115,8 +116,9 @@ const ShipmentHistoryPage = ({ shipment }) => {
         <div style={{ flex: 1 }} />
         <button id="shphist-export-btn" type="button" onClick={exportCSV} disabled={results.length === 0}
           style={{ ...inp, cursor: results.length === 0 ? "default" : "pointer",
-            color: results.length === 0 ? T.border : T.textMuted, padding: "5px 12px" }}>
-          ⬇ Export page as CSV
+            color: results.length === 0 ? T.border : T.textMuted, padding: "5px 12px",
+            display: "inline-flex", alignItems: "center", gap: 5 }}>
+          <IconArrowDown size={12} /> Export page as CSV
         </button>
       </div>
 
@@ -133,7 +135,7 @@ const ShipmentHistoryPage = ({ shipment }) => {
           <div style={{ ...th, width: 160, flexShrink: 0, cursor: "pointer", userSelect: "none",
             display: "flex", alignItems: "center", gap: 4 }}
             onClick={() => setSortDir(d => d === "desc" ? "asc" : "desc")}>
-            Date / Time {sortDir === "desc" ? "↓" : "↑"}
+            Date / Time {sortDir === "desc" ? <IconArrowDown size={11} /> : <IconArrowUp size={11} />}
           </div>
           <div style={{ ...th, width: 90, flexShrink: 0 }}>Actor</div>
         </div>
@@ -155,7 +157,7 @@ const ShipmentHistoryPage = ({ shipment }) => {
               onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
               onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
               <div style={{ width: 160, flexShrink: 0, display: "flex", alignItems: "center", gap: 6 }}>
-                <span style={{ fontSize: 13 }}>{cfg.icon}</span>
+                <span style={{ fontSize: 13, display: "inline-flex", alignItems: "center" }}><AnyIcon icon={cfg.icon} size={13} /></span>
                 <span style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600, color }}>{cfg.label}</span>
               </div>
               <div style={{ flex: 1, fontFamily: T.mono, fontSize: 11, color: T.textMuted,

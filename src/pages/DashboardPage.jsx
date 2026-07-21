@@ -15,6 +15,8 @@ import Spinner from "../components/primitives/spinner";
 import Pagination from "../components/primitives/Pagination";
 import DatePicker from "../components/primitives/DatePicker";
 import { useResizableColumns, ColResizer } from "../components/primitives/useResizableColumns.jsx";
+import { IconClose, IconWarning, IconPencil, IconCheck, IconRefresh, IconLock, IconUnlock,
+  IconEye, IconArrowDown, IconForbid } from "../components/primitives/Icon";
 
 const CHART_COLORS = [
   "#6366f1","#22c55e","#f59e0b","#3b82f6",
@@ -51,8 +53,9 @@ const OverrideBtn = () => {
           fontFamily: T.body, fontSize: 11, fontWeight: 600,
           background: T.surface, border: `1px solid ${T.border}`,
           color: T.border, opacity: 0.6, whiteSpace: "nowrap",
+          display: "inline-flex", alignItems: "center", gap: 5,
         }}>
-        🔓 Override Coverage
+        <IconUnlock size={11} />Override Coverage
       </button>
       {show && (
         <div style={{
@@ -62,8 +65,9 @@ const OverrideBtn = () => {
           boxShadow: "0 8px 28px rgba(0,0,0,.55)",
           minWidth: 280, maxWidth: 320,
         }}>
-          <div style={{ fontFamily: T.body, fontSize: 12, color: T.warning, fontWeight: 700, marginBottom: 6 }}>
-            🔒 Requires Contract Management
+          <div style={{ fontFamily: T.body, fontSize: 12, color: T.warning, fontWeight: 700, marginBottom: 6,
+            display: "flex", alignItems: "center", gap: 5 }}>
+            <IconLock size={12} />Requires Contract Management
           </div>
           <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, lineHeight: 1.65 }}>
             Override allows this configuration to intentionally cover linked port locations —
@@ -139,8 +143,9 @@ const ConflictBanner = ({ conflicts, loading }) => {
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       {conflicts.exact.length > 0 && (
         <div style={{ background: T.dangerBg, border: `1px solid ${T.danger}55`, borderRadius: 8, overflow: "hidden" }}>
-          <div style={{ padding: "8px 12px", fontFamily: T.body, fontSize: 12, color: T.danger, fontWeight: 600 }}>
-            ⛔ {conflicts.exact.length} exact conflict{conflicts.exact.length > 1 ? "s" : ""} — same carrier, route and overlapping period
+          <div style={{ padding: "8px 12px", fontFamily: T.body, fontSize: 12, color: T.danger, fontWeight: 600,
+            display: "flex", alignItems: "center", gap: 6 }}>
+            <IconForbid size={13} />{conflicts.exact.length} exact conflict{conflicts.exact.length > 1 ? "s" : ""} — same carrier, route and overlapping period
           </div>
           {conflicts.exact.map(a => <ConflictRow key={a.id} a={a} kind="exact" />)}
         </div>
@@ -148,8 +153,9 @@ const ConflictBanner = ({ conflicts, loading }) => {
       {conflicts.linked.length > 0 && (
         <div style={{ background: T.warningBg, border: `1px solid ${T.warning}55`, borderRadius: 8, overflow: "hidden" }}>
           <div style={{ padding: "8px 12px 6px", display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
-            <span style={{ fontFamily: T.body, fontSize: 12, color: T.warning, fontWeight: 600 }}>
-              ⚠ {conflicts.linked.length} linked-port overlap{conflicts.linked.length > 1 ? "s" : ""} — a linked port location matches an existing configuration
+            <span style={{ fontFamily: T.body, fontSize: 12, color: T.warning, fontWeight: 600,
+              display: "flex", alignItems: "center", gap: 6 }}>
+              <IconWarning size={13} />{conflicts.linked.length} linked-port overlap{conflicts.linked.length > 1 ? "s" : ""} — a linked port location matches an existing configuration
             </span>
             <OverrideBtn />
           </div>
@@ -419,7 +425,9 @@ const AllocationForm = ({ init = {}, tradeLanes = [], onSave, onCancel }) => {
               style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 5,
                 color: T.textMuted, cursor: "pointer", padding: "4px 10px",
                 fontFamily: T.body, fontSize: 11, flexShrink: 0 }}>
-              {laneOverride ? "✓ Done" : "✎ Override"}
+              {laneOverride
+                ? <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><IconCheck size={10} />Done</span>
+                : <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><IconPencil size={10} />Override</span>}
             </button>
           </div>
           {laneOverride && (
@@ -443,7 +451,7 @@ const AllocationForm = ({ init = {}, tradeLanes = [], onSave, onCancel }) => {
         {contractId ? (
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.success }}>✓</span>
+              <IconCheck size={13} color={T.success} />
               <span style={{ fontFamily: T.mono, fontSize: 13, color: T.text, fontWeight: 600 }}>{contractNumber}</span>
             </div>
             <div style={{ display: "flex", gap: 8 }}>
@@ -452,8 +460,9 @@ const AllocationForm = ({ init = {}, tradeLanes = [], onSave, onCancel }) => {
                 Change
               </button>
               <button type="button" onClick={() => { setContractId(""); setContractNumber(""); autoContractSelected.current = false; }}
-                style={{ fontFamily: T.body, fontSize: 12, color: T.danger, background: "none", border: `1px solid ${T.danger}44`, borderRadius: 5, padding: "4px 10px", cursor: "pointer" }}>
-                ✕
+                style={{ fontFamily: T.body, fontSize: 12, color: T.danger, background: "none", border: `1px solid ${T.danger}44`, borderRadius: 5, padding: "4px 10px", cursor: "pointer",
+                  display: "inline-flex", alignItems: "center" }}>
+                <IconClose size={11} />
               </button>
             </div>
           </div>
@@ -609,8 +618,12 @@ const CarriersPage = ({ carriers, onAdd, onEdit, onDelete }) => {
             <span style={{ fontFamily: T.mono, fontSize: 14, color: T.accent, fontWeight: 700 }}>{c.code}</span>
             <span style={{ fontFamily: T.body, fontSize: 14, color: T.text }}>{c.name}</span>
             <div style={{ display: "flex", gap: 6 }}>
-              <Btn size="sm" variant="secondary" onClick={() => setModal(c)}>✎ Edit</Btn>
-              <Btn size="sm" variant="danger"    onClick={() => setConfirm(c.code)}>✕ Remove</Btn>
+              <Btn size="sm" variant="secondary" onClick={() => setModal(c)}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><IconPencil size={11} />Edit</span>
+              </Btn>
+              <Btn size="sm" variant="danger"    onClick={() => setConfirm(c.code)}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><IconClose size={11} />Remove</span>
+              </Btn>
             </div>
           </div>
         ))}
@@ -664,7 +677,8 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
       {carriers.length === 0 && (
         <div style={{ background: T.warningBg, border: `1px solid ${T.warning}55`, borderRadius: 8,
           padding: "12px 18px", fontFamily: T.body, fontSize: 13, color: T.warning, marginBottom: 18 }}>
-          ⚠ Carrier Registry is empty. Go to <strong>Carrier Registry</strong> and add at least one carrier before creating shipments.
+          <IconWarning size={13} style={{ marginRight: 6, position: "relative", top: 2 }} />
+          Carrier Registry is empty. Go to <strong>Carrier Registry</strong> and add at least one carrier before creating shipments.
         </div>
       )}
 
@@ -702,7 +716,7 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
               <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text }}>{teuFor(s.id)}</span>
               <Badge variant={statusVariant(s.status)}>{s.status}</Badge>
               <Btn size="sm" variant="danger" onClick={e => { e.stopPropagation(); setConfirm(s.id); }}>
-                ✕ Remove
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><IconClose size={11} />Remove</span>
               </Btn>
             </div>
           );
@@ -754,7 +768,9 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
             {shipment.pol} → {shipment.pod} · created {shipment.createdAt}
           </p>
         </div>
-        <Btn variant="secondary" onClick={() => setEditShp(true)}>✎ Edit Shipment</Btn>
+        <Btn variant="secondary" onClick={() => setEditShp(true)}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><IconPencil size={11} />Edit Shipment</span>
+        </Btn>
       </div>
 
       {/* Info cards row 1 */}
@@ -852,7 +868,7 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
                 <span style={{ fontFamily: T.mono, fontSize: 14, fontWeight: 700, color: T.text }}>{teuOf(c.size)}</span>
                 <div style={{ display: "flex", gap: 6 }}>
                   <Btn size="sm" variant="secondary" onClick={() => setCtrModal(c)}>Edit</Btn>
-                  <Btn size="sm" variant="danger"    onClick={() => setConfirmCtr(c.id)}>✕</Btn>
+                  <Btn size="sm" variant="danger"    onClick={() => setConfirmCtr(c.id)}><IconClose size={11} /></Btn>
                 </div>
               </div>
             ))}
@@ -1450,12 +1466,12 @@ const MarginView = ({ financeEnabled }) => {
           <Btn size="sm" variant="ghost"
             disabled={exporting === "xlsx"}
             onClick={() => handleExport("xlsx")}>
-            {exporting === "xlsx" ? "Generating…" : "⬇ XLSX (programmatic)"}
+            {exporting === "xlsx" ? "Generating…" : <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><IconArrowDown size={11} />XLSX (programmatic)</span>}
           </Btn>
           <Btn size="sm" variant="ghost"
             disabled={exporting === "template"}
             onClick={() => handleExport("template")}>
-            {exporting === "template" ? "Generating…" : "⬇ XLSX (template)"}
+            {exporting === "template" ? "Generating…" : <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><IconArrowDown size={11} />XLSX (template)</span>}
           </Btn>
         </div>
       </div>
@@ -1730,8 +1746,8 @@ const ComplianceReviewView = ({ compHits, custHits, loading, onRefresh }) => {
         <button type="button" onClick={onRefresh}
           style={{ fontFamily: T.body, fontSize: 12, color: T.accent, background: "none",
             border: `1px solid ${T.accent}44`, borderRadius: 7, padding: "6px 14px",
-            cursor: "pointer" }}>
-          ↻ Refresh
+            cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 5 }}>
+          <IconRefresh size={12} />Refresh
         </button>
       </div>
 
@@ -1780,8 +1796,9 @@ const ComplianceReviewView = ({ compHits, custHits, loading, onRefresh }) => {
                   <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>{s.pol} → {s.pod}</span>
                   <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>{s.carrierCode}</span>
                   <span style={{ fontFamily: T.body, fontSize: 12, color: T.danger, fontWeight: 600,
-                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    ⚠ {hitLabels}
+                    overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                    display: "inline-flex", alignItems: "center", gap: 4 }}>
+                    <IconWarning size={11} />{hitLabels}
                   </span>
                   <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
                     {s.screening.screenedAt ? new Date(s.screening.screenedAt).toLocaleDateString("en-GB") : "—"}
@@ -1831,8 +1848,9 @@ const ComplianceReviewView = ({ compHits, custHits, loading, onRefresh }) => {
                     onMouseEnter={e => e.currentTarget.style.background = "#ef444412"}
                     onMouseLeave={e => e.currentTarget.style.background = "#ef444408"}>
                     <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>{h.customer.id}</span>
-                    <span style={{ fontFamily: T.body, fontSize: 13, fontWeight: 600, color: T.danger }}>
-                      ⚠ {h.customer.companyName}
+                    <span style={{ fontFamily: T.body, fontSize: 13, fontWeight: 600, color: T.danger,
+                      display: "inline-flex", alignItems: "center", gap: 4 }}>
+                      <IconWarning size={11} />{h.customer.companyName}
                     </span>
                     <span style={{ fontFamily: T.body, fontSize: 12, color: T.text }}>{h.matchedEntry}</span>
                     <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>{h.program || "—"}</span>

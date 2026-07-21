@@ -5,6 +5,7 @@ import { toast } from "../../toast";
 import { useAuth } from "../../AuthContext";
 import Btn from "../primitives/Btn";
 import { inputBase } from "../primitives/Form";
+import { IconPackage, IconPencil } from "../primitives/Icon";
 
 // ─── Container Cargo Manifest — pallet/box sub-level breakdown (TKT-EMFIBR) ───
 // Arbitrary-depth self-referencing packages under a container (e.g. 3 pallets of
@@ -59,7 +60,7 @@ const PackageNode = ({ pkg, allPackages, depth, canEdit, onAddChild, onEdit, onD
       ) : (
         <div id={`pkg-${pkg.id}-row`} style={{ display: "flex", alignItems: "center", gap: 10,
           padding: "7px 10px", borderRadius: 7, background: T.bg, border: `1px solid ${T.border}`, marginBottom: 6 }}>
-          <span style={{ fontSize: 13, flexShrink: 0 }}>📦</span>
+          <span style={{ fontSize: 13, flexShrink: 0, display: "inline-flex", color: T.textMuted }}><IconPackage size={13} /></span>
           <span style={{ flex: 1, fontFamily: T.body, fontSize: 12.5, color: T.text }}>{pkg.description}</span>
           <span style={{ fontFamily: T.mono, fontSize: 12, color: T.accent, fontWeight: 700, flexShrink: 0 }}>× {pkg.quantity}</span>
           {canEdit && (
@@ -67,7 +68,7 @@ const PackageNode = ({ pkg, allPackages, depth, canEdit, onAddChild, onEdit, onD
               <button type="button" onClick={() => onSetAdding(pkg.id)} title="Add sub-package"
                 style={{ background: "none", border: "none", cursor: "pointer", color: T.accent, fontSize: 13, padding: "0 3px" }}>＋</button>
               <button type="button" onClick={() => onSetEditing(pkg.id)} title="Edit"
-                style={{ background: "none", border: "none", cursor: "pointer", color: T.textMuted, fontSize: 12, padding: "0 3px" }}>✎</button>
+                style={{ background: "none", border: "none", cursor: "pointer", color: T.textMuted, fontSize: 12, padding: "0 3px", display: "inline-flex", alignItems: "center" }}><IconPencil size={11} /></button>
               <button type="button" onClick={() => onDelete(pkg.id)} title="Delete"
                 style={{ background: "none", border: "none", cursor: "pointer", color: T.textMuted, fontSize: 13, padding: "0 3px" }}
                 onMouseEnter={e => e.currentTarget.style.color = T.danger}

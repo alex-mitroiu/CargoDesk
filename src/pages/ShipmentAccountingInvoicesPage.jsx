@@ -8,6 +8,7 @@ import { CostLineForm, CostLineHistoryModal, CostLineRow, CostLineActualizeModal
 import { generateInvoices, resolveInvoiceCurrency } from "../utils/invoiceGenerator";
 import { api } from "../api";
 import { toast } from "../toast";
+import { IconCheck, IconWarning, IconClipboard, IconReceipt, IconPackage, IconEye } from "../components/primitives/Icon";
 
 const fmtUsd = v => v == null ? "—" : `$${Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fmtDate = s => s ? new Date(s).toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" }) : "—";
@@ -159,10 +160,11 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
 
   const statusPill = doc => {
     const isConfirmed = doc.status === "confirmed";
-    const label = isConfirmed ? "✓ Confirmed" : doc.isStale ? "⚠ Outdated" : "Draft";
+    const label = isConfirmed ? <><IconCheck size={9} />Confirmed</> : doc.isStale ? <><IconWarning size={9} />Outdated</> : "Draft";
     const color = isConfirmed ? T.success : doc.isStale ? T.warning : T.textMuted;
     return <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color,
-      background: color + "18", border: `1px solid ${color}44`, borderRadius: 6, padding: "2px 7px", whiteSpace: "nowrap" }}>{label}</span>;
+      background: color + "18", border: `1px solid ${color}44`, borderRadius: 6, padding: "2px 7px", whiteSpace: "nowrap",
+      display: "inline-flex", alignItems: "center", gap: 3 }}>{label}</span>;
   };
 
   const handleSave = async (data, mirror = false) => {
@@ -246,7 +248,7 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
               onClick={() => setSplitConfirm(true)}>
               ◫ Split per Container
             </Btn>
-            <Btn id="shpacct-invoices-history-btn" size="sm" variant="secondary" onClick={() => setHistOpen(true)}>⏱ History</Btn>
+            <Btn id="shpacct-invoices-history-btn" size="sm" variant="secondary" onClick={() => setHistOpen(true)}><IconClipboard size={12} />History</Btn>
             <Btn id="shpacct-invoices-add-btn" size="sm" onClick={() => setLineModal("add")}>＋ Add Line</Btn>
           </div>
         )}
@@ -293,12 +295,12 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
             <Btn id="shpacct-invoices-generate-btn" size="sm" variant="secondary" disabled={genBusy || loading || !hasChargeLines}
               title={!hasChargeLines ? "Add at least one charge line first" : undefined}
               onClick={() => handleGenerate(false)}>
-              🧾 Generate Invoice
+              <IconReceipt size={12} />Generate Invoice
             </Btn>
             <Btn id="shpacct-invoices-generate-percontainer-btn" size="sm" variant="secondary" disabled={genBusy || loading || !hasChargeLines || ctrs.length === 0}
               title={!hasChargeLines ? "Add at least one charge line first" : undefined}
               onClick={() => handleGenerate(true)}>
-              📦 Generate Per-Container Invoices
+              <IconPackage size={12} />Generate Per-Container Invoices
             </Btn>
           </div>
         )}
@@ -341,7 +343,7 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
                 {doc.responsibleParty || "—"}
               </div>
               <div style={{ width: 130, textAlign: "right" }}>
-                <Btn size="sm" variant="secondary" onClick={() => setPreviewDoc(doc)}>👁 Preview Invoice</Btn>
+                <Btn size="sm" variant="secondary" onClick={() => setPreviewDoc(doc)}><IconEye size={12} />Preview Invoice</Btn>
               </div>
             </div>
           ))}

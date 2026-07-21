@@ -5,6 +5,7 @@ import { toast } from "../../toast";
 import { useAuth } from "../../AuthContext";
 import Btn from "../primitives/Btn";
 import { inputBase } from "../primitives/Form";
+import { AnyIcon, IconPackage, IconDoor, IconArrowUp, IconArrowDown, IconShip, IconRefresh } from "../primitives/Icon";
 
 // ─── Container Lifecycle Events Panel ─────────────────────────────────────────
 // FCL container movement: Empty Pickup → Gate In → Loaded → Sailed → Discharged
@@ -13,8 +14,8 @@ import { inputBase } from "../primitives/Form";
 export const CONTAINER_EVENT_TYPES = ["Empty Pickup", "Gate In", "Loaded", "Sailed", "Discharged", "Gate Out", "Empty Return"];
 
 const EVENT_ICON = {
-  "Empty Pickup": "📦", "Gate In": "🚪", "Loaded": "⬆", "Sailed": "⚓",
-  "Discharged": "⬇", "Gate Out": "🚪", "Empty Return": "↩",
+  "Empty Pickup": IconPackage, "Gate In": IconDoor, "Loaded": IconArrowUp, "Sailed": IconShip,
+  "Discharged": IconArrowDown, "Gate Out": IconDoor, "Empty Return": IconRefresh,
 };
 
 const fmtDate = iso => {
@@ -85,7 +86,9 @@ const ContainerEventsPanel = ({ containerId, containerNumber }) => {
           {events.map(ev => (
             <div key={ev.id} style={{ display: "flex", alignItems: "flex-start", gap: 10,
               padding: "9px 12px", borderRadius: 8, background: T.bg, border: `1px solid ${T.border}` }}>
-              <span style={{ fontSize: 16, flexShrink: 0, marginTop: 1 }}>{EVENT_ICON[ev.eventType] || "•"}</span>
+              <span style={{ fontSize: 16, flexShrink: 0, marginTop: 1, display: "inline-flex", color: T.textMuted }}>
+                <AnyIcon icon={EVENT_ICON[ev.eventType] || "•"} size={16} />
+              </span>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                   <span style={{ fontFamily: T.body, fontSize: 12.5, fontWeight: 700, color: T.text }}>

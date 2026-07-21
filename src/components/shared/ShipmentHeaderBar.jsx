@@ -8,6 +8,7 @@ import Btn from "../primitives/Btn";
 import { ComplianceModal, RouteSummaryBar, MessagesDrawer, EdiMessagesDrawer, TicketsDrawer } from "../../pages/ShipmentDetailPage";
 import { deriveHaulageNeeds } from "../../pages/ShipmentFormPage";
 import ContractMismatchModal from "./ContractMismatchModal";
+import { AnyIcon, IconClipboard, IconLink, IconRefresh, IconPencil, IconWarning, IconCheck } from "../primitives/Icon";
 
 // ─── Persistent Shipment Header ────────────────────────────────────────────
 // Mounted once in App.jsx above the page switch for "detail" + every promoted
@@ -66,8 +67,8 @@ const IconTile = ({ items }) => {
               display: "flex", alignItems: "center", justifyContent: "center",
               fontSize: 14, lineHeight: 1, color: hovered === it.key ? T.accent : T.textMuted,
               transition: "background .12s, color .12s" }}>
-            <span style={{ display: "inline-block", animation: it.spinning ? "shb-spin .7s linear infinite" : "none" }}>
-              {it.icon}
+            <span style={{ display: "inline-flex", alignItems: "center", animation: it.spinning ? "shb-spin .7s linear infinite" : "none" }}>
+              <AnyIcon icon={it.icon} size={14} />
             </span>
             {!!it.badge && (
               <span style={{ position: "absolute", top: -3, right: -3,
@@ -310,7 +311,7 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
               display: "flex", alignItems: "center", fontSize: 12, lineHeight: 1, color: T.textMuted }}
             onMouseEnter={e => { e.currentTarget.style.color = T.accent; }}
             onMouseLeave={e => { e.currentTarget.style.color = T.textMuted; }}>
-            📋
+            <IconClipboard size={12} />
           </button>
         </span>
         <span id="shphdr-movement-type" style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 600, letterSpacing: "0.03em",
@@ -323,7 +324,11 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
           const overridden = screening?.overriddenAt;
           const bg = !r ? T.border + "33" : isHit ? "#ef444420" : "#22c55e20";
           const color = !r ? T.textMuted : isHit ? "#ef4444" : "#22c55e";
-          const label = !r ? "UNSCREENED" : isHit ? "⚠ Compliance review required" : overridden ? "✓ CLEAR*" : "✓ CLEAR";
+          const label = !r ? "UNSCREENED" : isHit
+            ? <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><IconWarning size={11} />Compliance review required</span>
+            : overridden
+              ? <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><IconCheck size={11} />CLEAR*</span>
+              : <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><IconCheck size={11} />CLEAR</span>;
           const hitLines = isHit && screening?.hits?.length
             ? screening.hits.map(h => `${h.field}: ${h.value}`).join("\n")
             : null;
@@ -380,15 +385,15 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
           { key: "messages", icon: unreadCount > 0 ? "📩" : "✉️", badge: unreadCount,
             title: unreadCount > 0 ? `${unreadCount} unread message${unreadCount > 1 ? "s" : ""}` : "Shipment messages",
             onClick: openMessages },
-          { key: "share", icon: "🔗", spinning: false,
+          { key: "share", icon: IconLink, spinning: false,
             title: "Generate customer tracking link", onClick: handleShare },
-          { key: "refresh", icon: "↻", spinning: refreshing,
+          { key: "refresh", icon: IconRefresh, spinning: refreshing,
             title: "Refresh shipment", onClick: handleRefresh },
           { key: "edi", icon: "📡", title: "EDI messages", onClick: () => setEdiOpen(true) },
           { key: "tickets", icon: "◩", badge: openTicketCount,
             title: openTicketCount > 0 ? `${openTicketCount} open ticket${openTicketCount > 1 ? "s" : ""}` : "Related tickets",
             onClick: () => setTicketsOpen(true) },
-          ...(canEdit ? [{ key: "edit", icon: "✎", title: "Edit Shipment", onClick: () => onEdit?.() }] : []),
+          ...(canEdit ? [{ key: "edit", icon: IconPencil, title: "Edit Shipment", onClick: () => onEdit?.() }] : []),
         ]} />
 
         {contractMismatch && (
@@ -396,8 +401,9 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
             title={`${shipment.contractRef || "The attached contract"} no longer covers ${matchPol} → ${matchPod} — click to resolve`}
             style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, letterSpacing: "0.03em",
               padding: "3px 9px", borderRadius: 5, background: T.danger + "22", color: T.danger,
-              border: `1px solid ${T.danger}66`, whiteSpace: "nowrap", cursor: onNavigateToSchedules ? "pointer" : "default" }}>
-            ⚠ Contract Mismatch
+              border: `1px solid ${T.danger}66`, whiteSpace: "nowrap", cursor: onNavigateToSchedules ? "pointer" : "default",
+              display: "inline-flex", alignItems: "center", gap: 4 }}>
+            <IconWarning size={11} />Contract Mismatch
           </button>
         )}
 
@@ -406,16 +412,18 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
             title={`${pendingMatches.length} active contract${pendingMatches.length !== 1 ? "s" : ""} match${pendingMatches.length === 1 ? "es" : ""} "${shipment.contractRef}" — click to review`}
             style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, letterSpacing: "0.03em",
               padding: "3px 9px", borderRadius: 5, background: T.info + "22", color: T.info,
-              border: `1px solid ${T.info}66`, whiteSpace: "nowrap", cursor: onNavigateToSchedules ? "pointer" : "default" }}>
-            🔄 Contract Match Found
+              border: `1px solid ${T.info}66`, whiteSpace: "nowrap", cursor: onNavigateToSchedules ? "pointer" : "default",
+              display: "inline-flex", alignItems: "center", gap: 4 }}>
+            <IconRefresh size={11} />Contract Match Found
           </button>
         )}
 
         {isDg && (
           <span id="shphdr-dg-badge" style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, letterSpacing: "0.03em",
             padding: "3px 9px", borderRadius: 5, background: T.danger + "22", color: T.danger,
-            border: `1px solid ${T.danger}66`, whiteSpace: "nowrap" }}>
-            ⚠ DG{dgClasses.length ? ` · CLASS ${dgClasses.join("/")}` : ""}
+            border: `1px solid ${T.danger}66`, whiteSpace: "nowrap",
+            display: "inline-flex", alignItems: "center", gap: 4 }}>
+            <IconWarning size={11} />DG{dgClasses.length ? ` · CLASS ${dgClasses.join("/")}` : ""}
           </span>
         )}
       </div>
@@ -458,7 +466,7 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
       )}
 
       {shareUrl && (
-        <Modal title="🔗 Customer Tracking Link" onClose={() => setShareUrl(null)} style={{ maxWidth: 520 }}>
+        <Modal title={<span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><IconLink size={15} />Customer Tracking Link</span>} onClose={() => setShareUrl(null)} style={{ maxWidth: 520 }}>
           <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, marginBottom: 12 }}>
             Anyone with this link can view the shipment status and milestones — no login required.
             Valid for 30 days.
