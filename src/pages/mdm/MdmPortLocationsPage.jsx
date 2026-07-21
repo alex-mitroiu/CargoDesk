@@ -1,6 +1,7 @@
 ﻿import { useState, useEffect, useCallback, useRef } from "react";
 import Spinner, { PageSpinner } from "../../components/primitives/Spinner";
 import { T } from "../../tokens";
+import { IconSearch } from "../../components/primitives/Icon";
 import { api } from "../../api";
 import { useAuth } from "../../AuthContext";
 import Btn from "../../components/primitives/Btn";
@@ -107,7 +108,7 @@ const MdmPortLocationsPage = () => {
           <input value={search} onChange={e => handleSearch(e.target.value)}
             placeholder="Search by UN/LOCODE or port name…"
             style={{ ...inputBase, fontFamily: T.body, fontSize: 14, paddingLeft: 36 }} />
-          <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: T.textMuted, fontSize: 14 }}>🔍</span>
+          <span style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: T.textMuted, display: "inline-flex" }}><IconSearch size={14} /></span>
         </div>
         <input value={country} onChange={e => handleCountry(e.target.value.toUpperCase())}
           placeholder="Country (NL…)" maxLength={2}

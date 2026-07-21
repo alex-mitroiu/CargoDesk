@@ -5,6 +5,7 @@ import { inputBase, Field } from "../primitives/Form";
 import { Modal } from "../primitives/Modal";
 import Pagination from "../primitives/Pagination";
 import Btn from "../primitives/Btn";
+import { IconSearch } from "../primitives/Icon";
 
 const PICKER_LIMIT = 20;
 const EMPTY_FILTERS = { search: '', city: '', country: '', customerId: '' };
@@ -227,7 +228,7 @@ const CustomerCombobox = ({ label, value = { id: "", name: "" }, onChange, requi
               borderColor: resolved ? T.success + "88" : undefined,
             }}
           />
-          {/* 🔍 lookup icon */}
+          {/* lookup icon */}
           <button
             type="button"
             onClick={() => setPickerOpen(true)}
@@ -236,11 +237,12 @@ const CustomerCombobox = ({ label, value = { id: "", name: "" }, onChange, requi
               position: "absolute", right: 7, top: "50%", transform: "translateY(-50%)",
               background: "none", border: "none", cursor: "pointer",
               color: T.textMuted, fontSize: 13, padding: 2, lineHeight: 1,
+              display: "inline-flex", alignItems: "center",
             }}
             onMouseEnter={e => e.currentTarget.style.color = T.text}
             onMouseLeave={e => e.currentTarget.style.color = T.textMuted}
           >
-            🔍
+            <IconSearch size={13} />
           </button>
         </div>
 

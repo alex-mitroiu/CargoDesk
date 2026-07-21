@@ -3,7 +3,7 @@ import { T } from "../../tokens";
 import { api } from "../../api";
 import { toast } from "../../toast";
 import { AiOrb } from "./AiOrb";
-import { IconSettings, AnyIcon } from "../primitives/Icon";
+import { IconSettings, IconAnchor, AnyIcon } from "../primitives/Icon";
 
 // Palette — mutable module vars so sub-components defined outside the main function see the
 // correct values. Updated at the start of each CommandCenterView render based on isDark prop.
@@ -128,7 +128,7 @@ const CMDS = [
   { icon: "🗂",  label: "Kanban Board",          key: "kanban"        },
   { icon: "⚖",  label: "Space Configurations",  key: "space-configs" },
   { icon: "📋", label: "Carrier Contracts",     key: "mdm-contracts" },
-  { icon: "⚓", label: "Port Locations",        key: "mdm-ports"     },
+  { icon: IconAnchor, label: "Port Locations",        key: "mdm-ports"     },
   { icon: "🏢", label: "Branches & Offices",    key: "org-branch"    },
   { icon: IconSettings,  label: "App Settings",          key: "settings"      },
 ];

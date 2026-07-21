@@ -4,6 +4,7 @@ import { inputBase } from "../primitives/Form";
 import { Modal } from "../primitives/Modal";
 import Btn from "../primitives/Btn";
 import { api } from "../../api";
+import { IconSearch } from "../primitives/Icon";
 
 // ─── Carrier Picker Modal ─────────────────────────────────────────────────────
 
@@ -187,10 +188,11 @@ const CarrierCombobox = ({ value = "", onChange, required = false }) => {
           <button type="button" onClick={() => setPickerOpen(true)}
             title="Browse carriers"
             style={{ background: "none", border: "none", cursor: "pointer",
-              color: T.textMuted, fontSize: 13, padding: "0 2px", flexShrink: 0, lineHeight: 1 }}
+              color: T.textMuted, fontSize: 13, padding: "0 2px", flexShrink: 0, lineHeight: 1,
+              display: "inline-flex", alignItems: "center" }}
             onMouseEnter={e => e.currentTarget.style.color = T.text}
             onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>
-            🔍
+            <IconSearch size={13} />
           </button>
           <button type="button" onClick={clear}
             style={{ background: "none", border: "none", cursor: "pointer",
@@ -217,10 +219,11 @@ const CarrierCombobox = ({ value = "", onChange, required = false }) => {
               title="Browse all carriers"
               style={{ position: "absolute", right: 8, top: "50%",
                 transform: "translateY(-50%)", background: "none", border: "none",
-                cursor: "pointer", color: T.textMuted, fontSize: 13, padding: 2, lineHeight: 1 }}
+                cursor: "pointer", color: T.textMuted, fontSize: 13, padding: 2, lineHeight: 1,
+                display: "inline-flex", alignItems: "center" }}
               onMouseEnter={e => e.currentTarget.style.color = T.text}
               onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>
-              🔍
+              <IconSearch size={13} />
             </button>
           </div>
 

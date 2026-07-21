@@ -2,11 +2,17 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.34.3";
+export const VERSION   = "0.34.4";
 export const BUILD     = "2026-07-21";
 export const CODENAME  = "Ledger";
 
 export const CHANGELOG = [
+  {
+    version:  "0.34.4",
+    date:     "2026-07-21",
+    codename: "Ledger",
+    summary:  "Closes the last disclosed icon gap from v0.34.2/0.34.3: anchor, search/magnifier, and the messaging/EDI cluster had no MingCute equivalent, so a second Apache-2.0 icon family (Remix Icon) was added alongside it — same 24x24 filled-line style, mixes freely via the existing AnyIcon helper. Eight new icons: anchor, search, mail, mail-unread, base-station (EDI), send-plane, upload, download. Anchor now covers every occurrence app-wide, including the app's own wordmark/logo mark (header, login, landing greeting, full-page spinner, About page, footer) for the same cross-platform-consistency reason the icon migration started in v0.34.1 — an emoji anchor rendered differently per OS/browser, a vector one doesn't. Search covers every combobox browse button (Carrier/Customer/Commodity/Port/Container-type pickers), empty-search states, and the Kanban parent-ticket picker. The messaging/EDI cluster (envelope/unread envelope, base-station, send-plane, upload/download for sent/received) covers the shipment header's icon tile, the EDI Messages drawer, and the Export/Import Services group icons in the shipment sidebar.",
+  },
   {
     version:  "0.34.3",
     date:     "2026-07-21",

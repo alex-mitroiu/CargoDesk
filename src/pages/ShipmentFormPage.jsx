@@ -17,7 +17,7 @@ import Spinner from "../components/primitives/Spinner";
 import Pagination from "../components/primitives/Pagination";
 import { ContainerTypeField } from "../components/shared/ContainerTypePickerModal";
 import SailingPickerModal from "../components/shared/SailingPickerModal";
-import { IconClose, IconWarning, IconPackage, IconPencil, IconCheck, IconRefresh, IconLock } from "../components/primitives/Icon";
+import { IconClose, IconWarning, IconPackage, IconPencil, IconCheck, IconRefresh, IconLock, IconAnchor } from "../components/primitives/Icon";
 
 // ─── Draft Container Manager ──────────────────────────────────────────────────
 
@@ -2127,7 +2127,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
                     opacity: canSearch ? 1 : 0.5, display: "flex", alignItems: "center", gap: 6 }}
                   onMouseEnter={e => { if (canSearch) { e.currentTarget.style.borderColor = T.accent; e.currentTarget.style.color = T.accent; }}}
                   onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = canSearch ? T.text : T.textMuted; }}>
-                  ⚓ {init.id ? (savedSchedules.length > 0 ? "Change Sailing" : "Add Sailing") : (selectedSailing ? "Change Sailing" : "Search Sailings")}
+                  <IconAnchor size={13} />{init.id ? (savedSchedules.length > 0 ? "Change Sailing" : "Add Sailing") : (selectedSailing ? "Change Sailing" : "Search Sailings")}
                 </button>
                 {!canSearch && (
                   <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>

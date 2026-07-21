@@ -5,6 +5,7 @@ import { Modal } from "../primitives/Modal";
 import Pagination from "../primitives/Pagination";
 import Btn from "../primitives/Btn";
 import { api } from "../../api";
+import { IconSearch } from "../primitives/Icon";
 
 // ─── Grade colours ────────────────────────────────────────────────────────────
 const GRADE_COLOR = {
@@ -252,10 +253,11 @@ const CommodityCombobox = ({ value, onChange, placeholder = "Search by code or d
           <button type="button" onClick={() => setPickerOpen(true)}
             title="Browse commodity list"
             style={{ background: "none", border: "none", cursor: "pointer",
-              color: T.textMuted, fontSize: 13, padding: "0 2px", flexShrink: 0 }}
+              color: T.textMuted, fontSize: 13, padding: "0 2px", flexShrink: 0,
+              display: "inline-flex", alignItems: "center" }}
             onMouseEnter={e => e.currentTarget.style.color = T.text}
             onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>
-            🔍
+            <IconSearch size={13} />
           </button>
           <button type="button" onClick={clear}
             style={{ background: "none", border: "none", cursor: "pointer",
@@ -273,15 +275,16 @@ const CommodityCombobox = ({ value, onChange, placeholder = "Search by code or d
               <span style={{ position: "absolute", right: 32, top: "50%",
                 transform: "translateY(-50%)", fontFamily: T.mono, fontSize: 10, color: T.textMuted }}>…</span>
             )}
-            {/* 🔍 browse button */}
+            {/* browse button */}
             <button type="button" onClick={() => setPickerOpen(true)}
               title="Browse all commodities"
               style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)",
                 background: "none", border: "none", cursor: "pointer",
-                color: T.textMuted, fontSize: 13, padding: 2, lineHeight: 1 }}
+                color: T.textMuted, fontSize: 13, padding: 2, lineHeight: 1,
+                display: "inline-flex", alignItems: "center" }}
               onMouseEnter={e => e.currentTarget.style.color = T.text}
               onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>
-              🔍
+              <IconSearch size={13} />
             </button>
           </div>
 

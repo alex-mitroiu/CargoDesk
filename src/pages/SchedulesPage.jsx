@@ -1,5 +1,6 @@
 import { useState, useCallback, useMemo, useEffect } from "react";
 import { T } from "../tokens";
+import { IconSearch } from "../components/primitives/Icon";
 import { api } from "../api";
 import { toast } from "../toast";
 import Spinner from "../components/primitives/Spinner";
@@ -1270,7 +1271,7 @@ const SchedulesPage = () => {
       {!searched ? (
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center",
           justifyContent: "center", minHeight: 260, gap: 12, opacity: .6 }}>
-          <div style={{ fontSize: 36 }}>🔍</div>
+          <div style={{ color: T.textMuted }}><IconSearch size={36} /></div>
           <div style={{ fontFamily: T.body, fontSize: 14, color: T.textMuted }}>
             Enter search criteria above and click <strong>Search Contracts</strong>.
           </div>
@@ -1301,7 +1302,7 @@ const SchedulesPage = () => {
             </div>
           ) : results.length === 0 ? (
             <div style={{ padding: "32px 0", textAlign: "center" }}>
-              <div style={{ fontSize: 26, marginBottom: 8, opacity: .5 }}>🔍</div>
+              <div style={{ marginBottom: 8, opacity: .5, color: T.textMuted }}><IconSearch size={26} /></div>
               <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
                 No contracts match the filters.
               </div>

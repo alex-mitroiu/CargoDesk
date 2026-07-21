@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { AnyIcon, IconAnchor } from "../components/primitives/Icon";
 
 const STATUS_COLOR = {
   "Booking": "#6366f1",
@@ -15,7 +16,7 @@ const STEP_ICONS = {
   cargo_gated_in:    "🏭",
   vessel_departed:   "🚢",
   bl_issued:         "📃",
-  vessel_arrived:    "⚓",
+  vessel_arrived:    IconAnchor,
   customs_cleared:   "✅",
   cargo_released:    "📦",
   delivered:         "🎯",
@@ -25,7 +26,7 @@ const STEP_ICONS = {
   "Cargo Gated In":     "🏭",
   "Vessel Departed":    "🚢",
   "B/L Issued":         "📃",
-  "Vessel Arrived":     "⚓",
+  "Vessel Arrived":     IconAnchor,
   "Customs Cleared":    "✅",
   "Cargo Released":     "📦",
   "Delivered":          "🎯",
@@ -82,11 +83,12 @@ function MilestoneTimeline({ milestones }) {
       {/* Progress summary */}
       <div style={{ marginBottom: 20 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: "#1e293b" }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: "#1e293b",
+            display: "inline-flex", alignItems: "center", gap: 5 }}>
             {completedCount === total
               ? "✓ Journey complete"
               : currentStep
-                ? `${STEP_ICONS[currentStep.milestone_key] || STEP_ICONS[currentStep.label] || "→"} ${currentStep.label}`
+                ? <><AnyIcon icon={STEP_ICONS[currentStep.milestone_key] || STEP_ICONS[currentStep.label] || "→"} size={13} />{currentStep.label}</>
                 : "In progress"}
           </span>
           <span style={{ fontSize: 12, color: "#64748b" }}>{completedCount}/{total} steps</span>
@@ -113,7 +115,7 @@ function MilestoneTimeline({ milestones }) {
                 border: done ? "2px solid #059669" : isCurrent ? "2px solid #2563eb" : "2px solid #cbd5e1",
                 boxShadow: isCurrent ? "0 0 0 4px #3b82f620" : "none",
               }}>
-                {done ? "✓" : icon}
+                {done ? "✓" : <AnyIcon icon={icon} size={15} />}
               </div>
               {i < milestones.length - 1 && (
                 <div style={{ width: 2, height: 24, background: done ? "#10b981" : "#e2e8f0", marginTop: 2 }} />

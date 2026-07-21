@@ -8,7 +8,8 @@ import Btn from "../primitives/Btn";
 import { ComplianceModal, RouteSummaryBar, MessagesDrawer, EdiMessagesDrawer, TicketsDrawer } from "../../pages/ShipmentDetailPage";
 import { deriveHaulageNeeds } from "../../pages/ShipmentFormPage";
 import ContractMismatchModal from "./ContractMismatchModal";
-import { AnyIcon, IconClipboard, IconLink, IconRefresh, IconPencil, IconWarning, IconCheck } from "../primitives/Icon";
+import { AnyIcon, IconClipboard, IconLink, IconRefresh, IconPencil, IconWarning, IconCheck,
+  IconMail, IconMailUnread, IconBaseStation } from "../primitives/Icon";
 
 // ─── Persistent Shipment Header ────────────────────────────────────────────
 // Mounted once in App.jsx above the page switch for "detail" + every promoted
@@ -382,14 +383,14 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
         <div style={{ flex: 1 }} />
 
         <IconTile items={[
-          { key: "messages", icon: unreadCount > 0 ? "📩" : "✉️", badge: unreadCount,
+          { key: "messages", icon: unreadCount > 0 ? IconMailUnread : IconMail, badge: unreadCount,
             title: unreadCount > 0 ? `${unreadCount} unread message${unreadCount > 1 ? "s" : ""}` : "Shipment messages",
             onClick: openMessages },
           { key: "share", icon: IconLink, spinning: false,
             title: "Generate customer tracking link", onClick: handleShare },
           { key: "refresh", icon: IconRefresh, spinning: refreshing,
             title: "Refresh shipment", onClick: handleRefresh },
-          { key: "edi", icon: "📡", title: "EDI messages", onClick: () => setEdiOpen(true) },
+          { key: "edi", icon: IconBaseStation, title: "EDI messages", onClick: () => setEdiOpen(true) },
           { key: "tickets", icon: "◩", badge: openTicketCount,
             title: openTicketCount > 0 ? `${openTicketCount} open ticket${openTicketCount > 1 ? "s" : ""}` : "Related tickets",
             onClick: () => setTicketsOpen(true) },

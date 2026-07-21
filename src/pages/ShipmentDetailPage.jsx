@@ -21,7 +21,8 @@ import SailingPickerModal from "../components/shared/SailingPickerModal";
 import ContainerEventsPanel, { CONTAINER_EVENT_TYPES } from "../components/shared/ContainerEventsPanel";
 import { AnyIcon, IconClose, IconWarning, IconPackage, IconPencil, IconCheck, IconClipboard,
   IconRefresh, IconShip, IconLock, IconUnlock, IconEye, IconArrowUp, IconArrowDown, IconForbid,
-  IconLink } from "../components/primitives/Icon";
+  IconLink, IconAnchor, IconFile, IconFileCertificate, IconDoor, IconFlag,
+  IconBaseStation, IconUpload, IconDownload, IconSendPlane } from "../components/primitives/Icon";
 
 
 // ─── Section header with hover tooltip ───────────────────────────────────────
@@ -395,7 +396,7 @@ export const CommodityDisplay = ({ code }) => {
 
 const STATUS_ICON = {
   Active: "🟢", Pending: "🟡", Sailed: IconShip,
-  Arrived: "⚓", Completed: IconCheck, Cancelled: IconClose,
+  Arrived: IconAnchor, Completed: IconCheck, Cancelled: IconClose,
 };
 
 export const relTime = iso => {
@@ -921,8 +922,9 @@ export const EdiMessagesDrawer = ({ shipment, messages, onSend, onClose }) => {
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
             padding: "16px 20px 12px" }}>
             <div>
-              <div style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text }}>
-                📡 EDI Messages
+              <div style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text,
+                display: "flex", alignItems: "center", gap: 6 }}>
+                <IconBaseStation size={14} />EDI Messages
               </div>
               <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, marginTop: 2 }}>
                 {messages.length} message{messages.length !== 1 ? "s" : ""}
@@ -965,8 +967,9 @@ export const EdiMessagesDrawer = ({ shipment, messages, onSend, onClose }) => {
               <div key={m.id} style={{ background: T.bg, border: `1px solid ${T.border}`,
                 borderRadius: 10, padding: "12px 14px" }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
-                  <span style={{ fontFamily: T.body, fontSize: 12, fontWeight: 700, color: T.text }}>
-                    {m.direction === "out" ? "📤 Sent" : "📥 Received"}
+                  <span style={{ fontFamily: T.body, fontSize: 12, fontWeight: 700, color: T.text,
+                    display: "inline-flex", alignItems: "center", gap: 4 }}>
+                    {m.direction === "out" ? <><IconUpload size={11} />Sent</> : <><IconDownload size={11} />Received</>}
                   </span>
                   <span style={{ fontFamily: T.mono, fontSize: 10.5, color: T.textMuted }}>
                     {m.messageType.replace(/_/g, " ")}
@@ -1009,8 +1012,9 @@ export const EdiMessagesDrawer = ({ shipment, messages, onSend, onClose }) => {
             style={{ background: bookable ? T.accent : T.border, border: "none", borderRadius: 7,
               color: bookable ? "#fff" : T.textMuted, cursor: bookable && !sending ? "pointer" : "default",
               padding: "9px 20px", fontFamily: T.body, fontSize: 13, fontWeight: 700,
-              transition: "background .15s" }}>
-            {sending ? "Sending…" : "📤 Send Booking Request"}
+              transition: "background .15s", display: "inline-flex", alignItems: "center",
+              justifyContent: "center", gap: 6 }}>
+            {sending ? "Sending…" : <><IconSendPlane size={13} />Send Booking Request</>}
           </button>
         </div>
       </div>
@@ -1307,14 +1311,14 @@ export const ComplianceModal = ({ shipment, screening, onChange, onClose }) => {
 
 const MILESTONE_ICONS = {
   booking_confirmed: IconClipboard,
-  si_submitted:      "📄",
-  cargo_gated_in:    "🏭",
+  si_submitted:      IconFile,
+  cargo_gated_in:    IconDoor,
   vessel_departed:   IconShip,
-  bl_issued:         "📃",
-  vessel_arrived:    "⚓",
+  bl_issued:         IconFileCertificate,
+  vessel_arrived:    IconAnchor,
   customs_cleared:   IconCheck,
   cargo_released:    IconPackage,
-  delivered:         "🎯",
+  delivered:         IconFlag,
 };
 
 // ─── Parties & Offices Panel ───────────────────────────────────────────────────

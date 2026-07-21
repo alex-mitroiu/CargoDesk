@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { T } from "../tokens";
+import { IconSearch } from "../components/primitives/Icon";
 import { api } from "../api";
 import { useAuth } from "../AuthContext";
 import { toast } from "../toast";
@@ -505,7 +506,7 @@ export default function TestCasesPage() {
         {!selected ? (
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center",
             justifyContent: "center", height: "100%", gap: 10, color: T.textMuted }}>
-            <span style={{ fontSize: 36 }}>🔍</span>
+            <IconSearch size={36} />
             <span style={{ fontFamily: T.body, fontSize: 13 }}>Select a test case to preview</span>
           </div>
         ) : (

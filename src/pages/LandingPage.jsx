@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { T, toIso, addDays } from "../tokens";
 import { api } from "../api";
 import CommandCenterView from "../components/shared/CommandCenterView";
+import { IconAnchor } from "../components/primitives/Icon";
 
 // ─── Quotes ───────────────────────────────────────────────────────────────────
 const QUOTES = [
@@ -270,8 +271,9 @@ const LandingPage = ({ shipments = [], containers = [], carriers = [], allocatio
       {/* ── Hero greeting ── */}
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 28, gap: 20 }}>
         <div>
-          <h1 style={{ fontFamily: T.head, fontSize: 32, fontWeight: 800, color: T.text, margin: "0 0 6px" }}>
-            {greeting()} ⚓
+          <h1 style={{ fontFamily: T.head, fontSize: 32, fontWeight: 800, color: T.text, margin: "0 0 6px",
+            display: "flex", alignItems: "center", gap: 10 }}>
+            {greeting()} <IconAnchor size={28} />
           </h1>
           <div style={{ fontFamily: T.body, fontSize: 14, color: T.textMuted, maxWidth: 640, lineHeight: 1.6, fontStyle: "italic" }}>
             "{quote.text}"

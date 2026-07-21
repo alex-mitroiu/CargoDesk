@@ -11,7 +11,7 @@ import SailingPickerModal from "../components/shared/SailingPickerModal";
 import ContractAssignModal from "../components/shared/ContractAssignModal";
 import { ScheduleHistoryPanel, PendingRevalidationModal } from "./ShipmentDetailPage";
 import { LegsTable, deriveHaulageNeeds } from "./ShipmentFormPage";
-import { IconWarning, IconPackage } from "../components/primitives/Icon";
+import { IconWarning, IconPackage, IconAnchor } from "../components/primitives/Icon";
 
 // ─── Shipment Schedules Page ──────────────────────────────────────────────
 // Dedicated sub-page for carrier schedule/booking management, promoted out
@@ -275,11 +275,11 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
       style={{ background: "none", border: `1px solid ${T.border}`,
         borderRadius: 6, padding: "4px 12px", cursor: canSearch ? "pointer" : "not-allowed",
         fontFamily: T.body, fontSize: 12, color: canSearch ? T.text : T.textMuted,
-        opacity: canSearch ? 1 : 0.5 }}
+        opacity: canSearch ? 1 : 0.5, display: "inline-flex", alignItems: "center", gap: 5 }}
       onMouseEnter={e => { if (canSearch) { e.currentTarget.style.borderColor = T.accent; e.currentTarget.style.color = T.accent; }}}
       onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = canSearch ? T.text : T.textMuted; }}
       title={hasSchedule ? "A sailing is already assigned — remove the SEA leg to unlink and search again" : canSearch ? "Search and add a sailing" : "POL, POD and carrier must be set"}>
-      ⚓ Add Sailing
+      <IconAnchor size={12} />Add Sailing
     </button>
   );
 

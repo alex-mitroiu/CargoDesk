@@ -5,6 +5,7 @@ import { Modal } from "../primitives/Modal";
 import Pagination from "../primitives/Pagination";
 import Btn from "../primitives/Btn";
 import { api } from "../../api";
+import { IconSearch } from "../primitives/Icon";
 
 const PICKER_LIMIT = 20;
 
@@ -252,10 +253,11 @@ const PortCombobox = ({ value = null, onChange, placeholder = "Search port or LO
           <button type="button" onClick={() => setPickerOpen(true)}
             title="Browse port directory"
             style={{ background: "none", border: "none", cursor: "pointer",
-              color: T.textMuted, fontSize: 13, padding: "0 2px", flexShrink: 0, lineHeight: 1 }}
+              color: T.textMuted, fontSize: 13, padding: "0 2px", flexShrink: 0, lineHeight: 1,
+              display: "inline-flex", alignItems: "center" }}
             onMouseEnter={e => e.currentTarget.style.color = T.text}
             onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>
-            🔍
+            <IconSearch size={13} />
           </button>
           <button type="button" onClick={clear}
             style={{ background: "none", border: "none", cursor: "pointer",
@@ -287,10 +289,11 @@ const PortCombobox = ({ value = null, onChange, placeholder = "Search port or LO
               title="Browse port directory"
               style={{ position: "absolute", right: 8, top: "50%",
                 transform: "translateY(-50%)", background: "none", border: "none",
-                cursor: "pointer", color: T.textMuted, fontSize: 13, padding: 2, lineHeight: 1 }}
+                cursor: "pointer", color: T.textMuted, fontSize: 13, padding: 2, lineHeight: 1,
+                display: "inline-flex", alignItems: "center" }}
               onMouseEnter={e => e.currentTarget.style.color = T.text}
               onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>
-              🔍
+              <IconSearch size={13} />
             </button>
           </div>
 

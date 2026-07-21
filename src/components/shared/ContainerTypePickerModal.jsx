@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { T, CONTAINER_OPTIONS } from "../../tokens";
 import { Field, inputBase } from "../primitives/Form";
 import { Modal } from "../primitives/Modal";
+import { IconSearch } from "../primitives/Icon";
 
 // ─── ContainerTypePickerModal ─────────────────────────────────────────────────
 // Visual equipment picker grouped by 20ft / 40ft.
@@ -176,10 +177,11 @@ export const ContainerTypeField = ({ size, type, onChange, required = false, lab
           <button type="button" onClick={() => setPickerOpen(true)}
             title="Browse equipment types"
             style={{ background: "none", border: "none", cursor: "pointer",
-              color: T.textMuted, fontSize: 13, padding: "0 2px", flexShrink: 0, lineHeight: 1 }}
+              color: T.textMuted, fontSize: 13, padding: "0 2px", flexShrink: 0, lineHeight: 1,
+              display: "inline-flex", alignItems: "center" }}
             onMouseEnter={e => e.currentTarget.style.color = T.text}
             onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>
-            🔍
+            <IconSearch size={13} />
           </button>
           <button type="button" onClick={() => onChange(null)}
             style={{ background: "none", border: "none", cursor: "pointer",
@@ -206,10 +208,11 @@ export const ContainerTypeField = ({ size, type, onChange, required = false, lab
               title="Browse all equipment types"
               style={{ position: "absolute", right: 8, top: "50%",
                 transform: "translateY(-50%)", background: "none", border: "none",
-                cursor: "pointer", color: T.textMuted, fontSize: 13, padding: 2, lineHeight: 1 }}
+                cursor: "pointer", color: T.textMuted, fontSize: 13, padding: 2, lineHeight: 1,
+                display: "inline-flex", alignItems: "center" }}
               onMouseEnter={e => e.currentTarget.style.color = T.text}
               onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>
-              🔍
+              <IconSearch size={13} />
             </button>
           </div>
 

@@ -2,7 +2,7 @@
 
 > Freight management application for tracking ocean shipments, carrier space utilisation, contracts, and maritime master data.
 
-[![Version](https://img.shields.io/badge/version-0.34.3-blue)](.)
+[![Version](https://img.shields.io/badge/version-0.34.4-blue)](.)
 ![Node](https://img.shields.io/badge/node-22.5%2B-green)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
@@ -353,6 +353,7 @@ See the built-in **About** page (i in the sidebar) for the full interactive sche
 
 | Version | Codename | Summary |
 |---------|----------|---------|
+| 0.34.4 | Ledger | Closes the last icon gap: MingCute has no anchor, search, or messaging/EDI icons, so a second Apache-2.0 family (Remix Icon, same style) was added — 8 new icons covering the anchor (including the app's own logo mark everywhere it appears), every search/browse button, and the messaging/EDI cluster (header icon tile, EDI drawer, Export/Import service groups). |
 | 0.34.3 | Ledger | Icon replacement pass three covers the remaining shipment sub-pages (Contracts & Schedules, Cost/Invoice Entry, Loading & Generic Service, Space Configurations, Archive, Cargo) and the Services / Container Events / Container Packages shared panels, with seven new icons (door, receipt, coin, time, file, file-certificate) completing the shipment Explorer sidebar — only the anchor stays emoji (no MingCute equivalent). Container lifecycle events each get a matching icon. Nav fold state now persists per group in localStorage — expanded groups survive reloads; a fresh browser still starts all-collapsed. |
 | 0.34.2 | Ledger | Main nav gets its own internal scrollbar and starts collapsed by default (Dashboard/Integration Board join Master Data/Organization as foldable groups) — fixes the sidebar silently clipping its last item on shorter screens. Icon replacement extends past the sidebar/settings-only scope of 0.34.1 into shipment entry/detail pages, the Dashboard, and the persistent shipment header, plus six new icons (lock, unlock, eye, up/down arrow, forbid). Two standing admin accounts documented for recovery/verification use. |
 | 0.34.1 | Ledger | Sidebar icon set replaced: every nav item's emoji swapped for a line-style SVG icon from MingCute (Apache-2.0) via a new shared `Icon.jsx` component, rendering consistently across browsers/platforms instead of relying on the OS's emoji font. The ⚙ settings glyph got the same fix everywhere it appears (the shared ActionMenu trigger, Application Settings menu item, command palette, Kanban WIP-limit/Board Settings buttons), using an actual gear-shaped icon rather than a sliders-style one. The vendored icon source was trimmed from ~24MB/3,324 files down to just the ~30 actually used. Scoped to the sidebar and the settings icon for this pass — inline emoji elsewhere (edit/delete/warning glyphs, badges) are unchanged. |

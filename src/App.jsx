@@ -30,7 +30,8 @@ import {
   IconFlask, IconRefresh, IconCheck, IconCalendar, IconGroup, IconCircle,
   IconBuilding, IconShip, IconPackage, IconMapPin, IconLink, IconRoute,
   IconFlag, IconHashtag, IconEarth, IconGovernment, IconSettings, IconChartBar, AnyIcon,
-  IconReceipt, IconCoin,
+  IconReceipt, IconCoin, IconAnchor, IconSearch, IconMail, IconMailUnread, IconBaseStation,
+  IconSendPlane, IconUpload, IconDownload,
 } from "./components/primitives/Icon";
 import TrackedDocPreviewModal from "./components/shared/TrackedDocPreviewModal";
 import { fmtCurr, _esc, _invShell, buildFreightInvoiceHtml } from "./utils/invoiceGenerator";
@@ -1186,7 +1187,8 @@ const ShipmentFormSidebar = ({ shipment, mode, navigate, onContainers }) => {
       display: "flex", flexDirection: "column", flexShrink: 0 }}>
 
       <div style={{ padding: "22px 20px 18px", borderBottom: `1px solid ${T.border}` }}>
-        <div style={{ fontFamily: T.head, fontSize: 17, fontWeight: 800, color: T.text }}>⚓ CargoDesk</div>
+        <div style={{ fontFamily: T.head, fontSize: 17, fontWeight: 800, color: T.text,
+          display: "flex", alignItems: "center", gap: 7 }}><IconAnchor size={17} />CargoDesk</div>
         <div style={{ fontFamily: T.mono, fontSize: 9.5, color: T.textMuted, marginTop: 3,
           letterSpacing: ".12em", textTransform: "uppercase" }}>Freight Management</div>
       </div>
@@ -1379,8 +1381,9 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
 
       {/* Logo */}
       <div style={{ padding: "22px 20px 18px", borderBottom: `1px solid ${T.border}` }}>
-        <div style={{ fontFamily: T.head, fontSize: 17, fontWeight: 800, color: T.text }}>
-          ⚓ CargoDesk
+        <div style={{ fontFamily: T.head, fontSize: 17, fontWeight: 800, color: T.text,
+          display: "flex", alignItems: "center", gap: 7 }}>
+          <IconAnchor size={17} />CargoDesk
         </div>
         <div style={{ fontFamily: T.mono, fontSize: 9.5, color: T.textMuted, marginTop: 3,
           letterSpacing: ".12em", textTransform: "uppercase" }}>
@@ -1527,8 +1530,8 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
                 </div>
               ) : (
                 <>
-                  {renderServiceGroup("Export", exportTypes, "📤")}
-                  {renderServiceGroup("Import", importTypes, "📥")}
+                  {renderServiceGroup("Export", exportTypes, IconUpload)}
+                  {renderServiceGroup("Import", importTypes, IconDownload)}
                 </>
               )}
               {sectionsAfterServices.map(renderSection)}
@@ -1963,7 +1966,8 @@ function App() {
   if (apiError) return (
     <div style={{ display: "flex", minHeight: "100vh", background: T.bg, alignItems: "center", justifyContent: "center" }}>
       <div style={{ textAlign: "center", maxWidth: 420 }}>
-        <div style={{ fontFamily: T.head, fontSize: 22, fontWeight: 800, color: T.text, marginBottom: 12 }}>⚓ CargoDesk</div>
+        <div style={{ fontFamily: T.head, fontSize: 22, fontWeight: 800, color: T.text, marginBottom: 12,
+          display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}><IconAnchor size={22} />CargoDesk</div>
         <div style={{ background: T.dangerBg, border: `1px solid ${T.danger}55`, borderRadius: 8, padding: "14px 18px",
           fontFamily: T.body, fontSize: 13, color: T.danger, marginBottom: 12 }}>
           Cannot reach the API server.<br /><strong>{apiError}</strong>
@@ -2539,7 +2543,8 @@ function App() {
 
           {/* Logo — click to go home */}
           <div style={{ padding: "22px 20px 20px", borderBottom: `1px solid ${T.border}` }}>
-            <div onClick={() => navigate("home")} style={{ fontFamily: T.head, fontSize: 17, fontWeight: 800, color: T.text, cursor: "pointer" }}>⚓ CargoDesk</div>
+            <div onClick={() => navigate("home")} style={{ fontFamily: T.head, fontSize: 17, fontWeight: 800, color: T.text, cursor: "pointer",
+              display: "flex", alignItems: "center", gap: 7 }}><IconAnchor size={17} />CargoDesk</div>
             <div style={{ fontFamily: T.mono, fontSize: 9.5, color: T.textMuted, marginTop: 3, letterSpacing: ".12em", textTransform: "uppercase" }}>
               Freight Management
             </div>
@@ -2998,8 +3003,9 @@ function App() {
         display: "flex", alignItems: "center", justifyContent: "space-between",
         background: T.bg,
       }}>
-        <span style={{ fontFamily: T.mono, fontSize: 11, color: T.border }}>
-          ⚓ CargoDesk · v{VERSION}
+        <span style={{ fontFamily: T.mono, fontSize: 11, color: T.border,
+          display: "inline-flex", alignItems: "center", gap: 5 }}>
+          <IconAnchor size={11} />CargoDesk · v{VERSION}
         </span>
         <span style={{ fontFamily: T.body, fontSize: 11, color: T.border }}>
           © {COPYRIGHT_YEAR} {COPYRIGHT_OWNER} ·{" "}

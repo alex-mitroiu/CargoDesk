@@ -11,7 +11,7 @@ import ActionMenu from "../components/primitives/ActionMenu";
 import TestCaseStoryLinksPanel from "../components/shared/TestCaseStoryLinksPanel";
 import { Inp, Sel, Textarea } from "../components/primitives/Form";
 import { toast } from "../toast";
-import { IconSettings } from "../components/primitives/Icon";
+import { IconSettings, IconSearch } from "../components/primitives/Icon";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -1196,8 +1196,9 @@ const TicketModal = ({ init = {}, shipments = [], tickets = [], testItems = [], 
                     onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>×</button>
                 </>
               ) : (
-                <span style={{ fontFamily: T.body, fontSize: 12, color: T.border, fontStyle: "italic" }}>
-                  None — click 🔍 to search
+                <span style={{ fontFamily: T.body, fontSize: 12, color: T.border, fontStyle: "italic",
+                  display: "inline-flex", alignItems: "center", gap: 4 }}>
+                  None — click <IconSearch size={11} /> to search
                 </span>
               )}
             </div>
@@ -1209,7 +1210,7 @@ const TicketModal = ({ init = {}, shipments = [], tickets = [], testItems = [], 
                 lineHeight: 1, flexShrink: 0, transition: "background .12s" }}
               onMouseEnter={e => e.currentTarget.style.background = `${T.accent}33`}
               onMouseLeave={e => e.currentTarget.style.background = T.accentBg}>
-              🔍
+              <IconSearch size={15} />
             </button>
           </div>
         </div>
@@ -1350,8 +1351,9 @@ const TestItemModal = ({ init = {}, shipments = [], testItems = [], tickets = []
                     onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>×</button>
                 </>
               ) : (
-                <span style={{ fontFamily: T.body, fontSize: 12, color: T.border, fontStyle: "italic" }}>
-                  None — click 🔍 to search
+                <span style={{ fontFamily: T.body, fontSize: 12, color: T.border, fontStyle: "italic",
+                  display: "inline-flex", alignItems: "center", gap: 4 }}>
+                  None — click <IconSearch size={11} /> to search
                 </span>
               )}
             </div>
@@ -1362,7 +1364,7 @@ const TestItemModal = ({ init = {}, shipments = [], testItems = [], tickets = []
                 lineHeight: 1, flexShrink: 0, transition: "background .12s" }}
               onMouseEnter={e => e.currentTarget.style.background = `${T.accent}33`}
               onMouseLeave={e => e.currentTarget.style.background = T.accentBg}>
-              🔍
+              <IconSearch size={15} />
             </button>
           </div>
         </div>

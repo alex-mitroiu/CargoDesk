@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { T } from "../tokens";
 import { api, TOKEN_KEY } from "../api";
 import { VERSION } from "../version";
+import { IconAnchor } from "../components/primitives/Icon";
 
 const LoginPage = ({ onLogin }) => {
   const [email,       setEmail]       = useState("");
@@ -76,8 +77,9 @@ const LoginPage = ({ onLogin }) => {
 
         {/* Logo */}
         <div style={{ textAlign: "center", marginBottom: 36 }}>
-          <div style={{ fontFamily: T.head, fontSize: 30, fontWeight: 800, color: T.text, marginBottom: 6 }}>
-            ⚓ CargoDesk
+          <div style={{ fontFamily: T.head, fontSize: 30, fontWeight: 800, color: T.text, marginBottom: 6,
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+            <IconAnchor size={28} />CargoDesk
           </div>
           <div style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted,
             letterSpacing: ".14em", textTransform: "uppercase" }}>

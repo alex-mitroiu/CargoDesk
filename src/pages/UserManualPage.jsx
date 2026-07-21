@@ -70,7 +70,7 @@ const UserManualPage = () => {
         <H3>Status workflow</H3>
         <P>Set the shipment status to <Tag>Active</Tag>, <Tag>Pending</Tag>, <Tag>Completed</Tag>, or <Tag>Cancelled</Tag> as it progresses.</P>
         <H3>EDI Messages</H3>
-        <P>Click the <Tag>📡</Tag> icon in the shipment header to open the EDI Messages drawer. Sending a booking request to a supported carrier (currently <Tag>MAEU</Tag>, <Tag>SAFM</Tag>, <Tag>MCPU</Tag>) logs an outbound message and — once the carrier responds — an inbound confirmation or rejection, each with a raw/parsed payload toggle. Without a live carrier API key configured in App Settings, responses are generated as clearly-tagged demo data so the flow can be exercised end-to-end.</P>
+        <P>Click the EDI icon in the shipment header to open the EDI Messages drawer. Sending a booking request to a supported carrier (currently <Tag>MAEU</Tag>, <Tag>SAFM</Tag>, <Tag>MCPU</Tag>) logs an outbound message and — once the carrier responds — an inbound confirmation or rejection, each with a raw/parsed payload toggle. Without a live carrier API key configured in App Settings, responses are generated as clearly-tagged demo data so the flow can be exercised end-to-end.</P>
         <H3>Container Lifecycle Events (FCL)</H3>
         <P>Each container tracks its own movement history — <Tag>Empty Pickup</Tag>, <Tag>Gate In</Tag>, <Tag>Loaded</Tag>, <Tag>Sailed</Tag>, <Tag>Discharged</Tag>, <Tag>Gate Out</Tag>, <Tag>Empty Return</Tag>. Open the full container list and click <Tag>📋</Tag> on any row to view or log an event — the form suggests the next stage in sequence. This is the foundation for upcoming demurrage/detention tracking.</P>
       </div>

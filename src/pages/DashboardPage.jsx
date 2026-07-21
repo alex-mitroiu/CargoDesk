@@ -16,7 +16,7 @@ import Pagination from "../components/primitives/Pagination";
 import DatePicker from "../components/primitives/DatePicker";
 import { useResizableColumns, ColResizer } from "../components/primitives/useResizableColumns.jsx";
 import { IconClose, IconWarning, IconPencil, IconCheck, IconRefresh, IconLock, IconUnlock,
-  IconEye, IconArrowDown, IconForbid } from "../components/primitives/Icon";
+  IconEye, IconArrowDown, IconForbid, IconSearch } from "../components/primitives/Icon";
 
 const CHART_COLORS = [
   "#6366f1","#22c55e","#f59e0b","#3b82f6",
@@ -179,7 +179,7 @@ const AllocContractPickerModal = ({ pol, pod, matches, onSelect, onClose }) => {
         </div>
       ) : matches.length === 0 ? (
         <div style={{ padding: "40px 0", textAlign: "center" }}>
-          <div style={{ fontSize: 28, marginBottom: 10 }}>🔍</div>
+          <div style={{ marginBottom: 10, color: T.textMuted, display: "flex", justifyContent: "center" }}><IconSearch size={28} /></div>
           <div style={{ fontFamily: T.body, fontSize: 14, color: T.text, marginBottom: 4 }}>No contracts found for this route</div>
           <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
             Try adjusting the POL, POD, or carrier, or check the valid-from / valid-to dates on your contracts.

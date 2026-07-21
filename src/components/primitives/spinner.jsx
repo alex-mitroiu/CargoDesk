@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { T } from "../../tokens";
+import { IconAnchor } from "./Icon";
 
 // Inject keyframe once
 if (!document.getElementById("cd-spinner-style")) {
@@ -51,7 +52,8 @@ export const FullPageSpinner = ({ label = "Loading CargoDesk…" }) => (
     alignItems: "center", justifyContent: "center", gap: 20, zIndex: 9999,
   }}>
     <div style={{ fontFamily: T.head, fontSize: 28, fontWeight: 800,
-      color: T.text, letterSpacing: "-.02em" }}>⚓ CargoDesk</div>
+      color: T.text, letterSpacing: "-.02em",
+      display: "flex", alignItems: "center", gap: 10 }}><IconAnchor size={28} />CargoDesk</div>
     <Spinner size="lg" />
     <span style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
       {label}
