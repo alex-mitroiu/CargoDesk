@@ -50,8 +50,8 @@ const LoginPage = ({ onLogin }) => {
     setError("");
     setLoading(true);
     try {
-      const { token, user } = await api.auth.login(email, password);
-      onLogin(token, user);
+      const { token, user, passwordExpired } = await api.auth.login(email, password);
+      onLogin(token, user, passwordExpired);
     } catch (e) {
       setError(e.message || "Sign in failed");
     } finally {

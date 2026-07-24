@@ -8,7 +8,7 @@
  *
  * Prerequisites:
  *   - npm run server  (Express on :3001)
- *   - Admin account: claudeagent@localhost / admin
+ *   - Admin account: claudeagent@localhost / TestFixture!2026Zq
  */
 
 import http from "node:http";
@@ -62,7 +62,7 @@ function assert(label, condition, detail = "") {
 async function login() {
   const { status, body } = await request("POST", "/api/auth/login", {
     email: "claudeagent@localhost",
-    password: "admin",
+    password: "TestFixture!2026Zq",
   });
   if (status !== 200 || !body.token)
     throw new Error(`Login failed (${status}): ${JSON.stringify(body)}`);

@@ -2,7 +2,7 @@
 
 > Freight management application for tracking ocean shipments, carrier space utilisation, contracts, and maritime master data.
 
-[![Version](https://img.shields.io/badge/version-0.34.4-blue)](.)
+[![Version](https://img.shields.io/badge/version-0.34.5-blue)](.)
 ![Node](https://img.shields.io/badge/node-22.5%2B-green)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
@@ -353,6 +353,7 @@ See the built-in **About** page (i in the sidebar) for the full interactive sche
 
 | Version | Codename | Summary |
 |---------|----------|---------|
+| 0.34.5 | Ledger | Security review response: fixed a stored-XSS hole in Kanban's Mermaid diagram rendering, closed a gap where role downgrades didn't revoke existing sessions, added per-IP login rate limiting, and shipped a full password-expiry policy (configurable expiry, self-service change with strength meter and complexity requirements, forced change prompt when overdue). Rotated a previously-exposed admin credential. Applied the safe subset of `npm audit fix`. |
 | 0.34.4 | Ledger | Closes the last icon gap: MingCute has no anchor, search, or messaging/EDI icons, so a second Apache-2.0 family (Remix Icon, same style) was added — 8 new icons covering the anchor (including the app's own logo mark everywhere it appears), every search/browse button, and the messaging/EDI cluster (header icon tile, EDI drawer, Export/Import service groups). |
 | 0.34.3 | Ledger | Icon replacement pass three covers the remaining shipment sub-pages (Contracts & Schedules, Cost/Invoice Entry, Loading & Generic Service, Space Configurations, Archive, Cargo) and the Services / Container Events / Container Packages shared panels, with seven new icons (door, receipt, coin, time, file, file-certificate) completing the shipment Explorer sidebar — only the anchor stays emoji (no MingCute equivalent). Container lifecycle events each get a matching icon. Nav fold state now persists per group in localStorage — expanded groups survive reloads; a fresh browser still starts all-collapsed. |
 | 0.34.2 | Ledger | Main nav gets its own internal scrollbar and starts collapsed by default (Dashboard/Integration Board join Master Data/Organization as foldable groups) — fixes the sidebar silently clipping its last item on shorter screens. Icon replacement extends past the sidebar/settings-only scope of 0.34.1 into shipment entry/detail pages, the Dashboard, and the persistent shipment header, plus six new icons (lock, unlock, eye, up/down arrow, forbid). Two standing admin accounts documented for recovery/verification use. |

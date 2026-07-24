@@ -2,11 +2,17 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.34.4";
-export const BUILD     = "2026-07-21";
+export const VERSION   = "0.34.5";
+export const BUILD     = "2026-07-24";
 export const CODENAME  = "Ledger";
 
 export const CHANGELOG = [
+  {
+    version:  "0.34.5",
+    date:     "2026-07-24",
+    codename: "Ledger",
+    summary:  "Security review response. Fixed a stored-XSS hole where a ticket title containing a `\"` could break out of its quoted Mermaid diagram label and inject arbitrary syntax (Kanban's Hierarchy/Dependency views render Mermaid output via dangerouslySetInnerHTML with securityLevel:\"loose\") — titles and link-type labels are now escaped before interpolation. Role changes now revoke existing sessions the same way password resets and deactivation already did (previously a demoted user's token kept its old privileges until the 8h expiry). The login endpoint gained a per-IP rate limit (20 attempts/15min) alongside the existing per-account lockout, which only ever protected one email at a time. New password expiry policy: a configurable Login Security setting (default 90 days, 0 disables it), a self-service `POST /api/auth/change-password` requiring the current password, a strength meter and 12-char/3-class minimum enforced both client and server side, and a forced Change Password modal that gates the app when a password is overdue — checked at both login and the silent token-restore-on-mount path, since only gating the login form would let an already-logged-in session dodge the policy indefinitely. Fixed two collisions this surfaced: the office-picker modal (z-index 9000) previously painted over the forced password modal instead of deferring to it, and change-password's \"wrong current password\" response used 401, which api.js's global interceptor treats as \"session dead\" and force-logs-out on — moved to 400. fallback-admin@cargodesk.local's password (previously committed to this file in plaintext, on a public repo) was rotated through the new self-service endpoint and redacted from here. `npm audit fix` applied for the patch-level fixes available (body-parser, brace-expansion, dompurify, postcss, shell-quote); the remaining four findings all require a major version bump (Vite 5→8, ExceljS major) and are deliberately left for a dedicated follow-up rather than forced through here.",
+  },
   {
     version:  "0.34.4",
     date:     "2026-07-21",

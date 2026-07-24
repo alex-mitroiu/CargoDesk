@@ -588,6 +588,7 @@ const migrations = [
   "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('login_max_attempts','5')",
   "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('login_lockout_minutes','30')",
   "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('jwt_lifetime_hours','8')",
+  "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('password_expiry_days','90')",
   "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('sso_enabled','0')",
   "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('sso_tenant_id','')",
   "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('sso_client_id','')",
@@ -835,6 +836,13 @@ const migrations = [
     position     INTEGER NOT NULL DEFAULT 0,
     created_at   TEXT NOT NULL
   )`,
+  // v0.34.5 — password expiry policy: track when each user's password was last set.
+  // Backfilled to created_at (not "now") for existing rows, since we don't actually
+  // know when an existing account's password was last changed — created_at is the
+  // most recent point we CAN vouch for, so an old-enough account correctly shows as
+  // already due rather than being given a fresh, unearned 90-day grace period.
+  "ALTER TABLE users ADD COLUMN password_changed_at TEXT NOT NULL DEFAULT ''",
+  "UPDATE users SET password_changed_at = created_at WHERE password_changed_at = ''",
 ];
 
 for (const sql of migrations) {

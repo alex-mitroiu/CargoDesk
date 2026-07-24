@@ -185,12 +185,18 @@ const TicketDiagramModal = ({ ticket, allTickets, onClose }) => {
   // Safe Mermaid node ID — hyphens are not allowed.
   const sid = id => id.replace(/-/g, "_");
 
+  // Escape user-controlled text (ticket titles, link types) before it goes into a
+  // quoted Mermaid label — otherwise a `"` in a title breaks out of the label string
+  // and injects raw Mermaid syntax (e.g. a `click id "javascript:..."` directive),
+  // which then renders unsanitized via dangerouslySetInnerHTML in MermaidRenderer.
+  const escLabel = s => String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
   // ── Hierarchy diagram definition ──────────────────────────────────────────
   const hierarchyDef = useMemo(() => {
     const lines = ["flowchart TD"];
     epicGroup.forEach(t => {
       const icon  = TYPE_ICON[t.type] || "📋";
-      const label = t.title.length > 38 ? t.title.slice(0, 38) + "…" : t.title;
+      const label = escLabel(t.title.length > 38 ? t.title.slice(0, 38) + "…" : t.title);
       const done  = ["Done", "Ready to Deploy", "Released"].includes(t.status);
       // Different node shapes: Epic = stadium, Story = rect, others = rounded rect
       const [o, c] = t.type === "Epic"  ? (["([", "])"])
@@ -220,7 +226,7 @@ const TicketDiagramModal = ({ ticket, allTickets, onClose }) => {
                       : l.linkType === "Implements" ? "-..->"
                       : l.linkType === "Duplicates" ? "==>"
                       :                               "--->";
-          edges.push({ from: t.id, to: l.otherTicketId, arrow, label: l.linkType.toLowerCase() });
+          edges.push({ from: t.id, to: l.otherTicketId, arrow, label: escLabel(l.linkType.toLowerCase()) });
         });
     });
 
@@ -234,7 +240,7 @@ const TicketDiagramModal = ({ ticket, allTickets, onClose }) => {
       const t     = epicGroup.find(e => e.id === id);
       if (!t) return;
       const icon  = TYPE_ICON[t.type] || "📋";
-      const label = t.title.length > 30 ? t.title.slice(0, 30) + "…" : t.title;
+      const label = escLabel(t.title.length > 30 ? t.title.slice(0, 30) + "…" : t.title);
       lines.push(`  ${sid(id)}["${icon} ${id}\\n${label}"]`);
     });
     edges.forEach(e =>

@@ -13,10 +13,28 @@ module.exports = function authRoutes(app, ctx) {
   const getSecuritySettings = () => {
     const s = getSettings();
     return {
-      maxAttempts:    parseInt(s.login_max_attempts  || "5",  10),
-      lockoutMinutes: parseInt(s.login_lockout_minutes || "30", 10),
-      jwtHours:       parseInt(s.jwt_lifetime_hours  || "8",  10),
+      maxAttempts:      parseInt(s.login_max_attempts   || "5",  10),
+      lockoutMinutes:   parseInt(s.login_lockout_minutes || "30", 10),
+      jwtHours:         parseInt(s.jwt_lifetime_hours   || "8",  10),
+      passwordExpiryDays: parseInt(s.password_expiry_days ?? "90", 10),
     };
+  };
+
+  const isPasswordExpired = (user, expiryDays) => {
+    if (!expiryDays) return false; // 0 = disabled
+    const changedAt = user.password_changed_at || user.created_at;
+    if (!changedAt) return false;
+    const ageMs = Date.now() - new Date(changedAt).getTime();
+    return ageMs > expiryDays * 24 * 60 * 60 * 1000;
+  };
+
+  // Mirrors src/utils/passwordPolicy.js's scorePassword — frontend is ESM, this route
+  // is CommonJS, so it's duplicated rather than shared; keep both in sync if this changes.
+  const COMMON_WEAK_PW = /^(password|12345678|123456789|qwerty|letmein|admin123|iloveyou|welcome1|passw0rd)/i;
+  const passwordMeetsPolicy = (pw) => {
+    const pass = pw || "";
+    const classes = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^A-Za-z0-9]/].filter(re => re.test(pass)).length;
+    return pass.length >= 12 && classes >= 3 && !COMMON_WEAK_PW.test(pass);
   };
 
   const mapUser = (r) => ({
@@ -35,9 +53,34 @@ module.exports = function authRoutes(app, ctx) {
     allOffices:     !!r.all_offices,
   });
 
+  // ─── Login rate limiting ─────────────────────────────────────────────────────
+  // Per-account lockout (below) only engages after N failed attempts against ONE
+  // email — it does nothing to stop a spray across many different accounts from the
+  // same source. This is a separate, per-IP throttle on the endpoint itself. Same
+  // in-memory Map + periodic-cleanup pattern already used for ssoNonces (server.js).
+  const loginAttemptsByIp = new Map(); // ip -> { count, windowStart }
+  const LOGIN_RATE_WINDOW_MS = 15 * 60 * 1000;
+  const LOGIN_RATE_MAX = 20;
+  setInterval(() => {
+    const cutoff = Date.now() - LOGIN_RATE_WINDOW_MS;
+    for (const [k, v] of loginAttemptsByIp) if (v.windowStart < cutoff) loginAttemptsByIp.delete(k);
+  }, 60_000);
+
+  const loginRateLimit = (req, res, next) => {
+    const now = Date.now();
+    let rec = loginAttemptsByIp.get(req.ip);
+    if (!rec || now - rec.windowStart > LOGIN_RATE_WINDOW_MS) {
+      rec = { count: 0, windowStart: now };
+      loginAttemptsByIp.set(req.ip, rec);
+    }
+    rec.count++;
+    if (rec.count > LOGIN_RATE_MAX) return err(res, "Too many login attempts from this address — try again later", 429);
+    next();
+  };
+
   // ─── Login ─────────────────────────────────────────────────────────────────
 
-  app.post("/api/auth/login", (req, res) => {
+  app.post("/api/auth/login", loginRateLimit, (req, res) => {
     const { email, password } = req.body || {};
     if (!email || !password) return err(res, "Email and password required");
 
@@ -73,9 +116,10 @@ module.exports = function authRoutes(app, ctx) {
     db.prepare("UPDATE users SET failed_attempts=0, locked_until='', last_login=datetime('now') WHERE id=?")
       .run(user.id);
 
-    const { jwtHours } = getSecuritySettings();
+    const { jwtHours, passwordExpiryDays } = getSecuritySettings();
     const roles = JSON.parse(user.roles || JSON.stringify([user.role || 'viewer']));
     const allOffices = !!user.all_offices;
+    const passwordExpired = isPasswordExpired(user, passwordExpiryDays);
 
     // Fetch user's assigned offices for the picker
     const userOfficesRows = db.prepare(
@@ -95,19 +139,62 @@ module.exports = function authRoutes(app, ctx) {
       JWT_SECRET,
       { expiresIn: `${jwtHours}h` }
     );
-    ok(res, { token, user: { id: user.id, email: user.email, name: user.name, roles,
+    ok(res, { token, passwordExpired, user: { id: user.id, email: user.email, name: user.name, roles,
       canViewFinance: !!user.can_view_finance, allOffices, offices } });
   });
 
   app.get("/api/auth/me", auth(), (req, res) => {
     const user = db.prepare(
-      "SELECT id, email, name, role, roles, is_active FROM users WHERE id = ?"
+      "SELECT id, email, name, role, roles, is_active, created_at, password_changed_at FROM users WHERE id = ?"
     ).get(req.user.id);
     if (!user || !user.is_active) return err(res, "User not found or inactive", 404);
-    ok(res, user);
+    // Silent token-restore-on-mount (a still-valid JWT from a prior session) bypasses
+    // the login endpoint entirely — without this, a user who never re-enters credentials
+    // could stay on an expired password indefinitely. Same check as login's.
+    const { passwordExpiryDays } = getSecuritySettings();
+    ok(res, { ...user, passwordExpired: isPasswordExpired(user, passwordExpiryDays) });
   });
 
   app.post("/api/auth/logout", (req, res) => ok(res, { ok: true }));
+
+  // Self-service password change — any authenticated user, own account only.
+  // Requires the current password (not just an admin-issued reset) so a hijacked
+  // session alone can't silently take over the account's long-term credential.
+  app.post("/api/auth/change-password", auth(), (req, res) => {
+    const { currentPassword, newPassword } = req.body || {};
+    if (!currentPassword || !newPassword) return err(res, "Current and new password are required");
+
+    const user = db.prepare("SELECT * FROM users WHERE id=?").get(req.user.id);
+    if (!user) return err(res, "Not found", 404);
+    // 400, not 401 — the caller IS authenticated (valid bearer token got them past
+    // auth() above); this is a wrong-field rejection, not a session failure. api.js's
+    // req() treats any 401 as "session dead" and force-logs-out + clears the token,
+    // which would wrongly kick the user out of their own password-change attempt.
+    if (!bcrypt.compareSync(currentPassword, user.password_hash)) return err(res, "Current password is incorrect", 400);
+    if (!passwordMeetsPolicy(newPassword)) {
+      return err(res, "New password must be at least 12 characters and include 3 of: lowercase, uppercase, digit, symbol — and not be a common password");
+    }
+    if (bcrypt.compareSync(newPassword, user.password_hash)) return err(res, "New password must be different from the current one");
+
+    const newTokenVersion = (user.token_version ?? 0) + 1;
+    const now = new Date().toISOString();
+    db.prepare("UPDATE users SET password_hash=?, password_changed_at=?, token_version=? WHERE id=?")
+      .run(bcrypt.hashSync(newPassword, 10), now, newTokenVersion, user.id);
+    logAdminEvent(req.user, 'PASSWORD_CHANGED_SELF', 'user', user.id, {});
+
+    // token_version just bumped, invalidating the token this very request came in on —
+    // issue a fresh one so the user isn't logged out by their own password change.
+    const { jwtHours } = getSecuritySettings();
+    const roles = parseUserRoles(user);
+    const token = jwt.sign(
+      { id: user.id, email: user.email, name: user.name, role: user.role, roles,
+        canViewFinance: !!user.can_view_finance, allOffices: !!user.all_offices,
+        tv: newTokenVersion },
+      JWT_SECRET,
+      { expiresIn: `${jwtHours}h` }
+    );
+    ok(res, { token });
+  });
 
   // ─── SSO ───────────────────────────────────────────────────────────────────
 
@@ -257,9 +344,12 @@ module.exports = function authRoutes(app, ctx) {
     const active  = isActive !== undefined ? (isActive ? 1 : 0) : existing.is_active;
     const hash    = password ? bcrypt.hashSync(password, 10) : existing.password_hash;
 
-    // Revoke sessions when deactivating or when password is reset
+    // Revoke sessions when deactivating, resetting the password, or changing roles —
+    // otherwise a downgraded user's already-issued token keeps its old (higher)
+    // privileges until it naturally expires (up to 8h, see the jwt.sign expiresIn below).
+    const rolesChanged = JSON.stringify(newRoles) !== existing.roles;
     let newTokenVersion = existing.token_version ?? 0;
-    if ((!active && existing.is_active) || password) newTokenVersion++;
+    if ((!active && existing.is_active) || password || rolesChanged) newTokenVersion++;
 
     // Unlock clears lockout fields
     const failedAttempts = unlock ? 0 : (existing.failed_attempts ?? 0);

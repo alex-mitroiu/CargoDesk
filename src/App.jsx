@@ -31,9 +31,10 @@ import {
   IconBuilding, IconShip, IconPackage, IconMapPin, IconLink, IconRoute,
   IconFlag, IconHashtag, IconEarth, IconGovernment, IconSettings, IconChartBar, AnyIcon,
   IconReceipt, IconCoin, IconAnchor, IconSearch, IconMail, IconMailUnread, IconBaseStation,
-  IconSendPlane, IconUpload, IconDownload,
+  IconSendPlane, IconUpload, IconDownload, IconLock,
 } from "./components/primitives/Icon";
 import TrackedDocPreviewModal from "./components/shared/TrackedDocPreviewModal";
+import ChangePasswordModal from "./components/shared/ChangePasswordModal";
 import { fmtCurr, _esc, _invShell, buildFreightInvoiceHtml } from "./utils/invoiceGenerator";
 
 import ShipmentsPage     from "./pages/ShipmentsPage";
@@ -1718,13 +1719,21 @@ function App() {
   const [detailAction, setDetailAction] = useState(null);
   const [user,         setUser]         = useState(null);
   const [authLoading,  setAuthLoading]  = useState(true);
+  const [changePwOpen,   setChangePwOpen]   = useState(false);
+  const [changePwForced, setChangePwForced] = useState(false);
 
-  // Verify stored token on mount
+  // Verify stored token on mount — a still-valid JWT restores the session silently,
+  // bypassing the login form entirely, so the password-expiry check has to be
+  // re-evaluated here too (not just in handleLogin) or it could go unenforced forever.
   useEffect(() => {
     const token = localStorage.getItem(TOKEN_KEY);
     if (!token) { setAuthLoading(false); return; }
     api.auth.me()
-      .then(u => { setUser(u); setAuthLoading(false); })
+      .then(u => {
+        setUser(u);
+        setAuthLoading(false);
+        if (u.passwordExpired) { setChangePwForced(true); setChangePwOpen(true); }
+      })
       .catch(() => { localStorage.removeItem(TOKEN_KEY); setAuthLoading(false); });
   }, []);
 
@@ -1814,7 +1823,7 @@ function App() {
   const userRoles       = Array.isArray(user?.roles) ? user.roles : (user?.role ? [user.role] : ['viewer']);
   const userPrimaryRole = primaryRole(userRoles);
 
-  const handleLogin  = (token, userData) => {
+  const handleLogin  = (token, userData, passwordExpired) => {
     localStorage.setItem(TOKEN_KEY, token);
     // Only clear office selection if user hasn't opted to remember it
     if (localStorage.getItem(OFFICE_REMEMBER_KEY) !== "1") {
@@ -1824,6 +1833,7 @@ function App() {
     }
     setUser(userData);
     setActiveRole(null);
+    if (passwordExpired) { setChangePwForced(true); setChangePwOpen(true); }
   };
   const handleLogout = () => {
     localStorage.removeItem(TOKEN_KEY);
@@ -2483,6 +2493,7 @@ function App() {
                 <Divider />
 
                 {!authCtxValue.isTradeManager && <MenuItem icon={IconSettings} label="Application Settings" onClick={() => navigate("settings")} />}
+                <MenuItem icon={IconLock} label="Change Password" onClick={() => { setChangePwForced(false); setChangePwOpen(true); }} />
 
                 <Divider />
 
@@ -3158,7 +3169,9 @@ function App() {
       )}
 
       {/* ── Office Picker Modal ─────────────────────────────────────────────── */}
-      {officePicker && (
+      {/* Suppressed while a forced (expired-password) change is pending — that gate takes
+          priority, and this modal's z-index (9000) would otherwise sit on top of it (z:1000). */}
+      {officePicker && !(changePwOpen && changePwForced) && (
         <div style={{
           position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 9000,
           display: "flex", alignItems: "center", justifyContent: "center",
@@ -3236,6 +3249,19 @@ function App() {
             )}
           </div>
         </div>
+      )}
+
+      {changePwOpen && (
+        <ChangePasswordModal
+          forced={changePwForced}
+          onClose={() => setChangePwOpen(false)}
+          onSuccess={(newToken) => {
+            if (newToken) localStorage.setItem(TOKEN_KEY, newToken);
+            setChangePwOpen(false);
+            setChangePwForced(false);
+          }}
+          onForceLogout={handleLogout}
+        />
       )}
 
       <ToastContainer />

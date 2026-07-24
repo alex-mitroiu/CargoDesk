@@ -1,6 +1,6 @@
 {
   "name": "cargodesk",
-  "version": "0.34.4",
+  "version": "0.34.5",
   "private": true,
   "engines": {
     "node": ">=22.5.0"

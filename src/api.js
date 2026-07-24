@@ -290,9 +290,10 @@ export const api = {
     remove: (id)   => req("DELETE", `/system-messages/${id}`),
   },
   auth: {
-    login:     (email, password) => req("POST", "/auth/login", { email, password }),
-    me:        ()                => req("GET",  "/auth/me"),
-    ssoConfig: ()                => req("GET",  "/auth/sso/config"),
+    login:          (email, password)               => req("POST", "/auth/login", { email, password }),
+    me:             ()                               => req("GET",  "/auth/me"),
+    ssoConfig:      ()                               => req("GET",  "/auth/sso/config"),
+    changePassword: (currentPassword, newPassword)   => req("POST", "/auth/change-password", { currentPassword, newPassword }),
   },
   users: {
     list:           ()           => req("GET",    "/users"),

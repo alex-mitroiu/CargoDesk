@@ -398,6 +398,7 @@ function SecuritySettingsPanel({ settings, onChange }) {
     login_max_attempts:    settings.login_max_attempts    ?? '5',
     login_lockout_minutes: settings.login_lockout_minutes ?? '30',
     jwt_lifetime_hours:    settings.jwt_lifetime_hours    ?? '8',
+    password_expiry_days:  settings.password_expiry_days  ?? '90',
   };
   const row = { display: "flex", alignItems: "center", gap: 14, marginBottom: 18 };
   const lbl = { fontFamily: T.body, fontSize: 12, fontWeight: 600, color: T.textMuted,
@@ -411,6 +412,7 @@ function SecuritySettingsPanel({ settings, onChange }) {
         { key: "login_max_attempts",    label: "Max failed attempts",    hint: "Lockout after N failures (0 = disabled)" },
         { key: "login_lockout_minutes", label: "Lockout duration (min)", hint: "How long the account stays locked" },
         { key: "jwt_lifetime_hours",    label: "Session lifetime (hrs)", hint: "JWT token expiry; requires re-login" },
+        { key: "password_expiry_days",  label: "Password expiry (days)", hint: "Prompt to change password after N days (0 = disabled)" },
       ].map(({ key, label, hint }) => (
         <div key={key} style={row}>
           <div style={lbl}>{label}</div>
