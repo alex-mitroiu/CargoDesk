@@ -5,11 +5,11 @@ import { toast } from "../../toast";
 import { useAuth } from "../../AuthContext";
 import { Modal } from "../primitives/Modal";
 import Btn from "../primitives/Btn";
-import { ComplianceModal, RouteSummaryBar, MessagesDrawer, EdiMessagesDrawer, TicketsDrawer } from "../../pages/ShipmentDetailPage";
+import { ComplianceModal, RouteSummaryBar, MessagesDrawer, TicketsDrawer } from "../../pages/ShipmentDetailPage";
 import { deriveHaulageNeeds } from "../../pages/ShipmentFormPage";
 import ContractMismatchModal from "./ContractMismatchModal";
 import { AnyIcon, IconClipboard, IconLink, IconRefresh, IconPencil, IconWarning, IconCheck,
-  IconMail, IconMailUnread, IconBaseStation } from "../primitives/Icon";
+  IconMail, IconMailUnread } from "../primitives/Icon";
 
 // ─── Persistent Shipment Header ────────────────────────────────────────────
 // Mounted once in App.jsx above the page switch for "detail" + every promoted
@@ -18,10 +18,12 @@ import { AnyIcon, IconClipboard, IconLink, IconRefresh, IconPencil, IconWarning,
 // shown on the Schedules page) rather than maintaining a second, different
 // journey visualization for the same underlying legs data.
 //
-// Messages/EDI/Share/Refresh used to be per-page actions on the old Overview
-// header (only reachable there); they now live here instead, grouped into one
-// small icon tile (IconTile below) so they're a single fixture visible from
-// every page rather than four separate buttons duplicated per page.
+// Messages/Share/Refresh used to be per-page actions on the old Overview header
+// (only reachable there); they now live here instead, grouped into one small icon
+// tile (IconTile below) so they're a single fixture visible from every page rather
+// than separate buttons duplicated per page. EDI/carrier-booking moved OUT of this
+// tile in v0.35.0 — it's now the dedicated Carrier Booking page (Explorer sidebar),
+// not a drawer.
 
 const Field = ({ label, value, first }) => (
   <div id={`shphdr-field-${label.toLowerCase().replace(/\s+/g, "-")}`} style={{
@@ -149,38 +151,8 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
     setUnreadCount(0);
   };
 
-  // ── EDI ──
-  const [ediOpen, setEdiOpen] = useState(false);
-  const [ediMessages, setEdiMessages] = useState([]);
-  const loadEdiMessagesRef = useRef(null);
-  const loadEdiMessages = () =>
-    api.ediMessages.list(shipment.id).then(setEdiMessages).catch(() => {});
-  loadEdiMessagesRef.current = loadEdiMessages;
-
-  useEffect(() => { loadEdiMessages(); }, [shipment.id]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (!ediOpen) return;
-    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsHost = import.meta.env.DEV ? "localhost:3001" : window.location.host;
-    const ws = new WebSocket(`${proto}//${wsHost}/ws`);
-    let pollId;
-    ws.onopen = () => ws.send(JSON.stringify({ type: "subscribe", shipmentId: shipment.id }));
-    ws.onmessage = e => {
-      try {
-        const frame = JSON.parse(e.data);
-        if (frame.type === "new_edi_message") {
-          setEdiMessages(prev => prev.some(m => m.id === frame.message.id) ? prev : [frame.message, ...prev]);
-        }
-      } catch { /* ignore */ }
-    };
-    ws.onerror = () => { pollId = setInterval(() => loadEdiMessagesRef.current?.(), 10_000); };
-    ws.onclose = () => { if (pollId) clearInterval(pollId); };
-    return () => { ws.close(); if (pollId) clearInterval(pollId); };
-  }, [ediOpen, shipment.id]);
-
   // ── Tickets ──
-  // No WS subscription (unlike Messages/EDI above) — no ticket_updated broadcast type
+  // No WS subscription (unlike Messages above) — no ticket_updated broadcast type
   // exists today; this just fetches once per shipment for the open-count badge, same as
   // Messages' initial unread-count fetch, and again whenever the drawer opens.
   const [ticketsOpen, setTicketsOpen] = useState(false);
@@ -193,14 +165,6 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
       .catch(() => {});
     return () => { live = false; };
   }, [shipment.id]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleSendBookingRequest = async () => {
-    try {
-      await api.ediMessages.sendBookingRequest(shipment.id);
-      await loadEdiMessages();
-      toast.success("Booking request sent");
-    } catch (e) { toast.error(e.message || "Failed to send booking request"); }
-  };
 
   // ── Share ──
   const [shareUrl, setShareUrl] = useState(null);
@@ -390,7 +354,6 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
             title: "Generate customer tracking link", onClick: handleShare },
           { key: "refresh", icon: IconRefresh, spinning: refreshing,
             title: "Refresh shipment", onClick: handleRefresh },
-          { key: "edi", icon: IconBaseStation, title: "EDI messages", onClick: () => setEdiOpen(true) },
           { key: "tickets", icon: "◩", badge: openTicketCount,
             title: openTicketCount > 0 ? `${openTicketCount} open ticket${openTicketCount > 1 ? "s" : ""}` : "Related tickets",
             onClick: () => setTicketsOpen(true) },
@@ -492,13 +455,6 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
       />}
 
       {ticketsOpen && <TicketsDrawer shipment={shipment} onClose={() => setTicketsOpen(false)} />}
-
-      {ediOpen && <EdiMessagesDrawer
-        shipment={shipment}
-        messages={ediMessages}
-        onSend={handleSendBookingRequest}
-        onClose={() => setEdiOpen(false)}
-      />}
     </div>
   );
 };

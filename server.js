@@ -843,6 +843,35 @@ const migrations = [
   // already due rather than being given a fresh, unearned 90-day grace period.
   "ALTER TABLE users ADD COLUMN password_changed_at TEXT NOT NULL DEFAULT ''",
   "UPDATE users SET password_changed_at = created_at WHERE password_changed_at = ''",
+  // v0.35.0 — Carrier Booking. One row per shipment, not a history table — edi_messages
+  // already IS the full historical ledger of every request/response; this is a derived
+  // "current state" projection over it (same relationship shipments.booking_ref already
+  // has to the same data). status/last_response_status are tracked separately on purpose:
+  // a confirmed carrier response must NOT auto-finalize the booking, so it only sets
+  // last_response_status='confirmed' and leaves status='Pending' until the operator's own
+  // Confirm action moves it to 'Confirmed' — a rejected response has nothing to lock in,
+  // so it DOES auto-advance status straight to 'Rejected'.
+  `CREATE TABLE IF NOT EXISTS carrier_bookings (
+    id                   TEXT PRIMARY KEY,
+    shipment_id          TEXT NOT NULL UNIQUE REFERENCES shipments(id) ON DELETE CASCADE,
+    carrier_code         TEXT NOT NULL DEFAULT '',
+    status               TEXT NOT NULL DEFAULT 'Pending',
+    last_response_status TEXT NOT NULL DEFAULT '',
+    booking_ref          TEXT DEFAULT '',
+    correlation_id       TEXT DEFAULT '',
+    is_mock              INTEGER DEFAULT 0,
+    requested_at         TEXT DEFAULT NULL,
+    requested_by         TEXT DEFAULT '',
+    responded_at         TEXT DEFAULT NULL,
+    confirmed_at         TEXT DEFAULT NULL,
+    confirmed_by         TEXT DEFAULT '',
+    cancelled_at         TEXT DEFAULT NULL,
+    cancelled_by         TEXT DEFAULT '',
+    cancel_reason        TEXT DEFAULT '',
+    created_at           TEXT NOT NULL,
+    updated_at           TEXT NOT NULL
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_carrier_bookings_status ON carrier_bookings(status)",
 ];
 
 for (const sql of migrations) {
@@ -1754,6 +1783,26 @@ const mapEdiMessage = r => ({
   createdAt:     r.created_at,
   processedAt:   r.processed_at || null,
 });
+const mapCarrierBooking = r => ({
+  id:                 r.id,
+  shipmentId:         r.shipment_id,
+  carrierCode:        r.carrier_code || '',
+  status:             r.status || 'Pending',
+  lastResponseStatus: r.last_response_status || '',
+  bookingRef:         r.booking_ref || '',
+  correlationId:      r.correlation_id || '',
+  isMock:             !!r.is_mock,
+  requestedAt:        r.requested_at || null,
+  requestedBy:        r.requested_by || '',
+  respondedAt:        r.responded_at || null,
+  confirmedAt:        r.confirmed_at || null,
+  confirmedBy:        r.confirmed_by || '',
+  cancelledAt:        r.cancelled_at || null,
+  cancelledBy:        r.cancelled_by || '',
+  cancelReason:       r.cancel_reason || '',
+  createdAt:          r.created_at,
+  updatedAt:          r.updated_at,
+});
 const mapKbProject = r => ({ id: r.id, name: r.name, key: r.key, color: r.color || '#6366f1', description: r.description || '', createdAt: r.created_at });
 const mapKbVersion = r => ({ id: r.id, projectId: r.project_id, name: r.name, description: r.description || '', status: r.status || 'Planning', releaseDate: r.release_date || null, createdAt: r.created_at });
 const mapKbColumn  = r => ({ id: r.id, projectId: r.project_id, name: r.name, position: r.position ?? 0, color: r.color || '#6366f1', wipLimit: r.wip_limit ?? null, createdAt: r.created_at });
@@ -2202,6 +2251,7 @@ const ctx = {
   mapScopeItem, mapAccessConfig, mapOffice, mapBranch, mapOrgCountry, mapRegion, mapCountry, mapTicketLink, mapTicket,
   mapTestItem, mapTestCaseLink,
   mapEdiMessage,
+  mapCarrierBooking,
   mapKbProject, mapKbVersion, mapKbColumn,
   mapCustomer, mapCustomerIdentifier, mapCustomerScreening, mapCustomerDoc,
   mapCommodity, mapSystemMessage, mapMilestone, mapMilestoneTemplate,

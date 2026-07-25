@@ -48,6 +48,8 @@ import ShipmentMilestonesPage from "./pages/ShipmentMilestonesPage";
 import ShipmentAccountingCostsPage from "./pages/ShipmentAccountingCostsPage";
 import ShipmentAccountingInvoicesPage from "./pages/ShipmentAccountingInvoicesPage";
 import ShipmentAccountingGpPage from "./pages/ShipmentAccountingGpPage";
+import ShipmentCarrierBookingDetailsPage from "./pages/ShipmentCarrierBookingDetailsPage";
+import ShipmentCarrierBookingReviewPage from "./pages/ShipmentCarrierBookingReviewPage";
 import ShipmentHistoryPage from "./pages/ShipmentHistoryPage";
 import ShipmentHeaderBar from "./components/shared/ShipmentHeaderBar";
 import DashboardPage       from "./pages/DashboardPage";
@@ -62,6 +64,7 @@ import KanbanPage          from "./pages/KanbanPage";
 import TestPlansPage        from "./pages/TestPlansPage";
 import TestRunsPage         from "./pages/TestRunsPage";
 import TestCasesPage        from "./pages/TestCasesPage";
+import TestToolsPage        from "./pages/TestToolsPage";
 import ReleasesPage         from "./pages/ReleasesPage";
 
 import MdmCarriersPage        from "./pages/mdm/MdmCarriersPage";
@@ -1326,6 +1329,9 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
     "shp-accounting-invoices": "shipment-accounting-invoices",
     "shp-accounting-costs":    "shipment-accounting-costs",
     "shp-accounting-gp":       "shipment-accounting-gp",
+    "shp-carrier-booking":         "shipment-carrier-booking-details", // parent row → first child
+    "shp-carrier-booking-details": "shipment-carrier-booking-details",
+    "shp-carrier-booking-review":  "shipment-carrier-booking-review",
     // Export/Import Services parent rows route to their side's first ordered type
     // (canonical SERVICE_TYPES order) — same "parent row → first child" idiom as
     // Accounting above. Children route to their own dedicated/WIP page directly.
@@ -1335,6 +1341,7 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
     ...Object.fromEntries(importTypes.map(t => [servicePageKey("Import", t), servicePageKey("Import", t)])),
   };
   const ACCOUNTING_ROUTES = ["shipment-accounting-invoices", "shipment-accounting-costs", "shipment-accounting-gp"];
+  const CARRIER_BOOKING_ROUTES = ["shipment-carrier-booking-details", "shipment-carrier-booking-review"];
   const handleSection = (id) => {
     const route = PROMOTED_ROUTES[id];
     if (route) {
@@ -1373,6 +1380,10 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
     { id: "shp-accounting-invoices", icon: IconReceipt, label: "Invoice Entry" },
     { id: "shp-accounting-costs",    icon: IconCoin, label: "Cost Entry" },
     { id: "shp-accounting-gp",       icon: IconChartBar, label: "GP Overview" },
+  ];
+  const bookingChildren = [
+    { id: "shp-carrier-booking-details", icon: IconSendPlane, label: "Details" },
+    { id: "shp-carrier-booking-review",  icon: IconSearch,    label: "Review" },
   ];
 
   return (
@@ -1536,6 +1547,17 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
                 </>
               )}
               {sectionsAfterServices.map(renderSection)}
+              {/* Unconditional — visible to anyone who can view the shipment, matching the
+                  old EDI drawer's own zero-role-gate visibility (not Accounting's finance
+                  restriction just below, which is unrelated). */}
+              <NavRow id="shp-carrier-booking" icon={IconBaseStation} label="Carrier Booking" depth={0}
+                selected={CARRIER_BOOKING_ROUTES.includes(currentPage)} promoted
+                onClick={() => handleSection("shp-carrier-booking")} />
+              {bookingChildren.map(({ id, icon, label }) => (
+                <NavRow key={id} id={id} icon={icon} label={label} depth={1}
+                  selected={currentPage === PROMOTED_ROUTES[id]} promoted
+                  onClick={() => handleSection(id)} />
+              ))}
               {/* Shipment cost lines are hidden from trade_manager entirely — not just the
                   Finance/Margin dashboard's canViewFinance gate, per the role spec. */}
               {!isTradeManager && (
@@ -1629,6 +1651,8 @@ function App() {
     "shipment-accounting-invoices": "api_shipments_enabled",
     "shipment-accounting-costs":    "api_shipments_enabled",
     "shipment-accounting-gp":       "api_shipments_enabled",
+    "shipment-carrier-booking-details": "api_shipments_enabled",
+    "shipment-carrier-booking-review":  "api_shipments_enabled",
     // Export/Import Services dedicated pages (Epic TKT-TBS7QD) — same gate, not part
     // of the shared shipmentSections.js array since they're a dynamic combinatorial set.
     ...Object.fromEntries(SERVICE_PAGE_KEYS.map(k => [k, "api_shipments_enabled"])),
@@ -1661,6 +1685,16 @@ function App() {
   const ACCOUNTING_SUBPAGE_HASHES = Object.fromEntries(
     Object.entries(ACCOUNTING_SUBPAGES).map(([suffix, key]) => [key, suffix])
   );
+  // Carrier Booking is the same nested-parent-with-children shape as Accounting —
+  // shipments/:id/booking/:child — for the same reason (Details/Review are two distinct
+  // pages under one nav entry, not a single flat section).
+  const CARRIER_BOOKING_SUBPAGES = {
+    details: "shipment-carrier-booking-details",
+    review:  "shipment-carrier-booking-review",
+  };
+  const CARRIER_BOOKING_SUBPAGE_HASHES = Object.fromEntries(
+    Object.entries(CARRIER_BOOKING_SUBPAGES).map(([suffix, key]) => [key, suffix])
+  );
 
   const parseHash = hash => {
     if (!hash) return { page: "home", selectedId: null };
@@ -1668,6 +1702,8 @@ function App() {
     if (/^shipments\/[^/]+\/edit$/.test(hash)) return { page: "shipment-edit", selectedId: hash.split("/")[1] };
     const acctMatch = hash.match(/^shipments\/([^/]+)\/accounting\/(costs|invoices|gp)$/);
     if (acctMatch) return { page: ACCOUNTING_SUBPAGES[acctMatch[2]], selectedId: acctMatch[1] };
+    const bookingMatch = hash.match(/^shipments\/([^/]+)\/booking\/(details|review)$/);
+    if (bookingMatch) return { page: CARRIER_BOOKING_SUBPAGES[bookingMatch[2]], selectedId: bookingMatch[1] };
     // Export/Import Services — two-segment hash (shipments/:id/services/:side/:type),
     // same shape as Accounting's, since it's also a nested parent+children page family.
     const svcMatch = hash.match(/^shipments\/([^/]+)\/services\/(export|import)\/([a-z0-9-]+)$/i);
@@ -1936,6 +1972,7 @@ function App() {
     else if (key === "shipment-edit" && id)              window.location.hash = `shipments/${id}/edit`;
     else if (SHIPMENT_SUBPAGE_HASHES[key] && id)         window.location.hash = `shipments/${id}/${SHIPMENT_SUBPAGE_HASHES[key]}`;
     else if (ACCOUNTING_SUBPAGE_HASHES[key] && id)       window.location.hash = `shipments/${id}/accounting/${ACCOUNTING_SUBPAGE_HASHES[key]}`;
+    else if (CARRIER_BOOKING_SUBPAGE_HASHES[key] && id)  window.location.hash = `shipments/${id}/booking/${CARRIER_BOOKING_SUBPAGE_HASHES[key]}`;
     else if (SERVICE_SUBPAGE_HASHES[key] && id)          window.location.hash = `shipments/${id}/services/${SERVICE_SUBPAGE_HASHES[key]}`;
     else if (key === "detail" && id)                     window.location.hash = `shipments/${id}`;
     else                                                  window.location.hash = key;
@@ -2031,6 +2068,7 @@ function App() {
     "space-configs":     "Space Configurations",
     "dashboard-archive": "Dashboard — Archive",
     kanban:             "Integration Board",
+    "test-tools":       "Test Tools",
     "user-manual":      "User Manual",
     about:              "About",
     settings:           "Application Settings",
@@ -2062,6 +2100,8 @@ function App() {
     "shipment-accounting-invoices":"Invoice Entry",
     "shipment-accounting-costs":   "Cost Entry",
     "shipment-accounting-gp":      "GP Overview",
+    "shipment-carrier-booking-details": "Details",
+    "shipment-carrier-booking-review":  "Review",
     ...SERVICE_SUBPAGE_LABELS,
   };
 
@@ -2535,7 +2575,7 @@ function App() {
     <div style={{ display: "flex", minHeight: "100vh", background: T.bg, fontFamily: T.body, color: T.text }}>
 
       {/* ── Sidebar ── */}
-      {(page === "detail" || Object.values(SHIPMENT_SUBPAGES).includes(page) || Object.values(ACCOUNTING_SUBPAGES).includes(page) || SERVICE_PAGE_KEYS.includes(page)) && selectedShipment ? (
+      {(page === "detail" || Object.values(SHIPMENT_SUBPAGES).includes(page) || Object.values(ACCOUNTING_SUBPAGES).includes(page) || Object.values(CARRIER_BOOKING_SUBPAGES).includes(page) || SERVICE_PAGE_KEYS.includes(page)) && selectedShipment ? (
         <ShipmentDetailSidebar
           shipment={selectedShipment}
           ctrCount={containers.filter(c => c.shipmentId === selectedShipment.id).length}
@@ -2579,7 +2619,7 @@ function App() {
             )}
 
             <NavBtn pageKey="kanban" icon={IconClipboard} label="Integration Board"
-              activeExtra={["releases", "test-plans", "test-runs", "test-cases"].includes(page)}
+              activeExtra={["releases", "test-plans", "test-runs", "test-cases", "test-tools"].includes(page)}
               foldable open={kanbanNavOpen} onToggleFold={() => setKanbanNavOpen(o => !o)} />
             {kanbanNavOpen && (
               <>
@@ -2587,6 +2627,7 @@ function App() {
                 <NavBtn pageKey="test-plans"  icon={IconFlask} label="Test Plans"  indent />
                 <NavBtn pageKey="test-runs"   icon={IconRefresh} label="Test Runs"   indent />
                 <NavBtn pageKey="test-cases"  icon={IconCheck}  label="Test Cases"  indent />
+                <NavBtn pageKey="test-tools"  icon={IconBaseStation} label="Test Tools"  indent />
               </>
             )}
             <NavBtn pageKey="schedules"  icon={IconCalendar} label="Schedule Search" />
@@ -2909,11 +2950,28 @@ function App() {
             onBack={() => navigate("detail", selectedShipment.id)} />
         )}
 
+        {page === "shipment-carrier-booking-details" && selectedShipment && (
+          <ShipmentCarrierBookingDetailsPage
+            shipment={selectedShipment}
+            onBack={() => navigate("detail", selectedShipment.id)} />
+        )}
+
+        {page === "shipment-carrier-booking-review" && selectedShipment && (
+          <ShipmentCarrierBookingReviewPage
+            shipment={selectedShipment}
+            onBack={() => navigate("detail", selectedShipment.id)}
+            onRefresh={async () => {
+              const fresh = await api.shipments.get(selectedShipment.id);
+              setShipments(p => p.map(s => s.id === fresh.id ? { ...s, ...fresh } : s));
+            }} />
+        )}
+
         {page === "kanban"      && isEnabled("kanban")    && <KanbanPage shipments={shipments} />}
         {page === "releases"    && isEnabled("kanban")    && <ReleasesPage />}
         {page === "test-plans"  && isEnabled("kanban")    && <TestPlansPage />}
         {page === "test-runs"   && isEnabled("kanban")    && <TestRunsPage />}
         {page === "test-cases"  && isEnabled("kanban")    && <TestCasesPage />}
+        {page === "test-tools"  && isEnabled("kanban")    && <TestToolsPage navigate={navigate} />}
 
         {page === "dashboard-archive" && (
           <DashboardArchive

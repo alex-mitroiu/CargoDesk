@@ -2,7 +2,7 @@
 
 > Freight management application for tracking ocean shipments, carrier space utilisation, contracts, and maritime master data.
 
-[![Version](https://img.shields.io/badge/version-0.34.5-blue)](.)
+[![Version](https://img.shields.io/badge/version-0.35.0-blue)](.)
 ![Node](https://img.shields.io/badge/node-22.5%2B-green)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
@@ -353,6 +353,7 @@ See the built-in **About** page (i in the sidebar) for the full interactive sche
 
 | Version | Codename | Summary |
 |---------|----------|---------|
+| 0.35.0 | Charter | Carrier Booking becomes its own shipment sub-page family (Details + Review), replacing the old EDI messages drawer — Details holds the outbound request, Review holds the carrier's response plus new Confirm/Cancel actions. A confirmed carrier response no longer auto-finalizes the booking; it waits for the operator's own Confirm click. New Integration Board → Test Tools page ships an EDI Message Simulator so rejections (previously untestable — the old demo fallback could only ever return "confirmed") can be exercised on demand. |
 | 0.34.5 | Ledger | Security review response: fixed a stored-XSS hole in Kanban's Mermaid diagram rendering, closed a gap where role downgrades didn't revoke existing sessions, added per-IP login rate limiting, and shipped a full password-expiry policy (configurable expiry, self-service change with strength meter and complexity requirements, forced change prompt when overdue). Rotated a previously-exposed admin credential. Applied the safe subset of `npm audit fix`. |
 | 0.34.4 | Ledger | Closes the last icon gap: MingCute has no anchor, search, or messaging/EDI icons, so a second Apache-2.0 family (Remix Icon, same style) was added — 8 new icons covering the anchor (including the app's own logo mark everywhere it appears), every search/browse button, and the messaging/EDI cluster (header icon tile, EDI drawer, Export/Import service groups). |
 | 0.34.3 | Ledger | Icon replacement pass three covers the remaining shipment sub-pages (Contracts & Schedules, Cost/Invoice Entry, Loading & Generic Service, Space Configurations, Archive, Cargo) and the Services / Container Events / Container Packages shared panels, with seven new icons (door, receipt, coin, time, file, file-certificate) completing the shipment Explorer sidebar — only the anchor stays emoji (no MingCute equivalent). Container lifecycle events each get a matching icon. Nav fold state now persists per group in localStorage — expanded groups survive reloads; a fresh browser still starts all-collapsed. |

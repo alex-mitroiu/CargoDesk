@@ -56,6 +56,13 @@ export const api = {
   ediMessages: {
     list:               (shipmentId)       => req("GET",  `/shipments/${shipmentId}/edi-messages`),
     sendBookingRequest: (shipmentId, data) => req("POST", `/shipments/${shipmentId}/edi-messages/booking-request`, data),
+    simulateResponse:   (shipmentId, data) => req("POST", `/shipments/${shipmentId}/edi-messages/simulate-response`, data),
+  },
+  carrierBooking: {
+    get:     (shipmentId)          => req("GET",   `/shipments/${shipmentId}/carrier-booking`),
+    confirm: (shipmentId, data={}) => req("PATCH", `/shipments/${shipmentId}/carrier-booking/confirm`, data),
+    cancel:  (shipmentId, data={}) => req("PATCH", `/shipments/${shipmentId}/carrier-booking/cancel`, data),
+    listAll: (params={})           => req("GET",   `/carrier-bookings?${new URLSearchParams(params)}`),
   },
   legs: {
     list:   (shipmentId)              => req("GET",    `/shipments/${shipmentId}/legs`),

@@ -2,11 +2,17 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.34.5";
-export const BUILD     = "2026-07-24";
-export const CODENAME  = "Ledger";
+export const VERSION   = "0.35.0";
+export const BUILD     = "2026-07-25";
+export const CODENAME  = "Charter";
 
 export const CHANGELOG = [
+  {
+    version:  "0.35.0",
+    date:     "2026-07-25",
+    codename: "Charter",
+    summary:  "Carrier Booking becomes its own shipment sub-page family (Details + Review), replacing the old EdiMessagesDrawer — Details holds the outbound request and Send action, Review holds the carrier's response plus Confirm/Cancel. New carrier_bookings table (BKG- surrogate key, real FK) tracks status separately from last_response_status on purpose: a confirmed carrier response no longer auto-finalizes the booking (it used to, instantly, via the old drawer) — it now only records that a confirmed reply arrived, and stays Pending until the operator's own Confirm click, which is also the new trigger point for shipments.booking_ref and the booking_confirmed milestone (moved off the automatic path). A rejected response has nothing to lock in, so it does auto-advance straight to Rejected. Cancel sends an outbound booking_cancellation EDI message when the carrier is EDI-bookable and something was actually transmitted. Non-EDI carriers get a full Confirm/Cancel lifecycle too, via a manual bookingRef entry — 'consolidating all the carrier booking information' shouldn't only apply to the 3 bookable carriers. Booking-request itself no longer auto-fabricates a confirmed response when no live Maersk key is configured (the old always-confirmed demo fallback) — it now genuinely waits, which is what motivated the second half of this release: Integration Board gained a 5th child, Test Tools, whose first tool is an EDI Message Simulator that writes real edi_messages rows through the real WebSocket broadcast path (a Review page open elsewhere sees it exactly like a real reply) and can produce either outcome on demand, closing the gap where rejections could never be tested before. Fixed occ_bk being able to see an enabled Send button that 403'd on click (the backend write gate excluded it; canEditShipments on the frontend didn't) — widened to match. Shipment schedules already had a proper surrogate key (SCHED-, real FK) — deliberately left fully decoupled from bookings, per explicit direction, rather than auto-linked on confirm.",
+  },
   {
     version:  "0.34.5",
     date:     "2026-07-24",
