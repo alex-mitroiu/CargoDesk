@@ -12,7 +12,7 @@ import Spinner from "../primitives/Spinner";
 import { serviceTypesForSide } from "../../shipmentServicePages";
 import { emitServicesChanged } from "../../servicesBus";
 import { findRoutingLeg } from "../../utils/carrierBooking";
-import { IconClose } from "../primitives/Icon";
+import { IconClose, IconPencil } from "../primitives/Icon";
 
 // ─── Dedicated Services panel (TKT-9DGDNP) ─────────────────────────────────
 // Ancillary services (VGM, Pickup, Fumigation, Storage, Customs, ...) ordered
@@ -42,7 +42,12 @@ const StatusPill = ({ status }) => (
   </span>
 );
 
-const ServiceForm = ({ side, offices, shipment, onSave, onCancel }) => {
+const ServiceForm = ({ side, offices, shipment, init = null, onSave, onCancel }) => {
+  // init present = editing an already-requested service (fixing/adding vendor, office,
+  // date, or notes after the fact — there was previously no way to do this once a service
+  // existed: only Confirm/Cancel/Delete, direct user report). init absent = the original
+  // "Request Service" create flow, unchanged.
+  const isEdit = !!init;
   const dept = side === "Export" ? "SE" : "SI";
   const defaultOfficeId = (side === "Export" ? shipment.emoOfficeId : shipment.imoOfficeId) || "";
   const candidates = offices.filter(o => o.department === dept && o.isActive);
@@ -50,14 +55,18 @@ const ServiceForm = ({ side, offices, shipment, onSave, onCancel }) => {
   // filtered out of the *other* side's dropdown entirely here — see SERVICE_TYPE_SIDES in
   // shipmentServicePages.js for why those five aren't both-sides like everything else.
   const availableTypes = serviceTypesForSide(side);
+  // An edited service's own serviceType may be a free-text "Other" value saved earlier that
+  // isn't in the current dropdown list — fall back to the "Other" option + prefill the
+  // specify-service field, rather than leaving the Sel on a value it doesn't recognize.
+  const initTypeIsOther = isEdit && init.serviceType && !availableTypes.includes(init.serviceType);
 
-  const [serviceType, setServiceType] = useState(availableTypes[0]);
-  const [typeDefaulted, setTypeDefaulted] = useState(false); // don't override an operator's own pick
-  const [otherType,   setOtherType]   = useState("");
-  const [vendor,       setVendor]      = useState({ id: "", name: "" });
-  const [officeId,     setOfficeId]    = useState(defaultOfficeId);
-  const [requestedDate, setRequestedDate] = useState(todayIso());
-  const [notes,         setNotes]         = useState("");
+  const [serviceType, setServiceType] = useState(initTypeIsOther ? "Other" : (init?.serviceType || availableTypes[0]));
+  const [typeDefaulted, setTypeDefaulted] = useState(isEdit); // don't override an already-set type
+  const [otherType,   setOtherType]   = useState(initTypeIsOther ? init.serviceType : "");
+  const [vendor,       setVendor]      = useState({ id: init?.vendorId || "", name: init?.vendorName || "" });
+  const [officeId,     setOfficeId]    = useState(init?.officeId || defaultOfficeId);
+  const [requestedDate, setRequestedDate] = useState(init?.requestedDate || todayIso());
+  const [notes,         setNotes]         = useState(init?.notes || "");
   const [saving,        setSaving]        = useState(false);
 
   // Nicety, not required for correctness: pre-select Pickup/Delivery when this side's own
@@ -87,7 +96,7 @@ const ServiceForm = ({ side, offices, shipment, onSave, onCancel }) => {
   };
 
   return (
-    <Modal title={`Request ${side} Service`} onClose={onCancel} width={480}>
+    <Modal title={isEdit ? `Edit ${side} Service` : `Request ${side} Service`} onClose={onCancel} width={480}>
       <div id="svcform" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         <Sel id="svcform-type" label="Service Type" value={serviceType} onChange={setServiceType} required
           options={availableTypes.map(t => ({ value: t, label: t }))} />
@@ -103,7 +112,7 @@ const ServiceForm = ({ side, offices, shipment, onSave, onCancel }) => {
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 6 }}>
           <Btn id="svcform-cancel-btn" variant="secondary" onClick={onCancel}>Cancel</Btn>
           <Btn id="svcform-save-btn" onClick={handleSave} disabled={!valid || saving}>
-            {saving ? "Saving…" : "Request Service"}
+            {saving ? "Saving…" : isEdit ? "Save Changes" : "Request Service"}
           </Btn>
         </div>
       </div>
@@ -111,7 +120,7 @@ const ServiceForm = ({ side, offices, shipment, onSave, onCancel }) => {
   );
 };
 
-const ServiceRow = ({ service, canEdit, onAdvance, onCancelService, onDelete }) => {
+const ServiceRow = ({ service, canEdit, onAdvance, onCancelService, onDelete, onEdit }) => {
   const nextStatus = NEXT_STATUS[service.status];
   return (
     <div id={`svcpanel-row-${service.id}`} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 12px",
@@ -131,6 +140,14 @@ const ServiceRow = ({ service, canEdit, onAdvance, onCancelService, onDelete }) 
       </div>
       {canEdit && (
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+          <button id={`svcpanel-row-${service.id}-edit-btn`} type="button" onClick={() => onEdit(service)}
+            title="Edit vendor / office / notes"
+            style={{ background: "none", border: "none", color: T.textMuted,
+              cursor: "pointer", padding: "3px 4px", display: "inline-flex", alignItems: "center" }}
+            onMouseEnter={e => e.currentTarget.style.color = T.accent}
+            onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>
+            <IconPencil size={12} />
+          </button>
           {nextStatus && (
             <button id={`svcpanel-row-${service.id}-advance-btn`} type="button" onClick={() => onAdvance(service, nextStatus)}
               style={{ background: "none", border: `1px solid ${T.accent}66`, color: T.accent,
@@ -161,7 +178,7 @@ const ServiceRow = ({ service, canEdit, onAdvance, onCancelService, onDelete }) 
   );
 };
 
-const ServiceColumn = ({ side, services, loading, canEdit, onRequest, onAdvance, onCancelService, onDelete }) => (
+const ServiceColumn = ({ side, services, loading, canEdit, onRequest, onAdvance, onCancelService, onDelete, onEdit }) => (
   <div id={`svcpanel-${side.toLowerCase()}-column`} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, overflow: "hidden" }}>
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
       padding: "12px 14px", borderBottom: `1px solid ${T.border}` }}>
@@ -189,7 +206,7 @@ const ServiceColumn = ({ side, services, loading, canEdit, onRequest, onAdvance,
         </div>
       ) : services.map(s => (
         <ServiceRow key={s.id} service={s} canEdit={canEdit}
-          onAdvance={onAdvance} onCancelService={onCancelService} onDelete={onDelete} />
+          onAdvance={onAdvance} onCancelService={onCancelService} onDelete={onDelete} onEdit={onEdit} />
       ))}
     </div>
   </div>
@@ -204,6 +221,7 @@ const ServicesPanel = ({ shipment }) => {
   const [services, setServices] = useState(null);
   const [offices,  setOffices]  = useState([]);
   const [requestSide, setRequestSide] = useState(null); // null | "Export" | "Import"
+  const [editingService, setEditingService] = useState(null); // service pending edit, or null
   const [confirmDelete, setConfirmDelete] = useState(null); // service pending delete
 
   const load = () => api.services.list(shipment.id)
@@ -227,6 +245,15 @@ const ServicesPanel = ({ shipment }) => {
       setRequestSide(null);
       load();
     } catch (e) { toast.error(e.message || "Failed to request service"); }
+  };
+
+  const handleEditSave = async (payload) => {
+    try {
+      await api.services.update(shipment.id, editingService.id, payload);
+      toast.success("Service updated");
+      setEditingService(null);
+      load();
+    } catch (e) { toast.error(e.message || "Failed to update service"); }
   };
 
   const handleAdvance = async (service, nextStatus) => {
@@ -261,16 +288,21 @@ const ServicesPanel = ({ shipment }) => {
         <ServiceColumn side="Export" services={exportServices} loading={loading} canEdit={canEdit}
           onRequest={() => setRequestSide("Export")}
           onAdvance={handleAdvance} onCancelService={handleCancelService}
-          onDelete={setConfirmDelete} />
+          onDelete={setConfirmDelete} onEdit={setEditingService} />
         <ServiceColumn side="Import" services={importServices} loading={loading} canEdit={canEdit}
           onRequest={() => setRequestSide("Import")}
           onAdvance={handleAdvance} onCancelService={handleCancelService}
-          onDelete={setConfirmDelete} />
+          onDelete={setConfirmDelete} onEdit={setEditingService} />
       </div>
 
       {requestSide && (
         <ServiceForm side={requestSide} offices={offices} shipment={shipment}
           onSave={handleCreate} onCancel={() => setRequestSide(null)} />
+      )}
+
+      {editingService && (
+        <ServiceForm side={editingService.side} offices={offices} shipment={shipment} init={editingService}
+          onSave={handleEditSave} onCancel={() => setEditingService(null)} />
       )}
 
       {confirmDelete && (

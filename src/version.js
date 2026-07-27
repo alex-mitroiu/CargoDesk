@@ -2,11 +2,17 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.47.1";
+export const VERSION   = "0.47.2";
 export const BUILD     = "2026-07-27";
 export const CODENAME  = "Consignment";
 
 export const CHANGELOG = [
+  {
+    version:  "0.47.2",
+    date:     "2026-07-27",
+    codename: "Consignment",
+    summary:  "Fixed a real gap in ServicesPanel.jsx (Overview page's Export/Import Services dashboard), direct user report with a screenshot: once a service (VGM, Pickup, Loading, ...) was requested, there was no way to add or change its vendor/office afterward — ServiceRow only ever offered Confirm/Complete, Cancel, and Delete, so a service left with \"No vendor set\" at request time (the office picker in the Request Service form is optional) stayed that way forever. The backend PATCH route (routes/shipment-ops.js) already supported updating vendorId/vendorName/officeId/notes generically — this was purely a missing frontend entry point. Added an Edit (pencil) button to every service row that reopens the same ServiceForm used for requesting a new service, now also supporting an edit mode (pre-filled from the existing service, title/button read \"Edit ... Service\"/\"Save Changes\", saves via api.services.update instead of create). Verified live via CDP: edited a VGM service showing \"No vendor set\", picked an office, saved, confirmed it persisted via the API.",
+  },
   {
     version:  "0.47.1",
     date:     "2026-07-27",

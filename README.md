@@ -2,7 +2,7 @@
 
 > Freight management application for tracking ocean shipments, carrier space utilisation, contracts, and maritime master data.
 
-[![Version](https://img.shields.io/badge/version-0.47.1-blue)](.)
+[![Version](https://img.shields.io/badge/version-0.47.2-blue)](.)
 ![Node](https://img.shields.io/badge/node-22.5%2B-green)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
@@ -353,6 +353,7 @@ See the built-in **About** page (i in the sidebar) for the full interactive sche
 
 | Version | Codename | Summary |
 |---------|----------|---------|
+| 0.47.2 | Consignment | Fixed a gap in the Overview page's Export/Import Services dashboard: once a service was requested, there was no way to add or change its vendor/office afterward. Added an Edit button to each service row that reopens the request form pre-filled, now supporting save-in-place. |
 | 0.47.1 | Consignment | Fixed a layout bug on the redesigned Containers page: the Save/Cancel and + Add Package buttons were buried inside a small fixed-height nested scroll box. The right detail panel now flows naturally in the page like every other page in the app. |
 | 0.47.0 | Consignment | Cargo Manifest & Container Details Redesign: the Containers page and the separate "Cargo Manifest" modal are now one unified page — a tree spanning every container and its typed pack breakdown, with a detail panel showing Marks & Nos. and a Description of Goods rollup. DG classification now works at the individual pallet/carton level, not just the container. New org-wide DG Compliance Address setting, pulled onto the Dangerous Goods Declaration. |
 | 0.46.1 | Stowage | Three linked schedule/booking bugs fixed: a freshly-added Route Leg was immediately locked/uneditable while a schedule existed; removing that stuck leg wiped the entire real schedule (cascade compared raw SEA-leg counts instead of checking which leg was actually removed); and once a schedule really was unlinked, the shipment header kept showing stale vessel/ETD data and Carrier Booking stayed fully accessible with no schedule attached. New combined Cypress spec (schedule-leg-cascade.cy.js) covers all three in one run. |
