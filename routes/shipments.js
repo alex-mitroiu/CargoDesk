@@ -6,7 +6,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
           applyShipmentAccessFilter, syncShipmentFromLegs, importContractRates,
           broadcastMessage, recomputeSpaceBadge, screenShipmentById,
           logEvent, logEntityEvent, TRACKED_FIELDS, TRACKED_CTR_FIELDS, FREE_TIME_WARNING_DAYS,
-          sanctionsMap, autoCompleteMilestone } = ctx;
+          sanctionsMap, autoCompleteMilestone, ensureBookingCreated } = ctx;
 
   // trade_manager and viewer are read-only on all shipment write operations
   const shipmentWrite = requireRole(["admin", "operator", "occ_bk"]);
@@ -118,7 +118,9 @@ module.exports = function shipmentsRoutes(app, ctx) {
              ctrl.code AS controlling_office_code, ctrl.name AS controlling_office_name,
              COALESCE(buy.total, 0)  AS margin_buy_usd,
              COALESCE(sell.total, 0) AS margin_sell_usd,
-             COALESCE(ms.overdue_count, 0) AS overdue_count
+             COALESCE(ms.overdue_count, 0) AS overdue_count,
+             cb.status AS booking_status,
+             cb.requested_at AS booking_requested_at
       FROM shipments s
       LEFT JOIN port_locations p1 ON p1.unlocode = s.pol
       LEFT JOIN port_locations p2 ON p2.unlocode = s.pod
@@ -136,6 +138,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
                  WHERE estimated_date != '' AND estimated_date < date('now') AND completed_at = ''
                  GROUP BY shipment_id) ms
              ON ms.shipment_id = s.id
+      LEFT JOIN carrier_bookings cb ON cb.shipment_id = s.id
       ORDER BY s.created_at DESC
     `).all();
     const seaPorts = resolveSeaPorts(rows.map(r => r.id));
@@ -314,6 +317,11 @@ module.exports = function shipmentsRoutes(app, ctx) {
       contract_valid_from=?, contract_valid_to=? WHERE id=?
     `).run(polU, podU, carrierCode, contractType, contractNotes, effStatus, etd, eta, bookingRef, blNumber, vessel, voyage, incoterm, vesselImo, effContractId, effContractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, effAllocationId, spaceSkipReason, spaceOverageReason, freightTerms, movementType, serviceType, placeOfReceipt, placeOfDelivery, cargoReadyDate || null, notifyId, notifyName, (declaredValue !== null && declaredValue !== undefined && String(declaredValue).trim() !== '') ? Number(declaredValue) : null, declaredValueCurrency || "USD", emoOfficeId || null, imoOfficeId || null, controllingOfficeId || null, contractValidFrom || null, contractValidTo || null, req.params.id);
     if (info.changes === 0) return err(res, "Not found", 404);
+    // Contract assignment is one of the two triggers for auto-creating a carrier booking
+    // (the other is a schedule save/link, in routes/shipment-ops.js) — only worth checking
+    // when the contract fields actually changed, since ensureBookingCreated no-ops otherwise.
+    if (effContractId !== existing.contract_id || effContractRef !== existing.contract_ref)
+      ensureBookingCreated(req.params.id);
     const newVals = { pol: polU, pod: podU, status: effStatus, etd, eta, carrier_code: carrierCode,
       vessel, vessel_imo: vesselImo, voyage, incoterm, commodity_code: commodityCode,
       booking_ref: bookingRef, bl_number: blNumber, contract_type: contractType,
@@ -392,7 +400,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
 
   app.post("/api/containers", shipmentWrite, (req, res) => {
     const { shipmentId, containerNumber = "", sealNumber = "", size, type,
-            hsCode = "", cargoDescription = "", grossWeightKg = null, volumeCbm = null, isDg = false, dgClass = "",
+            hsCode = "", cargoDescription = "", marksAndNumbers = "", grossWeightKg = null, volumeCbm = null, isDg = false, dgClass = "",
             vgmWeightKg = null, vgmStatus = "Pending", vgmCutoff = "", cyCutoff = "",
             originFreeTimeDays = null, destFreeTimeDays = null } = req.body;
     if (!shipmentId || !size || !type) return err(res, "shipmentId, size, type required");
@@ -400,11 +408,11 @@ module.exports = function shipmentsRoutes(app, ctx) {
     if (dgErr) return err(res, dgErr, 422);
     const id  = `CTR-${uid()}`;
     const cnU = containerNumber.toUpperCase();
-    db.prepare(`INSERT INTO containers (id,shipment_id,container_number,seal_number,size,type,hs_code,cargo_description,gross_weight_kg,volume_cbm,is_dg,dg_class,
-                vgm_weight_kg,vgm_status,vgm_cutoff,cy_cutoff,origin_free_time_days,dest_free_time_days) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-      .run(id, shipmentId, cnU, sealNumber, size, type, hsCode, cargoDescription, grossWeightKg, volumeCbm, isDg ? 1 : 0, dgClass,
+    db.prepare(`INSERT INTO containers (id,shipment_id,container_number,seal_number,size,type,hs_code,cargo_description,marks_and_numbers,gross_weight_kg,volume_cbm,is_dg,dg_class,
+                vgm_weight_kg,vgm_status,vgm_cutoff,cy_cutoff,origin_free_time_days,dest_free_time_days) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(id, shipmentId, cnU, sealNumber, size, type, hsCode, cargoDescription, marksAndNumbers, grossWeightKg, volumeCbm, isDg ? 1 : 0, dgClass,
            vgmWeightKg, vgmStatus, vgmCutoff || null, cyCutoff || null, originFreeTimeDays, destFreeTimeDays);
-    const ctrRow = { id, shipment_id: shipmentId, container_number: cnU, seal_number: sealNumber, size, type, hs_code: hsCode, cargo_description: cargoDescription, gross_weight_kg: grossWeightKg, volume_cbm: volumeCbm, is_dg: isDg ? 1 : 0, dg_class: dgClass,
+    const ctrRow = { id, shipment_id: shipmentId, container_number: cnU, seal_number: sealNumber, size, type, hs_code: hsCode, cargo_description: cargoDescription, marks_and_numbers: marksAndNumbers, gross_weight_kg: grossWeightKg, volume_cbm: volumeCbm, is_dg: isDg ? 1 : 0, dg_class: dgClass,
       vgm_weight_kg: vgmWeightKg, vgm_status: vgmStatus, vgm_cutoff: vgmCutoff || null, cy_cutoff: cyCutoff || null,
       origin_free_time_days: originFreeTimeDays, dest_free_time_days: destFreeTimeDays };
     // Brand-new container has no events yet — skip the query, free-time windows start 'not-started'.
@@ -417,7 +425,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
 
   app.put("/api/containers/:id", shipmentWrite, (req, res) => {
     const { containerNumber = "", sealNumber = "", size, type,
-            hsCode = "", cargoDescription = "", grossWeightKg = null, volumeCbm = null, isDg = false, dgClass = "",
+            hsCode = "", cargoDescription = "", marksAndNumbers = "", grossWeightKg = null, volumeCbm = null, isDg = false, dgClass = "",
             vgmWeightKg = null, vgmStatus = "Pending", vgmCutoff = "", cyCutoff = "",
             originFreeTimeDays = null, destFreeTimeDays = null } = req.body;
     const cnU    = containerNumber.toUpperCase();
@@ -425,13 +433,13 @@ module.exports = function shipmentsRoutes(app, ctx) {
     if (!oldCtr) return err(res, "Not found", 404);
     const dgErr = checkDgPolicy(oldCtr.shipment_id, isDg, dgClass);
     if (dgErr) return err(res, dgErr, 422);
-    const info = db.prepare(`UPDATE containers SET container_number=?, seal_number=?, size=?, type=?, hs_code=?, cargo_description=?, gross_weight_kg=?, volume_cbm=?, is_dg=?, dg_class=?,
+    const info = db.prepare(`UPDATE containers SET container_number=?, seal_number=?, size=?, type=?, hs_code=?, cargo_description=?, marks_and_numbers=?, gross_weight_kg=?, volume_cbm=?, is_dg=?, dg_class=?,
                 vgm_weight_kg=?, vgm_status=?, vgm_cutoff=?, cy_cutoff=?, origin_free_time_days=?, dest_free_time_days=? WHERE id=?`)
-      .run(cnU, sealNumber, size, type, hsCode, cargoDescription, grossWeightKg, volumeCbm, isDg ? 1 : 0, dgClass,
+      .run(cnU, sealNumber, size, type, hsCode, cargoDescription, marksAndNumbers, grossWeightKg, volumeCbm, isDg ? 1 : 0, dgClass,
            vgmWeightKg, vgmStatus, vgmCutoff || null, cyCutoff || null, originFreeTimeDays, destFreeTimeDays, req.params.id);
     if (info.changes === 0) return err(res, "Not found", 404);
     const newVals = { container_number: cnU, size, type, hs_code: hsCode,
-      cargo_description: cargoDescription, gross_weight_kg: grossWeightKg,
+      cargo_description: cargoDescription, marks_and_numbers: marksAndNumbers, gross_weight_kg: grossWeightKg,
       volume_cbm: volumeCbm, is_dg: isDg ? 1 : 0, dg_class: dgClass,
       vgm_weight_kg: vgmWeightKg, vgm_status: vgmStatus, vgm_cutoff: vgmCutoff || null, cy_cutoff: cyCutoff || null,
       origin_free_time_days: originFreeTimeDays, dest_free_time_days: destFreeTimeDays };
@@ -532,7 +540,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
   });
 
   app.post("/api/containers/:id/packages", shipmentWrite, (req, res) => {
-    const { parentId = null, description, quantity = 1 } = req.body || {};
+    const { parentId = null, description, quantity = 1, packTypeId = null, isDg = false, dgClass = "" } = req.body || {};
     if (!description || !description.trim()) return err(res, "description required");
     const qty = parseInt(quantity, 10);
     if (!Number.isFinite(qty) || qty < 1) return err(res, "quantity must be a positive integer");
@@ -545,22 +553,22 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const siblingCount = db.prepare("SELECT COUNT(*) AS n FROM container_packages WHERE container_id=? AND parent_id IS ?").get(req.params.id, parentId).n;
     const id = `PKG-${uid()}`;
     const now = new Date().toISOString();
-    db.prepare(`INSERT INTO container_packages (id, container_id, parent_id, description, quantity, position, created_at)
-      VALUES (?,?,?,?,?,?,?)`)
-      .run(id, req.params.id, parentId, description.trim(), qty, siblingCount, now);
+    db.prepare(`INSERT INTO container_packages (id, container_id, parent_id, description, quantity, position, pack_type_id, is_dg, dg_class, created_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?)`)
+      .run(id, req.params.id, parentId, description.trim(), qty, siblingCount, packTypeId || null, isDg ? 1 : 0, dgClass || "", now);
     ok(res, mapContainerPackage(db.prepare("SELECT * FROM container_packages WHERE id=?").get(id)), 201);
   });
 
   app.put("/api/container-packages/:id", shipmentWrite, (req, res) => {
     const existing = db.prepare("SELECT * FROM container_packages WHERE id=?").get(req.params.id);
     if (!existing) return err(res, "Not found", 404);
-    const { description, quantity } = req.body || {};
+    const { description, quantity, packTypeId = null, isDg = false, dgClass = "" } = req.body || {};
     if (!description || !description.trim()) return err(res, "description required");
     const qty = parseInt(quantity, 10);
     if (!Number.isFinite(qty) || qty < 1) return err(res, "quantity must be a positive integer");
-    db.prepare("UPDATE container_packages SET description=?, quantity=? WHERE id=?")
-      .run(description.trim(), qty, req.params.id);
-    ok(res, mapContainerPackage({ ...existing, description: description.trim(), quantity: qty }));
+    db.prepare("UPDATE container_packages SET description=?, quantity=?, pack_type_id=?, is_dg=?, dg_class=? WHERE id=?")
+      .run(description.trim(), qty, packTypeId || null, isDg ? 1 : 0, dgClass || "", req.params.id);
+    ok(res, mapContainerPackage({ ...existing, description: description.trim(), quantity: qty, pack_type_id: packTypeId || null, is_dg: isDg ? 1 : 0, dg_class: dgClass || "" }));
   });
 
   // Deletes the package and its entire sub-tree (a package with children removed on
@@ -625,6 +633,9 @@ module.exports = function shipmentsRoutes(app, ctx) {
            etd||null, eta||null, carrierCode, vessel, vesselImo, voyage, movementBy,
            contractType, contractRef, createdAt);
     syncShipmentFromLegs(req.params.id);
+    // A hand-entered SEA leg with a real ETD counts as "has a schedule" for booking
+    // auto-creation purposes too — see ensureBookingCreated's comment in server.js.
+    ensureBookingCreated(req.params.id);
     ok(res, ctx.mapShipmentLeg(db.prepare("SELECT * FROM shipment_legs WHERE id=?").get(id)), 201);
   });
 
@@ -642,6 +653,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
            carrierCode, vessel, vesselImo, voyage, movementBy,
            contractType, contractRef, legOrder ?? existing.leg_order, req.params.legId);
     syncShipmentFromLegs(req.params.id);
+    ensureBookingCreated(req.params.id);
     ok(res, ctx.mapShipmentLeg(db.prepare("SELECT * FROM shipment_legs WHERE id=?").get(req.params.legId)));
   });
 

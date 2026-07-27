@@ -1,10 +1,14 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { T } from "../tokens";
 import { useAuth } from "../AuthContext";
 import { api } from "../api";
 import { toast } from "../toast";
 import EdiMessageList from "../components/shared/EdiMessageList";
+import CarrierBookingsTable from "../components/shared/CarrierBookingsTable";
+import Spinner from "../components/primitives/Spinner";
+import { CommodityDisplay } from "./ShipmentDetailPage";
 import { IconSendPlane, IconAnchor } from "../components/primitives/Icon";
+import { BOOKABLE_CARRIERS } from "../utils/carrierBooking";
 
 // ─── Carrier Booking — Details ────────────────────────────────────────────────
 // The outbound half of a booking: what we're asking the carrier for, and the Send
@@ -12,43 +16,52 @@ import { IconSendPlane, IconAnchor } from "../components/primitives/Icon";
 // out of the old EdiMessagesDrawer per the same "one concept, one dedicated page"
 // precedent Accounting already established for Invoice/Cost/GP.
 
-const BOOKABLE_CARRIERS = new Set(["MAEU", "SAFM", "MCPU"]);
-
-const STATUS_COLOR = {
-  Draft: "#6b7280", Pending: "#3b82f6", Confirmed: "#22c55e",
-  Rejected: "#ef4444", Cancelled: "#6b7280",
-};
-
-const StatusBadge = ({ status }) => {
-  const color = STATUS_COLOR[status] || T.textMuted;
-  return (
-    <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color,
-      background: `${color}18`, border: `1px solid ${color}44`,
-      borderRadius: 5, padding: "3px 10px", textTransform: "uppercase" }}>
-      {status}
-    </span>
-  );
-};
-
 const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack }) => {
   const { canEditShipments: canEdit } = useAuth();
-  const [booking,  setBooking]  = useState(null);
-  const [messages, setMessages] = useState([]);
-  const [loading,  setLoading]  = useState(true);
-  const [sending,  setSending]  = useState(false);
+  const [booking,    setBooking]    = useState(null);
+  const [messages,   setMessages]   = useState([]);
+  const [containers, setContainers] = useState([]);
+  const [contract,   setContract]   = useState(null);
+  const [loading,    setLoading]    = useState(true);
+  const [sending,    setSending]    = useState(false);
+
+  // Only a Central contract has a real record to load (contractId set) — SPOT/Pending/
+  // Customer Own carry just a free-text contractRef with nothing to fetch, so `contract`
+  // stays null and the Client field below falls back to "No Customer" per its own rule.
+  useEffect(() => {
+    if (!shipment.contractId) { setContract(null); return; }
+    let cancelled = false;
+    api.contracts.get(shipment.contractId).then(c => !cancelled && setContract(c)).catch(() => !cancelled && setContract(null));
+    return () => { cancelled = true; };
+  }, [shipment.contractId]);
 
   const load = useCallback(() => {
     setLoading(true);
     return Promise.all([
       api.carrierBooking.get(shipment.id).catch(() => null),
       api.ediMessages.list(shipment.id).catch(() => []),
-    ]).then(([b, m]) => { setBooking(b); setMessages(m); }).finally(() => setLoading(false));
+      api.containers.list({ shipmentId: shipment.id }).catch(() => []),
+    ]).then(([b, m, c]) => { setBooking(b); setMessages(m); setContainers(c); }).finally(() => setLoading(false));
   }, [shipment.id]);
+
+  // Same size+type grouping the backend applies to the outbound booking-request payload
+  // (routes/edi.js, TKT-0H9TSP) — shown here so what's on screen matches what gets sent.
+  const equipment = useMemo(() => {
+    const byType = {};
+    for (const c of containers) {
+      const key = `${c.size}${c.type}`;
+      const entry = byType[key] || (byType[key] = { type: key, count: 0, totalWeightKg: 0, totalVolumeCbm: 0 });
+      entry.count += 1;
+      entry.totalWeightKg += c.grossWeightKg || 0;
+      entry.totalVolumeCbm += c.volumeCbm || 0;
+    }
+    return Object.values(byType);
+  }, [containers]);
 
   useEffect(() => { load(); }, [load]);
 
   const bookable = BOOKABLE_CARRIERS.has(shipment.carrierCode);
-  const status = booking?.status || "Draft";
+  const status = booking?.status || "Created";
   const canSend = canEdit && bookable && status !== "Pending" && status !== "Confirmed";
   const outboundMessages = messages.filter(m => m.direction === "out");
 
@@ -70,17 +83,27 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack }) => {
     }
   };
 
-  if (loading) return null;
+  if (loading) return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, color: T.textMuted,
+      fontFamily: T.body, fontSize: 13, padding: "60px 0", justifyContent: "center" }}>
+      <Spinner size="sm" /> Loading booking details…
+    </div>
+  );
 
   return (
     <div id="shpbooking-details-page" style={{ maxWidth: 1100, margin: "0 auto" }}>
+      <CarrierBookingsTable shipment={shipment} />
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <h2 style={{ fontFamily: T.head, fontSize: 20, fontWeight: 800, color: T.text, margin: 0,
+          {/* Status + BKG- id are no longer repeated here — both already appear on the
+              current row in the "Bookings on this Shipment" table above (CarrierBookingsTable),
+              which is now the single place that shows them. Heading font size matched to that
+              table's own "Bookings on this Shipment" heading rather than standing out as a
+              bigger, differently-weighted title above it. */}
+          <h2 style={{ fontFamily: T.head, fontSize: 14, fontWeight: 700, color: T.text, margin: 0,
             display: "flex", alignItems: "center", gap: 8 }}>
-            <IconAnchor size={18} />Carrier Booking — Details
+            <IconAnchor size={14} />Carrier Booking — Details
           </h2>
-          <StatusBadge status={status} />
         </div>
       </div>
 
@@ -102,6 +125,74 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack }) => {
         ))}
       </div>
 
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+        gap: 14, marginBottom: 24, background: T.surface, border: `1px solid ${T.border}`,
+        borderRadius: 10, padding: "16px 20px" }}>
+        <div>
+          <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
+            textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 4 }}>Contract Number</div>
+          <div style={{ fontFamily: T.body, fontSize: 14, color: T.text, fontWeight: 600 }}>
+            {contract?.contractNumber || "—"}
+          </div>
+        </div>
+        <div>
+          <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
+            textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 4 }}>Reference</div>
+          <div style={{ fontFamily: T.body, fontSize: 14, color: T.text, fontWeight: 600 }}>
+            {shipment.contractRef || "—"}
+          </div>
+        </div>
+        <div>
+          <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
+            textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 4 }}>Client</div>
+          {/* Specifically the contract's own Named Account — not the shipment's Shipper/
+              Consignee, which are separate parties. A SPOT/Pending/Customer Own contract (no
+              linked contract record) or a Central contract with no named account both fall
+              through to the same explicit "No Customer" text, per direct request. */}
+          <div style={{ fontFamily: T.body, fontSize: 14, color: T.text, fontWeight: 600 }}>
+            {contract?.namedAccount || "No Customer"}
+          </div>
+        </div>
+        <div>
+          <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
+            textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 4 }}>Commodity</div>
+          {shipment.commodityCode ? <CommodityDisplay code={shipment.commodityCode} /> : (
+            <div style={{ fontFamily: T.body, fontSize: 14, color: T.text, fontWeight: 600 }}>—</div>
+          )}
+        </div>
+      </div>
+
+      <div style={{ marginBottom: 24 }}>
+        <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
+          textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8 }}>
+          Equipment — sent with the booking request
+        </div>
+        {equipment.length === 0 ? (
+          <div style={{ fontFamily: T.body, fontSize: 12.5, color: T.textMuted, fontStyle: "italic",
+            background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 14px" }}>
+            No containers added yet — the booking request will go out with no equipment detail.
+          </div>
+        ) : (
+          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, overflow: "hidden" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 80px 140px 140px",
+              gap: 10, padding: "8px 16px", borderBottom: `1px solid ${T.border}`,
+              fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: T.textMuted, textTransform: "uppercase" }}>
+              <span>Type</span><span>Count</span><span>Total Weight</span><span>Total Volume</span>
+            </div>
+            {equipment.map(e => (
+              <div key={e.type} style={{ display: "grid", gridTemplateColumns: "1fr 80px 140px 140px",
+                gap: 10, padding: "9px 16px", borderBottom: `1px solid ${T.border}22`,
+                fontFamily: T.body, fontSize: 13, color: T.text }}>
+                <span style={{ fontFamily: T.mono, fontWeight: 700, color: T.accent }}>{e.type}</span>
+                <span>{e.count}</span>
+                <span>{e.totalWeightKg.toLocaleString()} kg</span>
+                <span>{e.totalVolumeCbm.toLocaleString()} m³</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       {!bookable && (
         <div style={{ fontFamily: T.body, fontSize: 12.5, color: T.textMuted, marginBottom: 16,
           background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 14px" }}>
@@ -110,7 +201,7 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack }) => {
       )}
       {status === "Pending" && (
         <div style={{ fontFamily: T.body, fontSize: 12.5, color: T.text, marginBottom: 16,
-          background: `${STATUS_COLOR.Pending}12`, border: `1px solid ${STATUS_COLOR.Pending}44`,
+          background: "#3b82f612", border: "1px solid #3b82f644",
           borderRadius: 8, padding: "10px 14px" }}>
           Awaiting carrier response — check the Review page once it arrives.
         </div>

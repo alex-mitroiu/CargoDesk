@@ -101,6 +101,7 @@ export const ContainerForm = forwardRef(({ init = {}, onSave, onCancel, onDirtyC
     type:             init.type             || "",
     hsCode:           init.hsCode           || "",
     cargoDescription: init.cargoDescription || "",
+    marksAndNumbers:  init.marksAndNumbers  || "",
     grossWeightKg:    init.grossWeightKg    != null ? String(init.grossWeightKg) : "",
     volumeCbm:        init.volumeCbm        != null ? String(init.volumeCbm)     : "",
     isDg:             init.isDg             || false,
@@ -124,6 +125,7 @@ export const ContainerForm = forwardRef(({ init = {}, onSave, onCancel, onDirtyC
     const dirty = f.containerNumber !== s.containerNumber || f.sealNumber !== s.sealNumber ||
       f.size !== s.size ||
       f.type !== s.type || f.hsCode !== s.hsCode || f.cargoDescription !== s.cargoDescription ||
+      f.marksAndNumbers !== s.marksAndNumbers ||
       f.grossWeightKg !== s.grossWeightKg || f.volumeCbm !== s.volumeCbm ||
       f.isDg !== s.isDg || f.dgClass !== s.dgClass ||
       f.vgmWeightKg !== s.vgmWeightKg || f.vgmStatus !== s.vgmStatus || f.vgmCutoff !== s.vgmCutoff ||
@@ -158,7 +160,7 @@ export const ContainerForm = forwardRef(({ init = {}, onSave, onCancel, onDirtyC
 
   const buildPayload = () => ({
     containerNumber: f.containerNumber, sealNumber: f.sealNumber, size: f.size, type: f.type,
-    hsCode: f.hsCode, cargoDescription: f.cargoDescription,
+    hsCode: f.hsCode, cargoDescription: f.cargoDescription, marksAndNumbers: f.marksAndNumbers,
     grossWeightKg: f.grossWeightKg ? parseFloat(f.grossWeightKg) : null,
     volumeCbm:     f.volumeCbm     ? parseFloat(f.volumeCbm)     : null,
     isDg: f.isDg, dgClass: f.dgClass,
@@ -232,6 +234,10 @@ export const ContainerForm = forwardRef(({ init = {}, onSave, onCancel, onDirtyC
           <FieldErr show={touched.desc && !descOk} msg="Cargo description is required" />
         </div>
       </div>
+
+      <Inp label="Marks & Nos." value={f.marksAndNumbers} onChange={set("marksAndNumbers")}
+        placeholder="e.g. IN DIAMOND / MADE IN CHINA / NO. 1-50"
+        hint="Identifying marks and numbers stenciled on the packages, as shown on the B/L or packing list" />
 
       {/* ③ Measurements */}
       <SectionHeader n="③" title="Physical Measurements" />
@@ -1306,8 +1312,23 @@ const OfficeInlineSelect = ({ id, field, shipment, offices, canEdit, onUpdate })
 export const PartiesOfficesPanel = ({ shipment, onUpdate }) => {
   const { canEditShipments: canEdit } = useAuth();
   const [editing, setEditing] = useState(false);
-  const [offices, setOffices] = useState([]);
-  useEffect(() => { api.offices.list().then(setOffices).catch(() => {}); }, []);
+  // null (not []) while the offices fetch is in flight — same "empty [] is indistinguishable
+  // from a real zero-office result" gap already fixed for ServicesPanel/the sidebar Export-
+  // Import group. It mattered more here than usual: a slow-loading offices fetch left every
+  // OfficeInlineSelect dropdown showing NO real candidates at all (just the placeholder
+  // option) for however long the request took, which reads as "this shipment has no offices
+  // configured" rather than "still loading" — reported directly as an office loading delay.
+  const [offices, setOffices] = useState(null);
+  useEffect(() => { api.offices.list().then(setOffices).catch(() => setOffices([])); }, []);
+
+  if (offices === null) {
+    return (
+      <div id="shpparties-panel" style={{ display: "flex", alignItems: "center", gap: 8,
+        color: T.textMuted, fontFamily: T.body, fontSize: 13, padding: "30px 0", justifyContent: "center" }}>
+        <Spinner size="sm" /> Loading parties &amp; offices…
+      </div>
+    );
+  }
 
   return (
     <div id="shpparties-panel">

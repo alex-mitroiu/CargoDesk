@@ -596,6 +596,16 @@ const migrations = [
   "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('sso_redirect_uri','')",
   "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('sso_default_role','operator')",
   "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('sso_frontend_url','http://localhost:5173')",
+  // v0.43.0 — admin-defined Shipment Explorer sidebar order (see PUT /api/settings/shipment-sidebar-order,
+  // routes/system.js). Empty array means "no override, use the built-in default order" — reconciled
+  // client-side (ShipmentDetailSidebar, App.jsx) against whatever top-level nav ids actually exist today,
+  // so a future new section added in code just appends itself rather than silently vanishing.
+  "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('shipment_sidebar_order','[]')",
+  // Sequence has no "0th"/negative position in a physical Loading/Unloading/Pickup/Delivery
+  // plan — 1 is the floor, enforced going forward in the PUT loading-plan route (routes/
+  // shipment-ops.js). One-time backfill for the handful of rows already saved as 0 before
+  // this rule existed — idempotent, a re-run after all rows are already >=1 is a no-op.
+  "UPDATE shipment_loading_plan_lines SET sequence_order = 1 WHERE sequence_order <= 0",
   // v0.25.0 — VAT on cost lines
   "ALTER TABLE shipment_cost_lines ADD COLUMN vat_rate REAL NOT NULL DEFAULT 0",
   // v0.26.0 — per-user finance access flag
@@ -872,10 +882,121 @@ const migrations = [
     updated_at           TEXT NOT NULL
   )`,
   "CREATE INDEX IF NOT EXISTS idx_carrier_bookings_status ON carrier_bookings(status)",
+
+  // Archive for superseded booking attempts (found via a real bug report — SHP-Y9E98X:
+  // carrier_bookings.shipment_id is UNIQUE, so a Cancelled/Rejected booking was the only
+  // record for that shipment, permanently, even once the carrier/schedule genuinely moved
+  // on). Same shape as carrier_bookings minus the uniqueness, plus archived_at/reason — an
+  // archived row keeps its OWN original id (the surrogate key it already had), so a
+  // shipment's full booking history is just carrier_bookings' current row + however many of
+  // these. See ensureBookingCreated below for what actually triggers an archive.
+  `CREATE TABLE IF NOT EXISTS carrier_booking_archive (
+    id                   TEXT PRIMARY KEY,
+    shipment_id          TEXT NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
+    carrier_code         TEXT NOT NULL DEFAULT '',
+    status               TEXT NOT NULL DEFAULT 'Pending',
+    last_response_status TEXT NOT NULL DEFAULT '',
+    booking_ref          TEXT DEFAULT '',
+    correlation_id       TEXT DEFAULT '',
+    is_mock              INTEGER DEFAULT 0,
+    requested_at         TEXT DEFAULT NULL,
+    requested_by         TEXT DEFAULT '',
+    responded_at         TEXT DEFAULT NULL,
+    confirmed_at         TEXT DEFAULT NULL,
+    confirmed_by         TEXT DEFAULT '',
+    cancelled_at         TEXT DEFAULT NULL,
+    cancelled_by         TEXT DEFAULT '',
+    cancel_reason        TEXT DEFAULT '',
+    created_at           TEXT NOT NULL,
+    updated_at           TEXT NOT NULL,
+    archived_at          TEXT NOT NULL,
+    archived_reason      TEXT DEFAULT ''
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_carrier_booking_archive_shipment ON carrier_booking_archive(shipment_id)",
+
+  // Sea-schedule field completeness (vessel IMO alongside the existing free-text vessel_name;
+  // ATD/ATA actuals alongside the existing ETD/ETA estimates) + the shared-schedule catalog —
+  // 'source' distinguishes a normal per-shipment search-and-save ('search', the default, so
+  // every pre-existing row is unaffected) from one authored by the Test Tools Schedule
+  // Generator ('generated'), which is the only kind additional shipments can link to.
+  "ALTER TABLE shipment_schedules ADD COLUMN vessel_imo TEXT DEFAULT ''",
+  "ALTER TABLE shipment_schedules ADD COLUMN atd        TEXT DEFAULT ''",
+  "ALTER TABLE shipment_schedules ADD COLUMN ata        TEXT DEFAULT ''",
+  "ALTER TABLE shipment_schedules ADD COLUMN source     TEXT DEFAULT 'search'",
+
+  // Additive sharing layer: shipment_schedules.shipment_id keeps meaning "the shipment that
+  // originally saved this row" (unchanged, every existing owned-schedule flow untouched) —
+  // this table lets ADDITIONAL shipments link to that same schedule without duplicating it.
+  `CREATE TABLE IF NOT EXISTS schedule_shipment_links (
+    schedule_id  TEXT NOT NULL REFERENCES shipment_schedules(id) ON DELETE CASCADE,
+    shipment_id  TEXT NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
+    linked_at    TEXT NOT NULL,
+    linked_by    TEXT DEFAULT '',
+    PRIMARY KEY (schedule_id, shipment_id)
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_schedule_links_shipment ON schedule_shipment_links(shipment_id)",
+
+  // Pack-type registry for the container cargo manifest tree (container_packages) — admin-
+  // maintained, mirrors charge_code_definitions structurally. Nullable FK on the package
+  // itself (below) means existing packages simply have no type/icon yet, not an error.
+  `CREATE TABLE IF NOT EXISTS pack_type_definitions (
+    id         TEXT PRIMARY KEY,
+    code       TEXT NOT NULL,
+    label      TEXT NOT NULL,
+    icon       TEXT NOT NULL DEFAULT '📦',
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    is_active  INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL
+  )`,
+  "INSERT OR IGNORE INTO pack_type_definitions (id,code,label,icon,sort_order,is_active,created_at) VALUES ('ptd-pallet','PALLET','Pallet','🟫',10,1,datetime('now'))",
+  "INSERT OR IGNORE INTO pack_type_definitions (id,code,label,icon,sort_order,is_active,created_at) VALUES ('ptd-carton','CARTON','Carton','📦',20,1,datetime('now'))",
+  "INSERT OR IGNORE INTO pack_type_definitions (id,code,label,icon,sort_order,is_active,created_at) VALUES ('ptd-case','CASE','Case','🗄️',30,1,datetime('now'))",
+  "INSERT OR IGNORE INTO pack_type_definitions (id,code,label,icon,sort_order,is_active,created_at) VALUES ('ptd-crate','CRATE','Crate','🪵',40,1,datetime('now'))",
+  "INSERT OR IGNORE INTO pack_type_definitions (id,code,label,icon,sort_order,is_active,created_at) VALUES ('ptd-drum','DRUM','Drum','🛢️',50,1,datetime('now'))",
+  "INSERT OR IGNORE INTO pack_type_definitions (id,code,label,icon,sort_order,is_active,created_at) VALUES ('ptd-box','BOX','Box','📦',60,1,datetime('now'))",
+  "INSERT OR IGNORE INTO pack_type_definitions (id,code,label,icon,sort_order,is_active,created_at) VALUES ('ptd-bag','BAG','Bag','🛍️',70,1,datetime('now'))",
+  "INSERT OR IGNORE INTO pack_type_definitions (id,code,label,icon,sort_order,is_active,created_at) VALUES ('ptd-bundle','BUNDLE','Bundle','🎋',80,1,datetime('now'))",
+  "INSERT OR IGNORE INTO pack_type_definitions (id,code,label,icon,sort_order,is_active,created_at) VALUES ('ptd-other','OTHER','Other','📄',90,1,datetime('now'))",
+  "ALTER TABLE container_packages ADD COLUMN pack_type_id TEXT DEFAULT NULL",
+
+  // Cargo Manifest & Container Details Redesign (TKT-OTKNJN). Marks & Nos. is a real
+  // packing-list/BOL field that never existed on containers — Description of Goods is NOT
+  // a new field, it's the existing container_packages.description shown as a rollup on the
+  // container's own detail view (see ShipmentContainersPage.jsx).
+  "ALTER TABLE containers ADD COLUMN marks_and_numbers TEXT DEFAULT ''",
+  // DG classification extends down from the container level (containers.is_dg/dg_class,
+  // already existed) to the individual pallet/item level (TKT-9VAD6R) — a single DG pallet
+  // inside an otherwise clean container no longer forces the whole container to be flagged.
+  "ALTER TABLE container_packages ADD COLUMN is_dg INTEGER DEFAULT 0",
+  "ALTER TABLE container_packages ADD COLUMN dg_class TEXT DEFAULT ''",
+  // DG Compliance Address (TKT-DPLQTV) — one reusable org-wide emergency-contact/compliance
+  // record (confirmed: FCL means one is enough, no per-office variant), pulled onto the DG01
+  // declaration's emergency-contact line (buildDGDeclHtml, App.jsx) instead of a hand-filled
+  // blank. Plain app_settings keys, same idiom as every other single-record setting.
+  "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('dg_compliance_contact_name','')",
+  "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('dg_compliance_phone','')",
+  "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('dg_compliance_email','')",
+  "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('dg_compliance_address','')",
 ];
 
+// "duplicate column name" is the expected, harmless result of re-running an ADD COLUMN
+// migration against a DB that already has it (SQLite has no ADD COLUMN IF NOT EXISTS) —
+// every one of the ~100 ALTER TABLE lines above hits this on every restart after the first.
+// Anything else (syntax error, wrong type, locked db, disk full, ...) is a genuine failure
+// that used to vanish into this same catch-all with zero trace.
+const migrationFailures = [];
 for (const sql of migrations) {
-  try { db.exec(sql); } catch {}
+  try {
+    db.exec(sql);
+  } catch (e) {
+    if (!/duplicate column name/i.test(e.message)) {
+      migrationFailures.push({ sql: sql.slice(0, 100), error: e.message });
+      console.error(`[migration] FAILED: ${e.message}\n  SQL: ${sql.slice(0, 140)}`);
+    }
+  }
+}
+if (migrationFailures.length) {
+  console.error(`[migration] ${migrationFailures.length} startup migration(s) failed — schema may be incomplete, see above.`);
 }
 
 const UPLOADS_DIR = path.join(__dirname, "uploads", "documents");
@@ -1517,11 +1638,17 @@ try { db.exec("UPDATE shipments SET vessel = '', vessel_imo = '' WHERE vessel_im
 // ─── Map functions ────────────────────────────────────────────────────────────
 
 const SVC_ABBR = { 'Port-to-Port': 'P2P', 'Door-to-Port': 'D2P', 'Port-to-Door': 'P2D', 'Door-to-Door': 'D2D' };
+// Carriers a booking request can be sent to. Single source of truth on ctx — routes/edi.js
+// used to hand-copy this same Set locally (matching an equivalent copy on the frontend);
+// centralized here so the two can't silently drift apart. Deliberately separate from
+// MAERSK_CODES (routes/system.js) — that's "carriers you can search schedules for" (a
+// broader, different concept, includes CMDU) — not the same thing as "bookable".
+const BOOKABLE_CARRIERS = new Set(["MAEU", "SAFM", "MCPU"]);
 function longestLane(un) {
   const s = portLanesMap[un]; if (!s || !s.size) return ''; return [...s].sort((a, b) => b.length - a.length)[0];
 }
 
-const mapShipment     = r => { const polLane = longestLane(r.pol), podLane = longestLane(r.pod); return { id: r.id, pol: r.pol, polName: r.pol_name || '', pod: r.pod, podName: r.pod_name || '', carrierCode: r.carrier_code, contractType: r.contract_type, contractNotes: r.contract_notes || '', status: r.status, createdAt: r.created_at, etd: r.etd || '', eta: r.eta || '', bookingRef: r.booking_ref || '', blNumber: r.bl_number || '', vessel: r.vessel || '', voyage: r.voyage || '', incoterm: r.incoterm || '', vesselImo: r.vessel_imo || '', contractId: r.contract_id || '', contractRef: r.contract_ref || '', commodityCode: r.commodity_code || '', shipperId: r.shipper_id || '', shipperName: r.shipper_name || '', consigneeId: r.consignee_id || '', consigneeName: r.consignee_name || '', principalId: r.principal_id || '', principalName: r.principal_name || '', allocationId: r.allocation_id || '', spaceSkipReason: r.space_skip_reason || '', spaceOverageReason: r.space_overage_reason || '', spaceBadge: r.space_badge || '', marginBuyUsd: r.margin_buy_usd ?? null, marginSellUsd: r.margin_sell_usd ?? null, overdueCount: r.overdue_count ?? 0, freightTerms: r.freight_terms || 'Prepaid', movementType: r.movement_type || 'FCL', serviceType: r.service_type || 'Port-to-Port', placeOfReceipt: r.place_of_receipt || '', placeOfDelivery: r.place_of_delivery || '', cargoReadyDate: r.cargo_ready_date || null, notifyId: r.notify_id || '', notifyName: r.notify_name || '', declaredValue: r.declared_value ?? null, declaredValueCurrency: r.declared_value_currency || 'USD', routingTerm: r.routing_term || (SVC_ABBR[r.service_type] || 'P2P'), tradeLane: polLane && podLane ? polLane + ' → ' + podLane : '', emoOfficeId: r.emo_office_id || null, emoOfficeCode: r.emo_office_code || '', emoOfficeName: r.emo_office_name || '', imoOfficeId: r.imo_office_id || null, imoOfficeCode: r.imo_office_code || '', imoOfficeName: r.imo_office_name || '', controllingOfficeId: r.controlling_office_id || null, controllingOfficeCode: r.controlling_office_code || '', controllingOfficeName: r.controlling_office_name || '', contractValidFrom: r.contract_valid_from || '', contractValidTo: r.contract_valid_to || '' }; };
+const mapShipment     = r => { const polLane = longestLane(r.pol), podLane = longestLane(r.pod); return { id: r.id, pol: r.pol, polName: r.pol_name || '', pod: r.pod, podName: r.pod_name || '', carrierCode: r.carrier_code, contractType: r.contract_type, contractNotes: r.contract_notes || '', status: r.status, createdAt: r.created_at, etd: r.etd || '', eta: r.eta || '', bookingRef: r.booking_ref || '', blNumber: r.bl_number || '', vessel: r.vessel || '', voyage: r.voyage || '', incoterm: r.incoterm || '', vesselImo: r.vessel_imo || '', contractId: r.contract_id || '', contractRef: r.contract_ref || '', commodityCode: r.commodity_code || '', shipperId: r.shipper_id || '', shipperName: r.shipper_name || '', consigneeId: r.consignee_id || '', consigneeName: r.consignee_name || '', principalId: r.principal_id || '', principalName: r.principal_name || '', allocationId: r.allocation_id || '', spaceSkipReason: r.space_skip_reason || '', spaceOverageReason: r.space_overage_reason || '', spaceBadge: r.space_badge || '', marginBuyUsd: r.margin_buy_usd ?? null, marginSellUsd: r.margin_sell_usd ?? null, overdueCount: r.overdue_count ?? 0, bookingStatus: r.booking_status || null, bookingRequestedAt: r.booking_requested_at || null, freightTerms: r.freight_terms || 'Prepaid', movementType: r.movement_type || 'FCL', serviceType: r.service_type || 'Port-to-Port', placeOfReceipt: r.place_of_receipt || '', placeOfDelivery: r.place_of_delivery || '', cargoReadyDate: r.cargo_ready_date || null, notifyId: r.notify_id || '', notifyName: r.notify_name || '', declaredValue: r.declared_value ?? null, declaredValueCurrency: r.declared_value_currency || 'USD', routingTerm: r.routing_term || (SVC_ABBR[r.service_type] || 'P2P'), tradeLane: polLane && podLane ? polLane + ' → ' + podLane : '', emoOfficeId: r.emo_office_id || null, emoOfficeCode: r.emo_office_code || '', emoOfficeName: r.emo_office_name || '', imoOfficeId: r.imo_office_id || null, imoOfficeCode: r.imo_office_code || '', imoOfficeName: r.imo_office_name || '', controllingOfficeId: r.controlling_office_id || null, controllingOfficeCode: r.controlling_office_code || '', controllingOfficeName: r.controlling_office_name || '', contractValidFrom: r.contract_valid_from || '', contractValidTo: r.contract_valid_to || '' }; };
 const mapShipmentLeg = r => ({
   id: r.id, shipmentId: r.shipment_id, legOrder: r.leg_order,
   mot: r.mot || 'SEA',
@@ -1540,7 +1667,14 @@ const LEG_LOC_ABBR = { 'Door': 'DR', 'Terminal': 'PT', 'Container Yard': 'CY', '
 
 const syncShipmentFromLegs = (shipmentId) => {
   const legs = db.prepare("SELECT * FROM shipment_legs WHERE shipment_id=? ORDER BY leg_order ASC").all(shipmentId);
-  if (!legs.length) return;
+  if (!legs.length) {
+    // Every leg was just removed (e.g. unlinking a schedule) — the schedule-derived fields
+    // this function writes are now stale and must be cleared, not left showing the last-known
+    // sailing forever. pol/pod/carrier_code are shipment-level fields set independently at
+    // creation (not purely leg-derived), so they're left untouched here.
+    db.prepare(`UPDATE shipments SET etd='', eta='', vessel='', vessel_imo='', voyage='', routing_term=NULL WHERE id=?`).run(shipmentId);
+    return;
+  }
   const first = legs[0], last = legs[legs.length - 1];
   const seaLeg = legs.find(l => l.leg_type === 'SEA' || l.mot === 'SEA') || first;
   // Routing term: span from first carrier-arranged leg to last — Merchant's Haulage legs excluded
@@ -1593,13 +1727,14 @@ const cutoffState = (dateStr, resolved) => {
   const days = Math.round((parsed - new Date(new Date().toISOString().slice(0, 10))) / 86400000);
   return days < 0 ? 'red' : days <= CUTOFF_WARNING_DAYS ? 'amber' : 'ok';
 };
-const mapContainer    = r => ({ id: r.id, shipmentId: r.shipment_id, containerNumber: r.container_number || '', sealNumber: r.seal_number || '', size: r.size, type: r.type, hsCode: r.hs_code || '', cargoDescription: r.cargo_description || '', grossWeightKg: r.gross_weight_kg ?? null, volumeCbm: r.volume_cbm ?? null, isDg: r.is_dg === 1, dgClass: r.dg_class || '',
+const mapContainer    = r => ({ id: r.id, shipmentId: r.shipment_id, containerNumber: r.container_number || '', sealNumber: r.seal_number || '', size: r.size, type: r.type, hsCode: r.hs_code || '', cargoDescription: r.cargo_description || '', marksAndNumbers: r.marks_and_numbers || '', grossWeightKg: r.gross_weight_kg ?? null, volumeCbm: r.volume_cbm ?? null, isDg: r.is_dg === 1, dgClass: r.dg_class || '',
   vgmWeightKg: r.vgm_weight_kg ?? null, vgmStatus: r.vgm_status || 'Pending', vgmCutoff: r.vgm_cutoff || '',
   vgmCutoffState: cutoffState(r.vgm_cutoff, (r.vgm_status || 'Pending') === 'Submitted'),
   cyCutoff: r.cy_cutoff || '', cyCutoffState: cutoffState(r.cy_cutoff, false),
   originFreeTimeDays: r.origin_free_time_days ?? null, destFreeTimeDays: r.dest_free_time_days ?? null });
 const mapContainerEvent = r => ({ id: r.id, containerId: r.container_id, shipmentId: r.shipment_id, eventType: r.event_type, location: r.location || '', occurredAt: r.occurred_at, recordedBy: r.recorded_by || '', notes: r.notes || '', createdAt: r.created_at });
-const mapContainerPackage = r => ({ id: r.id, containerId: r.container_id, parentId: r.parent_id || null, description: r.description, quantity: r.quantity, position: r.position, createdAt: r.created_at });
+const mapContainerPackage = r => ({ id: r.id, containerId: r.container_id, parentId: r.parent_id || null, description: r.description, quantity: r.quantity, position: r.position, packTypeId: r.pack_type_id || null, isDg: r.is_dg === 1, dgClass: r.dg_class || '', createdAt: r.created_at });
+const mapPackTypeDefinition = r => ({ id: r.id, code: r.code, label: r.label, icon: r.icon, sortOrder: r.sort_order, isActive: r.is_active === 1, createdAt: r.created_at });
 const mapAllocation   = r => ({ id: r.id, carrierCode: r.carrier_code, allocatedTEU: r.allocated_teu, effectiveDate: r.effective_date || '', endDate: r.end_date || '', tradeLane: r.trade_lane || '', notes: r.notes || '', alertThreshold: r.alert_threshold ?? 80, pol: r.pol || '', pod: r.pod || '', originLane: r.origin_lane || '', destLane: r.dest_lane || '', coverageScope: r.coverage_scope || 'STRICT', contractId: r.contract_id || '', contractNumber: r.contract_number || '' });
 const mapCarrier      = r => ({ code: r.code, name: r.name, shortName: r.short_name || '' });
 const mapVessel       = r => ({ imo: r.imo, name: r.name, assetType: r.asset_type || '', flagIso2: r.flag_iso2 || '', flagName: r.flag_name || '', buildYear: r.build_year, grossTonnage: r.gross_tonnage });
@@ -1802,6 +1937,8 @@ const mapCarrierBooking = r => ({
   cancelReason:       r.cancel_reason || '',
   createdAt:          r.created_at,
   updatedAt:          r.updated_at,
+  archivedAt:         r.archived_at || null,
+  archivedReason:     r.archived_reason || '',
 });
 const mapKbProject = r => ({ id: r.id, name: r.name, key: r.key, color: r.color || '#6366f1', description: r.description || '', createdAt: r.created_at });
 const mapKbVersion = r => ({ id: r.id, projectId: r.project_id, name: r.name, description: r.description || '', status: r.status || 'Planning', releaseDate: r.release_date || null, createdAt: r.created_at });
@@ -1967,6 +2104,154 @@ const autoCompleteMilestone = (shipmentId, milestoneKey, note) => {
   db.prepare("UPDATE shipment_milestones SET completed_at=?, completed_by=?, note=? WHERE id=?")
     .run(now, 'System (Auto)', note, row.id);
 };
+
+// ─── Carrier booking auto-creation ─────────────────────────────────────────────
+// Once a shipment has both a contract (contract_id for Central, or a manual contract_ref
+// for SPOT/Pending/Customer Own) and a schedule, it's ready to book: a carrier_bookings
+// row is created automatically in a new 'Created' status, giving it a real BKG- surrogate
+// key before anyone has to explicitly send anything.
+//
+// "Has a schedule" deliberately covers TWO cases, not just one — found via a real bug
+// report (SHP-VSB0Z2): a shipment_schedules row (from a sailing search-and-save or a
+// Schedule Generator link) is the formal case, but a shipment can just as legitimately
+// have its Route Legs filled in by hand (real POL/POD/ETD per SEA leg) without ever going
+// through Add Sailing — that's still a real schedule from the operator's point of view,
+// it just never produced an audit-trail row. Requiring etd specifically (not just "a SEA
+// leg exists") matters: ShipmentFormPage defaults every new leg to legType SEA, so nearly
+// every shipment has an empty one from the moment it's created — checking bare existence
+// would fire the moment a contract is added to ANY shipment, regardless of whether real
+// routing info exists yet.
+//
+// Called from every route that can newly satisfy either precondition (contract
+// assignment, schedule save, Schedule Generator create/link) — idempotent (no-ops once a
+// booking row already exists, same "never silently overwritten" rule autoCompleteMilestone
+// above already follows) and safe to call unconditionally even when nothing changed.
+// Copies a booking row into carrier_booking_archive AS-IS (keeps its own BKG- id — the
+// surrogate key it already had) then deletes it from the live table. Called only from
+// ensureBookingCreated's supersede branch below.
+const archiveBooking = (booking, reason) => {
+  const now = new Date().toISOString();
+  db.prepare(`INSERT INTO carrier_booking_archive
+    (id, shipment_id, carrier_code, status, last_response_status, booking_ref, correlation_id,
+     is_mock, requested_at, requested_by, responded_at, confirmed_at, confirmed_by,
+     cancelled_at, cancelled_by, cancel_reason, created_at, updated_at, archived_at, archived_reason)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(booking.id, booking.shipment_id, booking.carrier_code, booking.status,
+         booking.last_response_status, booking.booking_ref, booking.correlation_id,
+         booking.is_mock, booking.requested_at, booking.requested_by, booking.responded_at,
+         booking.confirmed_at, booking.confirmed_by, booking.cancelled_at, booking.cancelled_by,
+         booking.cancel_reason, booking.created_at, booking.updated_at, now, reason || '');
+  db.prepare("DELETE FROM carrier_bookings WHERE id=?").run(booking.id);
+  logEntityEvent('carrier_booking', booking.id, 'ARCHIVED', null, null, null,
+    JSON.stringify({ shipmentId: booking.shipment_id, reason: reason || '' }));
+};
+
+// Supersede: ANY not-yet-Confirmed booking (Created, Pending, Rejected, or already Cancelled)
+// whose carrier no longer matches the shipment's current one is stale — the arrangement moved
+// on. Changing the carrier IS the cancellation trigger now, not a precondition of it — the
+// operator doesn't have to have manually cancelled (or had it rejected) first; even a booking
+// still Pending (a real request already sent, awaiting the carrier's response) gets auto-
+// cancelled the moment the carrier changes. A Confirmed booking is never touched here — that's
+// a real commitment, not something to silently supersede. A same-carrier edit (a contract/date
+// correction that doesn't actually change who's carrying it) leaves the existing booking and
+// its id completely alone — this is what makes the surrogate key persist across an edit.
+//
+// The old booking is transitioned to Cancelled first (if it wasn't already) — including
+// sending the exact same cancellation EDI message the manual Cancel action already sends
+// (only when something was actually transmitted: a bare Created booking with no
+// correlation_id never had a request sent, so there's no carrier to notify) — then archived
+// under its own original BKG- id (reason recorded), and the caller creates a fresh booking
+// under the new carrier in its place.
+//
+// Shared by every place that reads "the current carrier_bookings row for this shipment" and
+// then decides whether to keep building on it — not just ensureBookingCreated. Send Booking
+// Request (upsertPendingBooking, routes/edi.js) and the manual Confirm route both used to read
+// `existing` and unconditionally UPDATE it in place regardless of status, which is exactly what
+// let a stale booking's own id/carrier/history quietly get overwritten by a completely
+// different carrier's attempt the moment Send or Confirm was clicked again — the actual
+// still-reproducible shape of the original SHP-Y9E98X bug, since neither of those call sites
+// went through ensureBookingCreated at all.
+const supersedeIfCarrierChanged = (shipment, existing) => {
+  if (!existing || existing.status === "Confirmed" || shipment.carrier_code === existing.carrier_code) return existing;
+  const now = new Date().toISOString();
+  const reason = `Carrier changed to ${shipment.carrier_code || '(none)'}`;
+  if (existing.status !== "Cancelled") {
+    // Notify the old carrier only if something was actually transmitted for THIS booking —
+    // its own carrier_code (who the request actually went to), not the shipment's new one.
+    if (existing.correlation_id && BOOKABLE_CARRIERS.has(existing.carrier_code)) {
+      const cancelId = `EDI-${uid()}`;
+      db.prepare(`
+        INSERT INTO edi_messages (id, shipment_id, carrier_code, direction, message_type, format, raw_payload, status, correlation_id, is_mock, created_at)
+        VALUES (?,?,?,'out','booking_cancellation','JSON',?,'sent',?,0,?)
+      `).run(cancelId, shipment.id, existing.carrier_code, JSON.stringify({ reason }), existing.correlation_id, now);
+      const subs = shipmentSubs.get(shipment.id);
+      if (subs) {
+        const frame = JSON.stringify({
+          type: "new_edi_message",
+          message: mapEdiMessage(db.prepare("SELECT * FROM edi_messages WHERE id=?").get(cancelId)),
+        });
+        for (const ws of subs) if (ws.readyState === ws.OPEN) ws.send(frame);
+      }
+    }
+    db.prepare(`UPDATE carrier_bookings SET status='Cancelled', cancelled_at=?, cancelled_by=?, cancel_reason=?, updated_at=? WHERE id=?`)
+      .run(now, 'System (Auto)', reason, now, existing.id);
+    existing = db.prepare("SELECT * FROM carrier_bookings WHERE id=?").get(existing.id);
+  }
+  archiveBooking(existing, `Superseded — ${reason}`);
+  return null;
+};
+
+const ensureBookingCreated = (shipmentId) => {
+  const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(shipmentId);
+  if (!shipment) return;
+  if (!(shipment.contract_id || shipment.contract_ref)) return;
+  const hasSchedule = !!db.prepare(`
+    SELECT 1 FROM shipment_schedules WHERE shipment_id=?
+    UNION
+    SELECT 1 FROM shipment_legs WHERE shipment_id=? AND leg_type='SEA' AND etd IS NOT NULL AND etd != ''
+  `).get(shipmentId, shipmentId);
+  if (!hasSchedule) return;
+  let existing = db.prepare("SELECT * FROM carrier_bookings WHERE shipment_id=?").get(shipmentId);
+  existing = supersedeIfCarrierChanged(shipment, existing);
+  if (existing) return;
+  const now = new Date().toISOString();
+  const id = `BKG-${uid()}`;
+  db.prepare(`INSERT INTO carrier_bookings (id, shipment_id, carrier_code, status, created_at, updated_at)
+    VALUES (?,?,?,'Created',?,?)`).run(id, shipmentId, shipment.carrier_code || '', now, now);
+  logEntityEvent('carrier_booking', id, 'CREATED', null, null, null,
+    JSON.stringify({ shipmentId, actor: 'System (Auto)' }));
+  // Live-push the new booking — matters much more now than when this was write-only-at-
+  // creation: a booking can be auto-superseded (and its own id swapped) at any time a not-yet-
+  // Confirmed booking's carrier changes, including while a Details/Review tab for it is
+  // already open. Same broadcast shape Send/Confirm/Cancel already use.
+  const subs = shipmentSubs.get(shipmentId);
+  if (subs) {
+    const frame = JSON.stringify({
+      type: "booking_status_changed",
+      booking: mapCarrierBooking(db.prepare("SELECT * FROM carrier_bookings WHERE id=?").get(id)),
+    });
+    for (const ws of subs) if (ws.readyState === ws.OPEN) ws.send(frame);
+  }
+};
+
+// One-time startup backfill — the auto-creation trigger above only fires from write
+// routes going forward; shipments that already satisfied both conditions before this
+// feature existed (or via a code path that doesn't call it, like SHP-VSB0Z2's hand-entered
+// legs) need a one-time sweep. Safe to re-run on every startup: ensureBookingCreated
+// itself no-ops for anything that already has a booking or doesn't qualify.
+(function backfillCarrierBookings() {
+  const candidates = db.prepare(`
+    SELECT id FROM shipments
+    WHERE (contract_id IS NOT NULL AND contract_id != '') OR (contract_ref IS NOT NULL AND contract_ref != '')
+  `).all();
+  let created = 0;
+  for (const { id } of candidates) {
+    const before = db.prepare("SELECT id FROM carrier_bookings WHERE shipment_id=?").get(id);
+    ensureBookingCreated(id);
+    if (!before && db.prepare("SELECT id FROM carrier_bookings WHERE shipment_id=?").get(id)) created++;
+  }
+  if (created > 0) console.log(`  ✔ Backfilled ${created} carrier booking(s) for already-qualifying shipments`);
+})();
 
 // ─── Allocation conflict helpers ──────────────────────────────────────────────
 
@@ -2246,12 +2531,12 @@ const ctx = {
   VALID_ROLES, ROLE_RANK_SV, primaryRoleSV, parseUserRoles,
   SERVICE_CODE_MAP, importContractRates, createRateSnapshot, generateCostLinesFromSnapshot,
   mapShipment, mapShipmentLeg, mapCostLine, mapService, mapContainer, mapContainerEvent, mapContainerPackage, mapAllocation,
-  mapRateSnapshot, mapRateSnapshotLine, mapChargeCodeDefinition,
+  mapRateSnapshot, mapRateSnapshotLine, mapChargeCodeDefinition, mapPackTypeDefinition,
   mapCarrier, mapVessel, mapPortLocation, mapLinkedPort, mapTradeLane,
   mapScopeItem, mapAccessConfig, mapOffice, mapBranch, mapOrgCountry, mapRegion, mapCountry, mapTicketLink, mapTicket,
   mapTestItem, mapTestCaseLink,
   mapEdiMessage,
-  mapCarrierBooking,
+  mapCarrierBooking, BOOKABLE_CARRIERS,
   mapKbProject, mapKbVersion, mapKbColumn,
   mapCustomer, mapCustomerIdentifier, mapCustomerScreening, mapCustomerDoc,
   mapCommodity, mapSystemMessage, mapMilestone, mapMilestoneTemplate,
@@ -2262,11 +2547,13 @@ const ctx = {
   syncShipmentFromLegs,
   checkOverlap,
   autoCompleteMilestone,
+  ensureBookingCreated, supersedeIfCarrierChanged,
   linkedPortCodes, findMatchingContractLeg,
   screenShipmentById,
   bcrypt, jwt, JWT_SECRET,
   inverseLinkLabel,
   fs, path,
+  migrationFailures,
 };
 
 require('./routes/auth')(app, ctx);
@@ -2287,6 +2574,7 @@ require('./routes/share')(app, ctx);
 require('./routes/offices')(app, ctx);
 require('./routes/organization')(app, ctx);
 require('./routes/charge-codes')(app, ctx);
+require('./routes/pack-types')(app, ctx);
 
 // ─── Auth routes ──────────────────────────────────────────────────────────────
 

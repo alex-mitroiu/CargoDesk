@@ -289,6 +289,12 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
                 {s.overdueCount > 0 && (
                   <Badge variant="danger" size={9.5}>{s.overdueCount} overdue</Badge>
                 )}
+                {s.bookingStatus === "Pending" && (
+                  <Badge variant="info" size={9.5}>Booking pending</Badge>
+                )}
+                {s.bookingStatus === "Rejected" && (
+                  <Badge variant="danger" size={9.5}>Booking rejected</Badge>
+                )}
               </div>
               <div>{(() => {
                 if (!financeEnabled) return null;

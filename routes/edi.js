@@ -3,14 +3,11 @@
 module.exports = function ediRoutes(app, ctx) {
   const { db, ok, err, uid, auth, requireRole, getSettings, shipmentSubs,
           mapEdiMessage, mapCarrierBooking, mapShipment, applyShipmentAccessFilter,
-          autoCompleteMilestone, logEntityEvent } = ctx;
+          autoCompleteMilestone, logEntityEvent, BOOKABLE_CARRIERS, supersedeIfCarrierChanged } = ctx;
 
   // occ_bk has canEditShipments:true on the frontend and already sees an enabled Send
   // button — this used to exclude occ_bk (a pre-existing 403-on-click gap), fixed here.
   const write = requireRole(["operator", "admin", "occ_bk"]);
-
-  // Carriers we can send a booking request to. Mirrors MAERSK_CODES in routes/system.js.
-  const BOOKABLE_CARRIERS = new Set(["MAEU", "SAFM", "MCPU"]);
 
   function broadcast(shipmentId, frame) {
     const subs = shipmentSubs.get(shipmentId);
@@ -110,11 +107,18 @@ module.exports = function ediRoutes(app, ctx) {
 
   function upsertPendingBooking(shipment, correlationId, requestedBy) {
     const now = new Date().toISOString();
-    const existing = db.prepare("SELECT * FROM carrier_bookings WHERE shipment_id=?").get(shipment.id);
+    let existing = db.prepare("SELECT * FROM carrier_bookings WHERE shipment_id=?").get(shipment.id);
+    // Any not-yet-Confirmed booking under a since-changed carrier — including one still
+    // Pending — gets auto-cancelled and archived (own BKG- id preserved) rather than silently
+    // reused here. This used to be the actual still-visible shape of the SHP-Y9E98X bug:
+    // clicking Send again just overwrote the same row's carrier in place, discarding what
+    // carrier the earlier attempt was really for.
+    existing = supersedeIfCarrierChanged(shipment, existing);
     if (existing) {
       db.prepare(`
         UPDATE carrier_bookings SET status='Pending', last_response_status='', correlation_id=?,
-          carrier_code=?, requested_at=?, requested_by=?, responded_at=NULL, updated_at=? WHERE id=?
+          carrier_code=?, requested_at=?, requested_by=?, responded_at=NULL,
+          cancelled_at=NULL, cancelled_by='', cancel_reason='', updated_at=? WHERE id=?
       `).run(correlationId, shipment.carrier_code, now, requestedBy, now, existing.id);
       return db.prepare("SELECT * FROM carrier_bookings WHERE id=?").get(existing.id);
     }
@@ -134,6 +138,15 @@ module.exports = function ediRoutes(app, ctx) {
   app.get("/api/shipments/:id/carrier-booking", auth(), (req, res) => {
     const row = db.prepare("SELECT * FROM carrier_bookings WHERE shipment_id=?").get(req.params.id);
     ok(res, row ? mapCarrierBooking(row) : null);
+  });
+
+  // Superseded booking attempts — see ensureBookingCreated (server.js) for what actually
+  // archives one. Newest-first; each entry keeps its own original BKG- id from when it was
+  // the live booking, so "which schedule/carrier this attempt was actually for" stays exact.
+  app.get("/api/shipments/:id/carrier-booking-history", auth(), (req, res) => {
+    const rows = db.prepare("SELECT * FROM carrier_booking_archive WHERE shipment_id=? ORDER BY archived_at DESC")
+      .all(req.params.id);
+    ok(res, rows.map(mapCarrierBooking));
   });
 
   // Cross-shipment list for Test Tools' Message Simulator picker — the one route in this
@@ -170,12 +183,41 @@ module.exports = function ediRoutes(app, ctx) {
 
     const now = new Date().toISOString();
     const correlationId = `EDI-${uid()}`;
+
+    // Equipment summary — TKT-0H9TSP: a real carrier can't allocate space against a
+    // booking that says nothing about what's being shipped. Grouped by size+type (the
+    // same "40HC"/"20GP" convention used everywhere else in this app) rather than listed
+    // per-container — a carrier booking request states quantities per equipment type, not
+    // individual container numbers (those aren't assigned until the carrier responds).
+    const containerRows = db.prepare(
+      "SELECT size, type, gross_weight_kg, volume_cbm FROM containers WHERE shipment_id=?"
+    ).all(shipment.id);
+    const equipmentByType = {};
+    for (const c of containerRows) {
+      const key = `${c.size}${c.type}`;
+      const entry = equipmentByType[key] || (equipmentByType[key] = { type: key, count: 0, totalWeightKg: 0, totalVolumeCbm: 0 });
+      entry.count += 1;
+      entry.totalWeightKg += c.gross_weight_kg || 0;
+      entry.totalVolumeCbm += c.volume_cbm || 0;
+    }
+
+    // Same lookup importContractRates already uses to find the rate set that priced this
+    // shipment (server.js) — reused rather than reinvented. null for SPOT/manual-contract
+    // shipments, which never get a snapshot (they were never Central-contract-priced).
+    const rateSnapshot = db.prepare(
+      "SELECT id FROM shipment_rate_snapshots WHERE shipment_id=? ORDER BY generated_at DESC LIMIT 1"
+    ).get(shipment.id);
+
     const requestPayload = {
       pol: shipment.pol, pod: shipment.pod,
       carrierCode: shipment.carrier_code,
       etd: shipment.etd || null,
       vessel: shipment.vessel || null, voyage: shipment.voyage || null,
       contractType: shipment.contract_type || null,
+      contractRef: shipment.contract_ref || null,
+      rateSnapshotId: rateSnapshot?.id || null,
+      containerCount: containerRows.length,
+      equipment: Object.values(equipmentByType),
       ...(req.body || {}),
     };
 
@@ -234,7 +276,11 @@ module.exports = function ediRoutes(app, ctx) {
     if (!shipment) return err(res, "Shipment not found", 404);
     const { bookingRef, note } = req.body || {};
 
-    const existing = db.prepare("SELECT * FROM carrier_bookings WHERE shipment_id=?").get(shipment.id);
+    let existing = db.prepare("SELECT * FROM carrier_bookings WHERE shipment_id=?").get(shipment.id);
+    // Same supersede rule as Send (upsertPendingBooking above) — any not-yet-Confirmed booking
+    // under a since-changed carrier is auto-cancelled and archived rather than resurrected as
+    // "Confirmed" under a carrier it was never actually requested/rejected/cancelled for.
+    existing = supersedeIfCarrierChanged(shipment, existing);
     if (existing && (existing.status === "Confirmed" || existing.status === "Cancelled"))
       return err(res, `Booking is already ${existing.status.toLowerCase()}`, 409);
 

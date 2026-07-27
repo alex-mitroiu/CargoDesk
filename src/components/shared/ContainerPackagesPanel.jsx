@@ -1,169 +1,104 @@
 import { useState, useEffect } from "react";
-import { T } from "../../tokens";
-import { api } from "../../api";
-import { toast } from "../../toast";
-import { useAuth } from "../../AuthContext";
+import { T, IMDG_CLASSES } from "../../tokens";
 import Btn from "../primitives/Btn";
-import { inputBase } from "../primitives/Form";
-import { IconPackage, IconPencil } from "../primitives/Icon";
+import { Inp, Sel, BtnToggle } from "../primitives/Form";
+import { AnyIcon, IconWarning } from "../primitives/Icon";
 
-// ─── Container Cargo Manifest — pallet/box sub-level breakdown (TKT-EMFIBR) ───
-// Arbitrary-depth self-referencing packages under a container (e.g. 3 pallets of
-// Product A + 2 pallets of Product B, each pallet itself built from several boxes).
-// Description + quantity only — weight/HS code stay at the container level (see
-// ticket's 2026-07-17 scoping decisions). Independent of containers.cargoDescription/
-// grossWeightKg/volumeCbm, which remain the source of truth elsewhere in the app —
-// this is a supplementary detail view, not a rollup.
+// ─── Container cargo manifest — shared tree/detail building blocks ────────────
+// NavRow and PackageDetailForm back the unified Containers + Cargo Manifest tree
+// (ShipmentContainersPage.jsx, TKT-OTKNJN) — a single tree spanning every container
+// in the shipment (root nodes) fanning out into each one's typed pack breakdown
+// (container_packages, TKT-EMFIBR / TKT-26C70U: arbitrary nesting, Pallet/Carton/
+// Box/... via the pack-type registry). Previously this file also owned a
+// single-container-only tree opened from a separate "Cargo Manifest" modal button —
+// that surface is gone now that the same tree lives inline on the unified page.
 
-const PackageForm = ({ init = {}, onSave, onCancel }) => {
+const NavRow = ({ id, icon, label, badge, dgClass, depth, selected, onClick, onToggle, hasChildren, isOpen }) => (
+  <div id={id} onClick={onClick}
+    style={{ display: "flex", alignItems: "center", gap: 4,
+      padding: `4px 8px 4px ${8 + depth * 14}px`,
+      borderRadius: 5, cursor: "pointer", userSelect: "none",
+      background: selected ? T.accent + "22" : "transparent",
+      color: selected ? T.accent : T.text,
+      fontFamily: T.body, fontSize: 12.5, fontWeight: selected ? 600 : 400,
+      borderLeft: selected ? `2px solid ${T.accent}` : "2px solid transparent" }}>
+    <span onClick={e => { if (onToggle) { e.stopPropagation(); onToggle(); } }}
+      style={{ fontSize: 9, color: T.textMuted, width: 10, flexShrink: 0, textAlign: "center" }}>
+      {hasChildren ? (isOpen ? "▾" : "▸") : ""}
+    </span>
+    <AnyIcon icon={icon} size={13} />
+    <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{label}</span>
+    {dgClass && (
+      <span title={`DG — IMO ${dgClass}`} style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 700,
+        color: "#fff", background: T.danger, borderRadius: 4, padding: "1px 5px", flexShrink: 0 }}>DG</span>
+    )}
+    {badge != null && (
+      <span style={{ fontFamily: T.mono, fontSize: 10, color: T.accent, fontWeight: 700, flexShrink: 0 }}>× {badge}</span>
+    )}
+  </div>
+);
+
+const PackageDetailForm = ({ init = {}, packTypes, isNew, canEdit, saving, onSave, onCancel, onDelete, onAddChild }) => {
+  const [packTypeId,  setPackTypeId]  = useState(init.packTypeId || "");
   const [description, setDescription] = useState(init.description || "");
   const [quantity,    setQuantity]    = useState(init.quantity != null ? String(init.quantity) : "1");
-  const [saving,      setSaving]      = useState(false);
+  // Per-item DG classification (TKT-9VAD6R) — mirrors ContainerForm's own DG section (Shipment
+  // DetailPage.jsx) so a single pallet/carton can be flagged DG independent of the container
+  // it sits in, instead of forcing the whole container to be marked DG for one DG item.
+  const [isDg,        setIsDg]        = useState(init.isDg || false);
+  const [dgClass,     setDgClass]     = useState(init.dgClass || "");
+
+  useEffect(() => {
+    setPackTypeId(init.packTypeId || "");
+    setDescription(init.description || "");
+    setQuantity(init.quantity != null ? String(init.quantity) : "1");
+    setIsDg(init.isDg || false);
+    setDgClass(init.dgClass || "");
+  }, [init.id, init.packTypeId, init.description, init.quantity, init.isDg, init.dgClass]);
+
   const qty   = parseInt(quantity, 10);
-  const valid = description.trim().length > 0 && Number.isFinite(qty) && qty >= 1;
-
-  const handleSave = async () => {
-    if (!valid) return;
-    setSaving(true);
-    try { await onSave({ description: description.trim(), quantity: qty }); }
-    finally { setSaving(false); }
-  };
+  const valid = description.trim().length > 0 && Number.isFinite(qty) && qty >= 1 && (!isDg || dgClass);
+  const typeOptions = [{ value: "", label: "— No type —" }, ...packTypes.map(t => ({ value: t.id, label: `${t.icon} ${t.label}` }))];
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: 10,
-      borderRadius: 8, border: `1px dashed ${T.accent}55`, background: T.bg }}>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 90px", gap: 8 }}>
-        <input value={description} onChange={e => setDescription(e.target.value)} autoFocus
-          placeholder="Description (e.g. Pallet — Product A)" style={{ ...inputBase, fontFamily: T.body, fontSize: 12.5 }} />
-        <input type="number" min="1" value={quantity} onChange={e => setQuantity(e.target.value)}
-          placeholder="Qty" style={{ ...inputBase, fontFamily: T.mono, fontSize: 12.5 }} />
-      </div>
-      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-        <Btn size="sm" variant="secondary" onClick={onCancel}>Cancel</Btn>
-        <Btn size="sm" disabled={!valid || saving} onClick={handleSave}>{saving ? "Saving…" : "Save"}</Btn>
-      </div>
-    </div>
-  );
-};
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <Sel id="pkgform-packtype" label="Pack Type" value={packTypeId} onChange={setPackTypeId} options={typeOptions} />
+      <Inp id="pkgform-description" label="Description" value={description} onChange={setDescription}
+        placeholder="e.g. Bottles of olive oil" hint="What's on/in this pack — the type above is the box/pallet/etc. itself" required />
+      <Inp id="pkgform-quantity" label="Quantity" value={quantity} onChange={setQuantity} type="number" required />
 
-const PackageNode = ({ pkg, allPackages, depth, canEdit, onAddChild, onEdit, onDelete, addingUnder, editingId, onSetAdding, onSetEditing }) => {
-  const children = allPackages.filter(p => p.parentId === pkg.id);
-  const isEditing = editingId === pkg.id;
-  const isAddingHere = addingUnder === pkg.id;
-
-  return (
-    <div style={{ marginLeft: depth > 0 ? 22 : 0 }}>
-      {isEditing ? (
-        <PackageForm init={pkg}
-          onSave={data => onEdit(pkg.id, data)}
-          onCancel={() => onSetEditing(null)} />
-      ) : (
-        <div id={`pkg-${pkg.id}-row`} style={{ display: "flex", alignItems: "center", gap: 10,
-          padding: "7px 10px", borderRadius: 7, background: T.bg, border: `1px solid ${T.border}`, marginBottom: 6 }}>
-          <span style={{ fontSize: 13, flexShrink: 0, display: "inline-flex", color: T.textMuted }}><IconPackage size={13} /></span>
-          <span style={{ flex: 1, fontFamily: T.body, fontSize: 12.5, color: T.text }}>{pkg.description}</span>
-          <span style={{ fontFamily: T.mono, fontSize: 12, color: T.accent, fontWeight: 700, flexShrink: 0 }}>× {pkg.quantity}</span>
-          {canEdit && (
-            <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-              <button type="button" onClick={() => onSetAdding(pkg.id)} title="Add sub-package"
-                style={{ background: "none", border: "none", cursor: "pointer", color: T.accent, fontSize: 13, padding: "0 3px" }}>＋</button>
-              <button type="button" onClick={() => onSetEditing(pkg.id)} title="Edit"
-                style={{ background: "none", border: "none", cursor: "pointer", color: T.textMuted, fontSize: 12, padding: "0 3px", display: "inline-flex", alignItems: "center" }}><IconPencil size={11} /></button>
-              <button type="button" onClick={() => onDelete(pkg.id)} title="Delete"
-                style={{ background: "none", border: "none", cursor: "pointer", color: T.textMuted, fontSize: 13, padding: "0 3px" }}
-                onMouseEnter={e => e.currentTarget.style.color = T.danger}
-                onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>×</button>
-            </div>
-          )}
+      <div style={{ background: T.bg, border: `1px solid ${isDg ? T.danger + "55" : T.border}`,
+        borderRadius: 8, padding: "10px 12px", transition: "border-color .15s" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <span style={{ fontFamily: T.body, fontSize: 10.5, color: isDg ? T.danger : T.textMuted,
+            fontWeight: 600, textTransform: "uppercase", letterSpacing: ".08em", display: "flex", alignItems: "center", gap: 4 }}>
+            <IconWarning size={11} /> Dangerous Goods
+          </span>
+          <BtnToggle selected={isDg} onClick={() => { setIsDg(v => !v); setDgClass(""); }}>{isDg ? "DG ON" : "DG OFF"}</BtnToggle>
         </div>
-      )}
-
-      {isAddingHere && (
-        <div style={{ marginLeft: 22, marginBottom: 6 }}>
-          <PackageForm onSave={data => onAddChild(pkg.id, data)} onCancel={() => onSetAdding(null)} />
-        </div>
-      )}
-
-      {children.map(child => (
-        <PackageNode key={child.id} pkg={child} allPackages={allPackages} depth={depth + 1}
-          canEdit={canEdit} onAddChild={onAddChild} onEdit={onEdit} onDelete={onDelete}
-          addingUnder={addingUnder} editingId={editingId} onSetAdding={onSetAdding} onSetEditing={onSetEditing} />
-      ))}
-    </div>
-  );
-};
-
-const ContainerPackagesPanel = ({ containerId, containerNumber }) => {
-  const { canEdit } = useAuth();
-  const [packages,    setPackages]    = useState(null); // null = loading
-  const [addingUnder, setAddingUnder] = useState(null); // null | "root" | parentId
-  const [editingId,   setEditingId]   = useState(null);
-
-  const load = () => api.containerPackages.list(containerId).then(setPackages).catch(() => setPackages([]));
-  useEffect(() => { load(); }, [containerId]);
-
-  const roots = (packages || []).filter(p => !p.parentId);
-
-  const handleAdd = async (parentId, data) => {
-    try {
-      await api.containerPackages.create(containerId, { ...data, parentId: parentId === "root" ? null : parentId });
-      setAddingUnder(null);
-      await load();
-    } catch (e) { toast.error(e.message); }
-  };
-
-  const handleEdit = async (id, data) => {
-    try {
-      await api.containerPackages.update(id, data);
-      setEditingId(null);
-      await load();
-    } catch (e) { toast.error(e.message); }
-  };
-
-  const handleDelete = async id => {
-    try {
-      await api.containerPackages.remove(id);
-      await load();
-    } catch (e) { toast.error(e.message); }
-  };
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-      <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
-        {containerNumber || containerId} · supplementary manifest detail — weight/HS code stay on the container itself
+        {isDg && (
+          <div style={{ marginTop: 10 }}>
+            <Sel id="pkgform-dgclass" label="IMDG Class" value={dgClass} onChange={setDgClass} required
+              options={[{ value: "", label: "— Select IMDG class —" }, ...IMDG_CLASSES.map(c => ({ value: c.code, label: `${c.label} — ${c.name}` }))]} />
+          </div>
+        )}
       </div>
 
-      {packages === null ? (
-        <div style={{ padding: "24px 0", textAlign: "center", fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
-          Loading packages…
-        </div>
-      ) : roots.length === 0 ? (
-        <div style={{ padding: "20px 0", textAlign: "center", fontFamily: T.body, fontSize: 12,
-          color: T.textMuted, fontStyle: "italic" }}>
-          No packing breakdown recorded yet — this container's manifest is just the single cargo description above.
-        </div>
-      ) : (
+      <div style={{ display: "flex", gap: 8, justifyContent: "space-between", alignItems: "center", paddingTop: 4 }}>
         <div>
-          {roots.map(pkg => (
-            <PackageNode key={pkg.id} pkg={pkg} allPackages={packages} depth={0}
-              canEdit={canEdit} onAddChild={handleAdd} onEdit={handleEdit} onDelete={handleDelete}
-              addingUnder={addingUnder} editingId={editingId} onSetAdding={setAddingUnder} onSetEditing={setEditingId} />
-          ))}
+          {!isNew && canEdit && <Btn id="pkgform-delete-btn" variant="danger" size="sm" onClick={onDelete}>Delete</Btn>}
         </div>
-      )}
-
-      {canEdit && (addingUnder === "root" ? (
-        <PackageForm onSave={data => handleAdd("root", data)} onCancel={() => setAddingUnder(null)} />
-      ) : (
-        <button type="button" onClick={() => setAddingUnder("root")}
-          style={{ fontFamily: T.body, fontSize: 12, color: T.accent, background: "none",
-            border: `1px dashed ${T.accent}55`, borderRadius: 6, padding: "7px 12px",
-            cursor: "pointer", width: "100%", textAlign: "center" }}>
-          ＋ Add Package
-        </button>
-      ))}
+        <div style={{ display: "flex", gap: 8 }}>
+          {!isNew && canEdit && <Btn id="pkgform-addchild-btn" variant="secondary" size="sm" onClick={onAddChild}>＋ Add Sub-Package</Btn>}
+          {isNew && <Btn id="pkgform-cancel-btn" variant="secondary" onClick={onCancel}>Cancel</Btn>}
+          <Btn id="pkgform-save-btn" disabled={!valid || saving}
+            onClick={() => valid && onSave({ description: description.trim(), quantity: qty, packTypeId: packTypeId || null, isDg, dgClass: isDg ? dgClass : "" })}>
+            {saving ? "Saving…" : isNew ? "Add Package" : "Save Changes"}
+          </Btn>
+        </div>
+      </div>
     </div>
   );
 };
 
-export default ContainerPackagesPanel;
+export { NavRow, PackageDetailForm };

@@ -1,6 +1,6 @@
 {
   "name": "cargodesk",
-  "version": "0.35.0",
+  "version": "0.47.1",
   "private": true,
   "engines": {
     "node": ">=22.5.0"
@@ -15,7 +15,7 @@
     "seed:contracts": "node scripts/seed-contracts.js",
     "checkdb": "node scripts/checkdb.js",
     "export:template": "node scripts/create-export-template.js",
-    "test": "node tests/pending-revalidation.test.js && node tests/shipment-crud.test.js && node tests/schedules.test.js && node tests/container-events.test.js && node tests/carrier-booking.test.js",
+    "test": "node tests/pending-revalidation.test.js && node tests/shipment-crud.test.js && node tests/schedules.test.js && node tests/container-events.test.js && node tests/carrier-booking.test.js && node tests/schedule-catalog.test.js && node tests/pickup-service.test.js && node tests/container-packages.test.js",
     "test:schedules": "node tests/schedules.test.js",
     "test:revalidate": "node tests/pending-revalidation.test.js",
     "test:shipment": "node tests/shipment-crud.test.js",

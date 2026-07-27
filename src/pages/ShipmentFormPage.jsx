@@ -914,7 +914,13 @@ export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChan
                 {isSelected && (
                   <div style={{ position: "absolute", inset: 0, background: T.accent + "06", pointerEvents: "none" }} />
                 )}
-                <LegRow leg={leg} onSave={saveLeg} canEdit={canEdit} widths={widths} inheritedContractType={inheritedContractType} inheritedContractRef={inheritedContractRef} showContractCols={showContractCols} locked={lockedSeaLegs && leg.legType === "SEA"} onUpdateSchedule={onUpdateSchedule} />
+                {/* A SEA leg is only "the schedule's leg" (and thus locked) once a real sailing has
+                    been applied to it (vessel/voyage populated by applySailingToLegs) — a brand new
+                    leg from "+ Add leg" also defaults to legType SEA but starts blank, and must stay
+                    editable so its type can still be changed to Pick-up/Delivery. Previously this
+                    locked on legType alone, trapping a fresh leg as uneditable the instant it was
+                    created whenever any schedule already existed on the shipment. */}
+                <LegRow leg={leg} onSave={saveLeg} canEdit={canEdit} widths={widths} inheritedContractType={inheritedContractType} inheritedContractRef={inheritedContractRef} showContractCols={showContractCols} locked={lockedSeaLegs && leg.legType === "SEA" && !!(leg.vessel || leg.voyage)} onUpdateSchedule={onUpdateSchedule} />
               </div>
             );
           })}
@@ -970,7 +976,10 @@ export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChan
       })()}
 
       {confirmRemove && (() => {
-        const isCascade = lockedSeaLegs && confirmRemove.legType === "SEA" && legs.filter(l => l.legType === "SEA").length >= 1;
+        // Matches the same "is this actually the schedule's own leg" check the lock above
+        // uses (vessel/voyage populated) — a brand new, still-blank SEA leg being removed is
+        // not a cascade, it's just deleting an unconfigured row.
+        const isCascade = lockedSeaLegs && confirmRemove.legType === "SEA" && !!(confirmRemove.vessel || confirmRemove.voyage);
         return (
           <Modal title="Remove leg?" onClose={() => setConfirmRemove(null)} width={440}>
             <p style={{ fontFamily: T.body, fontSize: 14, color: T.text, margin: "0 0 6px", lineHeight: 1.6 }}>
@@ -1442,17 +1451,10 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
             onChange={v => setF(p => ({ ...p, declaredValue: v }))}
             placeholder="0.00" type="number" min="0" step="0.01"
             hint="Customs / insured value of the goods" />
-          <div>
-            <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 4 }}>Currency</div>
-            <select value={f.declaredValueCurrency}
-              onChange={e => setF(p => ({ ...p, declaredValueCurrency: e.target.value }))}
-              style={{ fontFamily: T.mono, fontSize: 13, background: T.surface, color: T.text,
-                border: `1px solid ${T.border}`, borderRadius: 6, padding: "6px 8px",
-                width: "100%", cursor: "pointer" }}>
-              {["USD","EUR","GBP","CNY","JPY","AUD","CAD","CHF","SGD","HKD"].map(c =>
-                <option key={c} value={c}>{c}</option>)}
-            </select>
-          </div>
+          <Sel label="Currency" value={f.declaredValueCurrency}
+            onChange={v => setF(p => ({ ...p, declaredValueCurrency: v }))}
+            options={["USD","EUR","GBP","CNY","JPY","AUD","CAD","CHF","SGD","HKD"].map(c => ({ value: c, label: c }))}
+            hint="Currency the declared value is expressed in" />
         </div>
       </div>
 
@@ -1874,7 +1876,41 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
         const applySailingToLegs = (sailing) => {
           const list = draftLegs || [];
           const firstSeaIdx = list.findIndex(l => l.legType === "SEA");
-          if (firstSeaIdx === -1) return;
+          const isTSPForCreate = sailing.legs && sailing.legs.length > 1;
+
+          // No SEA leg staged yet — create it/them from the sailing instead of silently
+          // doing nothing (mirrors ShipmentSchedulesPage.jsx's equivalent fix for the same
+          // gap post-creation — nothing seeds an initial leg automatically, so a shipment
+          // that goes straight to Add Sailing used to leave Route Legs empty with no error).
+          if (firstSeaIdx === -1) {
+            const segments = isTSPForCreate ? sailing.legs : [{
+              pol: sailing.pol, pod: sailing.pod, etd: sailing.etd, eta: sailing.eta,
+              vesselName: sailing.vesselName, voyageNumber: sailing.voyageNumber,
+            }];
+            const newLegs = segments.map((leg, i) => ({
+              id:           `draft_${Date.now() + i}`,
+              legType:      "SEA",
+              movementType: "SEA",
+              movementBy:   "",
+              polLocType:   "Terminal",
+              podLocType:   "Terminal",
+              pol:          leg.pol,      polName: "",
+              pod:          leg.pod,      podName: "",
+              etd:          leg.etd,
+              eta:          leg.eta,
+              carrierCode:  sailing.carrier || "",
+              vessel:       leg.vesselName   || "",
+              vesselImo:    "",
+              voyage:       leg.voyageNumber || "",
+              contractType: "SPOT",
+              contractRef:  "",
+            }));
+            onDraftLegsChange([...list, ...newLegs]);
+            toast.success(isTSPForCreate
+              ? `TSP sailing applied — ${newLegs.length} sea legs created`
+              : "Sailing applied — SEA leg created");
+            return;
+          }
           const firstSeaLeg = list[firstSeaIdx];
           // Drop every SEA leg AFTER the first one — they belong to whatever routing was
           // there before (including a contract's own pre-populated multi-leg legs), and
@@ -1946,11 +1982,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
               await Promise.all(savedSchedules.map(s => api.schedules.remove(init.id, s.id)));
               const saved = await api.schedules.save(init.id, sailing);
               setSavedSchedules([saved]);
-              if ((draftLegs || []).some(l => l.legType === "SEA")) {
-                applySailingToLegs(sailing);
-              } else {
-                toast.success(`Sailing ${sailing.vesselName} saved`);
-              }
+              applySailingToLegs(sailing);
             } catch (e) { toast.error(e.message); }
           } else {
             setSelectedSailing(sailing);

@@ -63,6 +63,7 @@ export const api = {
     confirm: (shipmentId, data={}) => req("PATCH", `/shipments/${shipmentId}/carrier-booking/confirm`, data),
     cancel:  (shipmentId, data={}) => req("PATCH", `/shipments/${shipmentId}/carrier-booking/cancel`, data),
     listAll: (params={})           => req("GET",   `/carrier-bookings?${new URLSearchParams(params)}`),
+    history: (shipmentId)          => req("GET",   `/shipments/${shipmentId}/carrier-booking-history`),
   },
   legs: {
     list:   (shipmentId)              => req("GET",    `/shipments/${shipmentId}/legs`),
@@ -79,7 +80,7 @@ export const api = {
     shareToken: (id)  => req("POST",   `/shipments/${id}/share-token`),
   },
   containers: {
-    list:   ()        => req("GET",    "/containers"),
+    list:   (p = {})  => req("GET",    `/containers?${new URLSearchParams(p)}`),
     create: (data)    => req("POST",   "/containers", data),
     update: (id, data)=> req("PUT",    `/containers/${id}`, data),
     remove: (id)      => req("DELETE", `/containers/${id}`),
@@ -264,6 +265,12 @@ export const api = {
     update: (id, d) => req("PUT",    `/charge-code-definitions/${id}`, d),
     remove: (id)    => req("DELETE", `/charge-code-definitions/${id}`),
   },
+  packTypes: {
+    list:   ()      => req("GET",    "/pack-type-definitions"),
+    create: (d)     => req("POST",   "/pack-type-definitions", d),
+    update: (id, d) => req("PUT",    `/pack-type-definitions/${id}`, d),
+    remove: (id)    => req("DELETE", `/pack-type-definitions/${id}`),
+  },
   services: {
     list:   (shipmentId)             => req("GET",    `/shipments/${shipmentId}/services`),
     create: (shipmentId, d)          => req("POST",   `/shipments/${shipmentId}/services`, d),
@@ -346,6 +353,7 @@ export const api = {
   settings: {
     get:    ()       => req("GET", "/settings"),
     update: (data)   => req("PUT", "/settings", data),
+    updateSidebarOrder: (order) => req("PUT", "/settings/shipment-sidebar-order", { order }),
   },
   schedules: {
     search:  (p = {})         => req("GET",    `/schedules/search?${new URLSearchParams(p)}`),
@@ -354,6 +362,13 @@ export const api = {
     update:  (shipmentId, id, d) => req("PUT", `/shipments/${shipmentId}/schedules/${id}`, d),
     remove:  (shipmentId, id) => req("DELETE", `/shipments/${shipmentId}/schedules/${id}`),
     events:  (shipmentId)     => req("GET",    `/shipments/${shipmentId}/schedule-events`),
+  },
+  scheduleCatalog: {
+    list:          (p = {})          => req("GET",    `/schedules?${new URLSearchParams(p)}`),
+    create:        (d)                => req("POST",   "/schedules", d),
+    linkedShipments: (scheduleId)     => req("GET",    `/schedules/${scheduleId}/linked-shipments`),
+    link:          (scheduleId, d)    => req("POST",   `/schedules/${scheduleId}/link`, d),
+    unlink:        (scheduleId, shipmentId) => req("DELETE", `/schedules/${scheduleId}/link/${shipmentId}`),
   },
   vessels: {
     search: (q = "")          => req("GET",    `/vessels/search?q=${encodeURIComponent(q)}`),

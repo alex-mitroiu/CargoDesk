@@ -5,7 +5,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
           mapCostLine, mapService, mapMilestone, mapMilestoneTemplate,
           sanctionsMap, screenShipmentById,
           logEntityEvent, importContractRates, createRateSnapshot, generateCostLinesFromSnapshot,
-          mapRateSnapshot, syncShipmentFromLegs,
+          mapRateSnapshot, syncShipmentFromLegs, ensureBookingCreated,
           UPLOADS_DIR, fs, path } = ctx;
 
   const shipmentWrite = requireRole(["admin", "operator", "occ_bk"]);
@@ -400,7 +400,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     containerNumber: r.container_number || '',
     size: r.size, type: r.type,
     plannedDate:     r.planned_date || '',
-    sequenceOrder:   r.sequence_order ?? 0,
+    sequenceOrder:   r.sequence_order ?? 1,
     notes:           r.notes || '',
     updatedAt:       r.updated_at || null,
   });
@@ -431,7 +431,12 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       .get(req.params.containerId, req.params.shipmentId);
     if (!container) return err(res, "Container not found", 404);
 
-    const { plannedDate = '', sequenceOrder = 0, notes = '' } = req.body || {};
+    // Sequence is a display/print ordering for the physical loading/unloading/pickup/delivery
+    // plan — "0th" or negative has no real-world meaning there, so 1 is the floor regardless
+    // of what the client sends (this table is shared by exactly Loading/Unloading/Pickup/
+    // Delivery, nothing else, so no need to branch on the service's own type here).
+    const { plannedDate = '', sequenceOrder: rawSequenceOrder = 1, notes = '' } = req.body || {};
+    const sequenceOrder = Math.max(1, parseInt(rawSequenceOrder, 10) || 1);
     const now = new Date().toISOString();
     const existing = db.prepare("SELECT 1 FROM shipment_loading_plan_lines WHERE service_id=? AND container_id=?")
       .get(req.params.serviceId, req.params.containerId);
@@ -646,6 +651,22 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     isMock:        !!r.is_mock,
     savedAt:       r.saved_at,
     savedBy:       r.saved_by      || "",
+    vesselImo:     r.vessel_imo    || "",
+    atd:           r.atd           || "",
+    ata:           r.ata           || "",
+    source:        r.source        || "search",
+  });
+
+  // TEU for a shipment's linked-shipments summary row — same size='40'→2 else 1 convention
+  // used everywhere else this app computes TEU (e.g. the notification bell, SpaceConfigurationsPage).
+  const teuForShipment = shipmentId =>
+    db.prepare("SELECT COALESCE(SUM(CASE WHEN size='40' THEN 2 ELSE 1 END), 0) AS teu FROM containers WHERE shipment_id=?")
+      .get(shipmentId).teu;
+
+  const mapLinkedShipment = s => ({
+    id: s.id, pol: s.pol, pod: s.pod, etd: s.etd || "",
+    contractType: s.contract_type || "", contractRef: s.contract_ref || "",
+    status: s.status, teu: teuForShipment(s.id),
   });
 
   app.get("/api/shipments/:id/schedules", auth(), (req, res) => {
@@ -669,6 +690,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
            Number(transitDays), isMock ? 1 : 0, savedAt, savedBy);
     logEntityEvent('schedule', id, 'SAVED', null, null, null,
       JSON.stringify({ shipmentId: req.params.id, carrier, vesselName, voyageNumber, service, pol, pod, etd, eta, actor: savedBy }));
+    ensureBookingCreated(req.params.id);
     ok(res, mapSchedule({ id, shipment_id: req.params.id, carrier, vessel_name: vesselName,
       voyage_number: voyageNumber, service, pol, pod, etd, eta,
       transit_days: Number(transitDays), is_mock: isMock ? 1 : 0, saved_at: savedAt, saved_by: savedBy }), 201);
@@ -730,6 +752,144 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
         voyageNumber: existing.voyage_number, service: existing.service, pol: existing.pol, pod: existing.pod,
         actor: req.user?.name || req.user?.email || "" }));
     ok(res, { deleted: req.params.scheduleId });
+  });
+
+  // ─── Schedule catalog (shared schedules — Test Tools > Schedule Generator) ────────────
+  // A schedule created here is NOT owned by exactly one shipment the way a searched-and-saved
+  // one is — shipment_id becomes whichever shipment was linked first (satisfies the existing
+  // NOT NULL FK with no schema loosening needed), and every additional shipment is a row in
+  // schedule_shipment_links instead of a duplicate shipment_schedules row. This is what lets
+  // many shipments share one real sailing and answer "how many are on schedule SCHED-XYZ".
+
+  // Mirrors src/utils/applySailingToLegs.js's "no SEA leg yet" case (the routing-table bug
+  // fixed earlier this session) — nothing auto-seeds a shipment's first leg, so a shipment
+  // linked to a generated schedule before it has any SEA leg must get one created here,
+  // not silently skipped.
+  const pushScheduleToLeg = (shipmentId, sched) => {
+    const legs = db.prepare("SELECT * FROM shipment_legs WHERE shipment_id=? ORDER BY leg_order ASC").all(shipmentId);
+    const seaLegs = legs.filter(l => l.leg_type === 'SEA');
+    if (seaLegs.length === 0) {
+      const shipment = db.prepare("SELECT contract_type, contract_ref FROM shipments WHERE id=?").get(shipmentId);
+      const id = `LEG-${uid()}`;
+      const legOrder = (db.prepare("SELECT MAX(leg_order) AS m FROM shipment_legs WHERE shipment_id=?").get(shipmentId).m ?? -1) + 1;
+      db.prepare(`INSERT INTO shipment_legs
+        (id, shipment_id, leg_order, mot, leg_type, movement_type, pol, pod, pol_loc_type, pod_loc_type,
+         etd, eta, carrier_code, vessel, vessel_imo, voyage, movement_by, contract_type, contract_ref, created_at)
+        VALUES (?,?,?,'SEA','SEA','SEA',?,?,'Terminal','Terminal',?,?,?,?,?,?,'',?,?,?)`)
+        .run(id, shipmentId, legOrder, sched.pol, sched.pod, sched.etd || null, sched.eta || null,
+             sched.carrier, sched.vessel_name, sched.vessel_imo, sched.voyage_number,
+             shipment?.contract_type || "SPOT", shipment?.contract_ref || "", new Date().toISOString());
+      syncShipmentFromLegs(shipmentId);
+      return;
+    }
+    const first = seaLegs[0], last = seaLegs[seaLegs.length - 1];
+    db.prepare("UPDATE shipment_legs SET vessel=?, vessel_imo=?, voyage=?, carrier_code=? WHERE id=?")
+      .run(sched.vessel_name, sched.vessel_imo, sched.voyage_number, sched.carrier, first.id);
+    db.prepare("UPDATE shipment_legs SET eta=? WHERE id=?").run(sched.eta, last.id);
+    syncShipmentFromLegs(shipmentId);
+  };
+
+  app.post("/api/schedules", shipmentWrite, (req, res) => {
+    const { carrier = "", vesselImo = "", vesselName = "", voyageNumber = "", service = "",
+            pol = "", pod = "", etd = "", atd = "", eta = "", ata = "",
+            initialShipmentIds = [] } = req.body;
+    if (!Array.isArray(initialShipmentIds) || initialShipmentIds.length === 0)
+      return err(res, "At least one shipment must be linked", 400);
+    if (carrier && !db.prepare("SELECT 1 FROM carriers WHERE code=?").get(carrier))
+      return err(res, `Unknown carrier code: ${carrier}`, 400);
+    if (vesselImo && !db.prepare("SELECT 1 FROM vessels WHERE imo=?").get(vesselImo))
+      return err(res, `Unknown vessel IMO: ${vesselImo}`, 400);
+    if (pol && !db.prepare("SELECT 1 FROM port_locations WHERE unlocode=?").get(pol))
+      return err(res, `Unknown POL: ${pol}`, 400);
+    if (pod && !db.prepare("SELECT 1 FROM port_locations WHERE unlocode=?").get(pod))
+      return err(res, `Unknown POD: ${pod}`, 400);
+    for (const sid of initialShipmentIds) {
+      if (!db.prepare("SELECT id FROM shipments WHERE id=?").get(sid))
+        return err(res, `Shipment not found: ${sid}`, 404);
+    }
+
+    const [ownerId, ...extraIds] = initialShipmentIds;
+    const id = `SCHED-${uid()}`;
+    const savedAt = new Date().toISOString();
+    const savedBy = req.user?.name || req.user?.email || "";
+    db.prepare(`INSERT INTO shipment_schedules
+      (id, shipment_id, carrier, vessel_name, voyage_number, service, pol, pod, etd, eta,
+       transit_days, is_mock, saved_at, saved_by, vessel_imo, atd, ata, source)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'generated')`)
+      .run(id, ownerId, carrier, vesselName, voyageNumber, service, pol, pod, etd, eta,
+           0, 0, savedAt, savedBy, vesselImo, atd, ata);
+    logEntityEvent('schedule', id, 'SAVED', null, null, null,
+      JSON.stringify({ shipmentId: ownerId, carrier, vesselName, voyageNumber, service, pol, pod, etd, eta,
+        actor: savedBy, source: 'generated' }));
+
+    const row = db.prepare("SELECT * FROM shipment_schedules WHERE id=?").get(id);
+    pushScheduleToLeg(ownerId, row);
+    ensureBookingCreated(ownerId);
+    for (const sid of extraIds) {
+      db.prepare("INSERT INTO schedule_shipment_links (schedule_id, shipment_id, linked_at, linked_by) VALUES (?,?,?,?)")
+        .run(id, sid, savedAt, savedBy);
+      pushScheduleToLeg(sid, row);
+      ensureBookingCreated(sid);
+    }
+
+    ok(res, { ...mapSchedule(row), linkedShipmentCount: initialShipmentIds.length }, 201);
+  });
+
+  app.get("/api/schedules", auth(), (req, res) => {
+    const { source } = req.query;
+    const rows = source
+      ? db.prepare("SELECT * FROM shipment_schedules WHERE source=? ORDER BY saved_at DESC LIMIT 100").all(source)
+      : db.prepare("SELECT * FROM shipment_schedules ORDER BY saved_at DESC LIMIT 100").all();
+    const withCounts = rows.map(r => ({
+      ...mapSchedule(r),
+      linkedShipmentCount: 1 + db.prepare("SELECT COUNT(*) AS n FROM schedule_shipment_links WHERE schedule_id=?").get(r.id).n,
+    }));
+    ok(res, withCounts);
+  });
+
+  app.get("/api/schedules/:id/linked-shipments", auth(), (req, res) => {
+    const sched = db.prepare("SELECT * FROM shipment_schedules WHERE id=?").get(req.params.id);
+    if (!sched) return err(res, "Not found", 404);
+    const owner = db.prepare("SELECT * FROM shipments WHERE id=?").get(sched.shipment_id);
+    const linkedRows = db.prepare(`
+      SELECT s.* FROM schedule_shipment_links l
+      JOIN shipments s ON s.id = l.shipment_id
+      WHERE l.schedule_id=? ORDER BY l.linked_at ASC`).all(req.params.id);
+    ok(res, {
+      owner: owner ? mapLinkedShipment(owner) : null,
+      linked: linkedRows.map(mapLinkedShipment),
+    });
+  });
+
+  app.post("/api/schedules/:id/link", shipmentWrite, (req, res) => {
+    const sched = db.prepare("SELECT * FROM shipment_schedules WHERE id=?").get(req.params.id);
+    if (!sched) return err(res, "Not found", 404);
+    const { shipmentId } = req.body;
+    if (!shipmentId) return err(res, "shipmentId is required", 400);
+    if (!db.prepare("SELECT id FROM shipments WHERE id=?").get(shipmentId))
+      return err(res, "Shipment not found", 404);
+    if (sched.shipment_id === shipmentId) return err(res, "Already the owner of this schedule", 409);
+    if (db.prepare("SELECT 1 FROM schedule_shipment_links WHERE schedule_id=? AND shipment_id=?").get(req.params.id, shipmentId))
+      return err(res, "Already linked", 409);
+    const linkedAt = new Date().toISOString();
+    db.prepare("INSERT INTO schedule_shipment_links (schedule_id, shipment_id, linked_at, linked_by) VALUES (?,?,?,?)")
+      .run(req.params.id, shipmentId, linkedAt, req.user?.name || req.user?.email || "");
+    pushScheduleToLeg(shipmentId, sched);
+    ensureBookingCreated(shipmentId);
+    ok(res, { linked: shipmentId }, 201);
+  });
+
+  app.delete("/api/schedules/:id/link/:shipmentId", shipmentWrite, (req, res) => {
+    const sched = db.prepare("SELECT * FROM shipment_schedules WHERE id=?").get(req.params.id);
+    if (!sched) return err(res, "Not found", 404);
+    if (sched.shipment_id === req.params.shipmentId)
+      return err(res, "Can't unlink the owning shipment — delete the schedule instead", 400);
+    const existing = db.prepare("SELECT 1 FROM schedule_shipment_links WHERE schedule_id=? AND shipment_id=?")
+      .get(req.params.id, req.params.shipmentId);
+    if (!existing) return err(res, "Not linked", 404);
+    db.prepare("DELETE FROM schedule_shipment_links WHERE schedule_id=? AND shipment_id=?")
+      .run(req.params.id, req.params.shipmentId);
+    ok(res, { unlinked: req.params.shipmentId });
   });
 
   app.get("/api/shipments/:id/schedule-events", (req, res) => {

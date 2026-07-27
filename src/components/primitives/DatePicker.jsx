@@ -42,12 +42,48 @@ const DatePicker = ({
 
   const [open,      setOpen]      = useState(false);
   const [openUp,    setOpenUp]    = useState(false);
+  const [dropStyle, setDropStyle] = useState({});
   const triggerRef  = useRef(null);
+  const dropRef     = useRef(null);
   const [view,      setView]      = useState("days");   // "days" | "months" | "years"
   const [viewYear,  setViewYear]  = useState(init.getFullYear());
   const [viewMonth, setViewMonth] = useState(init.getMonth());
   const [yearBase,  setYearBase]  = useState(() => Math.floor(init.getFullYear() / YEARS_PER_PAGE) * YEARS_PER_PAGE);
   const ref = useRef(null);
+
+  // position: fixed off the trigger's own viewport rect — same fix PortCombobox/
+  // CarrierCombobox already use (CLAUDE.md: "always position: fixed... to escape modal
+  // overflow:auto"). DatePicker was never updated to match, so its popover used to be
+  // position:absolute (relative to the nearest positioned ancestor) — fine standing alone,
+  // but a real bug the first time one landed inside an overflow:auto/hidden container (the
+  // per-container plan table's horizontal scroller, LoadingServicePage.jsx): the popover
+  // got clipped to that container's own box instead of floating over the whole page.
+  const POPOVER_WIDTH = 272;
+  const positionPopover = () => {
+    if (!triggerRef.current) return;
+    const r = triggerRef.current.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - r.bottom;
+    const flipUp = spaceBelow < 340;
+    setOpenUp(flipUp);
+    // Fixed calendar width regardless of the trigger's own width (a narrow table-cell
+    // trigger shouldn't squeeze the day grid) — but still anchored to the trigger
+    // horizontally, right-aligning instead of left- when it would overflow the viewport.
+    const overflowsRight = r.left + POPOVER_WIDTH > window.innerWidth;
+    setDropStyle({
+      position: "fixed", zIndex: 9000,
+      ...(overflowsRight ? { right: window.innerWidth - r.right } : { left: r.left }),
+      ...(flipUp ? { bottom: window.innerHeight - r.top + 6 } : { top: r.bottom + 6 }),
+    });
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    positionPopover();
+    const update = () => positionPopover();
+    window.addEventListener("scroll", update, true);
+    window.addEventListener("resize", update);
+    return () => { window.removeEventListener("scroll", update, true); window.removeEventListener("resize", update); };
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Sync view when the date part changes externally
   useEffect(() => {
@@ -67,13 +103,8 @@ const DatePicker = ({
 
   const openPicker = () => {
     if (disabled) return;
-    if (triggerRef.current) {
-      const rect       = triggerRef.current.getBoundingClientRect();
-      const spaceBelow = window.innerHeight - rect.bottom;
-      setOpenUp(spaceBelow < 340); // flip up when less than 340px below
-    }
     setView("days");
-    setOpen(o => !o);
+    setOpen(o => !o); // positioning itself is handled by the open-triggered effect above
   };
   const close      = ()  => { setOpen(false); setView("days"); };
   const pick       = iso => {
@@ -134,8 +165,9 @@ const DatePicker = ({
   const selectYear = y => { setViewYear(y); setYearBase(Math.floor(y / YEARS_PER_PAGE) * YEARS_PER_PAGE); setView("months"); };
 
   // ── Shared styles ───────────────────────────────────────────────────────────
+  // Position (fixed, off the trigger's rect) comes from dropStyle/positionPopover above —
+  // this is just the fixed cosmetic part, width overridden by dropStyle to match the trigger.
   const popover = {
-    position: "absolute", top: "calc(100% + 6px)", left: 0, zIndex: 600,
     background: T.surface, border: `1px solid ${T.borderMid || T.border}`,
     borderRadius: 12, boxShadow: "0 20px 50px rgba(0,0,0,.7)",
     padding: "14px 12px", width: 272,
@@ -202,11 +234,7 @@ const DatePicker = ({
 
         {/* Popover */}
         {open && !disabled && (
-          <div style={{
-            ...popover,
-            top:    openUp ? "auto" : "calc(100% + 6px)",
-            bottom: openUp ? "calc(100% + 6px)" : "auto",
-          }}>
+          <div ref={dropRef} style={{ ...popover, ...dropStyle }}>
 
             {withTime && (
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12,

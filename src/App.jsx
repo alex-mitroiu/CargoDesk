@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from "react";
 import { T, applyTheme } from "./tokens";
 import { toast } from "./toast";
 import ToastContainer from "./components/primitives/ToastContainer";
@@ -31,7 +31,7 @@ import {
   IconBuilding, IconShip, IconPackage, IconMapPin, IconLink, IconRoute,
   IconFlag, IconHashtag, IconEarth, IconGovernment, IconSettings, IconChartBar, AnyIcon,
   IconReceipt, IconCoin, IconAnchor, IconSearch, IconMail, IconMailUnread, IconBaseStation,
-  IconSendPlane, IconUpload, IconDownload, IconLock,
+  IconUpload, IconDownload, IconLock,
 } from "./components/primitives/Icon";
 import TrackedDocPreviewModal from "./components/shared/TrackedDocPreviewModal";
 import ChangePasswordModal from "./components/shared/ChangePasswordModal";
@@ -48,8 +48,7 @@ import ShipmentMilestonesPage from "./pages/ShipmentMilestonesPage";
 import ShipmentAccountingCostsPage from "./pages/ShipmentAccountingCostsPage";
 import ShipmentAccountingInvoicesPage from "./pages/ShipmentAccountingInvoicesPage";
 import ShipmentAccountingGpPage from "./pages/ShipmentAccountingGpPage";
-import ShipmentCarrierBookingDetailsPage from "./pages/ShipmentCarrierBookingDetailsPage";
-import ShipmentCarrierBookingReviewPage from "./pages/ShipmentCarrierBookingReviewPage";
+import ShipmentCarrierBookingPage from "./pages/ShipmentCarrierBookingPage";
 import ShipmentHistoryPage from "./pages/ShipmentHistoryPage";
 import ShipmentHeaderBar from "./components/shared/ShipmentHeaderBar";
 import DashboardPage       from "./pages/DashboardPage";
@@ -60,7 +59,10 @@ import AppSettingsPage     from "./pages/AppSettingsPage";
 import { VERSION, COPYRIGHT_YEAR, COPYRIGHT_OWNER } from "./version";
 import LandingPage         from "./pages/LandingPage";
 import LoginPage           from "./pages/LoginPage";
-import KanbanPage          from "./pages/KanbanPage";
+// Lazy-loaded: pulls in mermaid (KanbanPage's only consumer, ~600 kB+ of the main chunk
+// between the core lib and its diagram-renderer sub-chunks) only when Integration Board
+// is actually opened, instead of on every single page load.
+const KanbanPage           = lazy(() => import("./pages/KanbanPage"));
 import TestPlansPage        from "./pages/TestPlansPage";
 import TestRunsPage         from "./pages/TestRunsPage";
 import TestCasesPage        from "./pages/TestCasesPage";
@@ -77,6 +79,7 @@ import MdmCountriesPage       from "./pages/mdm/MdmCountriesPage";
 import MdmUNLocationCodesPage  from "./pages/mdm/MdmUNLocationCodesPage";
 import MdmCommoditiesPage     from "./pages/mdm/MdmCommoditiesPage";
 import MdmChargeCodesPage     from "./pages/mdm/MdmChargeCodesPage";
+import MdmPackTypesPage       from "./pages/mdm/MdmPackTypesPage";
 import MdmCustomersPage           from "./pages/mdm/MdmCustomersPage";
 import MdmSanctionedCustomersPage from "./pages/mdm/MdmSanctionedCustomersPage";
 import MdmContractsPage        from "./pages/mdm/MdmContractsPage";
@@ -106,6 +109,8 @@ const DOC_TYPES = [
   { code: "DG01", label: "Dangerous Goods Declaration" },
   { code: "LP01", label: "Loading Plan" },
   { code: "UP01", label: "Unloading Plan" },
+  { code: "PU01", label: "Pickup Plan" },
+  { code: "DL01", label: "Delivery Plan" },
   { code: "OT",   label: "Other" },
 ];
 const DOC_TYPE_MAP   = Object.fromEntries(DOC_TYPES.map(t => [t.code, t.label]));
@@ -434,7 +439,7 @@ const buildInsuranceCertHtml = ({ shipment: sh, invNumber, invDate, notes, conta
   return _invShell(`Insurance Certificate — ${invNumber}`, "INSURANCE CERTIFICATE", invNumber, invDate, body);
 };
 
-const buildDGDeclHtml = ({ shipment: sh, invNumber, invDate, notes, containers, shipper, consignee }) => {
+const buildDGDeclHtml = ({ shipment: sh, invNumber, invDate, notes, containers, shipper, consignee, dgCompliance }) => {
   const dgCtrs = containers.filter(c => c.isDg);
   const rows = dgCtrs.length === 0
     ? `<tr><td colspan="7" style="text-align:center;color:#dc2626;padding:16px;font-weight:600">No containers flagged as DG — verify cargo details</td></tr>`
@@ -494,7 +499,14 @@ const buildDGDeclHtml = ({ shipment: sh, invNumber, invDate, notes, containers, 
       <div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px">
         <div class="party-label">Emergency Contact</div>
         <div style="font-size:11px;color:#374151;margin-top:6px;line-height:1.8">
-          24hr Emergency: ___________<br>CHEMTREC: +1 703-527-3887<br>CANUTEC: +1 613-996-6666
+          ${dgCompliance && (dgCompliance.contactName || dgCompliance.phone || dgCompliance.email || dgCompliance.address)
+            ? [
+                dgCompliance.contactName && _esc(dgCompliance.contactName),
+                dgCompliance.phone       && `Phone: ${_esc(dgCompliance.phone)}`,
+                dgCompliance.email       && `Email: ${_esc(dgCompliance.email)}`,
+                dgCompliance.address     && _esc(dgCompliance.address),
+              ].filter(Boolean).join("<br>")
+            : `24hr Emergency: ___________<br>CHEMTREC: +1 703-527-3887<br>CANUTEC: +1 613-996-6666`}
         </div>
       </div>
     </div>
@@ -590,6 +602,8 @@ const dispatchDocBuilder = (code, data) => {
     // (LoadingServicePage.jsx), which fetches and passes the real per-container lines.
     case "LP01":             return buildLoadingPlanHtml(data);
     case "UP01":             return buildLoadingPlanHtml({ ...data, planLabel: "Unloading Plan" });
+    case "PU01":             return buildLoadingPlanHtml({ ...data, planLabel: "Pickup Plan" });
+    case "DL01":             return buildLoadingPlanHtml({ ...data, planLabel: "Delivery Plan" });
     default:                 return buildGenericDocHtml(data);
   }
 };
@@ -606,11 +620,13 @@ const GenerateDocumentModal = ({ shipment, onClose, onSaved, defaultCode }) => {
     setLoading(true);
     try {
       const needsCostLines = docCode === "FR01" || docCode === "FR02";
-      const [ctrsRaw, shipper, consignee, costLines] = await Promise.all([
+      const needsDgSettings = docCode === "DG01";
+      const [ctrsRaw, shipper, consignee, costLines, orgSettings] = await Promise.all([
         api.containers.list(),
         shipment.shipperId   ? api.customers.get(shipment.shipperId).catch(() => null)   : Promise.resolve(null),
         shipment.consigneeId ? api.customers.get(shipment.consigneeId).catch(() => null) : Promise.resolve(null),
         needsCostLines ? api.costLines.list(shipment.id).then(ls => ls.filter(l => l.type === "SELL")) : Promise.resolve([]),
+        needsDgSettings ? api.settings.get().catch(() => null) : Promise.resolve(null),
       ]);
       if (needsCostLines && costLines.length === 0) {
         toast.error("At least one valid charge line needs to be present to generate an invoice.");
@@ -619,8 +635,17 @@ const GenerateDocumentModal = ({ shipment, onClose, onSaved, defaultCode }) => {
       }
       const allCtrs    = Array.isArray(ctrsRaw) ? ctrsRaw : (ctrsRaw?.results ?? []);
       const containers = allCtrs.filter(c => c.shipmentId === shipment.id);
+      // Org-wide DG compliance address (TKT-DPLQTV) — pulled onto the DG01 declaration's
+      // emergency-contact line in place of a hand-filled blank; falls back to the generic
+      // CHEMTREC/CANUTEC hotlines if the org hasn't filled its own compliance address in yet.
+      const dgCompliance = orgSettings ? {
+        contactName: orgSettings.dg_compliance_contact_name || "",
+        phone:       orgSettings.dg_compliance_phone         || "",
+        email:       orgSettings.dg_compliance_email         || "",
+        address:     orgSettings.dg_compliance_address       || "",
+      } : null;
       const html = dispatchDocBuilder(docCode, {
-        shipment, invNumber: docNum, invDate: docDate, notes, containers, shipper, consignee, costLines,
+        shipment, invNumber: docNum, invDate: docDate, notes, containers, shipper, consignee, costLines, dgCompliance,
       });
 
       // Save to shipment documents
@@ -1092,7 +1117,11 @@ const HealthModal = ({ onClose }) => {
         const timer = setTimeout(() => ctrl.abort(), 7000);
         const r     = await fetch(url, { signal: ctrl.signal, headers });
         clearTimeout(timer);
-        setResults(p => ({ ...p, [id]: { ok: r.ok, status: r.status, latency: Date.now() - t0 } }));
+        let migrations = null;
+        if (id === "server" && r.ok) {
+          try { migrations = (await r.clone().json())?.migrations || null; } catch { /* non-JSON, ignore */ }
+        }
+        setResults(p => ({ ...p, [id]: { ok: r.ok, status: r.status, latency: Date.now() - t0, migrations } }));
       } catch (e) {
         setResults(p => ({ ...p, [id]: { ok: false, error: e.name === "AbortError" ? "Timeout (7 s)" : e.message, latency: Date.now() - t0 } }));
       }
@@ -1121,6 +1150,22 @@ const HealthModal = ({ onClose }) => {
             {running ? "Running…" : "Re-check"}
           </Btn>
         </div>
+
+        {/* Startup migration failures — surfaces what used to be a silent server.js catch{} */}
+        {results.server?.migrations?.failed > 0 && (
+          <div style={{ background: `${T.danger}15`, border: `1px solid ${T.danger}44`,
+            borderRadius: 8, padding: "10px 14px" }}>
+            <div style={{ fontFamily: T.body, fontSize: 12.5, fontWeight: 700, color: T.danger,
+              marginBottom: 4 }}>
+              ⚠ {results.server.migrations.failed} startup migration{results.server.migrations.failed > 1 ? "s" : ""} failed
+            </div>
+            <div style={{ fontFamily: T.mono, fontSize: 10.5, color: T.textMuted, lineHeight: 1.6 }}>
+              {results.server.migrations.details.map((d, i) => (
+                <div key={i}>{d.error}</div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Per-category tables */}
         {cats.map(cat => (
@@ -1274,8 +1319,69 @@ const ShipmentFormSidebar = ({ shipment, mode, navigate, onContainers }) => {
 
 // ─── Shipment Detail Sidebar ──────────────────────────────────────────────────
 
-const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, currentPage = "detail" }) => {
-  const { isTradeManager } = useAuth();
+// Admin-reorderable top-level nav blocks. A block can be a single row (Overview, Cargo, ...)
+// or a parent+children group (Booking & Routing, Export/Import Services, Accounting) — only
+// the TOP-LEVEL sequence is reorderable; children stay in their existing fixed relative order
+// within their own group, keeping the drag interaction simple (11 draggable rows, not an
+// arbitrary tree) and avoiding a child ever floating out to become its own top-level item,
+// which would break the nav's structural meaning (e.g. "Cost Entry" isn't a thing outside of
+// Accounting). This sequence was set via the admin Reorder UI (SHP-JFULNY's saved order,
+// promoted to the hardcoded default) rather than the original v0.44.0 default — a fresh
+// install with no admin-saved override yet should already start from the intended order.
+const DEFAULT_SIDEBAR_ORDER = [
+  "shp-documents", "shp-overview", "shp-milestones", "shp-conditions", "shp-parties",
+  "shp-cargo", "shp-booking-routing", "shp-export-services", "shp-import-services",
+  "shp-accounting", "shp-history",
+];
+
+// Reconciles an admin-saved order (possibly stale — saved before a since-added/removed nav
+// block) against the current default: keeps only ids that still exist today, in the saved
+// sequence, then appends any current id missing from the saved list (preserving ITS default
+// relative position) — so a newly-introduced block always appears rather than silently
+// vanishing just because it didn't exist yet when the order was last saved.
+const reconcileSidebarOrder = stored => {
+  const valid = stored.filter(id => DEFAULT_SIDEBAR_ORDER.includes(id));
+  const missing = DEFAULT_SIDEBAR_ORDER.filter(id => !valid.includes(id));
+  return [...valid, ...missing];
+};
+
+const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, currentPage = "detail",
+  appSettings = {}, onSidebarOrderSaved }) => {
+  const { isTradeManager, isAdmin } = useAuth();
+
+  // Admin-only sidebar reorder mode — see DEFAULT_SIDEBAR_ORDER/reconcileSidebarOrder above.
+  // draftOrder is only ever used while actively reordering; the live tree below always
+  // renders from the committed effectiveOrder (derived from appSettings), never draftOrder.
+  const [reorderMode, setReorderMode] = useState(false);
+  const [draftOrder,  setDraftOrder]  = useState([]);
+  const [dragIdx,     setDragIdx]     = useState(null);
+  const [dragOverIdx, setDragOverIdx] = useState(null);
+  const [savingOrder, setSavingOrder] = useState(false);
+
+  let storedOrder = [];
+  try { storedOrder = JSON.parse(appSettings.shipment_sidebar_order || "[]"); } catch { storedOrder = []; }
+  const effectiveOrder = reconcileSidebarOrder(Array.isArray(storedOrder) ? storedOrder : []);
+
+  const startReorder = () => { setDraftOrder(effectiveOrder); setReorderMode(true); };
+  const cancelReorder = () => { setReorderMode(false); setDragIdx(null); setDragOverIdx(null); };
+  const handleReorderDrop = () => {
+    if (dragIdx === null || dragOverIdx === null || dragIdx === dragOverIdx) { setDragIdx(null); setDragOverIdx(null); return; }
+    const reordered = [...draftOrder];
+    const [moved] = reordered.splice(dragIdx, 1);
+    reordered.splice(dragOverIdx, 0, moved);
+    setDraftOrder(reordered);
+    setDragIdx(null); setDragOverIdx(null);
+  };
+  const saveOrder = async () => {
+    setSavingOrder(true);
+    try {
+      await api.settings.updateSidebarOrder(draftOrder);
+      onSidebarOrderSaved?.(draftOrder);
+      toast.success("Sidebar order saved — applies to every user");
+      setReorderMode(false);
+    } catch (e) { toast.error(e.message || "Failed to save sidebar order"); }
+    setSavingOrder(false);
+  };
 
   // Self-fetches shipment_services (Epic TKT-TBS7QD) purely to decide which Export/Import
   // Services nav rows are visible — separate from ServicesPanel's own copy on Overview
@@ -1296,6 +1402,22 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
 
   const servicesLoading = services === null;
 
+  // Self-fetches the current booking status purely for the sidebar badge below — same
+  // "fetch once per shipment, no WS subscription" idiom already used for the Tickets
+  // badge count (no live-push need for a badge that's just a hint to go look, and this
+  // keeps the sidebar from taking on a WS dependency it doesn't otherwise have).
+  const [bookingStatus, setBookingStatus] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    api.carrierBooking.get(shipment.id)
+      .then(b => !cancelled && setBookingStatus(b?.status || null))
+      .catch(() => !cancelled && setBookingStatus(null));
+    return () => { cancelled = true; };
+  }, [shipment.id, currentPage]);
+  const bookingBadge = bookingStatus === "Pending" ? { text: "Pending", color: T.accent }
+    : bookingStatus === "Rejected" ? { text: "Rejected", color: T.danger }
+    : null;
+
   // One nav row per distinct, non-cancelled ordered type per side, in canonical
   // SERVICE_TYPES order (not order-ordered) for predictable placement.
   const orderedTypesFor = (side) => {
@@ -1305,6 +1427,12 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
   };
   const exportTypes = orderedTypesFor("Export");
   const importTypes = orderedTypesFor("Import");
+  // Delivery stays grouped under "Booking & Routing" below (excluded here so that group's own
+  // visibility reflects only the ancillary types it actually still renders) — Pickup moved
+  // back into Export Services as a regular child, per direct request, so it's no longer
+  // filtered out of exportTypes here.
+  const genericExportTypes = exportTypes;
+  const genericImportTypes = importTypes.filter(t => t !== "Delivery");
 
   const goBack = () => {
     if (window.opener) window.close();
@@ -1332,16 +1460,20 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
     "shp-carrier-booking":         "shipment-carrier-booking-details", // parent row → first child
     "shp-carrier-booking-details": "shipment-carrier-booking-details",
     "shp-carrier-booking-review":  "shipment-carrier-booking-review",
-    // Export/Import Services parent rows route to their side's first ordered type
-    // (canonical SERVICE_TYPES order) — same "parent row → first child" idiom as
-    // Accounting above. Children route to their own dedicated/WIP page directly.
-    ...(exportTypes.length > 0 ? { "shp-export-services": servicePageKey("Export", exportTypes[0]) } : {}),
-    ...(importTypes.length > 0 ? { "shp-import-services": servicePageKey("Import", importTypes[0]) } : {}),
+    // "Booking & Routing" groups the booking pipeline (Schedules → Carrier Booking →
+    // Pickup/Delivery) under one parent — same "parent row → first child" idiom.
+    "shp-booking-routing": "shipment-schedules",
+    // Export/Import Services parent rows route to their side's first ordered *generic*
+    // type (canonical SERVICE_TYPES order) — same "parent row → first child" idiom as
+    // Accounting above. Children route to their own dedicated/WIP page directly. Pickup/
+    // Delivery are excluded here (they route via "Booking & Routing" instead) but still
+    // need their own page-key routes, so the full exportTypes/importTypes feed those below.
+    ...(genericExportTypes.length > 0 ? { "shp-export-services": servicePageKey("Export", genericExportTypes[0]) } : {}),
+    ...(genericImportTypes.length > 0 ? { "shp-import-services": servicePageKey("Import", genericImportTypes[0]) } : {}),
     ...Object.fromEntries(exportTypes.map(t => [servicePageKey("Export", t), servicePageKey("Export", t)])),
     ...Object.fromEntries(importTypes.map(t => [servicePageKey("Import", t), servicePageKey("Import", t)])),
   };
   const ACCOUNTING_ROUTES = ["shipment-accounting-invoices", "shipment-accounting-costs", "shipment-accounting-gp"];
-  const CARRIER_BOOKING_ROUTES = ["shipment-carrier-booking-details", "shipment-carrier-booking-review"];
   const handleSection = (id) => {
     const route = PROMOTED_ROUTES[id];
     if (route) {
@@ -1365,27 +1497,48 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
   const sc = STATUS_COLORS[shipment.status] || STATUS_COLORS.DRAFT;
 
   // ctrCount (the only per-render dynamic value among these) is spliced onto the Cargo
-  // entry here rather than baked into the static shared config.
+  // entry here rather than baked into the static shared config. "shp-schedules" is filtered
+  // out of the flat list — it's still a real entry in SHIPMENT_SECTIONS (its hash/page-key/
+  // label wiring is unchanged) but now renders as the first child of "Booking & Routing"
+  // below instead of as its own top-level row.
   const sections = [
     { id: "shp-overview", icon: "◎", label: "Overview" },
-    ...SHIPMENT_SECTIONS.map(s => s.id === "shp-cargo" ? { ...s, badge: ctrCount || null } : s),
+    ...SHIPMENT_SECTIONS.filter(s => s.id !== "shp-schedules")
+      .map(s => s.id === "shp-cargo" ? { ...s, badge: ctrCount || null } : s),
   ];
-  // Export/Import Services (dynamic, per-shipment — see above) render between Cargo and
-  // Milestones & Events: services are ordered against containers that must already exist.
-  const cargoIdx = sections.findIndex(s => s.id === "shp-cargo");
-  const sectionsBeforeServices = sections.slice(0, cargoIdx + 1);
-  const sectionsAfterServices  = sections.slice(cargoIdx + 1);
-  const sectionsAfterAccounting = SHIPMENT_SECTIONS_AFTER_ACCOUNTING;
+  const schedulesSection = SHIPMENT_SECTIONS.find(s => s.id === "shp-schedules");
+  // Groups the booking pipeline — what & when (Schedules) → booked with the carrier
+  // (Carrier Booking) → physically arranged (Pickup/Delivery, once ordered) — under one
+  // parent, same NavRow parent+children idiom as Accounting just below. Schedules/Carrier
+  // Booking are always-visible children; Pickup/Delivery only appear once actually ordered
+  // (mirrors Export/Import Services' own "only show if ordered" rule).
+  const bookingRoutingChildren = [
+    { id: schedulesSection.id, icon: schedulesSection.icon, label: schedulesSection.label },
+    { id: "shp-carrier-booking", icon: IconBaseStation, label: "Carrier Booking",
+      badge: bookingBadge?.text, badgeColor: bookingBadge?.color },
+    ...(importTypes.includes("Delivery")
+      ? [{ id: servicePageKey("Import", "Delivery"), icon: IconMapPin, label: "Delivery Service" }] : []),
+  ];
+  const BOOKING_ROUTING_ROUTES = [
+    "shipment-schedules", "shipment-carrier-booking-details", "shipment-carrier-booking-review",
+    ...(importTypes.includes("Delivery") ? [servicePageKey("Import", "Delivery")] : []),
+  ];
   const accountingChildren = [
     { id: "shp-accounting-invoices", icon: IconReceipt, label: "Invoice Entry" },
     { id: "shp-accounting-costs",    icon: IconCoin, label: "Cost Entry" },
     { id: "shp-accounting-gp",       icon: IconChartBar, label: "GP Overview" },
   ];
-  const bookingChildren = [
-    { id: "shp-carrier-booking-details", icon: IconSendPlane, label: "Details" },
-    { id: "shp-carrier-booking-review",  icon: IconSearch,    label: "Review" },
-  ];
-
+  // Lookup for the 6 top-level blocks that are single flat rows sourced from `sections`
+  // (Overview, Conditions, Parties, Cargo, Milestones, Documents, History) — reordering
+  // renders from this plus TOP_LEVEL_META below (the 5 blocks that are groups or otherwise
+  // not a plain `sections` entry: Booking & Routing, Export/Import Services, Accounting).
+  const sectionById = Object.fromEntries([...sections, ...SHIPMENT_SECTIONS_AFTER_ACCOUNTING].map(s => [s.id, s]));
+  const TOP_LEVEL_META = {
+    "shp-booking-routing":   { icon: IconRoute,    label: "Booking & Routing" },
+    "shp-export-services":   { icon: IconUpload,   label: "Export Services" },
+    "shp-import-services":   { icon: IconDownload, label: "Import Services" },
+    "shp-accounting":        { icon: "◈",          label: "Accounting" },
+  };
   return (
     <aside style={{ width: 240, height: "100vh", position: "sticky", top: 0,
       background: T.surface, borderRight: `1px solid ${T.border}`,
@@ -1456,23 +1609,68 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
 
       {/* Section nav — Explorer-tree pattern, same visual language as TestCasesPage's folder tree */}
       <nav style={{ padding: "14px 12px", flex: 1, overflowY: "auto" }}>
-        <div style={{ fontFamily: T.mono, fontSize: 9.5, color: T.border, fontWeight: 700,
-          textTransform: "uppercase", letterSpacing: ".12em", padding: "0 12px", marginBottom: 8 }}>
-          Explorer
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 12px", marginBottom: 8 }}>
+          <div style={{ fontFamily: T.mono, fontSize: 9.5, color: T.border, fontWeight: 700,
+            textTransform: "uppercase", letterSpacing: ".12em" }}>
+            Explorer
+          </div>
+          {/* Admin-only — sets the sidebar order every user sees, not just this admin's own
+              view. See DEFAULT_SIDEBAR_ORDER/reconcileSidebarOrder above. */}
+          {isAdmin && !reorderMode && (
+            <button onClick={startReorder} title="Reorder the sidebar for all users"
+              style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 4,
+                color: T.textMuted, fontFamily: T.mono, fontSize: 9.5, fontWeight: 700,
+                textTransform: "uppercase", letterSpacing: ".04em", padding: "2px 7px", cursor: "pointer" }}>
+              ⇅ Reorder
+            </button>
+          )}
         </div>
-        {/* Root node — the shipment in focus */}
+        {reorderMode && (
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, fontStyle: "italic",
+              padding: "0 12px 8px" }}>
+              Drag rows to set the order every user's sidebar will use.
+            </div>
+            {draftOrder.map((id, idx) => {
+              const meta = TOP_LEVEL_META[id] || { icon: sectionById[id]?.icon, label: sectionById[id]?.label };
+              if (!meta.label) return null;
+              return (
+                <div key={id} draggable onDragStart={() => setDragIdx(idx)} onDragEnd={handleReorderDrop}
+                  onDragOver={e => { e.preventDefault(); setDragOverIdx(idx); }}
+                  style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px",
+                    borderRadius: 6, marginBottom: 3, cursor: "grab",
+                    background: dragOverIdx === idx ? `${T.accent}12` : T.bg,
+                    border: `1px solid ${dragOverIdx === idx ? T.accent + "55" : T.border}` }}>
+                  <span style={{ color: T.border, fontSize: 13 }}>⠿</span>
+                  <span style={{ width: 16, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                    <AnyIcon icon={meta.icon} size={13} />
+                  </span>
+                  <span style={{ fontFamily: T.body, fontSize: 13, color: T.text }}>{meta.label}</span>
+                </div>
+              );
+            })}
+            <div style={{ display: "flex", gap: 8, marginTop: 10, padding: "0 4px" }}>
+              <Btn size="sm" onClick={saveOrder} disabled={savingOrder}>{savingOrder ? "Saving…" : "Save Order"}</Btn>
+              <Btn size="sm" variant="secondary" onClick={cancelReorder} disabled={savingOrder}>Cancel</Btn>
+            </div>
+          </div>
+        )}
+        {/* Root node — the shipment in focus. Hidden along with the live tree while
+            reordering — the draft list above is the only thing being edited right now. */}
+        {!reorderMode && (
         <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px",
           fontFamily: T.body, fontSize: 12, fontWeight: 700, color: T.textMuted }}>
           <span style={{ fontSize: 11, width: 10, textAlign: "center" }}>▾</span>
           <span style={{ fontSize: 13 }}>🚢</span>
           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{shipment.id}</span>
         </div>
+        )}
         {/* NavRow — depth-aware row renderer, same visual/indentation pattern as
             TestCasesPage.jsx's NavRow/NavFolderNode. Accounting is the only nested
             entry today (a fixed, always-expanded 3-child subtree — no collapse state
             needed for a subtree this small; more restructuring planned later). */}
-        {(() => {
-          const NavRow = ({ id, icon, label, badge, depth = 0, selected, promoted, onClick }) => (
+        {!reorderMode && (() => {
+          const NavRow = ({ id, icon, label, badge, badgeColor = T.accent, depth = 0, selected, promoted, onClick }) => (
             <div key={id} onClick={onClick}
               style={{
                 display: "flex", alignItems: "center", justifyContent: "space-between",
@@ -1492,8 +1690,8 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
                 {promoted && <span style={{ fontSize: 9, color: T.border }}>↗</span>}
               </span>
               {badge != null && (
-                <span style={{ fontFamily: T.mono, fontSize: 11, background: T.accent + "22",
-                  color: T.accent, borderRadius: 10, padding: "1px 7px", fontWeight: 700, flexShrink: 0 }}>
+                <span style={{ fontFamily: T.mono, fontSize: 11, background: badgeColor + "22",
+                  color: badgeColor, borderRadius: 10, padding: "1px 7px", fontWeight: 700, flexShrink: 0 }}>
                   {badge}
                 </span>
               )}
@@ -1529,52 +1727,61 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
             </>
           );
 
-          return (
-            <>
-              {sectionsBeforeServices.map(renderSection)}
-              {servicesLoading ? (
-                <div style={{ display: "flex", alignItems: "center", gap: 8,
-                  padding: "5px 8px 5px 32px", marginBottom: 1 }}>
-                  <Spinner size="sm" />
-                  <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, fontStyle: "italic" }}>
-                    Loading services…
-                  </span>
-                </div>
-              ) : (
-                <>
-                  {renderServiceGroup("Export", exportTypes, IconUpload)}
-                  {renderServiceGroup("Import", importTypes, IconDownload)}
-                </>
-              )}
-              {sectionsAfterServices.map(renderSection)}
-              {/* Unconditional — visible to anyone who can view the shipment, matching the
-                  old EDI drawer's own zero-role-gate visibility (not Accounting's finance
-                  restriction just below, which is unrelated). */}
-              <NavRow id="shp-carrier-booking" icon={IconBaseStation} label="Carrier Booking" depth={0}
-                selected={CARRIER_BOOKING_ROUTES.includes(currentPage)} promoted
-                onClick={() => handleSection("shp-carrier-booking")} />
-              {bookingChildren.map(({ id, icon, label }) => (
-                <NavRow key={id} id={id} icon={icon} label={label} depth={1}
-                  selected={currentPage === PROMOTED_ROUTES[id]} promoted
-                  onClick={() => handleSection(id)} />
-              ))}
-              {/* Shipment cost lines are hidden from trade_manager entirely — not just the
-                  Finance/Margin dashboard's canViewFinance gate, per the role spec. */}
-              {!isTradeManager && (
-                <>
-                  <NavRow id="shp-accounting" icon="◈" label="Accounting" depth={0}
-                    selected={ACCOUNTING_ROUTES.includes(currentPage)} promoted
-                    onClick={() => handleSection("shp-accounting")} />
-                  {accountingChildren.map(({ id, icon, label }) => (
-                    <NavRow key={id} id={id} icon={icon} label={label} depth={1}
-                      selected={currentPage === PROMOTED_ROUTES[id]} promoted
-                      onClick={() => handleSection(id)} />
-                  ))}
-                </>
-              )}
-              {sectionsAfterAccounting.map(renderSection)}
-            </>
-          );
+          // One render function per admin-reorderable top-level block (DEFAULT_SIDEBAR_ORDER)
+          // — the sequence they're called in is now driven entirely by effectiveOrder, not a
+          // hardcoded slice-and-splice of `sections`. A block renders null when it has nothing
+          // to show right now (Export/Import Services with nothing ordered, Accounting for a
+          // trade manager) — same conditional visibility as before, just relocated here.
+          const blockRenderers = {
+            "shp-overview":   () => renderSection(sectionById["shp-overview"]),
+            "shp-conditions": () => renderSection(sectionById["shp-conditions"]),
+            "shp-parties":    () => renderSection(sectionById["shp-parties"]),
+            "shp-cargo":      () => renderSection(sectionById["shp-cargo"]),
+            "shp-milestones": () => renderSection(sectionById["shp-milestones"]),
+            "shp-documents":  () => renderSection(sectionById["shp-documents"]),
+            "shp-history":    () => renderSection(sectionById["shp-history"]),
+            // "Booking & Routing" — Schedules, Carrier Booking, and Pickup/Delivery (once
+            // ordered) grouped under one parent. Unconditional/no role gate, matching the old
+            // standalone Carrier Booking row's own zero-gate visibility (not Accounting's
+            // finance restriction below, which is unrelated).
+            "shp-booking-routing": () => (
+              <div key="shp-booking-routing">
+                <NavRow id="shp-booking-routing" icon={IconRoute} label="Booking & Routing" depth={0}
+                  selected={BOOKING_ROUTING_ROUTES.includes(currentPage)} promoted
+                  onClick={() => handleSection("shp-booking-routing")} />
+                {bookingRoutingChildren.map(({ id, icon, label, badge, badgeColor }) => (
+                  <NavRow key={id} id={id} icon={icon} label={label} depth={1} badge={badge} badgeColor={badgeColor}
+                    selected={currentPage === PROMOTED_ROUTES[id]} promoted
+                    onClick={() => handleSection(id)} />
+                ))}
+              </div>
+            ),
+            "shp-export-services": () => servicesLoading ? (
+              <div key="shp-export-services" style={{ display: "flex", alignItems: "center", gap: 8,
+                padding: "5px 8px 5px 32px", marginBottom: 1 }}>
+                <Spinner size="sm" />
+                <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, fontStyle: "italic" }}>Loading services…</span>
+              </div>
+            ) : <div key="shp-export-services">{renderServiceGroup("Export", genericExportTypes, IconUpload)}</div>,
+            "shp-import-services": () => servicesLoading ? null
+              : <div key="shp-import-services">{renderServiceGroup("Import", genericImportTypes, IconDownload)}</div>,
+            // Shipment cost lines are hidden from trade_manager entirely — not just the
+            // Finance/Margin dashboard's canViewFinance gate, per the role spec.
+            "shp-accounting": () => isTradeManager ? null : (
+              <div key="shp-accounting">
+                <NavRow id="shp-accounting" icon="◈" label="Accounting" depth={0}
+                  selected={ACCOUNTING_ROUTES.includes(currentPage)} promoted
+                  onClick={() => handleSection("shp-accounting")} />
+                {accountingChildren.map(({ id, icon, label }) => (
+                  <NavRow key={id} id={id} icon={icon} label={label} depth={1}
+                    selected={currentPage === PROMOTED_ROUTES[id]} promoted
+                    onClick={() => handleSection(id)} />
+                ))}
+              </div>
+            ),
+          };
+
+          return <>{effectiveOrder.map(id => blockRenderers[id]?.())}</>;
         })()}
       </nav>
     </aside>
@@ -1999,7 +2206,7 @@ function App() {
   }, [page, selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // kanban is top-level, not MDM
-  const MDM_PAGES = ["mdm-carriers", "mdm-ports", "mdm-linked", "mdm-vessels", "mdm-commodities", "mdm-tradelanes", "mdm-countries", "mdm-unlocodes", "mdm-customers", "mdm-sanctioned-customers", "mdm-contracts", "mdm-charge-codes"];
+  const MDM_PAGES = ["mdm-carriers", "mdm-ports", "mdm-linked", "mdm-vessels", "mdm-commodities", "mdm-tradelanes", "mdm-countries", "mdm-unlocodes", "mdm-customers", "mdm-sanctioned-customers", "mdm-contracts", "mdm-charge-codes", "mdm-pack-types"];
   const ORG_PAGES = ["org-country", "org-branch", "org-office"];
   const ALL_PAGES = [...MDM_PAGES, ...ORG_PAGES, "manual"];
   const isMdmActive = MDM_PAGES.includes(page);
@@ -2085,6 +2292,7 @@ function App() {
     "mdm-sanctioned-customers":  "Master Data — Sanctioned Customers",
     "mdm-contracts":    "Master Data — Contracts",
     "mdm-charge-codes": "Master Data — Automated Charge Codes",
+    "mdm-pack-types": "Master Data — Pack Types",
     "org-country":      "Organization — Countries",
     "org-branch":       "Organization — Branches",
     "org-office":       "Organization — Offices",
@@ -2100,8 +2308,10 @@ function App() {
     "shipment-accounting-invoices":"Invoice Entry",
     "shipment-accounting-costs":   "Cost Entry",
     "shipment-accounting-gp":      "GP Overview",
-    "shipment-carrier-booking-details": "Details",
-    "shipment-carrier-booking-review":  "Review",
+    // Both keys share one label — Details/Review are in-page tabs on a single page,
+    // not two distinct pages, so the breadcrumb/header shouldn't change between them.
+    "shipment-carrier-booking-details": "Carrier Booking",
+    "shipment-carrier-booking-review":  "Carrier Booking",
     ...SERVICE_SUBPAGE_LABELS,
   };
 
@@ -2155,6 +2365,9 @@ function App() {
 
     const BELL_DISMISS_KEY = "cargodesk_dismissed_bell";
     const todayStr = new Date().toISOString().split('T')[0];
+    // Fixed rather than a configurable setting — same "surface it at all" scoping as the
+    // rest of this pass; promote to an app_setting later if the fixed value needs tuning.
+    const STALE_BOOKING_HOURS = 48;
 
     const [dismissedBell, setDismissedBell] = useState(() => {
       try {
@@ -2169,8 +2382,9 @@ function App() {
       setDismissedBell(next);
       localStorage.setItem(BELL_DISMISS_KEY, JSON.stringify(next));
       // Close panel if this was the last visible item and no system messages remain
-      const remainingBell = visibleBellItems.filter(a => a.id !== id);
-      if (remainingBell.length === 0 && activeSysMsgs.length === 0) setBellOpen(false);
+      const remainingBell        = visibleBellItems.filter(a => a.id !== id);
+      const remainingBookingBell = visibleBookingBellItems.filter(b => b.id !== id);
+      if (remainingBell.length === 0 && remainingBookingBell.length === 0 && activeSysMsgs.length === 0) setBellOpen(false);
     };
 
     // Active allocations above their alert threshold, sorted worst-first (max 5 shown)
@@ -2192,7 +2406,31 @@ function App() {
         .slice(0, 5);
     })();
     const visibleBellItems = bellItems.filter(a => !dismissedBell[a.id]);
-    const bellCount = visibleBellItems.length + activeSysMsgs.length;
+
+    // Carrier bookings needing attention: Rejected (auto-advanced, needs a manual
+    // Confirm/Cancel decision) or Pending with no carrier response after STALE_BOOKING_HOURS.
+    const bookingBellItems = (() => {
+      if (!ready) return [];
+      const now = Date.now();
+      return shipments
+        .filter(s => {
+          if (s.bookingStatus === "Rejected") return true;
+          if (s.bookingStatus === "Pending" && s.bookingRequestedAt) {
+            return (now - new Date(s.bookingRequestedAt).getTime()) / 36e5 >= STALE_BOOKING_HOURS;
+          }
+          return false;
+        })
+        .map(s => ({
+          id:       s.id,
+          rejected: s.bookingStatus === "Rejected",
+          hours:    s.bookingRequestedAt ? Math.floor((now - new Date(s.bookingRequestedAt).getTime()) / 36e5) : null,
+        }))
+        .sort((a, b) => (b.rejected - a.rejected) || ((b.hours || 0) - (a.hours || 0)))
+        .slice(0, 5);
+    })();
+    const visibleBookingBellItems = bookingBellItems.filter(b => !dismissedBell[b.id]);
+
+    const bellCount = visibleBellItems.length + visibleBookingBellItems.length + activeSysMsgs.length;
 
     useEffect(() => {
       const h = e => {
@@ -2344,6 +2582,64 @@ function App() {
                   );
                 })()}
 
+                {/* ── Carrier bookings section ── */}
+                {visibleBookingBellItems.length > 0 && (
+                  <>
+                    <div style={{ padding: "10px 16px 8px",
+                      borderBottom: `1px solid ${T.border}`,
+                      display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <span style={{ fontFamily: T.body, fontSize: 12, fontWeight: 700, color: T.danger }}>
+                        ⚓ Carrier Bookings
+                      </span>
+                      <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted }}>
+                        {visibleBookingBellItems.length} shipment{visibleBookingBellItems.length > 1 ? "s" : ""}
+                      </span>
+                    </div>
+                    {visibleBookingBellItems.map(b => (
+                      <div key={b.id} style={{
+                          display: "flex", alignItems: "center",
+                          borderBottom: `1px solid ${T.border}22`,
+                        }}>
+                        <button type="button"
+                          onClick={() => { navigate("shipment-carrier-booking-review", b.id); setBellOpen(false); }}
+                          style={{
+                            display: "flex", alignItems: "center", justifyContent: "space-between",
+                            flex: 1, padding: "10px 12px 10px 16px", background: "none", border: "none",
+                            cursor: "pointer", textAlign: "left",
+                          }}
+                          onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
+                          onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                          <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.accent }}>
+                            {b.id}
+                          </span>
+                          <span style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600,
+                            color: b.rejected ? T.danger : T.warning }}>
+                            {b.rejected ? "Rejected" : `Pending ${b.hours}h`}
+                          </span>
+                        </button>
+                        <button type="button"
+                          onClick={() => dismissBellItem(b.id)}
+                          title="Dismiss until tomorrow"
+                          style={{ background: "none", border: "none", cursor: "pointer",
+                            color: T.textMuted, fontSize: 14, padding: "10px 12px", lineHeight: 1, flexShrink: 0 }}
+                          onMouseEnter={e => e.currentTarget.style.color = T.text}
+                          onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                    <button type="button"
+                      onClick={() => { navigate("shipments"); setBellOpen(false); }}
+                      style={{ width: "100%", padding: "9px 16px", background: "none",
+                        border: "none", cursor: "pointer",
+                        fontFamily: T.body, fontSize: 12, color: T.textMuted, textAlign: "center" }}
+                      onMouseEnter={e => { e.currentTarget.style.background = T.surfaceHover; e.currentTarget.style.color = T.text; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = T.textMuted; }}>
+                      View all in Shipments →
+                    </button>
+                  </>
+                )}
+
                 {/* ── Allocation threshold section ── */}
                 {visibleBellItems.length > 0 && (
                   <>
@@ -2419,6 +2715,20 @@ function App() {
             onMouseEnter={e => e.currentTarget.style.opacity = 1}
             onMouseLeave={e => e.currentTarget.style.opacity = page === "home" ? 1 : 0.55}>
             🏠
+          </button>
+
+          {/* Test Tools shortcut — same IconBaseStation used for its sidebar entry under
+              Integration Board, so it reads as the same destination from a second entry
+              point rather than a new icon language. Direct nav, no dropdown — nothing about
+              "tools like: schedule generator" implies more destinations, just more sections
+              inside the one Test Tools page. */}
+          <button type="button" onClick={() => navigate("test-tools")} title="Test Tools"
+            style={{ background: "none", border: "none", cursor: "pointer",
+              padding: "4px 6px", lineHeight: 1, display: "flex", alignItems: "center",
+              opacity: page === "test-tools" ? 1 : 0.55, transition: "opacity .15s" }}
+            onMouseEnter={e => e.currentTarget.style.opacity = 1}
+            onMouseLeave={e => e.currentTarget.style.opacity = page === "test-tools" ? 1 : 0.55}>
+            <IconBaseStation size={16} color={T.text} />
           </button>
 
           {/* Office switcher — shown when user has multiple offices or allOffices */}
@@ -2582,6 +2892,8 @@ function App() {
           navigate={navigate}
           onSectionClick={setDetailAction}
           currentPage={page}
+          appSettings={appSettings}
+          onSidebarOrderSaved={order => setAppSettings(s => ({ ...s, shipment_sidebar_order: JSON.stringify(order) }))}
         />
       ) : page === "shipment-new" ? (
         <ShipmentFormSidebar mode="new" shipment={null} navigate={navigate} onContainers={() => setNewCtrSignal(p => p + 1)} />
@@ -2677,6 +2989,7 @@ function App() {
                   <NavBtn pageKey="mdm-sanctioned-customers" icon={IconCircle} iconColor="#ef4444" label="Sanctioned Customers" subIndent />
                   <NavBtn pageKey="mdm-contracts"   icon={IconClipboard} label="Contracts"       indent />
                   <NavBtn pageKey="mdm-charge-codes" icon={IconTag} label="Charge Codes"    indent />
+                  <NavBtn pageKey="mdm-pack-types" icon={IconPackage} label="Pack Types"    indent />
                   <NavBtn pageKey="mdm-carriers" icon={IconBuilding} label="Carriers"       indent />
                   <NavBtn pageKey="mdm-vessels"      icon={IconShip} label="Vessels"         indent />
                   <NavBtn pageKey="mdm-commodities" icon={IconPackage} label="Commodities"     indent />
@@ -2950,15 +3263,11 @@ function App() {
             onBack={() => navigate("detail", selectedShipment.id)} />
         )}
 
-        {page === "shipment-carrier-booking-details" && selectedShipment && (
-          <ShipmentCarrierBookingDetailsPage
+        {(page === "shipment-carrier-booking-details" || page === "shipment-carrier-booking-review") && selectedShipment && (
+          <ShipmentCarrierBookingPage
             shipment={selectedShipment}
-            onBack={() => navigate("detail", selectedShipment.id)} />
-        )}
-
-        {page === "shipment-carrier-booking-review" && selectedShipment && (
-          <ShipmentCarrierBookingReviewPage
-            shipment={selectedShipment}
+            initialTab={page === "shipment-carrier-booking-review" ? "review" : "details"}
+            navigate={navigate}
             onBack={() => navigate("detail", selectedShipment.id)}
             onRefresh={async () => {
               const fresh = await api.shipments.get(selectedShipment.id);
@@ -2966,12 +3275,16 @@ function App() {
             }} />
         )}
 
-        {page === "kanban"      && isEnabled("kanban")    && <KanbanPage shipments={shipments} />}
+        {page === "kanban"      && isEnabled("kanban")    && (
+          <Suspense fallback={<FullPageSpinner />}>
+            <KanbanPage shipments={shipments} />
+          </Suspense>
+        )}
         {page === "releases"    && isEnabled("kanban")    && <ReleasesPage />}
         {page === "test-plans"  && isEnabled("kanban")    && <TestPlansPage />}
         {page === "test-runs"   && isEnabled("kanban")    && <TestRunsPage />}
         {page === "test-cases"  && isEnabled("kanban")    && <TestCasesPage />}
-        {page === "test-tools"  && isEnabled("kanban")    && <TestToolsPage navigate={navigate} />}
+        {page === "test-tools"  && isEnabled("kanban")    && <TestToolsPage navigate={navigate} shipments={shipments} />}
 
         {page === "dashboard-archive" && (
           <DashboardArchive
@@ -3049,6 +3362,7 @@ function App() {
         {page === "mdm-unlocodes"  &&                                 <MdmUNLocationCodesPage />}
         {page === "mdm-commodities"&&                                 <MdmCommoditiesPage />}
         {page === "mdm-charge-codes"&&                                <MdmChargeCodesPage />}
+        {page === "mdm-pack-types"&&                                  <MdmPackTypesPage />}
         {page === "mdm-customers"              && isEnabled("mdm-customers")             && <MdmCustomersPage />}
         {page === "mdm-sanctioned-customers"   && isEnabled("mdm-sanctioned-customers")  && <MdmSanctionedCustomersPage />}
         {page === "mdm-contracts"  && isEnabled("mdm-contracts")  && <MdmContractsPage />}

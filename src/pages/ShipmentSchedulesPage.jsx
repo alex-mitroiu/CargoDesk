@@ -12,6 +12,7 @@ import ContractAssignModal from "../components/shared/ContractAssignModal";
 import { ScheduleHistoryPanel, PendingRevalidationModal } from "./ShipmentDetailPage";
 import { LegsTable, deriveHaulageNeeds } from "./ShipmentFormPage";
 import { IconWarning, IconPackage, IconAnchor } from "../components/primitives/Icon";
+import { applySailingToLegs as applySailingToLegsShared } from "../utils/applySailingToLegs";
 
 // ─── Shipment Schedules Page ──────────────────────────────────────────────
 // Dedicated sub-page for carrier schedule/booking management, promoted out
@@ -80,64 +81,10 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
     } catch (e) { toast.error(e.message); }
   };
 
-  // Mirrors ShipmentFormPage's applySailingToLegs, but against an EXISTING shipment's
-  // already-persisted legs (live api.legs.* calls) instead of local draft state.
-  const applySailingToLegs = async (sailing) => {
-    const legs = await api.legs.list(shipment.id);
-    const seaLegs = legs.filter(l => l.legType === "SEA");
-    if (seaLegs.length === 0) return false;
-    const [firstSeaLeg, ...extraSeaLegs] = seaLegs;
-    const isTSP = sailing.legs && sailing.legs.length > 1;
-
-    if (isTSP) {
-      await api.legs.update(shipment.id, firstSeaLeg.id, {
-        ...firstSeaLeg,
-        vessel:      sailing.legs[0].vesselName   || firstSeaLeg.vessel,
-        voyage:      sailing.legs[0].voyageNumber || firstSeaLeg.voyage,
-        etd:         sailing.legs[0].etd          || firstSeaLeg.etd,
-        eta:         sailing.legs[0].eta          || firstSeaLeg.eta,
-        pod:         sailing.legs[0].pod          || firstSeaLeg.pod,
-        podName:     sailing.legs[0].pod !== firstSeaLeg.pod ? "" : firstSeaLeg.podName,
-        carrierCode: sailing.carrier              || firstSeaLeg.carrierCode,
-      });
-      // Any existing trailing SEA legs belong to the OLD sailing — replace them with
-      // fresh legs for the new sailing's remaining segments.
-      for (const stale of extraSeaLegs) await api.legs.remove(shipment.id, stale.id);
-      for (const leg of sailing.legs.slice(1)) {
-        await api.legs.create(shipment.id, {
-          legType: "SEA", movementType: "SEA", movementBy: "",
-          polLocType: "Terminal", podLocType: "Terminal",
-          pol: leg.pol, pod: leg.pod, etd: leg.etd, eta: leg.eta,
-          carrierCode: sailing.carrier || "",
-          vessel: leg.vesselName || "", voyage: leg.voyageNumber || "",
-          contractType: firstSeaLeg.contractType || "SPOT", contractRef: firstSeaLeg.contractRef || "",
-        });
-      }
-      toast.success(`TSP sailing applied — ${sailing.legs.length} sea legs updated`);
-      return true;
-    } else {
-      await api.legs.update(shipment.id, firstSeaLeg.id, {
-        ...firstSeaLeg,
-        vessel:      sailing.vesselName   || firstSeaLeg.vessel,
-        voyage:      sailing.voyageNumber || firstSeaLeg.voyage,
-        etd:         sailing.etd          || firstSeaLeg.etd,
-        eta:         sailing.eta          || firstSeaLeg.eta,
-        carrierCode: sailing.carrier      || firstSeaLeg.carrierCode,
-        // A direct sailing's own pol/pod is always the true door-to-door endpoints
-        // (mockSailings/maerskSchedules both echo the search query here) — reset both
-        // in case the leg currently holds a TSP hub from a previously-applied sailing.
-        pol:         sailing.pol          || firstSeaLeg.pol,
-        pod:         sailing.pod          || firstSeaLeg.pod,
-        polName:     sailing.pol !== firstSeaLeg.pol ? "" : firstSeaLeg.polName,
-        podName:     sailing.pod !== firstSeaLeg.pod ? "" : firstSeaLeg.podName,
-      });
-      // A direct sailing was selected for what used to be a multi-leg (TSP) journey —
-      // collapse back down to a single SEA leg rather than leaving stale extra legs.
-      for (const extra of extraSeaLegs) await api.legs.remove(shipment.id, extra.id);
-      toast.success("Sailing applied to SEA leg");
-      return true;
-    }
-  };
+  // Live-shipment leg-sync, shared with Test Tools' Schedule Generator (both operate on an
+  // EXISTING shipment's already-persisted legs) — see src/utils/applySailingToLegs.js.
+  const applySailingToLegs = sailing => applySailingToLegsShared(shipment.id, sailing,
+    { contractType: shipment.contractType, contractRef: shipment.contractRef });
 
   const commitSailing = async (sailing) => {
     try {
@@ -168,29 +115,45 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
     }
   };
 
-  // While a schedule is assigned, SEA leg fields are locked (see lockedSeaLegs below) —
-  // the only way to change them is to remove a SEA leg, which this treats as "unlink the
-  // schedule": since a TSP schedule's legs are one connected journey, removing any single
-  // SEA leg cascades to remove the rest too (rather than leaving a broken partial route),
+  // While a schedule is assigned, the schedule's own SEA leg (the one carrying real
+  // vessel/voyage data from applySailingToLegs — see lockedSeaLegs below) is locked; the
+  // only way to change it is to remove it, which this treats as "unlink the schedule":
+  // since a TSP schedule's legs are one connected journey, removing the schedule's SEA leg
+  // cascades to remove any other SEA legs too (rather than leaving a broken partial route),
   // and the shipment_schedules row(s) are removed so a freshly added SEA leg starts out
   // unlocked instead of immediately re-locking itself.
   const [legs, setLegs] = useState([]);
-  const prevSeaLegCountRef = useRef(null);
+  // Tracks which leg ids actually belong to the assigned schedule (vessel/voyage populated),
+  // not just a raw SEA-leg count — a brand new, still-blank SEA leg (freshly added via
+  // "+ Add leg" while a schedule already exists) is NOT one of those, so adding one and then
+  // removing it again must never cascade into unlinking the real schedule. Comparing counts
+  // alone couldn't tell the two apart and cascaded on either.
+  const prevScheduledLegIdsRef = useRef(null);
   const handleLegsChange = async (nextLegs) => {
     setLegs(nextLegs);
-    const nextSeaLegs = nextLegs.filter(l => l.legType === "SEA");
-    const prevCount = prevSeaLegCountRef.current;
-    prevSeaLegCountRef.current = nextSeaLegs.length;
-    // Only react to an actual removal (fewer SEA legs than before) — the initial fetch on
-    // mount also fires this callback, and adding a Pick-up/Delivery leg shouldn't cascade.
-    if (prevCount === null || nextSeaLegs.length >= prevCount || schedules.length === 0) return;
+    const nextScheduledIds = new Set(
+      nextLegs.filter(l => l.legType === "SEA" && (l.vessel || l.voyage)).map(l => l.id)
+    );
+    const prevIds = prevScheduledLegIdsRef.current;
+    prevScheduledLegIdsRef.current = nextScheduledIds;
+    // Only react once a schedule's own leg has actually disappeared — the initial fetch on
+    // mount also fires this callback (prevIds === null), and adding/removing an unrelated
+    // blank leg shouldn't cascade.
+    if (prevIds === null || schedules.length === 0) return;
+    const removedScheduledLeg = [...prevIds].some(id => !nextLegs.some(l => l.id === id));
+    if (!removedScheduledLeg) return;
     try {
-      await Promise.all(nextSeaLegs.map(l => api.legs.remove(shipment.id, l.id)));
+      const remainingSeaLegs = nextLegs.filter(l => l.legType === "SEA");
+      await Promise.all(remainingSeaLegs.map(l => api.legs.remove(shipment.id, l.id)));
       await Promise.all(schedules.map(s => api.schedules.remove(shipment.id, s.id)));
       setSchedules([]);
-      prevSeaLegCountRef.current = 0;
+      prevScheduledLegIdsRef.current = new Set();
       setLegsVersion(v => v + 1);
       setHistoryVersion(v => v + 1);
+      // The last SEA leg's removal already clears the shipment's stale etd/eta/vessel/voyage
+      // server-side (syncShipmentFromLegs) — without re-fetching here, the header stays on
+      // its cached shipment prop and keeps showing the old sailing until an unrelated reload.
+      await onRefresh?.();
       toast.success("Schedule unlinked — SEA leg(s) removed, fields are editable again");
     } catch (e) { toast.error(e.message); }
   };
@@ -449,14 +412,38 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
         <ContractAssignModal
           shipment={shipment} legs={legs} pol={pol} pod={pod} onUpdate={onUpdate}
           onClose={() => setContractModalOpen(false)}
-          onDone={({ isCentral, contractPicked, carrierCode, matchedRoute }) => {
+          onDone={async ({ isCentral, contractPicked, carrierCode, matchedRoute }) => {
             setContractModalOpen(false);
+            // Real bug found on a live shipment (SHP-Y9E98X): changing the contract to a
+            // different carrier while a schedule was already assigned used to leave the old
+            // SEA leg(s)/shipment_schedules row silently in place — Route Legs kept showing
+            // the OLD carrier/vessel/voyage forever, permanently disagreeing with the
+            // shipment's own (now-updated) carrier/contract, since nothing here reacted to
+            // it. That schedule was booked with a specific carrier; relabeling the shipment
+            // around it doesn't make the old sailing valid for the new one — same "archive,
+            // don't silently rewrite" principle as the carrier_bookings fix. Auto-unlink it
+            // (the exact same cascade handleLegsChange already runs for a manual SEA-leg
+            // removal — remove every SEA leg, then every shipment_schedules row) instead of
+            // requiring the operator to notice the mismatch and separately go delete the leg.
+            const carrierChanged = !!carrierCode && carrierCode !== shipment.carrierCode;
+            if (carrierChanged && hasSchedule) {
+              try {
+                await Promise.all(legs.filter(l => l.legType === "SEA").map(l => api.legs.remove(shipment.id, l.id)));
+                await Promise.all(schedules.map(s => api.schedules.remove(shipment.id, s.id)));
+                setSchedules([]);
+                prevScheduledLegIdsRef.current = new Set();
+                setLegsVersion(v => v + 1);
+                setHistoryVersion(v => v + 1);
+                await onRefresh?.();
+                toast.info("Previous schedule unlinked — it was booked with a different carrier. Pick a new sailing below.");
+              } catch (e) { toast.error(e.message); }
+            }
             // Contract routing already matches the request params — chain straight into
             // the sailing search rather than making the user re-open "Add Sailing" and
             // re-enter the same pol/pod/carrier that just got confirmed. Scoped to the
             // contract/space-config's own matched route (matchedRoute), not the shipment's
             // generic SEA-leg span — see routeOverride above.
-            if (isCentral && contractPicked && !hasSchedule) {
+            if (isCentral && contractPicked && (!hasSchedule || carrierChanged)) {
               setCarrierOverride(carrierCode || "");
               setRouteOverride(matchedRoute || null);
               setChainedFromContract(true);

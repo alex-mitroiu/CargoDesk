@@ -3,7 +3,7 @@
 module.exports = function systemRoutes(app, ctx) {
   const { db, ok, err, auth, requireRole,
           mapSystemMessage, getSettings, scheduleNextOfacSync, fxCache,
-          logAdminEvent } = ctx;
+          logAdminEvent, migrationFailures } = ctx;
 
   // ─── Health ───────────────────────────────────────────────────────────────
 
@@ -24,6 +24,7 @@ module.exports = function systemRoutes(app, ctx) {
         fxCurrencies:  Object.keys(fxCache.rates).length,
         fxCacheAgeMin: fxCache.ts ? Math.round((Date.now() - fxCache.ts) / 60000) : null,
         counts,
+        migrations:    { failed: migrationFailures.length, details: migrationFailures },
         latency:       Date.now() - t,
         ts:            new Date().toISOString(),
       });
@@ -89,6 +90,22 @@ module.exports = function systemRoutes(app, ctx) {
     );
     if (Object.keys(safeKeys).length) logAdminEvent(req.user, 'SETTINGS_UPDATED', 'settings', '', safeKeys);
     ok(res, getSettings());
+  });
+
+  // Admin-only: the Shipment Explorer sidebar's top-level nav order (ShipmentDetailSidebar,
+  // App.jsx). A dedicated, more tightly-gated route rather than folding this into the generic
+  // PUT /api/settings above (which also allows operator/occ_bk) — reordering everyone's nav is
+  // a different class of action than the operational settings that route otherwise handles.
+  // Reads still go through the existing GET /api/settings — every user needs the stored order
+  // to render their own sidebar, only writing it is restricted.
+  app.put("/api/settings/shipment-sidebar-order", auth(), requireRole(["admin"]), (req, res) => {
+    const { order } = req.body || {};
+    if (!Array.isArray(order) || order.some(id => typeof id !== "string"))
+      return err(res, "order must be an array of section id strings");
+    const value = JSON.stringify(order);
+    db.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('shipment_sidebar_order', ?)").run(value);
+    logAdminEvent(req.user, 'SETTINGS_UPDATED', 'settings', 'shipment_sidebar_order', { order });
+    ok(res, { order });
   });
 
   // ─── Schedules ────────────────────────────────────────────────────────────

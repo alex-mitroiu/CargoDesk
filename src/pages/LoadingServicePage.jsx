@@ -6,7 +6,8 @@ import Btn from "../components/primitives/Btn";
 import DatePicker from "../components/primitives/DatePicker";
 import { inputBase } from "../components/primitives/Form";
 import { buildLoadingPlanHtml } from "../utils/invoiceGenerator";
-import { IconCheck, IconFlash, IconFolder } from "../components/primitives/Icon";
+import { IconCheck, IconFlash, IconFolder, IconWarning, IconMapPin } from "../components/primitives/Icon";
+import { findRoutingLeg } from "../utils/carrierBooking";
 
 // ─── Loading / Unloading Service page (Epic TKT-TBS7QD, Stories TKT-TR6OBR /
 //     TKT-X3SA2E / follow-up Unloading reuse) ──────────────────────────────
@@ -22,14 +23,85 @@ import { IconCheck, IconFlash, IconFolder } from "../components/primitives/Icon"
 // time-plan shape), so this one component serves both via the serviceType prop
 // rather than being duplicated — only the doc-type code (LP01/UP01) and labels differ.
 
-const DOC_CODE_BY_TYPE   = { Loading: "LP01", Unloading: "UP01" };
-const PLAN_LABEL_BY_TYPE = { Loading: "Loading Plan", Unloading: "Unloading Plan" };
+const DOC_CODE_BY_TYPE   = { Loading: "LP01", Unloading: "UP01", Pickup: "PU01", Delivery: "DL01" };
+const PLAN_LABEL_BY_TYPE = { Loading: "Loading Plan", Unloading: "Unloading Plan", Pickup: "Pickup Plan", Delivery: "Delivery Plan" };
+
+// Pickup/Delivery only — Loading/Unloading have no equivalent concept. Reports whether
+// we're the ones arranging the covering leg (Merchant's Haulage) or the carrier already is
+// (Carrier's Haulage, via findRoutingLeg — src/utils/carrierBooking.js), so the page can
+// tell the operator at a glance whether this service is actually needed.
+const RoutingCard = ({ serviceType, leg }) => {
+  const isMerchant = leg?.movementType === "Merchant's Haulage";
+  return (
+    <div id="svcplan-routing-card" style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
+      padding: "16px 18px", marginBottom: 18 }}>
+      <div style={{ fontFamily: T.head, fontSize: 14, fontWeight: 800, color: T.text, marginBottom: 12 }}>
+        Routing
+      </div>
+      {!leg ? (
+        <div style={{ fontFamily: T.body, fontSize: 12.5, color: T.textMuted, display: "flex", alignItems: "center", gap: 7 }}>
+          <IconWarning size={13} />
+          No {serviceType === "Pickup" ? "Pick-up" : "Delivery"} leg on this shipment yet —
+          add one from Contracts &amp; Schedules.
+        </div>
+      ) : (
+        <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: T.body, fontSize: 12.5, color: T.text }}>
+            <IconMapPin size={13} />
+            {serviceType === "Pickup" ? leg.pol : leg.pod}
+          </div>
+          <div style={{ fontFamily: T.body, fontSize: 12.5, color: T.textMuted }}>
+            {serviceType === "Pickup" ? leg.etd : leg.eta || "No date yet"}
+          </div>
+          <span style={{ fontFamily: T.mono, fontSize: 10.5, fontWeight: 700, textTransform: "uppercase",
+            padding: "3px 9px", borderRadius: 5,
+            color: isMerchant ? T.accent : T.textMuted,
+            background: isMerchant ? `${T.accent}18` : T.bg,
+            border: `1px solid ${isMerchant ? T.accent + "44" : T.border}` }}>
+            {leg.movementType || "Movement type not set"}
+          </span>
+          {isMerchant ? (
+            <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>— arranged by us</span>
+          ) : (
+            <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, fontStyle: "italic" }}>
+              — the carrier is arranging this leg; this service may not be needed
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
 
 const LoadingPlanRow = ({ line, canEdit, saving, onSave }) => {
-  const [seq,   setSeq]   = useState(line.sequenceOrder ?? 0);
+  const [seq,   setSeq]   = useState(line.sequenceOrder ?? 1);
   const [notes, setNotes] = useState(line.notes || "");
 
-  useEffect(() => { setSeq(line.sequenceOrder ?? 0); setNotes(line.notes || ""); }, [line.containerId]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Also resyncs whenever the SAVED value itself changes (not just on switching to a
+  // different row) — closes a real risk: without this, a clamped/corrected sequence (see
+  // commitSequence below) would round-trip to the server but the input would keep showing
+  // the user's original, now-stale typed value, silently diverging from what's actually
+  // persisted. Safe against disrupting active typing — onSave (and therefore this prop)
+  // only ever changes on blur/commit, never mid-keystroke.
+  useEffect(() => {
+    setSeq(line.sequenceOrder ?? 1);
+    setNotes(line.notes || "");
+  }, [line.containerId, line.sequenceOrder, line.notes]);
+
+  // Sequence has no "0th" or negative position in a physical loading/pickup/delivery plan —
+  // 1 is the floor. Enforced only on blur/commit, never while typing (onChange below just
+  // tracks the raw string), so correcting a value mid-edit is never fought or interrupted.
+  // An out-of-range entry is clamped AND surfaced via toast — silently rewriting what the
+  // user typed without saying so is exactly the confusion risk to avoid here.
+  const commitSequence = () => {
+    const parsed = parseInt(seq, 10);
+    const clamped = Math.max(1, Number.isNaN(parsed) ? 1 : parsed);
+    if (clamped !== parsed) {
+      toast.warning("Sequence must be 1 or higher — reset to 1");
+      setSeq(clamped);
+    }
+    onSave({ sequenceOrder: clamped });
+  };
 
   return (
     <tr id={`svcplan-row-${line.containerId}`} style={{ borderBottom: `1px solid ${T.border}` }}>
@@ -46,9 +118,9 @@ const LoadingPlanRow = ({ line, canEdit, saving, onSave }) => {
           onChange={d => onSave({ plannedDate: d })} placeholder="Not yet planned" />
       </td>
       <td style={{ padding: "8px 10px", width: 80 }}>
-        <input id={`svcplan-row-${line.containerId}-seq`} type="number" value={seq} disabled={!canEdit}
+        <input id={`svcplan-row-${line.containerId}-seq`} type="number" min="1" value={seq} disabled={!canEdit}
           onChange={e => setSeq(e.target.value)}
-          onBlur={() => onSave({ sequenceOrder: parseInt(seq, 10) || 0 })}
+          onBlur={commitSequence}
           style={{ ...inputBase, fontFamily: T.body, fontSize: 12, width: "100%" }} />
       </td>
       <td style={{ padding: "8px 10px" }}>
@@ -70,8 +142,11 @@ const LoadingServicePage = ({ shipment, containers = [], side, serviceType = "Lo
   const docCode   = DOC_CODE_BY_TYPE[serviceType];
   const planLabel = PLAN_LABEL_BY_TYPE[serviceType];
 
+  const isHaulageType = serviceType === "Pickup" || serviceType === "Delivery";
+
   const [service, setService] = useState(undefined); // undefined = loading, null = not found
   const [lines,   setLines]   = useState([]);
+  const [routingLeg, setRoutingLeg] = useState(null);
   const [savingId, setSavingId] = useState(null);
   const [latestDoc, setLatestDoc] = useState(null);
   const [file,       setFile]       = useState(null);
@@ -93,6 +168,15 @@ const LoadingServicePage = ({ shipment, containers = [], side, serviceType = "Lo
     return () => { cancelled = true; };
   }, [shipment.id, side, serviceType]);
 
+  useEffect(() => {
+    if (!isHaulageType) return;
+    let cancelled = false;
+    api.legs.list(shipment.id)
+      .then(legs => !cancelled && setRoutingLeg(findRoutingLeg(legs, serviceType)))
+      .catch(() => !cancelled && setRoutingLeg(null));
+    return () => { cancelled = true; };
+  }, [shipment.id, serviceType, isHaulageType]);
+
   const loadLines = (serviceId) =>
     api.loadingPlan.list(shipment.id, serviceId).then(setLines).catch(() => setLines([]));
 
@@ -111,7 +195,7 @@ const LoadingServicePage = ({ shipment, containers = [], side, serviceType = "Lo
     const current = lines.find(l => l.containerId === containerId) || {};
     try {
       const updated = await api.loadingPlan.update(shipment.id, service.id, containerId, {
-        plannedDate: current.plannedDate || "", sequenceOrder: current.sequenceOrder ?? 0,
+        plannedDate: current.plannedDate || "", sequenceOrder: current.sequenceOrder ?? 1,
         notes: current.notes || "", ...patch,
       });
       setLines(p => p.map(l => l.containerId === containerId ? updated : l));
@@ -140,11 +224,18 @@ const LoadingServicePage = ({ shipment, containers = [], side, serviceType = "Lo
   const handleGenerate = async () => {
     setGenerating(true);
     try {
+      // Re-fetch rather than trusting the component's own `lines` state — a row's onBlur
+      // save (sequence/notes/date) is async, so a value just typed and immediately followed
+      // by clicking Generate could still be in flight when this closure's `lines` was
+      // captured, producing a document with a stale sequence. Reading fresh from the server
+      // right before building guarantees the document always matches what's actually saved.
+      const freshLines = await api.loadingPlan.list(shipment.id, service.id);
+      setLines(freshLines);
       const invNumber = `${shipment.id}-${docCode.slice(0, 2)}-${Date.now().toString(36).toUpperCase().slice(-6)}`;
       const invDate   = todayIso();
       const html = buildLoadingPlanHtml({
         shipment, invNumber, invDate, notes: "", side, planLabel,
-        containers: shipmentContainers, loadingPlanLines: lines,
+        containers: shipmentContainers, loadingPlanLines: freshLines,
       });
       const filename = `${docCode}-${invNumber}-${invDate}.html`;
       const base64   = btoa(unescape(encodeURIComponent(html)));
@@ -197,6 +288,8 @@ const LoadingServicePage = ({ shipment, containers = [], side, serviceType = "Lo
           Manage vendor, status and dates from the Services panel on Overview.
         </div>
       </div>
+
+      {isHaulageType && <RoutingCard serviceType={serviceType} leg={routingLeg} />}
 
       {/* Per-container loading plan */}
       <div id="svcplan-table-section" style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, overflow: "hidden", marginBottom: 18 }}>
@@ -272,8 +365,9 @@ const LoadingServicePage = ({ shipment, containers = [], side, serviceType = "Lo
                 {uploading ? "Uploading…" : "Upload"}
               </Btn>
             </div>
-            <Btn id="svcplan-generate-btn" onClick={handleGenerate} disabled={generating}>
-              {generating ? "Generating…" : <><IconFlash size={13} />Generate {planLabel}</>}
+            <Btn id="svcplan-generate-btn" onClick={handleGenerate} disabled={generating || savingId !== null}
+              title={savingId !== null ? "Waiting for the in-progress row edit to save…" : undefined}>
+              {generating ? "Generating…" : savingId !== null ? "Saving…" : <><IconFlash size={13} />Generate {planLabel}</>}
             </Btn>
           </div>
         )}

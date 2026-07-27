@@ -9,12 +9,13 @@ import DatePicker from "../primitives/DatePicker";
 import { Inp, Sel, Textarea } from "../primitives/Form";
 import CustomerCombobox from "./CustomerCombobox";
 import Spinner from "../primitives/Spinner";
-import { SERVICE_TYPES } from "../../shipmentServicePages";
+import { serviceTypesForSide } from "../../shipmentServicePages";
 import { emitServicesChanged } from "../../servicesBus";
+import { findRoutingLeg } from "../../utils/carrierBooking";
 import { IconClose } from "../primitives/Icon";
 
 // ─── Dedicated Services panel (TKT-9DGDNP) ─────────────────────────────────
-// Ancillary services (VGM, Haulage, Fumigation, Storage, Customs, ...) ordered
+// Ancillary services (VGM, Pickup, Fumigation, Storage, Customs, ...) ordered
 // independently per Export/Import side, each with its own vendor, office, and
 // Requested → Confirmed → Completed (or Cancelled) lifecycle. Deliberately
 // independent of shipment_legs — a leg tracks physical routing, a service
@@ -45,14 +46,31 @@ const ServiceForm = ({ side, offices, shipment, onSave, onCancel }) => {
   const dept = side === "Export" ? "SE" : "SI";
   const defaultOfficeId = (side === "Export" ? shipment.emoOfficeId : shipment.imoOfficeId) || "";
   const candidates = offices.filter(o => o.department === dept && o.isActive);
+  // Origin-only (VGM/Loading/Pickup) and destination-only (Unloading/Delivery) types are
+  // filtered out of the *other* side's dropdown entirely here — see SERVICE_TYPE_SIDES in
+  // shipmentServicePages.js for why those five aren't both-sides like everything else.
+  const availableTypes = serviceTypesForSide(side);
 
-  const [serviceType, setServiceType] = useState(SERVICE_TYPES[0]);
+  const [serviceType, setServiceType] = useState(availableTypes[0]);
+  const [typeDefaulted, setTypeDefaulted] = useState(false); // don't override an operator's own pick
   const [otherType,   setOtherType]   = useState("");
   const [vendor,       setVendor]      = useState({ id: "", name: "" });
   const [officeId,     setOfficeId]    = useState(defaultOfficeId);
   const [requestedDate, setRequestedDate] = useState(todayIso());
   const [notes,         setNotes]         = useState("");
   const [saving,        setSaving]        = useState(false);
+
+  // Nicety, not required for correctness: pre-select Pickup/Delivery when this side's own
+  // Pick-up/Delivery leg is Merchant's Haulage — that's the realistic case an operator is
+  // opening this form for. Silent no-op otherwise (stays on the default first type).
+  useEffect(() => {
+    if (typeDefaulted) return;
+    const type = side === "Export" ? "Pickup" : "Delivery";
+    api.legs.list(shipment.id).then(legs => {
+      const leg = findRoutingLeg(legs, type);
+      if (leg?.movementType === "Merchant's Haulage") setServiceType(type);
+    }).catch(() => {}).finally(() => setTypeDefaulted(true));
+  }, [side, shipment.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const resolvedType = serviceType === "Other" ? otherType.trim() : serviceType;
   const valid = !!resolvedType;
@@ -72,7 +90,7 @@ const ServiceForm = ({ side, offices, shipment, onSave, onCancel }) => {
     <Modal title={`Request ${side} Service`} onClose={onCancel} width={480}>
       <div id="svcform" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         <Sel id="svcform-type" label="Service Type" value={serviceType} onChange={setServiceType} required
-          options={SERVICE_TYPES.map(t => ({ value: t, label: t }))} />
+          options={availableTypes.map(t => ({ value: t, label: t }))} />
         {serviceType === "Other" && (
           <Inp id="svcform-other-type" label="Specify Service" value={otherType} onChange={setOtherType} placeholder="e.g. Inspection" required />
         )}

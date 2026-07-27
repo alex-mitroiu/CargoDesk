@@ -29,16 +29,21 @@ const BtnToggle = ({ children, selected, onClick, wide, sub }) => {
   );
 };
 
+// Label and hint each get their own line rather than sharing one flex row — cramming both
+// onto one line (the previous layout) made wrapping unpredictable: two side-by-side Fields
+// in a grid row, each with a different combined label+hint length, would wrap to a
+// different number of lines and push their inputs to different heights, visibly
+// misaligning the row (found via a real report — the VGM Weight/VGM Status row in
+// ContainerForm, ShipmentDetailPage.jsx). Stacking them still varies with hint length, but
+// only the hint's own line wraps — no more two texts fighting over one line's width.
 const Field = ({ label, required, hint, children }) => (
-  <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
     {label && (
-      <div style={{ display: "flex", alignItems: "baseline", gap: 7 }}>
-        <label style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".08em" }}>
-          {label}{required && <span style={{ color: T.danger }}> *</span>}
-        </label>
-        {hint && <span style={{ fontFamily: T.body, fontSize: 10.5, color: T.border }}>{hint}</span>}
-      </div>
+      <label style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".08em" }}>
+        {label}{required && <span style={{ color: T.danger }}> *</span>}
+      </label>
     )}
+    {hint && <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.border, lineHeight: 1.4 }}>{hint}</div>}
     {children}
   </div>
 );
@@ -60,8 +65,8 @@ const Inp = ({ id, label, value, onChange, onBlur, placeholder, mono, maxLength,
   </Field>
 );
 
-const Sel = ({ id, label, value, onChange, options, required, error }) => (
-  <Field label={label} required={required}>
+const Sel = ({ id, label, value, onChange, options, required, error, hint }) => (
+  <Field label={label} required={required} hint={hint}>
     <select id={id} value={value} onChange={e => onChange(e.target.value)}
       style={{ ...inputBase, fontFamily: T.body, fontSize: 14, cursor: "pointer",
         ...(error ? { borderColor: T.danger, boxShadow: `0 0 0 2px ${T.danger}44` } : {}) }}>

@@ -170,7 +170,7 @@ function StatusDot({ result, testing }) {
   );
 }
 
-const TABS_BASE   = ["API Controls", "Finance", "Developer"];
+const TABS_BASE   = ["API Controls", "Finance", "Compliance", "Developer"];
 const API_SUBTABS = ["External APIs", "Internal APIs", "Security", "Single Sign-On", "AI Agent"];
 
 const downloadJson = (data, filename) => {
@@ -502,6 +502,58 @@ function SsoSettingsPanel({ settings, onChange }) {
           {"  "}— link this from your identity provider or share with users.
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── DG Compliance Settings Panel ─────────────────────────────────────────────
+// One reusable org-wide emergency-contact/compliance record (TKT-DPLQTV) — confirmed
+// via direct answer, a single record is enough for FCL, no per-office variation
+// needed, so this is a settings panel (like Login Security above) rather than a
+// CRUD list like Pack Types or Charge Codes. Pulled onto the DG01 Dangerous Goods
+// Declaration's emergency-contact line (buildDGDeclHtml, App.jsx) in place of the
+// hand-filled blank that sat there before.
+
+function DgComplianceSettingsPanel({ settings, onChange }) {
+  const c = {
+    dg_compliance_contact_name: settings.dg_compliance_contact_name ?? '',
+    dg_compliance_phone:        settings.dg_compliance_phone        ?? '',
+    dg_compliance_email:        settings.dg_compliance_email        ?? '',
+    dg_compliance_address:      settings.dg_compliance_address      ?? '',
+  };
+  const fld = { marginBottom: 16 };
+  const lbl = { display: "block", fontFamily: T.body, fontSize: 11, fontWeight: 600,
+    color: T.textMuted, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 5 };
+  return (
+    <div style={{ maxWidth: 560 }}>
+      <h3 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, marginBottom: 8 }}>
+        DG Compliance Address
+      </h3>
+      <p style={{ fontFamily: T.body, fontSize: 12.5, color: T.textMuted, lineHeight: 1.6, marginBottom: 20 }}>
+        A single 24hr emergency-contact / compliance record for the whole organization —
+        printed on the Dangerous Goods Declaration (DG01) in place of a hand-filled blank.
+      </p>
+      <div style={fld}>
+        <label style={lbl}>Contact Name</label>
+        <input value={c.dg_compliance_contact_name} placeholder="e.g. CHEMTREC"
+          onChange={e => onChange('dg_compliance_contact_name', e.target.value)} style={inp()} />
+      </div>
+      <div style={fld}>
+        <label style={lbl}>Phone</label>
+        <input value={c.dg_compliance_phone} placeholder="e.g. +1 703-527-3887"
+          onChange={e => onChange('dg_compliance_phone', e.target.value)} style={inp()} />
+      </div>
+      <div style={fld}>
+        <label style={lbl}>Email</label>
+        <input type="email" value={c.dg_compliance_email} placeholder="e.g. dg-compliance@yourcompany.com"
+          onChange={e => onChange('dg_compliance_email', e.target.value)} style={inp()} />
+      </div>
+      <div style={fld}>
+        <label style={lbl}>Address</label>
+        <textarea rows={3} value={c.dg_compliance_address} placeholder="Street, city, country"
+          onChange={e => onChange('dg_compliance_address', e.target.value)}
+          style={{ ...inp(), resize: "vertical" }} />
+      </div>
     </div>
   );
 }
@@ -1644,6 +1696,13 @@ export default function AppSettingsPage() {
             can have finance access independently of this global toggle.
           </div>
         </div>
+      )}
+
+      {activeTab === "Compliance" && settings && (
+        <DgComplianceSettingsPanel settings={settings} onChange={(k, v) => {
+          setSettings(s => ({ ...s, [k]: v }));
+          saveSetting(k, v);
+        }} />
       )}
 
       {activeTab === "API Controls" && (

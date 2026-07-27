@@ -4,9 +4,12 @@ import { useAuth } from "../AuthContext";
 import { api } from "../api";
 import { toast } from "../toast";
 import Btn from "../components/primitives/Btn";
+import Spinner from "../components/primitives/Spinner";
 import { Modal } from "../components/primitives/Modal";
 import EdiMessageList, { EDI_STATUS_COLOR } from "../components/shared/EdiMessageList";
+import CarrierBookingsTable from "../components/shared/CarrierBookingsTable";
 import { IconCheck, IconClose, IconAnchor } from "../components/primitives/Icon";
+import { BOOKABLE_CARRIERS } from "../utils/carrierBooking";
 
 // ─── Carrier Booking — Review ─────────────────────────────────────────────────
 // The inbound half: the carrier's response (real or Test-Tools-simulated) plus the
@@ -15,24 +18,6 @@ import { IconCheck, IconClose, IconAnchor } from "../components/primitives/Icon"
 // separate operator action (see the migration comment on carrier_bookings in server.js
 // for why: it's what lets "simulate confirmed, then click Confirm" be two real,
 // independently-testable steps instead of the same thing twice).
-
-const BOOKABLE_CARRIERS = new Set(["MAEU", "SAFM", "MCPU"]);
-
-const STATUS_COLOR = {
-  Draft: "#6b7280", Pending: "#3b82f6", Confirmed: "#22c55e",
-  Rejected: "#ef4444", Cancelled: "#6b7280",
-};
-
-const StatusBadge = ({ status }) => {
-  const color = STATUS_COLOR[status] || T.textMuted;
-  return (
-    <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color,
-      background: `${color}18`, border: `1px solid ${color}44`,
-      borderRadius: 5, padding: "3px 10px", textTransform: "uppercase" }}>
-      {status}
-    </span>
-  );
-};
 
 const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
   const { canEditShipments: canEdit } = useAuth();
@@ -78,7 +63,7 @@ const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
     return () => { ws.close(); if (pollId) clearInterval(pollId); };
   }, [shipment.id]);
 
-  const status = booking?.status || "Draft";
+  const status = booking?.status || "Created";
   const canConfirm = canEdit && status !== "Confirmed" && status !== "Cancelled";
   const canCancel  = canEdit && status !== "Cancelled";
   const willNotifyCarrier = BOOKABLE_CARRIERS.has(shipment.carrierCode) && !!booking?.correlationId;
@@ -115,17 +100,27 @@ const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
     } finally { setBusy(false); }
   };
 
-  if (loading) return null;
+  if (loading) return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, color: T.textMuted,
+      fontFamily: T.body, fontSize: 13, padding: "60px 0", justifyContent: "center" }}>
+      <Spinner size="sm" /> Loading booking review…
+    </div>
+  );
 
   return (
     <div id="shpbooking-review-page" style={{ maxWidth: 1100, margin: "0 auto" }}>
+      <CarrierBookingsTable shipment={shipment} />
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          <h2 style={{ fontFamily: T.head, fontSize: 20, fontWeight: 800, color: T.text, margin: 0,
+          {/* Status + BKG- id are no longer repeated here — both already appear on the
+              current row in the "Bookings on this Shipment" table above (CarrierBookingsTable),
+              which is now the single place that shows them. Heading font size matched to that
+              table's own "Bookings on this Shipment" heading rather than standing out as a
+              bigger, differently-weighted title above it. */}
+          <h2 style={{ fontFamily: T.head, fontSize: 14, fontWeight: 700, color: T.text, margin: 0,
             display: "flex", alignItems: "center", gap: 8 }}>
-            <IconAnchor size={18} />Carrier Booking — Review
+            <IconAnchor size={14} />Carrier Booking — Review
           </h2>
-          <StatusBadge status={status} />
         </div>
         {canEdit && (
           <div style={{ display: "flex", gap: 8 }}>
