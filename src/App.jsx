@@ -19,8 +19,9 @@ import {
 import { onServicesChanged } from "./servicesBus";
 import { runNavigationGuard } from "./navigationGuard";
 import { buildLoadingPlanHtml } from "./utils/invoiceGenerator";
-import LoadingServicePage from "./pages/LoadingServicePage";
-import GenericServicePage from "./pages/GenericServicePage";
+import LoadingServicePage from "./pages/shipments/LoadingServicePage";
+import GenericServicePage from "./pages/shipments/GenericServicePage";
+import VgmServicePage from "./pages/shipments/VgmServicePage";
 
 import Btn from "./components/primitives/Btn";
 import { Modal } from "./components/primitives/Modal";
@@ -31,25 +32,26 @@ import {
   IconBuilding, IconShip, IconPackage, IconMapPin, IconLink, IconRoute,
   IconFlag, IconHashtag, IconEarth, IconGovernment, IconSettings, IconChartBar, AnyIcon,
   IconReceipt, IconCoin, IconAnchor, IconSearch, IconMail, IconMailUnread, IconBaseStation,
-  IconUpload, IconDownload, IconLock,
+  IconUpload, IconDownload, IconLock, IconFileCertificate,
 } from "./components/primitives/Icon";
 import TrackedDocPreviewModal from "./components/shared/TrackedDocPreviewModal";
 import ChangePasswordModal from "./components/shared/ChangePasswordModal";
-import { fmtCurr, _esc, _invShell, buildFreightInvoiceHtml } from "./utils/invoiceGenerator";
+import { fmtCurr, _esc, _invShell, buildFreightInvoiceHtml, partyByRole } from "./utils/invoiceGenerator";
 
-import ShipmentsPage     from "./pages/ShipmentsPage";
-import ShipmentFormPage  from "./pages/ShipmentFormPage";
-import ShipmentDetailPage, { ContainerForm } from "./pages/ShipmentDetailPage";
-import ShipmentConditionsPage from "./pages/ShipmentConditionsPage";
-import ShipmentContainersPage from "./pages/ShipmentContainersPage";
-import ShipmentPartiesPage from "./pages/ShipmentPartiesPage";
-import ShipmentSchedulesPage from "./pages/ShipmentSchedulesPage";
-import ShipmentMilestonesPage from "./pages/ShipmentMilestonesPage";
-import ShipmentAccountingCostsPage from "./pages/ShipmentAccountingCostsPage";
-import ShipmentAccountingInvoicesPage from "./pages/ShipmentAccountingInvoicesPage";
-import ShipmentAccountingGpPage from "./pages/ShipmentAccountingGpPage";
-import ShipmentCarrierBookingPage from "./pages/ShipmentCarrierBookingPage";
-import ShipmentHistoryPage from "./pages/ShipmentHistoryPage";
+import ShipmentsPage     from "./pages/shipments/ShipmentsPage";
+import ShipmentFormPage  from "./pages/shipments/ShipmentFormPage";
+import ShipmentDetailPage, { ContainerForm } from "./pages/shipments/ShipmentDetailPage";
+import ShipmentConditionsPage from "./pages/shipments/ShipmentConditionsPage";
+import ShipmentContainersPage from "./pages/shipments/ShipmentContainersPage";
+import ShipmentPartiesPage from "./pages/shipments/ShipmentPartiesPage";
+import ShipmentSchedulesPage from "./pages/shipments/ShipmentSchedulesPage";
+import ShipmentMilestonesPage from "./pages/shipments/ShipmentMilestonesPage";
+import ShipmentAccountingCostsPage from "./pages/shipments/ShipmentAccountingCostsPage";
+import ShipmentAccountingInvoicesPage from "./pages/shipments/ShipmentAccountingInvoicesPage";
+import ShipmentAccountingGpPage from "./pages/shipments/ShipmentAccountingGpPage";
+import ShipmentCarrierBookingPage from "./pages/shipments/ShipmentCarrierBookingPage";
+import ShipmentCustomsFilingPage from "./pages/shipments/ShipmentCustomsFilingPage";
+import ShipmentHistoryPage from "./pages/shipments/ShipmentHistoryPage";
 import ShipmentHeaderBar from "./components/shared/ShipmentHeaderBar";
 import DashboardPage       from "./pages/DashboardPage";
 import DashboardArchive    from "./pages/DashboardArchivePage";
@@ -139,9 +141,12 @@ const fmtAddrHtml = c => {
 };
 
 const buildCommercialInvoiceHtml = ({ shipment: sh, invNumber, invDate, notes, containers, shipper, consignee }) => {
-  const rows = containers.length === 0
-    ? `<tr><td colspan="7" style="text-align:center;color:#9ca3af;padding:20px">No containers recorded</td></tr>`
-    : containers.map(c => `<tr>
+  // Structured cargo line items (Epic TKT-P3ASH1, Story TKT-LUNODU) — a container with
+  // pack items (container.packages, only populated for CI01/CI02/PL01 by handlePreview)
+  // renders one row per item with a real declared value; a container with none renders
+  // exactly the same single row this document has always produced (regression-safe).
+  let totalDeclaredUsd = 0, anyPriced = false;
+  const containerRow = c => `<tr>
         <td><span class="code" style="font-size:11px">${c.containerNumber || "TBC"}</span></td>
         <td>${c.size}ft ${c.type}${c.isDg ? ` <span class="dg">DG ${c.dgClass}</span>` : ""}</td>
         <td class="num">${c.grossWeightKg != null ? Number(c.grossWeightKg).toLocaleString() + " kg" : "—"}</td>
@@ -149,7 +154,26 @@ const buildCommercialInvoiceHtml = ({ shipment: sh, invNumber, invDate, notes, c
         <td>${c.cargoDescription || "—"}</td>
         <td>${c.hsCode || "—"}</td>
         <td class="num">—</td>
-      </tr>`).join("");
+      </tr>`;
+  const packageRow = (c, p) => {
+    const lineValue = p.unitValue != null ? p.quantity * p.unitValue : null;
+    if (p.unitValueUsd != null) { totalDeclaredUsd += p.quantity * p.unitValueUsd; anyPriced = true; }
+    return `<tr>
+        <td><span class="code" style="font-size:11px">${c.containerNumber || "TBC"}</span></td>
+        <td>${c.size}ft ${c.type}${p.isDg ? ` <span class="dg">DG ${_esc(p.dgClass)}</span>` : ""}</td>
+        <td class="num">—</td>
+        <td class="num">—</td>
+        <td>${_esc(p.description)} × ${p.quantity}</td>
+        <td>${_esc(p.hsCode || c.hsCode || "—")}</td>
+        <td class="num">${lineValue != null ? fmtCurr(lineValue, p.currency || "USD") : "—"}</td>
+      </tr>`;
+  };
+  const rows = containers.length === 0
+    ? `<tr><td colspan="7" style="text-align:center;color:#9ca3af;padding:20px">No containers recorded</td></tr>`
+    : containers.map(c => {
+        const pkgs = c.packages || [];
+        return pkgs.length > 0 ? pkgs.map(p => packageRow(c, p)).join("") : containerRow(c);
+      }).join("");
 
   const detailItems = [
     ["Shipment ID", sh.id], ["B/L Number", sh.blNumber || "—"],
@@ -184,7 +208,7 @@ const buildCommercialInvoiceHtml = ({ shipment: sh, invNumber, invDate, notes, c
       <th style="text-align:right">Declared Value</th>
     </tr></thead><tbody>${rows}</tbody></table>
     <div class="totals">
-      <div class="total-row grand"><span class="total-label">Total Declared Value</span><span class="total-amt">As per attached</span></div>
+      <div class="total-row grand"><span class="total-label">Total Declared Value</span><span class="total-amt">${anyPriced ? fmtCurr(totalDeclaredUsd, "USD") : "As per attached"}</span></div>
     </div>
     ${notes ? `<div class="notes"><div class="notes-label">Notes</div><div class="notes-text">${_esc(notes)}</div></div>` : ""}`;
 
@@ -277,9 +301,11 @@ const buildBillOfLadingHtml = ({ shipment: sh, invNumber, invDate, notes, contai
 
 const buildPackingListHtml = ({ shipment: sh, invNumber, invDate, notes, containers, shipper, consignee }) => {
   const { w: totalWeight, v: totalVolume } = _ctrTotals(containers);
-  const rows = containers.length === 0
-    ? `<tr><td colspan="7" style="text-align:center;color:#9ca3af;padding:16px">No containers recorded</td></tr>`
-    : containers.map(c => `<tr>
+  // Structured cargo line items (Epic TKT-P3ASH1, Story TKT-LUNODU) — same fallback shape
+  // as buildCommercialInvoiceHtml: a container with pack items gets one row per item, a
+  // container with none renders exactly today's single row (regression-safe). No value
+  // column here — not part of this story for the Packing List.
+  const containerRow = c => `<tr>
         <td><span class="code">${_esc(c.containerNumber || "TBC")}</span></td>
         <td>${_esc(c.size)}ft ${_esc(c.type)}</td>
         <td>${_esc(c.cargoDescription || "—")}</td>
@@ -287,7 +313,22 @@ const buildPackingListHtml = ({ shipment: sh, invNumber, invDate, notes, contain
         <td class="num">${c.grossWeightKg != null ? Number(c.grossWeightKg).toLocaleString() + " kg" : "—"}</td>
         <td class="num">${c.volumeCbm != null ? Number(c.volumeCbm) + " CBM" : "—"}</td>
         <td>${c.isDg ? `<span class="dg">DG ${_esc(c.dgClass)}</span>` : "—"}</td>
-      </tr>`).join("");
+      </tr>`;
+  const packageRow = (c, p) => `<tr>
+        <td><span class="code">${_esc(c.containerNumber || "TBC")}</span></td>
+        <td>${_esc(c.size)}ft ${_esc(c.type)}</td>
+        <td>${_esc(p.description)} × ${p.quantity}</td>
+        <td>${(p.hsCode || c.hsCode) ? `<span class="code" style="font-size:11px">${_esc(p.hsCode || c.hsCode)}</span>` : "—"}</td>
+        <td class="num">—</td>
+        <td class="num">—</td>
+        <td>${p.isDg ? `<span class="dg">DG ${_esc(p.dgClass)}</span>` : "—"}</td>
+      </tr>`;
+  const rows = containers.length === 0
+    ? `<tr><td colspan="7" style="text-align:center;color:#9ca3af;padding:16px">No containers recorded</td></tr>`
+    : containers.map(c => {
+        const pkgs = c.packages || [];
+        return pkgs.length > 0 ? pkgs.map(p => packageRow(c, p)).join("") : containerRow(c);
+      }).join("");
 
   const body = `
     <div class="parties">
@@ -386,14 +427,17 @@ const buildCertOriginHtml = ({ shipment: sh, invNumber, invDate, notes, containe
   return _invShell(`Certificate of Origin — ${invNumber}`, "CERTIFICATE OF ORIGIN", invNumber, invDate, body);
 };
 
-const buildInsuranceCertHtml = ({ shipment: sh, invNumber, invDate, notes, containers, shipper }) => {
+const buildInsuranceCertHtml = ({ shipment: sh, invNumber, invDate, notes, containers, shipper, parties }) => {
   const { w: totalWeight } = _ctrTotals(containers);
   const descriptions = [...new Set(containers.map(c => c.cargoDescription).filter(Boolean))].join("; ") || "As described in Bill of Lading";
+  // Insurance Provider (Epic TKT-5XFCAP) preferred over the Shipper fallback when assigned —
+  // additive: a shipment with none assigned falls back to today's exact behavior.
+  const insuranceProvider = partyByRole(parties, "Insurance Provider");
 
   const body = `
     <div class="shp-block"><div class="block-label">Assured</div>
       <div class="details-grid" style="grid-template-columns:repeat(2,1fr)">${_detailGrid([
-        ["Assured / Insured Party", _esc(sh.shipperName || shipper?.companyName || "—")],
+        ["Assured / Insured Party", _esc(insuranceProvider?.customerName || sh.shipperName || shipper?.companyName || "—")],
         ["Certificate Reference", _esc(invNumber)],
       ])}</div>
     </div>
@@ -515,7 +559,11 @@ const buildDGDeclHtml = ({ shipment: sh, invNumber, invDate, notes, containers, 
   return _invShell(`DG Declaration — ${invNumber}`, "DANGEROUS GOODS DECLARATION", invNumber, invDate, body);
 };
 
-const buildCustomsDeclHtml = ({ shipment: sh, invNumber, invDate, notes, containers, shipper, consignee }) => {
+const buildCustomsDeclHtml = ({ shipment: sh, invNumber, invDate, notes, containers, shipper, consignee, parties }) => {
+  // Customs Broker (Export)/(Import) (Epic TKT-5XFCAP) — additive detail rows, only rendered
+  // when that role is assigned; falls back to today's exact output when neither is.
+  const brokerExport = partyByRole(parties, "Customs Broker (Export)");
+  const brokerImport = partyByRole(parties, "Customs Broker (Import)");
   const rows = containers.length === 0
     ? `<tr><td colspan="6" style="text-align:center;color:#9ca3af;padding:16px">No containers recorded</td></tr>`
     : containers.map(c => `<tr>
@@ -548,6 +596,8 @@ const buildCustomsDeclHtml = ({ shipment: sh, invNumber, invDate, notes, contain
         ["Declared Value", sh.declaredValue != null ? fmtCurr(sh.declaredValue, sh.declaredValueCurrency || "USD") : "—"],
         ["ETD", sh.etd ? new Date(sh.etd).toLocaleDateString("en-GB") : "—"],
         ["ETA", sh.eta ? new Date(sh.eta).toLocaleDateString("en-GB") : "—"],
+        ...(brokerExport ? [["Customs Broker (Export)", _esc(brokerExport.customerName)]] : []),
+        ...(brokerImport ? [["Customs Broker (Import)", _esc(brokerImport.customerName)]] : []),
       ])}</div>
     </div>
     <div class="section-label">Goods Declaration</div>
@@ -621,20 +671,28 @@ const GenerateDocumentModal = ({ shipment, onClose, onSaved, defaultCode }) => {
     try {
       const needsCostLines = docCode === "FR01" || docCode === "FR02";
       const needsDgSettings = docCode === "DG01";
-      const [ctrsRaw, shipper, consignee, costLines, orgSettings] = await Promise.all([
+      const [ctrsRaw, shipper, consignee, costLines, orgSettings, parties] = await Promise.all([
         api.containers.list(),
         shipment.shipperId   ? api.customers.get(shipment.shipperId).catch(() => null)   : Promise.resolve(null),
         shipment.consigneeId ? api.customers.get(shipment.consigneeId).catch(() => null) : Promise.resolve(null),
         needsCostLines ? api.costLines.list(shipment.id).then(ls => ls.filter(l => l.type === "SELL")) : Promise.resolve([]),
         needsDgSettings ? api.settings.get().catch(() => null) : Promise.resolve(null),
+        api.shipmentParties.list(shipment.id).catch(() => []),
       ]);
       if (needsCostLines && costLines.length === 0) {
         toast.error("At least one valid charge line needs to be present to generate an invoice.");
         setLoading(false);
         return;
       }
-      const allCtrs    = Array.isArray(ctrsRaw) ? ctrsRaw : (ctrsRaw?.results ?? []);
-      const containers = allCtrs.filter(c => c.shipmentId === shipment.id);
+      const allCtrs         = Array.isArray(ctrsRaw) ? ctrsRaw : (ctrsRaw?.results ?? []);
+      const containersBase  = allCtrs.filter(c => c.shipmentId === shipment.id);
+      // Structured cargo line items (Epic TKT-P3ASH1, Story TKT-LUNODU) — only CI01/CI02/PL01
+      // render per-pack-item rows; every other doc type is left untouched (no extra requests)
+      // since container_packages has no bulk "packages for a whole shipment" endpoint.
+      const needsPackages = docCode === "CI01" || docCode === "CI02" || docCode === "PL01";
+      const containers = needsPackages
+        ? await Promise.all(containersBase.map(async c => ({ ...c, packages: await api.containerPackages.list(c.id).catch(() => []) })))
+        : containersBase;
       // Org-wide DG compliance address (TKT-DPLQTV) — pulled onto the DG01 declaration's
       // emergency-contact line in place of a hand-filled blank; falls back to the generic
       // CHEMTREC/CANUTEC hotlines if the org hasn't filled its own compliance address in yet.
@@ -645,14 +703,14 @@ const GenerateDocumentModal = ({ shipment, onClose, onSaved, defaultCode }) => {
         address:     orgSettings.dg_compliance_address       || "",
       } : null;
       const html = dispatchDocBuilder(docCode, {
-        shipment, invNumber: docNum, invDate: docDate, notes, containers, shipper, consignee, costLines, dgCompliance,
+        shipment, invNumber: docNum, invDate: docDate, notes, containers, shipper, consignee, costLines, dgCompliance, parties,
       });
 
-      // Save to shipment documents
-      const filename = `${docCode}-${docNum}-${docDate}.html`;
-      const base64   = btoa(unescape(encodeURIComponent(html)));
-      const saved    = await api.documents.upload(shipment.id, {
-        filename, mimeType: "text/html", docType: docCode, data: base64,
+      // Save to shipment documents — server renders + signs the PDF, so the signing key
+      // never has to leave the server.
+      const filename = `${docCode}-${docNum}-${docDate}.pdf`;
+      const saved    = await api.documents.generate(shipment.id, {
+        html, filename, docType: docCode,
       });
       toast.success(`${docTypeLabel(docCode)} saved to Documents`);
       onSaved?.(saved);
@@ -693,12 +751,12 @@ const GenerateDocumentModal = ({ shipment, onClose, onSaved, defaultCode }) => {
               border: `1px solid ${T.border}`, borderRadius: 6, padding: "8px 10px", resize: "vertical", boxSizing: "border-box" }} />
         </div>
         <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
-          Opens in a new window — use your browser's Print dialog to save as PDF.
+          Generates a digitally signed PDF and saves it to Documents.
         </div>
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", borderTop: `1px solid ${T.border}`, paddingTop: 14 }}>
           <Btn variant="secondary" onClick={onClose}>Cancel</Btn>
           <Btn onClick={handlePreview} disabled={loading || !docNum.trim()}>
-            {loading ? "Building…" : "Preview / Print →"}
+            {loading ? "Building…" : "Generate →"}
           </Btn>
         </div>
       </div>
@@ -729,6 +787,100 @@ const DOC_READINESS_LABEL = {
   missing:   "Missing",
 };
 
+// ─── Send Document Email Modal ─────────────────────────────────────────────────
+// Always sends from the shipment's EMO (Export Managing Office) — a direct scope decision,
+// not a user-facing office picker (see the shipped plan). Recipient candidates mirror
+// GenerateDocumentModal.handlePreview's existing party-resolution pattern just below.
+
+const SendDocumentEmailModal = ({ shipment, doc, onClose }) => {
+  const [candidates, setCandidates] = useState([]);
+  const [loadingCandidates, setLoadingCandidates] = useState(true);
+  const [to,          setTo]          = useState("");
+  const [customMode,  setCustomMode]  = useState(false);
+  const [subject,     setSubject]     = useState(`${docTypeLabel(doc.docType)} — ${shipment.id}`);
+  const [message,     setMessage]     = useState(`Please find attached the ${docTypeLabel(doc.docType)} for shipment ${shipment.id}.`);
+  const [sending,     setSending]     = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      const fixedRoles = [
+        ["Shipper", shipment.shipperId, shipment.shipperName],
+        ["Consignee", shipment.consigneeId, shipment.consigneeName],
+        ["Notify Party", shipment.notifyId, shipment.notifyName],
+        ["Principal", shipment.principalId, shipment.principalName],
+      ].filter(([, id]) => id);
+      const parties = await api.shipmentParties.list(shipment.id).catch(() => []);
+      const allRefs = [...fixedRoles, ...parties.map(p => [p.role, p.customerId, p.customerName])];
+      const resolved = await Promise.all(allRefs.map(async ([role, customerId, name]) => {
+        const cust = await api.customers.get(customerId).catch(() => null);
+        return cust?.email ? { role, name: name || cust.companyName, email: cust.email } : null;
+      }));
+      const list = resolved.filter(Boolean);
+      setCandidates(list);
+      if (list.length) setTo(list[0].email); else setCustomMode(true);
+      setLoadingCandidates(false);
+    })();
+  }, [shipment.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleSend = async () => {
+    if (!to.trim()) return toast.error("A recipient email address is required");
+    setSending(true);
+    try {
+      await api.documents.sendEmail(shipment.id, doc.id, { to: to.trim(), subject, message });
+      toast.success(`Sent to ${to.trim()}`);
+      onClose();
+    } catch (ex) { toast.error(ex.message); } finally { setSending(false); }
+  };
+
+  return (
+    <Modal title={`Send — ${doc.filename}`} onClose={onClose} width={480}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted,
+          background: T.bg, border: `1px solid ${T.border}`, borderRadius: 6, padding: "6px 10px" }}>
+          Sends from <strong>{shipment.emoOfficeName || "the shipment's Export Managing Office"}</strong>
+          {shipment.emoOfficeName ? "" : " — configure it under Parties & Offices if unset"}.
+        </div>
+        <div>
+          <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 6 }}>To</div>
+          {!customMode && candidates.length > 0 ? (
+            <select value={to} onChange={e => { if (e.target.value === "__custom__") { setCustomMode(true); setTo(""); } else setTo(e.target.value); }}
+              style={{ width: "100%", fontFamily: T.body, fontSize: 13, background: T.surface, color: T.text,
+                border: `1px solid ${T.border}`, borderRadius: 6, padding: "8px 10px", cursor: "pointer" }}>
+              {candidates.map(c => <option key={c.role} value={c.email}>{c.role}: {c.name} &lt;{c.email}&gt;</option>)}
+              <option value="__custom__">Other (enter manually)…</option>
+            </select>
+          ) : (
+            <input type="email" value={to} onChange={e => setTo(e.target.value)} placeholder="recipient@example.com"
+              style={{ width: "100%", fontFamily: T.body, fontSize: 13, background: T.surface, color: T.text,
+                border: `1px solid ${T.border}`, borderRadius: 6, padding: "7px 10px", boxSizing: "border-box" }} />
+          )}
+          {!loadingCandidates && candidates.length === 0 && (
+            <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginTop: 4 }}>
+              No party on this shipment has an email on file — enter one manually.
+            </div>
+          )}
+        </div>
+        <div>
+          <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 4 }}>Subject</div>
+          <input value={subject} onChange={e => setSubject(e.target.value)}
+            style={{ width: "100%", fontFamily: T.body, fontSize: 13, background: T.surface, color: T.text,
+              border: `1px solid ${T.border}`, borderRadius: 6, padding: "7px 10px", boxSizing: "border-box" }} />
+        </div>
+        <div>
+          <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 4 }}>Message</div>
+          <textarea value={message} onChange={e => setMessage(e.target.value)} rows={4}
+            style={{ width: "100%", fontFamily: T.body, fontSize: 13, background: T.surface, color: T.text,
+              border: `1px solid ${T.border}`, borderRadius: 6, padding: "8px 10px", resize: "vertical", boxSizing: "border-box" }} />
+        </div>
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", borderTop: `1px solid ${T.border}`, paddingTop: 14 }}>
+          <Btn variant="secondary" onClick={onClose}>Cancel</Btn>
+          <Btn onClick={handleSend} disabled={sending || !to.trim()}>{sending ? "Sending…" : "Send →"}</Btn>
+        </div>
+      </div>
+    </Modal>
+  );
+};
+
 // Kept in App.jsx (not a separate src/pages/ file) — GenerateDocumentModal here depends on
 // ~450 lines of buildXHtml/dispatchDocBuilder template functions defined earlier in this
 // file (lines ~74-566); a separate page file would need to import them back from App.jsx,
@@ -743,6 +895,7 @@ const DocumentsModal = ({ shipment, canEdit, onClose, standalone = false }) => {
   const [genInvOpen,     setGenInvOpen]     = useState(false);
   const [genDefaultCode, setGenDefaultCode] = useState(null);
   const [previewDoc,     setPreviewDoc]     = useState(null);
+  const [sendDoc,        setSendDoc]        = useState(null);
   const fileRef = useRef(null);
 
   // Best doc per type: confirmed+fresh > confirmed+stale > draft+fresh > draft+stale
@@ -1005,6 +1158,9 @@ const DocumentsModal = ({ shipment, canEdit, onClose, standalone = false }) => {
                     onClick={() => api.documents.download(doc.id, doc.filename).catch(() => toast.error("Download failed"))}>
                     ↓
                   </Btn>
+                  <Btn size="sm" variant="secondary" onClick={() => setSendDoc(doc)}>
+                    ✉ Send
+                  </Btn>
                   {canEdit && doc.status !== "confirmed" && (
                     <Btn size="sm" variant="secondary" onClick={() => handleConfirm(doc.id)}
                       style={{ color: T.success, borderColor: T.success + "66" }}>
@@ -1040,7 +1196,11 @@ const DocumentsModal = ({ shipment, canEdit, onClose, standalone = false }) => {
           doc={previewDoc}
           onClose={() => setPreviewDoc(null)}
           onConfirm={canEdit ? () => handleConfirm(previewDoc.id) : null}
+          onSend={() => setSendDoc(previewDoc)}
         />
+      )}
+      {sendDoc && (
+        <SendDocumentEmailModal shipment={shipment} doc={sendDoc} onClose={() => setSendDoc(null)} />
       )}
     </>
   );
@@ -1418,6 +1578,21 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
     : bookingStatus === "Rejected" ? { text: "Rejected", color: T.danger }
     : null;
 
+  // Same self-fetch, no-WS idiom as bookingBadge above — a shipment can have up to 2 filings
+  // (AES/EEI + ISF/AMS), so this looks across all of them: Rejected takes priority over Filed,
+  // same minimal 2-state treatment the booking badge already uses.
+  const [filingStatuses, setFilingStatuses] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    api.customsFilings.list(shipment.id)
+      .then(rows => !cancelled && setFilingStatuses(rows.map(r => r.status)))
+      .catch(() => !cancelled && setFilingStatuses([]));
+    return () => { cancelled = true; };
+  }, [shipment.id, currentPage]);
+  const filingBadge = filingStatuses.includes("Rejected") ? { text: "Rejected", color: T.danger }
+    : filingStatuses.includes("Filed") ? { text: "Filed", color: T.accent }
+    : null;
+
   // One nav row per distinct, non-cancelled ordered type per side, in canonical
   // SERVICE_TYPES order (not order-ordered) for predictable placement.
   const orderedTypesFor = (side) => {
@@ -1460,6 +1635,9 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
     "shp-carrier-booking":         "shipment-carrier-booking-details", // parent row → first child
     "shp-carrier-booking-details": "shipment-carrier-booking-details",
     "shp-carrier-booking-review":  "shipment-carrier-booking-review",
+    "shp-customs-filing":         "shipment-customs-filing-details", // parent row → first child
+    "shp-customs-filing-details": "shipment-customs-filing-details",
+    "shp-customs-filing-review":  "shipment-customs-filing-review",
     // "Booking & Routing" groups the booking pipeline (Schedules → Carrier Booking →
     // Pickup/Delivery) under one parent — same "parent row → first child" idiom.
     "shp-booking-routing": "shipment-schedules",
@@ -1516,11 +1694,14 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
     { id: schedulesSection.id, icon: schedulesSection.icon, label: schedulesSection.label },
     { id: "shp-carrier-booking", icon: IconBaseStation, label: "Carrier Booking",
       badge: bookingBadge?.text, badgeColor: bookingBadge?.color },
+    { id: "shp-customs-filing", icon: IconFileCertificate, label: "Customs Filing",
+      badge: filingBadge?.text, badgeColor: filingBadge?.color },
     ...(importTypes.includes("Delivery")
       ? [{ id: servicePageKey("Import", "Delivery"), icon: IconMapPin, label: "Delivery Service" }] : []),
   ];
   const BOOKING_ROUTING_ROUTES = [
     "shipment-schedules", "shipment-carrier-booking-details", "shipment-carrier-booking-review",
+    "shipment-customs-filing-details", "shipment-customs-filing-review",
     ...(importTypes.includes("Delivery") ? [servicePageKey("Import", "Delivery")] : []),
   ];
   const accountingChildren = [
@@ -1860,6 +2041,8 @@ function App() {
     "shipment-accounting-gp":       "api_shipments_enabled",
     "shipment-carrier-booking-details": "api_shipments_enabled",
     "shipment-carrier-booking-review":  "api_shipments_enabled",
+    "shipment-customs-filing-details":  "api_shipments_enabled",
+    "shipment-customs-filing-review":   "api_shipments_enabled",
     // Export/Import Services dedicated pages (Epic TKT-TBS7QD) — same gate, not part
     // of the shared shipmentSections.js array since they're a dynamic combinatorial set.
     ...Object.fromEntries(SERVICE_PAGE_KEYS.map(k => [k, "api_shipments_enabled"])),
@@ -1902,6 +2085,16 @@ function App() {
   const CARRIER_BOOKING_SUBPAGE_HASHES = Object.fromEntries(
     Object.entries(CARRIER_BOOKING_SUBPAGES).map(([suffix, key]) => [key, suffix])
   );
+  // Customs Filing (Epic TKT-XW6TQK) — same nested-parent-with-children shape as Carrier
+  // Booking (shipments/:id/customs-filing/:child), for the same reason (Details/Review are
+  // two distinct pages under one nav entry, not a single flat section).
+  const CUSTOMS_FILING_SUBPAGES = {
+    details: "shipment-customs-filing-details",
+    review:  "shipment-customs-filing-review",
+  };
+  const CUSTOMS_FILING_SUBPAGE_HASHES = Object.fromEntries(
+    Object.entries(CUSTOMS_FILING_SUBPAGES).map(([suffix, key]) => [key, suffix])
+  );
 
   const parseHash = hash => {
     if (!hash) return { page: "home", selectedId: null };
@@ -1911,6 +2104,8 @@ function App() {
     if (acctMatch) return { page: ACCOUNTING_SUBPAGES[acctMatch[2]], selectedId: acctMatch[1] };
     const bookingMatch = hash.match(/^shipments\/([^/]+)\/booking\/(details|review)$/);
     if (bookingMatch) return { page: CARRIER_BOOKING_SUBPAGES[bookingMatch[2]], selectedId: bookingMatch[1] };
+    const filingMatch = hash.match(/^shipments\/([^/]+)\/customs-filing\/(details|review)$/);
+    if (filingMatch) return { page: CUSTOMS_FILING_SUBPAGES[filingMatch[2]], selectedId: filingMatch[1] };
     // Export/Import Services — two-segment hash (shipments/:id/services/:side/:type),
     // same shape as Accounting's, since it's also a nested parent+children page family.
     const svcMatch = hash.match(/^shipments\/([^/]+)\/services\/(export|import)\/([a-z0-9-]+)$/i);
@@ -2136,11 +2331,12 @@ function App() {
       toast.success("Container added");
     } catch (e) { toast.error(e.message); throw e; }
   };
-  const handleEditContainer = async (id, form) => {
+  const handleEditContainer = async (id, form, { silent = false } = {}) => {
     try {
       const updated = await api.containers.update(id, form);
       setContainers(p => p.map(c => c.id === id ? { ...c, ...updated } : c));
-      toast.success("Container updated");
+      if (!silent) toast.success("Container updated");
+      return updated;
     } catch (e) { toast.error(e.message); throw e; }
   };
   const handleDeleteContainer = async id => {
@@ -2180,6 +2376,7 @@ function App() {
     else if (SHIPMENT_SUBPAGE_HASHES[key] && id)         window.location.hash = `shipments/${id}/${SHIPMENT_SUBPAGE_HASHES[key]}`;
     else if (ACCOUNTING_SUBPAGE_HASHES[key] && id)       window.location.hash = `shipments/${id}/accounting/${ACCOUNTING_SUBPAGE_HASHES[key]}`;
     else if (CARRIER_BOOKING_SUBPAGE_HASHES[key] && id)  window.location.hash = `shipments/${id}/booking/${CARRIER_BOOKING_SUBPAGE_HASHES[key]}`;
+    else if (CUSTOMS_FILING_SUBPAGE_HASHES[key] && id)   window.location.hash = `shipments/${id}/customs-filing/${CUSTOMS_FILING_SUBPAGE_HASHES[key]}`;
     else if (SERVICE_SUBPAGE_HASHES[key] && id)          window.location.hash = `shipments/${id}/services/${SERVICE_SUBPAGE_HASHES[key]}`;
     else if (key === "detail" && id)                     window.location.hash = `shipments/${id}`;
     else                                                  window.location.hash = key;
@@ -2312,6 +2509,8 @@ function App() {
     // not two distinct pages, so the breadcrumb/header shouldn't change between them.
     "shipment-carrier-booking-details": "Carrier Booking",
     "shipment-carrier-booking-review":  "Carrier Booking",
+    "shipment-customs-filing-details":  "Customs Filing",
+    "shipment-customs-filing-review":   "Customs Filing",
     ...SERVICE_SUBPAGE_LABELS,
   };
 
@@ -2885,7 +3084,7 @@ function App() {
     <div style={{ display: "flex", minHeight: "100vh", background: T.bg, fontFamily: T.body, color: T.text }}>
 
       {/* ── Sidebar ── */}
-      {(page === "detail" || Object.values(SHIPMENT_SUBPAGES).includes(page) || Object.values(ACCOUNTING_SUBPAGES).includes(page) || Object.values(CARRIER_BOOKING_SUBPAGES).includes(page) || SERVICE_PAGE_KEYS.includes(page)) && selectedShipment ? (
+      {(page === "detail" || Object.values(SHIPMENT_SUBPAGES).includes(page) || Object.values(ACCOUNTING_SUBPAGES).includes(page) || Object.values(CARRIER_BOOKING_SUBPAGES).includes(page) || Object.values(CUSTOMS_FILING_SUBPAGES).includes(page) || SERVICE_PAGE_KEYS.includes(page)) && selectedShipment ? (
         <ShipmentDetailSidebar
           shipment={selectedShipment}
           ctrCount={containers.filter(c => c.shipmentId === selectedShipment.id).length}
@@ -3228,11 +3427,20 @@ function App() {
 
         {/* Export/Import Services dedicated pages (Epic TKT-TBS7QD) — one generic block
             handles all side x type combinations rather than one hardcoded JSX block per
-            type. Loading/Unloading share LoadingServicePage.jsx (identical per-container
-            date/time-plan shape); every other type gets GenericServicePage.jsx. */}
+            type. VGM gets its own VgmServicePage.jsx (its data lives directly on
+            `containers`, not a satellite table, so it doesn't fit LoadingServicePage's
+            shape — checked first, ahead of the generic isBespokeServiceType branch, since
+            LoadingServicePage indexes doc-type/label maps that have no "VGM" entry).
+            Loading/Unloading/Pickup/Delivery share LoadingServicePage.jsx (identical
+            per-container date/time-plan shape); every other type gets GenericServicePage.jsx. */}
         {SERVICE_PAGE_INFO[page] && selectedShipment && (() => {
           const { side, type } = SERVICE_PAGE_INFO[page];
-          return isBespokeServiceType(type) ? (
+          return type === "VGM" ? (
+            <VgmServicePage
+              shipment={selectedShipment} containers={containers} side={side}
+              canEdit={authCtxValue.canEditShipments}
+              onEditContainer={handleEditContainer} />
+          ) : isBespokeServiceType(type) ? (
             <LoadingServicePage
               shipment={selectedShipment} containers={containers} side={side} serviceType={type}
               canEdit={authCtxValue.canEditShipments}
@@ -3273,6 +3481,14 @@ function App() {
               const fresh = await api.shipments.get(selectedShipment.id);
               setShipments(p => p.map(s => s.id === fresh.id ? { ...s, ...fresh } : s));
             }} />
+        )}
+
+        {(page === "shipment-customs-filing-details" || page === "shipment-customs-filing-review") && selectedShipment && (
+          <ShipmentCustomsFilingPage
+            shipment={selectedShipment}
+            initialTab={page === "shipment-customs-filing-review" ? "review" : "details"}
+            navigate={navigate}
+            onBack={() => navigate("detail", selectedShipment.id)} />
         )}
 
         {page === "kanban"      && isEnabled("kanban")    && (

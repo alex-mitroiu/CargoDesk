@@ -6,11 +6,11 @@
  *
  * Prerequisites:
  *   - npm run dev  (Express :3001, Vite :5173)
- *   - Admin account: claudeagent@localhost / admin
+ *   - Admin account: claudeagent@localhost / TestFixture!2026Zq
  */
 
 const ADMIN_EMAIL    = "claudeagent@localhost";
-const ADMIN_PASSWORD = "admin";
+const ADMIN_PASSWORD = "TestFixture!2026Zq";
 
 describe("Users & Finance Gating Suite", () => {
   let adminTok;
@@ -155,10 +155,14 @@ describe("Users & Finance Gating Suite", () => {
   // ── data-testid Attributes ──────────────────────────────────────────────────
 
   context("data-testid attributes (UI smoke)", () => {
-    // Must be beforeEach — Cypress clears localStorage between it() blocks,
-    // so a single before() login won't persist past the first test.
+    // Must be beforeEach — Cypress clears localStorage between it() blocks, so a single
+    // before() login won't persist past the first test. loginSession still caches the
+    // real login once per spec file instead of once per test — routes/auth.js's per-IP
+    // rate limiter (20/15min, no test-mode bypass) is otherwise exhausted well before a
+    // full `npx cypress run` across every spec finishes.
     beforeEach(() => {
-      cy.loginAs(ADMIN_EMAIL, ADMIN_PASSWORD);
+      cy.loginSession(ADMIN_EMAIL, ADMIN_PASSWORD, { acceptLicense: true });
+      cy.visit("/");
     });
 
     it("[data-testid=main-nav] is present in the sidebar", () => {

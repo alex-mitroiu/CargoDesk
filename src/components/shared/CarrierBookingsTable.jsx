@@ -28,19 +28,22 @@ const STATUS_COLOR = {
 };
 
 const CarrierBookingsTable = ({ shipment }) => {
-  const [rows,     setRows]     = useState(null); // null = loading
-  const [expanded, setExpanded] = useState(null); // booking id
+  const [rows,      setRows]      = useState(null); // null = loading
+  const [expanded,  setExpanded]  = useState(null); // booking id
+  const [documents, setDocuments] = useState([]); // for resolving a linked bl_document_id to a filename
   const loadRef = useRef(null);
 
   const load = useCallback(() => {
     return Promise.all([
       api.carrierBooking.get(shipment.id).catch(() => null),
       api.carrierBooking.history(shipment.id).catch(() => []),
-    ]).then(([current, history]) => {
+      api.documents.list(shipment.id).catch(() => []),
+    ]).then(([current, history, docs]) => {
       setRows([
         ...(current ? [{ ...current, isCurrent: true }] : []),
         ...history.map(h => ({ ...h, isCurrent: false })),
       ]);
+      setDocuments(docs);
     });
   }, [shipment.id]);
   loadRef.current = load;
@@ -117,7 +120,9 @@ const CarrierBookingsTable = ({ shipment }) => {
                     {b.archivedReason || "—"}
                   </span>
                 </button>
-                {isOpen && (
+                {isOpen && (() => {
+                  const linkedDoc = b.blDocumentId ? documents.find(d => d.id === b.blDocumentId) : null;
+                  return (
                   <div style={{ padding: "0 16px 14px 16px" }}>
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
                       {[
@@ -127,6 +132,10 @@ const CarrierBookingsTable = ({ shipment }) => {
                         ["Cancelled By", b.cancelledBy || "—"],
                         ["Cancel Reason", b.cancelReason || "—"],
                         ["Correlation ID", b.correlationId || "—"],
+                        ["Linked B/L", linkedDoc
+                          ? <a href="#" onClick={e => { e.preventDefault(); api.documents.download(linkedDoc.id, linkedDoc.filename); }}
+                              style={{ color: T.accent, textDecoration: "none" }}>{linkedDoc.filename}</a>
+                          : (b.blDocumentId ? "Linked document" : "Not linked")],
                       ].map(([label, value]) => (
                         <div key={label}>
                           <div style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted, fontWeight: 600,
@@ -145,7 +154,8 @@ const CarrierBookingsTable = ({ shipment }) => {
                       </div>
                     )}
                   </div>
-                )}
+                  );
+                })()}
               </div>
             );
           })}

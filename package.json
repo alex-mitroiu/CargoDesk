@@ -1,6 +1,6 @@
 {
   "name": "cargodesk",
-  "version": "0.47.2",
+  "version": "0.52.0",
   "private": true,
   "engines": {
     "node": ">=22.5.0"
@@ -15,7 +15,7 @@
     "seed:contracts": "node scripts/seed-contracts.js",
     "checkdb": "node scripts/checkdb.js",
     "export:template": "node scripts/create-export-template.js",
-    "test": "node tests/pending-revalidation.test.js && node tests/shipment-crud.test.js && node tests/schedules.test.js && node tests/container-events.test.js && node tests/carrier-booking.test.js && node tests/schedule-catalog.test.js && node tests/pickup-service.test.js && node tests/container-packages.test.js",
+    "test": "node tests/pending-revalidation.test.js && node tests/shipment-crud.test.js && node tests/schedules.test.js && node tests/container-events.test.js && node tests/carrier-booking.test.js && node tests/schedule-catalog.test.js && node tests/pickup-service.test.js && node tests/container-packages.test.js && node tests/shipment-parties.test.js && node tests/customs-filing.test.js && node tests/document-signing.test.js && node tests/office-mail.test.js",
     "test:schedules": "node tests/schedules.test.js",
     "test:revalidate": "node tests/pending-revalidation.test.js",
     "test:shipment": "node tests/shipment-crud.test.js",
@@ -26,6 +26,10 @@
     "cy:run": "concurrently --kill-others-on-fail \"npm run dev\" \"cypress run\""
   },
   "dependencies": {
+    "@signpdf/placeholder-pdf-lib": "^3.3.0",
+    "@signpdf/signer-p12": "^3.3.0",
+    "@signpdf/signpdf": "^3.3.0",
+    "@signpdf/utils": "^3.3.0",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
     "exceljs": "^4.4.0",
@@ -34,6 +38,10 @@
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.8",
     "mermaid": "^11.16.0",
+    "node-forge": "^1.4.0",
+    "nodemailer": "^9.0.3",
+    "pdf-lib": "^1.17.1",
+    "puppeteer-core": "^25.4.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "recharts": "^2.12.0",

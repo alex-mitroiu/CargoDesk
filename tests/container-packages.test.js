@@ -138,6 +138,33 @@ async function login() {
     assert("update round-trips packTypeId", updatedPallet.body.packTypeId === palletType.id);
     assert("update round-trips isDg turned off", updatedPallet.body.isDg === false && updatedPallet.body.dgClass === "");
 
+    console.log("\nStructured value/currency/HS override (TKT-PV5P5L)");
+    const priced = await request("POST", `/api/containers/${containerId}/packages`,
+      { description: "Priced carton", quantity: 4, unitValue: 25.5, currency: "EUR", hsCode: "6203.42" }, token);
+    assert("priced item created (201)", priced.status === 201);
+    assert("unitValue round-trips", priced.body.unitValue === 25.5);
+    assert("currency round-trips", priced.body.currency === "EUR");
+    assert("hsCode round-trips", priced.body.hsCode === "6203.42");
+    assert("unitValueUsd computed (non-null)", priced.body.unitValueUsd != null);
+
+    const unpriced = await request("POST", `/api/containers/${containerId}/packages`,
+      { description: "Unpriced carton", quantity: 1 }, token);
+    assert("unpriced item defaults unitValue to null (not 0)", unpriced.body.unitValue === null);
+    assert("unpriced item defaults currency to ''", unpriced.body.currency === "");
+    assert("unpriced item defaults unitValueUsd to null", unpriced.body.unitValueUsd === null);
+
+    const clearedBack = await request("PUT", `/api/container-packages/${priced.body.id}`,
+      { description: "Priced carton", quantity: 4 }, token); // omit unitValue/currency entirely
+    assert("clearing value back to blank nulls unitValue", clearedBack.body.unitValue === null);
+    assert("clearing value back to blank nulls unitValueUsd", clearedBack.body.unitValueUsd === null);
+
+    const negRejected = await request("POST", `/api/containers/${containerId}/packages`,
+      { description: "Bad value", quantity: 1, unitValue: -5 }, token);
+    assert("negative unitValue rejected", negRejected.status !== 201);
+
+    await request("DELETE", `/api/container-packages/${priced.body.id}`, null, token);
+    await request("DELETE", `/api/container-packages/${unpriced.body.id}`, null, token);
+
     console.log("\nDeleting the parent cascade-deletes the child");
     const del = await request("DELETE", `/api/container-packages/${pallet.body.id}`, null, token);
     assert("delete returns 200", del.status === 200);

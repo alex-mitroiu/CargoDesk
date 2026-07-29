@@ -18,7 +18,7 @@ const fmtDate = s => s ? new Date(s).toLocaleDateString(undefined, { day: "2-dig
 // NOT the same component as the same-named DocumentPreviewModal in
 // ShipmentDetailPage.jsx, which belongs to the separate untracked jsPDF document
 // system (dataUri prop, no server round-trip) — see ARCHITECTURE.md M10.
-const TrackedDocPreviewModal = ({ doc, onClose, onConfirm }) => {
+const TrackedDocPreviewModal = ({ doc, onClose, onConfirm, onSend }) => {
   const [src,        setSrc]        = useState(null);
   const [confirming, setConfirming] = useState(false);
 
@@ -68,6 +68,9 @@ const TrackedDocPreviewModal = ({ doc, onClose, onConfirm }) => {
             onClick={() => api.documents.download(doc.id, doc.filename).catch(() => toast.error("Download failed"))}>
             ↓ Download
           </Btn>
+          {onSend && (
+            <Btn size="sm" variant="secondary" onClick={onSend}>✉ Send</Btn>
+          )}
           {onConfirm && !isConfirmed && (
             <Btn size="sm" onClick={handleConfirm} disabled={confirming}>
               {confirming ? "Confirming…" : "✓ Confirm Document"}

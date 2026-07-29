@@ -6,7 +6,7 @@ import Btn from "../primitives/Btn";
 import { Inp, ContractTypeInput } from "../primitives/Form";
 import DatePicker from "../primitives/DatePicker";
 import CarrierCombobox from "./CarrierCombobox";
-import { ContractPickerModal, deriveHaulageNeeds } from "../../pages/ShipmentFormPage";
+import { ContractPickerModal, deriveHaulageNeeds } from "../../pages/shipments/ShipmentFormPage";
 
 // ─── Contract Assign Modal ──────────────────────────────────────────────────
 // "+ Add Contract" / "Change Contract" flow for the Schedules page — mirrors

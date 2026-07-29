@@ -7,11 +7,11 @@
  *
  * Prerequisites:
  *   - npm run dev  (Express :3001, Vite :5173)
- *   - Admin account: claudeagent@localhost / admin
+ *   - Admin account: claudeagent@localhost / TestFixture!2026Zq
  */
 
 const ADMIN_EMAIL    = "claudeagent@localhost";
-const ADMIN_PASSWORD = "admin";
+const ADMIN_PASSWORD = "TestFixture!2026Zq";
 
 describe("API Smoke Suite", () => {
   let tok;

@@ -22,6 +22,14 @@ const req = async (method, path, body) => {
   });
 
   if (res.status === 401) {
+    // /auth/login's own 401 means "wrong credentials", not "a session went stale" —
+    // there was never a valid session to expire, and clearing/logging out here would
+    // just mask the server's real message (e.g. "Invalid email or password") behind
+    // a misleading generic one.
+    if (path === "/auth/login") {
+      const e = await res.json().catch(() => ({}));
+      throw new Error(e.error || e.message || "Invalid email or password");
+    }
     localStorage.removeItem(TOKEN_KEY);
     window.dispatchEvent(new Event("cargodesk:logout"));
     throw new Error("Session expired — please sign in again");
@@ -64,6 +72,15 @@ export const api = {
     cancel:  (shipmentId, data={}) => req("PATCH", `/shipments/${shipmentId}/carrier-booking/cancel`, data),
     listAll: (params={})           => req("GET",   `/carrier-bookings?${new URLSearchParams(params)}`),
     history: (shipmentId)          => req("GET",   `/shipments/${shipmentId}/carrier-booking-history`),
+    linkBlDocument: (shipmentId, documentId) => req("PATCH", `/shipments/${shipmentId}/carrier-booking/link-bl-document`, { documentId }),
+  },
+  customsFilings: {
+    list:             (shipmentId)              => req("GET",   `/shipments/${shipmentId}/customs-filings`),
+    create:           (shipmentId, data)        => req("POST",  `/shipments/${shipmentId}/customs-filings`, data),
+    submit:           (shipmentId, filingId)    => req("POST",  `/shipments/${shipmentId}/customs-filings/${filingId}/submit`, {}),
+    simulateResponse: (shipmentId, filingId, d) => req("POST",  `/shipments/${shipmentId}/customs-filings/${filingId}/simulate-response`, d),
+    reset:            (shipmentId, filingId)    => req("PATCH", `/shipments/${shipmentId}/customs-filings/${filingId}/reset`, {}),
+    listAll:          (params={})               => req("GET",   `/customs-filings?${new URLSearchParams(params)}`),
   },
   legs: {
     list:   (shipmentId)              => req("GET",    `/shipments/${shipmentId}/legs`),
@@ -259,6 +276,12 @@ export const api = {
     update: (id, d)           => req("PUT",    `/container-packages/${id}`, d),
     remove: (id)              => req("DELETE", `/container-packages/${id}`),
   },
+  shipmentParties: {
+    list:   (shipmentId)     => req("GET",    `/shipments/${shipmentId}/parties`),
+    create: (shipmentId, d) => req("POST",   `/shipments/${shipmentId}/parties`, d),
+    update: (id, d)          => req("PUT",    `/shipment-parties/${id}`, d),
+    remove: (id)             => req("DELETE", `/shipment-parties/${id}`),
+  },
   chargeCodes: {
     list:   ()      => req("GET",    "/charge-code-definitions"),
     create: (d)     => req("POST",   "/charge-code-definitions", d),
@@ -332,6 +355,8 @@ export const api = {
   documents: {
     list:     (shipmentId)       => req("GET",    `/shipments/${shipmentId}/documents`),
     upload:   (shipmentId, data) => req("POST",   `/shipments/${shipmentId}/documents`, data),
+    generate: (shipmentId, data) => req("POST",   `/shipments/${shipmentId}/documents/generate`, data),
+    sendEmail: (shipmentId, docId, data) => req("POST", `/shipments/${shipmentId}/documents/${docId}/send-email`, data),
     patch:    (docId, data)      => req("PATCH",  `/documents/${docId}`, data),
     remove:   (docId)            => req("DELETE", `/documents/${docId}`),
     download: async (docId, filename) => {
@@ -439,6 +464,11 @@ export const api = {
     assignOffice:   (userId, data)   => req("POST",   `/users/${userId}/offices`, data),
     setDefault:     (userId, offId)  => req("PATCH",  `/users/${userId}/offices/${offId}/set-default`, {}),
     removeOffice:   (userId, offId)  => req("DELETE", `/users/${userId}/offices/${offId}`),
+  },
+  officeMail: {
+    get:      (officeId)       => req("GET",  `/offices/${officeId}/mail-settings`),
+    update:   (officeId, data) => req("PUT",  `/offices/${officeId}/mail-settings`, data),
+    sendTest: (officeId, data) => req("POST", `/offices/${officeId}/mail-settings/test`, data),
   },
   branches: {
     list:   ()           => req("GET",    "/branches"),

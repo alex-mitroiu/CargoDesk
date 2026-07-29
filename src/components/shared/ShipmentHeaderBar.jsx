@@ -1,15 +1,17 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { T } from "../../tokens";
 import { api } from "../../api";
 import { toast } from "../../toast";
 import { useAuth } from "../../AuthContext";
 import { Modal } from "../primitives/Modal";
 import Btn from "../primitives/Btn";
-import { ComplianceModal, RouteSummaryBar, MessagesDrawer, TicketsDrawer } from "../../pages/ShipmentDetailPage";
-import { deriveHaulageNeeds } from "../../pages/ShipmentFormPage";
+import { ComplianceModal, RouteSummaryBar, MessagesDrawer, TicketsDrawer } from "../../pages/shipments/ShipmentDetailPage";
+import { deriveHaulageNeeds } from "../../pages/shipments/ShipmentFormPage";
 import ContractMismatchModal from "./ContractMismatchModal";
 import { AnyIcon, IconClipboard, IconLink, IconRefresh, IconPencil, IconWarning, IconCheck,
   IconMail, IconMailUnread } from "../primitives/Icon";
+import { fmtCurr } from "../../utils/invoiceGenerator";
+import { onCargoValueChanged } from "../../cargoValueBus";
 
 // ─── Persistent Shipment Header ────────────────────────────────────────────
 // Mounted once in App.jsx above the page switch for "detail" + every promoted
@@ -253,6 +255,28 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
   const isDg = ctrs.some(c => c.isDg);
   const loopCode = schedules[0]?.service || "";
 
+  // Cargo value rollup (Epic TKT-P3ASH1, Story TKT-NSTDKF) — sum of quantity x unitValueUsd
+  // across every container's pack items, USD-normalized at write time (no live FX call here).
+  // Same per-container-fetch cost profile ShipmentContainersPage.jsx already pays. This header
+  // is persistent (mounted once in App.jsx, never remounts on navigation), so the ctrIds-keyed
+  // effect below only re-fires when the shipment's own set of containers changes — it would
+  // never notice a pack item being priced/repriced on an already-known container. cargoValueBus
+  // (cousin-component signal, same shape as servicesBus.js) closes that gap: ShipmentContainers
+  // Page emits after every package save/delete, and the second effect below refetches on that
+  // signal too, independent of ctrIds.
+  const [cargoValueUsd, setCargoValueUsd] = useState(null);
+  const ctrIds = ctrs.map(c => c.id).join(",");
+  const loadCargoValue = useCallback(() => {
+    if (!ctrIds) { setCargoValueUsd(null); return; }
+    Promise.all(ctrIds.split(",").map(id => api.containerPackages.list(id).catch(() => [])))
+      .then(lists => {
+        const priced = lists.flat().filter(p => p.unitValueUsd != null);
+        setCargoValueUsd(priced.length ? priced.reduce((s, p) => s + p.unitValueUsd * p.quantity, 0) : null);
+      });
+  }, [ctrIds]);
+  useEffect(() => { loadCargoValue(); }, [loadCargoValue]);
+  useEffect(() => onCargoValueChanged(id => { if (id === shipment.id) loadCargoValue(); }), [shipment.id, loadCargoValue]);
+
   const vesselVoyage = [shipment.vessel, shipment.voyage ? `Voy ${shipment.voyage}` : null].filter(Boolean).join(" · ");
 
   const copyId = () => {
@@ -403,6 +427,7 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
         <Field label="Consignee" value={shipment.consigneeName} />
         <Field label="Contract" value={shipment.contractRef} />
         <Field label="TEU" value={ctrs.length ? String(teu) : null} />
+        <Field label="Cargo Value" value={cargoValueUsd != null ? fmtCurr(cargoValueUsd, "USD") : null} />
         <Field label="Loop" value={loopCode} />
       </div>
 

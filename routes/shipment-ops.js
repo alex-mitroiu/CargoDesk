@@ -6,7 +6,9 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
           sanctionsMap, screenShipmentById,
           logEntityEvent, importContractRates, createRateSnapshot, generateCostLinesFromSnapshot,
           mapRateSnapshot, syncShipmentFromLegs, ensureBookingCreated,
-          UPLOADS_DIR, fs, path } = ctx;
+          UPLOADS_DIR, fs, path,
+          renderHtmlToPdf, getActiveSigningCert, signPdfBuffer,
+          buildMailOptions, sendViaOffice } = ctx;
 
   const shipmentWrite = requireRole(["admin", "operator", "occ_bk"]);
 
@@ -558,6 +560,64 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       const row = db.prepare("SELECT * FROM shipment_documents WHERE id = ?").get(id);
       ok(res, mapDoc(row, req.params.id), 201);
     } catch (e) { err(res, e.message, 500); }
+  });
+
+  // Server-side render + sign counterpart to the plain upload route above — every
+  // CargoDesk-generated document (Commercial Invoice, Packing List, loading plans, service
+  // docs, ...) goes through this instead of building a blob client-side, so the signing key
+  // never has to leave the server. Raw user-attached files keep using the plain upload route
+  // untouched — signing a file CargoDesk didn't author would misrepresent who generated it.
+  app.post("/api/shipments/:id/documents/generate", shipmentWrite, async (req, res) => {
+    const { html, filename, docType, containerId = '', responsibleParty = '' } = req.body;
+    if (!html || !filename) return err(res, "html and filename are required");
+    try {
+      const cert = getActiveSigningCert(db);
+      const rawPdf = await renderHtmlToPdf(html);
+      const signedPdf = await signPdfBuffer(Buffer.from(rawPdf), cert);
+
+      const pdfFilename = `${path.parse(filename).name}.pdf`;
+      const storedName  = `${Date.now()}_${uid()}.pdf`;
+      fs.writeFileSync(path.join(UPLOADS_DIR, storedName), signedPdf);
+
+      const id       = `DOC-${uid()}`;
+      const now      = new Date().toISOString();
+      const uploader = req.user?.name || req.user?.email || "";
+      db.prepare(`INSERT INTO shipment_documents
+        (id, shipment_id, filename, stored_name, mime_type, size_bytes, doc_type, uploaded_by, created_at, status, container_id, responsible_party)
+        VALUES (?, ?, ?, ?, 'application/pdf', ?, ?, ?, ?, 'draft', ?, ?)`)
+        .run(id, req.params.id, pdfFilename, storedName, signedPdf.length, docType || "OT", uploader, now, containerId, responsibleParty);
+      logEntityEvent('document', id, 'GENERATED', null, null, null,
+        JSON.stringify({ shipmentId: req.params.id, docType: docType || "OT", filename: pdfFilename, containerId, signed: true, certFingerprint: cert.fingerprint_sha256 }));
+      const row = db.prepare("SELECT * FROM shipment_documents WHERE id = ?").get(id);
+      ok(res, mapDoc(row, req.params.id), 201);
+    } catch (e) { err(res, e.message, 500); }
+  });
+
+  // Always sends from the shipment's EMO (Export Managing Office) — simplest correct default
+  // for FCL export-led document distribution (direct scope decision, not a user-facing office
+  // picker). No silent fallback to IMO if EMO has no mail settings configured.
+  app.post("/api/shipments/:id/documents/:docId/send-email", shipmentWrite, async (req, res) => {
+    const { to, subject, message } = req.body || {};
+    if (!to) return err(res, "A recipient email address is required");
+    const shipment = db.prepare("SELECT emo_office_id FROM shipments WHERE id=?").get(req.params.id);
+    if (!shipment) return err(res, "Shipment not found", 404);
+    if (!shipment.emo_office_id) return err(res, "This shipment has no Export Managing Office assigned");
+    const doc = db.prepare("SELECT * FROM shipment_documents WHERE id=? AND shipment_id=?").get(req.params.docId, req.params.id);
+    if (!doc) return err(res, "Document not found", 404);
+    const mailSettings = db.prepare("SELECT * FROM office_mail_settings WHERE office_id=? AND is_active=1").get(shipment.emo_office_id);
+    if (!mailSettings) return err(res, "Configure SMTP settings for the shipment's Export Managing Office first");
+
+    try {
+      const mailOptions = buildMailOptions({
+        from: mailSettings.from_address, fromName: mailSettings.from_name,
+        to, subject: subject || doc.filename, message: message || "",
+        attachmentPath: path.join(UPLOADS_DIR, doc.stored_name), attachmentFilename: doc.filename,
+      });
+      await sendViaOffice(db, shipment.emo_office_id, mailOptions);
+      logEntityEvent('document', doc.id, 'EMAILED', null, null, null,
+        JSON.stringify({ shipmentId: req.params.id, to, subject: subject || doc.filename }));
+      ok(res, { sent: true });
+    } catch (e) { err(res, e.message, 502); }
   });
 
   app.patch("/api/documents/:docId", shipmentWrite, (req, res) => {

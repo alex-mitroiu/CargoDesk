@@ -1,12 +1,13 @@
 "use strict";
 
 module.exports = function shipmentsRoutes(app, ctx) {
-  const { db, ok, err, uid, auth, requireRole,
+  const { db, ok, err, uid, auth, requireRole, isUniqueViolation,
           mapShipment, mapShipmentLeg, mapContainer, mapContainerEvent, mapContainerPackage, mapAllocation,
+          mapShipmentParty, ADDITIONAL_PARTY_ROLES,
           applyShipmentAccessFilter, syncShipmentFromLegs, importContractRates,
           broadcastMessage, recomputeSpaceBadge, screenShipmentById,
           logEvent, logEntityEvent, TRACKED_FIELDS, TRACKED_CTR_FIELDS, FREE_TIME_WARNING_DAYS,
-          sanctionsMap, autoCompleteMilestone, ensureBookingCreated } = ctx;
+          sanctionsMap, autoCompleteMilestone, ensureBookingCreated, toUsd } = ctx;
 
   // trade_manager and viewer are read-only on all shipment write operations
   const shipmentWrite = requireRole(["admin", "operator", "occ_bk"]);
@@ -539,8 +540,24 @@ module.exports = function shipmentsRoutes(app, ctx) {
     ok(res, rows.map(mapContainerPackage));
   });
 
-  app.post("/api/containers/:id/packages", shipmentWrite, (req, res) => {
-    const { parentId = null, description, quantity = 1, packTypeId = null, isDg = false, dgClass = "" } = req.body || {};
+  // Resolves+validates the optional per-item value/currency (Epic TKT-P3ASH1, Story
+  // TKT-PV5P5L) and precomputes its USD equivalent at today's FX rate — shared by create
+  // and update so both routes stay in sync. Write-time conversion (not live-at-read), same
+  // amount_usd-at-write-time idiom as contract_rates/saveRates — keeps the cargo value
+  // rollup and generated documents pure sums over already-USD numbers, no FX call at read
+  // time. unitValue stays null (not 0) when nothing's entered — "$0" and "not priced yet"
+  // must stay distinguishable.
+  async function resolvePackageValue({ unitValue, currency }) {
+    const uv = (unitValue === "" || unitValue == null) ? null : parseFloat(unitValue);
+    if (uv != null && (!Number.isFinite(uv) || uv < 0)) throw new Error("unitValue must be a non-negative number");
+    const curr = uv != null ? (currency || "USD") : "";
+    const uvUsd = uv != null ? await toUsd(uv, curr) : null;
+    return { uv, curr, uvUsd };
+  }
+
+  app.post("/api/containers/:id/packages", shipmentWrite, async (req, res) => {
+    const { parentId = null, description, quantity = 1, packTypeId = null, isDg = false, dgClass = "",
+            unitValue = null, currency = "", hsCode = "" } = req.body || {};
     if (!description || !description.trim()) return err(res, "description required");
     const qty = parseInt(quantity, 10);
     if (!Number.isFinite(qty) || qty < 1) return err(res, "quantity must be a positive integer");
@@ -550,25 +567,35 @@ module.exports = function shipmentsRoutes(app, ctx) {
       const parent = db.prepare("SELECT id FROM container_packages WHERE id=? AND container_id=?").get(parentId, req.params.id);
       if (!parent) return err(res, "Parent package not found on this container", 404);
     }
+    let uv, curr, uvUsd;
+    try { ({ uv, curr, uvUsd } = await resolvePackageValue({ unitValue, currency })); }
+    catch (e) { return err(res, e.message); }
     const siblingCount = db.prepare("SELECT COUNT(*) AS n FROM container_packages WHERE container_id=? AND parent_id IS ?").get(req.params.id, parentId).n;
     const id = `PKG-${uid()}`;
     const now = new Date().toISOString();
-    db.prepare(`INSERT INTO container_packages (id, container_id, parent_id, description, quantity, position, pack_type_id, is_dg, dg_class, created_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?)`)
-      .run(id, req.params.id, parentId, description.trim(), qty, siblingCount, packTypeId || null, isDg ? 1 : 0, dgClass || "", now);
+    db.prepare(`INSERT INTO container_packages (id, container_id, parent_id, description, quantity, position, pack_type_id, is_dg, dg_class, unit_value, currency, hs_code, unit_value_usd, created_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(id, req.params.id, parentId, description.trim(), qty, siblingCount, packTypeId || null, isDg ? 1 : 0, dgClass || "",
+           uv, curr, (hsCode || "").trim(), uvUsd, now);
     ok(res, mapContainerPackage(db.prepare("SELECT * FROM container_packages WHERE id=?").get(id)), 201);
   });
 
-  app.put("/api/container-packages/:id", shipmentWrite, (req, res) => {
+  app.put("/api/container-packages/:id", shipmentWrite, async (req, res) => {
     const existing = db.prepare("SELECT * FROM container_packages WHERE id=?").get(req.params.id);
     if (!existing) return err(res, "Not found", 404);
-    const { description, quantity, packTypeId = null, isDg = false, dgClass = "" } = req.body || {};
+    const { description, quantity, packTypeId = null, isDg = false, dgClass = "",
+            unitValue = null, currency = "", hsCode = "" } = req.body || {};
     if (!description || !description.trim()) return err(res, "description required");
     const qty = parseInt(quantity, 10);
     if (!Number.isFinite(qty) || qty < 1) return err(res, "quantity must be a positive integer");
-    db.prepare("UPDATE container_packages SET description=?, quantity=?, pack_type_id=?, is_dg=?, dg_class=? WHERE id=?")
-      .run(description.trim(), qty, packTypeId || null, isDg ? 1 : 0, dgClass || "", req.params.id);
-    ok(res, mapContainerPackage({ ...existing, description: description.trim(), quantity: qty, pack_type_id: packTypeId || null, is_dg: isDg ? 1 : 0, dg_class: dgClass || "" }));
+    let uv, curr, uvUsd;
+    try { ({ uv, curr, uvUsd } = await resolvePackageValue({ unitValue, currency })); }
+    catch (e) { return err(res, e.message); }
+    const hs = (hsCode || "").trim();
+    db.prepare("UPDATE container_packages SET description=?, quantity=?, pack_type_id=?, is_dg=?, dg_class=?, unit_value=?, currency=?, hs_code=?, unit_value_usd=? WHERE id=?")
+      .run(description.trim(), qty, packTypeId || null, isDg ? 1 : 0, dgClass || "", uv, curr, hs, uvUsd, req.params.id);
+    ok(res, mapContainerPackage({ ...existing, description: description.trim(), quantity: qty, pack_type_id: packTypeId || null,
+      is_dg: isDg ? 1 : 0, dg_class: dgClass || "", unit_value: uv, currency: curr, hs_code: hs, unit_value_usd: uvUsd }));
   });
 
   // Deletes the package and its entire sub-tree (a package with children removed on
@@ -584,6 +611,52 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const placeholders = toDelete.map(() => '?').join(',');
     db.prepare(`DELETE FROM container_packages WHERE id IN (${placeholders})`).run(...toDelete);
     ok(res, { deleted: toDelete });
+  });
+
+  // ─── Additional Parties (Epic TKT-5XFCAP, Story TKT-HG10IK) ────────────────
+  // Generic role-based party assignment, alongside (not replacing) the 4 fixed
+  // shipper/consignee/notify/principal columns on shipments. role is validated
+  // against ADDITIONAL_PARTY_ROLES server-side too (defense in depth — the
+  // frontend picker already filters to unassigned roles from the same list).
+
+  app.get("/api/shipments/:id/parties", auth(), (req, res) => {
+    const rows = db.prepare("SELECT * FROM shipment_parties WHERE shipment_id=? ORDER BY created_at ASC").all(req.params.id);
+    ok(res, rows.map(mapShipmentParty));
+  });
+
+  app.post("/api/shipments/:id/parties", shipmentWrite, (req, res) => {
+    const { role, customerId, customerName } = req.body || {};
+    if (!role || !ADDITIONAL_PARTY_ROLES.includes(role)) return err(res, "Invalid role");
+    if (!customerId || !customerName) return err(res, "customerId and customerName required");
+    const sh = db.prepare("SELECT id FROM shipments WHERE id=?").get(req.params.id);
+    if (!sh) return err(res, "Shipment not found", 404);
+    const id = `PTY-${uid()}`;
+    const now = new Date().toISOString();
+    try {
+      db.prepare(`INSERT INTO shipment_parties (id, shipment_id, role, customer_id, customer_name, created_at)
+        VALUES (?,?,?,?,?,?)`).run(id, req.params.id, role, customerId, customerName, now);
+    } catch (e) {
+      return err(res, isUniqueViolation(e) ? "This role is already assigned on this shipment — edit or remove it instead." : e.message);
+    }
+    ok(res, mapShipmentParty(db.prepare("SELECT * FROM shipment_parties WHERE id=?").get(id)), 201);
+  });
+
+  // Role is immutable once assigned (it's the row's conceptual identity, backed by the
+  // UNIQUE constraint) — PUT only ever reassigns which customer fills that role.
+  app.put("/api/shipment-parties/:id", shipmentWrite, (req, res) => {
+    const existing = db.prepare("SELECT * FROM shipment_parties WHERE id=?").get(req.params.id);
+    if (!existing) return err(res, "Not found", 404);
+    const { customerId, customerName } = req.body || {};
+    if (!customerId || !customerName) return err(res, "customerId and customerName required");
+    db.prepare("UPDATE shipment_parties SET customer_id=?, customer_name=? WHERE id=?").run(customerId, customerName, req.params.id);
+    ok(res, mapShipmentParty({ ...existing, customer_id: customerId, customer_name: customerName }));
+  });
+
+  app.delete("/api/shipment-parties/:id", shipmentWrite, (req, res) => {
+    const existing = db.prepare("SELECT * FROM shipment_parties WHERE id=?").get(req.params.id);
+    if (!existing) return err(res, "Not found", 404);
+    db.prepare("DELETE FROM shipment_parties WHERE id=?").run(req.params.id);
+    ok(res, { deleted: req.params.id });
   });
 
   // ─── Shipment Messages ────────────────────────────────────────────────────

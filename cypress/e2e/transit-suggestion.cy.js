@@ -6,7 +6,7 @@
  *
  * Prerequisites:
  *   - npm run dev  (Vite :5173 + Express :3001)
- *   - Admin account: claudeagent@localhost / admin
+ *   - Admin account: claudeagent@localhost / TestFixture!2026Zq
  *
  * Fixtures (real UN/LOCODE ports in the live DB):
  *   CNAPP  →  FE lane  (28d transit)
@@ -15,7 +15,7 @@
  */
 
 const ADMIN_EMAIL    = "claudeagent@localhost";
-const ADMIN_PASSWORD = "admin";
+const ADMIN_PASSWORD = "TestFixture!2026Zq";
 const TEST_LANE_CODE = "TSTLN";
 
 // Shared auth token — set once in before(), reused across all it() blocks.

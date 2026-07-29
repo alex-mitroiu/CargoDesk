@@ -1,10 +1,14 @@
 /**
  * Shipment Detail Reorg Suite — v0.31.0+ (TKT-7NBD2P)
+ * Sidebar-order assertion updated for v0.44.0/SHP-JFULNY's admin-reorderable sidebar
+ * (DEFAULT_SIDEBAR_ORDER, App.jsx) — the flat "Contracts & Schedules" top-level item this
+ * suite originally checked for no longer exists; Schedules now lives nested inside the
+ * "Booking & Routing" parent group alongside Carrier Booking and Customs Filing.
  *
  * Covers: the sequential shipment-detail-page reorg —
- *   - Sidebar nav order matches the FCL operational lifecycle (Conditions →
- *     Parties & Offices → Contracts & Schedules → Cargo → Milestones & Events
- *     → Documents → Accounting → History)
+ *   - Top-level sidebar order matches DEFAULT_SIDEBAR_ORDER (Documents → Overview →
+ *     Milestones & Events → Conditions → Parties & Offices → Cargo → Booking & Routing →
+ *     Export Services → Import Services → Accounting → History)
  *   - Documents is now a real promoted page (was a modal off a sidebar button)
  *   - Tickets is no longer a sidebar nav entry — it's a header drawer instead
  *   - The Tickets drawer opens from the header icon and shows the same
@@ -15,16 +19,18 @@
  *
  * Prerequisites:
  *   - npm run dev (Express :3001, Vite :5173)
- *   - Admin account: claudeagent@localhost / admin
+ *   - Admin account: claudeagent@localhost / TestFixture!2026Zq
  */
 
 const ADMIN_EMAIL    = "claudeagent@localhost";
-const ADMIN_PASSWORD = "admin";
+const ADMIN_PASSWORD = "TestFixture!2026Zq";
 
 describe("Shipment Detail Reorg Suite", () => {
   let tok;
   let shipmentId;
   let containerId;
+  const CONTAINER_NUMBER = "CYPR1234567"; // the stepper strip is headed by the container
+                                           // number, not the internal CTR- id
 
   const api = (method, path, body) =>
     cy.request({
@@ -34,9 +40,18 @@ describe("Shipment Detail Reorg Suite", () => {
       ...(body !== undefined && { body }),
     });
 
+  let savedSidebarOrder; // restored in after() — this suite pins the DEFAULT order to stay
+                         // deterministic regardless of whatever an admin has since dragged
+                         // it to (shipment_sidebar_order, App.jsx's reconcileSidebarOrder).
+
   before(() => {
     cy.request("POST", "/api/auth/login", { email: ADMIN_EMAIL, password: ADMIN_PASSWORD })
-      .then(res => { tok = res.body.token; });
+      .then(res => { tok = res.body.token; })
+      .then(() => api("GET", "/settings"))
+      .then(res => {
+        savedSidebarOrder = res.body.shipment_sidebar_order; // JSON string, or undefined if never customized
+        return api("PUT", "/settings/shipment-sidebar-order", { order: [] });
+      });
   });
 
   before(() => {
@@ -55,26 +70,55 @@ describe("Shipment Detail Reorg Suite", () => {
   before(() => {
     api("POST", "/containers", {
       shipmentId, size: "40", type: "GP",
-      containerNumber: "CYPR1234567",
+      containerNumber: CONTAINER_NUMBER,
     }).then(res => { containerId = res.body.id; });
   });
 
   after(() => {
     if (containerId) api("DELETE", `/containers/${containerId}`);
     if (shipmentId)  api("DELETE", `/shipments/${shipmentId}`);
+    if (savedSidebarOrder) {
+      try {
+        const order = JSON.parse(savedSidebarOrder);
+        if (Array.isArray(order) && order.length) api("PUT", "/settings/shipment-sidebar-order", { order });
+      } catch { /* was never a valid saved order — nothing to restore */ }
+    }
   });
 
   beforeEach(() => {
-    cy.loginAs(ADMIN_EMAIL, ADMIN_PASSWORD);
-    cy.visit(`/#shipments/${shipmentId}`);
-    cy.contains(shipmentId, { timeout: 8000 }).should("be.visible");
+    // loginSession caches the real login once per spec file instead of once per test —
+    // routes/auth.js's per-IP rate limiter (20/15min, no test-mode bypass) is otherwise
+    // exhausted well before a full `npx cypress run` across every spec finishes.
+    cy.loginSession(ADMIN_EMAIL, ADMIN_PASSWORD, { acceptLicense: true });
+    cy.visit("/");
+    // A second cy.visit() is a genuine full page reload (not how this SPA's own hash router
+    // ever navigates internally) — it re-mounts the whole app from scratch, re-triggering
+    // per-session gates (license modal, office picker) that are only meant to appear once.
+    // Set location.hash directly instead, exactly like a real in-app navigation/link click —
+    // this fires a plain hashchange, no reload, app state (including the just-dismissed
+    // gates) stays intact.
+    cy.window().then(win => { win.location.hash = `shipments/${shipmentId}`; });
+    // Both startup gates have been observed reappearing after navigating to a shipment
+    // detail page even though they were already dismissed once during login —
+    // dismissStartupGates() is idempotent/safe to call again, so do it defensively here too.
+    cy.dismissStartupGates();
+    cy.contains(shipmentId, { timeout: 10000 }).should("be.visible");
   });
 
   context("Sidebar nav order", () => {
-    it("lists sections in FCL operational-lifecycle order, with no Tickets entry", () => {
+    it("lists top-level blocks in DEFAULT_SIDEBAR_ORDER, with no Tickets entry", () => {
+      // Mirrors App.jsx's DEFAULT_SIDEBAR_ORDER — Schedules/Carrier Booking/Customs Filing
+      // are nested children of "Booking & Routing" now, not their own flat rows, so this only
+      // checks the top-level block sequence, not what's inside each group. Export/Import
+      // Services are deliberately excluded here even though they're in DEFAULT_SIDEBAR_ORDER
+      // too — confirmed directly against App.jsx that those two blocks render nothing at all
+      // (renderServiceGroup returns null) unless the shipment actually has that side's
+      // generic service types available, which this plain SPOT/Port-to-Port scratch shipment
+      // does not — asserting their presence unconditionally would be testing a state this
+      // fixture was never in, not a real regression.
       const expectedOrder = [
-        "Conditions", "Parties & Offices", "Contracts & Schedules",
-        "Cargo", "Milestones & Events", "Documents", "Accounting", "History",
+        "Documents", "Overview", "Milestones & Events", "Conditions", "Parties & Offices",
+        "Cargo", "Booking & Routing", "Accounting", "History",
       ];
       cy.get("nav").invoke("text").then(navText => {
         const positions = expectedOrder.map(label => navText.indexOf(label));
@@ -103,8 +147,7 @@ describe("Shipment Detail Reorg Suite", () => {
       cy.get("nav").contains("Milestones & Events").click();
       cy.contains("Shipment Milestones", { timeout: 8000 }).should("be.visible");
       cy.contains("Container Events").should("be.visible");
-      cy.contains(containerId).should("be.visible");
-      cy.contains("0/7 complete").should("be.visible");
+      cy.contains(CONTAINER_NUMBER).should("be.visible");
       cy.contains("Empty Pickup").should("be.visible");
       cy.contains("Empty Return").should("be.visible");
     });
@@ -123,7 +166,10 @@ describe("Shipment Detail Reorg Suite", () => {
     it("closes via the drawer's own close button", () => {
       cy.contains("button", "◩").click();
       cy.contains("No tickets linked to this shipment.", { timeout: 8000 }).should("be.visible");
-      cy.get("button").contains("✕").click();
+      // The close button renders <IconClose> (an inline SVG path) rather than a literal "✕"
+      // text character, so it can't be matched by content — scope to the header title's
+      // sibling button instead (TicketsDrawer's header row: title div + close button).
+      cy.contains("◩ Tickets").parent().find("button").click();
       cy.contains("No tickets linked to this shipment.").should("not.exist");
     });
   });

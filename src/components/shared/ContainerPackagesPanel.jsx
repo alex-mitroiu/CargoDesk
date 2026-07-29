@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { T, IMDG_CLASSES } from "../../tokens";
+import { T, IMDG_CLASSES, CURRENCIES } from "../../tokens";
 import Btn from "../primitives/Btn";
 import { Inp, Sel, BtnToggle } from "../primitives/Form";
 import { AnyIcon, IconWarning } from "../primitives/Icon";
@@ -38,7 +38,7 @@ const NavRow = ({ id, icon, label, badge, dgClass, depth, selected, onClick, onT
   </div>
 );
 
-const PackageDetailForm = ({ init = {}, packTypes, isNew, canEdit, saving, onSave, onCancel, onDelete, onAddChild }) => {
+const PackageDetailForm = ({ init = {}, packTypes, isNew, canEdit, saving, containerHsCode, onSave, onCancel, onDelete, onAddChild }) => {
   const [packTypeId,  setPackTypeId]  = useState(init.packTypeId || "");
   const [description, setDescription] = useState(init.description || "");
   const [quantity,    setQuantity]    = useState(init.quantity != null ? String(init.quantity) : "1");
@@ -47,6 +47,11 @@ const PackageDetailForm = ({ init = {}, packTypes, isNew, canEdit, saving, onSav
   // it sits in, instead of forcing the whole container to be marked DG for one DG item.
   const [isDg,        setIsDg]        = useState(init.isDg || false);
   const [dgClass,     setDgClass]     = useState(init.dgClass || "");
+  // Structured cargo line item (Epic TKT-P3ASH1) — unit value/currency/HS override, feeding
+  // the cargo value rollup and the Commercial Invoice / Packing List documents.
+  const [unitValue,   setUnitValue]   = useState(init.unitValue != null ? String(init.unitValue) : "");
+  const [currency,    setCurrency]    = useState(init.currency || "USD");
+  const [hsCode,       setHsCode]      = useState(init.hsCode || "");
 
   useEffect(() => {
     setPackTypeId(init.packTypeId || "");
@@ -54,10 +59,15 @@ const PackageDetailForm = ({ init = {}, packTypes, isNew, canEdit, saving, onSav
     setQuantity(init.quantity != null ? String(init.quantity) : "1");
     setIsDg(init.isDg || false);
     setDgClass(init.dgClass || "");
-  }, [init.id, init.packTypeId, init.description, init.quantity, init.isDg, init.dgClass]);
+    setUnitValue(init.unitValue != null ? String(init.unitValue) : "");
+    setCurrency(init.currency || "USD");
+    setHsCode(init.hsCode || "");
+  }, [init.id, init.packTypeId, init.description, init.quantity, init.isDg, init.dgClass, init.unitValue, init.currency, init.hsCode]);
 
-  const qty   = parseInt(quantity, 10);
-  const valid = description.trim().length > 0 && Number.isFinite(qty) && qty >= 1 && (!isDg || dgClass);
+  const qty = parseInt(quantity, 10);
+  const uv  = unitValue.trim() === "" ? null : parseFloat(unitValue);
+  const validValue = uv == null || (Number.isFinite(uv) && uv >= 0);
+  const valid = description.trim().length > 0 && Number.isFinite(qty) && qty >= 1 && (!isDg || dgClass) && validValue;
   const typeOptions = [{ value: "", label: "— No type —" }, ...packTypes.map(t => ({ value: t.id, label: `${t.icon} ${t.label}` }))];
 
   return (
@@ -66,6 +76,20 @@ const PackageDetailForm = ({ init = {}, packTypes, isNew, canEdit, saving, onSav
       <Inp id="pkgform-description" label="Description" value={description} onChange={setDescription}
         placeholder="e.g. Bottles of olive oil" hint="What's on/in this pack — the type above is the box/pallet/etc. itself" required />
       <Inp id="pkgform-quantity" label="Quantity" value={quantity} onChange={setQuantity} type="number" required />
+
+      <div style={{ display: "flex", gap: 10 }}>
+        <div style={{ flex: 2 }}>
+          <Inp id="pkgform-unitvalue" label="Unit Value" value={unitValue} onChange={setUnitValue} type="number"
+            placeholder="e.g. 12.50" hint="Per-unit declared value — leave blank if not priced yet" />
+        </div>
+        <div style={{ flex: 1 }}>
+          <Sel id="pkgform-currency" label="Currency" value={currency} onChange={setCurrency}
+            options={CURRENCIES.map(c => ({ value: c, label: c }))} />
+        </div>
+      </div>
+      <Inp id="pkgform-hscode" label="HS Code" value={hsCode} onChange={setHsCode}
+        placeholder={containerHsCode ? `Container default: ${containerHsCode}` : "e.g. 8471.30"}
+        hint="Optional override — leave blank to use the container's own HS code" />
 
       <div style={{ background: T.bg, border: `1px solid ${isDg ? T.danger + "55" : T.border}`,
         borderRadius: 8, padding: "10px 12px", transition: "border-color .15s" }}>
@@ -92,7 +116,8 @@ const PackageDetailForm = ({ init = {}, packTypes, isNew, canEdit, saving, onSav
           {!isNew && canEdit && <Btn id="pkgform-addchild-btn" variant="secondary" size="sm" onClick={onAddChild}>＋ Add Sub-Package</Btn>}
           {isNew && <Btn id="pkgform-cancel-btn" variant="secondary" onClick={onCancel}>Cancel</Btn>}
           <Btn id="pkgform-save-btn" disabled={!valid || saving}
-            onClick={() => valid && onSave({ description: description.trim(), quantity: qty, packTypeId: packTypeId || null, isDg, dgClass: isDg ? dgClass : "" })}>
+            onClick={() => valid && onSave({ description: description.trim(), quantity: qty, packTypeId: packTypeId || null,
+              isDg, dgClass: isDg ? dgClass : "", unitValue: uv, currency: uv != null ? currency : "", hsCode: hsCode.trim() })}>
             {saving ? "Saving…" : isNew ? "Add Package" : "Save Changes"}
           </Btn>
         </div>

@@ -8,11 +8,11 @@ import EdiMessageList from "../components/shared/EdiMessageList";
 import { VesselField } from "../components/shared/VesselCombobox";
 import CarrierCombobox from "../components/shared/CarrierCombobox";
 import PortCombobox from "../components/shared/PortCombobox";
-import { IconBaseStation, IconCheck, IconClose, IconAnchor } from "../components/primitives/Icon";
+import { IconBaseStation, IconCheck, IconClose, IconAnchor, IconFileCertificate } from "../components/primitives/Icon";
 
 // ─── Test Tools ────────────────────────────────────────────────────────────────
 // Reached both from Integration Board's sidebar and a header shortcut icon (App.jsx).
-// Two tools so far:
+// Three tools so far:
 //  - Message Simulator: emulates a carrier's response to a pending booking request
 //    (routes/edi.js's booking-request endpoint no longer fabricates one automatically —
 //    see the v0.35.0 changelog) so rejections and other non-happy-path outcomes can
@@ -24,10 +24,20 @@ import { IconBaseStation, IconCheck, IconClose, IconAnchor } from "../components
 //    stays the schedule's owner exactly as it always has, additional shipments link via a
 //    new schedule_shipment_links row, so "how many shipments are on schedule SCHED-XYZ" is
 //    finally answerable.
+//  - Filing Simulator (Epic TKT-XW6TQK): emulates a customs authority's response to a Filed
+//    AES/EEI or ISF/AMS filing — same "no live government EDI, so simulate the outcome"
+//    precedent as the Message Simulator, mirroring its exact shape (pick a pending item,
+//    Accept/Reject with an optional ref/reason, refresh three things in parallel).
 
 const STATUS_COLOR = {
   Created: "#6b7280", Pending: "#3b82f6", Confirmed: "#22c55e",
   Rejected: "#ef4444", Cancelled: "#6b7280",
+};
+
+// Distinct key set from STATUS_COLOR above (customs_filings has its own status vocabulary —
+// Draft/Filed/Accepted/Rejected, not Created/Pending/Confirmed/Cancelled) — not merged in.
+const FILING_STATUS_COLOR = {
+  Draft: "#6b7280", Filed: "#3b82f6", Accepted: "#22c55e", Rejected: "#ef4444",
 };
 
 const inputStyle = {
@@ -198,9 +208,68 @@ const TestToolsPage = ({ navigate, shipments = [] }) => {
     }
   };
 
+  // ─── Filing Simulator state (Epic TKT-XW6TQK) ─────────────────────────────
+  const [filings,         setFilings]         = useState([]);
+  const [filingsLoading,  setFilingsLoading]  = useState(true);
+  const [showAllFilings,  setShowAllFilings]  = useState(false); // false = Filed only
+  const [selectedFiling,  setSelectedFiling]  = useState(null);  // filing row, includes .shipment
+  const [filingMessages,  setFilingMessages]  = useState([]);
+  const [filingMsgLoading,setFilingMsgLoading]= useState(false);
+  const [confNumInput,    setConfNumInput]    = useState("");
+  const [rejReasonInput,  setRejReasonInput]  = useState("");
+  const [filingBusy,      setFilingBusy]      = useState(false);
+
+  const loadFilings = useCallback(() => {
+    setFilingsLoading(true);
+    return api.customsFilings.listAll(showAllFilings ? {} : { status: "Filed" })
+      .then(setFilings).catch(() => setFilings([])).finally(() => setFilingsLoading(false));
+  }, [showAllFilings]);
+
+  useEffect(() => { loadFilings(); }, [loadFilings]);
+
+  const loadFilingThread = shipmentId => {
+    setFilingMsgLoading(true);
+    return api.ediMessages.list(shipmentId)
+      .then(setFilingMessages).catch(() => setFilingMessages([])).finally(() => setFilingMsgLoading(false));
+  };
+
+  const selectFiling = row => {
+    setSelectedFiling(row);
+    setConfNumInput("");
+    setRejReasonInput("");
+    loadFilingThread(row.shipmentId);
+  };
+
+  const simulateFiling = async outcome => {
+    if (!selectedFiling || filingBusy) return;
+    setFilingBusy(true);
+    try {
+      await api.customsFilings.simulateResponse(selectedFiling.shipmentId, selectedFiling.id, {
+        outcome,
+        confirmationNumber: outcome === "accepted" ? (confNumInput.trim() || undefined) : undefined,
+        reason:             outcome === "rejected" ? (rejReasonInput.trim() || undefined) : undefined,
+      });
+      toast.success(`Simulated ${outcome} response`);
+      const [freshFilings] = await Promise.all([
+        api.customsFilings.list(selectedFiling.shipmentId),
+        loadFilings(),
+        loadFilingThread(selectedFiling.shipmentId),
+      ]);
+      const fresh = freshFilings.find(f => f.id === selectedFiling.id);
+      setSelectedFiling(prev => prev ? { ...prev, ...fresh } : prev);
+    } catch (e) {
+      toast.error(e.message || "Failed to simulate response");
+    } finally {
+      setFilingBusy(false);
+    }
+  };
+
+  const FILING_TYPE_LABEL = { AES_EEI: "AES/EEI (Export)", ISF_AMS: "ISF/AMS (Import)" };
+
   const TABS = [
     { key: "simulator", label: "Message Simulator", icon: IconBaseStation },
     { key: "generator",  label: "Schedule Generator", icon: IconAnchor },
+    { key: "filings",    label: "Filing Simulator", icon: IconFileCertificate },
   ];
 
   return (
@@ -522,6 +591,118 @@ const TestToolsPage = ({ navigate, shipments = [] }) => {
                   </div>
                 ))}
               </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {activeTab === "filings" && (
+        <div style={{ display: "flex", gap: 24, height: "100%" }}>
+          {/* Left: filing picker */}
+          <div style={{ width: 340, flexShrink: 0, display: "flex", flexDirection: "column" }}>
+            <h2 style={{ fontFamily: T.head, fontSize: 16, fontWeight: 800, color: T.text, margin: "0 0 14px" }}>
+              Simulate a regulatory response
+            </h2>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14,
+              fontFamily: T.body, fontSize: 12.5, color: T.textMuted, cursor: "pointer" }}>
+              <input type="checkbox" checked={showAllFilings} onChange={e => setShowAllFilings(e.target.checked)}
+                style={{ accentColor: T.accent }} />
+              Show all filings, not just Filed
+            </label>
+            {filingsLoading ? <Spinner size="sm" /> : filings.length === 0 ? (
+              <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, fontStyle: "italic" }}>
+                {showAllFilings ? "No customs filings yet." : "No filed submissions awaiting a response right now."}
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, overflowY: "auto" }}>
+                {filings.map(f => {
+                  const color = FILING_STATUS_COLOR[f.status] || T.textMuted;
+                  const active = selectedFiling?.id === f.id;
+                  return (
+                    <button key={f.id} onClick={() => selectFiling(f)}
+                      style={{ textAlign: "left", background: active ? T.accentBg : T.surface,
+                        border: `1px solid ${active ? T.accent : T.border}`, borderRadius: 8,
+                        padding: "10px 12px", cursor: "pointer" }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 3 }}>
+                        <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.text }}>
+                          {f.shipment?.id}
+                        </span>
+                        <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color,
+                          textTransform: "uppercase" }}>{f.status}</span>
+                      </div>
+                      <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted }}>
+                        {FILING_TYPE_LABEL[f.filingType] || f.filingType} · {f.shipment?.pol} → {f.shipment?.pod}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Right: selected filing's thread + simulate actions */}
+          <div style={{ flex: 1, overflowY: "auto" }}>
+            {!selectedFiling ? (
+              <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, fontStyle: "italic",
+                textAlign: "center", marginTop: 60 }}>
+                Select a filing on the left to view its message thread and simulate a response.
+              </div>
+            ) : (
+              <>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+                  <h3 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: 0 }}>
+                    {selectedFiling.shipment?.id} — {FILING_TYPE_LABEL[selectedFiling.filingType] || selectedFiling.filingType}
+                  </h3>
+                  <Btn variant="secondary" size="sm"
+                    onClick={() => navigate?.("shipment-customs-filing-review", selectedFiling.shipmentId)}>
+                    Open Review Page
+                  </Btn>
+                </div>
+
+                {selectedFiling.status === "Filed" ? (
+                  <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
+                    padding: "16px 20px", marginBottom: 20, display: "flex", flexDirection: "column", gap: 14 }}>
+                    <div style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600, color: T.textMuted,
+                      textTransform: "uppercase", letterSpacing: ".06em" }}>Simulate Regulatory Response</div>
+                    <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
+                      <div style={{ flex: 1, minWidth: 220 }}>
+                        <label style={label}>
+                          Confirmation number (optional — auto-generated if blank)
+                        </label>
+                        <input value={confNumInput} onChange={e => setConfNumInput(e.target.value)}
+                          style={{ ...inputStyle, fontFamily: T.mono, marginBottom: 8 }} />
+                        <Btn size="sm" onClick={() => simulateFiling("accepted")} disabled={filingBusy}>
+                          <IconCheck size={12} /> Simulate Accepted
+                        </Btn>
+                      </div>
+                      <div style={{ flex: 1, minWidth: 220 }}>
+                        <label style={label}>
+                          Rejection reason (optional)
+                        </label>
+                        <input value={rejReasonInput} onChange={e => setRejReasonInput(e.target.value)}
+                          placeholder="Data did not pass regulatory validation…"
+                          style={{ ...inputStyle, marginBottom: 8 }} />
+                        <Btn size="sm" variant="danger" onClick={() => simulateFiling("rejected")} disabled={filingBusy}>
+                          <IconClose size={12} /> Simulate Rejected
+                        </Btn>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ fontFamily: T.body, fontSize: 12.5, color: T.textMuted, marginBottom: 20,
+                    background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 14px" }}>
+                    This filing is {selectedFiling.status.toLowerCase()} — nothing pending to respond to.
+                  </div>
+                )}
+
+                <h4 style={{ fontFamily: T.head, fontSize: 13, fontWeight: 700, color: T.text, marginBottom: 10 }}>
+                  Message Thread
+                </h4>
+                {filingMsgLoading ? <Spinner size="sm" /> : (
+                  <EdiMessageList messages={filingMessages.filter(m => m.correlationId === selectedFiling.id)}
+                    emptyText="No messages for this filing yet." />
+                )}
+              </>
             )}
           </div>
         </div>

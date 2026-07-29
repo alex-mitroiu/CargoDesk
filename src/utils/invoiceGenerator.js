@@ -11,6 +11,11 @@ export const fmtCurr = (n, curr = "USD") =>
 
 export const _esc = s => String(s).replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
 
+// Looks up an Additional Party (Epic TKT-5XFCAP) by role on a shipment's parties list.
+// Additive/optional everywhere it's used — a missing role just means no matching party,
+// never an error.
+export const partyByRole = (parties, role) => (parties || []).find(p => p.role === role) || null;
+
 export const INV_CSS = `
   @page{margin:18mm}
   @media print{.no-print{display:none!important}}
@@ -149,7 +154,13 @@ export const buildFreightInvoiceHtml = ({ shipment: sh, invNumber, invDate, note
 // that page, so a circular import isn't possible the other way around. Usable both from that
 // dedicated page (passes real loadingPlanLines) and the generic Documents "⚡ Generate" picker
 // in App.jsx (passes containers only — blank dates, a starting template).
-export const buildLoadingPlanHtml = ({ shipment: sh, invNumber, invDate, notes, side = "Export", planLabel = "Loading Plan", containers = [], loadingPlanLines = [] }) => {
+export const buildLoadingPlanHtml = ({ shipment: sh, invNumber, invDate, notes, side = "Export", planLabel = "Loading Plan", containers = [], loadingPlanLines = [], parties = [] }) => {
+  // Trucker (Epic TKT-5XFCAP) — additive only. Loading/Unloading Plans have no trucker
+  // role (truckerRole stays null, so this section renders byte-identical to before this
+  // epic); Pickup/Delivery Plans surface the matching Trucker party when one is assigned.
+  const truckerRole = planLabel === "Pickup Plan" ? "Trucker (Pre-carriage)"
+                     : planLabel === "Delivery Plan" ? "Trucker (On-carriage)" : null;
+  const trucker = truckerRole ? partyByRole(parties, truckerRole) : null;
   const lineByContainer = Object.fromEntries(loadingPlanLines.map(l => [l.containerId, l]));
   const sortedContainers = [...containers].sort((a, b) => {
     const la = lineByContainer[a.id], lb = lineByContainer[b.id];
@@ -184,6 +195,7 @@ export const buildLoadingPlanHtml = ({ shipment: sh, invNumber, invDate, notes, 
     ["Origin (POL)", `${_esc(sh.pol)}${sh.polName ? " · " + _esc(sh.polName) : ""}`],
     ["Destination (POD)", `${_esc(sh.pod)}${sh.podName ? " · " + _esc(sh.podName) : ""}`],
     ["ETD", sh.etd ? new Date(sh.etd).toLocaleDateString("en-GB") : "—"],
+    ...(trucker ? [["Trucker", _esc(trucker.customerName)]] : []),
   ].map(([k, v]) => `<div><div class="detail-key">${k}</div><div class="detail-val">${v}</div></div>`).join("");
 
   const body = `
@@ -300,16 +312,15 @@ export async function generateInvoices(shipment, { containers = [], costLines, s
   };
 
   const upload = (html, filename, containerId) =>
-    api.documents.upload(shipment.id, {
-      filename, mimeType: "text/html", docType: "FR01",
-      data: btoa(unescape(encodeURIComponent(html))),
+    api.documents.generate(shipment.id, {
+      html, filename, docType: "FR01",
       containerId, responsibleParty,
     });
 
   if (!splitPerContainer) {
     await replaceDraftIfAny("");
     const html  = buildFreightInvoiceHtml({ shipment, invNumber: baseNumber, invDate, notes: "", costLines: sellLines, targetCurrency, fxRates });
-    const saved = await upload(html, `FR01-${baseNumber}-${invDate}.html`, "");
+    const saved = await upload(html, `FR01-${baseNumber}-${invDate}.pdf`, "");
     return [saved];
   }
 
@@ -322,7 +333,7 @@ export async function generateInvoices(shipment, { containers = [], costLines, s
     await replaceDraftIfAny(container.id);
     const html  = buildFreightInvoiceHtml({ shipment, invNumber: baseNumber, invDate, notes: "", costLines: sellLines, container, targetCurrency, fxRates });
     const label = container.containerNumber || container.id;
-    const saved = await upload(html, `FR01-${baseNumber}-${label}-${invDate}.html`, container.id);
+    const saved = await upload(html, `FR01-${baseNumber}-${label}-${invDate}.pdf`, container.id);
     results.push(saved);
   }
   return results;

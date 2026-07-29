@@ -6,12 +6,12 @@
  *
  * Prerequisites:
  *   - npm run dev  (Express :3001, Vite :5173)
- *   - Admin account: claudeagent@localhost / admin
+ *   - Admin account: claudeagent@localhost / TestFixture!2026Zq
  *   - Server restarted after routes/share.js was added
  */
 
 const ADMIN_EMAIL    = "claudeagent@localhost";
-const ADMIN_PASSWORD = "admin";
+const ADMIN_PASSWORD = "TestFixture!2026Zq";
 
 describe("Share Token & Customer Tracking Suite", () => {
   let tok;

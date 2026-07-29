@@ -2,7 +2,7 @@ import { useState } from "react";
 import { T } from "../../tokens";
 import { Modal } from "../primitives/Modal";
 import { ContractTypeInput, Inp } from "../primitives/Form";
-import { ContractField } from "../../pages/ShipmentFormPage";
+import { ContractField } from "../../pages/shipments/ShipmentFormPage";
 
 // ─── Contract Mismatch — forcing modal ─────────────────────────────────────
 // Auto-opened by ShipmentHeaderBar whenever a Central contract no longer covers

@@ -640,6 +640,111 @@ async function testPayloadContractAndRateSnapshot(token) {
   }
 }
 
+// ─── Booking-request payload gains vesselImo, cargoReadyDate, party names,
+// commodityCode, placeOfReceipt/placeOfDelivery (TKT-5UNMUD, TKT-O57N94, TKT-U7T2QU) ──
+
+async function testExtendedPayloadFields(token) {
+  console.log("\nBooking-request payload includes vessel IMO, CRD, parties, commodity, and door places");
+
+  // Unset — everything should come through null, not blow up or omit the key.
+  const bareId = await scratchShipment(token, "MAEU");
+  const bareSend = await request("POST", `/api/shipments/${bareId}/edi-messages/booking-request`, {}, token);
+  assert("bare booking-request returns 201", bareSend.status === 201);
+  const bareMessages = await request("GET", `/api/shipments/${bareId}/edi-messages`, null, token);
+  const barePayload = JSON.parse(bareMessages.body.find(m => m.direction === "out" && m.messageType === "booking_request").rawPayload);
+  assert("vesselImo is null when unset", barePayload.vesselImo === null);
+  assert("cargoReadyDate is null when unset", barePayload.cargoReadyDate === null);
+  assert("shipperName is null when unset", barePayload.shipperName === null);
+  assert("placeOfReceipt is null when unset", barePayload.placeOfReceipt === null);
+  await request("DELETE", `/api/shipments/${bareId}`, null, token);
+
+  // Fully populated.
+  const fullCreate = await request("POST", "/api/shipments", {
+    pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+    etd: "2026-09-01", vesselImo: "9321483", cargoReadyDate: "2026-08-15",
+    placeOfReceipt: "Utrecht", placeOfDelivery: "Newark",
+    shipperName: "Test Shipper Co", consigneeName: "Test Consignee Co", notifyName: "Test Notify Co",
+    commodityCode: "HS8471",
+  }, token);
+  const fullId = fullCreate.body.id;
+  const fullSend = await request("POST", `/api/shipments/${fullId}/edi-messages/booking-request`, {}, token);
+  assert("full booking-request returns 201", fullSend.status === 201);
+  const fullMessages = await request("GET", `/api/shipments/${fullId}/edi-messages`, null, token);
+  const fullPayload = JSON.parse(fullMessages.body.find(m => m.direction === "out" && m.messageType === "booking_request").rawPayload);
+  assert("vesselImo round-trips", fullPayload.vesselImo === "9321483");
+  assert("cargoReadyDate round-trips", fullPayload.cargoReadyDate === "2026-08-15");
+  assert("placeOfReceipt round-trips", fullPayload.placeOfReceipt === "Utrecht");
+  assert("placeOfDelivery round-trips", fullPayload.placeOfDelivery === "Newark");
+  assert("shipperName round-trips", fullPayload.shipperName === "Test Shipper Co");
+  assert("consigneeName round-trips", fullPayload.consigneeName === "Test Consignee Co");
+  assert("notifyName round-trips", fullPayload.notifyName === "Test Notify Co");
+  assert("commodityCode round-trips", fullPayload.commodityCode === "HS8471");
+  await request("DELETE", `/api/shipments/${fullId}`, null, token);
+}
+
+// ─── Booking-request payload gains a DG cargo declaration (TKT-O57N94) ────────
+
+async function testDgCargoSummary(token) {
+  console.log("\nBooking-request payload includes a DG cargo declaration");
+
+  const shipmentId = await scratchShipment(token, "MAEU");
+  await request("POST", "/api/containers", { shipmentId, size: "40", type: "HC", isDg: true, dgClass: "3" }, token);
+  await request("POST", "/api/containers", { shipmentId, size: "40", type: "HC", isDg: true, dgClass: "3" }, token);
+  await request("POST", "/api/containers", { shipmentId, size: "20", type: "GP" }, token); // not DG
+
+  const send = await request("POST", `/api/shipments/${shipmentId}/edi-messages/booking-request`, {}, token);
+  assert("booking-request returns 201", send.status === 201);
+  const messages = await request("GET", `/api/shipments/${shipmentId}/edi-messages`, null, token);
+  const payload = JSON.parse(messages.body.find(m => m.direction === "out" && m.messageType === "booking_request").rawPayload);
+
+  assert("containerCount still counts all 3 containers", payload.containerCount === 3);
+  assert("equipment still has 2 groups (40HC, 20GP)", payload.equipment.length === 2);
+  assert("dgCargo has exactly 1 group (only the DG containers)", payload.dgCargo.length === 1);
+  const dg = payload.dgCargo[0];
+  assert("dgCargo group type is 40HC", dg?.type === "40HC");
+  assert("dgCargo group dgClass is 3", dg?.dgClass === "3");
+  assert("dgCargo group count is 2 (the two DG containers, not the clean one)", dg?.count === 2);
+
+  await request("DELETE", `/api/shipments/${shipmentId}`, null, token);
+}
+
+async function testLinkBlDocument(token) {
+  console.log("\nLink/unlink a B/L document to the current carrier booking (TKT-LAK8P4)");
+
+  const shipmentId = await scratchShipment(token, "MAEU");
+  await request("POST", `/api/shipments/${shipmentId}/edi-messages/booking-request`, {}, token);
+
+  const blDoc = await request("POST", `/api/shipments/${shipmentId}/documents/generate`,
+    { html: "<html><body>BL</body></html>", filename: "BL01-test.html", docType: "BL01" }, token);
+  assert("BL01 document generated (201)", blDoc.status === 201);
+  const ciDoc = await request("POST", `/api/shipments/${shipmentId}/documents/generate`,
+    { html: "<html><body>CI</body></html>", filename: "CI01-test.html", docType: "CI01" }, token);
+
+  const otherShipmentId = await scratchShipment(token, "MAEU");
+  const otherDoc = await request("POST", `/api/shipments/${otherShipmentId}/documents/generate`,
+    { html: "<html><body>BL</body></html>", filename: "BL01-other.html", docType: "BL01" }, token);
+
+  const link = await request("PATCH", `/api/shipments/${shipmentId}/carrier-booking/link-bl-document`, { documentId: blDoc.body.id }, token);
+  assert("link returns 200", link.status === 200);
+  assert("blDocumentId set", link.body.blDocumentId === blDoc.body.id);
+
+  const rejectWrongType = await request("PATCH", `/api/shipments/${shipmentId}/carrier-booking/link-bl-document`, { documentId: ciDoc.body.id }, token);
+  assert("linking a non-BL01 document is rejected (400)", rejectWrongType.status === 400);
+
+  const rejectWrongShipment = await request("PATCH", `/api/shipments/${shipmentId}/carrier-booking/link-bl-document`, { documentId: otherDoc.body.id }, token);
+  assert("linking a document from a different shipment is rejected (404 — not found in this scope)", rejectWrongShipment.status === 404);
+
+  const stillLinked = await request("GET", `/api/shipments/${shipmentId}/carrier-booking`, null, token);
+  assert("rejected attempts did not disturb the original link", stillLinked.body.blDocumentId === blDoc.body.id);
+
+  const unlink = await request("PATCH", `/api/shipments/${shipmentId}/carrier-booking/link-bl-document`, { documentId: null }, token);
+  assert("unlink returns 200", unlink.status === 200);
+  assert("blDocumentId cleared", unlink.body.blDocumentId === null);
+
+  await request("DELETE", `/api/shipments/${shipmentId}`, null, token);
+  await request("DELETE", `/api/shipments/${otherShipmentId}`, null, token);
+}
+
 // ─── Cross-shipment list ───────────────────────────────────────────────────────
 
 async function testBookingsList(token) {
@@ -667,6 +772,9 @@ async function testBookingsList(token) {
     await testSupersedeWhilePending(token);
     await testSameCarrierPersistsId(token);
     await testPayloadContractAndRateSnapshot(token);
+    await testExtendedPayloadFields(token);
+    await testDgCargoSummary(token);
+    await testLinkBlDocument(token);
     await testBookingsList(token);
 
     console.log(`\n${"─".repeat(50)}`);

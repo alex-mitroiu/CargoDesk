@@ -15,11 +15,11 @@
  *
  * Prerequisites:
  *   - npm run dev (Express :3001, Vite :5173)
- *   - Admin account: claudeagent@localhost / admin
+ *   - Admin account: claudeagent@localhost / TestFixture!2026Zq
  */
 
 const ADMIN_EMAIL    = "claudeagent@localhost";
-const ADMIN_PASSWORD = "admin";
+const ADMIN_PASSWORD = "TestFixture!2026Zq";
 const PASSWORD       = "Cypress123!";
 const TM_EMAIL       = `cypress-tm-${Date.now()}@test.local`;
 const VIEWER_EMAIL   = `cypress-viewer-${Date.now()}@test.local`;
@@ -136,11 +136,12 @@ describe("Trade Manager Role Suite", () => {
   // ── UI gating ──────────────────────────────────────────────────────────────
 
   context("UI gating — trade_manager", () => {
+    // loginSession caches the real login once per spec file instead of once per test —
+    // routes/auth.js's per-IP rate limiter (20/15min, no test-mode bypass) is otherwise
+    // exhausted well before a full `npx cypress run` across every spec finishes.
     beforeEach(() => {
-      cy.clearAuthState();
+      cy.loginSession(TM_EMAIL, PASSWORD, { acceptLicense: true });
       cy.visit("/");
-      cy.fillLogin(TM_EMAIL, PASSWORD);
-      cy.acceptLicense();
     });
 
     it("MDM Carriers page shows no write controls for trade_manager", () => {
@@ -151,7 +152,7 @@ describe("Trade Manager Role Suite", () => {
 
     it("Application Settings menu item is hidden for trade_manager", () => {
       cy.contains("Shipments", { timeout: 8000 }).should("be.visible");
-      cy.get("header").find("button").filter((_, el) => /^[A-Z]$/.test(el.textContent.trim())).click();
+      cy.get('[data-testid="user-avatar-btn"]').click();
       cy.contains("Application Settings").should("not.exist");
     });
   });

@@ -47,15 +47,18 @@ export const SERVICE_TYPE_SIDES = {
 export const serviceTypesForSide = side =>
   SERVICE_TYPES.filter(t => !SERVICE_TYPE_SIDES[t] || SERVICE_TYPE_SIDES[t].includes(side));
 
-// Types with their own bespoke page — Loading/Unloading share LoadingServicePage.jsx
+// Types with their own bespoke page. Loading/Unloading share LoadingServicePage.jsx
 // (parameterized by a serviceType prop, identical per-container date/time-plan +
-// attachment/produced-document shape); Pickup/Delivery now share it too (same shape, plus
-// a Merchant's Haulage routing card the other two don't show). Every other type in
-// SERVICE_TYPES renders the shared GenericServicePage.jsx (vendor/status recap + notes + a
-// generic produced document under the catch-all "OT" doc type) — not the WIP placeholder
-// anymore, that component was removed once every remaining type had a real (if generic)
-// page. "Other" is free text per instance and never gets a dedicated catalog page at all.
-export const BESPOKE_SERVICE_TYPES = ["Loading", "Unloading", "Pickup", "Delivery"];
+// attachment/produced-document shape); Pickup/Delivery share it too (same shape, plus
+// a Merchant's Haulage routing card the other two don't show). VGM gets its own
+// dedicated VgmServicePage.jsx instead — its real data (weight/status/cutoff) lives
+// directly on `containers`, not a satellite per-service table, so it doesn't fit
+// LoadingServicePage's shape at all. Every other type in SERVICE_TYPES renders the
+// shared GenericServicePage.jsx (vendor/status recap + notes + a generic produced
+// document under the catch-all "OT" doc type) — not the WIP placeholder anymore, that
+// component was removed once every remaining type had a real (if generic) page.
+// "Other" is free text per instance and never gets a dedicated catalog page at all.
+export const BESPOKE_SERVICE_TYPES = ["VGM", "Loading", "Unloading", "Pickup", "Delivery"];
 
 export const SERVICE_SIDES = ["Export", "Import"];
 

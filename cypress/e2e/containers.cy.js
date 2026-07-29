@@ -7,13 +7,13 @@
  *
  * Prerequisites:
  *   - npm run dev  (Express :3001, Vite :5173)
- *   - Admin account: claudeagent@localhost / admin
+ *   - Admin account: claudeagent@localhost / TestFixture!2026Zq
  *   - At least one Central contract seeded with per_container rates
  *     (npm run seed:contracts provides CMDU-CH-EUN-NAM)
  */
 
 const ADMIN_EMAIL    = "claudeagent@localhost";
-const ADMIN_PASSWORD = "admin";
+const ADMIN_PASSWORD = "TestFixture!2026Zq";
 
 describe("Containers Suite", () => {
   let tok;

@@ -79,12 +79,21 @@ describe("Schedule Leg-Removal Cascade Suite", () => {
   });
 
   beforeEach(() => {
-    cy.loginAs(ADMIN_EMAIL, ADMIN_PASSWORD);
+    // loginSession caches the real login once per spec file instead of once per test —
+    // routes/auth.js's per-IP rate limiter (20/15min, no test-mode bypass) is otherwise
+    // exhausted well before a full `npx cypress run` across every spec finishes.
+    cy.loginSession(ADMIN_EMAIL, ADMIN_PASSWORD, { acceptLicense: true });
+    cy.visit("/");
   });
 
   it("bug 1 — a freshly-added leg stays editable even while a schedule is already assigned", () => {
-    cy.visit(`/#shipments/${shipmentId}/schedules`);
-    cy.contains(shipmentId, { timeout: 8000 }).should("be.visible");
+    // Hash-only navigation, not a second cy.visit() — a genuine reload re-mounts the whole
+    // app and has been observed losing the license-accepted flag from the cached session
+    // (the auth token survives, so this isn't a full storage wipe — just this one flag),
+    // re-showing the license modal on top of the page. Same fix already proven in
+    // shipment-reorg.cy.js for the identical symptom.
+    cy.window().then(win => { win.location.hash = `shipments/${shipmentId}/schedules`; });
+    cy.contains(shipmentId, { timeout: 15000 }).should("be.visible");
     cy.contains("button", "+ Add leg").click();
     // The new row must render a real, enabled Leg Type <select> — not a locked read-only
     // row (which would render plain text with no <select> at all).
@@ -96,8 +105,8 @@ describe("Schedule Leg-Removal Cascade Suite", () => {
   });
 
   it("bug 2 — removing that unconfigured new leg does NOT wipe the real schedule/vessel", () => {
-    cy.visit(`/#shipments/${shipmentId}/schedules`);
-    cy.contains(shipmentId, { timeout: 8000 }).should("be.visible");
+    cy.window().then(win => { win.location.hash = `shipments/${shipmentId}/schedules`; });
+    cy.contains(shipmentId, { timeout: 15000 }).should("be.visible");
     cy.get('[id^="leg-row-"]').should("have.length", 2);
     // Select the freshly-added (still-blank, no vessel/voyage) leg and remove it.
     cy.get('[id^="leg-row-"]').last().click();
@@ -118,8 +127,8 @@ describe("Schedule Leg-Removal Cascade Suite", () => {
   });
 
   it("bug 3 — removing the REAL schedule leg still cascades correctly, clears the header, and blocks Carrier Booking", () => {
-    cy.visit(`/#shipments/${shipmentId}/schedules`);
-    cy.contains(shipmentId, { timeout: 8000 }).should("be.visible");
+    cy.window().then(win => { win.location.hash = `shipments/${shipmentId}/schedules`; });
+    cy.contains(shipmentId, { timeout: 15000 }).should("be.visible");
     cy.contains('[id^="leg-row-"]', "DEMO CADENZA").click();
     cy.contains("button", "Remove leg").click();
     // This one really is the schedule's own leg — the cascade warning SHOULD show.
@@ -140,7 +149,7 @@ describe("Schedule Leg-Removal Cascade Suite", () => {
 
     // Carrier Booking must now be blocked — even though a booking record already exists
     // from when the schedule was still valid (ensureBookingCreated auto-created one above).
-    cy.visit(`/#shipments/${shipmentId}/booking/details`);
+    cy.window().then(win => { win.location.hash = `shipments/${shipmentId}/booking/details`; });
     cy.contains("Carrier Booking Unavailable", { timeout: 8000 }).should("be.visible");
     cy.contains("doesn't have a schedule assigned").should("be.visible");
   });

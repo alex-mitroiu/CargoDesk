@@ -190,7 +190,7 @@ module.exports = function ediRoutes(app, ctx) {
     // per-container — a carrier booking request states quantities per equipment type, not
     // individual container numbers (those aren't assigned until the carrier responds).
     const containerRows = db.prepare(
-      "SELECT size, type, gross_weight_kg, volume_cbm FROM containers WHERE shipment_id=?"
+      "SELECT size, type, gross_weight_kg, volume_cbm, is_dg, dg_class FROM containers WHERE shipment_id=?"
     ).all(shipment.id);
     const equipmentByType = {};
     for (const c of containerRows) {
@@ -199,6 +199,20 @@ module.exports = function ediRoutes(app, ctx) {
       entry.count += 1;
       entry.totalWeightKg += c.gross_weight_kg || 0;
       entry.totalVolumeCbm += c.volume_cbm || 0;
+    }
+
+    // DG declaration — TKT-O57N94: IFTMBF's DGS segment carries hazmat declarations at
+    // booking time, not after the carrier has already allocated space. Same size+type
+    // grouping as equipment above, plus the IMDG class, and only for containers actually
+    // flagged (container-level is_dg — consistent with every other DG signal in the app,
+    // e.g. ShipmentHeaderBar's DG badge; deliberately not also reaching into
+    // container_packages' independent, unsynced pack-level DG flags).
+    const dgByType = {};
+    for (const c of containerRows) {
+      if (!c.is_dg) continue;
+      const key = `${c.size}${c.type}`;
+      const entry = dgByType[key] || (dgByType[key] = { type: key, dgClass: c.dg_class || '', count: 0 });
+      entry.count += 1;
     }
 
     // Same lookup importContractRates already uses to find the rate set that priced this
@@ -213,11 +227,20 @@ module.exports = function ediRoutes(app, ctx) {
       carrierCode: shipment.carrier_code,
       etd: shipment.etd || null,
       vessel: shipment.vessel || null, voyage: shipment.voyage || null,
+      vesselImo: shipment.vessel_imo || null,
       contractType: shipment.contract_type || null,
       contractRef: shipment.contract_ref || null,
       rateSnapshotId: rateSnapshot?.id || null,
+      cargoReadyDate: shipment.cargo_ready_date || null,
+      placeOfReceipt: shipment.place_of_receipt || null,
+      placeOfDelivery: shipment.place_of_delivery || null,
+      shipperName: shipment.shipper_name || null,
+      consigneeName: shipment.consignee_name || null,
+      notifyName: shipment.notify_name || null,
+      commodityCode: shipment.commodity_code || null,
       containerCount: containerRows.length,
       equipment: Object.values(equipmentByType),
+      dgCargo: Object.values(dgByType),
       ...(req.body || {}),
     };
 
@@ -367,6 +390,36 @@ module.exports = function ediRoutes(app, ctx) {
       JSON.stringify({ reason: reason || "", cancelledBy }));
 
     const mapped = mapCarrierBooking(booking);
+    broadcast(shipment.id, { type: "booking_status_changed", booking: mapped });
+    ok(res, mapped);
+  });
+
+  // TKT-LAK8P4 — booking-to-B/L traceability. Only ever touches the current live
+  // carrier_bookings row (shipment_id is UNIQUE on that table) — an archived/superseded
+  // row is read-only history, same convention CarrierBookingsTable.jsx already enforces
+  // in its own UI. documentId: null clears the link.
+  app.patch("/api/shipments/:id/carrier-booking/link-bl-document", write, (req, res) => {
+    const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
+    if (!shipment) return err(res, "Shipment not found", 404);
+    const { documentId = null } = req.body || {};
+
+    const booking = db.prepare("SELECT * FROM carrier_bookings WHERE shipment_id=?").get(shipment.id);
+    if (!booking) return err(res, "This shipment has no booking to link a B/L to", 404);
+
+    if (documentId) {
+      const doc = db.prepare("SELECT * FROM shipment_documents WHERE id=?").get(documentId);
+      if (!doc || doc.shipment_id !== shipment.id) return err(res, "Document not found on this shipment", 404);
+      if (doc.doc_type !== "BL01") return err(res, "Only a Bill of Lading (BL01) document can be linked", 400);
+    }
+
+    const now = new Date().toISOString();
+    db.prepare("UPDATE carrier_bookings SET bl_document_id=?, updated_at=? WHERE id=?")
+      .run(documentId, now, booking.id);
+    const updated = db.prepare("SELECT * FROM carrier_bookings WHERE id=?").get(booking.id);
+    logEntityEvent('carrier_booking', booking.id, documentId ? 'BL_LINKED' : 'BL_UNLINKED', null, null, null,
+      JSON.stringify({ documentId }));
+
+    const mapped = mapCarrierBooking(updated);
     broadcast(shipment.id, { type: "booking_status_changed", booking: mapped });
     ok(res, mapped);
   });

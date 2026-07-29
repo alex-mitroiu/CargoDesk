@@ -4,7 +4,7 @@ import { IconUpload, IconDownload } from "../primitives/Icon";
 
 export const EDI_STATUS_COLOR = {
   pending: "#6b7280", sent: "#3b82f6", acknowledged: "#3b82f6",
-  confirmed: "#22c55e", rejected: "#ef4444", error: "#ef4444",
+  confirmed: "#22c55e", accepted: "#22c55e", rejected: "#ef4444", error: "#ef4444",
 };
 
 const fmtTs = iso => {

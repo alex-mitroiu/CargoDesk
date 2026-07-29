@@ -164,24 +164,25 @@ async function testStatusChange(token, shipmentId) {
 async function testAuditLog(token, shipmentId) {
   console.log("\nGET /api/shipments/:id/events — audit log");
 
-  const res = await request("GET", `/api/shipments/${shipmentId}/events`, null, token);
+  const res = await request("GET", `/api/shipments/${shipmentId}/events?sort=asc`, null, token);
   assert("returns 200",              res.status === 200);
-  assert("returns array",            Array.isArray(res.body));
-  assert("has at least one event",   res.body.length >= 1);
+  const events = res.body?.results;
+  assert("returns paginated results array", Array.isArray(events));
+  assert("has at least one event",   events.length >= 1);
 
-  const statusEvent = res.body.find(e => e.eventType === "STATUS_CHANGED");
+  const statusEvent = events.find(e => e.eventType === "STATUS_CHANGED");
   assert("STATUS_CHANGED event exists",    !!statusEvent);
   assert("newValue is In Transit",         statusEvent?.newValue === "In Transit");
   assert("oldValue is Active",             statusEvent?.oldValue === "Active");
   assert("shipmentId on event matches",    statusEvent?.shipmentId === shipmentId);
 
-  const ev = res.body[0];
+  const ev = events[0];
   const hasShape = ["id", "shipmentId", "eventType", "field", "oldValue", "newValue", "actor", "occurredAt", "meta"]
     .every(k => Object.prototype.hasOwnProperty.call(ev, k));
   assert("event has correct shape",        hasShape);
 
   // Events ordered ascending
-  const dates = res.body.map(e => e.occurredAt);
+  const dates = events.map(e => e.occurredAt);
   const sorted = [...dates].sort();
   assert("events ordered by occurredAt",   JSON.stringify(dates) === JSON.stringify(sorted));
 }

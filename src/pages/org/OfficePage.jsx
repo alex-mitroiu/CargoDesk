@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { api } from "../../api";
 import { T } from "../../tokens";
 import { toast } from "../../toast";
+import { useAuth } from "../../AuthContext";
 
 const DEPT_COLOR  = { SE: { bg: "#3b82f618", text: "#3b82f6" }, SI: { bg: "#10b98118", text: "#10b981" } };
 const DEPT_LABELS = { SE: "Sea Export", SI: "Sea Import" };
@@ -105,6 +106,166 @@ function OfficeStats({ officeId, onClose }) {
               color: "#fff", cursor: "pointer", fontFamily: T.body, fontSize: 13 }}>
             Close
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const SECURE_MODE_LABELS = { none: "None (port 25)", starttls: "STARTTLS (port 587)", tls: "TLS/SSL (port 465)" };
+
+// Mirrors OfficeStats' exact shape (fixed-overlay backdrop, fetch-on-open, ~580px panel) —
+// see OfficeStats above for the pattern this copies.
+function OfficeMailSettingsModal({ officeId, onClose }) {
+  const { user } = useAuth();
+  const [data,    setData]    = useState(null);
+  const [form,    setForm]    = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving,  setSaving]  = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testOpen,setTestOpen]= useState(false);
+  const [testTo,  setTestTo]  = useState("");
+
+  useEffect(() => {
+    api.officeMail.get(officeId)
+      .then(d => {
+        setData(d);
+        setForm({ smtpHost: d.smtpHost, smtpPort: d.smtpPort, secureMode: d.secureMode,
+          smtpUsername: d.smtpUsername, smtpPassword: "", fromAddress: d.fromAddress,
+          fromName: d.fromName, isActive: d.isActive });
+        setTestTo(user?.email || "");
+      })
+      .catch(() => toast.error("Failed to load mail settings"))
+      .finally(() => setLoading(false));
+  }, [officeId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (!form && loading) return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.45)", zIndex: 800,
+      display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ background: T.surface, borderRadius: 14, padding: "40px 50px",
+        fontFamily: T.body, fontSize: 13, color: T.textMuted }}>Loading…</div>
+    </div>
+  );
+
+  const inp = { width: "100%", padding: "7px 10px", borderRadius: 7, border: `1px solid ${T.border}`,
+    background: T.bg, fontFamily: T.body, fontSize: 13, color: T.text, outline: "none", boxSizing: "border-box" };
+  const set = k => e => setForm(p => ({ ...p, [k]: e.target.value }));
+
+  const handleSave = async () => {
+    if (!form.smtpHost.trim()) return toast.error("SMTP host is required");
+    if (!form.fromAddress.trim()) return toast.error("From address is required");
+    setSaving(true);
+    try {
+      const updated = await api.officeMail.update(officeId, form);
+      setData(updated);
+      setForm(p => ({ ...p, smtpPassword: "" }));
+      toast.success("Mail settings saved");
+    } catch (e) { toast.error(e.message); } finally { setSaving(false); }
+  };
+
+  const handleTest = async () => {
+    if (!testTo.trim()) return toast.error("Enter a test-recipient address");
+    setTesting(true);
+    try {
+      await api.officeMail.sendTest(officeId, { to: testTo, ...form });
+      toast.success(`Test email sent to ${testTo}`);
+    } catch (e) { toast.error(e.message); } finally { setTesting(false); }
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.45)", zIndex: 800,
+      display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ background: T.surface, borderRadius: 14, border: `1px solid ${T.border}`,
+        padding: "28px 30px", width: 520, maxHeight: "82vh", overflow: "auto",
+        boxShadow: "0 20px 60px rgba(0,0,0,.3)" }}>
+
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 18 }}>
+          <div>
+            <div style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted, textTransform: "uppercase",
+              letterSpacing: ".08em", marginBottom: 4 }}>Email Settings</div>
+            <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
+              Outgoing SMTP for documents sent from this office.
+            </div>
+          </div>
+          <button type="button" onClick={onClose}
+            style={{ background: "none", border: "none", cursor: "pointer", fontSize: 18, color: T.textMuted }}>✕</button>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 10, marginBottom: 10 }}>
+          <div>
+            <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 4 }}>SMTP Host <span style={{ color: T.danger }}>*</span></div>
+            <input value={form.smtpHost} onChange={set("smtpHost")} placeholder="smtp.example.com" style={{ ...inp, fontFamily: T.mono }} />
+          </div>
+          <div>
+            <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 4 }}>Port</div>
+            <input type="number" value={form.smtpPort} onChange={e => setForm(p => ({ ...p, smtpPort: parseInt(e.target.value, 10) || 0 }))} style={{ ...inp, fontFamily: T.mono }} />
+          </div>
+        </div>
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 4 }}>Encryption</div>
+          <select value={form.secureMode} onChange={set("secureMode")} style={{ ...inp, cursor: "pointer" }}>
+            {Object.entries(SECURE_MODE_LABELS).map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+          </select>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
+          <div>
+            <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 4 }}>Username</div>
+            <input value={form.smtpUsername} onChange={set("smtpUsername")} style={inp} />
+          </div>
+          <div>
+            <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 4 }}>Password</div>
+            <input type="password" value={form.smtpPassword} onChange={set("smtpPassword")}
+              placeholder={data?.hasPassword ? "Leave blank to keep current" : ""} style={inp} />
+          </div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
+          <div>
+            <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 4 }}>From Address <span style={{ color: T.danger }}>*</span></div>
+            <input value={form.fromAddress} onChange={set("fromAddress")} placeholder="noreply@example.com" style={inp} />
+          </div>
+          <div>
+            <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 4 }}>From Name</div>
+            <input value={form.fromName} onChange={set("fromName")} placeholder="e.g. CargoDesk Rotterdam" style={inp} />
+          </div>
+        </div>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginBottom: 18 }}>
+          <input type="checkbox" checked={form.isActive}
+            onChange={e => setForm(p => ({ ...p, isActive: e.target.checked }))}
+            style={{ accentColor: T.accent, width: 16, height: 16 }} />
+          <span style={{ fontFamily: T.body, fontSize: 13, color: T.text }}>Active</span>
+        </label>
+
+        {testOpen && (
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 14,
+            padding: "10px 12px", borderRadius: 8, background: T.bg, border: `1px solid ${T.border}` }}>
+            <input value={testTo} onChange={e => setTestTo(e.target.value)} placeholder="test-recipient@example.com"
+              style={{ ...inp, flex: 1 }} />
+            <button type="button" onClick={handleTest} disabled={testing}
+              style={{ padding: "7px 14px", borderRadius: 7, border: "none", background: T.accent,
+                color: "#fff", cursor: "pointer", fontFamily: T.body, fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap" }}>
+              {testing ? "Sending…" : "Send"}
+            </button>
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: 8, justifyContent: "space-between", borderTop: `1px solid ${T.border}`, paddingTop: 14 }}>
+          <button type="button" onClick={() => setTestOpen(o => !o)}
+            style={{ padding: "6px 14px", borderRadius: 7, border: `1px solid ${T.border}`,
+              background: "none", cursor: "pointer", fontFamily: T.body, fontSize: 13, color: T.text }}>
+            {testOpen ? "Cancel Test" : "Send Test Email"}
+          </button>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button type="button" onClick={onClose}
+              style={{ padding: "6px 14px", borderRadius: 7, border: `1px solid ${T.border}`,
+                background: "none", cursor: "pointer", fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
+              Close
+            </button>
+            <button type="button" onClick={handleSave} disabled={saving}
+              style={{ padding: "6px 18px", borderRadius: 7, border: "none", background: T.accent,
+                color: "#fff", cursor: "pointer", fontFamily: T.body, fontSize: 13, fontWeight: 600 }}>
+              {saving ? "Saving…" : "Save"}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -231,6 +392,7 @@ export default function OfficePage() {
   const [formOpen,  setFormOpen]  = useState(false);
   const [editing,   setEditing]   = useState(null);
   const [statsId,   setStatsId]   = useState(null);
+  const [mailId,    setMailId]    = useState(null);
   const [defaultId, setDefaultId] = useState("");
   const [allowAll,  setAllowAll]  = useState(false);
   const [savingGlobal, setSavingGlobal] = useState(false);
@@ -395,6 +557,11 @@ export default function OfficePage() {
                               background: "none", cursor: "pointer", fontFamily: T.body, fontSize: 12, color: T.accent }}>
                             Stats
                           </button>
+                          <button type="button" onClick={() => setMailId(o.id)}
+                            style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${T.border}`,
+                              background: "none", cursor: "pointer", fontFamily: T.body, fontSize: 12, color: T.text }}>
+                            Email Settings
+                          </button>
                           <button type="button" onClick={() => { setEditing(o); setFormOpen(true); }}
                             style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${T.border}`,
                               background: "none", cursor: "pointer", fontFamily: T.body, fontSize: 12, color: T.text }}>
@@ -423,6 +590,7 @@ export default function OfficePage() {
       )}
 
       {statsId && <OfficeStats officeId={statsId} onClose={() => { setStatsId(null); load(); }} />}
+      {mailId && <OfficeMailSettingsModal officeId={mailId} onClose={() => setMailId(null)} />}
     </div>
   );
 }

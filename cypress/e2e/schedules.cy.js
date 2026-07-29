@@ -3,11 +3,11 @@
  *
  * Prerequisites:
  *   - npm run dev  (Vite :5173 + Express :3001)
- *   - Admin account: claudeagent@localhost / admin
+ *   - Admin account: claudeagent@localhost / TestFixture!2026Zq
  */
 
 const ADMIN_EMAIL    = "claudeagent@localhost";
-const ADMIN_PASSWORD = "admin";
+const ADMIN_PASSWORD = "TestFixture!2026Zq";
 
 let authToken;
 

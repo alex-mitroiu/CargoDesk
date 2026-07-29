@@ -169,7 +169,7 @@ async function testAuditLogCrossCheck(token, shipmentId) {
   const res = await request("GET", `/api/shipments/${shipmentId}/events`, null, token);
   assert("returns 200", res.status === 200);
 
-  const found = res.body.find(e => e.eventType === "CONTAINER_EVENT_ADDED");
+  const found = (res.body?.results || []).find(e => e.eventType === "CONTAINER_EVENT_ADDED");
   assert("CONTAINER_EVENT_ADDED logged to shipment_events", !!found);
 }
 

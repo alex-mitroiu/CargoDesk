@@ -8,6 +8,14 @@ const { WebSocketServer } = require("ws");
 const { DatabaseSync } = require("node:sqlite");
 const bcrypt = require("bcryptjs");
 const jwt    = require("jsonwebtoken");
+const {
+  resolveBrowserExecutable, renderHtmlToPdf,
+  generateSelfSignedSigningCert, getActiveSigningCert, signPdfBuffer,
+} = require("./lib/pdf-signing");
+const {
+  createTransporterFromSettings, getTransporterForOffice,
+  invalidateTransporterCache, buildMailOptions, sendViaOffice,
+} = require("./lib/mailer");
 
 const JWT_SECRET = process.env.JWT_SECRET || "cargoDesk-dev-secret-do-not-use-in-prod";
 if (!process.env.JWT_SECRET)
@@ -883,6 +891,12 @@ const migrations = [
   )`,
   "CREATE INDEX IF NOT EXISTS idx_carrier_bookings_status ON carrier_bookings(status)",
 
+  // Booking-to-B/L traceability (TKT-LAK8P4) — nullable, points at a specific generated
+  // document instance rather than the free-text shipments.bl_number: a shipment can have
+  // multiple BL01 document rows (drafts, amendments) with no "current" flag, so a user has
+  // to pick which one; nothing auto-links here.
+  "ALTER TABLE carrier_bookings ADD COLUMN bl_document_id TEXT DEFAULT NULL REFERENCES shipment_documents(id)",
+
   // Archive for superseded booking attempts (found via a real bug report — SHP-Y9E98X:
   // carrier_bookings.shipment_id is UNIQUE, so a Cancelled/Rejected booking was the only
   // record for that shipment, permanently, even once the carrier/schedule genuinely moved
@@ -977,6 +991,103 @@ const migrations = [
   "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('dg_compliance_phone','')",
   "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('dg_compliance_email','')",
   "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('dg_compliance_address','')",
+
+  // Additional Parties (Epic TKT-5XFCAP, Story TKT-HG10IK) — generic, extensible party-role
+  // mechanism sitting ALONGSIDE the 4 fixed shipper/consignee/notify/principal columns on
+  // shipments (untouched — high blast radius, not broken, not in scope). role is drawn from
+  // a fixed, curated list (ADDITIONAL_PARTY_ROLES below), not free text, so the frontend can
+  // render a clean "roles not yet assigned" picker. customer_id/customer_name are plain
+  // denormalized columns with no FK to customers, matching shipments.shipper_id/shipper_name's
+  // own existing convention. UNIQUE(shipment_id, role): one active party per role per shipment.
+  `CREATE TABLE IF NOT EXISTS shipment_parties (
+    id            TEXT PRIMARY KEY,
+    shipment_id   TEXT NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
+    role          TEXT NOT NULL,
+    customer_id   TEXT NOT NULL,
+    customer_name TEXT NOT NULL,
+    created_at    TEXT NOT NULL,
+    UNIQUE(shipment_id, role)
+  )`,
+
+  // Structured Cargo / Commodity Line Items (Epic TKT-P3ASH1, Story TKT-PV5P5L) — extends
+  // container_packages with a real per-item declared value, replacing the container-level
+  // hs_code/cargo_description as the sole source for Commercial Invoice / Packing List line
+  // items and the cargo value rollup (TKT-NSTDKF). unit_value stays NULL (not 0) when nothing
+  // has been entered — "$0" and "not priced yet" are different facts the rollup/document
+  // fallback must be able to tell apart. hs_code is a per-item OVERRIDE of the container's own
+  // hs_code (untouched) — blank means "inherit the container's code". unit_value_usd is
+  // precomputed at write time (same amount_usd-at-write-time idiom as contract_rates,
+  // saveRates/toUsd) so the rollup and generated documents never need a live FX call.
+  "ALTER TABLE container_packages ADD COLUMN unit_value REAL DEFAULT NULL",
+  "ALTER TABLE container_packages ADD COLUMN currency TEXT DEFAULT ''",
+  "ALTER TABLE container_packages ADD COLUMN hs_code TEXT DEFAULT ''",
+  "ALTER TABLE container_packages ADD COLUMN unit_value_usd REAL DEFAULT NULL",
+
+  // Customs & Regulatory Filing (Epic TKT-XW6TQK, Story TKT-QRNGK9) — mirrors carrier_bookings'
+  // shape closely, minus its archive/supersede machinery (not needed here: a shipment needs at
+  // most one AES/EEI export filing and one ISF/AMS import filing, two independent things that
+  // coexist rather than something a carrier change "supersedes"). UNIQUE(shipment_id,
+  // filing_type), not UNIQUE(shipment_id) alone, is what lets both types coexist as independent
+  // rows. SIMULATED/MOCK ONLY — no real government EDI integration, matching the carrier-booking
+  // Test Tools precedent (direct scope decision, not revisited here).
+  `CREATE TABLE IF NOT EXISTS customs_filings (
+    id                   TEXT PRIMARY KEY,
+    shipment_id          TEXT NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
+    filing_type          TEXT NOT NULL,
+    status               TEXT NOT NULL DEFAULT 'Draft',
+    filing_reference     TEXT DEFAULT '',
+    confirmation_number  TEXT DEFAULT '',
+    rejection_reason     TEXT DEFAULT '',
+    filed_at             TEXT DEFAULT NULL,
+    filed_by             TEXT DEFAULT '',
+    responded_at         TEXT DEFAULT NULL,
+    created_at           TEXT NOT NULL,
+    updated_at           TEXT NOT NULL,
+    UNIQUE(shipment_id, filing_type)
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_customs_filings_status ON customs_filings(status)",
+
+  // Signed PDF Document Generation (Epic TKT-YOFYFZ) — deliberately its own table rather
+  // than an app_settings row: GET /api/settings already returns the whole app_settings
+  // table in plaintext to any authenticated user (it's how ai_api_key leaks today), and the
+  // signing private key must never be reachable that way. Only one row is ever 'active' at
+  // a time; rotating in a new cert flips the old row to 'superseded' instead of deleting it,
+  // so documents signed under a retired cert stay independently self-verifying.
+  `CREATE TABLE IF NOT EXISTS org_signing_certs (
+    id                  TEXT PRIMARY KEY,
+    cert_pem            TEXT NOT NULL,
+    private_key_pem     TEXT NOT NULL,
+    p12_base64          TEXT NOT NULL,
+    p12_passphrase      TEXT NOT NULL,
+    fingerprint_sha256  TEXT NOT NULL,
+    subject             TEXT NOT NULL,
+    not_before          TEXT NOT NULL,
+    not_after           TEXT NOT NULL,
+    status              TEXT NOT NULL DEFAULT 'active',
+    created_at          TEXT NOT NULL
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_org_signing_certs_status ON org_signing_certs(status)",
+
+  // Office-Level Email Distribution (Epic TKT-O4B0IB) — per-office outgoing SMTP config, not
+  // org-wide app_settings: different EMO/IMO offices (e.g. different countries) need separate
+  // mail servers/from-addresses. UNIQUE(office_id) — one config per office, upsert on save.
+  // smtp_password mirrors org_signing_certs' secret-column precedent: stored plaintext, but
+  // NO mapper or route ever returns it — GET /api/settings's existing plaintext app_settings
+  // leak (any authenticated user, no role gate) is exactly the mistake this avoids.
+  `CREATE TABLE IF NOT EXISTS office_mail_settings (
+    id              TEXT PRIMARY KEY,
+    office_id       TEXT NOT NULL UNIQUE REFERENCES offices(id) ON DELETE CASCADE,
+    smtp_host       TEXT NOT NULL DEFAULT '',
+    smtp_port       INTEGER NOT NULL DEFAULT 587,
+    secure_mode     TEXT NOT NULL DEFAULT 'starttls',
+    smtp_username   TEXT NOT NULL DEFAULT '',
+    smtp_password   TEXT NOT NULL DEFAULT '',
+    from_address    TEXT NOT NULL DEFAULT '',
+    from_name       TEXT NOT NULL DEFAULT '',
+    is_active       INTEGER NOT NULL DEFAULT 1,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+  )`,
 ];
 
 // "duplicate column name" is the expected, harmless result of re-running an ADD COLUMN
@@ -1068,6 +1179,25 @@ const shipmentSubs = new Map();
     console.log(`   Temporary password : ${TEMP_PW}`);
     console.log(`   Change it via the User Management panel.\n`);
   }
+})();
+
+// ─── Seed document-signing certificate ────────────────────────────────────────
+// Pure JS (node-forge) — safe to run unconditionally every boot, unlike the browser this
+// cert will eventually be used alongside for rendering, which only needs to resolve lazily
+// at render time so a machine with no browser installed yet still starts up fine.
+
+;(function seedSigningCert() {
+  try {
+    const exists = db.prepare("SELECT id FROM org_signing_certs WHERE status = 'active'").get();
+    if (exists) return;
+    const cert = generateSelfSignedSigningCert();
+    db.prepare(`INSERT INTO org_signing_certs
+      (id, cert_pem, private_key_pem, p12_base64, p12_passphrase, fingerprint_sha256, subject, not_before, not_after, status, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', datetime('now'))`)
+      .run(`CERT-${uid()}`, cert.certPem, cert.privateKeyPem, cert.p12Base64, cert.p12Passphrase,
+        cert.fingerprintSha256, cert.subject, cert.notBefore, cert.notAfter);
+    console.log(`  ✔ Document-signing certificate generated (fingerprint ${cert.fingerprintSha256.slice(0, 16)}...)`);
+  } catch (e) { console.warn("  ⚠ Document-signing cert bootstrap:", e.message); }
 })();
 
 // ─── App Settings ─────────────────────────────────────────────────────────────
@@ -1644,6 +1774,20 @@ const SVC_ABBR = { 'Port-to-Port': 'P2P', 'Door-to-Port': 'D2P', 'Port-to-Door':
 // MAERSK_CODES (routes/system.js) — that's "carriers you can search schedules for" (a
 // broader, different concept, includes CMDU) — not the same thing as "bookable".
 const BOOKABLE_CARRIERS = new Set(["MAEU", "SAFM", "MCPU"]);
+// Fixed, curated additional party roles (Epic TKT-5XFCAP) — alongside the 4 hardcoded
+// shipper/consignee/notify/principal roles on shipments. Frontend keeps its own copy in
+// src/tokens.js (same split as BOOKABLE_CARRIERS — frontend/backend don't share a module).
+// Customs Broker is split Export/Import (not a single role) since each shipment can only
+// hold one party per role and the two are routinely handled by different brokers — also a
+// deliberate setup for the later Customs & Regulatory Filing epic (TKT-XW6TQK).
+const ADDITIONAL_PARTY_ROLES = [
+  "Forwarder", "Customs Broker (Export)", "Customs Broker (Import)",
+  "Trucker (Pre-carriage)", "Trucker (On-carriage)",
+  "Also Notify Party", "Bank", "Insurance Provider", "Agent",
+];
+// Customs & Regulatory Filing (Epic TKT-XW6TQK) — the two filing types a shipment can
+// independently need, AES/EEI (export) and ISF/AMS (import). Simulated/mock only.
+const CUSTOMS_FILING_TYPES = ["AES_EEI", "ISF_AMS"];
 function longestLane(un) {
   const s = portLanesMap[un]; if (!s || !s.size) return ''; return [...s].sort((a, b) => b.length - a.length)[0];
 }
@@ -1733,7 +1877,8 @@ const mapContainer    = r => ({ id: r.id, shipmentId: r.shipment_id, containerNu
   cyCutoff: r.cy_cutoff || '', cyCutoffState: cutoffState(r.cy_cutoff, false),
   originFreeTimeDays: r.origin_free_time_days ?? null, destFreeTimeDays: r.dest_free_time_days ?? null });
 const mapContainerEvent = r => ({ id: r.id, containerId: r.container_id, shipmentId: r.shipment_id, eventType: r.event_type, location: r.location || '', occurredAt: r.occurred_at, recordedBy: r.recorded_by || '', notes: r.notes || '', createdAt: r.created_at });
-const mapContainerPackage = r => ({ id: r.id, containerId: r.container_id, parentId: r.parent_id || null, description: r.description, quantity: r.quantity, position: r.position, packTypeId: r.pack_type_id || null, isDg: r.is_dg === 1, dgClass: r.dg_class || '', createdAt: r.created_at });
+const mapContainerPackage = r => ({ id: r.id, containerId: r.container_id, parentId: r.parent_id || null, description: r.description, quantity: r.quantity, position: r.position, packTypeId: r.pack_type_id || null, isDg: r.is_dg === 1, dgClass: r.dg_class || '', unitValue: r.unit_value ?? null, currency: r.currency || '', hsCode: r.hs_code || '', unitValueUsd: r.unit_value_usd ?? null, createdAt: r.created_at });
+const mapShipmentParty = r => ({ id: r.id, shipmentId: r.shipment_id, role: r.role, customerId: r.customer_id, customerName: r.customer_name, createdAt: r.created_at });
 const mapPackTypeDefinition = r => ({ id: r.id, code: r.code, label: r.label, icon: r.icon, sortOrder: r.sort_order, isActive: r.is_active === 1, createdAt: r.created_at });
 const mapAllocation   = r => ({ id: r.id, carrierCode: r.carrier_code, allocatedTEU: r.allocated_teu, effectiveDate: r.effective_date || '', endDate: r.end_date || '', tradeLane: r.trade_lane || '', notes: r.notes || '', alertThreshold: r.alert_threshold ?? 80, pol: r.pol || '', pod: r.pod || '', originLane: r.origin_lane || '', destLane: r.dest_lane || '', coverageScope: r.coverage_scope || 'STRICT', contractId: r.contract_id || '', contractNumber: r.contract_number || '' });
 const mapCarrier      = r => ({ code: r.code, name: r.name, shortName: r.short_name || '' });
@@ -1854,6 +1999,12 @@ function applyShipmentAccessFilter(shipments, user, req) {
   });
 }
 const mapOffice       = r => ({ id: r.id, code: r.code, countryCode: r.country_code, unlocode: r.unlocode, department: r.department, name: r.name, isActive: !!r.is_active, branchId: r.branch_id || null, createdAt: r.created_at });
+// smtp_password is deliberately never included here — hasPassword (a boolean, not the secret
+// itself) is the only signal a client ever gets that a password is configured.
+const mapOfficeMailSettings = r => ({ id: r.id, officeId: r.office_id, smtpHost: r.smtp_host, smtpPort: r.smtp_port,
+  secureMode: r.secure_mode, smtpUsername: r.smtp_username, hasPassword: !!r.smtp_password,
+  fromAddress: r.from_address, fromName: r.from_name, isActive: !!r.is_active,
+  createdAt: r.created_at, updatedAt: r.updated_at });
 const mapBranch       = r => ({ id: r.id, code: r.code, name: r.name, countryCode: r.country_code, locode: r.locode || null, city: r.city || null, address: r.address || null, timezone: r.timezone || null, phone: r.phone || null, email: r.email || null, isActive: !!r.is_active, createdAt: r.created_at });
 const mapOrgCountry   = r => ({ countryCode: r.country_code, countryName: r.country_name || null, defaultCurrency: r.default_currency || null, timezone: r.timezone || null, branchId: r.branch_id || null, branchCode: r.branch_code || null, branchName: r.branch_name || null, complianceNotes: r.compliance_notes || null, isActive: !!r.is_active, addedAt: r.added_at });
 const mapRegion       = r => ({ code: r.code, name: r.name, description: r.description || '' });
@@ -1939,6 +2090,21 @@ const mapCarrierBooking = r => ({
   updatedAt:          r.updated_at,
   archivedAt:         r.archived_at || null,
   archivedReason:     r.archived_reason || '',
+  blDocumentId:       r.bl_document_id || null,
+});
+const mapCustomsFiling = r => ({
+  id:                 r.id,
+  shipmentId:         r.shipment_id,
+  filingType:         r.filing_type,
+  status:             r.status || 'Draft',
+  filingReference:    r.filing_reference || '',
+  confirmationNumber: r.confirmation_number || '',
+  rejectionReason:    r.rejection_reason || '',
+  filedAt:            r.filed_at || null,
+  filedBy:            r.filed_by || '',
+  respondedAt:        r.responded_at || null,
+  createdAt:          r.created_at,
+  updatedAt:          r.updated_at,
 });
 const mapKbProject = r => ({ id: r.id, name: r.name, key: r.key, color: r.color || '#6366f1', description: r.description || '', createdAt: r.created_at });
 const mapKbVersion = r => ({ id: r.id, projectId: r.project_id, name: r.name, description: r.description || '', status: r.status || 'Planning', releaseDate: r.release_date || null, createdAt: r.created_at });
@@ -2527,16 +2693,21 @@ const ctx = {
   getSettings,
   shipmentSubs, broadcastMessage, recomputeSpaceBadge,
   UPLOADS_DIR,
+  resolveBrowserExecutable, renderHtmlToPdf, getActiveSigningCert, signPdfBuffer,
+  createTransporterFromSettings, getTransporterForOffice, invalidateTransporterCache,
+  buildMailOptions, sendViaOffice, mapOfficeMailSettings,
   SVC_ABBR, LEG_LOC_ABBR,
   VALID_ROLES, ROLE_RANK_SV, primaryRoleSV, parseUserRoles,
   SERVICE_CODE_MAP, importContractRates, createRateSnapshot, generateCostLinesFromSnapshot,
   mapShipment, mapShipmentLeg, mapCostLine, mapService, mapContainer, mapContainerEvent, mapContainerPackage, mapAllocation,
+  mapShipmentParty, ADDITIONAL_PARTY_ROLES,
   mapRateSnapshot, mapRateSnapshotLine, mapChargeCodeDefinition, mapPackTypeDefinition,
   mapCarrier, mapVessel, mapPortLocation, mapLinkedPort, mapTradeLane,
   mapScopeItem, mapAccessConfig, mapOffice, mapBranch, mapOrgCountry, mapRegion, mapCountry, mapTicketLink, mapTicket,
   mapTestItem, mapTestCaseLink,
   mapEdiMessage,
   mapCarrierBooking, BOOKABLE_CARRIERS,
+  mapCustomsFiling, CUSTOMS_FILING_TYPES,
   mapKbProject, mapKbVersion, mapKbColumn,
   mapCustomer, mapCustomerIdentifier, mapCustomerScreening, mapCustomerDoc,
   mapCommodity, mapSystemMessage, mapMilestone, mapMilestoneTemplate,
@@ -2563,6 +2734,7 @@ require('./routes/mdm')(app, ctx);
 require('./routes/kanban')(app, ctx);
 require('./routes/testcases')(app, ctx);
 require('./routes/edi')(app, ctx);
+require('./routes/customs-filing')(app, ctx);
 require('./routes/customers')(app, ctx);
 require('./routes/contracts')(app, ctx);
 require('./routes/shipment-ops')(app, ctx);
@@ -2572,6 +2744,7 @@ require('./routes/export')(app, ctx);
 require('./routes/ai')(app, ctx);
 require('./routes/share')(app, ctx);
 require('./routes/offices')(app, ctx);
+require('./routes/office-mail')(app, ctx);
 require('./routes/organization')(app, ctx);
 require('./routes/charge-codes')(app, ctx);
 require('./routes/pack-types')(app, ctx);

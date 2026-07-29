@@ -1,0 +1,128 @@
+"use strict";
+
+// ─── Customs & Regulatory Filing (Epic TKT-XW6TQK) ─────────────────────────────
+// Mirrors carrier_bookings/routes/edi.js closely, minus the archive/supersede
+// machinery (not needed — a shipment can independently need one AES/EEI export
+// filing AND one ISF/AMS import filing; UNIQUE(shipment_id, filing_type) lets
+// both coexist as their own rows, nothing "supersedes" the other). Reuses the
+// existing edi_messages table for submission/response messages rather than a
+// new table — every row this file inserts sets correlation_id = filing.id so a
+// shipment's two filings' threads stay independently filterable even though
+// they share one physical table. SIMULATED/MOCK ONLY — no real government EDI
+// integration, matching the carrier-booking Test Tools precedent exactly.
+
+module.exports = function customsFilingRoutes(app, ctx) {
+  const { db, uid, ok, err, auth, requireRole, applyShipmentAccessFilter,
+          mapCustomsFiling, mapEdiMessage, mapShipment,
+          logEntityEvent, isUniqueViolation, CUSTOMS_FILING_TYPES } = ctx;
+
+  const write = requireRole(["operator", "admin", "occ_bk"]); // same set as routes/edi.js
+
+  const FILING_TYPE_LABEL = { AES_EEI: "AES/EEI (Export)", ISF_AMS: "ISF/AMS (Import)" };
+  const REF_PREFIX = { AES_EEI: "AES", ISF_AMS: "ISF" };
+
+  function insertMessage(shipmentId, filingId, direction, messageType, status, rawPayload, isMock) {
+    const id = `EDI-${uid()}`, now = new Date().toISOString();
+    db.prepare(`INSERT INTO edi_messages (id, shipment_id, carrier_code, direction, message_type,
+      format, raw_payload, status, correlation_id, is_mock, created_at, processed_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(id, shipmentId, "", direction, messageType, "JSON", JSON.stringify(rawPayload),
+           status, filingId, isMock ? 1 : 0, now, now);
+    return mapEdiMessage(db.prepare("SELECT * FROM edi_messages WHERE id=?").get(id));
+  }
+
+  app.get("/api/shipments/:id/customs-filings", auth(), (req, res) => {
+    const rows = db.prepare("SELECT * FROM customs_filings WHERE shipment_id=? ORDER BY created_at ASC").all(req.params.id);
+    ok(res, rows.map(mapCustomsFiling));
+  });
+
+  // Cross-shipment list for the Test Tools Filing Simulator picker — mirrors GET /api/carrier-bookings.
+  app.get("/api/customs-filings", auth(), (req, res) => {
+    const { status } = req.query;
+    const rows = status
+      ? db.prepare("SELECT * FROM customs_filings WHERE status=? ORDER BY updated_at DESC").all(status)
+      : db.prepare("SELECT * FROM customs_filings ORDER BY updated_at DESC").all();
+    if (rows.length === 0) return ok(res, []);
+    const shipmentIds = [...new Set(rows.map(r => r.shipment_id))];
+    const ph = shipmentIds.map(() => "?").join(",");
+    const shipmentRows = db.prepare(`SELECT * FROM shipments WHERE id IN (${ph})`).all(...shipmentIds);
+    const allowedShipments = applyShipmentAccessFilter(shipmentRows.map(mapShipment), req.user, req);
+    const shipmentById = new Map(allowedShipments.map(s => [s.id, s]));
+    ok(res, rows.filter(r => shipmentById.has(r.shipment_id))
+      .map(r => ({ ...mapCustomsFiling(r), shipment: shipmentById.get(r.shipment_id) })));
+  });
+
+  app.post("/api/shipments/:id/customs-filings", write, (req, res) => {
+    const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
+    if (!shipment) return err(res, "Shipment not found", 404);
+    const { filingType } = req.body || {};
+    if (!CUSTOMS_FILING_TYPES.includes(filingType))
+      return err(res, `filingType must be one of ${CUSTOMS_FILING_TYPES.join(", ")}`);
+    const id = `CF-${uid()}`, now = new Date().toISOString();
+    try {
+      db.prepare(`INSERT INTO customs_filings (id, shipment_id, filing_type, status, created_at, updated_at)
+        VALUES (?,?,?,'Draft',?,?)`).run(id, shipment.id, filingType, now, now);
+    } catch (e) {
+      if (isUniqueViolation(e)) return err(res, `A ${FILING_TYPE_LABEL[filingType]} filing already exists for this shipment`, 409);
+      throw e;
+    }
+    logEntityEvent('customs_filing', id, 'CREATED', null, null, null, JSON.stringify({ filingType }));
+    ok(res, mapCustomsFiling(db.prepare("SELECT * FROM customs_filings WHERE id=?").get(id)), 201);
+  });
+
+  app.post("/api/shipments/:id/customs-filings/:filingId/submit", write, (req, res) => {
+    const filing = db.prepare("SELECT * FROM customs_filings WHERE id=? AND shipment_id=?").get(req.params.filingId, req.params.id);
+    if (!filing) return err(res, "Filing not found", 404);
+    if (filing.status !== "Draft") return err(res, `Filing is already ${filing.status.toLowerCase()}`, 409);
+    const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
+    const now = new Date().toISOString();
+    const filingRef = `${REF_PREFIX[filing.filing_type]}${uid()}`;
+    db.prepare(`UPDATE customs_filings SET status='Filed', filing_reference=?, filed_at=?, filed_by=?, updated_at=? WHERE id=?`)
+      .run(filingRef, now, req.user?.name || req.user?.email || "", now, filing.id);
+    const sent = insertMessage(shipment.id, filing.id, "out", "customs_filing_submission", "sent", {
+      filingType: filing.filing_type, filingReference: filingRef, pol: shipment.pol, pod: shipment.pod,
+      note: "Submitted for simulated regulatory review (Epic TKT-XW6TQK — no live government EDI integration).",
+    }, false);
+    logEntityEvent('customs_filing', filing.id, 'SUBMITTED', null, 'Draft', 'Filed', JSON.stringify({ filingReference: filingRef }));
+    ok(res, { sent, filing: mapCustomsFiling(db.prepare("SELECT * FROM customs_filings WHERE id=?").get(filing.id)) }, 201);
+  });
+
+  app.post("/api/shipments/:id/customs-filings/:filingId/simulate-response", write, (req, res) => {
+    const filing = db.prepare("SELECT * FROM customs_filings WHERE id=? AND shipment_id=?").get(req.params.filingId, req.params.id);
+    if (!filing) return err(res, "Filing not found", 404);
+    const { outcome, confirmationNumber, reason } = req.body || {};
+    if (outcome !== "accepted" && outcome !== "rejected") return err(res, 'outcome must be "accepted" or "rejected"');
+    if (filing.status !== "Filed") return err(res, "This filing has no pending submission to respond to", 409);
+    const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
+    const now = new Date().toISOString();
+    if (outcome === "accepted") {
+      const confNum = confirmationNumber?.trim() || `CBP${uid()}`;
+      db.prepare(`UPDATE customs_filings SET status='Accepted', confirmation_number=?, responded_at=?, updated_at=? WHERE id=?`)
+        .run(confNum, now, now, filing.id);
+      insertMessage(shipment.id, filing.id, "in", "customs_filing_acceptance", "accepted",
+        { confirmationNumber: confNum, note: "Simulated via Test Tools → Filing Simulator." }, true);
+      logEntityEvent('customs_filing', filing.id, 'ACCEPTED', null, 'Filed', 'Accepted', JSON.stringify({ confirmationNumber: confNum }));
+    } else {
+      const rejReason = reason?.trim() || "Filing rejected — data did not pass regulatory validation.";
+      db.prepare(`UPDATE customs_filings SET status='Rejected', rejection_reason=?, responded_at=?, updated_at=? WHERE id=?`)
+        .run(rejReason, now, now, filing.id);
+      insertMessage(shipment.id, filing.id, "in", "customs_filing_rejection", "rejected",
+        { reason: rejReason, note: "Simulated via Test Tools → Filing Simulator." }, true);
+      logEntityEvent('customs_filing', filing.id, 'REJECTED', null, 'Filed', 'Rejected', JSON.stringify({ reason: rejReason }));
+    }
+    ok(res, { filing: mapCustomsFiling(db.prepare("SELECT * FROM customs_filings WHERE id=?").get(filing.id)) }, 201);
+  });
+
+  // Allows resubmission after a rejection — the next Submit generates a genuinely new
+  // filing_reference rather than reusing the rejected one.
+  app.patch("/api/shipments/:id/customs-filings/:filingId/reset", write, (req, res) => {
+    const filing = db.prepare("SELECT * FROM customs_filings WHERE id=? AND shipment_id=?").get(req.params.filingId, req.params.id);
+    if (!filing) return err(res, "Filing not found", 404);
+    if (filing.status !== "Rejected") return err(res, "Only a Rejected filing can be reset to Draft", 409);
+    const now = new Date().toISOString();
+    db.prepare(`UPDATE customs_filings SET status='Draft', filing_reference='', rejection_reason='',
+      filed_at=NULL, filed_by='', responded_at=NULL, updated_at=? WHERE id=?`).run(now, filing.id);
+    logEntityEvent('customs_filing', filing.id, 'RESET_TO_DRAFT', null, 'Rejected', 'Draft');
+    ok(res, mapCustomsFiling(db.prepare("SELECT * FROM customs_filings WHERE id=?").get(filing.id)));
+  });
+};

@@ -1,6 +1,18 @@
 export const CONTRACT_PRESETS = ["Pending", "SPOT", "Customer Own", "Central"];
 export const CONTAINER_TYPES  = ["DC", "HC", "RF", "OT", "FR", "TK"];
 export const STATUSES         = ["Active", "Pending", "Completed", "Cancelled", "Requires Review"];
+// Fixed, extensible additional party roles (Epic TKT-5XFCAP) — sit alongside the 4 hardcoded
+// shipper/consignee/notify/principal roles on a shipment. Backend keeps its own copy
+// (server.js, near BOOKABLE_CARRIERS) — frontend/backend don't share a module. Customs Broker
+// is split Export/Import since each shipment can only hold one party per role.
+export const ADDITIONAL_PARTY_ROLES = [
+  "Forwarder", "Customs Broker (Export)", "Customs Broker (Import)",
+  "Trucker (Pre-carriage)", "Trucker (On-carriage)",
+  "Also Notify Party", "Bank", "Insurance Provider", "Agent",
+];
+// Currencies offered on cargo/commodity line items (Epic TKT-P3ASH1). MdmChargeCodesPage.jsx
+// keeps its own small pre-existing local copy — already working, no value in touching it here.
+export const CURRENCIES = ["USD", "EUR", "GBP", "CNY", "SGD", "JPY", "AED", "CHF"];
 export const teuOf = (size) => (size === "40" ? 2 : 1);
 
 export const CONTAINER_OPTIONS = [
