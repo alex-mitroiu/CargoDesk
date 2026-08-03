@@ -4,7 +4,7 @@
 Full-stack freight management app. React 18 + Vite frontend, Express + node:sqlite backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.52.0 "Manifest"**
+- Version: **v0.59.1 "Lineage"**
 - Run: `npm run dev` (runs server on :3001 + Vite on :5173 concurrently)
 - Seed: `npm run seed` (runs `scripts/import-mdm-data.js`)
 
@@ -198,7 +198,7 @@ are fully validated.
 | containers | Container-level cargo detail, plus VGM/CY-cutoff/Demurrage-Detention compliance fields (v0.30.0) |
 | allocations | Space configurations (TEU per carrier/route/contract) |
 | carriers | Carrier MDM |
-| vessels | Vessel MDM (IMO registry) |
+| vessels | Vessel MDM (IMO registry). `mmsi`/`ais_verified_at` (v0.55.0) — AIS-observed MMSI (structural link a PositionReport, MMSI-only, needs to resolve back to an IMO) and last-live-confirmed timestamp; blank means MDM-import-only, never seen live |
 | port_locations | 14,269 UN/LOCODE ports (has last_synced_at) |
 | linked_ports | Port equivalence pairs — conflict detection + route matching |
 | trade_lanes | FIATA high-level trade lanes |
@@ -209,19 +209,22 @@ are fully validated.
 | ticket_links | Cross-ticket dependency relationships (blocks / is blocked by / etc.) |
 | shipment_events | Full audit log: FIELD_UPDATED, STATUS_CHANGED, CONTAINER_ADDED/REMOVED/UPDATED |
 | shipment_messages | Per-shipment threaded messages with author, role, timestamp |
-| shipment_legs | Multimodal legs: leg_type, movement_type, pol_loc_type, pod_loc_type, movement_by |
+| shipment_legs | Multimodal legs: leg_type, movement_type, pol_loc_type, pod_loc_type, movement_by. `etd_source`/`eta_source` (v0.55.1, `'manual'\|'ais'\|''`) — AIS-confirmed departure/arrival updates `etd`/`eta` in place (an estimate becoming a known fact) rather than a separate ATD/ATA pair; idempotent-confirmation guard (`source==='ais'` means already-confirmed, don't re-fire), a manual edit always overwrites an AIS-confirmed value and clears the flag. Older `atd`/`ata`/`atd_source`/`ata_source` columns (v0.55.0's original, since-superseded design) are left in place, inert |
 | shipment_cost_lines | BUY/SELL cost lines per shipment with source tracking and FX |
 | shipment_milestones | Per-shipment milestone steps (estimated date, completion, note) |
-| shipment_schedules | Saved sailings: carrier, vessel (name + IMO), voyage, ETD/ATD, ETA/ATA, transit days, isMock, source (search/generated), savedBy. `shipment_id` = the owning/originating shipment — see schedule_shipment_links for shared schedules (v0.37.0) |
-| schedule_shipment_links | Additive many-to-one: lets additional shipments link to an existing shipment_schedules row without duplicating it (v0.37.0) |
+| shipment_schedules | Saved sailings: carrier, vessel (name + IMO), voyage, ETD/ATD, ETA/ATA, transit days, isMock, source (search/generated), savedBy. `shipment_id` is nullable (v0.54.0) — NULL means an ownerless Schedule Generator "template"; set means a real shipment's own copy, whose `template_id` (self-referential, ON DELETE SET NULL) records which template it was copied from, if any |
+| schedule_legs | Per-leg detail (pol/pod/etd/eta/vessel/voyage/service, `leg_order`) for a genuine multi-leg/TSP `shipment_schedules` row — 2+ rows makes it TSP; 0-1 rows means direct, same convention the sailing-search `legs[]` shape already used (v0.54.0) |
+| schedule_shipment_links | Legacy many-to-one from the pre-v0.54.0 shared-schedule model (v0.37.0) — no longer written to (Generator-created schedules are ownerless templates now, copied via `template_id` instead of linked); old rows are left in place, harmless |
 | shipment_services | Dedicated Services (Export/Import): side, service_type, status lifecycle, vendor, office, dates — Epic TKT-A5LUPD |
 | shipment_loading_plan_lines | Per-container loading plan (planned date, sequence, notes) for a Loading service — Epic TKT-TBS7QD |
-| shipment_screenings | OFAC/SDN screening results and override records |
+| shipment_screenings | OFAC/SDN screening results and override records. Since v0.58.0 covers all 13 party-role slots (4 fixed + 9 `shipment_parties`), not just Shipper/Consignee/Principal — each hit's `field` corroborates by both name-match and `customer_id`-against-`customer_screenings` |
 | shipment_documents | Uploaded documents metadata (filename, type, label) |
 | status_log | Shipment status transitions (legacy, kept for compat) |
 | entity_events | Generic audit log for allocations, carriers, contracts |
 | commodities | 294 Maersk freight commodity codes (Grades M/K/E/S/Q) |
-| customers | Customer records with full address and contact details |
+| customers | Customer records with full address and contact details. `credit_limit`/`credit_terms_days`/`credit_hold`/`credit_hold_reason` (v0.57.0) — `credit_hold` hard-blocks generating a NEW invoice for shipments where this customer is Shipper/Consignee/Principal/the linked contract's Named Account; `credit_limit` is a soft over-limit warning only, computed live against confirmed FR01/FR02 invoices, never a hard block. `parent_customer_id` (v0.59.0, self-referential, `ON DELETE SET NULL`) — branch/subsidiary rollup; read via the shared `resolveCustomerGroup(customerId)` helper (walks to the root ancestor then every descendant), never a write-path merge |
+| customer_contacts | Named people at a customer (v0.56.0) — name/title/email/phone/department, one `is_primary` per customer; replaces the old free-text-notes-only workaround |
+| customer_roles | Which of `ALL_CUSTOMER_ROLES` (v0.56.0) a customer is eligible for — `CustomerCombobox`'s `roleFilter` prop narrows pickers against this (soft filter, never a hard block) |
 | contracts | Carrier rate contracts with IMDG class filters |
 | contract_legs | POL/POD pairs per contract with linked-port flags + haulage columns + loc types |
 | contract_rates | Rate entries per contract |
@@ -279,6 +282,357 @@ are fully validated.
 - **Two independent "document" systems** (naming collision, easy to confuse): (1) `DocumentsMenu` inside ShipmentDetailPage.jsx (2711-2919) — a header dropdown that generates B/L Draft/Packing List/Container Manifest client-side via jsPDF, no persistence/tracking. (2) `DOC_TYPES` in App.jsx (~line 56: BL01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). When asked to "add a document type" or "generate a document," clarify which system — they don't share code
 - **Lifecycle-stage stepper precedent**: no dedicated stepper component exists yet; `MilestonePanel` (ShipmentDetailPage.jsx 1593-~1870) is the closest analog — linear progress bar (1734-1738, `width: ${progress}%`) plus per-step state coloring via `milestoneState()`/`stateColor()` (1666-1676: completed/overdue/current/upcoming) driven by `shipment_milestones` rows (`id, label, estimatedDate, note, completedAt, completedBy`, fixed step keys `booking_confirmed, si_submitted, cargo_gated_in, vessel_departed, bl_issued, vessel_arrived, customs_cleared, cargo_released, delivered`). Any new per-container lifecycle/stage UI should reuse this state-coloring pattern rather than inventing a new visual language
 - **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages 3516-3533, 📡 EDI 3534-3543, then `DocumentsMenu` at 3544). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
+
+## Recent changes (v0.59.1 "Lineage")
+- **Fixed a real bug found live on SHP-XXGOJ1** (direct user report: "the container invoice does
+  not include the VAT"): the generated freight invoice PDF (FR01/FR02, and the credit/debit note
+  reversing one) completely omitted VAT — a $10,000 line with a real 19% VAT rate ($1,900)
+  produced a signed PDF showing just $10,010 total. `ShipmentAccountingInvoicesPage.jsx`'s own
+  in-app summary bar had been computing/showing VAT correctly the whole time; the gap was purely
+  in the document actually generated and sent to the customer.
+- `buildFreightInvoiceHtml`/`buildCreditDebitNoteHtml` (`src/utils/invoiceGenerator.js`) both now
+  render a VAT column per charge line and a Subtotal/VAT/Total(incl. VAT) breakdown per currency
+  — collapsing back to the original plain Total row for a currency group with no VAT on any
+  line, so a shipment with `vat_rate=0` everywhere renders byte-identical to before this fix.
+- Verified live: regenerated the real draft invoice on SHP-XXGOJ1 and confirmed the signed PDF
+  now shows SUBTOTAL $10,010.00 / VAT $1,900.00 / TOTAL (incl. VAT) $11,910.00.
+
+## Recent changes (v0.59.0 "Lineage")
+- **Organization Model Enhancement, Epic 4: Customer Hierarchy & Named-Account Unification.**
+  New nullable, self-referential `customers.parent_customer_id` (`ON DELETE SET NULL`, actually
+  enforced since `foreign_keys=ON` is set globally) — a plain `ADD COLUMN`, no table rebuild
+  needed since it's a brand new nullable column. New shared `resolveCustomerGroup(customerId)`
+  (server.js) — walks to the root ancestor then every descendant, so a rollup gets the same
+  group regardless of which member's id the caller started from. Deliberately read-side only —
+  the 3 independent customer-pointer mechanisms (shipment fixed FKs, `shipment_parties`,
+  `contracts.named_account_id`) keep writing plain denormalized `customer_id`/`customer_name`
+  pairs exactly as before; this reads across them for reporting, doesn't unify the write path.
+- New Parent Customer picker on the customer Profile tab (`CustomerCombobox`, unrestricted) with
+  server-side cycle detection (rejects self-parenting and deeper A→B→A loops, which would
+  otherwise make `resolveCustomerGroup`'s walk infinite).
+- **`GET /api/margin/summary` gains a `byCustomer` breakdown** (grouped by each shipment's
+  Principal, falling back to Consignee) with a `groupByParent=true` query param — the Dashboard
+  Margin tab's new "Roll up by parent" toggle (off by default) remaps every line to its
+  hierarchy's root customer before aggregating.
+- Carrier Booking's "Client" field gains a small "Part of {parent}" caption when the Named
+  Account customer has a parent — single-shipment context, not a rollup (nothing to aggregate
+  on one shipment's own client display).
+- New `tests/customer-hierarchy.test.js` (17 assertions) — full suite green (18 files), clean
+  build. Verified live via CDP: Parent Customer resolves correctly, and the rollup toggle
+  correctly collapses two customer rows into one combined row under the parent's name.
+
+## Recent changes (v0.58.0 "Sentinel")
+- **Organization Model Enhancement, Epic 3: Unified Compliance Screening** — the highest
+  compliance-risk gap from the original CargoWise analysis: 9 of a shipment's 13 possible
+  party-role slots were previously invisible to sanctions screening entirely.
+- **`screenShipmentById`** (server.js) broadened from Shipper/Consignee/Principal only to all
+  13: the 4 fixed columns (adding Notify Party) plus every `shipment_parties` row. Assigning/
+  reassigning/removing an additional party now auto-triggers a re-screen (`routes/shipments.js`'s
+  new `maybeRescreen` helper, reused across all 3 `shipment_parties` CRUD routes and the
+  shipment `PUT` route, which also gained `notify_name` to its own re-screen-trigger check) —
+  honoring the same don't-overwrite-a-compliance-officer's-override guard every path already used.
+- **Customer-level and shipment-level screening now cross-reference.** `screenCustomer`
+  (`routes/customers.js`) calls a new `rescreenShipmentsForCustomer` that immediately re-screens
+  every shipment referencing that customer via any of its 13 role slots. This surfaced a real,
+  deeper bug: shipment-level screening only checked each party's denormalized NAME copy — a
+  customer rename updates `customers.company_name` but never touches any shipment's already-
+  stored copy of the old name, so a pure name-match re-screen stayed permanently blind to the
+  rename. Fixed by also corroborating each party's `customer_id` (where set) against
+  `customer_screenings` directly, alongside the name match, not instead of it.
+- After any sanctions list update (OFAC sync, scheduled auto-sync, or manual CSV import), a new
+  `rescreenActiveShipments` sweep re-screens every not-Completed/Cancelled shipment.
+- The existing `ComplianceModal` (already the app's one unified compliance view, reachable from
+  every shipment sub-page via the persistent header) was extended, not replaced: Notify Party
+  joins the 4-role Phase 1, and a new Phase 1b lists every assigned additional party with its
+  live screening status.
+- New `tests/customer-compliance-screening.test.js` (25 assertions, deliberately reusing a real
+  already-synced sanctioned entity name rather than importing new sanctions data, which would
+  destructively replace the live OFAC dataset) — full suite green (17 files), clean build.
+  Verified live via CDP: a sanctioned Notify Party and a sanctioned Bank additional party both
+  correctly show as HIT with real matched OFAC program details.
+
+## Recent changes (v0.57.0 "Covenant")
+- **Organization Model Enhancement, Epic 2: Credit Control.** New `credit_limit`/
+  `credit_terms_days`/`credit_hold`/`credit_hold_reason` on `customers`, surfaced in the
+  Profile tab's Billing section alongside Currency — ties directly into the already-shipped
+  invoicing infrastructure (`generateInvoices`, `ShipmentAccountingInvoicesPage.jsx`) rather
+  than needing a new page.
+- **`credit_hold` is a hard block on generating a NEW invoice** for shipments where the held
+  customer is the Shipper, Consignee, Principal, or the linked contract's Named Account —
+  existing cost lines/documents stay fully visible and editable, only Generate Invoice/
+  Generate Per-Container Invoices are blocked, via a modal naming exactly which party and why
+  (no way to proceed from it — mirrors `CarrierBookingGateModal`'s forced-modal shape, but
+  scoped to one action rather than the whole page).
+- **New `GET /api/customers/:id/credit-status`** resolves outstanding AR by summing every
+  CONFIRMED (non-voided) FR01/FR02 invoice on shipments where the customer is Principal or
+  Consignee, resolving each invoice's real dollar total via `source_cost_line_ids` (the same
+  field the v0.53.0 invoice-reversal feature introduced) with the identical live-container-
+  scoped fallback for older invoices predating that column.
+- **Over-limit is a soft warning only** (`resolveCreditGate`, `src/utils/invoiceGenerator.js`)
+  — Cancel/Generate Anyway, never a hard block, per this epic's own explicit scope (a real hard
+  block needs a proper AR-aging view this app doesn't have yet). Computed as *outstanding AR +
+  the invoice about to be generated* against the limit, not outstanding AR alone — a real gap
+  caught during CDP verification: checking only prior confirmed invoices would never catch the
+  very first invoice that actually pushes a customer over their limit.
+- New `tests/customer-credit-control.test.js` (28 assertions) — full suite green (16 files),
+  clean build. Verified live via CDP: the blocking modal correctly names the held customer and
+  reason and produces zero documents; clearing the hold and lowering the limit below an
+  uninvoiced line's amount correctly shows the projected-total warning modal instead.
+
+## Recent changes (v0.56.0 "Roster")
+- **Organization Model Enhancement, Epic 1 of a 5-epic roadmap** drawn up from a direct
+  CargoWise One gap analysis: CargoWise's Organization record carries its own role flags and
+  multiple named contacts; this app's `customers` table had neither — a company was only ever
+  "a shipper" or "a bank" by whichever shipment-level slot it was dropped into, and the only
+  place to record a contact person was `CustomerCombobox`'s free-text Notes field.
+- **New `customer_contacts` table** (name/title/email/phone/department, one `is_primary` per
+  customer) — new **Contacts** tab on the Customers MDM page, mirrors the existing
+  `customer_identifiers` CRUD pattern almost exactly (`routes/customers.js`).
+- **New `customer_roles` table** tags a customer against `ALL_CUSTOMER_ROLES` — a new combined
+  vocabulary (the 4 fixed shipment roles Shipper/Consignee/Notify Party/Principal, plus the
+  existing 9 `ADDITIONAL_PARTY_ROLES` from Epic `TKT-5XFCAP`, both sides — server.js and
+  `src/tokens.js` — keep their own copy, same split `ADDITIONAL_PARTY_ROLES` already used). A
+  checkbox multi-select on the customer Profile tab saves each toggle immediately via its own
+  endpoint (`PUT /api/customers/:id/roles`, full-set replace) rather than folding into the main
+  Save Profile button, since roles live in a separate table.
+- **`CustomerCombobox` gains an optional `roleFilter` prop**, threaded through to a new
+  `GET /api/customers?role=` subquery filter — wired into `AdditionalPartiesPanel` (filtered by
+  whichever role is being assigned) and `PartiesEditForm`'s Shipper/Consignee/Principal/Notify
+  Party fields. Deliberately a **soft filter, never a hard block**: `CustomerPickerModal` shows a
+  checkbox ("Only show customers eligible for {role}", defaults on) so an operator can always
+  reach an unflagged customer by unchecking it — verified live via CDP, toggling it correctly
+  reveals/hides a non-eligible customer in the same result list.
+- New `tests/customer-contacts-roles.test.js` (28 assertions: contacts CRUD including the
+  single-primary-per-customer invariant, roles get/set as a full-replace not a merge,
+  invalid-role rejection, the role search filter, orphan-free cleanup on customer delete) — full
+  suite green (15 files), clean build.
+- **This is Epic 1 of a larger roadmap** — Epics 2-4 (not yet built): credit control (limit/
+  terms/hold gating invoice generation), unified compliance screening across all 13 party-role
+  slots (today only 3 of 13 are screened), customer hierarchy/rollup reporting. Epic 5 (a real
+  Customer/Organization service extraction) is deliberately sequenced last, after the data model
+  settles — a same-process second SQLite file was considered and rejected as the mechanism, since
+  it achieves neither of the two real drivers raised for it (future shared-service consumption,
+  data-compliance controls); both need a genuine separate service with its own datastore and API,
+  not a file split.
+
+## Recent changes (v0.55.1 "Transponder")
+- **Direct design correction to v0.55.0's AIS feature**: the original design showed AIS-detected
+  departure/arrival as a separate, always-visible ATD/ATA pair alongside ETD/ETA — corrected per
+  direct feedback to instead update `etd`/`eta` **in place** on confirmation (an estimate
+  becoming a known fact), matching how the Route Legs table is meant to read. New
+  `shipment_legs.etd_source`/`eta_source` replace `atd`/`ata`/`atd_source`/`ata_source` as the
+  write model (old columns left inert, not dropped — standing no-migration-cleanup precedent).
+  The write guard changed from a blank-fill check (etd/eta are almost always already populated
+  with an estimate, so that would never fire) to an **idempotent-confirmation** check
+  (`source==='ais'` means already-confirmed, don't re-fire) — the first AIS confirmation
+  legitimately overwrites the prior estimate, and a later manual correction legitimately
+  overwrites an AIS-confirmed value right back, clearing the flag. A small ship-icon indicator
+  on the ETD/ETA cells marks a confirmed value. `lib/ais-listener.js`, the leg CRUD routes,
+  `routes/ais.js`'s open-legs query, and the Test Tools AIS Simulator were all reworked to
+  match; `tests/ais-integration.test.js` rewritten around the corrected model (30 assertions).
+- **Four unrelated live bugs found and fixed in the same feedback pass**: (1) the Route Legs
+  Carrier column could visually overlap Movement By — a CSS flexbox `min-width:auto` gotcha
+  (`CarrierCombobox`'s root div had no explicit `min-width`, so it refused to shrink below its
+  selected chip's intrinsic width inside a fixed-width cell); fixed at the shared-component
+  source (`minWidth:0`) plus `overflow:hidden` on the cell wrapper. (2) Header/row column
+  misalignment — the locked/read-only leg row rendered a variable-width leading lock-icon
+  column the header had no matching placeholder for, while the editable row rendered no leading
+  column at all; fixed with one shared `LEG_LEAD_COL_W=40` constant reserved identically across
+  the header and both row states. (3) The Sailing Search modal's apparent "duplicate" schedule
+  entry was three compounding gaps, not real duplicate data: a stale pre-fix `transit_days=0` on
+  an already-committed `source='search'` copy (backfill migration broadened beyond
+  `source='generated'`), and `vesselImo` never carried through `catalogSailings()`'s results nor
+  `POST .../schedules`' commit route (both fixed). (4) A module-level `LEG_TYPE_COLOR` object in
+  `ShipmentFormPage.jsx` captured `T.accent`/`T.info`/`T.textMuted` once at import time — since
+  `T`'s colors mutate in place on theme toggle rather than the object rebuilding, "Delivery" was
+  permanently stuck in the dark theme's blue-gray `textMuted` even in light mode. Fixed by
+  converting it to a function evaluated at render time.
+- **Vessels MDM polish** (same session's earlier AIS vessel-import work): Flag cell always
+  reserves two stacked lines regardless of whether a vessel has flag data (fixes inconsistent
+  row heights); Actions column header right-aligned to match its button content; Flag badge's
+  caption text gets the same 9px left inset `Badge.jsx`'s own padding gives the badge above it
+  (fixes an optical, not layout, misalignment).
+- Full `npm test` green (14 files), clean `vite build`. Verified live via CDP: the header/row
+  alignment fix confirmed via a fresh screenshot (separator bars now land exactly on column
+  boundaries); the separately-reported "remove leg doesn't unlink the schedule" issue was
+  reproduced on a disposable clone of the real reference shipment's exact leg/schedule shape
+  (not the real shipment itself) and worked correctly end-to-end — the cascade logic itself was
+  not broken.
+
+## Recent changes (v0.55.0 "Transponder")
+- **AIS Integration (Epic `TKT-ZFO2OM`)**, following two spike tickets (`TKT-R7S25A`,
+  `TKT-1Q59BF`) evaluating live AIS vessel-tracking data for (a) keeping the Vessels registry
+  fresh — resolving unknown IMOs automatically and catching renames/reflags — and (b)
+  auto-detecting a shipment's actual departure/arrival (`atd`/`ata`), previously manual-entry
+  only. Provider comparison landed on **aisstream.io** as the default (free, WebSocket, no
+  hardware) — AISHub was directly considered and rejected as the default since it requires
+  operating physical AIS receiver hardware and streaming to them before granting API access, not
+  a signup-and-get-a-key API. Settings stay provider-pluggable (new `ais_provider`/`ais_api_key`
+  App Settings card, same pattern as `maersk_api_key`) so a client with their own AIS access can
+  supply different configuration later.
+- **New `lib/ais-listener.js`** — one persistent outbound WebSocket connection (the first
+  persistent-outbound-connection precedent in this codebase) feeds two independent write
+  behaviors from the same handler: `ShipStaticData` resolves/refreshes `vessels` (new `mmsi`/
+  `ais_verified_at` columns; a differing name for a known IMO logs a `RENAMED` `entity_event`),
+  `PositionReport` proposes `atd`/`ata` on a tracked SEA leg when nav-status/position near the
+  leg's POL/POD indicates a real departure or arrival.
+- **ATD/ATA lives on `shipment_legs`** (new `atd`/`ata`/`atd_source`/`ata_source` columns,
+  `_source` is `'manual'|'ais'|''`), rolled up onto `shipments.atd`/`.ata` the same first-leg/
+  last-leg bookend way `etd`/`eta` already are via `syncShipmentFromLegs` — **not**
+  `shipment_schedules`, since tracing every write path found `shipment_schedules.vessel_imo`/
+  `atd`/`ata` are only ever populated by the Schedule Generator's ownerless template rows, never
+  the everyday Add Sailing flow, so matching against it on a real shipment would essentially
+  never hit. The auto-fill is strictly non-destructive — structurally identical to the existing
+  `autoCompleteMilestone` guard (only ever writes a still-blank field) — with a visible
+  provenance flag so an AIS-detected value is never mistaken for a manual one (small ship-icon
+  indicator on the Route Legs table, `ShipmentFormPage.jsx`'s `LEG_COLS`).
+- **New Test Tools "AIS Simulator" tab** (mirrors the existing Message/Filing Simulator
+  precedent) injects synthetic `ShipStaticData`/`PositionReport` messages through the exact same
+  `ctx.ingestAisMessage` the live connection calls — no parallel "simulate an update" code path
+  — making the whole feature verifiable end-to-end without a real aisstream.io API key.
+- **Two real bugs caught during verification, both fixed**: (1) disconnecting a socket that
+  hadn't finished connecting yet (e.g. toggling the feature off moments after enabling it)
+  emitted an internal 'error' event that `removeAllListeners()` had just stripped the handler
+  for, **crashing the entire Node process** — fixed by no longer removing listeners before
+  `terminate()`. (2) the live listener's tracked-leg cache only refreshes every 60s (fine for a
+  real feed pushing hundreds of msg/sec, not fine for a leg a developer just created moments ago
+  via the simulator) — the simulator now force-refreshes it before injecting a position.
+- New `tests/ais-integration.test.js` (30 assertions, added to `npm test`) — full suite green
+  (11 files), clean build. Verified live end-to-end via the real simulator/API: unknown-IMO
+  resolve, rename detection with no duplicate event on a re-observed unchanged name, ATD/ATA
+  blank-fill with correct provenance and shipment-level rollup, and — the single most important
+  case — a manually-set ATD surviving a subsequent AIS departure simulation untouched. Also
+  confirmed live: the reconnect/backoff loop retries indefinitely on a bad key without ever
+  taking the server down, and a settings toggle/key change applies immediately with no restart.
+
+## Recent changes (v0.54.3 "Catalog")
+- **A fourth live bug on the same feature**: transit time showed "0d" for a real 2-leg TSP
+  catalog match with an 8-day door-to-door span. `POST /api/schedules` (the Schedule
+  Generator's create route) hardcoded `transit_days` to the literal value `0` at insert time —
+  never derived from the schedule's own etd/eta, unlike `mockSailings()`/`maerskSchedules()`,
+  which both compute it correctly from real date math. Fixed by computing it as the
+  whole-journey ETD→ETA span in days — this naturally folds in any transshipment hub dwell
+  time between legs instead of undercounting it (a TSP with a multi-day layover at the hub is
+  the full door-to-door span, not the sum of each leg's own transit). Added a one-time startup
+  backfill for schedules already created with this bug (`source='generated'`, `transit_days`
+  still 0, real etd/eta present) — safe to re-run.
+- **Separately investigated a reported Route Legs table formatting inconsistency** between the
+  Contracts & Schedules page and the shipment Edit form (both render the shared `LegsTable`
+  component). Direct side-by-side comparison via automated browser testing found no actual
+  discrepancy — both already render identically with no overlaps on a fresh shipment; a fixed
+  footer briefly appeared to overlap a leg row in an early screenshot, but that turned out to be
+  a Puppeteer `fullPage`-screenshot artifact (fixed-position elements can render at the wrong
+  offset during full-page capture), not a real rendering bug — confirmed via a real,
+  non-fullpage scrolled screenshot showing clean separation.
+
+## Recent changes (v0.54.2 "Catalog")
+- **A third live bug on the same feature**, reported right after v0.54.1 shipped: "having the
+  data filled in the modal does not propagate anything to the main schedule gen page, generation
+  is prevented." `generate()`'s validation in `TestToolsPage.jsx` only ever checked the top-level
+  Vessel/Carrier/POL/POD fields, never `legRows` — so a TSP built entirely inside the Configure
+  Legs modal (main form deliberately left blank) was wrongly blocked even though the backend's
+  own `POST /api/schedules` derivation (`finalCarrier`/`finalVesselName`/`finalPol`/`finalPod`
+  from leg 1/leg N) already fully supported this exact case. Fixed by making `generate()`'s
+  validation read `legRows[0]`/`legRows[legRows.length-1]` whenever `legRows.length >= 2`,
+  mirroring the backend's own effective-value logic rather than duplicating a narrower one.
+  New `closeLegsModal()` mirrors leg 1's pol/carrier/vessel and leg N's pod back onto the main
+  form's visible fields on Done (not the unrelated Clear action), so a modal-only TSP is visibly
+  reflected afterward instead of looking like nothing happened.
+- **New regression test** in `cypress/e2e/schedule-generator.cy.js` reproduces the exact scenario
+  end-to-end. Along the way, hit a Cypress-only artifact worth remembering: since the main form is
+  deliberately left blank in this scenario, its own (still-empty) Carrier search input stays in
+  the DOM too, just visually hidden behind the modal overlay — an unscoped page-wide selector can
+  grab that one by accident instead of the modal's own. Fixed via `.within()` scoping from the
+  modal's own `<h2>`, same pattern already established elsewhere in this suite for `Modal.jsx`'s
+  header/content nesting.
+- **Verified independently via a direct CDP/Puppeteer script**, not Cypress — the Cypress binary
+  would not launch in this session's sandboxed shell (`Cypress.exe: bad option: --smoke-test`),
+  confirmed unrelated to this fix via a full cache-clear-and-reinstall. The script drove a real
+  browser through the exact regression scenario end-to-end: the modal-built TSP correctly
+  propagated onto the main form and a real schedule generated successfully.
+
+## Recent changes (v0.54.1 "Catalog")
+- **Two real bugs found live on v0.54.0, both direct user reports against a real shipment
+  (SHP-W942AJ).** (1) `GET /api/schedules/search`'s new catalog query had no `is_mock` exclusion,
+  so it resurrected old `shipment_schedules` rows saved back when Add Sailing always inserted a
+  row for any picked sailing, including synthetic "DEMO ..." ones — confirmed live, 4 stale rows
+  ("DEMO DULCIMER"/"DEMO CADENZA") were surfacing tagged `source:catalog` as if real. Fixed with
+  `AND is_mock=0` on the catalog query. (2) The Configure Legs modal's Vessel field was a plain
+  text input with zero connection to the real vessel registry, and there was no per-leg carrier
+  at all — real TSP sailings routinely change carrier at a transshipment hub. Vessel column now
+  reuses the existing `VesselCombobox` (real `/api/vessels/search` typeahead) with a compact
+  selected-vessel chip; new `schedule_legs.carrier` column + a `CarrierCombobox` per row — the
+  schedule's own top-level carrier now derives from leg 1's carrier when set, same fallback
+  pattern already used for vessel/voyage/service. `tests/schedule-catalog.test.js` gained 7 new
+  assertions (stale-mock-exclusion regression, per-leg carrier/vesselImo round-trip) — full suite
+  green (13 files, 546 assertions), clean build. Verified live via CDP/Cypress.
+
+## Recent changes (v0.54.0 "Catalog")
+- **Schedule Generator (Test Tools) decoupled from shipments, direct request.** Previously `POST
+  /api/schedules` required `initialShipmentIds` to be non-empty — `shipment_schedules.shipment_id`
+  was `NOT NULL`, so a generated schedule literally couldn't exist without a shipment attached at
+  creation time (plus a secondary manual link/unlink UI in the same tab). Generate is now a plain
+  "create and store" action with no shipment picker at all, create-time or post-hoc.
+- **Add Sailing search now checks the stored catalog first.** `GET /api/schedules/search`
+  (`routes/system.js`) previously always synthesized either live Maersk results or fully
+  synthetic "DEMO ..." sailings (`mockSailings()`) — the search and the catalog were two
+  completely disconnected write paths into the same table. It now queries `shipment_schedules`
+  for a match on POL, POD, and an ETD window (mirroring the existing `weeks` semantics), joins in
+  any `schedule_legs` for TSP detail, and only falls back to live/demo data when nothing real
+  matches. Picking a catalog result flows through the exact same commit path as any other
+  sailing (`applySailingToLegs`, unchanged) — it just also stamps the new `template_id` column on
+  the shipment's own freshly-created row for provenance.
+- **New `template_id` self-referential column** (nullable, `ON DELETE SET NULL`) replaces the old
+  shared-ownership model for the search-and-copy flow: a shipment picking a catalog template gets
+  its own `shipment_schedules` row (same as always), with `template_id` recording which template
+  it was copied from — not a link to a shared row. The old `schedule_shipment_links` table and its
+  `POST`/`DELETE .../link...` routes are gone (no caller once manual linking left the UI); `GET
+  /api/schedules/:id/usage` (replacing `linked-shipments`) derives "used by N shipments" from
+  `template_id` matches instead.
+- **A guarded, one-time table-rebuild migration** (`server.js`) makes `shipment_schedules.shipment_id`
+  nullable — SQLite can't drop `NOT NULL` via `ALTER TABLE`, so this is a real create-copy-swap,
+  gated by checking the column's own `notnull` flag first (idempotent, runs once). Accepted
+  despite this codebase's usual aversion to that migration class (see v0.41.0's additive
+  `carrier_booking_archive` workaround for a similar constraint) since the blast radius here is
+  narrow — nothing else joins on the column expecting non-null, and the everyday Add Sailing save
+  path is completely untouched by the migration (it keeps writing shipment-owned rows exactly as
+  before; only the Generator's new ownerless rows exercise the null case).
+- **Real TSP/multi-leg support in the Generator**, previously entirely absent from both the tool
+  and the schema. A new "Configure Legs" modal — a leg-rows table styled after the existing Route
+  Legs add/remove-row interaction (direct request, simpler than bespoke inline multi-field TSP
+  controls) — builds a genuine multi-leg sailing, backed by a new `schedule_legs` child table
+  (mirrors the existing `shipment_legs`/`contract_legs` multi-leg pattern: one row = direct
+  sailing, 2+ rows = TSP). The parent row's own summary fields (pol/vessel/voyage/etd from the
+  first leg, pod/eta from the last) are derived automatically, falling back to the main form's
+  top-level fields when a leg's own value is blank — every existing consumer of a schedule
+  (`ShipmentHeaderBar`'s Loop field, etc.) is unaffected.
+- **New `demo_schedules_enabled` setting** (App Settings → API Controls → External APIs, default
+  **on**) gates the synthetic mock fallback specifically — live carrier API results are untouched,
+  since they're real, not demo. Defaulting on means sailing search and existing test coverage keep
+  working with zero setup; an admin turns it off once real generated schedules exist in the
+  catalog and synthetic "DEMO ..." placeholders are no longer wanted.
+- **Gap found and fixed while writing tests**: with no owning shipment, the existing per-shipment
+  `DELETE /api/shipments/:id/schedules/:scheduleId` route (scoped `WHERE shipment_id=?`) could
+  never reach an ownerless template at all — there was no way to remove a generated schedule once
+  created. Added a dedicated `DELETE /api/schedules/:id` route, plus a delete button in the
+  now-read-only catalog browser.
+- `tests/schedule-catalog.test.js` rewritten around the new contract (50 assertions: ownerless
+  creation, TSP leg derivation and the single-leg-array-is-still-direct edge case, usage/template
+  provenance, the old link routes returning 404, catalog-first search priority over live/demo,
+  and the toggle's on/off behavior) — full suite green (13 files, 516 assertions), clean build.
+  Verified live end-to-end via a temporary Cypress spec: built a real 2-leg TSP schedule through
+  the Configure Legs modal, confirmed it in the read-only catalog browser, found it via Add
+  Sailing search on a real shipment tagged "Catalog", picked it and confirmed both SEA legs were
+  created correctly with the right POL/hub/POD chain and `template_id` provenance, and confirmed
+  the Settings toggle renders checked by default.
+
+## Recent changes (v0.53.0 "Voucher")
+- **TKT-O4B0IB (Office-Level Email Distribution) verified already shipped, closed rather than rebuilt.** Cross-checking the Kanban pipeline against actual code found every piece of this epic's 3-story scope already live from earlier releases: per-office SMTP config (`office_mail_settings`, `lib/mailer.js`, `routes/office-mail.js`, `OfficeMailSettingsModal` in `OfficePage.jsx`), a test-send route, and the embedded compose-and-send-with-signed-PDF flow (`POST .../documents/:docId/send-email`, `SendDocumentEmailModal` in `App.jsx`) — all already covered by `tests/office-mail.test.js` (31 assertions, re-run and confirmed green as the actual verification step). Epic + 3 stories (`TKT-R7UZT5`, `TKT-B8K7ZL`, `TKT-LRZTEJ`) marked Done.
+- **Invoice Reversal / Debit-Credit Note workflow (`TKT-DUADU3`)**, logged since v0.49.0 — SELL-side only, a direct scoping decision that also happens to be the only thing structurally possible: a generated FR01/FR02 invoice is already built exclusively from SELL cost lines (`generateInvoices()`), so reversing one can only ever reverse SELL lines. A new "↩ Reverse" action on a **confirmed** FR01/FR02 invoice (Invoice Entry page) does three things: creates negative-amount, already-`posted` adjusting SELL cost lines mirroring the original charge lines (`source: 'reversal'`, a new `CostLineRow` badge — a reversal is a final, already-recorded accounting event, not something needing a separate manual posting step afterward); marks the original invoice `status: 'voided'` (struck-through label + gray "Voided" pill, the Reverse action itself hidden once already reversed); and generates a new, dedicated `CN01` "Credit / Debit Note" `DOC_TYPES` entry — deliberately **not** a reuse of `FR02` ("Amendment" and "Reversal" are different documents with different accounting meaning) — linked back to the original via a new symmetric `shipment_documents.related_doc_id`.
+- **Precise reversal scoping via a new `source_cost_line_ids` column**: `generateInvoices()` previously had no record of exactly which cost-line IDs a given FR01/FR02 was built from — it just re-filtered live SELL lines by `containerId` at generation time. Now every FR01/FR02 generation captures and persists that exact id list (JSON array), so a later reversal negates precisely the lines that were actually invoiced rather than re-deriving from whatever SELL lines happen to still exist. An invoice generated **before** this shipped (no value in the new column) falls back to a live container-scoped SELL-line filter — the same "no migration, old rows get a sensible fallback" precedent this codebase uses throughout (VGM/CY cutoff fields, sequence floor, etc.).
+- **New `POST /api/shipments/:shipmentId/documents/:docId/reverse`** (`routes/shipment-ops.js`, gated `admin`/`operator` — same tier as the cost-line `postGate`, since this creates locked financial records and voids a confirmed invoice) does the cost-line creation + original-doc voiding; `PATCH /api/documents/:docId` gained a `voided` status value and an independent `relatedDocId` field. The `CN01` document itself is built and uploaded **client-side** (`ShipmentAccountingInvoicesPage.jsx`'s new `handleReverse`, chaining `reverse` → `buildCreditDebitNoteHtml` → `documents.generate` → two `documents.patch` calls to complete the symmetric link) — matching this codebase's established client-builds-HTML/server-signs-and-stores split for every other generated document, not a new pattern.
+- New `tests/invoice-reversal.test.js` (20 assertions: full reverse flow, draft/non-invoice/already-voided rejection paths, the `source_cost_line_ids` fallback) added to the `npm test` chain — full suite green, clean `vite build`. Verified live end-to-end via a temporary Cypress spec: generated and confirmed a real invoice, reversed it, confirmed the voided styling, the new `CN01` row with its "Reverses FR01-..." caption, and the negative `Reversal`-tagged posted cost line, all in the real UI.
+- `TKT-DUADU3` marked Done.
 
 ## Recent changes (v0.52.0 "Manifest")
 - **Completes epic `TKT-OYQFMB` (CargoWise-Aligned Carrier Booking Requirements)** — the

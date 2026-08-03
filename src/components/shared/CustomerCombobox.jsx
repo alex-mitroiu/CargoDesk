@@ -13,17 +13,21 @@ const EMPTY_FILTERS = { search: '', city: '', country: '', customerId: '' };
 // ── Customer Picker Modal ─────────────────────────────────────────────────────
 // Full paginated customer browser with the same filters as the Customers MDM page.
 
-export const CustomerPickerModal = ({ onSelect, onClose }) => {
+export const CustomerPickerModal = ({ onSelect, onClose, roleFilter = "" }) => {
   const [rows,    setRows]    = useState([]);
   const [total,   setTotal]   = useState(0);
   const [offset,  setOffset]  = useState(0);
   const [filters, setFilters] = useState(EMPTY_FILTERS);
   const [loading, setLoading] = useState(true);
+  // Soft filter, never a hard block — starts on when a roleFilter is passed in (the common
+  // case: assigning a "Bank" party should default to showing Bank-flagged customers), but an
+  // operator can turn it off to reach an unflagged customer without leaving this modal.
+  const [applyRoleFilter, setApplyRoleFilter] = useState(!!roleFilter);
 
   const setF = k => v => setFilters(p => ({ ...p, [k]: v }));
   const hasFilters = Object.values(filters).some(v => v.trim() !== "");
 
-  const doLoad = useCallback(async (f, off) => {
+  const doLoad = useCallback(async (f, off, useRoleFilter) => {
     setLoading(true);
     try {
       const res = await api.customers.list({
@@ -31,6 +35,7 @@ export const CustomerPickerModal = ({ onSelect, onClose }) => {
         city:       f.city.trim(),
         country:    f.country.trim(),
         customerId: f.customerId.trim(),
+        role:       useRoleFilter && roleFilter ? roleFilter : "",
         limit:      PICKER_LIMIT,
         offset:     off,
       });
@@ -38,14 +43,20 @@ export const CustomerPickerModal = ({ onSelect, onClose }) => {
       setTotal(res.total || 0);
     } catch {}
     setLoading(false);
-  }, []);
+  }, [roleFilter]);
 
-  useEffect(() => { doLoad(EMPTY_FILTERS, 0); }, []);
+  useEffect(() => { doLoad(EMPTY_FILTERS, 0, applyRoleFilter); }, []);
 
-  const handleSearch = () => { setOffset(0); doLoad(filters, 0); };
-  const handleClear  = () => { setFilters(EMPTY_FILTERS); setOffset(0); doLoad(EMPTY_FILTERS, 0); };
+  const handleSearch = () => { setOffset(0); doLoad(filters, 0, applyRoleFilter); };
+  const handleClear  = () => { setFilters(EMPTY_FILTERS); setOffset(0); doLoad(EMPTY_FILTERS, 0, applyRoleFilter); };
   const handleKey    = e => { if (e.key === "Enter") handleSearch(); };
-  const goPage = off => { setOffset(off); doLoad(filters, off); };
+  const goPage = off => { setOffset(off); doLoad(filters, off, applyRoleFilter); };
+  const toggleRoleFilter = () => {
+    const next = !applyRoleFilter;
+    setApplyRoleFilter(next);
+    setOffset(0);
+    doLoad(filters, 0, next);
+  };
 
   return (
     <Modal title="Select Customer" onClose={onClose} width={660}>
@@ -72,6 +83,17 @@ export const CustomerPickerModal = ({ onSelect, onClose }) => {
           <Btn onClick={handleSearch}>Search</Btn>
           {hasFilters && <Btn variant="secondary" onClick={handleClear}>Clear</Btn>}
         </div>
+
+        {/* Role-eligibility soft filter — only shown when this picker was opened for a specific
+            role slot. Defaults on, but never blocks reaching an unflagged customer. */}
+        {roleFilter && (
+          <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: "pointer",
+            fontFamily: T.body, fontSize: 12, color: T.textMuted, width: "fit-content" }}>
+            <input type="checkbox" checked={applyRoleFilter} onChange={toggleRoleFilter}
+              style={{ accentColor: T.accent, width: 13, height: 13 }} />
+            Only show customers eligible for <strong style={{ color: T.text }}>{roleFilter}</strong>
+          </label>
+        )}
 
         {/* Result count */}
         {!loading && (
@@ -136,7 +158,7 @@ export const CustomerPickerModal = ({ onSelect, onClose }) => {
 // When a customer is resolved from the list/picker, the ID is shown as a chip
 // and the border turns green. The user can clear it to re-enter.
 
-const CustomerCombobox = ({ label, value = { id: "", name: "" }, onChange, required }) => {
+const CustomerCombobox = ({ label, value = { id: "", name: "" }, onChange, required, roleFilter = "" }) => {
   const [query,      setQuery]      = useState(value.name || "");
   const [results,    setResults]    = useState([]);
   const [dropOpen,   setDropOpen]   = useState(false);
@@ -172,7 +194,7 @@ const CustomerCombobox = ({ label, value = { id: "", name: "" }, onChange, requi
     if (!q.trim()) { setResults([]); setDropOpen(false); return; }
     timer.current = setTimeout(async () => {
       try {
-        const res = await api.customers.list({ search: q.trim(), limit: 8 });
+        const res = await api.customers.list({ search: q.trim(), role: roleFilter, limit: 8 });
         const items = res.results || [];
         setResults(items);
         if (items.length > 0) { computeDropPos(); setDropOpen(true); }
@@ -298,6 +320,7 @@ const CustomerCombobox = ({ label, value = { id: "", name: "" }, onChange, requi
         <CustomerPickerModal
           onSelect={handlePickerSelect}
           onClose={() => setPickerOpen(false)}
+          roleFilter={roleFilter}
         />
       )}
     </Field>

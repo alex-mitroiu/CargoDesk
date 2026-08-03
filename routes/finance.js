@@ -1,7 +1,7 @@
 "use strict";
 
 module.exports = function financeRoutes(app, ctx) {
-  const { db, ok, err, auth } = ctx;
+  const { db, ok, err, auth, resolveCustomerGroup } = ctx;
 
   app.get("/api/margin/summary", auth(), (req, res) => {
     const u = req.user;
@@ -9,7 +9,8 @@ module.exports = function financeRoutes(app, ctx) {
     if (!roles.includes('admin') && !u.canViewFinance)
       return err(res, "Finance access not enabled for your account", 403);
     const lines = db.prepare(`
-      SELECT cl.*, s.carrier_code, s.pol, s.pod, s.etd, s.created_at AS shp_created_at
+      SELECT cl.*, s.carrier_code, s.pol, s.pod, s.etd, s.created_at AS shp_created_at,
+             s.principal_id, s.principal_name, s.consignee_id, s.consignee_name
       FROM shipment_cost_lines cl
       JOIN shipments s ON s.id = cl.shipment_id
     `).all();
@@ -54,6 +55,33 @@ module.exports = function financeRoutes(app, ctx) {
       return { lane, ...aggregate(rows), weeks: weeklyBreakdown(rows) };
     }).sort((a, b) => (b.totalSellUsd || 0) - (a.totalSellUsd || 0));
 
-    ok(res, { ...overall, byCarrier, byLane });
+    // Organization Model Enhancement Epic 4 — "the responsible party" precedence
+    // (Principal, falling back to Consignee) mirrors invoiceGenerator.js's own responsibleParty
+    // field, since that's the same customer relationship a generated invoice is actually billed
+    // against. groupByParent=true (query param) remaps each line's customer to its hierarchy's
+    // ROOT customer via resolveCustomerGroup before aggregating, so a multinational shipper's
+    // shipments booked under several regional customer records show as one consolidated row —
+    // without touching how any of those individual records are stored or displayed elsewhere.
+    const groupByParent = req.query.groupByParent === 'true';
+    const custKey = r => r.principal_id || r.consignee_id || '';
+    const custName = r => r.principal_id ? r.principal_name : r.consignee_id ? r.consignee_name : '';
+    const rootCache = new Map();
+    const rootOf = id => {
+      if (!groupByParent || !id) return id;
+      if (!rootCache.has(id)) rootCache.set(id, resolveCustomerGroup(id)[0]);
+      return rootCache.get(id);
+    };
+    const custRows = lines.filter(r => custKey(r));
+    const customerIds = [...new Set(custRows.map(r => rootOf(custKey(r))))];
+    const byCustomer = customerIds.map(rootId => {
+      const rows = custRows.filter(r => rootOf(custKey(r)) === rootId);
+      // Display name: prefer the root customer's own name if it's a member of this group,
+      // otherwise fall back to whichever member's name we actually have on a cost line row —
+      // a rolled-up group reads by its parent's name, a standalone customer reads by its own.
+      const nameRow = rows.find(r => custKey(r) === rootId) || rows[0];
+      return { customerId: rootId, customerName: custName(nameRow), ...aggregate(rows), weeks: weeklyBreakdown(rows) };
+    }).sort((a, b) => (b.totalSellUsd || 0) - (a.totalSellUsd || 0));
+
+    ok(res, { ...overall, byCarrier, byLane, byCustomer });
   });
 };

@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { T } from "../../tokens";
+import { T, CONTACT_DEPARTMENTS, ALL_CUSTOMER_ROLES } from "../../tokens";
 import { api } from "../../api";
 import { useAuth } from "../../AuthContext";
 import { toast } from "../../toast";
-import { PageSpinner } from "../../components/primitives/Spinner";
+import Spinner, { PageSpinner } from "../../components/primitives/Spinner";
 import Btn from "../../components/primitives/Btn";
 import Badge from "../../components/primitives/Badge";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
@@ -11,6 +11,7 @@ import Pagination from "../../components/primitives/Pagination";
 import ActionMenu from "../../components/primitives/ActionMenu";
 import { inputBase, Inp, Sel, Textarea } from "../../components/primitives/Form";
 import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns.jsx";
+import CustomerCombobox from "../../components/shared/CustomerCombobox";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -58,9 +59,37 @@ const ProfileTab = ({ init = {}, onSave, saving }) => {
     website:     init.website     || "",
     notes:       init.notes       || "",
     currency:    init.currency    || "USD",
+    creditLimit:      init.creditLimit      != null ? String(init.creditLimit)      : "",
+    creditTermsDays:  init.creditTermsDays  != null ? String(init.creditTermsDays)  : "",
+    creditHold:       init.creditHold       || false,
+    creditHoldReason: init.creditHoldReason || "",
+    parentCustomerId:   init.parentCustomerId   || "",
+    parentCustomerName: init.parentCustomerName || "",
   });
   const set   = k => v => setF(p => ({ ...p, [k]: v }));
   const valid = f.companyName.trim().length > 0;
+
+  // Roles — a separate table/endpoint from the rest of the profile, so this is its own
+  // load/save cycle (immediate-save per toggle, like a settings checkbox) rather than folding
+  // into the "Save Profile" button below. Only shown for an already-created customer — there's
+  // no customer id to attach roles to yet while adding a new one (mirrors why Identifiers/
+  // Compliance/Documents tabs are hidden for isNew too, one level up in CustomerDetailModal).
+  const [roles,       setRoles]       = useState(null);
+  const [rolesSaving, setRolesSaving] = useState(false);
+  useEffect(() => {
+    if (!init.id) { setRoles(null); return; }
+    api.customers.roles.list(init.id).then(setRoles).catch(() => setRoles([]));
+  }, [init.id]);
+
+  const toggleRole = async role => {
+    const prev = roles;
+    const next = roles.includes(role) ? roles.filter(r => r !== role) : [...roles, role];
+    setRoles(next);
+    setRolesSaving(true);
+    try { await api.customers.roles.set(init.id, next); }
+    catch (e) { toast.error(e.message); setRoles(prev); }
+    setRolesSaving(false);
+  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -102,8 +131,68 @@ const ProfileTab = ({ init = {}, onSave, saving }) => {
       <Sel label="Currency" value={f.currency} onChange={set("currency")}
         options={CURRENCIES.map(c => ({ value: c, label: c }))} />
 
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <Inp label="Credit Limit (USD, optional)" value={f.creditLimit} onChange={set("creditLimit")}
+          placeholder="Blank = no limit" mono type="number" hint="Soft warning only — a full invoice never blocks past this" />
+        <Inp label="Credit Terms (days, optional)" value={f.creditTermsDays} onChange={set("creditTermsDays")}
+          placeholder="e.g. 30" mono type="number" />
+      </div>
+      <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer",
+        fontFamily: T.body, fontSize: 13, color: T.text, width: "fit-content" }}>
+        <input type="checkbox" checked={f.creditHold}
+          onChange={e => set("creditHold")(e.target.checked)} />
+        On credit hold — blocks generating new invoices for this customer
+      </label>
+      {f.creditHold && (
+        <Inp label="Hold Reason" value={f.creditHoldReason} onChange={set("creditHoldReason")}
+          placeholder="e.g. Overdue balance — awaiting payment on INV-4021" />
+      )}
+
       <Textarea label="Notes" value={f.notes} onChange={set("notes")}
         placeholder="Internal notes, account manager, payment terms…" rows={3} />
+
+      <div style={{ fontFamily: T.mono, fontSize: 9.5, color: T.border, fontWeight: 700,
+        textTransform: "uppercase", letterSpacing: ".12em", marginBottom: -6 }}>Hierarchy</div>
+
+      <CustomerCombobox label="Parent Customer (optional)"
+        value={{ id: f.parentCustomerId, name: f.parentCustomerName }}
+        onChange={v => setF(p => ({ ...p, parentCustomerId: v.id, parentCustomerName: v.name }))} />
+      <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted, marginTop: -8 }}>
+        For a branch or subsidiary booked under a larger group — lets margin/GP reporting roll
+        this customer's figures up under its parent. Leave blank for a standalone customer.
+      </div>
+
+      {init.id && (
+        <>
+          <div style={{ fontFamily: T.mono, fontSize: 9.5, color: T.border, fontWeight: 700,
+            textTransform: "uppercase", letterSpacing: ".12em", marginBottom: -6 }}>Roles</div>
+          <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted, marginTop: -6 }}>
+            Which shipment/party roles this customer is eligible for — narrows customer pickers
+            elsewhere in the app (e.g. only Bank-flagged customers show when assigning a Bank
+            party), without ever blocking an unflagged customer from still being picked manually.
+          </div>
+          {roles === null ? <Spinner size="sm" /> : (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              {ALL_CUSTOMER_ROLES.map(r => {
+                const checked = roles.includes(r);
+                return (
+                  <label key={r} style={{ display: "flex", alignItems: "center", gap: 6,
+                    cursor: rolesSaving ? "default" : "pointer", fontFamily: T.body, fontSize: 12,
+                    padding: "5px 10px", borderRadius: 6,
+                    border: `1px solid ${checked ? T.accent + "88" : T.border}`,
+                    background: checked ? T.accentBg : "transparent",
+                    color: checked ? T.accent : T.textMuted, opacity: rolesSaving ? 0.6 : 1 }}>
+                    <input type="checkbox" checked={checked} disabled={rolesSaving}
+                      onChange={() => toggleRole(r)}
+                      style={{ accentColor: T.accent, width: 12, height: 12 }} />
+                    {r}
+                  </label>
+                );
+              })}
+            </div>
+          )}
+        </>
+      )}
 
       <div style={{ display: "flex", justifyContent: "flex-end", paddingTop: 4 }}>
         <Btn disabled={!valid || saving} onClick={() => onSave(f)}>
@@ -247,6 +336,150 @@ const IdentifiersTab = ({ customerId, canEdit }) => {
       )}
       {confirm && (
         <ConfirmModal message="Remove this identifier?" onConfirm={() => handleDelete(confirm)} onCancel={() => setConfirm(null)} />
+      )}
+    </div>
+  );
+};
+
+// ─── Contacts tab ─────────────────────────────────────────────────────────────
+// Named people at this customer — replaces the old "cram it into notes" workaround
+// (ProfileTab's Notes hint used to literally say "account manager, payment terms…").
+// Mirrors IdentifiersTab/IdentifierForm's shape almost exactly.
+
+const ContactForm = ({ init = {}, onSave, onCancel, saving }) => {
+  const [f, setF] = useState({
+    name:       init.name       || "",
+    title:      init.title      || "",
+    email:      init.email      || "",
+    phone:      init.phone      || "",
+    department: init.department || "Other",
+    isPrimary:  init.isPrimary  || false,
+  });
+  const set = k => v => setF(p => ({ ...p, [k]: v }));
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <Inp label="Name" value={f.name} onChange={set("name")} placeholder="Jane van der Berg" required />
+      <Inp label="Title (optional)" value={f.title} onChange={set("title")} placeholder="Export Coordinator" />
+      <div>
+        <div style={{ fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted,
+          textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 4 }}>Department</div>
+        <select value={f.department} onChange={e => set("department")(e.target.value)}
+          style={{ ...inputBase, width: "100%", cursor: "pointer" }}>
+          {CONTACT_DEPARTMENTS.map(d => <option key={d} value={d}>{d}</option>)}
+        </select>
+      </div>
+      <Inp label="Email" value={f.email} onChange={set("email")} placeholder="jane@acme-freight.com" />
+      <Inp label="Phone" value={f.phone} onChange={set("phone")} placeholder="+31 10 123 4567" mono />
+      <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer",
+        fontFamily: T.body, fontSize: 13, color: T.text }}>
+        <input type="checkbox" checked={f.isPrimary}
+          onChange={e => set("isPrimary")(e.target.checked)} />
+        Mark as primary contact
+      </label>
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", paddingTop: 4 }}>
+        <Btn variant="secondary" onClick={onCancel}>Cancel</Btn>
+        <Btn disabled={!f.name.trim() || saving} onClick={() => onSave(f)}>
+          {saving ? "Saving…" : "Save"}
+        </Btn>
+      </div>
+    </div>
+  );
+};
+
+const ContactsTab = ({ customerId, canEdit }) => {
+  const [items,   setItems]   = useState(null);
+  const [editing, setEditing] = useState(null);
+  const [confirm, setConfirm] = useState(null);
+  const [saving,  setSaving]  = useState(false);
+
+  const load = useCallback(async () => {
+    try { setItems(await api.customers.contacts.list(customerId)); }
+    catch (e) { toast.error(e.message); }
+  }, [customerId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleSave = async f => {
+    setSaving(true);
+    try {
+      if (editing === "new") await api.customers.contacts.create(customerId, f);
+      else await api.customers.contacts.update(customerId, editing.id, f);
+      setEditing(null); load();
+    } catch (e) { toast.error(e.message); }
+    setSaving(false);
+  };
+
+  const handleDelete = async id => {
+    try { await api.customers.contacts.remove(customerId, id); setConfirm(null); load(); }
+    catch (e) { toast.error(e.message); }
+  };
+
+  if (items === null) return <div style={{ padding: 24 }}><PageSpinner /></div>;
+
+  return (
+    <div>
+      {canEdit && (
+        <div style={{ marginBottom: 14 }}>
+          <Btn size="sm" onClick={() => setEditing("new")}>＋ Add Contact</Btn>
+        </div>
+      )}
+
+      {items.length === 0 ? (
+        <div style={{ padding: "32px 0", textAlign: "center", fontFamily: T.body, fontSize: 13,
+          color: T.textMuted, fontStyle: "italic" }}>
+          No contacts on file. Add the people you actually deal with at this customer.
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {items.map(item => (
+            <div key={item.id} style={{
+              display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+              padding: "10px 14px", borderRadius: 8, background: T.bg, border: `1px solid ${T.border}`,
+            }}>
+              <span style={{ fontFamily: T.body, fontSize: 13, fontWeight: 700, color: T.text }}>
+                {item.name}
+              </span>
+              {item.title && (
+                <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>{item.title}</span>
+              )}
+              <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700,
+                background: T.accentBg, color: T.accent, border: `1px solid ${T.accent}44`,
+                borderRadius: 4, padding: "1px 6px" }}>{item.department}</span>
+              {item.email && (
+                <a href={`mailto:${item.email}`} style={{ fontFamily: T.body, fontSize: 12, color: T.accent, textDecoration: "none" }}>
+                  {item.email}
+                </a>
+              )}
+              {item.phone && (
+                <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>{item.phone}</span>
+              )}
+              {item.isPrimary && (
+                <span style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 700,
+                  color: T.success, background: `${T.success}15`,
+                  border: `1px solid ${T.success}44`, borderRadius: 4, padding: "1px 5px" }}>PRIMARY</span>
+              )}
+              {canEdit && (
+                <div style={{ marginLeft: "auto" }}>
+                  <ActionMenu items={[
+                    { icon: "✎", label: "Edit",   onClick: () => setEditing(item) },
+                    { icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(item.id) },
+                  ]} />
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {editing && (
+        <Modal title={editing === "new" ? "Add Contact" : "Edit Contact"}
+          onClose={() => setEditing(null)} width={420}>
+          <ContactForm init={editing === "new" ? {} : editing}
+            onSave={handleSave} onCancel={() => setEditing(null)} saving={saving} />
+        </Modal>
+      )}
+      {confirm && (
+        <ConfirmModal message="Remove this contact?" onConfirm={() => handleDelete(confirm)} onCancel={() => setConfirm(null)} />
       )}
     </div>
   );
@@ -479,7 +712,7 @@ const DocumentsTab = ({ customerId, canEdit }) => {
 
 // ─── Customer detail modal ────────────────────────────────────────────────────
 
-const TABS = ["Profile", "Identifiers", "Compliance", "Documents"];
+const TABS = ["Profile", "Contacts", "Identifiers", "Compliance", "Documents"];
 
 const CustomerDetailModal = ({ customer, isNew, onClose, onUpdated }) => {
   const { canEdit } = useAuth();
@@ -526,6 +759,7 @@ const CustomerDetailModal = ({ customer, isNew, onClose, onUpdated }) => {
       )}
 
       {tab === "Profile"     && <ProfileTab     init={customer}           onSave={handleProfileSave} saving={saving} />}
+      {tab === "Contacts"    && <ContactsTab    customerId={customer.id} canEdit={canEdit} />}
       {tab === "Identifiers" && <IdentifiersTab  customerId={customer.id} canEdit={canEdit} />}
       {tab === "Compliance"  && <ComplianceTab   customerId={customer.id} canEdit={canEdit} />}
       {tab === "Documents"   && <DocumentsTab    customerId={customer.id} canEdit={canEdit} />}

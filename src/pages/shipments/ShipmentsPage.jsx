@@ -10,6 +10,11 @@ import { inputBase } from "../../components/primitives/Form";
 import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns";
 import ActionMenu from "../../components/primitives/ActionMenu";
 import EntityHistoryModal from "../../components/shared/EntityHistoryModal";
+import Pagination from "../../components/primitives/Pagination";
+import { IconRefresh, IconDownload, IconClose, IconWarning, IconTime, IconEye, IconClipboard }
+  from "../../components/primitives/Icon";
+
+const PAGE_SIZE = 50;
 
 const SORT_OPTIONS = [
   { value: "",         label: "Default order" },
@@ -37,7 +42,12 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
   const [exporting,       setExporting]       = useState(false);
   const [staleCount,      setStaleCount]      = useState(0);
   const [refreshing,      setRefreshing]      = useState(false);
+  const [offset,          setOffset]          = useState(0);
   const knownIdsRef = useRef(new Set(shipments.map(s => s.id)));
+
+  // A new filter/sort can shrink the result set below the page a user was already on —
+  // reset to page 1 whenever the filtered set's shape changes, not just on mount.
+  useEffect(() => { setOffset(0); }, [filters.search, filters.status, filters.carrier, sort]);
 
   // Sync known IDs when parent pushes a fresh list (after manual refresh or other updates)
   useEffect(() => {
@@ -107,6 +117,8 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
                   : sort === "status"   ? [...filtered].sort((a,b) => (a.status||"").localeCompare(b.status||""))
                   : filtered;
 
+  const pageItems = displayed.slice(offset, offset + PAGE_SIZE);
+
   return (
     <div>
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 16 }}>
@@ -131,7 +143,7 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
                 transition: "border-color .15s, color .15s" }}
               onMouseEnter={e => { if (!refreshing) { e.currentTarget.style.borderColor = T.accent; e.currentTarget.style.color = T.accent; }}}
               onMouseLeave={e => { e.currentTarget.style.borderColor = staleCount > 0 ? T.accent : T.border; e.currentTarget.style.color = staleCount > 0 ? T.accent : T.textMuted; }}>
-              {refreshing ? "↻" : "↻"}
+              <IconRefresh size={13} />
             </button>
             {staleCount > 0 && (
               <span style={{ position: "absolute", top: -6, right: -6,
@@ -145,7 +157,7 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
             )}
           </div>
           <Btn onClick={handleExportCSV} size="sm" variant="ghost" disabled={exporting || shipments.length === 0}>
-            {exporting ? "Exporting…" : "⬇ CSV"}
+            {exporting ? "Exporting…" : <><IconDownload size={12} />CSV</>}
           </Btn>
           {canEdit && <Btn onClick={onNew} size="lg" disabled={carriers.length === 0}>＋ New Shipment</Btn>}
         </div>
@@ -179,8 +191,9 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
             onClick={() => { setFilters({ search: '', status: '', carrier: '' }); setSort(""); }}
             style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 6,
               color: T.textMuted, cursor: "pointer", padding: "6px 12px",
-              fontFamily: T.body, fontSize: 12, whiteSpace: "nowrap" }}>
-            ✕ Clear
+              fontFamily: T.body, fontSize: 12, whiteSpace: "nowrap",
+              display: "inline-flex", alignItems: "center", gap: 5 }}>
+            <IconClose size={11} />Clear
           </button>
         )}
       </div>
@@ -191,7 +204,7 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
           const active = filters.status === s;
           const colors = { Active:"#22c55e", Pending:"#f59e0b", "Requires Review":"#ef4444",
                            Completed:"#3b82f6", Cancelled:"#64748b", _overdue:"#ef4444" };
-          const label = s === "_overdue" ? "⏰ Overdue" : (s || "All");
+          const label = s === "_overdue" ? <><IconTime size={11} />Overdue</> : (s || "All");
           const col = s ? colors[s] || T.accent : T.textMuted;
           return (
             <button key={s || "all"} type="button"
@@ -201,7 +214,8 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
                 background: active ? `${col}18` : "none",
                 cursor:"pointer", fontFamily: T.body, fontSize: 11.5,
                 color: active ? col : T.textMuted, fontWeight: active ? 600 : 400,
-                transition:"all .12s", whiteSpace:"nowrap" }}>
+                transition:"all .12s", whiteSpace:"nowrap",
+                display: "inline-flex", alignItems: "center", gap: 4 }}>
               {label}
               {s && s !== "_overdue" && (() => {
                 const cnt = shipments.filter(x => x.status === s).length;
@@ -219,8 +233,10 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
 
       {carriers.length === 0 && (
         <div style={{ background: T.warningBg, border: `1px solid ${T.warning}55`, borderRadius: 8,
-          padding: "12px 18px", fontFamily: T.body, fontSize: 13, color: T.warning, marginBottom: 18 }}>
-          ⚠ Carrier Registry is empty. Go to <strong>Carrier Registry</strong> and add at least one carrier before creating shipments.
+          padding: "12px 18px", fontFamily: T.body, fontSize: 13, color: T.warning, marginBottom: 18,
+          display: "flex", alignItems: "center", gap: 8 }}>
+          <IconWarning size={13} />
+          <span>Carrier Registry is empty. Go to <strong>Carrier Registry</strong> and add at least one carrier before creating shipments.</span>
         </div>
       )}
 
@@ -238,7 +254,7 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
           <div style={{ padding: 48, textAlign: "center", color: T.textMuted, fontFamily: T.body, fontSize: 14 }}>
             {hasFilters ? "No shipments match your filters." : "No shipments yet. Create your first one above."}
           </div>
-        ) : displayed.map(s => {
+        ) : pageItems.map(s => {
           const carrier = carriers.find(c => c.code === s.carrierCode);
           return (
             <div key={s.id} onDoubleClick={() => window.open(`#shipments/${s.id}`, "_blank")}
@@ -313,15 +329,17 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
               })()}</div>
               <div onClick={e => e.stopPropagation()}>
                 <ActionMenu items={[
-                  { icon: "↗", label: "Open",    onClick: () => window.open(`#shipments/${s.id}`, "_blank") },
-                  { icon: "📋", label: "History", onClick: () => setHistoryShipment(s) },
-                  ...(canEdit ? [{ icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(s.id) }] : []),
+                  { icon: IconEye,       label: "Open",    onClick: () => window.open(`#shipments/${s.id}`, "_blank") },
+                  { icon: IconClipboard, label: "History", onClick: () => setHistoryShipment(s) },
+                  ...(canEdit ? [{ icon: IconClose, label: "Delete", variant: "danger", onClick: () => setConfirm(s.id) }] : []),
                 ]} />
               </div>
             </div>
           );
         })}
       </div>
+
+      <Pagination total={displayed.length} offset={offset} limit={PAGE_SIZE} onPage={setOffset} />
 
       {confirm && (
         <ConfirmModal

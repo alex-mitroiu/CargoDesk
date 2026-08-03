@@ -14,6 +14,17 @@ module.exports = function shipmentsRoutes(app, ctx) {
 
   const LEG_TO_MOT = { 'SEA': 'SEA', 'AIR': 'AIR', 'RAIL': 'RAIL', 'Pick-up': 'ROAD', 'Delivery': 'ROAD', 'Feeder': 'SEA' };
 
+  // Organization Model Enhancement Epic 3 — re-screens a shipment whenever an additional party
+  // (shipment_parties) is added/reassigned/removed, since screenShipmentById now covers all 9
+  // of those roles too, not just the 4 fixed columns. Honors the same "don't silently overwrite
+  // a compliance officer's override" guard the shipment PUT route's own re-screen already uses.
+  const maybeRescreen = shipmentId => {
+    if (sanctionsMap.size === 0) return;
+    const prev = db.prepare("SELECT result, overridden_at FROM shipment_screenings WHERE shipment_id=?").get(shipmentId);
+    const isOverridden = prev?.result === 'CLEAR' && prev?.overridden_at;
+    if (!isOverridden) screenShipmentById(shipmentId);
+  };
+
   const checkDgPolicy = (shipmentId, isDg, dgClass) => {
     if (!isDg || !dgClass) return null;
     const shipment = db.prepare("SELECT contract_id, contract_ref FROM shipments WHERE id=?").get(shipmentId);
@@ -367,6 +378,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
         || existing.shipper_name  !== shipperName
         || existing.consignee_name !== consigneeName
         || existing.principal_name !== principalName
+        || existing.notify_name   !== notifyName
         || existing.pol            !== polU
         || existing.pod            !== podU;
       if (!isOverridden && partyOrRouteChanged) silentScreening = screenShipmentById(req.params.id);
@@ -638,6 +650,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     } catch (e) {
       return err(res, isUniqueViolation(e) ? "This role is already assigned on this shipment — edit or remove it instead." : e.message);
     }
+    maybeRescreen(req.params.id);
     ok(res, mapShipmentParty(db.prepare("SELECT * FROM shipment_parties WHERE id=?").get(id)), 201);
   });
 
@@ -649,6 +662,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const { customerId, customerName } = req.body || {};
     if (!customerId || !customerName) return err(res, "customerId and customerName required");
     db.prepare("UPDATE shipment_parties SET customer_id=?, customer_name=? WHERE id=?").run(customerId, customerName, req.params.id);
+    maybeRescreen(existing.shipment_id);
     ok(res, mapShipmentParty({ ...existing, customer_id: customerId, customer_name: customerName }));
   });
 
@@ -656,6 +670,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const existing = db.prepare("SELECT * FROM shipment_parties WHERE id=?").get(req.params.id);
     if (!existing) return err(res, "Not found", 404);
     db.prepare("DELETE FROM shipment_parties WHERE id=?").run(req.params.id);
+    maybeRescreen(existing.shipment_id);
     ok(res, { deleted: req.params.id });
   });
 
@@ -699,6 +714,9 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const maxOrder = db.prepare("SELECT MAX(leg_order) as m FROM shipment_legs WHERE shipment_id=?").get(req.params.id);
     const legOrder = (maxOrder?.m ?? -1) + 1;
     const createdAt = new Date().toISOString();
+    // etd_source/eta_source start blank (an estimate, not yet AIS-confirmed) — a leg created
+    // through this route always carries a fresh, unconfirmed date, even if etd/eta happen to be
+    // pre-filled from a picked sailing.
     db.prepare(`INSERT INTO shipment_legs (id,shipment_id,leg_order,mot,leg_type,movement_type,pol,pod,pol_loc_type,pod_loc_type,etd,eta,carrier_code,vessel,vessel_imo,voyage,movement_by,contract_type,contract_ref,created_at)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
       .run(id, req.params.id, legOrder, mot, legType, movementType,
@@ -720,11 +738,20 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const mot = rawMot || LEG_TO_MOT[legType] || 'SEA';
     const existing = db.prepare("SELECT * FROM shipment_legs WHERE id=? AND shipment_id=?").get(req.params.legId, req.params.id);
     if (!existing) return err(res, "Not found", 404);
-    db.prepare(`UPDATE shipment_legs SET mot=?,leg_type=?,movement_type=?,pol=?,pod=?,pol_loc_type=?,pod_loc_type=?,etd=?,eta=?,carrier_code=?,vessel=?,vessel_imo=?,voyage=?,movement_by=?,contract_type=?,contract_ref=?,leg_order=? WHERE id=?`)
+    // The only writer here is this HTTP route (the AIS listener updates etd/eta directly via
+    // its own DB calls, never through this endpoint) — so a changed date reaching this route is
+    // inherently a manual correction, and clears the 'ais'-confirmed flag (the operator is
+    // stating a new estimate/correction, not re-confirming the same detected event). An
+    // unchanged value keeps whatever source it already had, so saving other fields on the same
+    // leg doesn't accidentally erase an existing confirmation.
+    const etdSource = etd !== (existing.etd || null) ? '' : existing.etd_source;
+    const etaSource = eta !== (existing.eta || null) ? '' : existing.eta_source;
+    db.prepare(`UPDATE shipment_legs SET mot=?,leg_type=?,movement_type=?,pol=?,pod=?,pol_loc_type=?,pod_loc_type=?,etd=?,eta=?,carrier_code=?,vessel=?,vessel_imo=?,voyage=?,movement_by=?,contract_type=?,contract_ref=?,leg_order=?,etd_source=?,eta_source=? WHERE id=?`)
       .run(mot, legType, movementType, pol.toUpperCase(), pod.toUpperCase(),
            polLocType, podLocType, etd||null, eta||null,
            carrierCode, vessel, vesselImo, voyage, movementBy,
-           contractType, contractRef, legOrder ?? existing.leg_order, req.params.legId);
+           contractType, contractRef, legOrder ?? existing.leg_order,
+           etdSource, etaSource, req.params.legId);
     syncShipmentFromLegs(req.params.id);
     ensureBookingCreated(req.params.id);
     ok(res, ctx.mapShipmentLeg(db.prepare("SELECT * FROM shipment_legs WHERE id=?").get(req.params.legId)));

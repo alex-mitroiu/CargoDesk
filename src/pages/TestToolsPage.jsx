@@ -4,11 +4,12 @@ import { api } from "../api";
 import { toast } from "../toast";
 import Spinner from "../components/primitives/Spinner";
 import Btn from "../components/primitives/Btn";
+import { Modal } from "../components/primitives/Modal";
 import EdiMessageList from "../components/shared/EdiMessageList";
-import { VesselField } from "../components/shared/VesselCombobox";
+import { VesselField, VesselCombobox } from "../components/shared/VesselCombobox";
 import CarrierCombobox from "../components/shared/CarrierCombobox";
 import PortCombobox from "../components/shared/PortCombobox";
-import { IconBaseStation, IconCheck, IconClose, IconAnchor, IconFileCertificate } from "../components/primitives/Icon";
+import { IconBaseStation, IconCheck, IconClose, IconAnchor, IconFileCertificate, IconShip } from "../components/primitives/Icon";
 
 // ─── Test Tools ────────────────────────────────────────────────────────────────
 // Reached both from Integration Board's sidebar and a header shortcut icon (App.jsx).
@@ -17,13 +18,14 @@ import { IconBaseStation, IconCheck, IconClose, IconAnchor, IconFileCertificate 
 //    (routes/edi.js's booking-request endpoint no longer fabricates one automatically —
 //    see the v0.35.0 changelog) so rejections and other non-happy-path outcomes can
 //    actually be exercised without a live carrier account.
-//  - Schedule Generator: authors realistic sea schedules from the real Vessels/Ports/
-//    Carriers MDM data (instead of mockSailings()'s synthetic "DEMO ALLEGRO" placeholders)
-//    and can attach one schedule to MULTIPLE real shipments at once — the "shared schedule
-//    catalog" introduced alongside this tool (v0.37.0): shipment_schedules.shipment_id
-//    stays the schedule's owner exactly as it always has, additional shipments link via a
-//    new schedule_shipment_links row, so "how many shipments are on schedule SCHED-XYZ" is
-//    finally answerable.
+//  - Schedule Generator: authors realistic sea schedules — including genuine multi-leg/TSP
+//    sailings via the "Configure Legs" modal — from the real Vessels/Ports/Carriers MDM data
+//    (instead of mockSailings()'s synthetic "DEMO ALLEGRO" placeholders). A generated schedule
+//    is a pure, ownerless catalog "template" (shipment_schedules.shipment_id is nullable) —
+//    it's never linked to a shipment directly here; the everyday Add Sailing search
+//    (GET /api/schedules/search) checks this catalog first and a shipment picking a match
+//    copies it into its own row (template_id records the provenance). The catalog browser
+//    below is read-only — "Used by N shipment(s)" reflects real copies, not manual links.
 //  - Filing Simulator (Epic TKT-XW6TQK): emulates a customs authority's response to a Filed
 //    AES/EEI or ISF/AMS filing — same "no live government EDI, so simulate the outcome"
 //    precedent as the Message Simulator, mirroring its exact shape (pick a pending item,
@@ -48,7 +50,7 @@ const inputStyle = {
 
 const label = { display: "block", fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 5 };
 
-const TestToolsPage = ({ navigate, shipments = [] }) => {
+const TestToolsPage = ({ navigate }) => {
   const [activeTab, setActiveTab] = useState("simulator"); // "simulator" | "generator"
 
   // ─── Message Simulator state (unchanged) ──────────────────────────────────
@@ -115,16 +117,17 @@ const TestToolsPage = ({ navigate, shipments = [] }) => {
   const [service,      setService]      = useState("");
   const [etd, setEtd] = useState(""); const [atd, setAtd] = useState("");
   const [eta, setEta] = useState(""); const [ata, setAta] = useState("");
-  const [shipQuery,       setShipQuery]       = useState("");
-  const [linkShipmentIds, setLinkShipmentIds] = useState([]);
   const [genBusy, setGenBusy] = useState(false);
+
+  const emptyLegRow = () => ({ pol: "", pod: "", etd: "", eta: "", vesselImo: "", vesselName: "", voyageNumber: "", carrier: "", service: "" });
+  const [legsModalOpen, setLegsModalOpen] = useState(false);
+  const [legRows,       setLegRows]       = useState([]); // [] = direct sailing (no TSP configured)
 
   const [catalog,        setCatalog]        = useState([]);
   const [catalogLoading, setCatalogLoading] = useState(true);
   const [expandedId,     setExpandedId]     = useState(null);
   const [expandedData,   setExpandedData]   = useState(null);
   const [expandedLoading,setExpandedLoading]= useState(false);
-  const [linkPickerQuery, setLinkPickerQuery] = useState("");
 
   const loadCatalog = useCallback(() => {
     setCatalogLoading(true);
@@ -134,37 +137,59 @@ const TestToolsPage = ({ navigate, shipments = [] }) => {
 
   useEffect(() => { if (activeTab === "generator") loadCatalog(); }, [activeTab, loadCatalog]);
 
-  const shipMatches = q => {
-    const query = q.trim().toUpperCase();
-    if (!query) return [];
-    return shipments.filter(s =>
-      s.id.toUpperCase().includes(query) || s.pol?.toUpperCase().includes(query) || s.pod?.toUpperCase().includes(query)
-    ).slice(0, 8);
-  };
-
-  const toggleLinkShipment = id => {
-    setLinkShipmentIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
-  };
-
   const resetGeneratorForm = () => {
     setVessel(null); setCarrierCode(""); setPol(null); setPod(null);
     setVoyageNumber(""); setService(""); setEtd(""); setAtd(""); setEta(""); setAta("");
-    setShipQuery(""); setLinkShipmentIds([]);
+    setLegRows([]);
+  };
+
+  const openLegsModal = () => {
+    setLegRows(prev => prev.length >= 2 ? prev : [
+      { ...emptyLegRow(), pol: pol?.unlocode || "", etd, carrier: carrierCode, vesselImo: vessel?.imo || "", vesselName: vessel?.name || "" },
+      { ...emptyLegRow(), pod: pod?.unlocode || "", eta, carrier: carrierCode },
+    ]);
+    setLegsModalOpen(true);
+  };
+
+  // The main form's top-level Vessel/Carrier/POL/POD are otherwise the only source generate()
+  // reads from — leaving them blank after building a TSP entirely inside the modal made the page
+  // look like nothing had happened (even though the legs themselves were fully configured) and,
+  // before the validation fix above, actually blocked Generate outright. Mirror leg 1 / leg N
+  // back onto the main form on Done so what's configured is visible, not just usable.
+  const closeLegsModal = () => {
+    if (legRows.length >= 2) {
+      const first = legRows[0], last = legRows[legRows.length - 1];
+      if (first.pol)      setPol(p => p?.unlocode === first.pol ? p : { unlocode: first.pol, name: "" });
+      if (last.pod)       setPod(p => p?.unlocode === last.pod  ? p : { unlocode: last.pod,  name: "" });
+      if (first.carrier)  setCarrierCode(first.carrier);
+      if (first.vesselImo) setVessel(v => v?.imo === first.vesselImo ? v : { imo: first.vesselImo, name: first.vesselName });
+    }
+    setLegsModalOpen(false);
   };
 
   const generate = async () => {
-    if (!vessel?.imo)       return toast.error("Pick a vessel");
-    if (!carrierCode)       return toast.error("Pick a carrier");
-    if (!pol?.unlocode || !pod?.unlocode) return toast.error("Pick POL and POD");
-    if (linkShipmentIds.length === 0)     return toast.error("Pick at least one shipment to link");
+    // A TSP built entirely in the Configure Legs modal (top-level Vessel/Carrier/POL/POD left
+    // blank) is fully valid — the backend already derives the schedule's summary from leg 1/leg
+    // N (finalCarrier/finalVesselName/finalPol/finalPod in POST /api/schedules). Validation here
+    // must check the SAME effective source, not just the top-level fields, or a pure-modal TSP
+    // gets wrongly blocked even though everything it needs is already filled in.
+    const isTSP = legRows.length >= 2;
+    const lastLeg = isTSP ? legRows[legRows.length - 1] : null;
+    const effectiveVesselImo = isTSP ? (legRows[0].vesselImo || vessel?.imo) : vessel?.imo;
+    const effectiveCarrier   = isTSP ? (legRows[0].carrier   || carrierCode) : carrierCode;
+    const effectivePol       = isTSP ? (legRows[0].pol       || pol?.unlocode) : pol?.unlocode;
+    const effectivePod       = isTSP ? (lastLeg.pod           || pod?.unlocode) : pod?.unlocode;
+    if (!effectiveVesselImo) return toast.error("Pick a vessel");
+    if (!effectiveCarrier)   return toast.error("Pick a carrier");
+    if (!effectivePol || !effectivePod) return toast.error("Pick POL and POD");
     setGenBusy(true);
     try {
       const created = await api.scheduleCatalog.create({
-        carrier: carrierCode, vesselImo: vessel.imo, vesselName: vessel.name,
-        voyageNumber, service, pol: pol.unlocode, pod: pod.unlocode, etd, atd, eta, ata,
-        initialShipmentIds: linkShipmentIds,
+        carrier: carrierCode, vesselImo: vessel?.imo || "", vesselName: vessel?.name || "",
+        voyageNumber, service, pol: pol?.unlocode || "", pod: pod?.unlocode || "", etd, atd, eta, ata,
+        legs: isTSP ? legRows : null,
       });
-      toast.success(`Schedule ${created.id} created — linked to ${linkShipmentIds.length} shipment(s)`);
+      toast.success(`Schedule ${created.id} created${created.legs ? ` — ${created.legs.length}-leg TSP` : ""}`);
       resetGeneratorForm();
       loadCatalog();
     } catch (e) {
@@ -178,33 +203,20 @@ const TestToolsPage = ({ navigate, shipments = [] }) => {
     if (expandedId === schedId) { setExpandedId(null); setExpandedData(null); return; }
     setExpandedId(schedId);
     setExpandedLoading(true);
-    setLinkPickerQuery("");
     try {
-      setExpandedData(await api.scheduleCatalog.linkedShipments(schedId));
+      setExpandedData(await api.scheduleCatalog.usage(schedId));
     } catch { setExpandedData(null); }
     setExpandedLoading(false);
   };
 
-  const linkAnother = async (schedId, shipmentId) => {
+  const deleteTemplate = async (schedId) => {
     try {
-      await api.scheduleCatalog.link(schedId, { shipmentId });
-      toast.success(`Linked ${shipmentId}`);
-      setLinkPickerQuery("");
-      setExpandedData(await api.scheduleCatalog.linkedShipments(schedId));
+      await api.scheduleCatalog.remove(schedId);
+      toast.success("Schedule deleted");
+      if (expandedId === schedId) { setExpandedId(null); setExpandedData(null); }
       loadCatalog();
     } catch (e) {
-      toast.error(e.message || "Failed to link shipment");
-    }
-  };
-
-  const unlink = async (schedId, shipmentId) => {
-    try {
-      await api.scheduleCatalog.unlink(schedId, shipmentId);
-      toast.success(`Unlinked ${shipmentId}`);
-      setExpandedData(await api.scheduleCatalog.linkedShipments(schedId));
-      loadCatalog();
-    } catch (e) {
-      toast.error(e.message || "Failed to unlink shipment");
+      toast.error(e.message || "Failed to delete schedule");
     }
   };
 
@@ -266,10 +278,56 @@ const TestToolsPage = ({ navigate, shipments = [] }) => {
 
   const FILING_TYPE_LABEL = { AES_EEI: "AES/EEI (Export)", ISF_AMS: "ISF/AMS (Import)" };
 
+  // ─── AIS Simulator state (TKT-ZFO2OM) ──────────────────────────────────────
+  // Both inject actions call the exact same ctx.ingestAisMessage the live aisstream.io
+  // connection calls (routes/ais.js) — this tab has no logic of its own, it just constructs a
+  // realistic envelope so the real resolve/refresh and ATD/ATA detection code paths run.
+  const [aisStatus,      setAisStatus]      = useState(null);
+  const [openLegs,       setOpenLegs]       = useState([]);
+  const [openLegsLoading,setOpenLegsLoading]= useState(true);
+  const [selectedLeg,    setSelectedLeg]    = useState(null);
+  const [aisBusy,        setAisBusy]        = useState(false);
+  const [staticImo,      setStaticImo]      = useState("");
+  const [staticMmsi,     setStaticMmsi]     = useState("");
+  const [staticName,     setStaticName]     = useState("");
+
+  const loadAisStatus = useCallback(() => api.ais.status().then(setAisStatus).catch(() => setAisStatus(null)), []);
+  const loadOpenLegs  = useCallback(() => {
+    setOpenLegsLoading(true);
+    return api.ais.openLegs().then(setOpenLegs).catch(() => setOpenLegs([])).finally(() => setOpenLegsLoading(false));
+  }, []);
+
+  useEffect(() => { loadAisStatus(); loadOpenLegs(); }, [loadAisStatus, loadOpenLegs]);
+
+  const injectStatic = async () => {
+    if (!staticImo.trim() || !staticMmsi.trim() || !staticName.trim() || aisBusy) return;
+    setAisBusy(true);
+    try {
+      const res = await api.ais.simulateStatic({ imo: staticImo.trim(), mmsi: staticMmsi.trim(), name: staticName.trim() });
+      toast.success(res.vessel ? `Vessel ${res.imo} — ${res.vessel.name}` : "Static data injected");
+      loadOpenLegs();
+    } catch (e) { toast.error(e.message || "Failed to inject ShipStaticData"); }
+    setAisBusy(false);
+  };
+
+  const injectPosition = async event => {
+    if (!selectedLeg || aisBusy) return;
+    setAisBusy(true);
+    try {
+      const fresh = await api.ais.simulatePosition({ legId: selectedLeg.legId, event });
+      const field = event === "departure" ? "etd" : "eta";
+      toast.success(`Simulated ${event} — ${field.toUpperCase()} confirmed: ${fresh[field]}`);
+      setSelectedLeg(prev => prev ? { ...prev, etd: fresh.etd, eta: fresh.eta, etdSource: fresh.etdSource, etaSource: fresh.etaSource } : prev);
+      loadOpenLegs();
+    } catch (e) { toast.error(e.message || `Failed to simulate ${event}`); }
+    setAisBusy(false);
+  };
+
   const TABS = [
     { key: "simulator", label: "Message Simulator", icon: IconBaseStation },
     { key: "generator",  label: "Schedule Generator", icon: IconAnchor },
     { key: "filings",    label: "Filing Simulator", icon: IconFileCertificate },
+    { key: "ais",        label: "AIS Simulator", icon: IconShip },
   ];
 
   return (
@@ -407,8 +465,9 @@ const TestToolsPage = ({ navigate, shipments = [] }) => {
               Generate a schedule
             </h2>
             <p style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, margin: "0 0 16px", lineHeight: 1.5 }}>
-              Built from the real Vessels/Ports/Carriers registry — attach it to one or more
-              shipments at once to exercise a schedule shared across many shipments.
+              Built from the real Vessels/Ports/Carriers registry and stored in the catalog —
+              a real shipment's own Add Sailing search finds and copies it in later, no manual
+              linking here.
             </p>
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               <VesselField vessel={vessel} onSelect={setVessel} />
@@ -457,51 +516,91 @@ const TestToolsPage = ({ navigate, shipments = [] }) => {
                 </div>
               </div>
 
-              <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: 12, marginTop: 4 }}>
-                <label style={label}>Link to shipment(s)</label>
-                <input value={shipQuery} onChange={e => setShipQuery(e.target.value)}
-                  placeholder="Search by ID, POL, or POD…" style={{ ...inputStyle, marginBottom: 6 }} />
-                {shipQuery.trim() && (
-                  <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 6,
-                    maxHeight: 160, overflowY: "auto", marginBottom: 8 }}>
-                    {shipMatches(shipQuery).map(s => (
-                      <button key={s.id} onClick={() => { toggleLinkShipment(s.id); setShipQuery(""); }}
-                        style={{ display: "block", width: "100%", textAlign: "left", background: "none",
-                          border: "none", cursor: "pointer", padding: "7px 10px",
-                          fontFamily: T.mono, fontSize: 11.5, color: T.text,
-                          borderBottom: `1px solid ${T.border}33` }}
-                        onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
-                        onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                        {s.id} <span style={{ color: T.textMuted }}>· {s.pol} → {s.pod}</span>
-                      </button>
-                    ))}
-                    {shipMatches(shipQuery).length === 0 && (
-                      <div style={{ padding: "8px 10px", fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
-                        No matches.
-                      </div>
-                    )}
+              <div style={{ borderTop: `1px solid ${T.border}`, paddingTop: 12, marginTop: 4,
+                display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div>
+                  <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted }}>
+                    {legRows.length >= 2
+                      ? <span style={{ color: T.warning, fontWeight: 700 }}>{legRows.length}-leg TSP sailing configured</span>
+                      : "Direct sailing (no transshipment)"}
                   </div>
-                )}
-                {linkShipmentIds.length > 0 && (
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
-                    {linkShipmentIds.map(id => (
-                      <span key={id} style={{ display: "flex", alignItems: "center", gap: 5,
-                        background: T.accentBg, border: `1px solid ${T.accent}55`, borderRadius: 5,
-                        padding: "3px 8px", fontFamily: T.mono, fontSize: 11, color: T.accent }}>
-                        {id}
-                        <button onClick={() => toggleLinkShipment(id)}
-                          style={{ background: "none", border: "none", cursor: "pointer", color: T.accent,
-                            padding: 0, fontSize: 11, lineHeight: 1 }}>✕</button>
-                      </span>
-                    ))}
-                  </div>
-                )}
-                <Btn onClick={generate} disabled={genBusy}>
-                  {genBusy ? "Generating…" : <><IconAnchor size={12} /> Generate &amp; Link</>}
+                </div>
+                <Btn variant="secondary" size="sm" onClick={openLegsModal}>
+                  {legRows.length >= 2 ? "Edit Legs" : "Configure Legs (TSP)"}
                 </Btn>
               </div>
+
+              <Btn onClick={generate} disabled={genBusy}>
+                {genBusy ? "Generating…" : <><IconAnchor size={12} /> Generate</>}
+              </Btn>
             </div>
           </div>
+
+          {legsModalOpen && (
+            <Modal title="Configure Legs" onClose={closeLegsModal} width={1040}>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, lineHeight: 1.4 }}>
+                  One row = direct sailing. Two or more rows makes this a transshipment (TSP)
+                  sailing — the first row's origin/carrier/vessel and the last row's destination/
+                  arrival become the schedule's own overall summary.
+                </div>
+                <div style={{ display: "grid",
+                  gridTemplateColumns: "75px 75px 110px 115px 115px 1fr 85px 85px 26px",
+                  gap: 6, fontFamily: T.body, fontSize: 10, fontWeight: 700, color: T.textMuted,
+                  textTransform: "uppercase", letterSpacing: ".05em" }}>
+                  <span>POL</span><span>POD</span><span>Carrier</span><span>ETD</span><span>ETA</span>
+                  <span>Vessel</span><span>Voyage</span><span>Service</span><span />
+                </div>
+                {legRows.map((row, i) => (
+                  <div key={i} style={{ display: "grid",
+                    gridTemplateColumns: "75px 75px 110px 115px 115px 1fr 85px 85px 26px",
+                    gap: 6, alignItems: "center" }}>
+                    <input value={row.pol} onChange={e => setLegRows(p => p.map((r, ri) => ri === i ? { ...r, pol: e.target.value.toUpperCase() } : r))}
+                      placeholder="UNLOCODE" style={{ ...inputStyle, fontFamily: T.mono, fontSize: 11.5, padding: "5px 8px" }} />
+                    <input value={row.pod} onChange={e => setLegRows(p => p.map((r, ri) => ri === i ? { ...r, pod: e.target.value.toUpperCase() } : r))}
+                      placeholder="UNLOCODE" style={{ ...inputStyle, fontFamily: T.mono, fontSize: 11.5, padding: "5px 8px" }} />
+                    <CarrierCombobox value={row.carrier} onChange={v => setLegRows(p => p.map((r, ri) => ri === i ? { ...r, carrier: v } : r))} />
+                    <input type="date" value={row.etd} onChange={e => setLegRows(p => p.map((r, ri) => ri === i ? { ...r, etd: e.target.value } : r))}
+                      style={{ ...inputStyle, fontSize: 11.5, padding: "5px 8px" }} />
+                    <input type="date" value={row.eta} onChange={e => setLegRows(p => p.map((r, ri) => ri === i ? { ...r, eta: e.target.value } : r))}
+                      style={{ ...inputStyle, fontSize: 11.5, padding: "5px 8px" }} />
+                    {row.vesselImo ? (
+                      <div style={{ display: "flex", alignItems: "center", gap: 5, background: T.bg,
+                        border: `1px solid ${T.accent}55`, borderRadius: 6, padding: "5px 7px", minWidth: 0 }}>
+                        <span style={{ fontFamily: T.mono, fontSize: 10.5, color: T.textMuted, flexShrink: 0 }}>{row.vesselImo}</span>
+                        <span style={{ fontFamily: T.body, fontSize: 11.5, color: T.text, flex: 1,
+                          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.vesselName}</span>
+                        <button onClick={() => setLegRows(p => p.map((r, ri) => ri === i ? { ...r, vesselImo: "", vesselName: "" } : r))}
+                          style={{ background: "none", border: "none", cursor: "pointer", color: T.textMuted,
+                            fontSize: 12, padding: 0, flexShrink: 0 }}>✕</button>
+                      </div>
+                    ) : (
+                      <VesselCombobox placeholder="Search vessel…"
+                        onSelect={v => setLegRows(p => p.map((r, ri) => ri === i ? { ...r, vesselImo: v.imo, vesselName: v.name } : r))} />
+                    )}
+                    <input value={row.voyageNumber} onChange={e => setLegRows(p => p.map((r, ri) => ri === i ? { ...r, voyageNumber: e.target.value } : r))}
+                      placeholder="Voyage" style={{ ...inputStyle, fontSize: 11.5, padding: "5px 8px" }} />
+                    <input value={row.service} onChange={e => setLegRows(p => p.map((r, ri) => ri === i ? { ...r, service: e.target.value } : r))}
+                      placeholder="Loop" style={{ ...inputStyle, fontSize: 11.5, padding: "5px 8px" }} />
+                    <button onClick={() => setLegRows(p => p.filter((_, ri) => ri !== i))}
+                      title="Remove leg" style={{ background: "none", border: "none", cursor: "pointer",
+                        color: T.textMuted, fontSize: 14 }}>✕</button>
+                  </div>
+                ))}
+                <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
+                  <Btn variant="secondary" size="sm" onClick={() => setLegRows(p => [...p, emptyLegRow()])}>
+                    + Add Leg
+                  </Btn>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <Btn variant="secondary" size="sm" onClick={() => { setLegRows([]); setLegsModalOpen(false); }}>
+                      Clear (direct sailing)
+                    </Btn>
+                    <Btn size="sm" onClick={closeLegsModal}>Done</Btn>
+                  </div>
+                </div>
+              </div>
+            </Modal>
+          )}
 
           {/* Right: catalog browser */}
           <div style={{ flex: 1, overflowY: "auto" }}>
@@ -516,75 +615,78 @@ const TestToolsPage = ({ navigate, shipments = [] }) => {
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {catalog.map(s => (
                   <div key={s.id} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8 }}>
-                    <button onClick={() => openExpanded(s.id)}
-                      style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
-                        width: "100%", background: "none", border: "none", cursor: "pointer",
-                        padding: "10px 14px", textAlign: "left" }}>
-                      <div>
-                        <div style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.text }}>
-                          {s.carrier} · {s.vesselName} {s.vesselImo && `(IMO ${s.vesselImo})`}
+                    <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                      <button onClick={() => openExpanded(s.id)}
+                        style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+                          flex: 1, minWidth: 0, background: "none", border: "none", cursor: "pointer",
+                          padding: "10px 14px", textAlign: "left" }}>
+                        <div>
+                          <div style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.text }}>
+                            {s.carrier} · {s.vesselName} {s.vesselImo && `(IMO ${s.vesselImo})`}
+                            {s.legs && <span style={{ marginLeft: 6, fontFamily: T.body, fontSize: 10, fontWeight: 700,
+                              color: T.warning, background: T.warning + "18", borderRadius: 4, padding: "1px 6px",
+                              textTransform: "uppercase" }}>TSP · {s.legs.length} legs</span>}
+                          </div>
+                          <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, marginTop: 2 }}>
+                            {s.pol} → {s.pod} · ETD {s.etd || "—"}
+                          </div>
                         </div>
-                        <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, marginTop: 2 }}>
-                          {s.pol} → {s.pod} · ETD {s.etd || "—"}
-                        </div>
-                      </div>
-                      <span style={{ fontFamily: T.body, fontSize: 11, fontWeight: 700, color: T.accent,
-                        background: `${T.accent}18`, borderRadius: 12, padding: "3px 10px", flexShrink: 0 }}>
-                        {s.linkedShipmentCount} shipment{s.linkedShipmentCount !== 1 ? "s" : ""}
-                      </span>
-                    </button>
+                        <span style={{ fontFamily: T.body, fontSize: 11, fontWeight: 700, color: T.accent,
+                          background: `${T.accent}18`, borderRadius: 12, padding: "3px 10px", flexShrink: 0 }}>
+                          Used by {s.usedByCount} shipment{s.usedByCount !== 1 ? "s" : ""}
+                        </span>
+                      </button>
+                      <button onClick={() => deleteTemplate(s.id)} title="Delete schedule"
+                        style={{ background: "none", border: "none", cursor: "pointer",
+                          color: T.textMuted, fontSize: 14, padding: "0 14px 0 4px", flexShrink: 0 }}>✕</button>
+                    </div>
                     {expandedId === s.id && (
                       <div style={{ borderTop: `1px solid ${T.border}`, padding: "10px 14px" }}>
-                        {expandedLoading ? <Spinner size="sm" /> : expandedData && (
-                          <>
-                            <div style={{ display: "grid",
-                              gridTemplateColumns: "110px 130px 90px 110px 50px 90px 24px",
-                              gap: 8, fontFamily: T.mono, fontSize: 10.5, color: T.textMuted,
-                              fontWeight: 700, textTransform: "uppercase", marginBottom: 6 }}>
-                              <span>Shipment</span><span>POL → POD</span><span>ETD</span>
-                              <span>Contract</span><span>TEU</span><span>Status</span><span />
-                            </div>
-                            {[expandedData.owner, ...expandedData.linked].filter(Boolean).map((sh, i) => (
-                              <div key={sh.id} style={{ display: "grid",
-                                gridTemplateColumns: "110px 130px 90px 110px 50px 90px 24px",
-                                gap: 8, alignItems: "center", padding: "5px 0",
-                                borderTop: i > 0 ? `1px solid ${T.border}22` : "none" }}>
-                                <span style={{ fontFamily: T.mono, fontSize: 11.5, color: T.accent, fontWeight: 700 }}>
-                                  {sh.id}{i === 0 && <span title="Owner" style={{ color: T.textMuted }}> ★</span>}
-                                </span>
-                                <span style={{ fontFamily: T.mono, fontSize: 11 }}>{sh.pol} → {sh.pod}</span>
-                                <span style={{ fontFamily: T.mono, fontSize: 11 }}>{sh.etd || "—"}</span>
-                                <span style={{ fontFamily: T.body, fontSize: 11 }}>{sh.contractType || "—"}</span>
-                                <span style={{ fontFamily: T.mono, fontSize: 11 }}>{sh.teu}</span>
-                                <span style={{ fontFamily: T.body, fontSize: 11 }}>{sh.status}</span>
-                                {i > 0 ? (
-                                  <button onClick={() => unlink(s.id, sh.id)} title="Unlink"
-                                    style={{ background: "none", border: "none", cursor: "pointer",
-                                      color: T.textMuted, fontSize: 12 }}>✕</button>
-                                ) : <span />}
-                              </div>
+                        {s.legs && (
+                          <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap",
+                            marginBottom: 10, fontFamily: T.mono, fontSize: 11 }}>
+                            {s.legs.map((leg, li) => (
+                              <span key={li} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                                <span style={{ color: T.text, fontWeight: 700 }}>{leg.pol}</span>
+                                <span style={{ color: T.textMuted }}>→</span>
+                                {li === s.legs.length - 1 && <span style={{ color: T.text, fontWeight: 700 }}>{leg.pod}</span>}
+                                {li < s.legs.length - 1 && (
+                                  <span style={{ color: T.warning, fontWeight: 700, background: T.warning + "18",
+                                    borderRadius: 3, padding: "0 5px" }}>{leg.pod} →</span>
+                                )}
+                              </span>
                             ))}
-                            <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
-                              <input value={linkPickerQuery} onChange={e => setLinkPickerQuery(e.target.value)}
-                                placeholder="+ Link another shipment (ID, POL, POD)…"
-                                style={{ ...inputStyle, fontSize: 11.5 }} />
+                          </div>
+                        )}
+                        {expandedLoading ? <Spinner size="sm" /> : expandedData && (
+                          expandedData.usedBy.length === 0 ? (
+                            <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, fontStyle: "italic" }}>
+                              No shipment has picked this schedule yet.
                             </div>
-                            {linkPickerQuery.trim() && (
-                              <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 6,
-                                maxHeight: 140, overflowY: "auto", marginTop: 6 }}>
-                                {shipMatches(linkPickerQuery).map(sh => (
-                                  <button key={sh.id} onClick={() => linkAnother(s.id, sh.id)}
-                                    style={{ display: "block", width: "100%", textAlign: "left", background: "none",
-                                      border: "none", cursor: "pointer", padding: "6px 10px",
-                                      fontFamily: T.mono, fontSize: 11, color: T.text }}
-                                    onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
-                                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-                                    {sh.id} <span style={{ color: T.textMuted }}>· {sh.pol} → {sh.pod}</span>
-                                  </button>
-                                ))}
+                          ) : (
+                            <>
+                              <div style={{ display: "grid",
+                                gridTemplateColumns: "110px 130px 90px 110px 50px 90px",
+                                gap: 8, fontFamily: T.mono, fontSize: 10.5, color: T.textMuted,
+                                fontWeight: 700, textTransform: "uppercase", marginBottom: 6 }}>
+                                <span>Shipment</span><span>POL → POD</span><span>ETD</span>
+                                <span>Contract</span><span>TEU</span><span>Status</span>
                               </div>
-                            )}
-                          </>
+                              {expandedData.usedBy.map((sh, i) => (
+                                <div key={sh.id} style={{ display: "grid",
+                                  gridTemplateColumns: "110px 130px 90px 110px 50px 90px",
+                                  gap: 8, alignItems: "center", padding: "5px 0",
+                                  borderTop: i > 0 ? `1px solid ${T.border}22` : "none" }}>
+                                  <span style={{ fontFamily: T.mono, fontSize: 11.5, color: T.accent, fontWeight: 700 }}>{sh.id}</span>
+                                  <span style={{ fontFamily: T.mono, fontSize: 11 }}>{sh.pol} → {sh.pod}</span>
+                                  <span style={{ fontFamily: T.mono, fontSize: 11 }}>{sh.etd || "—"}</span>
+                                  <span style={{ fontFamily: T.body, fontSize: 11 }}>{sh.contractType || "—"}</span>
+                                  <span style={{ fontFamily: T.mono, fontSize: 11 }}>{sh.teu}</span>
+                                  <span style={{ fontFamily: T.body, fontSize: 11 }}>{sh.status}</span>
+                                </div>
+                              ))}
+                            </>
+                          )
                         )}
                       </div>
                     )}
@@ -704,6 +806,125 @@ const TestToolsPage = ({ navigate, shipments = [] }) => {
                 )}
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {activeTab === "ais" && (
+        <div style={{ display: "flex", gap: 24, height: "100%" }}>
+          {/* Left: connection status + open legs eligible for ETD/ETA confirmation */}
+          <div style={{ width: 340, flexShrink: 0, display: "flex", flexDirection: "column" }}>
+            <h2 style={{ fontFamily: T.head, fontSize: 16, fontWeight: 800, color: T.text, margin: "0 0 14px" }}>
+              AIS Simulator
+            </h2>
+            <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8,
+              padding: "10px 12px", marginBottom: 16, fontFamily: T.mono, fontSize: 11.5, color: T.textMuted }}>
+              {aisStatus ? (
+                <>
+                  <span style={{ color: aisStatus.connected ? T.success : T.textMuted }}>
+                    ● {aisStatus.connected ? "Live connection open" : "Not connected"}
+                  </span>
+                  {" · "}{aisStatus.trackedVesselCount} vessel(s) tracked
+                </>
+              ) : "Loading status…"}
+              <div style={{ marginTop: 2, fontSize: 10.5, color: T.border }}>
+                The simulators below work regardless of a live connection — they inject
+                straight into the same handler a real message would.
+              </div>
+            </div>
+
+            <div style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600, color: T.textMuted,
+              textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8 }}>
+              Open legs (SEA, vessel set, ETD or ETA not yet confirmed)
+            </div>
+            {openLegsLoading ? <Spinner size="sm" /> : openLegs.length === 0 ? (
+              <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, fontStyle: "italic" }}>
+                No shipments currently eligible for AIS matching.
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, overflowY: "auto" }}>
+                {openLegs.map(l => {
+                  const active = selectedLeg?.legId === l.legId;
+                  return (
+                    <button key={l.legId} onClick={() => setSelectedLeg(l)}
+                      style={{ textAlign: "left", background: active ? T.accentBg : T.surface,
+                        border: `1px solid ${active ? T.accent : T.border}`, borderRadius: 8,
+                        padding: "10px 12px", cursor: "pointer" }}>
+                      <div style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.text, marginBottom: 3 }}>
+                        {l.shipmentId}
+                      </div>
+                      <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted }}>
+                        {l.pol} → {l.pod} · {l.vessel || l.vesselImo}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Right: two injectors */}
+          <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 20 }}>
+            <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: "16px 20px" }}>
+              <div style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600, color: T.textMuted,
+                textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 12 }}>
+                Simulate ShipStaticData — resolve or rename a vessel
+              </div>
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                <div style={{ flex: 1, minWidth: 120 }}>
+                  <label style={label}>IMO</label>
+                  <input value={staticImo} onChange={e => setStaticImo(e.target.value)} placeholder="9222568" style={{ ...inputStyle, fontFamily: T.mono }} />
+                </div>
+                <div style={{ flex: 1, minWidth: 120 }}>
+                  <label style={label}>MMSI</label>
+                  <input value={staticMmsi} onChange={e => setStaticMmsi(e.target.value)} placeholder="245473000" style={{ ...inputStyle, fontFamily: T.mono }} />
+                </div>
+                <div style={{ flex: 2, minWidth: 180 }}>
+                  <label style={label}>Ship Name</label>
+                  <input value={staticName} onChange={e => setStaticName(e.target.value)} placeholder="EVER GIVEN" style={inputStyle} />
+                </div>
+              </div>
+              <Btn size="sm" onClick={injectStatic} disabled={aisBusy} style={{ marginTop: 12 }}>
+                <IconShip size={12} /> Inject ShipStaticData
+              </Btn>
+            </div>
+
+            <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: "16px 20px" }}>
+              <div style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600, color: T.textMuted,
+                textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 12 }}>
+                Simulate PositionReport — confirm ETD/ETA in place
+              </div>
+              {!selectedLeg ? (
+                <div style={{ fontFamily: T.body, fontSize: 12.5, color: T.textMuted, fontStyle: "italic" }}>
+                  Pick an open leg on the left first.
+                </div>
+              ) : (
+                <>
+                  <div style={{ fontFamily: T.mono, fontSize: 12, color: T.text, marginBottom: 4 }}>
+                    {selectedLeg.shipmentId} — {selectedLeg.pol} → {selectedLeg.pod}
+                  </div>
+                  <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted, marginBottom: 12 }}>
+                    Vessel IMO {selectedLeg.vesselImo} must already have a known MMSI —
+                    inject a ShipStaticData message for it above first if "no known MMSI" is returned.
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <Btn size="sm" onClick={() => injectPosition("departure")} disabled={aisBusy || selectedLeg.etdSource === "ais"}>
+                      <IconCheck size={12} /> Simulate Departure
+                    </Btn>
+                    <Btn size="sm" variant="secondary" onClick={() => injectPosition("arrival")} disabled={aisBusy || selectedLeg.etaSource === "ais"}>
+                      <IconCheck size={12} /> Simulate Arrival
+                    </Btn>
+                  </div>
+                  {(selectedLeg.etdSource === "ais" || selectedLeg.etaSource === "ais") && (
+                    <div style={{ marginTop: 10, fontFamily: T.mono, fontSize: 11.5, color: T.success }}>
+                      {selectedLeg.etdSource === "ais" && `ETD confirmed: ${selectedLeg.etd}`}
+                      {selectedLeg.etdSource === "ais" && selectedLeg.etaSource === "ais" ? " · " : ""}
+                      {selectedLeg.etaSource === "ais" && `ETA confirmed: ${selectedLeg.eta}`}
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
           </div>
         </div>
       )}

@@ -878,16 +878,32 @@ export const ComplianceModal = ({ shipment, screening, onChange, onClose }) => {
   const effectiveResult = screening?.result === "CLEAR" && screening?.overriddenAt ? "OVERRIDE" : screening?.result;
   const rs = RESULT_STYLE[effectiveResult] || RESULT_STYLE.CLEAR;
 
+  // Organization Model Enhancement Epic 3 — this was already the app's one unified compliance
+  // view (reachable from every shipment sub-page via the persistent ShipmentHeaderBar), just
+  // scoped to 3 of the 13 possible party-role slots. Notify Party joins the 4 fixed roles here;
+  // the 9 shipment_parties roles (Forwarder, Customs Broker Export/Import, Trucker Pre/On-
+  // carriage, Also Notify Party, Bank, Insurance Provider, Agent) are fetched and shown as their
+  // own phase — screenShipmentById (server.js) now screens all 13, this just surfaces them.
+  const [additionalParties, setAdditionalParties] = useState(null);
+  useEffect(() => {
+    api.shipmentParties.list(shipment.id).then(setAdditionalParties).catch(() => setAdditionalParties([]));
+  }, [shipment.id]);
+
   // Phase-based check definitions
   const PHASES = [
     {
       id: "parties", label: "Phase 1", title: "Parties",
       checks: [
-        { field: "Shipper",   label: "Shipper",   value: shipment.shipperName,   desc: null },
-        { field: "Consignee", label: "Consignee", value: shipment.consigneeName, desc: null },
-        { field: "Principal", label: "Principal", value: shipment.principalName, desc: null },
+        { field: "Shipper",      label: "Shipper",      value: shipment.shipperName,   desc: null },
+        { field: "Consignee",    label: "Consignee",    value: shipment.consigneeName, desc: null },
+        { field: "Principal",    label: "Principal",    value: shipment.principalName, desc: null },
+        { field: "Notify Party", label: "Notify Party",  value: shipment.notifyName,    desc: null },
       ],
     },
+    ...(additionalParties && additionalParties.length > 0 ? [{
+      id: "additional-parties", label: "Phase 1b", title: "Additional Parties",
+      checks: additionalParties.map(p => ({ field: p.role, label: p.role, value: p.customerName, desc: null })),
+    }] : []),
     {
       id: "routing", label: "Phase 2", title: "Routing",
       checks: [
@@ -1205,13 +1221,13 @@ const PartiesEditForm = ({ shipment, onSave, onCancel }) => {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <CustomerCombobox label="Shipper" required
+        <CustomerCombobox label="Shipper" required roleFilter="Shipper"
           value={{ id: f.shipperId, name: f.shipperName }}
           onChange={v => setF(p => ({ ...p, shipperId: v.id, shipperName: v.name }))} />
-        <CustomerCombobox label="Consignee" required
+        <CustomerCombobox label="Consignee" required roleFilter="Consignee"
           value={{ id: f.consigneeId, name: f.consigneeName }}
           onChange={v => setF(p => ({ ...p, consigneeId: v.id, consigneeName: v.name }))} />
-        <CustomerCombobox label="Principal" required
+        <CustomerCombobox label="Principal" required roleFilter="Principal"
           value={{ id: f.principalId, name: f.principalName }}
           onChange={v => setF(p => ({ ...p, principalId: v.id, principalName: v.name }))} />
       </div>
@@ -1233,7 +1249,7 @@ const PartiesEditForm = ({ shipment, onSave, onCancel }) => {
                 ? <>Notify → <span style={{ color: T.text, fontStyle: "normal" }}>{f.consigneeName}</span></>
                 : "Same as Consignee (select a Consignee above)"}
             </div>
-          : <CustomerCombobox label="Notify Party"
+          : <CustomerCombobox label="Notify Party" roleFilter="Notify Party"
               value={{ id: f.notifyId, name: f.notifyName }}
               onChange={v => setF(p => ({ ...p, notifyId: v.id, notifyName: v.name }))} />
         }
@@ -2072,6 +2088,7 @@ export const CostLineRow = ({ line: l, containers = [], showActions = false, onE
     : l.source === "contract" ? { label: "Contract", color: T.info }
     : l.source === "mirror" ? { label: l.type === "SELL" ? "Mirrored ← Cost Entry" : "Mirrored ← Invoice Entry", color: T.accent }
     : l.source === "automated" ? { label: "Automated", color: T.success }
+    : l.source === "reversal" ? { label: "Reversal", color: T.danger }
     : { label: "Manual", color: T.textMuted };
   return (
     <div key={l.id} id={`costline-${l.id}-row`}

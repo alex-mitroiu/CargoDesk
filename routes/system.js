@@ -3,7 +3,7 @@
 module.exports = function systemRoutes(app, ctx) {
   const { db, ok, err, auth, requireRole,
           mapSystemMessage, getSettings, scheduleNextOfacSync, fxCache,
-          logAdminEvent, migrationFailures } = ctx;
+          logAdminEvent, migrationFailures, restartAisListener } = ctx;
 
   // ─── Health ───────────────────────────────────────────────────────────────
 
@@ -84,6 +84,7 @@ module.exports = function systemRoutes(app, ctx) {
       db.exec("COMMIT");
     } catch (e) { db.exec("ROLLBACK"); return err(res, e.message); }
     scheduleNextOfacSync();
+    restartAisListener();
     // Log settings changes — skip secrets
     const safeKeys = Object.fromEntries(
       Object.entries(updates).filter(([k]) => !k.includes('secret') && !k.includes('password'))
@@ -205,14 +206,57 @@ module.exports = function systemRoutes(app, ctx) {
     } catch { return null; }
   }
 
+  // Catalog-backed matches (Test Tools > Schedule Generator, plus any ordinary Add-Sailing pick
+  // saved elsewhere — the catalog search deliberately considers every stored shipment_schedules
+  // row, not just Generator-authored ones, to maximize reuse) — checked before live/demo data.
+  // ETD is matched as a window (today..today+weeks*7d), mirroring the same weeks semantics the
+  // live/mock paths already use, since a stored schedule's ETD is a specific date, not a range.
+  const catalogSailings = (pol, pod, weeks) => {
+    const today = new Date().toISOString().slice(0, 10);
+    const windowEnd = new Date(Date.now() + weeks * 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    // is_mock=0 excludes stale demo/mock data — before catalog search existed, picking ANY
+    // sailing (mock, live, or catalog) via Add Sailing always inserted a shipment_schedules row
+    // (POST /api/shipments/:id/schedules), including whatever synthetic "DEMO ..." sailing a user
+    // happened to pick. Without this filter, those old rows resurface here mislabeled as real
+    // curated matches — confirmed live (SHP-W942AJ returned 4 "DEMO DULCIMER"/"DEMO CADENZA" rows
+    // tagged source:catalog, none of it real data).
+    const rows = db.prepare(`
+      SELECT * FROM shipment_schedules
+      WHERE pol=? AND pod=? AND etd != '' AND etd >= ? AND etd <= ? AND is_mock=0
+      ORDER BY etd ASC LIMIT 20`).all(pol, pod, today, windowEnd);
+    return rows.map(r => {
+      const legRows = db.prepare("SELECT * FROM schedule_legs WHERE schedule_id=? ORDER BY leg_order ASC").all(r.id);
+      const legs = legRows.length >= 2 ? legRows.map(l => ({
+        pol: l.pol || "", pod: l.pod || "", etd: l.etd || "", eta: l.eta || "",
+        vesselName: l.vessel_name || "", vesselImo: l.vessel_imo || "", voyageNumber: l.voyage_number || "", service: l.service || "",
+        carrier: l.carrier || "",
+      })) : null;
+      return {
+        carrier: r.carrier || "—", vesselName: r.vessel_name || "—", vesselImo: r.vessel_imo || "", voyageNumber: r.voyage_number || "—",
+        service: r.service || "—", pol: r.pol, pod: r.pod, etd: r.etd, eta: r.eta,
+        transitDays: r.transit_days || 0, legs, isMock: false, source: "catalog", scheduleId: r.id,
+      };
+    });
+  };
+
   app.get("/api/schedules/search", auth(), async (req, res) => {
     const { pol, pod, carrierCode, weeks: w = "4" } = req.query;
     if (!pol || !pod) return res.status(400).json({ error: "pol and pod are required" });
     const weeks = Math.min(Math.max(parseInt(w) || 4, 1), 12);
-    let sailings = null;
-    if (MAERSK_CODES.has(carrierCode)) sailings = await maerskSchedules(pol, pod, carrierCode, weeks);
-    const isMock = !sailings;
-    if (isMock) sailings = mockSailings(pol, pod, carrierCode, weeks);
-    ok(res, { sailings, pol, pod, carrierCode, isMock });
+
+    const catalog = catalogSailings(pol, pod, weeks);
+    let live = null;
+    if (MAERSK_CODES.has(carrierCode)) live = await maerskSchedules(pol, pod, carrierCode, weeks);
+    const liveTagged = (live || []).map(s => ({ ...s, source: "live" }));
+
+    let sailings = [...catalog, ...liveTagged];
+    const demoEnabled = getSettings().demo_schedules_enabled !== 'false'; // default on
+    let usedDemo = false;
+    if (sailings.length === 0 && demoEnabled) {
+      sailings = mockSailings(pol, pod, carrierCode, weeks).map(s => ({ ...s, source: "mock" }));
+      usedDemo = true;
+    }
+    const isMock = usedDemo; // kept for the frontend's existing isMock check
+    ok(res, { sailings, pol, pod, carrierCode, isMock, catalogCount: catalog.length });
   });
 };

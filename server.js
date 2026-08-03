@@ -16,6 +16,7 @@ const {
   createTransporterFromSettings, getTransporterForOffice,
   invalidateTransporterCache, buildMailOptions, sendViaOffice,
 } = require("./lib/mailer");
+const { createAisListener } = require("./lib/ais-listener");
 
 const JWT_SECRET = process.env.JWT_SECRET || "cargoDesk-dev-secret-do-not-use-in-prod";
 if (!process.env.JWT_SECRET)
@@ -592,6 +593,29 @@ const migrations = [
     uploaded_by  TEXT NOT NULL DEFAULT '',
     created_at   TEXT NOT NULL
   )`,
+  // Organization Model Enhancement Epic 1 (contacts + role-eligible pickers) — multiple named
+  // people per customer, replacing the old "cram it into the notes field" workaround.
+  `CREATE TABLE IF NOT EXISTS customer_contacts (
+    id           TEXT PRIMARY KEY,
+    customer_id  TEXT NOT NULL,
+    name         TEXT NOT NULL,
+    title        TEXT NOT NULL DEFAULT '',
+    email        TEXT NOT NULL DEFAULT '',
+    phone        TEXT NOT NULL DEFAULT '',
+    department   TEXT NOT NULL DEFAULT 'Other',
+    is_primary   INTEGER NOT NULL DEFAULT 0,
+    created_at   TEXT NOT NULL
+  )`,
+  // Which of ALL_CUSTOMER_ROLES (below) this customer is eligible for — lets CustomerCombobox
+  // filter pickers (e.g. only Bank-flagged customers when assigning the "Bank" shipment_parties
+  // role) instead of every picker offering every customer regardless of fitness for the slot.
+  `CREATE TABLE IF NOT EXISTS customer_roles (
+    id           TEXT PRIMARY KEY,
+    customer_id  TEXT NOT NULL,
+    role         TEXT NOT NULL,
+    created_at   TEXT NOT NULL,
+    UNIQUE(customer_id, role)
+  )`,
   // seed security defaults (INSERT OR IGNORE so they only apply once)
   "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('login_max_attempts','5')",
   "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('login_lockout_minutes','30')",
@@ -800,6 +824,21 @@ const migrations = [
   // Customer's main currency — used to resolve a single grand total on a generated invoice
   // when its charge lines span multiple currencies, instead of showing several totals.
   "ALTER TABLE customers ADD COLUMN currency TEXT DEFAULT 'USD'",
+  // Organization Model Enhancement Epic 2 (Credit Control) — credit_limit/credit_terms_days
+  // are nullable (null = no limit set, not "$0 limit"); credit_hold is a hard gate on
+  // generating a NEW invoice for this customer (existing lines/documents stay fully visible
+  // and editable — only the Generate action is blocked), independent of credit_limit.
+  "ALTER TABLE customers ADD COLUMN credit_limit REAL DEFAULT NULL",
+  "ALTER TABLE customers ADD COLUMN credit_terms_days INTEGER DEFAULT NULL",
+  "ALTER TABLE customers ADD COLUMN credit_hold INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE customers ADD COLUMN credit_hold_reason TEXT DEFAULT ''",
+  // Organization Model Enhancement Epic 4 (Customer Hierarchy) — self-referential, nullable
+  // (no parent = a standalone customer, the default/common case). Unlike the shipment_schedules
+  // rebuild elsewhere in this file, this doesn't need a table rebuild: it's a brand new nullable
+  // column, not an existing NOT NULL one being loosened, so a plain ADD COLUMN with its own
+  // REFERENCES clause is sufficient — foreign_keys=ON is set globally (top of this file), so
+  // ON DELETE SET NULL is actually enforced, not just documentation.
+  "ALTER TABLE customers ADD COLUMN parent_customer_id TEXT REFERENCES customers(id) ON DELETE SET NULL",
   // Manual contract types (SPOT/Pending/Customer Own) — validity window, TKT-UONN72
   "ALTER TABLE shipments ADD COLUMN contract_valid_from TEXT DEFAULT NULL",
   "ALTER TABLE shipments ADD COLUMN contract_valid_to   TEXT DEFAULT NULL",
@@ -1088,6 +1127,68 @@ const migrations = [
     created_at      TEXT NOT NULL,
     updated_at      TEXT NOT NULL
   )`,
+
+  // Invoice Reversal / Debit-Credit Note workflow (TKT-DUADU3), SELL-side only — reversing a
+  // confirmed FR01/FR02 invoice creates a new CN01 doc and voids the original; related_doc_id
+  // links the two symmetrically (set on both rows once the CN01 doc exists). source_cost_line_ids
+  // (JSON array) is captured at FR01/FR02 generation time so a later reversal knows exactly which
+  // cost lines to negate rather than re-deriving from whatever SELL lines currently exist — a
+  // doc with no value here (generated before this shipped) falls back to a live container-scoped
+  // filter instead, no backfill needed.
+  "ALTER TABLE shipment_documents ADD COLUMN related_doc_id       TEXT DEFAULT NULL",
+  "ALTER TABLE shipment_documents ADD COLUMN source_cost_line_ids TEXT DEFAULT NULL",
+
+  // Decoupled Schedule Generator / catalog-backed sailing search — Test Tools' Schedule
+  // Generator no longer forces a shipment link at creation time (shipment_schedules.shipment_id
+  // nullability is handled by a one-time table-rebuild migration below, since SQLite can't drop
+  // NOT NULL via ALTER TABLE). A generated schedule can now be a genuine multi-leg/TSP sailing —
+  // schedule_legs mirrors the existing shipment_legs/contract_legs multi-leg pattern (one row =
+  // direct sailing, 2+ rows = TSP), while the parent shipment_schedules row keeps summarizing the
+  // overall journey (first leg's pol/vessel/etd, last leg's pod/eta) so every existing consumer
+  // of mapSchedule() keeps working unchanged.
+  `CREATE TABLE IF NOT EXISTS schedule_legs (
+    id             TEXT PRIMARY KEY,
+    schedule_id    TEXT NOT NULL REFERENCES shipment_schedules(id) ON DELETE CASCADE,
+    leg_order      INTEGER NOT NULL DEFAULT 0,
+    pol            TEXT DEFAULT '',
+    pod            TEXT DEFAULT '',
+    etd            TEXT DEFAULT '',
+    eta            TEXT DEFAULT '',
+    vessel_name    TEXT DEFAULT '',
+    vessel_imo     TEXT DEFAULT '',
+    voyage_number  TEXT DEFAULT '',
+    service        TEXT DEFAULT ''
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_schedule_legs_schedule ON schedule_legs(schedule_id)",
+  "ALTER TABLE schedule_legs ADD COLUMN carrier TEXT DEFAULT ''",
+  // Gates the synthetic "DEMO ..." mockSailings() fallback in GET /api/schedules/search — default
+  // on, so sailing search/tests keep working with zero setup; an admin turns it off once real
+  // generated schedules exist in the catalog and synthetic fallback data is no longer wanted.
+  "INSERT OR IGNORE INTO app_settings (key, value) VALUES ('demo_schedules_enabled', 'true')",
+  // AIS integration (TKT-ZFO2OM) — mmsi is the structural link a PositionReport (MMSI-only, no
+  // IMO) needs to resolve back to a vessel; ais_verified_at distinguishes an MDM-imported row
+  // from one AIS has actually confirmed live.
+  "ALTER TABLE vessels ADD COLUMN mmsi TEXT DEFAULT ''",
+  "ALTER TABLE vessels ADD COLUMN ais_verified_at TEXT DEFAULT ''",
+  // First design pass tracked actual departure/arrival as separate atd/ata columns alongside
+  // etd/eta — reworked per direct feedback: ETD/ETA should update in place once AIS confirms
+  // a real departure/arrival (an estimate becoming a known fact), not sit next to a second,
+  // always-visible pair of columns. atd/ata/atd_source/ata_source are left in place, unused
+  // going forward — same "no migration, old rows/columns are just inert" precedent used
+  // throughout this codebase — etd_source/eta_source are the ones actually read/written now.
+  "ALTER TABLE shipment_legs ADD COLUMN atd TEXT DEFAULT ''",
+  "ALTER TABLE shipment_legs ADD COLUMN ata TEXT DEFAULT ''",
+  "ALTER TABLE shipment_legs ADD COLUMN atd_source TEXT DEFAULT ''",
+  "ALTER TABLE shipment_legs ADD COLUMN ata_source TEXT DEFAULT ''",
+  "ALTER TABLE shipment_legs ADD COLUMN etd_source TEXT DEFAULT ''",
+  "ALTER TABLE shipment_legs ADD COLUMN eta_source TEXT DEFAULT ''",
+  // Persistent-connection feature, defaults OFF (unlike fx/weather/ofac, which no-op cleanly
+  // with no key) — an unconfigured AIS listener would otherwise try to open a socket on every
+  // boot and fail its auth handshake for nothing. Provider seam exists now; only 'aisstream' is
+  // wired to an actual connection this pass (see lib/ais-listener.js).
+  "INSERT OR IGNORE INTO app_settings (key, value) VALUES ('api_ais_enabled', 'false')",
+  "INSERT OR IGNORE INTO app_settings (key, value) VALUES ('ais_provider', 'aisstream')",
+  "INSERT OR IGNORE INTO app_settings (key, value) VALUES ('ais_api_key', '')",
 ];
 
 // "duplicate column name" is the expected, harmless result of re-running an ADD COLUMN
@@ -1109,6 +1210,63 @@ for (const sql of migrations) {
 if (migrationFailures.length) {
   console.error(`[migration] ${migrationFailures.length} startup migration(s) failed — schema may be incomplete, see above.`);
 }
+
+// One-time table rebuild: shipment_schedules.shipment_id NOT NULL -> nullable, plus a new
+// self-referential template_id column. SQLite can't drop a NOT NULL constraint via ALTER TABLE
+// (unlike the ~150 plain ADD COLUMN migrations above), so this is a real create-copy-swap —
+// guarded by checking the column's own notnull flag first, so it only ever runs once per DB.
+// Narrow blast radius: nothing else in this schema joins on shipment_id expecting non-null
+// (mapSchedule/linked-shipment lookups already null-guard), and the everyday "Add Sailing" flow
+// keeps writing shipment-owned rows exactly as before — only the Schedule Generator's new
+// ownerless "template" rows actually exercise the null case.
+;(function rebuildShipmentSchedulesNullableOwner() {
+  try {
+    const cols = db.prepare("PRAGMA table_info(shipment_schedules)").all();
+    const shipmentIdCol = cols.find(c => c.name === "shipment_id");
+    if (!shipmentIdCol || shipmentIdCol.notnull === 0) return; // already migrated (or table missing)
+    // foreign_keys can't be toggled mid-transaction (SQLite silently no-ops it) — must be set
+    // before BEGIN, per SQLite's own documented recipe for this class of rebuild.
+    db.exec("PRAGMA foreign_keys=OFF");
+    db.exec("BEGIN");
+    db.exec(`CREATE TABLE shipment_schedules_new (
+      id            TEXT PRIMARY KEY,
+      shipment_id   TEXT REFERENCES shipments(id) ON DELETE CASCADE,
+      carrier       TEXT DEFAULT '',
+      vessel_name   TEXT DEFAULT '',
+      voyage_number TEXT DEFAULT '',
+      service       TEXT DEFAULT '',
+      pol           TEXT DEFAULT '',
+      pod           TEXT DEFAULT '',
+      etd           TEXT DEFAULT '',
+      eta           TEXT DEFAULT '',
+      transit_days  INTEGER DEFAULT 0,
+      is_mock       INTEGER DEFAULT 0,
+      saved_at      TEXT NOT NULL,
+      saved_by      TEXT NOT NULL DEFAULT '',
+      vessel_imo    TEXT DEFAULT '',
+      atd           TEXT DEFAULT '',
+      ata           TEXT DEFAULT '',
+      source        TEXT DEFAULT 'search',
+      template_id   TEXT REFERENCES shipment_schedules(id) ON DELETE SET NULL
+    )`);
+    db.exec(`INSERT INTO shipment_schedules_new
+      (id, shipment_id, carrier, vessel_name, voyage_number, service, pol, pod, etd, eta,
+       transit_days, is_mock, saved_at, saved_by, vessel_imo, atd, ata, source, template_id)
+      SELECT id, shipment_id, carrier, vessel_name, voyage_number, service, pol, pod, etd, eta,
+             transit_days, is_mock, saved_at, saved_by, vessel_imo, atd, ata, source, NULL
+      FROM shipment_schedules`);
+    db.exec("DROP TABLE shipment_schedules");
+    db.exec("ALTER TABLE shipment_schedules_new RENAME TO shipment_schedules");
+    db.exec("COMMIT");
+    console.log("  ✔ shipment_schedules rebuilt: shipment_id is now nullable, template_id added");
+  } catch (e) {
+    try { db.exec("ROLLBACK"); } catch {}
+    console.error("[migration] FAILED shipment_schedules rebuild:", e.message);
+    migrationFailures.push({ sql: "rebuildShipmentSchedulesNullableOwner", error: e.message });
+  } finally {
+    try { db.exec("PRAGMA foreign_keys=ON"); } catch {}
+  }
+})();
 
 const UPLOADS_DIR = path.join(__dirname, "uploads", "documents");
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
@@ -1353,7 +1511,53 @@ async function syncOfacSdn() {
   const now = new Date().toISOString();
   db.prepare("INSERT OR REPLACE INTO sanctions_syncs (source,synced_at,entry_count) VALUES ('OFAC-SDN',?,?)").run(now, entries.length);
   loadSanctionsIndex();
+  rescreenActiveShipments();
   return { source: "OFAC-SDN", syncedAt: now, entries: entries.length };
+}
+
+// Organization Model Enhancement Epic 3 — after any sanctions list update (OFAC XML sync, the
+// scheduled auto-sync, or a manual CSV import), re-screen every still-relevant shipment so a
+// newly-added SDN entry is caught immediately instead of waiting for that shipment to be
+// independently edited. Bounded to shipments that aren't Completed/Cancelled — mirrors
+// CargoWise's own "rescan on list update" behavior without a full-table sweep of every
+// shipment ever created, most of which are no longer operationally relevant. Same
+// don't-overwrite-a-compliance-officer's-override guard every other re-screen trigger uses.
+function rescreenActiveShipments() {
+  const ids = db.prepare("SELECT id FROM shipments WHERE status NOT IN ('Completed','Cancelled')").all().map(r => r.id);
+  for (const shipmentId of ids) {
+    const prev = db.prepare("SELECT result, overridden_at FROM shipment_screenings WHERE shipment_id=?").get(shipmentId);
+    const isOverridden = prev?.result === 'CLEAR' && prev?.overridden_at;
+    if (!isOverridden) screenShipmentById(shipmentId);
+  }
+}
+
+// Organization Model Enhancement Epic 4 — the shared read-side helper the plan called for:
+// given ANY customer id in a parent/child hierarchy, returns every customer id belonging to
+// that same tree (root ancestor + all descendants), so a "roll up by parent" report can sum
+// figures across a whole group regardless of which member's id the caller started from.
+// Deliberately read-side only — the three independent customer-pointer mechanisms (shipment
+// fixed FKs, shipment_parties, contracts.named_account_id) keep writing plain denormalized
+// customer_id/customer_name pairs exactly as they already do everywhere else in this codebase;
+// this doesn't unify or change that convention, it just reads across it for reporting.
+function resolveCustomerGroup(customerId) {
+  let root = customerId;
+  let current = customerId;
+  const walked = new Set();
+  while (current) {
+    if (walked.has(current)) break; // safety net against a pre-existing cycle in old data
+    walked.add(current);
+    root = current;
+    current = db.prepare("SELECT parent_customer_id FROM customers WHERE id=?").get(current)?.parent_customer_id || null;
+  }
+  const group = new Set([root]);
+  const queue = [root];
+  while (queue.length) {
+    const id = queue.shift();
+    for (const child of db.prepare("SELECT id FROM customers WHERE parent_customer_id=?").all(id)) {
+      if (!group.has(child.id)) { group.add(child.id); queue.push(child.id); }
+    }
+  }
+  return [...group];
 }
 
 // ─── OFAC auto-sync scheduler ─────────────────────────────────────────────────
@@ -1416,11 +1620,41 @@ function screenShipmentById(shipmentId) {
 
   const hits = [];
 
-  // Party name screening
-  for (const [field, name] of [['Shipper', s.shipper_name], ['Consignee', s.consignee_name], ['Principal', s.principal_name]]) {
+  // Party name screening — Organization Model Enhancement Epic 3 broadened this from just
+  // Shipper/Consignee/Principal to all 13 possible party-role slots on a shipment: the 4 fixed
+  // columns (adding Notify Party, previously invisible to screening entirely) plus every
+  // shipment_parties row (Forwarder, Customs Broker Export/Import, Trucker Pre/On-carriage,
+  // Also Notify Party, Bank, Insurance Provider, Agent — 9 more roles that were also previously
+  // invisible). `field` uses the exact role strings from FIXED_SHIPMENT_ROLES/
+  // ADDITIONAL_PARTY_ROLES so the unified Compliance panel can match a hit back to its slot.
+  //
+  // Each party also carries a customer_id (where set) — corroborated against customer_screenings
+  // ALONGSIDE the direct name-vs-sanctionsMap match, not instead of it. This matters because
+  // shipper_name/consignee_name/shipment_parties.customer_name etc. are all denormalized name
+  // SNAPSHOTS (this codebase's standing convention — see shipment_parties' own schema comment),
+  // frozen at whichever moment that party was assigned. Renaming a customer updates
+  // customers.company_name (and re-screens that customer immediately) but does NOT touch any
+  // shipment's already-stored copy of the old name — a pure name-match re-screen would stay
+  // blind to that rename forever. The customer_id corroboration catches it: customer-level
+  // screening always reflects the customer's CURRENT name, independent of what any shipment's
+  // own stale copy says.
+  const fixedParties = [
+    ['Shipper', s.shipper_name, s.shipper_id], ['Consignee', s.consignee_name, s.consignee_id],
+    ['Principal', s.principal_name, s.principal_id], ['Notify Party', s.notify_name, s.notify_id],
+  ];
+  const additionalParties = db.prepare("SELECT role, customer_name, customer_id FROM shipment_parties WHERE shipment_id=?")
+    .all(shipmentId).map(r => [r.role, r.customer_name, r.customer_id]);
+  for (const [field, name, customerId] of [...fixedParties, ...additionalParties]) {
     if (!name || !name.trim()) continue;
-    const match = sanctionsMap.get(normSanctionName(name));
-    if (match) hits.push({ field, value: name, matchedEntry: match.entityName, program: match.program, source: match.source });
+    const nameMatch = sanctionsMap.get(normSanctionName(name));
+    if (nameMatch) {
+      hits.push({ field, value: name, matchedEntry: nameMatch.entityName, program: nameMatch.program, source: nameMatch.source });
+      continue;
+    }
+    const custScreen = customerId ? db.prepare("SELECT result FROM customer_screenings WHERE customer_id=?").get(customerId) : null;
+    if (custScreen?.result === 'HIT') {
+      hits.push({ field, value: name, matchedEntry: `${name} — flagged at the customer level (name on this shipment may be outdated)`, program: 'OFAC-SDN', source: 'customer_screenings' });
+    }
   }
 
   // Country embargo via UNLOCODE prefix (first 2 chars)
@@ -1468,6 +1702,32 @@ async function toUsd(amount, currency) {
   const rate = rates[currency];
   return rate ? Math.round((amount / rate) * 100) / 100 : Math.round(amount * 100) / 100;
 }
+
+// ─── Backfill transit_days on generated schedules ─────────────────────────────
+// POST /api/schedules (Schedule Generator) unconditionally hardcoded transit_days to 0 at
+// insert time instead of deriving it from etd/eta — every schedule created through the
+// Generator before this fix has a wrong "0d" transit shown wherever it surfaces (the catalog
+// browser, Add Sailing search results). Purely a computed value with no user input involved,
+// so a one-time backfill is safe — only touches rows the bug actually affected (source =
+// 'generated', transit_days still 0, real etd/eta both present with eta after etd).
+// Safe to re-run — already-fixed rows (transit_days > 0) are left untouched.
+(function backfillGeneratedScheduleTransitDays() {
+  // Originally scoped to source='generated' only (the Schedule Generator's own bug — see the
+  // v0.54.3 changelog). Broadened: a shipment committing a catalog-picked sailing (source=
+  // 'search') copies the picked sailing's own fields via a plain object spread on the frontend
+  // (ShipmentSchedulesPage.jsx's commitSailing) — any commit made *before* the generator fix
+  // above landed baked in the same wrong 0 permanently, since a copy is a point-in-time
+  // snapshot, not a live reference back to its template. Same safe condition either way: only
+  // rows that are still exactly 0 with a real, positive etd/eta span are touched.
+  const info = db.prepare(`
+    UPDATE shipment_schedules
+    SET transit_days = CAST(ROUND(julianday(eta) - julianday(etd)) AS INTEGER)
+    WHERE transit_days = 0
+      AND etd != '' AND eta != '' AND julianday(eta) > julianday(etd)
+  `).run();
+  if (info.changes > 0)
+    console.log(`  ✔ Backfilled transit_days on ${info.changes.toLocaleString()} schedule row(s)`);
+})();
 
 // ─── Backfill port country_code from unlocode ─────────────────────────────────
 // Derives country from first 2 chars of UN/LOCODE (e.g. NLRTM → NL).
@@ -1785,6 +2045,14 @@ const ADDITIONAL_PARTY_ROLES = [
   "Trucker (Pre-carriage)", "Trucker (On-carriage)",
   "Also Notify Party", "Bank", "Insurance Provider", "Agent",
 ];
+// Organization Model Enhancement Epic 1 — the 4 hardcoded shipment roles plus
+// ADDITIONAL_PARTY_ROLES, combined into one vocabulary customer_roles validates against and
+// CustomerCombobox's roleFilter matches on. Deliberately a NEW list alongside
+// ADDITIONAL_PARTY_ROLES rather than a rewrite of it — that list is already correctly
+// single-sourced per side (this backend copy + src/tokens.js's own, same split as
+// BOOKABLE_CARRIERS), nothing to consolidate there. Frontend keeps its own equivalent copy.
+const FIXED_SHIPMENT_ROLES = ["Shipper", "Consignee", "Notify Party", "Principal"];
+const ALL_CUSTOMER_ROLES = [...FIXED_SHIPMENT_ROLES, ...ADDITIONAL_PARTY_ROLES];
 // Customs & Regulatory Filing (Epic TKT-XW6TQK) — the two filing types a shipment can
 // independently need, AES/EEI (export) and ISF/AMS (import). Simulated/mock only.
 const CUSTOMS_FILING_TYPES = ["AES_EEI", "ISF_AMS"];
@@ -1801,6 +2069,7 @@ const mapShipmentLeg = r => ({
   pol: r.pol || '', pod: r.pod || '',
   polLocType: r.pol_loc_type || 'Terminal', podLocType: r.pod_loc_type || 'Terminal',
   etd: r.etd || null, eta: r.eta || null,
+  etdSource: r.etd_source || '', etaSource: r.eta_source || '',
   carrierCode: r.carrier_code || '', vessel: r.vessel || '', vesselImo: r.vessel_imo || '',
   voyage: r.voyage || '', movementBy: r.movement_by || '',
   contractType: r.contract_type || '', contractRef: r.contract_ref || '',
@@ -1829,7 +2098,11 @@ const syncShipmentFromLegs = (shipmentId) => {
     const b = cLegs[cLegs.length - 1].pod_loc_type || 'Terminal';
     routingTerm = (LEG_LOC_ABBR[a] || a) + '-' + (LEG_LOC_ABBR[b] || b);
   }
-  // COALESCE(NULLIF(?, ''), carrier_code) preserves an existing carrier when the leg has none set
+  // COALESCE(NULLIF(?, ''), carrier_code) preserves an existing carrier when the leg has none set.
+  // etd/eta already double as the "confirmed once known" fields (AIS TKT-ZFO2OM) — when the AIS
+  // listener updates a SEA leg's etd/eta in place after a confirmed departure/arrival, this
+  // existing rollup carries it up to the shipment the same way it always has, no separate
+  // atd/ata bookend needed.
   db.prepare(`UPDATE shipments SET pol=?, pod=?, etd=?, eta=?, carrier_code=COALESCE(NULLIF(?, ''), carrier_code), vessel=?, vessel_imo=?, voyage=?, routing_term=? WHERE id=?`)
     .run(first.pol || '', last.pod || '', first.etd || null, last.eta || null,
          seaLeg.carrier_code || '', seaLeg.vessel || '', seaLeg.vessel_imo || '',
@@ -1882,7 +2155,7 @@ const mapShipmentParty = r => ({ id: r.id, shipmentId: r.shipment_id, role: r.ro
 const mapPackTypeDefinition = r => ({ id: r.id, code: r.code, label: r.label, icon: r.icon, sortOrder: r.sort_order, isActive: r.is_active === 1, createdAt: r.created_at });
 const mapAllocation   = r => ({ id: r.id, carrierCode: r.carrier_code, allocatedTEU: r.allocated_teu, effectiveDate: r.effective_date || '', endDate: r.end_date || '', tradeLane: r.trade_lane || '', notes: r.notes || '', alertThreshold: r.alert_threshold ?? 80, pol: r.pol || '', pod: r.pod || '', originLane: r.origin_lane || '', destLane: r.dest_lane || '', coverageScope: r.coverage_scope || 'STRICT', contractId: r.contract_id || '', contractNumber: r.contract_number || '' });
 const mapCarrier      = r => ({ code: r.code, name: r.name, shortName: r.short_name || '' });
-const mapVessel       = r => ({ imo: r.imo, name: r.name, assetType: r.asset_type || '', flagIso2: r.flag_iso2 || '', flagName: r.flag_name || '', buildYear: r.build_year, grossTonnage: r.gross_tonnage });
+const mapVessel       = r => ({ imo: r.imo, name: r.name, assetType: r.asset_type || '', flagIso2: r.flag_iso2 || '', flagName: r.flag_name || '', buildYear: r.build_year, grossTonnage: r.gross_tonnage, mmsi: r.mmsi || '', aisVerifiedAt: r.ais_verified_at || '' });
 const mapPortLocation = r => ({ unlocode: r.unlocode, name: r.name, latitude: r.latitude, longitude: r.longitude, countryCode: r.country_code, zoneCode: r.zone_code, timezone: r.timezone || null, lastSyncedAt: r.last_synced_at || null });
 const mapLinkedPort   = r => ({ id: r.id, primaryUnlocode: r.primary_unlocode, primaryName: r.primary_name || '', linkedUnlocode: r.linked_unlocode, linkedName: r.linked_name || '', note: r.note || '' });
 const mapTradeLane    = r => ({ code: r.code, name: r.name, description: r.description || '', countryCount: r.country_count ?? 0, transitDays: r.transit_days ?? 0 });
@@ -2109,10 +2382,11 @@ const mapCustomsFiling = r => ({
 const mapKbProject = r => ({ id: r.id, name: r.name, key: r.key, color: r.color || '#6366f1', description: r.description || '', createdAt: r.created_at });
 const mapKbVersion = r => ({ id: r.id, projectId: r.project_id, name: r.name, description: r.description || '', status: r.status || 'Planning', releaseDate: r.release_date || null, createdAt: r.created_at });
 const mapKbColumn  = r => ({ id: r.id, projectId: r.project_id, name: r.name, position: r.position ?? 0, color: r.color || '#6366f1', wipLimit: r.wip_limit ?? null, createdAt: r.created_at });
-const mapCustomer            = r => ({ id: r.id, companyName: r.company_name, address1: r.address1 || '', address2: r.address2 || '', city: r.city || '', state: r.state || '', postalCode: r.postal_code || '', countryIso2: r.country_iso2 || '', phone: r.phone || '', fax: r.fax || '', email: r.email || '', website: r.website || '', notes: r.notes || '', createdAt: r.created_at, screeningResult: r.screening_result || null, currency: r.currency || 'USD' });
+const mapCustomer            = r => ({ id: r.id, companyName: r.company_name, address1: r.address1 || '', address2: r.address2 || '', city: r.city || '', state: r.state || '', postalCode: r.postal_code || '', countryIso2: r.country_iso2 || '', phone: r.phone || '', fax: r.fax || '', email: r.email || '', website: r.website || '', notes: r.notes || '', createdAt: r.created_at, screeningResult: r.screening_result || null, currency: r.currency || 'USD', creditLimit: r.credit_limit ?? null, creditTermsDays: r.credit_terms_days ?? null, creditHold: !!r.credit_hold, creditHoldReason: r.credit_hold_reason || '', parentCustomerId: r.parent_customer_id || null, parentCustomerName: r.parent_customer_name || null });
 const mapCustomerIdentifier  = r => ({ id: r.id, customerId: r.customer_id, idType: r.id_type, idCode: r.id_code, countryIso2: r.country_iso2 || '', label: r.label || '', isPrimary: !!r.is_primary, createdAt: r.created_at });
 const mapCustomerScreening   = r => ({ id: r.id, customerId: r.customer_id, screenedAt: r.screened_at, result: r.result, hits: JSON.parse(r.hits || '[]'), overriddenAt: r.overridden_at || null, overrideReason: r.override_reason || null });
 const mapCustomerDoc         = r => ({ id: r.id, customerId: r.customer_id, filename: r.filename, mimeType: r.mime_type, sizeBytes: r.size_bytes, docType: r.doc_type, uploadedBy: r.uploaded_by, createdAt: r.created_at });
+const mapCustomerContact     = r => ({ id: r.id, customerId: r.customer_id, name: r.name, title: r.title || '', email: r.email || '', phone: r.phone || '', department: r.department || 'Other', isPrimary: !!r.is_primary, createdAt: r.created_at });
 const mapCommodity    = r => ({ code: r.code, description: r.description, gradeCode: r.grade_code, gradeName: r.grade_name });
 const mapSystemMessage = r => ({
   id: r.id, title: r.title, body: r.body,
@@ -2682,6 +2956,10 @@ app.use("/api", (req, res, next) =>
 
 // ─── Shared context passed to every route module ───────────────────────────────
 
+const aisListener = createAisListener({
+  db, getSettings, broadcastMessage, logEntityEvent, uid, syncShipmentFromLegs,
+});
+
 const ctx = {
   db, uid, ok, err, isUniqueViolation,
   auth, requireRole,
@@ -2709,18 +2987,23 @@ const ctx = {
   mapCarrierBooking, BOOKABLE_CARRIERS,
   mapCustomsFiling, CUSTOMS_FILING_TYPES,
   mapKbProject, mapKbVersion, mapKbColumn,
-  mapCustomer, mapCustomerIdentifier, mapCustomerScreening, mapCustomerDoc,
+  mapCustomer, mapCustomerIdentifier, mapCustomerScreening, mapCustomerDoc, mapCustomerContact,
+  ALL_CUSTOMER_ROLES,
   mapCommodity, mapSystemMessage, mapMilestone, mapMilestoneTemplate,
   mapContract, mapLeg, mapRate,
   logEvent, logEntityEvent, logAdminEvent, TRACKED_FIELDS, TRACKED_CTR_FIELDS,
   CUTOFF_WARNING_DAYS, FREE_TIME_WARNING_DAYS,
   ssoNonces,
   syncShipmentFromLegs,
+  restartAisListener: aisListener.applySettings,
+  ingestAisMessage: aisListener.ingestMessage,
+  getAisListenerStatus: aisListener.getStatus,
+  forceRefreshAisTrackedLegs: aisListener.forceRefreshTrackedLegs,
   checkOverlap,
   autoCompleteMilestone,
   ensureBookingCreated, supersedeIfCarrierChanged,
   linkedPortCodes, findMatchingContractLeg,
-  screenShipmentById,
+  screenShipmentById, rescreenActiveShipments, resolveCustomerGroup,
   bcrypt, jwt, JWT_SECRET,
   inverseLinkLabel,
   fs, path,
@@ -2748,6 +3031,7 @@ require('./routes/office-mail')(app, ctx);
 require('./routes/organization')(app, ctx);
 require('./routes/charge-codes')(app, ctx);
 require('./routes/pack-types')(app, ctx);
+require('./routes/ais')(app, ctx);
 
 // ─── Auth routes ──────────────────────────────────────────────────────────────
 
@@ -4814,6 +5098,11 @@ wss.on("connection", ws => {
     }
   });
 });
+
+// Outbound AIS listener (TKT-ZFO2OM) — settings-gated (api_ais_enabled + a key), no-ops
+// cleanly if unconfigured. Wrapped defensively so a bad config can never take the HTTP
+// server down with it, same "fail soft" contract external integrations follow elsewhere.
+try { ctx.restartAisListener(); } catch (e) { console.error("AIS listener bootstrap failed:", e.message); }
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 

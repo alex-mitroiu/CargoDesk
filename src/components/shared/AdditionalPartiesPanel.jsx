@@ -93,7 +93,7 @@ const AdditionalPartiesPanel = ({ shipmentId }) => {
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
                   textTransform: "uppercase", letterSpacing: ".08em" }}>{p.role}</div>
-                <CustomerCombobox label="Customer" value={editCustomer} onChange={setEditCustomer} />
+                <CustomerCombobox label="Customer" value={editCustomer} onChange={setEditCustomer} roleFilter={p.role} />
                 <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
                   <Btn size="sm" variant="secondary" onClick={() => setEditingId(null)}>Cancel</Btn>
                   <Btn size="sm" disabled={saving || !editCustomer.id} onClick={() => handleReassign(p.id)}>
@@ -139,7 +139,7 @@ const AdditionalPartiesPanel = ({ shipmentId }) => {
             <option value="">Select role…</option>
             {availableRoles.map(r => <option key={r} value={r}>{r}</option>)}
           </select>
-          <CustomerCombobox label="Customer" value={newCustomer} onChange={setNewCustomer} />
+          <CustomerCombobox label="Customer" value={newCustomer} onChange={setNewCustomer} roleFilter={newRole} />
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
             <Btn size="sm" variant="secondary" onClick={() => setAdding(false)}>Cancel</Btn>
             <Btn id="shpparties-additional-save-btn" size="sm" disabled={saving || !newRole || !newCustomer.id} onClick={handleAdd}>

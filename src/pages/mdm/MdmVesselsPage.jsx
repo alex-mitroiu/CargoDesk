@@ -118,7 +118,11 @@ const MdmVesselsPage = () => {
         <div style={{ display: "grid", gridTemplateColumns: template,
           padding: "10px 20px", borderBottom: `1px solid ${T.border}` }}>
           {headers.map((h, i) => (
-            <div key={i} style={{ position: "relative", paddingLeft: 6, fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
+            <div key={i} style={{ position: "relative", paddingLeft: 6, fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em",
+              // Actions is the one column whose content is right-aligned (the gear button sits
+              // at the cell's trailing edge) — the header needs to match, or it reads as
+              // misaligned against every button in the column below it.
+              textAlign: h === "Actions" ? "right" : "left" }}>
               {h}{i < headers.length - 1 && <ColResizer onStart={e => startResize(i, e)} />}
             </div>
           ))}
@@ -138,13 +142,30 @@ const MdmVesselsPage = () => {
             onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
             onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
             <span style={{ fontFamily: T.mono, fontSize: 11, color: T.accent, fontWeight: 700 }}>{v.imo}</span>
-            <span style={{ fontFamily: T.body, fontSize: 13, color: T.text, fontWeight: 600 }}>{v.name}</span>
+            <span style={{ fontFamily: T.body, fontSize: 13, color: T.text, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+              {v.name}
+              {v.aisVerifiedAt && (
+                <span title={`Resolved/confirmed live via AIS — last seen ${new Date(v.aisVerifiedAt).toLocaleString()}`}
+                  style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 700, color: T.accent,
+                    background: `${T.accent}18`, border: `1px solid ${T.accent}44`,
+                    borderRadius: 4, padding: "1px 5px", letterSpacing: ".04em", flexShrink: 0 }}>
+                  AIS
+                </span>
+              )}
+            </span>
             <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>{v.assetType || "—"}</span>
-            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            {/* Always reserve two stacked lines here, flag-present or not — this cell being the
+                only one in the row that ever grows to two lines was making rows with no flag
+                data (common for AIS-resolved vessels, which never carry flag/tonnage) render
+                visibly shorter than rows with one, so the table's row heights zig-zagged. */}
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
               {v.flagIso2
-                ? <><Badge variant="default">{v.flagIso2}</Badge><span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted }}>{v.flagName}</span></>
-                : <span style={{ fontFamily: T.body, fontSize: 12, color: T.border }}>{v.flagName || "—"}</span>
-              }
+                ? <Badge variant="default">{v.flagIso2}</Badge>
+                : <span style={{ fontFamily: T.body, fontSize: 12, color: T.border }}>—</span>}
+              {/* Badge's own padding ("2px 9px", Badge.jsx) insets its text 9px from the column's
+                  left edge — matched here so the caption's text lines up with the badge's text
+                  above it, not with the badge's own bounding-box edge. */}
+              <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted, minHeight: 12, paddingLeft: 9 }}>{v.flagIso2 ? v.flagName : " "}</span>
             </div>
             <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>{v.buildYear || "—"}</span>
             <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>{v.grossTonnage ? v.grossTonnage.toLocaleString() : "—"}</span>

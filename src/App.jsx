@@ -104,6 +104,7 @@ const DOC_TYPES = [
   { code: "CI02", label: "Commercial Invoice (Amendment)" },
   { code: "FR01", label: "Freight Invoice" },
   { code: "FR02", label: "Freight Invoice (Amendment)" },
+  { code: "CN01", label: "Credit / Debit Note" },
   { code: "PL01", label: "Packing List" },
   { code: "CO01", label: "Certificate of Origin" },
   { code: "CD01", label: "Customs Declaration" },
@@ -726,7 +727,9 @@ const GenerateDocumentModal = ({ shipment, onClose, onSaved, defaultCode }) => {
           <select value={docCode} onChange={e => setDocCode(e.target.value)}
             style={{ width: "100%", fontFamily: T.body, fontSize: 13, background: T.surface, color: T.text,
               border: `1px solid ${T.border}`, borderRadius: 6, padding: "8px 10px", cursor: "pointer" }}>
-            {DOC_TYPES.map(t => <option key={t.code} value={t.code}>{t.code} · {t.label}</option>)}
+            {/* CN01 is excluded — it's only ever produced by the Reverse action on Invoice Entry,
+                never picked ad hoc (it needs real reversal-line data behind it). */}
+            {DOC_TYPES.filter(t => t.code !== "CN01").map(t => <option key={t.code} value={t.code}>{t.code} · {t.label}</option>)}
           </select>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
@@ -3324,7 +3327,7 @@ function App() {
                   setContainers(p => [...p, newCtr]);
                 }
                 if (selectedSailing) {
-                  await api.schedules.save(created.id, selectedSailing).catch(() => {});
+                  await api.schedules.save(created.id, { ...selectedSailing, templateId: selectedSailing.scheduleId ?? null }).catch(() => {});
                 }
                 navigate("detail", created.id);
               } catch (e) { toast.error(e.message); throw e; }
@@ -3500,7 +3503,7 @@ function App() {
         {page === "test-plans"  && isEnabled("kanban")    && <TestPlansPage />}
         {page === "test-runs"   && isEnabled("kanban")    && <TestRunsPage />}
         {page === "test-cases"  && isEnabled("kanban")    && <TestCasesPage />}
-        {page === "test-tools"  && isEnabled("kanban")    && <TestToolsPage navigate={navigate} shipments={shipments} />}
+        {page === "test-tools"  && isEnabled("kanban")    && <TestToolsPage navigate={navigate} />}
 
         {page === "dashboard-archive" && (
           <DashboardArchive

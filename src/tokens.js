@@ -10,6 +10,13 @@ export const ADDITIONAL_PARTY_ROLES = [
   "Trucker (Pre-carriage)", "Trucker (On-carriage)",
   "Also Notify Party", "Bank", "Insurance Provider", "Agent",
 ];
+// Organization Model Enhancement Epic 1 — the 4 hardcoded shipment roles plus
+// ADDITIONAL_PARTY_ROLES, combined into one vocabulary for customer role-tagging
+// (MdmCustomersPage.jsx) and CustomerCombobox's roleFilter. Backend keeps its own equivalent
+// copy (server.js, near ADDITIONAL_PARTY_ROLES) — same split as that list already uses.
+export const FIXED_SHIPMENT_ROLES = ["Shipper", "Consignee", "Notify Party", "Principal"];
+export const ALL_CUSTOMER_ROLES   = [...FIXED_SHIPMENT_ROLES, ...ADDITIONAL_PARTY_ROLES];
+export const CONTACT_DEPARTMENTS  = ["Sales", "Operations", "Accounts", "Other"];
 // Currencies offered on cargo/commodity line items (Epic TKT-P3ASH1). MdmChargeCodesPage.jsx
 // keeps its own small pre-existing local copy — already working, no value in touching it here.
 export const CURRENCIES = ["USD", "EUR", "GBP", "CNY", "SGD", "JPY", "AED", "CHF"];

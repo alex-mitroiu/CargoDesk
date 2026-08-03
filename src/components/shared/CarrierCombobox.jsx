@@ -172,7 +172,12 @@ const CarrierCombobox = ({ value = "", onChange, required = false }) => {
   }
 
   return (
-    <div style={{ position: "relative" }}>
+    // minWidth:0 overrides a flex child's implicit min-width:auto — without it, this component
+    // (width:100% internally via inputBase) refuses to shrink below its own content's intrinsic
+    // width whenever a caller places it inside a `display:flex` cell narrower than that content
+    // (e.g. a fixed-width table column with a long carrier name selected) — the visible symptom
+    // is the selected chip bleeding into the next column instead of truncating/ellipsizing.
+    <div style={{ position: "relative", minWidth: 0 }}>
       {selected ? (
         // ── Selected chip ────────────────────────────────────────────────────
         <div style={{ ...inputBase, display: "flex", alignItems: "center", gap: 8,

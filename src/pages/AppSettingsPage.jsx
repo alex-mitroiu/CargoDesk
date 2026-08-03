@@ -57,6 +57,7 @@ const EXTERNAL_APIS = [
     testType: "maersk_schedule",
     hasApiKey: true,
     settingKey: "maersk_api_key",
+    keyHelpText: "Register free at developer.maersk.com to get a Consumer Key.",
     hasRecurrence: false,
   },
   {
@@ -67,6 +68,18 @@ const EXTERNAL_APIS = [
     testType: "maersk_booking",
     hasApiKey: true,
     settingKey: "maersk_api_key",
+    keyHelpText: "Register free at developer.maersk.com to get a Consumer Key.",
+    hasRecurrence: false,
+  },
+  {
+    id: "ais",
+    name: "AIS Vessel Tracking",
+    provider: "aisstream.io",
+    description: "Live vessel position/static data — keeps the Vessels registry fresh and auto-detects sailing ATD/ATA. Free, no payment required, key-only signup at aisstream.io.",
+    testType: "ais_status",
+    hasApiKey: true,
+    settingKey: "ais_api_key",
+    keyHelpText: "Register free at aisstream.io to get an API key — no payment, no hardware required.",
     hasRecurrence: false,
   },
 ];
@@ -1327,6 +1340,14 @@ export default function AppSettingsPage() {
           ok: true, latency: Date.now() - t0,
           label: info.entryCount > 0 ? `${info.entryCount.toLocaleString()} entries` : "No entries — sync required",
         }}));
+      } else if (apiDef.testType === "ais_status") {
+        const status = await api.ais.status();
+        setTestResults(r => ({ ...r, [apiDef.id]: {
+          ok: status.connected, latency: Date.now() - t0,
+          label: status.connected
+            ? `Connected · ${status.trackedVesselCount} vessel(s) tracked`
+            : (status.lastError || "Not connected"),
+        }}));
       } else if (apiDef.testType === "maersk_schedule") {
         const ctrl  = new AbortController();
         const tmr   = setTimeout(() => ctrl.abort(), 10000);
@@ -1513,7 +1534,7 @@ export default function AppSettingsPage() {
               </div>
             ) : (
               <div style={{ fontFamily: T.mono, fontSize: 10.5, color: T.textMuted, marginTop: 5 }}>
-                Register free at developer.maersk.com to get a Consumer Key.
+                {apiDef.keyHelpText || "Register free to get a Consumer Key."}
               </div>
             )}
           </div>
@@ -1726,6 +1747,27 @@ export default function AppSettingsPage() {
 
           {activeApiSub === "External APIs" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              {settings && (
+                <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
+                  padding: "14px 16px" }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer",
+                    fontFamily: T.body, fontSize: 13, color: T.text }}>
+                    <input type="checkbox"
+                      checked={settings.demo_schedules_enabled !== 'false'}
+                      onChange={e => {
+                        const v = e.target.checked ? 'true' : 'false';
+                        setSettings(s => ({ ...s, demo_schedules_enabled: v }));
+                        saveSetting('demo_schedules_enabled', v);
+                      }} />
+                    Fall back to demo sailing schedules when a search finds no stored or live match
+                  </label>
+                  <p style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted, margin: "8px 0 0 26px", lineHeight: 1.5 }}>
+                    Add Sailing checks the schedule catalog (Test Tools → Schedule Generator) and
+                    any live carrier API first. With this off, a search with no real match returns
+                    empty instead of synthetic "DEMO …" placeholders.
+                  </p>
+                </div>
+              )}
               {EXTERNAL_APIS.map(a => <ExternalCard key={a.id} apiDef={a} />)}
             </div>
           )}

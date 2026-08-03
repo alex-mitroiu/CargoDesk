@@ -41,6 +41,8 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       confirmedAt: r.confirmed_at || null, confirmedBy: r.confirmed_by || '',
       isStale: n > 0,
       containerId: r.container_id || '', responsibleParty: r.responsible_party || '',
+      relatedDocId: r.related_doc_id || null,
+      sourceCostLineIds: r.source_cost_line_ids ? JSON.parse(r.source_cost_line_ids) : null,
     };
   };
 
@@ -568,7 +570,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   // never has to leave the server. Raw user-attached files keep using the plain upload route
   // untouched — signing a file CargoDesk didn't author would misrepresent who generated it.
   app.post("/api/shipments/:id/documents/generate", shipmentWrite, async (req, res) => {
-    const { html, filename, docType, containerId = '', responsibleParty = '' } = req.body;
+    const { html, filename, docType, containerId = '', responsibleParty = '', sourceCostLineIds = null, relatedDocId = null } = req.body;
     if (!html || !filename) return err(res, "html and filename are required");
     try {
       const cert = getActiveSigningCert(db);
@@ -582,10 +584,14 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       const id       = `DOC-${uid()}`;
       const now      = new Date().toISOString();
       const uploader = req.user?.name || req.user?.email || "";
+      // sourceCostLineIds (FR01/FR02 only) records exactly which cost lines this invoice was
+      // built from, so a later reversal (TKT-DUADU3) knows precisely what to negate rather than
+      // re-deriving from whatever SELL lines happen to exist by then.
       db.prepare(`INSERT INTO shipment_documents
-        (id, shipment_id, filename, stored_name, mime_type, size_bytes, doc_type, uploaded_by, created_at, status, container_id, responsible_party)
-        VALUES (?, ?, ?, ?, 'application/pdf', ?, ?, ?, ?, 'draft', ?, ?)`)
-        .run(id, req.params.id, pdfFilename, storedName, signedPdf.length, docType || "OT", uploader, now, containerId, responsibleParty);
+        (id, shipment_id, filename, stored_name, mime_type, size_bytes, doc_type, uploaded_by, created_at, status, container_id, responsible_party, source_cost_line_ids, related_doc_id)
+        VALUES (?, ?, ?, ?, 'application/pdf', ?, ?, ?, ?, 'draft', ?, ?, ?, ?)`)
+        .run(id, req.params.id, pdfFilename, storedName, signedPdf.length, docType || "OT", uploader, now, containerId, responsibleParty,
+             Array.isArray(sourceCostLineIds) ? JSON.stringify(sourceCostLineIds) : null, relatedDocId);
       logEntityEvent('document', id, 'GENERATED', null, null, null,
         JSON.stringify({ shipmentId: req.params.id, docType: docType || "OT", filename: pdfFilename, containerId, signed: true, certFingerprint: cert.fingerprint_sha256 }));
       const row = db.prepare("SELECT * FROM shipment_documents WHERE id = ?").get(id);
@@ -623,17 +629,78 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   app.patch("/api/documents/:docId", shipmentWrite, (req, res) => {
     const doc = db.prepare("SELECT * FROM shipment_documents WHERE id = ?").get(req.params.docId);
     if (!doc) return err(res, "Not found", 404);
-    const { status } = req.body;
-    if (!["draft", "confirmed"].includes(status)) return err(res, "status must be draft or confirmed");
-    const now = new Date().toISOString();
-    db.prepare("UPDATE shipment_documents SET status=?, confirmed_at=?, confirmed_by=? WHERE id=?")
-      .run(status, status === "confirmed" ? now : null, status === "confirmed" ? (req.user?.name || req.user?.email || "") : "", req.params.docId);
-    if (status === "confirmed" && doc.status !== "confirmed") {
-      logEntityEvent('document', req.params.docId, 'CONFIRMED', null, null, null,
-        JSON.stringify({ shipmentId: doc.shipment_id, docType: doc.doc_type, filename: doc.filename, containerId: doc.container_id || '' }));
+    const { status, relatedDocId } = req.body;
+    if (status !== undefined) {
+      if (!["draft", "confirmed", "voided"].includes(status)) return err(res, "status must be draft, confirmed, or voided");
+      const now = new Date().toISOString();
+      if (status === "confirmed") {
+        db.prepare("UPDATE shipment_documents SET status=?, confirmed_at=?, confirmed_by=? WHERE id=?")
+          .run(status, now, req.user?.name || req.user?.email || "", req.params.docId);
+      } else {
+        // draft/voided don't touch confirmed_at/confirmed_by — a voided doc WAS confirmed once
+        // and that history stays true, it's just no longer the active record.
+        db.prepare("UPDATE shipment_documents SET status=? WHERE id=?").run(status, req.params.docId);
+      }
+      if (status === "confirmed" && doc.status !== "confirmed") {
+        logEntityEvent('document', req.params.docId, 'CONFIRMED', null, null, null,
+          JSON.stringify({ shipmentId: doc.shipment_id, docType: doc.doc_type, filename: doc.filename, containerId: doc.container_id || '' }));
+      }
+      if (status === "voided" && doc.status !== "voided") {
+        logEntityEvent('document', req.params.docId, 'VOIDED', null, null, null,
+          JSON.stringify({ shipmentId: doc.shipment_id, docType: doc.doc_type, filename: doc.filename, containerId: doc.container_id || '' }));
+      }
+    }
+    if (relatedDocId !== undefined) {
+      db.prepare("UPDATE shipment_documents SET related_doc_id=? WHERE id=?").run(relatedDocId, req.params.docId);
     }
     const updated = db.prepare("SELECT * FROM shipment_documents WHERE id = ?").get(req.params.docId);
     ok(res, mapDoc(updated, updated.shipment_id));
+  });
+
+  // ─── Invoice Reversal / Credit-Debit Note (TKT-DUADU3) ─────────────────────
+  // SELL-side only, by construction: FR01/FR02 are built exclusively from SELL cost lines
+  // (generateInvoices(), src/utils/invoiceGenerator.js), so reversing an invoice can only ever
+  // reverse SELL lines. Creates negative-amount, already-posted adjusting cost lines and voids
+  // the original invoice doc — the new CN01 "Credit / Debit Note" document itself is built and
+  // uploaded by the client afterward (same client-builds-HTML/server-signs split every other
+  // generated document already follows), which is also why this route doesn't touch
+  // related_doc_id — that's set once the CN01 doc actually exists (see PATCH above).
+  app.post("/api/shipments/:shipmentId/documents/:docId/reverse", postGate, (req, res) => {
+    const doc = db.prepare("SELECT * FROM shipment_documents WHERE id=? AND shipment_id=?").get(req.params.docId, req.params.shipmentId);
+    if (!doc) return err(res, "Not found", 404);
+    if (doc.doc_type !== "FR01" && doc.doc_type !== "FR02") return err(res, "Only a generated invoice can be reversed", 400);
+    if (doc.status !== "confirmed") return err(res, "Only a confirmed invoice can be reversed — a draft can simply be regenerated or deleted", 409);
+    if (doc.related_doc_id) return err(res, "This invoice has already been reversed", 409);
+
+    const sourceIds = doc.source_cost_line_ids ? JSON.parse(doc.source_cost_line_ids) : null;
+    const sourceLines = sourceIds && sourceIds.length
+      ? db.prepare(`SELECT * FROM shipment_cost_lines WHERE id IN (${sourceIds.map(() => '?').join(',')})`).all(...sourceIds)
+      : db.prepare("SELECT * FROM shipment_cost_lines WHERE shipment_id=? AND type='SELL' AND container_id=?").all(req.params.shipmentId, doc.container_id || '');
+    if (sourceLines.length === 0) return err(res, "No charge lines found to reverse", 409);
+
+    const { reason = "" } = req.body || {};
+    const now   = new Date().toISOString();
+    const actor = req.user?.name || req.user?.email || "";
+    const reversalLines = [];
+    for (const line of sourceLines) {
+      const id = `CL-${uid()}`;
+      const notes = `Reversal of invoice ${doc.filename}` + (reason ? ` — ${reason}` : "");
+      db.prepare(`INSERT INTO shipment_cost_lines
+        (id,shipment_id,type,charge_code,currency,amount,exchange_rate,vat_rate,notes,container_id,created_at,source,payment_indicator,status,posted_at,posted_by)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+        .run(id, req.params.shipmentId, line.type, line.charge_code, line.currency, -line.amount, line.exchange_rate,
+             line.vat_rate || 0, notes, line.container_id || '', now, 'reversal', line.payment_indicator || 'Prepaid', 'posted', now, actor);
+      logEntityEvent('cost_line', id, 'CREATED', null, null, null,
+        JSON.stringify({ shipmentId: req.params.shipmentId, type: line.type, chargeCode: line.charge_code, currency: line.currency, amount: -line.amount, reversalOf: doc.id }));
+      reversalLines.push(mapCostLine(db.prepare("SELECT * FROM shipment_cost_lines WHERE id=?").get(id)));
+    }
+
+    db.prepare("UPDATE shipment_documents SET status='voided' WHERE id=?").run(doc.id);
+    logEntityEvent('document', doc.id, 'VOIDED', null, null, null,
+      JSON.stringify({ shipmentId: doc.shipment_id, docType: doc.doc_type, filename: doc.filename, containerId: doc.container_id || '' }));
+
+    const voidedDoc = mapDoc(db.prepare("SELECT * FROM shipment_documents WHERE id=?").get(doc.id), doc.shipment_id);
+    ok(res, { reversalLines, voidedDoc });
   });
 
   app.get("/api/documents/:docId/download", auth(), (req, res) => {
@@ -696,9 +763,22 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
 
   // ─── Shipment Schedules ───────────────────────────────────────────────────
 
+  const mapScheduleLeg = l => ({
+    pol: l.pol || "", pod: l.pod || "", etd: l.etd || "", eta: l.eta || "",
+    vesselName: l.vessel_name || "", vesselImo: l.vessel_imo || "",
+    voyageNumber: l.voyage_number || "", service: l.service || "", carrier: l.carrier || "",
+  });
+
+  // A schedule with 0 or 1 schedule_legs rows is a direct sailing (legs: null, same convention
+  // mockSailings()/maerskSchedules() already use) — only 2+ rows makes it a real TSP sailing.
+  const getScheduleLegs = scheduleId => {
+    const rows = db.prepare("SELECT * FROM schedule_legs WHERE schedule_id=? ORDER BY leg_order ASC").all(scheduleId);
+    return rows.length >= 2 ? rows.map(mapScheduleLeg) : null;
+  };
+
   const mapSchedule = r => ({
     id:            r.id,
-    shipmentId:    r.shipment_id,
+    shipmentId:    r.shipment_id   || null,
     carrier:       r.carrier       || "",
     vesselName:    r.vessel_name   || "",
     voyageNumber:  r.voyage_number || "",
@@ -715,6 +795,8 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     atd:           r.atd           || "",
     ata:           r.ata           || "",
     source:        r.source        || "search",
+    templateId:    r.template_id   || null,
+    legs:          getScheduleLegs(r.id),
   });
 
   // TEU for a shipment's linked-shipments summary row — same size='40'→2 else 1 convention
@@ -738,22 +820,27 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   app.post("/api/shipments/:id/schedules", shipmentWrite, (req, res) => {
     if (!db.prepare("SELECT id FROM shipments WHERE id=?").get(req.params.id))
       return err(res, "Shipment not found", 404);
-    const { carrier = "", vesselName = "", voyageNumber = "", service = "",
-            pol = "", pod = "", etd = "", eta = "", transitDays = 0, isMock = false } = req.body;
+    const { carrier = "", vesselName = "", vesselImo = "", voyageNumber = "", service = "",
+            pol = "", pod = "", etd = "", eta = "", transitDays = 0, isMock = false,
+            templateId = null } = req.body;
     const id = `SCHED-${uid()}`;
     const savedAt = new Date().toISOString();
     const savedBy = req.user?.name || req.user?.email || "";
+    // templateId (optional) — set when this sailing was picked from a catalog match (a
+    // Schedule-Generator-authored template, or any other stored schedule) rather than freshly
+    // synthesized from mock/live data; pure provenance, doesn't change how this row behaves.
     db.prepare(`INSERT INTO shipment_schedules
-      (id, shipment_id, carrier, vessel_name, voyage_number, service, pol, pod, etd, eta, transit_days, is_mock, saved_at, saved_by)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-      .run(id, req.params.id, carrier, vesselName, voyageNumber, service, pol, pod, etd, eta,
-           Number(transitDays), isMock ? 1 : 0, savedAt, savedBy);
+      (id, shipment_id, carrier, vessel_name, vessel_imo, voyage_number, service, pol, pod, etd, eta, transit_days, is_mock, saved_at, saved_by, template_id)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(id, req.params.id, carrier, vesselName, vesselImo, voyageNumber, service, pol, pod, etd, eta,
+           Number(transitDays), isMock ? 1 : 0, savedAt, savedBy, templateId);
     logEntityEvent('schedule', id, 'SAVED', null, null, null,
       JSON.stringify({ shipmentId: req.params.id, carrier, vesselName, voyageNumber, service, pol, pod, etd, eta, actor: savedBy }));
     ensureBookingCreated(req.params.id);
-    ok(res, mapSchedule({ id, shipment_id: req.params.id, carrier, vessel_name: vesselName,
+    ok(res, mapSchedule({ id, shipment_id: req.params.id, carrier, vessel_name: vesselName, vessel_imo: vesselImo,
       voyage_number: voyageNumber, service, pol, pod, etd, eta,
-      transit_days: Number(transitDays), is_mock: isMock ? 1 : 0, saved_at: savedAt, saved_by: savedBy }), 201);
+      transit_days: Number(transitDays), is_mock: isMock ? 1 : 0, saved_at: savedAt, saved_by: savedBy,
+      template_id: templateId }), 201);
   });
 
   // Lightweight correction for an already-saved sailing (e.g. a carrier-driven ETD/ETA shift) —
@@ -814,47 +901,17 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     ok(res, { deleted: req.params.scheduleId });
   });
 
-  // ─── Schedule catalog (shared schedules — Test Tools > Schedule Generator) ────────────
-  // A schedule created here is NOT owned by exactly one shipment the way a searched-and-saved
-  // one is — shipment_id becomes whichever shipment was linked first (satisfies the existing
-  // NOT NULL FK with no schema loosening needed), and every additional shipment is a row in
-  // schedule_shipment_links instead of a duplicate shipment_schedules row. This is what lets
-  // many shipments share one real sailing and answer "how many are on schedule SCHED-XYZ".
-
-  // Mirrors src/utils/applySailingToLegs.js's "no SEA leg yet" case (the routing-table bug
-  // fixed earlier this session) — nothing auto-seeds a shipment's first leg, so a shipment
-  // linked to a generated schedule before it has any SEA leg must get one created here,
-  // not silently skipped.
-  const pushScheduleToLeg = (shipmentId, sched) => {
-    const legs = db.prepare("SELECT * FROM shipment_legs WHERE shipment_id=? ORDER BY leg_order ASC").all(shipmentId);
-    const seaLegs = legs.filter(l => l.leg_type === 'SEA');
-    if (seaLegs.length === 0) {
-      const shipment = db.prepare("SELECT contract_type, contract_ref FROM shipments WHERE id=?").get(shipmentId);
-      const id = `LEG-${uid()}`;
-      const legOrder = (db.prepare("SELECT MAX(leg_order) AS m FROM shipment_legs WHERE shipment_id=?").get(shipmentId).m ?? -1) + 1;
-      db.prepare(`INSERT INTO shipment_legs
-        (id, shipment_id, leg_order, mot, leg_type, movement_type, pol, pod, pol_loc_type, pod_loc_type,
-         etd, eta, carrier_code, vessel, vessel_imo, voyage, movement_by, contract_type, contract_ref, created_at)
-        VALUES (?,?,?,'SEA','SEA','SEA',?,?,'Terminal','Terminal',?,?,?,?,?,?,'',?,?,?)`)
-        .run(id, shipmentId, legOrder, sched.pol, sched.pod, sched.etd || null, sched.eta || null,
-             sched.carrier, sched.vessel_name, sched.vessel_imo, sched.voyage_number,
-             shipment?.contract_type || "SPOT", shipment?.contract_ref || "", new Date().toISOString());
-      syncShipmentFromLegs(shipmentId);
-      return;
-    }
-    const first = seaLegs[0], last = seaLegs[seaLegs.length - 1];
-    db.prepare("UPDATE shipment_legs SET vessel=?, vessel_imo=?, voyage=?, carrier_code=? WHERE id=?")
-      .run(sched.vessel_name, sched.vessel_imo, sched.voyage_number, sched.carrier, first.id);
-    db.prepare("UPDATE shipment_legs SET eta=? WHERE id=?").run(sched.eta, last.id);
-    syncShipmentFromLegs(shipmentId);
-  };
+  // ─── Schedule catalog (Test Tools > Schedule Generator) ────────────────────────────────
+  // A schedule created here is a pure, ownerless "template" (shipment_id NULL) — it exists to be
+  // FOUND by the everyday sailing-search flow (GET /api/schedules/search) and copied into a real
+  // shipment's own shipment_schedules row (POST /api/shipments/:id/schedules, which then stamps
+  // template_id back to this row for provenance). Nothing here writes to a shipment directly —
+  // there's no shipment to sync a SEA leg onto until a real shipment actually picks it via search.
 
   app.post("/api/schedules", shipmentWrite, (req, res) => {
     const { carrier = "", vesselImo = "", vesselName = "", voyageNumber = "", service = "",
             pol = "", pod = "", etd = "", atd = "", eta = "", ata = "",
-            initialShipmentIds = [] } = req.body;
-    if (!Array.isArray(initialShipmentIds) || initialShipmentIds.length === 0)
-      return err(res, "At least one shipment must be linked", 400);
+            legs = null } = req.body;
     if (carrier && !db.prepare("SELECT 1 FROM carriers WHERE code=?").get(carrier))
       return err(res, `Unknown carrier code: ${carrier}`, 400);
     if (vesselImo && !db.prepare("SELECT 1 FROM vessels WHERE imo=?").get(vesselImo))
@@ -863,36 +920,63 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       return err(res, `Unknown POL: ${pol}`, 400);
     if (pod && !db.prepare("SELECT 1 FROM port_locations WHERE unlocode=?").get(pod))
       return err(res, `Unknown POD: ${pod}`, 400);
-    for (const sid of initialShipmentIds) {
-      if (!db.prepare("SELECT id FROM shipments WHERE id=?").get(sid))
-        return err(res, `Shipment not found: ${sid}`, 404);
-    }
 
-    const [ownerId, ...extraIds] = initialShipmentIds;
+    // A real TSP schedule (2+ legs) derives its own summary fields from the leg chain — first
+    // leg's pol/vessel/voyage/etd, last leg's pod/eta — rather than trusting separately-typed
+    // top-level fields that could disagree with what was actually built in the legs modal.
+    const isTSP = Array.isArray(legs) && legs.length >= 2;
+    const first = isTSP ? legs[0] : null;
+    const last  = isTSP ? legs[legs.length - 1] : null;
+    // Leg rows built in the Generator's legs modal don't collect a per-leg vessel IMO (the main
+    // form's own VesselField pick already provides one) — fall back to the top-level fields
+    // whenever a leg's own value is blank, rather than dropping it.
+    const finalVesselName   = isTSP ? (first.vesselName   || vesselName)   : vesselName;
+    const finalVesselImo    = isTSP ? (first.vesselImo     || vesselImo)    : vesselImo;
+    const finalVoyageNumber = isTSP ? (first.voyageNumber || voyageNumber) : voyageNumber;
+    const finalService      = isTSP ? (first.service       || service)     : service;
+    const finalCarrier      = isTSP ? (first.carrier       || carrier)     : carrier;
+    const finalPol          = isTSP ? (first.pol           || pol)         : pol;
+    const finalPod          = isTSP ? (last.pod             || pod)         : pod;
+    const finalEtd          = isTSP ? (first.etd           || etd)         : etd;
+    const finalEta          = isTSP ? (last.eta             || eta)         : eta;
+    // Whole-journey ETD->ETA span, not a sum of per-leg transit times — this naturally folds
+    // in any hub dwell time between legs (e.g. leg 1 arrives at the transshipment port, leg 2
+    // doesn't depart for another 3 days) instead of undercounting it. Previously hardcoded to
+    // 0 here unconditionally — a live bug report caught it on a real TSP catalog match showing
+    // "0d" transit for an 8-day door-to-door sailing.
+    const finalEtdDate = finalEtd ? new Date(finalEtd) : null;
+    const finalEtaDate = finalEta ? new Date(finalEta) : null;
+    const finalTransitDays = (finalEtdDate && finalEtaDate && !isNaN(finalEtdDate) && !isNaN(finalEtaDate))
+      ? Math.max(0, Math.round((finalEtaDate - finalEtdDate) / 86400000))
+      : 0;
+
     const id = `SCHED-${uid()}`;
     const savedAt = new Date().toISOString();
     const savedBy = req.user?.name || req.user?.email || "";
     db.prepare(`INSERT INTO shipment_schedules
       (id, shipment_id, carrier, vessel_name, voyage_number, service, pol, pod, etd, eta,
-       transit_days, is_mock, saved_at, saved_by, vessel_imo, atd, ata, source)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'generated')`)
-      .run(id, ownerId, carrier, vesselName, voyageNumber, service, pol, pod, etd, eta,
-           0, 0, savedAt, savedBy, vesselImo, atd, ata);
-    logEntityEvent('schedule', id, 'SAVED', null, null, null,
-      JSON.stringify({ shipmentId: ownerId, carrier, vesselName, voyageNumber, service, pol, pod, etd, eta,
-        actor: savedBy, source: 'generated' }));
+       transit_days, is_mock, saved_at, saved_by, vessel_imo, atd, ata, source, template_id)
+      VALUES (?,NULL,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'generated',NULL)`)
+      .run(id, finalCarrier, finalVesselName, finalVoyageNumber, finalService, finalPol, finalPod,
+           finalEtd, finalEta, finalTransitDays, 0, savedAt, savedBy, finalVesselImo, atd, ata);
 
-    const row = db.prepare("SELECT * FROM shipment_schedules WHERE id=?").get(id);
-    pushScheduleToLeg(ownerId, row);
-    ensureBookingCreated(ownerId);
-    for (const sid of extraIds) {
-      db.prepare("INSERT INTO schedule_shipment_links (schedule_id, shipment_id, linked_at, linked_by) VALUES (?,?,?,?)")
-        .run(id, sid, savedAt, savedBy);
-      pushScheduleToLeg(sid, row);
-      ensureBookingCreated(sid);
+    if (isTSP) {
+      legs.forEach((leg, i) => {
+        db.prepare(`INSERT INTO schedule_legs
+          (id, schedule_id, leg_order, pol, pod, etd, eta, vessel_name, vessel_imo, voyage_number, service, carrier)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+          .run(`SCHEDLEG-${uid()}`, id, i, leg.pol || "", leg.pod || "", leg.etd || "", leg.eta || "",
+               leg.vesselName || "", leg.vesselImo || "", leg.voyageNumber || "", leg.service || "", leg.carrier || "");
+      });
     }
 
-    ok(res, { ...mapSchedule(row), linkedShipmentCount: initialShipmentIds.length }, 201);
+    logEntityEvent('schedule', id, 'SAVED', null, null, null,
+      JSON.stringify({ carrier: finalCarrier, vesselName: finalVesselName, voyageNumber: finalVoyageNumber,
+        service: finalService, pol: finalPol, pod: finalPod, etd: finalEtd, eta: finalEta,
+        actor: savedBy, source: 'generated', legCount: isTSP ? legs.length : 1 }));
+
+    const row = db.prepare("SELECT * FROM shipment_schedules WHERE id=?").get(id);
+    ok(res, mapSchedule(row), 201);
   });
 
   app.get("/api/schedules", auth(), (req, res) => {
@@ -902,54 +986,39 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       : db.prepare("SELECT * FROM shipment_schedules ORDER BY saved_at DESC LIMIT 100").all();
     const withCounts = rows.map(r => ({
       ...mapSchedule(r),
-      linkedShipmentCount: 1 + db.prepare("SELECT COUNT(*) AS n FROM schedule_shipment_links WHERE schedule_id=?").get(r.id).n,
+      usedByCount: db.prepare("SELECT COUNT(*) AS n FROM shipment_schedules WHERE template_id=?").get(r.id).n,
     }));
     ok(res, withCounts);
   });
 
-  app.get("/api/schedules/:id/linked-shipments", auth(), (req, res) => {
+  // Read-only usage view — which real shipments ended up with their own shipment_schedules row
+  // copied from this template (via POST /api/shipments/:id/schedules' templateId passthrough).
+  // Replaces the old linked-shipments/link/unlink trio now that assignment happens exclusively
+  // through search-and-copy, not manual linking.
+  app.get("/api/schedules/:id/usage", auth(), (req, res) => {
     const sched = db.prepare("SELECT * FROM shipment_schedules WHERE id=?").get(req.params.id);
     if (!sched) return err(res, "Not found", 404);
-    const owner = db.prepare("SELECT * FROM shipments WHERE id=?").get(sched.shipment_id);
-    const linkedRows = db.prepare(`
-      SELECT s.* FROM schedule_shipment_links l
-      JOIN shipments s ON s.id = l.shipment_id
-      WHERE l.schedule_id=? ORDER BY l.linked_at ASC`).all(req.params.id);
-    ok(res, {
-      owner: owner ? mapLinkedShipment(owner) : null,
-      linked: linkedRows.map(mapLinkedShipment),
-    });
+    const usedByRows = db.prepare(`
+      SELECT s.* FROM shipment_schedules t
+      JOIN shipments s ON s.id = t.shipment_id
+      WHERE t.template_id=? ORDER BY t.saved_at ASC`).all(req.params.id);
+    ok(res, { usedBy: usedByRows.map(mapLinkedShipment) });
   });
 
-  app.post("/api/schedules/:id/link", shipmentWrite, (req, res) => {
+  // Deletes a catalog template. Templates have no owning shipment, so the existing per-shipment
+  // DELETE /api/shipments/:id/schedules/:scheduleId route (scoped WHERE shipment_id=?) can never
+  // reach one — this is the only way to remove a generated schedule. schedule_legs rows cascade;
+  // any shipment-owned row that copied this template (template_id) keeps its own data, only its
+  // template_id reference is cleared (ON DELETE SET NULL) — deleting a template never touches a
+  // shipment's own already-applied sailing.
+  app.delete("/api/schedules/:id", shipmentWrite, (req, res) => {
     const sched = db.prepare("SELECT * FROM shipment_schedules WHERE id=?").get(req.params.id);
     if (!sched) return err(res, "Not found", 404);
-    const { shipmentId } = req.body;
-    if (!shipmentId) return err(res, "shipmentId is required", 400);
-    if (!db.prepare("SELECT id FROM shipments WHERE id=?").get(shipmentId))
-      return err(res, "Shipment not found", 404);
-    if (sched.shipment_id === shipmentId) return err(res, "Already the owner of this schedule", 409);
-    if (db.prepare("SELECT 1 FROM schedule_shipment_links WHERE schedule_id=? AND shipment_id=?").get(req.params.id, shipmentId))
-      return err(res, "Already linked", 409);
-    const linkedAt = new Date().toISOString();
-    db.prepare("INSERT INTO schedule_shipment_links (schedule_id, shipment_id, linked_at, linked_by) VALUES (?,?,?,?)")
-      .run(req.params.id, shipmentId, linkedAt, req.user?.name || req.user?.email || "");
-    pushScheduleToLeg(shipmentId, sched);
-    ensureBookingCreated(shipmentId);
-    ok(res, { linked: shipmentId }, 201);
-  });
-
-  app.delete("/api/schedules/:id/link/:shipmentId", shipmentWrite, (req, res) => {
-    const sched = db.prepare("SELECT * FROM shipment_schedules WHERE id=?").get(req.params.id);
-    if (!sched) return err(res, "Not found", 404);
-    if (sched.shipment_id === req.params.shipmentId)
-      return err(res, "Can't unlink the owning shipment — delete the schedule instead", 400);
-    const existing = db.prepare("SELECT 1 FROM schedule_shipment_links WHERE schedule_id=? AND shipment_id=?")
-      .get(req.params.id, req.params.shipmentId);
-    if (!existing) return err(res, "Not linked", 404);
-    db.prepare("DELETE FROM schedule_shipment_links WHERE schedule_id=? AND shipment_id=?")
-      .run(req.params.id, req.params.shipmentId);
-    ok(res, { unlinked: req.params.shipmentId });
+    db.prepare("DELETE FROM shipment_schedules WHERE id=?").run(req.params.id);
+    logEntityEvent('schedule', req.params.id, 'REMOVED', null, null, null,
+      JSON.stringify({ carrier: sched.carrier, vesselName: sched.vessel_name, pol: sched.pol, pod: sched.pod,
+        actor: req.user?.name || req.user?.email || "", source: 'generated' }));
+    ok(res, { deleted: req.params.id });
   });
 
   app.get("/api/shipments/:id/schedule-events", (req, res) => {

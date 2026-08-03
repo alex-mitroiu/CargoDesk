@@ -74,6 +74,12 @@ export const api = {
     history: (shipmentId)          => req("GET",   `/shipments/${shipmentId}/carrier-booking-history`),
     linkBlDocument: (shipmentId, documentId) => req("PATCH", `/shipments/${shipmentId}/carrier-booking/link-bl-document`, { documentId }),
   },
+  ais: {
+    status:           ()                => req("GET",  "/ais/status"),
+    openLegs:          ()                => req("GET",  "/test-tools/ais/open-legs"),
+    simulateStatic:    (data)            => req("POST", "/test-tools/ais/simulate-static", data),
+    simulatePosition:  (data)            => req("POST", "/test-tools/ais/simulate-position", data),
+  },
   customsFilings: {
     list:             (shipmentId)              => req("GET",   `/shipments/${shipmentId}/customs-filings`),
     create:           (shipmentId, data)        => req("POST",  `/shipments/${shipmentId}/customs-filings`, data),
@@ -174,6 +180,7 @@ export const api = {
     update:         (id, data) => req("PUT",    `/customers/${id}`, data),
     remove:         (id)       => req("DELETE", `/customers/${id}`),
     sanctionsCheck: ()         => req("GET",    "/customers/sanctions-check"),
+    creditStatus:   (id)       => req("GET",    `/customers/${id}/credit-status`),
     identifiers: {
       list:   (cid)            => req("GET",    `/customers/${cid}/identifiers`),
       create: (cid, data)      => req("POST",   `/customers/${cid}/identifiers`, data),
@@ -190,6 +197,16 @@ export const api = {
       upload:   (cid, data)     => req("POST",   `/customers/${cid}/documents`, data),
       remove:   (cid, did)      => req("DELETE", `/customers/${cid}/documents/${did}`),
       downloadUrl: (cid, did)   => `/api/customers/${cid}/documents/${did}/download`,
+    },
+    contacts: {
+      list:   (cid)             => req("GET",    `/customers/${cid}/contacts`),
+      create: (cid, data)       => req("POST",   `/customers/${cid}/contacts`, data),
+      update: (cid, ctid, data) => req("PUT",    `/customers/${cid}/contacts/${ctid}`, data),
+      remove: (cid, ctid)       => req("DELETE", `/customers/${cid}/contacts/${ctid}`),
+    },
+    roles: {
+      list: (cid)         => req("GET", `/customers/${cid}/roles`),
+      set:  (cid, roles)  => req("PUT", `/customers/${cid}/roles`, { roles }),
     },
   },
   tickets: {
@@ -318,7 +335,7 @@ export const api = {
     remove: (id)         => req("DELETE", `/milestone-templates/${id}`),
   },
   margin: {
-    summary: () => req("GET", "/margin/summary"),
+    summary: (groupByParent = false) => req("GET", `/margin/summary${groupByParent ? "?groupByParent=true" : ""}`),
   },
   systemMessages: {
     list:   ()     => req("GET",    "/system-messages"),
@@ -357,6 +374,7 @@ export const api = {
     upload:   (shipmentId, data) => req("POST",   `/shipments/${shipmentId}/documents`, data),
     generate: (shipmentId, data) => req("POST",   `/shipments/${shipmentId}/documents/generate`, data),
     sendEmail: (shipmentId, docId, data) => req("POST", `/shipments/${shipmentId}/documents/${docId}/send-email`, data),
+    reverse:  (shipmentId, docId, data = {}) => req("POST", `/shipments/${shipmentId}/documents/${docId}/reverse`, data),
     patch:    (docId, data)      => req("PATCH",  `/documents/${docId}`, data),
     remove:   (docId)            => req("DELETE", `/documents/${docId}`),
     download: async (docId, filename) => {
@@ -389,11 +407,10 @@ export const api = {
     events:  (shipmentId)     => req("GET",    `/shipments/${shipmentId}/schedule-events`),
   },
   scheduleCatalog: {
-    list:          (p = {})          => req("GET",    `/schedules?${new URLSearchParams(p)}`),
-    create:        (d)                => req("POST",   "/schedules", d),
-    linkedShipments: (scheduleId)     => req("GET",    `/schedules/${scheduleId}/linked-shipments`),
-    link:          (scheduleId, d)    => req("POST",   `/schedules/${scheduleId}/link`, d),
-    unlink:        (scheduleId, shipmentId) => req("DELETE", `/schedules/${scheduleId}/link/${shipmentId}`),
+    list:    (p = {})     => req("GET",    `/schedules?${new URLSearchParams(p)}`),
+    create:  (d)           => req("POST",   "/schedules", d),
+    usage:   (scheduleId) => req("GET",    `/schedules/${scheduleId}/usage`),
+    remove:  (scheduleId) => req("DELETE", `/schedules/${scheduleId}`),
   },
   vessels: {
     search: (q = "")          => req("GET",    `/vessels/search?q=${encodeURIComponent(q)}`),

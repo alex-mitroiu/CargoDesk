@@ -89,7 +89,7 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
   const commitSailing = async (sailing) => {
     try {
       await Promise.all(schedules.map(s => api.schedules.remove(shipment.id, s.id)));
-      const saved = await api.schedules.save(shipment.id, sailing);
+      const saved = await api.schedules.save(shipment.id, { ...sailing, templateId: sailing.scheduleId ?? null });
       setSchedules([saved]);
       const appliedToLegs = await applySailingToLegs(sailing);
       if (appliedToLegs) {

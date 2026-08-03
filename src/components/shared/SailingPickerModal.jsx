@@ -77,11 +77,19 @@ const SailingPickerModal = ({ pol, pod, carrierCode, routingTerm, activeSailing,
 
   useEffect(() => { search(weeks); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const mockBadge = () => (
-    <span style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 700, letterSpacing: ".08em",
-      background: T.warning + "22", color: T.warning, border: `1px solid ${T.warning}44`,
-      borderRadius: 4, padding: "1px 6px", textTransform: "uppercase" }}>Demo</span>
-  );
+  const SOURCE_BADGE = {
+    catalog: { label: "Catalog", color: T.success },
+    live:    { label: "Live",    color: T.info },
+    mock:    { label: "Demo",    color: T.warning },
+  };
+  const sourceBadge = source => {
+    const b = SOURCE_BADGE[source] || SOURCE_BADGE.mock;
+    return (
+      <span style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 700, letterSpacing: ".08em",
+        background: b.color + "22", color: b.color, border: `1px solid ${b.color}44`,
+        borderRadius: 4, padding: "1px 6px", textTransform: "uppercase" }}>{b.label}</span>
+    );
+  };
 
   return (
     <Modal title={`Sailing Search — ${pol} → ${pod}`} onClose={onClose} width={760}>
@@ -137,7 +145,8 @@ const SailingPickerModal = ({ pol, pod, carrierCode, routingTerm, activeSailing,
               <div style={{ fontFamily: T.body, fontSize: 12, color: T.warning,
                 padding: "8px 12px", background: T.warning + "12",
                 border: `1px solid ${T.warning}33`, borderRadius: 6 }}>
-                No Maersk API key configured — showing demo schedules. Configure a key in App Settings → External APIs.
+                No stored or live schedules matched this route/window — showing demo schedules.
+                Generate real schedules in Test Tools, or disable demo schedules in App Settings.
               </div>
             )}
             {(sailings.sailings || []).length === 0 ? (
@@ -177,7 +186,7 @@ const SailingPickerModal = ({ pol, pod, carrierCode, routingTerm, activeSailing,
                           <div style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.text,
                             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                             {s.vesselName}
-                            {s.isMock && <span style={{ marginLeft: 6 }}>{mockBadge()}</span>}
+                            <span style={{ marginLeft: 6 }}>{sourceBadge(s.source || (s.isMock ? "mock" : "live"))}</span>
                           </div>
                           <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
                             {s.service} · Voy {s.voyageNumber}

@@ -16,6 +16,15 @@ export const _esc = s => String(s).replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "
 // never an error.
 export const partyByRole = (parties, role) => (parties || []).find(p => p.role === role) || null;
 
+// A cost line's own VAT amount in ITS OWN currency (not vatAmountUsd, the USD-converted figure
+// mapCostLine also computes server-side — showing that here would mislabel a non-USD line's VAT
+// with the wrong currency symbol). Shared by buildFreightInvoiceHtml and
+// buildCreditDebitNoteHtml — both previously omitted VAT from the actual generated document
+// entirely, even on a line with a real, non-zero vatRate: ShipmentAccountingInvoicesPage.jsx's
+// own summary bar always computed and displayed VAT correctly, but that total was never
+// carried into the signed PDF an operator actually sends a customer.
+const lineVatAmount = cl => (parseFloat(cl.amount) || 0) * ((cl.vatRate || 0) / 100);
+
 export const INV_CSS = `
   @page{margin:18mm}
   @media print{.no-print{display:none!important}}
@@ -91,26 +100,45 @@ export const buildFreightInvoiceHtml = ({ shipment: sh, invNumber, invDate, note
   const isMultiCurrency = distinctCurrencies.length > 1;
 
   const rows = scopedLines.length === 0
-    ? `<tr><td colspan="4" style="text-align:center;color:#9ca3af;padding:20px">No cost lines recorded for this ${container ? "container" : "shipment"}</td></tr>`
+    ? `<tr><td colspan="5" style="text-align:center;color:#9ca3af;padding:20px">No cost lines recorded for this ${container ? "container" : "shipment"}</td></tr>`
     : scopedLines.map(cl => `<tr>
         <td><span class="code">${cl.chargeCode || "—"}</span></td>
         <td>${cl.type || "—"}${cl.notes ? `<br><span style="color:#6b7280;font-size:11px">${cl.notes}</span>` : ""}</td>
         <td>${cl.currency}</td>
         <td class="num">${fmtCurr(cl.amount, cl.currency)}</td>
+        <td class="num">${cl.vatRate ? `${fmtCurr(lineVatAmount(cl), cl.currency)}<br><span style="color:#9ca3af;font-size:10px">${cl.vatRate}%</span>` : "—"}</td>
       </tr>`).join("");
 
   let totalRows;
   if (isMultiCurrency) {
     const rate = targetCurrency === "USD" ? 1 : (fxRates?.[targetCurrency] || 1);
-    const grandTotal = scopedLines.reduce((s, cl) => s + (cl.amountUsd || 0), 0) * rate;
-    totalRows = `<div class="total-row grand"><span class="total-label">Grand Total (${targetCurrency})</span><span class="total-amt">${fmtCurr(grandTotal, targetCurrency)}</span></div>
-      <div style="font-size:10px;color:#9ca3af;margin-top:4px;text-align:right">Converted from multiple currencies (${distinctCurrencies.join(", ")}) to ${targetCurrency}</div>`;
+    const subtotal  = scopedLines.reduce((s, cl) => s + (cl.amountUsd || 0), 0) * rate;
+    const vatTotal  = scopedLines.reduce((s, cl) => s + (cl.vatAmountUsd || 0), 0) * rate;
+    const grandTotal = subtotal + vatTotal;
+    totalRows = (vatTotal > 0
+      ? `<div class="total-row"><span class="total-label">Subtotal (${targetCurrency})</span><span class="total-amt">${fmtCurr(subtotal, targetCurrency)}</span></div>
+         <div class="total-row"><span class="total-label">VAT (${targetCurrency})</span><span class="total-amt">${fmtCurr(vatTotal, targetCurrency)}</span></div>
+         <div class="total-row grand"><span class="total-label">Grand Total (${targetCurrency}, incl. VAT)</span><span class="total-amt">${fmtCurr(grandTotal, targetCurrency)}</span></div>`
+      : `<div class="total-row grand"><span class="total-label">Grand Total (${targetCurrency})</span><span class="total-amt">${fmtCurr(grandTotal, targetCurrency)}</span></div>`)
+      + `<div style="font-size:10px;color:#9ca3af;margin-top:4px;text-align:right">Converted from multiple currencies (${distinctCurrencies.join(", ")}) to ${targetCurrency}</div>`;
   } else {
-    const totals = {};
-    for (const cl of scopedLines) totals[cl.currency] = (totals[cl.currency] || 0) + (parseFloat(cl.amount) || 0);
-    totalRows = Object.entries(totals).map(([c, a]) =>
-      `<div class="total-row"><span class="total-label">Total ${c}</span><span class="total-amt">${fmtCurr(a, c)}</span></div>`).join("") ||
-      `<div class="total-row"><span class="total-label">Total</span><span class="total-amt">—</span></div>`;
+    // Grouped per currency (single-currency branch can still see >1 group only if scopedLines
+    // is empty, in which case the fallback "—" row below applies) — a group with no VAT on any
+    // of its lines collapses to the original plain Total row, byte-identical to before this fix.
+    const grouped = {};
+    for (const cl of scopedLines) {
+      const c = cl.currency;
+      if (!grouped[c]) grouped[c] = { amount: 0, vat: 0 };
+      const amt = parseFloat(cl.amount) || 0;
+      grouped[c].amount += amt;
+      grouped[c].vat += lineVatAmount(cl);
+    }
+    totalRows = Object.entries(grouped).map(([c, { amount, vat }]) => vat > 0
+      ? `<div class="total-row"><span class="total-label">Subtotal ${c}</span><span class="total-amt">${fmtCurr(amount, c)}</span></div>
+         <div class="total-row"><span class="total-label">VAT ${c}</span><span class="total-amt">${fmtCurr(vat, c)}</span></div>
+         <div class="total-row grand"><span class="total-label">Total ${c} (incl. VAT)</span><span class="total-amt">${fmtCurr(amount + vat, c)}</span></div>`
+      : `<div class="total-row"><span class="total-label">Total ${c}</span><span class="total-amt">${fmtCurr(amount, c)}</span></div>`
+    ).join("") || `<div class="total-row"><span class="total-label">Total</span><span class="total-amt">—</span></div>`;
   }
 
   const detailItems = [
@@ -134,7 +162,7 @@ export const buildFreightInvoiceHtml = ({ shipment: sh, invNumber, invDate, note
     </div>
     <div class="shp-block"><div class="block-label">Shipment Details</div><div class="details-grid">${detailItems}</div></div>
     <div class="section-label">Charges</div>
-    <table><thead><tr><th>Code</th><th>Type / Description</th><th>Currency</th><th style="text-align:right">Amount</th></tr></thead>
+    <table><thead><tr><th>Code</th><th>Type / Description</th><th>Currency</th><th style="text-align:right">Amount</th><th style="text-align:right">VAT</th></tr></thead>
     <tbody>${rows}</tbody></table>
     <div class="totals">${totalRows}</div>
     ${notes ? `<div class="notes"><div class="notes-label">Notes</div><div class="notes-text">${_esc(notes)}</div></div>` : ""}`;
@@ -257,6 +285,58 @@ export async function resolveInvoiceCurrency(shipment) {
   }
 }
 
+// Organization Model Enhancement Epic 2 (Credit Control) — resolves whether generating a NEW
+// invoice for this shipment should be hard-blocked (any of Shipper/Consignee/Principal, or the
+// linked contract's Named Account, is on credit_hold) or should carry a soft over-limit warning.
+// `newAmountUsd` is the dollar total of THIS generation action (the caller already knows it —
+// scoped by splitPerContainer, same as the currency check right after this one) — overLimit is
+// deliberately computed as outstandingAr + newAmountUsd > creditLimit, not just outstandingAr
+// alone: checking only prior confirmed invoices would never catch the very FIRST invoice that
+// actually pushes a customer over their limit, only ones generated after they're already over.
+// Mirrors resolveInvoiceCurrency's shape: resolve up front, let the caller decide how to present
+// it, rather than baking UI decisions into this helper.
+export async function resolveCreditGate(shipment, newAmountUsd = 0) {
+  const candidates = [];
+  if (shipment.shipperId)   candidates.push({ id: shipment.shipperId,   role: "Shipper" });
+  if (shipment.consigneeId) candidates.push({ id: shipment.consigneeId, role: "Consignee" });
+  if (shipment.principalId) candidates.push({ id: shipment.principalId, role: "Principal" });
+  if (shipment.contractId) {
+    try {
+      const contract = await api.contracts.get(shipment.contractId);
+      if (contract.namedAccountId) candidates.push({ id: contract.namedAccountId, role: "Contract Named Account" });
+    } catch { /* no contract, or it has no named account — not a blocker either way */ }
+  }
+  // Dedup by customer id — a customer very often fills more than one role (e.g. Principal and
+  // the contract's own Named Account are commonly the same company).
+  const seen = new Set();
+  const unique = candidates.filter(c => (seen.has(c.id) ? false : (seen.add(c.id), true)));
+
+  const resolved = (await Promise.all(unique.map(async c => {
+    try { return { ...c, status: await api.customers.creditStatus(c.id) }; }
+    catch { return null; }
+  }))).filter(Boolean);
+
+  const holds = resolved
+    .filter(r => r.status.creditHold)
+    .map(r => ({ role: r.role, companyName: r.status.companyName, reason: r.status.creditHoldReason }));
+
+  // Same principal-then-consignee precedence generateInvoices() itself already uses for
+  // responsibleParty — the AR warning is scoped to whoever is actually being billed.
+  const respId = shipment.principalId || shipment.consigneeId || null;
+  const respStatus = respId ? resolved.find(r => r.id === respId)?.status : null;
+  const projectedAr = respStatus ? Math.round((respStatus.outstandingAr + newAmountUsd) * 100) / 100 : 0;
+  const overLimit = respStatus?.creditLimit != null && projectedAr > respStatus.creditLimit;
+
+  return {
+    blocked: holds.length > 0,
+    holds,
+    overLimit,
+    responsibleParty: respStatus
+      ? { companyName: respStatus.companyName, creditLimit: respStatus.creditLimit, outstandingAr: respStatus.outstandingAr, projectedAr }
+      : null,
+  };
+}
+
 // Generates + persists freight invoice document(s) for a shipment: either one
 // consolidated invoice over all SELL cost lines, or one per container (only for
 // containers with at least one SELL line tagged to them via CostLineForm's
@@ -311,16 +391,16 @@ export async function generateInvoices(shipment, { containers = [], costLines, s
     if (existing) await api.documents.remove(existing.id).catch(() => {});
   };
 
-  const upload = (html, filename, containerId) =>
+  const upload = (html, filename, containerId, sourceCostLineIds) =>
     api.documents.generate(shipment.id, {
       html, filename, docType: "FR01",
-      containerId, responsibleParty,
+      containerId, responsibleParty, sourceCostLineIds,
     });
 
   if (!splitPerContainer) {
     await replaceDraftIfAny("");
     const html  = buildFreightInvoiceHtml({ shipment, invNumber: baseNumber, invDate, notes: "", costLines: sellLines, targetCurrency, fxRates });
-    const saved = await upload(html, `FR01-${baseNumber}-${invDate}.pdf`, "");
+    const saved = await upload(html, `FR01-${baseNumber}-${invDate}.pdf`, "", sellLines.map(l => l.id));
     return [saved];
   }
 
@@ -331,10 +411,68 @@ export async function generateInvoices(shipment, { containers = [], costLines, s
   const results = [];
   for (const container of targets) {
     await replaceDraftIfAny(container.id);
+    const scopedLines = sellLines.filter(cl => cl.containerId === container.id);
     const html  = buildFreightInvoiceHtml({ shipment, invNumber: baseNumber, invDate, notes: "", costLines: sellLines, container, targetCurrency, fxRates });
     const label = container.containerNumber || container.id;
-    const saved = await upload(html, `FR01-${baseNumber}-${label}-${invDate}.pdf`, container.id);
+    const saved = await upload(html, `FR01-${baseNumber}-${label}-${invDate}.pdf`, container.id, scopedLines.map(l => l.id));
     results.push(saved);
   }
   return results;
 }
+
+// Builds the produced Credit / Debit Note (CN01) document for an invoice reversal
+// (TKT-DUADU3) — modeled directly on buildFreightInvoiceHtml (same details-grid/charges-table/
+// totals shape via _invShell) with two differences: the title reads as a credit/debit note, and
+// the body calls out which original invoice it reverses. `costLines` here is already the exact
+// (negative-amount) reversal set the backend created — no further container filtering needed.
+export const buildCreditDebitNoteHtml = ({ shipment: sh, invNumber, invDate, notes, costLines, container, originalDoc }) => {
+  // Reversal lines carry negative amounts (they're crediting the original charge back) —
+  // lineVatAmount(cl) = amount * vatRate/100 stays correctly negative for them too, no special
+  // casing needed; the VAT being reversed shows as a negative figure, same sign as the charge.
+  const rows = costLines.length === 0
+    ? `<tr><td colspan="5" style="text-align:center;color:#9ca3af;padding:20px">No reversal lines</td></tr>`
+    : costLines.map(cl => `<tr>
+        <td><span class="code">${cl.chargeCode || "—"}</span></td>
+        <td>${cl.type || "—"}${cl.notes ? `<br><span style="color:#6b7280;font-size:11px">${cl.notes}</span>` : ""}</td>
+        <td>${cl.currency}</td>
+        <td class="num">${fmtCurr(cl.amount, cl.currency)}</td>
+        <td class="num">${cl.vatRate ? `${fmtCurr(lineVatAmount(cl), cl.currency)}<br><span style="color:#9ca3af;font-size:10px">${cl.vatRate}%</span>` : "—"}</td>
+      </tr>`).join("");
+
+  const grouped = {};
+  for (const cl of costLines) {
+    const c = cl.currency;
+    if (!grouped[c]) grouped[c] = { amount: 0, vat: 0 };
+    grouped[c].amount += parseFloat(cl.amount) || 0;
+    grouped[c].vat += lineVatAmount(cl);
+  }
+  const totalRows = Object.entries(grouped).map(([c, { amount, vat }]) => vat !== 0
+    ? `<div class="total-row"><span class="total-label">Subtotal ${c}</span><span class="total-amt">${fmtCurr(amount, c)}</span></div>
+       <div class="total-row"><span class="total-label">VAT ${c}</span><span class="total-amt">${fmtCurr(vat, c)}</span></div>
+       <div class="total-row grand"><span class="total-label">Total ${c} (incl. VAT)</span><span class="total-amt">${fmtCurr(amount + vat, c)}</span></div>`
+    : `<div class="total-row grand"><span class="total-label">Total ${c}</span><span class="total-amt">${fmtCurr(amount, c)}</span></div>`
+  ).join("") || `<div class="total-row grand"><span class="total-label">Total</span><span class="total-amt">—</span></div>`;
+
+  const detailItems = [
+    ["Shipment ID", sh.id],
+    ...(container ? [["Container", container.containerNumber || `(${container.size || ""}${container.type || ""})`]] : []),
+    ["Reverses Invoice", originalDoc?.filename || "—"],
+    ["Original Issue Date", originalDoc?.createdAt ? new Date(originalDoc.createdAt).toLocaleDateString("en-GB") : "—"],
+    ["B/L Number", sh.blNumber || "—"], ["Booking Ref", sh.bookingRef || "—"],
+  ].map(([k, v]) => `<div><div class="detail-key">${k}</div><div class="detail-val">${v}</div></div>`).join("");
+
+  const body = `
+    <div class="parties">
+      <div class="party"><div class="party-label">Shipper / Exporter</div><div class="party-name">${sh.shipperName || "—"}</div></div>
+      <div class="party"><div class="party-label">Consignee / Bill To</div><div class="party-name">${sh.consigneeName || "—"}</div></div>
+    </div>
+    <div class="shp-block"><div class="block-label">Shipment Details</div><div class="details-grid">${detailItems}</div></div>
+    <div class="section-label">Reversed Charges</div>
+    <table><thead><tr><th>Code</th><th>Type / Description</th><th>Currency</th><th style="text-align:right">Amount</th><th style="text-align:right">VAT</th></tr></thead>
+    <tbody>${rows}</tbody></table>
+    <div class="totals">${totalRows}</div>
+    ${notes ? `<div class="notes"><div class="notes-label">Reason</div><div class="notes-text">${_esc(notes)}</div></div>` : ""}`;
+
+  const displayNumber = container ? `${invNumber}-${container.containerNumber || container.id}` : invNumber;
+  return _invShell(`Credit / Debit Note — ${displayNumber}`, "CREDIT / DEBIT NOTE", displayNumber, invDate, body);
+};

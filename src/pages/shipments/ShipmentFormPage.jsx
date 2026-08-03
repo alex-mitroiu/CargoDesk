@@ -17,7 +17,7 @@ import Spinner from "../../components/primitives/Spinner";
 import Pagination from "../../components/primitives/Pagination";
 import { ContainerTypeField } from "../../components/shared/ContainerTypePickerModal";
 import SailingPickerModal from "../../components/shared/SailingPickerModal";
-import { IconClose, IconWarning, IconPackage, IconPencil, IconCheck, IconRefresh, IconLock, IconAnchor } from "../../components/primitives/Icon";
+import { IconClose, IconWarning, IconPackage, IconPencil, IconCheck, IconRefresh, IconLock, IconAnchor, IconShip } from "../../components/primitives/Icon";
 
 // ─── Draft Container Manager ──────────────────────────────────────────────────
 
@@ -490,13 +490,25 @@ const LOC_TYPE_OPTIONS      = ["Door", "Terminal", "Container Yard", "CFS"];
 // Pick-up/Delivery-only (SEA legs always show "—" here) — inland/short-haul movement modes.
 // "Air" removed: a loaded FCL container can't realistically move by air for a door leg.
 const MOVEMENT_BY_OPTIONS   = ["", "Barge", "Rail", "Truck", "Vessel"];
-const LEG_TYPE_COLOR        = { "Pick-up": T.accent, "SEA": T.info, "Delivery": T.textMuted };
+// A function, not a plain object literal — T's colors are mutated in place on theme toggle
+// (tokens.js's applyTheme), so a module-level object built from T.accent/T.info/T.textMuted
+// would freeze whatever the theme happened to be at first import (always dark, since T starts
+// as {...DARK_THEME} before App's own useEffect ever calls applyTheme) and never update again.
+// This was the source of "Delivery" rendering in the dark theme's blue-gray textMuted even in
+// light mode — a real, permanently-stuck-gray bug, not a deliberate muted-text choice.
+const legTypeColor = type => ({ "Pick-up": T.accent, "SEA": T.info, "Delivery": T.textMuted }[type]);
 const LEG_LOC_ABBR_C        = { "Door": "DR", "Terminal": "PT", "Container Yard": "CY", "CFS": "CFS" };
 const LEG_TYPE_DEFAULT_MT   = { "Pick-up": "Carrier's Haulage", "SEA": "SEA", "Delivery": "Carrier's Haulage" };
 
 // Widths sized to fit the longest actual option text plus the native <select> arrow
 // (e.g. movementType must fit "Merchant's Haulage", polLocType/podLocType must fit
 // "Container Yard") — too narrow and the browser clips the text against its own arrow.
+// Every LegRow reserves this much leading space before its first real column — a locked row's
+// own 🔒✎ icons, an editable row's blank placeholder for the same slot, and the header's own
+// blank placeholder below all share this one width, so every column lands at the same x
+// regardless of which of those three a given row happens to be.
+const LEG_LEAD_COL_W = 40;
+
 const LEG_COLS = [
   { key: "legType",      label: "Leg Type",      w: 96  },
   { key: "movementType", label: "Movement Type", w: 168 },
@@ -555,10 +567,13 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
     return (
       <div style={{ display: "flex", borderBottom: `1px solid ${T.border}` }}
         title={locked && canEdit ? "Locked — linked to an assigned schedule. Remove this leg to unlink and edit again." : undefined}>
-        {locked && canEdit && (
-          <div style={{ width: onUpdateSchedule && d.legType === "SEA" ? 40 : 18, minWidth: onUpdateSchedule && d.legType === "SEA" ? 40 : 18,
-            display: "flex", alignItems: "center", justifyContent: "center", gap: 4,
-            borderRight: `1px solid ${T.border}22`, color: T.textMuted, fontSize: 11 }}>
+        {/* Always LEG_LEAD_COL_W wide, lock icon or not — a variable-width leading column here
+            (0/18/40px depending on locked+onUpdateSchedule) was shifting every column after it
+            out of alignment with the header, which has no matching leading cell of its own. */}
+        <div style={{ width: LEG_LEAD_COL_W, minWidth: LEG_LEAD_COL_W,
+          display: "flex", alignItems: "center", justifyContent: "center", gap: 4,
+          borderRight: `1px solid ${T.border}22`, color: T.textMuted, fontSize: 11 }}>
+          {locked && canEdit && (<>
             <IconLock size={11} />
             {onUpdateSchedule && d.legType === "SEA" && (
               <button type="button" onClick={e => { e.stopPropagation(); onUpdateSchedule(d); }}
@@ -567,8 +582,8 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
                   fontSize: 12, lineHeight: 1, color: T.accent,
                   display: "inline-flex", alignItems: "center" }}><IconPencil size={11} /></button>
             )}
-          </div>
-        )}
+          </>)}
+        </div>
         {visibleCols.map((c, i) => {
           const isPort = c.key === "pol" || c.key === "pod";
           const nameKey = c.key === "pol" ? "polName" : c.key === "pod" ? "podName" : null;
@@ -596,7 +611,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
                 </div>
               ) : (
                 <span style={{ fontFamily: MONO_KEYS.has(c.key) ? T.mono : T.body, fontSize: 12,
-                  color: c.key === "legType" ? (LEG_TYPE_COLOR[d[c.key]] || T.textMuted) : T.text,
+                  color: c.key === "legType" ? (legTypeColor(d[c.key]) || T.textMuted) : T.text,
                   fontWeight: c.key === "legType" ? 700 : 400,
                   overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {value}
@@ -613,6 +628,11 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
     <div style={{ display: "flex", borderBottom: `1px solid ${T.border}` }}
       onBlur={e => { if (!e.currentTarget.contains(e.relatedTarget)) flush(); }}>
 
+      {/* Blank — same LEG_LEAD_COL_W the locked/read-only row's own lock-icon column reserves,
+          so an editable row's columns land at the exact same x-position as a locked row's (and
+          the header's) regardless of which of the two this leg happens to render as right now. */}
+      <div style={{ width: LEG_LEAD_COL_W, minWidth: LEG_LEAD_COL_W, borderRight: `1px solid ${T.border}22` }} />
+
       {/* Leg Type */}
       <div id={`leg-${d.id}-legType`} style={{ width: widths[0], minWidth: widths[0], padding: "0 0 0 10px",
         display: "flex", alignItems: "center", borderRight: `1px solid ${T.border}33` }}>
@@ -620,7 +640,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
           const lt = e.target.value;
           const newD = { ...d, legType: lt, movementType: LEG_TYPE_DEFAULT_MT[lt] || d.movementType };
           setD(newD); onSave(newD);
-        }} style={{ ...cellInput, cursor: "pointer", color: LEG_TYPE_COLOR[d.legType] || T.textMuted, fontWeight: 700 }}>
+        }} style={{ ...cellInput, cursor: "pointer", color: legTypeColor(d.legType) || T.textMuted, fontWeight: 700 }}>
           {LEG_TYPE_OPTIONS.map(m => <option key={m} value={m}>{m}</option>)}
         </select>
       </div>
@@ -658,11 +678,19 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
         </select>
       </div>
 
-      {/* Date (ETD) */}
+      {/* Date (ETD) — once AIS confirms the vessel has actually departed, this field is updated
+          in place to the real date rather than sitting alongside a separate ATD column (TKT-
+          ZFO2OM); the ship icon marks it as confirmed rather than still just an estimate. A
+          human can always type over it — editing clears the confirmed flag on the next save. */}
       <div id={`leg-${d.id}-etd`} style={{ width: widths[4], minWidth: widths[4], padding: "0 0 0 10px",
-        display: "flex", alignItems: "center", borderRight: `1px solid ${T.border}33` }}>
+        display: "flex", alignItems: "center", gap: 4, borderRight: `1px solid ${T.border}33` }}>
+        {d.etdSource === "ais" && (
+          <span title={`Confirmed departure — detected via AIS`} style={{ color: T.accent, flexShrink: 0, display: "inline-flex" }}>
+            <IconShip size={11} />
+          </span>
+        )}
         <input type="date" value={d.etd || ""} max={d.eta || undefined}
-          onChange={e => set("etd")(e.target.value || null)}
+          onChange={e => setD(p => ({ ...p, etd: e.target.value || null, etdSource: "" }))}
           onBlur={flush} style={cellInput} />
       </div>
 
@@ -687,12 +715,19 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
         </select>
       </div>
 
-      {/* Date (ETA) */}
+      {/* Date (ETA) — same confirmed-in-place behavior as ETD above */}
       <div id={`leg-${d.id}-eta`} style={{ width: widths[7], minWidth: widths[7], padding: "0 0 0 10px", borderRight: `1px solid ${T.border}33`,
         display: "flex", flexDirection: "column", justifyContent: "center", gap: 3 }}>
-        <input type="date" value={d.eta || ""} min={d.etd || undefined}
-          onChange={e => set("eta")(e.target.value || null)}
-          onBlur={flush} style={cellInput} />
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          {d.etaSource === "ais" && (
+            <span title={`Confirmed arrival — detected via AIS`} style={{ color: T.accent, flexShrink: 0, display: "inline-flex" }}>
+              <IconShip size={11} />
+            </span>
+          )}
+          <input type="date" value={d.eta || ""} min={d.etd || undefined}
+            onChange={e => setD(p => ({ ...p, eta: e.target.value || null, etaSource: "" }))}
+            onBlur={flush} style={cellInput} />
+        </div>
         {suggEta && (
           <button type="button" title={`Based on ${suggEta.lane} average transit (${suggEta.days}d)`}
             onClick={() => { const next = { ...d, eta: suggEta.date }; setD(next); onSave(next); setSuggEta(null); }}
@@ -706,8 +741,11 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
         )}
       </div>
 
-      {/* Carrier — only relevant for SEA legs */}
-      <div id={`leg-${d.id}-carrierCode`} style={{ width: widths[8], minWidth: widths[8], borderRight: `1px solid ${T.border}33`, overflow: "visible",
+      {/* Carrier — only relevant for SEA legs. overflow:hidden (not "visible" — CarrierCombobox's
+          own dropdown already escapes via position:fixed, so this doesn't need to allow it) is
+          what makes the selected chip's name actually truncate/ellipsis at the column's real
+          width instead of visibly overflowing into Movement By next to it. */}
+      <div id={`leg-${d.id}-carrierCode`} style={{ width: widths[8], minWidth: widths[8], borderRight: `1px solid ${T.border}33`, overflow: "hidden",
         display: "flex", alignItems: "center" }}>
         {d.legType === "Pick-up" || d.legType === "Delivery"
           ? <span style={{ display: "block", padding: "0 8px 0 10px", fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>—</span>
@@ -897,6 +935,7 @@ export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChan
       <div style={{ overflowX: "auto" }}>
         <div style={{ minWidth: totalCols }}>
           <div style={{ display: "flex", padding: "10px 0", borderBottom: `1px solid ${T.border}`, background: T.surface }}>
+            <div style={{ width: LEG_LEAD_COL_W, minWidth: LEG_LEAD_COL_W }} />
             {visibleCols.map((c, i) => (
               <div key={c.key} style={{ position: "relative", width: widths[i], minWidth: widths[i], paddingLeft: 10,
                 fontFamily: T.body, fontSize: 10.5, fontWeight: 600,
@@ -1995,7 +2034,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
           if (init.id) {
             try {
               await Promise.all(savedSchedules.map(s => api.schedules.remove(init.id, s.id)));
-              const saved = await api.schedules.save(init.id, sailing);
+              const saved = await api.schedules.save(init.id, { ...sailing, templateId: sailing.scheduleId ?? null });
               setSavedSchedules([saved]);
               applySailingToLegs(sailing);
             } catch (e) { toast.error(e.message); }

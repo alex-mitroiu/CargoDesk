@@ -22,6 +22,7 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack }) => {
   const [messages,   setMessages]   = useState([]);
   const [containers, setContainers] = useState([]);
   const [contract,   setContract]   = useState(null);
+  const [namedAccountParent, setNamedAccountParent] = useState(null); // Organization Model Enhancement Epic 4
   const [loading,    setLoading]    = useState(true);
   const [sending,    setSending]    = useState(false);
 
@@ -34,6 +35,19 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack }) => {
     api.contracts.get(shipment.contractId).then(c => !cancelled && setContract(c)).catch(() => !cancelled && setContract(null));
     return () => { cancelled = true; };
   }, [shipment.contractId]);
+
+  // Organization Model Enhancement Epic 4 — if the contract's Named Account customer has a
+  // parent (a branch/subsidiary booked under a regional entity of a larger group), surface that
+  // context right on the Client field, since this is a single-shipment display, not a
+  // cross-shipment report — there's nothing here to numerically "roll up", just useful context.
+  useEffect(() => {
+    if (!contract?.namedAccountId) { setNamedAccountParent(null); return; }
+    let cancelled = false;
+    api.customers.get(contract.namedAccountId)
+      .then(c => !cancelled && setNamedAccountParent(c.parentCustomerName || null))
+      .catch(() => !cancelled && setNamedAccountParent(null));
+    return () => { cancelled = true; };
+  }, [contract?.namedAccountId]);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -157,6 +171,11 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack }) => {
           <div style={{ fontFamily: T.body, fontSize: 14, color: T.text, fontWeight: 600 }}>
             {contract?.namedAccount || "No Customer"}
           </div>
+          {namedAccountParent && (
+            <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginTop: 2 }}>
+              Part of {namedAccountParent}
+            </div>
+          )}
         </div>
         <div>
           <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,

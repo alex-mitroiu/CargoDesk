@@ -1357,13 +1357,18 @@ const MarginView = ({ financeEnabled }) => {
   const [data,      setData]      = useState(null);
   const [loading,   setLoading]   = useState(true);
   const [exporting, setExporting] = useState(null); // "xlsx" | "template" | null
+  // Organization Model Enhancement Epic 4 — off by default (each customer record's own margin
+  // stays the primary view); toggling on re-fetches with the same grouping /api/margin/summary
+  // itself does server-side, so a multinational shipper's regional accounts sum into one row.
+  const [groupByParent, setGroupByParent] = useState(false);
 
   useEffect(() => {
-    api.margin.summary()
+    setLoading(true);
+    api.margin.summary(groupByParent)
       .then(setData)
       .catch(() => setData(null))
       .finally(() => setLoading(false));
-  }, []);
+  }, [groupByParent]);
 
   const handleExport = async (mode) => {
     setExporting(mode);
@@ -1554,6 +1559,52 @@ const MarginView = ({ financeEnabled }) => {
                 onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
                 onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
                 <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.accent }}>{c.carrierCode}</span>
+                <span style={{ fontFamily: T.mono, fontSize: 12, color: T.warning }}>{financeEnabled ? fmtUsd(c.totalBuyUsd) : "••••"}</span>
+                <span style={{ fontFamily: T.mono, fontSize: 12, color: T.success }}>{financeEnabled ? fmtUsd(c.totalSellUsd) : "••••"}</span>
+                <span style={{ fontFamily: T.mono, fontSize: 12, color: c.grossProfitUsd >= 0 ? T.success : T.danger }}>
+                  {financeEnabled ? `${c.grossProfitUsd >= 0 ? "+" : ""}${fmtUsd(c.grossProfitUsd)}` : "••••"}
+                </span>
+                <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: cc,
+                  background: `${cc}18`, borderRadius: 6, padding: "2px 8px", border: `1px solid ${cc}33` }}>
+                  {cpct != null ? `${cpct}%` : "—"}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Customer breakdown table (Organization Model Enhancement Epic 4) */}
+      {data.byCustomer?.length > 0 && (
+        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden", marginBottom: 16 }}>
+          <div style={{ padding: "13px 20px", borderBottom: `1px solid ${T.border}`,
+            display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <h3 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: 0 }}>By Customer</h3>
+            <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: "pointer",
+              fontFamily: T.body, fontSize: 12, color: T.textMuted, userSelect: "none" }}>
+              <input type="checkbox" checked={groupByParent} onChange={e => setGroupByParent(e.target.checked)}
+                style={{ accentColor: T.accent, width: 13, height: 13 }} />
+              Roll up by parent
+            </label>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr 80px",
+            padding: "8px 20px", borderBottom: `1px solid ${T.border}` }}>
+            {["Customer","Buy (USD)","Sell (USD)","GP (USD)","Margin"].map((h, i) => (
+              <div key={i} style={{ fontFamily: T.body, fontSize: 10, fontWeight: 600, color: T.textMuted,
+                textTransform: "uppercase", letterSpacing: ".07em" }}>{h}</div>
+            ))}
+          </div>
+          {data.byCustomer.map(c => {
+            const cpct = c.grossMarginPct; const cc = marginColor(cpct);
+            return (
+              <div key={c.customerId}
+                style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr 80px",
+                  padding: "11px 20px", borderBottom: `1px solid ${T.border}22`, alignItems: "center",
+                  transition: "background .1s" }}
+                onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
+                onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                <span style={{ fontFamily: T.body, fontSize: 13, fontWeight: 600, color: T.text,
+                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.customerName || "—"}</span>
                 <span style={{ fontFamily: T.mono, fontSize: 12, color: T.warning }}>{financeEnabled ? fmtUsd(c.totalBuyUsd) : "••••"}</span>
                 <span style={{ fontFamily: T.mono, fontSize: 12, color: T.success }}>{financeEnabled ? fmtUsd(c.totalSellUsd) : "••••"}</span>
                 <span style={{ fontFamily: T.mono, fontSize: 12, color: c.grossProfitUsd >= 0 ? T.success : T.danger }}>

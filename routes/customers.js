@@ -2,7 +2,8 @@
 
 module.exports = function customersRoutes(app, ctx) {
   const { db, ok, err, uid, auth,
-          mapCustomer, mapCustomerIdentifier, mapCustomerScreening, mapCustomerDoc,
+          mapCustomer, mapCustomerIdentifier, mapCustomerScreening, mapCustomerDoc, mapCustomerContact,
+          ALL_CUSTOMER_ROLES, screenShipmentById, rescreenActiveShipments,
           sanctionsMap, normSanctionName, loadSanctionsIndex, scheduleNextOfacSync,
           syncOfacSdn,
           getFxRates, fxCache, getSettings,
@@ -50,6 +51,26 @@ module.exports = function customersRoutes(app, ctx) {
     return entries;
   }
 
+  // Organization Model Enhancement Epic 3 — customer-level and shipment-level screening
+  // previously never cross-referenced: a customer flagged HIT here stayed invisible on any
+  // shipment referencing it until that shipment was independently edited (which re-derives by
+  // name-match anyway, just lazily). Now screenCustomer() immediately re-screens every shipment
+  // that references this customer via any of its 13 possible party slots — the 4 fixed FK
+  // columns plus shipment_parties — so a HIT propagates the moment it's discovered, not later.
+  function rescreenShipmentsForCustomer(customerId) {
+    const ids = new Set([
+      ...db.prepare("SELECT id FROM shipments WHERE shipper_id=? OR consignee_id=? OR principal_id=? OR notify_id=?")
+        .all(customerId, customerId, customerId, customerId).map(r => r.id),
+      ...db.prepare("SELECT DISTINCT shipment_id AS id FROM shipment_parties WHERE customer_id=?")
+        .all(customerId).map(r => r.id),
+    ]);
+    for (const shipmentId of ids) {
+      const prev = db.prepare("SELECT result, overridden_at FROM shipment_screenings WHERE shipment_id=?").get(shipmentId);
+      const isOverridden = prev?.result === 'CLEAR' && prev?.overridden_at;
+      if (!isOverridden) screenShipmentById(shipmentId);
+    }
+  }
+
   // Screen a customer against the loaded sanctions map and persist the result
   function screenCustomer(customerId) {
     const c = db.prepare("SELECT * FROM customers WHERE id=?").get(customerId);
@@ -65,18 +86,20 @@ module.exports = function customersRoutes(app, ctx) {
         screened_at=excluded.screened_at, result=excluded.result,
         hits=excluded.hits, overridden_at=NULL, override_reason=NULL`)
       .run(id, customerId, now, result, JSON.stringify(hits));
+    rescreenShipmentsForCustomer(customerId);
     const row = db.prepare("SELECT * FROM customer_screenings WHERE customer_id=?").get(customerId);
     return mapCustomerScreening(row);
   }
 
-  const CUST_JOIN = `SELECT c.*, cs.result AS screening_result
+  const CUST_JOIN = `SELECT c.*, cs.result AS screening_result, pc.company_name AS parent_customer_name
     FROM customers c
-    LEFT JOIN customer_screenings cs ON cs.customer_id = c.id`;
+    LEFT JOIN customer_screenings cs ON cs.customer_id = c.id
+    LEFT JOIN customers pc ON pc.id = c.parent_customer_id`;
 
   // ─── Customers ────────────────────────────────────────────────────────────
 
   app.get("/api/customers", (req, res) => {
-    const { search='', city='', country='', customerId='', limit='50', offset='0' } = req.query;
+    const { search='', city='', country='', customerId='', role='', limit='50', offset='0' } = req.query;
     const lim = Math.min(parseInt(limit)||50, 200), off = parseInt(offset)||0;
     const conditions = [], params = [];
     const s = search.trim();
@@ -87,6 +110,11 @@ module.exports = function customersRoutes(app, ctx) {
     if (co) { conditions.push("c.country_iso2 = ?"); params.push(co); }
     const cid = customerId.trim();
     if (cid) { conditions.push("c.id LIKE ?"); params.push(`%${cid}%`); }
+    // roleFilter (CustomerCombobox) — narrows to customers flagged eligible for this role via
+    // customer_roles; deliberately a soft filter (an unflagged customer is still reachable by
+    // clearing it client-side), never a hard block enforced server-side beyond the query itself.
+    const rl = role.trim();
+    if (rl) { conditions.push("c.id IN (SELECT customer_id FROM customer_roles WHERE role=?)"); params.push(rl); }
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
     const total = db.prepare(`SELECT COUNT(*) AS n FROM customers c ${where}`).get(...params).n;
     const rows  = db.prepare(`${CUST_JOIN} ${where} ORDER BY c.company_name LIMIT ? OFFSET ?`).all(...params, lim, off);
@@ -113,15 +141,80 @@ module.exports = function customersRoutes(app, ctx) {
     ok(res, mapCustomer(r));
   });
 
+  // ─── Credit Status (Organization Model Enhancement Epic 2) ────────────────
+  // outstandingAr sums every CONFIRMED (not voided/draft) FR01/FR02 invoice on a shipment
+  // where this customer is Principal or Consignee — the same "responsible party" resolution
+  // invoiceGenerator.js's own responsibleParty field already uses. Each invoice's real dollar
+  // total is resolved via source_cost_line_ids when present (the same field the invoice
+  // reversal feature, TKT-DUADU3, introduced for exactly this "what was this invoice actually
+  // for" question), falling back to a live container-scoped SELL sum for older invoices
+  // generated before that column existed — identical fallback to the reversal route's own.
+  // A soft number only: no aging buckets, no partial-payment tracking — just "invoiced and
+  // confirmed but not yet reversed," used purely as an over-limit warning at generate time.
+  app.get("/api/customers/:id/credit-status", auth(), (req, res) => {
+    const c = db.prepare("SELECT * FROM customers WHERE id=?").get(req.params.id);
+    if (!c) return err(res, "Not found", 404);
+
+    const shipmentIds = db.prepare(
+      "SELECT id FROM shipments WHERE principal_id=? OR consignee_id=?"
+    ).all(req.params.id, req.params.id).map(r => r.id);
+
+    let outstandingAr = 0;
+    if (shipmentIds.length) {
+      const placeholders = shipmentIds.map(() => '?').join(',');
+      const docs = db.prepare(
+        `SELECT * FROM shipment_documents WHERE shipment_id IN (${placeholders}) AND doc_type IN ('FR01','FR02') AND status='confirmed'`
+      ).all(...shipmentIds);
+      for (const doc of docs) {
+        const sourceIds = doc.source_cost_line_ids ? JSON.parse(doc.source_cost_line_ids) : null;
+        const lines = sourceIds && sourceIds.length
+          ? db.prepare(`SELECT amount, exchange_rate FROM shipment_cost_lines WHERE id IN (${sourceIds.map(() => '?').join(',')})`).all(...sourceIds)
+          : db.prepare("SELECT amount, exchange_rate FROM shipment_cost_lines WHERE shipment_id=? AND type='SELL' AND container_id=?").all(doc.shipment_id, doc.container_id || '');
+        outstandingAr += lines.reduce((s, l) => s + l.amount * l.exchange_rate, 0);
+      }
+    }
+    outstandingAr = Math.round(outstandingAr * 100) / 100;
+
+    const creditLimit = c.credit_limit ?? null;
+    ok(res, {
+      customerId: c.id, companyName: c.company_name,
+      creditLimit, creditTermsDays: c.credit_terms_days ?? null,
+      creditHold: !!c.credit_hold, creditHoldReason: c.credit_hold_reason || '',
+      outstandingAr, overLimit: creditLimit != null && outstandingAr > creditLimit,
+    });
+  });
+
+  // Organization Model Enhancement Epic 4 — walks the parent chain to make sure setting
+  // newParentId as customerId's parent could never loop back on itself (A -> B -> A), since a
+  // rollup read (resolveCustomerGroup below) that walked a cycle would never terminate.
+  function wouldCreateCycle(customerId, newParentId) {
+    let current = newParentId;
+    const seen = new Set();
+    while (current) {
+      if (current === customerId || seen.has(current)) return true;
+      seen.add(current);
+      current = db.prepare("SELECT parent_customer_id FROM customers WHERE id=?").get(current)?.parent_customer_id || null;
+    }
+    return false;
+  }
+
   app.post("/api/customers", auth(), (req, res) => {
     const { companyName, address1='', address2='', city='', state='', postalCode='',
-            countryIso2='', phone='', fax='', email='', website='', notes='', currency='USD' } = req.body;
+            countryIso2='', phone='', fax='', email='', website='', notes='', currency='USD',
+            creditLimit=null, creditTermsDays=null, creditHold=false, creditHoldReason='',
+            parentCustomerId=null } = req.body;
     if (!companyName?.trim()) return err(res, "companyName required");
+    if (parentCustomerId && !db.prepare("SELECT id FROM customers WHERE id=?").get(parentCustomerId))
+      return err(res, "Parent customer not found");
     const id = `CUS-${uid()}`;
     const createdAt = new Date().toISOString();
     const ccU = countryIso2.toUpperCase().trim();
-    db.prepare("INSERT INTO customers (id,company_name,address1,address2,city,state,postal_code,country_iso2,phone,fax,email,website,notes,created_at,currency) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-      .run(id, companyName.trim(), address1, address2, city, state, postalCode, ccU, phone, fax, email, website, notes, createdAt, (currency || 'USD').toUpperCase().trim());
+    const cl = creditLimit === null || creditLimit === '' ? null : Number(creditLimit);
+    const ctd = creditTermsDays === null || creditTermsDays === '' ? null : parseInt(creditTermsDays, 10);
+    db.prepare(`INSERT INTO customers (id,company_name,address1,address2,city,state,postal_code,country_iso2,phone,fax,email,website,notes,created_at,currency,credit_limit,credit_terms_days,credit_hold,credit_hold_reason,parent_customer_id)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(id, companyName.trim(), address1, address2, city, state, postalCode, ccU, phone, fax, email, website, notes, createdAt, (currency || 'USD').toUpperCase().trim(),
+           cl, ctd, creditHold ? 1 : 0, creditHold ? creditHoldReason.trim() : '', parentCustomerId || null);
     if (sanctionsMap.size > 0) screenCustomer(id);
     const row = db.prepare(`${CUST_JOIN} WHERE c.id=?`).get(id);
     ok(res, mapCustomer(row), 201);
@@ -129,12 +222,24 @@ module.exports = function customersRoutes(app, ctx) {
 
   app.put("/api/customers/:id", auth(), (req, res) => {
     const { companyName, address1='', address2='', city='', state='', postalCode='',
-            countryIso2='', phone='', fax='', email='', website='', notes='', currency='USD' } = req.body;
+            countryIso2='', phone='', fax='', email='', website='', notes='', currency='USD',
+            creditLimit=null, creditTermsDays=null, creditHold=false, creditHoldReason='',
+            parentCustomerId=null } = req.body;
     if (!companyName?.trim()) return err(res, "companyName required");
+    if (parentCustomerId) {
+      if (!db.prepare("SELECT id FROM customers WHERE id=?").get(parentCustomerId))
+        return err(res, "Parent customer not found");
+      if (wouldCreateCycle(req.params.id, parentCustomerId))
+        return err(res, "This would create a circular parent chain — pick a different parent");
+    }
     const ccU = countryIso2.toUpperCase().trim();
+    const cl = creditLimit === null || creditLimit === '' ? null : Number(creditLimit);
+    const ctd = creditTermsDays === null || creditTermsDays === '' ? null : parseInt(creditTermsDays, 10);
     const info = db.prepare(`UPDATE customers SET company_name=?,address1=?,address2=?,city=?,state=?,
-      postal_code=?,country_iso2=?,phone=?,fax=?,email=?,website=?,notes=?,currency=? WHERE id=?`)
-      .run(companyName.trim(), address1, address2, city, state, postalCode, ccU, phone, fax, email, website, notes, (currency || 'USD').toUpperCase().trim(), req.params.id);
+      postal_code=?,country_iso2=?,phone=?,fax=?,email=?,website=?,notes=?,currency=?,
+      credit_limit=?,credit_terms_days=?,credit_hold=?,credit_hold_reason=?,parent_customer_id=? WHERE id=?`)
+      .run(companyName.trim(), address1, address2, city, state, postalCode, ccU, phone, fax, email, website, notes, (currency || 'USD').toUpperCase().trim(),
+           cl, ctd, creditHold ? 1 : 0, creditHold ? creditHoldReason.trim() : '', parentCustomerId || null, req.params.id);
     if (info.changes === 0) return err(res, "Not found", 404);
     if (sanctionsMap.size > 0) screenCustomer(req.params.id);
     const row = db.prepare(`${CUST_JOIN} WHERE c.id=?`).get(req.params.id);
@@ -146,6 +251,8 @@ module.exports = function customersRoutes(app, ctx) {
     if (info.changes === 0) return err(res, "Not found", 404);
     db.prepare("DELETE FROM customer_identifiers WHERE customer_id=?").run(req.params.id);
     db.prepare("DELETE FROM customer_screenings  WHERE customer_id=?").run(req.params.id);
+    db.prepare("DELETE FROM customer_contacts    WHERE customer_id=?").run(req.params.id);
+    db.prepare("DELETE FROM customer_roles       WHERE customer_id=?").run(req.params.id);
     const docs = db.prepare("SELECT stored_name FROM customer_documents WHERE customer_id=?").all(req.params.id);
     for (const d of docs) {
       try { fs.unlinkSync(path.join(UPLOADS_DIR, d.stored_name)); } catch {}
@@ -194,6 +301,79 @@ module.exports = function customersRoutes(app, ctx) {
     const info = db.prepare("DELETE FROM customer_identifiers WHERE id=? AND customer_id=?").run(req.params.iid, req.params.id);
     if (info.changes === 0) return err(res, "Not found", 404);
     ok(res, { deleted: req.params.iid });
+  });
+
+  // ─── Customer Contacts ────────────────────────────────────────────────────
+  // Named people at this customer (Sales/Operations/Accounts/Other) — replaces the old
+  // "cram it into the notes field" workaround. Mirrors the identifiers CRUD shape exactly.
+
+  app.get("/api/customers/:id/contacts", auth(), (req, res) => {
+    const rows = db.prepare("SELECT * FROM customer_contacts WHERE customer_id=? ORDER BY is_primary DESC, created_at ASC").all(req.params.id);
+    ok(res, rows.map(mapCustomerContact));
+  });
+
+  app.post("/api/customers/:id/contacts", auth(), (req, res) => {
+    if (!db.prepare("SELECT id FROM customers WHERE id=?").get(req.params.id))
+      return err(res, "Customer not found", 404);
+    const { name='', title='', email='', phone='', department='Other', isPrimary=false } = req.body;
+    if (!name.trim()) return err(res, "name required");
+    const id  = `CCT-${uid()}`;
+    const now = new Date().toISOString();
+    if (isPrimary)
+      db.prepare("UPDATE customer_contacts SET is_primary=0 WHERE customer_id=?").run(req.params.id);
+    db.prepare("INSERT INTO customer_contacts (id,customer_id,name,title,email,phone,department,is_primary,created_at) VALUES (?,?,?,?,?,?,?,?,?)")
+      .run(id, req.params.id, name.trim(), title.trim(), email.trim(), phone.trim(), department, isPrimary ? 1 : 0, now);
+    const row = db.prepare("SELECT * FROM customer_contacts WHERE id=?").get(id);
+    ok(res, mapCustomerContact(row), 201);
+  });
+
+  app.put("/api/customers/:id/contacts/:cid", auth(), (req, res) => {
+    const existing = db.prepare("SELECT * FROM customer_contacts WHERE id=? AND customer_id=?").get(req.params.cid, req.params.id);
+    if (!existing) return err(res, "Not found", 404);
+    const { name=existing.name, title=existing.title, email=existing.email, phone=existing.phone,
+            department=existing.department, isPrimary=!!existing.is_primary } = req.body;
+    if (!name.trim()) return err(res, "name required");
+    if (isPrimary)
+      db.prepare("UPDATE customer_contacts SET is_primary=0 WHERE customer_id=? AND id!=?").run(req.params.id, req.params.cid);
+    db.prepare("UPDATE customer_contacts SET name=?,title=?,email=?,phone=?,department=?,is_primary=? WHERE id=?")
+      .run(name.trim(), title.trim(), email.trim(), phone.trim(), department, isPrimary ? 1 : 0, req.params.cid);
+    const row = db.prepare("SELECT * FROM customer_contacts WHERE id=?").get(req.params.cid);
+    ok(res, mapCustomerContact(row));
+  });
+
+  app.delete("/api/customers/:id/contacts/:cid", auth(), (req, res) => {
+    const info = db.prepare("DELETE FROM customer_contacts WHERE id=? AND customer_id=?").run(req.params.cid, req.params.id);
+    if (info.changes === 0) return err(res, "Not found", 404);
+    ok(res, { deleted: req.params.cid });
+  });
+
+  // ─── Customer Roles ───────────────────────────────────────────────────────
+  // Which of ALL_CUSTOMER_ROLES this customer is eligible for — a full-set replace on save
+  // (a small checkbox list, not an add/remove-one-at-a-time flow like identifiers/contacts),
+  // guarded by a transaction so a partial write can never leave a half-applied role set.
+
+  app.get("/api/customers/:id/roles", auth(), (req, res) => {
+    const rows = db.prepare("SELECT role FROM customer_roles WHERE customer_id=?").all(req.params.id);
+    ok(res, rows.map(r => r.role));
+  });
+
+  app.put("/api/customers/:id/roles", auth(), (req, res) => {
+    if (!db.prepare("SELECT id FROM customers WHERE id=?").get(req.params.id))
+      return err(res, "Customer not found", 404);
+    const { roles } = req.body;
+    if (!Array.isArray(roles)) return err(res, "roles array required");
+    const invalid = roles.filter(r => !ALL_CUSTOMER_ROLES.includes(r));
+    if (invalid.length) return err(res, `Invalid role(s): ${invalid.join(", ")}`);
+    const now = new Date().toISOString();
+    db.exec("BEGIN");
+    try {
+      db.prepare("DELETE FROM customer_roles WHERE customer_id=?").run(req.params.id);
+      const ins = db.prepare("INSERT INTO customer_roles (id,customer_id,role,created_at) VALUES (?,?,?,?)");
+      for (const role of [...new Set(roles)]) ins.run(`CRL-${uid()}`, req.params.id, role, now);
+      db.exec("COMMIT");
+    } catch (e) { db.exec("ROLLBACK"); throw e; }
+    const rows = db.prepare("SELECT role FROM customer_roles WHERE customer_id=?").all(req.params.id);
+    ok(res, rows.map(r => r.role));
   });
 
   // ─── Customer Screening ───────────────────────────────────────────────────
@@ -320,6 +500,7 @@ module.exports = function customersRoutes(app, ctx) {
       db.prepare("INSERT OR REPLACE INTO sanctions_syncs (source, synced_at, entry_count) VALUES ('OFAC-SDN', ?, ?)").run(now, entries.length);
       loadSanctionsIndex();
       scheduleNextOfacSync();
+      rescreenActiveShipments();
       ok(res, { source: "OFAC-SDN", syncedAt: now, entries: entries.length });
     } catch (e) {
       err(res, e.message, 400);

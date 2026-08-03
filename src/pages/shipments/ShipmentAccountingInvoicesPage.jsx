@@ -5,9 +5,10 @@ import Btn from "../../components/primitives/Btn";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
 import TrackedDocPreviewModal from "../../components/shared/TrackedDocPreviewModal";
 import { CostLineForm, CostLineHistoryModal, CostLineRow, CostLineActualizeModal } from "./ShipmentDetailPage";
-import { generateInvoices, resolveInvoiceCurrency } from "../../utils/invoiceGenerator";
+import { generateInvoices, resolveInvoiceCurrency, resolveCreditGate, buildCreditDebitNoteHtml } from "../../utils/invoiceGenerator";
 import { api } from "../../api";
 import { toast } from "../../toast";
+import { Textarea } from "../../components/primitives/Form";
 import { IconCheck, IconWarning, IconClipboard, IconReceipt, IconPackage, IconEye } from "../../components/primitives/Icon";
 
 const fmtUsd = v => v == null ? "—" : `$${Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -19,6 +20,92 @@ const fmtDate = s => s ? new Date(s).toLocaleDateString(undefined, { day: "2-dig
 // Entry (BUY lines) — contract-rate regeneration (Reset/Update Carrier Costs)
 // lives on that page since it's a carrier-cost concept; SELL lines here are
 // added/edited manually or arrive via the Mirror action from Cost Entry.
+
+// Confirm-with-reason modal for the Reverse action (TKT-DUADU3) — same shape as
+// CostLineActualizeModal/ConfirmModal, a reason textarea instead of a numeric field, and an
+// explicit warning since this is a one-way action (creates locked cost lines + a new document).
+const ReverseInvoiceModal = ({ doc, busy, onClose, onConfirm }) => {
+  const [reason, setReason] = useState("");
+  return (
+    <Modal title="Reverse Invoice" onClose={onClose} width={460}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, lineHeight: 1.5 }}>
+          This creates locked, negative-amount adjusting charge lines and a new Credit / Debit
+          Note reversing <strong style={{ color: T.text }}>{doc.filename}</strong>. The original
+          invoice will be marked <strong style={{ color: T.text }}>Voided</strong>. This cannot be undone.
+        </div>
+        <div>
+          <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 6 }}>Reason (optional)</div>
+          <Textarea value={reason} onChange={setReason} rows={3} placeholder="e.g. Duplicate charge, rate correction…" />
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <Btn variant="secondary" onClick={onClose} disabled={busy}>Cancel</Btn>
+          <Btn onClick={() => onConfirm(reason)} disabled={busy}>{busy ? "Reversing…" : "Reverse Invoice"}</Btn>
+        </div>
+      </div>
+    </Modal>
+  );
+};
+
+// Credit hold — hard block, no way to proceed from here (Organization Model Enhancement
+// Epic 2). Named per role rather than just "this customer" since more than one attached
+// party (Shipper/Consignee/Principal/the linked contract's Named Account) could be the one
+// actually on hold, and the operator needs to know which relationship to go resolve.
+const CreditHoldModal = ({ holds, onClose }) => (
+  <Modal title="Invoice Generation Blocked" onClose={onClose} width={460}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ padding: "10px 14px", borderRadius: 8, background: `${T.danger}18`,
+        border: `1px solid ${T.danger}44`, display: "flex", gap: 10, alignItems: "flex-start" }}>
+        <span style={{ color: T.danger, flexShrink: 0, marginTop: 1 }}><IconWarning size={15} /></span>
+        <div style={{ fontFamily: T.body, fontSize: 12.5, color: T.text, lineHeight: 1.5 }}>
+          {holds.length === 1
+            ? <>The {holds[0].role.toLowerCase()} on this shipment, <strong>{holds[0].companyName}</strong>, is on credit hold.</>
+            : <>{holds.length} parties on this shipment are on credit hold.</>}
+          {" "}A new invoice can't be generated until the hold is cleared on their customer profile.
+        </div>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {holds.map((h, i) => (
+          <div key={i} style={{ padding: "8px 12px", borderRadius: 6, background: T.bg, border: `1px solid ${T.border}` }}>
+            <div style={{ fontFamily: T.body, fontSize: 12, fontWeight: 700, color: T.text }}>
+              {h.companyName} <span style={{ fontWeight: 400, color: T.textMuted }}>— {h.role}</span>
+            </div>
+            {h.reason && (
+              <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted, marginTop: 2 }}>{h.reason}</div>
+            )}
+          </div>
+        ))}
+      </div>
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <Btn onClick={onClose}>Close</Btn>
+      </div>
+    </div>
+  </Modal>
+);
+
+// Over-limit — a soft warning only (Organization Model Enhancement Epic 2's own explicit
+// scope: a hard block needs a real AR-aging view this app doesn't have yet). Cancel or
+// proceed anyway, straight into whatever the normal generate flow would have done next.
+const CreditWarningModal = ({ responsibleParty, busy, onClose, onContinue }) => (
+  <Modal title="Credit Limit Warning" onClose={() => !busy && onClose()} width={460}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <div style={{ padding: "10px 14px", borderRadius: 8, background: `${T.warning}18`,
+        border: `1px solid ${T.warning}44`, display: "flex", gap: 10, alignItems: "flex-start" }}>
+        <span style={{ color: T.warning, flexShrink: 0, marginTop: 1 }}><IconWarning size={15} /></span>
+        <div style={{ fontFamily: T.body, fontSize: 12.5, color: T.text, lineHeight: 1.5 }}>
+          <strong>{responsibleParty.companyName}</strong> already has {fmtUsd(responsibleParty.outstandingAr)} in
+          confirmed, unpaid invoices. This new invoice would bring their total
+          to {fmtUsd(responsibleParty.projectedAr)}, over their {fmtUsd(responsibleParty.creditLimit)} credit
+          limit. This is a warning only; generating it is still allowed.
+        </div>
+      </div>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+        <Btn variant="secondary" onClick={onClose} disabled={busy}>Cancel</Btn>
+        <Btn onClick={onContinue} disabled={busy}>{busy ? "Generating…" : "Generate Anyway"}</Btn>
+      </div>
+    </div>
+  </Modal>
+);
 
 const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
   const { canEditShipments: canEdit } = useAuth();
@@ -38,8 +125,12 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
   const [splitConfirm,  setSplitConfirm] = useState(false);
   const [splitBusy,     setSplitBusy]    = useState(false);
   const [currencyModal, setCurrencyModal] = useState(null); // { splitPerContainer, distinctCurrencies, currency, isFallback, principalName }
+  const [creditHoldModal, setCreditHoldModal] = useState(null); // { holds } — hard block, no continuation
+  const [creditWarnModal, setCreditWarnModal] = useState(null); // { splitPerContainer, responsibleParty } — soft warning
   const [actualizeLine, setActualizeLine] = useState(null); // line pending actualization
   const [confirmPost,   setConfirmPost]   = useState(null); // line pending Post confirmation
+  const [reverseDoc,    setReverseDoc]    = useState(null); // invoice doc pending Reverse confirmation
+  const [reverseBusy,   setReverseBusy]   = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -50,7 +141,7 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
   const loadDocs = () => {
     setDocsLoading(true);
     return api.documents.list(shipment.id)
-      .then(rows => setDocs(rows.filter(d => d.docType === "FR01" || d.docType === "FR02")))
+      .then(rows => setDocs(rows.filter(d => d.docType === "FR01" || d.docType === "FR02" || d.docType === "CN01")))
       .catch(() => setDocs([]))
       .finally(() => setDocsLoading(false));
   };
@@ -69,6 +160,13 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
   const untaggedSellLines = sellLines.filter(l => !l.containerId);
   const canSplit = untaggedSellLines.length > 0 && ctrs.length > 0;
 
+  // Lines actually in scope for a given generation action — mirrors generateInvoices()'s own
+  // per-container targeting, so both the credit gate and the currency check below agree with
+  // what will really be invoiced.
+  const scopedLinesFor = splitPerContainer => splitPerContainer
+    ? sellLines.filter(l => l.containerId && ctrs.some(c => c.id === l.containerId))
+    : sellLines;
+
   // Generation is blocked with no charge lines present — not just a courtesy message,
   // this is the actual gate: the buttons are disabled AND this guard runs before any
   // upload call fires, so there's no path to producing a blank/empty invoice document.
@@ -77,11 +175,24 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
       toast.error("At least one valid charge line needs to be present to generate an invoice.");
       return;
     }
-    // Lines actually in scope for this generation action — mirrors generateInvoices()'s own
-    // per-container targeting so the currency check matches what will really be invoiced.
-    const scopedLines = splitPerContainer
-      ? sellLines.filter(l => l.containerId && ctrs.some(c => c.id === l.containerId))
-      : sellLines;
+    // Credit gate (Organization Model Enhancement Epic 2) runs before the currency check below
+    // — a credit hold or over-limit warning is about whether to invoice at all, which should be
+    // resolved before asking which currency to invoice in. newAmountUsd is THIS invoice's own
+    // total, added to prior outstanding AR — otherwise the very first invoice that pushes a
+    // customer over their limit would never be caught, only ones generated after they already are.
+    const newAmountUsd = scopedLinesFor(splitPerContainer).reduce((s, l) => s + l.amountUsd, 0);
+    setGenBusy(true);
+    const gate = await resolveCreditGate(shipment, newAmountUsd);
+    setGenBusy(false);
+    if (gate.blocked) { setCreditHoldModal({ holds: gate.holds }); return; }
+    if (gate.overLimit) { setCreditWarnModal({ splitPerContainer, responsibleParty: gate.responsibleParty }); return; }
+    await checkCurrencyAndGenerate(splitPerContainer);
+  };
+
+  // Split out so both the normal path and "Generate Anyway" (after a credit warning is
+  // dismissed) reach the same currency check without duplicating it.
+  const checkCurrencyAndGenerate = async splitPerContainer => {
+    const scopedLines = scopedLinesFor(splitPerContainer);
     const distinctCurrencies = [...new Set(scopedLines.map(l => l.currency))];
     if (distinctCurrencies.length > 1) {
       setGenBusy(true);
@@ -160,8 +271,9 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
 
   const statusPill = doc => {
     const isConfirmed = doc.status === "confirmed";
-    const label = isConfirmed ? <><IconCheck size={9} />Confirmed</> : doc.isStale ? <><IconWarning size={9} />Outdated</> : "Draft";
-    const color = isConfirmed ? T.success : doc.isStale ? T.warning : T.textMuted;
+    const isVoided    = doc.status === "voided";
+    const label = isVoided ? "Voided" : isConfirmed ? <><IconCheck size={9} />Confirmed</> : doc.isStale ? <><IconWarning size={9} />Outdated</> : "Draft";
+    const color = isVoided ? T.textMuted : isConfirmed ? T.success : doc.isStale ? T.warning : T.textMuted;
     return <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color,
       background: color + "18", border: `1px solid ${color}44`, borderRadius: 6, padding: "2px 7px", whiteSpace: "nowrap",
       display: "inline-flex", alignItems: "center", gap: 3 }}>{label}</span>;
@@ -219,6 +331,38 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
       toast.success("Invoice line posted — now locked");
       load();
     } catch (e) { toast.error(e.message); }
+  };
+
+  // TKT-DUADU3 — reversing a confirmed invoice: (1) backend creates negative-amount, already-
+  // posted adjusting SELL lines and voids the original doc; (2) client builds the Credit/Debit
+  // Note HTML from those exact returned lines (same client-builds-HTML/server-signs split every
+  // generated document already follows) and uploads it as a new, auto-confirmed CN01 doc;
+  // (3) the two docs are linked symmetrically via relatedDocId. Any failure after step 1 leaves
+  // the original voided with reversal lines recorded but no CN01 yet — recoverable by reloading
+  // and reversing again is deliberately NOT offered (the route 409s on an already-voided doc);
+  // this is a rare, narrow window and the reversal lines/void are themselves the source of truth.
+  const handleReverse = async reason => {
+    const doc = reverseDoc;
+    setReverseBusy(true);
+    try {
+      const { reversalLines } = await api.documents.reverse(shipment.id, doc.id, { reason });
+      const container = doc.containerId ? ctrs.find(c => c.id === doc.containerId) : null;
+      const now     = new Date();
+      const invDate = now.toISOString().slice(0, 10);
+      const invNumber = `${doc.filename.replace(/\.pdf$/i, "")}-CN`;
+      const html = buildCreditDebitNoteHtml({ shipment, invNumber, invDate, notes: reason, costLines: reversalLines, container, originalDoc: doc });
+      const filename = `CN01-${invNumber}-${invDate}.pdf`;
+      const newDoc = await api.documents.generate(shipment.id, {
+        html, filename, docType: "CN01", containerId: doc.containerId, responsibleParty: doc.responsibleParty,
+      });
+      await api.documents.patch(newDoc.id, { status: "confirmed", relatedDocId: doc.id });
+      await api.documents.patch(doc.id, { relatedDocId: newDoc.id });
+      toast.success("Invoice reversed — Credit/Debit Note generated");
+      setReverseDoc(null);
+      load();
+      loadDocs();
+    } catch (e) { toast.error(e.message); }
+    setReverseBusy(false);
   };
 
   const th = { fontFamily: T.body, fontSize: 10, fontWeight: 600, color: T.textMuted,
@@ -322,13 +466,17 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
             <div style={{ ...th, width: 110 }}>Status</div>
             <div style={{ ...th, width: 100 }}>Created</div>
             <div style={{ ...th, flex: 1 }}>Responsible Party</div>
-            <div style={{ width: 130 }} />
+            <div style={{ width: 240 }} />
           </div>
-          {docs.map(doc => (
+          {docs.map(doc => {
+            const isVoided = doc.status === "voided";
+            const relatedDoc = doc.relatedDocId ? docs.find(d => d.id === doc.relatedDocId) : null;
+            const canReverse = canEdit && doc.docType !== "CN01" && doc.status === "confirmed" && !doc.relatedDocId;
+            return (
             <div key={doc.id} id={`shpacct-invoices-doc-${doc.id}`}
               onDoubleClick={() => setPreviewDoc(doc)}
               style={{ display: "flex", alignItems: "center", padding: "9px 16px",
-                borderBottom: `1px solid ${T.border}22`, cursor: "pointer" }}
+                borderBottom: `1px solid ${T.border}22`, cursor: "pointer", opacity: isVoided ? 0.6 : 1 }}
               onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
               onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
               <div style={{ width: 60 }}>
@@ -336,17 +484,28 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
                   background: T.accent + "18", border: `1px solid ${T.accent}44`,
                   borderRadius: 6, padding: "2px 6px" }}>{doc.docType}</span>
               </div>
-              <div style={{ flex: 1, fontFamily: T.body, fontSize: 13, color: T.text }}>{invoiceLabel(doc)}</div>
+              <div style={{ flex: 1, fontFamily: T.body, fontSize: 13, color: T.text, textDecoration: isVoided ? "line-through" : "none" }}>
+                {invoiceLabel(doc)}
+                {doc.docType === "CN01" && (
+                  <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, textDecoration: "none", marginTop: 2 }}>
+                    Reverses {relatedDoc?.filename || "an invoice"}
+                  </div>
+                )}
+              </div>
               <div style={{ width: 110 }}>{statusPill(doc)}</div>
               <div style={{ width: 100, fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>{fmtDate(doc.createdAt)}</div>
               <div style={{ flex: 1, fontFamily: T.body, fontSize: 12, color: doc.responsibleParty ? T.text : T.border }}>
                 {doc.responsibleParty || "—"}
               </div>
-              <div style={{ width: 130, textAlign: "right" }}>
+              <div style={{ width: 240, textAlign: "right", display: "flex", justifyContent: "flex-end", gap: 6 }}>
+                {canReverse && (
+                  <Btn size="sm" variant="secondary" onClick={() => setReverseDoc(doc)}>↩ Reverse</Btn>
+                )}
                 <Btn size="sm" variant="secondary" onClick={() => setPreviewDoc(doc)}><IconEye size={12} />Preview Invoice</Btn>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -378,6 +537,20 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
         </Modal>
       )}
 
+      {creditHoldModal && (
+        <CreditHoldModal holds={creditHoldModal.holds} onClose={() => setCreditHoldModal(null)} />
+      )}
+
+      {creditWarnModal && (
+        <CreditWarningModal responsibleParty={creditWarnModal.responsibleParty} busy={genBusy}
+          onClose={() => setCreditWarnModal(null)}
+          onContinue={async () => {
+            const { splitPerContainer } = creditWarnModal;
+            setCreditWarnModal(null);
+            await checkCurrencyAndGenerate(splitPerContainer);
+          }} />
+      )}
+
       {currencyModal && (
         <Modal title="Multiple Currencies" onClose={() => !genBusy && setCurrencyModal(null)} width={460}>
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -407,6 +580,11 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
 
       {actualizeLine && (
         <CostLineActualizeModal line={actualizeLine} onClose={() => setActualizeLine(null)} onSave={handleActualize} />
+      )}
+
+      {reverseDoc && (
+        <ReverseInvoiceModal doc={reverseDoc} busy={reverseBusy}
+          onClose={() => !reverseBusy && setReverseDoc(null)} onConfirm={handleReverse} />
       )}
 
       {confirmPost && (
