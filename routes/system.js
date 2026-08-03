@@ -225,7 +225,12 @@ module.exports = function systemRoutes(app, ctx) {
       WHERE pol=? AND pod=? AND etd != '' AND etd >= ? AND etd <= ? AND is_mock=0
       ORDER BY etd ASC LIMIT 20`).all(pol, pod, today, windowEnd);
     return rows.map(r => {
-      const legRows = db.prepare("SELECT * FROM schedule_legs WHERE schedule_id=? ORDER BY leg_order ASC").all(r.id);
+      // Content-Keyed Sailing Legs — leg detail now lives in sailing_legs, referenced (not owned)
+      // via schedule_leg_refs; same join getScheduleLegRows (routes/shipment-ops.js) uses.
+      const legRows = db.prepare(`
+        SELECT sl.* FROM schedule_leg_refs ref JOIN sailing_legs sl ON sl.leg_key = ref.leg_key
+        WHERE ref.schedule_id=? ORDER BY ref.leg_order ASC
+      `).all(r.id);
       const legs = legRows.length >= 2 ? legRows.map(l => ({
         pol: l.pol || "", pod: l.pod || "", etd: l.etd || "", eta: l.eta || "",
         vesselName: l.vessel_name || "", vesselImo: l.vessel_imo || "", voyageNumber: l.voyage_number || "", service: l.service || "",

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { T, CONTACT_DEPARTMENTS, ALL_CUSTOMER_ROLES } from "../../tokens";
+import { T, CONTACT_DEPARTMENTS, CUSTOMER_ROLE_CATEGORIES } from "../../tokens";
 import { api } from "../../api";
 import { useAuth } from "../../AuthContext";
 import { toast } from "../../toast";
@@ -25,6 +25,30 @@ function ScreeningBadge({ result }) {
   if (!result) return null;
   const label = result === "HIT" ? "⚠ OFAC Hit" : result === "OVERRIDDEN" ? "↩ Overridden" : "✓ Clear";
   return <Badge variant={SCREENING_VARIANT[result] || "default"}>{label}</Badge>;
+}
+
+// Role-derivation rework — roles are read-only, computed from actual shipment usage (see
+// CUSTOMER_ROLE_USAGE_SQL, routes/customers.js). "Category" (Trading Customer vs Service
+// Provider) is purely a frontend grouping for color-coding and the list-page segmented filter —
+// the backend has no concept of it, only individual roles.
+const isServiceProviderRole = role => CUSTOMER_ROLE_CATEGORIES["Service Providers"].includes(role);
+
+function RoleBadge({ role }) {
+  const color = isServiceProviderRole(role) ? T.purple : T.accent;
+  return (
+    <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color,
+      background: `${color}18`, border: `1px solid ${color}44`, borderRadius: 4,
+      padding: "2px 7px", whiteSpace: "nowrap" }}>{role}</span>
+  );
+}
+
+function RoleBadgeList({ roles }) {
+  if (!roles?.length) return <span style={{ color: T.border, fontFamily: T.body, fontSize: 12 }}>—</span>;
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+      {roles.map(r => <RoleBadge key={r} role={r} />)}
+    </div>
+  );
 }
 
 function fmtBytes(n) {
@@ -65,31 +89,24 @@ const ProfileTab = ({ init = {}, onSave, saving }) => {
     creditHoldReason: init.creditHoldReason || "",
     parentCustomerId:   init.parentCustomerId   || "",
     parentCustomerName: init.parentCustomerName || "",
+    classifiedLocation: init.classifiedLocation || false,
+    latitude:           init.latitude  != null ? String(init.latitude)  : "",
+    longitude:          init.longitude != null ? String(init.longitude) : "",
   });
   const set   = k => v => setF(p => ({ ...p, [k]: v }));
   const valid = f.companyName.trim().length > 0;
 
-  // Roles — a separate table/endpoint from the rest of the profile, so this is its own
-  // load/save cycle (immediate-save per toggle, like a settings checkbox) rather than folding
-  // into the "Save Profile" button below. Only shown for an already-created customer — there's
-  // no customer id to attach roles to yet while adding a new one (mirrors why Identifiers/
-  // Compliance/Documents tabs are hidden for isNew too, one level up in CustomerDetailModal).
-  const [roles,       setRoles]       = useState(null);
-  const [rolesSaving, setRolesSaving] = useState(false);
+  // Roles — read-only, derived from actual shipment usage (role-derivation rework; see
+  // CUSTOMER_ROLE_USAGE_SQL, routes/customers.js). Nothing to save here: the moment this
+  // customer is assigned a role on any shipment, it shows up here automatically. Only shown
+  // for an already-created customer — there's no usage history to derive yet while adding a
+  // new one (mirrors why Identifiers/Compliance/Documents tabs are hidden for isNew too, one
+  // level up in CustomerDetailModal).
+  const [roles, setRoles] = useState(null);
   useEffect(() => {
     if (!init.id) { setRoles(null); return; }
     api.customers.roles.list(init.id).then(setRoles).catch(() => setRoles([]));
   }, [init.id]);
-
-  const toggleRole = async role => {
-    const prev = roles;
-    const next = roles.includes(role) ? roles.filter(r => r !== role) : [...roles, role];
-    setRoles(next);
-    setRolesSaving(true);
-    try { await api.customers.roles.set(init.id, next); }
-    catch (e) { toast.error(e.message); setRoles(prev); }
-    setRolesSaving(false);
-  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -112,6 +129,21 @@ const ProfileTab = ({ init = {}, onSave, saving }) => {
           onChange={v => setF(p => ({ ...p, countryIso2: v.toUpperCase().slice(0,2) }))}
           placeholder="NL" mono maxLength={2} hint="2-letter ISO 3166-1" />
       </div>
+
+      <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer",
+        fontFamily: T.body, fontSize: 13, color: T.text, width: "fit-content" }}>
+        <input type="checkbox" checked={f.classifiedLocation}
+          onChange={e => set("classifiedLocation")(e.target.checked)} />
+        Classified location — pickup/delivery can only be identified by GPS coordinates
+      </label>
+      {f.classifiedLocation && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <Inp label="Latitude" value={f.latitude} onChange={set("latitude")}
+            placeholder="52.3676" mono type="number" />
+          <Inp label="Longitude" value={f.longitude} onChange={set("longitude")}
+            placeholder="4.9041" mono type="number" />
+        </div>
+      )}
 
       <div style={{ fontFamily: T.mono, fontSize: 9.5, color: T.border, fontWeight: 700,
         textTransform: "uppercase", letterSpacing: ".12em", marginBottom: -6 }}>Contact</div>
@@ -167,29 +199,15 @@ const ProfileTab = ({ init = {}, onSave, saving }) => {
           <div style={{ fontFamily: T.mono, fontSize: 9.5, color: T.border, fontWeight: 700,
             textTransform: "uppercase", letterSpacing: ".12em", marginBottom: -6 }}>Roles</div>
           <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted, marginTop: -6 }}>
-            Which shipment/party roles this customer is eligible for — narrows customer pickers
-            elsewhere in the app (e.g. only Bank-flagged customers show when assigning a Bank
-            party), without ever blocking an unflagged customer from still being picked manually.
+            Computed from where this customer has actually been assigned on real shipments —
+            updates itself the moment a new assignment happens, nothing to maintain here.
           </div>
-          {roles === null ? <Spinner size="sm" /> : (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-              {ALL_CUSTOMER_ROLES.map(r => {
-                const checked = roles.includes(r);
-                return (
-                  <label key={r} style={{ display: "flex", alignItems: "center", gap: 6,
-                    cursor: rolesSaving ? "default" : "pointer", fontFamily: T.body, fontSize: 12,
-                    padding: "5px 10px", borderRadius: 6,
-                    border: `1px solid ${checked ? T.accent + "88" : T.border}`,
-                    background: checked ? T.accentBg : "transparent",
-                    color: checked ? T.accent : T.textMuted, opacity: rolesSaving ? 0.6 : 1 }}>
-                    <input type="checkbox" checked={checked} disabled={rolesSaving}
-                      onChange={() => toggleRole(r)}
-                      style={{ accentColor: T.accent, width: 12, height: 12 }} />
-                    {r}
-                  </label>
-                );
-              })}
+          {roles === null ? <Spinner size="sm" /> : roles.length === 0 ? (
+            <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, fontStyle: "italic" }}>
+              Not yet used in any role.
             </div>
+          ) : (
+            <RoleBadgeList roles={roles} />
           )}
         </>
       )}
@@ -771,22 +789,30 @@ const CustomerDetailModal = ({ customer, isNew, onClose, onUpdated }) => {
 
 const LIMIT = 50;
 
+// Segmented list-page filter (role-derivation rework) — "All" omits the role param entirely;
+// the other two segments send their category's roles as one comma-joined `role` filter, so the
+// backend still only ever reasons about individual roles (see CUSTOMER_ROLE_USAGE_SQL).
+const CATEGORIES = ["All", ...Object.keys(CUSTOMER_ROLE_CATEGORIES)];
+
 const MdmCustomersPage = () => {
   const { canEdit } = useAuth();
-  const [results, setResults] = useState([]);
-  const [total,   setTotal]   = useState(0);
-  const [offset,  setOffset]  = useState(0);
-  const [search,  setSearch]  = useState("");
-  const [loading, setLoading] = useState(true);
-  const [modal,   setModal]   = useState(null); // null | "new" | customer obj
-  const [confirm, setConfirm] = useState(null);
+  const [results,  setResults]  = useState([]);
+  const [total,    setTotal]    = useState(0);
+  const [offset,   setOffset]   = useState(0);
+  const [search,   setSearch]   = useState("");
+  const [category, setCategory] = useState("All");
+  const [loading,  setLoading]  = useState(true);
+  const [modal,    setModal]    = useState(null); // null | "new" | customer obj
+  const [confirm,  setConfirm]  = useState(null);
   const timer = useRef(null);
 
   const load = useCallback(async (opts = {}) => {
     setLoading(true);
     try {
+      const cat = opts.category !== undefined ? opts.category : category;
       const res = await api.customers.list({
         search: opts.search !== undefined ? opts.search : search,
+        ...(cat !== "All" ? { role: CUSTOMER_ROLE_CATEGORIES[cat].join(",") } : {}),
         limit:  LIMIT,
         offset: opts.offset !== undefined ? opts.offset : offset,
       });
@@ -794,7 +820,7 @@ const MdmCustomersPage = () => {
       setTotal(res.total);
     } catch {}
     setLoading(false);
-  }, [search, offset]);
+  }, [search, offset, category]);
 
   useEffect(() => { load(); }, []);
 
@@ -802,6 +828,11 @@ const MdmCustomersPage = () => {
     setSearch(v); setOffset(0);
     clearTimeout(timer.current);
     timer.current = setTimeout(() => load({ search: v, offset: 0 }), 300);
+  };
+
+  const handleCategory = cat => {
+    setCategory(cat); setOffset(0);
+    load({ category: cat, offset: 0 });
   };
 
   const goPage = off => { setOffset(off); load({ offset: off }); };
@@ -821,8 +852,8 @@ const MdmCustomersPage = () => {
     color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em",
   };
 
-  const { template, startResize } = useResizableColumns("mdm-customers", [240, 130, 80, 160, 130, 90]);
-  const headers = ["Company", "City / Country", "Phone", "Email", "Website", "Actions"];
+  const { template, startResize } = useResizableColumns("mdm-customers", [220, 170, 120, 80, 150, 120, 90]);
+  const headers = ["Company", "Roles", "City / Country", "Phone", "Email", "Website", "Actions"];
 
   return (
     <div>
@@ -837,6 +868,20 @@ const MdmCustomersPage = () => {
           </p>
         </div>
         {canEdit && <Btn size="lg" onClick={() => setModal("new")}>＋ Add Customer</Btn>}
+      </div>
+
+      {/* Segmented category filter */}
+      <div style={{ display: "inline-flex", gap: 2, padding: 3, marginBottom: 12,
+        background: T.bg, border: `1px solid ${T.border}`, borderRadius: 9 }}>
+        {CATEGORIES.map(cat => (
+          <button key={cat} onClick={() => handleCategory(cat)} style={{
+            padding: "6px 14px", fontFamily: T.body, fontSize: 12.5,
+            fontWeight: category === cat ? 700 : 500,
+            color: category === cat ? T.btnPrimaryText : T.textMuted,
+            background: category === cat ? T.accent : "transparent",
+            border: "none", borderRadius: 6, cursor: "pointer", transition: "background .12s, color .12s",
+          }}>{cat}</button>
+        ))}
       </div>
 
       {/* Search */}
@@ -863,7 +908,9 @@ const MdmCustomersPage = () => {
         ) : results.length === 0 ? (
           <div style={{ padding: 48, textAlign: "center", color: T.textMuted,
             fontFamily: T.body, fontSize: 14, fontStyle: "italic" }}>
-            {search ? "No customers match your search." : "No customers yet. Add your first one above."}
+            {search ? "No customers match your search."
+              : category !== "All" ? `No customers used as a ${category === "Trading Customers" ? "trading customer" : "service provider"} role yet.`
+              : "No customers yet. Add your first one above."}
           </div>
         ) : results.map(c => (
           <div key={c.id}
@@ -884,6 +931,9 @@ const MdmCustomersPage = () => {
               </div>
               <div style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted, marginTop: 2 }}>{c.id}</div>
             </div>
+
+            {/* Roles */}
+            <RoleBadgeList roles={c.roles} />
 
             {/* City / Country */}
             <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted }}>

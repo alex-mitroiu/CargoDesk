@@ -23,6 +23,7 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack }) => {
   const [containers, setContainers] = useState([]);
   const [contract,   setContract]   = useState(null);
   const [namedAccountParent, setNamedAccountParent] = useState(null); // Organization Model Enhancement Epic 4
+  const [parties,    setParties]    = useState(null); // Carrier Line Agents
   const [loading,    setLoading]    = useState(true);
   const [sending,    setSending]    = useState(false);
 
@@ -55,8 +56,16 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack }) => {
       api.carrierBooking.get(shipment.id).catch(() => null),
       api.ediMessages.list(shipment.id).catch(() => []),
       api.containers.list({ shipmentId: shipment.id }).catch(() => []),
-    ]).then(([b, m, c]) => { setBooking(b); setMessages(m); setContainers(c); }).finally(() => setLoading(false));
+      api.shipmentParties.list(shipment.id).catch(() => []),
+    ]).then(([b, m, c, p]) => { setBooking(b); setMessages(m); setContainers(c); setParties(p); }).finally(() => setLoading(false));
   }, [shipment.id]);
+
+  // Carrier Line Agents — read-only here, same as Carrier/Route/Vessel above: this page
+  // displays, it doesn't edit. Reassignment happens on Parties & Offices (AdditionalPartiesPanel)
+  // like any other additional party — these are ordinary shipment_parties rows, not a separate
+  // concept, so whatever's actually assigned (auto-resolved or manually overridden) is what shows.
+  const exportAgent = (parties || []).find(p => p.role === "Line Agent (Export)");
+  const importAgent = (parties || []).find(p => p.role === "Line Agent (Import)");
 
   // Same size+type grouping the backend applies to the outbound booking-request payload
   // (routes/edi.js, TKT-0H9TSP) — shown here so what's on screen matches what gets sent.
@@ -142,6 +151,37 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack }) => {
             <div style={{ fontFamily: T.body, fontSize: 14, color: T.text, fontWeight: 600 }}>{value}</div>
           </div>
         ))}
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+        gap: 14, marginBottom: 24, background: T.surface,
+        border: `1.5px solid ${T.accent}55`, borderRadius: 10, padding: "16px 20px" }}>
+        <div>
+          <div style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 700, letterSpacing: ".06em",
+            textTransform: "uppercase", color: T.accent, background: T.accentBg, borderRadius: 4,
+            padding: "1px 6px", width: "fit-content", marginBottom: 6 }}>Line Agent · Export</div>
+          <div style={{ fontFamily: T.body, fontSize: 14, color: T.text, fontWeight: 600 }}>
+            {exportAgent?.customerName || "Not registered"}
+          </div>
+          <div style={{ fontFamily: T.mono, fontSize: 10.5, color: T.textMuted, marginTop: 2 }}>
+            at {shipment.pol || "—"}
+          </div>
+        </div>
+        <div>
+          <div style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 700, letterSpacing: ".06em",
+            textTransform: "uppercase", color: T.purple, background: T.purpleBg, borderRadius: 4,
+            padding: "1px 6px", width: "fit-content", marginBottom: 6 }}>Line Agent · Import</div>
+          <div style={{ fontFamily: T.body, fontSize: 14, color: T.text, fontWeight: 600 }}>
+            {importAgent?.customerName || "Not registered"}
+          </div>
+          <div style={{ fontFamily: T.mono, fontSize: 10.5, color: T.textMuted, marginTop: 2 }}>
+            at {shipment.pod || "—"}
+          </div>
+        </div>
+        <div style={{ gridColumn: "1 / -1", fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
+          Resolved from Carrier Agents master data when Carrier/Route were set — reassign via
+          Parties &amp; Offices if this shipment needs a one-off exception.
+        </div>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",

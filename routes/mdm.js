@@ -2,7 +2,7 @@
 
 module.exports = function mdmRoutes(app, ctx) {
   const { db, ok, err, uid, isUniqueViolation, requireRole,
-          mapCarrier, mapVessel, mapPortLocation, mapLinkedPort, mapTradeLane,
+          mapCarrier, mapVessel, mapPortLocation, mapLinkedPort, mapTradeLane, mapCarrierAgent,
           mapCountry, mapRegion, mapCommodity,
           logEntityEvent, rebuildPortLanesMap, longestLane } = ctx;
 
@@ -139,6 +139,54 @@ module.exports = function mdmRoutes(app, ctx) {
     ok(res, mapLinkedPort(r));
   });
   app.delete("/api/linked-ports/:id", write, (req, res) => { const info = db.prepare("DELETE FROM linked_ports WHERE id=?").run(req.params.id); if (info.changes===0) return err(res,"Not found",404); ok(res,{deleted:req.params.id}); });
+
+  // ─── Carrier Agents ───────────────────────────────────────────────────────
+  // Which local company represents a carrier at a given port (carrier x port -> agent
+  // customer) — auto-resolves onto every shipment's Additional Parties as "Line Agent
+  // (Export/Import)" (see resolveCarrierAgent/maybeAssignLineAgents, routes/shipments.js).
+  // Unlike Linked Ports (where the pair itself is the fixed identity), the agent assignment is
+  // exactly the kind of thing that changes over time while carrier+port stay fixed, so PUT here
+  // allows reassigning the agent customer, not just the note.
+
+  const CARRIER_AGENT_JOIN = `
+    SELECT ca.*, pl.name AS port_name, c.company_name AS agent_customer_name
+    FROM carrier_agents ca
+    LEFT JOIN port_locations pl ON pl.unlocode = ca.port_unlocode
+    LEFT JOIN customers c ON c.id = ca.agent_customer_id
+  `;
+
+  app.get("/api/carrier-agents", (req, res) => {
+    const rows = db.prepare(`${CARRIER_AGENT_JOIN} ORDER BY ca.carrier_code, ca.port_unlocode`).all();
+    ok(res, rows.map(mapCarrierAgent));
+  });
+  app.post("/api/carrier-agents", write, (req, res) => {
+    const { carrierCode, portUnlocode, agentCustomerId, note = '' } = req.body;
+    if (!carrierCode || !portUnlocode || !agentCustomerId) return err(res, "carrierCode, portUnlocode and agentCustomerId required");
+    const id = `CAG-${uid()}`;
+    const now = new Date().toISOString();
+    try {
+      db.prepare("INSERT INTO carrier_agents (id,carrier_code,port_unlocode,agent_customer_id,note,created_at) VALUES (?,?,?,?,?,?)")
+        .run(id, carrierCode.toUpperCase().trim(), portUnlocode.toUpperCase().trim(), agentCustomerId, note.trim(), now);
+    } catch (e) {
+      return err(res, isUniqueViolation(e) ? "This carrier already has an agent registered at this port" : e.message);
+    }
+    const r = db.prepare(`${CARRIER_AGENT_JOIN} WHERE ca.id=?`).get(id);
+    ok(res, mapCarrierAgent(r), 201);
+  });
+  app.put("/api/carrier-agents/:id", write, (req, res) => {
+    const existing = db.prepare("SELECT * FROM carrier_agents WHERE id=?").get(req.params.id);
+    if (!existing) return err(res, "Not found", 404);
+    const { agentCustomerId = existing.agent_customer_id, note = existing.note } = req.body;
+    if (!agentCustomerId) return err(res, "agentCustomerId required");
+    db.prepare("UPDATE carrier_agents SET agent_customer_id=?, note=? WHERE id=?").run(agentCustomerId, note.trim(), req.params.id);
+    const r = db.prepare(`${CARRIER_AGENT_JOIN} WHERE ca.id=?`).get(req.params.id);
+    ok(res, mapCarrierAgent(r));
+  });
+  app.delete("/api/carrier-agents/:id", write, (req, res) => {
+    const info = db.prepare("DELETE FROM carrier_agents WHERE id=?").run(req.params.id);
+    if (info.changes === 0) return err(res, "Not found", 404);
+    ok(res, { deleted: req.params.id });
+  });
 
   // ─── Trade Lanes ──────────────────────────────────────────────────────────
 

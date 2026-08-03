@@ -32,6 +32,12 @@ const uid = () => Math.random().toString(36).slice(2,8).toUpperCase();
 const ok  = (res, data, status = 200) => res.status(status).json(data);
 const err = (res, msg, status = 400) => res.status(status).json({ error: msg });
 const isUniqueViolation = e => e?.message?.includes("UNIQUE constraint");
+// First place in the codebase validating a free-typed lat/lng pair — port_locations' own
+// latitude/longitude is trusted/curated import data, never user-typed, so nothing like this
+// existed before. Per-field, not both-or-neither: cell-level onBlur-flush editing can legitimately
+// save one of the pair a moment before the other is typed.
+const validCoord = (v, min, max) => v === null || v === undefined || v === ''
+  ? true : Number.isFinite(Number(v)) && Number(v) >= min && Number(v) <= max;
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -1086,6 +1092,29 @@ const migrations = [
   )`,
   "CREATE INDEX IF NOT EXISTS idx_customs_filings_status ON customs_filings(status)",
 
+  // Carrier Line Agents (CargoWise-baseline gap: a carrier's LOCAL representative differs by
+  // port — Maersk's Rotterdam agent isn't its New York agent — distinct from a Forwarder's own
+  // overseas correspondent network, which this doesn't model). carrier_code stays loose text,
+  // matching shipments/contracts/allocations' own carrier_code convention everywhere else (never
+  // FK'd to `carriers`). port_unlocode DOES get a real FK, matching linked_ports' own style.
+  // agent_customer_id is a real FK to customers(id) with NO ON DELETE clause (neither CASCADE —
+  // which would let a customer delete silently destroy master data — nor SET NULL, which would
+  // leave a meaningless NOT NULL-in-spirit row with nothing left to point at); customer delete
+  // is instead blocked by an app-level guard, mirroring offices.js's own "referenced by
+  // shipments — deactivate it instead" pattern. No denormalized agent_customer_name column —
+  // this is live master data, not a shipment-time snapshot, so reads always join to customers
+  // for the current name (same idiom CUST_JOIN already uses for parent_customer_name).
+  `CREATE TABLE IF NOT EXISTS carrier_agents (
+    id                 TEXT PRIMARY KEY,
+    carrier_code       TEXT NOT NULL,
+    port_unlocode      TEXT NOT NULL REFERENCES port_locations(unlocode),
+    agent_customer_id  TEXT NOT NULL REFERENCES customers(id),
+    note               TEXT DEFAULT '',
+    created_at         TEXT NOT NULL,
+    UNIQUE(carrier_code, port_unlocode)
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_carrier_agents_customer ON carrier_agents(agent_customer_id)",
+
   // Signed PDF Document Generation (Epic TKT-YOFYFZ) — deliberately its own table rather
   // than an app_settings row: GET /api/settings already returns the whole app_settings
   // table in plaintext to any authenticated user (it's how ai_api_key leaks today), and the
@@ -1161,6 +1190,45 @@ const migrations = [
   )`,
   "CREATE INDEX IF NOT EXISTS idx_schedule_legs_schedule ON schedule_legs(schedule_id)",
   "ALTER TABLE schedule_legs ADD COLUMN carrier TEXT DEFAULT ''",
+
+  // Content-Keyed Sailing Legs — schedule_legs (above) gives every schedule its OWN fresh leg
+  // rows with zero dedup, even when two schedules describe the exact same physical dated sailing
+  // segment (same carrier/vessel/voyage/route/date). sailing_legs is the canonical, deduplicated
+  // catalog instead: one row per distinct leg, keyed by a deterministic content key (computeLegKey,
+  // routes/shipment-ops.js) over carrier+vesselImo+voyageNumber+pol+pod+etd — those 6 fields ARE
+  // the identity, so they never change in place; eta/vesselName/service are descriptive and CAN be
+  // revised later (a live carrier feed, a re-run generator) via upsertLeg's real upsert-with-audit
+  // (diffs old vs new, logs one entity_events('sailing_leg', ...) row per changed field — same
+  // idiom the schedule PUT route already uses). schedule_leg_refs is the ordered composition: which
+  // legs make up a schedule, in what order — every schedule now has 1+ refs (a "direct" sailing is
+  // just a schedule with exactly one ref), removing the old 0-1-rows-means-direct special case.
+  `CREATE TABLE IF NOT EXISTS sailing_legs (
+    leg_key        TEXT PRIMARY KEY,
+    carrier        TEXT DEFAULT '',
+    pol            TEXT DEFAULT '',
+    pod            TEXT DEFAULT '',
+    etd            TEXT DEFAULT '',
+    eta            TEXT DEFAULT '',
+    vessel_name    TEXT DEFAULT '',
+    vessel_imo     TEXT DEFAULT '',
+    voyage_number  TEXT DEFAULT '',
+    service        TEXT DEFAULT '',
+    created_at     TEXT NOT NULL,
+    updated_at     TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS schedule_leg_refs (
+    schedule_id  TEXT NOT NULL REFERENCES shipment_schedules(id) ON DELETE CASCADE,
+    leg_key      TEXT NOT NULL REFERENCES sailing_legs(leg_key),
+    leg_order    INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (schedule_id, leg_order)
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_schedule_leg_refs_leg ON schedule_leg_refs(leg_key)",
+  // schedule_key: the ordered concatenation of this schedule's leg_keys — lets two independently
+  // -created schedule rows be recognized as literally the same sailing via string equality, without
+  // comparing individual leg rows. Written once at create time (Generator + Add Sailing), same
+  // write-time idiom as the existing pol/pod/vessel summary fields below.
+  "ALTER TABLE shipment_schedules ADD COLUMN schedule_key TEXT DEFAULT ''",
+
   // Gates the synthetic "DEMO ..." mockSailings() fallback in GET /api/schedules/search — default
   // on, so sailing search/tests keep working with zero setup; an admin turns it off once real
   // generated schedules exist in the catalog and synthetic fallback data is no longer wanted.
@@ -1189,6 +1257,21 @@ const migrations = [
   "INSERT OR IGNORE INTO app_settings (key, value) VALUES ('api_ais_enabled', 'false')",
   "INSERT OR IGNORE INTO app_settings (key, value) VALUES ('ais_provider', 'aisstream')",
   "INSERT OR IGNORE INTO app_settings (key, value) VALUES ('ais_api_key', '')",
+  // Classified-location customers — a site (military/government/restricted) that can only ever
+  // be identified by GPS coordinates, never a normal address or port/UN-LOCODE lookup. DEFAULT
+  // NULL (not port_locations' own DEFAULT 0) — 0,0 is a real ocean coordinate, so NULL is the
+  // only way to mean "unset."
+  "ALTER TABLE customers ADD COLUMN classified_location INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE customers ADD COLUMN latitude  REAL DEFAULT NULL",
+  "ALTER TABLE customers ADD COLUMN longitude REAL DEFAULT NULL",
+  // A Pick-up/Delivery leg to a classified-location site — pol_loc_type/pod_loc_type gains a
+  // "GPS Coordinates" value (alongside Door/Terminal/Container Yard/CFS) instead of a parallel
+  // mode column, since it's already the "what kind of location is this endpoint" field. When set,
+  // pol/pod (the UN/LOCODE) is blanked and these carry the real location instead — never both.
+  "ALTER TABLE shipment_legs ADD COLUMN pol_latitude  REAL DEFAULT NULL",
+  "ALTER TABLE shipment_legs ADD COLUMN pol_longitude REAL DEFAULT NULL",
+  "ALTER TABLE shipment_legs ADD COLUMN pod_latitude  REAL DEFAULT NULL",
+  "ALTER TABLE shipment_legs ADD COLUMN pod_longitude REAL DEFAULT NULL",
 ];
 
 // "duplicate column name" is the expected, harmless result of re-running an ADD COLUMN
@@ -1265,6 +1348,55 @@ if (migrationFailures.length) {
     migrationFailures.push({ sql: "rebuildShipmentSchedulesNullableOwner", error: e.message });
   } finally {
     try { db.exec("PRAGMA foreign_keys=ON"); } catch {}
+  }
+})();
+
+// One-time backfill: give every pre-existing shipment_schedules row a uniform leg-backed
+// representation under the new content-keyed model (sailing_legs/schedule_leg_refs above) —
+// idempotent (skips any schedule that already has schedule_leg_refs rows, so re-running on every
+// boot after the first is a no-op). A real TSP row (2+ existing schedule_legs) gets each of its
+// legs upserted into sailing_legs and referenced in order; a direct row (0-1 schedule_legs) gets
+// ONE synthetic leg built from its own top-level carrier/pol/pod/vessel/voyage/etd/eta/service —
+// the same "every schedule has 1+ legs" convention the rewritten write paths use going forward.
+// No entity_events logging here: this is populating sailing_legs for the first time, not revising
+// an existing row, so there's nothing to diff against yet.
+;(function backfillSailingLegs() {
+  const legKeyOf = l => [l.carrier, l.vessel_imo, l.voyage_number, l.pol, l.pod, l.etd]
+    .map(v => (v || '').toString().trim().toUpperCase()).join('|');
+  const upsertBackfillLeg = (l, now) => {
+    const legKey = legKeyOf(l);
+    db.prepare(`INSERT INTO sailing_legs (leg_key, carrier, pol, pod, etd, eta, vessel_name, vessel_imo, voyage_number, service, created_at, updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(leg_key) DO NOTHING`)
+      .run(legKey, l.carrier || '', l.pol || '', l.pod || '', l.etd || '', l.eta || '',
+           l.vessel_name || '', l.vessel_imo || '', l.voyage_number || '', l.service || '', now, now);
+    return legKey;
+  };
+  try {
+    const schedules = db.prepare(`
+      SELECT s.* FROM shipment_schedules s
+      WHERE NOT EXISTS (SELECT 1 FROM schedule_leg_refs r WHERE r.schedule_id = s.id)
+    `).all();
+    if (schedules.length === 0) return;
+    const insertRef = db.prepare("INSERT INTO schedule_leg_refs (schedule_id, leg_key, leg_order) VALUES (?,?,?)");
+    const updateKey = db.prepare("UPDATE shipment_schedules SET schedule_key=? WHERE id=?");
+    const now = new Date().toISOString();
+    db.exec("BEGIN");
+    for (const sched of schedules) {
+      const oldLegs = db.prepare("SELECT * FROM schedule_legs WHERE schedule_id=? ORDER BY leg_order ASC").all(sched.id);
+      const legRows = oldLegs.length >= 2 ? oldLegs : [{
+        carrier: sched.carrier, pol: sched.pol, pod: sched.pod, etd: sched.etd, eta: sched.eta,
+        vessel_name: sched.vessel_name, vessel_imo: sched.vessel_imo, voyage_number: sched.voyage_number, service: sched.service,
+      }];
+      const legKeys = legRows.map(l => upsertBackfillLeg(l, now));
+      legKeys.forEach((legKey, i) => insertRef.run(sched.id, legKey, i));
+      updateKey.run(legKeys.join("→"), sched.id);
+    }
+    db.exec("COMMIT");
+    console.log(`  ✔ Backfilled ${schedules.length} schedule(s) into sailing_legs/schedule_leg_refs`);
+  } catch (e) {
+    try { db.exec("ROLLBACK"); } catch {}
+    console.error("[migration] FAILED backfillSailingLegs:", e.message);
+    migrationFailures.push({ sql: "backfillSailingLegs", error: e.message });
   }
 })();
 
@@ -2039,20 +2171,17 @@ const BOOKABLE_CARRIERS = new Set(["MAEU", "SAFM", "MCPU"]);
 // src/tokens.js (same split as BOOKABLE_CARRIERS — frontend/backend don't share a module).
 // Customs Broker is split Export/Import (not a single role) since each shipment can only
 // hold one party per role and the two are routinely handled by different brokers — also a
-// deliberate setup for the later Customs & Regulatory Filing epic (TKT-XW6TQK).
+// deliberate setup for the later Customs & Regulatory Filing epic (TKT-XW6TQK). "Agent" (bare)
+// is a generic, manually-picked catch-all with no carrier/port linkage — NOT the same concept
+// as "Line Agent (Export/Import)" below, which is a specific carrier's local representative at
+// a specific port, auto-resolved from the carrier_agents table (see resolveCarrierAgent) — the
+// two are easy to confuse since they sit side by side in the same picker.
 const ADDITIONAL_PARTY_ROLES = [
   "Forwarder", "Customs Broker (Export)", "Customs Broker (Import)",
   "Trucker (Pre-carriage)", "Trucker (On-carriage)",
   "Also Notify Party", "Bank", "Insurance Provider", "Agent",
+  "Line Agent (Export)", "Line Agent (Import)",
 ];
-// Organization Model Enhancement Epic 1 — the 4 hardcoded shipment roles plus
-// ADDITIONAL_PARTY_ROLES, combined into one vocabulary customer_roles validates against and
-// CustomerCombobox's roleFilter matches on. Deliberately a NEW list alongside
-// ADDITIONAL_PARTY_ROLES rather than a rewrite of it — that list is already correctly
-// single-sourced per side (this backend copy + src/tokens.js's own, same split as
-// BOOKABLE_CARRIERS), nothing to consolidate there. Frontend keeps its own equivalent copy.
-const FIXED_SHIPMENT_ROLES = ["Shipper", "Consignee", "Notify Party", "Principal"];
-const ALL_CUSTOMER_ROLES = [...FIXED_SHIPMENT_ROLES, ...ADDITIONAL_PARTY_ROLES];
 // Customs & Regulatory Filing (Epic TKT-XW6TQK) — the two filing types a shipment can
 // independently need, AES/EEI (export) and ISF/AMS (import). Simulated/mock only.
 const CUSTOMS_FILING_TYPES = ["AES_EEI", "ISF_AMS"];
@@ -2068,6 +2197,8 @@ const mapShipmentLeg = r => ({
   movementType: r.movement_type || r.mot || 'SEA',
   pol: r.pol || '', pod: r.pod || '',
   polLocType: r.pol_loc_type || 'Terminal', podLocType: r.pod_loc_type || 'Terminal',
+  polLatitude: r.pol_latitude ?? null, polLongitude: r.pol_longitude ?? null,
+  podLatitude: r.pod_latitude ?? null, podLongitude: r.pod_longitude ?? null,
   etd: r.etd || null, eta: r.eta || null,
   etdSource: r.etd_source || '', etaSource: r.eta_source || '',
   carrierCode: r.carrier_code || '', vessel: r.vessel || '', vesselImo: r.vessel_imo || '',
@@ -2076,7 +2207,8 @@ const mapShipmentLeg = r => ({
   createdAt: r.created_at,
 });
 
-const LEG_LOC_ABBR = { 'Door': 'DR', 'Terminal': 'PT', 'Container Yard': 'CY', 'CFS': 'CFS' };
+const LEG_LOC_ABBR = { 'Door': 'DR', 'Terminal': 'PT', 'Container Yard': 'CY', 'CFS': 'CFS', 'GPS Coordinates': 'GPS' };
+const GPS_LOC_TYPE = 'GPS Coordinates';
 
 const syncShipmentFromLegs = (shipmentId) => {
   const legs = db.prepare("SELECT * FROM shipment_legs WHERE shipment_id=? ORDER BY leg_order ASC").all(shipmentId);
@@ -2103,8 +2235,12 @@ const syncShipmentFromLegs = (shipmentId) => {
   // listener updates a SEA leg's etd/eta in place after a confirmed departure/arrival, this
   // existing rollup carries it up to the shipment the same way it always has, no separate
   // atd/ata bookend needed.
+  // first.pol/last.pod fall back to the SEA leg's own port when the bookending Pick-up/Delivery
+  // leg is a classified GPS site (pol/pod blanked there by design) — the shipment's overall
+  // pol/pod must still resolve to a real UN/LOCODE, since it feeds B/L generation, exports, and
+  // every list/header surface that expects a real port.
   db.prepare(`UPDATE shipments SET pol=?, pod=?, etd=?, eta=?, carrier_code=COALESCE(NULLIF(?, ''), carrier_code), vessel=?, vessel_imo=?, voyage=?, routing_term=? WHERE id=?`)
-    .run(first.pol || '', last.pod || '', first.etd || null, last.eta || null,
+    .run(first.pol || seaLeg.pol || '', last.pod || seaLeg.pod || '', first.etd || null, last.eta || null,
          seaLeg.carrier_code || '', seaLeg.vessel || '', seaLeg.vessel_imo || '',
          seaLeg.voyage || '', routingTerm, shipmentId);
 };
@@ -2158,6 +2294,7 @@ const mapCarrier      = r => ({ code: r.code, name: r.name, shortName: r.short_n
 const mapVessel       = r => ({ imo: r.imo, name: r.name, assetType: r.asset_type || '', flagIso2: r.flag_iso2 || '', flagName: r.flag_name || '', buildYear: r.build_year, grossTonnage: r.gross_tonnage, mmsi: r.mmsi || '', aisVerifiedAt: r.ais_verified_at || '' });
 const mapPortLocation = r => ({ unlocode: r.unlocode, name: r.name, latitude: r.latitude, longitude: r.longitude, countryCode: r.country_code, zoneCode: r.zone_code, timezone: r.timezone || null, lastSyncedAt: r.last_synced_at || null });
 const mapLinkedPort   = r => ({ id: r.id, primaryUnlocode: r.primary_unlocode, primaryName: r.primary_name || '', linkedUnlocode: r.linked_unlocode, linkedName: r.linked_name || '', note: r.note || '' });
+const mapCarrierAgent = r => ({ id: r.id, carrierCode: r.carrier_code, portUnlocode: r.port_unlocode, portName: r.port_name || '', agentCustomerId: r.agent_customer_id, agentCustomerName: r.agent_customer_name || '', note: r.note || '', createdAt: r.created_at });
 const mapTradeLane    = r => ({ code: r.code, name: r.name, description: r.description || '', countryCount: r.country_count ?? 0, transitDays: r.transit_days ?? 0 });
 const mapScopeItem    = r => ({
   id:        r.id,
@@ -2382,7 +2519,7 @@ const mapCustomsFiling = r => ({
 const mapKbProject = r => ({ id: r.id, name: r.name, key: r.key, color: r.color || '#6366f1', description: r.description || '', createdAt: r.created_at });
 const mapKbVersion = r => ({ id: r.id, projectId: r.project_id, name: r.name, description: r.description || '', status: r.status || 'Planning', releaseDate: r.release_date || null, createdAt: r.created_at });
 const mapKbColumn  = r => ({ id: r.id, projectId: r.project_id, name: r.name, position: r.position ?? 0, color: r.color || '#6366f1', wipLimit: r.wip_limit ?? null, createdAt: r.created_at });
-const mapCustomer            = r => ({ id: r.id, companyName: r.company_name, address1: r.address1 || '', address2: r.address2 || '', city: r.city || '', state: r.state || '', postalCode: r.postal_code || '', countryIso2: r.country_iso2 || '', phone: r.phone || '', fax: r.fax || '', email: r.email || '', website: r.website || '', notes: r.notes || '', createdAt: r.created_at, screeningResult: r.screening_result || null, currency: r.currency || 'USD', creditLimit: r.credit_limit ?? null, creditTermsDays: r.credit_terms_days ?? null, creditHold: !!r.credit_hold, creditHoldReason: r.credit_hold_reason || '', parentCustomerId: r.parent_customer_id || null, parentCustomerName: r.parent_customer_name || null });
+const mapCustomer            = r => ({ id: r.id, companyName: r.company_name, address1: r.address1 || '', address2: r.address2 || '', city: r.city || '', state: r.state || '', postalCode: r.postal_code || '', countryIso2: r.country_iso2 || '', phone: r.phone || '', fax: r.fax || '', email: r.email || '', website: r.website || '', notes: r.notes || '', createdAt: r.created_at, screeningResult: r.screening_result || null, currency: r.currency || 'USD', creditLimit: r.credit_limit ?? null, creditTermsDays: r.credit_terms_days ?? null, creditHold: !!r.credit_hold, creditHoldReason: r.credit_hold_reason || '', parentCustomerId: r.parent_customer_id || null, parentCustomerName: r.parent_customer_name || null, classifiedLocation: !!r.classified_location, latitude: r.latitude ?? null, longitude: r.longitude ?? null });
 const mapCustomerIdentifier  = r => ({ id: r.id, customerId: r.customer_id, idType: r.id_type, idCode: r.id_code, countryIso2: r.country_iso2 || '', label: r.label || '', isPrimary: !!r.is_primary, createdAt: r.created_at });
 const mapCustomerScreening   = r => ({ id: r.id, customerId: r.customer_id, screenedAt: r.screened_at, result: r.result, hits: JSON.parse(r.hits || '[]'), overriddenAt: r.overridden_at || null, overrideReason: r.override_reason || null });
 const mapCustomerDoc         = r => ({ id: r.id, customerId: r.customer_id, filename: r.filename, mimeType: r.mime_type, sizeBytes: r.size_bytes, docType: r.doc_type, uploadedBy: r.uploaded_by, createdAt: r.created_at });
@@ -2717,6 +2854,20 @@ const linkedPortCodes = code => db.prepare(`
   FROM linked_ports WHERE primary_unlocode=? OR linked_unlocode=?
 `).all(code, code, code).map(r => r.code);
 
+// Carrier Line Agents — resolves the registered Line Agent for a carrier at a port, falling
+// back to any linked port (same linked-port-aware matching findMatchingContractLeg already
+// uses below) so a carrier_agents row registered against a seaport still matches a shipment
+// routed via a linked inland ICD. Returns the matched row (with a live-joined agent name) or
+// null if nothing's registered for this carrier at this port (or any of its linked ports).
+function resolveCarrierAgent(carrierCode, portUnlocode) {
+  const tryPort = p => db.prepare(`
+    SELECT ca.*, c.company_name AS agent_customer_name
+    FROM carrier_agents ca JOIN customers c ON c.id = ca.agent_customer_id
+    WHERE ca.carrier_code=? AND ca.port_unlocode=?
+  `).get(carrierCode, p);
+  return tryPort(portUnlocode) || linkedPortCodes(portUnlocode).map(tryPort).find(Boolean) || null;
+}
+
 // Finds a run of legs covering pol->pod as one connected journey. Contracts in this app
 // store legs in two different shapes: sequential TSP hops of ONE journey (leg[i].pod ===
 // leg[i+1].pol, e.g. NLRTM->BEANR->USNYC) and independent ALTERNATE LANES bundled under a
@@ -2961,7 +3112,7 @@ const aisListener = createAisListener({
 });
 
 const ctx = {
-  db, uid, ok, err, isUniqueViolation,
+  db, uid, ok, err, isUniqueViolation, validCoord,
   auth, requireRole,
   portLanesMap, portCountryMap, rebuildPortLanesMap, longestLane,
   applyShipmentAccessFilter,
@@ -2974,13 +3125,13 @@ const ctx = {
   resolveBrowserExecutable, renderHtmlToPdf, getActiveSigningCert, signPdfBuffer,
   createTransporterFromSettings, getTransporterForOffice, invalidateTransporterCache,
   buildMailOptions, sendViaOffice, mapOfficeMailSettings,
-  SVC_ABBR, LEG_LOC_ABBR,
+  SVC_ABBR, LEG_LOC_ABBR, GPS_LOC_TYPE,
   VALID_ROLES, ROLE_RANK_SV, primaryRoleSV, parseUserRoles,
   SERVICE_CODE_MAP, importContractRates, createRateSnapshot, generateCostLinesFromSnapshot,
   mapShipment, mapShipmentLeg, mapCostLine, mapService, mapContainer, mapContainerEvent, mapContainerPackage, mapAllocation,
   mapShipmentParty, ADDITIONAL_PARTY_ROLES,
   mapRateSnapshot, mapRateSnapshotLine, mapChargeCodeDefinition, mapPackTypeDefinition,
-  mapCarrier, mapVessel, mapPortLocation, mapLinkedPort, mapTradeLane,
+  mapCarrier, mapVessel, mapPortLocation, mapLinkedPort, mapTradeLane, mapCarrierAgent,
   mapScopeItem, mapAccessConfig, mapOffice, mapBranch, mapOrgCountry, mapRegion, mapCountry, mapTicketLink, mapTicket,
   mapTestItem, mapTestCaseLink,
   mapEdiMessage,
@@ -2988,7 +3139,6 @@ const ctx = {
   mapCustomsFiling, CUSTOMS_FILING_TYPES,
   mapKbProject, mapKbVersion, mapKbColumn,
   mapCustomer, mapCustomerIdentifier, mapCustomerScreening, mapCustomerDoc, mapCustomerContact,
-  ALL_CUSTOMER_ROLES,
   mapCommodity, mapSystemMessage, mapMilestone, mapMilestoneTemplate,
   mapContract, mapLeg, mapRate,
   logEvent, logEntityEvent, logAdminEvent, TRACKED_FIELDS, TRACKED_CTR_FIELDS,
@@ -3002,7 +3152,7 @@ const ctx = {
   checkOverlap,
   autoCompleteMilestone,
   ensureBookingCreated, supersedeIfCarrierChanged,
-  linkedPortCodes, findMatchingContractLeg,
+  linkedPortCodes, findMatchingContractLeg, resolveCarrierAgent,
   screenShipmentById, rescreenActiveShipments, resolveCustomerGroup,
   bcrypt, jwt, JWT_SECRET,
   inverseLinkLabel,
@@ -4428,21 +4578,43 @@ app.get("/api/shipments/:id/legs", auth(), (req, res) => {
 });
 
 const LEG_TO_MOT = { 'SEA': 'SEA', 'AIR': 'AIR', 'RAIL': 'RAIL', 'Pick-up': 'ROAD', 'Delivery': 'ROAD', 'Feeder': 'SEA' };
+// Kept in lockstep with routes/shipments.js's own copy of this helper, even though this whole
+// block is dead code (require('./routes/shipments') registers the real handlers first — see the
+// comment on that route) — in case a future require-reordering ever resurrects it.
+const resolveLegPointDead = (legType, locType, code, lat, lng) => {
+  if (locType !== GPS_LOC_TYPE) return { code: (code || '').toUpperCase(), lat: null, lng: null };
+  if (legType === 'SEA') return { error: "A SEA leg cannot use GPS Coordinates — it must have a real port" };
+  return {
+    code: '',
+    lat: lat === '' || lat == null ? null : Number(lat),
+    lng: lng === '' || lng == null ? null : Number(lng),
+  };
+};
 
 app.post("/api/shipments/:id/legs", auth(), (req, res) => {
   const { legType='SEA', movementType='SEA', movementBy='',
           mot: rawMot, pol='', pod='', etd=null, eta=null, carrierCode='',
           polLocType='Terminal', podLocType='Terminal',
+          polLatitude=null, polLongitude=null, podLatitude=null, podLongitude=null,
           vessel='', vesselImo='', voyage='', contractType='', contractRef='' } = req.body;
   const mot = rawMot || LEG_TO_MOT[legType] || 'SEA';
+  const polPoint = resolveLegPointDead(legType, polLocType, pol, polLatitude, polLongitude);
+  if (polPoint.error) return err(res, polPoint.error);
+  const podPoint = resolveLegPointDead(legType, podLocType, pod, podLatitude, podLongitude);
+  if (podPoint.error) return err(res, podPoint.error);
+  if (!validCoord(polPoint.lat, -90, 90)) return err(res, "POL latitude must be between -90 and 90");
+  if (!validCoord(polPoint.lng, -180, 180)) return err(res, "POL longitude must be between -180 and 180");
+  if (!validCoord(podPoint.lat, -90, 90)) return err(res, "POD latitude must be between -90 and 90");
+  if (!validCoord(podPoint.lng, -180, 180)) return err(res, "POD longitude must be between -180 and 180");
   const id = `LEG-${uid()}`;
   const maxOrder = db.prepare("SELECT MAX(leg_order) as m FROM shipment_legs WHERE shipment_id=?").get(req.params.id);
   const legOrder = (maxOrder?.m ?? -1) + 1;
   const createdAt = new Date().toISOString();
-  db.prepare(`INSERT INTO shipment_legs (id,shipment_id,leg_order,mot,leg_type,movement_type,pol,pod,pol_loc_type,pod_loc_type,etd,eta,carrier_code,vessel,vessel_imo,voyage,movement_by,contract_type,contract_ref,created_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+  db.prepare(`INSERT INTO shipment_legs (id,shipment_id,leg_order,mot,leg_type,movement_type,pol,pod,pol_loc_type,pod_loc_type,pol_latitude,pol_longitude,pod_latitude,pod_longitude,etd,eta,carrier_code,vessel,vessel_imo,voyage,movement_by,contract_type,contract_ref,created_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run(id, req.params.id, legOrder, mot, legType, movementType,
-         pol.toUpperCase(), pod.toUpperCase(), polLocType, podLocType,
+         polPoint.code, podPoint.code, polLocType, podLocType,
+         polPoint.lat, polPoint.lng, podPoint.lat, podPoint.lng,
          etd||null, eta||null, carrierCode, vessel, vesselImo, voyage, movementBy,
          contractType, contractRef, createdAt);
   syncShipmentFromLegs(req.params.id);
@@ -4453,13 +4625,23 @@ app.put("/api/shipments/:id/legs/:legId", auth(), (req, res) => {
   const { legType='SEA', movementType='SEA', movementBy='',
           mot: rawMot, pol='', pod='', etd=null, eta=null, carrierCode='',
           polLocType='Terminal', podLocType='Terminal',
+          polLatitude=null, polLongitude=null, podLatitude=null, podLongitude=null,
           vessel='', vesselImo='', voyage='', contractType='', contractRef='', legOrder } = req.body;
   const mot = rawMot || LEG_TO_MOT[legType] || 'SEA';
   const existing = db.prepare("SELECT * FROM shipment_legs WHERE id=? AND shipment_id=?").get(req.params.legId, req.params.id);
   if (!existing) return err(res, "Not found", 404);
-  db.prepare(`UPDATE shipment_legs SET mot=?,leg_type=?,movement_type=?,pol=?,pod=?,pol_loc_type=?,pod_loc_type=?,etd=?,eta=?,carrier_code=?,vessel=?,vessel_imo=?,voyage=?,movement_by=?,contract_type=?,contract_ref=?,leg_order=? WHERE id=?`)
-    .run(mot, legType, movementType, pol.toUpperCase(), pod.toUpperCase(),
-         polLocType, podLocType, etd||null, eta||null,
+  const polPoint = resolveLegPointDead(legType, polLocType, pol, polLatitude, polLongitude);
+  if (polPoint.error) return err(res, polPoint.error);
+  const podPoint = resolveLegPointDead(legType, podLocType, pod, podLatitude, podLongitude);
+  if (podPoint.error) return err(res, podPoint.error);
+  if (!validCoord(polPoint.lat, -90, 90)) return err(res, "POL latitude must be between -90 and 90");
+  if (!validCoord(polPoint.lng, -180, 180)) return err(res, "POL longitude must be between -180 and 180");
+  if (!validCoord(podPoint.lat, -90, 90)) return err(res, "POD latitude must be between -90 and 90");
+  if (!validCoord(podPoint.lng, -180, 180)) return err(res, "POD longitude must be between -180 and 180");
+  db.prepare(`UPDATE shipment_legs SET mot=?,leg_type=?,movement_type=?,pol=?,pod=?,pol_loc_type=?,pod_loc_type=?,pol_latitude=?,pol_longitude=?,pod_latitude=?,pod_longitude=?,etd=?,eta=?,carrier_code=?,vessel=?,vessel_imo=?,voyage=?,movement_by=?,contract_type=?,contract_ref=?,leg_order=? WHERE id=?`)
+    .run(mot, legType, movementType, polPoint.code, podPoint.code,
+         polLocType, podLocType, polPoint.lat, polPoint.lng, podPoint.lat, podPoint.lng,
+         etd||null, eta||null,
          carrierCode, vessel, vesselImo, voyage, movementBy,
          contractType, contractRef, legOrder ?? existing.leg_order, req.params.legId);
   syncShipmentFromLegs(req.params.id);

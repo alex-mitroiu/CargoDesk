@@ -3,10 +3,11 @@
 module.exports = function customersRoutes(app, ctx) {
   const { db, ok, err, uid, auth,
           mapCustomer, mapCustomerIdentifier, mapCustomerScreening, mapCustomerDoc, mapCustomerContact,
-          ALL_CUSTOMER_ROLES, screenShipmentById, rescreenActiveShipments,
+          screenShipmentById, rescreenActiveShipments,
           sanctionsMap, normSanctionName, loadSanctionsIndex, scheduleNextOfacSync,
           syncOfacSdn,
           getFxRates, fxCache, getSettings,
+          validCoord,
           UPLOADS_DIR, fs, path } = ctx;
 
   // ─── CSV parsing helpers (local to this domain) ────────────────────────────
@@ -96,6 +97,19 @@ module.exports = function customersRoutes(app, ctx) {
     LEFT JOIN customer_screenings cs ON cs.customer_id = c.id
     LEFT JOIN customers pc ON pc.id = c.parent_customer_id`;
 
+  // Customer role-eligibility, derived (role-derivation rework) — rather than a hand-maintained
+  // customer_roles flag table, this reads the same 13 role slots screenShipmentById (server.js)
+  // already screens: the 4 fixed shipment FK columns plus shipment_parties. A customer that's
+  // never actually been assigned a role simply doesn't appear here yet — no backfill, no
+  // separate table to keep in sync, self-corrects the moment a real assignment happens.
+  const CUSTOMER_ROLE_USAGE_SQL = `
+    SELECT shipper_id AS customer_id, 'Shipper' AS role FROM shipments WHERE shipper_id != ''
+    UNION SELECT consignee_id, 'Consignee' FROM shipments WHERE consignee_id != ''
+    UNION SELECT principal_id, 'Principal' FROM shipments WHERE principal_id != ''
+    UNION SELECT notify_id, 'Notify Party' FROM shipments WHERE notify_id != ''
+    UNION SELECT customer_id, role FROM shipment_parties
+  `;
+
   // ─── Customers ────────────────────────────────────────────────────────────
 
   app.get("/api/customers", (req, res) => {
@@ -110,15 +124,31 @@ module.exports = function customersRoutes(app, ctx) {
     if (co) { conditions.push("c.country_iso2 = ?"); params.push(co); }
     const cid = customerId.trim();
     if (cid) { conditions.push("c.id LIKE ?"); params.push(`%${cid}%`); }
-    // roleFilter (CustomerCombobox) — narrows to customers flagged eligible for this role via
-    // customer_roles; deliberately a soft filter (an unflagged customer is still reachable by
-    // clearing it client-side), never a hard block enforced server-side beyond the query itself.
-    const rl = role.trim();
-    if (rl) { conditions.push("c.id IN (SELECT customer_id FROM customer_roles WHERE role=?)"); params.push(rl); }
+    // roleFilter (CustomerCombobox) / category segment (MdmCustomersPage list) — narrows to
+    // customers actually used in any of one-or-more comma-separated roles; deliberately a soft
+    // filter (a not-yet-used customer is still reachable by clearing it client-side), never a
+    // hard block enforced server-side beyond the query itself.
+    const roleList = role.split(',').map(r => r.trim()).filter(Boolean);
+    if (roleList.length) {
+      conditions.push(`c.id IN (SELECT customer_id FROM (${CUSTOMER_ROLE_USAGE_SQL}) WHERE role IN (${roleList.map(() => '?').join(',')}))`);
+      params.push(...roleList);
+    }
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
     const total = db.prepare(`SELECT COUNT(*) AS n FROM customers c ${where}`).get(...params).n;
     const rows  = db.prepare(`${CUST_JOIN} ${where} ORDER BY c.company_name LIMIT ? OFFSET ?`).all(...params, lim, off);
-    ok(res, { results: rows.map(mapCustomer), total, limit: lim, offset: off });
+
+    let rolesByCustomer = {};
+    if (rows.length) {
+      const ids = rows.map(r => r.id);
+      const roleRows = db.prepare(
+        `SELECT customer_id, role FROM (${CUSTOMER_ROLE_USAGE_SQL}) WHERE customer_id IN (${ids.map(() => '?').join(',')})`
+      ).all(...ids);
+      for (const r of roleRows) (rolesByCustomer[r.customer_id] ??= []).push(r.role);
+    }
+    ok(res, {
+      results: rows.map(r => ({ ...mapCustomer(r), roles: rolesByCustomer[r.id] || [] })),
+      total, limit: lim, offset: off,
+    });
   });
 
   app.get("/api/customers/sanctions-check", (req, res) => {
@@ -202,19 +232,25 @@ module.exports = function customersRoutes(app, ctx) {
     const { companyName, address1='', address2='', city='', state='', postalCode='',
             countryIso2='', phone='', fax='', email='', website='', notes='', currency='USD',
             creditLimit=null, creditTermsDays=null, creditHold=false, creditHoldReason='',
-            parentCustomerId=null } = req.body;
+            parentCustomerId=null,
+            classifiedLocation=false, latitude=null, longitude=null } = req.body;
     if (!companyName?.trim()) return err(res, "companyName required");
     if (parentCustomerId && !db.prepare("SELECT id FROM customers WHERE id=?").get(parentCustomerId))
       return err(res, "Parent customer not found");
+    if (!validCoord(latitude, -90, 90)) return err(res, "Latitude must be between -90 and 90");
+    if (!validCoord(longitude, -180, 180)) return err(res, "Longitude must be between -180 and 180");
     const id = `CUS-${uid()}`;
     const createdAt = new Date().toISOString();
     const ccU = countryIso2.toUpperCase().trim();
     const cl = creditLimit === null || creditLimit === '' ? null : Number(creditLimit);
     const ctd = creditTermsDays === null || creditTermsDays === '' ? null : parseInt(creditTermsDays, 10);
-    db.prepare(`INSERT INTO customers (id,company_name,address1,address2,city,state,postal_code,country_iso2,phone,fax,email,website,notes,created_at,currency,credit_limit,credit_terms_days,credit_hold,credit_hold_reason,parent_customer_id)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    const lat = classifiedLocation && latitude !== '' && latitude != null ? Number(latitude) : null;
+    const lng = classifiedLocation && longitude !== '' && longitude != null ? Number(longitude) : null;
+    db.prepare(`INSERT INTO customers (id,company_name,address1,address2,city,state,postal_code,country_iso2,phone,fax,email,website,notes,created_at,currency,credit_limit,credit_terms_days,credit_hold,credit_hold_reason,parent_customer_id,classified_location,latitude,longitude)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
       .run(id, companyName.trim(), address1, address2, city, state, postalCode, ccU, phone, fax, email, website, notes, createdAt, (currency || 'USD').toUpperCase().trim(),
-           cl, ctd, creditHold ? 1 : 0, creditHold ? creditHoldReason.trim() : '', parentCustomerId || null);
+           cl, ctd, creditHold ? 1 : 0, creditHold ? creditHoldReason.trim() : '', parentCustomerId || null,
+           classifiedLocation ? 1 : 0, lat, lng);
     if (sanctionsMap.size > 0) screenCustomer(id);
     const row = db.prepare(`${CUST_JOIN} WHERE c.id=?`).get(id);
     ok(res, mapCustomer(row), 201);
@@ -224,7 +260,8 @@ module.exports = function customersRoutes(app, ctx) {
     const { companyName, address1='', address2='', city='', state='', postalCode='',
             countryIso2='', phone='', fax='', email='', website='', notes='', currency='USD',
             creditLimit=null, creditTermsDays=null, creditHold=false, creditHoldReason='',
-            parentCustomerId=null } = req.body;
+            parentCustomerId=null,
+            classifiedLocation=false, latitude=null, longitude=null } = req.body;
     if (!companyName?.trim()) return err(res, "companyName required");
     if (parentCustomerId) {
       if (!db.prepare("SELECT id FROM customers WHERE id=?").get(parentCustomerId))
@@ -232,14 +269,22 @@ module.exports = function customersRoutes(app, ctx) {
       if (wouldCreateCycle(req.params.id, parentCustomerId))
         return err(res, "This would create a circular parent chain — pick a different parent");
     }
+    if (!validCoord(latitude, -90, 90)) return err(res, "Latitude must be between -90 and 90");
+    if (!validCoord(longitude, -180, 180)) return err(res, "Longitude must be between -180 and 180");
     const ccU = countryIso2.toUpperCase().trim();
     const cl = creditLimit === null || creditLimit === '' ? null : Number(creditLimit);
     const ctd = creditTermsDays === null || creditTermsDays === '' ? null : parseInt(creditTermsDays, 10);
+    // classifiedLocation off force-clears any stored coordinates server-side, regardless of what
+    // the request body still carries — same hygiene idiom as credit_hold_reason on the line above.
+    const lat = classifiedLocation && latitude !== '' && latitude != null ? Number(latitude) : null;
+    const lng = classifiedLocation && longitude !== '' && longitude != null ? Number(longitude) : null;
     const info = db.prepare(`UPDATE customers SET company_name=?,address1=?,address2=?,city=?,state=?,
       postal_code=?,country_iso2=?,phone=?,fax=?,email=?,website=?,notes=?,currency=?,
-      credit_limit=?,credit_terms_days=?,credit_hold=?,credit_hold_reason=?,parent_customer_id=? WHERE id=?`)
+      credit_limit=?,credit_terms_days=?,credit_hold=?,credit_hold_reason=?,parent_customer_id=?,
+      classified_location=?,latitude=?,longitude=? WHERE id=?`)
       .run(companyName.trim(), address1, address2, city, state, postalCode, ccU, phone, fax, email, website, notes, (currency || 'USD').toUpperCase().trim(),
-           cl, ctd, creditHold ? 1 : 0, creditHold ? creditHoldReason.trim() : '', parentCustomerId || null, req.params.id);
+           cl, ctd, creditHold ? 1 : 0, creditHold ? creditHoldReason.trim() : '', parentCustomerId || null,
+           classifiedLocation ? 1 : 0, lat, lng, req.params.id);
     if (info.changes === 0) return err(res, "Not found", 404);
     if (sanctionsMap.size > 0) screenCustomer(req.params.id);
     const row = db.prepare(`${CUST_JOIN} WHERE c.id=?`).get(req.params.id);
@@ -247,12 +292,17 @@ module.exports = function customersRoutes(app, ctx) {
   });
 
   app.delete("/api/customers/:id", auth(), (req, res) => {
+    // Carrier Line Agents — agent_customer_id has no ON DELETE clause (deliberately: neither
+    // CASCADE nor SET NULL fits a NOT NULL master-data pointer that IS the row's reason for
+    // existing), so this app-level guard is the actual enforcement, mirroring offices.js's own
+    // "referenced by shipments — deactivate it instead" pattern for the same class of problem.
+    const inUse = db.prepare("SELECT id FROM carrier_agents WHERE agent_customer_id=? LIMIT 1").get(req.params.id);
+    if (inUse) return err(res, "Customer is assigned as a carrier line agent — remove that assignment first");
     const info = db.prepare("DELETE FROM customers WHERE id=?").run(req.params.id);
     if (info.changes === 0) return err(res, "Not found", 404);
     db.prepare("DELETE FROM customer_identifiers WHERE customer_id=?").run(req.params.id);
     db.prepare("DELETE FROM customer_screenings  WHERE customer_id=?").run(req.params.id);
     db.prepare("DELETE FROM customer_contacts    WHERE customer_id=?").run(req.params.id);
-    db.prepare("DELETE FROM customer_roles       WHERE customer_id=?").run(req.params.id);
     const docs = db.prepare("SELECT stored_name FROM customer_documents WHERE customer_id=?").all(req.params.id);
     for (const d of docs) {
       try { fs.unlinkSync(path.join(UPLOADS_DIR, d.stored_name)); } catch {}
@@ -348,31 +398,12 @@ module.exports = function customersRoutes(app, ctx) {
   });
 
   // ─── Customer Roles ───────────────────────────────────────────────────────
-  // Which of ALL_CUSTOMER_ROLES this customer is eligible for — a full-set replace on save
-  // (a small checkbox list, not an add/remove-one-at-a-time flow like identifiers/contacts),
-  // guarded by a transaction so a partial write can never leave a half-applied role set.
+  // Derived, read-only (role-derivation rework) — which roles this customer has actually been
+  // assigned on real shipments. No setter: nothing to save, it self-corrects the moment a new
+  // assignment is made elsewhere in the app. See CUSTOMER_ROLE_USAGE_SQL above.
 
   app.get("/api/customers/:id/roles", auth(), (req, res) => {
-    const rows = db.prepare("SELECT role FROM customer_roles WHERE customer_id=?").all(req.params.id);
-    ok(res, rows.map(r => r.role));
-  });
-
-  app.put("/api/customers/:id/roles", auth(), (req, res) => {
-    if (!db.prepare("SELECT id FROM customers WHERE id=?").get(req.params.id))
-      return err(res, "Customer not found", 404);
-    const { roles } = req.body;
-    if (!Array.isArray(roles)) return err(res, "roles array required");
-    const invalid = roles.filter(r => !ALL_CUSTOMER_ROLES.includes(r));
-    if (invalid.length) return err(res, `Invalid role(s): ${invalid.join(", ")}`);
-    const now = new Date().toISOString();
-    db.exec("BEGIN");
-    try {
-      db.prepare("DELETE FROM customer_roles WHERE customer_id=?").run(req.params.id);
-      const ins = db.prepare("INSERT INTO customer_roles (id,customer_id,role,created_at) VALUES (?,?,?,?)");
-      for (const role of [...new Set(roles)]) ins.run(`CRL-${uid()}`, req.params.id, role, now);
-      db.exec("COMMIT");
-    } catch (e) { db.exec("ROLLBACK"); throw e; }
-    const rows = db.prepare("SELECT role FROM customer_roles WHERE customer_id=?").all(req.params.id);
+    const rows = db.prepare(`SELECT DISTINCT role FROM (${CUSTOMER_ROLE_USAGE_SQL}) WHERE customer_id=?`).all(req.params.id);
     ok(res, rows.map(r => r.role));
   });
 

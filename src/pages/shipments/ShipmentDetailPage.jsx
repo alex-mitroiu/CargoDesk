@@ -10,6 +10,7 @@ import CustomerCombobox from "../../components/shared/CustomerCombobox";
 import ServicesPanel from "../../components/shared/ServicesPanel";
 import { api } from "../../api";
 import { toast } from "../../toast";
+import { formatLegPoint } from "../../utils/legLocation";
 import Btn from "../../components/primitives/Btn";
 import ActionMenu from "../../components/primitives/ActionMenu";
 import Spinner from "../../components/primitives/Spinner";
@@ -2365,10 +2366,10 @@ export const RouteSummaryBar = ({ shipment }) => {
           <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
             letterSpacing: "0.09em", color: T.accent }}>Pick-up</span>
           <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text }}>
-            {pkuLeg.pol || "—"}
+            {formatLegPoint(pkuLeg, "pol").code || "—"}
           </span>
-          {pkuLeg.polName && (
-            <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{pkuLeg.polName}</span>
+          {formatLegPoint(pkuLeg, "pol").name && (
+            <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{formatLegPoint(pkuLeg, "pol").name}</span>
           )}
           <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted, marginTop: 2 }}>
             Carrier's Haulage →
@@ -2472,10 +2473,10 @@ export const RouteSummaryBar = ({ shipment }) => {
           <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
             letterSpacing: "0.09em", color: T.accent }}>Delivery</span>
           <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text }}>
-            {delLeg.pod || "—"}
+            {formatLegPoint(delLeg, "pod").code || "—"}
           </span>
-          {delLeg.podName && (
-            <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{delLeg.podName}</span>
+          {formatLegPoint(delLeg, "pod").name && (
+            <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{formatLegPoint(delLeg, "pod").name}</span>
           )}
           <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted, marginTop: 2 }}>
             → Carrier's Haulage
@@ -2511,7 +2512,7 @@ export const ScheduleHistoryPanel = ({ shipment, forceOpen = false }) => {
   }, [shipment.id]);
 
   const EVENT_COLOR = { SAVED: T.success, REMOVED: T.danger, UPDATED: T.warning };
-  const SCHED_FIELD_LABELS = { vessel_name: "Vessel", voyage_number: "Voyage", etd: "ETD", eta: "ETA", carrier: "Carrier" };
+  const SCHED_FIELD_LABELS = { vessel_name: "Vessel", voyage_number: "Voyage", etd: "ETD", eta: "ETA", carrier: "Carrier", service: "Service" };
 
   const body = (
     <>
@@ -2540,6 +2541,11 @@ export const ScheduleHistoryPanel = ({ shipment, forceOpen = false }) => {
                 </span>
                 {isUpdate ? (
                   <div style={{ flex: 1, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", minWidth: 0 }}>
+                    {ev.entity_type === "sailing_leg" && (
+                      <span style={{ fontFamily: T.mono, fontSize: 10.5, color: T.textMuted }}>
+                        Leg {m.pol || "—"}→{m.pod || "—"}:
+                      </span>
+                    )}
                     <span style={{ fontFamily: T.body, fontSize: 12, fontWeight: 700, color: T.text, minWidth: 60 }}>
                       {SCHED_FIELD_LABELS[ev.field] || ev.field}
                     </span>

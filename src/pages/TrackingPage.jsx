@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { AnyIcon, IconAnchor } from "../components/primitives/Icon";
+import { formatLegPoint } from "../utils/legLocation";
 
 const STATUS_COLOR = {
   "Booking": "#6366f1",
@@ -158,8 +159,8 @@ function LegRow({ leg, idx }) {
         {leg.carrierCode && <span style={{ color: "#64748b", marginLeft: "auto", fontSize: 12 }}>{leg.carrierCode}</span>}
       </div>
       <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
-        <span style={{ color: "#475569" }}><b>POL:</b> {leg.pol || "—"}</span>
-        <span style={{ color: "#475569" }}><b>POD:</b> {leg.pod || "—"}</span>
+        <span style={{ color: "#475569" }}><b>POL:</b> {formatLegPoint(leg, "pol").code || "—"}</span>
+        <span style={{ color: "#475569" }}><b>POD:</b> {formatLegPoint(leg, "pod").code || "—"}</span>
         {leg.etd && <span style={{ color: "#475569" }}><b>ETD:</b> {fmt(leg.etd)}</span>}
         {leg.eta && <span style={{ color: "#475569" }}><b>ETA:</b> {fmt(leg.eta)}</span>}
         {leg.vessel && <span style={{ color: "#475569" }}><b>Vessel:</b> {leg.vessel}</span>}

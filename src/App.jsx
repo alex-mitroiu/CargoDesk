@@ -75,6 +75,7 @@ import MdmCarriersPage        from "./pages/mdm/MdmCarriersPage";
 import MdmVesselsPage         from "./pages/mdm/MdmVesselsPage";
 import MdmPortLocationsPage   from "./pages/mdm/MdmPortLocationsPage";
 import MdmLinkedPortsPage     from "./pages/mdm/MdmLinkedPortsPage";
+import MdmCarrierAgentsPage   from "./pages/mdm/MdmCarrierAgentsPage";
 import MdmTradeLanesPage      from "./pages/mdm/MdmTradeLanesPage";
 import MdmRegionsPage         from "./pages/mdm/MdmRegionsPage";
 import MdmCountriesPage       from "./pages/mdm/MdmCountriesPage";
@@ -2053,6 +2054,7 @@ function App() {
     "mdm-customers":              "api_customers_enabled",
     "mdm-sanctioned-customers":  "api_customers_enabled",
     "mdm-carriers":    "api_carriers_enabled",
+    "mdm-carrier-agents": "api_carriers_enabled",
     "mdm-vessels":     "api_vessels_enabled",
     "mdm-ports":       "api_ports_enabled",
     "mdm-linked":      "api_ports_enabled",
@@ -2406,7 +2408,7 @@ function App() {
   }, [page, selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // kanban is top-level, not MDM
-  const MDM_PAGES = ["mdm-carriers", "mdm-ports", "mdm-linked", "mdm-vessels", "mdm-commodities", "mdm-tradelanes", "mdm-countries", "mdm-unlocodes", "mdm-customers", "mdm-sanctioned-customers", "mdm-contracts", "mdm-charge-codes", "mdm-pack-types"];
+  const MDM_PAGES = ["mdm-carriers", "mdm-carrier-agents", "mdm-ports", "mdm-linked", "mdm-vessels", "mdm-commodities", "mdm-tradelanes", "mdm-countries", "mdm-unlocodes", "mdm-customers", "mdm-sanctioned-customers", "mdm-contracts", "mdm-charge-codes", "mdm-pack-types"];
   const ORG_PAGES = ["org-country", "org-branch", "org-office"];
   const ALL_PAGES = [...MDM_PAGES, ...ORG_PAGES, "manual"];
   const isMdmActive = MDM_PAGES.includes(page);
@@ -2480,6 +2482,7 @@ function App() {
     about:              "About",
     settings:           "Application Settings",
     "mdm-carriers":     "Master Data — Carriers",
+    "mdm-carrier-agents": "Master Data — Carrier Agents",
     "mdm-vessels":      "Master Data — Vessels",
     "mdm-commodities":  "Master Data — Commodities",
     "mdm-ports":        "Master Data — Port Locations",
@@ -3193,6 +3196,7 @@ function App() {
                   <NavBtn pageKey="mdm-charge-codes" icon={IconTag} label="Charge Codes"    indent />
                   <NavBtn pageKey="mdm-pack-types" icon={IconPackage} label="Pack Types"    indent />
                   <NavBtn pageKey="mdm-carriers" icon={IconBuilding} label="Carriers"       indent />
+                  <NavBtn pageKey="mdm-carrier-agents" icon={IconLink} label="Carrier Agents" indent />
                   <NavBtn pageKey="mdm-vessels"      icon={IconShip} label="Vessels"         indent />
                   <NavBtn pageKey="mdm-commodities" icon={IconPackage} label="Commodities"     indent />
                   <NavBtn pageKey="mdm-ports"    icon={IconMapPin} label="Port Locations" indent />
@@ -3573,6 +3577,7 @@ function App() {
             }} />
         )}
 
+        {page === "mdm-carrier-agents" && isEnabled("mdm-carrier-agents") && <MdmCarrierAgentsPage />}
         {page === "mdm-vessels"    && isEnabled("mdm-vessels")    && <MdmVesselsPage />}
         {page === "mdm-ports"      && isEnabled("mdm-ports")      && <MdmPortLocationsPage />}
         {page === "mdm-linked"     && isEnabled("mdm-linked")     && <MdmLinkedPortsPage />}

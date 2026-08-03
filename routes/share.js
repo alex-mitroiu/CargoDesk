@@ -76,7 +76,12 @@ module.exports = function shareRoutes(app, ctx) {
       shipperName: ship.shipper_name || '',
       consigneeName: ship.consignee_name || '',
       cargoReadyDate: ship.cargo_ready_date || null,
-      legs: legs.map(mapShipmentLeg),
+      // A classified-location leg's exact lat/lng is stripped here — this is an unauthenticated,
+      // token-only endpoint (anyone holding the link, forwarded or not, can reach it), unlike the
+      // authenticated app where an ops user genuinely needs the real coordinates. polLocType/
+      // podLocType are kept so the public tracking page can still show a "Classified location"
+      // label instead of a blank, via the same formatLegPoint helper used everywhere else.
+      legs: legs.map(mapShipmentLeg).map(({ polLatitude, polLongitude, podLatitude, podLongitude, ...leg }) => leg),
       containers,
       milestones,
       expiresAt: new Date(payload.exp).toISOString(),

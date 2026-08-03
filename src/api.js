@@ -142,6 +142,12 @@ export const api = {
     update: (id, data)   => req("PUT",    `/linked-ports/${id}`, data),
     remove: (id)         => req("DELETE", `/linked-ports/${id}`),
   },
+  carrierAgents: {
+    list:   ()           => req("GET",    "/carrier-agents"),
+    create: (data)       => req("POST",   "/carrier-agents", data),
+    update: (id, data)   => req("PUT",    `/carrier-agents/${id}`, data),
+    remove: (id)         => req("DELETE", `/carrier-agents/${id}`),
+  },
   regions: {
     list:   ()           => req("GET",    "/regions"),
     create: (data)       => req("POST",   "/regions", data),
@@ -205,8 +211,7 @@ export const api = {
       remove: (cid, ctid)       => req("DELETE", `/customers/${cid}/contacts/${ctid}`),
     },
     roles: {
-      list: (cid)         => req("GET", `/customers/${cid}/roles`),
-      set:  (cid, roles)  => req("PUT", `/customers/${cid}/roles`, { roles }),
+      list: (cid) => req("GET", `/customers/${cid}/roles`),
     },
   },
   tickets: {

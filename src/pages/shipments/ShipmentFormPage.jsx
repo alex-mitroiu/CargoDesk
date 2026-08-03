@@ -18,6 +18,7 @@ import Pagination from "../../components/primitives/Pagination";
 import { ContainerTypeField } from "../../components/shared/ContainerTypePickerModal";
 import SailingPickerModal from "../../components/shared/SailingPickerModal";
 import { IconClose, IconWarning, IconPackage, IconPencil, IconCheck, IconRefresh, IconLock, IconAnchor, IconShip } from "../../components/primitives/Icon";
+import { GPS_LOC_TYPE, formatLegPoint } from "../../utils/legLocation";
 
 // ─── Draft Container Manager ──────────────────────────────────────────────────
 
@@ -487,6 +488,8 @@ export const ContractField = ({ value, onChange, pol, pod, etd, crd, needsPolHau
 const LEG_TYPE_OPTIONS      = ["Pick-up", "SEA", "Delivery"];
 const MOVEMENT_TYPE_OPTIONS = ["Carrier's Haulage", "Merchant's Haulage", "Customer Arranged"];
 const LOC_TYPE_OPTIONS      = ["Door", "Terminal", "Container Yard", "CFS"];
+// GPS Coordinates is offered only for Pick-up/Delivery legs — a SEA leg always needs a real port.
+const legLocTypeOptions     = legType => legType === "SEA" ? LOC_TYPE_OPTIONS : [...LOC_TYPE_OPTIONS, GPS_LOC_TYPE];
 // Pick-up/Delivery-only (SEA legs always show "—" here) — inland/short-haul movement modes.
 // "Air" removed: a loaded FCL container can't realistically move by air for a door leg.
 const MOVEMENT_BY_OPTIONS   = ["", "Barge", "Rail", "Truck", "Vessel"];
@@ -497,7 +500,7 @@ const MOVEMENT_BY_OPTIONS   = ["", "Barge", "Rail", "Truck", "Vessel"];
 // This was the source of "Delivery" rendering in the dark theme's blue-gray textMuted even in
 // light mode — a real, permanently-stuck-gray bug, not a deliberate muted-text choice.
 const legTypeColor = type => ({ "Pick-up": T.accent, "SEA": T.info, "Delivery": T.textMuted }[type]);
-const LEG_LOC_ABBR_C        = { "Door": "DR", "Terminal": "PT", "Container Yard": "CY", "CFS": "CFS" };
+const LEG_LOC_ABBR_C        = { "Door": "DR", "Terminal": "PT", "Container Yard": "CY", "CFS": "CFS", [GPS_LOC_TYPE]: "GPS" };
 const LEG_TYPE_DEFAULT_MT   = { "Pick-up": "Carrier's Haulage", "SEA": "SEA", "Delivery": "Carrier's Haulage" };
 
 // Widths sized to fit the longest actual option text plus the native <select> arrow
@@ -586,26 +589,28 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
         </div>
         {visibleCols.map((c, i) => {
           const isPort = c.key === "pol" || c.key === "pod";
-          const nameKey = c.key === "pol" ? "polName" : c.key === "pod" ? "podName" : null;
+          const portSide = c.key === "pol" ? "pol" : c.key === "pod" ? "pod" : null;
+          const portPoint = isPort ? formatLegPoint(d, portSide) : null;
           const value = c.key === "contractType" ? (inheritedContractType || "—")
             : c.key === "contractRef" ? (inheritedContractRef || "—")
             : c.key === "carrierCode" && (d.legType === "Pick-up" || d.legType === "Delivery") ? "—"
+            : isPort ? (portPoint.code || "—")
             : (d[c.key] || "—");
           return (
             <div key={c.key} id={`leg-${d.id}-${c.key}`} style={{ width: widths[i], minWidth: widths[i], padding: "8px 8px 8px 10px",
               display: "flex", alignItems: "center", borderRight: `1px solid ${T.border}22` }}>
               {/* Ports get the same bordered chip weight as the editable PortCombobox, so a
                   locked row doesn't look visually "cheaper" than an editable one beside it. */}
-              {isPort && d[c.key] ? (
+              {isPort && portPoint.code ? (
                 <div style={{ display: "flex", alignItems: "center", gap: 6, width: "100%", boxSizing: "border-box",
                   border: `1px solid ${T.border}`, borderRadius: 6, padding: "5px 9px", overflow: "hidden" }}>
                   <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.text, flexShrink: 0 }}>
                     {value}
                   </span>
-                  {nameKey && d[nameKey] && (
+                  {portPoint.name && (
                     <span style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted,
                       overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {d[nameKey]}
+                      {portPoint.name}
                     </span>
                   )}
                 </div>
@@ -657,24 +662,43 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
         }
       </div>
 
-      {/* From (POL) */}
+      {/* From (POL) — a classified-location Pick-up/Delivery leg swaps the port picker for two
+          plain number inputs (Lat/Lng) once its Loc. Type is set to GPS Coordinates. */}
       <div id={`leg-${d.id}-pol`} style={{ width: widths[2], minWidth: widths[2], borderRight: `1px solid ${T.border}33`, overflow: "visible" }}>
-        <PortCombobox
-          value={d.pol ? { unlocode: d.pol, name: d.polName || "" } : null}
-          onChange={v => {
-            const newD = { ...d, pol: v?.unlocode || "", polName: v?.name || "" };
-            setD(newD); if (v?.unlocode) onSave(newD);
-          }}
-          placeholder="Search From…"
-        />
+        {d.polLocType === GPS_LOC_TYPE ? (
+          <div style={{ display: "flex", gap: 4, padding: "0 8px 0 0" }}>
+            <input type="number" step="any" min={-90} max={90} placeholder="Lat" value={d.polLatitude ?? ""}
+              onChange={e => setD(p => ({ ...p, polLatitude: e.target.value === "" ? null : e.target.value }))}
+              onBlur={flush} style={{ ...cellInput, fontFamily: T.mono, width: "50%" }} />
+            <input type="number" step="any" min={-180} max={180} placeholder="Lng" value={d.polLongitude ?? ""}
+              onChange={e => setD(p => ({ ...p, polLongitude: e.target.value === "" ? null : e.target.value }))}
+              onBlur={flush} style={{ ...cellInput, fontFamily: T.mono, width: "50%" }} />
+          </div>
+        ) : (
+          <PortCombobox
+            value={d.pol ? { unlocode: d.pol, name: d.polName || "" } : null}
+            onChange={v => {
+              const newD = { ...d, pol: v?.unlocode || "", polName: v?.name || "" };
+              setD(newD); if (v?.unlocode) onSave(newD);
+            }}
+            placeholder="Search From…"
+          />
+        )}
       </div>
 
       {/* Loc. Type (From) */}
       <div id={`leg-${d.id}-polLocType`} style={{ width: widths[3], minWidth: widths[3], padding: "0 0 0 10px",
         display: "flex", alignItems: "center", borderRight: `1px solid ${T.border}33` }}>
-        <select value={d.polLocType || "Terminal"} onChange={e => set("polLocType")(e.target.value)} onBlur={flush}
+        <select value={d.polLocType || "Terminal"} onChange={e => {
+            const lt = e.target.value;
+            // Switching away from GPS clears the coordinates client-side too (belt-and-suspenders
+            // with the server-side clear in routes/shipments.js) so stale values never linger.
+            const newD = lt === GPS_LOC_TYPE ? { ...d, polLocType: lt }
+              : { ...d, polLocType: lt, polLatitude: null, polLongitude: null };
+            setD(newD); onSave(newD);
+          }}
           style={{ ...cellInput, cursor: "pointer" }}>
-          {LOC_TYPE_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
+          {legLocTypeOptions(d.legType).map(t => <option key={t} value={t}>{t}</option>)}
         </select>
       </div>
 
@@ -694,24 +718,40 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
           onBlur={flush} style={cellInput} />
       </div>
 
-      {/* To (POD) */}
+      {/* To (POD) — same GPS-mode swap as From (POL) above */}
       <div id={`leg-${d.id}-pod`} style={{ width: widths[5], minWidth: widths[5], borderRight: `1px solid ${T.border}33`, overflow: "visible" }}>
-        <PortCombobox
-          value={d.pod ? { unlocode: d.pod, name: d.podName || "" } : null}
-          onChange={v => {
-            const newD = { ...d, pod: v?.unlocode || "", podName: v?.name || "" };
-            setD(newD); if (v?.unlocode) onSave(newD);
-          }}
-          placeholder="Search To…"
-        />
+        {d.podLocType === GPS_LOC_TYPE ? (
+          <div style={{ display: "flex", gap: 4, padding: "0 8px 0 0" }}>
+            <input type="number" step="any" min={-90} max={90} placeholder="Lat" value={d.podLatitude ?? ""}
+              onChange={e => setD(p => ({ ...p, podLatitude: e.target.value === "" ? null : e.target.value }))}
+              onBlur={flush} style={{ ...cellInput, fontFamily: T.mono, width: "50%" }} />
+            <input type="number" step="any" min={-180} max={180} placeholder="Lng" value={d.podLongitude ?? ""}
+              onChange={e => setD(p => ({ ...p, podLongitude: e.target.value === "" ? null : e.target.value }))}
+              onBlur={flush} style={{ ...cellInput, fontFamily: T.mono, width: "50%" }} />
+          </div>
+        ) : (
+          <PortCombobox
+            value={d.pod ? { unlocode: d.pod, name: d.podName || "" } : null}
+            onChange={v => {
+              const newD = { ...d, pod: v?.unlocode || "", podName: v?.name || "" };
+              setD(newD); if (v?.unlocode) onSave(newD);
+            }}
+            placeholder="Search To…"
+          />
+        )}
       </div>
 
       {/* Loc. Type (To) */}
       <div id={`leg-${d.id}-podLocType`} style={{ width: widths[6], minWidth: widths[6], padding: "0 0 0 10px",
         display: "flex", alignItems: "center", borderRight: `1px solid ${T.border}33` }}>
-        <select value={d.podLocType || "Terminal"} onChange={e => set("podLocType")(e.target.value)} onBlur={flush}
+        <select value={d.podLocType || "Terminal"} onChange={e => {
+            const lt = e.target.value;
+            const newD = lt === GPS_LOC_TYPE ? { ...d, podLocType: lt }
+              : { ...d, podLocType: lt, podLatitude: null, podLongitude: null };
+            setD(newD); onSave(newD);
+          }}
           style={{ ...cellInput, cursor: "pointer" }}>
-          {LOC_TYPE_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
+          {legLocTypeOptions(d.legType).map(t => <option key={t} value={t}>{t}</option>)}
         </select>
       </div>
 
@@ -1295,7 +1335,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
   const lastSeaLeg  = seaLegs[seaLegs.length - 1] || null;
 
   // Contract match routing context — excludes Merchant's Haulage and Customer Arranged
-  const LEG_LOC_ABBR_C = { Door: "DR", Terminal: "PT", "Container Yard": "CY", CFS: "CFS" };
+  const LEG_LOC_ABBR_C = { Door: "DR", Terminal: "PT", "Container Yard": "CY", CFS: "CFS", [GPS_LOC_TYPE]: "GPS" };
   const contractMatchRoutingTerm = cLegsForMatch.length > 0
     ? (LEG_LOC_ABBR_C[cLegsForMatch[0].polLocType] || "PT") + "-" + (LEG_LOC_ABBR_C[cLegsForMatch[cLegsForMatch.length - 1].podLocType] || "PT")
     : "";
@@ -1610,8 +1650,8 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
             {pkuLeg && (
               <div id="shpform-route-pku" style={{ ...doorCell, borderRight: `1px dashed ${T.border}` }}>
                 <span style={{ ...labelStyle, color: T.accent }}>Pick-up</span>
-                <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text }}>{pkuLeg.pol || "—"}</span>
-                {pkuLeg.polName && <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{pkuLeg.polName}</span>}
+                <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text }}>{formatLegPoint(pkuLeg, "pol").code || "—"}</span>
+                {formatLegPoint(pkuLeg, "pol").name && <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{formatLegPoint(pkuLeg, "pol").name}</span>}
                 <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted }}>Carrier's Haulage →</span>
               </div>
             )}
@@ -1707,8 +1747,8 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
             {delLeg && (
               <div id="shpform-route-del" style={{ ...doorCell, borderLeft: `1px dashed ${T.border}`, textAlign: "right" }}>
                 <span style={{ ...labelStyle, color: T.accent }}>Delivery</span>
-                <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text }}>{delLeg.pod || "—"}</span>
-                {delLeg.podName && <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{delLeg.podName}</span>}
+                <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text }}>{formatLegPoint(delLeg, "pod").code || "—"}</span>
+                {formatLegPoint(delLeg, "pod").name && <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{formatLegPoint(delLeg, "pod").name}</span>}
                 <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted }}>→ Carrier's Haulage</span>
               </div>
             )}

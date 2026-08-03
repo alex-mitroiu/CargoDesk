@@ -5,14 +5,32 @@ module.exports = function shipmentsRoutes(app, ctx) {
           mapShipment, mapShipmentLeg, mapContainer, mapContainerEvent, mapContainerPackage, mapAllocation,
           mapShipmentParty, ADDITIONAL_PARTY_ROLES,
           applyShipmentAccessFilter, syncShipmentFromLegs, importContractRates,
-          broadcastMessage, recomputeSpaceBadge, screenShipmentById,
+          broadcastMessage, recomputeSpaceBadge, screenShipmentById, resolveCarrierAgent,
           logEvent, logEntityEvent, TRACKED_FIELDS, TRACKED_CTR_FIELDS, FREE_TIME_WARNING_DAYS,
-          sanctionsMap, autoCompleteMilestone, ensureBookingCreated, toUsd } = ctx;
+          sanctionsMap, autoCompleteMilestone, ensureBookingCreated, toUsd,
+          validCoord, GPS_LOC_TYPE } = ctx;
 
   // trade_manager and viewer are read-only on all shipment write operations
   const shipmentWrite = requireRole(["admin", "operator", "occ_bk"]);
 
   const LEG_TO_MOT = { 'SEA': 'SEA', 'AIR': 'AIR', 'RAIL': 'RAIL', 'Pick-up': 'ROAD', 'Delivery': 'ROAD', 'Feeder': 'SEA' };
+
+  // Classified-location GPS Coordinates loc-type — a SEA leg always needs a real port, so it's
+  // never eligible; a Pick-up/Delivery leg in GPS mode blanks its UN/LOCODE and carries lat/lng
+  // instead. Resolved server-side (not just trusted from the frontend) so switching back out of
+  // GPS mode always clears any stale coordinates at the single source of truth. Gated on legType,
+  // not mot — the Leg Type selector (ShipmentFormPage.jsx) only updates legType/movementType on
+  // change, never mot, so a leg just switched from SEA to Pick-up/Delivery still carries its old
+  // mot='SEA' in the very same save — found live via CDP verification of this exact flow.
+  const resolveLegPoint = (legType, locType, code, lat, lng) => {
+    if (locType !== GPS_LOC_TYPE) return { code: (code || '').toUpperCase(), lat: null, lng: null };
+    if (legType === 'SEA') return { error: "A SEA leg cannot use GPS Coordinates — it must have a real port" };
+    return {
+      code: '',
+      lat: lat === '' || lat == null ? null : Number(lat),
+      lng: lng === '' || lng == null ? null : Number(lng),
+    };
+  };
 
   // Organization Model Enhancement Epic 3 — re-screens a shipment whenever an additional party
   // (shipment_parties) is added/reassigned/removed, since screenShipmentById now covers all 9
@@ -23,6 +41,26 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const prev = db.prepare("SELECT result, overridden_at FROM shipment_screenings WHERE shipment_id=?").get(shipmentId);
     const isOverridden = prev?.result === 'CLEAR' && prev?.overridden_at;
     if (!isOverridden) screenShipmentById(shipmentId);
+  };
+
+  // Carrier Line Agents — resolves the carrier's registered agent at POL/POD (carrier_agents,
+  // via resolveCarrierAgent) and, for each side where one's found, adds it as an ordinary
+  // "Line Agent (Export/Import)" additional party. The UNIQUE(shipment_id, role) constraint on
+  // shipment_parties IS the "only fill an empty slot, never overwrite" mechanism — same idiom
+  // POST /api/shipments/:id/parties below already relies on — so this never clobbers a party
+  // that's already there, whether CargoDesk set it earlier or a person did. No transaction: the
+  // two sides are independent single-row writes on two different role strings, so one resolving
+  // and the other not (no agent registered for that port yet) is a normal, non-corrupting result.
+  const maybeAssignLineAgents = (shipmentId, carrierCode, pol, pod) => {
+    for (const [port, role] of [[pol, "Line Agent (Export)"], [pod, "Line Agent (Import)"]]) {
+      const match = resolveCarrierAgent(carrierCode, port);
+      if (!match) continue;
+      try {
+        db.prepare(`INSERT INTO shipment_parties (id, shipment_id, role, customer_id, customer_name, created_at)
+          VALUES (?,?,?,?,?,?)`)
+          .run(`PTY-${uid()}`, shipmentId, role, match.agent_customer_id, match.agent_customer_name, new Date().toISOString());
+      } catch (e) { if (!isUniqueViolation(e)) throw e; }
+    }
   };
 
   const checkDgPolicy = (shipmentId, isDg, dgClass) => {
@@ -269,6 +307,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
       .run(id, polU, podU, carrierCode, contractType, contractNotes, status, createdAt, etd, eta, bookingRef, blNumber, vessel, voyage, incoterm, vesselImo, contractId, contractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, allocationId, spaceSkipReason, spaceOverageReason, freightTerms, movementType, serviceType, placeOfReceipt, placeOfDelivery, cargoReadyDate || null, notifyId, notifyName, (declaredValue !== null && declaredValue !== undefined && String(declaredValue).trim() !== '') ? Number(declaredValue) : null, declaredValueCurrency || "USD", emoOfficeId || null, imoOfficeId || null, controllingOfficeId || null);
     logEvent(id, 'SHIPMENT_CREATED', null, null, null,
       JSON.stringify({ pol: polU, pod: podU, carrier: carrierCode, status, etd, contractType }));
+    maybeAssignLineAgents(id, carrierCode, polU, podU);
     if (contractType === 'Central' && contractId) importContractRates(id);
     const silentScreening = sanctionsMap.size > 0 ? screenShipmentById(id) : null;
     const base = mapShipment(db.prepare("SELECT * FROM shipments WHERE id=?").get(id));
@@ -329,6 +368,11 @@ module.exports = function shipmentsRoutes(app, ctx) {
       contract_valid_from=?, contract_valid_to=? WHERE id=?
     `).run(polU, podU, carrierCode, contractType, contractNotes, effStatus, etd, eta, bookingRef, blNumber, vessel, voyage, incoterm, vesselImo, effContractId, effContractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, effAllocationId, spaceSkipReason, spaceOverageReason, freightTerms, movementType, serviceType, placeOfReceipt, placeOfDelivery, cargoReadyDate || null, notifyId, notifyName, (declaredValue !== null && declaredValue !== undefined && String(declaredValue).trim() !== '') ? Number(declaredValue) : null, declaredValueCurrency || "USD", emoOfficeId || null, imoOfficeId || null, controllingOfficeId || null, contractValidFrom || null, contractValidTo || null, req.params.id);
     if (info.changes === 0) return err(res, "Not found", 404);
+    // Only re-attempt Line Agent resolution when carrier/route actually changed — the existing
+    // partyOrRouteChanged flag (further below) doesn't check carrier_code, so this needs its
+    // own condition rather than reusing that one.
+    if (carrierCode !== existing.carrier_code || polU !== existing.pol || podU !== existing.pod)
+      maybeAssignLineAgents(req.params.id, carrierCode, polU, podU);
     // Contract assignment is one of the two triggers for auto-creating a carrier booking
     // (the other is a schedule save/link, in routes/shipment-ops.js) — only worth checking
     // when the contract fields actually changed, since ensureBookingCreated no-ops otherwise.
@@ -708,8 +752,17 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const { legType='SEA', movementType='SEA', movementBy='',
             mot: rawMot, pol='', pod='', etd=null, eta=null, carrierCode='',
             polLocType='Terminal', podLocType='Terminal',
+            polLatitude=null, polLongitude=null, podLatitude=null, podLongitude=null,
             vessel='', vesselImo='', voyage='', contractType='', contractRef='' } = req.body;
     const mot = rawMot || LEG_TO_MOT[legType] || 'SEA';
+    const polPoint = resolveLegPoint(legType, polLocType, pol, polLatitude, polLongitude);
+    if (polPoint.error) return err(res, polPoint.error);
+    const podPoint = resolveLegPoint(legType, podLocType, pod, podLatitude, podLongitude);
+    if (podPoint.error) return err(res, podPoint.error);
+    if (!validCoord(polPoint.lat, -90, 90)) return err(res, "POL latitude must be between -90 and 90");
+    if (!validCoord(polPoint.lng, -180, 180)) return err(res, "POL longitude must be between -180 and 180");
+    if (!validCoord(podPoint.lat, -90, 90)) return err(res, "POD latitude must be between -90 and 90");
+    if (!validCoord(podPoint.lng, -180, 180)) return err(res, "POD longitude must be between -180 and 180");
     const id = `LEG-${uid()}`;
     const maxOrder = db.prepare("SELECT MAX(leg_order) as m FROM shipment_legs WHERE shipment_id=?").get(req.params.id);
     const legOrder = (maxOrder?.m ?? -1) + 1;
@@ -717,10 +770,11 @@ module.exports = function shipmentsRoutes(app, ctx) {
     // etd_source/eta_source start blank (an estimate, not yet AIS-confirmed) — a leg created
     // through this route always carries a fresh, unconfirmed date, even if etd/eta happen to be
     // pre-filled from a picked sailing.
-    db.prepare(`INSERT INTO shipment_legs (id,shipment_id,leg_order,mot,leg_type,movement_type,pol,pod,pol_loc_type,pod_loc_type,etd,eta,carrier_code,vessel,vessel_imo,voyage,movement_by,contract_type,contract_ref,created_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    db.prepare(`INSERT INTO shipment_legs (id,shipment_id,leg_order,mot,leg_type,movement_type,pol,pod,pol_loc_type,pod_loc_type,pol_latitude,pol_longitude,pod_latitude,pod_longitude,etd,eta,carrier_code,vessel,vessel_imo,voyage,movement_by,contract_type,contract_ref,created_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
       .run(id, req.params.id, legOrder, mot, legType, movementType,
-           pol.toUpperCase(), pod.toUpperCase(), polLocType, podLocType,
+           polPoint.code, podPoint.code, polLocType, podLocType,
+           polPoint.lat, polPoint.lng, podPoint.lat, podPoint.lng,
            etd||null, eta||null, carrierCode, vessel, vesselImo, voyage, movementBy,
            contractType, contractRef, createdAt);
     syncShipmentFromLegs(req.params.id);
@@ -734,10 +788,19 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const { legType='SEA', movementType='SEA', movementBy='',
             mot: rawMot, pol='', pod='', etd=null, eta=null, carrierCode='',
             polLocType='Terminal', podLocType='Terminal',
+            polLatitude=null, polLongitude=null, podLatitude=null, podLongitude=null,
             vessel='', vesselImo='', voyage='', contractType='', contractRef='', legOrder } = req.body;
     const mot = rawMot || LEG_TO_MOT[legType] || 'SEA';
     const existing = db.prepare("SELECT * FROM shipment_legs WHERE id=? AND shipment_id=?").get(req.params.legId, req.params.id);
     if (!existing) return err(res, "Not found", 404);
+    const polPoint = resolveLegPoint(legType, polLocType, pol, polLatitude, polLongitude);
+    if (polPoint.error) return err(res, polPoint.error);
+    const podPoint = resolveLegPoint(legType, podLocType, pod, podLatitude, podLongitude);
+    if (podPoint.error) return err(res, podPoint.error);
+    if (!validCoord(polPoint.lat, -90, 90)) return err(res, "POL latitude must be between -90 and 90");
+    if (!validCoord(polPoint.lng, -180, 180)) return err(res, "POL longitude must be between -180 and 180");
+    if (!validCoord(podPoint.lat, -90, 90)) return err(res, "POD latitude must be between -90 and 90");
+    if (!validCoord(podPoint.lng, -180, 180)) return err(res, "POD longitude must be between -180 and 180");
     // The only writer here is this HTTP route (the AIS listener updates etd/eta directly via
     // its own DB calls, never through this endpoint) — so a changed date reaching this route is
     // inherently a manual correction, and clears the 'ais'-confirmed flag (the operator is
@@ -746,9 +809,10 @@ module.exports = function shipmentsRoutes(app, ctx) {
     // leg doesn't accidentally erase an existing confirmation.
     const etdSource = etd !== (existing.etd || null) ? '' : existing.etd_source;
     const etaSource = eta !== (existing.eta || null) ? '' : existing.eta_source;
-    db.prepare(`UPDATE shipment_legs SET mot=?,leg_type=?,movement_type=?,pol=?,pod=?,pol_loc_type=?,pod_loc_type=?,etd=?,eta=?,carrier_code=?,vessel=?,vessel_imo=?,voyage=?,movement_by=?,contract_type=?,contract_ref=?,leg_order=?,etd_source=?,eta_source=? WHERE id=?`)
-      .run(mot, legType, movementType, pol.toUpperCase(), pod.toUpperCase(),
-           polLocType, podLocType, etd||null, eta||null,
+    db.prepare(`UPDATE shipment_legs SET mot=?,leg_type=?,movement_type=?,pol=?,pod=?,pol_loc_type=?,pod_loc_type=?,pol_latitude=?,pol_longitude=?,pod_latitude=?,pod_longitude=?,etd=?,eta=?,carrier_code=?,vessel=?,vessel_imo=?,voyage=?,movement_by=?,contract_type=?,contract_ref=?,leg_order=?,etd_source=?,eta_source=? WHERE id=?`)
+      .run(mot, legType, movementType, polPoint.code, podPoint.code,
+           polLocType, podLocType, polPoint.lat, polPoint.lng, podPoint.lat, podPoint.lng,
+           etd||null, eta||null,
            carrierCode, vessel, vesselImo, voyage, movementBy,
            contractType, contractRef, legOrder ?? existing.leg_order,
            etdSource, etaSource, req.params.legId);

@@ -4,11 +4,15 @@ export const STATUSES         = ["Active", "Pending", "Completed", "Cancelled", 
 // Fixed, extensible additional party roles (Epic TKT-5XFCAP) — sit alongside the 4 hardcoded
 // shipper/consignee/notify/principal roles on a shipment. Backend keeps its own copy
 // (server.js, near BOOKABLE_CARRIERS) — frontend/backend don't share a module. Customs Broker
-// is split Export/Import since each shipment can only hold one party per role.
+// is split Export/Import since each shipment can only hold one party per role. "Agent" (bare) is
+// a generic, manually-picked catch-all — NOT the same concept as "Line Agent (Export/Import)",
+// a specific carrier's local representative at a specific port, auto-resolved from the Carrier
+// Agents master data (MdmCarrierAgentsPage.jsx) — easy to confuse since they sit side by side.
 export const ADDITIONAL_PARTY_ROLES = [
   "Forwarder", "Customs Broker (Export)", "Customs Broker (Import)",
   "Trucker (Pre-carriage)", "Trucker (On-carriage)",
   "Also Notify Party", "Bank", "Insurance Provider", "Agent",
+  "Line Agent (Export)", "Line Agent (Import)",
 ];
 // Organization Model Enhancement Epic 1 — the 4 hardcoded shipment roles plus
 // ADDITIONAL_PARTY_ROLES, combined into one vocabulary for customer role-tagging
@@ -16,6 +20,16 @@ export const ADDITIONAL_PARTY_ROLES = [
 // copy (server.js, near ADDITIONAL_PARTY_ROLES) — same split as that list already uses.
 export const FIXED_SHIPMENT_ROLES = ["Shipper", "Consignee", "Notify Party", "Principal"];
 export const ALL_CUSTOMER_ROLES   = [...FIXED_SHIPMENT_ROLES, ...ADDITIONAL_PARTY_ROLES];
+// Customer MDM list segmentation (role-derivation rework) — a purely frontend grouping of the
+// same role vocabulary above; the backend has no notion of "category", only individual roles.
+export const CUSTOMER_ROLE_CATEGORIES = {
+  "Trading Customers": ["Shipper", "Consignee", "Principal", "Notify Party", "Also Notify Party"],
+  "Service Providers": [
+    "Forwarder", "Customs Broker (Export)", "Customs Broker (Import)",
+    "Trucker (Pre-carriage)", "Trucker (On-carriage)", "Bank", "Insurance Provider", "Agent",
+    "Line Agent (Export)", "Line Agent (Import)",
+  ],
+};
 export const CONTACT_DEPARTMENTS  = ["Sales", "Operations", "Accounts", "Other"];
 // Currencies offered on cargo/commodity line items (Epic TKT-P3ASH1). MdmChargeCodesPage.jsx
 // keeps its own small pre-existing local copy — already working, no value in touching it here.

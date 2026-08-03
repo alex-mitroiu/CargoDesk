@@ -238,6 +238,91 @@ async function realVesselImo(token) {
 
     await request("DELETE", `/api/schedules/${searchTemplate.body.id}`, null, token);
 
+    console.log("\nContent-Keyed Sailing Legs — schedule_key differs when the leg sequence differs");
+    const legsX = [
+      { pol: "CNSHA", pod: "SGSIN", etd: "2026-10-01", eta: "2026-10-10", vesselName: "KEYTEST A", vesselImo: "9111111", voyageNumber: "K1W", service: "KEYSVC", carrier: "MAEU" },
+      { pol: "SGSIN", pod: "USSAV", etd: "2026-10-11", eta: "2026-10-25", vesselName: "KEYTEST B", vesselImo: "9222222", voyageNumber: "K2W", service: "KEYSVC", carrier: "MAEU" },
+    ];
+    const schedX = await request("POST", "/api/schedules", { carrier: "MAEU", pol: "CNSHA", pod: "USSAV", legs: legsX }, token);
+    assert("schedule X created", schedX.status === 201);
+    assert("schedule X has a non-empty scheduleKey", !!schedX.body.scheduleKey, JSON.stringify(schedX.body));
+    const schedY = await request("POST", "/api/schedules", { carrier: "MAEU", pol: "CNSHA", pod: "AUMEL", legs: [legsX[0], { ...legsX[1], pod: "AUMEL" }] }, token);
+    assert("schedule Y (different second leg) created", schedY.status === 201);
+    assert("scheduleKey differs when the leg sequence differs", schedY.body.scheduleKey !== schedX.body.scheduleKey);
+
+    console.log("\nLeg reuse — a different schedule offering exactly schedule X's second leg resolves to the SAME leg row");
+    // Proven indirectly through the leg-update audit trail rather than a raw-table peek: posting
+    // the identical key fields (carrier/vesselImo/voyageNumber/pol/pod/etd) with a DIFFERENT eta
+    // only produces an UPDATE (not a fresh, unrelated row) if upsertLeg actually found and matched
+    // the existing leg_key — that's the observable signal that reuse, not duplication, occurred.
+    // A real 2-leg TSP array is used (not a 1-entry one) so both legs save with their own fields
+    // only, exactly like schedule X's did — no synthesized/top-level fallback in play.
+    const reuseShip = await scratchShipment(token);
+    const revisedEta = "2026-10-28"; // different from legsX[1]'s original 2026-10-25
+    const reuseLegs = [
+      { pol: "PKKHI", pod: "SGSIN", etd: "2026-10-08", eta: "2026-10-10", vesselName: "KEYTEST C", vesselImo: "9333333", voyageNumber: "K3W", service: "KEYSVC2", carrier: "MAEU" },
+      { ...legsX[1], eta: revisedEta },
+    ];
+    const reuseSave = await request("POST", `/api/shipments/${reuseShip}/schedules`, {
+      carrier: "MAEU", pol: "PKKHI", pod: "USSAV", etd: "2026-10-08", legs: reuseLegs,
+    }, token);
+    assert("reuse save returns 201", reuseSave.status === 201, JSON.stringify(reuseSave.body));
+    assert("reuse save has its own 2-leg breakdown", reuseSave.body.legs?.length === 2, JSON.stringify(reuseSave.body.legs));
+    const reuseEvents = await request("GET", `/api/shipments/${reuseShip}/schedule-events`, null, token);
+    const legUpdateEvent = reuseEvents.body.find(e => e.entity_type === "sailing_leg" && e.event_type === "UPDATED" && e.field === "eta");
+    assert("a sailing_leg UPDATED/eta event is visible for this shipment", !!legUpdateEvent, JSON.stringify(reuseEvents.body));
+    assert("old value matches schedule X's original leg 2 eta", legUpdateEvent?.old_value === "2026-10-25", legUpdateEvent?.old_value);
+    assert("new value matches the revised eta", legUpdateEvent?.new_value === revisedEta, legUpdateEvent?.new_value);
+    await request("DELETE", `/api/shipments/${reuseShip}`, null, token);
+
+    console.log("\nAdd-Sailing regression fix — a picked multi-leg sailing keeps its TSP leg breakdown");
+    const addSailShip = await scratchShipment(token);
+    const addSailLegs = [
+      { pol: "NLRTM", pod: "AEJEA", etd: "2026-11-01", eta: "2026-11-12", vesselName: "ADDSAIL A", voyageNumber: "AS1W", service: "ASSVC", carrier: "MAEU" },
+      { pol: "AEJEA", pod: "INNSA", etd: "2026-11-13", eta: "2026-11-20", vesselName: "ADDSAIL B", voyageNumber: "AS2W", service: "ASSVC", carrier: "MAEU" },
+    ];
+    const addSailSave = await request("POST", `/api/shipments/${addSailShip}/schedules`, {
+      carrier: "MAEU", pol: "NLRTM", pod: "INNSA", etd: "2026-11-01", eta: "2026-11-20", legs: addSailLegs,
+    }, token);
+    assert("Add-Sailing save with legs returns 201", addSailSave.status === 201, JSON.stringify(addSailSave.body));
+    assert("legs is a real 2-entry array, not null (previously silently lost)", addSailSave.body.legs?.length === 2, JSON.stringify(addSailSave.body.legs));
+    assert("leg 1 pol/pod round-trip", addSailSave.body.legs[0].pol === "NLRTM" && addSailSave.body.legs[0].pod === "AEJEA");
+    assert("leg 2 pol/pod round-trip", addSailSave.body.legs[1].pol === "AEJEA" && addSailSave.body.legs[1].pod === "INNSA");
+    await request("DELETE", `/api/shipments/${addSailShip}`, null, token);
+
+    console.log("\nSchedule correction (PUT) — a carrier-driven vessel/voyage change re-keys the schedule's legs");
+    // PUT /api/shipments/:id/schedules/:scheduleId is the pre-existing "lightweight correction" route
+    // (e.g. a carrier-driven ETD/ETA/vessel shift). Found live via manual testing (simulating a
+    // carrier response with a different vessel/voyage) that it updated the schedule's own flat
+    // columns but left scheduleKey — and the underlying sailing_legs/schedule_leg_refs rows —
+    // completely stale, since this route predated the leg-key rework and was never wired into it.
+    const correctionShip = await scratchShipment(token);
+    const correctionAdd = await request("POST", `/api/shipments/${correctionShip}/schedules`, {
+      carrier: "MAEU", vesselName: "CORRECTION ORIGINAL", voyageNumber: "COR1W",
+      pol: "NLRTM", pod: "USNYC", etd: "2026-09-01", eta: "2026-09-15",
+    }, token);
+    assert("correction-fixture schedule created", correctionAdd.status === 201, JSON.stringify(correctionAdd.body));
+    const originalKey = correctionAdd.body.scheduleKey;
+    assert("original scheduleKey is non-empty", !!originalKey, originalKey);
+
+    const correctionPut = await request("PUT", `/api/shipments/${correctionShip}/schedules/${correctionAdd.body.id}`, {
+      carrier: "MAEU", vesselName: "CORRECTION REVISED", voyageNumber: "COR2W",
+      etd: "2026-09-03", eta: "2026-09-17",
+    }, token);
+    assert("correction PUT returns 200", correctionPut.status === 200, JSON.stringify(correctionPut.body));
+    assert("scheduleKey changed to reflect the corrected vessel/voyage/dates (previously stayed frozen)",
+      correctionPut.body.scheduleKey !== originalKey, correctionPut.body.scheduleKey);
+    assert("corrected vesselName round-trips", correctionPut.body.vesselName === "CORRECTION REVISED");
+
+    const correctionEvents = await request("GET", `/api/shipments/${correctionShip}/schedule-events`, null, token);
+    assert("no spurious sailing_leg UPDATED event — the identity fields changed, so a NEW leg_key was created rather than the old one being edited",
+      !correctionEvents.body.some(e => e.entity_type === "sailing_leg"), JSON.stringify(correctionEvents.body));
+    assert("a schedule-level UPDATED/vessel_name event is still logged as before", correctionEvents.body.some(e => e.entity_type === "schedule" && e.field === "vessel_name"));
+    await request("DELETE", `/api/shipments/${correctionShip}`, null, token);
+
+    await request("DELETE", `/api/schedules/${schedX.body.id}`, null, token);
+    await request("DELETE", `/api/schedules/${schedY.body.id}`, null, token);
+
     console.log("\nDELETE /api/schedules/:id — removing a template");
     const delTemplate = await request("DELETE", `/api/schedules/${scheduleId}`, null, token);
     assert("delete returns 200", delTemplate.status === 200);

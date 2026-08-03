@@ -769,10 +769,86 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     voyageNumber: l.voyage_number || "", service: l.service || "", carrier: l.carrier || "",
   });
 
-  // A schedule with 0 or 1 schedule_legs rows is a direct sailing (legs: null, same convention
-  // mockSailings()/maerskSchedules() already use) — only 2+ rows makes it a real TSP sailing.
+  // Content-Keyed Sailing Legs — computeLegKey's 6 fields ARE a leg's identity (same carrier +
+  // vessel + voyage + route + departure date = the same physical dated sailing segment, whether
+  // it's this schedule's leg 2 or another schedule's only leg); eta/vesselName/service are
+  // descriptive, not identity, and are the only fields upsertLeg will ever revise in place.
+  const computeLegKey = leg => [leg.carrier, leg.vesselImo, leg.voyageNumber, leg.pol, leg.pod, leg.etd]
+    .map(v => (v || "").toString().trim().toUpperCase()).join("|");
+
+  // Real upsert, not insert-or-ignore: a leg may be revised later by an external source (a live
+  // carrier feed, a re-run generator, a future EDI sync) — diff old vs new on the fields that can
+  // actually change and log one entity_events('sailing_leg', ...) row per changed field, the same
+  // field-level diff-and-log idiom the schedule PUT route below already uses for its own updates.
+  const upsertLeg = leg => {
+    const legKey = computeLegKey(leg);
+    const now = new Date().toISOString();
+    const existing = db.prepare("SELECT * FROM sailing_legs WHERE leg_key=?").get(legKey);
+    if (!existing) {
+      db.prepare(`INSERT INTO sailing_legs (leg_key, carrier, pol, pod, etd, eta, vessel_name, vessel_imo, voyage_number, service, created_at, updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+        .run(legKey, leg.carrier || "", leg.pol || "", leg.pod || "", leg.etd || "", leg.eta || "",
+             leg.vesselName || "", leg.vesselImo || "", leg.voyageNumber || "", leg.service || "", now, now);
+      return legKey;
+    }
+    const diffs = [
+      ["eta", existing.eta, leg.eta || ""],
+      ["vessel_name", existing.vessel_name, leg.vesselName || ""],
+      ["service", existing.service, leg.service || ""],
+    ].filter(([, o, n]) => String(o || "") !== String(n || ""));
+    if (diffs.length) {
+      db.prepare("UPDATE sailing_legs SET eta=?, vessel_name=?, service=?, updated_at=? WHERE leg_key=?")
+        .run(leg.eta || "", leg.vesselName || "", leg.service || "", now, legKey);
+      for (const [field, oldV, newV] of diffs) {
+        logEntityEvent("sailing_leg", legKey, "UPDATED", field, oldV, newV,
+          JSON.stringify({ carrier: existing.carrier, pol: existing.pol, pod: existing.pod }));
+      }
+    }
+    return legKey;
+  };
+
+  // Builds the ordered list of legs to save for a schedule, given whatever legs[] was actually
+  // posted (if any) and the schedule's own top-level fields. 2+ legs = real TSP, saved with each
+  // leg's own fields only, no cross-leg fallback — leg 2 must never inherit leg 1's vessel/voyage
+  // just because one of its own fields happens to be blank (mirrors this route's pre-existing
+  // per-leg save behavior). Exactly 1 leg fills only ITS OWN blanks from the top-level fields —
+  // safe here since there's no "other leg" to keep distinct from. No legs at all synthesizes one
+  // leg entirely from the top-level fields (the "direct sailing" case).
+  const buildLegsToSave = (legs, top) => {
+    if (Array.isArray(legs) && legs.length >= 2) {
+      return legs.map(leg => ({ carrier: leg.carrier || "", pol: leg.pol || "", pod: leg.pod || "",
+        etd: leg.etd || "", eta: leg.eta || "", vesselName: leg.vesselName || "",
+        vesselImo: leg.vesselImo || "", voyageNumber: leg.voyageNumber || "", service: leg.service || "" }));
+    }
+    const single = Array.isArray(legs) && legs.length === 1 ? legs[0] : {};
+    return [{
+      carrier: single.carrier || top.carrier, pol: single.pol || top.pol, pod: single.pod || top.pod,
+      etd: single.etd || top.etd, eta: single.eta || top.eta, vesselName: single.vesselName || top.vesselName,
+      vesselImo: single.vesselImo || top.vesselImo, voyageNumber: single.voyageNumber || top.voyageNumber,
+      service: single.service || top.service,
+    }];
+  };
+
+  // Every schedule now has 1+ schedule_leg_refs rows (a "direct" sailing is simply one ref) —
+  // upserts each leg into the canonical catalog and records the ordered reference list, returning
+  // the composed schedule_key (ordered leg_keys) for the caller to store on shipment_schedules.
+  const saveScheduleLegs = (scheduleId, legs) => {
+    db.prepare("DELETE FROM schedule_leg_refs WHERE schedule_id=?").run(scheduleId);
+    const insertRef = db.prepare("INSERT INTO schedule_leg_refs (schedule_id, leg_key, leg_order) VALUES (?,?,?)");
+    const legKeys = legs.map(leg => upsertLeg(leg));
+    legKeys.forEach((legKey, i) => insertRef.run(scheduleId, legKey, i));
+    return legKeys.join("→");
+  };
+
+  const getScheduleLegRows = scheduleId => db.prepare(`
+    SELECT sl.* FROM schedule_leg_refs r JOIN sailing_legs sl ON sl.leg_key = r.leg_key
+    WHERE r.schedule_id=? ORDER BY r.leg_order ASC
+  `).all(scheduleId);
+
+  // A schedule with exactly 1 leg ref is a direct sailing (legs: null, same convention
+  // mockSailings()/maerskSchedules() already use) — only 2+ makes it a real TSP sailing.
   const getScheduleLegs = scheduleId => {
-    const rows = db.prepare("SELECT * FROM schedule_legs WHERE schedule_id=? ORDER BY leg_order ASC").all(scheduleId);
+    const rows = getScheduleLegRows(scheduleId);
     return rows.length >= 2 ? rows.map(mapScheduleLeg) : null;
   };
 
@@ -796,6 +872,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     ata:           r.ata           || "",
     source:        r.source        || "search",
     templateId:    r.template_id   || null,
+    scheduleKey:   r.schedule_key  || "",
     legs:          getScheduleLegs(r.id),
   });
 
@@ -822,7 +899,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       return err(res, "Shipment not found", 404);
     const { carrier = "", vesselName = "", vesselImo = "", voyageNumber = "", service = "",
             pol = "", pod = "", etd = "", eta = "", transitDays = 0, isMock = false,
-            templateId = null } = req.body;
+            templateId = null, legs = null } = req.body;
     const id = `SCHED-${uid()}`;
     const savedAt = new Date().toISOString();
     const savedBy = req.user?.name || req.user?.email || "";
@@ -834,13 +911,21 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
       .run(id, req.params.id, carrier, vesselName, vesselImo, voyageNumber, service, pol, pod, etd, eta,
            Number(transitDays), isMock ? 1 : 0, savedAt, savedBy, templateId);
+    // The picked sailing's own legs[] (when it's a multi-leg catalog/mock/live match) already
+    // arrives in this body — commitSailing() (ShipmentSchedulesPage.jsx) spreads the whole sailing
+    // object it received from search, this just wasn't reading `legs` before. Without this, a
+    // shipment picking a TSP sailing silently lost the transshipment-leg detail on save (legs came
+    // back null on its own row even though the match it was copied from had 2+ legs).
+    const legsToSave = buildLegsToSave(legs, { carrier, pol, pod, etd, eta, vesselName, vesselImo, voyageNumber, service });
+    const scheduleKey = saveScheduleLegs(id, legsToSave);
+    db.prepare("UPDATE shipment_schedules SET schedule_key=? WHERE id=?").run(scheduleKey, id);
     logEntityEvent('schedule', id, 'SAVED', null, null, null,
       JSON.stringify({ shipmentId: req.params.id, carrier, vesselName, voyageNumber, service, pol, pod, etd, eta, actor: savedBy }));
     ensureBookingCreated(req.params.id);
     ok(res, mapSchedule({ id, shipment_id: req.params.id, carrier, vessel_name: vesselName, vessel_imo: vesselImo,
       voyage_number: voyageNumber, service, pol, pod, etd, eta,
       transit_days: Number(transitDays), is_mock: isMock ? 1 : 0, saved_at: savedAt, saved_by: savedBy,
-      template_id: templateId }), 201);
+      template_id: templateId, schedule_key: scheduleKey }), 201);
   });
 
   // Lightweight correction for an already-saved sailing (e.g. a carrier-driven ETD/ETA shift) —
@@ -872,6 +957,30 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       logEntityEvent('schedule', req.params.scheduleId, 'UPDATED', field, oldVal, newVal,
         JSON.stringify({ shipmentId: req.params.id, actor }));
     }
+
+    // Keep the canonical leg data (sailing_legs/schedule_leg_refs) in lockstep with this
+    // correction too — first leg carries the corrected vessel/voyage/etd/carrier, last leg
+    // carries the corrected eta (same first/last convention the shipment_legs sync below uses);
+    // any legs in between are left untouched. Without this, a real carrier-driven vessel/voyage
+    // substitution left schedule_key (and the underlying leg content) silently frozen on the
+    // ORIGINAL sailing even though vesselName/voyageNumber/etd/eta had all visibly changed —
+    // found live via manual testing. Re-saving recomputes schedule_key and, since vessel/voyage/
+    // etd are identity fields, correctly resolves to a DIFFERENT leg_key when they actually
+    // change (a genuine vessel substitution is a different leg, not an edit to the old one) while
+    // a same-vessel ETD-only bump still lands as a normal upsertLeg update with its own audit
+    // entry — either way it's no longer invisible to the leg-reuse system.
+    const existingLegRows = getScheduleLegRows(req.params.scheduleId).map(mapScheduleLeg);
+    const legsForCorrection = existingLegRows.length > 0 ? existingLegRows
+      : [{ carrier: existing.carrier, pol: existing.pol, pod: existing.pod, etd: existing.etd, eta: existing.eta,
+           vesselName: existing.vessel_name, vesselImo: existing.vessel_imo, voyageNumber: existing.voyage_number, service: existing.service }];
+    const lastIdx = legsForCorrection.length - 1;
+    const correctedLegs = legsForCorrection.map((l, i) => ({
+      ...l,
+      ...(i === 0 ? { carrier, vesselName, voyageNumber, etd } : {}),
+      ...(i === lastIdx ? { eta } : {}),
+    }));
+    const scheduleKey = saveScheduleLegs(req.params.scheduleId, correctedLegs);
+    db.prepare("UPDATE shipment_schedules SET schedule_key=? WHERE id=?").run(scheduleKey, req.params.scheduleId);
 
     // Keep the SEA leg(s) backing this schedule in lockstep — first leg carries
     // vessel/voyage/etd/carrier, last leg carries eta (handles both direct and TSP sailings,
@@ -960,15 +1069,13 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       .run(id, finalCarrier, finalVesselName, finalVoyageNumber, finalService, finalPol, finalPod,
            finalEtd, finalEta, finalTransitDays, 0, savedAt, savedBy, finalVesselImo, atd, ata);
 
-    if (isTSP) {
-      legs.forEach((leg, i) => {
-        db.prepare(`INSERT INTO schedule_legs
-          (id, schedule_id, leg_order, pol, pod, etd, eta, vessel_name, vessel_imo, voyage_number, service, carrier)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
-          .run(`SCHEDLEG-${uid()}`, id, i, leg.pol || "", leg.pod || "", leg.etd || "", leg.eta || "",
-               leg.vesselName || "", leg.vesselImo || "", leg.voyageNumber || "", leg.service || "", leg.carrier || "");
-      });
-    }
+    // Every schedule is now backed by 1+ canonical sailing_legs rows (see buildLegsToSave/
+    // saveScheduleLegs above).
+    const legsToSave = buildLegsToSave(legs, { carrier: finalCarrier, pol: finalPol, pod: finalPod,
+      etd: finalEtd, eta: finalEta, vesselName: finalVesselName, vesselImo: finalVesselImo,
+      voyageNumber: finalVoyageNumber, service: finalService });
+    const scheduleKey = saveScheduleLegs(id, legsToSave);
+    db.prepare("UPDATE shipment_schedules SET schedule_key=? WHERE id=?").run(scheduleKey, id);
 
     logEntityEvent('schedule', id, 'SAVED', null, null, null,
       JSON.stringify({ carrier: finalCarrier, vesselName: finalVesselName, voyageNumber: finalVoyageNumber,
@@ -1022,12 +1129,22 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   });
 
   app.get("/api/shipments/:id/schedule-events", (req, res) => {
+    // A sailing_leg's own UPDATED events (upsertLeg, above) have no shipmentId in their meta —
+    // a leg is shared/canonical, not owned by one shipment — so they're scoped here via a join
+    // instead: any leg that actually backs one of THIS shipment's own schedules.
     const rows = db.prepare(`
       SELECT * FROM entity_events
       WHERE entity_type = 'schedule'
       AND json_extract(meta, '$.shipmentId') = ?
+      UNION ALL
+      SELECT * FROM entity_events
+      WHERE entity_type = 'sailing_leg' AND entity_id IN (
+        SELECT r.leg_key FROM schedule_leg_refs r
+        JOIN shipment_schedules s ON s.id = r.schedule_id
+        WHERE s.shipment_id = ?
+      )
       ORDER BY created_at DESC
-    `).all(req.params.id);
+    `).all(req.params.id, req.params.id);
     ok(res, rows);
   });
 };

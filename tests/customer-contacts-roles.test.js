@@ -1,9 +1,14 @@
 /**
  * Organization Model Enhancement — Epic 1: Contacts & Role-Eligible Pickers
+ * (Roles section updated for the role-derivation rework — see CUSTOMER_ROLE_USAGE_SQL,
+ * routes/customers.js: roles are no longer a hand-maintained customer_roles flag table, they're
+ * derived live from actual shipment/shipment_parties usage.)
  *
- * Covers customer_contacts CRUD, customer_roles get/set (full-set replace), and the new
- * GET /api/customers?role= filter that CustomerCombobox's roleFilter/CustomerPickerModal's
- * "Only show eligible customers" toggle both rely on.
+ * Covers customer_contacts CRUD, the derived customer roles endpoint (read-only, computed from
+ * real shipment assignments — no setter), the GET /api/customers?role= filter (now supporting
+ * comma-separated multi-role) that CustomerCombobox's roleFilter/CustomerPickerModal's "Only
+ * show eligible customers" toggle and the MdmCustomersPage segmented category filter both rely
+ * on.
  *
  * Usage:
  *   node tests/customer-contacts-roles.test.js
@@ -111,39 +116,52 @@ async function login() {
     const badDel = await request("DELETE", `/api/customers/${customerId}/contacts/CCT-DOESNOTEXIST`, null, token);
     assert("delete bogus id returns 404", badDel.status === 404);
 
-    console.log("\nRoles — empty on a fresh customer");
+    console.log("\nRoles — empty on a fresh, never-used customer (no PUT/setter exists)");
     const emptyRoles = await request("GET", `/api/customers/${customerId}/roles`, null, token);
     assert("GET returns 200", emptyRoles.status === 200);
     assert("empty array", Array.isArray(emptyRoles.body) && emptyRoles.body.length === 0);
 
-    console.log("\nRoles — invalid role value rejected");
-    const badRoles = await request("PUT", `/api/customers/${customerId}/roles`, { roles: ["Not A Real Role"] }, token);
-    assert("invalid role rejected", badRoles.status >= 400);
-
-    console.log("\nRoles — set to [Bank, Shipper]");
-    const setRoles = await request("PUT", `/api/customers/${customerId}/roles`, { roles: ["Bank", "Shipper"] }, token);
-    assert("set returns 200", setRoles.status === 200);
-    assert("both roles present", setRoles.body.includes("Bank") && setRoles.body.includes("Shipper") && setRoles.body.length === 2);
-
-    console.log("\nRoles — set again is a full REPLACE, not a merge (down to just [Bank])");
-    const replaceRoles = await request("PUT", `/api/customers/${customerId}/roles`, { roles: ["Bank"] }, token);
-    assert("replace returns 200", replaceRoles.status === 200);
-    assert("only Bank remains — Shipper was dropped, not kept alongside", JSON.stringify(replaceRoles.body) === JSON.stringify(["Bank"]));
-
-    console.log("\nRole filter — GET /api/customers?role=Bank only returns Bank-flagged customers");
+    console.log("\nRoles — derived from a real shipment assignment (Principal), zero role-setting calls made");
     const unflagged = await request("POST", "/api/customers", { companyName: "Test Unflagged Co" }, token);
+    const shipment = await request("POST", "/api/shipments", {
+      pol: "nlrtm", pod: "usnyc", carrierCode: "MAEU", contractType: "SPOT", principalId: customerId,
+    }, token);
+    assert("scratch shipment created", shipment.status === 201);
+    const rolesAfterPrincipal = await request("GET", `/api/customers/${customerId}/roles`, null, token);
+    assert("Principal now appears, derived from the shipment field", JSON.stringify(rolesAfterPrincipal.body) === JSON.stringify(["Principal"]));
+
+    console.log("\nRoles — derived from a shipment_parties assignment (Bank), same endpoint, still no setter");
+    const bankParty = await request("POST", `/api/shipments/${shipment.body.id}/parties`,
+      { role: "Bank", customerId, customerName: "Test Contacts & Roles Co" }, token);
+    assert("party assignment created (201)", bankParty.status === 201);
+    const rolesAfterBoth = await request("GET", `/api/customers/${customerId}/roles`, null, token);
+    assert("Principal and Bank both present", rolesAfterBoth.body.includes("Principal") && rolesAfterBoth.body.includes("Bank") && rolesAfterBoth.body.length === 2);
+
+    console.log("\nRole filter — GET /api/customers?role=Bank only returns customers actually used as Bank");
     const roleSearch = await request("GET", `/api/customers?role=Bank&search=Test%20`, null, token);
     assert("search returns 200", roleSearch.status === 200);
     const ids = roleSearch.body.results.map(c => c.id);
-    assert("flagged customer is included", ids.includes(customerId));
-    assert("unflagged customer is excluded", !ids.includes(unflagged.body.id));
+    assert("customer used as Bank is included", ids.includes(customerId));
+    assert("never-used customer is excluded", !ids.includes(unflagged.body.id));
 
-    console.log("\nCleanup — deleting the customer also removes its contacts/roles (not orphaned)");
+    console.log("\nRole filter — comma-separated multi-role (category filter) matches either role");
+    const multiRoleSearch = await request("GET", `/api/customers?role=Principal,Bank&search=Test%20`, null, token);
+    const multiIds = multiRoleSearch.body.results.map(c => c.id);
+    assert("multi-role filter still includes the customer", multiIds.includes(customerId));
+    assert("multi-role filter still excludes the never-used customer", !multiIds.includes(unflagged.body.id));
+
+    console.log("\nRoles list — the batch-attached roles[] on GET /api/customers matches the per-customer endpoint");
+    const listRow = roleSearch.body.results.find(c => c.id === customerId);
+    assert("list row carries a roles array", Array.isArray(listRow?.roles));
+    assert("list row's roles matches GET .../roles", listRow.roles.includes("Principal") && listRow.roles.includes("Bank"));
+
+    console.log("\nCleanup — deleting the customer also removes its contacts (not orphaned); roles derive to empty since nothing references it anymore");
+    await request("DELETE", `/api/shipments/${shipment.body.id}`, null, token);
     await request("DELETE", `/api/customers/${customerId}`, null, token);
     const afterDeleteContacts = await request("GET", `/api/customers/${customerId}/contacts`, null, token);
     assert("no orphaned contacts after customer delete", afterDeleteContacts.body.length === 0);
     const afterDeleteRoles = await request("GET", `/api/customers/${customerId}/roles`, null, token);
-    assert("no orphaned roles after customer delete", afterDeleteRoles.body.length === 0);
+    assert("no roles after customer + shipment delete", afterDeleteRoles.body.length === 0);
     await request("DELETE", `/api/customers/${unflagged.body.id}`, null, token);
 
     console.log("\n" + "─".repeat(50));

@@ -4,7 +4,7 @@
 Full-stack freight management app. React 18 + Vite frontend, Express + node:sqlite backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.59.1 "Lineage"**
+- Version: **v0.63.0 "Beacon"**
 - Run: `npm run dev` (runs server on :3001 + Vite on :5173 concurrently)
 - Seed: `npm run seed` (runs `scripts/import-mdm-data.js`)
 
@@ -282,6 +282,126 @@ are fully validated.
 - **Two independent "document" systems** (naming collision, easy to confuse): (1) `DocumentsMenu` inside ShipmentDetailPage.jsx (2711-2919) — a header dropdown that generates B/L Draft/Packing List/Container Manifest client-side via jsPDF, no persistence/tracking. (2) `DOC_TYPES` in App.jsx (~line 56: BL01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). When asked to "add a document type" or "generate a document," clarify which system — they don't share code
 - **Lifecycle-stage stepper precedent**: no dedicated stepper component exists yet; `MilestonePanel` (ShipmentDetailPage.jsx 1593-~1870) is the closest analog — linear progress bar (1734-1738, `width: ${progress}%`) plus per-step state coloring via `milestoneState()`/`stateColor()` (1666-1676: completed/overdue/current/upcoming) driven by `shipment_milestones` rows (`id, label, estimatedDate, note, completedAt, completedBy`, fixed step keys `booking_confirmed, si_submitted, cargo_gated_in, vessel_departed, bl_issued, vessel_arrived, customs_cleared, cargo_released, delivered`). Any new per-container lifecycle/stage UI should reuse this state-coloring pattern rather than inventing a new visual language
 - **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages 3516-3533, 📡 EDI 3534-3543, then `DocumentsMenu` at 3544). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
+
+## Recent changes (v0.63.0 "Beacon")
+- **GPS-Coordinate Pickup/Delivery for Classified-Location Customers** — some customers' sites
+  (military/government/restricted) can only be identified by GPS coordinates, never a UN/LOCODE.
+  Strict either/or per leg endpoint (per direct clarification), not a hybrid: `shipment_legs`'
+  existing `pol_loc_type`/`pod_loc_type` (`Door`/`Terminal`/`Container Yard`/`CFS`) gains a 5th
+  value, `"GPS Coordinates"`, reusing the existing per-endpoint selector rather than a parallel
+  mode column. New nullable `pol_latitude`/`pol_longitude`/`pod_latitude`/`pod_longitude` carry the
+  location when set, with the corresponding `pol`/`pod` blanked — gated to Pick-up/Delivery legs
+  only (a SEA leg always needs a real port), enforced both client- and server-side.
+- New `customers.classified_location`/`latitude`/`longitude` — Profile tab checkbox reveals Lat/Lng
+  fields when checked (mirrors the `credit_hold`/`credit_hold_reason` pattern). New `validCoord`
+  helper (server.js) — the first lat/lng range validation (-90..90/-180..180) in this codebase,
+  since `port_locations`' own coordinates are trusted import data, never user-typed.
+- **Real bug fixed, found live via CDP verification**: the SEA-leg gate initially checked a leg's
+  `mot` field, but the Leg Type selector (`ShipmentFormPage.jsx`) only updates `legType`/
+  `movementType` on change, never `mot` — a leg just switched from SEA to Pick-up/Delivery still
+  carried its old `mot='SEA'` in the same save, wrongly blocking a legitimate GPS-mode switch.
+  Fixed by gating on `legType` instead. Also fixed: `syncShipmentFromLegs` now falls back to the
+  real SEA leg's port for the shipment's own `pol`/`pod` when the bookending Pick-up/Delivery leg
+  is GPS-blanked (it already did this for vessel/voyage/carrier, just not pol/pod).
+- New shared `src/utils/legLocation.js` (`formatLegPoint`) renders `"GPS: {lat}, {lng}"` with a
+  "Classified location" caption everywhere a leg's From/To is shown. `routes/share.js`'s public,
+  unauthenticated tracking endpoint strips the 4 coordinate fields (keeping the loc-type label) —
+  a classified site's exact coordinates must not leak through a token-only link.
+- 30 new test assertions (`tests/classified-locations.test.js`), full 20-file suite green, clean
+  build. Verified live via CDP: flagged a customer classified with real coordinates via the
+  Profile tab; switched a shipment's Pick-up leg to GPS Coordinates with typed lat/lng, confirmed
+  save/display (including the "GPS-PT" routing badge and header card) alongside a real SEA leg
+  whose own port still correctly populated the shipment header.
+
+## Recent changes (v0.62.1 "Waypoint")
+- **Schedule-correction route (`PUT /api/shipments/:id/schedules/:scheduleId`) wired into the new
+  leg-key system** — found live during an end-to-end manual test (simulating a carrier response
+  with a different vessel/voyage via this route). It updated the schedule's flat columns fine but
+  left `scheduleKey`/`sailing_legs`/`schedule_leg_refs` stale on the ORIGINAL sailing, since this
+  route predates the Waypoint rework. Fixed by rebuilding legs from `schedule_leg_refs`, applying
+  the correction on the first leg (carrier/vessel/voyage/etd) and last leg (eta), then re-saving via
+  `saveScheduleLegs`. A real vessel substitution now correctly produces a new `leg_key`; a same-
+  vessel ETD bump still lands as a normal `upsertLeg` update. 7 new test assertions, full 24-file
+  suite green.
+
+## Recent changes (v0.62.0 "Waypoint")
+- **Content-Keyed Sailing Legs** — `schedule_legs` gave every schedule its own fresh leg rows with
+  zero dedup, even when two schedules described the exact same physical dated sailing segment. New
+  `sailing_legs` table is the canonical, deduplicated catalog instead — one row per distinct leg,
+  keyed by a deterministic content key (`computeLegKey`: carrier+vesselImo+voyageNumber+pol+pod+etd,
+  `routes/shipment-ops.js`). New `schedule_leg_refs` join table is the ordered composition — every
+  schedule now has 1+ refs (a "direct" sailing is simply one ref). New `schedule_key` column (the
+  ordered concatenation of leg keys) lets two independently-created schedules be recognized as the
+  same sailing via string equality. `mapSchedule`'s external shape is unchanged, so the existing
+  frontend and the 50-assertion `schedule-catalog.test.js` suite needed zero changes.
+- **`upsertLeg` is a real upsert with an audit trail**, per direct feedback — a leg's descriptive
+  fields (`eta`/`vesselName`/`service`) can be revised later by an external source, and every
+  revision logs one `entity_events('sailing_leg', ...)` row per changed field, the same
+  field-level diff-and-log idiom the schedule PUT route already used. Surfaced in the existing
+  `ScheduleHistoryPanel` — `GET /api/shipments/:id/schedule-events` now unions in `sailing_leg`
+  events for whichever legs back that shipment's own schedules, with a "Leg POL→POD:" prefix.
+- **Real bug fixed along the way**: `POST /api/shipments/:id/schedules` never read a posted
+  `legs[]` array even though the frontend's `commitSailing()` already sent one for multi-leg picks
+  — a shipment picking a TSP sailing silently lost its transshipment-leg breakdown on save. Fixed
+  by wiring the same leg-saving path into that route; no frontend change needed.
+- One-time backfill gives every pre-existing schedule a uniform leg-backed representation;
+  idempotent (verified via two consecutive restarts). 13 new test assertions, full 19-file suite
+  green, clean build. Verified live via CDP: a second shipment reusing an existing schedule's leg
+  with a revised ETA correctly shows up as a leg-level update (old→new diff) in the first
+  shipment's own Schedule History.
+
+## Recent changes (v0.61.0 "Liaison")
+- **Carrier Line Agents** — modeled the CargoWise-baseline relationship between an ocean carrier
+  and its local representative, who differs by port (Maersk's Rotterdam agent isn't its New York
+  agent) — distinct from a Forwarder's own overseas correspondent network, which this doesn't
+  model. New `carrier_agents` table (`carrier_code` x `port_unlocode` -> agent `customer`, no
+  denormalized name — live-joins to `customers` like `CUST_JOIN` already does for
+  `parent_customer_name`) plus `MdmCarrierAgentsPage.jsx`, modeled directly on
+  `MdmLinkedPortsPage.jsx`. `agent_customer_id` has no `ON DELETE` clause (neither CASCADE nor
+  SET NULL fits) — customer delete is blocked by a new app-level guard in `routes/customers.js`,
+  mirroring `offices.js`'s own "referenced by shipments — deactivate it instead" pattern.
+- **Resolves onto the existing `shipment_parties` mechanism**, not a parallel system — two new
+  roles, `"Line Agent (Export)"`/`"Line Agent (Import)"`, mirroring how `"Customs Broker"` was
+  already split Export/Import for the identical one-shipment-two-ends reason. New
+  `resolveCarrierAgent(carrierCode, portUnlocode)` (server.js, beside `linkedPortCodes`) falls back
+  through linked ports the same way `findMatchingContractLeg` already does.
+  `maybeAssignLineAgents` (routes/shipments.js) fires on shipment create (before
+  `screenShipmentById`, so compliance screening never misses a sanctioned agent on day one) and on
+  carrier/POL/POD change — `UNIQUE(shipment_id, role)`'s own insert-conflict IS the "only fill an
+  empty slot, never overwrite" mechanism, so a manual assignment is never clobbered and a carrier
+  change with no registered agent simply leaves the existing party untouched.
+- **Everything else picks it up for free**: compliance screening, and the customer
+  role-derivation/segmented list (v0.60.0) — both new roles land under Service Providers
+  automatically. One deliberate new UI surface: a read-only Line Agents card on the shipment's
+  Carrier Booking → Details tab, next to the existing Carrier/Route/Vessel card.
+- New `tests/carrier-agents.test.js` (24 assertions) — full 19-file suite green, clean build.
+  Live browser-screenshot verification of the two new UI surfaces was inconclusive due to
+  intermittent dev-proxy connectivity in this environment (backend itself responded correctly to
+  every direct request throughout) — thoroughly verified instead via the automated suite and
+  direct API checks against the exact data those surfaces render.
+
+## Recent changes (v0.60.0 "Census")
+- **Customer roles reworked from a hand-maintained 13-checkbox editor into a derived, read-only
+  signal.** Direct concern: nothing kept a checked role honest against actual usage — classic
+  staleness bug waiting to happen. `routes/customers.js` gained `CUSTOMER_ROLE_USAGE_SQL`, a
+  UNION over `shipments`' 4 fixed role columns + `shipment_parties` (the same 13-role vocabulary
+  `screenShipmentById`, Epic 3, already screens). `GET /api/customers/:id/roles` now reads it
+  directly — `PUT /api/customers/:id/roles` is gone, there's nothing to set. `customer_roles`
+  itself is left in place, unused, per this codebase's standing no-schema-drop-migration
+  precedent.
+- **`GET /api/customers?role=` now accepts comma-separated multi-role values**, resolved against
+  the same derived UNION, and the list response batch-attaches a `roles: string[]` to each row.
+- **Considered and rejected: splitting customers from vendors into separate tables** — would
+  reintroduce the duplicate-company-record problem CargoWise's unified Organization-with-role-
+  flags model exists to avoid. Built a segmented view instead: `CUSTOMER_ROLE_CATEGORIES`
+  (`src/tokens.js`, frontend-only) groups the 13 roles into Trading Customers (5) / Service
+  Providers (8); `MdmCustomersPage`'s list gained an All/Trading Customers/Service Providers
+  segmented control and a color-coded Roles column. The Profile tab's checkbox editor was deleted
+  and replaced with the same read-only badge list.
+- Two interactive HTML mockups (matching the app's real theme tokens) were built and walked
+  through with the user before writing any code, per explicit request.
+- Verified live via CDP against real data: switching to "Trading Customers" correctly narrowed
+  18 customers to 9, excluding every customer whose only real usage is a Service Provider role.
 
 ## Recent changes (v0.59.1 "Lineage")
 - **Fixed a real bug found live on SHP-XXGOJ1** (direct user report: "the container invoice does
