@@ -6,10 +6,11 @@
     "node": ">=22.5.0"
   },
   "scripts": {
-    "dev": "concurrently \"npm run server\" \"npm run client\" \"npm run distribution-service\"",
+    "dev": "concurrently \"npm run server\" \"npm run client\" \"npm run distribution-service\" \"npm run pdf-render-service\"",
     "server": "node server.js",
     "client": "vite",
     "distribution-service": "node services/document-distribution/server.js",
+    "pdf-render-service": "node services/pdf-render/server.js",
     "build": "vite build",
     "preview": "vite preview",
     "seed": "node scripts/import-mdm-data.js",

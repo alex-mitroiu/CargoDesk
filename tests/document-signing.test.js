@@ -6,6 +6,8 @@
  *
  * Prerequisites:
  *   - Express server running on :3001
+ *   - PDF Render Service running on :3003 (services/pdf-render — the generate-document route
+ *     calls it internally; started automatically by `npm run dev`, a separate process otherwise)
  *   - Admin account: claudeagent@localhost / TestFixture!2026Zq
  */
 

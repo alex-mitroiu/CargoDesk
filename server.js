@@ -9,7 +9,7 @@ const { DatabaseSync } = require("node:sqlite");
 const bcrypt = require("bcryptjs");
 const jwt    = require("jsonwebtoken");
 const {
-  resolveBrowserExecutable, renderHtmlToPdf,
+  renderHtmlToPdf,
   generateSelfSignedSigningCert, getActiveSigningCert, signPdfBuffer,
 } = require("./lib/pdf-signing");
 const {
@@ -2880,7 +2880,7 @@ const ctx = {
   getSettings,
   shipmentSubs, broadcastMessage, recomputeSpaceBadge,
   UPLOADS_DIR,
-  resolveBrowserExecutable, renderHtmlToPdf, getActiveSigningCert, signPdfBuffer,
+  renderHtmlToPdf, getActiveSigningCert, signPdfBuffer,
   createTransporterFromSettings, getTransporterForOffice, invalidateTransporterCache,
   buildMailOptions, sendViaOffice, mapOfficeMailSettings,
   SVC_ABBR, LEG_LOC_ABBR, GPS_LOC_TYPE,

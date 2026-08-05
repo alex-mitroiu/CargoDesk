@@ -596,7 +596,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
         JSON.stringify({ shipmentId: req.params.id, docType: docType || "OT", filename: pdfFilename, containerId, signed: true, certFingerprint: cert.fingerprint_sha256 }));
       const row = db.prepare("SELECT * FROM shipment_documents WHERE id = ?").get(id);
       ok(res, mapDoc(row, req.params.id), 201);
-    } catch (e) { err(res, e.message, 500); }
+    } catch (e) { err(res, e.message, e.status || 500); }
   });
 
   // Always sends from the shipment's EMO (Export Managing Office) — simplest correct default

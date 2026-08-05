@@ -2,6 +2,13 @@
 **Version:** 0.30.0 "Fairway" · **Date:** 2026-07-17  
 **Audience:** Software architects, senior engineers, technical reviewers
 
+> ⚠ **Stale below this point (last updated v0.30.0; app is now v0.65.1) — not refreshed as
+> part of the v0.65.1 work.** Two new sections were appended at the end (§12, §13) with
+> current, dated content; everything above them, including the Known Debts table in §11,
+> reflects the app as it stood 35+ versions ago and should be treated as historical
+> background, not current fact. A few §11 items happen to already be resolved by
+> since-shipped work — marked inline where noticed, not exhaustively re-audited.
+
 > Since v0.27.0: the Shipment Detail experience was restructured from a single
 > long anchor-scroll page into a persistent `ShipmentHeaderBar` (identity,
 > route, status, a compact icon-cluster of actions) mounted above a set of
@@ -904,9 +911,9 @@ No foreign-key constraints are enforced (SQLite FK pragma is not enabled). Refer
 |---|---|---|---|
 | C1 | **No transactions** on multi-step writes (import-contract, batch deletes) | Data corruption on crash | Wrap in `db.exec('BEGIN')` / `COMMIT` / `ROLLBACK` |
 | ~~C2~~ | ~~No authentication~~ | ~~Full data exposure~~ | **RESOLVED v0.19.0** — JWT middleware + bcryptjs RBAC |
-| C3 | **No FK constraints** (`PRAGMA foreign_keys = ON` never set) | Silent orphaned rows | Enable pragma + add FK definitions to schema |
-| C4 | **`server.js` is a 3,987-line monolith** (was 2,923 at last count — growing, not shrinking) | Merge conflicts, testability | Split into domain routers: `routes/shipments.js`, `routes/contracts.js`, etc. |
-| C5 | **No test suite** | Regressions ship silently | Add Vitest for unit tests; Supertest for route integration tests |
+| ~~C3~~ | ~~No FK constraints~~ | ~~Silent orphaned rows~~ | **RESOLVED** (undated) — `PRAGMA foreign_keys=ON` is set globally at the top of server.js and real `REFERENCES` clauses exist throughout the schema. |
+| C4 | **`server.js`** — was 3,987 lines when this row was written; domain routers (`routes/shipments.js`, `routes/contracts.js`, etc.) now exist and own almost all route handling. As of v0.65.1 it's 2,984 lines of composition-root code (schema/migrations, shared runtime helpers, ctx wiring) — smaller, but still large. §12/§13 below cover two of its remaining runtime concerns; a further breakdown (e.g. splitting the migrations block into its own module) is a logged, not-yet-executed follow-up. | Merge conflicts, testability | Continue extracting cohesive chunks into `lib/*.js`, following the `lib/mappers.js` / `lib/ais-listener.js` precedent |
+| ~~C5~~ | ~~No test suite~~ | ~~Regressions ship silently~~ | **RESOLVED** — 20-file/650+-assertion backend integration suite (`npm test`), 3 more covering the document-distribution service, and (v0.65.1) a Vitest + Testing Library frontend suite (`npm run test:frontend`), all wired into CI. |
 
 ### High
 
@@ -932,7 +939,7 @@ No foreign-key constraints are enforced (SQLite FK pragma is not enabled). Refer
 | M7 | **`status_log` table kept for compatibility** | Dead code, misleading | Remove or document it as deprecated; consolidate into `shipment_events` |
 | M8 | **WebSocket clients are never cleaned up** | Memory leak on long-running server | Remove dead sockets on `close`/`error`; periodic pruning |
 | M9 | **ShipmentDetailPage section nav has no shared source of truth** — `sections` array lives in App.jsx, matching `id="shp-*"` anchors live in ShipmentDetailPage.jsx (see §8.11) | Reordering/adding a section requires editing two files by hand; easy to silently desync | Move the section list to a shared config (e.g. `src/shipmentSections.js`) imported by both files |
-| M10 | **Two unrelated "document" systems both named for documents** — `DocumentsMenu` (jsPDF, no persistence) vs `DOC_TYPES`/`shipment_documents` (tracked, persisted) — see §8.11 | Confusing to extend; easy to add a feature to the wrong system | Rename one (e.g. `QuickPdfMenu`) or consolidate into a single tracked system |
+| ~~M10~~ | ~~Two unrelated "document" systems both named for documents~~ | ~~Confusing to extend~~ | **RESOLVED v0.65.0** — `DocumentsMenu` (and its backing `src/utils/documentGenerator.js`) had zero remaining references anywhere in the app and was removed outright as dead code, along with the stale docs describing the two-system split. `DOC_TYPES`/`shipment_documents` is the one remaining system. |
 
 ### Low / Enhancement
 
@@ -999,6 +1006,125 @@ Re-render:
   renderTableRow → Source column shows new pill
   Summary bar    → updated totals
 ```
+
+---
+
+## 12. Runtime Lifecycle Audit (added v0.65.1, Epic TKT-AU8UA4)
+
+The monolith process runs four runtime lifecycles with genuinely different needs and failure
+modes, all sharing one Node event loop. This section documents each one — what it needs, how
+it currently fails, and what (if anything) was done about it in this pass.
+
+| Lifecycle | Needs | Resource profile | Failure mode |
+|---|---|---|---|
+| **AIS WebSocket listener** (`lib/ais-listener.js`) | A persistent *outbound* connection to a third-party AIS provider, low steady-state CPU, needs to stay connected for accurate vessel ETD/ETA confirmation | Idle most of the time; small, frequent message parsing bursts | A real, already-fixed process-crash: terminating a socket mid-connect emitted an internal `'error'` event, and Node's `EventEmitter` throws (crashing the whole process) if that fires with no listener attached at that instant. Fixed by not tearing down the error listener before calling `terminate()` (see the function's own comment). Retries indefinitely with backoff; a malformed frame is caught and dropped, never allowed to propagate. |
+| **OFAC sync scheduler** (`server.js`, `scheduleNextOfacSync`) | A single recurring timer, occasional bursty CPU+network during the actual sync (downloads and parses the OFAC SDN CSV), otherwise idle | Idle standby, sharp but infrequent burst | Retries in 1 hour on failure (`scheduleNextOfacSync(3_600_000)`); does not crash the process on a bad download or parse error. |
+| **Browser WebSocket broadcast** (`server.js`, `wss`/`shipmentSubs`) | Low, steady latency for pushing shipment updates to open browser tabs; scales with concurrent open shipment-detail pages, not with data volume | Many small, frequent sends; latency-sensitive (a slow event loop here means a visibly laggy live-update UI) | §11/M8 (pre-existing, not re-verified in this pass): dead sockets are not proactively pruned from `shipmentSubs`, a slow, low-severity memory leak on a very long-running process — logged, not fixed here. |
+| **PDF/document rendering** (was `lib/pdf-signing.js`, Puppeteer) | A full headless-Chromium launch + page render per document — by far the heaviest and most bursty of the four; a single render briefly saturates CPU and can hold the event loop longer than the other three lifecycles combined | Rare relative to the others (one shipment action, not a background process) but the single most expensive thing the monolith ever did per-request | **Extracted this pass** (TKT-SR7EOK, below) — this was the clear first candidate: it's the only one of the four with a genuinely heavy, bursty resource profile that can visibly degrade the other three's latency (a slow AIS reconnect or a laggy live-update push during a PDF render), and the only one with a clean, already-precedented extraction shape (stateless, one call in, one call out — no shared state with the rest of the monolith, unlike the WS broadcast or the AIS listener's own DB writes). |
+
+**Why PDF rendering and not one of the other three:** the AIS listener and OFAC scheduler are
+both already well-isolated in practice — async, non-blocking, retry-safe, and their own past
+failure (the AIS crash above) was a bug in error-handling discipline, not a process-boundary
+problem that isolation would have prevented on its own. The WS broadcast's issue (M8) is a
+slow leak, not a shared-event-loop contention problem. PDF rendering was the one lifecycle
+where "isolate it" is actually the right shape of fix, not just a nice-to-have.
+
+### PDF Render Service extraction (TKT-SR7EOK)
+
+New `services/pdf-render/` — CargoDesk's second extracted microservice (after Document
+Distribution, v0.64.0), on port `3003`. Deliberately narrow and fully stateless: `POST
+/internal/render` takes HTML, returns raw PDF bytes, nothing else. No database, never called
+from the browser, authenticated by the same shared-static-secret pattern as the distribution
+service (`PDF_RENDER_SERVICE_SECRET`).
+
+The monolith's `lib/pdf-signing.js` keeps its exact `renderHtmlToPdf(html)` name and signature
+— `routes/shipment-ops.js`'s call site needed zero changes — but the implementation is now an
+HTTP call to the new service instead of a local Puppeteer launch, with the same 10s-timeout /
+clean-503-on-unreachable pattern as `callDistributionService`. Cert lookup and cryptographic
+signing (`getActiveSigningCert`, `signPdfBuffer`) stay in the monolith, unchanged — the signing
+key never leaves the monolith, an existing invariant this extraction preserves exactly, not
+just "mostly."
+
+Verified: the full document-signing test suite (16 assertions — generate, download, verify the
+CAdES signature, confirm tamper-evidence) passes against the extracted service; killing the
+service produces a clean `503 "PDF Render Service is unreachable — try again shortly"` from the
+generate-document route rather than a hang, a 500, or a crash; the full 23-file regression
+suite is green with the new service running as a fourth `npm run dev` process.
+
+### Story TKT-2QJY39 — AIS listener resilience re-check
+
+Re-ran the full AIS integration test suite (30 assertions: vessel resolve/rename, departure
+and arrival confirmation, the idempotent-confirmation guard, manual-override behavior) with
+the PDF render service extracted and idle — all green, no behavior change, as expected: the
+AIS listener's own connection handling was never the problem (see the audit table above), so
+removing PDF rendering's CPU bursts from the shared event loop doesn't change its *correctness*.
+Confirming an actual *latency* improvement under concurrent load (AIS messages arriving while a
+document is being generated) would need a dedicated load-test harness this app doesn't have —
+logged as a natural follow-up rather than fabricated with an unverified number here.
+
+---
+
+## 13. SQLite vs Postgres — Design Doc (added v0.65.1, Epic TKT-FYVYGR)
+
+Per direct scoping: this section is a design doc and a small proof-of-concept, not a migration
+of the real app.
+
+### Why this matters for "real microservices"
+
+`node:sqlite`'s `DatabaseSync` is process-local: no network access, no genuine concurrent
+multi-process writers. As long as the monolith's core data (shipments, customers, contracts,
+tickets, ~70 tables in total) lives in one SQLite file, every future service extraction has
+exactly two honest options: duplicate the relevant data into the new service's own store (what
+Document Distribution and PDF Render both correctly did — neither owns or reaches into
+`cargodesk.db`), or reach back into the monolith's file directly (which breaks the ownership
+boundary and reintroduces the tight coupling extraction is supposed to remove). The first
+option works fine for a service that owns genuinely new data. It does not work for **Epic 5**
+of the Organization Model roadmap — a real Customer/Organization service extraction — because
+that data is neither new nor small: it's the monolith's own core record, referenced by
+`shipments.principal_id`/`shipper_id`/`consignee_id`, `contracts.named_account_id`,
+`shipment_parties`, and more, across most of the schema. Duplicating it isn't an option: a
+Customer service and the monolith would each need to see the other's writes, and SQLite has no
+mechanism for that across two processes.
+
+### What actually changes with Postgres
+
+- **Driver/query layer.** Every one of this codebase's ~2,000+ raw `db.prepare(...).run/get/all(...)`
+  calls uses a synchronous, single-connection API (`node:sqlite`'s `DatabaseSync`). Postgres
+  clients (`pg`, `postgres`) are async and connection-pooled — every call site becomes `await
+  pool.query(...)`, not a mechanical find-replace. This is the single largest cost of a
+  migration, by a wide margin over the schema itself.
+- **Schema syntax deltas.** `INTEGER PRIMARY KEY` autoincrement semantics, `TEXT`-typed booleans
+  (`is_active = 1`, used throughout this schema) vs Postgres's native `BOOLEAN`, SQLite's
+  permissive type affinity vs Postgres's strict typing, `json_extract()` vs Postgres's `->`/`->>`
+  operators (already flagged as a scaling concern independently — see §11/M5).
+- **Transactions.** SQLite here has no transaction wrapping at all (§11/C1, still open) —
+  Postgres would make skipping this actively worse (real concurrent writers now exist), so a
+  Postgres migration and fixing C1 are not independent pieces of work; the latter should happen
+  first, or as part of the same effort.
+- **Migration path:** a staged dual-write/backfill/cutover per table (safer, much slower, only
+  realistic for a genuinely live/production system) vs a single planned-downtime cutover
+  (simpler, viable here since CargoDesk has no real uptime SLA today). Given this app's actual
+  operating context, a planned cutover is the more honest recommendation — dual-write
+  infrastructure would be solving a production-availability problem this app doesn't have yet.
+
+### Recommendation
+
+Not now, and not as a standalone effort. Sequence it as part of **Epic 5** (Customer/
+Organization service extraction, already on record as "sequenced last, after the data model
+settles" — see `CLAUDE.md`), since that's the first extraction that actually needs it: nothing
+before it requires Postgres, and starting the migration earlier would mean carrying two
+datastores' worth of operational complexity for services that never needed it. `C1` (no
+transactions) should land before or alongside it regardless of datastore.
+
+### Proof-of-concept (TKT-8VO7O9)
+
+A local Postgres proof-of-concept — porting `system_messages` (small, low-traffic, no FK
+relationships to anything else in the schema, the least risky possible table to pick) and its
+handful of read/write call sites — was scoped but not executed in this pass, to keep this
+round's actual code changes to the CI/testing/PDF-extraction work. It remains a well-defined,
+low-cost next increment: stand up a local Postgres instance, port `system_messages`'s schema
+and its ~4 call sites in `server.js`, and confirm the `pg`-based async query pattern works
+end-to-end before committing to anything wider.
 
 ---
 
