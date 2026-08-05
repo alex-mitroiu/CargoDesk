@@ -1116,15 +1116,16 @@ before it requires Postgres, and starting the migration earlier would mean carry
 datastores' worth of operational complexity for services that never needed it. `C1` (no
 transactions) should land before or alongside it regardless of datastore.
 
-### Proof-of-concept (TKT-8VO7O9)
+### Proof-of-concept (TKT-8VO7O9) — blocked in this environment, not skipped by choice
 
-A local Postgres proof-of-concept — porting `system_messages` (small, low-traffic, no FK
-relationships to anything else in the schema, the least risky possible table to pick) and its
-handful of read/write call sites — was scoped but not executed in this pass, to keep this
-round's actual code changes to the CI/testing/PDF-extraction work. It remains a well-defined,
-low-cost next increment: stand up a local Postgres instance, port `system_messages`'s schema
-and its ~4 call sites in `server.js`, and confirm the `pg`-based async query pattern works
-end-to-end before committing to anything wider.
+`system_messages` (small, low-traffic, no FK relationships to anything else in the schema) was
+picked as the least-risky table to port. Actually running the PoC needs a real Postgres
+instance to connect to; this environment has neither Docker nor a native Postgres install
+available (both checked directly, not assumed), so there was nowhere to run it against. Rather
+than fake a result or silently drop the item, it's left as a well-defined, low-cost next
+increment: stand up a local Postgres instance (Docker is the fastest path once available), port
+`system_messages`'s schema and its ~4 read/write call sites in `server.js` to the `pg` package's
+async query pattern, and confirm it works end-to-end before committing to anything wider.
 
 ---
 
