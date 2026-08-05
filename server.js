@@ -2953,6 +2953,21 @@ require('./routes/charge-codes')(app, ctx);
 require('./routes/pack-types')(app, ctx);
 require('./routes/ais')(app, ctx);
 
+// ─── Static frontend (production only) ─────────────────────────────────────────
+// Local dev never hits this — Vite's own dev server (npm run client) serves the frontend and
+// proxies /api + /ws to this process instead (vite.config.js). In production there's no Vite
+// dev server running at all, so this process needs to serve the already-built dist/ itself.
+// Registered after every /api/* route above, so an unmatched /api/* path still 404s normally
+// instead of falling through to index.html.
+if (process.env.NODE_ENV === "production") {
+  const distDir = path.join(__dirname, "dist");
+  app.use(express.static(distDir));
+  // SPA fallback: any non-API, non-WS path (including a hard refresh on a hash route, or a
+  // path Express's own router didn't match) gets index.html — the app's own client-side hash
+  // routing takes it from there. Must be registered last.
+  app.get(/^(?!\/api|\/ws).*/, (req, res) => res.sendFile(path.join(distDir, "index.html")));
+}
+
 // ─── WebSocket server ─────────────────────────────────────────────────────────
 
 const httpServer = http.createServer(app);
