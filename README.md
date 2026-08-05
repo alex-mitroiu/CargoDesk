@@ -3,7 +3,7 @@
 > Freight management application for tracking ocean shipments, carrier space utilisation, contracts, and maritime master data.
 
 [![CI](https://github.com/alex-mitroiu/CargoDesk/actions/workflows/ci.yml/badge.svg)](https://github.com/alex-mitroiu/CargoDesk/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.65.1-blue)](.)
+[![Version](https://img.shields.io/badge/version-0.66.0-blue)](.)
 ![Node](https://img.shields.io/badge/node-22.5%2B-green)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
@@ -354,6 +354,7 @@ See the built-in **About** page (i in the sidebar) for the full interactive sche
 
 | Version | Codename | Summary |
 |---------|----------|---------|
+| 0.66.0 | Bulkhead | Four platform-hardening epics: CI Pipeline (the existing Cypress workflow had zero actual runs ever — pull_request-only trigger on a commit-to-main project; fixed, plus a new backend-tests-and-build job and two real previously-hidden bugs it surfaced), Frontend Test Coverage (Vitest + Testing Library, App.jsx auth gating + KanbanPage's Add Ticket flow, wired into CI), Runtime Lifecycle Separation (audited server.js's 4 bundled lifecycles, extracted PDF rendering into a second microservice, services/pdf-render/), and a SQLite-ceiling design doc (Postgres PoC honestly logged as blocked by this environment, not skipped). |
 | 0.65.1 | Ballast | Follow-up: extracted server.js's genuine pure row-mapper functions (mapShipment, mapContainer, mapCustomer, and 45 others) into lib/mappers.js via a factory matching the existing createAisListener pattern, leaving real business logic (syncShipmentFromLegs, the access-control filter) that had shared the same section header behind in server.js. server.js: 3230 → 2984 lines, no behavior changed. |
 | 0.65.0 | Ballast | Dead-code audit and removal. `server.js`'s entire tail (144 route registrations) was an exact duplicate of routes already registered by `routes/*.js`, proven unreachable via Express's first-match routing, plus 10 interleaved helper functions independently re-implemented in their live counterparts — removed, taking `server.js` from 5300 to 3230 lines. Also removed: a full legacy pre-refactor app copy, an unreferenced client-side jsPDF document generator (dropping the `jspdf`/`jspdf-autotable` dependencies), and three entirely dead component definitions inside `DashboardPage.jsx`. No behavior changed — every removal was proven unreachable/unreferenced first. Full test suite green, clean build, live CDP verification. |
 | 0.64.0 | Relay | TKT-SLIRP9 — Document Distribution: EDI + Webhook channels, and CargoDesk's first extracted microservice. New `services/document-distribution/` — a genuinely separate deploy unit (own port, own SQLite file) owning webhook configs, EDI transmittals, and webhook deliveries, reached over an authenticated internal HTTP API. Document rows gain "📡 EDI" and "🔗 Webhook" send buttons plus a "🕐" history icon (closing a gap where every send, including the existing Email feature, was invisible after the fact). Test Tools gains a real dev-only Webhook Simulator with client-side HMAC signature verification. Found and fixed two real bugs live: a webhook-delivery double-insert on failure, and a never-configured webhook silently defaulting to inactive. |

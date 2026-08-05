@@ -4,8 +4,8 @@
 Full-stack freight management app. React 18 + Vite frontend, Express + node:sqlite backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.65.1 "Ballast"**
-- Run: `npm run dev` (runs the monolith on :3001 + Vite on :5173 + the Document Distribution Service on :3002, concurrently)
+- Version: **v0.66.0 "Bulkhead"**
+- Run: `npm run dev` (runs the monolith on :3001 + Vite on :5173 + the Document Distribution Service on :3002 + the PDF Render Service on :3003, concurrently)
 - Seed: `npm run seed` (runs `scripts/import-mdm-data.js`)
 
 ## Stack
@@ -282,6 +282,30 @@ are fully validated.
 - **Document system**: `DOC_TYPES` in App.jsx (~line 56: BL01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). (The earlier client-side-jsPDF `DocumentsMenu` component this note used to distinguish from was removed as dead code — it had zero references anywhere in the app.)
 - **Lifecycle-stage stepper precedent**: no dedicated stepper component exists yet; `MilestonePanel` (ShipmentDetailPage.jsx 1593-~1870) is the closest analog — linear progress bar (1734-1738, `width: ${progress}%`) plus per-step state coloring via `milestoneState()`/`stateColor()` (1666-1676: completed/overdue/current/upcoming) driven by `shipment_milestones` rows (`id, label, estimatedDate, note, completedAt, completedBy`, fixed step keys `booking_confirmed, si_submitted, cargo_gated_in, vessel_departed, bl_issued, vessel_arrived, customs_cleared, cargo_released, delivered`). Any new per-container lifecycle/stage UI should reuse this state-coloring pattern rather than inventing a new visual language
 - **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages, 📡 EDI). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
+
+## Recent changes (v0.66.0 "Bulkhead")
+- **Four platform-hardening epics**, tracked as real Kanban epics/stories: CI Pipeline,
+  Frontend Test Coverage, Runtime Lifecycle Separation, SQLite Ceiling.
+- **CI**: `.github/workflows/cypress.yml` had zero actual runs ever (pull_request-only trigger,
+  this project commits directly to main) — renamed to `ci.yml`, added a push trigger, added a
+  `backend-tests-and-build` job (full monolith + distribution-service suites + build). Fixed two
+  bugs the never-run workflow had been hiding: seed-before-server-exists ordering, and the login
+  rate limiter (20/15min/IP) tripping across 23+ test files in one continuous run — now
+  configurable via `LOGIN_RATE_MAX` (default unchanged; CI sets 200).
+- **Frontend tests**: Vitest + Testing Library wired up (`npm run test:frontend`, its own
+  parallel CI job). `src/App.test.jsx` (auth gating), `src/pages/KanbanPage.test.jsx` (Add
+  Ticket flow). Mocks `./api` by mirroring its real shape via `vi.importActual`, not a hand-kept
+  method list.
+- **PDF Render Service** — CargoDesk's second extracted microservice (`services/pdf-render/`,
+  port `3003`, stateless). `lib/pdf-signing.js`'s `renderHtmlToPdf(html)` kept its exact
+  name/signature; only its implementation moved from a local Puppeteer launch to an HTTP call.
+  Cert lookup + signing stay in the monolith — the signing key never leaves it. Full runtime-
+  lifecycle audit (AIS listener, OFAC sync, WS broadcast, PDF rendering) in `ARCHITECTURE.md` §12.
+- **SQLite ceiling**: design doc + honestly-blocked PoC in `ARCHITECTURE.md` §13 (no Postgres
+  available in this environment — not skipped by choice). Recommends sequencing an eventual
+  Postgres migration with the already-planned Epic 5 (Customer/Organization service extraction).
+- `ARCHITECTURE.md` (root) was found even more stale than `src/dev/architecture.html` (v0.30.0)
+  — staleness banner added, three Known Debts items marked resolved that are now directly false.
 
 ## Recent changes (v0.65.1 "Ballast")
 - **Row-mapper extraction.** `server.js`'s "Map functions" section mixed genuine pure row-mappers
