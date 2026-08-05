@@ -379,6 +379,8 @@ export const api = {
     upload:   (shipmentId, data) => req("POST",   `/shipments/${shipmentId}/documents`, data),
     generate: (shipmentId, data) => req("POST",   `/shipments/${shipmentId}/documents/generate`, data),
     sendEmail: (shipmentId, docId, data) => req("POST", `/shipments/${shipmentId}/documents/${docId}/send-email`, data),
+    sendEdi:     (shipmentId, docId, data) => req("POST", `/shipments/${shipmentId}/documents/${docId}/send-edi`, data),
+    sendWebhook: (shipmentId, docId)       => req("POST", `/shipments/${shipmentId}/documents/${docId}/send-webhook`),
     reverse:  (shipmentId, docId, data = {}) => req("POST", `/shipments/${shipmentId}/documents/${docId}/reverse`, data),
     patch:    (docId, data)      => req("PATCH",  `/documents/${docId}`, data),
     remove:   (docId)            => req("DELETE", `/documents/${docId}`),
@@ -491,6 +493,15 @@ export const api = {
     get:      (officeId)       => req("GET",  `/offices/${officeId}/mail-settings`),
     update:   (officeId, data) => req("PUT",  `/offices/${officeId}/mail-settings`, data),
     sendTest: (officeId, data) => req("POST", `/offices/${officeId}/mail-settings/test`, data),
+  },
+  officeWebhook: {
+    get:      (officeId)       => req("GET",  `/offices/${officeId}/webhook-settings`),
+    update:   (officeId, data) => req("PUT",  `/offices/${officeId}/webhook-settings`, data),
+    sendTest: (officeId, data) => req("POST", `/offices/${officeId}/webhook-settings/test`, data),
+  },
+  webhookSimulator: {
+    list:  ()  => req("GET",    "/test/webhook-receiver"),
+    clear: ()  => req("DELETE", "/test/webhook-receiver"),
   },
   branches: {
     list:   ()           => req("GET",    "/branches"),

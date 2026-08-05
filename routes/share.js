@@ -1,25 +1,9 @@
 "use strict";
 
-const crypto = require("crypto");
-
-// HMAC-SHA256 token helpers — avoids a JWT dependency for public tokens
-function signToken(payload, secret) {
-  const data = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  const sig = crypto.createHmac("sha256", secret).update(data).digest("base64url");
-  return `${data}.${sig}`;
-}
-
-function verifyToken(token, secret) {
-  const [data, sig] = token.split(".");
-  if (!data || !sig) return null;
-  const expected = crypto.createHmac("sha256", secret).update(data).digest("base64url");
-  if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
-  try { return JSON.parse(Buffer.from(data, "base64url").toString()); }
-  catch { return null; }
-}
+const { signToken, verifyToken } = require("../lib/shareToken");
 
 module.exports = function shareRoutes(app, ctx) {
-  const { db, ok, err, auth, JWT_SECRET, mapShipmentLeg } = ctx;
+  const { db, ok, err, auth, JWT_SECRET, mapShipmentLeg, UPLOADS_DIR, fs, path } = ctx;
 
   const SHARE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
@@ -86,5 +70,23 @@ module.exports = function shareRoutes(app, ctx) {
       milestones,
       expiresAt: new Date(payload.exp).toISOString(),
     });
+  });
+
+  // Document-scoped share link — minted internally by the webhook distribution proxy
+  // (routes/document-distribution.js), never exposed as its own "generate a link" UI action the
+  // way the shipment-level tracking link is. The distribution service itself never touches file
+  // bytes; this is the one place a partner's webhook receiver can actually fetch the document,
+  // using the same signed-token mechanism as the tracking link above.
+  app.get("/api/share/document/:token", (req, res) => {
+    const payload = verifyToken(req.params.token, JWT_SECRET);
+    if (!payload || !payload.docId) return err(res, "Invalid or tampered link", 400);
+    if (Date.now() > payload.exp) return err(res, "This document link has expired", 410);
+    const doc = db.prepare("SELECT * FROM shipment_documents WHERE id=? AND shipment_id=?").get(payload.docId, payload.shipmentId);
+    if (!doc) return err(res, "Document not found", 404);
+    const filePath = path.join(UPLOADS_DIR, doc.stored_name);
+    if (!fs.existsSync(filePath)) return err(res, "File not found on disk", 404);
+    res.setHeader("Content-Disposition", `attachment; filename="${doc.filename}"`);
+    res.setHeader("Content-Type", doc.mime_type || "application/octet-stream");
+    fs.createReadStream(filePath).pipe(res);
   });
 };

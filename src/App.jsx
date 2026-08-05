@@ -35,6 +35,7 @@ import {
   IconUpload, IconDownload, IconLock, IconFileCertificate,
 } from "./components/primitives/Icon";
 import TrackedDocPreviewModal from "./components/shared/TrackedDocPreviewModal";
+import EntityHistoryModal from "./components/shared/EntityHistoryModal";
 import ChangePasswordModal from "./components/shared/ChangePasswordModal";
 import { fmtCurr, _esc, _invShell, buildFreightInvoiceHtml, partyByRole } from "./utils/invoiceGenerator";
 
@@ -885,6 +886,88 @@ const SendDocumentEmailModal = ({ shipment, doc, onClose }) => {
   );
 };
 
+// EDI distribution — a formal transmittal record only (this app's EDI has always been
+// simulated/structured-JSON, no attachment concept anywhere in edi_messages); the "recipient" is
+// free text since a document's EDI counterparty isn't always a carrier (a Certificate of Origin
+// might go to a customs broker), mirroring carrier_code's own established loose-text convention.
+const SendDocumentEdiModal = ({ shipment, doc, onClose }) => {
+  const [recipientCode,  setRecipientCode]  = useState("");
+  const [recipientLabel, setRecipientLabel] = useState("");
+  const [sending, setSending] = useState(false);
+
+  const handleSend = async () => {
+    if (!recipientCode.trim()) return toast.error("A recipient code is required");
+    setSending(true);
+    try {
+      await api.documents.sendEdi(shipment.id, doc.id, { recipientCode: recipientCode.trim(), recipientLabel: recipientLabel.trim() });
+      toast.success(`EDI transmittal sent to ${recipientCode.trim()}`);
+      onClose();
+    } catch (ex) { toast.error(ex.message); } finally { setSending(false); }
+  };
+
+  return (
+    <Modal title={`Send via EDI — ${doc.filename}`} onClose={onClose} width={440}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted,
+          background: T.bg, border: `1px solid ${T.border}`, borderRadius: 6, padding: "6px 10px" }}>
+          Records a formal EDI transmittal (document metadata + checksum, simulated — no real EDI
+          network integration) via the Document Distribution Service.
+        </div>
+        <div>
+          <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 4 }}>Recipient Code <span style={{ color: T.danger }}>*</span></div>
+          <input value={recipientCode} onChange={e => setRecipientCode(e.target.value)} placeholder="e.g. MAEU, or a customs broker code"
+            style={{ width: "100%", fontFamily: T.mono, fontSize: 13, background: T.surface, color: T.text,
+              border: `1px solid ${T.border}`, borderRadius: 6, padding: "7px 10px", boxSizing: "border-box" }} />
+        </div>
+        <div>
+          <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 4 }}>Recipient Label (optional)</div>
+          <input value={recipientLabel} onChange={e => setRecipientLabel(e.target.value)} placeholder="e.g. Maersk Line"
+            style={{ width: "100%", fontFamily: T.body, fontSize: 13, background: T.surface, color: T.text,
+              border: `1px solid ${T.border}`, borderRadius: 6, padding: "7px 10px", boxSizing: "border-box" }} />
+        </div>
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", borderTop: `1px solid ${T.border}`, paddingTop: 14 }}>
+          <Btn variant="secondary" onClick={onClose}>Cancel</Btn>
+          <Btn onClick={handleSend} disabled={sending || !recipientCode.trim()}>{sending ? "Sending…" : "Send →"}</Btn>
+        </div>
+      </div>
+    </Modal>
+  );
+};
+
+// Webhook distribution — no recipient input, everything resolves server-side from the shipment's
+// EMO office's configured webhook (Document Distribution Service). A confirm-style modal rather
+// than a silent one-click action, so a mis-click doesn't fire a real external HTTP POST unseen.
+const SendDocumentWebhookModal = ({ shipment, doc, onClose }) => {
+  const [sending, setSending] = useState(false);
+
+  const handleSend = async () => {
+    setSending(true);
+    try {
+      await api.documents.sendWebhook(shipment.id, doc.id);
+      toast.success("Webhook delivered");
+      onClose();
+    } catch (ex) { toast.error(ex.message); } finally { setSending(false); }
+  };
+
+  return (
+    <Modal title={`Send via Webhook — ${doc.filename}`} onClose={onClose} width={440}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted,
+          background: T.bg, border: `1px solid ${T.border}`, borderRadius: 6, padding: "6px 10px" }}>
+          Delivers to <strong>{shipment.emoOfficeName || "the shipment's Export Managing Office"}</strong>'s
+          configured webhook{shipment.emoOfficeName ? "" : " — configure it under Parties & Offices if unset"},
+          via a signed, expiring download link. Configure the webhook URL under the office's Webhook
+          Settings first.
+        </div>
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", borderTop: `1px solid ${T.border}`, paddingTop: 14 }}>
+          <Btn variant="secondary" onClick={onClose}>Cancel</Btn>
+          <Btn onClick={handleSend} disabled={sending}>{sending ? "Sending…" : "Send →"}</Btn>
+        </div>
+      </div>
+    </Modal>
+  );
+};
+
 // Kept in App.jsx (not a separate src/pages/ file) — GenerateDocumentModal here depends on
 // ~450 lines of buildXHtml/dispatchDocBuilder template functions defined earlier in this
 // file (lines ~74-566); a separate page file would need to import them back from App.jsx,
@@ -900,6 +983,9 @@ const DocumentsModal = ({ shipment, canEdit, onClose, standalone = false }) => {
   const [genDefaultCode, setGenDefaultCode] = useState(null);
   const [previewDoc,     setPreviewDoc]     = useState(null);
   const [sendDoc,        setSendDoc]        = useState(null);
+  const [ediDoc,         setEdiDoc]         = useState(null);
+  const [webhookDoc,     setWebhookDoc]     = useState(null);
+  const [historyDoc,     setHistoryDoc]     = useState(null);
   const fileRef = useRef(null);
 
   // Best doc per type: confirmed+fresh > confirmed+stale > draft+fresh > draft+stale
@@ -1165,6 +1251,15 @@ const DocumentsModal = ({ shipment, canEdit, onClose, standalone = false }) => {
                   <Btn size="sm" variant="secondary" onClick={() => setSendDoc(doc)}>
                     ✉ Send
                   </Btn>
+                  <Btn size="sm" variant="secondary" onClick={() => setEdiDoc(doc)}>
+                    📡 EDI
+                  </Btn>
+                  <Btn size="sm" variant="secondary" onClick={() => setWebhookDoc(doc)}>
+                    🔗 Webhook
+                  </Btn>
+                  <Btn size="sm" variant="secondary" onClick={() => setHistoryDoc(doc)}>
+                    🕐
+                  </Btn>
                   {canEdit && doc.status !== "confirmed" && (
                     <Btn size="sm" variant="secondary" onClick={() => handleConfirm(doc.id)}
                       style={{ color: T.success, borderColor: T.success + "66" }}>
@@ -1205,6 +1300,19 @@ const DocumentsModal = ({ shipment, canEdit, onClose, standalone = false }) => {
       )}
       {sendDoc && (
         <SendDocumentEmailModal shipment={shipment} doc={sendDoc} onClose={() => setSendDoc(null)} />
+      )}
+      {ediDoc && (
+        <SendDocumentEdiModal shipment={shipment} doc={ediDoc} onClose={() => setEdiDoc(null)} />
+      )}
+      {webhookDoc && (
+        <SendDocumentWebhookModal shipment={shipment} doc={webhookDoc} onClose={() => setWebhookDoc(null)} />
+      )}
+      {historyDoc && (
+        <EntityHistoryModal
+          entityType="document"
+          entityId={historyDoc.id}
+          title={`History — ${historyDoc.filename}`}
+          onClose={() => setHistoryDoc(null)} />
       )}
     </>
   );

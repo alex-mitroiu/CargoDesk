@@ -4,8 +4,8 @@
 Full-stack freight management app. React 18 + Vite frontend, Express + node:sqlite backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.63.0 "Beacon"**
-- Run: `npm run dev` (runs server on :3001 + Vite on :5173 concurrently)
+- Version: **v0.65.1 "Ballast"**
+- Run: `npm run dev` (runs the monolith on :3001 + Vite on :5173 + the Document Distribution Service on :3002, concurrently)
 - Seed: `npm run seed` (runs `scripts/import-mdm-data.js`)
 
 ## Stack
@@ -279,9 +279,86 @@ are fully validated.
 - **Export — XLSX template**: `GET /api/export/dashboard/template` — loads `exports/dashboard-template.xlsx`, overwrites data ranges (WeeklySummary A11:E16, ByCarrier, ByLane), preserves any Excel charts pre-wired to those named ranges; `npm run export:template` regenerates the base file
 - **Export api namespace**: `api.export.shipmentsCSV()`, `api.export.dashboardXlsx()`, `api.export.dashboardTemplate()` — all use direct `fetch` + `blob` → `<a>.click()` pattern (same as documents download)
 - **ShipmentDetailPage section nav**: NOT a React tab/state pattern — `ShipmentDetailSidebar` in App.jsx (~1385-1530) is a hardcoded `sections` array (`{id, icon, label, badge?}`, App.jsx:1407-1414) rendered as a list; clicking calls `scrollTo(id)` (App.jsx:1394-1397) → `document.getElementById(id)?.scrollIntoView(...)`. Adding/reordering a section means editing the App.jsx array AND moving the matching `id="shp-*"` anchor div inside ShipmentDetailPage.jsx — the two files must stay in sync manually, there's no shared source of truth
-- **Two independent "document" systems** (naming collision, easy to confuse): (1) `DocumentsMenu` inside ShipmentDetailPage.jsx (2711-2919) — a header dropdown that generates B/L Draft/Packing List/Container Manifest client-side via jsPDF, no persistence/tracking. (2) `DOC_TYPES` in App.jsx (~line 56: BL01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). When asked to "add a document type" or "generate a document," clarify which system — they don't share code
+- **Document system**: `DOC_TYPES` in App.jsx (~line 56: BL01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). (The earlier client-side-jsPDF `DocumentsMenu` component this note used to distinguish from was removed as dead code — it had zero references anywhere in the app.)
 - **Lifecycle-stage stepper precedent**: no dedicated stepper component exists yet; `MilestonePanel` (ShipmentDetailPage.jsx 1593-~1870) is the closest analog — linear progress bar (1734-1738, `width: ${progress}%`) plus per-step state coloring via `milestoneState()`/`stateColor()` (1666-1676: completed/overdue/current/upcoming) driven by `shipment_milestones` rows (`id, label, estimatedDate, note, completedAt, completedBy`, fixed step keys `booking_confirmed, si_submitted, cargo_gated_in, vessel_departed, bl_issued, vessel_arrived, customs_cleared, cargo_released, delivered`). Any new per-container lifecycle/stage UI should reuse this state-coloring pattern rather than inventing a new visual language
-- **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages 3516-3533, 📡 EDI 3534-3543, then `DocumentsMenu` at 3544). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
+- **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages, 📡 EDI). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
+
+## Recent changes (v0.65.1 "Ballast")
+- **Row-mapper extraction.** `server.js`'s "Map functions" section mixed genuine pure row-mappers
+  with real business logic (`syncShipmentFromLegs` writes to the DB; `applyShipmentAccessFilter` is
+  the role/office/scope authorization filter) sharing one section header. Extracted only the true
+  mappers (`mapShipment`, `mapContainer`, `mapCustomer`, and 45 others) into new `lib/mappers.js` via
+  a `createMappers({ portLanesMap, CUTOFF_WARNING_DAYS })` factory — same pattern as
+  `createAisListener({ db, ... })`. `syncShipmentFromLegs`/`applyShipmentAccessFilter`/the party-role
+  constants deliberately stayed in `server.js` rather than being swept in for a bigger line-count
+  win. `server.js`: 3230 → 2984 lines. No behavior changed — full suite green, clean build, live CDP
+  pass across 4 mapper-heavy pages. The larger remaining piece of the file-breakdown proposal
+  (splitting `KanbanPage.jsx`'s ~20 components) was scoped but not executed this pass.
+
+## Recent changes (v0.65.0 "Ballast")
+- **Dead-code audit and removal.** `server.js`'s entire tail (144 `app.*` registrations, everything
+  after the last `require('./routes/ais')` call) was an exact duplicate of routes already registered
+  by `routes/*.js` — proven unreachable via Express's first-match routing, not just suspected-unused.
+  Removed via a character-level statement parser (paren-depth tracking, skips string/template-literal/
+  comment content) rather than a line-range heuristic. Also removed: 10 helper functions/constants
+  interleaved in that same dead zone, each independently re-implemented in its live `routes/*.js`
+  counterpart (`checkDgPolicy`, `TICKET_JOIN`, `saveLegs`, `saveRates`, `LEG_TO_MOT`,
+  `resolveLegPointDead`, `parseCSVLine`, `parseOfacCsv`, `STALE_EVENTS`/`mapDoc`, `MAERSK_CODES`,
+  `mockSailings`, `maerskSchedules`); `server.js` is now 3230 lines, down from 5300 (39% smaller).
+  Elsewhere: `src/old - no refactor/` (a full legacy pre-refactor app copy, zero references) deleted;
+  `src/utils/documentGenerator.js` (client-side jsPDF generation, zero references, superseded by the
+  server-uploaded `DOC_TYPES` tracker) deleted, letting `jspdf`/`jspdf-autotable` drop from
+  `package.json`; three complete dead component definitions inside `DashboardPage.jsx`
+  (`CarriersPage`/`ShipmentsPage`/`ShipmentDetailPage` — a whole second, never-rendered
+  carrier/shipment UI) removed (330 lines). No behavior changed anywhere — every removal was proven
+  unreachable/unreferenced before deletion. Full 20-file monolith suite + 3 distribution-service
+  suites green (600+ assertions), clean build, live CDP pass confirming zero regressions. A
+  structural survey of the largest remaining files (`KanbanPage.jsx` 4358 lines, `App.jsx` 3977,
+  `ShipmentDetailPage.jsx` 2816, etc.) found most are already composed of many independent,
+  self-contained components concatenated into one file — a low-risk file-split candidate, logged as
+  a proposed follow-up rather than executed in this pass.
+
+## Recent changes (v0.64.0 "Relay")
+- **TKT-SLIRP9 — Document Distribution: EDI + Webhook channels, and CargoDesk's first extracted
+  microservice.** New `services/document-distribution/` — a genuinely separate deploy unit (own
+  `package.json`, port `3002`, SQLite file, same Express+`node:sqlite` stack) owning
+  `webhook_configs`/`edi_transmittals`/`webhook_deliveries`. It never touches the monolith's
+  database — only the opaque ids the monolith hands it via `/internal/*` routes, authenticated by
+  a shared bearer secret (`DISTRIBUTION_SERVICE_SECRET`). Email stays in the monolith (proven,
+  shipped, no reason to migrate for architectural purity alone) — only the two brand-new channels
+  get a service boundary from birth.
+- **EDI** means a formal transmittal record (metadata + SHA-256 checksum, not embedded bytes) —
+  this app's EDI messaging has always been simulated/structured-JSON, with zero attachment concept
+  anywhere in `edi_messages`. **Webhook** is a real outbound HTTPS POST, HMAC-signed
+  (`X-CargoDesk-Signature`), gated by a new SSRF guard (`services/document-distribution/lib/
+  webhookSender.js` — https-only, blocks loopback/link-local/private-range literal hosts including
+  the cloud-metadata address). New `lib/shareToken.js` (extracted from `routes/share.js`, pure
+  move) backs a new `GET /api/share/document/:token` — a signed, expiring download link the
+  monolith mints so an external webhook receiver can fetch the file without a CargoDesk login.
+- **Two real bugs found live during verification**: the webhook handler's error path
+  double-inserted the same delivery id (once in its `try` block on any non-2xx response, again in
+  `catch`), surfacing as a UNIQUE constraint violation — fixed to exactly one `INSERT` regardless
+  of outcome. A never-configured webhook defaulted `isActive` to `false` (Email's own
+  `DEFAULT_SETTINGS` defaults `true`) — since the frontend always sends an explicit value seeded
+  from the GET response, a brand-new webhook silently saved as inactive; fixed to match Email's
+  default.
+- New internal channel registry (`services/document-distribution/lib/channels.js`) —
+  `registerChannel()`/`distribute()` — is the actual "add a channel = one new registration, not a
+  new route" decoupling property, achieved without any new infrastructure (no message broker
+  between the two processes — a direct authenticated HTTP call is the right size for two services).
+- Document rows gain **"📡 EDI"** and **"🔗 Webhook"** buttons alongside the existing **"✉ Send"**,
+  plus a **"🕐"** history icon wired to the already-generic (but until now unused for documents)
+  `EntityHistoryModal` — closing a real gap where every send, Email included, wrote an audit event
+  nobody could ever see again. Test Tools gains a **Webhook Simulator** tab (a real dev-only mock
+  receiver plus client-side signature verification), mirroring the Message/Filing/AIS Simulator
+  precedent. `src/dev/architecture.html` (stale since v0.22.0, otherwise untouched) gets one new,
+  clearly-marked box for the split — see its own header note.
+- 54 new test assertions across 3 files (2 service-level on `:3002`, 1 monolith-level exercising
+  the real proxy-to-service round trip — the first test requiring two processes running). Full
+  20-file regression suite still green, clean build. Verified live via CDP end-to-end: saved a
+  real office webhook, sent a document via EDI and confirmed the transmittal in the History modal,
+  sent via webhook to a real non-2xx host and got the same clean-failure toast the automated tests
+  already proved — now confirmed over a real network call to a genuinely separate process.
 
 ## Recent changes (v0.63.0 "Beacon")
 - **GPS-Coordinate Pickup/Delivery for Classified-Location Customers** — some customers' sites

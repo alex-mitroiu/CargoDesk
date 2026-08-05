@@ -9,7 +9,7 @@ import EdiMessageList from "../components/shared/EdiMessageList";
 import { VesselField, VesselCombobox } from "../components/shared/VesselCombobox";
 import CarrierCombobox from "../components/shared/CarrierCombobox";
 import PortCombobox from "../components/shared/PortCombobox";
-import { IconBaseStation, IconCheck, IconClose, IconAnchor, IconFileCertificate, IconShip } from "../components/primitives/Icon";
+import { IconBaseStation, IconCheck, IconClose, IconAnchor, IconFileCertificate, IconShip, IconLink } from "../components/primitives/Icon";
 
 // ─── Test Tools ────────────────────────────────────────────────────────────────
 // Reached both from Integration Board's sidebar and a header shortcut icon (App.jsx).
@@ -323,11 +323,50 @@ const TestToolsPage = ({ navigate }) => {
     setAisBusy(false);
   };
 
+  // ─── Webhook Simulator state ────────────────────────────────────────────────
+  // Same "inject/observe through the real code path" philosophy as the AIS/Filing/Message
+  // simulators above, except here the real code path is a genuine outbound HTTP call: this tab's
+  // own mock receiver (POST /api/test/webhook-receiver) is a real endpoint, not a stub — pointing
+  // an office's Webhook Settings at it and clicking "Send via Webhook" on a real document proves
+  // the whole cross-service, cross-network round trip actually works.
+  const [webhookReceived, setWebhookReceived] = useState([]);
+  const [webhookLoading,  setWebhookLoading]  = useState(true);
+  const [verifySecret,    setVerifySecret]    = useState("");
+  const [verifiedIdx,     setVerifiedIdx]     = useState({});
+
+  const loadWebhookReceived = useCallback(() => {
+    setWebhookLoading(true);
+    return api.webhookSimulator.list().then(setWebhookReceived).catch(() => setWebhookReceived([])).finally(() => setWebhookLoading(false));
+  }, []);
+
+  useEffect(() => {
+    if (activeTab !== "webhook") return;
+    loadWebhookReceived();
+    const id = setInterval(loadWebhookReceived, 3000);
+    return () => clearInterval(id);
+  }, [activeTab, loadWebhookReceived]);
+
+  async function hmacSha256Hex(message, secret) {
+    const enc = new TextEncoder();
+    const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const sig = await crypto.subtle.sign("HMAC", key, enc.encode(message));
+    return Array.from(new Uint8Array(sig)).map(b => b.toString(16).padStart(2, "0")).join("");
+  }
+  const verifyOne = async (idx, item) => {
+    if (!verifySecret.trim()) return toast.error("Enter the office's signing secret first");
+    const expected = "sha256=" + await hmacSha256Hex(JSON.stringify(item.body), verifySecret.trim());
+    setVerifiedIdx(p => ({ ...p, [idx]: expected === item.signature }));
+  };
+  const receiverUrl = `${window.location.origin}/api/test/webhook-receiver`;
+  const copyReceiverUrl = () => { navigator.clipboard.writeText(receiverUrl); toast.success("Copied"); };
+  const clearReceived = async () => { await api.webhookSimulator.clear(); loadWebhookReceived(); };
+
   const TABS = [
     { key: "simulator", label: "Message Simulator", icon: IconBaseStation },
     { key: "generator",  label: "Schedule Generator", icon: IconAnchor },
     { key: "filings",    label: "Filing Simulator", icon: IconFileCertificate },
     { key: "ais",        label: "AIS Simulator", icon: IconShip },
+    { key: "webhook",    label: "Webhook Simulator", icon: IconLink },
   ];
 
   return (
@@ -925,6 +964,78 @@ const TestToolsPage = ({ navigate }) => {
                 </>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === "webhook" && (
+        <div style={{ display: "flex", gap: 24, height: "100%" }}>
+          <div style={{ width: 340, flexShrink: 0, display: "flex", flexDirection: "column" }}>
+            <h2 style={{ fontFamily: T.head, fontSize: 16, fontWeight: 800, color: T.text, margin: "0 0 14px" }}>
+              Webhook Simulator
+            </h2>
+            <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8,
+              padding: "10px 12px", marginBottom: 16, fontFamily: T.body, fontSize: 11.5, color: T.textMuted }}>
+              Point an office's Webhook URL (Organization → Offices → Webhook Settings) at the
+              address below to test end-to-end delivery without a real external endpoint.
+            </div>
+            <div style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600, color: T.textMuted,
+              textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8 }}>
+              Mock Receiver URL
+            </div>
+            <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+              <div style={{ flex: 1, fontFamily: T.mono, fontSize: 11.5, color: T.text,
+                background: T.bg, border: `1px solid ${T.border}`, borderRadius: 6, padding: "7px 9px",
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {receiverUrl}
+              </div>
+              <Btn size="sm" variant="secondary" onClick={copyReceiverUrl}>Copy</Btn>
+            </div>
+            <div>
+              <label style={label}>Verify signature with secret</label>
+              <input value={verifySecret} onChange={e => setVerifySecret(e.target.value)}
+                placeholder="the office's configured signing secret" style={inputStyle} />
+            </div>
+            <Btn size="sm" variant="secondary" onClick={clearReceived} style={{ marginTop: 12, alignSelf: "flex-start" }}>
+              Clear received
+            </Btn>
+          </div>
+
+          <div style={{ flex: 1, overflowY: "auto" }}>
+            <div style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600, color: T.textMuted,
+              textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8 }}>
+              Received Payloads (last 20)
+            </div>
+            {webhookLoading ? <Spinner size="sm" /> : webhookReceived.length === 0 ? (
+              <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, fontStyle: "italic" }}>
+                Nothing received yet — point a webhook here and click "Send via Webhook" on a
+                real document.
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {webhookReceived.map((item, idx) => (
+                  <div key={idx} style={{ background: T.surface, border: `1px solid ${T.border}`,
+                    borderRadius: 10, padding: "12px 16px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                      <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>{item.receivedAt}</span>
+                      <span style={{ fontFamily: T.body, fontSize: 11, fontWeight: 700, color: T.accent }}>{item.body?.event}</span>
+                      <Btn size="sm" variant="secondary" onClick={() => verifyOne(idx, item)} style={{ marginLeft: "auto" }}>
+                        Verify signature
+                      </Btn>
+                      {verifiedIdx[idx] === true && (
+                        <span style={{ fontFamily: T.body, fontSize: 11, color: T.success, fontWeight: 700 }}><IconCheck size={11} /> Valid</span>
+                      )}
+                      {verifiedIdx[idx] === false && (
+                        <span style={{ fontFamily: T.body, fontSize: 11, color: T.danger, fontWeight: 700 }}><IconClose size={11} /> Mismatch</span>
+                      )}
+                    </div>
+                    <pre style={{ fontFamily: T.mono, fontSize: 11, color: T.text, background: T.bg,
+                      border: `1px solid ${T.border}`, borderRadius: 6, padding: "8px 10px",
+                      margin: 0, overflowX: "auto" }}>{JSON.stringify(item.body, null, 2)}</pre>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}

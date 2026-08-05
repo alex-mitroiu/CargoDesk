@@ -272,6 +272,116 @@ function OfficeMailSettingsModal({ officeId, onClose }) {
   );
 }
 
+// Mirrors OfficeMailSettingsModal above almost field-for-field — same fixed-overlay/fetch-on-open
+// shape, same "blank secret on save means keep the current one" idiom. Backed by the Document
+// Distribution Service (services/document-distribution/), not a monolith table — this modal has
+// no idea it's talking to a separate process, same as the rest of this app's office settings.
+function OfficeWebhookSettingsModal({ officeId, onClose }) {
+  const [data,    setData]    = useState(null);
+  const [form,    setForm]    = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving,  setSaving]  = useState(false);
+  const [testing, setTesting] = useState(false);
+
+  useEffect(() => {
+    api.officeWebhook.get(officeId)
+      .then(d => { setData(d); setForm({ webhookUrl: d.webhookUrl, secret: "", isActive: d.isActive }); })
+      .catch(() => toast.error("Failed to load webhook settings"))
+      .finally(() => setLoading(false));
+  }, [officeId]);
+
+  if (!form && loading) return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.45)", zIndex: 800,
+      display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ background: T.surface, borderRadius: 14, padding: "40px 50px",
+        fontFamily: T.body, fontSize: 13, color: T.textMuted }}>Loading…</div>
+    </div>
+  );
+
+  const inp = { width: "100%", padding: "7px 10px", borderRadius: 7, border: `1px solid ${T.border}`,
+    background: T.bg, fontFamily: T.body, fontSize: 13, color: T.text, outline: "none", boxSizing: "border-box" };
+  const set = k => e => setForm(p => ({ ...p, [k]: e.target.value }));
+
+  const handleSave = async () => {
+    if (!form.webhookUrl.trim()) return toast.error("Webhook URL is required");
+    setSaving(true);
+    try {
+      const updated = await api.officeWebhook.update(officeId, form);
+      setData(updated);
+      setForm(p => ({ ...p, secret: "" }));
+      toast.success("Webhook settings saved");
+    } catch (e) { toast.error(e.message); } finally { setSaving(false); }
+  };
+
+  const handleTest = async () => {
+    if (!form.webhookUrl.trim()) return toast.error("Enter a webhook URL first");
+    setTesting(true);
+    try {
+      await api.officeWebhook.sendTest(officeId, form);
+      toast.success("Test webhook delivered");
+    } catch (e) { toast.error(e.message); } finally { setTesting(false); }
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.45)", zIndex: 800,
+      display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ background: T.surface, borderRadius: 14, border: `1px solid ${T.border}`,
+        padding: "28px 30px", width: 520, maxHeight: "82vh", overflow: "auto",
+        boxShadow: "0 20px 60px rgba(0,0,0,.3)" }}>
+
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 18 }}>
+          <div>
+            <div style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted, textTransform: "uppercase",
+              letterSpacing: ".08em", marginBottom: 4 }}>Webhook Settings</div>
+            <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
+              Outbound document-distribution endpoint for this office. Must be https and not point
+              at a private/internal address.
+            </div>
+          </div>
+          <button type="button" onClick={onClose}
+            style={{ background: "none", border: "none", cursor: "pointer", fontSize: 18, color: T.textMuted }}>✕</button>
+        </div>
+
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 4 }}>Webhook URL <span style={{ color: T.danger }}>*</span></div>
+          <input value={form.webhookUrl} onChange={set("webhookUrl")} placeholder="https://partner.example.com/cargodesk-hook" style={{ ...inp, fontFamily: T.mono }} />
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 4 }}>Signing Secret</div>
+          <input type="password" value={form.secret} onChange={set("secret")}
+            placeholder={data?.hasSecret ? "Leave blank to keep current" : "Used to sign the X-CargoDesk-Signature header"} style={inp} />
+        </div>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginBottom: 18 }}>
+          <input type="checkbox" checked={form.isActive}
+            onChange={e => setForm(p => ({ ...p, isActive: e.target.checked }))}
+            style={{ accentColor: T.accent, width: 16, height: 16 }} />
+          <span style={{ fontFamily: T.body, fontSize: 13, color: T.text }}>Active</span>
+        </label>
+
+        <div style={{ display: "flex", gap: 8, justifyContent: "space-between", borderTop: `1px solid ${T.border}`, paddingTop: 14 }}>
+          <button type="button" onClick={handleTest} disabled={testing}
+            style={{ padding: "6px 14px", borderRadius: 7, border: `1px solid ${T.border}`,
+              background: "none", cursor: "pointer", fontFamily: T.body, fontSize: 13, color: T.text }}>
+            {testing ? "Sending…" : "Send Test Webhook"}
+          </button>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button type="button" onClick={onClose}
+              style={{ padding: "6px 14px", borderRadius: 7, border: `1px solid ${T.border}`,
+                background: "none", cursor: "pointer", fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
+              Close
+            </button>
+            <button type="button" onClick={handleSave} disabled={saving}
+              style={{ padding: "6px 18px", borderRadius: 7, border: "none", background: T.accent,
+                color: "#fff", cursor: "pointer", fontFamily: T.body, fontSize: 13, fontWeight: 600 }}>
+              {saving ? "Saving…" : "Save"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function OfficeForm({ office, branches, onSave, onCancel }) {
   const isEdit = !!office;
   const [form, setForm] = useState({
@@ -393,6 +503,7 @@ export default function OfficePage() {
   const [editing,   setEditing]   = useState(null);
   const [statsId,   setStatsId]   = useState(null);
   const [mailId,    setMailId]    = useState(null);
+  const [webhookId, setWebhookId] = useState(null);
   const [defaultId, setDefaultId] = useState("");
   const [allowAll,  setAllowAll]  = useState(false);
   const [savingGlobal, setSavingGlobal] = useState(false);
@@ -562,6 +673,11 @@ export default function OfficePage() {
                               background: "none", cursor: "pointer", fontFamily: T.body, fontSize: 12, color: T.text }}>
                             Email Settings
                           </button>
+                          <button type="button" onClick={() => setWebhookId(o.id)}
+                            style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${T.border}`,
+                              background: "none", cursor: "pointer", fontFamily: T.body, fontSize: 12, color: T.text }}>
+                            Webhook Settings
+                          </button>
                           <button type="button" onClick={() => { setEditing(o); setFormOpen(true); }}
                             style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${T.border}`,
                               background: "none", cursor: "pointer", fontFamily: T.body, fontSize: 12, color: T.text }}>
@@ -591,6 +707,7 @@ export default function OfficePage() {
 
       {statsId && <OfficeStats officeId={statsId} onClose={() => { setStatsId(null); load(); }} />}
       {mailId && <OfficeMailSettingsModal officeId={mailId} onClose={() => setMailId(null)} />}
+      {webhookId && <OfficeWebhookSettingsModal officeId={webhookId} onClose={() => setWebhookId(null)} />}
     </div>
   );
 }

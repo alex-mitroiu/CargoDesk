@@ -172,6 +172,7 @@ footer {
   <div>
     <div class="h-title">CargoDesk — System Architecture</div>
     <div class="h-sub">React 18 + Vite &nbsp;·&nbsp; Express + node:sqlite &nbsp;·&nbsp; 35 tables &nbsp;·&nbsp; 4 service layers</div>
+    <div class="h-sub" style="color:var(--amber); margin-top:6px;">⚠ Stale below the dashed box — last full refresh v0.22.0, table/route counts and everything except "Document Distribution Service" predate ~40 versions of changes. That one box reflects v0.64.0.</div>
   </div>
   <div class="h-badge">v0.22.0 "Crossroads"</div>
 </header>
@@ -478,9 +479,51 @@ footer {
   <div class="conn-pill">node:sqlite · DatabaseSync (synchronous, single-process)</div>
 </div>
 
+<!-- ══ FIRST EXTRACTED SERVICE ═══════════════════════════════════════════
+     Added post-v0.63.0 (TKT-SLIRP9, v0.64.0 "Relay") — this one box reflects the current
+     architecture; the rest of this diagram predates it by ~40 versions (last full refresh at
+     v0.22.0, see header badge) and is due a complete pass, not just this addition. -->
+<div class="conn">
+  <div class="conn-pill">HTTP · Bearer shared secret (DISTRIBUTION_SERVICE_SECRET) &nbsp;·&nbsp; /internal/*</div>
+</div>
+<div class="layer l-violet" style="border-style:dashed;">
+  <div class="eyebrow e-violet">Document Distribution Service &nbsp; Express :3002 + own node:sqlite &nbsp;·&nbsp; first extracted microservice</div>
+  <div class="g3">
+    <div class="card c-violet">
+      <div class="card-lbl">Owns</div>
+      <div class="chips">
+        <span class="chip k-violet">webhook_configs</span>
+        <span class="chip k-violet">edi_transmittals</span>
+        <span class="chip k-violet">webhook_deliveries</span>
+        <span class="chip k-violet">own distribution.db — never touches the monolith's DB</span>
+      </div>
+    </div>
+    <div class="card c-violet">
+      <div class="card-lbl">Routes (/internal/* — never called from the browser)</div>
+      <div class="chips">
+        <span class="chip k-violet">POST /distribute/edi</span>
+        <span class="chip k-violet">POST /distribute/webhook</span>
+        <span class="chip k-violet">/webhook-configs/:scopeId CRUD + /test</span>
+      </div>
+    </div>
+    <div class="card c-violet">
+      <div class="card-lbl">Called by</div>
+      <div class="chips">
+        <span class="chip k-violet">Monolith only — routes/document-distribution.js</span>
+        <span class="chip k-neutral">registerChannel()/distribute() registry — add a channel = one new registration</span>
+        <span class="chip k-neutral">Monolith still owns the file + signed download link (lib/shareToken.js)</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="conn">
+  <div class="conn-pill">node:sqlite · DatabaseSync (synchronous, single-process)</div>
+</div>
+
 <!-- ══ DATA LAYER ══════════════════════════════════════════════════════ -->
 <div class="layer l-teal">
-  <div class="eyebrow e-teal">Data Layer &nbsp; SQLite · 35 tables</div>
+  <div class="eyebrow e-teal">Data Layer &nbsp; SQLite · 35 tables &nbsp;·&nbsp; monolith only, see Document Distribution Service above for its own store</div>
   <div class="g3">
 
     <div class="card c-teal">

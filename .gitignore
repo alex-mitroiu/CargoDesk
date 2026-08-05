@@ -144,6 +144,7 @@ vite.config.ts.timestamp-*
 node_modules/
 dist/
 cargodesk.db
+services/document-distribution/distribution.db
 *.db-shm
 *.db-wal
 !sampleDB/cargodesk.db

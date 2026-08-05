@@ -365,7 +365,7 @@ const ARCHITECTURE_ARTIFACT_URL = "https://claude.ai/code/artifact/9515fbd6-accd
 
 const FRONTEND_DOMAINS = [
   { name: "Shipment Core", color: "#e8a217", items: ["ShipmentsPage", "ShipmentFormPage + LegsTable", "ShipmentDetailPage (Overview)"] },
-  { name: "Embedded on Overview", color: "#4db3e8", items: ["ServicesPanel", "ShipmentHeaderBar", "MilestonePanel", "DocumentsMenu", "MessagesDrawer / EdiMessagesDrawer"] },
+  { name: "Embedded on Overview", color: "#4db3e8", items: ["ServicesPanel", "ShipmentHeaderBar", "MilestonePanel", "MessagesDrawer / EdiMessagesDrawer"] },
   { name: "Promoted Sub-pages (8)", color: "#2dcc8f", items: ["Cargo / Containers", "Parties & Offices", "Schedules + ScheduleHistoryPanel", "Milestones", "Tickets", "Invoice Entry", "Cost Entry", "GP Overview"] },
   { name: "Dashboards, MDM & Admin", color: "#a855f7", items: ["DashboardPage + Command Center", "12 × MdmXPage reference data", "Kanban / Test Cases · Plans · Runs", "AppSettingsPage"] },
 ];
@@ -407,7 +407,6 @@ const ARCH_PATTERNS = [
 ];
 
 const ARCH_GOTCHAS = [
-  { name: "Two independent \"document\" systems", desc: "DocumentsMenu (client-side jsPDF, no persistence) and the DOC_TYPES tracker (server-uploaded, draft/confirmed lifecycle) look similar but share no code. Always clarify which one before touching \"documents.\"" },
   { name: "shipment.pol/pod isn't always the SEA leg", desc: "They're the journey's overall bookends (legs[0]/legs[-1]) — with a Door pickup or a multi-leg TSP journey, that's not the same as the SEA leg's own pol/pod. Anything showing \"the port\" should resolve the actual SEA leg(s)." },
   { name: "VGM isn't linked to a weight field", desc: "VGM is a valid Dedicated Services type (order it, track its status) but nothing connects a confirmed VGM to containers.grossWeightKg or a verified-weight cutoff date yet." },
   { name: "Service vendors aren't sanctions-screened", desc: "screenShipmentById only checks shipper/consignee/principal by a hardcoded field list. A vendor picked via the Services panel gets zero compliance coverage today — deliberate scope cut, tracked in TKT-9DGDNP." },
