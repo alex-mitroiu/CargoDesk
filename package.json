@@ -24,6 +24,7 @@
     "test:carrier-booking": "node tests/carrier-booking.test.js",
     "test:distribution-service": "node services/document-distribution/tests/webhook-configs.test.js && node services/document-distribution/tests/distribute.test.js",
     "test:document-distribution": "node tests/document-distribution.test.js",
+    "test:frontend": "vitest run",
     "kill": "scripts\\kill-server.bat",
     "cy:open": "concurrently --kill-others \"npm run dev\" \"cypress open\"",
     "cy:run": "concurrently --kill-others-on-fail \"npm run dev\" \"cypress run\""
