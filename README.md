@@ -2,6 +2,7 @@
 
 > Freight management application for tracking ocean shipments, carrier space utilisation, contracts, and maritime master data.
 
+[![CI](https://github.com/alex-mitroiu/CargoDesk/actions/workflows/ci.yml/badge.svg)](https://github.com/alex-mitroiu/CargoDesk/actions/workflows/ci.yml)
 [![Version](https://img.shields.io/badge/version-0.65.1-blue)](.)
 ![Node](https://img.shields.io/badge/node-22.5%2B-green)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
