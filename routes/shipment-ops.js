@@ -81,15 +81,23 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     if (!shipment) return err(res, "Shipment not found", 404);
     if (shipment.contract_type !== 'Central' || !shipment.contract_id)
       return err(res, "Shipment is not linked to a Central contract");
-    let includeSell = false;
-    if (overwrite) {
-      const existingBuy  = db.prepare("SELECT id FROM shipment_cost_lines WHERE shipment_id=? AND type='BUY'  AND source='contract'").all(req.params.id);
-      const existingSell = db.prepare("SELECT id FROM shipment_cost_lines WHERE shipment_id=? AND type='SELL' AND source='contract'").all(req.params.id);
-      includeSell = existingSell.length > 0;
-      for (const row of [...existingBuy, ...existingSell]) db.prepare("DELETE FROM shipment_cost_lines WHERE id=?").run(row.id);
-    }
-    const count = importContractRates(req.params.id, { splitPerContainer, includeSell });
-    ok(res, { imported: count });
+    // Delete-then-regenerate wrapped in one transaction — importContractRates() writes on the
+    // same db connection, so it naturally joins this same transaction (SQLite transactions are
+    // connection-scoped, not statement-scoped). Without this, an interruption between the
+    // delete loop and regeneration could leave a shipment with NO cost lines at all.
+    db.exec("BEGIN");
+    try {
+      let includeSell = false;
+      if (overwrite) {
+        const existingBuy  = db.prepare("SELECT id FROM shipment_cost_lines WHERE shipment_id=? AND type='BUY'  AND source='contract'").all(req.params.id);
+        const existingSell = db.prepare("SELECT id FROM shipment_cost_lines WHERE shipment_id=? AND type='SELL' AND source='contract'").all(req.params.id);
+        includeSell = existingSell.length > 0;
+        for (const row of [...existingBuy, ...existingSell]) db.prepare("DELETE FROM shipment_cost_lines WHERE id=?").run(row.id);
+      }
+      const count = importContractRates(req.params.id, { splitPerContainer, includeSell });
+      db.exec("COMMIT");
+      ok(res, { imported: count });
+    } catch (e) { db.exec("ROLLBACK"); err(res, e.message, 500); }
   });
 
   // Replays the shipment's existing frozen rate snapshot — does NOT read live contract_rates,
@@ -681,26 +689,34 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     const { reason = "" } = req.body || {};
     const now   = new Date().toISOString();
     const actor = req.user?.name || req.user?.email || "";
-    const reversalLines = [];
-    for (const line of sourceLines) {
-      const id = `CL-${uid()}`;
-      const notes = `Reversal of invoice ${doc.filename}` + (reason ? ` — ${reason}` : "");
-      db.prepare(`INSERT INTO shipment_cost_lines
-        (id,shipment_id,type,charge_code,currency,amount,exchange_rate,vat_rate,notes,container_id,created_at,source,payment_indicator,status,posted_at,posted_by)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-        .run(id, req.params.shipmentId, line.type, line.charge_code, line.currency, -line.amount, line.exchange_rate,
-             line.vat_rate || 0, notes, line.container_id || '', now, 'reversal', line.payment_indicator || 'Prepaid', 'posted', now, actor);
-      logEntityEvent('cost_line', id, 'CREATED', null, null, null,
-        JSON.stringify({ shipmentId: req.params.shipmentId, type: line.type, chargeCode: line.charge_code, currency: line.currency, amount: -line.amount, reversalOf: doc.id }));
-      reversalLines.push(mapCostLine(db.prepare("SELECT * FROM shipment_cost_lines WHERE id=?").get(id)));
-    }
+    // Loop-insert the reversal lines, then void the original doc — all one atomic unit. An
+    // interruption partway through used to risk either a half-reversed invoice (some charges
+    // negated, others not) or reversal lines created with the original still showing
+    // "confirmed" (looks active AND reversed — a real double-counting risk in AR).
+    db.exec("BEGIN");
+    try {
+      const reversalLines = [];
+      for (const line of sourceLines) {
+        const id = `CL-${uid()}`;
+        const notes = `Reversal of invoice ${doc.filename}` + (reason ? ` — ${reason}` : "");
+        db.prepare(`INSERT INTO shipment_cost_lines
+          (id,shipment_id,type,charge_code,currency,amount,exchange_rate,vat_rate,notes,container_id,created_at,source,payment_indicator,status,posted_at,posted_by)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+          .run(id, req.params.shipmentId, line.type, line.charge_code, line.currency, -line.amount, line.exchange_rate,
+               line.vat_rate || 0, notes, line.container_id || '', now, 'reversal', line.payment_indicator || 'Prepaid', 'posted', now, actor);
+        logEntityEvent('cost_line', id, 'CREATED', null, null, null,
+          JSON.stringify({ shipmentId: req.params.shipmentId, type: line.type, chargeCode: line.charge_code, currency: line.currency, amount: -line.amount, reversalOf: doc.id }));
+        reversalLines.push(mapCostLine(db.prepare("SELECT * FROM shipment_cost_lines WHERE id=?").get(id)));
+      }
 
-    db.prepare("UPDATE shipment_documents SET status='voided' WHERE id=?").run(doc.id);
-    logEntityEvent('document', doc.id, 'VOIDED', null, null, null,
-      JSON.stringify({ shipmentId: doc.shipment_id, docType: doc.doc_type, filename: doc.filename, containerId: doc.container_id || '' }));
+      db.prepare("UPDATE shipment_documents SET status='voided' WHERE id=?").run(doc.id);
+      logEntityEvent('document', doc.id, 'VOIDED', null, null, null,
+        JSON.stringify({ shipmentId: doc.shipment_id, docType: doc.doc_type, filename: doc.filename, containerId: doc.container_id || '' }));
 
-    const voidedDoc = mapDoc(db.prepare("SELECT * FROM shipment_documents WHERE id=?").get(doc.id), doc.shipment_id);
-    ok(res, { reversalLines, voidedDoc });
+      db.exec("COMMIT");
+      const voidedDoc = mapDoc(db.prepare("SELECT * FROM shipment_documents WHERE id=?").get(doc.id), doc.shipment_id);
+      ok(res, { reversalLines, voidedDoc });
+    } catch (e) { db.exec("ROLLBACK"); err(res, e.message, 500); }
   });
 
   app.get("/api/documents/:docId/download", auth(), (req, res) => {
