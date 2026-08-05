@@ -3,7 +3,7 @@
 > Freight management application for tracking ocean shipments, carrier space utilisation, contracts, and maritime master data.
 
 [![CI](https://github.com/alex-mitroiu/CargoDesk/actions/workflows/ci.yml/badge.svg)](https://github.com/alex-mitroiu/CargoDesk/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.66.0-blue)](.)
+[![Version](https://img.shields.io/badge/version-0.67.0-blue)](.)
 ![Node](https://img.shields.io/badge/node-22.5%2B-green)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
@@ -386,6 +386,7 @@ See the built-in **About** page (i in the sidebar) for the full interactive sche
 
 | Version | Codename | Summary |
 |---------|----------|---------|
+| 0.67.0 | Drydock | Four more architect-review fixes, two correcting stale ARCHITECTURE.md claims found inaccurate on re-verification: real indexing gaps (shipment_cost_lines, containers, entity_events, shipment_documents — 14 indexes already existed elsewhere), real transaction gaps (contracts.js legs/rates, contract-rate re-import, invoice reversal — 9 transactions already existed elsewhere), a verified float-precision money-rounding bug fixed via a new roundCents() helper, and a first-draft (untested, no Docker available) production deployment path: static-file serving, 3 Dockerfiles, docker-compose.yml. |
 | 0.66.0 | Bulkhead | Four platform-hardening epics: CI Pipeline (the existing Cypress workflow had zero actual runs ever — pull_request-only trigger on a commit-to-main project; fixed, plus a new backend-tests-and-build job and two real previously-hidden bugs it surfaced), Frontend Test Coverage (Vitest + Testing Library, App.jsx auth gating + KanbanPage's Add Ticket flow, wired into CI), Runtime Lifecycle Separation (audited server.js's 4 bundled lifecycles, extracted PDF rendering into a second microservice, services/pdf-render/), and a SQLite-ceiling design doc (Postgres PoC honestly logged as blocked by this environment, not skipped). |
 | 0.65.1 | Ballast | Follow-up: extracted server.js's genuine pure row-mapper functions (mapShipment, mapContainer, mapCustomer, and 45 others) into lib/mappers.js via a factory matching the existing createAisListener pattern, leaving real business logic (syncShipmentFromLegs, the access-control filter) that had shared the same section header behind in server.js. server.js: 3230 → 2984 lines, no behavior changed. |
 | 0.65.0 | Ballast | Dead-code audit and removal. `server.js`'s entire tail (144 route registrations) was an exact duplicate of routes already registered by `routes/*.js`, proven unreachable via Express's first-match routing, plus 10 interleaved helper functions independently re-implemented in their live counterparts — removed, taking `server.js` from 5300 to 3230 lines. Also removed: a full legacy pre-refactor app copy, an unreferenced client-side jsPDF document generator (dropping the `jspdf`/`jspdf-autotable` dependencies), and three entirely dead component definitions inside `DashboardPage.jsx`. No behavior changed — every removal was proven unreachable/unreferenced first. Full test suite green, clean build, live CDP verification. |

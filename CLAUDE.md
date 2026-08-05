@@ -4,7 +4,7 @@
 Full-stack freight management app. React 18 + Vite frontend, Express + node:sqlite backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.66.0 "Bulkhead"**
+- Version: **v0.67.0 "Drydock"**
 - Run: `npm run dev` (runs the monolith on :3001 + Vite on :5173 + the Document Distribution Service on :3002 + the PDF Render Service on :3003, concurrently)
 - Seed: `npm run seed` (runs `scripts/import-mdm-data.js`)
 
@@ -287,6 +287,26 @@ are fully validated.
 - **Document system**: `DOC_TYPES` in App.jsx (~line 56: BL01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). (The earlier client-side-jsPDF `DocumentsMenu` component this note used to distinguish from was removed as dead code — it had zero references anywhere in the app.)
 - **Lifecycle-stage stepper precedent**: no dedicated stepper component exists yet; `MilestonePanel` (ShipmentDetailPage.jsx 1593-~1870) is the closest analog — linear progress bar (1734-1738, `width: ${progress}%`) plus per-step state coloring via `milestoneState()`/`stateColor()` (1666-1676: completed/overdue/current/upcoming) driven by `shipment_milestones` rows (`id, label, estimatedDate, note, completedAt, completedBy`, fixed step keys `booking_confirmed, si_submitted, cargo_gated_in, vessel_departed, bl_issued, vessel_arrived, customs_cleared, cargo_released, delivered`). Any new per-container lifecycle/stage UI should reuse this state-coloring pattern rather than inventing a new visual language
 - **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages, 📡 EDI). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
+
+## Recent changes (v0.67.0 "Drydock")
+- **Four more architect-review fixes.** Two ARCHITECTURE.md claims driving this round (C1 "no
+  transactions", H5 "no indexes") turned out stale/inaccurate — re-verified against the live
+  codebase first, found the real narrower gap each one actually had.
+- **Indexes**: 14 already existed. Added the real gap — `shipment_cost_lines`, `containers`,
+  `entity_events`, `shipment_documents` (all queried by `shipment_id`/`entity_type`+`entity_id`
+  on every shipment-detail load, none indexed). `shipment_parties` skipped — already covered by
+  its own `UNIQUE(shipment_id, role)` constraint's implicit index.
+- **Transactions**: 9 already existed. Fixed the real gap — `routes/contracts.js`'s
+  `saveLegs`/`saveRates`, the contract-rate re-import overwrite path, and invoice reversal —
+  all delete-then-regenerate or multi-insert sequences on `shipment_cost_lines` with zero
+  wrapping before this.
+- **Money rounding**: new `roundCents()` helper (`lib/mappers.js`, exported via `ctx`) fixes a
+  real, verified float-precision bug in the `Math.round(x*100)/100` pattern (12 occurrences
+  across 6 files) — adopted in `mapCostLine`, `toUsd`, and 3 more route files.
+- **Production deployment**: `NODE_ENV=production`-gated static-file serving + SPA fallback in
+  `server.js` (the monolith couldn't serve its own frontend before this); 3 Dockerfiles +
+  `docker-compose.yml` (none build-tested — no Docker available here, documented plainly as a
+  first draft); new `.env.example`.
 
 ## Recent changes (v0.66.0 "Bulkhead")
 - **Four platform-hardening epics**, tracked as real Kanban epics/stories: CI Pipeline,
