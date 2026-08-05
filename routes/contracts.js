@@ -7,31 +7,47 @@ module.exports = function contractsRoutes(app, ctx) {
   // write routes had no role gate at all (any authenticated user, including viewer, could write).
   const write = requireRole(["admin", "operator", "trade_manager"]);
 
+  // Delete-then-loop-insert, wrapped in a transaction — an interrupted loop (a bad row, a
+  // disk error, the process dying) used to leave a contract with its legs fully deleted and
+  // only partially replaced. Mirrors the BEGIN/COMMIT/ROLLBACK pattern already established in
+  // routes/mdm.js's own trade-lane-replace routes.
   function saveLegs(contractId, legs) {
-    db.prepare("DELETE FROM contract_legs WHERE contract_id=?").run(contractId);
-    legs.forEach((l, i) => {
-      const legId = `CLEG-${uid()}`;
-      db.prepare(`INSERT INTO contract_legs (id,contract_id,leg_order,pol,pol_name,pod,pod_name,transit_days,vessel_service,pol_linked_allowed,pod_linked_allowed,pol_carrier_haulage,pod_carrier_haulage,pol_haulage_locations,pod_haulage_locations,pol_loc_type,pod_loc_type)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-        .run(legId, contractId, i, l.pol||"", l.polName||"", l.pod||"", l.podName||"", l.transitDays||0, l.vesselService||"",
+    db.exec("BEGIN");
+    try {
+      db.prepare("DELETE FROM contract_legs WHERE contract_id=?").run(contractId);
+      const ins = db.prepare(`INSERT INTO contract_legs (id,contract_id,leg_order,pol,pol_name,pod,pod_name,transit_days,vessel_service,pol_linked_allowed,pod_linked_allowed,pol_carrier_haulage,pod_carrier_haulage,pol_haulage_locations,pod_haulage_locations,pol_loc_type,pod_loc_type)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+      legs.forEach((l, i) => {
+        ins.run(`CLEG-${uid()}`, contractId, i, l.pol||"", l.polName||"", l.pod||"", l.podName||"", l.transitDays||0, l.vesselService||"",
              l.polLinkedAllowed ? 1 : 0, l.podLinkedAllowed ? 1 : 0,
              l.polCarrierHaulage ? 1 : 0, l.podCarrierHaulage ? 1 : 0,
              l.polHaulageLocations || "", l.podHaulageLocations || "",
              l.polLocType || 'Terminal', l.podLocType || 'Terminal');
-    });
+      });
+      db.exec("COMMIT");
+    } catch (e) { db.exec("ROLLBACK"); throw e; }
   }
 
+  // usd conversion (toUsd, potentially a network-backed FX lookup) resolves BEFORE the
+  // transaction opens — holding a write transaction open across an awaited network call would
+  // block other writers for however long that call takes, for no benefit (the resolved amounts
+  // don't depend on anything inside the transaction itself).
   async function saveRates(contractId, rates) {
-    db.prepare("DELETE FROM contract_rates WHERE contract_id=?").run(contractId);
-    for (let i = 0; i < rates.length; i++) {
-      const r   = rates[i];
-      const usd = await toUsd(r.amount || 0, r.currency || "USD");
-      const rateId = `RATE-${uid()}`;
-      db.prepare(`INSERT INTO contract_rates (id,contract_id,service_code,description,amount,currency,amount_usd,unit,container_type,sort_order,notes)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
-        .run(rateId, contractId, r.serviceCode||"", r.description||"", r.amount||0, r.currency||"USD", usd,
-             r.unit||"per_container", r.containerType||"", i, r.notes||"");
+    const resolved = [];
+    for (const r of rates) {
+      resolved.push({ ...r, usd: await toUsd(r.amount || 0, r.currency || "USD") });
     }
+    db.exec("BEGIN");
+    try {
+      db.prepare("DELETE FROM contract_rates WHERE contract_id=?").run(contractId);
+      const ins = db.prepare(`INSERT INTO contract_rates (id,contract_id,service_code,description,amount,currency,amount_usd,unit,container_type,sort_order,notes)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
+      resolved.forEach((r, i) => {
+        ins.run(`RATE-${uid()}`, contractId, r.serviceCode||"", r.description||"", r.amount||0, r.currency||"USD", r.usd,
+             r.unit||"per_container", r.containerType||"", i, r.notes||"");
+      });
+      db.exec("COMMIT");
+    } catch (e) { db.exec("ROLLBACK"); throw e; }
   }
 
   // Contract typeahead — MUST be before /api/contracts/:id

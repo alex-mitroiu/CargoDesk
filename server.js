@@ -88,6 +88,9 @@ db.exec(`
     is_dg            INTEGER DEFAULT 0,
     dg_class         TEXT DEFAULT ''
   );
+  -- Every shipment-detail-page load queries "all containers for this shipment" — 9 call sites,
+  -- no index before this (verified via a direct grep of WHERE-clause usage, not assumed).
+  CREATE INDEX IF NOT EXISTS idx_containers_shipment ON containers(shipment_id);
 
   CREATE TABLE IF NOT EXISTS allocations (
     id              TEXT PRIMARY KEY,
@@ -325,6 +328,9 @@ db.exec(`
     meta        TEXT,
     created_at  TEXT NOT NULL
   );
+  -- Backs every "🕐 History" modal across the app (documents, allocations, contracts, carriers,
+  -- ...) — always queried as entity_type=? AND entity_id=?, no index before this.
+  CREATE INDEX IF NOT EXISTS idx_entity_events_lookup ON entity_events(entity_type, entity_id);
 
   CREATE TABLE IF NOT EXISTS sanctions_entries (
     id               TEXT PRIMARY KEY,
@@ -435,6 +441,9 @@ const migrations = [
     notes         TEXT DEFAULT '',
     created_at    TEXT NOT NULL
   )`,
+  // Every shipment-detail-page load queries "all cost lines for this shipment" — 11 call
+  // sites (highest of any table checked), no index before this.
+  "CREATE INDEX IF NOT EXISTS idx_cost_lines_shipment ON shipment_cost_lines(shipment_id)",
   "ALTER TABLE shipment_cost_lines ADD COLUMN container_id TEXT DEFAULT ''",
   "ALTER TABLE shipment_cost_lines ADD COLUMN source TEXT DEFAULT 'manual'",
   "ALTER TABLE shipment_cost_lines ADD COLUMN modified_at TEXT",
@@ -557,6 +566,7 @@ const migrations = [
     uploaded_by  TEXT NOT NULL DEFAULT '',
     created_at   TEXT NOT NULL
   )`,
+  "CREATE INDEX IF NOT EXISTS idx_shipment_documents_shipment ON shipment_documents(shipment_id)",
   "ALTER TABLE shipment_documents ADD COLUMN status        TEXT DEFAULT 'draft'",
   "ALTER TABLE shipment_documents ADD COLUMN confirmed_at  TEXT DEFAULT NULL",
   "ALTER TABLE shipment_documents ADD COLUMN confirmed_by  TEXT DEFAULT ''",
@@ -1836,10 +1846,10 @@ async function getFxRates() {
   return fxCache.rates;
 }
 async function toUsd(amount, currency) {
-  if (!currency || currency === "USD") return Math.round(amount * 100) / 100;
+  if (!currency || currency === "USD") return roundCents(amount);
   const rates = await getFxRates();
   const rate = rates[currency];
-  return rate ? Math.round((amount / rate) * 100) / 100 : Math.round(amount * 100) / 100;
+  return rate ? roundCents(amount / rate) : roundCents(amount);
 }
 
 // ─── Backfill transit_days on generated schedules ─────────────────────────────
@@ -2236,7 +2246,7 @@ const syncShipmentFromLegs = (shipmentId) => {
 // in, matching the createAisListener({ db, ... }) factory pattern already used in this codebase.
 const CUTOFF_WARNING_DAYS = 3;
 const {
-  SVC_ABBR, longestLane, cutoffState,
+  SVC_ABBR, longestLane, cutoffState, roundCents,
   mapShipment, mapShipmentLeg, mapCostLine, mapService, mapRateSnapshot, mapRateSnapshotLine,
   mapChargeCodeDefinition, mapContainer, mapContainerEvent, mapContainerPackage, mapShipmentParty,
   mapPackTypeDefinition, mapAllocation, mapCarrier, mapVessel, mapPortLocation, mapLinkedPort,
@@ -2874,7 +2884,7 @@ const ctx = {
   auth, requireRole,
   portLanesMap, portCountryMap, rebuildPortLanesMap, longestLane,
   applyShipmentAccessFilter,
-  fxCache, getFxRates, toUsd,
+  fxCache, getFxRates, toUsd, roundCents,
   sanctionsMap, loadSanctionsIndex, syncOfacSdn, scheduleNextOfacSync,
   normSanctionName, EMBARGOED_COUNTRIES,
   getSettings,

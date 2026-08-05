@@ -64,6 +64,15 @@ const hasHaulage = legs => legs?.some(l => l.polCarrierHaulage || l.podCarrierHa
 
 // ─── Rate compute helpers ─────────────────────────────────────────────────────
 
+// Rounds to 2 decimal places (cents) correctly — NOT the same as the more common
+// Math.round(x * 100) / 100, which silently gets the wrong answer for some ordinary-looking
+// inputs (e.g. Math.round(1.005 * 100) / 100 === 1, not 1.01) because the multiplication itself
+// introduces float error before rounding ever runs. Mirrors lib/mappers.js's own roundCents on
+// the backend — no shared module between frontend/backend, so duplicated here deliberately.
+function roundCents(n) {
+  return Number(Math.round(Number(n + "e2")) + "e-2");
+}
+
 function buildChargeMap(rates) {
   const perCtr = (rates || []).filter(r => !r.unit || r.unit === "per_container");
   const map = {};
@@ -86,7 +95,7 @@ function computeRateTotal(rates, containers) {
       if (entry) total += (entry.amountUsd || 0) * qty;
     }
   }
-  return Math.round(total * 100) / 100;
+  return roundCents(total);
 }
 
 function computeRateByType(rates, containers) {
@@ -98,7 +107,7 @@ function computeRateByType(rates, containers) {
       const entry = charge.rateByType[type] || charge.rateByType["*"];
       if (entry) amt += (entry.amountUsd || 0) * qty;
     }
-    return { type, qty, amount: Math.round(amt * 100) / 100 };
+    return { type, qty, amount: roundCents(amt) };
   }).filter(x => x.amount > 0);
 }
 
@@ -191,7 +200,7 @@ const RateEstimate = ({ containers, rates }) => {
     for (const { type, qty } of containers) {
       const entry = charge.rateByType[type] || charge.rateByType["*"] || null;
       if (entry) {
-        const lineTotal = Math.round((entry.amountUsd || 0) * qty * 100) / 100;
+        const lineTotal = roundCents((entry.amountUsd || 0) * qty);
         subtotal += lineTotal;
         lines.push({ type, qty, entry, lineTotal });
       }

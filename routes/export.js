@@ -4,7 +4,7 @@ const path    = require("path");
 const fs      = require("fs");
 
 module.exports = function exportRoutes(app, ctx) {
-  const { db, auth, applyShipmentAccessFilter, mapShipment } = ctx;
+  const { db, auth, applyShipmentAccessFilter, mapShipment, roundCents } = ctx;
 
   // ─── Palette & style helpers ──────────────────────────────────────────────
 
@@ -40,7 +40,7 @@ module.exports = function exportRoutes(app, ctx) {
   const alignR = { horizontal: "right" };
   const alignC = { horizontal: "center" };
 
-  const usd = (v) => (v == null ? 0 : Math.round(v * 100) / 100);
+  const usd = (v) => (v == null ? 0 : roundCents(v));
 
   // ─── Shared data queries ──────────────────────────────────────────────────
 

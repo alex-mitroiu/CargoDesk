@@ -7,7 +7,7 @@ module.exports = function customersRoutes(app, ctx) {
           sanctionsMap, normSanctionName, loadSanctionsIndex, scheduleNextOfacSync,
           syncOfacSdn,
           getFxRates, fxCache, getSettings,
-          validCoord,
+          validCoord, roundCents,
           UPLOADS_DIR, fs, path } = ctx;
 
   // ─── CSV parsing helpers (local to this domain) ────────────────────────────
@@ -203,7 +203,7 @@ module.exports = function customersRoutes(app, ctx) {
         outstandingAr += lines.reduce((s, l) => s + l.amount * l.exchange_rate, 0);
       }
     }
-    outstandingAr = Math.round(outstandingAr * 100) / 100;
+    outstandingAr = roundCents(outstandingAr);
 
     const creditLimit = c.credit_limit ?? null;
     ok(res, {

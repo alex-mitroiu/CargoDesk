@@ -1,7 +1,7 @@
 "use strict";
 
 module.exports = function financeRoutes(app, ctx) {
-  const { db, ok, err, auth, resolveCustomerGroup } = ctx;
+  const { db, ok, err, auth, resolveCustomerGroup, roundCents } = ctx;
 
   app.get("/api/margin/summary", auth(), (req, res) => {
     const u = req.user;
@@ -30,7 +30,7 @@ module.exports = function financeRoutes(app, ctx) {
       const sell = rows.filter(r => r.type === 'SELL').reduce((s, r) => s + r.amount * r.exchange_rate, 0);
       const gp   = sell - buy;
       const pct  = sell > 0 ? Math.round((gp / sell) * 1000) / 10 : null;
-      return { totalBuyUsd: Math.round(buy * 100) / 100, totalSellUsd: Math.round(sell * 100) / 100, grossProfitUsd: Math.round(gp * 100) / 100, grossMarginPct: pct };
+      return { totalBuyUsd: roundCents(buy), totalSellUsd: roundCents(sell), grossProfitUsd: roundCents(gp), grossMarginPct: pct };
     };
 
     const weeklyBreakdown = (rows) => weekBuckets.map(b => {
