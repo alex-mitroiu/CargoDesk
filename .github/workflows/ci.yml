@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend-tests-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      NODE_ENV: test
+      # 23 test files each log in once against one continuous server process — well past the
+      # real-world default of 20 per 15 minutes. See routes/auth.js's own comment on this var.
+      LOGIN_RATE_MAX: '200'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Start monolith + document-distribution service (background)
+        run: npm run server & npm run distribution-service &
+
+      - name: Wait for monolith API (port 3001)
+        run: npx wait-on http://localhost:3001/api/health --timeout 60000
+
+      - name: Wait for document-distribution service (port 3002)
+        run: npx wait-on http://localhost:3002/health --timeout 60000
+
+      # import-mdm-data.js requires cargodesk.db to already exist (created by the server on
+      # boot, above) — it exits early otherwise. Must run after the server is up, not before.
+      - name: Seed database
+        run: npm run seed
+
+      - name: Run monolith test suite (20 files)
+        run: npm test
+
+      - name: Run document-distribution service test suite
+        run: npm run test:distribution-service
+
+      - name: Run monolith-side document-distribution proxy tests
+        run: npm run test:document-distribution
+
+      - name: Production build
+        run: npm run build
+
+  cypress:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NODE_ENV: test
+      # Cypress logs in repeatedly across specs against one continuous server process — see
+      # the backend-tests-and-build job's own comment, and routes/auth.js, for why.
+      LOGIN_RATE_MAX: '200'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Start dev server (background)
+        run: npm run dev &
+
+      - name: Wait for API server (port 3001)
+        run: npx wait-on http://localhost:3001/api/health --timeout 60000
+
+      - name: Wait for document-distribution service (port 3002)
+        run: npx wait-on http://localhost:3002/health --timeout 60000
+
+      - name: Wait for Vite (port 5173)
+        run: npx wait-on http://localhost:5173 --timeout 60000
+
+      # import-mdm-data.js requires cargodesk.db to already exist (created by the server on
+      # boot, above) — it exits early otherwise. Must run after the server is up, not before.
+      - name: Seed database
+        run: npm run seed
+
+      - name: Run Cypress
+        run: npx cypress run --browser chrome
+        env:
+          CYPRESS_BASE_URL: http://localhost:5173
+
+      - name: Upload screenshots on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cypress-screenshots
+          path: cypress/screenshots
+          retention-days: 7
+
+      - name: Upload videos
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cypress-videos
+          path: cypress/videos
+          retention-days: 7

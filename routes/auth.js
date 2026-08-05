@@ -60,7 +60,12 @@ module.exports = function authRoutes(app, ctx) {
   // in-memory Map + periodic-cleanup pattern already used for ssoNonces (server.js).
   const loginAttemptsByIp = new Map(); // ip -> { count, windowStart }
   const LOGIN_RATE_WINDOW_MS = 15 * 60 * 1000;
-  const LOGIN_RATE_MAX = 20;
+  // Overridable via env for CI: a single continuous test run logs in once per test file (23+
+  // files across the monolith + document-distribution suites) from one IP, well past the
+  // real-world default of 20 — the same friction that forced a manual restart-between-batches
+  // workaround throughout local verification. Any real deployment leaves this unset and gets
+  // the unchanged default.
+  const LOGIN_RATE_MAX = Number(process.env.LOGIN_RATE_MAX) || 20;
   setInterval(() => {
     const cutoff = Date.now() - LOGIN_RATE_WINDOW_MS;
     for (const [k, v] of loginAttemptsByIp) if (v.windowStart < cutoff) loginAttemptsByIp.delete(k);
