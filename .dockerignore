@@ -10,5 +10,7 @@ uploads/documents
 .env
 .env.*
 !.env.example
+docker-secrets
+docker-data
 cypress/screenshots
 cypress/videos

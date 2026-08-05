@@ -13,11 +13,13 @@
 // exactly, not just "mostly").
 const express = require("express");
 const fs = require("fs");
+const { readSecret } = require("./lib/dockerSecret");
 
 const PORT = process.env.PDF_RENDER_SERVICE_PORT || 3003;
-const SERVICE_SECRET = process.env.PDF_RENDER_SERVICE_SECRET || "cargoDesk-dev-pdf-render-secret-do-not-use-in-prod";
-if (!process.env.PDF_RENDER_SERVICE_SECRET)
-  console.warn("⚠  PDF_RENDER_SERVICE_SECRET env var not set — using insecure dev default. Set it (and the same value in the monolith's env) before deploying.");
+const SERVICE_SECRET_DEV_DEFAULT = "cargoDesk-dev-pdf-render-secret-do-not-use-in-prod";
+const SERVICE_SECRET = readSecret("PDF_RENDER_SERVICE_SECRET", SERVICE_SECRET_DEV_DEFAULT);
+if (SERVICE_SECRET === SERVICE_SECRET_DEV_DEFAULT)
+  console.warn("⚠  PDF_RENDER_SERVICE_SECRET not set (checked PDF_RENDER_SERVICE_SECRET_FILE, then PDF_RENDER_SERVICE_SECRET) — using insecure dev default. Set it (and the same value in the monolith's env) before deploying.");
 
 const app = express();
 app.use(express.json({ limit: "20mb" })); // generated document HTML can be a few MB with inline styles

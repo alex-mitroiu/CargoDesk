@@ -150,6 +150,13 @@ services/document-distribution/distribution.db
 !sampleDB/cargodesk.db
 .env
 
+# Real Docker Compose secret files (docker-compose.yml's own secrets: block reads from here) —
+# same reasoning as .env above, never committed. docker-data/ (bind-mounted db files + uploads
+# for a running container) is local runtime state for the same reason cargodesk.db itself is
+# gitignored above.
+docker-secrets/
+docker-data/
+
 # Generated/uploaded document artifacts from manual + automated testing (signed PDFs, generated
 # HTML, plain-upload fixtures) — runtime-generated content, not source. 653 pre-existing files
 # under uploads/documents/ were already committed before this rule was added and are left alone

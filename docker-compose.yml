@@ -4,14 +4,36 @@
 # volume mounts below (SQLite-file bind mounts are simple but easy to get subtly wrong, and
 # there was no way to actually confirm these against a running container).
 #
+# Secrets use Docker Compose's native `secrets:` mechanism (file-based, mounted at
+# /run/secrets/<name> inside each container) rather than plain `environment:` values — a
+# secret passed via `environment:` shows up in full in `docker inspect` and any process-env
+# dump; a file mounted under /run/secrets does not. Each app process reads it via a
+# `<NAME>_FILE` env var pointing at the mounted path (lib/dockerSecret.js and its per-service
+# duplicates), falling back to a plain `<NAME>` env var or a dev default if unset — so this
+# still works unchanged for `npm run dev` or a plain `docker run -e` with no Compose secrets.
+#
 # Usage:
-#   1. cp .env.example .env, fill in real secrets
-#   2. mkdir -p docker-data && touch docker-data/cargodesk.db docker-data/distribution.db
+#   1. mkdir -p docker-secrets
+#      openssl rand -hex 32 > docker-secrets/jwt_secret
+#      openssl rand -hex 32 > docker-secrets/distribution_service_secret
+#      openssl rand -hex 32 > docker-secrets/pdf_render_service_secret
+#      (docker-secrets/ is gitignored — see .gitignore. These 3 files are the actual secrets;
+#      treat them the same as you would a committed .env, i.e. never commit them for real.)
+#   2. cp .env.example .env — fills in LOGIN_RATE_MAX and anything else non-secret
+#   3. mkdir -p docker-data && touch docker-data/cargodesk.db docker-data/distribution.db
 #      (REQUIRED — Docker bind-mounts a host path that doesn't exist yet as a DIRECTORY, not a
 #      file, which would break `new DatabaseSync('/app/cargodesk.db')` since it expects a real
 #      file path. Creating empty files first sidesteps this well-known bind-mount gotcha.)
-#   3. mkdir -p docker-data/uploads
-#   4. docker compose up -d --build
+#   4. mkdir -p docker-data/uploads
+#   5. docker compose up -d --build
+
+secrets:
+  jwt_secret:
+    file: ./docker-secrets/jwt_secret
+  distribution_service_secret:
+    file: ./docker-secrets/distribution_service_secret
+  pdf_render_service_secret:
+    file: ./docker-secrets/pdf_render_service_secret
 
 services:
   monolith:
@@ -22,17 +44,21 @@ services:
       - "3001:3001"
     environment:
       NODE_ENV: production
-      JWT_SECRET: ${JWT_SECRET}
+      JWT_SECRET_FILE: /run/secrets/jwt_secret
       DISTRIBUTION_SERVICE_URL: http://document-distribution:3002
-      DISTRIBUTION_SERVICE_SECRET: ${DISTRIBUTION_SERVICE_SECRET}
+      DISTRIBUTION_SERVICE_SECRET_FILE: /run/secrets/distribution_service_secret
       PDF_RENDER_SERVICE_URL: http://pdf-render:3003
-      PDF_RENDER_SERVICE_SECRET: ${PDF_RENDER_SERVICE_SECRET}
+      PDF_RENDER_SERVICE_SECRET_FILE: /run/secrets/pdf_render_service_secret
       LOGIN_RATE_MAX: ${LOGIN_RATE_MAX:-20}
+    secrets:
+      - jwt_secret
+      - distribution_service_secret
+      - pdf_render_service_secret
     volumes:
       # Bind-mounted to specific host paths deliberately, NOT a named volume mounted over the
       # whole /app directory — that would hide the image's own application code (server.js,
       # dist/, node_modules) behind an empty volume and break the container outright. The host
-      # file must already exist (see step 2 above) — its contents don't matter, server.js
+      # file must already exist (see step 3 above) — its contents don't matter, server.js
       # creates the real schema on first boot, but Docker creates a DIRECTORY at a bind-mount
       # target that doesn't exist yet, which would break DatabaseSync entirely.
       - ./docker-data/cargodesk.db:/app/cargodesk.db
@@ -50,7 +76,9 @@ services:
       - "3002:3002"
     environment:
       NODE_ENV: production
-      DISTRIBUTION_SERVICE_SECRET: ${DISTRIBUTION_SERVICE_SECRET}
+      DISTRIBUTION_SERVICE_SECRET_FILE: /run/secrets/distribution_service_secret
+    secrets:
+      - distribution_service_secret
     volumes:
       - ./docker-data/distribution.db:/app/services/document-distribution/distribution.db
     restart: unless-stopped
@@ -63,5 +91,7 @@ services:
       - "3003:3003"
     environment:
       NODE_ENV: production
-      PDF_RENDER_SERVICE_SECRET: ${PDF_RENDER_SERVICE_SECRET}
+      PDF_RENDER_SERVICE_SECRET_FILE: /run/secrets/pdf_render_service_secret
+    secrets:
+      - pdf_render_service_secret
     restart: unless-stopped

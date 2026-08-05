@@ -4,11 +4,13 @@ const path = require("path");
 const { DatabaseSync } = require("node:sqlite");
 const { registerChannel, distribute } = require("./lib/channels");
 const { isUrlSafe, sendWebhook } = require("./lib/webhookSender");
+const { readSecret } = require("./lib/dockerSecret");
 
 const PORT = process.env.DISTRIBUTION_SERVICE_PORT || 3002;
-const SERVICE_SECRET = process.env.DISTRIBUTION_SERVICE_SECRET || "cargoDesk-dev-distribution-secret-do-not-use-in-prod";
-if (!process.env.DISTRIBUTION_SERVICE_SECRET)
-  console.warn("⚠  DISTRIBUTION_SERVICE_SECRET env var not set — using insecure dev default. Set it (and the same value in the monolith's env) before deploying.");
+const SERVICE_SECRET_DEV_DEFAULT = "cargoDesk-dev-distribution-secret-do-not-use-in-prod";
+const SERVICE_SECRET = readSecret("DISTRIBUTION_SERVICE_SECRET", SERVICE_SECRET_DEV_DEFAULT);
+if (SERVICE_SECRET === SERVICE_SECRET_DEV_DEFAULT)
+  console.warn("⚠  DISTRIBUTION_SERVICE_SECRET not set (checked DISTRIBUTION_SERVICE_SECRET_FILE, then DISTRIBUTION_SERVICE_SECRET) — using insecure dev default. Set it (and the same value in the monolith's env) before deploying.");
 
 const app = express();
 const db = new DatabaseSync(path.join(__dirname, "distribution.db"));

@@ -18,17 +18,20 @@ const {
 } = require("./lib/mailer");
 const { createAisListener } = require("./lib/ais-listener");
 const { createMappers } = require("./lib/mappers");
+const { readSecret } = require("./lib/dockerSecret");
 
-const JWT_SECRET = process.env.JWT_SECRET || "cargoDesk-dev-secret-do-not-use-in-prod";
-if (!process.env.JWT_SECRET)
-  console.warn("⚠  JWT_SECRET env var not set — using insecure dev default. Set it before deploying.");
+const JWT_DEV_DEFAULT = "cargoDesk-dev-secret-do-not-use-in-prod";
+const JWT_SECRET = readSecret("JWT_SECRET", JWT_DEV_DEFAULT);
+if (JWT_SECRET === JWT_DEV_DEFAULT)
+  console.warn("⚠  JWT_SECRET not set (checked JWT_SECRET_FILE, then JWT_SECRET) — using insecure dev default. Set it before deploying.");
 
 // Document Distribution Service (services/document-distribution/) — CargoDesk's first extracted
 // microservice. This secret must match DISTRIBUTION_SERVICE_SECRET in that service's own env.
 const DISTRIBUTION_SERVICE_URL = process.env.DISTRIBUTION_SERVICE_URL || "http://localhost:3002";
-const DISTRIBUTION_SERVICE_SECRET = process.env.DISTRIBUTION_SERVICE_SECRET || "cargoDesk-dev-distribution-secret-do-not-use-in-prod";
-if (!process.env.DISTRIBUTION_SERVICE_SECRET)
-  console.warn("⚠  DISTRIBUTION_SERVICE_SECRET env var not set — using insecure dev default. Set it (matching the distribution service's own env) before deploying.");
+const DISTRIBUTION_SECRET_DEV_DEFAULT = "cargoDesk-dev-distribution-secret-do-not-use-in-prod";
+const DISTRIBUTION_SERVICE_SECRET = readSecret("DISTRIBUTION_SERVICE_SECRET", DISTRIBUTION_SECRET_DEV_DEFAULT);
+if (DISTRIBUTION_SERVICE_SECRET === DISTRIBUTION_SECRET_DEV_DEFAULT)
+  console.warn("⚠  DISTRIBUTION_SERVICE_SECRET not set (checked DISTRIBUTION_SERVICE_SECRET_FILE, then DISTRIBUTION_SERVICE_SECRET) — using insecure dev default. Set it (matching the distribution service's own env) before deploying.");
 
 const app = express();
 const db  = new DatabaseSync(path.join(__dirname, "cargodesk.db"));

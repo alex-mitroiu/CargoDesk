@@ -157,7 +157,11 @@ CargoDesk is 3 backend processes (the monolith, `services/document-distribution/
 mode (Vite's own dev server + proxy). For anything else, there's a first-draft Docker path:
 
 ```bash
-cp .env.example .env          # fill in real secrets — see below
+mkdir -p docker-secrets
+openssl rand -hex 32 > docker-secrets/jwt_secret
+openssl rand -hex 32 > docker-secrets/distribution_service_secret
+openssl rand -hex 32 > docker-secrets/pdf_render_service_secret
+cp .env.example .env          # non-secret config (LOGIN_RATE_MAX, etc.) — see below
 mkdir -p docker-data && touch docker-data/cargodesk.db docker-data/distribution.db
 mkdir -p docker-data/uploads
 docker compose up -d --build
@@ -171,14 +175,23 @@ proven-working.
 
 ### Secrets management
 
-`.env.example` lists every secret the 3 processes need (`JWT_SECRET`,
-`DISTRIBUTION_SERVICE_SECRET`, `PDF_RENDER_SERVICE_SECRET`). Every one has an insecure
-dev-default baked into the code, specifically so local `npm run dev` works with zero setup —
-each fallback logs a console warning naming itself if a real deployment somehow leaves it
-unset. Beyond "put real values in `.env`," there is no actual secrets-management story here:
-no vault, no rotation, no per-environment separation. That's a real, honestly-acknowledged gap
-for anything beyond a single-operator self-hosted deployment — a legitimate future ask once
-this deployment path itself exists and has actually been used, not solved here.
+The 3 processes share 3 secrets (`JWT_SECRET`, `DISTRIBUTION_SERVICE_SECRET`,
+`PDF_RENDER_SERVICE_SECRET`). Running via `docker compose`, they're passed using Compose's
+native file-based `secrets:` mechanism — mounted at `/run/secrets/<name>` inside each
+container, never exposed via `docker inspect` or a process-env dump the way a plain
+`environment:` value is. Each process reads its own secret via a `<NAME>_FILE` env var pointing
+at the mounted path (`lib/dockerSecret.js`, duplicated per-service since there's no shared
+module between independent processes — same reasoning as `roundCents()`'s own duplication),
+falling back to a plain `<NAME>` env var and then an insecure dev default if neither is set —
+so `npm run dev` and a bare `docker run -e JWT_SECRET=...` both still work unchanged.
+`docker-secrets/*` (the actual secret files) and `.env` are both gitignored; `.env.example`
+documents the plain-env-var fallback path for anything not going through Compose secrets.
+
+Beyond "generate real random values and keep the files/env out of version control," there is
+no actual secrets-management story here: no vault, no rotation, no per-environment separation.
+That's a real, honestly-acknowledged gap for anything beyond a single-operator self-hosted
+deployment — a legitimate future ask once this deployment path itself exists and has actually
+been used, not solved here.
 
 ---
 
