@@ -1,0 +1,67 @@
+# Wires the 3 backend processes together for a self-hosted/single-operator deployment.
+# NOT independently verified by actually running in this environment (no Docker available
+# here) — see each Dockerfile's own note. Build-test before relying on this, especially the
+# volume mounts below (SQLite-file bind mounts are simple but easy to get subtly wrong, and
+# there was no way to actually confirm these against a running container).
+#
+# Usage:
+#   1. cp .env.example .env, fill in real secrets
+#   2. mkdir -p docker-data && touch docker-data/cargodesk.db docker-data/distribution.db
+#      (REQUIRED — Docker bind-mounts a host path that doesn't exist yet as a DIRECTORY, not a
+#      file, which would break `new DatabaseSync('/app/cargodesk.db')` since it expects a real
+#      file path. Creating empty files first sidesteps this well-known bind-mount gotcha.)
+#   3. mkdir -p docker-data/uploads
+#   4. docker compose up -d --build
+
+services:
+  monolith:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3001"
+    environment:
+      NODE_ENV: production
+      JWT_SECRET: ${JWT_SECRET}
+      DISTRIBUTION_SERVICE_URL: http://document-distribution:3002
+      DISTRIBUTION_SERVICE_SECRET: ${DISTRIBUTION_SERVICE_SECRET}
+      PDF_RENDER_SERVICE_URL: http://pdf-render:3003
+      PDF_RENDER_SERVICE_SECRET: ${PDF_RENDER_SERVICE_SECRET}
+      LOGIN_RATE_MAX: ${LOGIN_RATE_MAX:-20}
+    volumes:
+      # Bind-mounted to specific host paths deliberately, NOT a named volume mounted over the
+      # whole /app directory — that would hide the image's own application code (server.js,
+      # dist/, node_modules) behind an empty volume and break the container outright. The host
+      # file must already exist (see step 2 above) — its contents don't matter, server.js
+      # creates the real schema on first boot, but Docker creates a DIRECTORY at a bind-mount
+      # target that doesn't exist yet, which would break DatabaseSync entirely.
+      - ./docker-data/cargodesk.db:/app/cargodesk.db
+      - ./docker-data/uploads:/app/uploads
+    depends_on:
+      - document-distribution
+      - pdf-render
+    restart: unless-stopped
+
+  document-distribution:
+    build:
+      context: .
+      dockerfile: services/document-distribution/Dockerfile
+    ports:
+      - "3002:3002"
+    environment:
+      NODE_ENV: production
+      DISTRIBUTION_SERVICE_SECRET: ${DISTRIBUTION_SERVICE_SECRET}
+    volumes:
+      - ./docker-data/distribution.db:/app/services/document-distribution/distribution.db
+    restart: unless-stopped
+
+  pdf-render:
+    build:
+      context: .
+      dockerfile: services/pdf-render/Dockerfile
+    ports:
+      - "3003:3003"
+    environment:
+      NODE_ENV: production
+      PDF_RENDER_SERVICE_SECRET: ${PDF_RENDER_SERVICE_SECRET}
+    restart: unless-stopped

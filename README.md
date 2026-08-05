@@ -150,6 +150,38 @@ On first startup, if no users exist, the server seeds a default admin account:
 
 ---
 
+## Deployment
+
+CargoDesk is 3 backend processes (the monolith, `services/document-distribution/`,
+`services/pdf-render/`) plus a static frontend build. `npm run dev` runs all of this in dev
+mode (Vite's own dev server + proxy). For anything else, there's a first-draft Docker path:
+
+```bash
+cp .env.example .env          # fill in real secrets — see below
+mkdir -p docker-data && touch docker-data/cargodesk.db docker-data/distribution.db
+mkdir -p docker-data/uploads
+docker compose up -d --build
+```
+
+**This has not been build-tested in a real Docker environment** — it was written against this
+repo's actual npm scripts, dependencies, and ports, but no Docker install was available to
+actually build and run it while writing it. Treat `Dockerfile`, `services/*/Dockerfile`, and
+`docker-compose.yml` as a first draft to verify before relying on for anything real, not as
+proven-working.
+
+### Secrets management
+
+`.env.example` lists every secret the 3 processes need (`JWT_SECRET`,
+`DISTRIBUTION_SERVICE_SECRET`, `PDF_RENDER_SERVICE_SECRET`). Every one has an insecure
+dev-default baked into the code, specifically so local `npm run dev` works with zero setup —
+each fallback logs a console warning naming itself if a real deployment somehow leaves it
+unset. Beyond "put real values in `.env`," there is no actual secrets-management story here:
+no vault, no rotation, no per-environment separation. That's a real, honestly-acknowledged gap
+for anything beyond a single-operator self-hosted deployment — a legitimate future ask once
+this deployment path itself exists and has actually been used, not solved here.
+
+---
+
 ## Troubleshooting
 
 **`Cannot find module 'mermaid'` (or any other missing package)**

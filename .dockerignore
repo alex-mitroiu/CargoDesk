@@ -1,0 +1,14 @@
+node_modules
+services/*/node_modules
+dist
+cargodesk.db
+cargodesk.db-shm
+cargodesk.db-wal
+services/document-distribution/distribution.db
+uploads/documents
+.git
+.env
+.env.*
+!.env.example
+cypress/screenshots
+cypress/videos
