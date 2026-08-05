@@ -150,5 +150,11 @@ services/document-distribution/distribution.db
 !sampleDB/cargodesk.db
 .env
 
+# Generated/uploaded document artifacts from manual + automated testing (signed PDFs, generated
+# HTML, plain-upload fixtures) — runtime-generated content, not source. 653 pre-existing files
+# under uploads/documents/ were already committed before this rule was added and are left alone
+# (git status quo); this only stops the pile from growing further via a future `git add -A`.
+uploads/documents/
+
 # Claude Code local agent state (worktrees, local settings) — never project source
 .claude/

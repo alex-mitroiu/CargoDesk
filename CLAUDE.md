@@ -13,6 +13,11 @@ Full-stack freight management app. React 18 + Vite frontend, Express + node:sqli
 - Backend: Express, `node:sqlite` (DatabaseSync — NOT better-sqlite3)
 - Design tokens: `src/tokens.js` exports mutable `T` object, `applyTheme(isDark)` for dark/light
 - All styling via `style={{ ... }}` using `T.surface`, `T.text`, `T.accent`, `T.border` etc.
+- `puppeteer-core` is a **root** `package.json` dependency even though no code in the monolith
+  or `services/document-distribution/` requires it directly — `services/pdf-render/` (own
+  `package.json`, no separate install step) hoists it from the root `node_modules`, matching
+  `services/document-distribution`'s own hoisting convention. Don't remove it as apparent dead
+  weight; check `services/pdf-render/server.js` first.
 
 ## Key files
 ```
