@@ -3,19 +3,22 @@ import { T, CONTAINER_OPTIONS } from "../../tokens";
 import { Field, inputBase } from "../primitives/Form";
 import { Modal } from "../primitives/Modal";
 import { IconSearch } from "../primitives/Icon";
+import { api } from "../../api";
 
 // ─── ContainerTypePickerModal ─────────────────────────────────────────────────
 // Visual equipment picker grouped by 20ft / 40ft.
 // Props:
 //   current  — currently selected code string (e.g. "40DC") — highlights the row
-//   onSelect — called with the full CONTAINER_OPTIONS entry on click; modal stays open
+//   options  — the equipment list to show (same shape as CONTAINER_OPTIONS) — defaults to the
+//              static list so any caller that doesn't pass one keeps today's exact behavior
+//   onSelect — called with the full options entry on click; modal stays open
 //   onClose  — called when modal should close
 
-export const ContainerTypePickerModal = ({ current, onSelect, onClose }) => {
+export const ContainerTypePickerModal = ({ current, onSelect, onClose, options = CONTAINER_OPTIONS }) => {
   const [hovered, setHovered] = useState(null);
   const groups = [
-    { size: "20", teu: 1, items: CONTAINER_OPTIONS.filter(o => o.size === "20") },
-    { size: "40", teu: 2, items: CONTAINER_OPTIONS.filter(o => o.size === "40") },
+    { size: "20", teu: 1, items: options.filter(o => o.size === "20") },
+    { size: "40", teu: 2, items: options.filter(o => o.size === "40") },
   ];
 
   return (
@@ -88,6 +91,11 @@ export const ContainerTypePickerModal = ({ current, onSelect, onClose }) => {
 // Unselected: real <input> with typeahead filtering (type "40RF", "dry", etc.)
 //             + 🔍 button to open full visual picker.
 // Selected:   chip row (code · label · TEU badge · 🔍 · ✕).
+//
+// Reads from the live, admin-maintained Equipment > Container Types registry (same relationship
+// the cargo manifest's Pack Type dropdown has to pack_type_definitions) — falls back to the
+// static CONTAINER_OPTIONS list whenever the registry is empty or unreachable, so this field
+// never breaks even before that table has any rows (or if the request fails).
 
 export const ContainerTypeField = ({ size, type, onChange, required = false, label = "Equipment Type" }) => {
   const [query,       setQuery]       = useState("");
@@ -95,18 +103,28 @@ export const ContainerTypeField = ({ size, type, onChange, required = false, lab
   const [highlighted, setHighlighted] = useState(-1);
   const [pickerOpen,  setPickerOpen]  = useState(false);
   const [dropStyle,   setDropStyle]   = useState({});
+  const [options,     setOptions]     = useState(CONTAINER_OPTIONS);
   const inputRef = useRef(null);
   const dropRef  = useRef(null);
 
-  const selected = CONTAINER_OPTIONS.find(o => o.size === size && o.type === type) || null;
+  useEffect(() => {
+    api.containerTypes.list()
+      .then(defs => {
+        if (!defs || defs.length === 0) return;
+        setOptions(defs.map(d => ({ code: d.code, size: d.size, type: d.type, teu: d.teu, label: d.label, desc: d.description })));
+      })
+      .catch(() => {});
+  }, []);
+
+  const selected = options.find(o => o.size === size && o.type === type) || null;
 
   const filtered = query.trim()
-    ? CONTAINER_OPTIONS.filter(o =>
+    ? options.filter(o =>
         o.code.toUpperCase().includes(query.toUpperCase()) ||
         o.label.toLowerCase().includes(query.toLowerCase()) ||
         o.size.includes(query) ||
         o.type.toUpperCase().includes(query.toUpperCase()))
-    : CONTAINER_OPTIONS;
+    : options;
 
   const positionDrop = useCallback(() => {
     if (!inputRef.current) return;
@@ -248,6 +266,7 @@ export const ContainerTypeField = ({ size, type, onChange, required = false, lab
       {pickerOpen && (
         <ContainerTypePickerModal
           current={selected?.code}
+          options={options}
           onSelect={opt => { onChange(opt); setPickerOpen(false); }}
           onClose={() => setPickerOpen(false)}
         />

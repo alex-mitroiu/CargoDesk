@@ -341,7 +341,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
   });
 
   app.put("/api/shipments/:id", shipmentWrite, (req, res) => {
-    const { pol, pod, carrierCode, contractType, contractNotes = "", status,
+    const { pol, pod, carrierCode, contractType, contractNotes = "", status: statusIn,
             etd = "", eta = "", bookingRef = "", blNumber = "", vessel = "", voyage = "",
             incoterm = "", vesselImo = "", contractId = "", contractRef = "", commodityCode = "",
             shipperId = "", shipperName = "", consigneeId = "", consigneeName = "",
@@ -356,6 +356,10 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const polU = pol.toUpperCase(), podU = pod.toUpperCase();
     const existing = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
     if (!existing) return err(res, "Not found", 404);
+    // status has no destructuring default (unlike every sibling field above) because the
+    // fallback needs the existing row — omitting it from the request must preserve the
+    // shipment's current status, not silently bind `undefined` into the UPDATE below.
+    const status = statusIn !== undefined ? statusIn : existing.status;
     if (contractType && !CONTRACT_TYPES.includes(contractType)) return err(res, `contractType must be one of: ${CONTRACT_TYPES.join(", ")}`);
     if (status && !SHIPMENT_STATUSES.includes(status)) return err(res, `status must be one of: ${SHIPMENT_STATUSES.join(", ")}`);
 
@@ -379,9 +383,9 @@ module.exports = function shipmentsRoutes(app, ctx) {
       for (const s of existingSchedules) {
         db.prepare("DELETE FROM shipment_schedules WHERE id=?").run(s.id);
         logEntityEvent('schedule', s.id, 'REMOVED', null, null, null,
-          JSON.stringify({ shipmentId: req.params.id, carrier: s.carrier, vesselName: s.vessel_name,
-            voyageNumber: s.voyage_number, service: s.service, pol: s.pol, pod: s.pod,
-            actor, reason: 'CRD updated past ETD' }));
+          JSON.stringify({ shipmentId: req.params.id, carrier: s.carrier, vesselName: s.vessel_name, vesselImo: s.vessel_imo,
+            voyageNumber: s.voyage_number, service: s.service, pol: s.pol, pod: s.pod, etd: s.etd, eta: s.eta,
+            transitDays: s.transit_days, actor, reason: 'CRD updated past ETD' }));
       }
     }
 

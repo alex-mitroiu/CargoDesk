@@ -2527,15 +2527,22 @@ export const ScheduleHistoryPanel = ({ shipment, forceOpen = false }) => {
             const color = EVENT_COLOR[ev.event_type] || T.textMuted;
             const isUpdate = ev.event_type === "UPDATED";
             return (
-              <div key={ev.id} style={{ display: "flex", alignItems: "center", gap: 12,
+              <div key={ev.id} style={{ display: "flex", flexDirection: "column", gap: 4,
                 padding: "10px 14px", background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8 }}>
-                <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, letterSpacing: "0.03em",
-                  padding: "2px 8px", borderRadius: 4, textTransform: "uppercase",
-                  background: color + "22", color, border: `1px solid ${color}55`, flexShrink: 0 }}>
-                  {ev.event_type}
-                </span>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, letterSpacing: "0.03em",
+                    padding: "2px 8px", borderRadius: 4, textTransform: "uppercase",
+                    background: color + "22", color, border: `1px solid ${color}55`, flexShrink: 0 }}>
+                    {ev.event_type}
+                  </span>
+                  {/* Schedule's own surrogate key — omitted for sailing_leg rows, which already
+                      show a friendlier "Leg POL→POD:" identifier instead of a raw leg key. */}
+                  {ev.entity_type === "schedule" && ev.entity_id && (
+                    <span style={{ fontFamily: T.mono, fontSize: 10.5, color: T.textMuted }}>{ev.entity_id}</span>
+                  )}
+                </div>
                 {isUpdate ? (
-                  <div style={{ flex: 1, display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", minWidth: 0 }}>
+                  <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center", minWidth: 0 }}>
                     {ev.entity_type === "sailing_leg" && (
                       <span style={{ fontFamily: T.mono, fontSize: 10.5, color: T.textMuted }}>
                         Leg {m.pol || "—"}→{m.pod || "—"}:
@@ -2557,21 +2564,33 @@ export const ScheduleHistoryPanel = ({ shipment, forceOpen = false }) => {
                     </span>
                   </div>
                 ) : (
-                  <div style={{ flex: 1, display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center", minWidth: 0 }}>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 120 }}>
+                  <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "center", minWidth: 0 }}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 1, minWidth: 130 }}>
                       <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.text }}>
-                        {m.vesselName || "—"}
+                        {m.vesselName || "—"}{m.vesselImo ? <span style={{ color: T.textMuted, fontWeight: 400 }}>{` · IMO ${m.vesselImo}`}</span> : ""}
                       </span>
                       <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
                         {m.service || "—"}{m.voyageNumber ? ` · Voy ${m.voyageNumber}` : ""}
                       </span>
                     </div>
+                    {m.carrier && (
+                      <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: T.accent,
+                        background: T.accentBg, border: `1px solid ${T.accent}33`, borderRadius: 4, padding: "1px 7px" }}>
+                        {m.carrier}
+                      </span>
+                    )}
                     <span style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>
                       {m.pol || "—"} → {m.pod || "—"}
                     </span>
                     {(m.etd || m.eta) && (
                       <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
                         {m.etd || "—"} → {m.eta || "—"}
+                      </span>
+                    )}
+                    {m.transitDays != null && m.transitDays !== "" && (
+                      <span style={{ fontFamily: T.mono, fontSize: 10.5, color: T.textMuted,
+                        background: T.surface, border: `1px solid ${T.border}`, borderRadius: 4, padding: "1px 7px" }}>
+                        {m.transitDays}d transit
                       </span>
                     )}
                     <span style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, marginLeft: "auto", whiteSpace: "nowrap" }}>

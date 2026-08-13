@@ -330,6 +330,12 @@ export const api = {
     update: (id, d) => req("PUT",    `/pack-type-definitions/${id}`, d),
     remove: (id)    => req("DELETE", `/pack-type-definitions/${id}`),
   },
+  containerTypes: {
+    list:   ()      => req("GET",    "/container-type-definitions"),
+    create: (d)     => req("POST",   "/container-type-definitions", d),
+    update: (id, d) => req("PUT",    `/container-type-definitions/${id}`, d),
+    remove: (id)    => req("DELETE", `/container-type-definitions/${id}`),
+  },
   services: {
     list:   (shipmentId)             => req("GET",    `/shipments/${shipmentId}/services`),
     create: (shipmentId, d)          => req("POST",   `/shipments/${shipmentId}/services`, d),

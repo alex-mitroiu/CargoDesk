@@ -86,6 +86,8 @@ import MdmUNLocationCodesPage  from "./pages/mdm/MdmUNLocationCodesPage";
 import MdmCommoditiesPage     from "./pages/mdm/MdmCommoditiesPage";
 import MdmChargeCodesPage     from "./pages/mdm/MdmChargeCodesPage";
 import MdmPackTypesPage       from "./pages/mdm/MdmPackTypesPage";
+import MdmContainerTypesPage  from "./pages/mdm/MdmContainerTypesPage";
+import MdmEquipmentPage       from "./pages/mdm/MdmEquipmentPage";
 import MdmCustomersPage           from "./pages/mdm/MdmCustomersPage";
 import MdmSanctionedCustomersPage from "./pages/mdm/MdmSanctionedCustomersPage";
 import MdmContractsPage        from "./pages/mdm/MdmContractsPage";
@@ -2525,7 +2527,7 @@ function App() {
   }, [page, selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // kanban is top-level, not MDM
-  const MDM_PAGES = ["mdm-carriers", "mdm-carrier-agents", "mdm-ports", "mdm-linked", "mdm-vessels", "mdm-commodities", "mdm-tradelanes", "mdm-countries", "mdm-unlocodes", "mdm-customers", "mdm-sanctioned-customers", "mdm-contracts", "rate-benchmark", "mdm-charge-codes", "mdm-pack-types"];
+  const MDM_PAGES = ["mdm-carriers", "mdm-carrier-agents", "mdm-ports", "mdm-linked", "mdm-vessels", "mdm-commodities", "mdm-tradelanes", "mdm-countries", "mdm-unlocodes", "mdm-customers", "mdm-sanctioned-customers", "mdm-contracts", "rate-benchmark", "mdm-charge-codes", "mdm-equipment", "mdm-pack-types", "mdm-container-types"];
   const ORG_PAGES = ["org-country", "org-branch", "org-office"];
   const ALL_PAGES = [...MDM_PAGES, ...ORG_PAGES, "manual"];
   const isMdmActive = MDM_PAGES.includes(page);
@@ -2617,7 +2619,9 @@ function App() {
     "mdm-contracts":    "Master Data — Contracts",
     "rate-benchmark":   "Rate Benchmarking",
     "mdm-charge-codes": "Master Data — Automated Charge Codes",
+    "mdm-equipment": "Master Data — Equipment",
     "mdm-pack-types": "Master Data — Pack Types",
+    "mdm-container-types": "Master Data — Container Types",
     "org-country":      "Organization — Countries",
     "org-branch":       "Organization — Branches",
     "org-office":       "Organization — Offices",
@@ -3395,15 +3399,16 @@ function App() {
                   <NavBtn pageKey="mdm-customers"            icon={IconGroup} label="Customers"            indent />
                   <NavBtn pageKey="mdm-sanctioned-customers" icon={IconCircle} iconColor="#ef4444" label="Sanctioned Customers" subIndent />
                   <NavBtn pageKey="mdm-contracts"   icon={IconClipboard} label="Contracts"       indent />
-                  <NavBtn pageKey="rate-benchmark"  icon={IconSearch}    label="Rate Benchmarking" indent />
+                  <NavBtn pageKey="rate-benchmark"  icon={IconSearch}    label="Rate Benchmarking" subIndent />
                   <NavBtn pageKey="mdm-charge-codes" icon={IconTag} label="Charge Codes"    indent />
-                  <NavBtn pageKey="mdm-pack-types" icon={IconPackage} label="Pack Types"    indent />
                   <NavBtn pageKey="mdm-carriers" icon={IconBuilding} label="Carriers"       indent />
-                  <NavBtn pageKey="mdm-carrier-agents" icon={IconLink} label="Carrier Agents" indent />
+                  <NavBtn pageKey="mdm-carrier-agents" icon={IconLink} label="Carrier Agents" subIndent />
                   <NavBtn pageKey="mdm-vessels"      icon={IconShip} label="Vessels"         indent />
                   <NavBtn pageKey="mdm-commodities" icon={IconPackage} label="Commodities"     indent />
                   <NavBtn pageKey="mdm-ports"    icon={IconMapPin} label="Port Locations" indent />
-                  <NavBtn pageKey="mdm-linked"   icon={IconLink} label="Linked Ports"   indent />
+                  <NavBtn pageKey="mdm-linked"   icon={IconLink} label="Linked Ports"   subIndent />
+
+                  <NavBtn pageKey="mdm-equipment" icon={IconArchive} label="Equipment"      indent />
 
                   {/* Locations sub-section */}
                   <div style={{ fontFamily: T.mono, fontSize: 9, color: T.textMuted, fontWeight: 700,
@@ -3798,7 +3803,9 @@ function App() {
         {page === "mdm-unlocodes"  &&                                 <MdmUNLocationCodesPage />}
         {page === "mdm-commodities"&&                                 <MdmCommoditiesPage />}
         {page === "mdm-charge-codes"&&                                <MdmChargeCodesPage />}
+        {page === "mdm-equipment"&&                                   <MdmEquipmentPage navigate={navigate} />}
         {page === "mdm-pack-types"&&                                  <MdmPackTypesPage />}
+        {page === "mdm-container-types"&&                             <MdmContainerTypesPage />}
         {page === "mdm-customers"              && isEnabled("mdm-customers")             && <MdmCustomersPage />}
         {page === "mdm-sanctioned-customers"   && isEnabled("mdm-sanctioned-customers")  && <MdmSanctionedCustomersPage />}
         {page === "mdm-contracts"  && isEnabled("mdm-contracts")  && <MdmContractsPage />}

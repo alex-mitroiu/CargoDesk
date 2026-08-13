@@ -94,6 +94,33 @@ const resolveRoutingIndex = (items, routings) =>
     routingIndex: item.routingId ? routings.findIndex(r => r.id === item.routingId) : -1,
   }));
 
+// ─── Routing chain-continuity check ──────────────────────────────────────────
+// A routing's legs (the ungrouped bucket, or one named routing's own group) are one
+// continuous physical journey, not independent hops — leg N's own POD is where leg N+1
+// must load from. Nothing enforced this before: a contract could silently save Leg 2
+// discharging at FRMRS while Leg 3 loads from NLRTM with no warning anywhere. Only flags
+// a gap once both ports on either side of the join are actually set, so a leg still being
+// filled in never spuriously warns.
+const findChainGaps = (orderedLegs) => {
+  const gaps = [];
+  for (let i = 1; i < orderedLegs.length; i++) {
+    const prev = orderedLegs[i - 1], cur = orderedLegs[i];
+    if (prev.pod && cur.pol && prev.pod !== cur.pol) {
+      gaps.push({ afterLegPos: i, prevPod: prev.pod, nextPol: cur.pol });
+    }
+  }
+  return gaps;
+};
+
+const RoutingGapWarning = ({ afterPos, prevPod, nextPol }) => (
+  <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 10px",
+    background: `${T.danger}18`, border: `1px solid ${T.danger}55`, borderRadius: 6,
+    fontFamily: T.body, fontSize: 11, color: T.danger }}>
+    <span>⚠</span>
+    <span>Routing gap — Leg {afterPos} discharges at <strong style={{ fontFamily: T.mono }}>{prevPod}</strong>, but Leg {afterPos + 1} loads from <strong style={{ fontFamily: T.mono }}>{nextPol}</strong></span>
+  </div>
+);
+
 // ─── Leg card — one POL/POD leg, reused for both the ungrouped bucket and each named
 // routing's own leg list below, so the grouping UI doesn't duplicate this ~140-line card. ──
 
@@ -386,6 +413,16 @@ const ContractModal = ({ editing, prefill, onSave, onClose }) => {
       return toast.error(`"${f.carrierCode}" is not a recognised carrier code`);
     if (!f.validFrom || !f.validTo) return toast.error("Validity dates required");
     if (f.legs.length === 0) return toast.error("At least one routing leg required");
+    // Every named routing (and the ungrouped bucket, routingIndex -1) is one continuous
+    // physical journey — validate each group's own leg chain, not just leg presence.
+    for (const gk of [-1, ...f.routings.map((_, ri) => ri)]) {
+      const gaps = findChainGaps(f.legs.filter(l => l.routingIndex === gk));
+      if (gaps.length > 0) {
+        const g = gaps[0];
+        const where = gk === -1 ? "" : ` in routing "${f.routings[gk].name || `Routing ${gk + 1}`}"`;
+        return toast.error(`Routing gap${where}: Leg ${g.afterLegPos} discharges at ${g.prevPod} but Leg ${g.afterLegPos + 1} loads from ${g.nextPol}`);
+      }
+    }
     withSaving(async () => {
       try {
         if (editing) {
@@ -560,10 +597,14 @@ const ContractModal = ({ editing, prefill, onSave, onClose }) => {
       {/* Ungrouped legs (routingIndex -1) — a contract with zero named routings renders exactly
           this, nothing more: no routing chrome, just "+ Add Leg" like before this feature. */}
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {f.legs.map((leg, i) => leg.routingIndex >= 0 ? null : (
-          <LegCard key={i} leg={leg}
-            label={`Leg ${f.legs.slice(0, i + 1).filter(l => l.routingIndex < 0).length}`}
-            onUpdate={patch => updateLeg(i, patch)} onRemove={() => removeLeg(i)} />
+        {f.legs.map((l, i) => ({ ...l, _i: i })).filter(l => l.routingIndex < 0).map((leg, pos, arr) => (
+          <div key={leg._i} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {pos > 0 && arr[pos - 1].pod && leg.pol && arr[pos - 1].pod !== leg.pol && (
+              <RoutingGapWarning afterPos={pos} prevPod={arr[pos - 1].pod} nextPol={leg.pol} />
+            )}
+            <LegCard leg={leg} label={`Leg ${pos + 1}`}
+              onUpdate={patch => updateLeg(leg._i, patch)} onRemove={() => removeLeg(leg._i)} />
+          </div>
         ))}
         <div>
           <Btn variant="secondary" onClick={() => addLeg(-1)}>+ Add Leg</Btn>
@@ -594,10 +635,14 @@ const ContractModal = ({ editing, prefill, onSave, onClose }) => {
                 </button>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {f.legs.map((leg, i) => leg.routingIndex !== ri ? null : (
-                  <LegCard key={i} leg={leg}
-                    label={`Leg ${f.legs.slice(0, i + 1).filter(l => l.routingIndex === ri).length}`}
-                    onUpdate={patch => updateLeg(i, patch)} onRemove={() => removeLeg(i)} />
+                {f.legs.map((l, i) => ({ ...l, _i: i })).filter(l => l.routingIndex === ri).map((leg, pos, arr) => (
+                  <div key={leg._i} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {pos > 0 && arr[pos - 1].pod && leg.pol && arr[pos - 1].pod !== leg.pol && (
+                      <RoutingGapWarning afterPos={pos} prevPod={arr[pos - 1].pod} nextPol={leg.pol} />
+                    )}
+                    <LegCard leg={leg} label={`Leg ${pos + 1}`}
+                      onUpdate={patch => updateLeg(leg._i, patch)} onRemove={() => removeLeg(leg._i)} />
+                  </div>
                 ))}
                 <div>
                   <Btn variant="secondary" size="sm" onClick={() => addLeg(ri)}>+ Add Leg</Btn>

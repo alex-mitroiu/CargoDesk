@@ -1020,7 +1020,8 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     const scheduleKey = saveScheduleLegs(id, legsToSave);
     db.prepare("UPDATE shipment_schedules SET schedule_key=? WHERE id=?").run(scheduleKey, id);
     logEntityEvent('schedule', id, 'SAVED', null, null, null,
-      JSON.stringify({ shipmentId: req.params.id, carrier, vesselName, voyageNumber, service, pol, pod, etd, eta, actor: savedBy }));
+      JSON.stringify({ shipmentId: req.params.id, carrier, vesselName, vesselImo, voyageNumber, service, pol, pod, etd, eta,
+        transitDays: Number(transitDays), actor: savedBy }));
     ensureBookingCreated(req.params.id);
     ok(res, mapSchedule({ id, shipment_id: req.params.id, carrier, vessel_name: vesselName, vessel_imo: vesselImo,
       voyage_number: voyageNumber, service, pol, pod, etd, eta,
@@ -1105,7 +1106,8 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     db.prepare("DELETE FROM shipment_schedules WHERE id=?").run(req.params.scheduleId);
     logEntityEvent('schedule', req.params.scheduleId, 'REMOVED', null, null, null,
       JSON.stringify({ shipmentId: req.params.id, carrier: existing.carrier, vesselName: existing.vessel_name,
-        voyageNumber: existing.voyage_number, service: existing.service, pol: existing.pol, pod: existing.pod,
+        vesselImo: existing.vessel_imo, voyageNumber: existing.voyage_number, service: existing.service,
+        pol: existing.pol, pod: existing.pod, etd: existing.etd, eta: existing.eta, transitDays: existing.transit_days,
         actor: req.user?.name || req.user?.email || "" }));
     ok(res, { deleted: req.params.scheduleId });
   });
@@ -1178,8 +1180,8 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     db.prepare("UPDATE shipment_schedules SET schedule_key=? WHERE id=?").run(scheduleKey, id);
 
     logEntityEvent('schedule', id, 'SAVED', null, null, null,
-      JSON.stringify({ carrier: finalCarrier, vesselName: finalVesselName, voyageNumber: finalVoyageNumber,
-        service: finalService, pol: finalPol, pod: finalPod, etd: finalEtd, eta: finalEta,
+      JSON.stringify({ carrier: finalCarrier, vesselName: finalVesselName, vesselImo: finalVesselImo, voyageNumber: finalVoyageNumber,
+        service: finalService, pol: finalPol, pod: finalPod, etd: finalEtd, eta: finalEta, transitDays: finalTransitDays,
         actor: savedBy, source: 'generated', legCount: isTSP ? legs.length : 1 }));
 
     const row = db.prepare("SELECT * FROM shipment_schedules WHERE id=?").get(id);
@@ -1223,8 +1225,9 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     if (!sched) return err(res, "Not found", 404);
     db.prepare("DELETE FROM shipment_schedules WHERE id=?").run(req.params.id);
     logEntityEvent('schedule', req.params.id, 'REMOVED', null, null, null,
-      JSON.stringify({ carrier: sched.carrier, vesselName: sched.vessel_name, pol: sched.pol, pod: sched.pod,
-        actor: req.user?.name || req.user?.email || "", source: 'generated' }));
+      JSON.stringify({ carrier: sched.carrier, vesselName: sched.vessel_name, vesselImo: sched.vessel_imo,
+        voyageNumber: sched.voyage_number, pol: sched.pol, pod: sched.pod, etd: sched.etd, eta: sched.eta,
+        transitDays: sched.transit_days, actor: req.user?.name || req.user?.email || "", source: 'generated' }));
     ok(res, { deleted: req.params.id });
   });
 

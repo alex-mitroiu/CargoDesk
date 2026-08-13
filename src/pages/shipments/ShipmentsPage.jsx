@@ -264,11 +264,17 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
       <div style={{ background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, overflow: "hidden" }}>
         <div style={{ display: "grid", gridTemplateColumns: shipTemplate,
           padding: "10px 20px", borderBottom: `1px solid ${T.border}` }}>
-          {shipHeaders.map((h, i) => (
-            <div key={i} style={{ position: "relative", paddingLeft: 6, fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
-              {h}{i < shipHeaders.length - 1 && <ColResizer onStart={e => shipStartResize(i, e)} />}
-            </div>
-          ))}
+          {shipHeaders.map((h, i) => {
+            // Contract and Status render their data as a centered badge (alignItems:"center" on
+            // the row cell below) — the header needs to match, or the label sits at the left
+            // edge of a column whose actual content is centered underneath it.
+            const centered = h === "Contract" || h === "Status";
+            return (
+              <div key={i} style={{ position: "relative", paddingLeft: centered ? 0 : 6, textAlign: centered ? "center" : "left", fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
+                {h}{i < shipHeaders.length - 1 && <ColResizer onStart={e => shipStartResize(i, e)} />}
+              </div>
+            );
+          })}
         </div>
 
         {displayed.length === 0 ? (

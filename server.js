@@ -1097,6 +1097,35 @@ const migrations = [
   "INSERT OR IGNORE INTO pack_type_definitions (id,code,label,icon,sort_order,is_active,created_at) VALUES ('ptd-other','OTHER','Other','📄',90,1,datetime('now'))",
   "ALTER TABLE container_packages ADD COLUMN pack_type_id TEXT DEFAULT NULL",
 
+  // Container-type registry (Equipment section) — admin-maintained, same shape/role
+  // pack_type_definitions has for pack types. Seeded from the app's own long-standing hardcoded
+  // CONTAINER_OPTIONS list (src/tokens.js) so nothing currently reading that list changes
+  // behavior; this table is purely additive reference data for now, not yet the live source
+  // any existing container-type dropdown reads from.
+  `CREATE TABLE IF NOT EXISTS container_type_definitions (
+    id          TEXT PRIMARY KEY,
+    code        TEXT NOT NULL,
+    size        TEXT NOT NULL,
+    type        TEXT NOT NULL,
+    teu         INTEGER NOT NULL DEFAULT 1,
+    label       TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    sort_order  INTEGER NOT NULL DEFAULT 0,
+    is_active   INTEGER NOT NULL DEFAULT 1,
+    created_at  TEXT NOT NULL
+  )`,
+  "INSERT OR IGNORE INTO container_type_definitions (id,code,size,type,teu,label,description,sort_order,is_active,created_at) VALUES ('ctd-20dc','20DC','20','DC',1,'20ft Dry Container','Standard dry cargo — general goods, non-temperature-sensitive',10,1,datetime('now'))",
+  "INSERT OR IGNORE INTO container_type_definitions (id,code,size,type,teu,label,description,sort_order,is_active,created_at) VALUES ('ctd-40dc','40DC','40','DC',2,'40ft Dry Container','Standard dry cargo — general goods, non-temperature-sensitive',20,1,datetime('now'))",
+  "INSERT OR IGNORE INTO container_type_definitions (id,code,size,type,teu,label,description,sort_order,is_active,created_at) VALUES ('ctd-40hc','40HC','40','HC',2,'40ft High Cube','Extra interior height (9''6\") for voluminous or tall cargo',30,1,datetime('now'))",
+  "INSERT OR IGNORE INTO container_type_definitions (id,code,size,type,teu,label,description,sort_order,is_active,created_at) VALUES ('ctd-20rf','20RF','20','RF',1,'20ft Reefer','Temperature-controlled — food, pharma, cold-chain cargo',40,1,datetime('now'))",
+  "INSERT OR IGNORE INTO container_type_definitions (id,code,size,type,teu,label,description,sort_order,is_active,created_at) VALUES ('ctd-40rf','40RF','40','RF',2,'40ft Reefer','Temperature-controlled — food, pharma, cold-chain cargo',50,1,datetime('now'))",
+  "INSERT OR IGNORE INTO container_type_definitions (id,code,size,type,teu,label,description,sort_order,is_active,created_at) VALUES ('ctd-20ot','20OT','20','OT',1,'20ft Open Top','Removable roof — machinery, lumber, crane-loaded cargo',60,1,datetime('now'))",
+  "INSERT OR IGNORE INTO container_type_definitions (id,code,size,type,teu,label,description,sort_order,is_active,created_at) VALUES ('ctd-40ot','40OT','40','OT',2,'40ft Open Top','Removable roof — machinery, lumber, crane-loaded cargo',70,1,datetime('now'))",
+  "INSERT OR IGNORE INTO container_type_definitions (id,code,size,type,teu,label,description,sort_order,is_active,created_at) VALUES ('ctd-20fr','20FR','20','FR',1,'20ft Flat Rack','Collapsible ends — heavy machinery, vehicles, oversized loads',80,1,datetime('now'))",
+  "INSERT OR IGNORE INTO container_type_definitions (id,code,size,type,teu,label,description,sort_order,is_active,created_at) VALUES ('ctd-40fr','40FR','40','FR',2,'40ft Flat Rack','Collapsible ends — heavy machinery, vehicles, oversized loads',90,1,datetime('now'))",
+  "INSERT OR IGNORE INTO container_type_definitions (id,code,size,type,teu,label,description,sort_order,is_active,created_at) VALUES ('ctd-20tk','20TK','20','TK',1,'20ft Tank','Liquid bulk — chemicals, food-grade liquids, petroleum products',100,1,datetime('now'))",
+  "INSERT OR IGNORE INTO container_type_definitions (id,code,size,type,teu,label,description,sort_order,is_active,created_at) VALUES ('ctd-40tk','40TK','40','TK',2,'40ft Tank','Liquid bulk — chemicals, food-grade liquids, petroleum products',110,1,datetime('now'))",
+
   // Cargo Manifest & Container Details Redesign (TKT-OTKNJN). Marks & Nos. is a real
   // packing-list/BOL field that never existed on containers — Description of Goods is NOT
   // a new field, it's the existing container_packages.description shown as a rollup on the
@@ -2553,19 +2582,41 @@ const syncShipmentFromLegs = (shipmentId) => {
     const b = cLegs[cLegs.length - 1].pod_loc_type || 'Terminal';
     routingTerm = (LEG_LOC_ABBR[a] || a) + '-' + (LEG_LOC_ABBR[b] || b);
   }
-  // COALESCE(NULLIF(?, ''), carrier_code) preserves an existing carrier when the leg has none set.
-  // etd/eta already double as the "confirmed once known" fields (AIS TKT-ZFO2OM) — when the AIS
-  // listener updates a SEA leg's etd/eta in place after a confirmed departure/arrival, this
-  // existing rollup carries it up to the shipment the same way it always has, no separate
-  // atd/ata bookend needed.
+  // Real bug found on a live shipment (SHP-L46XMM): this used to unconditionally roll the SEA
+  // leg's own carrier up onto the shipment via COALESCE(NULLIF(?,''), carrier_code) — correct
+  // for the "carrier decided leg-by-leg" case (blank shipment carrier, or no contract driving
+  // it), but it silently clobbered a Central contract's own carrier the moment ANY leg carried
+  // a different one, with no audit trail (this function writes via a bare UPDATE, never
+  // logEvent) — the sailing search then read that now-wrong shipment.carrierCode and searched
+  // the wrong carrier's schedules entirely, with no record anywhere of how it got that way.
+  // A Central contract's carrier is the authoritative one once a contract is attached — a
+  // leg's own carrier should never silently override it. Every other shipment (no Central
+  // contract yet, or Central with the SAME carrier) keeps the exact prior roll-up behavior.
+  const shipmentRow = db.prepare("SELECT carrier_code, contract_type, contract_id FROM shipments WHERE id=?").get(shipmentId);
+  const contractLocksCarrier = shipmentRow?.contract_type === 'Central' && !!shipmentRow?.contract_id;
+  const legCarrier = seaLeg.carrier_code || '';
+  const newCarrierCode = contractLocksCarrier
+    ? (shipmentRow.carrier_code || '')
+    : (legCarrier || shipmentRow?.carrier_code || '');
   // first.pol/last.pod fall back to the SEA leg's own port when the bookending Pick-up/Delivery
   // leg is a classified GPS site (pol/pod blanked there by design) — the shipment's overall
   // pol/pod must still resolve to a real UN/LOCODE, since it feeds B/L generation, exports, and
   // every list/header surface that expects a real port.
-  db.prepare(`UPDATE shipments SET pol=?, pod=?, etd=?, eta=?, carrier_code=COALESCE(NULLIF(?, ''), carrier_code), vessel=?, vessel_imo=?, voyage=?, routing_term=? WHERE id=?`)
+  // etd/eta already double as the "confirmed once known" fields (AIS TKT-ZFO2OM) — when the AIS
+  // listener updates a SEA leg's etd/eta in place after a confirmed departure/arrival, this
+  // existing rollup carries it up to the shipment the same way it always has, no separate
+  // atd/ata bookend needed.
+  db.prepare(`UPDATE shipments SET pol=?, pod=?, etd=?, eta=?, carrier_code=?, vessel=?, vessel_imo=?, voyage=?, routing_term=? WHERE id=?`)
     .run(first.pol || seaLeg.pol || '', last.pod || seaLeg.pod || '', first.etd || null, last.eta || null,
-         seaLeg.carrier_code || '', seaLeg.vessel || '', seaLeg.vessel_imo || '',
+         newCarrierCode, seaLeg.vessel || '', seaLeg.vessel_imo || '',
          seaLeg.voyage || '', routingTerm, shipmentId);
+  // Closes the "no audit trail" half of the bug above — any future roll-up that actually
+  // changes carrier_code (the legitimate blank-carrier/no-contract case) is now traceable the
+  // same way a manual edit already is, instead of only ever showing up as an unexplained diff.
+  if (shipmentRow && newCarrierCode !== (shipmentRow.carrier_code || '')) {
+    logEvent(shipmentId, 'FIELD_UPDATED', 'carrier_code', shipmentRow.carrier_code || null, newCarrierCode || null,
+      JSON.stringify({ source: 'syncShipmentFromLegs', legCarrier, seaLegId: seaLeg.id }));
+  }
 };
 
 // Row-mapper functions (mapShipment, mapContainer, mapCustomer, etc.) live in lib/mappers.js —
@@ -2577,7 +2628,7 @@ const {
   SVC_ABBR, longestLane, cutoffState, roundCents,
   mapShipment, mapShipmentLeg, mapCostLine, mapService, mapRateSnapshot, mapRateSnapshotLine,
   mapChargeCodeDefinition, mapContainer, mapContainerEvent, mapContainerPackage, mapShipmentParty,
-  mapPackTypeDefinition, mapAllocation, mapCarrier, mapVessel, mapPortLocation, mapLinkedPort,
+  mapPackTypeDefinition, mapContainerTypeDefinition, mapAllocation, mapCarrier, mapVessel, mapPortLocation, mapLinkedPort,
   mapCarrierAgent, mapTradeLane, mapScopeItem, mapAccessConfig, mapOffice, mapOfficeMailSettings,
   mapSystemEmailSettings,
   mapBranch, mapOrgCountry, mapRegion, mapCountry, mapTicketLink, mapTicket, mapTestItem,
@@ -2999,7 +3050,14 @@ const runOpsAutomationSweep = () => {
     WHERE sc.result='HIT' AND sc.overridden_at IS NULL AND s.status NOT IN ('Completed', 'Cancelled')
   `).all();
   for (const sc of complianceHits) {
-    ensureOpsTicket('compliance_hit', sc.id, {
+    // Dedupe on shipment_id, not sc.id — shipment_screenings has UNIQUE(shipment_id), so a
+    // re-screen (party change, customer rename, sanctions sync, this very sweep's own
+    // rescreenActiveShipments call) does an INSERT OR REPLACE that regenerates sc.id even
+    // though it's the same still-unresolved HIT. Deduping on the regenerating id let every
+    // re-screen of an already-ticketed shipment create a fresh duplicate Critical ticket —
+    // confirmed live (SHP-0YZJJ8 and SHP-W6K9NO each had two). carrier_booking_stale (above)
+    // doesn't have this bug since carrier_bookings.id is genuinely stable.
+    ensureOpsTicket('compliance_hit', sc.shipment_id, {
       shipmentId: sc.shipment_id, priority: 'Critical',
       title: `Compliance HIT requires review — ${sc.shipment_id}`,
       description: `Sanctions screening on ${sc.shipment_id} returned a HIT with no override on record. Auto-created by the ops automation sweep.`,
@@ -3387,7 +3445,7 @@ const ctx = {
   SERVICE_CODE_MAP, importContractRates, createRateSnapshot, generateCostLinesFromSnapshot,
   mapShipment, mapShipmentLeg, mapCostLine, mapService, mapContainer, mapContainerEvent, mapContainerPackage, mapAllocation,
   mapShipmentParty, ADDITIONAL_PARTY_ROLES,
-  mapRateSnapshot, mapRateSnapshotLine, mapChargeCodeDefinition, mapPackTypeDefinition,
+  mapRateSnapshot, mapRateSnapshotLine, mapChargeCodeDefinition, mapPackTypeDefinition, mapContainerTypeDefinition,
   mapCarrier, mapVessel, mapPortLocation, mapLinkedPort, mapTradeLane, mapCarrierAgent,
   mapScopeItem, mapAccessConfig, mapOffice, mapBranch, mapOrgCountry, mapRegion, mapCountry, mapTicketLink, mapTicket,
   mapTestItem, mapTestCaseLink,
@@ -3446,6 +3504,7 @@ require('./routes/document-distribution')(app, ctx);
 require('./routes/organization')(app, ctx);
 require('./routes/charge-codes')(app, ctx);
 require('./routes/pack-types')(app, ctx);
+require('./routes/container-types')(app, ctx);
 require('./routes/ais')(app, ctx);
 
 // ─── Static frontend (production only) ─────────────────────────────────────────

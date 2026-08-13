@@ -145,11 +145,12 @@ const QuoteFormModal = ({ quote, onClose, onSaved }) => {
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 120px", gap: 12 }}>
           <Field label="Cargo Ready Date"><DatePicker value={cargoReadyDate} onChange={setCargoReadyDate} /></Field>
-          <Field label="Valid Until" hint="After this date, an un-actioned Sent quote auto-expires">
-            <DatePicker value={validUntil} onChange={setValidUntil} />
-          </Field>
+          <Field label="Valid Until"><DatePicker value={validUntil} onChange={setValidUntil} /></Field>
           <Sel label="Currency" value={currency} onChange={setCurrency} options={CURRENCIES.map(c => ({ value: c, label: c }))} />
         </div>
+        <p style={{ fontFamily: T.body, fontSize: 10.5, color: T.border, lineHeight: 1.4, margin: "-6px 0 0" }}>
+          After Valid Until passes, an un-actioned Sent quote auto-expires.
+        </p>
 
         <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px",
           background: T.bg, border: `1px dashed ${T.border}`, borderRadius: 8 }}>
