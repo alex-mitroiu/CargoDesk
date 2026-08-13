@@ -4,8 +4,8 @@
 Full-stack freight management app. React 18 + Vite frontend, Express + node:sqlite backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.67.0 "Drydock"**
-- Run: `npm run dev` (runs the monolith on :3001 + Vite on :5173 + the Document Distribution Service on :3002 + the PDF Render Service on :3003, concurrently)
+- Version: **v0.70.0 "Waypoint"**
+- Run: `npm run dev` (runs the monolith on :3001 + Vite on :5173 + the Document Distribution Service on :3002 + the PDF Render Service on :3003 + the Contract Management Service on :3004, concurrently)
 - Seed: `npm run seed` (runs `scripts/import-mdm-data.js`)
 
 ## Stack
@@ -42,6 +42,8 @@ routes/
                      AES/EEI + ISF/AMS filing lifecycle, reuses edi_messages — Epic TKT-XW6TQK
   customers.js       /api/customers/*, /api/sanctions/*, /api/fx/*
   contracts.js       /api/contracts/*, /api/entity-events/*
+  carrier-invoices.js /api/carrier-invoices/*, /api/carrier-invoice-lines/:id/(approve|dispute) —
+                     Freight Audit & Payment (v0.69.0)
   shipment-ops.js    /api/shipments/:id/screening, cost-lines, milestones, documents,
                      services, services/:serviceId/loading-plan
   finance.js         /api/margin/summary
@@ -53,6 +55,10 @@ scripts/
   seed-contracts.js                Seeds sample carrier contracts (npm run seed:contracts)
   checkdb.js                       Dev utility — inspects DB schema and row counts (npm run checkdb)
   create-export-template.js        Generates exports/dashboard-template.xlsx (npm run export:template)
+  migrate-contracts-to-service.js  One-time, admin-run migration of local contracts into the
+                                   standalone Contract Management Service (npm run
+                                   migrate:contracts-to-service) — never automatic, doesn't
+                                   flip app_settings.contract_source itself
 exports/
   dashboard-template.xlsx          Base XLSX template with named ranges for chart wiring
 sampleDB/
@@ -118,6 +124,15 @@ src/
                                    Pickup/Delivery, Customs Clearance) — notes + generic "OT" doc.
     DashboardPage.jsx              Overview + Contract Consumption + Margin (XLSX export) tabs
     SpaceConfigurationsPage.jsx    Standalone Space Configs page with Linked Shipments modal
+    FreightAuditPage.jsx           Freight Audit & Payment (v0.69.0) — carrier invoice list,
+                                   cross-shipment exceptions queue, invoice detail with
+                                   Approve/Dispute; nested under the Dashboard nav group. New
+                                   Carrier Invoice modal has an "Extract from document" upload
+                                   (v0.70.0) — POST /api/ai/extract-document pre-fills the form
+    QuotesPage.jsx                 Quoting/RFQ (v0.70.0) — top-level nav item, list + New Quote
+                                   modal (customer/route/carrier, "Find Matching Contracts" as a
+                                   pricing reference, line items) + lifecycle detail modal
+                                   (Send/Accept/Decline/Convert to Shipment)
     DashboardArchivePage.jsx       Expired allocations + renew flow
     KanbanPage.jsx                 Integration board with drag-to-reorder
     AppSettingsPage.jsx            API Controls + Finance + Users (admin only) tabs
@@ -196,7 +211,7 @@ The original inline routes remain in server.js as **dead code** (route files reg
 Express uses first-match). They act as a fallback and can be deleted once the extracted routes
 are fully validated.
 
-## Database — 41 tables listed below (56 total — see the About page's Architectural Details tab for the full domain-grouped list)
+## Database — 43 tables listed below (77 total as of v0.70.0 — see the About page's Architectural Details tab, or `ARCHITECTURE.md` §6, for the full domain-grouped list)
 | Table | Purpose |
 |---|---|
 | shipments | Core shipment records |
@@ -216,6 +231,10 @@ are fully validated.
 | shipment_messages | Per-shipment threaded messages with author, role, timestamp |
 | shipment_legs | Multimodal legs: leg_type, movement_type, pol_loc_type, pod_loc_type, movement_by. `etd_source`/`eta_source` (v0.55.1, `'manual'\|'ais'\|''`) — AIS-confirmed departure/arrival updates `etd`/`eta` in place (an estimate becoming a known fact) rather than a separate ATD/ATA pair; idempotent-confirmation guard (`source==='ais'` means already-confirmed, don't re-fire), a manual edit always overwrites an AIS-confirmed value and clears the flag. Older `atd`/`ata`/`atd_source`/`ata_source` columns (v0.55.0's original, since-superseded design) are left in place, inert |
 | shipment_cost_lines | BUY/SELL cost lines per shipment with source tracking and FX |
+| carrier_invoices | Freight Audit & Payment (v0.69.0) — a carrier's own submitted invoice per shipment, header only (carrier, invoice number/date, currency, rolled-up status) |
+| carrier_invoice_lines | Per-invoice charge lines (v0.69.0) — amount vs. an independently-resolved `expected_amount` (from an accrued `shipment_cost_lines` row, a live `contract_rates` row, or a Detention/Demurrage pre-audit computed from `containers`' free-time fields + `container_events`), variance, and pending/matched/variance/approved/disputed status. Approving posts into the existing cost-line accrual/actualized lifecycle |
+| quotes | Quoting/RFQ pre-booking stage (v0.70.0) — precedes and converts into a real shipment. Lifecycle Draft (editable) -> Sent (locked, needs `valid_until` + 1+ lines) -> Accepted \| Declined \| Expired (hourly `expireStaleQuotes()` sweep, mirrors `expireStaleContracts`) -> Converted (Accepted only). `contract_id`/`contract_ref` optional — set when a matched contract was used as a pricing reference, not a hard link |
+| quote_lines | The quote's own customer-facing SELL price per line — kept independent of the referenced contract's live rate (a quote commonly already has margin added). On conversion, each becomes a new `shipment_cost_lines` SELL row, `source='quote'`, while the BUY side still comes from `importContractRates()` unchanged if a contract was referenced |
 | shipment_milestones | Per-shipment milestone steps (estimated date, completion, note) |
 | shipment_schedules | Saved sailings: carrier, vessel (name + IMO), voyage, ETD/ATD, ETA/ATA, transit days, isMock, source (search/generated), savedBy. `shipment_id` is nullable (v0.54.0) — NULL means an ownerless Schedule Generator "template"; set means a real shipment's own copy, whose `template_id` (self-referential, ON DELETE SET NULL) records which template it was copied from, if any |
 | schedule_legs | Per-leg detail (pol/pod/etd/eta/vessel/voyage/service, `leg_order`) for a genuine multi-leg/TSP `shipment_schedules` row — 2+ rows makes it TSP; 0-1 rows means direct, same convention the sailing-search `legs[]` shape already used (v0.54.0) |
@@ -231,12 +250,13 @@ are fully validated.
 | customer_contacts | Named people at a customer (v0.56.0) — name/title/email/phone/department, one `is_primary` per customer; replaces the old free-text-notes-only workaround |
 | customer_roles | Which of `ALL_CUSTOMER_ROLES` (v0.56.0) a customer is eligible for — `CustomerCombobox`'s `roleFilter` prop narrows pickers against this (soft filter, never a hard block) |
 | contracts | Carrier rate contracts with IMDG class filters |
-| contract_legs | POL/POD pairs per contract with linked-port flags + haulage columns + loc types |
-| contract_rates | Rate entries per contract |
+| contract_legs | POL/POD pairs per contract with linked-port flags + haulage columns + loc types. `routing_id` (v0.68.0, blank = ungrouped) optionally groups a leg into a named `contract_routings` bundle |
+| contract_rates | Rate entries per contract. `routing_id` (v0.68.0) same optional grouping as `contract_legs` |
+| contract_routings | Named, ordered routing bundles for a contract (v0.68.0) — a lane bookable via several distinct physical paths (e.g. 3 different transshipment hubs), each independently priced via its own `contract_rates`/`contract_legs` rows. `contracts`/`contract_legs`/`contract_rates`/`contract_routings` are also fully duplicated (own schema, own db file) in `services/contract-management/` — see that section below |
 | milestone_templates | Reusable milestone step definitions grouped by template key/carrier/lane |
 | system_messages | Operational notices with severity and active date range |
-| sanctions_entries | OFAC SDN entity records |
-| sanctions_syncs | OFAC sync history (timestamp, source, count) |
+| sanctions_entries | Denied-party entity records. `source` (already generic pre-v0.69.0, just never populated with anything but `'OFAC-SDN'` until now) also holds 11 more list names from the free US Consolidated Screening List (v0.69.0) — BIS Denied Persons/Entity/Unverified/Military End User Lists, State Dept ITAR Debarred + Nonproliferation Sanctions, 5 more OFAC-family lists. Every CSL-sourced row's `id` is prefixed `CSL-` so its own sync can safely scope a delete-then-reinsert without enumerating list names |
+| sanctions_syncs | Sync history (timestamp, source, count) — one row per sync JOB (`'OFAC-SDN'`, `'CSL'`), not per list; the CSL job populates many `sanctions_entries.source` values from one sync |
 | app_settings | Key-value store for server-side config (API keys, toggles, recurrence) |
 | users | Authenticated users: id, email, name, password_hash, role, is_active, last_login |
 | user_scope_items | Per-user shipment scope restrictions (carrier, POL, POD filters) |
@@ -287,6 +307,116 @@ are fully validated.
 - **Document system**: `DOC_TYPES` in App.jsx (~line 56: BL01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). (The earlier client-side-jsPDF `DocumentsMenu` component this note used to distinguish from was removed as dead code — it had zero references anywhere in the app.)
 - **Lifecycle-stage stepper precedent**: no dedicated stepper component exists yet; `MilestonePanel` (ShipmentDetailPage.jsx 1593-~1870) is the closest analog — linear progress bar (1734-1738, `width: ${progress}%`) plus per-step state coloring via `milestoneState()`/`stateColor()` (1666-1676: completed/overdue/current/upcoming) driven by `shipment_milestones` rows (`id, label, estimatedDate, note, completedAt, completedBy`, fixed step keys `booking_confirmed, si_submitted, cargo_gated_in, vessel_departed, bl_issued, vessel_arrived, customs_cleared, cargo_released, delivered`). Any new per-container lifecycle/stage UI should reuse this state-coloring pattern rather than inventing a new visual language
 - **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages, 📡 EDI). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
+
+## Recent changes (v0.70.0 "Waypoint")
+- **AI-driven document extraction** (TKT-44PRSK) — new `POST /api/ai/extract-document`
+  (`routes/ai.js`), a single-shot vision call deliberately kept generic (not carrier-invoice-
+  specific) so future document-in/structured-data-out features can reuse it. Provider-agnostic
+  like `/api/ai/chat`: Anthropic gets a native image/document content block (PDF support is
+  Anthropic-only — the OpenAI-compatible Chat Completions shape has no native PDF handling, and
+  a PDF upload against a non-Anthropic endpoint returns a clean 400, not a silently wrong-shaped
+  request); every other configured endpoint gets an `image_url` block. Own tighter rate limiter
+  (`aiExtractRateLimit`) than chat's, since a vision payload is meaningfully more expensive per
+  call. Wired into `FreightAuditPage.jsx`'s New Carrier Invoice modal as an "Extract from
+  document" upload that pre-fills the form for review before saving.
+- **Quoting / RFQ pre-booking stage** (TKT-H8VOOW) — new `quotes`/`quote_lines` tables,
+  `routes/quotes.js`, `QuotesPage.jsx` (new top-level nav item, before Shipments). Lifecycle
+  Draft -> Sent -> Accepted | Declined | Expired -> Converted; pricing reuses the existing
+  `GET /api/contracts/match` engine as a reference ("Find Matching Contracts"), but the quote's
+  own lines are the real offer, kept independent of the live contract rate. Converting creates a
+  real shipment (BUY side via the existing `importContractRates` path if a contract was
+  referenced; SELL side from the quote's own lines, `source='quote'`) and returns the full
+  mapped shipment object inline — required because the SPA's local `shipments` array (App.jsx)
+  needs the record pushed in before it can navigate to a detail page it doesn't otherwise know
+  about yet; this exact gap caused a real blank-page bug caught only via live CDP verification,
+  since fixed.
+- **CargoDesk Field Guide** — the user-facing manual rewritten from the existing topic-organized
+  in-app reference (`UserManualPage.jsx`, left unchanged) into a step-by-step, illustrated
+  walkthrough: 12 chapters in the real required workflow order (quote → shipment → cargo →
+  schedule → booking → parties → customs → documents → tracking → money), following one example
+  shipment through its whole lifecycle with live-captured screenshots. Chapter order corrected
+  mid-build on a real discovery: Carrier Booking is hard-gated behind a schedule/contract being
+  assigned first. Published as a standalone artifact for review, not merged into the in-app page.
+- **`ARCHITECTURE.md` refresh** — the doc had gone stale since v0.30.0 (self-flagged, but worse
+  on direct inspection: three different wrong `server.js` line counts across its own sections, a
+  direct self-contradiction on whether FK constraints are enforced, five "known debts" already
+  resolved, and an entire microservice plus several major subsystems missing). Rewritten from a
+  direct, measured pass against the live code — see that file's own header for specifics.
+  `dev/architecture.html` (a separate visual diagram, dated v0.20.0) was explicitly left
+  untouched, out of scope for this pass.
+- **CI gap fix, found in passing**: the document-action rate limiter (20/60s,
+  `routes/shipment-ops.js`) gets exhausted by the full test suite's cumulative document-
+  generation calls across files — the same class of bug the login limiter had before v0.66.0.
+  Added `DOC_ACTION_RATE_MAX` to `ci.yml`'s backend job, mirroring the existing `LOGIN_RATE_MAX`
+  fix exactly.
+
+## Recent changes (v0.69.0 "Custodian")
+- **Competitive gap analysis** — direct request to compare CargoDesk against other freight-
+  forwarding software and act on the findings. 8-agent parallel research sweep (CargoWise One,
+  Magaya, Descartes, project44/FourKites/GoComet, Flexport/Freightos/WebCargo, CargoSphere/
+  Freightos Terminal & Procure, real AES/ISF/ACE filing requirements, multi-list denied-party
+  screening) cross-checked against a direct, verified audit of CargoDesk's own code. Full
+  writeup + prioritized roadmap published as an artifact; a 10-story Epic logged in Kanban.
+  Gaps that are structurally out of reach (carrier networks, market-data indices, marketplaces —
+  these need years of partnerships/a data business, not code) are named explicitly rather than
+  treated as an engineering backlog. LCL/consolidation/Master-House B/L is the single largest
+  real gap found — deliberately **not** scheduled, governed by the standing FCL-first sequencing
+  decision. Two highest-value stories executed this pass (below); 8 more logged as scoped
+  backlog (quoting/RFQ, customer self-service portal, AI document extraction, scheduled reports,
+  external rate benchmarking, multi-entity accounting, CRM, LCL/consolidation).
+- **Freight Audit & Payment** — carrier invoice reconciliation against contracted rates/accrued
+  costs, plus a Detention & Demurrage pre-audit. New `carrier_invoices`/`carrier_invoice_lines`
+  tables; the matching engine prefers an already-accrued `shipment_cost_lines` row over the live
+  contract rate, respects the `contract_source` toggle (v0.68.0), and independently computes the
+  expected D&D charge from `containers`' free-time fields + `container_events` before comparing
+  it to what the carrier billed. Approving a matched line actualizes the existing cost line in
+  place; an unmatched line creates a new one, tagged `source:'carrier_invoice'`. New
+  `FreightAuditPage.jsx` (nav: Dashboard → Freight Audit) — invoice list, cross-shipment
+  exceptions queue, per-line container/free-time-side entry, Approve/Dispute actions.
+- **Multi-list denied-party screening** — extends OFAC-SDN-only screening to the free, public US
+  Consolidated Screening List (11 more lists: BIS Denied Persons/Entity/Unverified/Military End
+  User, State Dept ITAR Debarred + Nonproliferation Sanctions, 5 more OFAC-family lists).
+  `sanctions_entries.source`/`sanctions_syncs.source` were already fully generic — zero schema
+  change needed. New `syncConsolidatedScreeningList()` mirrors `syncOfacSdn()`'s exact shape,
+  additive only. `screenShipmentById`/`ComplianceModal` already threaded `hit.source` through —
+  zero screening-logic or hit-display changes needed, only the data feeding it grew. New Settings
+  card mirrors the existing OFAC one.
+- Full 28-file regression green, clean build, live CDP verification end-to-end for both features
+  (including confirming, via a direct backend check, that an "Approve" click in the real UI
+  genuinely actualizes the underlying cost line, not just a UI-only state change).
+
+## Recent changes (v0.68.0 "Junction")
+- **Multi-Routing-Per-Contract.** A carrier contract can now cover one lane via several distinct
+  physical routings (e.g. HLCU/Kuehne+Nagel CNCKG->SEGOT bookable via three different
+  transshipment hubs — DEHAM, NLRTM, Wilhelmshaven — each independently priced/timed), researched
+  against SeaRates/CargoSphere/CargoWise/Freightos before building. New `contract_routings` table;
+  `contract_legs`/`contract_rates` gain an optional `routing_id` (blank = today's exact ungrouped
+  behavior). `findMatchingContractLeg` → `findMatchingContractLegs` — groups legs by routing,
+  returns every matching routing instead of stopping at the first, so `GET /api/contracts/match`
+  emits one comparable result per (contract, routing) pair, each with rates scoped to that routing
+  (plus contract-wide `routing_id=''` rows). A leg/rate correlates to its routing by array index
+  into the current save's `routings[]` payload (`routingIndex`) — the only identity that survives
+  a save, since routing ids regenerate every save exactly like legs/rates already do. MdmContractsPage
+  leg editor is routing-grouped; ContractPickerModal shows each routing as its own pickable option;
+  `useContractMismatch`/`RateBenchmarkPage` key on routing id, not just contract id. Allocations
+  stay contract-level-only by design (space config books lane capacity, not a specific path).
+- **Standalone Contract Management Service** (`services/contract-management/`, port 3004) —
+  CargoDesk's third extracted microservice, and its first that runs ALONGSIDE the monolith's own
+  local tables rather than replacing them (own schema, own db file — a faithful port of
+  `routes/contracts.js`'s full route surface as `/internal/*` endpoints). New admin-only
+  `app_settings.contract_source` toggle (`'local'` default | `'remote'`, Application Settings →
+  API Controls → External APIs) decides per-request which is authoritative. Every local read that
+  touches contract data got the same toggle branch: `routes/contracts.js`, `routes/allocations.js`'s
+  match endpoint, `server.js`'s `createRateSnapshot`/`importContractRates`, `routes/shipment-ops.js`'s
+  credit-hold check, `routes/shipments.js`'s `checkDgPolicy`, and the AI Assistant's `get_contract`
+  tool. New shared `callContractService(method, path, body)` helper (server.js, exposed via ctx —
+  unlike `callDistributionService`, needed by 4+ files, not just one) mirrors the clean-503-on-
+  unreachable pattern already established for the other two services. The service owns no
+  `linked_ports`/`shipments`/`allocations` data — linked-port pairs are resolved by the caller and
+  passed explicitly; the shipment/allocation delete/withdraw reference guards are replicated in the
+  monolith's proxy layer against its own local tables before ever calling the remote route. New
+  `scripts/migrate-contracts-to-service.js` (CLI-only, never automatic) is the explicit, admin-
+  triggered one-way cutover step — flipping the toggle alone never copies data.
 
 ## Recent changes (v0.67.0 "Drydock")
 - **Four more architect-review fixes.** Two ARCHITECTURE.md claims driving this round (C1 "no

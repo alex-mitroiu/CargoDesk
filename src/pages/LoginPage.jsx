@@ -137,10 +137,16 @@ const LoginPage = ({ onLogin }) => {
             </div>
 
             <div style={{ marginBottom: 24 }}>
-              <label style={{ display: "block", fontFamily: T.body, fontSize: 11, fontWeight: 600,
-                color: T.textMuted, textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 6 }}>
-                Password
-              </label>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                <label style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600,
+                  color: T.textMuted, textTransform: "uppercase", letterSpacing: ".07em" }}>
+                  Password
+                </label>
+                <a href="#forgot-password" style={{ fontFamily: T.body, fontSize: 11.5, color: T.accent,
+                  textDecoration: "none" }}>
+                  Forgot password?
+                </a>
+              </div>
               <input
                 type="password" value={password} onChange={e => setPassword(e.target.value)}
                 required autoComplete="current-password"

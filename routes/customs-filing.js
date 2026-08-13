@@ -20,6 +20,10 @@ module.exports = function customsFilingRoutes(app, ctx) {
 
   const FILING_TYPE_LABEL = { AES_EEI: "AES/EEI (Export)", ISF_AMS: "ISF/AMS (Import)" };
   const REF_PREFIX = { AES_EEI: "AES", ISF_AMS: "ISF" };
+  // Matches ShipmentCustomsFilingDetailsPage.jsx's own per-card "Create Filing" precondition
+  // exactly (hasThisBroker) — previously only enforced client-side, so a direct API call could
+  // create a filing with no broker assigned and no priced cargo at all.
+  const FILING_TYPE_BROKER_ROLE = { AES_EEI: "Customs Broker (Export)", ISF_AMS: "Customs Broker (Import)" };
 
   function insertMessage(shipmentId, filingId, direction, messageType, status, rawPayload, isMock) {
     const id = `EDI-${uid()}`, now = new Date().toISOString();
@@ -58,6 +62,15 @@ module.exports = function customsFilingRoutes(app, ctx) {
     const { filingType } = req.body || {};
     if (!CUSTOMS_FILING_TYPES.includes(filingType))
       return err(res, `filingType must be one of ${CUSTOMS_FILING_TYPES.join(", ")}`);
+    const brokerRole = FILING_TYPE_BROKER_ROLE[filingType];
+    const hasBroker = !!db.prepare("SELECT id FROM shipment_parties WHERE shipment_id=? AND role=?").get(shipment.id, brokerRole);
+    if (!hasBroker) return err(res, `Assign a ${brokerRole} to this shipment before creating a ${FILING_TYPE_LABEL[filingType]} filing`);
+    const hasCargo = !!db.prepare(`
+      SELECT cp.id FROM container_packages cp
+      JOIN containers c ON c.id = cp.container_id
+      WHERE c.shipment_id=? AND cp.unit_value_usd IS NOT NULL
+    `).get(shipment.id);
+    if (!hasCargo) return err(res, "At least one priced cargo line is required before creating a customs filing");
     const id = `CF-${uid()}`, now = new Date().toISOString();
     try {
       db.prepare(`INSERT INTO customs_filings (id, shipment_id, filing_type, status, created_at, updated_at)

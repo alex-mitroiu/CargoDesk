@@ -5,7 +5,24 @@
  */
 
 module.exports = function aiRoutes(app, ctx) {
-  const { db, ok, err, auth, getSettings } = ctx;
+  const { db, ok, err, auth, getSettings, createRateLimiter, callContractService } = ctx;
+
+  // Every chat call proxies to a real, externally-billed LLM API and can loop up to 3 tool-use
+  // iterations internally (so up to 4 outbound fetches per single request) — keyed by user, not
+  // IP, since the actor (not their network) is what should be budgeted here.
+  const aiChatRateLimit = createRateLimiter({
+    windowMs: 5 * 60 * 1000, max: 30, maxEnvVar: "AI_CHAT_RATE_MAX",
+    keyFn: req => req.user.id,
+    message: "Too many AI Assistant messages recently — please slow down",
+  });
+  // Vision calls carry a full image/document payload — meaningfully more expensive per call than
+  // a text chat turn, and callers (e.g. the New Carrier Invoice form) trigger one per uploaded
+  // file, not per keystroke — a tighter budget than chat is the right shape here.
+  const aiExtractRateLimit = createRateLimiter({
+    windowMs: 15 * 60 * 1000, max: 15, maxEnvVar: "AI_EXTRACT_RATE_MAX",
+    keyFn: req => req.user.id,
+    message: "Too many document-extraction requests recently — please slow down",
+  });
 
   // ─── Tool schemas exposed to the LLM ───────────────────────────────────────
   // Anthropic tool format: { name, description, input_schema }. This is the
@@ -76,7 +93,7 @@ module.exports = function aiRoutes(app, ctx) {
 
   // ─── Tool execution (server-side tool calls) ────────────────────────────────
 
-  function executeTool(name, args) {
+  async function executeTool(name, args) {
     try {
       if (name === "get_shipment") {
         const row = db.prepare(
@@ -102,6 +119,10 @@ module.exports = function aiRoutes(app, ctx) {
         return { shipments: db.prepare(q).all(...params), count: db.prepare(q.replace("SELECT s.*", "SELECT COUNT(*) AS n")).get(...params)?.n };
       }
       if (name === "get_contract") {
+        if ((getSettings().contract_source || "local") === "remote") {
+          try { return await callContractService("GET", `/internal/contracts/${args.id}`); }
+          catch { return { error: `Contract ${args.id} not found` }; }
+        }
         const row = db.prepare("SELECT * FROM contracts WHERE id=?").get(args.id);
         if (!row) return { error: `Contract ${args.id} not found` };
         const legs  = db.prepare("SELECT * FROM contract_legs  WHERE contract_id=? ORDER BY leg_order").all(args.id);
@@ -168,7 +189,7 @@ module.exports = function aiRoutes(app, ctx) {
 
   // ─── POST /api/ai/chat ──────────────────────────────────────────────────────
 
-  app.post("/api/ai/chat", auth(), async (req, res) => {
+  app.post("/api/ai/chat", auth(), aiChatRateLimit, async (req, res) => {
     const settings = getSettings();
     if (settings.ai_agent_enabled !== '1') {
       return err(res, "AI agent is disabled. Enable it in Application Settings → AI Agent.", 403);
@@ -219,7 +240,7 @@ module.exports = function aiRoutes(app, ctx) {
         const toolCalls = extractToolCalls(isAnthropic, responseData);
         if (!toolCalls.length) break;
 
-        const results = toolCalls.map(tc => executeTool(tc.name, tc.args));
+        const results = await Promise.all(toolCalls.map(tc => executeTool(tc.name, tc.args)));
         currentMessages = appendToolResults(isAnthropic, currentMessages, responseData, toolCalls, results);
 
         const loopRes = await fetch(endpoint, {
@@ -232,6 +253,104 @@ module.exports = function aiRoutes(app, ctx) {
       }
 
       ok(res, { reply: extractReply(isAnthropic, responseData), raw: responseData });
+    } catch (e) {
+      err(res, `AI proxy error: ${e.message}`, 502);
+    }
+  });
+
+  // ─── POST /api/ai/extract-document ───────────────────────────────────────────
+  // Single-shot vision call (no tool loop) that asks the configured LLM to read an
+  // uploaded image or PDF and return structured JSON. Deliberately generic — not
+  // carrier-invoice-specific — so any future document-extraction feature (e.g. a
+  // commercial invoice → cargo packages import) can reuse this same endpoint rather
+  // than duplicating the provider-branching/vision-payload plumbing.
+
+  const EXTRACT_IMAGE_TYPES = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+
+  const EXTRACT_SYSTEM_PROMPT =
+    "You are a document data extraction engine. Extract the requested fields from the " +
+    "provided document and respond with ONLY a single valid JSON object — no prose, no " +
+    "markdown code fences, no explanation. If a field cannot be found in the document, " +
+    "use null for its value.";
+
+  app.post("/api/ai/extract-document", auth(), aiExtractRateLimit, async (req, res) => {
+    const settings = getSettings();
+    if (settings.ai_agent_enabled !== '1') {
+      return err(res, "AI agent is disabled. Enable it in Application Settings → AI Agent.", 403);
+    }
+
+    const endpoint = settings.ai_endpoint || '';
+    const model    = settings.ai_model    || 'claude-haiku-4-5-20251001';
+    const apiKey   = settings.ai_api_key  || '';
+
+    if (!endpoint || !apiKey) {
+      return err(res, "AI endpoint or API key not configured. Set them in Application Settings → AI Agent.", 503);
+    }
+
+    const { dataBase64, mimeType, instructions } = req.body || {};
+    if (!dataBase64 || typeof dataBase64 !== 'string') return err(res, "dataBase64 is required");
+    if (!mimeType    || typeof mimeType    !== 'string') return err(res, "mimeType is required");
+    if (!instructions || typeof instructions !== 'string') return err(res, "instructions is required");
+
+    const isAnthropic = isAnthropicEndpoint(endpoint);
+    const isImage = EXTRACT_IMAGE_TYPES.includes(mimeType);
+    const isPdf   = mimeType === 'application/pdf';
+
+    if (!isImage && !isPdf) {
+      return err(res, `Unsupported file type "${mimeType}". Supported: PNG, JPEG, WEBP, GIF images, or PDF.`);
+    }
+    if (isPdf && !isAnthropic) {
+      return err(res, "PDF extraction requires an Anthropic endpoint (api.anthropic.com). Upload an image instead, or switch the configured AI endpoint.", 400);
+    }
+
+    let requestBody;
+    if (isAnthropic) {
+      const contentBlock = isPdf
+        ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: dataBase64 } }
+        : { type: "image", source: { type: "base64", media_type: mimeType, data: dataBase64 } };
+      requestBody = {
+        model, max_tokens: 4096, system: EXTRACT_SYSTEM_PROMPT,
+        messages: [{ role: "user", content: [contentBlock, { type: "text", text: instructions }] }],
+      };
+    } else {
+      requestBody = {
+        model, max_tokens: 4096,
+        messages: [
+          { role: "system", content: EXTRACT_SYSTEM_PROMPT },
+          {
+            role: "user",
+            content: [
+              { type: "text", text: instructions },
+              { type: "image_url", image_url: { url: `data:${mimeType};base64,${dataBase64}` } },
+            ],
+          },
+        ],
+      };
+    }
+
+    const headers = isAnthropic
+      ? { "Content-Type": "application/json", "anthropic-version": "2023-06-01", "x-api-key": apiKey }
+      : { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` };
+
+    try {
+      const aiRes = await fetch(endpoint, { method: "POST", headers, body: JSON.stringify(requestBody) });
+      const data = await aiRes.json();
+
+      if (!aiRes.ok) {
+        return err(res, data?.error?.message || data?.message || `AI API error ${aiRes.status}`, aiRes.status);
+      }
+
+      const replyText = extractReply(isAnthropic, data);
+      const stripped = replyText.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+
+      let extracted;
+      try {
+        extracted = JSON.parse(stripped);
+      } catch {
+        return err(res, "AI response wasn't valid JSON — try again or enter the data manually.", 502);
+      }
+
+      ok(res, { extracted, raw: replyText });
     } catch (e) {
       err(res, `AI proxy error: ${e.message}`, 502);
     }

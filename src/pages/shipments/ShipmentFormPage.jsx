@@ -238,13 +238,24 @@ export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0
             {!indented && <span style={{ fontFamily: T.mono, fontSize: 14, color: T.accent, fontWeight: 700 }}>{c.contractNumber}</span>}
             {c.contractRef
               ? <span style={{ fontFamily: T.mono, fontSize: indented ? 13 : 12, fontWeight: indented ? 700 : 400, color: indented ? T.accent : T.text }}>{c.contractRef}</span>
-              : indented && <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, fontStyle: "italic" }}>No reference</span>}
+              : indented && !c.routing && <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, fontStyle: "italic" }}>No reference</span>}
+            {/* A named routing (e.g. "Via Rotterdam" vs "Via Hamburg") is what actually
+                distinguishes two priced options on the SAME contract — surfaced prominently
+                since contractRef alone would show identically for both. */}
+            {c.routing?.name && (
+              <span style={{ fontFamily: T.body, fontSize: 13, fontWeight: 600, color: T.accent }}>
+                {c.routing.name}
+              </span>
+            )}
             {c.namedAccount && <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>{c.namedAccount}</span>}
             <span style={{ background: k.bg, color: k.color, padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700 }}>{k.label}</span>
             {isBest && <span style={{ background: T.success + "22", color: T.success, padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700 }}>Best rate</span>}
           </div>
           <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
             <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>Valid {c.validFrom} → {c.validTo}</span>
+            {c.routing?.transitDays > 0 && (
+              <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>{c.routing.transitDays}d transit</span>
+            )}
           </div>
         </div>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4, flexShrink: 0, minWidth: 80 }}>
@@ -336,6 +347,12 @@ export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0
                   if (members.length === 1) return renderCard(members[0]);
                   const num = members[0].contractNumber;
                   const isOpen = expandedGroups.has(num);
+                  // Distinguishes "one contract with several named routings" (e.g. HLCU/K+N
+                  // priced independently via three different transshipment hubs) from "two
+                  // different contract rows that happen to share a number" (contractRef's own
+                  // reason for existing) — same grouping mechanism serves both, worth labeling
+                  // accurately since they mean different things to the person picking one.
+                  const allSameContract = members.every(c => c.id === members[0].id);
                   return (
                     <div key={num} style={{ display: "flex", flexDirection: "column", gap: 6, opacity: contractsLocked ? 0.45 : 1 }}>
                       <button type="button" onClick={() => !contractsLocked && toggleGroup(num)} disabled={contractsLocked}
@@ -346,7 +363,7 @@ export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0
                         <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                           <span style={{ fontFamily: T.mono, fontSize: 14, color: T.accent, fontWeight: 700 }}>{num}</span>
                           <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, background: T.accent + "18", color: T.accent, border: `1px solid ${T.accent}44`, borderRadius: 4, padding: "1px 7px" }}>
-                            {members.length} variants
+                            {members.length} {allSameContract ? "routing" : "variant"}{members.length !== 1 ? "s" : ""}
                           </span>
                         </div>
                       </button>
@@ -422,7 +439,7 @@ export const ContractField = ({ value, onChange, pol, pod, etd, crd, needsPolHau
         setAllocs(filteredAllocs);
         if (filteredAllocs.length === 0 && filteredContracts.length === 1 && !value.id && !autoSelected.current) {
           autoSelected.current = true;
-          onChange({ id: filteredContracts[0].id, ref: filteredContracts[0].contractNumber, carrierCode: filteredContracts[0].carrierCode, allocationId: "", spaceSkipReason: "", spaceOverageReason: "" });
+          onChange({ id: filteredContracts[0].id, ref: filteredContracts[0].contractNumber, carrierCode: filteredContracts[0].carrierCode, routingId: filteredContracts[0].routingId || "", allocationId: "", spaceSkipReason: "", spaceOverageReason: "" });
         }
       } catch {
         setMatches([]); setAllocs([]);
@@ -430,9 +447,12 @@ export const ContractField = ({ value, onChange, pol, pod, etd, crd, needsPolHau
     }, 400);
   }, [isCentral, pol, pod, dateRef, needsPolHaulage, needsPodHaulage, pkuLocation, delLocation, carrierCode]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const clearContract = () => { onChange({ id: "", ref: "", carrierCode: null, allocationId: "", spaceSkipReason: "", spaceOverageReason: "" }); autoSelected.current = false; };
-  const pickContract  = (c, skipReason = "") => { onChange({ id: c.id, ref: c.contractNumber, carrierCode: c.carrierCode, allocationId: "", spaceSkipReason: skipReason, spaceOverageReason: "" }); setPickerOpen(false); };
-  const pickAllocation = (alloc, overageReason = "") => { onChange({ id: alloc.contractId, ref: alloc.contractNumber, carrierCode: alloc.carrierCode, allocationId: alloc.id, spaceSkipReason: "", spaceOverageReason: overageReason }); setPickerOpen(false); };
+  const clearContract = () => { onChange({ id: "", ref: "", carrierCode: null, routingId: "", allocationId: "", spaceSkipReason: "", spaceOverageReason: "" }); autoSelected.current = false; };
+  // c.routingId is '' for a contract with no named routings, or the specific routing (e.g.
+  // "Via Rotterdam") the operator picked among — GET /api/contracts/match returns one match
+  // entry per (contract, routing) pair, so the card c is already that specific choice.
+  const pickContract  = (c, skipReason = "") => { onChange({ id: c.id, ref: c.contractNumber, carrierCode: c.carrierCode, routingId: c.routingId || "", allocationId: "", spaceSkipReason: skipReason, spaceOverageReason: "" }); setPickerOpen(false); };
+  const pickAllocation = (alloc, overageReason = "") => { onChange({ id: alloc.contractId, ref: alloc.contractNumber, carrierCode: alloc.carrierCode, routingId: "", allocationId: alloc.id, spaceSkipReason: "", spaceOverageReason: overageReason }); setPickerOpen(false); };
 
   if (!isCentral) return null;
 
@@ -1178,6 +1198,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
     incoterm:           init.incoterm           || "",
     contractId:         init.contractId         || "",
     contractRef:        init.contractRef        || "",
+    contractRoutingId:  init.contractRoutingId  || "",
     commodityCode:      init.commodityCode      || "",
     shipperId:          init.shipperId          || "",
     shipperName:        init.shipperName        || "",
@@ -1907,7 +1928,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
       <SectionDivider label="Contract" id="shpform-contract" />
       <ContractTypeInput value={f.contractType} onChange={v => {
         if (v !== "Central") {
-          setF(p => ({ ...p, contractType: v, contractId: "", contractRef: "", allocationId: "" }));
+          setF(p => ({ ...p, contractType: v, contractId: "", contractRef: "", contractRoutingId: "", allocationId: "" }));
         } else if (!init.id && !((useContainerManager && draftContainers.length >= 1) || (parseInt(quickCargo.count, 10) > 0 && quickCargo.size && quickCargo.type))) {
           toast.warning("Add containers first — Central Contract eligibility is verified against your cargo details.");
         } else {
@@ -1917,12 +1938,13 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
       {isCentral && (
         <ContractField
           value={{ id: f.contractId, ref: f.contractRef, allocationId: f.allocationId }}
-          onChange={({ id, ref, carrierCode, allocationId, spaceSkipReason, spaceOverageReason }) => {
+          onChange={({ id, ref, carrierCode, routingId, allocationId, spaceSkipReason, spaceOverageReason }) => {
             setF(p => {
               const next = {
                 ...p,
                 contractId:         id,
                 contractRef:        ref,
+                contractRoutingId:  routingId          !== undefined ? routingId          : p.contractRoutingId,
                 allocationId:       allocationId       !== undefined ? allocationId       : p.allocationId,
                 spaceSkipReason:    spaceSkipReason    !== undefined ? spaceSkipReason    : p.spaceSkipReason,
                 spaceOverageReason: spaceOverageReason !== undefined ? spaceOverageReason : p.spaceOverageReason,

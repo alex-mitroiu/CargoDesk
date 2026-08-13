@@ -7,6 +7,7 @@ import { Modal } from "../primitives/Modal";
 import Btn from "../primitives/Btn";
 import { ComplianceModal, RouteSummaryBar, MessagesDrawer, TicketsDrawer } from "../../pages/shipments/ShipmentDetailPage";
 import { deriveHaulageNeeds } from "../../pages/shipments/ShipmentFormPage";
+import useContractMismatch from "../../hooks/useContractMismatch";
 import ContractMismatchModal from "./ContractMismatchModal";
 import { AnyIcon, IconClipboard, IconLink, IconRefresh, IconPencil, IconWarning, IconCheck,
   IconMail, IconMailUnread } from "../primitives/Icon";
@@ -103,7 +104,6 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
   const [schedules, setSchedules] = useState([]);
   const [screening, setScreening] = useState(null);
   const [complianceOpen, setComplianceOpen] = useState(false);
-  const [contractMismatch, setContractMismatch] = useState(false);
   const [pendingMatches, setPendingMatches] = useState(null);
   const [legs, setLegs] = useState([]);
 
@@ -215,24 +215,12 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
   const matchPod = seaLegs[seaLegs.length - 1]?.pod || shipment.pod || "";
   const { needsPolHaulage, needsPodHaulage, pkuLocation, delLocation } = deriveHaulageNeeds(legs);
 
-  // Silent revalidation: a Central contract was matched against POL/POD (and haulage coverage)
-  // at the time it was picked, but nothing re-checks it if the route changes afterward — same
-  // class of gap the Pending-contract check right below covers for Pending shipments. Must
-  // agree with ContractAssignModal's own check or the badge and the actual fix flow could
-  // disagree on whether there's a problem.
-  useEffect(() => {
-    let live = true;
-    if (shipment.contractType !== "Central" || !shipment.contractId || !matchPol || !matchPod) {
-      setContractMismatch(false);
-      return;
-    }
-    api.contracts.match({ pol: matchPol, pod: matchPod,
-      ...(needsPolHaulage && { needsPolHaulage: "1" }), ...(needsPodHaulage && { needsPodHaulage: "1" }),
-      ...(pkuLocation && { pkuLocation }), ...(delLocation && { delLocation }) })
-      .then(matches => { if (live) setContractMismatch(!matches.some(m => m.id === shipment.contractId)); })
-      .catch(() => { if (live) setContractMismatch(false); });
-    return () => { live = false; };
-  }, [shipment.contractType, shipment.contractId, matchPol, matchPod, needsPolHaulage, needsPodHaulage, pkuLocation, delLocation]);
+  // Silent revalidation: a Central contract was matched against POL/POD (and haulage coverage,
+  // and validity window) at the time it was picked, but nothing re-checks it if the route
+  // changes or the contract simply expires afterward — same class of gap the Pending-contract
+  // check right below covers for Pending shipments. Shared with ShipmentSchedulesPage's own
+  // mismatch banner via useContractMismatch so the two can't drift on what counts as a mismatch.
+  const contractMismatch = useContractMismatch(shipment, matchPol, matchPod, legs);
 
   // Pending-contract revalidation: a Pending shipment's free-text contractRef might now
   // string-match a real Active contract in the repo — check on every load. Only a badge here

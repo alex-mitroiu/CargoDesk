@@ -1,49 +1,97 @@
 "use strict";
 
 module.exports = function allocationsRoutes(app, ctx) {
-  const { db, ok, err, uid, requireRole, mapAllocation, checkOverlap, logEntityEvent, linkedPortCodes, findMatchingContractLeg } = ctx;
+  const { db, ok, err, uid, requireRole, mapAllocation, checkOverlap, logEntityEvent, linkedPortCodes, findMatchingContractLegs,
+          getSettings, callContractService } = ctx;
+  const isRemoteContractSource = () => (getSettings().contract_source || "local") === "remote";
+
+  // findMatchingContractLegs (server.js) expects raw contract_legs DB rows (snake_case) — the
+  // Contract Management Service returns legs through its own mapLeg (camelCase, same field names
+  // as lib/mappers.js's copy). Converts one back to the other so this route's matching logic
+  // doesn't need two implementations.
+  const legToRow = l => ({
+    pol: l.pol, pod: l.pod, leg_order: l.legOrder, routing_id: l.routingId || "",
+    pol_linked_allowed: l.polLinkedAllowed ? 1 : 0, pod_linked_allowed: l.podLinkedAllowed ? 1 : 0,
+    pol_carrier_haulage: l.polCarrierHaulage ? 1 : 0, pod_carrier_haulage: l.podCarrierHaulage ? 1 : 0,
+    pol_haulage_locations: l.polHaulageLocations || "", pod_haulage_locations: l.podHaulageLocations || "",
+  });
 
   // Space configurations are full-CRUD for trade_manager alongside admin/operator —
   // previously these write routes had no role gate at all.
   const write = requireRole(["admin", "operator", "trade_manager"]);
 
+  // Consumed TEU is the same authoritative, allocationId-scoped definition everywhere it's
+  // shown (this list, /match below, and SpaceConfigurationsPage's own consumption bar/Linked
+  // Shipments modal, which now reads these fields off this response instead of recomputing its
+  // own broader contractId/route-based estimate client-side — those two used to disagree on the
+  // exact same allocation). One batched query rather than one subquery per allocation.
+  function loadConsumedTeuMap() {
+    const rows = db.prepare(`
+      SELECT s.allocation_id AS allocation_id,
+             COALESCE(SUM(CASE WHEN c.size=20 THEN 1 WHEN c.size IN (40,45) THEN 2 ELSE 0 END), 0) AS consumed_teu
+      FROM containers c
+      JOIN shipments s ON s.id = c.shipment_id
+      WHERE s.allocation_id IS NOT NULL AND s.allocation_id != ''
+      GROUP BY s.allocation_id
+    `).all();
+    return new Map(rows.map(r => [r.allocation_id, r.consumed_teu]));
+  }
+
   app.get("/api/allocations", (req, res) => {
-    ok(res, db.prepare("SELECT * FROM allocations ORDER BY effective_date DESC").all().map(mapAllocation));
+    const rows = db.prepare("SELECT * FROM allocations ORDER BY effective_date DESC").all();
+    const consumedMap = loadConsumedTeuMap();
+    ok(res, rows.map(r => {
+      const base = mapAllocation(r);
+      const consumedTEU = consumedMap.get(r.id) || 0;
+      return { ...base, consumedTEU, remainingTEU: Math.max(0, base.allocatedTEU - consumedTEU) };
+    }));
   });
 
   app.post("/api/allocations", write, (req, res) => {
     const { carrierCode, allocatedTEU, effectiveDate, endDate, tradeLane = '', notes = '',
             alertThreshold = 80, pol = '', pod = '', originLane = '', destLane = '', coverageScope = 'STRICT',
-            contractId = '', contractNumber = '' } = req.body;
+            contractId = '', contractNumber = '', minimumTEU = null } = req.body;
     if (!carrierCode || allocatedTEU == null || !effectiveDate || !endDate || !pol || !pod)
       return err(res, "carrierCode, allocatedTEU, effectiveDate, endDate, pol, pod all required");
     if (!contractId) return err(res, "contractId required");
     if (endDate < effectiveDate) return err(res, "end date must be on or after effective date");
+    if (minimumTEU != null && Number(minimumTEU) > Number(allocatedTEU))
+      return err(res, "Minimum commitment can't exceed the allocated TEU");
     if (checkOverlap(carrierCode, effectiveDate, endDate, pol, pod))
       return err(res, `An allocation for ${carrierCode} on route ${pol.toUpperCase()} → ${pod.toUpperCase()} already covers that date range`);
     const id = `ALC-${uid()}`;
-    db.prepare("INSERT INTO allocations (id,carrier_code,allocated_teu,effective_date,end_date,trade_lane,notes,alert_threshold,pol,pod,origin_lane,dest_lane,coverage_scope,contract_id,contract_number) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-      .run(id, carrierCode, allocatedTEU, effectiveDate, endDate, tradeLane, notes, alertThreshold, pol.toUpperCase(), pod.toUpperCase(), originLane, destLane, coverageScope, contractId, contractNumber);
+    const minTeuVal = minimumTEU != null && String(minimumTEU).trim() !== '' ? Number(minimumTEU) : null;
+    db.prepare("INSERT INTO allocations (id,carrier_code,allocated_teu,effective_date,end_date,trade_lane,notes,alert_threshold,pol,pod,origin_lane,dest_lane,coverage_scope,contract_id,contract_number,minimum_teu) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+      .run(id, carrierCode, allocatedTEU, effectiveDate, endDate, tradeLane, notes, alertThreshold, pol.toUpperCase(), pod.toUpperCase(), originLane, destLane, coverageScope, contractId, contractNumber, minTeuVal);
     logEntityEvent('allocation', id, 'CREATED', null, null, null,
-      JSON.stringify({ carrierCode, pol: pol.toUpperCase(), pod: pod.toUpperCase(), allocatedTEU, effectiveDate, endDate, contractNumber }));
-    ok(res, mapAllocation({ id, carrier_code: carrierCode, allocated_teu: allocatedTEU, effective_date: effectiveDate, end_date: endDate, trade_lane: tradeLane, notes, alert_threshold: alertThreshold, pol: pol.toUpperCase(), pod: pod.toUpperCase(), origin_lane: originLane, dest_lane: destLane, coverage_scope: coverageScope, contract_id: contractId, contract_number: contractNumber }), 201);
+      JSON.stringify({ carrierCode, pol: pol.toUpperCase(), pod: pod.toUpperCase(), allocatedTEU, effectiveDate, endDate, contractNumber, minimumTEU: minTeuVal }));
+    // A brand-new allocation always starts at 0 consumed (no shipment could reference this id
+    // yet) — included explicitly so the response shape matches GET's, not left undefined.
+    ok(res, { ...mapAllocation({ id, carrier_code: carrierCode, allocated_teu: allocatedTEU, effective_date: effectiveDate, end_date: endDate, trade_lane: tradeLane, notes, alert_threshold: alertThreshold, pol: pol.toUpperCase(), pod: pod.toUpperCase(), origin_lane: originLane, dest_lane: destLane, coverage_scope: coverageScope, contract_id: contractId, contract_number: contractNumber, minimum_teu: minTeuVal }), consumedTEU: 0, remainingTEU: allocatedTEU }, 201);
   });
 
   app.put("/api/allocations/:id", write, (req, res) => {
     const { carrierCode, allocatedTEU, effectiveDate, endDate, tradeLane = '', notes = '',
             alertThreshold = 80, pol = '', pod = '', originLane = '', destLane = '',
-            contractId = '', contractNumber = '' } = req.body;
+            contractId = '', contractNumber = '', minimumTEU = null } = req.body;
     if (!effectiveDate || !endDate || !pol || !pod) return err(res, "effectiveDate, endDate, pol, pod required");
     if (!contractId) return err(res, "contractId required");
     if (endDate < effectiveDate) return err(res, "end date must be on or after effective date");
+    if (minimumTEU != null && Number(minimumTEU) > Number(allocatedTEU))
+      return err(res, "Minimum commitment can't exceed the allocated TEU");
     if (checkOverlap(carrierCode, effectiveDate, endDate, pol, pod, req.params.id))
       return err(res, `Another allocation for ${carrierCode} on route ${pol.toUpperCase()} → ${pod.toUpperCase()} already covers that date range`);
-    const info = db.prepare("UPDATE allocations SET carrier_code=?, allocated_teu=?, effective_date=?, end_date=?, trade_lane=?, notes=?, alert_threshold=?, pol=?, pod=?, origin_lane=?, dest_lane=?, contract_id=?, contract_number=? WHERE id=?")
-      .run(carrierCode, allocatedTEU, effectiveDate, endDate, tradeLane, notes, alertThreshold, pol.toUpperCase(), pod.toUpperCase(), originLane, destLane, contractId, contractNumber, req.params.id);
+    const minTeuVal = minimumTEU != null && String(minimumTEU).trim() !== '' ? Number(minimumTEU) : null;
+    const info = db.prepare("UPDATE allocations SET carrier_code=?, allocated_teu=?, effective_date=?, end_date=?, trade_lane=?, notes=?, alert_threshold=?, pol=?, pod=?, origin_lane=?, dest_lane=?, contract_id=?, contract_number=?, minimum_teu=? WHERE id=?")
+      .run(carrierCode, allocatedTEU, effectiveDate, endDate, tradeLane, notes, alertThreshold, pol.toUpperCase(), pod.toUpperCase(), originLane, destLane, contractId, contractNumber, minTeuVal, req.params.id);
     if (info.changes === 0) return err(res, "Not found", 404);
     logEntityEvent('allocation', req.params.id, 'UPDATED', null, null, null,
-      JSON.stringify({ carrierCode, pol: pol.toUpperCase(), pod: pod.toUpperCase(), allocatedTEU, effectiveDate, endDate, contractNumber }));
-    ok(res, mapAllocation({ id: req.params.id, carrier_code: carrierCode, allocated_teu: allocatedTEU, effective_date: effectiveDate, end_date: endDate, trade_lane: tradeLane, notes, alert_threshold: alertThreshold, pol: pol.toUpperCase(), pod: pod.toUpperCase(), origin_lane: originLane, dest_lane: destLane, contract_id: contractId, contract_number: contractNumber }));
+      JSON.stringify({ carrierCode, pol: pol.toUpperCase(), pod: pod.toUpperCase(), allocatedTEU, effectiveDate, endDate, contractNumber, minimumTEU: minTeuVal }));
+    // Editing an allocation's own fields never changes which shipments reference it — carry the
+    // real current consumedTEU through so the response shape matches GET's (an edit no longer
+    // makes the header row briefly show 0 consumed until the next full reload).
+    const consumedTEU = loadConsumedTeuMap().get(req.params.id) || 0;
+    ok(res, { ...mapAllocation({ id: req.params.id, carrier_code: carrierCode, allocated_teu: allocatedTEU, effective_date: effectiveDate, end_date: endDate, trade_lane: tradeLane, notes, alert_threshold: alertThreshold, pol: pol.toUpperCase(), pod: pod.toUpperCase(), origin_lane: originLane, dest_lane: destLane, contract_id: contractId, contract_number: contractNumber, minimum_teu: minTeuVal }), consumedTEU, remainingTEU: Math.max(0, allocatedTEU - consumedTEU) });
   });
 
   app.delete("/api/allocations/:id", write, (req, res) => {
@@ -59,10 +107,10 @@ module.exports = function allocationsRoutes(app, ctx) {
   // needsPolHaulage/needsPodHaulage mirror /api/contracts/match's params exactly — an
   // allocation is only as good as the contract behind it, so when the shipment needs carrier
   // haulage this checks the allocation's OWN linked contract's leg for that same coverage
-  // (via the shared findMatchingContractLeg), instead of treating a pol/pod match alone as
+  // (via the shared findMatchingContractLegs), instead of treating a pol/pod match alone as
   // sufficient. An allocation with no linked contract_id can't be verified either way, so it's
   // passed through rather than penalized — same "don't disprove it" default as an unscreened party.
-  app.get("/api/allocations/match", (req, res) => {
+  app.get("/api/allocations/match", async (req, res) => {
     const { pol = "", pod = "", etd = "", needsPolHaulage = "", needsPodHaulage = "",
             pkuLocation = "", delLocation = "" } = req.query;
     if (!pol || !pod || !etd) return ok(res, []);
@@ -78,20 +126,31 @@ module.exports = function allocationsRoutes(app, ctx) {
       AND effective_date <= ? AND end_date >= ?
       ORDER BY effective_date DESC
     `).all(...polAll, ...podAll, etd, etd);
-    const results = allocs
-      .filter(a => {
-        if (!needsPol && !needsPod) return true;
-        if (!a.contract_id) return true;
-        const legs = db.prepare("SELECT * FROM contract_legs WHERE contract_id=?").all(a.contract_id);
-        return !!findMatchingContractLeg(legs, { pol: a.pol, pod: a.pod, needsPolHaulage: needsPol, needsPodHaulage: needsPod, pkuLocation, delLocation });
-      })
+    const consumedMap = loadConsumedTeuMap();
+    const remote = isRemoteContractSource();
+    const legsCache = new Map(); // contractId -> legs (row-shaped), fetched at most once per request
+    async function contractLegsFor(contractId) {
+      if (legsCache.has(contractId)) return legsCache.get(contractId);
+      let legs;
+      if (remote) {
+        try { legs = (await callContractService("GET", `/internal/contracts/${contractId}`)).legs.map(legToRow); }
+        catch { legs = []; } // an unreachable/vanished remote contract can't be verified either way
+      } else {
+        legs = db.prepare("SELECT * FROM contract_legs WHERE contract_id=?").all(contractId);
+      }
+      legsCache.set(contractId, legs);
+      return legs;
+    }
+    const passed = [];
+    for (const a of allocs) {
+      if (!needsPol && !needsPod) { passed.push(a); continue; }
+      if (!a.contract_id) { passed.push(a); continue; }
+      const legs = await contractLegsFor(a.contract_id);
+      if (findMatchingContractLegs(legs, { pol: a.pol, pod: a.pod, needsPolHaulage: needsPol, needsPodHaulage: needsPod, pkuLocation, delLocation }).length > 0) passed.push(a);
+    }
+    const results = passed
       .map(a => {
-        const { consumed_teu } = db.prepare(`
-          SELECT COALESCE(SUM(CASE WHEN c.size=20 THEN 1 WHEN c.size IN (40,45) THEN 2 ELSE 0 END), 0) AS consumed_teu
-          FROM containers c
-          JOIN shipments s ON s.id = c.shipment_id
-          WHERE s.allocation_id = ?
-        `).get(a.id);
+        const consumed_teu = consumedMap.get(a.id) || 0;
         const base      = mapAllocation(a);
         const matchKind = (a.pol === polU && a.pod === podU) ? "exact" : "linked";
         return { ...base, consumedTEU: consumed_teu, remainingTEU: Math.max(0, base.allocatedTEU - consumed_teu),

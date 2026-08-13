@@ -11,6 +11,7 @@ import ServicesPanel from "../../components/shared/ServicesPanel";
 import { api } from "../../api";
 import { toast } from "../../toast";
 import { formatLegPoint } from "../../utils/legLocation";
+import { dgPolicyConflict } from "../../utils/dgPolicy";
 import Btn from "../../components/primitives/Btn";
 import ActionMenu from "../../components/primitives/ActionMenu";
 import Spinner from "../../components/primitives/Spinner";
@@ -138,13 +139,7 @@ export const ContainerForm = forwardRef(({ init = {}, onSave, onCancel, onDirtyC
   const hsOk     = f.hsCode.trim().length > 0;
   const descOk   = f.cargoDescription.trim().length > 0;
 
-  const dgConflict = (() => {
-    if (!f.isDg || !f.dgClass || !dgPolicy) return null;
-    if (!dgPolicy.dgAllowed) return `Contract does not permit DG cargo`;
-    if (dgPolicy.imdgClasses.length > 0 && !dgPolicy.imdgClasses.includes(f.dgClass))
-      return `IMO class ${f.dgClass} not permitted by contract (allowed: ${dgPolicy.imdgClasses.join(", ")})`;
-    return null;
-  })();
+  const dgConflict = dgPolicyConflict(dgPolicy, f.isDg, f.dgClass);
 
   const valid    = f.containerNumber.length >= 4 && f.size && f.type
                  && hsOk && descOk && weightOk && volumeOk && (!f.isDg || f.dgClass)

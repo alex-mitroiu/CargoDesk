@@ -53,6 +53,7 @@ const EMPTY_FORM = {
   validFrom: "", validTo: "", currency: "USD", status: "Active", notes: "",
   legs: [],
   rates: [],
+  routings: [],
 };
 
 // ─── Section header style helper ─────────────────────────────────────────────
@@ -78,15 +79,164 @@ const contractStatusVariant = s => ({
   "On Hold": "default",
 }[s] || "default");
 
-// ─── Route summary helper ──────────────────────────────────────────────────────
+// ─── Routing-index resolution ───────────────────────────────────────────────────
+// GET /api/contracts responses carry each leg/rate's real, server-generated routingId
+// (contract_routings.id) — but that id never survives a save (saveRoutings deletes and
+// regenerates every routing row, same as legs/rates), so the SAVE payload correlates a
+// leg/rate to a routing purely by array index into f.routings (routingIndex), the only
+// identity that does survive. This resolves the server's routingId strings to the client's
+// own routingIndex once, right after a contract loads — -1 means "no routing" (the
+// contract's single implicit bucket), matching every leg/rate on a contract with no named
+// routings at all.
+const resolveRoutingIndex = (items, routings) =>
+  items.map(item => ({
+    ...item,
+    routingIndex: item.routingId ? routings.findIndex(r => r.id === item.routingId) : -1,
+  }));
 
-function routeSummary(legs) {
-  if (!legs || legs.length === 0) return "—";
-  if (legs.length === 1) {
-    return `${legs[0].pol || "?"} → ${legs[0].pod || "?"}`;
-  }
-  return `${legs[0].pol || "?"} → … → ${legs[legs.length - 1].pod || "?"}`;
-}
+// ─── Leg card — one POL/POD leg, reused for both the ungrouped bucket and each named
+// routing's own leg list below, so the grouping UI doesn't duplicate this ~140-line card. ──
+
+const LegCard = ({ leg, label, onUpdate, onRemove }) => (
+  <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px" }}>
+    {/* Row 1: Leg label · POL · → · POD · remove */}
+    <div style={{ display: "grid", gridTemplateColumns: "44px 1fr 18px 1fr 32px", gap: 8, alignItems: "start" }}>
+      <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, fontWeight: 700, paddingTop: 8 }}>
+        {label}
+      </span>
+
+      {/* POL */}
+      <div>
+        {leg.pol ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, background: T.surface,
+            border: `1px solid ${T.accent}55`, borderRadius: 6, padding: "6px 10px" }}>
+            <span style={{ fontFamily: T.mono, fontSize: 12, color: T.accent, fontWeight: 700 }}>{leg.pol}</span>
+            {leg.polName && <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{leg.polName}</span>}
+            <button type="button" onClick={() => onUpdate({ pol: "", polName: "", polLinkedAllowed: false, polCarrierHaulage: false, polHaulageLocations: "", polLocType: "Terminal" })}
+              style={{ background: "none", border: "none", cursor: "pointer", color: T.textMuted, fontSize: 10, padding: 0, flexShrink: 0 }}>✕</button>
+          </div>
+        ) : (
+          <PortCombobox placeholder="POL…" onChange={r => onUpdate({ pol: r.unlocode, polName: r.name })} />
+        )}
+        {leg.pol && (
+          <div style={{ marginTop: 6 }}>
+            <div style={{ display: "flex", gap: 0, borderRadius: 5, overflow: "hidden", border: `1px solid ${T.border}`, width: "fit-content" }}>
+              {["Terminal","Door","CY"].map(lt => (
+                <button key={lt} type="button"
+                  onClick={() => onUpdate({ polLocType: lt, polCarrierHaulage: lt !== "Terminal" })}
+                  style={{ fontFamily: T.body, fontSize: 11, padding: "3px 9px", border: "none", cursor: "pointer", borderRight: lt !== "CY" ? `1px solid ${T.border}` : "none",
+                    background: (leg.polLocType || "Terminal") === lt ? T.accent : T.surface,
+                    color: (leg.polLocType || "Terminal") === lt ? "#fff" : T.textMuted }}>
+                  {lt}
+                </button>
+              ))}
+            </div>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 5, cursor: "pointer" }}>
+              <input type="checkbox"
+                checked={!!leg.polLinkedAllowed}
+                onChange={e => onUpdate({ polLinkedAllowed: e.target.checked })}
+                style={{ width: 13, height: 13, accentColor: T.info, cursor: "pointer" }}
+              />
+              <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>Allow linked POL</span>
+            </label>
+            {(leg.polLocType === "Door" || leg.polLocType === "CY") && (
+              <div style={{ marginTop: 5 }}>
+                <input
+                  value={leg.polHaulageLocations || ""}
+                  onChange={e => onUpdate({ polHaulageLocations: e.target.value })}
+                  placeholder="UN/LOCODEs e.g. NLAMS NLRTM (leave blank for any)"
+                  style={{ ...inputBase, fontFamily: T.mono, fontSize: 11, width: "100%", boxSizing: "border-box" }}
+                />
+                <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted, marginTop: 2, display: "block" }}>
+                  Door and CY both enable Carrier's Haulage routing — leave blank to accept any location
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      <span style={{ textAlign: "center", color: T.textMuted, fontSize: 13, paddingTop: 8 }}>→</span>
+
+      {/* POD */}
+      <div>
+        {leg.pod ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, background: T.surface,
+            border: `1px solid ${T.accent}55`, borderRadius: 6, padding: "6px 10px" }}>
+            <span style={{ fontFamily: T.mono, fontSize: 12, color: T.accent, fontWeight: 700 }}>{leg.pod}</span>
+            {leg.podName && <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{leg.podName}</span>}
+            <button type="button" onClick={() => onUpdate({ pod: "", podName: "", podLinkedAllowed: false, podCarrierHaulage: false, podHaulageLocations: "", podLocType: "Terminal" })}
+              style={{ background: "none", border: "none", cursor: "pointer", color: T.textMuted, fontSize: 10, padding: 0, flexShrink: 0 }}>✕</button>
+          </div>
+        ) : (
+          <PortCombobox placeholder="POD…" onChange={r => onUpdate({ pod: r.unlocode, podName: r.name })} />
+        )}
+        {leg.pod && (
+          <div style={{ marginTop: 6 }}>
+            <div style={{ display: "flex", gap: 0, borderRadius: 5, overflow: "hidden", border: `1px solid ${T.border}`, width: "fit-content" }}>
+              {["Terminal","Door","CY"].map(lt => (
+                <button key={lt} type="button"
+                  onClick={() => onUpdate({ podLocType: lt, podCarrierHaulage: lt !== "Terminal" })}
+                  style={{ fontFamily: T.body, fontSize: 11, padding: "3px 9px", border: "none", cursor: "pointer", borderRight: lt !== "CY" ? `1px solid ${T.border}` : "none",
+                    background: (leg.podLocType || "Terminal") === lt ? T.accent : T.surface,
+                    color: (leg.podLocType || "Terminal") === lt ? "#fff" : T.textMuted }}>
+                  {lt}
+                </button>
+              ))}
+            </div>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 5, cursor: "pointer" }}>
+              <input type="checkbox"
+                checked={!!leg.podLinkedAllowed}
+                onChange={e => onUpdate({ podLinkedAllowed: e.target.checked })}
+                style={{ width: 13, height: 13, accentColor: T.info, cursor: "pointer" }}
+              />
+              <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>Allow linked POD</span>
+            </label>
+            {(leg.podLocType === "Door" || leg.podLocType === "CY") && (
+              <div style={{ marginTop: 5 }}>
+                <input
+                  value={leg.podHaulageLocations || ""}
+                  onChange={e => onUpdate({ podHaulageLocations: e.target.value })}
+                  placeholder="UN/LOCODEs e.g. USCHI USLGB (leave blank for any)"
+                  style={{ ...inputBase, fontFamily: T.mono, fontSize: 11, width: "100%", boxSizing: "border-box" }}
+                />
+                <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted, marginTop: 2, display: "block" }}>
+                  Door and CY both enable Carrier's Haulage routing — leave blank to accept any location
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Remove */}
+      <button type="button" onClick={onRemove}
+        style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 5,
+          color: T.danger, cursor: "pointer", fontSize: 13, padding: "4px 8px",
+          display: "flex", alignItems: "center", justifyContent: "center", marginTop: 2 }}>
+        ✕
+      </button>
+    </div>
+
+    {/* Row 2: Transit days + Vessel service */}
+    <div style={{ display: "grid", gridTemplateColumns: "80px 1fr", gap: 8, marginTop: 8 }}>
+      <input
+        type="number" min={0} max={999}
+        value={leg.transitDays}
+        onChange={e => onUpdate({ transitDays: parseInt(e.target.value) || 0 })}
+        placeholder="Days"
+        title="Transit days"
+        style={{ ...inputBase, fontFamily: T.mono, fontSize: 12, textAlign: "center" }}
+      />
+      <input
+        value={leg.vesselService}
+        onChange={e => onUpdate({ vesselService: e.target.value })}
+        placeholder="Vessel service (e.g. AEX-1)…"
+        style={{ ...inputBase, fontFamily: T.mono, fontSize: 12 }}
+      />
+    </div>
+  </div>
+);
 
 // ─── Contract Modal Form ──────────────────────────────────────────────────────
 
@@ -94,6 +244,7 @@ const ContractModal = ({ editing, prefill, onSave, onClose }) => {
   const src = editing || prefill;
   const [f, setF] = useState(() => {
     if (!src) return { ...EMPTY_FORM };
+    const routings = src.routings || [];
     return {
       contractNumber: src.contractNumber || "",
       contractRef:    src.contractRef    || "",
@@ -109,8 +260,9 @@ const ContractModal = ({ editing, prefill, onSave, onClose }) => {
       currency:       src.currency       || "USD",
       status:         src.status         || "Active",
       notes:          src.notes          || "",
-      legs:           src.legs           || [],
-      rates:          src.rates          || [],
+      legs:           resolveRoutingIndex(src.legs  || [], routings),
+      rates:          resolveRoutingIndex(src.rates || [], routings),
+      routings,
     };
   });
 
@@ -141,11 +293,12 @@ const ContractModal = ({ editing, prefill, onSave, onClose }) => {
     c.name.toLowerCase().includes(carrierQuery.toLowerCase())
   );
 
-  // Load legs+rates when editing
+  // Load legs+rates+routings when editing
   useEffect(() => {
     if (editing?.id) {
       api.contracts.get(editing.id).then(full => {
-        setF(p => ({ ...p, legs: full.legs || [], rates: full.rates || [] }));
+        const routings = full.routings || [];
+        setF(p => ({ ...p, legs: resolveRoutingIndex(full.legs || [], routings), rates: resolveRoutingIndex(full.rates || [], routings), routings }));
       }).catch(() => {});
     }
   }, [editing?.id]);
@@ -153,11 +306,35 @@ const ContractModal = ({ editing, prefill, onSave, onClose }) => {
   const updateLeg = (i, patch) =>
     setF(p => ({ ...p, legs: p.legs.map((l, idx) => idx === i ? { ...l, ...patch } : l) }));
 
-  const addLeg = () =>
-    setF(p => ({ ...p, legs: [...p.legs, { pol:"", polName:"", pod:"", podName:"", transitDays:0, vesselService:"", polLinkedAllowed:false, podLinkedAllowed:false, polCarrierHaulage:false, podCarrierHaulage:false, polHaulageLocations:"", podHaulageLocations:"", polLocType:"Terminal", podLocType:"Terminal" }] }));
+  // routingIndex: -1 (default) = the contract's single implicit routing/no grouping; an
+  // integer index into f.routings assigns the new leg straight into that named routing's
+  // own group (used by each routing card's own "+ Add Leg" button below).
+  const addLeg = (routingIndex = -1) =>
+    setF(p => ({ ...p, legs: [...p.legs, { pol:"", polName:"", pod:"", podName:"", transitDays:0, vesselService:"", polLinkedAllowed:false, podLinkedAllowed:false, polCarrierHaulage:false, podCarrierHaulage:false, polHaulageLocations:"", podHaulageLocations:"", polLocType:"Terminal", podLocType:"Terminal", routingIndex }] }));
 
   const removeLeg = i =>
     setF(p => ({ ...p, legs: p.legs.filter((_, idx) => idx !== i) }));
+
+  // A named routing (e.g. "Via Rotterdam") groups a subset of legs (and, in the Rates section
+  // below, optionally a subset of rates) under one label — see resolveRoutingIndex's own
+  // comment for why correlation is by array index, not a server id, while editing.
+  const addRouting = () =>
+    setF(p => ({ ...p, routings: [...p.routings, { name: "", transitDays: 0, notes: "" }] }));
+
+  const updateRouting = (i, patch) =>
+    setF(p => ({ ...p, routings: p.routings.map((r, idx) => idx === i ? { ...r, ...patch } : r) }));
+
+  // Removing a named routing removes ITS OWN legs/rates too (not just ungroups them) — a rate
+  // or leg scoped to "Via Hamburg" has no meaning once "Via Hamburg" no longer exists. Every
+  // leg/rate belonging to a LATER routing has its routingIndex shifted down by one so it still
+  // points at the correct (now-reindexed) entry in the shortened routings array.
+  const removeRouting = i =>
+    setF(p => ({
+      ...p,
+      routings: p.routings.filter((_, idx) => idx !== i),
+      legs: p.legs.filter(l => l.routingIndex !== i).map(l => l.routingIndex > i ? { ...l, routingIndex: l.routingIndex - 1 } : l),
+      rates: p.rates.filter(r => r.routingIndex !== i).map(r => r.routingIndex > i ? { ...r, routingIndex: r.routingIndex - 1 } : r),
+    }));
 
   const calcUsd = (amount, currency) => {
     if (!currency || currency === "USD") return Math.round(amount * 100) / 100;
@@ -181,7 +358,7 @@ const ContractModal = ({ editing, prefill, onSave, onClose }) => {
   };
 
   const addRate = () =>
-    setF(p => ({ ...p, rates: [...p.rates, { serviceCode:"OF", description:"", containerType:"", amount:0, currency: p.currency, amountUsd:0, unit:"per_container", notes:"" }] }));
+    setF(p => ({ ...p, rates: [...p.rates, { serviceCode:"OF", description:"", containerType:"", amount:0, currency: p.currency, amountUsd:0, unit:"per_container", notes:"", validFrom:"", validTo:"", routingIndex:-1 }] }));
 
   const removeRate = i =>
     setF(p => ({ ...p, rates: p.rates.filter((_, idx) => idx !== i) }));
@@ -245,6 +422,12 @@ const ContractModal = ({ editing, prefill, onSave, onClose }) => {
     transition: "background 0.12s, border-color 0.12s",
     userSelect: "none",
   });
+
+  // Rate table grid — gains a leading Routing column only once the contract has at least one
+  // named routing, so a plain single-routing contract's table is untouched.
+  const rateCols = f.routings.length > 0
+    ? "130px 130px 1fr 90px 80px 70px 70px 100px 108px 108px 1fr 32px"
+    : "130px 1fr 90px 80px 70px 70px 100px 108px 108px 1fr 32px";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
@@ -374,151 +557,58 @@ const ContractModal = ({ editing, prefill, onSave, onClose }) => {
 
       {/* ── Section 3: Routing ── */}
       <div style={sectionHeader()}>Routing (Multi-Leg) <span style={{ color: T.danger }}>*</span></div>
+      {/* Ungrouped legs (routingIndex -1) — a contract with zero named routings renders exactly
+          this, nothing more: no routing chrome, just "+ Add Leg" like before this feature. */}
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {f.legs.map((leg, i) => (
-          <div key={i} style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px" }}>
-            {/* Row 1: Leg label · POL · → · POD · remove */}
-            <div style={{ display: "grid", gridTemplateColumns: "44px 1fr 18px 1fr 32px", gap: 8, alignItems: "start" }}>
-              <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, fontWeight: 700, paddingTop: 8 }}>
-                Leg {i + 1}
-              </span>
-
-              {/* POL */}
-              <div>
-                {leg.pol ? (
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, background: T.surface,
-                    border: `1px solid ${T.accent}55`, borderRadius: 6, padding: "6px 10px" }}>
-                    <span style={{ fontFamily: T.mono, fontSize: 12, color: T.accent, fontWeight: 700 }}>{leg.pol}</span>
-                    {leg.polName && <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{leg.polName}</span>}
-                    <button type="button" onClick={() => updateLeg(i, { pol: "", polName: "", polLinkedAllowed: false, polCarrierHaulage: false, polHaulageLocations: "", polLocType: "Terminal" })}
-                      style={{ background: "none", border: "none", cursor: "pointer", color: T.textMuted, fontSize: 10, padding: 0, flexShrink: 0 }}>✕</button>
-                  </div>
-                ) : (
-                  <PortCombobox placeholder="POL…" onChange={r => updateLeg(i, { pol: r.unlocode, polName: r.name })} />
-                )}
-                {leg.pol && (
-                  <div style={{ marginTop: 6 }}>
-                    <div style={{ display: "flex", gap: 0, borderRadius: 5, overflow: "hidden", border: `1px solid ${T.border}`, width: "fit-content" }}>
-                      {["Terminal","Door","CY"].map(lt => (
-                        <button key={lt} type="button"
-                          onClick={() => updateLeg(i, { polLocType: lt, polCarrierHaulage: lt !== "Terminal" })}
-                          style={{ fontFamily: T.body, fontSize: 11, padding: "3px 9px", border: "none", cursor: "pointer", borderRight: lt !== "CY" ? `1px solid ${T.border}` : "none",
-                            background: (leg.polLocType || "Terminal") === lt ? T.accent : T.surface,
-                            color: (leg.polLocType || "Terminal") === lt ? "#fff" : T.textMuted }}>
-                          {lt}
-                        </button>
-                      ))}
-                    </div>
-                    <label style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 5, cursor: "pointer" }}>
-                      <input type="checkbox"
-                        checked={!!leg.polLinkedAllowed}
-                        onChange={e => updateLeg(i, { polLinkedAllowed: e.target.checked })}
-                        style={{ width: 13, height: 13, accentColor: T.info, cursor: "pointer" }}
-                      />
-                      <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>Allow linked POL</span>
-                    </label>
-                    {(leg.polLocType === "Door" || leg.polLocType === "CY") && (
-                      <div style={{ marginTop: 5 }}>
-                        <input
-                          value={leg.polHaulageLocations || ""}
-                          onChange={e => updateLeg(i, { polHaulageLocations: e.target.value })}
-                          placeholder="UN/LOCODEs e.g. NLAMS NLRTM (leave blank for any)"
-                          style={{ ...inputBase, fontFamily: T.mono, fontSize: 11, width: "100%", boxSizing: "border-box" }}
-                        />
-                        <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted, marginTop: 2, display: "block" }}>
-                          Door and CY both enable Carrier's Haulage routing — leave blank to accept any location
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              <span style={{ textAlign: "center", color: T.textMuted, fontSize: 13, paddingTop: 8 }}>→</span>
-
-              {/* POD */}
-              <div>
-                {leg.pod ? (
-                  <div style={{ display: "flex", alignItems: "center", gap: 6, background: T.surface,
-                    border: `1px solid ${T.accent}55`, borderRadius: 6, padding: "6px 10px" }}>
-                    <span style={{ fontFamily: T.mono, fontSize: 12, color: T.accent, fontWeight: 700 }}>{leg.pod}</span>
-                    {leg.podName && <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{leg.podName}</span>}
-                    <button type="button" onClick={() => updateLeg(i, { pod: "", podName: "", podLinkedAllowed: false, podCarrierHaulage: false, podHaulageLocations: "", podLocType: "Terminal" })}
-                      style={{ background: "none", border: "none", cursor: "pointer", color: T.textMuted, fontSize: 10, padding: 0, flexShrink: 0 }}>✕</button>
-                  </div>
-                ) : (
-                  <PortCombobox placeholder="POD…" onChange={r => updateLeg(i, { pod: r.unlocode, podName: r.name })} />
-                )}
-                {leg.pod && (
-                  <div style={{ marginTop: 6 }}>
-                    <div style={{ display: "flex", gap: 0, borderRadius: 5, overflow: "hidden", border: `1px solid ${T.border}`, width: "fit-content" }}>
-                      {["Terminal","Door","CY"].map(lt => (
-                        <button key={lt} type="button"
-                          onClick={() => updateLeg(i, { podLocType: lt, podCarrierHaulage: lt !== "Terminal" })}
-                          style={{ fontFamily: T.body, fontSize: 11, padding: "3px 9px", border: "none", cursor: "pointer", borderRight: lt !== "CY" ? `1px solid ${T.border}` : "none",
-                            background: (leg.podLocType || "Terminal") === lt ? T.accent : T.surface,
-                            color: (leg.podLocType || "Terminal") === lt ? "#fff" : T.textMuted }}>
-                          {lt}
-                        </button>
-                      ))}
-                    </div>
-                    <label style={{ display: "inline-flex", alignItems: "center", gap: 5, marginTop: 5, cursor: "pointer" }}>
-                      <input type="checkbox"
-                        checked={!!leg.podLinkedAllowed}
-                        onChange={e => updateLeg(i, { podLinkedAllowed: e.target.checked })}
-                        style={{ width: 13, height: 13, accentColor: T.info, cursor: "pointer" }}
-                      />
-                      <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>Allow linked POD</span>
-                    </label>
-                    {(leg.podLocType === "Door" || leg.podLocType === "CY") && (
-                      <div style={{ marginTop: 5 }}>
-                        <input
-                          value={leg.podHaulageLocations || ""}
-                          onChange={e => updateLeg(i, { podHaulageLocations: e.target.value })}
-                          placeholder="UN/LOCODEs e.g. USCHI USLGB (leave blank for any)"
-                          style={{ ...inputBase, fontFamily: T.mono, fontSize: 11, width: "100%", boxSizing: "border-box" }}
-                        />
-                        <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted, marginTop: 2, display: "block" }}>
-                          Door and CY both enable Carrier's Haulage routing — leave blank to accept any location
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Remove */}
-              <button type="button" onClick={() => removeLeg(i)}
-                style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 5,
-                  color: T.danger, cursor: "pointer", fontSize: 13, padding: "4px 8px",
-                  display: "flex", alignItems: "center", justifyContent: "center", marginTop: 2 }}>
-                ✕
-              </button>
-            </div>
-
-            {/* Row 2: Transit days + Vessel service */}
-            <div style={{ display: "grid", gridTemplateColumns: "80px 1fr", gap: 8, marginTop: 8 }}>
-              <input
-                type="number" min={0} max={999}
-                value={leg.transitDays}
-                onChange={e => updateLeg(i, { transitDays: parseInt(e.target.value) || 0 })}
-                placeholder="Days"
-                title="Transit days"
-                style={{ ...inputBase, fontFamily: T.mono, fontSize: 12, textAlign: "center" }}
-              />
-              <input
-                value={leg.vesselService}
-                onChange={e => updateLeg(i, { vesselService: e.target.value })}
-                placeholder="Vessel service (e.g. AEX-1)…"
-                style={{ ...inputBase, fontFamily: T.mono, fontSize: 12 }}
-              />
-            </div>
-
-          </div>
+        {f.legs.map((leg, i) => leg.routingIndex >= 0 ? null : (
+          <LegCard key={i} leg={leg}
+            label={`Leg ${f.legs.slice(0, i + 1).filter(l => l.routingIndex < 0).length}`}
+            onUpdate={patch => updateLeg(i, patch)} onRemove={() => removeLeg(i)} />
         ))}
         <div>
-          <Btn variant="secondary" onClick={addLeg}>+ Add Leg</Btn>
+          <Btn variant="secondary" onClick={() => addLeg(-1)}>+ Add Leg</Btn>
         </div>
+      </div>
+
+      {/* Named routings — each a self-contained group of its own legs (e.g. "Via Rotterdam"
+          vs. "Via Hamburg" for the same POL/POD), independently priced in the Rates section
+          below. Only appears once at least one routing has been added. */}
+      {f.routings.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 10 }}>
+          {f.routings.map((routing, ri) => (
+            <div key={ri} style={{ background: T.surface, border: `1px solid ${T.accent}44`, borderRadius: 10, padding: "12px 14px" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                <input value={routing.name} onChange={e => updateRouting(ri, { name: e.target.value })}
+                  placeholder={`Routing ${ri + 1} name (e.g. "Via Rotterdam")`}
+                  style={{ ...inputBase, fontFamily: T.body, fontSize: 13, fontWeight: 600, flex: 1 }} />
+                <input type="number" min={0} max={999}
+                  value={routing.transitDays}
+                  onChange={e => updateRouting(ri, { transitDays: parseInt(e.target.value) || 0 })}
+                  placeholder="Days" title="Total transit days for this routing"
+                  style={{ ...inputBase, fontFamily: T.mono, fontSize: 12, width: 90, textAlign: "center" }} />
+                <button type="button" onClick={() => removeRouting(ri)}
+                  title="Remove this routing and its legs/rates"
+                  style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 5,
+                    color: T.danger, cursor: "pointer", fontSize: 13, padding: "4px 8px" }}>
+                  ✕
+                </button>
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {f.legs.map((leg, i) => leg.routingIndex !== ri ? null : (
+                  <LegCard key={i} leg={leg}
+                    label={`Leg ${f.legs.slice(0, i + 1).filter(l => l.routingIndex === ri).length}`}
+                    onUpdate={patch => updateLeg(i, patch)} onRemove={() => removeLeg(i)} />
+                ))}
+                <div>
+                  <Btn variant="secondary" size="sm" onClick={() => addLeg(ri)}>+ Add Leg</Btn>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      <div style={{ marginTop: 10 }}>
+        <Btn variant="secondary" onClick={addRouting}>+ Add Routing</Btn>
       </div>
 
       {/* ── Section 4: Container & DG ── */}
@@ -579,11 +669,14 @@ const ContractModal = ({ editing, prefill, onSave, onClose }) => {
 
       {f.rates.length > 0 && (
         <div style={{ background: T.bg, borderRadius: 8, border: `1px solid ${T.border}`, overflow: "hidden", marginBottom: 8 }}>
-          {/* Header */}
-          <div style={{ display: "grid", gridTemplateColumns: "130px 1fr 90px 80px 70px 70px 100px 1fr 32px",
+          {/* Header — the Routing column only exists once the contract has at least one named
+              routing, so a plain single-routing contract's rate table looks exactly like it
+              did before this feature (see rateCols below). */}
+          <div style={{ display: "grid", gridTemplateColumns: rateCols,
             gap: 6, padding: "7px 10px", borderBottom: `1px solid ${T.border}`,
             fontFamily: T.body, fontSize: 10, fontWeight: 600, color: T.textMuted,
             textTransform: "uppercase", letterSpacing: ".07em" }}>
+            {f.routings.length > 0 && <span>Routing</span>}
             <span>Service</span>
             <span>Description</span>
             <span>Container</span>
@@ -591,12 +684,25 @@ const ContractModal = ({ editing, prefill, onSave, onClose }) => {
             <span>Currency</span>
             <span>≈ USD</span>
             <span>Unit</span>
+            <span title="Blank = inherits the contract's own Valid From/To window">Valid From</span>
+            <span title="Blank = inherits the contract's own Valid From/To window">Valid To</span>
             <span>Notes</span>
             <span></span>
           </div>
           {f.rates.map((r, i) => (
-            <div key={i} style={{ display: "grid", gridTemplateColumns: "130px 1fr 90px 80px 70px 70px 100px 1fr 32px",
+            <div key={i} style={{ display: "grid", gridTemplateColumns: rateCols,
               gap: 6, padding: "6px 10px", borderBottom: `1px solid ${T.border}22`, alignItems: "center" }}>
+              {/* Routing — '' / -1 means "all routings" (a contract-wide line, e.g. a flat
+                  documentation fee), same as this field's meaning on every legacy contract's
+                  rates today. */}
+              {f.routings.length > 0 && (
+                <select value={r.routingIndex ?? -1} onChange={e => updateRate(i, { routingIndex: parseInt(e.target.value, 10) })}
+                  title="Which routing this rate applies to — 'All routings' applies regardless of which one was matched"
+                  style={{ ...inputBase, fontFamily: T.body, fontSize: 11, padding: "5px 6px" }}>
+                  <option value={-1}>All routings</option>
+                  {f.routings.map((rt, ri) => <option key={ri} value={ri}>{rt.name || `Routing ${ri + 1}`}</option>)}
+                </select>
+              )}
               {/* Service code */}
               <select value={r.serviceCode} onChange={e => updateRate(i, { serviceCode: e.target.value })}
                 style={{ ...inputBase, fontFamily: T.mono, fontSize: 11, padding: "5px 6px" }}>
@@ -632,6 +738,14 @@ const ContractModal = ({ editing, prefill, onSave, onClose }) => {
                 style={{ ...inputBase, fontFamily: T.mono, fontSize: 11, padding: "5px 6px" }}>
                 {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
               </select>
+              {/* Valid From — blank inherits the contract's own window */}
+              <input type="date" value={r.validFrom || ""} max={r.validTo || undefined}
+                onChange={e => updateRate(i, { validFrom: e.target.value })}
+                style={{ ...inputBase, fontFamily: T.mono, fontSize: 10.5, padding: "5px 4px" }} />
+              {/* Valid To — blank inherits the contract's own window */}
+              <input type="date" value={r.validTo || ""} min={r.validFrom || undefined}
+                onChange={e => updateRate(i, { validTo: e.target.value })}
+                style={{ ...inputBase, fontFamily: T.mono, fontSize: 10.5, padding: "5px 4px" }} />
               {/* Notes */}
               <input value={r.notes} onChange={e => updateRate(i, { notes: e.target.value })}
                 placeholder="Notes…"
@@ -921,6 +1035,27 @@ const MdmContractsPage = () => {
     }
   };
 
+  const handlePublish = async id => {
+    try {
+      await api.contracts.publish(id);
+      toast.success("Contract published — now selectable for shipments");
+      doLoad(filters, offset);
+    } catch (e) {
+      toast.error(e.message);
+    }
+  };
+
+  const handleWithdraw = async id => {
+    if (!window.confirm("Withdraw this contract back to Draft? It will no longer be selectable for new shipments.")) return;
+    try {
+      await api.contracts.withdraw(id);
+      toast.success("Contract withdrawn to Draft");
+      doLoad(filters, offset);
+    } catch (e) {
+      toast.error(e.message);
+    }
+  };
+
   const handleSearchChange = (key, val) => {
     const next = { ...filters, [key]: val };
     setFilters(next);
@@ -1021,6 +1156,7 @@ const MdmContractsPage = () => {
           </div>
         ) : results.map(c => {
           const legs = c.legs || [];
+          const routings = c.routings || [];
           const ctypes = c.containerTypes || [];
           const shown = ctypes.slice(0, 3);
           const more  = ctypes.length - shown.length;
@@ -1071,15 +1207,25 @@ const MdmContractsPage = () => {
                         {legs[0].polName} › {legs[0].podName}
                       </div>
                     )}
-                    {legs.length > 1 && (
-                      <button type="button"
-                        onClick={e => { e.stopPropagation(); setRoutingContract(c); }}
-                        style={{ marginTop: 4, background: "none", border: "none", padding: 0,
-                          cursor: "pointer", fontFamily: T.body, fontSize: 10.5, color: T.accent,
-                          textDecoration: "underline", textDecorationStyle: "dotted" }}>
-                        +{legs.length - 1} more routing{legs.length - 1 > 1 ? "s" : ""}
-                      </button>
-                    )}
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+                      {legs.length > 1 && (
+                        <button type="button"
+                          onClick={e => { e.stopPropagation(); setRoutingContract(c); }}
+                          style={{ background: "none", border: "none", padding: 0,
+                            cursor: "pointer", fontFamily: T.body, fontSize: 10.5, color: T.accent,
+                            textDecoration: "underline", textDecorationStyle: "dotted" }}>
+                          +{legs.length - 1} more leg{legs.length - 1 > 1 ? "s" : ""}
+                        </button>
+                      )}
+                      {/* Named routings (e.g. "Via Rotterdam" vs "Via Hamburg") are a distinct
+                          concept from raw leg count — surfaced here so a multi-priced-path
+                          contract is visible straight from the list. */}
+                      {routings.length > 1 && (
+                        <span title={routings.map(r => r.name || "Unnamed").join(", ")}>
+                          <Badge variant="info">{routings.length} routings</Badge>
+                        </span>
+                      )}
+                    </div>
                   </>
                 )}
               </div>
@@ -1125,6 +1271,8 @@ const MdmContractsPage = () => {
               <div style={{ display: "flex", justifyContent: "flex-end" }}>
                 <ActionMenu items={[
                   ...(canManageConfigs ? [{ icon: "✎",  label: "Edit",      onClick: () => setModal(c) }] : []),
+                  ...(canManageConfigs && c.status === "Draft"  ? [{ icon: "▲", label: "Publish",  onClick: () => handlePublish(c.id) }] : []),
+                  ...(canManageConfigs && c.status === "Active" ? [{ icon: "▽", label: "Withdraw to Draft", onClick: () => handleWithdraw(c.id) }] : []),
                   ...(canManageConfigs ? [{ icon: "⧉",  label: "Duplicate", onClick: () => handleDuplicate(c) }] : []),
                   { icon: "🗓", label: "Schedules",  onClick: () => setSchedulesContract(c) },
                   { icon: "📋", label: "History",   onClick: () => setHistoryContract(c) },
@@ -1197,54 +1345,85 @@ const MdmContractsPage = () => {
         </Modal>
       )}
 
-      {/* Routings modal */}
+      {/* Route Legs modal — was labeled "Routings" before this feature, but it always meant
+          "leg detail," not "named alternative path"; renamed to free up that word for the
+          real contract_routings grouping, which this view now also groups legs by when any
+          exist (falls back to one flat unlabeled list for a contract with none, unchanged). */}
       {routingContract && (
         <Modal
-          title={`Routings — ${routingContract.contractNumber}`}
+          title={`Route Legs — ${routingContract.contractNumber}`}
           onClose={() => setRoutingContract(null)}
           width={500}
         >
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {(routingContract.legs || []).map((leg, i) => (
-              <div key={i} style={{ background: T.bg, border: `1px solid ${T.border}`,
-                borderRadius: 8, padding: "12px 16px" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: leg.polName || leg.podName || leg.transitDays || leg.vesselService ? 8 : 0 }}>
-                  <span style={{ fontFamily: T.mono, fontSize: 10, color: T.border, fontWeight: 600,
-                    background: T.surface, border: `1px solid ${T.border}`, borderRadius: 4,
-                    padding: "1px 6px", flexShrink: 0 }}>
-                    Leg {i + 1}
-                  </span>
-                  <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.accent }}>{leg.pol}</span>
-                  <span style={{ fontFamily: T.mono, fontSize: 14, color: T.textMuted }}>›</span>
-                  <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.accent }}>{leg.pod}</span>
-                </div>
-                {(leg.polName || leg.podName) && (
-                  <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, marginBottom: 6 }}>
-                    {leg.polName} <span style={{ color: T.border }}>›</span> {leg.podName}
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            {(() => {
+              const legs = routingContract.legs || [];
+              const routings = routingContract.routings || [];
+              const ungrouped = legs.filter(l => !l.routingId || !routings.some(r => r.id === l.routingId));
+              const groups = routings.length > 0
+                ? [
+                    ...routings.map(r => ({ routing: r, legs: legs.filter(l => l.routingId === r.id) })),
+                    ...(ungrouped.length > 0 ? [{ routing: null, legs: ungrouped }] : []),
+                  ]
+                : [{ routing: null, legs }];
+              return groups.map((group, gi) => (
+                <div key={gi}>
+                  {group.routing && (
+                    <div style={{ fontFamily: T.body, fontSize: 12, fontWeight: 700, color: T.accent,
+                      marginBottom: 8, textTransform: "uppercase", letterSpacing: ".05em" }}>
+                      {group.routing.name || `Routing ${gi + 1}`}
+                      {group.routing.transitDays > 0 && (
+                        <span style={{ color: T.textMuted, fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>
+                          {" "}· {group.routing.transitDays}d total
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {group.legs.map((leg, i) => (
+                      <div key={i} style={{ background: T.bg, border: `1px solid ${T.border}`,
+                        borderRadius: 8, padding: "12px 16px" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: leg.polName || leg.podName || leg.transitDays || leg.vesselService ? 8 : 0 }}>
+                          <span style={{ fontFamily: T.mono, fontSize: 10, color: T.border, fontWeight: 600,
+                            background: T.surface, border: `1px solid ${T.border}`, borderRadius: 4,
+                            padding: "1px 6px", flexShrink: 0 }}>
+                            Leg {i + 1}
+                          </span>
+                          <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.accent }}>{leg.pol}</span>
+                          <span style={{ fontFamily: T.mono, fontSize: 14, color: T.textMuted }}>›</span>
+                          <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.accent }}>{leg.pod}</span>
+                        </div>
+                        {(leg.polName || leg.podName) && (
+                          <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, marginBottom: 6 }}>
+                            {leg.polName} <span style={{ color: T.border }}>›</span> {leg.podName}
+                          </div>
+                        )}
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 20px" }}>
+                          {leg.transitDays > 0 && (
+                            <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+                              Transit: <span style={{ color: T.text }}>{leg.transitDays}d</span>
+                            </span>
+                          )}
+                          {leg.vesselService && (
+                            <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+                              Service: <span style={{ color: T.text }}>{leg.vesselService}</span>
+                            </span>
+                          )}
+                          {(leg.polLinkedAllowed || leg.podLinkedAllowed) && (
+                            <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
+                              Linked ports:{" "}
+                              <span style={{ color: T.text }}>
+                                {[leg.polLinkedAllowed && "POL", leg.podLinkedAllowed && "POD"].filter(Boolean).join(", ")}
+                              </span>
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                )}
-                <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 20px" }}>
-                  {leg.transitDays > 0 && (
-                    <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
-                      Transit: <span style={{ color: T.text }}>{leg.transitDays}d</span>
-                    </span>
-                  )}
-                  {leg.vesselService && (
-                    <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
-                      Service: <span style={{ color: T.text }}>{leg.vesselService}</span>
-                    </span>
-                  )}
-                  {(leg.polLinkedAllowed || leg.podLinkedAllowed) && (
-                    <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
-                      Linked ports:{" "}
-                      <span style={{ color: T.text }}>
-                        {[leg.polLinkedAllowed && "POL", leg.podLinkedAllowed && "POD"].filter(Boolean).join(", ")}
-                      </span>
-                    </span>
-                  )}
                 </div>
-              </div>
-            ))}
+              ));
+            })()}
           </div>
         </Modal>
       )}

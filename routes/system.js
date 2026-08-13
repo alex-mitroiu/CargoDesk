@@ -109,6 +109,19 @@ module.exports = function systemRoutes(app, ctx) {
     ok(res, { order });
   });
 
+  // Admin-only, same rationale as shipment-sidebar-order above: a dedicated, more tightly-gated
+  // route rather than folding into the generic PUT /api/settings (which also allows operator/
+  // occ_bk) — switching where every contract/rate read and write actually goes (local monolith
+  // tables vs. the standalone Contract Management Service) is a genuine data-source cutover, a
+  // different class of action than the operational settings that route otherwise handles.
+  app.put("/api/settings/contract-source", auth(), requireRole(["admin"]), (req, res) => {
+    const { value } = req.body || {};
+    if (value !== "local" && value !== "remote") return err(res, "value must be 'local' or 'remote'");
+    db.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('contract_source', ?)").run(value);
+    logAdminEvent(req.user, 'SETTINGS_UPDATED', 'settings', 'contract_source', { value });
+    ok(res, { contractSource: value });
+  });
+
   // ─── Schedules ────────────────────────────────────────────────────────────
 
   const MAERSK_CODES = new Set(["MAEU", "SAFM", "MCPU"]);

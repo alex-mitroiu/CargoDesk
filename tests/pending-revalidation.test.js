@@ -72,14 +72,31 @@ async function login() {
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
-async function testRevalidateEndpoint(token) {
+// Ref used to hardcode a specific pre-seeded dev-DB contract number (CMDU-CH-EUN-NAM) — fragile
+// by construction, since GET /api/contracts/revalidate only ever matches status='Active'
+// contracts, and that seed row's own valid_to eventually passes (contracts now auto-expire
+// server-side once valid_to passes — see routes/contracts.js's expireStaleContracts — so a fixed
+// dev-DB fixture can't be relied on to stay Active forever). Uses its own disposable scratch
+// contract with a far-future valid_to instead, same "don't depend on shared fixture state that
+// can silently go stale" reasoning as password-reset.test.js's own scratch user.
+async function makeScratchContract(token) {
+  const contractNumber = `TEST-REVAL-${Date.now()}`;
+  const r = await request("POST", "/api/contracts", {
+    contractNumber, carrierCode: "CMDU", status: "Active",
+    validFrom: "2026-01-01", validTo: "2099-12-31",
+  }, token);
+  if (r.status !== 201) throw new Error(`Scratch contract creation failed (${r.status}): ${JSON.stringify(r.body)}`);
+  return { id: r.body.id, contractNumber };
+}
+
+async function testRevalidateEndpoint(token, fixture) {
   console.log("\nGET /api/contracts/revalidate");
 
-  const known = await request("GET", "/api/contracts/revalidate?ref=CMDU-CH-EUN-NAM", null, token);
+  const known = await request("GET", `/api/contracts/revalidate?ref=${fixture.contractNumber}`, null, token);
   assert("200 for known ref",         known.status === 200);
   assert("returns array",             Array.isArray(known.body));
   assert("at least one result",       known.body.length >= 1);
-  assert("correct contractNumber",    known.body[0]?.contractNumber === "CMDU-CH-EUN-NAM");
+  assert("correct contractNumber",    known.body[0]?.contractNumber === fixture.contractNumber);
   assert("status is Active",          known.body[0]?.status === "Active");
   assert("has id field",              !!known.body[0]?.id);
 
@@ -93,23 +110,23 @@ async function testRevalidateEndpoint(token) {
   const omit = await request("GET", "/api/contracts/revalidate", null, token);
   assert("empty array when ref omitted", Array.isArray(omit.body) && omit.body.length === 0);
 
-  const lower = await request("GET", "/api/contracts/revalidate?ref=cmdu-ch-eun-nam", null, token);
-  assert("case-insensitive match",    lower.body.length >= 1 && lower.body[0].contractNumber === "CMDU-CH-EUN-NAM");
+  const lower = await request("GET", `/api/contracts/revalidate?ref=${fixture.contractNumber.toLowerCase()}`, null, token);
+  assert("case-insensitive match",    lower.body.length >= 1 && lower.body[0].contractNumber === fixture.contractNumber);
 
   const allActive = known.body.every(c => c.status === "Active");
   assert("all results are Active",    allActive);
 }
 
-async function testUpgradeFlow(token) {
+async function testUpgradeFlow(token, fixture) {
   console.log("\nPending → Central upgrade flow");
 
-  // Create a Pending shipment with a contractRef that matches a known contract
+  // Create a Pending shipment with a contractRef that matches the scratch contract
   const create = await request("POST", "/api/shipments", {
     pol: "CNSHA", pod: "USNYC",
     carrierCode: "CMDU",
     status: "Active",
     contractType: "Pending",
-    contractRef: "CMDU-CH-EUN-NAM",
+    contractRef: fixture.contractNumber,
     etd: "2026-08-01",
   }, token);
   assert("create Pending shipment (201)", create.status === 201);
@@ -118,7 +135,7 @@ async function testUpgradeFlow(token) {
 
   try {
     // Revalidate finds the match
-    const rev = await request("GET", `/api/contracts/revalidate?ref=CMDU-CH-EUN-NAM`, null, token);
+    const rev = await request("GET", `/api/contracts/revalidate?ref=${fixture.contractNumber}`, null, token);
     assert("revalidate returns match for new shipment's ref", rev.body.length >= 1);
     const contract = rev.body[0];
 
@@ -146,12 +163,15 @@ async function testUpgradeFlow(token) {
   console.log("Pending contract revalidation — smoke tests");
   console.log(`Server: ${BASE}\n`);
 
+  let fixture;
   try {
     const token = await login();
     console.log("  ✓ Login OK");
 
-    await testRevalidateEndpoint(token);
-    await testUpgradeFlow(token);
+    fixture = await makeScratchContract(token);
+    await testRevalidateEndpoint(token, fixture);
+    await testUpgradeFlow(token, fixture);
+    await request("DELETE", `/api/contracts/${fixture.id}`, null, token);
   } catch (e) {
     console.error("\nFatal:", e.message);
     process.exit(1);

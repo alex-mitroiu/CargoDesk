@@ -830,7 +830,11 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocat
                   Allocated vs Consumed TEU
                 </h2>
                 <p style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, margin: 0 }}>
-                  Space config utilisation per contract
+                  Contract-level rollup for the selected date range — sums every Central shipment
+                  against this contract (any allocation) in range, not one specific space config's
+                  own real-time figure. Can differ from that config's own Consumed number on the
+                  Space Configurations page, which is scoped to explicitly-linked shipments only,
+                  with no date-range filter.
                 </p>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 10,

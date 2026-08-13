@@ -90,7 +90,7 @@ const ShipmentCarrierBookingPage = ({ shipment, onBack, onRefresh, navigate, ini
         ))}
       </div>
 
-      {activeTab === "details" && <ShipmentCarrierBookingDetailsPage shipment={shipment} onBack={onBack} />}
+      {activeTab === "details" && <ShipmentCarrierBookingDetailsPage shipment={shipment} onBack={onBack} onRefresh={onRefresh} />}
       {activeTab === "review" && (
         <ShipmentCarrierBookingReviewPage shipment={shipment} onBack={onBack} onRefresh={onRefresh} />
       )}

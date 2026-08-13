@@ -4,8 +4,17 @@ const SECURE_MODES = ["none", "starttls", "tls"];
 
 module.exports = function officeMailRoutes(app, ctx) {
   const { db, ok, err, uid, requireRole, isUniqueViolation,
-          mapOfficeMailSettings, createTransporterFromSettings, invalidateTransporterCache } = ctx;
+          mapOfficeMailSettings, createTransporterFromSettings, invalidateTransporterCache,
+          createRateLimiter } = ctx;
   const adminOnly = requireRole(["admin"]);
+
+  // Admin-only, but still a real outbound SMTP send per call — keyed by user, mirrors the
+  // equivalent limiter on the system-email test route (routes/auth.js), own independent budget.
+  const mailTestRateLimit = createRateLimiter({
+    windowMs: 15 * 60 * 1000, max: 10, maxEnvVar: "MAIL_TEST_RATE_MAX",
+    keyFn: req => req.user.id,
+    message: "Too many test emails sent recently — try again later",
+  });
 
   const DEFAULT_SETTINGS = officeId => ({
     id: null, officeId, smtpHost: "", smtpPort: 587, secureMode: "starttls",
@@ -62,7 +71,7 @@ module.exports = function officeMailRoutes(app, ctx) {
   // necessarily saved yet) so "Test" always reflects exactly what's on screen. A blank password
   // in the body falls back to the already-stored one, same rule as the save route above — lets
   // an admin re-test after tweaking the host without having to retype the password first.
-  app.post("/api/offices/:id/mail-settings/test", adminOnly, async (req, res) => {
+  app.post("/api/offices/:id/mail-settings/test", adminOnly, mailTestRateLimit, async (req, res) => {
     const { to, smtpHost = '', smtpPort = 587, secureMode = 'starttls',
             smtpUsername = '', smtpPassword = '' } = req.body || {};
     if (!to) return err(res, "A test-recipient address is required");

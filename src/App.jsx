@@ -62,6 +62,8 @@ import AppSettingsPage     from "./pages/AppSettingsPage";
 import { VERSION, COPYRIGHT_YEAR, COPYRIGHT_OWNER } from "./version";
 import LandingPage         from "./pages/LandingPage";
 import LoginPage           from "./pages/LoginPage";
+import ForgotPasswordPage  from "./pages/ForgotPasswordPage";
+import ResetPasswordPage   from "./pages/ResetPasswordPage";
 // Lazy-loaded: pulls in mermaid (KanbanPage's only consumer, ~600 kB+ of the main chunk
 // between the core lib and its diagram-renderer sub-chunks) only when Integration Board
 // is actually opened, instead of on every single page load.
@@ -87,10 +89,13 @@ import MdmPackTypesPage       from "./pages/mdm/MdmPackTypesPage";
 import MdmCustomersPage           from "./pages/mdm/MdmCustomersPage";
 import MdmSanctionedCustomersPage from "./pages/mdm/MdmSanctionedCustomersPage";
 import MdmContractsPage        from "./pages/mdm/MdmContractsPage";
+import RateBenchmarkPage       from "./pages/RateBenchmarkPage";
 import BranchPage              from "./pages/org/BranchPage";
 import OfficePage              from "./pages/org/OfficePage";
 import CountryPage             from "./pages/org/CountryPage";
 import SpaceConfigurationsPage from "./pages/SpaceConfigurationsPage";
+import FreightAuditPage from "./pages/FreightAuditPage";
+import QuotesPage from "./pages/QuotesPage";
 import LicensePage             from "./pages/LicensePage";
 import SchedulesPage           from "./pages/SchedulesPage";
 import AiChatDrawer            from "./components/shared/AiChatDrawer";
@@ -2137,12 +2142,14 @@ function App() {
 
   // Map from page key → settings key that gates it
   const PAGE_SETTING_MAP = {
+    quotes:            "api_shipments_enabled",
     shipments:         "api_shipments_enabled",
     detail:            "api_shipments_enabled",
     kanban:            "api_shipments_enabled",
     dashboard:         "api_shipments_enabled",
     "space-configs":   "api_shipments_enabled",
     "dashboard-archive":"api_shipments_enabled",
+    "freight-audit":   "api_shipments_enabled",
     // Promoted shipment sub-pages inherit the same gate "detail" uses — otherwise
     // disabling the Shipments module only hides Overview, not Cargo/Accounting/etc.
     // Flat (non-Accounting) entries come from the shared config; Accounting's own
@@ -2159,6 +2166,7 @@ function App() {
     // of the shared shipmentSections.js array since they're a dynamic combinatorial set.
     ...Object.fromEntries(SERVICE_PAGE_KEYS.map(k => [k, "api_shipments_enabled"])),
     "mdm-contracts":   "api_contracts_enabled",
+    "rate-benchmark":  "api_contracts_enabled",
     "mdm-customers":              "api_customers_enabled",
     "mdm-sanctioned-customers":  "api_customers_enabled",
     "mdm-carriers":    "api_carriers_enabled",
@@ -2230,6 +2238,7 @@ function App() {
     if (subMatch) return { page: SHIPMENT_SUBPAGES[subMatch[2]], selectedId: subMatch[1] };
     if (hash.startsWith("shipments/")) return { page: "detail", selectedId: hash.split("/")[1] || null };
     if (hash.startsWith("track/")) return { page: "track", selectedId: hash.slice(6) };
+    if (hash.startsWith("reset-password/")) return { page: "reset-password", selectedId: hash.slice(15) };
     return { page: hash, selectedId: null };
   };
 
@@ -2516,13 +2525,15 @@ function App() {
   }, [page, selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // kanban is top-level, not MDM
-  const MDM_PAGES = ["mdm-carriers", "mdm-carrier-agents", "mdm-ports", "mdm-linked", "mdm-vessels", "mdm-commodities", "mdm-tradelanes", "mdm-countries", "mdm-unlocodes", "mdm-customers", "mdm-sanctioned-customers", "mdm-contracts", "mdm-charge-codes", "mdm-pack-types"];
+  const MDM_PAGES = ["mdm-carriers", "mdm-carrier-agents", "mdm-ports", "mdm-linked", "mdm-vessels", "mdm-commodities", "mdm-tradelanes", "mdm-countries", "mdm-unlocodes", "mdm-customers", "mdm-sanctioned-customers", "mdm-contracts", "rate-benchmark", "mdm-charge-codes", "mdm-pack-types"];
   const ORG_PAGES = ["org-country", "org-branch", "org-office"];
   const ALL_PAGES = [...MDM_PAGES, ...ORG_PAGES, "manual"];
   const isMdmActive = MDM_PAGES.includes(page);
   const isOrgActive = ORG_PAGES.includes(page);
 
   if (page === "track") return <TrackingPage token={selectedId} />;
+  if (page === "forgot-password") return <ForgotPasswordPage />;
+  if (page === "reset-password")  return <ResetPasswordPage token={selectedId} />;
 
   if (authLoading) return <FullPageSpinner />;
   if (!user)       return <LoginPage onLogin={handleLogin} />;
@@ -2577,6 +2588,7 @@ function App() {
 
   const PAGE_TITLES = {
     home:               "Home",
+    quotes:             "Quotes",
     shipments:          "Shipments",
     "shipment-detail":  "Shipment Detail",
     "shipment-new":     "New Shipment",
@@ -2584,6 +2596,7 @@ function App() {
     dashboard:           "Consumption Dashboard",
     "space-configs":     "Space Configurations",
     "dashboard-archive": "Dashboard — Archive",
+    "freight-audit":     "Freight Audit & Payment",
     kanban:             "Integration Board",
     "test-tools":       "Test Tools",
     "user-manual":      "User Manual",
@@ -2602,6 +2615,7 @@ function App() {
     "mdm-customers":              "Master Data — Customers",
     "mdm-sanctioned-customers":  "Master Data — Sanctioned Customers",
     "mdm-contracts":    "Master Data — Contracts",
+    "rate-benchmark":   "Rate Benchmarking",
     "mdm-charge-codes": "Master Data — Automated Charge Codes",
     "mdm-pack-types": "Master Data — Pack Types",
     "org-country":      "Organization — Countries",
@@ -2668,9 +2682,22 @@ function App() {
     const [bellOpen, setBellOpen] = useState(false);
     const bellRef                 = useRef(null);
     const [activeSysMsgs, setActiveSysMsgs] = useState([]);
+    const [expiringContracts, setExpiringContracts] = useState([]);
 
     useEffect(() => {
       const load = () => api.systemMessages.list().then(setActiveSysMsgs).catch(() => {});
+      load();
+      const t = setInterval(load, 60000);
+      return () => clearInterval(t);
+    }, []);
+
+    // Contracts within 14 days of (or already past) their own valid_to — the one alert here
+    // that isn't derived from already-loaded top-level state (shipments/allocations), since
+    // contracts aren't fetched at the App.jsx level at all; a small dedicated endpoint keeps
+    // this cheap rather than loading the full contracts list just for this. Same 60s poll
+    // cadence as system messages.
+    useEffect(() => {
+      const load = () => api.contracts.expiring(14).then(setExpiringContracts).catch(() => {});
       load();
       const t = setInterval(load, 60000);
       return () => clearInterval(t);
@@ -2697,7 +2724,8 @@ function App() {
       // Close panel if this was the last visible item and no system messages remain
       const remainingBell        = visibleBellItems.filter(a => a.id !== id);
       const remainingBookingBell = visibleBookingBellItems.filter(b => b.id !== id);
-      if (remainingBell.length === 0 && remainingBookingBell.length === 0 && activeSysMsgs.length === 0) setBellOpen(false);
+      const remainingExpiring    = visibleExpiringContracts.filter(c => c.id !== id);
+      if (remainingBell.length === 0 && remainingBookingBell.length === 0 && remainingExpiring.length === 0 && activeSysMsgs.length === 0) setBellOpen(false);
     };
 
     // Active allocations above their alert threshold, sorted worst-first (max 5 shown)
@@ -2742,8 +2770,9 @@ function App() {
         .slice(0, 5);
     })();
     const visibleBookingBellItems = bookingBellItems.filter(b => !dismissedBell[b.id]);
+    const visibleExpiringContracts = expiringContracts.filter(c => !dismissedBell[c.id]);
 
-    const bellCount = visibleBellItems.length + visibleBookingBellItems.length + activeSysMsgs.length;
+    const bellCount = visibleBellItems.length + visibleBookingBellItems.length + visibleExpiringContracts.length + activeSysMsgs.length;
 
     useEffect(() => {
       const h = e => {
@@ -2949,6 +2978,69 @@ function App() {
                       onMouseEnter={e => { e.currentTarget.style.background = T.surfaceHover; e.currentTarget.style.color = T.text; }}
                       onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = T.textMuted; }}>
                       View all in Shipments →
+                    </button>
+                  </>
+                )}
+
+                {/* ── Contract expiry section ── */}
+                {visibleExpiringContracts.length > 0 && (
+                  <>
+                    <div style={{ padding: "10px 16px 8px",
+                      borderBottom: `1px solid ${T.border}`,
+                      display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <span style={{ fontFamily: T.body, fontSize: 12, fontWeight: 700, color: T.warning }}>
+                        📄 Contract Expiry
+                      </span>
+                      <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted }}>
+                        {visibleExpiringContracts.length} contract{visibleExpiringContracts.length > 1 ? "s" : ""}
+                      </span>
+                    </div>
+                    {visibleExpiringContracts.map(c => (
+                      <div key={c.id} style={{
+                          display: "flex", alignItems: "center",
+                          borderBottom: `1px solid ${T.border}22`,
+                        }}>
+                        <button type="button"
+                          onClick={() => { navigate("mdm-contracts"); setBellOpen(false); }}
+                          style={{
+                            display: "flex", alignItems: "center", justifyContent: "space-between",
+                            flex: 1, padding: "10px 12px 10px 16px", background: "none", border: "none",
+                            cursor: "pointer", textAlign: "left",
+                          }}
+                          onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
+                          onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                            <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.accent }}>
+                              {c.contractNumber}
+                            </span>
+                            <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+                              {c.carrierCode}
+                            </span>
+                          </div>
+                          <span style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600,
+                            color: c.expired ? T.danger : T.warning }}>
+                            {c.expired ? "Expired" : `Expires ${c.validTo}`}
+                          </span>
+                        </button>
+                        <button type="button"
+                          onClick={() => dismissBellItem(c.id)}
+                          title="Dismiss until tomorrow"
+                          style={{ background: "none", border: "none", cursor: "pointer",
+                            color: T.textMuted, fontSize: 14, padding: "10px 12px", lineHeight: 1, flexShrink: 0 }}
+                          onMouseEnter={e => e.currentTarget.style.color = T.text}
+                          onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                    <button type="button"
+                      onClick={() => { navigate("mdm-contracts"); setBellOpen(false); }}
+                      style={{ width: "100%", padding: "9px 16px", background: "none",
+                        border: "none", cursor: "pointer",
+                        fontFamily: T.body, fontSize: 12, color: T.textMuted, textAlign: "center" }}
+                      onMouseEnter={e => { e.currentTarget.style.background = T.surfaceHover; e.currentTarget.style.color = T.text; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = T.textMuted; }}>
+                      View all in Master Data →
                     </button>
                   </>
                 )}
@@ -3230,16 +3322,18 @@ function App() {
           <nav data-testid="main-nav" style={{ padding: "14px 12px", flex: 1, overflowY: "auto" }}>
 
             {/* Top-level items */}
+            <NavBtn pageKey="quotes" icon={IconReceipt} label="Quotes" />
             <NavBtn pageKey="shipments" icon={IconSailboat} label="Shipments" />
 
             {/* Dashboard sub-group — folded by default (see NavBtn's foldable prop) */}
             <NavBtn pageKey="dashboard" icon={IconDashboard} label="Dashboard"
-              activeExtra={["space-configs", "dashboard-archive"].includes(page)}
+              activeExtra={["space-configs", "dashboard-archive", "freight-audit"].includes(page)}
               foldable open={dashboardNavOpen} onToggleFold={() => setDashboardNavOpen(o => !o)} />
             {dashboardNavOpen && (
               <>
                 <NavBtn pageKey="space-configs"  icon={IconFlash} label="Space Configurations" indent />
                 <NavBtn pageKey="dashboard-archive" icon={IconArchive} label="Archive"           indent />
+                <NavBtn pageKey="freight-audit" icon={IconFileCertificate} label="Freight Audit" indent />
               </>
             )}
 
@@ -3301,6 +3395,7 @@ function App() {
                   <NavBtn pageKey="mdm-customers"            icon={IconGroup} label="Customers"            indent />
                   <NavBtn pageKey="mdm-sanctioned-customers" icon={IconCircle} iconColor="#ef4444" label="Sanctioned Customers" subIndent />
                   <NavBtn pageKey="mdm-contracts"   icon={IconClipboard} label="Contracts"       indent />
+                  <NavBtn pageKey="rate-benchmark"  icon={IconSearch}    label="Rate Benchmarking" indent />
                   <NavBtn pageKey="mdm-charge-codes" icon={IconTag} label="Charge Codes"    indent />
                   <NavBtn pageKey="mdm-pack-types" icon={IconPackage} label="Pack Types"    indent />
                   <NavBtn pageKey="mdm-carriers" icon={IconBuilding} label="Carriers"       indent />
@@ -3667,6 +3762,15 @@ function App() {
             }} />
         )}
 
+        {page === "freight-audit" && (
+          <FreightAuditPage shipments={shipments} navigate={navigate} />
+        )}
+
+        {page === "quotes" && (
+          <QuotesPage navigate={navigate}
+            onShipmentCreated={shp => setShipments(p => [shp, ...p])} />
+        )}
+
         {/* MDM pages */}
         {page === "mdm-carriers" && isEnabled("mdm-carriers") && (
           <MdmCarriersPage
@@ -3698,6 +3802,7 @@ function App() {
         {page === "mdm-customers"              && isEnabled("mdm-customers")             && <MdmCustomersPage />}
         {page === "mdm-sanctioned-customers"   && isEnabled("mdm-sanctioned-customers")  && <MdmSanctionedCustomersPage />}
         {page === "mdm-contracts"  && isEnabled("mdm-contracts")  && <MdmContractsPage />}
+        {page === "rate-benchmark" && isEnabled("rate-benchmark") && <RateBenchmarkPage />}
         {page === "org-country"    && <CountryPage />}
         {page === "org-branch"     && <BranchPage />}
         {page === "org-office"     && <OfficePage />}

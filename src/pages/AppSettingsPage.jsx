@@ -50,6 +50,18 @@ const EXTERNAL_APIS = [
     recurrenceLabel: "Sync every",
   },
   {
+    id: "csl",
+    name: "Consolidated Screening List",
+    provider: "US Dept. of Commerce",
+    description: "11 more denied-party lists beyond OFAC's own SDN list — BIS Denied Persons/Entity/Unverified/Military End User Lists, State Dept ITAR Debarred + Nonproliferation Sanctions, and 5 more OFAC-family lists. Additive to OFAC SDN above, not a replacement.",
+    testType: "status",
+    testUrl: null,
+    hasRecurrence: true,
+    defaultValue: "1",
+    defaultUnit: "weeks",
+    recurrenceLabel: "Sync every",
+  },
+  {
     id: "maersk",
     name: "Maersk Schedules",
     provider: "Maersk Line",
@@ -184,7 +196,7 @@ function StatusDot({ result, testing }) {
 }
 
 const TABS_BASE   = ["API Controls", "Finance", "Compliance", "Developer"];
-const API_SUBTABS = ["External APIs", "Internal APIs", "Security", "Single Sign-On", "AI Agent"];
+const API_SUBTABS = ["External APIs", "Internal APIs", "Security", "Single Sign-On", "System Email", "AI Agent"];
 
 const downloadJson = (data, filename) => {
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
@@ -515,6 +527,160 @@ function SsoSettingsPanel({ settings, onChange }) {
           {"  "}— link this from your identity provider or share with users.
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── System Email Settings Panel ──────────────────────────────────────────────
+// Org-wide SMTP used only to send forgot-password links (routes/auth.js) — distinct from
+// per-office mail settings (OfficeMailSettingsModal, org/OfficePage.jsx), which sends shipment
+// documents from a specific office's own identity. Own dedicated GET/PUT/test routes (never
+// folded into the generic /api/settings blob, which is public and unfiltered) — same reasoning
+// as OfficeMailSettingsModal, so this panel manages its own local state/fetch rather than the
+// shared settings/onChange props every other panel on this tab uses.
+const SECURE_MODE_LABELS_SYS = { none: "None (port 25)", starttls: "STARTTLS (port 587)", tls: "TLS/SSL (port 465)" };
+
+function SystemEmailSettingsPanel() {
+  const { user } = useAuth();
+  const [data,    setData]    = useState(null);
+  const [form,    setForm]    = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [saving,  setSaving]  = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testOpen, setTestOpen] = useState(false);
+  const [testTo,  setTestTo]  = useState("");
+
+  useEffect(() => {
+    api.systemEmail.get()
+      .then(d => {
+        setData(d);
+        setForm({ smtpHost: d.smtpHost, smtpPort: d.smtpPort, secureMode: d.secureMode,
+          smtpUsername: d.smtpUsername, smtpPassword: "", fromAddress: d.fromAddress,
+          fromName: d.fromName, isActive: d.isActive });
+        setTestTo(user?.email || "");
+      })
+      .catch(() => toast.error("Failed to load system email settings"))
+      .finally(() => setLoading(false));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (loading || !form) return (
+    <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, padding: "20px 0" }}>Loading…</div>
+  );
+
+  const fld = { marginBottom: 16 };
+  const lbl = { display: "block", fontFamily: T.body, fontSize: 11, fontWeight: 600,
+    color: T.textMuted, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 5 };
+  const set = k => e => setForm(p => ({ ...p, [k]: e.target.value }));
+
+  const handleSave = async () => {
+    if (!form.smtpHost.trim())    return toast.error("SMTP host is required");
+    if (!form.fromAddress.trim()) return toast.error("From address is required");
+    setSaving(true);
+    try {
+      const updated = await api.systemEmail.update(form);
+      setData(updated);
+      setForm(p => ({ ...p, smtpPassword: "" }));
+      toast.success("System email settings saved");
+    } catch (e) { toast.error(e.message); } finally { setSaving(false); }
+  };
+
+  const handleTest = async () => {
+    if (!testTo.trim()) return toast.error("Enter a test-recipient address");
+    setTesting(true);
+    try {
+      await api.systemEmail.sendTest({ to: testTo, ...form });
+      toast.success(`Test email sent to ${testTo}`);
+    } catch (e) { toast.error(e.message); } finally { setTesting(false); }
+  };
+
+  return (
+    <div style={{ maxWidth: 560 }}>
+      <div style={{ marginBottom: 20 }}>
+        <h3 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: "0 0 4px" }}>
+          System Email (Password Reset)
+        </h3>
+        <p style={{ fontFamily: T.body, fontSize: 12.5, color: T.textMuted, margin: 0, lineHeight: 1.5 }}>
+          Outgoing SMTP used only to send forgot-password reset links — not tied to any one
+          office. Without this configured, reset requests still succeed (no user-enumeration
+          signal either way) but no email actually goes out.
+        </p>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 10, marginBottom: 10 }}>
+        <div>
+          <label style={lbl}>SMTP Host <span style={{ color: T.danger }}>*</span></label>
+          <input value={form.smtpHost} onChange={set("smtpHost")} placeholder="smtp.example.com" style={{ ...inp(), fontFamily: T.mono }} />
+        </div>
+        <div>
+          <label style={lbl}>Port</label>
+          <input type="number" value={form.smtpPort}
+            onChange={e => setForm(p => ({ ...p, smtpPort: parseInt(e.target.value, 10) || 0 }))}
+            style={{ ...inp(), fontFamily: T.mono }} />
+        </div>
+      </div>
+
+      <div style={fld}>
+        <label style={lbl}>Encryption</label>
+        <select value={form.secureMode} onChange={set("secureMode")} style={{ ...inp(), cursor: "pointer" }}>
+          {Object.entries(SECURE_MODE_LABELS_SYS).map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+        </select>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
+        <div>
+          <label style={lbl}>Username</label>
+          <input value={form.smtpUsername} onChange={set("smtpUsername")} style={inp()} />
+        </div>
+        <div>
+          <label style={lbl}>Password</label>
+          <input type="password" value={form.smtpPassword} onChange={set("smtpPassword")}
+            placeholder={data?.hasPassword ? "Leave blank to keep current" : ""} style={inp()} />
+        </div>
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
+        <div>
+          <label style={lbl}>From Address <span style={{ color: T.danger }}>*</span></label>
+          <input value={form.fromAddress} onChange={set("fromAddress")} placeholder="no-reply@example.com" style={inp()} />
+        </div>
+        <div>
+          <label style={lbl}>From Name</label>
+          <input value={form.fromName} onChange={set("fromName")} placeholder="e.g. CargoDesk" style={inp()} />
+        </div>
+      </div>
+
+      <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginBottom: 20 }}>
+        <input type="checkbox" checked={form.isActive}
+          onChange={e => setForm(p => ({ ...p, isActive: e.target.checked }))}
+          style={{ accentColor: T.accent, width: 16, height: 16 }} />
+        <span style={{ fontFamily: T.body, fontSize: 13, color: T.text }}>Active</span>
+      </label>
+
+      {testOpen && (
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 14,
+          padding: "10px 12px", borderRadius: 8, background: T.bg, border: `1px solid ${T.border}` }}>
+          <input value={testTo} onChange={e => setTestTo(e.target.value)} placeholder="test-recipient@example.com"
+            style={{ ...inp(), flex: 1 }} />
+          <button type="button" onClick={handleTest} disabled={testing}
+            style={{ padding: "7px 14px", borderRadius: 7, border: "none", background: T.accent,
+              color: "#fff", cursor: "pointer", fontFamily: T.body, fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap" }}>
+            {testing ? "Sending…" : "Send"}
+          </button>
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 8, justifyContent: "space-between", borderTop: `1px solid ${T.border}`, paddingTop: 14 }}>
+        <button type="button" onClick={() => setTestOpen(o => !o)}
+          style={{ padding: "6px 14px", borderRadius: 7, border: `1px solid ${T.border}`,
+            background: "none", cursor: "pointer", fontFamily: T.body, fontSize: 13, color: T.text }}>
+          {testOpen ? "Cancel Test" : "Send Test Email"}
+        </button>
+        <button type="button" onClick={handleSave} disabled={saving}
+          style={{ padding: "6px 18px", borderRadius: 7, border: "none", background: T.accent,
+            color: "#fff", cursor: "pointer", fontFamily: T.body, fontSize: 13, fontWeight: 600 }}>
+          {saving ? "Saving…" : "Save"}
+        </button>
+      </div>
     </div>
   );
 }
@@ -1282,6 +1448,7 @@ export default function AppSettingsPage() {
   const [testing,        setTesting]        = useState({});
   const [sanctionsInfo,  setSanctionsInfo]  = useState(null);
   const [syncing,        setSyncing]        = useState(false);
+  const [contractSourceSaving, setContractSourceSaving] = useState(false);
   const fileInputRef = useRef(null);
   const saveTimers   = useRef({});
   const [previewOpen, setPreviewOpen] = useState({});
@@ -1431,6 +1598,19 @@ export default function AppSettingsPage() {
     setSyncing(false);
   };
 
+  const syncCslFromSource = async () => {
+    setSyncing(true);
+    try {
+      const result = await api.sanctions.syncCsl();
+      toast.success(`Consolidated Screening List synced: ${result.entries.toLocaleString()} entries`);
+      const info = await api.sanctions.status();
+      setSanctionsInfo(info);
+    } catch (err2) {
+      toast.error(`Sync failed: ${err2.message}`);
+    }
+    setSyncing(false);
+  };
+
   if (!settings) {
     return <div style={{ padding: 40, color: T.textMuted, fontFamily: T.body }}>Loading settings…</div>;
   }
@@ -1472,11 +1652,16 @@ export default function AppSettingsPage() {
     const isTesting     = testing[apiDef.id];
     const [showKey, setShowKey] = useState(false);
 
-    let ofacNextDue = null;
-    if (apiDef.id === 'ofac' && sanctionsInfo?.syncs?.[0]?.synced_at) {
-      const val   = Math.max(1, parseInt(intervalValue) || 1);
-      const msMap = { days: 86400000, weeks: 7 * 86400000, months: 30 * 86400000 };
-      ofacNextDue = new Date(new Date(sanctionsInfo.syncs[0].synced_at).getTime() + val * (msMap[intervalUnit] || msMap.weeks));
+    // Shared by 'ofac' and 'csl' — each reads its own row out of sanctionsInfo.syncs (one row
+    // per source, GET /api/sanctions/status already returns every sanctions_syncs row).
+    let ofacNextDue = null, sanctionsSync = null;
+    if ((apiDef.id === 'ofac' || apiDef.id === 'csl') && sanctionsInfo) {
+      sanctionsSync = sanctionsInfo.syncs?.find(s => s.source === (apiDef.id === 'ofac' ? 'OFAC-SDN' : 'CSL')) || null;
+      if (sanctionsSync?.synced_at) {
+        const val   = Math.max(1, parseInt(intervalValue) || 1);
+        const msMap = { days: 86400000, weeks: 7 * 86400000, months: 30 * 86400000 };
+        ofacNextDue = new Date(new Date(sanctionsSync.synced_at).getTime() + val * (msMap[intervalUnit] || msMap.weeks));
+      }
     }
 
     return (
@@ -1558,8 +1743,15 @@ export default function AppSettingsPage() {
             </select>
             {apiDef.id === 'ofac' && sanctionsInfo && (
               <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, marginLeft: 4 }}>
-                {sanctionsInfo.entryCount > 0 ? `${sanctionsInfo.entryCount.toLocaleString()} entries` : "Not yet synced"}
-                {sanctionsInfo.syncs?.[0]?.synced_at && <> · Last {new Date(sanctionsInfo.syncs[0].synced_at).toLocaleDateString()}</>}
+                {sanctionsSync ? `${(sanctionsInfo.ofacEntryCount || 0).toLocaleString()} entries` : "Not yet synced"}
+                {sanctionsSync?.synced_at && <> · Last {new Date(sanctionsSync.synced_at).toLocaleDateString()}</>}
+                {ofacNextDue && <> · Next {ofacNextDue < new Date() ? "overdue" : ofacNextDue.toLocaleDateString()}</>}
+              </span>
+            )}
+            {apiDef.id === 'csl' && sanctionsInfo && (
+              <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, marginLeft: 4 }}>
+                {sanctionsSync ? `${(sanctionsInfo.cslEntryCount || 0).toLocaleString()} entries across 11 lists` : "Not yet synced"}
+                {sanctionsSync?.synced_at && <> · Last {new Date(sanctionsSync.synced_at).toLocaleDateString()}</>}
                 {ofacNextDue && <> · Next {ofacNextDue < new Date() ? "overdue" : ofacNextDue.toLocaleDateString()}</>}
               </span>
             )}
@@ -1592,6 +1784,14 @@ export default function AppSettingsPage() {
                 {syncing ? "Working…" : "↻ Sync from source"}
               </button>
             </>
+          )}
+          {apiDef.id === 'csl' && enabled && (
+            <button onClick={syncCslFromSource} disabled={syncing} type="button"
+              style={{ padding: "5px 13px", borderRadius: 6, border: `1px solid ${T.border}`,
+                background: T.bg, color: T.text, fontFamily: T.mono, fontSize: 12,
+                cursor: syncing ? "wait" : "pointer", opacity: syncing ? 0.65 : 1 }}>
+              {syncing ? "Working…" : "↻ Sync from source"}
+            </button>
           )}
           <StatusDot result={testResult} testing={isTesting} />
         </div>
@@ -1768,6 +1968,44 @@ export default function AppSettingsPage() {
                   </p>
                 </div>
               )}
+              {settings && isAdmin && (
+                <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
+                  padding: "14px 16px" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                    <div style={{ fontFamily: T.body, fontSize: 13, color: T.text, fontWeight: 600 }}>
+                      Contract data source
+                    </div>
+                    <select
+                      value={settings.contract_source || 'local'}
+                      disabled={contractSourceSaving}
+                      onChange={e => {
+                        const v = e.target.value;
+                        const prev = settings.contract_source || 'local';
+                        if (v === prev) return;
+                        setContractSourceSaving(true);
+                        api.settings.updateContractSource(v)
+                          .then(() => {
+                            setSettings(s => ({ ...s, contract_source: v }));
+                            toast.success(`Contract data source switched to ${v === 'remote' ? 'Contract Management Service' : 'Local (this app)'}`);
+                          })
+                          .catch(() => toast.error("Failed to switch contract data source"))
+                          .finally(() => setContractSourceSaving(false));
+                      }}
+                      style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${T.border}`,
+                        background: T.bg, color: T.text, fontFamily: T.mono, fontSize: 12, cursor: contractSourceSaving ? "wait" : "pointer" }}>
+                      <option value="local">Local (this app)</option>
+                      <option value="remote">Remote (Contract Management Service)</option>
+                    </select>
+                  </div>
+                  <p style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted, margin: "8px 0 0 0", lineHeight: 1.5 }}>
+                    Where every contract/rate/routing read and write goes — the standalone Contract
+                    Management Service, or this app's own local tables (today's behavior, and the
+                    default). This is a one-way cutover lever, not a live sync: switching back does
+                    not pull remote changes back, and existing local contracts are never copied
+                    automatically — run the migration script first if switching to Remote.
+                  </p>
+                </div>
+              )}
               {EXTERNAL_APIS.map(a => <ExternalCard key={a.id} apiDef={a} />)}
             </div>
           )}
@@ -1791,6 +2029,8 @@ export default function AppSettingsPage() {
               saveSetting(k, v);
             }} />
           )}
+
+          {activeApiSub === "System Email" && <SystemEmailSettingsPanel />}
 
           {activeApiSub === "AI Agent" && settings && (
             <AiAgentSettingsPanel settings={settings} onChange={(k, v) => {

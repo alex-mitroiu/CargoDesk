@@ -73,7 +73,7 @@ const ContractAssignModal = ({ shipment, legs, pol, pod, onUpdate, onDone, onClo
 
   const pickContract = (c, skipReason = "") => {
     // matchedLegs is the specific run of legs that satisfied THIS search — not the contract's
-    // full leg list, which can include unrelated alternate lanes — so the chained sailing
+    // full leg list, which can include other routings entirely — so the chained sailing
     // search (if one follows) scopes to the route this contract actually covers, not the
     // shipment's generic SEA-leg span.
     const chain = c.matchedLegs || [];
@@ -81,7 +81,12 @@ const ContractAssignModal = ({ shipment, legs, pol, pod, onUpdate, onDone, onClo
     // contract's specific transshipment port and vessel service, dropped by pol/pod alone.
     const matchedRoute = chain.length > 0 ? { pol: chain[0].pol, pod: chain[chain.length - 1].pod,
       hub: chain.length > 1 ? chain[0].pod : null, service: chain[0].vesselService || null } : null;
+    // c.routingId is '' for a contract with no named routings (unchanged shipments) or the
+    // specific routing (e.g. "Via Rotterdam" vs "Via Hamburg") the operator picked among —
+    // GET /api/contracts/match now returns one match entry per (contract, routing) pair, so
+    // ContractPickerModal's own card the operator clicked already IS that specific choice.
     finish({ contractId: c.id, contractRef: c.contractNumber, carrierCode: c.carrierCode || shipment.carrierCode,
+      contractRoutingId: c.routingId || "",
       allocationId: "", spaceSkipReason: skipReason, spaceOverageReason: "" }, matchedRoute);
   };
   const pickAllocation = (alloc, overageReason = "") => {

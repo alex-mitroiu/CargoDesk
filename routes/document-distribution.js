@@ -10,10 +10,24 @@ const { signToken } = require("../lib/shareToken");
 module.exports = function documentDistributionRoutes(app, ctx) {
   const { db, ok, err, requireRole, logEntityEvent, JWT_SECRET,
           DISTRIBUTION_SERVICE_URL, DISTRIBUTION_SERVICE_SECRET,
-          UPLOADS_DIR, fs, path } = ctx;
+          UPLOADS_DIR, fs, path, createRateLimiter } = ctx;
 
   const shipmentWrite = requireRole(["admin", "operator", "occ_bk"]);
   const adminOnly = requireRole(["admin"]);
+
+  // Each send proxies to the distribution service, which itself makes a real outbound call
+  // (an SMTP-adjacent EDI transmittal record, or a genuine HTTPS POST to a partner webhook URL).
+  const distributionSendRateLimit = createRateLimiter({
+    windowMs: 60 * 1000, max: 20, maxEnvVar: "DIST_SEND_RATE_MAX",
+    keyFn: req => req.user.id,
+    message: "Too many EDI/webhook sends recently — please slow down",
+  });
+  // Admin-only, but still a real outbound HTTPS call to an arbitrary submitted URL per test.
+  const webhookTestRateLimit = createRateLimiter({
+    windowMs: 15 * 60 * 1000, max: 10, maxEnvVar: "WEBHOOK_TEST_RATE_MAX",
+    keyFn: req => req.user.id,
+    message: "Too many webhook test sends recently — try again later",
+  });
 
   // Shorter than the 30-day shipment-level tracking link (routes/share.js) — this is a one-off
   // artifact handed to a single webhook receiver at send time, not a standing customer-facing link.
@@ -46,7 +60,7 @@ module.exports = function documentDistributionRoutes(app, ctx) {
 
   // ─── EDI transmittal ──────────────────────────────────────────────────────────────────────────
 
-  app.post("/api/shipments/:id/documents/:docId/send-edi", shipmentWrite, async (req, res) => {
+  app.post("/api/shipments/:id/documents/:docId/send-edi", shipmentWrite, distributionSendRateLimit, async (req, res) => {
     const { recipientCode, recipientLabel } = req.body || {};
     if (!recipientCode) return err(res, "A recipient code is required");
     const doc = db.prepare("SELECT * FROM shipment_documents WHERE id=? AND shipment_id=?").get(req.params.docId, req.params.id);
@@ -54,6 +68,13 @@ module.exports = function documentDistributionRoutes(app, ctx) {
     const filePath = path.join(UPLOADS_DIR, doc.stored_name);
     if (!fs.existsSync(filePath)) return err(res, "File not found on disk", 404);
     const checksum = crypto.createHash("sha256").update(fs.readFileSync(filePath)).digest("hex");
+    // Written BEFORE the real outbound call to the distribution service, so a crash or an
+    // unreachable service still leaves a durable "this was attempted" trail on the document's own
+    // history — previously a failure here (including the monolith crashing mid-call) left nothing
+    // behind at all. Deliberately just a visible marker, not a retry/queue — this app has neither,
+    // by design (see services/document-distribution's own scope notes).
+    logEntityEvent('document', doc.id, 'EDI_SEND_ATTEMPTED', null, null, null,
+      JSON.stringify({ shipmentId: req.params.id, recipientCode, recipientLabel: recipientLabel || "" }));
     try {
       const result = await callDistributionService("POST", "/internal/distribute/edi", {
         shipmentId: req.params.id, documentId: doc.id, docType: doc.doc_type, filename: doc.filename,
@@ -65,14 +86,18 @@ module.exports = function documentDistributionRoutes(app, ctx) {
       logEntityEvent('document', doc.id, 'EDI_SENT', null, null, null,
         JSON.stringify({ shipmentId: req.params.id, recipientCode, recipientLabel: recipientLabel || "", transmittalId: result.transmittalId }));
       ok(res, { sent: true, transmittalId: result.transmittalId }, 201);
-    } catch (e) { err(res, e.message, e.status || 502); }
+    } catch (e) {
+      logEntityEvent('document', doc.id, 'EDI_SEND_FAILED', null, null, null,
+        JSON.stringify({ shipmentId: req.params.id, recipientCode, error: e.message }));
+      err(res, e.message, e.status || 502);
+    }
   });
 
   // ─── Webhook distribution ─────────────────────────────────────────────────────────────────────
 
   // Same EMO-only resolution the existing send-email route uses (routes/shipment-ops.js) — no
   // office picker, no silent IMO fallback.
-  app.post("/api/shipments/:id/documents/:docId/send-webhook", shipmentWrite, async (req, res) => {
+  app.post("/api/shipments/:id/documents/:docId/send-webhook", shipmentWrite, distributionSendRateLimit, async (req, res) => {
     const shipment = db.prepare("SELECT emo_office_id FROM shipments WHERE id=?").get(req.params.id);
     if (!shipment) return err(res, "Shipment not found", 404);
     if (!shipment.emo_office_id) return err(res, "This shipment has no Export Managing Office assigned");
@@ -80,6 +105,9 @@ module.exports = function documentDistributionRoutes(app, ctx) {
     if (!doc) return err(res, "Document not found", 404);
     const token = signToken({ shipmentId: req.params.id, docId: doc.id, exp: Date.now() + DOC_SHARE_TTL_MS }, JWT_SECRET);
     const downloadUrl = `${req.protocol}://${req.get("host")}/api/share/document/${token}`;
+    // Same "attempted" marker written before the call as send-edi above — see its comment.
+    logEntityEvent('document', doc.id, 'WEBHOOK_SEND_ATTEMPTED', null, null, null,
+      JSON.stringify({ shipmentId: req.params.id, officeId: shipment.emo_office_id }));
     try {
       const result = await callDistributionService("POST", "/internal/distribute/webhook", {
         shipmentId: req.params.id, documentId: doc.id, docType: doc.doc_type, filename: doc.filename,
@@ -88,7 +116,11 @@ module.exports = function documentDistributionRoutes(app, ctx) {
       logEntityEvent('document', doc.id, 'WEBHOOK_SENT', null, null, null,
         JSON.stringify({ shipmentId: req.params.id, officeId: shipment.emo_office_id, deliveryId: result.deliveryId }));
       ok(res, { sent: true, deliveryId: result.deliveryId }, 201);
-    } catch (e) { err(res, e.message, e.status || 502); }
+    } catch (e) {
+      logEntityEvent('document', doc.id, 'WEBHOOK_SEND_FAILED', null, null, null,
+        JSON.stringify({ shipmentId: req.params.id, officeId: shipment.emo_office_id, error: e.message }));
+      err(res, e.message, e.status || 502);
+    }
   });
 
   // ─── Office webhook settings (mirrors routes/office-mail.js almost exactly) ──────────────────
@@ -111,7 +143,7 @@ module.exports = function documentDistributionRoutes(app, ctx) {
     } catch (e) { err(res, e.message, e.status || 502); }
   });
 
-  app.post("/api/offices/:id/webhook-settings/test", adminOnly, async (req, res) => {
+  app.post("/api/offices/:id/webhook-settings/test", adminOnly, webhookTestRateLimit, async (req, res) => {
     const { webhookUrl, secret } = req.body || {};
     if (!webhookUrl) return err(res, "A webhook URL is required");
     try {

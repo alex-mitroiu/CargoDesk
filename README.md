@@ -3,7 +3,7 @@
 > Freight management application for tracking ocean shipments, carrier space utilisation, contracts, and maritime master data.
 
 [![CI](https://github.com/alex-mitroiu/CargoDesk/actions/workflows/ci.yml/badge.svg)](https://github.com/alex-mitroiu/CargoDesk/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.67.0-blue)](.)
+[![Version](https://img.shields.io/badge/version-0.70.0-blue)](.)
 ![Node](https://img.shields.io/badge/node-22.5%2B-green)
 ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
@@ -152,17 +152,21 @@ On first startup, if no users exist, the server seeds a default admin account:
 
 ## Deployment
 
-CargoDesk is 3 backend processes (the monolith, `services/document-distribution/`,
-`services/pdf-render/`) plus a static frontend build. `npm run dev` runs all of this in dev
-mode (Vite's own dev server + proxy). For anything else, there's a first-draft Docker path:
+CargoDesk is 4 backend processes (the monolith, `services/document-distribution/`,
+`services/pdf-render/`, `services/contract-management/`) plus a static frontend build. `npm run
+dev` runs all of this in dev mode (Vite's own dev server + proxy). The contract-management
+service runs alongside the monolith's own local contract tables, not in place of them — see
+`app_settings.contract_source` in Application Settings. For anything else, there's a first-draft
+Docker path:
 
 ```bash
 mkdir -p docker-secrets
 openssl rand -hex 32 > docker-secrets/jwt_secret
 openssl rand -hex 32 > docker-secrets/distribution_service_secret
 openssl rand -hex 32 > docker-secrets/pdf_render_service_secret
+openssl rand -hex 32 > docker-secrets/contract_service_secret
 cp .env.example .env          # non-secret config (LOGIN_RATE_MAX, etc.) — see below
-mkdir -p docker-data && touch docker-data/cargodesk.db docker-data/distribution.db
+mkdir -p docker-data && touch docker-data/cargodesk.db docker-data/distribution.db docker-data/contracts.db
 mkdir -p docker-data/uploads
 docker compose up -d --build
 ```
@@ -175,8 +179,8 @@ proven-working.
 
 ### Secrets management
 
-The 3 processes share 3 secrets (`JWT_SECRET`, `DISTRIBUTION_SERVICE_SECRET`,
-`PDF_RENDER_SERVICE_SECRET`). Running via `docker compose`, they're passed using Compose's
+The 4 processes share 4 secrets (`JWT_SECRET`, `DISTRIBUTION_SERVICE_SECRET`,
+`PDF_RENDER_SERVICE_SECRET`, `CONTRACT_SERVICE_SECRET`). Running via `docker compose`, they're passed using Compose's
 native file-based `secrets:` mechanism — mounted at `/run/secrets/<name>` inside each
 container, never exposed via `docker inspect` or a process-env dump the way a plain
 `environment:` value is. Each process reads its own secret via a `<NAME>_FILE` env var pointing
@@ -399,6 +403,9 @@ See the built-in **About** page (i in the sidebar) for the full interactive sche
 
 | Version | Codename | Summary |
 |---------|----------|---------|
+| 0.70.0 | Waypoint | Two more Competitive Gap Analysis stories, plus a documentation refresh. (1) **AI-driven document extraction** — new `POST /api/ai/extract-document`, a generic single-shot vision endpoint (image on any provider, PDF on Anthropic only) wired into the Freight Audit invoice form as an "Extract from document" upload. (2) **Quoting / RFQ pre-booking stage** — new `quotes`/`quote_lines`, `QuotesPage.jsx`; Draft→Sent→Accepted/Declined/Expired→Converted, pricing referenced from the existing contract-match engine, conversion splits BUY (from the contract) and SELL (from the quote) cost lines correctly. A real blank-page bug found via live CDP verification (the new shipment wasn't reaching the SPA's local cache before navigating) — found and fixed. (3) **CargoDesk Field Guide** — the user manual rewritten as a 12-chapter, screenshot-illustrated, step-by-step walkthrough following one real shipment through its whole lifecycle in the actual required order, published as a standalone artifact for review. (4) **`ARCHITECTURE.md` refresh** — was stale since v0.30.0 and, on inspection, worse than its own staleness banner admitted (three conflicting line counts, a self-contradiction on FK enforcement, resolved debts still listed open, a whole microservice undocumented); rewritten from a direct pass against the live code. |
+| 0.69.0 | Custodian | Competitive gap analysis vs. CargoWise, Magaya, Descartes, project44/FourKites/GoComet, Flexport/Freightos, CargoSphere, and real AES/ISF/ACE + multi-list screening requirements — full writeup + a 10-story roadmap logged in Kanban, explicitly separating gaps no code can close (carrier networks, market data, marketplaces) from real buildable ones. Two executed: (1) **Freight Audit & Payment** — carrier invoice reconciliation against contracted rates/accrued costs plus a Detention & Demurrage pre-audit computed from existing free-time tracking; new `FreightAuditPage.jsx`. (2) **Multi-list denied-party screening** — extends OFAC-SDN-only screening to the free US Consolidated Screening List (11 more lists: BIS Denied Persons/Entity/Unverified/Military End User, State Dept ITAR Debarred, 5 more OFAC-family lists), zero schema change needed. LCL/consolidation/Master-House B/L — the largest real gap found — deliberately not scheduled, per the standing FCL-first decision. |
+| 0.68.0 | Junction | Two features: (1) Multi-Routing-Per-Contract — a contract can now cover one lane via several distinct physical routings (e.g. three different transshipment hubs), each independently priced/timed, researched against SeaRates/CargoSphere/CargoWise/Freightos. New `contract_routings` table; `findMatchingContractLegs` returns one match per (contract, routing) pair. (2) Standalone Contract Management Service (`services/contract-management/`, port 3004) — CargoDesk's third extracted microservice, and its first that runs ALONGSIDE the monolith's own local tables rather than replacing them, selected per-request via a new admin-only `app_settings.contract_source` toggle ('local' default \| 'remote') in Application Settings. Every local contract/allocation/cost-line/DG-policy read that touches contract data gained the same toggle branch. New CLI migration script (never automatic), Dockerfile + compose entry. Verified live via CDP: flipping the toggle immediately switches what the real Contracts page reads, and a contract created in 'remote' mode is provably invisible once flipped back to 'local'. |
 | 0.67.0 | Drydock | Four more architect-review fixes, two correcting stale ARCHITECTURE.md claims found inaccurate on re-verification: real indexing gaps (shipment_cost_lines, containers, entity_events, shipment_documents — 14 indexes already existed elsewhere), real transaction gaps (contracts.js legs/rates, contract-rate re-import, invoice reversal — 9 transactions already existed elsewhere), a verified float-precision money-rounding bug fixed via a new roundCents() helper, and a first-draft (untested, no Docker available) production deployment path: static-file serving, 3 Dockerfiles, docker-compose.yml. |
 | 0.66.0 | Bulkhead | Four platform-hardening epics: CI Pipeline (the existing Cypress workflow had zero actual runs ever — pull_request-only trigger on a commit-to-main project; fixed, plus a new backend-tests-and-build job and two real previously-hidden bugs it surfaced), Frontend Test Coverage (Vitest + Testing Library, App.jsx auth gating + KanbanPage's Add Ticket flow, wired into CI), Runtime Lifecycle Separation (audited server.js's 4 bundled lifecycles, extracted PDF rendering into a second microservice, services/pdf-render/), and a SQLite-ceiling design doc (Postgres PoC honestly logged as blocked by this environment, not skipped). |
 | 0.65.1 | Ballast | Follow-up: extracted server.js's genuine pure row-mapper functions (mapShipment, mapContainer, mapCustomer, and 45 others) into lib/mappers.js via a factory matching the existing createAisListener pattern, leaving real business logic (syncShipmentFromLegs, the access-control filter) that had shared the same section header behind in server.js. server.js: 3230 → 2984 lines, no behavior changed. |

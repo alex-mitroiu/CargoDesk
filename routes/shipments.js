@@ -8,10 +8,25 @@ module.exports = function shipmentsRoutes(app, ctx) {
           broadcastMessage, recomputeSpaceBadge, screenShipmentById, resolveCarrierAgent,
           logEvent, logEntityEvent, TRACKED_FIELDS, TRACKED_CTR_FIELDS, FREE_TIME_WARNING_DAYS,
           sanctionsMap, autoCompleteMilestone, ensureBookingCreated, toUsd,
-          validCoord, GPS_LOC_TYPE } = ctx;
+          validCoord, GPS_LOC_TYPE, getSettings, callContractService } = ctx;
 
   // trade_manager and viewer are read-only on all shipment write operations
   const shipmentWrite = requireRole(["admin", "operator", "occ_bk"]);
+
+  // Mirrors src/tokens.js's CONTRACT_PRESETS — frontend/backend don't share a module, same split
+  // as ADDITIONAL_PARTY_ROLES/BOOKABLE_CARRIERS elsewhere in this app. Previously nothing
+  // validated contractType server-side at all (only "non-empty string" was checked), so any
+  // value could be stored — silently breaking every downstream check keyed on these 4 literal
+  // strings (contract-mismatch detection, the Central-only rate-import path, the Dashboard's
+  // Contract Consumption filter, the Pending-revalidation flow).
+  const CONTRACT_TYPES = ["Pending", "SPOT", "Customer Own", "Central"];
+
+  // Mirrors src/tokens.js's STATUSES — same split as CONTRACT_TYPES above (frontend/backend
+  // don't share a module). Previously nothing validated shipments.status server-side at all, so
+  // any string could be stored, silently breaking every downstream consumer keyed on these 5
+  // literal values (dashboard status filters, the _overdue pseudo-filter's "not Completed/
+  // Cancelled" check, the STATUS_CHANGED audit-log branch below, status_log inserts).
+  const SHIPMENT_STATUSES = ["Active", "Pending", "Completed", "Cancelled", "Requires Review"];
 
   const LEG_TO_MOT = { 'SEA': 'SEA', 'AIR': 'AIR', 'RAIL': 'RAIL', 'Pick-up': 'ROAD', 'Delivery': 'ROAD', 'Feeder': 'SEA' };
 
@@ -63,11 +78,19 @@ module.exports = function shipmentsRoutes(app, ctx) {
     }
   };
 
-  const checkDgPolicy = (shipmentId, isDg, dgClass) => {
+  const checkDgPolicy = async (shipmentId, isDg, dgClass) => {
     if (!isDg || !dgClass) return null;
     const shipment = db.prepare("SELECT contract_id, contract_ref FROM shipments WHERE id=?").get(shipmentId);
     if (!shipment?.contract_id) return null;
-    const contract = db.prepare("SELECT dg_allowed, imdg_classes, contract_number FROM contracts WHERE id=?").get(shipment.contract_id);
+    let contract;
+    if ((getSettings().contract_source || "local") === "remote") {
+      try {
+        const c = await callContractService("GET", `/internal/contracts/${shipment.contract_id}`);
+        contract = { dg_allowed: c.dgAllowed ? 1 : 0, imdg_classes: JSON.stringify(c.imdgClasses || []), contract_number: c.contractNumber };
+      } catch { return null; } // an unreachable/vanished remote contract can't be checked either way — same "don't disprove it" default used elsewhere
+    } else {
+      contract = db.prepare("SELECT dg_allowed, imdg_classes, contract_number FROM contracts WHERE id=?").get(shipment.contract_id);
+    }
     if (!contract) return null;
     if (!contract.dg_allowed)
       return `Contract ${contract.contract_number} does not permit DG cargo`;
@@ -287,7 +310,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     })));
   });
 
-  app.post("/api/shipments", shipmentWrite, (req, res) => {
+  app.post("/api/shipments", shipmentWrite, async (req, res) => {
     const { pol, pod, carrierCode, contractType, contractNotes = "", status = "Active",
             etd = "", eta = "", bookingRef = "", blNumber = "", vessel = "", voyage = "",
             incoterm = "", vesselImo = "", contractId = "", contractRef = "", commodityCode = "",
@@ -298,17 +321,20 @@ module.exports = function shipmentsRoutes(app, ctx) {
             placeOfReceipt = "", placeOfDelivery = "", cargoReadyDate = null,
             notifyId = "", notifyName = "",
             declaredValue = null, declaredValueCurrency = "USD",
-            emoOfficeId = null, imoOfficeId = null, controllingOfficeId = null } = req.body;
+            emoOfficeId = null, imoOfficeId = null, controllingOfficeId = null,
+            contractRoutingId = "" } = req.body;
     if (!pol || !pod || !carrierCode || !contractType) return err(res, "pol, pod, carrierCode, contractType required");
+    if (!CONTRACT_TYPES.includes(contractType)) return err(res, `contractType must be one of: ${CONTRACT_TYPES.join(", ")}`);
+    if (!SHIPMENT_STATUSES.includes(status)) return err(res, `status must be one of: ${SHIPMENT_STATUSES.join(", ")}`);
     const id = `SHP-${uid()}`;
     const polU = pol.toUpperCase(), podU = pod.toUpperCase();
     const createdAt = new Date().toISOString();
-    db.prepare("INSERT INTO shipments (id,pol,pod,carrier_code,contract_type,contract_notes,status,created_at,etd,eta,booking_ref,bl_number,vessel,voyage,incoterm,vessel_imo,contract_id,contract_ref,commodity_code,shipper_id,shipper_name,consignee_id,consignee_name,principal_id,principal_name,allocation_id,space_skip_reason,space_overage_reason,freight_terms,movement_type,service_type,place_of_receipt,place_of_delivery,cargo_ready_date,notify_id,notify_name,declared_value,declared_value_currency,emo_office_id,imo_office_id,controlling_office_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-      .run(id, polU, podU, carrierCode, contractType, contractNotes, status, createdAt, etd, eta, bookingRef, blNumber, vessel, voyage, incoterm, vesselImo, contractId, contractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, allocationId, spaceSkipReason, spaceOverageReason, freightTerms, movementType, serviceType, placeOfReceipt, placeOfDelivery, cargoReadyDate || null, notifyId, notifyName, (declaredValue !== null && declaredValue !== undefined && String(declaredValue).trim() !== '') ? Number(declaredValue) : null, declaredValueCurrency || "USD", emoOfficeId || null, imoOfficeId || null, controllingOfficeId || null);
+    db.prepare("INSERT INTO shipments (id,pol,pod,carrier_code,contract_type,contract_notes,status,created_at,etd,eta,booking_ref,bl_number,vessel,voyage,incoterm,vessel_imo,contract_id,contract_ref,commodity_code,shipper_id,shipper_name,consignee_id,consignee_name,principal_id,principal_name,allocation_id,space_skip_reason,space_overage_reason,freight_terms,movement_type,service_type,place_of_receipt,place_of_delivery,cargo_ready_date,notify_id,notify_name,declared_value,declared_value_currency,emo_office_id,imo_office_id,controlling_office_id,contract_routing_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+      .run(id, polU, podU, carrierCode, contractType, contractNotes, status, createdAt, etd, eta, bookingRef, blNumber, vessel, voyage, incoterm, vesselImo, contractId, contractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, allocationId, spaceSkipReason, spaceOverageReason, freightTerms, movementType, serviceType, placeOfReceipt, placeOfDelivery, cargoReadyDate || null, notifyId, notifyName, (declaredValue !== null && declaredValue !== undefined && String(declaredValue).trim() !== '') ? Number(declaredValue) : null, declaredValueCurrency || "USD", emoOfficeId || null, imoOfficeId || null, controllingOfficeId || null, contractRoutingId || "");
     logEvent(id, 'SHIPMENT_CREATED', null, null, null,
       JSON.stringify({ pol: polU, pod: podU, carrier: carrierCode, status, etd, contractType }));
     maybeAssignLineAgents(id, carrierCode, polU, podU);
-    if (contractType === 'Central' && contractId) importContractRates(id);
+    if (contractType === 'Central' && contractId) await importContractRates(id);
     const silentScreening = sanctionsMap.size > 0 ? screenShipmentById(id) : null;
     const base = mapShipment(db.prepare("SELECT * FROM shipments WHERE id=?").get(id));
     ok(res, silentScreening ? { ...base, screening: silentScreening } : base, 201);
@@ -326,10 +352,12 @@ module.exports = function shipmentsRoutes(app, ctx) {
             notifyId = "", notifyName = "",
             declaredValue = null, declaredValueCurrency = "USD",
             emoOfficeId = null, imoOfficeId = null, controllingOfficeId = null,
-            contractValidFrom = "", contractValidTo = "" } = req.body;
+            contractValidFrom = "", contractValidTo = "", contractRoutingId = "" } = req.body;
     const polU = pol.toUpperCase(), podU = pod.toUpperCase();
     const existing = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
     if (!existing) return err(res, "Not found", 404);
+    if (contractType && !CONTRACT_TYPES.includes(contractType)) return err(res, `contractType must be one of: ${CONTRACT_TYPES.join(", ")}`);
+    if (status && !SHIPMENT_STATUSES.includes(status)) return err(res, `status must be one of: ${SHIPMENT_STATUSES.join(", ")}`);
 
     // CRD-vs-ETD guard: cargo can't be ready after the vessel has already sailed, so a Cargo
     // Ready Date edit that now falls after ETD invalidates whatever schedule/contract was
@@ -339,11 +367,12 @@ module.exports = function shipmentsRoutes(app, ctx) {
     // this lands on the same "contract type set, no ref yet" empty state already handled by
     // ShipmentSchedulesPage.jsx for a fresh shipment.
     let effContractId = contractId, effContractRef = contractRef, effAllocationId = allocationId;
+    let effContractRoutingId = contractRoutingId;
     let effStatus = status;
     let scheduleDropped = false;
     const existingSchedules = db.prepare("SELECT * FROM shipment_schedules WHERE shipment_id=?").all(req.params.id);
     if (cargoReadyDate && etd && cargoReadyDate > etd && (contractId || existingSchedules.length > 0)) {
-      effContractId = ""; effContractRef = ""; effAllocationId = "";
+      effContractId = ""; effContractRef = ""; effAllocationId = ""; effContractRoutingId = "";
       effStatus = "Requires Review";
       scheduleDropped = true;
       const actor = req.user?.name || req.user?.email || "";
@@ -365,8 +394,8 @@ module.exports = function shipmentsRoutes(app, ctx) {
       cargo_ready_date=?, notify_id=?, notify_name=?,
       declared_value=?, declared_value_currency=?,
       emo_office_id=?, imo_office_id=?, controlling_office_id=?,
-      contract_valid_from=?, contract_valid_to=? WHERE id=?
-    `).run(polU, podU, carrierCode, contractType, contractNotes, effStatus, etd, eta, bookingRef, blNumber, vessel, voyage, incoterm, vesselImo, effContractId, effContractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, effAllocationId, spaceSkipReason, spaceOverageReason, freightTerms, movementType, serviceType, placeOfReceipt, placeOfDelivery, cargoReadyDate || null, notifyId, notifyName, (declaredValue !== null && declaredValue !== undefined && String(declaredValue).trim() !== '') ? Number(declaredValue) : null, declaredValueCurrency || "USD", emoOfficeId || null, imoOfficeId || null, controllingOfficeId || null, contractValidFrom || null, contractValidTo || null, req.params.id);
+      contract_valid_from=?, contract_valid_to=?, contract_routing_id=? WHERE id=?
+    `).run(polU, podU, carrierCode, contractType, contractNotes, effStatus, etd, eta, bookingRef, blNumber, vessel, voyage, incoterm, vesselImo, effContractId, effContractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, effAllocationId, spaceSkipReason, spaceOverageReason, freightTerms, movementType, serviceType, placeOfReceipt, placeOfDelivery, cargoReadyDate || null, notifyId, notifyName, (declaredValue !== null && declaredValue !== undefined && String(declaredValue).trim() !== '') ? Number(declaredValue) : null, declaredValueCurrency || "USD", emoOfficeId || null, imoOfficeId || null, controllingOfficeId || null, contractValidFrom || null, contractValidTo || null, effContractRoutingId || "", req.params.id);
     if (info.changes === 0) return err(res, "Not found", 404);
     // Only re-attempt Line Agent resolution when carrier/route actually changed — the existing
     // partyOrRouteChanged flag (further below) doesn't check carrier_code, so this needs its
@@ -455,13 +484,13 @@ module.exports = function shipmentsRoutes(app, ctx) {
     }));
   });
 
-  app.post("/api/containers", shipmentWrite, (req, res) => {
+  app.post("/api/containers", shipmentWrite, async (req, res) => {
     const { shipmentId, containerNumber = "", sealNumber = "", size, type,
             hsCode = "", cargoDescription = "", marksAndNumbers = "", grossWeightKg = null, volumeCbm = null, isDg = false, dgClass = "",
             vgmWeightKg = null, vgmStatus = "Pending", vgmCutoff = "", cyCutoff = "",
             originFreeTimeDays = null, destFreeTimeDays = null } = req.body;
     if (!shipmentId || !size || !type) return err(res, "shipmentId, size, type required");
-    const dgErr = checkDgPolicy(shipmentId, isDg, dgClass);
+    const dgErr = await checkDgPolicy(shipmentId, isDg, dgClass);
     if (dgErr) return err(res, dgErr, 422);
     const id  = `CTR-${uid()}`;
     const cnU = containerNumber.toUpperCase();
@@ -480,7 +509,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     ok(res, addedCtr, 201);
   });
 
-  app.put("/api/containers/:id", shipmentWrite, (req, res) => {
+  app.put("/api/containers/:id", shipmentWrite, async (req, res) => {
     const { containerNumber = "", sealNumber = "", size, type,
             hsCode = "", cargoDescription = "", marksAndNumbers = "", grossWeightKg = null, volumeCbm = null, isDg = false, dgClass = "",
             vgmWeightKg = null, vgmStatus = "Pending", vgmCutoff = "", cyCutoff = "",
@@ -488,7 +517,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const cnU    = containerNumber.toUpperCase();
     const oldCtr = db.prepare("SELECT * FROM containers WHERE id=?").get(req.params.id);
     if (!oldCtr) return err(res, "Not found", 404);
-    const dgErr = checkDgPolicy(oldCtr.shipment_id, isDg, dgClass);
+    const dgErr = await checkDgPolicy(oldCtr.shipment_id, isDg, dgClass);
     if (dgErr) return err(res, dgErr, 422);
     const info = db.prepare(`UPDATE containers SET container_number=?, seal_number=?, size=?, type=?, hs_code=?, cargo_description=?, marks_and_numbers=?, gross_weight_kg=?, volume_cbm=?, is_dg=?, dg_class=?,
                 vgm_weight_kg=?, vgm_status=?, vgm_cutoff=?, cy_cutoff=?, origin_free_time_days=?, dest_free_time_days=? WHERE id=?`)

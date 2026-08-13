@@ -1,4 +1,4 @@
-# Wires the 3 backend processes together for a self-hosted/single-operator deployment.
+# Wires the 4 backend processes together for a self-hosted/single-operator deployment.
 # NOT independently verified by actually running in this environment (no Docker available
 # here) — see each Dockerfile's own note. Build-test before relying on this, especially the
 # volume mounts below (SQLite-file bind mounts are simple but easy to get subtly wrong, and
@@ -17,15 +17,22 @@
 #      openssl rand -hex 32 > docker-secrets/jwt_secret
 #      openssl rand -hex 32 > docker-secrets/distribution_service_secret
 #      openssl rand -hex 32 > docker-secrets/pdf_render_service_secret
-#      (docker-secrets/ is gitignored — see .gitignore. These 3 files are the actual secrets;
+#      openssl rand -hex 32 > docker-secrets/contract_service_secret
+#      (docker-secrets/ is gitignored — see .gitignore. These 4 files are the actual secrets;
 #      treat them the same as you would a committed .env, i.e. never commit them for real.)
 #   2. cp .env.example .env — fills in LOGIN_RATE_MAX and anything else non-secret
-#   3. mkdir -p docker-data && touch docker-data/cargodesk.db docker-data/distribution.db
+#   3. mkdir -p docker-data && touch docker-data/cargodesk.db docker-data/distribution.db docker-data/contracts.db
 #      (REQUIRED — Docker bind-mounts a host path that doesn't exist yet as a DIRECTORY, not a
 #      file, which would break `new DatabaseSync('/app/cargodesk.db')` since it expects a real
 #      file path. Creating empty files first sidesteps this well-known bind-mount gotcha.)
 #   4. mkdir -p docker-data/uploads
 #   5. docker compose up -d --build
+#
+# The contract-management service runs ALONGSIDE the monolith's own local contracts tables, not
+# in place of them (app_settings.contract_source, default 'local') — this compose file starts it
+# either way (cheap, stateless-to-add), same as document-distribution/pdf-render; nothing reads
+# from it until an admin flips that toggle in Application Settings and, before doing so, runs
+# `npm run migrate:contracts-to-service` (see scripts/migrate-contracts-to-service.js).
 
 secrets:
   jwt_secret:
@@ -34,6 +41,8 @@ secrets:
     file: ./docker-secrets/distribution_service_secret
   pdf_render_service_secret:
     file: ./docker-secrets/pdf_render_service_secret
+  contract_service_secret:
+    file: ./docker-secrets/contract_service_secret
 
 services:
   monolith:
@@ -49,11 +58,14 @@ services:
       DISTRIBUTION_SERVICE_SECRET_FILE: /run/secrets/distribution_service_secret
       PDF_RENDER_SERVICE_URL: http://pdf-render:3003
       PDF_RENDER_SERVICE_SECRET_FILE: /run/secrets/pdf_render_service_secret
+      CONTRACT_SERVICE_URL: http://contract-management:3004
+      CONTRACT_SERVICE_SECRET_FILE: /run/secrets/contract_service_secret
       LOGIN_RATE_MAX: ${LOGIN_RATE_MAX:-20}
     secrets:
       - jwt_secret
       - distribution_service_secret
       - pdf_render_service_secret
+      - contract_service_secret
     volumes:
       # Bind-mounted to specific host paths deliberately, NOT a named volume mounted over the
       # whole /app directory — that would hide the image's own application code (server.js,
@@ -66,6 +78,7 @@ services:
     depends_on:
       - document-distribution
       - pdf-render
+      - contract-management
     restart: unless-stopped
 
   document-distribution:
@@ -94,4 +107,19 @@ services:
       PDF_RENDER_SERVICE_SECRET_FILE: /run/secrets/pdf_render_service_secret
     secrets:
       - pdf_render_service_secret
+    restart: unless-stopped
+
+  contract-management:
+    build:
+      context: .
+      dockerfile: services/contract-management/Dockerfile
+    ports:
+      - "3004:3004"
+    environment:
+      NODE_ENV: production
+      CONTRACT_SERVICE_SECRET_FILE: /run/secrets/contract_service_secret
+    secrets:
+      - contract_service_secret
+    volumes:
+      - ./docker-data/contracts.db:/app/services/contract-management/contracts.db
     restart: unless-stopped

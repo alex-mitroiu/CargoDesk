@@ -3,9 +3,21 @@
 module.exports = function kanbanRoutes(app, ctx) {
   const { db, ok, err, uid, auth, requireRole,
           mapTicket, mapTicketLink, inverseLinkLabel,
-          mapKbProject, mapKbVersion, mapKbColumn } = ctx;
+          mapKbProject, mapKbVersion, mapKbColumn,
+          runOpsAutomationSweep } = ctx;
 
   const shipmentWrite = ctx.requireRole ? requireRole(["operator", "admin"]) : auth();
+
+  // Dev-only manual trigger for the ops-automation sweep (server.js — normally runs at startup
+  // and hourly) — same "expose the real trigger, not a parallel simulated code path" precedent
+  // as the existing AIS/EDI/Filing/Webhook Simulators, just without a dedicated Test Tools tab.
+  // Used by the automated test suite so it doesn't have to wait up to an hour for the real timer.
+  app.post("/api/test/run-ops-automation-sweep", requireRole(["admin"]), (req, res) => {
+    const before = db.prepare("SELECT COUNT(*) AS n FROM tickets WHERE source_type IS NOT NULL").get().n;
+    runOpsAutomationSweep();
+    const after = db.prepare("SELECT COUNT(*) AS n FROM tickets WHERE source_type IS NOT NULL").get().n;
+    ok(res, { ticketsCreated: after - before });
+  });
 
   // ─── Ticket helpers ───────────────────────────────────────────────────────
 

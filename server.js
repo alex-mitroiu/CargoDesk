@@ -19,6 +19,7 @@ const {
 const { createAisListener } = require("./lib/ais-listener");
 const { createMappers } = require("./lib/mappers");
 const { readSecret } = require("./lib/dockerSecret");
+const { createRateLimiter } = require("./lib/rateLimit");
 
 const JWT_DEV_DEFAULT = "cargoDesk-dev-secret-do-not-use-in-prod";
 const JWT_SECRET = readSecret("JWT_SECRET", JWT_DEV_DEFAULT);
@@ -32,6 +33,45 @@ const DISTRIBUTION_SECRET_DEV_DEFAULT = "cargoDesk-dev-distribution-secret-do-no
 const DISTRIBUTION_SERVICE_SECRET = readSecret("DISTRIBUTION_SERVICE_SECRET", DISTRIBUTION_SECRET_DEV_DEFAULT);
 if (DISTRIBUTION_SERVICE_SECRET === DISTRIBUTION_SECRET_DEV_DEFAULT)
   console.warn("⚠  DISTRIBUTION_SERVICE_SECRET not set (checked DISTRIBUTION_SERVICE_SECRET_FILE, then DISTRIBUTION_SERVICE_SECRET) — using insecure dev default. Set it (matching the distribution service's own env) before deploying.");
+
+// Contract Management Service (services/contract-management/) — CargoDesk's third extracted
+// microservice, and its first that runs ALONGSIDE the monolith's own in-process implementation
+// rather than replacing it — selected per-request via the app_settings.contract_source toggle
+// ('local'|'remote', default 'local' — see getSettings()/callContractService below). This secret
+// must match CONTRACT_SERVICE_SECRET in that service's own env.
+const CONTRACT_SERVICE_URL = process.env.CONTRACT_SERVICE_URL || "http://localhost:3004";
+const CONTRACT_SECRET_DEV_DEFAULT = "cargoDesk-dev-contract-service-secret-do-not-use-in-prod";
+const CONTRACT_SERVICE_SECRET = readSecret("CONTRACT_SERVICE_SECRET", CONTRACT_SECRET_DEV_DEFAULT);
+if (CONTRACT_SERVICE_SECRET === CONTRACT_SECRET_DEV_DEFAULT)
+  console.warn("⚠  CONTRACT_SERVICE_SECRET not set (checked CONTRACT_SERVICE_SECRET_FILE, then CONTRACT_SERVICE_SECRET) — using insecure dev default. Set it (matching the contract service's own env) before deploying.");
+
+// Unlike callDistributionService (routes/document-distribution.js, its only consumer), this is
+// shared across routes/contracts.js, routes/allocations.js, and server.js's own
+// createRateSnapshot/checkDgPolicy call sites — defined once here and handed out via ctx instead
+// of being duplicated per file. Same clean-503-on-unreachable contract as its distribution-service
+// counterpart.
+async function callContractService(method, urlPath, body) {
+  let r;
+  try {
+    r = await fetch(`${CONTRACT_SERVICE_URL}${urlPath}`, {
+      method,
+      headers: { Authorization: `Bearer ${CONTRACT_SERVICE_SECRET}`, "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch {
+    const e = new Error("Contract Management Service is unreachable — try again shortly");
+    e.status = 503;
+    throw e;
+  }
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const e = new Error(data.error || `Contract service returned HTTP ${r.status}`);
+    e.status = r.status;
+    throw e;
+  }
+  return data;
+}
 
 const app = express();
 const db  = new DatabaseSync(path.join(__dirname, "cargodesk.db"));
@@ -927,6 +967,24 @@ const migrations = [
   // already due rather than being given a fresh, unearned 90-day grace period.
   "ALTER TABLE users ADD COLUMN password_changed_at TEXT NOT NULL DEFAULT ''",
   "UPDATE users SET password_changed_at = created_at WHERE password_changed_at = ''",
+  // Self-service forgot-password. Stores a SHA-256 hash of the reset token, never the raw
+  // token itself — mirrors password_hash's own "never store the recoverable secret" rule. The
+  // raw token only ever exists in the emailed link and the incoming request that redeems it.
+  "ALTER TABLE users ADD COLUMN reset_token_hash    TEXT NOT NULL DEFAULT ''",
+  "ALTER TABLE users ADD COLUMN reset_token_expires TEXT NOT NULL DEFAULT ''",
+  `CREATE TABLE IF NOT EXISTS system_email_settings (
+    id              TEXT PRIMARY KEY,
+    smtp_host       TEXT NOT NULL DEFAULT '',
+    smtp_port       INTEGER NOT NULL DEFAULT 587,
+    secure_mode     TEXT NOT NULL DEFAULT 'starttls',
+    smtp_username   TEXT NOT NULL DEFAULT '',
+    smtp_password   TEXT NOT NULL DEFAULT '',
+    from_address    TEXT NOT NULL DEFAULT '',
+    from_name       TEXT NOT NULL DEFAULT '',
+    is_active       INTEGER NOT NULL DEFAULT 1,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+  )`,
   // v0.35.0 — Carrier Booking. One row per shipment, not a history table — edi_messages
   // already IS the full historical ledger of every request/response; this is a derived
   // "current state" projection over it (same relationship shipments.booking_ref already
@@ -1293,6 +1351,161 @@ const migrations = [
   "ALTER TABLE shipment_legs ADD COLUMN pol_longitude REAL DEFAULT NULL",
   "ALTER TABLE shipment_legs ADD COLUMN pod_latitude  REAL DEFAULT NULL",
   "ALTER TABLE shipment_legs ADD COLUMN pod_longitude REAL DEFAULT NULL",
+  // Rate-line-level validity window — previously only the whole contract had valid_from/valid_to,
+  // so a single line (e.g. a GRI or PSS surcharge effective for only part of the contract's own
+  // term) couldn't carry its own effective window. Blank on both ends (the default for every
+  // existing row) means "inherits the parent contract's own window" — a pure additive column,
+  // no backfill needed since blank already means exactly that everywhere it's read.
+  "ALTER TABLE contract_rates ADD COLUMN valid_from TEXT DEFAULT ''",
+  "ALTER TABLE contract_rates ADD COLUMN valid_to   TEXT DEFAULT ''",
+  // Minimum Quantity Commitment — allocations were ceiling-only (alertThreshold warns on going
+  // OVER allocatedTEU); there was no floor/under-commitment signal at all. NULL (not 0) means
+  // "no MQC set" — a real $0 minimum isn't a thing, so NULL/blank stays distinguishable from an
+  // explicit, deliberately-zero commitment.
+  "ALTER TABLE allocations ADD COLUMN minimum_teu INTEGER DEFAULT NULL",
+  // Ops-automation sweep (runOpsAutomationSweep, below) — lets an auto-created ticket record
+  // exactly which stuck-booking/overdue-milestone/compliance-hit row it came from, so the sweep
+  // can check "does a ticket already exist for this exact source" and never create a duplicate
+  // on its next run. NULL/NULL on every ticket created through the normal UI, same as every other
+  // additive nullable column in this codebase.
+  "ALTER TABLE tickets ADD COLUMN source_type TEXT DEFAULT NULL",
+  "ALTER TABLE tickets ADD COLUMN source_id   TEXT DEFAULT NULL",
+  "CREATE INDEX IF NOT EXISTS idx_tickets_source ON tickets(source_type, source_id)",
+  // Multiple routing options per contract (e.g. HLCU/Kuehne+Nagel CNCKG->SEGOT priced
+  // independently via CNSHA->NLRTM, via CNSHA->DEHAM, via CNSHA->Wilhelmshaven) — a routing is a
+  // named, ordered bundle of contract_legs rows with its own optional contract_rates rows.
+  // routing_id='' (the column default, not NULL — matches this codebase's existing
+  // named_account_id/contract_ref "unset means blank string" convention) means "the contract's
+  // single implicit routing" on both contract_legs and contract_rates — every leg/rate on every
+  // contract that predates this feature, unaffected, zero backfill needed. On contract_rates,
+  // '' additionally means "applies regardless of which routing was matched" (e.g. a flat
+  // documentation fee) — coexists freely with routing-specific rate rows on the same contract.
+  `CREATE TABLE IF NOT EXISTS contract_routings (
+    id TEXT PRIMARY KEY,
+    contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+    name TEXT DEFAULT '',
+    sort_order INTEGER DEFAULT 0,
+    transit_days INTEGER DEFAULT 0,
+    notes TEXT DEFAULT '',
+    created_at TEXT NOT NULL
+  )`,
+  "ALTER TABLE contract_legs ADD COLUMN routing_id TEXT DEFAULT ''",
+  "ALTER TABLE contract_rates ADD COLUMN routing_id TEXT DEFAULT ''",
+  // Which routing the operator actually picked when assigning this contract to the shipment.
+  // '' means "single implicit routing" (or not yet recorded, for shipments that predate this
+  // feature) — importContractRates/createRateSnapshot fall back to "match every rate on the
+  // contract" in that case, identical to today's behavior.
+  "ALTER TABLE shipments ADD COLUMN contract_routing_id TEXT DEFAULT ''",
+  "CREATE INDEX IF NOT EXISTS idx_contract_routings_contract ON contract_routings(contract_id)",
+  // Freight Audit & Payment — reconciles a carrier's own submitted invoice against what was
+  // actually CONTRACTED (contract_rates) and/or already accrued (shipment_cost_lines), flagging
+  // variance beyond a configurable tolerance rather than trusting the carrier's number at face
+  // value. Deliberately distinct from the existing accrued->actualized->posted state machine on
+  // shipment_cost_lines — that machine tracks CargoDesk's OWN cost estimate maturing into a real
+  // figure over time; this validates an EXTERNAL document against what was agreed. amount_usd/
+  // expected_amount_usd are resolved at write time (same idiom as contract_rates.amount_usd),
+  // not recomputed live, so a later FX-rate change never silently reopens an already-reviewed line.
+  `CREATE TABLE IF NOT EXISTS carrier_invoices (
+    id TEXT PRIMARY KEY,
+    shipment_id TEXT NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
+    carrier_code TEXT DEFAULT '',
+    invoice_number TEXT DEFAULT '',
+    invoice_date TEXT DEFAULT '',
+    currency TEXT DEFAULT 'USD',
+    status TEXT NOT NULL DEFAULT 'Pending',
+    notes TEXT DEFAULT '',
+    created_at TEXT NOT NULL,
+    created_by TEXT DEFAULT ''
+  )`,
+  // free_time_side ('' | 'origin' | 'destination') only applies to a Detention/Demurrage line
+  // (service_code DET/DEM) tied to a specific container — it tells the matching engine which of
+  // the container's two independent free-time windows (containers.origin_free_time_days/
+  // dest_free_time_days, already tracked for the compliance badges on the Cargo page) this charge
+  // is actually for; the carrier's own invoice tells the person entering it which side applies,
+  // so this is operator-supplied, not inferred. expected_source records HOW expected_amount was
+  // resolved ('cost_line' | 'contract_rate' | 'dnd_calc' | '' when no comparison was possible)
+  // so the UI can show its provenance rather than a bare number.
+  `CREATE TABLE IF NOT EXISTS carrier_invoice_lines (
+    id TEXT PRIMARY KEY,
+    invoice_id TEXT NOT NULL REFERENCES carrier_invoices(id) ON DELETE CASCADE,
+    service_code TEXT DEFAULT '',
+    description TEXT DEFAULT '',
+    container_id TEXT DEFAULT '',
+    free_time_side TEXT DEFAULT '',
+    amount REAL NOT NULL DEFAULT 0,
+    currency TEXT DEFAULT 'USD',
+    amount_usd REAL DEFAULT 0,
+    expected_amount REAL DEFAULT NULL,
+    expected_currency TEXT DEFAULT 'USD',
+    expected_amount_usd REAL DEFAULT NULL,
+    expected_source TEXT DEFAULT '',
+    matched_cost_line_id TEXT DEFAULT '',
+    variance_usd REAL DEFAULT NULL,
+    variance_pct REAL DEFAULT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    resolved_at TEXT DEFAULT NULL,
+    resolved_by TEXT DEFAULT '',
+    resolution_notes TEXT DEFAULT ''
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_carrier_invoices_shipment ON carrier_invoices(shipment_id)",
+  "CREATE INDEX IF NOT EXISTS idx_carrier_invoice_lines_invoice ON carrier_invoice_lines(invoice_id)",
+  // Quoting / RFQ pre-booking stage — every competitor platform researched (CargoWise, Magaya,
+  // Descartes, Flexport, Freightos) treats a quote as a distinct object that precedes and
+  // converts into a booking; CargoDesk previously had none (POST /api/shipments created a live
+  // numbered shipment directly, no prior quote entity). Lifecycle: Draft -> Sent -> Accepted |
+  // Declined | Expired -> Converted. Pricing reuses the existing contract-match/rate
+  // infrastructure (GET /api/contracts/match) as a reference; quote_lines carry the actual
+  // SELL-side price offered to the customer, which on conversion become the new shipment's SELL
+  // cost lines (source 'quote') — the BUY side still comes from the real matched contract via the
+  // existing importContractRates path, unchanged.
+  `CREATE TABLE IF NOT EXISTS quotes (
+    id TEXT PRIMARY KEY,
+    status TEXT NOT NULL DEFAULT 'Draft',
+    customer_id TEXT DEFAULT '',
+    customer_name TEXT DEFAULT '',
+    pol TEXT DEFAULT '',
+    pod TEXT DEFAULT '',
+    carrier_code TEXT DEFAULT '',
+    contract_id TEXT DEFAULT '',
+    contract_ref TEXT DEFAULT '',
+    commodity_code TEXT DEFAULT '',
+    movement_type TEXT DEFAULT 'FCL',
+    service_type TEXT DEFAULT 'Port-to-Port',
+    incoterm TEXT DEFAULT '',
+    cargo_ready_date TEXT DEFAULT '',
+    valid_until TEXT DEFAULT '',
+    notes TEXT DEFAULT '',
+    currency TEXT DEFAULT 'USD',
+    total_amount_usd REAL DEFAULT 0,
+    sent_at TEXT DEFAULT '',
+    accepted_at TEXT DEFAULT '',
+    declined_at TEXT DEFAULT '',
+    decline_reason TEXT DEFAULT '',
+    expired_at TEXT DEFAULT '',
+    converted_shipment_id TEXT DEFAULT '',
+    converted_at TEXT DEFAULT '',
+    created_at TEXT NOT NULL,
+    created_by TEXT DEFAULT ''
+  )`,
+  // quantity*rate = amount in the line's own currency; amount_usd is resolved once via toUsd() at
+  // write time — same idiom as carrier_invoice_lines.amount_usd/contract_rates.amount_usd — not
+  // recomputed live, so a later FX-rate change never silently reopens an already-quoted line.
+  `CREATE TABLE IF NOT EXISTS quote_lines (
+    id TEXT PRIMARY KEY,
+    quote_id TEXT NOT NULL REFERENCES quotes(id) ON DELETE CASCADE,
+    service_code TEXT DEFAULT '',
+    description TEXT DEFAULT '',
+    container_type TEXT DEFAULT '',
+    quantity REAL NOT NULL DEFAULT 1,
+    unit TEXT DEFAULT 'per_container',
+    rate REAL NOT NULL DEFAULT 0,
+    currency TEXT DEFAULT 'USD',
+    amount_usd REAL DEFAULT 0,
+    sort_order INTEGER DEFAULT 0
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_quotes_status ON quotes(status)",
+  "CREATE INDEX IF NOT EXISTS idx_quotes_customer ON quotes(customer_id)",
+  "CREATE INDEX IF NOT EXISTS idx_quote_lines_quote ON quote_lines(quote_id)",
 ];
 
 // "duplicate column name" is the expected, harmless result of re-running an ADD COLUMN
@@ -1530,6 +1743,13 @@ const SETTING_DEFAULTS = {
   api_ofac_enabled:           'true',
   api_ofac_interval_value:    '1',
   api_ofac_interval_unit:     'weeks',
+  // Multi-list denied-party screening beyond OFAC SDN — BIS Denied Persons/Entity/Unverified/
+  // Military End User Lists, State Dept ITAR Debarred + Nonproliferation Sanctions, and 5 more
+  // OFAC-family lists. Defaults on, same posture as OFAC itself (see api_ofac_enabled above) —
+  // narrower screening is never the safer default for a compliance feature.
+  api_csl_enabled:            'true',
+  api_csl_interval_value:     '1',
+  api_csl_interval_unit:      'weeks',
   finance_view_enabled:       'true',
   api_ws_enabled:             'true',
   api_shipments_enabled:      'true',
@@ -1544,6 +1764,16 @@ const SETTING_DEFAULTS = {
   ai_model:                   'claude-haiku-4-5-20251001',
   ai_api_key:                 '',
   ai_system_prompt:           '',
+  // 'local' (default) = the monolith's own in-process contracts/contract_legs/contract_rates/
+  // contract_routings tables, exactly as today. 'remote' = the standalone Contract Management
+  // Service (services/contract-management/, see CONTRACT_SERVICE_URL above). A one-way cutover
+  // lever, not a live bidirectional sync — see routes/contracts.js's callContractService callers.
+  contract_source:            'local',
+  // Freight Audit & Payment — a carrier invoice line whose |variance| exceeds this percentage of
+  // the expected (contracted/accrued) amount is flagged 'variance' instead of auto-'matched'.
+  // One flat global tolerance, not per-carrier/per-charge-type rules — the configurable-rule-
+  // library depth real FAP vendors build is deliberately out of scope for this pass.
+  fap_variance_tolerance_pct: '2',
 };
 {
   const ins = db.prepare("INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)");
@@ -1668,6 +1898,50 @@ async function syncOfacSdn() {
   return { source: "OFAC-SDN", syncedAt: now, entries: entries.length };
 }
 
+// ─── Consolidated Screening List sync (multi-list denied-party screening) ─────
+// The US government's own Consolidated Screening List (developer.trade.gov, free, no API key)
+// bundles 11 lists beyond OFAC's own SDN list into one feed — BIS's Denied Persons/Entity/
+// Unverified/Military End User Lists, State Dept's ITAR Debarred (AECA) and Nonproliferation
+// Sanctions lists, and 5 more OFAC-family lists beyond SDN (SSI, CAPTA, Non-SDN Menu-Based,
+// Non-SDN Chinese Military-Industrial Complex, Palestinian Legislative Council). Screening OFAC
+// SDN alone (this app's previous scope) misses all of these — a real compliance program checks
+// the full set, not one list. The bulk feed also includes the SDN list itself; those rows are
+// filtered out here since syncOfacSdn() above already owns that list under its own 'OFAC-SDN'
+// source and sync cadence — this sync is additive to it, not a replacement.
+//
+// sanctions_entries.source/sanctions_syncs.source were already fully generic columns before this
+// (confirmed: only ever written as the literal 'OFAC-SDN' until now) — no schema change needed.
+// Every CSL-sourced row's `id` is prefixed 'CSL-' specifically so the delete-then-reinsert below
+// can safely scope to "every row this sync owns" without having to enumerate the list names
+// themselves, which the government feed could rename or add to over time.
+async function syncConsolidatedScreeningList() {
+  const r = await fetch("https://data.trade.gov/downloadable_consolidated_screening_list/v1/consolidated.json");
+  if (!r.ok) throw new Error(`Consolidated Screening List returned HTTP ${r.status}`);
+  const data = await r.json();
+  const results = Array.isArray(data.results) ? data.results : [];
+  const entries = results.filter(e => e.id && e.name && !/^Specially Designated Nationals/i.test(e.source || ""));
+
+  db.prepare("DELETE FROM sanctions_entries WHERE id LIKE 'CSL-%'").run();
+  const ins = db.prepare(
+    `INSERT OR REPLACE INTO sanctions_entries (id,source,ref_id,entity_name,entity_name_norm,entity_type,program,aliases_norm)
+     VALUES (?,?,?,?,?,?,?,?)`
+  );
+  db.exec("BEGIN");
+  try {
+    for (const e of entries)
+      ins.run(`CSL-${e.id}`, e.source || "Consolidated Screening List", String(e.id), e.name,
+               normSanctionName(e.name), e.type || "", (e.programs || []).join("; "),
+               JSON.stringify((e.alt_names || []).map(normSanctionName)));
+    db.exec("COMMIT");
+  } catch (e2) { db.exec("ROLLBACK"); throw e2; }
+
+  const now = new Date().toISOString();
+  db.prepare("INSERT OR REPLACE INTO sanctions_syncs (source,synced_at,entry_count) VALUES ('CSL',?,?)").run(now, entries.length);
+  loadSanctionsIndex();
+  rescreenActiveShipments();
+  return { source: "CSL", syncedAt: now, entries: entries.length };
+}
+
 // Organization Model Enhancement Epic 3 — after any sanctions list update (OFAC XML sync, the
 // scheduled auto-sync, or a manual CSV import), re-screen every still-relevant shipment so a
 // newly-added SDN entry is caught immediately instead of waiting for that shipment to be
@@ -1766,6 +2040,57 @@ function scheduleNextOfacSync(retryDelayMs = null) {
   } catch {}
 }
 try { scheduleNextOfacSync(); } catch {}
+
+// Structurally identical to scheduleNextOfacSync above, just for the 'CSL' sync source and its
+// own settings keys — kept as an independent copy rather than generalizing the OFAC scheduler
+// into a shared multi-source one, since that would mean touching already-working, tested
+// scheduling logic for a second call site; same "duplicate rather than risk the working original"
+// precedent this codebase already applies elsewhere (dockerSecret.js, per-service mappers, etc.).
+let cslAutoSyncTimer = null;
+
+function scheduleNextCslSync(retryDelayMs = null) {
+  clearTimeout(cslAutoSyncTimer);
+  try {
+    const s = getSettings();
+    if (s.api_csl_enabled !== 'true') return;
+    const lastSync = db.prepare("SELECT synced_at FROM sanctions_syncs WHERE source='CSL'").get();
+    if (!lastSync) return; // Never synced — user must trigger the first one manually
+
+    let delay;
+    if (retryDelayMs != null) {
+      delay = Math.min(MAX_TIMER_MS, retryDelayMs);
+    } else {
+      const val        = Math.max(1, parseInt(s.api_csl_interval_value) || 1);
+      const unit       = s.api_csl_interval_unit || 'weeks';
+      const msMap      = { days: 86400000, weeks: 7 * 86400000, months: 30 * 86400000 };
+      const intervalMs = val * (msMap[unit] || msMap.weeks);
+      const nextDue    = new Date(lastSync.synced_at).getTime() + intervalMs;
+      delay = Math.min(MAX_TIMER_MS, Math.max(60000, nextDue - Date.now()));
+    }
+
+    cslAutoSyncTimer = setTimeout(async () => {
+      const ls  = db.prepare("SELECT synced_at FROM sanctions_syncs WHERE source='CSL'").get();
+      const sv  = Math.max(1, parseInt(getSettings().api_csl_interval_value) || 1);
+      const su  = getSettings().api_csl_interval_unit || 'weeks';
+      const msMap = { days: 86400000, weeks: 7 * 86400000, months: 30 * 86400000 };
+      const due = ls ? new Date(ls.synced_at).getTime() + sv * (msMap[su] || msMap.weeks) : 0;
+      if (Date.now() < due) { scheduleNextCslSync(); return; }
+
+      console.log("⚓ Auto-syncing Consolidated Screening List…");
+      try {
+        const r = await syncConsolidatedScreeningList();
+        console.log(`  ✔ CSL auto-sync complete: ${r.entries.toLocaleString()} entries`);
+        scheduleNextCslSync();
+      } catch (e) {
+        console.error("  ✗ CSL auto-sync failed:", e.message);
+        scheduleNextCslSync(3_600_000);
+      }
+    }, delay);
+
+    console.log(`  ⏱ CSL auto-sync scheduled in ${Math.round(delay / 3600000 * 10) / 10}h`);
+  } catch {}
+}
+try { scheduleNextCslSync(); } catch {}
 
 function screenShipmentById(shipmentId) {
   const s = db.prepare("SELECT * FROM shipments WHERE id=?").get(shipmentId);
@@ -2254,11 +2579,13 @@ const {
   mapChargeCodeDefinition, mapContainer, mapContainerEvent, mapContainerPackage, mapShipmentParty,
   mapPackTypeDefinition, mapAllocation, mapCarrier, mapVessel, mapPortLocation, mapLinkedPort,
   mapCarrierAgent, mapTradeLane, mapScopeItem, mapAccessConfig, mapOffice, mapOfficeMailSettings,
+  mapSystemEmailSettings,
   mapBranch, mapOrgCountry, mapRegion, mapCountry, mapTicketLink, mapTicket, mapTestItem,
   mapTestCaseLink, mapEdiMessage, mapCarrierBooking, mapCustomsFiling, mapKbProject, mapKbVersion,
   mapKbColumn, mapCustomer, mapCustomerIdentifier, mapCustomerScreening, mapCustomerDoc,
   mapCustomerContact, mapCommodity, mapSystemMessage, mapMilestone, mapMilestoneTemplate,
-  mapContract, mapLeg, mapRate,
+  mapContract, mapLeg, mapRate, mapContractRouting, mapCarrierInvoice, mapCarrierInvoiceLine,
+  mapQuote, mapQuoteLine,
 } = createMappers({ portLanesMap, CUTOFF_WARNING_DAYS });
 
 function shipmentMatchesAccessConfig(s, cfg) {
@@ -2602,6 +2929,86 @@ const ensureBookingCreated = (shipmentId) => {
   if (created > 0) console.log(`  ✔ Backfilled ${created} carrier booking(s) for already-qualifying shipments`);
 })();
 
+// ─── Ops-automation sweep: auto-create Kanban tickets from stuck process signals ──────────────
+// Previously the app had zero automatic ticket creation anywhere — a stuck carrier booking, an
+// overdue milestone, or an unresolved compliance HIT were only ever visible as a transient
+// notification-bell badge (App.jsx's Header) or a page-level badge, nothing that persisted,
+// could be assigned, or survived the badge being dismissed. This sweep turns those same three
+// conditions into real, trackable Kanban tickets — same "detect a condition, act once, never
+// re-fire" idiom as autoCompleteMilestone/ensureBookingCreated above, just running on a timer
+// instead of off a write-path call, since "stuck"/"overdue" are inherently time-based conditions
+// with no single write event that would ever trigger them.
+//
+// Mirrors App.jsx's own STALE_BOOKING_HOURS=48 (frontend/backend don't share a module, same
+// split as CONTRACT_TYPES/BOOKABLE_CARRIERS elsewhere in this app) — a Pending booking with no
+// carrier response past this age is exactly what the notification bell already flags.
+const STALE_BOOKING_HOURS = 48;
+
+// Dedupes on (sourceType, sourceId) via the new tickets.source_type/source_id columns — once a
+// ticket exists for a given source it's never recreated, even if a human later closes it and the
+// underlying condition still holds (closing it is treated as "handled", same as this codebase's
+// other one-shot auto-triggers never re-firing once their target is in a settled state). Returns
+// the new ticket id, or null if one already existed.
+const ensureOpsTicket = (sourceType, sourceId, { shipmentId, title, description, priority = 'Medium' }) => {
+  const existing = db.prepare("SELECT id FROM tickets WHERE source_type=? AND source_id=?").get(sourceType, sourceId);
+  if (existing) return null;
+  const id = `TKT-${uid()}`;
+  const now = new Date().toISOString();
+  const pos = (db.prepare("SELECT MAX(position) AS m FROM tickets WHERE status='Ready'").get()?.m ?? -1) + 1;
+  db.prepare(`INSERT INTO tickets
+    (id, title, description, priority, status, position, created_at, shipment_id, type, source_type, source_id)
+    VALUES (?,?,?,?,'Ready',?,?,?,'Task',?,?)`)
+    .run(id, title, description, priority, pos, now, shipmentId || null, sourceType, sourceId);
+  return id;
+};
+
+const runOpsAutomationSweep = () => {
+  const now = Date.now();
+  const staleBookings = db.prepare(`
+    SELECT id, shipment_id, carrier_code, requested_at FROM carrier_bookings
+    WHERE status='Pending' AND requested_at IS NOT NULL AND requested_at != ''
+  `).all();
+  for (const b of staleBookings) {
+    const ageHours = (now - new Date(b.requested_at).getTime()) / 36e5;
+    if (ageHours < STALE_BOOKING_HOURS) continue;
+    ensureOpsTicket('carrier_booking_stale', b.id, {
+      shipmentId: b.shipment_id, priority: 'High',
+      title: `Carrier booking stuck — no response in ${Math.floor(ageHours)}h (${b.shipment_id})`,
+      description: `Carrier booking ${b.id} on ${b.shipment_id} (${b.carrier_code || 'unknown carrier'}) has had no carrier response for over ${STALE_BOOKING_HOURS}h. Auto-created by the ops automation sweep.`,
+    });
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
+  const overdueMilestones = db.prepare(`
+    SELECT m.id, m.shipment_id, m.label, m.estimated_date FROM shipment_milestones m
+    JOIN shipments s ON s.id = m.shipment_id
+    WHERE (m.completed_at IS NULL OR m.completed_at='') AND m.estimated_date != '' AND m.estimated_date < ?
+      AND s.status NOT IN ('Completed', 'Cancelled')
+  `).all(today);
+  for (const m of overdueMilestones) {
+    ensureOpsTicket('milestone_overdue', m.id, {
+      shipmentId: m.shipment_id, priority: 'Medium',
+      title: `Overdue milestone: ${m.label} (${m.shipment_id})`,
+      description: `Milestone "${m.label}" on ${m.shipment_id} was estimated for ${m.estimated_date} and is still incomplete. Auto-created by the ops automation sweep.`,
+    });
+  }
+
+  const complianceHits = db.prepare(`
+    SELECT sc.id, sc.shipment_id FROM shipment_screenings sc
+    JOIN shipments s ON s.id = sc.shipment_id
+    WHERE sc.result='HIT' AND sc.overridden_at IS NULL AND s.status NOT IN ('Completed', 'Cancelled')
+  `).all();
+  for (const sc of complianceHits) {
+    ensureOpsTicket('compliance_hit', sc.id, {
+      shipmentId: sc.shipment_id, priority: 'Critical',
+      title: `Compliance HIT requires review — ${sc.shipment_id}`,
+      description: `Sanctions screening on ${sc.shipment_id} returned a HIT with no override on record. Auto-created by the ops automation sweep.`,
+    });
+  }
+};
+runOpsAutomationSweep();
+setInterval(runOpsAutomationSweep, 60 * 60 * 1000); // hourly, same cadence as expireStaleContracts
+
 // ─── Allocation conflict helpers ──────────────────────────────────────────────
 
 const checkOverlap = (carrierCode, effectiveDate, endDate, pol = '', pod = '', excludeId = null) => {
@@ -2640,22 +3047,30 @@ function resolveCarrierAgent(carrierCode, portUnlocode) {
   return tryPort(portUnlocode) || linkedPortCodes(portUnlocode).map(tryPort).find(Boolean) || null;
 }
 
-// Finds a run of legs covering pol->pod as one connected journey. Contracts in this app
-// store legs in two different shapes: sequential TSP hops of ONE journey (leg[i].pod ===
-// leg[i+1].pol, e.g. NLRTM->BEANR->USNYC) and independent ALTERNATE LANES bundled under a
-// single contract (unrelated pol/pod pairs, e.g. an Asia-Europe lane and a separate
-// Europe-US lane on the same contract) — a fixed "whole array is one chain" assumption
-// breaks the second shape. So: try every possible starting leg whose pol matches the query,
-// walk forward only while consecutive legs actually connect, and stop as soon as that
-// walked run's pod reaches the query pod — that's the natural boundary of one lane. Haulage
-// only attaches at the outer edges of the matched run: the first leg's POL haulage
-// (pre-carriage into the run's own first port) and the last leg's POD haulage (on-carriage
-// out of its own last port) — never the legs in between. A single-leg run is the simple case.
-const findMatchingContractLeg = (legs, { pol, pod, needsPolHaulage, needsPodHaulage, pkuLocation = '', delLocation = '' }) => {
-  if (legs.length === 0) return null;
+// Finds every distinct run of legs covering pol->pod as one connected journey, one match per
+// contract_routings group. Legs are grouped by routing_id FIRST — '' (the column default) is one
+// implicit group, which is every leg on every contract that predates the multi-routing feature —
+// so genuinely alternative routings for the same lane are never confused with each other, and a
+// legacy contract's legs are never split across groups they were never assigned to.
+//
+// Within one group, contracts in this app store legs in two different shapes: sequential TSP hops
+// of ONE journey (leg[i].pod === leg[i+1].pol, e.g. NLRTM->BEANR->USNYC) and independent ALTERNATE
+// LANES bundled under the same group (unrelated pol/pod pairs, e.g. an Asia-Europe lane and a
+// separate Europe-US lane sharing the implicit '' routing on a contract created before named
+// routings existed) — a fixed "whole array is one chain" assumption breaks the second shape. So:
+// try every possible starting leg whose pol matches the query, walk forward only while consecutive
+// legs actually connect, and stop as soon as that walked run's pod reaches the query pod — that's
+// the natural boundary of one lane. Unlike the old single-match version, scanning continues past a
+// successful match to find every other independent run in the SAME group too (this only changes
+// behavior for the rare legacy contract bundling two unrelated lanes that both happen to satisfy
+// the same pol/pod query — previously only the leg-order-earliest one was ever visible). Haulage
+// only attaches at the outer edges of a matched run: the first leg's POL haulage (pre-carriage into
+// the run's own first port) and the last leg's POD haulage (on-carriage out of its own last port)
+// — never the legs in between. A single-leg run is the simple case.
+const findMatchingContractLegs = (legs, { pol, pod, needsPolHaulage, needsPodHaulage, pkuLocation = '', delLocation = '' }) => {
+  if (legs.length === 0) return [];
   const polU = pol.toUpperCase(), podU = pod.toUpperCase();
   const pkuU = pkuLocation.toUpperCase(), delU = delLocation.toUpperCase();
-  const ordered = [...legs].sort((a, b) => a.leg_order - b.leg_order);
 
   const polMatches = leg => (leg.pol_linked_allowed ? [leg.pol, ...linkedPortCodes(leg.pol)] : [leg.pol]).includes(polU);
   const podMatches = leg => (leg.pod_linked_allowed ? [leg.pod, ...linkedPortCodes(leg.pod)] : [leg.pod]).includes(podU);
@@ -2678,23 +3093,34 @@ const findMatchingContractLeg = (legs, { pol, pod, needsPolHaulage, needsPodHaul
     return true;
   };
 
-  for (let i = 0; i < ordered.length; i++) {
-    if (!polMatches(ordered[i])) continue;
-    let j = i;
-    for (;;) {
-      if (podMatches(ordered[j])) {
-        if (haulageOk(ordered[i], ordered[j])) {
-          return { legs: ordered.slice(i, j + 1), firstLeg: ordered[i], lastLeg: ordered[j],
-            matchKind: (ordered[i].pol === polU && ordered[j].pod === podU) ? "exact" : "linked" };
+  const groups = new Map();
+  for (const leg of legs) {
+    const key = leg.routing_id || '';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(leg);
+  }
+
+  const matches = [];
+  for (const [routingId, groupLegs] of groups) {
+    const ordered = [...groupLegs].sort((a, b) => a.leg_order - b.leg_order);
+    for (let i = 0; i < ordered.length; i++) {
+      if (!polMatches(ordered[i])) continue;
+      let j = i;
+      for (;;) {
+        if (podMatches(ordered[j])) {
+          if (haulageOk(ordered[i], ordered[j])) {
+            matches.push({ routingId, legs: ordered.slice(i, j + 1), firstLeg: ordered[i], lastLeg: ordered[j],
+              matchKind: (ordered[i].pol === polU && ordered[j].pod === podU) ? "exact" : "linked" });
+          }
+          break; // reached the query pod (haulage ok or not) — this lane is done, try the next start
         }
-        break; // reached the query pod but haulage failed — this lane is done, try the next start
+        const next = ordered[j + 1];
+        if (!next || ordered[j].pod !== next.pol) break; // chain doesn't continue — dead end
+        j++;
       }
-      const next = ordered[j + 1];
-      if (!next || ordered[j].pod !== next.pol) break; // chain doesn't continue — dead end
-      j++;
     }
   }
-  return null;
+  return matches;
 };
 
 // ─── Role helpers (hoisted from inline routes so ctx can include them) ────────
@@ -2746,21 +3172,80 @@ const recomputeSpaceBadge = shipmentId => {
 };
 
 // ─── Contract rate → charge code mapping (hoisted so importContractRates + ctx are together) ─
-
+// charge_code is plain TEXT (no backend enum) — CHARGE_CODES in ShipmentDetailPage.jsx is only
+// a client-side suggestion list for a manually-typed NEW cost line, it doesn't constrain what a
+// contract-generated line can carry. This previously only recognized 6 of the 17 service codes
+// MdmContractsPage.jsx's own rate-entry UI offers (SERVICE_CODES) — every surcharge code (BAF,
+// CAF, EBS, PSS, ISPS, WRS, SCS, AMS, ENS, IMO) fell through to the generic literal 'Other',
+// losing its specific identity on the resulting cost line's structured charge_code field (the
+// original code/description survived only in the line's free-text notes) — meaning the GP
+// Overview's "by charge code" breakdown could never distinguish a bunker surcharge from a peak-
+// season surcharge from a war-risk surcharge, they all just landed in one 'Other' bucket.
 const SERVICE_CODE_MAP = {
   OF: 'Ocean Freight', OCF: 'Ocean Freight',
-  BL: 'B/L Fee',  BLF: 'B/L Fee', DOC: 'B/L Fee',
-  THC: 'Origin THC', OTHC: 'Origin THC', ORI: 'Origin THC',
-  DTHC: 'Destination THC', DEST: 'Destination THC',
+  BAF: 'Bunker Adjustment Factor',
+  CAF: 'Currency Adjustment Factor',
+  EBS: 'Emergency Bunker Surcharge',
+  'THC-O': 'Origin THC', THC: 'Origin THC', OTHC: 'Origin THC', ORI: 'Origin THC',
+  'THC-D': 'Destination THC', DTHC: 'Destination THC', DEST: 'Destination THC',
+  BL: 'B/L Fee', BLF: 'B/L Fee', DOC: 'B/L Fee',
+  AMS: 'Advance Manifest Surcharge',
+  ENS: 'Entry Summary Declaration',
+  IMO: 'IMO/DG Surcharge',
+  PSS: 'Peak Season Surcharge',
+  ISPS: 'ISPS Security Surcharge',
+  CUC: 'Carrier Uplift Charge',
+  WRS: 'War Risk Surcharge',
+  SCS: 'Suez Canal Surcharge',
   CUS: 'Customs', CUST: 'Customs',
   INL: 'Inland', INLAND: 'Inland',
+  DET: 'Detention', DEM: 'Demurrage',
 };
+
+// The Contract Management Service returns rates through its own mapRate (camelCase, same field
+// names as lib/mappers.js's copy) — converts one back to the snake_case row shape the insert
+// loop below (and the valid_from/valid_to filter above it) already expects, so that loop doesn't
+// need two implementations depending on contract_source.
+const rateToRow = r => ({
+  routing_id: r.routingId || '', service_code: r.serviceCode || '', description: r.description || '',
+  amount: r.amount, currency: r.currency || 'USD', amount_usd: r.amountUsd, unit: r.unit || 'per_container',
+  container_type: r.containerType || '', notes: r.notes || '', valid_from: r.validFrom || '', valid_to: r.validTo || '',
+});
 
 // Freezes a copy of contract_rates at the point they're committed to a shipment. Later edits to
 // contract_rates in MDM never rewrite what was already quoted — "Reset to Contract" replays this
 // frozen snapshot, and "Update Carrier Costs" is the only action that generates a new one. See TKT-6QT30S.
-function createRateSnapshot(shipmentId, contractId, reason, generatedBy = '') {
-  const rates = db.prepare("SELECT * FROM contract_rates WHERE contract_id=? ORDER BY sort_order").all(contractId);
+// The snapshot itself is always a local write regardless of contract_source — it's a monolith-
+// owned freeze of whatever the live rates said at commit time, not a mirror of the source's own
+// storage. async because 'remote' mode resolves the live rates via a network call to the Contract
+// Management Service first — callers must await this (see e.g. routes/shipment-ops.js's
+// import-contract route, which resolves the snapshot BEFORE opening its own write transaction,
+// same reasoning as saveRates in routes/contracts.js: never hold a transaction open across a
+// network call).
+async function createRateSnapshot(shipmentId, contractId, reason, generatedBy = '') {
+  const today = new Date().toISOString().slice(0, 10);
+  // Scoped to the shipment's own stored contract_routing_id (which named routing was actually
+  // assigned) plus contract-wide routing_id='' rows (e.g. a flat documentation fee that applies
+  // regardless of routing) — never every rate on the whole contract. A shipment that predates
+  // multi-routing contracts has contract_routing_id='', and every rate on a contract that
+  // predates named routings also has routing_id='' by column default, so this condition selects
+  // every rate on the contract for that combination — identical to this function's pre-routing
+  // behavior.
+  const routingId = db.prepare("SELECT contract_routing_id FROM shipments WHERE id=?").get(shipmentId)?.contract_routing_id || '';
+  // A rate line's own valid_from/valid_to (blank on both ends = inherits the parent contract's
+  // already-enforced window) — a mid-contract surcharge that hasn't started yet, or one that's
+  // already lapsed, is excluded from a freshly-generated snapshot. Already-frozen snapshots on
+  // other shipments are unaffected — this only ever gates what goes INTO a new one.
+  let allRates;
+  if ((getSettings().contract_source || 'local') === 'remote') {
+    try { allRates = (await callContractService("GET", `/internal/contracts/${contractId}`)).rates.map(rateToRow); }
+    catch { allRates = []; } // an unreachable/vanished remote contract yields no rates to snapshot, not a hard failure
+  } else {
+    allRates = db.prepare("SELECT * FROM contract_rates WHERE contract_id=? AND (routing_id=? OR routing_id='') ORDER BY sort_order").all(contractId, routingId);
+  }
+  const rates = allRates
+    .filter(r => r.routing_id === routingId || !r.routing_id)
+    .filter(r => (!r.valid_from || r.valid_from <= today) && (!r.valid_to || r.valid_to >= today));
   if (!rates.length) return null;
   const snapshotId = `RATE-${uid()}`;
   const now = new Date().toISOString();
@@ -2828,11 +3313,11 @@ function generateCostLinesFromSnapshot(shipmentId, snapshotId, { splitPerContain
 // need to know about snapshots. Reset/Update Carrier Costs (routes/shipment-ops.js) call
 // createRateSnapshot/generateCostLinesFromSnapshot directly since they need explicit control over
 // which snapshot is used.
-function importContractRates(shipmentId, opts = {}) {
+async function importContractRates(shipmentId, opts = {}) {
   const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(shipmentId);
   if (!shipment || shipment.contract_type !== 'Central' || !shipment.contract_id) return 0;
   const existing = db.prepare("SELECT id FROM shipment_rate_snapshots WHERE shipment_id=? ORDER BY generated_at DESC LIMIT 1").get(shipmentId);
-  const snapshotId = existing ? existing.id : createRateSnapshot(shipmentId, shipment.contract_id, 'initial');
+  const snapshotId = existing ? existing.id : await createRateSnapshot(shipmentId, shipment.contract_id, 'initial');
   if (!snapshotId) return 0;
   return generateCostLinesFromSnapshot(shipmentId, snapshotId, opts);
 }
@@ -2889,13 +3374,14 @@ const ctx = {
   applyShipmentAccessFilter,
   fxCache, getFxRates, toUsd, roundCents,
   sanctionsMap, loadSanctionsIndex, syncOfacSdn, scheduleNextOfacSync,
+  syncConsolidatedScreeningList, scheduleNextCslSync,
   normSanctionName, EMBARGOED_COUNTRIES,
   getSettings,
   shipmentSubs, broadcastMessage, recomputeSpaceBadge,
   UPLOADS_DIR,
   renderHtmlToPdf, getActiveSigningCert, signPdfBuffer,
   createTransporterFromSettings, getTransporterForOffice, invalidateTransporterCache,
-  buildMailOptions, sendViaOffice, mapOfficeMailSettings,
+  buildMailOptions, sendViaOffice, mapOfficeMailSettings, mapSystemEmailSettings,
   SVC_ABBR, LEG_LOC_ABBR, GPS_LOC_TYPE,
   VALID_ROLES, ROLE_RANK_SV, primaryRoleSV, parseUserRoles,
   SERVICE_CODE_MAP, importContractRates, createRateSnapshot, generateCostLinesFromSnapshot,
@@ -2911,7 +3397,8 @@ const ctx = {
   mapKbProject, mapKbVersion, mapKbColumn,
   mapCustomer, mapCustomerIdentifier, mapCustomerScreening, mapCustomerDoc, mapCustomerContact,
   mapCommodity, mapSystemMessage, mapMilestone, mapMilestoneTemplate,
-  mapContract, mapLeg, mapRate,
+  mapContract, mapLeg, mapRate, mapContractRouting, mapCarrierInvoice, mapCarrierInvoiceLine,
+  mapQuote, mapQuoteLine,
   logEvent, logEntityEvent, logAdminEvent, TRACKED_FIELDS, TRACKED_CTR_FIELDS,
   CUTOFF_WARNING_DAYS, FREE_TIME_WARNING_DAYS,
   ssoNonces,
@@ -2923,13 +3410,16 @@ const ctx = {
   checkOverlap,
   autoCompleteMilestone,
   ensureBookingCreated, supersedeIfCarrierChanged,
-  linkedPortCodes, findMatchingContractLeg, resolveCarrierAgent,
+  runOpsAutomationSweep,
+  linkedPortCodes, findMatchingContractLegs, resolveCarrierAgent,
   screenShipmentById, rescreenActiveShipments, resolveCustomerGroup,
   bcrypt, jwt, JWT_SECRET,
   DISTRIBUTION_SERVICE_URL, DISTRIBUTION_SERVICE_SECRET,
+  CONTRACT_SERVICE_URL, CONTRACT_SERVICE_SECRET, callContractService,
   inverseLinkLabel,
   fs, path,
   migrationFailures,
+  createRateLimiter,
 };
 
 require('./routes/auth')(app, ctx);
@@ -2943,6 +3433,8 @@ require('./routes/customs-filing')(app, ctx);
 require('./routes/customers')(app, ctx);
 require('./routes/contracts')(app, ctx);
 require('./routes/shipment-ops')(app, ctx);
+require('./routes/carrier-invoices')(app, ctx);
+require('./routes/quotes')(app, ctx);
 require('./routes/finance')(app, ctx);
 require('./routes/system')(app, ctx);
 require('./routes/export')(app, ctx);
@@ -2978,10 +3470,33 @@ const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
 
 // shipmentSubs is pre-declared near portLanesMap above so route modules can receive it via ctx.
 
-wss.on("connection", ws => {
+// The /ws endpoint has no auth at all (by design — it's a plain shipment-update fanout, not a
+// place secrets flow through) and previously had no cap of any kind — a single client could open
+// unlimited connections or flood "subscribe" frames with zero pushback. Two independent, cheap
+// guards: a per-IP concurrent-connection cap (protects against a connection-exhaustion flood) and
+// a per-connection message-rate cap (protects against a single open socket spamming frames).
+const WS_MAX_CONN_PER_IP = Number(process.env.WS_MAX_CONN_PER_IP) || 20;
+const WS_MSG_WINDOW_MS = 10_000;
+const WS_MSG_RATE_MAX = Number(process.env.WS_MSG_RATE_MAX) || 30;
+const wsConnCountByIp = new Map(); // ip -> open connection count
+
+wss.on("connection", (ws, req) => {
+  const ip = req.socket.remoteAddress || "unknown";
+  if ((wsConnCountByIp.get(ip) || 0) >= WS_MAX_CONN_PER_IP) {
+    ws.close(1013, "Too many connections from this address");
+    return;
+  }
+  wsConnCountByIp.set(ip, (wsConnCountByIp.get(ip) || 0) + 1);
+
   let subscribedId = null;
+  let msgCount = 0;
+  let msgWindowStart = Date.now();
 
   ws.on("message", raw => {
+    const now = Date.now();
+    if (now - msgWindowStart > WS_MSG_WINDOW_MS) { msgWindowStart = now; msgCount = 0; }
+    msgCount++;
+    if (msgCount > WS_MSG_RATE_MAX) { ws.close(1013, "Message rate exceeded"); return; }
     try {
       const msg = JSON.parse(raw);
       if (msg.type === "subscribe" && msg.shipmentId) {
@@ -2993,6 +3508,8 @@ wss.on("connection", ws => {
   });
 
   ws.on("close", () => {
+    const remaining = (wsConnCountByIp.get(ip) || 1) - 1;
+    if (remaining <= 0) wsConnCountByIp.delete(ip); else wsConnCountByIp.set(ip, remaining);
     if (subscribedId && shipmentSubs.has(subscribedId)) {
       const subs = shipmentSubs.get(subscribedId);
       subs.delete(ws);

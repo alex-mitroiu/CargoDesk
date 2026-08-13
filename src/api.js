@@ -257,11 +257,14 @@ export const api = {
     search:     (p = {})  => req("GET",    `/contracts?${new URLSearchParams(p)}`),
     find:       (p = {})  => req("GET",    `/contracts/search?${new URLSearchParams(p)}`),
     match:      (p = {})  => req("GET",    `/contracts/match?${new URLSearchParams(p)}`),
+    expiring:   (days)    => req("GET",    `/contracts/expiring${days ? `?days=${days}` : ""}`),
     revalidate: (ref)     => req("GET",    `/contracts/revalidate?ref=${encodeURIComponent(ref)}`),
     get:        (id)      => req("GET",    `/contracts/${id}`),
     create:  (data)       => req("POST",   "/contracts", data),
     update:  (id, data)   => req("PUT",    `/contracts/${id}`, data),
     remove:  (id)         => req("DELETE", `/contracts/${id}`),
+    publish: (id)         => req("POST",   `/contracts/${id}/publish`),
+    withdraw: (id)        => req("POST",   `/contracts/${id}/withdraw`),
   },
   entityEvents: {
     list: (type, id) => req("GET", `/entity-events/${type}/${id}`),
@@ -269,6 +272,7 @@ export const api = {
   sanctions: {
     status:    ()        => req("GET",  "/sanctions/status"),
     sync:      ()        => req("POST", "/sanctions/sync"),
+    syncCsl:   ()        => req("POST", "/sanctions/sync-csl"),
     importCsv: (csv)     => req("POST", "/sanctions/import-csv", { csv }),
     entries:   (p = {})  => req("GET",  `/sanctions/entries?${new URLSearchParams(p)}`),
   },
@@ -291,6 +295,16 @@ export const api = {
     actualize:      (shipmentId, lineId, d)    => req("PATCH",  `/shipments/${shipmentId}/cost-lines/${lineId}/actualize`, d),
     post:           (shipmentId, lineId)       => req("PATCH",  `/shipments/${shipmentId}/cost-lines/${lineId}/post`, {}),
     postBatch:      (shipmentId, ids)          => req("POST",   `/shipments/${shipmentId}/cost-lines/post-batch`, { ids }),
+  },
+  carrierInvoices: {
+    list:      (p = {})    => req("GET",    `/carrier-invoices?${new URLSearchParams(p)}`),
+    exceptions: ()         => req("GET",    "/carrier-invoices/exceptions"),
+    get:       (id)        => req("GET",    `/carrier-invoices/${id}`),
+    create:    (d)         => req("POST",   "/carrier-invoices", d),
+    remove:    (id)        => req("DELETE", `/carrier-invoices/${id}`),
+    rematch:   (id)        => req("POST",   `/carrier-invoices/${id}/rematch`, {}),
+    approveLine: (lineId)  => req("POST",   `/carrier-invoice-lines/${lineId}/approve`, {}),
+    disputeLine: (lineId, d) => req("POST", `/carrier-invoice-lines/${lineId}/dispute`, d),
   },
   containerPackages: {
     list:   (containerId)     => req("GET",    `/containers/${containerId}/packages`),
@@ -353,6 +367,13 @@ export const api = {
     me:             ()                               => req("GET",  "/auth/me"),
     ssoConfig:      ()                               => req("GET",  "/auth/sso/config"),
     changePassword: (currentPassword, newPassword)   => req("POST", "/auth/change-password", { currentPassword, newPassword }),
+    forgotPassword: (email)                          => req("POST", "/auth/forgot-password", { email }),
+    resetPassword:  (token, newPassword)             => req("POST", "/auth/reset-password", { token, newPassword }),
+  },
+  systemEmail: {
+    get:      ()     => req("GET", "/settings/system-email"),
+    update:   (data)  => req("PUT", "/settings/system-email", data),
+    sendTest: (data)  => req("POST", "/settings/system-email/test", data),
   },
   users: {
     list:           ()           => req("GET",    "/users"),
@@ -404,6 +425,7 @@ export const api = {
     get:    ()       => req("GET", "/settings"),
     update: (data)   => req("PUT", "/settings", data),
     updateSidebarOrder: (order) => req("PUT", "/settings/shipment-sidebar-order", { order }),
+    updateContractSource: (value) => req("PUT", "/settings/contract-source", { value }),
   },
   schedules: {
     search:  (p = {})         => req("GET",    `/schedules/search?${new URLSearchParams(p)}`),
@@ -428,12 +450,15 @@ export const api = {
     remove: (imo)             => req("DELETE", `/vessels/${imo}`),
   },
   export: {
-    shipmentsCSV: async () => {
+    // fields: optional array of field keys (see ShipmentsPage.jsx's EXPORT_FIELD_GROUPS) —
+    // omitted or empty means "export everything", matching the route's own default.
+    shipmentsCSV: async (fields = []) => {
       const token = localStorage.getItem("cargodesk_token");
       const activeRole = localStorage.getItem("cargodesk_active_role");
       const headers = { Authorization: `Bearer ${token}` };
       if (activeRole) headers["X-Active-Role"] = activeRole;
-      const res = await fetch("/api/export/shipments.csv", { headers });
+      const qs = fields.length ? `?fields=${encodeURIComponent(fields.join(","))}` : "";
+      const res = await fetch(`/api/export/shipments.csv${qs}`, { headers });
       if (!res.ok) throw new Error("CSV export failed");
       const blob = await res.blob();
       const url  = URL.createObjectURL(blob);
@@ -477,6 +502,19 @@ export const api = {
   ai: {
     settings: () => req("GET", "/ai/settings"),
     chat:     (messages, context = {}) => req("POST", "/ai/chat", { messages, context }),
+    extractDocument: (dataBase64, mimeType, instructions) =>
+      req("POST", "/ai/extract-document", { dataBase64, mimeType, instructions }),
+  },
+  quotes: {
+    list:    (p = {})    => req("GET",    `/quotes?${new URLSearchParams(p)}`),
+    get:     (id)        => req("GET",    `/quotes/${id}`),
+    create:  (data)      => req("POST",   "/quotes", data),
+    update:  (id, data)  => req("PUT",    `/quotes/${id}`, data),
+    remove:  (id)        => req("DELETE", `/quotes/${id}`),
+    send:    (id)        => req("POST",   `/quotes/${id}/send`),
+    accept:  (id)        => req("POST",   `/quotes/${id}/accept`),
+    decline: (id, data)  => req("POST",   `/quotes/${id}/decline`, data),
+    convert: (id)        => req("POST",   `/quotes/${id}/convert`),
   },
   offices: {
     list:           ()               => req("GET",    "/offices"),

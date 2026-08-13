@@ -4,9 +4,21 @@ const crypto = require("crypto");
 module.exports = function authRoutes(app, ctx) {
   const { db, ok, err, uid, auth, requireRole,
           VALID_ROLES, ROLE_RANK_SV, primaryRoleSV, parseUserRoles,
-          mapScopeItem, mapAccessConfig,
+          mapScopeItem, mapAccessConfig, mapSystemEmailSettings,
           bcrypt, jwt, JWT_SECRET,
-          logAdminEvent, getSettings, ssoNonces } = ctx;
+          createTransporterFromSettings, buildMailOptions,
+          logAdminEvent, getSettings, ssoNonces, createRateLimiter } = ctx;
+  const adminOnly = requireRole(["admin"]);
+  const SECURE_MODES = ["none", "starttls", "tls"];
+
+  // Admin-only, but still a real outbound SMTP send per call — keyed by user (not IP) since
+  // every caller here is already authenticated, and the actor is the meaningful key, not
+  // whatever office network they happen to be on.
+  const mailTestRateLimit = createRateLimiter({
+    windowMs: 15 * 60 * 1000, max: 10, maxEnvVar: "MAIL_TEST_RATE_MAX",
+    keyFn: req => req.user.id,
+    message: "Too many test emails sent recently — try again later",
+  });
 
   // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -53,35 +65,23 @@ module.exports = function authRoutes(app, ctx) {
     allOffices:     !!r.all_offices,
   });
 
-  // ─── Login rate limiting ─────────────────────────────────────────────────────
-  // Per-account lockout (below) only engages after N failed attempts against ONE
-  // email — it does nothing to stop a spray across many different accounts from the
-  // same source. This is a separate, per-IP throttle on the endpoint itself. Same
-  // in-memory Map + periodic-cleanup pattern already used for ssoNonces (server.js).
-  const loginAttemptsByIp = new Map(); // ip -> { count, windowStart }
-  const LOGIN_RATE_WINDOW_MS = 15 * 60 * 1000;
+  // ─── Rate limiting ───────────────────────────────────────────────────────────
+  // All limiters below share one factory (lib/rateLimit.js, exposed via ctx) — each call still
+  // gets its own private Map/interval, so limiters never bleed into each other's budget; only
+  // the window/sweep bookkeeping itself is shared code.
+
+  // Per-account lockout (below) only engages after N failed attempts against ONE email — it does
+  // nothing to stop a spray across many different accounts from the same source. This is a
+  // separate, per-IP throttle on the login endpoint itself.
   // Overridable via env for CI: a single continuous test run logs in once per test file (23+
   // files across the monolith + document-distribution suites) from one IP, well past the
   // real-world default of 20 — the same friction that forced a manual restart-between-batches
   // workaround throughout local verification. Any real deployment leaves this unset and gets
   // the unchanged default.
-  const LOGIN_RATE_MAX = Number(process.env.LOGIN_RATE_MAX) || 20;
-  setInterval(() => {
-    const cutoff = Date.now() - LOGIN_RATE_WINDOW_MS;
-    for (const [k, v] of loginAttemptsByIp) if (v.windowStart < cutoff) loginAttemptsByIp.delete(k);
-  }, 60_000);
-
-  const loginRateLimit = (req, res, next) => {
-    const now = Date.now();
-    let rec = loginAttemptsByIp.get(req.ip);
-    if (!rec || now - rec.windowStart > LOGIN_RATE_WINDOW_MS) {
-      rec = { count: 0, windowStart: now };
-      loginAttemptsByIp.set(req.ip, rec);
-    }
-    rec.count++;
-    if (rec.count > LOGIN_RATE_MAX) return err(res, "Too many login attempts from this address — try again later", 429);
-    next();
-  };
+  const loginRateLimit = createRateLimiter({
+    windowMs: 15 * 60 * 1000, max: 20, maxEnvVar: "LOGIN_RATE_MAX",
+    message: "Too many login attempts from this address — try again later",
+  });
 
   // ─── Login ─────────────────────────────────────────────────────────────────
 
@@ -201,7 +201,196 @@ module.exports = function authRoutes(app, ctx) {
     ok(res, { token });
   });
 
+  // ─── Forgot / Reset Password ─────────────────────────────────────────────────
+  // Separate per-IP throttle from loginRateLimit above — a different abuse shape (email-
+  // bombing a victim's inbox, not brute-forcing a password), so it gets its own budget rather
+  // than sharing login's. Stricter too: legitimate use is rare-repeat, so 5 requests/hour/IP is
+  // generous for a real user and still cheap to hit for an attacker probing for valid emails —
+  // which the generic response below already defeats regardless.
+  const forgotPasswordRateLimit = createRateLimiter({
+    windowMs: 60 * 60 * 1000, max: 5, maxEnvVar: "FORGOT_PW_MAX",
+    message: "Too many password reset requests from this address — try again later",
+  });
+
+  // reset-password is the OTHER half of this flow, and was missing its own throttle entirely —
+  // it's just as public/unauthenticated as forgot-password, and its abuse shape (brute-forcing a
+  // reset token, or just hammering the endpoint) is closer to login's than forgot-password's own.
+  // A real token is 32 random bytes (crypto.randomBytes(32)) so brute-forcing one is not
+  // realistically achievable within any rate limit's budget — this exists as a floor against
+  // blunt endpoint spam, not as the token's actual security boundary.
+  const resetPasswordRateLimit = createRateLimiter({
+    windowMs: 60 * 60 * 1000, max: 10, maxEnvVar: "RESET_PW_MAX",
+    message: "Too many password reset attempts from this address — try again later",
+  });
+
+  const RESET_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour
+  const hashResetToken = token => crypto.createHash("sha256").update(token).digest("hex");
+
+  // Always the same generic response whether or not the email matches a real account — the
+  // one thing this route must never do is let a caller distinguish "that email exists" from
+  // "it doesn't" (user enumeration). The actual work only happens inside the `if (user)` branch;
+  // everything outside it is identical either way, including the response and its timing profile
+  // being close enough that a network-level timing attack isn't practically useful here.
+  app.post("/api/auth/forgot-password", forgotPasswordRateLimit, async (req, res) => {
+    const { email = "" } = req.body || {};
+    const GENERIC_MSG = "If an account exists for that email, a password reset link has been sent.";
+    if (!email.trim()) return err(res, "Email is required");
+
+    const user = db.prepare("SELECT * FROM users WHERE email = ? AND is_active = 1").get(email.toLowerCase().trim());
+    if (user) {
+      const rawToken = crypto.randomBytes(32).toString("hex");
+      const expires = new Date(Date.now() + RESET_TOKEN_TTL_MS).toISOString();
+      db.prepare("UPDATE users SET reset_token_hash=?, reset_token_expires=? WHERE id=?")
+        .run(hashResetToken(rawToken), expires, user.id);
+
+      const settingsRow = db.prepare("SELECT * FROM system_email_settings WHERE id='system'").get();
+      if (settingsRow && settingsRow.is_active && settingsRow.smtp_host) {
+        try {
+          const transporter = createTransporterFromSettings({
+            smtpHost: settingsRow.smtp_host, smtpPort: settingsRow.smtp_port,
+            secureMode: settingsRow.secure_mode, smtpUsername: settingsRow.smtp_username,
+            smtpPassword: settingsRow.smtp_password,
+          });
+          const resetUrl = `${req.protocol}://${req.get("host")}/#reset-password/${rawToken}`;
+          await transporter.sendMail(buildMailOptions({
+            from: settingsRow.from_address, fromName: settingsRow.from_name || "CargoDesk",
+            to: user.email, subject: "Reset your CargoDesk password",
+            message: `Hi ${user.name || ""},\n\nA password reset was requested for your CargoDesk account. Click the link below to choose a new password — this link expires in 1 hour and can only be used once:\n\n${resetUrl}\n\nIf you didn't request this, you can safely ignore this email; your password won't change.`,
+          }));
+        } catch (e) {
+          // Never surface a send failure to the caller — that alone would confirm the email
+          // exists. Logged server-side only, matching this app's own established pattern for
+          // integrations that must fail soft outward (e.g. the AIS listener's own bootstrap).
+          console.error("forgot-password: failed to send reset email:", e.message);
+        }
+      } else {
+        console.warn("forgot-password: system email is not configured (Settings → System Email) — no email sent, but the reset token was still generated.");
+      }
+      logAdminEvent({ id: '', email: user.email }, 'PASSWORD_RESET_REQUESTED', 'user', user.id, {});
+      // Dev/test-only: the raw token otherwise only ever exists inside the emailed link, with
+      // no other retrieval path by design (same reasoning webhook_receiver's dev-only mock
+      // endpoint follows for otherwise-hidden async state — see Test Tools' Webhook Simulator).
+      // Never present when NODE_ENV=production, which every real deployment sets (see the
+      // static-file-serving gate elsewhere in server.js) — a real user always gets the token
+      // exclusively via email.
+      if (process.env.NODE_ENV !== "production") {
+        return ok(res, { message: GENERIC_MSG, devToken: rawToken });
+      }
+    }
+    ok(res, { message: GENERIC_MSG });
+  });
+
+  app.post("/api/auth/reset-password", resetPasswordRateLimit, (req, res) => {
+    const { token = "", newPassword = "" } = req.body || {};
+    if (!token || !newPassword) return err(res, "Token and new password are required");
+
+    const tokenHash = hashResetToken(token);
+    const user = db.prepare("SELECT * FROM users WHERE reset_token_hash = ? AND reset_token_hash != ''").get(tokenHash);
+    if (!user) return err(res, "This reset link is invalid or has already been used", 400);
+    if (!user.reset_token_expires || user.reset_token_expires < new Date().toISOString())
+      return err(res, "This reset link has expired — request a new one", 400);
+    if (!passwordMeetsPolicy(newPassword)) {
+      return err(res, "New password must be at least 12 characters and include 3 of: lowercase, uppercase, digit, symbol — and not be a common password");
+    }
+
+    const newTokenVersion = (user.token_version ?? 0) + 1;
+    const now = new Date().toISOString();
+    // Clears the reset token (single-use) and any pre-existing lockout — a successful reset via
+    // a link only the account owner's inbox could have received is itself proof of ownership,
+    // the same bar an admin-issued unlock already clears.
+    db.prepare(`UPDATE users SET password_hash=?, password_changed_at=?, token_version=?,
+      reset_token_hash='', reset_token_expires='', failed_attempts=0, locked_until='' WHERE id=?`)
+      .run(bcrypt.hashSync(newPassword, 10), now, newTokenVersion, user.id);
+    logAdminEvent({ id: '', email: user.email }, 'PASSWORD_RESET_COMPLETED', 'user', user.id, {});
+
+    // Deliberately does NOT return a token / log the user in automatically, unlike
+    // change-password — that route's caller was already authenticated; this one's wasn't.
+    // Safer to make them log in fresh with the new password.
+    ok(res, { ok: true });
+  });
+
+  // ─── System Email Settings (used only to send forgot-password links) ────────────
+  // Org-wide, not per-office — office_mail_settings (routes/office-mail.js) exists for
+  // shipment-document sending, tied to a specific office's identity; a password-reset email
+  // isn't naturally any one office's concern. Deliberately its own small settings surface
+  // rather than folded into the generic GET /api/settings blob, which is PUBLIC and returns
+  // its contents unfiltered — an SMTP password must never be reachable through that route.
+
+  const SYSTEM_EMAIL_DEFAULTS = {
+    smtpHost: "", smtpPort: 587, secureMode: "starttls", smtpUsername: "", hasPassword: false,
+    fromAddress: "", fromName: "", isActive: true, createdAt: null, updatedAt: null,
+  };
+
+  app.get("/api/settings/system-email", adminOnly, (req, res) => {
+    const row = db.prepare("SELECT * FROM system_email_settings WHERE id='system'").get();
+    ok(res, row ? mapSystemEmailSettings(row) : SYSTEM_EMAIL_DEFAULTS);
+  });
+
+  app.put("/api/settings/system-email", adminOnly, (req, res) => {
+    const { smtpHost = '', smtpPort = 587, secureMode = 'starttls', smtpUsername = '',
+            smtpPassword = '', fromAddress = '', fromName = '', isActive = true } = req.body || {};
+    if (!smtpHost.trim()) return err(res, "SMTP host is required");
+    if (!SECURE_MODES.includes(secureMode)) return err(res, "secureMode must be none, starttls, or tls");
+    if (!fromAddress.trim()) return err(res, "From address is required");
+
+    const existing = db.prepare("SELECT * FROM system_email_settings WHERE id='system'").get();
+    // Blank/omitted password means "keep the existing one" — same password-field UX
+    // office_mail_settings already established.
+    const password = smtpPassword.trim() ? smtpPassword : (existing ? existing.smtp_password : '');
+    const now = new Date().toISOString();
+
+    if (existing) {
+      db.prepare(`UPDATE system_email_settings SET smtp_host=?, smtp_port=?, secure_mode=?,
+        smtp_username=?, smtp_password=?, from_address=?, from_name=?, is_active=?, updated_at=?
+        WHERE id='system'`)
+        .run(smtpHost, smtpPort, secureMode, smtpUsername, password, fromAddress, fromName,
+          isActive ? 1 : 0, now);
+    } else {
+      db.prepare(`INSERT INTO system_email_settings
+        (id, smtp_host, smtp_port, secure_mode, smtp_username, smtp_password,
+         from_address, from_name, is_active, created_at, updated_at)
+        VALUES ('system',?,?,?,?,?,?,?,?,?,?)`)
+        .run(smtpHost, smtpPort, secureMode, smtpUsername, password, fromAddress, fromName,
+          isActive ? 1 : 0, now, now);
+    }
+    const row = db.prepare("SELECT * FROM system_email_settings WHERE id='system'").get();
+    ok(res, mapSystemEmailSettings(row));
+  });
+
+  // Builds a transporter straight from the submitted form values (not the cache, and not
+  // necessarily saved yet) — mirrors office_mail_settings' own test-send route exactly.
+  app.post("/api/settings/system-email/test", adminOnly, mailTestRateLimit, async (req, res) => {
+    const { to, smtpHost = '', smtpPort = 587, secureMode = 'starttls',
+            smtpUsername = '', smtpPassword = '' } = req.body || {};
+    if (!to) return err(res, "A test-recipient address is required");
+    if (!smtpHost.trim()) return err(res, "SMTP host is required");
+
+    const existing = db.prepare("SELECT smtp_password FROM system_email_settings WHERE id='system'").get();
+    const password = smtpPassword.trim() ? smtpPassword : (existing ? existing.smtp_password : '');
+
+    try {
+      const transporter = createTransporterFromSettings({ smtpHost, smtpPort, secureMode, smtpUsername, smtpPassword: password });
+      await transporter.sendMail({
+        from: smtpUsername || smtpHost,
+        to,
+        subject: "CargoDesk — system email test",
+        text: "This is a test email from CargoDesk's system email settings (used for password-reset links). If you received this, the configuration works.",
+      });
+      ok(res, { sent: true });
+    } catch (e) {
+      err(res, `Test send failed: ${e.message}`, 502);
+    }
+  });
+
   // ─── SSO ───────────────────────────────────────────────────────────────────
+  // init/callback are both public and each make real outbound calls to Microsoft
+  // (login.microsoftonline.com / graph.microsoft.com) — a per-IP throttle here isn't about
+  // brute-forcing anything (state is a random nonce, checked separately), it's about not letting
+  // one source burn through those outbound calls or the redirect chain in a tight loop.
+  const ssoRateLimit = createRateLimiter({
+    windowMs: 15 * 60 * 1000, max: 30, maxEnvVar: "SSO_RATE_MAX",
+    message: "Too many SSO attempts from this address — try again later",
+  });
 
   app.get("/api/auth/sso/config", (req, res) => {
     const s = getSettings();
@@ -212,7 +401,7 @@ module.exports = function authRoutes(app, ctx) {
     });
   });
 
-  app.get("/api/auth/sso/init", (req, res) => {
+  app.get("/api/auth/sso/init", ssoRateLimit, (req, res) => {
     const s = getSettings();
     if (s.sso_enabled !== '1') return err(res, "SSO not enabled", 404);
     const { sso_tenant_id: tenantId, sso_client_id: clientId, sso_redirect_uri: redirectUri } = s;
@@ -233,7 +422,7 @@ module.exports = function authRoutes(app, ctx) {
     res.redirect(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/authorize?${params}`);
   });
 
-  app.get("/api/auth/sso/callback", async (req, res) => {
+  app.get("/api/auth/sso/callback", ssoRateLimit, async (req, res) => {
     const s = getSettings();
     if (s.sso_enabled !== '1') return err(res, "SSO not enabled", 404);
 

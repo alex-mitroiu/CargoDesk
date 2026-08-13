@@ -10,6 +10,7 @@ import { inputBase } from "../../components/primitives/Form";
 import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns";
 import ActionMenu from "../../components/primitives/ActionMenu";
 import EntityHistoryModal from "../../components/shared/EntityHistoryModal";
+import ExportFieldsModal, { ALL_EXPORT_FIELDS } from "../../components/shared/ExportFieldsModal";
 import Pagination from "../../components/primitives/Pagination";
 import { IconRefresh, IconDownload, IconClose, IconWarning, IconTime, IconEye, IconClipboard }
   from "../../components/primitives/Icon";
@@ -40,6 +41,7 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
   });
   const [sort,            setSort]            = useState("");
   const [exporting,       setExporting]       = useState(false);
+  const [exportModalOpen, setExportModalOpen] = useState(false);
   const [staleCount,      setStaleCount]      = useState(0);
   const [refreshing,      setRefreshing]      = useState(false);
   const [offset,          setOffset]          = useState(0);
@@ -74,11 +76,30 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
     try { await onRefresh(); } finally { setRefreshing(false); }
   };
 
-  const handleExportCSV = async () => {
+  // Remembers the operator's field selection across visits (same localStorage-preference idiom
+  // as cd_theme/cd_navfold_*/cargodesk_wip_limits elsewhere in this app) — falls back to "every
+  // field" the first time, matching the old one-click button's behavior exactly so nobody's
+  // export silently gets narrower just because this feature shipped.
+  const EXPORT_FIELDS_KEY = "cargodesk_export_fields";
+
+  const handleExportCSV = async fields => {
     setExporting(true);
-    try { await api.export.shipmentsCSV(); toast.success("CSV downloaded"); }
-    catch (e) { toast.error(e.message); }
+    try {
+      await api.export.shipmentsCSV(fields);
+      try { localStorage.setItem(EXPORT_FIELDS_KEY, JSON.stringify(fields)); } catch { /* ignore */ }
+      toast.success("CSV downloaded");
+      setExportModalOpen(false);
+    } catch (e) { toast.error(e.message); }
     finally { setExporting(false); }
+  };
+
+  const openExportModal = () => setExportModalOpen(true);
+
+  const savedExportFields = () => {
+    try {
+      const raw = JSON.parse(localStorage.getItem(EXPORT_FIELDS_KEY) || "null");
+      return Array.isArray(raw) && raw.length ? raw : ALL_EXPORT_FIELDS;
+    } catch { return ALL_EXPORT_FIELDS; }
   };
 
   const teuFor = id => containers.filter(c => c.shipmentId === id).reduce((s, c) => s + teuOf(c.size), 0);
@@ -156,7 +177,7 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
               </span>
             )}
           </div>
-          <Btn onClick={handleExportCSV} size="sm" variant="ghost" disabled={exporting || shipments.length === 0}>
+          <Btn onClick={openExportModal} size="sm" variant="ghost" disabled={exporting || shipments.length === 0}>
             {exporting ? "Exporting…" : <><IconDownload size={12} />CSV</>}
           </Btn>
           {canEdit && <Btn onClick={onNew} size="lg" disabled={carriers.length === 0}>＋ New Shipment</Btn>}
@@ -361,6 +382,12 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
             </>
           }
           onClose={() => setHistoryShipment(null)} />
+      )}
+      {exportModalOpen && (
+        <ExportFieldsModal
+          initialSelected={savedExportFields()}
+          onExport={handleExportCSV}
+          onClose={() => setExportModalOpen(false)} />
       )}
     </div>
   );

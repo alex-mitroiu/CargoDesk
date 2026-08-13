@@ -145,6 +145,7 @@ node_modules/
 dist/
 cargodesk.db
 services/document-distribution/distribution.db
+services/contract-management/contracts.db
 *.db-shm
 *.db-wal
 !sampleDB/cargodesk.db

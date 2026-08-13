@@ -5,9 +5,11 @@ import Spinner from "../primitives/spinner";
 import { api } from "../../api";
 
 const EVENT_CONFIG = {
-  CREATED: { icon: "✦", label: "Created",       color: () => T.success },
-  UPDATED: { icon: "✎", label: "Updated",       color: () => T.accent  },
-  DELETED: { icon: "✕", label: "Deleted",       color: () => T.danger  },
+  CREATED:   { icon: "✦", label: "Created",       color: () => T.success },
+  UPDATED:   { icon: "✎", label: "Updated",       color: () => T.accent  },
+  DELETED:   { icon: "✕", label: "Deleted",       color: () => T.danger  },
+  PUBLISHED: { icon: "▲", label: "Published",     color: () => T.success },
+  WITHDRAWN: { icon: "▽", label: "Withdrawn to Draft", color: () => T.warning },
 };
 
 const fmt = iso => {

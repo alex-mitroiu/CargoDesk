@@ -11,6 +11,7 @@ import { emitCargoValueChanged } from "../../cargoValueBus";
 import { api } from "../../api";
 import { toast } from "../../toast";
 import { setNavigationGuard, clearNavigationGuard } from "../../navigationGuard";
+import { dgPolicyConflict } from "../../utils/dgPolicy";
 import { IconWarning, IconClipboard, IconPackage, IconArchive, IconClose } from "../../components/primitives/Icon";
 
 // ─── Shipment Containers Page — unified Containers + Cargo Manifest tree ──────
@@ -93,13 +94,7 @@ const ShipmentContainersPage = ({ shipment, containers, onBack, onAddContainer, 
     return () => clearNavigationGuard();
   }, [selection]);
 
-  const ctrDgConflict = c => {
-    if (!c.isDg || !c.dgClass || !dgPolicy) return null;
-    if (!dgPolicy.dgAllowed) return "Contract does not permit DG cargo";
-    if (dgPolicy.imdgClasses.length > 0 && !dgPolicy.imdgClasses.includes(c.dgClass))
-      return `IMO class ${c.dgClass} not permitted by contract (allowed: ${dgPolicy.imdgClasses.join(", ")})`;
-    return null;
-  };
+  const ctrDgConflict = c => dgPolicyConflict(dgPolicy, c.isDg, c.dgClass);
   const dgConflicts = ctrs.filter(ctrDgConflict).length;
 
   // Auto-select a freshly-added container once it lands in the containers prop —

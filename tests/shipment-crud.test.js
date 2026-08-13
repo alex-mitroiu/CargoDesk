@@ -133,19 +133,23 @@ async function testAddContainer(token, shipmentId) {
 
 async function testStatusChange(token, shipmentId) {
   console.log("\nPUT /api/shipments/:id — status change");
+  // "In Transit" was never a real shipments.status value — it's TrackingPage.jsx's own
+  // separate, derived public-tracker journey-phase vocabulary (Booking/In Transit/Arrived/
+  // Delivered), not src/tokens.js's STATUSES dropdown list. It only ever worked here because
+  // nothing validated shipments.status server-side before this pass added that check.
 
   const get = await request("GET", `/api/shipments/${shipmentId}`, null, token);
   const updated = await request("PUT", `/api/shipments/${shipmentId}`, {
     ...get.body,
-    status: "In Transit",
+    status: "Requires Review",
   }, token);
 
   assert("returns 200",              updated.status === 200);
-  assert("status is In Transit",     updated.body?.status === "In Transit");
+  assert("status is Requires Review", updated.body?.status === "Requires Review");
 
   // Verify persisted
   const verify = await request("GET", `/api/shipments/${shipmentId}`, null, token);
-  assert("persisted after GET",      verify.body?.status === "In Transit");
+  assert("persisted after GET",      verify.body?.status === "Requires Review");
 
   // Update bookingRef
   const br = await request("PUT", `/api/shipments/${shipmentId}`, {
@@ -172,7 +176,7 @@ async function testAuditLog(token, shipmentId) {
 
   const statusEvent = events.find(e => e.eventType === "STATUS_CHANGED");
   assert("STATUS_CHANGED event exists",    !!statusEvent);
-  assert("newValue is In Transit",         statusEvent?.newValue === "In Transit");
+  assert("newValue is Requires Review",    statusEvent?.newValue === "Requires Review");
   assert("oldValue is Active",             statusEvent?.oldValue === "Active");
   assert("shipmentId on event matches",    statusEvent?.shipmentId === shipmentId);
 

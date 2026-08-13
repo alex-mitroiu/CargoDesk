@@ -16,7 +16,9 @@ import { BOOKABLE_CARRIERS } from "../../utils/carrierBooking";
 // out of the old EdiMessagesDrawer per the same "one concept, one dedicated page"
 // precedent Accounting already established for Invoice/Cost/GP.
 
-const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack }) => {
+const FREIGHT_TERMS_OPTIONS = ["Prepaid", "Collect", "Payable at Destination"];
+
+const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
   const { canEditShipments: canEdit } = useAuth();
   const [booking,    setBooking]    = useState(null);
   const [messages,   setMessages]   = useState([]);
@@ -26,6 +28,25 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack }) => {
   const [parties,    setParties]    = useState(null); // Carrier Line Agents
   const [loading,    setLoading]    = useState(true);
   const [sending,    setSending]    = useState(false);
+  const [savingFreightTerms, setSavingFreightTerms] = useState(false);
+
+  // Freight Terms already exists on the shipment (set on the Shipment Form) but wasn't
+  // editable from the one place it's operationally most relevant — here, while actually
+  // booking with the carrier. Same spread-full-shipment-and-override-one-field update shape
+  // OfficeInlineSelect (ShipmentDetailPage.jsx) already uses, since PUT /api/shipments/:id
+  // requires the complete payload, not a partial patch.
+  const handleFreightTermsChange = async e => {
+    const next = e.target.value;
+    setSavingFreightTerms(true);
+    try {
+      await api.shipments.update(shipment.id, { ...shipment, freightTerms: next });
+      onRefresh?.();
+    } catch (err) {
+      toast.error(err.message || "Failed to update freight terms");
+    } finally {
+      setSavingFreightTerms(false);
+    }
+  };
 
   // Only a Central contract has a real record to load (contractId set) — SPOT/Pending/
   // Customer Own carry just a free-text contractRef with nothing to fetch, so `contract`
@@ -151,6 +172,27 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack }) => {
             <div style={{ fontFamily: T.body, fontSize: 14, color: T.text, fontWeight: 600 }}>{value}</div>
           </div>
         ))}
+        {/* Which party is financially responsible for the shipment at this point — Prepaid
+            (shipper/exporter pays), Collect (consignee/importer pays), or Payable at
+            Destination. Already existed on the Shipment Form; made editable here too since
+            this is the page where it's operationally relevant when actually booking. */}
+        <div id="shpbooking-freight-terms">
+          <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
+            textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 4 }}>Freight Terms</div>
+          {canEdit ? (
+            <select value={shipment.freightTerms || "Prepaid"} disabled={savingFreightTerms}
+              onChange={handleFreightTermsChange}
+              style={{ width: "100%", padding: "6px 8px", borderRadius: 6, fontFamily: T.body,
+                fontSize: 13, fontWeight: 600, color: T.text, border: `1px solid ${T.border}`,
+                background: T.bg, outline: "none", cursor: savingFreightTerms ? "wait" : "pointer" }}>
+              {FREIGHT_TERMS_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+            </select>
+          ) : (
+            <div style={{ fontFamily: T.body, fontSize: 14, color: T.text, fontWeight: 600 }}>
+              {shipment.freightTerms || "Prepaid"}
+            </div>
+          )}
+        </div>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",

@@ -4,13 +4,22 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   const { db, ok, err, uid, auth, requireRole,
           mapCostLine, mapService, mapMilestone, mapMilestoneTemplate,
           sanctionsMap, screenShipmentById,
-          logEntityEvent, importContractRates, createRateSnapshot, generateCostLinesFromSnapshot,
+          logEvent, logEntityEvent, importContractRates, createRateSnapshot, generateCostLinesFromSnapshot,
           mapRateSnapshot, syncShipmentFromLegs, ensureBookingCreated,
           UPLOADS_DIR, fs, path,
           renderHtmlToPdf, getActiveSigningCert, signPdfBuffer,
-          buildMailOptions, sendViaOffice } = ctx;
+          buildMailOptions, sendViaOffice,
+          createRateLimiter, getSettings, callContractService } = ctx;
 
   const shipmentWrite = requireRole(["admin", "operator", "occ_bk"]);
+
+  // Document generation renders through the Puppeteer-backed pdf-render service and signs the
+  // result; sending emails a real signed PDF via SMTP — both real, per-call cost, keyed per-user.
+  const documentActionRateLimit = createRateLimiter({
+    windowMs: 60 * 1000, max: 20, maxEnvVar: "DOC_ACTION_RATE_MAX",
+    keyFn: req => req.user.id,
+    message: "Too many document actions recently — please slow down",
+  });
 
   // Cost lines are hidden from trade_manager (and viewer) unless canViewFinance is set on
   // their account — mirrors routes/finance.js's inline margin-access check, but admin/
@@ -62,7 +71,11 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     ok(res, screenShipmentById(req.params.id));
   });
 
-  app.post("/api/shipments/:id/screening/override", (req, res) => {
+  // Previously had NO role gate at all — any authenticated user, including a viewer, could
+  // flip a sanctions HIT to CLEAR via a direct API call (the frontend's own ComplianceModal
+  // doesn't hide the button by role either, so this was reachable through the real UI too, not
+  // just a theoretical direct-API gap). Same tier as every other shipment-write action.
+  app.post("/api/shipments/:id/screening/override", shipmentWrite, (req, res) => {
     const { reason = "" } = req.body;
     if (!reason.trim()) return err(res, "Override reason is required");
     const row = db.prepare("SELECT id FROM shipment_screenings WHERE shipment_id=?").get(req.params.id);
@@ -75,16 +88,22 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
 
   // ─── Cost Lines ───────────────────────────────────────────────────────────
 
-  app.post("/api/shipments/:id/cost-lines/import-contract", shipmentWrite, (req, res) => {
+  app.post("/api/shipments/:id/cost-lines/import-contract", shipmentWrite, async (req, res) => {
     const { overwrite = false, splitPerContainer = false } = req.body || {};
     const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
     if (!shipment) return err(res, "Shipment not found", 404);
     if (shipment.contract_type !== 'Central' || !shipment.contract_id)
       return err(res, "Shipment is not linked to a Central contract");
-    // Delete-then-regenerate wrapped in one transaction — importContractRates() writes on the
-    // same db connection, so it naturally joins this same transaction (SQLite transactions are
-    // connection-scoped, not statement-scoped). Without this, an interruption between the
-    // delete loop and regeneration could leave a shipment with NO cost lines at all.
+    // Resolving (and, if needed, creating) the rate snapshot happens BEFORE the write transaction
+    // below opens — in 'remote' contract-source mode this is a network call to the Contract
+    // Management Service, and holding a write transaction open across it would block other
+    // writers for no benefit (same reasoning as saveRates in routes/contracts.js). Mirrors
+    // importContractRates()'s own existing-snapshot-or-create logic exactly, just hoisted above
+    // the transaction rather than inside it.
+    const existingSnap = db.prepare("SELECT id FROM shipment_rate_snapshots WHERE shipment_id=? ORDER BY generated_at DESC LIMIT 1").get(req.params.id);
+    const snapshotId = existingSnap ? existingSnap.id : await createRateSnapshot(req.params.id, shipment.contract_id, 'initial');
+    // Delete-then-regenerate wrapped in one transaction — without this, an interruption between
+    // the delete loop and regeneration could leave a shipment with NO cost lines at all.
     db.exec("BEGIN");
     try {
       let includeSell = false;
@@ -94,7 +113,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
         includeSell = existingSell.length > 0;
         for (const row of [...existingBuy, ...existingSell]) db.prepare("DELETE FROM shipment_cost_lines WHERE id=?").run(row.id);
       }
-      const count = importContractRates(req.params.id, { splitPerContainer, includeSell });
+      const count = snapshotId ? generateCostLinesFromSnapshot(req.params.id, snapshotId, { splitPerContainer, includeSell }) : 0;
       db.exec("COMMIT");
       ok(res, { imported: count });
     } catch (e) { db.exec("ROLLBACK"); err(res, e.message, 500); }
@@ -121,13 +140,13 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   // Pulls CURRENT live contract_rates into a NEW frozen snapshot, then regenerates cost lines
   // from it — the only action that changes the committed rate (carrier rates can move; this is
   // how that gets picked up deliberately, with a record of when/why it happened).
-  app.post("/api/shipments/:id/cost-lines/update-carrier-costs", shipmentWrite, (req, res) => {
+  app.post("/api/shipments/:id/cost-lines/update-carrier-costs", shipmentWrite, async (req, res) => {
     const { splitPerContainer = false } = req.body || {};
     const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
     if (!shipment) return err(res, "Shipment not found", 404);
     if (shipment.contract_type !== 'Central' || !shipment.contract_id)
       return err(res, "Shipment is not linked to a Central contract");
-    const snapshotId = createRateSnapshot(req.params.id, shipment.contract_id, 'carrier_update', req.user?.email || '');
+    const snapshotId = await createRateSnapshot(req.params.id, shipment.contract_id, 'carrier_update', req.user?.email || '');
     if (!snapshotId) return err(res, "Contract has no rates to snapshot");
     const existingSell = db.prepare("SELECT id FROM shipment_cost_lines WHERE shipment_id=? AND type='SELL' AND source='contract'").all(req.params.id);
     const includeSell = existingSell.length > 0;
@@ -531,9 +550,28 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     const { estimatedDate = '', completedAt = '', completedBy = '', note = '' } = req.body || {};
     const existing = db.prepare("SELECT * FROM shipment_milestones WHERE id=?").get(req.params.id);
     if (!existing) return err(res, "Not found", 404);
+    // shipment_milestones' sequence_order implies an intended step order, but real operations
+    // routinely need to backfill a step noticed late (or a carrier confirms two events same-day
+    // out of order) — per direct decision, this is flagged, not blocked: an entity_events row for
+    // the audit trail, plus an `outOfOrder` hint on the response the operator's own UI can choose
+    // to surface. Only fires on a genuinely NEW completion (blank -> set), not an edit of an
+    // already-completed step's date/note.
+    let outOfOrder = false;
+    if (completedAt && !existing.completed_at) {
+      const earlierIncomplete = db.prepare(
+        "SELECT label FROM shipment_milestones WHERE shipment_id=? AND sequence_order < ? AND (completed_at IS NULL OR completed_at='') LIMIT 1"
+      ).get(existing.shipment_id, existing.sequence_order);
+      if (earlierIncomplete) {
+        outOfOrder = true;
+        logEntityEvent('milestone', req.params.id, 'COMPLETED_OUT_OF_ORDER', null, null, null,
+          JSON.stringify({ shipmentId: existing.shipment_id, milestoneKey: existing.milestone_key,
+            label: existing.label, blockedBy: earlierIncomplete.label }));
+      }
+    }
     db.prepare("UPDATE shipment_milestones SET estimated_date=?,completed_at=?,completed_by=?,note=? WHERE id=?")
       .run(estimatedDate, completedAt, completedBy, note, req.params.id);
-    ok(res, mapMilestone({ ...existing, estimated_date: estimatedDate, completed_at: completedAt, completed_by: completedBy, note }));
+    const updated = mapMilestone({ ...existing, estimated_date: estimatedDate, completed_at: completedAt, completed_by: completedBy, note });
+    ok(res, outOfOrder ? { ...updated, outOfOrder: true } : updated);
   });
 
   app.delete("/api/milestones/:id", shipmentWrite, (req, res) => {
@@ -577,9 +615,51 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   // docs, ...) goes through this instead of building a blob client-side, so the signing key
   // never has to leave the server. Raw user-attached files keep using the plain upload route
   // untouched — signing a file CargoDesk didn't author would misrepresent who generated it.
-  app.post("/api/shipments/:id/documents/generate", shipmentWrite, async (req, res) => {
+  // Mirrors src/utils/invoiceGenerator.js's own resolveCreditGate — that helper only ever ran
+  // client-side (ShipmentAccountingInvoicesPage.jsx, before calling this same route), so a
+  // direct API call produced a fully signed invoice PDF for a customer on credit hold with no
+  // check at all. Scoped to FR01/FR02 (the only two doc types that are actually invoices) —
+  // every other generated document (B/L, packing list, service docs, ...) is unaffected by a
+  // credit hold and must keep generating normally. Only the hard block (credit_hold) is
+  // enforced here — the soft over-limit warning stays client-side-only by design (a real hard
+  // block there would need a proper AR-aging view this app doesn't have yet, per the Epic 2
+  // scope decision).
+  async function findCreditHold(shipment) {
+    const candidateIds = [shipment.shipper_id, shipment.consignee_id, shipment.principal_id].filter(Boolean);
+    if (shipment.contract_id) {
+      let namedAccountId = null;
+      if ((getSettings().contract_source || "local") === "remote") {
+        try { namedAccountId = (await callContractService("GET", `/internal/contracts/${shipment.contract_id}`)).namedAccountId; }
+        catch { /* an unreachable/vanished remote contract just means no Named Account to check — the shipper/consignee/principal check below still runs */ }
+      } else {
+        namedAccountId = db.prepare("SELECT named_account_id FROM contracts WHERE id=?").get(shipment.contract_id)?.named_account_id;
+      }
+      if (namedAccountId) candidateIds.push(namedAccountId);
+    }
+    for (const id of [...new Set(candidateIds)]) {
+      const c = db.prepare("SELECT company_name, credit_hold, credit_hold_reason FROM customers WHERE id=?").get(id);
+      if (c?.credit_hold) return { companyName: c.company_name, reason: c.credit_hold_reason || '' };
+    }
+    return null;
+  }
+
+  app.post("/api/shipments/:id/documents/generate", shipmentWrite, documentActionRateLimit, async (req, res) => {
     const { html, filename, docType, containerId = '', responsibleParty = '', sourceCostLineIds = null, relatedDocId = null } = req.body;
     if (!html || !filename) return err(res, "html and filename are required");
+    if (docType === 'FR01' || docType === 'FR02') {
+      const shipment = db.prepare("SELECT shipper_id, consignee_id, principal_id, contract_id FROM shipments WHERE id=?").get(req.params.id);
+      const hold = shipment && await findCreditHold(shipment);
+      if (hold) return err(res, `Cannot generate this invoice — ${hold.companyName} is on credit hold${hold.reason ? ` (${hold.reason})` : ''}`, 409);
+    }
+    // Written BEFORE the render/sign calls (both real, per-call network round-trips to the
+    // pdf-render service) so a crash or hang mid-call still leaves a durable trace — previously
+    // a failure anywhere in this block (render timeout, signing error, process crash) left
+    // absolutely nothing behind; the operator just saw a failed request with no record it was
+    // ever attempted. Not a retry/queue mechanism (this app has none, deliberately, per the
+    // document-distribution service's own scope notes) — just a visible "this was attempted"
+    // marker in the shipment's existing event history.
+    logEvent(req.params.id, 'DOCUMENT_GENERATION_ATTEMPTED', null, null, null,
+      JSON.stringify({ docType: docType || "OT", filename }));
     try {
       const cert = getActiveSigningCert(db);
       const rawPdf = await renderHtmlToPdf(html);
@@ -604,13 +684,17 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
         JSON.stringify({ shipmentId: req.params.id, docType: docType || "OT", filename: pdfFilename, containerId, signed: true, certFingerprint: cert.fingerprint_sha256 }));
       const row = db.prepare("SELECT * FROM shipment_documents WHERE id = ?").get(id);
       ok(res, mapDoc(row, req.params.id), 201);
-    } catch (e) { err(res, e.message, e.status || 500); }
+    } catch (e) {
+      logEvent(req.params.id, 'DOCUMENT_GENERATION_FAILED', null, null, null,
+        JSON.stringify({ docType: docType || "OT", filename, error: e.message }));
+      err(res, e.message, e.status || 500);
+    }
   });
 
   // Always sends from the shipment's EMO (Export Managing Office) — simplest correct default
   // for FCL export-led document distribution (direct scope decision, not a user-facing office
   // picker). No silent fallback to IMO if EMO has no mail settings configured.
-  app.post("/api/shipments/:id/documents/:docId/send-email", shipmentWrite, async (req, res) => {
+  app.post("/api/shipments/:id/documents/:docId/send-email", shipmentWrite, documentActionRateLimit, async (req, res) => {
     const { to, subject, message } = req.body || {};
     if (!to) return err(res, "A recipient email address is required");
     const shipment = db.prepare("SELECT emo_office_id FROM shipments WHERE id=?").get(req.params.id);

@@ -172,14 +172,20 @@ const ConflictBanner = ({ conflicts, loading }) => {
 
 const AllocContractPickerModal = ({ pol, pod, matches, onSelect, onClose }) => {
   const [hovered, setHovered] = useState(null);
+  // Space configurations bind to a CONTRACT, not a specific named routing (capacity is a
+  // contract-level concept here, by design — see the multi-routing-contract plan's own scope
+  // decision) — but GET /api/contracts/match now returns one entry per (contract, routing)
+  // pair, so a contract with several routings would otherwise show as several identical-looking
+  // rows sharing the same id (and collide on React key). Collapse to one row per contract id.
+  const uniqueMatches = matches ? [...new Map(matches.map(c => [c.id, c])).values()] : matches;
   return (
     <Modal title={`Select Contract — ${pol} → ${pod}`} onClose={onClose} width={600}>
-      {matches === null ? (
+      {uniqueMatches === null ? (
         <div style={{ padding: "48px 0", display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
           <Spinner />
           <span style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted }}>Searching contracts…</span>
         </div>
-      ) : matches.length === 0 ? (
+      ) : uniqueMatches.length === 0 ? (
         <div style={{ padding: "40px 0", textAlign: "center" }}>
           <div style={{ marginBottom: 10, color: T.textMuted, display: "flex", justifyContent: "center" }}><IconSearch size={28} /></div>
           <div style={{ fontFamily: T.body, fontSize: 14, color: T.text, marginBottom: 4 }}>No contracts found for this route</div>
@@ -189,7 +195,7 @@ const AllocContractPickerModal = ({ pol, pod, matches, onSelect, onClose }) => {
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 10, maxHeight: 420, overflowY: "auto", padding: "4px 2px" }}>
-          {matches.map(c => (
+          {uniqueMatches.map(c => (
             <div key={c.id} onClick={() => onSelect(c)}
               onMouseEnter={() => setHovered(c.id)} onMouseLeave={() => setHovered(null)}
               style={{ border: `1px solid ${hovered === c.id ? T.accent : T.border}`, borderRadius: 8,
@@ -242,6 +248,7 @@ const AllocationForm = ({ init = {}, tradeLanes = [], onSave, onCancel }) => {
   const [endDate,        setEndDate]        = useState(init.endDate        || "");
   const [notes,          setNotes]          = useState(init.notes          || "");
   const [alertThreshold, setAlertThreshold] = useState(init.alertThreshold ?? 80);
+  const [minTeuStr,      setMinTeuStr]      = useState(init.minimumTEU != null ? String(init.minimumTEU) : "");
   const [serverErr,      setServerErr]      = useState("");
   const [isSaving,       withSaving]        = useSaving();
 
@@ -358,9 +365,11 @@ const AllocationForm = ({ init = {}, tradeLanes = [], onSave, onCancel }) => {
 
   const teu    = parseInt(teuStr) || 0;
   const thresh = Math.min(100, Math.max(1, parseInt(alertThreshold) || 80));
+  const minTeu = minTeuStr.trim() === "" ? null : (parseInt(minTeuStr) || 0);
+  const minTeuValid = minTeu === null || minTeu <= teu;
   const valid  = carrierCode && teu > 0 && effectiveDate && endDate && endDate >= effectiveDate
                && polPort?.unlocode && podPort?.unlocode && originLane && destLane && contractId
-               && !conflicts.exact.length;
+               && !conflicts.exact.length && minTeuValid;
   const threshColour = thresh >= 90 ? T.danger : thresh >= 75 ? T.warning : T.success;
 
   const handleSave = () => {
@@ -369,7 +378,7 @@ const AllocationForm = ({ init = {}, tradeLanes = [], onSave, onCancel }) => {
       try {
         await onSave({
           carrierCode, allocatedTEU: teu, effectiveDate, endDate, notes,
-          alertThreshold: thresh,
+          alertThreshold: thresh, minimumTEU: minTeu,
           pol: polPort.unlocode, pod: podPort.unlocode,
           originLane, destLane,
           tradeLane: `${originLane}_${destLane}`,
@@ -525,6 +534,31 @@ const AllocationForm = ({ init = {}, tradeLanes = [], onSave, onCancel }) => {
         </div>
       </div>
 
+      <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "14px 16px" }}>
+        <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
+          textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 10 }}>
+          Minimum Quantity Commitment (optional)
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <input type="number" min={0} max={teu || undefined} value={minTeuStr}
+            onChange={e => setMinTeuStr(e.target.value)}
+            placeholder="No minimum set"
+            style={{ width: 140, padding: "8px 10px", borderRadius: 6, border: `1px solid ${T.border}`,
+              background: T.surface, fontFamily: T.mono, fontSize: 13, color: T.text }} />
+          <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>TEU by end of period</span>
+        </div>
+        {!minTeuValid && (
+          <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.danger, marginTop: 6 }}>
+            Can't exceed the {teu} TEU allocated above.
+          </div>
+        )}
+        <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginTop: 6, lineHeight: 1.5 }}>
+          Unlike the alert threshold above (a ceiling — warns when usage runs high), this is a
+          floor — the volume this office committed to the carrier in exchange for the rate. Left
+          blank, no under-commitment is tracked.
+        </div>
+      </div>
+
       <Textarea label="Notes" value={notes} onChange={setNotes} rows={3}
         placeholder="Contract caveats, rollover terms, special conditions…" />
 
@@ -600,30 +634,23 @@ const SpaceConfigurationsPage = ({
     }
   }, [pendingRenew]);
 
-  // Returns true when a shipment's contract matches an allocation's linked contract
+  // Per-allocation consumed TEU is now read directly off each allocation's own consumedTEU field
+  // (server-computed, scoped strictly to shipments explicitly linked via shipment.allocationId —
+  // routes/allocations.js's loadConsumedTeuMap()). This used to be recomputed here client-side
+  // with a broader carrier+contract+route heuristic (contractMatch/allocationRouteMatch below)
+  // that could — and did — disagree with the server's own /api/allocations/match number and with
+  // the Dashboard's Contract Consumption tab's own third definition, showing three different
+  // "Consumed" figures for the same allocation depending which screen you were on. One
+  // authoritative source now, reused everywhere.
+
+  // Still used by the Linked Shipments modal below to render the linked-port badge on a properly
+  // linked shipment's row (matchedLegFor), and to resolve a shipment's contract for display —
+  // NOT used anymore to decide which shipments count toward Consumed.
   const contractMatch = (s, a) => {
     if (a.contractId)     return s.contractId === a.contractId;
     if (a.contractNumber) return s.contractRef === a.contractNumber;
     return s.contractType === "Central";
   };
-
-  // Per-allocation consumed TEU — scoped to carrier + contract + route + period
-  const consumedPerAlloc = useMemo(() => {
-    const m = {};
-    allocations.forEach(a => {
-      const teu = shipments
-        .filter(s =>
-          s.carrierCode === a.carrierCode &&
-          s.etd >= a.effectiveDate && s.etd <= a.endDate &&
-          contractMatch(s, a) &&
-          allocationRouteMatch(s, a, contractsById, linkedPortIdx)
-        )
-        .reduce((sum, s) =>
-          sum + containers.filter(c => c.shipmentId === s.id).reduce((acc, c) => acc + teuOf(c.size), 0), 0);
-      m[a.id] = teu;
-    });
-    return m;
-  }, [allocations, shipments, containers, contractsById, linkedPortIdx]);
 
   // 6-week sparkline per allocation carrier
   const sparkPerAlloc = useMemo(() => {
@@ -688,8 +715,8 @@ const SpaceConfigurationsPage = ({
             No active configurations. Use "+ Add Configuration" to set up carrier space allocations.
           </div>
         ) : currentAllocs.map(a => {
-          const consumed  = consumedPerAlloc[a.id] || 0;
-          const remaining = Math.max(0, a.allocatedTEU - consumed);
+          const consumed  = a.consumedTEU ?? 0;
+          const remaining = a.remainingTEU ?? Math.max(0, a.allocatedTEU - consumed);
           const pct       = a.allocatedTEU > 0 ? (consumed / a.allocatedTEU) * 100 : 0;
           const carrier   = carriers.find(c => c.code === a.carrierCode);
           const thresh    = a.alertThreshold ?? 80;
@@ -704,6 +731,16 @@ const SpaceConfigurationsPage = ({
 
           const alertColor = pct >= 100 ? T.danger : T.warning;
           const isAlerting = pct >= thresh;
+
+          // Minimum Quantity Commitment — the floor, opposite of the ceiling alertThreshold
+          // guards above. Urgency scales with how much of the period has already elapsed: being
+          // under commitment on day 2 of a 90-day period is normal, being under it on day 85
+          // isn't — same "how much runway is left" framing the free-time/demurrage badges
+          // elsewhere in this app already use.
+          const belowMinimum = a.minimumTEU != null && consumed < a.minimumTEU;
+          const periodTotalDays = Math.max(1, diffDays(a.effectiveDate, a.endDate) + 1);
+          const periodElapsedPct = Math.min(100, Math.max(0, (diffDays(a.effectiveDate, today) / periodTotalDays) * 100));
+          const mqcUrgent = belowMinimum && periodElapsedPct >= 70;
 
           return (
             <div key={a.id}
@@ -766,6 +803,13 @@ const SpaceConfigurationsPage = ({
                   {consumed} TEU
                 </span>
                 <Sparkline data={spark} color={sparkColor} />
+                {belowMinimum && (
+                  <span title={`Committed to ${a.minimumTEU} TEU by ${a.endDate} — ${consumed} booked so far`}
+                    style={{ fontFamily: T.mono, fontSize: 9.5, fontWeight: 700,
+                      color: mqcUrgent ? T.danger : T.info }}>
+                    ⚠ MQC {consumed}/{a.minimumTEU}
+                  </span>
+                )}
               </div>
 
               {/* Status */}
@@ -820,12 +864,10 @@ const SpaceConfigurationsPage = ({
       {linkedAlloc && (() => {
         const a = linkedAlloc;
         const contract = a.contractId ? contractsById[a.contractId] : null;
-        const linked = shipments.filter(s =>
-          s.carrierCode === a.carrierCode &&
-          s.etd >= a.effectiveDate && s.etd <= a.endDate &&
-          contractMatch(s, a) &&
-          allocationRouteMatch(s, a, contractsById, linkedPortIdx)
-        ).map(s => {
+        // Explicitly linked via shipment.allocationId — the same authoritative relationship
+        // routes/allocations.js's consumedTEU is scoped to, so this list's own total always
+        // agrees with the header row's Consumed figure above (see the comment on contractMatch).
+        const linked = shipments.filter(s => s.allocationId === a.id).map(s => {
           const leg = contract ? matchedLegFor(contract, linkedPortIdx, s.pol, s.pod) : null;
           return {
             ...s,
@@ -834,6 +876,20 @@ const SpaceConfigurationsPage = ({
             viaLinkedPod: !!leg && leg.pod !== s.pod,
           };
         }).filter(s => s.teu > 0);
+
+        // Shipments that LOOK related (same carrier/contract/route/period) but were never
+        // explicitly linked via the contract-assignment flow — surfaced separately, below, so
+        // an operator can spot and fix a missing link rather than have it silently inflate or
+        // (as before this fix) produce a disagreeing Consumed number on this modal alone.
+        const possiblyRelated = shipments.filter(s =>
+          s.allocationId !== a.id &&
+          s.carrierCode === a.carrierCode &&
+          s.etd >= a.effectiveDate && s.etd <= a.endDate &&
+          contractMatch(s, a) &&
+          allocationRouteMatch(s, a, contractsById, linkedPortIdx)
+        ).map(s => ({
+          ...s, teu: containers.filter(c => c.shipmentId === s.id).reduce((acc, c) => acc + teuOf(c.size), 0),
+        })).filter(s => s.teu > 0);
 
         const totalTEU    = linked.reduce((acc, s) => acc + s.teu, 0);
         const allocated   = a.allocatedTEU;
@@ -914,6 +970,28 @@ const SpaceConfigurationsPage = ({
                   ))}
                 </div>
               </>
+            )}
+
+            {possiblyRelated.length > 0 && (
+              <div style={{ marginTop: 16, padding: "10px 14px", borderRadius: 8,
+                background: T.warning + "0f", border: `1px solid ${T.warning}44` }}>
+                <div style={{ fontFamily: T.body, fontSize: 12, fontWeight: 600, color: T.warning, marginBottom: 4 }}>
+                  {possiblyRelated.length} shipment{possiblyRelated.length !== 1 ? "s" : ""} look related but aren't linked to this configuration
+                </div>
+                <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted, lineHeight: 1.5, marginBottom: 8 }}>
+                  Same carrier, route, and period — but their own contract-assignment step never set this specific
+                  configuration, so they aren't counted toward Consumed above. Re-run "Change Contract" on each
+                  shipment's Schedules page to link it explicitly, if it should count here.
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {possiblyRelated.map(s => (
+                    <span key={s.id} style={{ fontFamily: T.mono, fontSize: 10.5, color: T.text,
+                      background: T.bg, border: `1px solid ${T.border}`, borderRadius: 4, padding: "2px 6px" }}>
+                      {s.id} · {s.teu} TEU
+                    </span>
+                  ))}
+                </div>
+              </div>
             )}
           </Modal>
         );

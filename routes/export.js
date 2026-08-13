@@ -4,7 +4,16 @@ const path    = require("path");
 const fs      = require("fs");
 
 module.exports = function exportRoutes(app, ctx) {
-  const { db, auth, applyShipmentAccessFilter, mapShipment, roundCents } = ctx;
+  const { db, auth, applyShipmentAccessFilter, mapShipment, roundCents, createRateLimiter } = ctx;
+
+  // Every route below does a full server-side multi-join build (CSV) or an in-memory ExcelJS
+  // workbook build (XLSX) across every shipment the caller can see — cheap for one call, not
+  // something that should be triggerable in a tight loop. Keyed per-user.
+  const exportRateLimit = createRateLimiter({
+    windowMs: 5 * 60 * 1000, max: 15, maxEnvVar: "EXPORT_RATE_MAX",
+    keyFn: req => req.user.id,
+    message: "Too many exports recently — please slow down",
+  });
 
   // ─── Palette & style helpers ──────────────────────────────────────────────
 
@@ -79,6 +88,7 @@ module.exports = function exportRoutes(app, ctx) {
     const rows = db.prepare(`
       SELECT s.*,
              p1.name AS pol_name, p2.name AS pod_name,
+             emo.name  AS emo_office_name, imo.name  AS imo_office_name, ctrl.name AS controlling_office_name,
              COALESCE(buy.total, 0)  AS margin_buy_usd,
              COALESCE(sell.total, 0) AS margin_sell_usd,
              COALESCE(ctr.teu, 0)    AS total_teu,
@@ -86,6 +96,9 @@ module.exports = function exportRoutes(app, ctx) {
       FROM shipments s
       LEFT JOIN port_locations p1 ON p1.unlocode = s.pol
       LEFT JOIN port_locations p2 ON p2.unlocode = s.pod
+      LEFT JOIN offices emo  ON emo.id  = s.emo_office_id
+      LEFT JOIN offices imo  ON imo.id  = s.imo_office_id
+      LEFT JOIN offices ctrl ON ctrl.id = s.controlling_office_id
       LEFT JOIN (SELECT shipment_id, SUM(amount * exchange_rate) AS total
                  FROM shipment_cost_lines WHERE type='BUY' GROUP BY shipment_id) buy
              ON buy.shipment_id = s.id
@@ -171,52 +184,83 @@ module.exports = function exportRoutes(app, ctx) {
       ? `"${s.replace(/"/g, '""')}"` : s;
   }
 
-  const CSV_COLS = [
-    ["id",              r => r.id],
-    ["Status",          r => r.status],
-    ["POL",             r => r.seaPol || r.pol],
-    ["POL Name",        r => r.seaPolName || r.polName],
-    ["POD",             r => r.seaPod || r.pod],
-    ["POD Name",        r => r.seaPodName || r.podName],
-    ["Door Pickup",     r => r.seaPol && r.seaPol !== r.pol ? r.pol : ""],
-    ["Door Delivery",   r => r.seaPod && r.seaPod !== r.pod ? r.pod : ""],
-    ["Carrier",         r => r.carrierCode],
-    ["Contract Type",   r => r.contractType],
-    ["Contract Ref",    r => r.contractRef],
-    ["Trade Lane",      r => r.tradeLane],
-    ["Routing Term",    r => r.routingTerm],
-    ["ETD",             r => r.etd],
-    ["ETA",             r => r.eta],
-    ["Cargo Ready Date",r => r.cargoReadyDate],
-    ["Booking Ref",     r => r.bookingRef],
-    ["B/L Number",      r => r.blNumber],
-    ["Vessel",          r => r.vessel],
-    ["Voyage",          r => r.voyage],
-    ["Incoterm",        r => r.incoterm],
-    ["Freight Terms",   r => r.freightTerms],
-    ["Movement Type",   r => r.movementType],
-    ["Service Type",    r => r.serviceType],
-    ["Commodity",       r => r.commodityCode],
-    ["Shipper",         r => r.shipperName],
-    ["Consignee",       r => r.consigneeName],
-    ["Principal",       r => r.principalName],
-    ["Place of Receipt",r => r.placeOfReceipt],
-    ["Place of Delivery",r => r.placeOfDelivery],
-    ["Containers",      r => r.containerCount],
-    ["TEU",             r => r.totalTeu],
-    ["Buy (USD)",       r => r.marginBuyUsd],
-    ["Sell (USD)",      r => r.marginSellUsd],
-    ["Gross Profit (USD)", r => usd(r.marginSellUsd - r.marginBuyUsd)],
-    ["Margin %",        r => r.marginSellUsd > 0 ? Math.round((r.marginSellUsd - r.marginBuyUsd) / r.marginSellUsd * 1000) / 10 : ""],
-    ["Created At",      r => r.createdAt],
+  // Field registry backing the Shipments page's "Export CSV" field-picker modal — mirrored on
+  // the frontend (src/pages/shipments/ShipmentsPage.jsx's EXPORT_FIELD_GROUPS) since frontend
+  // and backend don't share a module in this app (same split already used for
+  // ADDITIONAL_PARTY_ROLES/CONTRACT_PRESETS elsewhere). `key` is the stable id sent over the
+  // wire via ?fields=; `mandatory` fields are always included server-side regardless of what
+  // the caller requests — the modal shows them checked and disabled, but this is the actual
+  // enforcement point, not just a client-side nicety. "ETD / ATD" and "ETA / ATA" are
+  // deliberately one column each, not four — this app has no independently-populated ATD/ATA
+  // distinct from ETD/ETA; etd/eta get overwritten in place once AIS-confirmed (see
+  // shipment_legs.etd_source/eta_source), so the shipment's own etd/eta value already *is* the
+  // ATD/ATA once known.
+  const CSV_FIELDS = [
+    ["id",                   "Shipment ID",         true,  r => r.id],
+    ["status",               "Status",              false, r => r.status],
+    ["pol",                  "POL",                 true,  r => r.seaPol || r.pol],
+    ["polName",              "POL Name",             false, r => r.seaPolName || r.polName],
+    ["pod",                  "POD",                 true,  r => r.seaPod || r.pod],
+    ["podName",              "POD Name",             false, r => r.seaPodName || r.podName],
+    ["doorPickup",           "Door Pickup",          false, r => r.seaPol && r.seaPol !== r.pol ? r.pol : ""],
+    ["doorDelivery",         "Door Delivery",        false, r => r.seaPod && r.seaPod !== r.pod ? r.pod : ""],
+    ["tradeLane",            "Trade Lane",           false, r => r.tradeLane],
+    ["routingTerm",          "Routing Term",         false, r => r.routingTerm],
+    ["placeOfReceipt",       "Place of Receipt",     false, r => r.placeOfReceipt],
+    ["placeOfDelivery",      "Place of Delivery",    false, r => r.placeOfDelivery],
+    ["etd",                  "ETD / ATD",           true,  r => r.etd],
+    ["eta",                  "ETA / ATA",           true,  r => r.eta],
+    ["cargoReadyDate",       "Cargo Ready Date",     false, r => r.cargoReadyDate],
+    ["createdAt",            "Created At",           false, r => r.createdAt],
+    ["carrierCode",          "Carrier",              false, r => r.carrierCode],
+    ["vessel",               "Vessel",               false, r => r.vessel],
+    ["vesselImo",            "Vessel IMO",           false, r => r.vesselImo],
+    ["voyage",               "Voyage",               false, r => r.voyage],
+    ["bookingRef",           "Booking Ref",          false, r => r.bookingRef],
+    ["blNumber",             "B/L Number",           false, r => r.blNumber],
+    ["contractType",         "Contract Type",        false, r => r.contractType],
+    ["contractRef",          "Contract Ref",         false, r => r.contractRef],
+    ["contractValidFrom",    "Contract Valid From",  false, r => r.contractValidFrom],
+    ["contractValidTo",      "Contract Valid To",    false, r => r.contractValidTo],
+    ["incoterm",             "Incoterm",             false, r => r.incoterm],
+    ["freightTerms",         "Freight Terms",        false, r => r.freightTerms],
+    ["movementType",         "Movement Type",        false, r => r.movementType],
+    ["serviceType",          "Service Type",         false, r => r.serviceType],
+    ["commodityCode",        "Commodity",            false, r => r.commodityCode],
+    ["containerCount",       "Containers",           false, r => r.containerCount],
+    ["totalTeu",             "TEU",                  false, r => r.totalTeu],
+    ["shipperName",          "Shipper",              false, r => r.shipperName],
+    ["consigneeName",        "Consignee",            false, r => r.consigneeName],
+    ["principalName",        "Principal",            false, r => r.principalName],
+    ["notifyName",           "Notify Party",         false, r => r.notifyName],
+    ["emoOfficeName",        "EMO Office",           false, r => r.emoOfficeName],
+    ["imoOfficeName",        "IMO Office",           false, r => r.imoOfficeName],
+    ["controllingOfficeName","Controlling Office",   false, r => r.controllingOfficeName],
+    ["declaredValue",        "Declared Value",       false, r => r.declaredValue],
+    ["declaredValueCurrency","Declared Value Currency", false, r => r.declaredValueCurrency],
+    ["marginBuyUsd",         "Buy (USD)",            false, r => r.marginBuyUsd],
+    ["marginSellUsd",        "Sell (USD)",           false, r => r.marginSellUsd],
+    ["grossProfit",          "Gross Profit (USD)",   false, r => usd(r.marginSellUsd - r.marginBuyUsd)],
+    ["marginPct",            "Margin %",             false, r => r.marginSellUsd > 0 ? Math.round((r.marginSellUsd - r.marginBuyUsd) / r.marginSellUsd * 1000) / 10 : ""],
   ];
+  const MANDATORY_FIELD_KEYS = CSV_FIELDS.filter(([, , mandatory]) => mandatory).map(([key]) => key);
 
   // ─── GET /api/export/shipments.csv ────────────────────────────────────────
 
-  app.get("/api/export/shipments.csv", auth(), (req, res) => {
+  app.get("/api/export/shipments.csv", auth(), exportRateLimit, (req, res) => {
     const rows = queryShipmentRows(req.user, req);
-    const header = CSV_COLS.map(([label]) => escCSV(label)).join(",");
-    const body   = rows.map(r => CSV_COLS.map(([, fn]) => escCSV(fn(r))).join(",")).join("\n");
+    // No ?fields= (or an empty one) means "export everything" — preserves the old one-click
+    // behavior for any caller that doesn't go through the field-picker modal. When fields ARE
+    // specified, mandatory keys are force-included here regardless of what was actually sent —
+    // the modal already prevents unchecking them client-side, but the server is the real
+    // enforcement point, not the UI.
+    const requested = (req.query.fields || "").split(",").map(s => s.trim()).filter(Boolean);
+    const selected = requested.length
+      ? new Set([...requested, ...MANDATORY_FIELD_KEYS])
+      : new Set(CSV_FIELDS.map(([key]) => key));
+    const cols = CSV_FIELDS.filter(([key]) => selected.has(key));
+    const header = cols.map(([, label]) => escCSV(label)).join(",");
+    const body   = rows.map(r => cols.map(([, , , fn]) => escCSV(fn(r))).join(",")).join("\n");
     const csv    = `${header}\n${body}`;
     const date   = new Date().toISOString().slice(0, 10);
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
@@ -492,7 +536,7 @@ module.exports = function exportRoutes(app, ctx) {
 
   // ─── Approach A: Fully programmatic ExcelJS ───────────────────────────────
 
-  app.get("/api/export/dashboard/xlsx", auth(), (req, res) => {
+  app.get("/api/export/dashboard/xlsx", auth(), exportRateLimit, (req, res) => {
     const shipments   = queryShipmentRows(req.user, req);
     const summary     = buildMarginSummary(shipments);
     const exportedAt  = new Date().toLocaleString("en-GB");
@@ -517,7 +561,7 @@ module.exports = function exportRoutes(app, ctx) {
 
   const TEMPLATE_PATH = path.join(__dirname, "..", "exports", "dashboard-template.xlsx");
 
-  app.get("/api/export/dashboard/template", auth(), async (req, res) => {
+  app.get("/api/export/dashboard/template", auth(), exportRateLimit, async (req, res) => {
     if (!fs.existsSync(TEMPLATE_PATH)) {
       return res.status(404).json({ error: "Template not found. Run: node scripts/create-export-template.js" });
     }

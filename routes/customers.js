@@ -1,14 +1,34 @@
 "use strict";
 
 module.exports = function customersRoutes(app, ctx) {
-  const { db, ok, err, uid, auth,
+  const { db, ok, err, uid, auth, requireRole,
           mapCustomer, mapCustomerIdentifier, mapCustomerScreening, mapCustomerDoc, mapCustomerContact,
           screenShipmentById, rescreenActiveShipments,
           sanctionsMap, normSanctionName, loadSanctionsIndex, scheduleNextOfacSync,
-          syncOfacSdn,
+          syncOfacSdn, syncConsolidatedScreeningList, scheduleNextCslSync,
           getFxRates, fxCache, getSettings,
           validCoord, roundCents,
+          createRateLimiter,
           UPLOADS_DIR, fs, path } = ctx;
+
+  // Mirrors MdmContractsPage/MdmCustomersPage's own "full CRUD for trade_manager alongside
+  // admin/operator" MDM-write tier (routes/contracts.js, routes/allocations.js) — customer
+  // master-data management, which this compliance override is part of, sits at that tier, not
+  // shipment operational writes. This file had NO role-gated route at all before this pass
+  // (grepped — zero requireRole usage anywhere in customers.js); scoped here to just the
+  // screening-override route since that's the specific gap flagged, not a full-file audit.
+  const customerWrite = requireRole(["admin", "operator", "trade_manager"]);
+
+  // Both routes below are heavy (a live external OFAC fetch + full re-index, or a full
+  // delete-and-bulk-reimport of sanctions_entries followed by a shipment-wide re-screen) and
+  // reachable by any authenticated user — keyed per-user since the global gate already requires
+  // a valid token here. Note: neither route is role-restricted today (any viewer can trigger
+  // either); this limiter caps how often, not who — flagged separately as its own finding.
+  const sanctionsRateLimit = createRateLimiter({
+    windowMs: 60 * 60 * 1000, max: 5, maxEnvVar: "SANCTIONS_RATE_MAX",
+    keyFn: req => req.user.id,
+    message: "Too many sanctions sync/import requests recently — try again later",
+  });
 
   // ─── CSV parsing helpers (local to this domain) ────────────────────────────
 
@@ -423,7 +443,10 @@ module.exports = function customersRoutes(app, ctx) {
     ok(res, screenCustomer(req.params.id));
   });
 
-  app.post("/api/customers/:id/screening/override", auth(), (req, res) => {
+  // Previously gated only by auth() (any authenticated user, viewer included) — the frontend's
+  // own override button IS canEdit-gated (MdmCustomersPage.jsx), so this was a direct-API-only
+  // gap, unlike the shipment-level equivalent which was reachable through the real UI too.
+  app.post("/api/customers/:id/screening/override", auth(), customerWrite, (req, res) => {
     const { reason = "" } = req.body;
     if (!reason.trim()) return err(res, "Override reason is required");
     const row = db.prepare("SELECT id FROM customer_screenings WHERE customer_id=?").get(req.params.id);
@@ -497,10 +520,12 @@ module.exports = function customersRoutes(app, ctx) {
   app.get("/api/sanctions/status", (req, res) => {
     const syncs = db.prepare("SELECT * FROM sanctions_syncs ORDER BY synced_at DESC").all();
     const count = db.prepare("SELECT COUNT(*) AS n FROM sanctions_entries").get().n;
-    ok(res, { syncs, entryCount: count, indexed: sanctionsMap.size });
+    const ofacCount = db.prepare("SELECT COUNT(*) AS n FROM sanctions_entries WHERE source='OFAC-SDN'").get().n;
+    const cslCount = db.prepare("SELECT COUNT(*) AS n FROM sanctions_entries WHERE id LIKE 'CSL-%'").get().n;
+    ok(res, { syncs, entryCount: count, ofacEntryCount: ofacCount, cslEntryCount: cslCount, indexed: sanctionsMap.size });
   });
 
-  app.post("/api/sanctions/sync", async (req, res) => {
+  app.post("/api/sanctions/sync", sanctionsRateLimit, async (req, res) => {
     try {
       ok(res, await syncOfacSdn());
       scheduleNextOfacSync();
@@ -509,7 +534,20 @@ module.exports = function customersRoutes(app, ctx) {
     }
   });
 
-  app.post("/api/sanctions/import-csv", (req, res) => {
+  // Consolidated Screening List — the 11 US denied-party lists beyond OFAC's own SDN list
+  // (BIS Denied Persons/Entity/Unverified/Military End User, State Dept ITAR Debarred +
+  // Nonproliferation Sanctions, and 5 more OFAC-family lists). Additive to the OFAC sync above,
+  // not a replacement — see syncConsolidatedScreeningList's own comment in server.js.
+  app.post("/api/sanctions/sync-csl", sanctionsRateLimit, async (req, res) => {
+    try {
+      ok(res, await syncConsolidatedScreeningList());
+      scheduleNextCslSync();
+    } catch (e) {
+      err(res, e.message, 502);
+    }
+  });
+
+  app.post("/api/sanctions/import-csv", sanctionsRateLimit, (req, res) => {
     const { csv } = req.body;
     if (!csv || typeof csv !== "string") return err(res, "csv string required");
     try {

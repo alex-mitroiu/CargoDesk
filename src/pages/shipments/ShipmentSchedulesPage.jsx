@@ -10,9 +10,10 @@ import DatePicker from "../../components/primitives/DatePicker";
 import SailingPickerModal from "../../components/shared/SailingPickerModal";
 import ContractAssignModal from "../../components/shared/ContractAssignModal";
 import { ScheduleHistoryPanel, PendingRevalidationModal } from "./ShipmentDetailPage";
-import { LegsTable, deriveHaulageNeeds } from "./ShipmentFormPage";
+import { LegsTable } from "./ShipmentFormPage";
 import { IconWarning, IconPackage, IconAnchor } from "../../components/primitives/Icon";
 import { applySailingToLegs as applySailingToLegsShared } from "../../utils/applySailingToLegs";
+import useContractMismatch from "../../hooks/useContractMismatch";
 
 // ─── Shipment Schedules Page ──────────────────────────────────────────────
 // Dedicated sub-page for carrier schedule/booking management, promoted out
@@ -38,7 +39,6 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
   const [schedules,     setSchedules]     = useState([]);
   const [pickerOpen,    setPickerOpen]    = useState(false);
   const [confirmSailing, setConfirmSailing] = useState(null); // pending replacement
-  const [contractMismatch, setContractMismatch] = useState(false);
   const [contractModalOpen, setContractModalOpen] = useState(false);
   const [pendingMatches, setPendingMatches] = useState(null);
   const [histOpen, setHistOpen] = useState(false);
@@ -183,25 +183,12 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
   const hasSchedule = schedules.length > 0;
   const canSearch = !!(pol && pod && carrier) && !hasSchedule;
 
-  // Same silent revalidation as ShipmentHeaderBar's badge — duplicated here (rather than
-  // shared) since it's a small, cheap check and this is the one place that also renders
-  // the actual fix UI right below the warning. Matches against the real SEA leg pol/pod
-  // (above), not shipment.pol/pod — those are the door-to-door bookends, and a contract
-  // is always matched port-to-port against the actual ocean leg, including haulage coverage.
-  const { needsPolHaulage, needsPodHaulage, pkuLocation, delLocation } = deriveHaulageNeeds(legs);
-  useEffect(() => {
-    let live = true;
-    if (shipment.contractType !== "Central" || !shipment.contractId || !pol || !pod) {
-      setContractMismatch(false);
-      return;
-    }
-    api.contracts.match({ pol, pod,
-      ...(needsPolHaulage && { needsPolHaulage: "1" }), ...(needsPodHaulage && { needsPodHaulage: "1" }),
-      ...(pkuLocation && { pkuLocation }), ...(delLocation && { delLocation }) })
-      .then(matches => { if (live) setContractMismatch(!matches.some(m => m.id === shipment.contractId)); })
-      .catch(() => { if (live) setContractMismatch(false); });
-    return () => { live = false; };
-  }, [shipment.contractType, shipment.contractId, pol, pod, needsPolHaulage, needsPodHaulage, pkuLocation, delLocation]);
+  // Same silent revalidation as ShipmentHeaderBar's badge — shared via useContractMismatch so
+  // the two can't drift on what counts as a mismatch (they used to be independently duplicated,
+  // and neither passed a validity date to the match check — see the hook's own comment). Matches
+  // against the real SEA leg pol/pod (above), not shipment.pol/pod, which are door-to-door
+  // bookends; a contract is always matched port-to-port against the actual ocean leg.
+  const contractMismatch = useContractMismatch(shipment, pol, pod, legs);
 
   // Pending-contract revalidation — same check as ShipmentHeaderBar's badge (duplicated for
   // the same reason: cheap, and this is the page that renders the actual accept/dismiss UI).
