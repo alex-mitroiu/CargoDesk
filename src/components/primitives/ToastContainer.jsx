@@ -63,7 +63,7 @@ const Toast = ({ t, onDismiss }) => {
         {TYPE.icon}
       </span>
       {/* Message */}
-      <span style={{ fontSize: 13, color: T.text, flex: 1, lineHeight: 1.5 }}>
+      <span style={{ fontSize: 13, color: T.text, flex: 1, lineHeight: 1.5, whiteSpace: "pre-line" }}>
         {t.message}
       </span>
       {/* Dismiss */}

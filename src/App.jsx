@@ -232,8 +232,22 @@ const _ctrTotals = ctrs => {
   return { w, v };
 };
 
-const buildBillOfLadingHtml = ({ shipment: sh, invNumber, invDate, notes, containers, shipper, consignee }) => {
+const buildBillOfLadingHtml = ({ shipment: sh, invNumber, invDate, notes, containers, shipper, consignee, parties }) => {
   const { w: totalWeight, v: totalVolume } = _ctrTotals(containers);
+  // Additive party roles (Epic TKT-5XFCAP), same falls-back-to-today's-output pattern CD01/IC01
+  // already use: an unassigned role renders nothing rather than a blank placeholder row.
+  const alsoNotify = partyByRole(parties, "Also Notify Party");
+  const preCarrier = partyByRole(parties, "Trucker (Pre-carriage)");
+  // Real legal significance, not paperwork trivia — see BL_RELEASE_TYPES' own comment in
+  // tokens.js: an Original B/L needs a physical set surrendered before release, so a full set
+  // is issued (3 is the standard trade-practice count); Telex/Surrendered already gave up the
+  // original at origin, so zero travel with the goods; a Seaway Bill is never negotiable and
+  // never issued as a physical original at all.
+  const originalsLine = {
+    "Original": "3 ORIGINALS", "Telex Release": "0 ORIGINALS — TELEX RELEASE",
+    "Surrendered": "0 ORIGINALS — SURRENDERED AT ORIGIN",
+    "Seaway Bill": "NOT NEGOTIABLE — NO ORIGINALS ISSUED (SEAWAY BILL)",
+  }[sh.blReleaseType] || "—";
   const rows = containers.length === 0
     ? `<tr><td colspan="7" style="text-align:center;color:#9ca3af;padding:16px">No containers recorded</td></tr>`
     : containers.map(c => `<tr>
@@ -247,7 +261,7 @@ const buildBillOfLadingHtml = ({ shipment: sh, invNumber, invDate, notes, contai
       </tr>`).join("");
 
   const body = `
-    <div class="parties" style="grid-template-columns:1fr 1fr 1fr">
+    <div class="parties" style="grid-template-columns:${alsoNotify ? "1fr 1fr 1fr 1fr" : "1fr 1fr 1fr"}">
       <div class="party"><div class="party-label">Shipper / Exporter</div>
         <div class="party-name">${_esc(sh.shipperName || shipper?.companyName || "—")}</div>
         ${fmtAddrHtml(shipper) ? `<div class="party-addr">${fmtAddrHtml(shipper)}</div>` : ""}
@@ -259,14 +273,20 @@ const buildBillOfLadingHtml = ({ shipment: sh, invNumber, invDate, notes, contai
       <div class="party"><div class="party-label">Notify Party</div>
         <div class="party-name">${_esc(sh.notifyName || "—")}</div>
       </div>
+      ${alsoNotify ? `<div class="party"><div class="party-label">Also Notify Party</div>
+        <div class="party-name">${_esc(alsoNotify.customerName)}</div>
+      </div>` : ""}
     </div>
     <div class="shp-block"><div class="block-label">Transport Details</div>
       <div class="details-grid">${_detailGrid([
         ["B/L Number", _esc(sh.blNumber || invNumber)], ["Release Type", _esc(sh.blReleaseType || "—")],
-        ["Booking Ref", _esc(sh.bookingRef || "—")],
+        ["No. of Originals", originalsLine], ["Booking Ref", _esc(sh.bookingRef || "—")],
+        ...(preCarrier ? [["Pre-carriage By", _esc(preCarrier.customerName)]] : []),
+        ["Place of Receipt", _esc(sh.placeOfReceipt || "—")],
         ["Vessel", _esc(sh.vessel || "—")], ["Voyage", _esc(sh.voyage || "—")],
         ["Port of Loading", `${_esc(sh.pol)}${sh.polName ? " · " + _esc(sh.polName) : ""}`],
         ["Port of Discharge", `${_esc(sh.pod)}${sh.podName ? " · " + _esc(sh.podName) : ""}`],
+        ["Place of Delivery", _esc(sh.placeOfDelivery || "—")],
         ["ETD", sh.etd ? new Date(sh.etd).toLocaleDateString("en-GB") : "—"],
         ["ETA", sh.eta ? new Date(sh.eta).toLocaleDateString("en-GB") : "—"],
         ["Carrier", _esc(sh.carrierCode || "—")], ["Incoterm", _esc(sh.incoterm || "—")],
@@ -647,6 +667,47 @@ const buildGenericDocHtml = ({ shipment: sh, invNumber, invDate, notes }) => {
   return _invShell(`Document — ${invNumber}`, "DOCUMENT", invNumber, invDate, body);
 };
 
+// Blocks generation when data a real document of this type genuinely can't be issued without
+// is missing, and names every gap at once rather than making the user click Generate repeatedly
+// to discover them one at a time. Deliberately excludes LP01/UP01/PU01/DL01/OT/CN01 — those are
+// either free-text, backed by a dedicated page with its own validation (LoadingServicePage.jsx),
+// or (per dispatchDocBuilder's own comment above) intentionally allowed to render a
+// blank-template fallback from this generic modal.
+const getMissingDocRequirements = (docCode, { shipment: sh, containers, shipper, consignee, costLines, dgCompliance, parties }) => {
+  const missing = [];
+  const hasShipper   = !!(sh.shipperName || shipper?.companyName);
+  const hasConsignee = !!(sh.consigneeName || consignee?.companyName);
+  if (["BL01", "CI01", "CI02", "PL01", "CO01", "CD01", "DG01"].includes(docCode)) {
+    if (!hasShipper) missing.push("Shipper");
+    if (!hasConsignee) missing.push("Consignee");
+  }
+  if (["BL01", "CI01", "CI02", "PL01", "CO01", "CD01"].includes(docCode) && containers.length === 0) {
+    missing.push("At least one container");
+  }
+  if (["BL01", "CI01", "CI02", "PL01"].includes(docCode)) {
+    if (!sh.pol) missing.push("Port of Loading");
+    if (!sh.pod) missing.push("Port of Discharge");
+  }
+  if (docCode === "CD01" && containers.length > 0) {
+    const noHs = containers.filter(c => !c.hsCode).length;
+    if (noHs > 0) missing.push(`HS Code (missing on ${noHs} of ${containers.length} container${containers.length > 1 ? "s" : ""})`);
+  }
+  if (docCode === "IC01") {
+    const insuranceProvider = partyByRole(parties, "Insurance Provider");
+    if (!insuranceProvider?.customerName && !hasShipper) missing.push("Assured Party (Shipper or an assigned Insurance Provider)");
+  }
+  if (docCode === "DG01") {
+    if (containers.filter(c => c.isDg).length === 0) missing.push("At least one container flagged as Dangerous Goods");
+    if (!dgCompliance?.contactName && !dgCompliance?.phone && !dgCompliance?.email) {
+      missing.push("DG Compliance Contact (Application Settings → Compliance)");
+    }
+  }
+  if ((docCode === "FR01" || docCode === "FR02") && costLines.length === 0) {
+    missing.push("At least one valid SELL charge line");
+  }
+  return missing;
+};
+
 const dispatchDocBuilder = (code, data) => {
   switch (code) {
     case "BL01":             return buildBillOfLadingHtml(data);
@@ -690,11 +751,6 @@ const GenerateDocumentModal = ({ shipment, onClose, onSaved, defaultCode }) => {
         needsDgSettings ? api.settings.get().catch(() => null) : Promise.resolve(null),
         api.shipmentParties.list(shipment.id).catch(() => []),
       ]);
-      if (needsCostLines && costLines.length === 0) {
-        toast.error("At least one valid charge line needs to be present to generate an invoice.");
-        setLoading(false);
-        return;
-      }
       const allCtrs         = Array.isArray(ctrsRaw) ? ctrsRaw : (ctrsRaw?.results ?? []);
       const containersBase  = allCtrs.filter(c => c.shipmentId === shipment.id);
       // Structured cargo line items (Epic TKT-P3ASH1, Story TKT-LUNODU) — only CI01/CI02/PL01
@@ -713,6 +769,12 @@ const GenerateDocumentModal = ({ shipment, onClose, onSaved, defaultCode }) => {
         email:       orgSettings.dg_compliance_email         || "",
         address:     orgSettings.dg_compliance_address       || "",
       } : null;
+      const missing = getMissingDocRequirements(docCode, { shipment, containers, shipper, consignee, costLines, dgCompliance, parties });
+      if (missing.length > 0) {
+        toast.error(`Cannot generate ${docTypeLabel(docCode)} — missing:\n${missing.map(m => `• ${m}`).join("\n")}`);
+        setLoading(false);
+        return;
+      }
       const html = dispatchDocBuilder(docCode, {
         shipment, invNumber: docNum, invDate: docDate, notes, containers, shipper, consignee, costLines, dgCompliance, parties,
       });
