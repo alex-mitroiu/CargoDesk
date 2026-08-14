@@ -124,12 +124,21 @@ module.exports = function exportRoutes(app, ctx) {
   }
 
   function queryCostLines() {
-    return db.prepare(`
+    const rows = db.prepare(`
       SELECT cl.*, s.pol, s.pod, s.carrier_code, s.etd, s.booking_ref
       FROM shipment_cost_lines cl
       JOIN shipments s ON s.id = cl.shipment_id
       ORDER BY cl.shipment_id, cl.type, cl.created_at
     `).all();
+    // Same door-to-door-vs-real-sea-port gap as queryShipmentRows above — the "By Lane" margin
+    // summary grouped by raw pol/pod, so a shipment with a Door pickup/delivery leg misattributed
+    // its margin to an inland city's "lane" instead of the real sea lane. Overlay the resolved
+    // sea port here too, falling back to the door-to-door value when there's no SEA leg yet.
+    const seaPorts = resolveSeaPorts([...new Set(rows.map(r => r.shipment_id))]);
+    return rows.map(r => {
+      const sp = seaPorts[r.shipment_id];
+      return sp ? { ...r, pol: sp.seaPol || r.pol, pod: sp.seaPod || r.pod } : r;
+    });
   }
 
   function buildMarginSummary(shipments) {

@@ -52,6 +52,11 @@ const ShipmentConditionsPage = ({ shipment }) => (
           {shipment.blNumber || "—"}
         </span>
       } />
+      <Row id="shpcond-bl-release-type" label="B/L Release Type" node={
+        <span style={{ fontFamily: T.mono, fontSize: 13, color: shipment.blReleaseType ? T.textCode : T.border }}>
+          {shipment.blReleaseType || "—"}
+        </span>
+      } />
 
       {shipment.commodityCode && (
         <div id="shpcond-commodity" style={{ padding: "16px 20px", borderTop: `1px solid ${T.border}` }}>

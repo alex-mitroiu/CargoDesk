@@ -45,7 +45,12 @@ const SERVICE_TYPE_OPTIONS = [
   { value: "Door-to-Door", label: "Door-to-Door (D2D)" },
 ];
 
-const emptyLine = () => ({ serviceCode: "", description: "", containerType: "", quantity: "1", rate: "", currency: "USD" });
+const emptyLine = () => ({ serviceCode: "", description: "", containerType: "", quantity: "1", rate: "", currency: "USD", setTemperatureC: "" });
+
+// A quote's containerType is free text (e.g. "40RF", "20HC") — this is the same "does it look
+// like a reefer" check ContainerForm makes structurally (type === "RF"), just against a plain
+// string here since a quote line has no real ContainerTypeField picker.
+const looksReefer = containerType => /RF/i.test(containerType || "");
 
 // ─── Quote form modal (New + Edit-while-Draft) ──────────────────────────────
 const QuoteFormModal = ({ quote, onClose, onSaved }) => {
@@ -63,7 +68,8 @@ const QuoteFormModal = ({ quote, onClose, onSaved }) => {
   const [notes, setNotes] = useState(quote?.notes || "");
   const [currency, setCurrency] = useState(quote?.currency || "USD");
   const [lines, setLines] = useState(
-    quote?.lines?.length ? quote.lines.map(l => ({ ...l, rate: String(l.rate), quantity: String(l.quantity) })) : [emptyLine()]
+    quote?.lines?.length ? quote.lines.map(l => ({ ...l, rate: String(l.rate), quantity: String(l.quantity),
+      setTemperatureC: l.setTemperatureC != null ? String(l.setTemperatureC) : "" })) : [emptyLine()]
   );
   const [contractId, setContractId] = useState(quote?.contractId || "");
   const [contractRef, setContractRef] = useState(quote?.contractRef || "");
@@ -94,6 +100,9 @@ const QuoteFormModal = ({ quote, onClose, onSaved }) => {
       setLines(c.rates.map(r => ({
         serviceCode: r.serviceCode || "", description: r.description || "", containerType: r.containerType || "",
         quantity: "1", rate: String(r.amount), currency: r.currency || "USD",
+        // Contract rates carry no temperature concept — always starts blank/editable here,
+        // regardless of whether the applied rate happens to be for a reefer container type.
+        setTemperatureC: "",
       })));
     }
     setMatches(null);
@@ -189,8 +198,10 @@ const QuoteFormModal = ({ quote, onClose, onSaved }) => {
             <Btn size="sm" variant="secondary" onClick={addLine}>+ Add Line</Btn>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {lines.map((l, i) => (
-              <div key={i} style={{ display: "grid", gridTemplateColumns: "80px 1fr 90px 60px 110px 80px 24px", gap: 6, alignItems: "center",
+            {lines.map((l, i) => {
+              const isReefer = looksReefer(l.containerType);
+              return (
+              <div key={i} style={{ display: "grid", gridTemplateColumns: "80px 1fr 90px 70px 60px 110px 80px 24px", gap: 6, alignItems: "center",
                 padding: "8px", background: T.bg, border: `1px solid ${T.border}`, borderRadius: 6 }}>
                 <input value={l.serviceCode} onChange={e => setLine(i, { serviceCode: e.target.value.toUpperCase() })}
                   placeholder="OF" style={{ ...inputBase, fontFamily: T.mono, fontSize: 12, padding: "6px 8px" }} />
@@ -198,6 +209,13 @@ const QuoteFormModal = ({ quote, onClose, onSaved }) => {
                   placeholder="Description" style={{ ...inputBase, fontSize: 12.5, padding: "6px 8px" }} />
                 <input value={l.containerType} onChange={e => setLine(i, { containerType: e.target.value.toUpperCase() })}
                   placeholder="40HC" style={{ ...inputBase, fontFamily: T.mono, fontSize: 12, padding: "6px 8px" }} />
+                {isReefer ? (
+                  <input value={l.setTemperatureC} onChange={e => { if (e.target.value === "" || /^-?\d*\.?\d*$/.test(e.target.value)) setLine(i, { setTemperatureC: e.target.value }); }}
+                    inputMode="decimal" placeholder="°C" title="Reefer set-point temperature (°C)"
+                    style={{ ...inputBase, fontFamily: T.mono, fontSize: 12, padding: "6px 8px", textAlign: "right" }} />
+                ) : (
+                  <span style={{ fontFamily: T.mono, fontSize: 11.5, color: T.border, textAlign: "right", padding: "6px 8px" }}>—</span>
+                )}
                 <input value={l.quantity} onChange={e => setLine(i, { quantity: e.target.value })} inputMode="numeric"
                   placeholder="Qty" style={{ ...inputBase, fontFamily: T.mono, fontSize: 12.5, padding: "6px 8px", textAlign: "right" }} />
                 <input value={l.rate} onChange={e => setLine(i, { rate: e.target.value })} inputMode="decimal"
@@ -212,7 +230,8 @@ const QuoteFormModal = ({ quote, onClose, onSaved }) => {
                   <IconClose size={14} />
                 </button>
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
 
@@ -304,7 +323,7 @@ const QuoteDetailModal = ({ quoteId, navigate, onClose, onChanged, onShipmentCre
             <table style={{ width: "100%", borderCollapse: "collapse", fontFamily: T.body, fontSize: 12.5 }}>
               <thead>
                 <tr style={{ borderBottom: `1px solid ${T.border}`, color: T.textMuted, textAlign: "left" }}>
-                  {["Service", "Description", "Container", "Qty", "Rate", "USD"].map(h => (
+                  {["Service", "Description", "Container", "Temp", "Qty", "Rate", "USD"].map(h => (
                     <th key={h} style={{ padding: "6px 8px", fontWeight: 600, fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".05em" }}>{h}</th>
                   ))}
                 </tr>
@@ -315,6 +334,7 @@ const QuoteDetailModal = ({ quoteId, navigate, onClose, onChanged, onShipmentCre
                     <td style={{ padding: "8px", fontFamily: T.mono, color: T.text }}>{l.serviceCode}</td>
                     <td style={{ padding: "8px", color: T.text }}>{l.description || "—"}</td>
                     <td style={{ padding: "8px", fontFamily: T.mono, color: T.textMuted }}>{l.containerType || "—"}</td>
+                    <td style={{ padding: "8px", fontFamily: T.mono, color: T.textMuted, textAlign: "right" }}>{l.setTemperatureC != null ? `${l.setTemperatureC}°C` : "—"}</td>
                     <td style={{ padding: "8px", fontFamily: T.mono, color: T.text, textAlign: "right" }}>{l.quantity}</td>
                     <td style={{ padding: "8px", fontFamily: T.mono, color: T.text, textAlign: "right" }}>{l.rate.toLocaleString()} {l.currency}</td>
                     <td style={{ padding: "8px", fontFamily: T.mono, color: T.text, textAlign: "right" }}>{fmtUsd(l.amountUsd)}</td>

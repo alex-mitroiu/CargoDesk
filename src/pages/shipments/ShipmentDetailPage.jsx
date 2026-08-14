@@ -88,6 +88,14 @@ const SectionHeader = ({ n, title }) => {
 
 // ─── Container type picker modal ─────────────────────────────────────────────
 
+// Reefer set-point temperature — Celsius is the only unit actually persisted
+// (containers.set_temperature_c), so a Fahrenheit entry is always converted before
+// it reaches buildPayload; these are display/conversion helpers only. Rounded to 1
+// decimal place — a bare 9/5 conversion produces long floating-point tails
+// (e.g. -18°C → -0.3999999999999986°F) that would look broken in the input.
+const cToF = c => Math.round((c * 9 / 5 + 32) * 10) / 10;
+const fToC = f => Math.round(((f - 32) * 5 / 9) * 10) / 10;
+
 // ─── Container form ───────────────────────────────────────────────────────────
 
 // forwardRef + useImperativeHandle exposes trySave() to a parent page's navigation
@@ -110,6 +118,13 @@ export const ContainerForm = forwardRef(({ init = {}, onSave, onCancel, onDirtyC
     cyCutoff:         init.cyCutoff         || "",
     originFreeTimeDays: init.originFreeTimeDays != null ? String(init.originFreeTimeDays) : "",
     destFreeTimeDays:   init.destFreeTimeDays   != null ? String(init.destFreeTimeDays)   : "",
+    originDetentionFreeDays: init.originDetentionFreeDays != null ? String(init.originDetentionFreeDays) : "",
+    destDetentionFreeDays:   init.destDetentionFreeDays   != null ? String(init.destDetentionFreeDays)   : "",
+    setTemperatureC:  init.setTemperatureC  != null ? String(init.setTemperatureC) : "",
+    // Never loaded from init — only Celsius is persisted, so a container's saved temperature
+    // always displays via the Celsius box on open, regardless of which unit it was originally
+    // typed in.
+    setTemperatureF:  "",
   });
   const [f, setF] = useState({ ...initSnap.current });
   const set = k => v => setF(p => ({ ...p, [k]: v }));
@@ -126,13 +141,32 @@ export const ContainerForm = forwardRef(({ init = {}, onSave, onCancel, onDirtyC
       f.marksAndNumbers !== s.marksAndNumbers ||
       f.grossWeightKg !== s.grossWeightKg || f.volumeCbm !== s.volumeCbm ||
       f.isDg !== s.isDg || f.dgClass !== s.dgClass ||
-      f.cyCutoff !== s.cyCutoff || f.originFreeTimeDays !== s.originFreeTimeDays || f.destFreeTimeDays !== s.destFreeTimeDays;
+      f.cyCutoff !== s.cyCutoff || f.originFreeTimeDays !== s.originFreeTimeDays || f.destFreeTimeDays !== s.destFreeTimeDays ||
+      f.originDetentionFreeDays !== s.originDetentionFreeDays || f.destDetentionFreeDays !== s.destDetentionFreeDays ||
+      f.setTemperatureC !== s.setTemperatureC || f.setTemperatureF !== s.setTemperatureF;
     onDirtyChange?.(dirty);
   }, [f]);
 
   // Clear dirty flag when the form unmounts (modal closed)
   useEffect(() => () => onDirtyChange?.(false), []);
   const touch = k => setTouched(p => ({ ...p, [k]: true }));
+
+  // Celsius always wins when set — typing into it locks/recomputes the Fahrenheit box.
+  // Clearing it back to "" hands control back to Fahrenheit and resets whatever was there,
+  // rather than leaving a stale computed number behind.
+  const setCelsius = v => {
+    if (v !== "" && !/^-?\d*\.?\d*$/.test(v)) return;
+    setF(p => ({ ...p, setTemperatureC: v, ...(v === "" ? { setTemperatureF: "" } : {}) }));
+  };
+  const setFahrenheit = v => {
+    if (v !== "" && !/^-?\d*\.?\d*$/.test(v)) return;
+    set("setTemperatureF")(v);
+  };
+  const celsiusNum = parseFloat(f.setTemperatureC);
+  const fahrenheitLocked = f.setTemperatureC !== "";
+  const fahrenheitDisplay = fahrenheitLocked
+    ? (isNaN(celsiusNum) ? "" : String(cToF(celsiusNum)))
+    : f.setTemperatureF;
 
   const weightOk = parseFloat(f.grossWeightKg) > 0;
   const volumeOk = parseFloat(f.volumeCbm)    > 0;
@@ -163,6 +197,16 @@ export const ContainerForm = forwardRef(({ init = {}, onSave, onCancel, onDirtyC
     cyCutoff: f.cyCutoff,
     originFreeTimeDays: f.originFreeTimeDays ? parseInt(f.originFreeTimeDays, 10) : null,
     destFreeTimeDays:   f.destFreeTimeDays   ? parseInt(f.destFreeTimeDays, 10)   : null,
+    originDetentionFreeDays: f.originDetentionFreeDays ? parseInt(f.originDetentionFreeDays, 10) : null,
+    destDetentionFreeDays:   f.destDetentionFreeDays   ? parseInt(f.destDetentionFreeDays, 10)   : null,
+    // Cleared automatically if the type is switched away from Reefer, rather than left as a
+    // stale setting on what's now a dry container. Only Celsius is ever persisted — a
+    // Fahrenheit-only entry (Celsius box left empty) is converted here at save time, same
+    // effective value as if the operator had typed the Celsius equivalent directly.
+    setTemperatureC: f.type !== "RF" ? null
+      : f.setTemperatureC !== "" ? parseFloat(f.setTemperatureC)
+      : f.setTemperatureF !== "" && !isNaN(parseFloat(f.setTemperatureF)) ? fToC(parseFloat(f.setTemperatureF))
+      : null,
   });
 
   // Exposed to a parent's navigation guard — touches every mandatory field (so
@@ -233,6 +277,20 @@ export const ContainerForm = forwardRef(({ init = {}, onSave, onCancel, onDirtyC
       <Inp label="Marks & Nos." value={f.marksAndNumbers} onChange={set("marksAndNumbers")}
         placeholder="e.g. IN DIAMOND / MADE IN CHINA / NO. 1-50"
         hint="Identifying marks and numbers stenciled on the packages, as shown on the B/L or packing list" />
+
+      {f.type === "RF" && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <Inp label="Reefer Set Temperature (°C)" value={f.setTemperatureC}
+            onChange={setCelsius}
+            type="text" inputMode="decimal" placeholder="e.g. -18"
+            hint="Carrier set-point temperature — declared on the booking and B/L" />
+          <Inp label="Reefer Set Temperature (°F)" value={fahrenheitDisplay}
+            onChange={setFahrenheit}
+            disabled={fahrenheitLocked}
+            type="text" inputMode="decimal" placeholder="e.g. -0.4"
+            hint={fahrenheitLocked ? "Computed from °C — clear °C to enter °F directly" : "Converted to °C for storage"} />
+        </div>
+      )}
 
       {/* ③ Measurements */}
       <SectionHeader n="③" title="Physical Measurements" />
@@ -322,18 +380,37 @@ export const ContainerForm = forwardRef(({ init = {}, onSave, onCancel, onDirtyC
       <DatePicker label="CY Cutoff" value={f.cyCutoff} onChange={set("cyCutoff")}
         hint="Container yard / terminal receiving cutoff" />
 
+      <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
+        textTransform: "uppercase", letterSpacing: ".08em", marginTop: 4 }}>
+        Demurrage — terminal dwell time
+      </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <Inp label="Origin Free Time (days)" value={f.originFreeTimeDays}
+        <Inp label="Origin Demurrage Free Time (days)" value={f.originFreeTimeDays}
           onChange={v => { if (v === "" || /^\d*$/.test(v)) set("originFreeTimeDays")(v); }}
           type="text" inputMode="numeric" placeholder="e.g. 5"
-          hint="Days allowed from Gate In before origin charges start" />
-        <Inp label="Destination Free Time (days)" value={f.destFreeTimeDays}
+          hint="Days allowed from Gate In before origin demurrage charges start" />
+        <Inp label="Destination Demurrage Free Time (days)" value={f.destFreeTimeDays}
           onChange={v => { if (v === "" || /^\d*$/.test(v)) set("destFreeTimeDays")(v); }}
           type="text" inputMode="numeric" placeholder="e.g. 5"
-          hint="Days allowed from Discharged before destination charges start" />
+          hint="Days allowed from Discharged before destination demurrage charges start" />
+      </div>
+
+      <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
+        textTransform: "uppercase", letterSpacing: ".08em", marginTop: 4 }}>
+        Detention — carrier equipment held
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <Inp label="Origin Detention Free Time (days)" value={f.originDetentionFreeDays}
+          onChange={v => { if (v === "" || /^\d*$/.test(v)) set("originDetentionFreeDays")(v); }}
+          type="text" inputMode="numeric" placeholder="e.g. 7"
+          hint="Days allowed from Empty Pickup before origin detention charges start" />
+        <Inp label="Destination Detention Free Time (days)" value={f.destDetentionFreeDays}
+          onChange={v => { if (v === "" || /^\d*$/.test(v)) set("destDetentionFreeDays")(v); }}
+          type="text" inputMode="numeric" placeholder="e.g. 7"
+          hint="Days allowed from Gate Out before destination detention charges start" />
       </div>
       <div style={{ fontFamily: T.body, fontSize: 11, color: T.border, marginTop: -4 }}>
-        Counted from this container's Lifecycle Events (Gate In / Discharged) — see the 📋 button on the container list.
+        Counted from this container's Lifecycle Events (Empty Pickup / Gate In / Discharged / Gate Out / Empty Return) — see the 📋 button on the container list.
       </div>
 
       {/* Actions */}
@@ -885,6 +962,17 @@ export const ComplianceModal = ({ shipment, screening, onChange, onClose }) => {
     api.shipmentParties.list(shipment.id).then(setAdditionalParties).catch(() => setAdditionalParties([]));
   }, [shipment.id]);
 
+  // Service vendors (truckers, CFS/warehousing operators, ... ordered via "Request Service" on
+  // Export/Import Services) are now screened server-side (screenShipmentById, server.js) same
+  // as any other party — surfaced here so a HIT on a vendor is actually visible, not silently
+  // computed and never shown. Cancelled services are excluded, matching the backend's own filter.
+  const [serviceVendors, setServiceVendors] = useState(null);
+  useEffect(() => {
+    api.services.list(shipment.id)
+      .then(rows => setServiceVendors(rows.filter(r => r.status !== 'Cancelled' && r.vendorName)))
+      .catch(() => setServiceVendors([]));
+  }, [shipment.id]);
+
   // Phase-based check definitions
   const PHASES = [
     {
@@ -899,6 +987,13 @@ export const ComplianceModal = ({ shipment, screening, onChange, onClose }) => {
     ...(additionalParties && additionalParties.length > 0 ? [{
       id: "additional-parties", label: "Phase 1b", title: "Additional Parties",
       checks: additionalParties.map(p => ({ field: p.role, label: p.role, value: p.customerName, desc: null })),
+    }] : []),
+    ...(serviceVendors && serviceVendors.length > 0 ? [{
+      id: "service-vendors", label: "Phase 1c", title: "Service Vendors",
+      checks: serviceVendors.map(sv => {
+        const field = `${sv.side} ${sv.serviceType} Vendor`;
+        return { field, label: `${sv.side} ${sv.serviceType}`, value: sv.vendorName, desc: null };
+      }),
     }] : []),
     {
       id: "routing", label: "Phase 2", title: "Routing",
@@ -2582,11 +2677,19 @@ export const ScheduleHistoryPanel = ({ shipment, forceOpen = false }) => {
                     <span style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>
                       {m.pol || "—"} → {m.pod || "—"}
                     </span>
-                    {(m.etd || m.eta) && (
+                    {(m.etd || m.eta) ? (
                       <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
                         {m.etd || "—"} → {m.eta || "—"}
                       </span>
-                    )}
+                    ) : m.etd === undefined && m.eta === undefined ? (
+                      // Distinguishes genuinely-never-captured (both keys entirely absent — an
+                      // older entry logged before this snapshot tracked dates at all) from a
+                      // legitimately-blank ETA on an otherwise-complete recent entry (m.etd set,
+                      // m.eta simply not yet known) — the latter already renders fine above.
+                      <span style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontStyle: "italic" }}>
+                        Route dates not recorded (older entry)
+                      </span>
+                    ) : null}
                     {m.transitDays != null && m.transitDays !== "" && (
                       <span style={{ fontFamily: T.mono, fontSize: 10.5, color: T.textMuted,
                         background: T.surface, border: `1px solid ${T.border}`, borderRadius: 4, padding: "1px 7px" }}>

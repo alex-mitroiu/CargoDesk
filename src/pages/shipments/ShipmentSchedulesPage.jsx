@@ -4,6 +4,7 @@ import { useAuth } from "../../AuthContext";
 import { api } from "../../api";
 import { toast } from "../../toast";
 import Btn from "../../components/primitives/Btn";
+import Spinner from "../../components/primitives/Spinner";
 import { Modal } from "../../components/primitives/Modal";
 import { Inp } from "../../components/primitives/Form";
 import DatePicker from "../../components/primitives/DatePicker";
@@ -36,7 +37,15 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
   const [legsVersion, setLegsVersion] = useState(0);
   const [historyVersion, setHistoryVersion] = useState(0);
 
-  const [schedules,     setSchedules]     = useState([]);
+  // null (not []) until the first fetch resolves — [] is indistinguishable from "confirmed, no
+  // schedule assigned", so this page briefly rendered an unlocked/"no schedule" state on every
+  // load before the real data arrived (same []-vs-null gap fixed elsewhere in the app). Kept as
+  // `schedules` for the loading gate; `scheduleList` below is the safe-to-index array everywhere
+  // else in this component reads it — this deliberately keeps the loading gate as the LAST thing
+  // computed before the JSX return (after every hook has already run this render), so no hook
+  // ends up called conditionally.
+  const [schedules,     setSchedules]     = useState(null);
+  const scheduleList = schedules || [];
   const [pickerOpen,    setPickerOpen]    = useState(false);
   const [confirmSailing, setConfirmSailing] = useState(null); // pending replacement
   const [contractModalOpen, setContractModalOpen] = useState(false);
@@ -107,8 +116,8 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
     setCarrierOverride(null);
     setRouteOverride(null);
     setChainedFromContract(false);
-    const existingVoy = schedules[0]?.voyageNumber;
-    if (schedules.length > 0 && existingVoy !== sailing.voyageNumber) {
+    const existingVoy = scheduleList[0]?.voyageNumber;
+    if (scheduleList.length > 0 && existingVoy !== sailing.voyageNumber) {
       setConfirmSailing(sailing);
     } else {
       commitSailing(sailing);
@@ -180,7 +189,7 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
   const [routeOverride, setRouteOverride] = useState(null);
   const sailingPol = routeOverride?.pol || pol;
   const sailingPod = routeOverride?.pod || pod;
-  const hasSchedule = schedules.length > 0;
+  const hasSchedule = scheduleList.length > 0;
   const canSearch = !!(pol && pod && carrier) && !hasSchedule;
 
   // Same silent revalidation as ShipmentHeaderBar's badge — shared via useContractMismatch so
@@ -218,6 +227,17 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
     return () => { live = false; };
   }, [shipment.contractType, shipment.allocationId, pol, pod, shipment.etd]);
 
+  // Every hook above has already run this render regardless of this branch — only what gets
+  // returned/rendered is gated, so this doesn't violate the Rules of Hooks.
+  if (schedules === null) {
+    return (
+      <div id="shpsched-page" style={{ display: "flex", alignItems: "center", gap: 10, padding: "24px 0",
+        fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
+        <Spinner size="sm" /> Loading schedule…
+      </div>
+    );
+  }
+
   const addSailingBtn = canEdit && (
     <button type="button"
       disabled={!canSearch}
@@ -240,7 +260,8 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
       <div id="shpsched-legs-section">
         <div style={sectionLabel}>Route Legs</div>
         <LegsTable key={`legs-${legsVersion}`} shipmentId={shipment.id} canEdit={canEdit} showContractCols={false}
-          extraAction={addSailingBtn} lockedSeaLegs={schedules.length > 0} onLegsChange={handleLegsChange}
+          extraAction={addSailingBtn} lockedSeaLegs={hasSchedule} onLegsChange={handleLegsChange}
+          loopCode={scheduleList[0]?.service || ""}
           onUpdateSchedule={canEdit ? openUpdateSchedule : null} />
       </div>
 
@@ -344,7 +365,7 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
         <Modal title="Replace sailing?" onClose={() => setConfirmSailing(null)} width={420}>
           <p style={{ fontFamily: T.body, fontSize: 14, color: T.text, margin: "0 0 6px", lineHeight: 1.6 }}>
             This will replace{" "}
-            <strong style={{ fontFamily: T.mono }}>{schedules[0]?.vesselName || "the current sailing"}</strong>
+            <strong style={{ fontFamily: T.mono }}>{scheduleList[0]?.vesselName || "the current sailing"}</strong>
             {" "}with{" "}
             <strong style={{ fontFamily: T.mono }}>{confirmSailing.vesselName}</strong>
             {" "}· Voy {confirmSailing.voyageNumber}.
@@ -364,7 +385,7 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
           pol={sailingPol} pod={sailingPod} carrierCode={carrier}
           routingTerm={shipment.routingTerm}
           expectedHub={routeOverride?.hub || null} expectedService={routeOverride?.service || null}
-          activeSailing={schedules[0] || null}
+          activeSailing={scheduleList[0] || null}
           onSelect={handleSelectSailing}
           onClose={() => {
             // A contract was just committed as part of this chained flow — closing without

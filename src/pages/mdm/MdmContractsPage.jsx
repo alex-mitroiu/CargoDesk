@@ -16,6 +16,7 @@ import ActionMenu from "../../components/primitives/ActionMenu";
 import EntityHistoryModal from "../../components/shared/EntityHistoryModal";
 import PortCombobox from "../../components/shared/PortCombobox";
 import CustomerCombobox from "../../components/shared/CustomerCombobox";
+import CarrierCombobox from "../../components/shared/CarrierCombobox";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -1107,6 +1108,12 @@ const MdmContractsPage = () => {
     clearTimeout(timer.current);
     if (key === "search") {
       timer.current = setTimeout(() => { setOffset(0); doLoad(next, 0); }, 300);
+    } else if (key === "carrier") {
+      // CarrierCombobox only calls onChange on an actual selection (click or Enter on a real
+      // match) or its own clear button — never per-keystroke, typing lives in the combobox's
+      // own internal query state — so unlike the free-text search box above, this is already a
+      // discrete, validated pick and doesn't need a debounce; filter immediately.
+      setOffset(0); doLoad(next, 0);
     }
   };
 
@@ -1146,12 +1153,14 @@ const MdmContractsPage = () => {
           placeholder="Search contract #, carrier, account, route…"
           style={{ ...inputBase, flex: "1 1 220px", minWidth: 180 }}
         />
-        <input
-          value={filters.carrier}
-          onChange={e => handleSearchChange("carrier", e.target.value.toUpperCase())}
-          placeholder="Carrier"
-          style={{ ...inputBase, width: 90, fontFamily: T.mono }}
-        />
+        {/* Was a plain free-text input — the backend already does an exact carrier_code=?
+            match here (routes/contracts.js), never a partial LIKE, so a typo silently
+            returned zero results with no feedback, and Enter didn't trigger search at all
+            (no onKeyDown, unlike the search box above). CarrierCombobox validates against the
+            real carrier registry as you type, closing both gaps at once. */}
+        <div style={{ width: 160 }}>
+          <CarrierCombobox value={filters.carrier} onChange={code => handleSearchChange("carrier", code)} />
+        </div>
         <select value={filters.status} onChange={e => handleSearchChange("status", e.target.value)}
           style={{ ...inputBase, width: 120, cursor: "pointer" }}>
           <option value="">All Statuses</option>

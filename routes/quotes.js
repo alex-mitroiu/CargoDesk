@@ -64,16 +64,21 @@ module.exports = function quotesRoutes(app, ctx) {
 
   async function insertLines(quoteId, lines) {
     const stmt = db.prepare(`INSERT INTO quote_lines
-      (id, quote_id, service_code, description, container_type, quantity, unit, rate, currency, amount_usd, sort_order)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
+      (id, quote_id, service_code, description, container_type, quantity, unit, rate, currency, amount_usd, sort_order, set_temperature_c)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
     let i = 0;
     for (const l of lines) {
       const quantity = Number(l.quantity) || 1;
       const rate = Number(l.rate) || 0;
       const currency = (l.currency || "USD").toUpperCase();
       const amountUsd = await toUsd(rate * quantity, currency);
+      // Only meaningful on a reefer line, but not container-type-gated here — mirrors
+      // ContainerForm's own POST/PUT, which likewise trusts whatever the frontend already
+      // gated rather than re-deriving "is this a reefer line" server-side.
+      const setTemperatureC = l.setTemperatureC !== undefined && l.setTemperatureC !== null && l.setTemperatureC !== ""
+        ? Number(l.setTemperatureC) : null;
       stmt.run(`QTL-${uid()}`, quoteId, (l.serviceCode || "").toUpperCase(), l.description || "",
-        l.containerType || "", quantity, l.unit || "per_container", rate, currency, amountUsd, i++);
+        l.containerType || "", quantity, l.unit || "per_container", rate, currency, amountUsd, i++, setTemperatureC);
     }
   }
 

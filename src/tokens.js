@@ -1,5 +1,11 @@
 export const CONTRACT_PRESETS = ["Pending", "SPOT", "Customer Own", "Central"];
 export const CONTAINER_TYPES  = ["DC", "HC", "RF", "OT", "FR", "TK"];
+// What actually releases cargo at destination — a real operational distinction, not paperwork
+// trivia: an Original B/L must be physically surrendered (or a Letter of Indemnity issued) before
+// release; Telex Release / Surrendered both mean the shipper already gave up the original at
+// origin, so destination can release on a copy; a Seaway Bill needs no document presentation at
+// all, just consignee ID verification. '' (unset) means not yet decided/recorded.
+export const BL_RELEASE_TYPES = ["Original", "Telex Release", "Surrendered", "Seaway Bill"];
 export const STATUSES         = ["Active", "Pending", "Completed", "Cancelled", "Requires Review"];
 // Fixed, extensible additional party roles (Epic TKT-5XFCAP) — sit alongside the 4 hardcoded
 // shipper/consignee/notify/principal roles on a shipment. Backend keeps its own copy
@@ -267,11 +273,12 @@ export const worstState = states => {
   return tracked.reduce((worst, s) => (STATE_RANK[s] > STATE_RANK[worst] ? s : worst), tracked[0]);
 };
 
-// Worst of a container's VGM cutoff / CY cutoff / origin+dest free-time states,
-// for a single compact indicator where showing all 4 separately doesn't fit
+// Worst of a container's VGM cutoff / CY cutoff / demurrage+detention (origin & destination
+// each) states, for a single compact indicator where showing all 6 separately doesn't fit
 // (e.g. the Overview page's 3-row Cargo Details preview).
 export const worstComplianceState = c =>
-  worstState([c.vgmCutoffState, c.cyCutoffState, c.originFreeTimeState, c.destFreeTimeState]);
+  worstState([c.vgmCutoffState, c.cyCutoffState,
+    c.originDemurrageState, c.destDemurrageState, c.originDetentionState, c.destDetentionState]);
 
 
 export const INCOTERMS_2020 = [

@@ -23,6 +23,7 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
   const [booking,    setBooking]    = useState(null);
   const [messages,   setMessages]   = useState([]);
   const [containers, setContainers] = useState([]);
+  const [packDgContainerIds, setPackDgContainerIds] = useState(new Set());
   const [contract,   setContract]   = useState(null);
   const [namedAccountParent, setNamedAccountParent] = useState(null); // Organization Model Enhancement Epic 4
   const [parties,    setParties]    = useState(null); // Carrier Line Agents
@@ -78,7 +79,16 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
       api.ediMessages.list(shipment.id).catch(() => []),
       api.containers.list({ shipmentId: shipment.id }).catch(() => []),
       api.shipmentParties.list(shipment.id).catch(() => []),
-    ]).then(([b, m, c, p]) => { setBooking(b); setMessages(m); setContainers(c); setParties(p); }).finally(() => setLoading(false));
+    ]).then(([b, m, c, p]) => {
+      setBooking(b); setMessages(m); setContainers(c); setParties(p);
+      // Pack-level DG flags (a pallet/carton can be flagged DG even when its container isn't)
+      // also feed the outbound booking-request declaration (routes/edi.js) — fetched here too
+      // so this awareness chip matches what's actually transmitted on Send.
+      Promise.all(c.map(ctr => api.containerPackages.list(ctr.id).catch(() => [])))
+        .then(lists => setPackDgContainerIds(new Set(
+          c.filter((ctr, i) => lists[i].some(pk => pk.isDg)).map(ctr => ctr.id)
+        )));
+    }).finally(() => setLoading(false));
   }, [shipment.id]);
 
   // Carrier Line Agents — read-only here, same as Carrier/Route/Vessel above: this page
@@ -102,10 +112,28 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
     return Object.values(byType);
   }, [containers]);
 
-  // Container-level isDg only — consistent with every other DG signal in the app (the
-  // ShipmentHeaderBar DG badge, ShipmentContainersPage's contract-conflict chip); doesn't
-  // also reach into container_packages' independent, unsynced pack-level DG flags.
-  const dgContainerCount = useMemo(() => containers.filter(c => c.isDg).length, [containers]);
+  // Container-level isDg, plus any container whose own pack items (any depth) carry a DG
+  // flag — matches the outbound booking-request declaration (routes/edi.js), which reaches
+  // into container_packages too so a DG-flagged pallet inside an otherwise-clean container
+  // isn't silently omitted from what's declared to the carrier.
+  const dgContainerCount = useMemo(
+    () => containers.filter(c => c.isDg || packDgContainerIds.has(c.id)).length,
+    [containers, packDgContainerIds]
+  );
+
+  // Same type+temperature grouping the backend applies to the outbound reefer declaration
+  // (routes/edi.js) — a carrier can't hold an RF booking without knowing the set point, and
+  // different reefer boxes on the same shipment can carry different cargo/temperatures.
+  const reeferGroups = useMemo(() => {
+    const byKey = {};
+    for (const c of containers) {
+      if (c.type !== "RF" || c.setTemperatureC == null) continue;
+      const key = `${c.size}${c.type}_${c.setTemperatureC}`;
+      const entry = byKey[key] || (byKey[key] = { type: `${c.size}${c.type}`, setTemperatureC: c.setTemperatureC, count: 0 });
+      entry.count += 1;
+    }
+    return Object.values(byKey);
+  }, [containers]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -305,6 +333,17 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
           borderRadius: 8, padding: "10px 14px", display: "flex", alignItems: "center", gap: 8 }}>
           <IconWarning size={13} color={T.warning} />
           {dgContainerCount} container{dgContainerCount !== 1 ? "s" : ""} with DG cargo will be declared to the carrier.
+        </div>
+      )}
+
+      {reeferGroups.length > 0 && (
+        <div style={{ fontFamily: T.body, fontSize: 12.5, color: T.text, marginBottom: 16,
+          background: T.info + "12", border: `1px solid ${T.info}44`,
+          borderRadius: 8, padding: "10px 14px", display: "flex", alignItems: "center", gap: 8 }}>
+          <IconWarning size={13} color={T.info} />
+          {reeferGroups.map((g, i) => (
+            <span key={i}>{i > 0 && ", "}{g.count} × {g.type} @ {g.setTemperatureC}°C</span>
+          ))} will be declared to the carrier.
         </div>
       )}
 

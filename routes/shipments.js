@@ -28,6 +28,10 @@ module.exports = function shipmentsRoutes(app, ctx) {
   // Cancelled" check, the STATUS_CHANGED audit-log branch below, status_log inserts).
   const SHIPMENT_STATUSES = ["Active", "Pending", "Completed", "Cancelled", "Requires Review"];
 
+  // Mirrors src/tokens.js's BL_RELEASE_TYPES — same split as CONTRACT_TYPES/SHIPMENT_STATUSES
+  // above (frontend/backend don't share a module). '' (unset) is always allowed alongside these.
+  const BL_RELEASE_TYPES = ["Original", "Telex Release", "Surrendered", "Seaway Bill"];
+
   const LEG_TO_MOT = { 'SEA': 'SEA', 'AIR': 'AIR', 'RAIL': 'RAIL', 'Pick-up': 'ROAD', 'Delivery': 'ROAD', 'Feeder': 'SEA' };
 
   // Classified-location GPS Coordinates loc-type — a SEA leg always needs a real port, so it's
@@ -100,14 +104,15 @@ module.exports = function shipmentsRoutes(app, ctx) {
     return null;
   };
 
-  // Demurrage/detention free-time window: a countdown from a container-events
-  // anchor (Gate In for origin, Discharged for destination) to a configured
-  // free_time_days deadline, closed out once the matching "moved on" event
-  // fires (Sailed for origin, Gate Out for destination). ASSUMPTION: this
-  // origin/destination split follows the ticket's literal wording ("counted
-  // from gate-in/discharge events") rather than the more classical trade
-  // definition (origin free time = Empty Pickup -> Gate In) — flagged for
-  // review, cheap to swap the anchor event names below if wrong.
+  // Demurrage and Detention are two commercially distinct charge types, each with its own
+  // free-time allowance and carrier tariff — Demurrage is terminal DWELL TIME on a loaded
+  // container (Gate In -> Sailed at origin, Discharged -> Gate Out at destination); Detention
+  // is how long the carrier's EQUIPMENT is held outside the terminal (Empty Pickup -> Gate In
+  // at origin — the shipper holding an empty box before stuffing/returning it; Gate Out ->
+  // Empty Return at destination — the consignee holding a delivered box before returning it
+  // empty). The original v0.30.0 model only ever computed the demurrage pair under a generic
+  // "free time" name (self-flagged as an assumption needing review) — this now computes both,
+  // independently, from the same container_events log.
   const freeTimeWindow = (freeDays, startAt, closeAt, warnDays) => {
     if (freeDays == null) return { state: 'no-window', expiresAt: null, daysRemaining: null };
     const startParsed = startAt ? new Date(startAt) : null;
@@ -128,9 +133,13 @@ module.exports = function shipmentsRoutes(app, ctx) {
   // occurrence per type, since a type could in principle be logged more than once).
   const deriveFreeTime = (ctr, eventsByType, latest) => ({
     ...(() => { const w = freeTimeWindow(ctr.origin_free_time_days, eventsByType['Gate In'], eventsByType['Sailed'], FREE_TIME_WARNING_DAYS);
-      return { originFreeTimeState: w.state, originFreeTimeExpiresAt: w.expiresAt, originFreeTimeDaysRemaining: w.daysRemaining }; })(),
+      return { originDemurrageState: w.state, originDemurrageExpiresAt: w.expiresAt, originDemurrageDaysRemaining: w.daysRemaining }; })(),
     ...(() => { const w = freeTimeWindow(ctr.dest_free_time_days, eventsByType['Discharged'], eventsByType['Gate Out'], FREE_TIME_WARNING_DAYS);
-      return { destFreeTimeState: w.state, destFreeTimeExpiresAt: w.expiresAt, destFreeTimeDaysRemaining: w.daysRemaining }; })(),
+      return { destDemurrageState: w.state, destDemurrageExpiresAt: w.expiresAt, destDemurrageDaysRemaining: w.daysRemaining }; })(),
+    ...(() => { const w = freeTimeWindow(ctr.origin_detention_free_days, eventsByType['Empty Pickup'], eventsByType['Gate In'], FREE_TIME_WARNING_DAYS);
+      return { originDetentionState: w.state, originDetentionExpiresAt: w.expiresAt, originDetentionDaysRemaining: w.daysRemaining }; })(),
+    ...(() => { const w = freeTimeWindow(ctr.dest_detention_free_days, eventsByType['Gate Out'], eventsByType['Empty Return'], FREE_TIME_WARNING_DAYS);
+      return { destDetentionState: w.state, destDetentionExpiresAt: w.expiresAt, destDetentionDaysRemaining: w.daysRemaining }; })(),
     latestEventType: latest?.type || '', latestEventLocation: latest?.location || '', latestEventAt: latest?.at || '',
   });
 
@@ -312,7 +321,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
 
   app.post("/api/shipments", shipmentWrite, async (req, res) => {
     const { pol, pod, carrierCode, contractType, contractNotes = "", status = "Active",
-            etd = "", eta = "", bookingRef = "", blNumber = "", vessel = "", voyage = "",
+            etd = "", eta = "", bookingRef = "", blNumber = "", blReleaseType = "", vessel = "", voyage = "",
             incoterm = "", vesselImo = "", contractId = "", contractRef = "", commodityCode = "",
             shipperId = "", shipperName = "", consigneeId = "", consigneeName = "",
             principalId = "", principalName = "",
@@ -326,11 +335,12 @@ module.exports = function shipmentsRoutes(app, ctx) {
     if (!pol || !pod || !carrierCode || !contractType) return err(res, "pol, pod, carrierCode, contractType required");
     if (!CONTRACT_TYPES.includes(contractType)) return err(res, `contractType must be one of: ${CONTRACT_TYPES.join(", ")}`);
     if (!SHIPMENT_STATUSES.includes(status)) return err(res, `status must be one of: ${SHIPMENT_STATUSES.join(", ")}`);
+    if (blReleaseType && !BL_RELEASE_TYPES.includes(blReleaseType)) return err(res, `blReleaseType must be one of: ${BL_RELEASE_TYPES.join(", ")}`);
     const id = `SHP-${uid()}`;
     const polU = pol.toUpperCase(), podU = pod.toUpperCase();
     const createdAt = new Date().toISOString();
-    db.prepare("INSERT INTO shipments (id,pol,pod,carrier_code,contract_type,contract_notes,status,created_at,etd,eta,booking_ref,bl_number,vessel,voyage,incoterm,vessel_imo,contract_id,contract_ref,commodity_code,shipper_id,shipper_name,consignee_id,consignee_name,principal_id,principal_name,allocation_id,space_skip_reason,space_overage_reason,freight_terms,movement_type,service_type,place_of_receipt,place_of_delivery,cargo_ready_date,notify_id,notify_name,declared_value,declared_value_currency,emo_office_id,imo_office_id,controlling_office_id,contract_routing_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-      .run(id, polU, podU, carrierCode, contractType, contractNotes, status, createdAt, etd, eta, bookingRef, blNumber, vessel, voyage, incoterm, vesselImo, contractId, contractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, allocationId, spaceSkipReason, spaceOverageReason, freightTerms, movementType, serviceType, placeOfReceipt, placeOfDelivery, cargoReadyDate || null, notifyId, notifyName, (declaredValue !== null && declaredValue !== undefined && String(declaredValue).trim() !== '') ? Number(declaredValue) : null, declaredValueCurrency || "USD", emoOfficeId || null, imoOfficeId || null, controllingOfficeId || null, contractRoutingId || "");
+    db.prepare("INSERT INTO shipments (id,pol,pod,carrier_code,contract_type,contract_notes,status,created_at,etd,eta,booking_ref,bl_number,bl_release_type,vessel,voyage,incoterm,vessel_imo,contract_id,contract_ref,commodity_code,shipper_id,shipper_name,consignee_id,consignee_name,principal_id,principal_name,allocation_id,space_skip_reason,space_overage_reason,freight_terms,movement_type,service_type,place_of_receipt,place_of_delivery,cargo_ready_date,notify_id,notify_name,declared_value,declared_value_currency,emo_office_id,imo_office_id,controlling_office_id,contract_routing_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+      .run(id, polU, podU, carrierCode, contractType, contractNotes, status, createdAt, etd, eta, bookingRef, blNumber, blReleaseType, vessel, voyage, incoterm, vesselImo, contractId, contractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, allocationId, spaceSkipReason, spaceOverageReason, freightTerms, movementType, serviceType, placeOfReceipt, placeOfDelivery, cargoReadyDate || null, notifyId, notifyName, (declaredValue !== null && declaredValue !== undefined && String(declaredValue).trim() !== '') ? Number(declaredValue) : null, declaredValueCurrency || "USD", emoOfficeId || null, imoOfficeId || null, controllingOfficeId || null, contractRoutingId || "");
     logEvent(id, 'SHIPMENT_CREATED', null, null, null,
       JSON.stringify({ pol: polU, pod: podU, carrier: carrierCode, status, etd, contractType }));
     maybeAssignLineAgents(id, carrierCode, polU, podU);
@@ -342,7 +352,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
 
   app.put("/api/shipments/:id", shipmentWrite, (req, res) => {
     const { pol, pod, carrierCode, contractType, contractNotes = "", status: statusIn,
-            etd = "", eta = "", bookingRef = "", blNumber = "", vessel = "", voyage = "",
+            etd = "", eta = "", bookingRef = "", blNumber = "", blReleaseType = "", vessel = "", voyage = "",
             incoterm = "", vesselImo = "", contractId = "", contractRef = "", commodityCode = "",
             shipperId = "", shipperName = "", consigneeId = "", consigneeName = "",
             principalId = "", principalName = "",
@@ -362,6 +372,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const status = statusIn !== undefined ? statusIn : existing.status;
     if (contractType && !CONTRACT_TYPES.includes(contractType)) return err(res, `contractType must be one of: ${CONTRACT_TYPES.join(", ")}`);
     if (status && !SHIPMENT_STATUSES.includes(status)) return err(res, `status must be one of: ${SHIPMENT_STATUSES.join(", ")}`);
+    if (blReleaseType && !BL_RELEASE_TYPES.includes(blReleaseType)) return err(res, `blReleaseType must be one of: ${BL_RELEASE_TYPES.join(", ")}`);
 
     // CRD-vs-ETD guard: cargo can't be ready after the vessel has already sailed, so a Cargo
     // Ready Date edit that now falls after ETD invalidates whatever schedule/contract was
@@ -391,7 +402,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
 
     const info = db.prepare(`
       UPDATE shipments SET pol=?, pod=?, carrier_code=?, contract_type=?, contract_notes=?, status=?,
-      etd=?, eta=?, booking_ref=?, bl_number=?, vessel=?, voyage=?, incoterm=?, vessel_imo=?, contract_id=?, contract_ref=?, commodity_code=?,
+      etd=?, eta=?, booking_ref=?, bl_number=?, bl_release_type=?, vessel=?, voyage=?, incoterm=?, vessel_imo=?, contract_id=?, contract_ref=?, commodity_code=?,
       shipper_id=?, shipper_name=?, consignee_id=?, consignee_name=?, principal_id=?, principal_name=?,
       allocation_id=?, space_skip_reason=?, space_overage_reason=?,
       freight_terms=?, movement_type=?, service_type=?, place_of_receipt=?, place_of_delivery=?,
@@ -399,7 +410,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
       declared_value=?, declared_value_currency=?,
       emo_office_id=?, imo_office_id=?, controlling_office_id=?,
       contract_valid_from=?, contract_valid_to=?, contract_routing_id=? WHERE id=?
-    `).run(polU, podU, carrierCode, contractType, contractNotes, effStatus, etd, eta, bookingRef, blNumber, vessel, voyage, incoterm, vesselImo, effContractId, effContractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, effAllocationId, spaceSkipReason, spaceOverageReason, freightTerms, movementType, serviceType, placeOfReceipt, placeOfDelivery, cargoReadyDate || null, notifyId, notifyName, (declaredValue !== null && declaredValue !== undefined && String(declaredValue).trim() !== '') ? Number(declaredValue) : null, declaredValueCurrency || "USD", emoOfficeId || null, imoOfficeId || null, controllingOfficeId || null, contractValidFrom || null, contractValidTo || null, effContractRoutingId || "", req.params.id);
+    `).run(polU, podU, carrierCode, contractType, contractNotes, effStatus, etd, eta, bookingRef, blNumber, blReleaseType, vessel, voyage, incoterm, vesselImo, effContractId, effContractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, effAllocationId, spaceSkipReason, spaceOverageReason, freightTerms, movementType, serviceType, placeOfReceipt, placeOfDelivery, cargoReadyDate || null, notifyId, notifyName, (declaredValue !== null && declaredValue !== undefined && String(declaredValue).trim() !== '') ? Number(declaredValue) : null, declaredValueCurrency || "USD", emoOfficeId || null, imoOfficeId || null, controllingOfficeId || null, contractValidFrom || null, contractValidTo || null, effContractRoutingId || "", req.params.id);
     if (info.changes === 0) return err(res, "Not found", 404);
     // Only re-attempt Line Agent resolution when carrier/route actually changed — the existing
     // partyOrRouteChanged flag (further below) doesn't check carrier_code, so this needs its
@@ -413,7 +424,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
       ensureBookingCreated(req.params.id);
     const newVals = { pol: polU, pod: podU, status: effStatus, etd, eta, carrier_code: carrierCode,
       vessel, vessel_imo: vesselImo, voyage, incoterm, commodity_code: commodityCode,
-      booking_ref: bookingRef, bl_number: blNumber, contract_type: contractType,
+      booking_ref: bookingRef, bl_number: blNumber, bl_release_type: blReleaseType, contract_type: contractType,
       contract_id: effContractId, contract_ref: effContractRef, allocation_id: effAllocationId };
     for (const [col] of Object.entries(TRACKED_FIELDS)) {
       const o = String(existing[col] || ''), n = String(newVals[col] || '');
@@ -492,19 +503,23 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const { shipmentId, containerNumber = "", sealNumber = "", size, type,
             hsCode = "", cargoDescription = "", marksAndNumbers = "", grossWeightKg = null, volumeCbm = null, isDg = false, dgClass = "",
             vgmWeightKg = null, vgmStatus = "Pending", vgmCutoff = "", cyCutoff = "",
-            originFreeTimeDays = null, destFreeTimeDays = null } = req.body;
+            originFreeTimeDays = null, destFreeTimeDays = null,
+            originDetentionFreeDays = null, destDetentionFreeDays = null,
+            setTemperatureC = null } = req.body;
     if (!shipmentId || !size || !type) return err(res, "shipmentId, size, type required");
     const dgErr = await checkDgPolicy(shipmentId, isDg, dgClass);
     if (dgErr) return err(res, dgErr, 422);
     const id  = `CTR-${uid()}`;
     const cnU = containerNumber.toUpperCase();
     db.prepare(`INSERT INTO containers (id,shipment_id,container_number,seal_number,size,type,hs_code,cargo_description,marks_and_numbers,gross_weight_kg,volume_cbm,is_dg,dg_class,
-                vgm_weight_kg,vgm_status,vgm_cutoff,cy_cutoff,origin_free_time_days,dest_free_time_days) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+                vgm_weight_kg,vgm_status,vgm_cutoff,cy_cutoff,origin_free_time_days,dest_free_time_days,origin_detention_free_days,dest_detention_free_days,set_temperature_c) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
       .run(id, shipmentId, cnU, sealNumber, size, type, hsCode, cargoDescription, marksAndNumbers, grossWeightKg, volumeCbm, isDg ? 1 : 0, dgClass,
-           vgmWeightKg, vgmStatus, vgmCutoff || null, cyCutoff || null, originFreeTimeDays, destFreeTimeDays);
+           vgmWeightKg, vgmStatus, vgmCutoff || null, cyCutoff || null, originFreeTimeDays, destFreeTimeDays, originDetentionFreeDays, destDetentionFreeDays, setTemperatureC);
     const ctrRow = { id, shipment_id: shipmentId, container_number: cnU, seal_number: sealNumber, size, type, hs_code: hsCode, cargo_description: cargoDescription, marks_and_numbers: marksAndNumbers, gross_weight_kg: grossWeightKg, volume_cbm: volumeCbm, is_dg: isDg ? 1 : 0, dg_class: dgClass,
       vgm_weight_kg: vgmWeightKg, vgm_status: vgmStatus, vgm_cutoff: vgmCutoff || null, cy_cutoff: cyCutoff || null,
-      origin_free_time_days: originFreeTimeDays, dest_free_time_days: destFreeTimeDays };
+      origin_free_time_days: originFreeTimeDays, dest_free_time_days: destFreeTimeDays,
+      origin_detention_free_days: originDetentionFreeDays, dest_detention_free_days: destDetentionFreeDays,
+      set_temperature_c: setTemperatureC };
     // Brand-new container has no events yet — skip the query, free-time windows start 'not-started'.
     const addedCtr = { ...mapContainer(ctrRow), ...deriveFreeTime(ctrRow, {}, null) };
     logEvent(shipmentId, 'CONTAINER_ADDED', null, null, cnU,
@@ -517,22 +532,27 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const { containerNumber = "", sealNumber = "", size, type,
             hsCode = "", cargoDescription = "", marksAndNumbers = "", grossWeightKg = null, volumeCbm = null, isDg = false, dgClass = "",
             vgmWeightKg = null, vgmStatus = "Pending", vgmCutoff = "", cyCutoff = "",
-            originFreeTimeDays = null, destFreeTimeDays = null } = req.body;
+            originFreeTimeDays = null, destFreeTimeDays = null,
+            originDetentionFreeDays = null, destDetentionFreeDays = null,
+            setTemperatureC = null } = req.body;
     const cnU    = containerNumber.toUpperCase();
     const oldCtr = db.prepare("SELECT * FROM containers WHERE id=?").get(req.params.id);
     if (!oldCtr) return err(res, "Not found", 404);
     const dgErr = await checkDgPolicy(oldCtr.shipment_id, isDg, dgClass);
     if (dgErr) return err(res, dgErr, 422);
     const info = db.prepare(`UPDATE containers SET container_number=?, seal_number=?, size=?, type=?, hs_code=?, cargo_description=?, marks_and_numbers=?, gross_weight_kg=?, volume_cbm=?, is_dg=?, dg_class=?,
-                vgm_weight_kg=?, vgm_status=?, vgm_cutoff=?, cy_cutoff=?, origin_free_time_days=?, dest_free_time_days=? WHERE id=?`)
+                vgm_weight_kg=?, vgm_status=?, vgm_cutoff=?, cy_cutoff=?, origin_free_time_days=?, dest_free_time_days=?, origin_detention_free_days=?, dest_detention_free_days=?, set_temperature_c=? WHERE id=?`)
       .run(cnU, sealNumber, size, type, hsCode, cargoDescription, marksAndNumbers, grossWeightKg, volumeCbm, isDg ? 1 : 0, dgClass,
-           vgmWeightKg, vgmStatus, vgmCutoff || null, cyCutoff || null, originFreeTimeDays, destFreeTimeDays, req.params.id);
+           vgmWeightKg, vgmStatus, vgmCutoff || null, cyCutoff || null, originFreeTimeDays, destFreeTimeDays,
+           originDetentionFreeDays, destDetentionFreeDays, setTemperatureC, req.params.id);
     if (info.changes === 0) return err(res, "Not found", 404);
     const newVals = { container_number: cnU, size, type, hs_code: hsCode,
       cargo_description: cargoDescription, marks_and_numbers: marksAndNumbers, gross_weight_kg: grossWeightKg,
       volume_cbm: volumeCbm, is_dg: isDg ? 1 : 0, dg_class: dgClass,
       vgm_weight_kg: vgmWeightKg, vgm_status: vgmStatus, vgm_cutoff: vgmCutoff || null, cy_cutoff: cyCutoff || null,
-      origin_free_time_days: originFreeTimeDays, dest_free_time_days: destFreeTimeDays };
+      origin_free_time_days: originFreeTimeDays, dest_free_time_days: destFreeTimeDays,
+      origin_detention_free_days: originDetentionFreeDays, dest_detention_free_days: destDetentionFreeDays,
+      set_temperature_c: setTemperatureC };
     const meta = JSON.stringify({ containerNumber: cnU });
     for (const [col] of Object.entries(TRACKED_CTR_FIELDS)) {
       const o = String(oldCtr[col] ?? ''), n = String(newVals[col] ?? '');

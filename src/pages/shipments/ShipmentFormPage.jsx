@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { toast } from "../../toast";
 import useSaving from "../../hooks/useSaving";
-import { T, STATUSES, INCOTERMS_2020, IMDG_CLASSES } from "../../tokens";
+import { T, STATUSES, INCOTERMS_2020, IMDG_CLASSES, BL_RELEASE_TYPES } from "../../tokens";
 import { api } from "../../api";
 import { useAuth } from "../../AuthContext";
 import Btn from "../../components/primitives/Btn";
@@ -15,6 +15,7 @@ import { CommodityCombobox } from "../../components/shared/CommodityCombobox";
 import CustomerCombobox from "../../components/shared/CustomerCombobox";
 import Spinner from "../../components/primitives/Spinner";
 import Pagination from "../../components/primitives/Pagination";
+import InfoHint from "../../components/primitives/InfoHint";
 import { ContainerTypeField } from "../../components/shared/ContainerTypePickerModal";
 import SailingPickerModal from "../../components/shared/SailingPickerModal";
 import { IconClose, IconWarning, IconPackage, IconPencil, IconCheck, IconRefresh, IconLock, IconAnchor, IconShip } from "../../components/primitives/Icon";
@@ -545,6 +546,7 @@ const LEG_COLS = [
   { key: "movementBy",   label: "Movement by",   w: 90  },
   { key: "vessel",       label: "Vessel",        w: 100 },
   { key: "voyage",       label: "Voyage",        w: 72  },
+  { key: "loopCode",     label: "Loop",          w: 80  },
   { key: "contractType", label: "Ctr. Type",     w: 72  },
   { key: "contractRef",  label: "Contract No.",  w: 88  },
 ];
@@ -555,7 +557,7 @@ const cellInput = {
   padding: 0,
 };
 
-const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inheritedContractRef, showContractCols = true, locked = false, onUpdateSchedule = null }) => {
+const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inheritedContractRef, loopCode = "", showContractCols = true, locked = false, onUpdateSchedule = null }) => {
   const [d, setD] = useState(leg);
   useEffect(() => setD(leg), [leg]);
   const set   = k => v => setD(p => ({ ...p, [k]: v }));
@@ -611,8 +613,10 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
           const isPort = c.key === "pol" || c.key === "pod";
           const portSide = c.key === "pol" ? "pol" : c.key === "pod" ? "pod" : null;
           const portPoint = isPort ? formatLegPoint(d, portSide) : null;
+          const legIsTrucking = (d.legType === "Pick-up" || d.legType === "Delivery") && d.movementBy !== "Barge";
           const value = c.key === "contractType" ? (inheritedContractType || "—")
             : c.key === "contractRef" ? (inheritedContractRef || "—")
+            : c.key === "loopCode" ? (legIsTrucking ? "—" : (loopCode || "—"))
             : c.key === "carrierCode" && (d.legType === "Pick-up" || d.legType === "Delivery") ? "—"
             : isPort ? (portPoint.code || "—")
             : (d[c.key] || "—");
@@ -856,17 +860,32 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
         );
       })()}
 
+      {/* Loop — always read-only, no leg-level input: derived from the shipment's own assigned
+          schedule (shipment_schedules.service), not something typed per-leg. Blank for a
+          trucking leg (Pick-up/Delivery not on a barge), same gating as Vessel/Voyage above,
+          since a loop/service rotation is a vessel-sailing concept a truck leg doesn't have. */}
+      {(() => {
+        const legIsTrucking = (d.legType === "Pick-up" || d.legType === "Delivery") && d.movementBy !== "Barge";
+        return (
+          <div id={`leg-${d.id}-loopCode`} style={{ width: widths[12], minWidth: widths[12], padding: "0 0 0 10px",
+            display: "flex", alignItems: "center", borderRight: `1px solid ${T.border}33`,
+            fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>
+            {legIsTrucking ? "—" : (loopCode || "—")}
+          </div>
+        );
+      })()}
+
       {showContractCols && (
         <>
           {/* Contract Type — read-only, inherited */}
-          <div id={`leg-${d.id}-contractType`} style={{ width: widths[12], minWidth: widths[12], padding: "0 0 0 10px",
+          <div id={`leg-${d.id}-contractType`} style={{ width: widths[13], minWidth: widths[13], padding: "0 0 0 10px",
             display: "flex", alignItems: "center", borderRight: `1px solid ${T.border}33`,
             fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
             {inheritedContractType || "—"}
           </div>
 
           {/* Contract No. — read-only, inherited */}
-          <div id={`leg-${d.id}-contractRef`} style={{ width: widths[13], minWidth: widths[13], padding: "0 0 0 10px",
+          <div id={`leg-${d.id}-contractRef`} style={{ width: widths[14], minWidth: widths[14], padding: "0 0 0 10px",
             display: "flex", alignItems: "center", borderRight: `1px solid ${T.border}33`,
             fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>
             {inheritedContractRef || "—"}
@@ -886,7 +905,7 @@ const LEG_TYPE_RANK = { "Pick-up": 0, "Delivery": 2 };
 const orderLegs = legsArr => [...legsArr].sort((a, b) =>
   (LEG_TYPE_RANK[a.legType] ?? 1) - (LEG_TYPE_RANK[b.legType] ?? 1));
 
-export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChange, inheritedCarrier, inheritedContractType, inheritedContractRef, canEdit, showContractCols = true, extraAction = null, lockedSeaLegs = false, onUpdateSchedule = null }) => {
+export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChange, inheritedCarrier, inheritedContractType, inheritedContractRef, loopCode = "", canEdit, showContractCols = true, extraAction = null, lockedSeaLegs = false, onUpdateSchedule = null }) => {
   const [legs,          setLegs]          = useState([]);
   const [saving,        setSaving]        = useState(null);
   const [selectedLegId, setSelectedLegId] = useState(null);
@@ -1034,7 +1053,7 @@ export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChan
                     editable so its type can still be changed to Pick-up/Delivery. Previously this
                     locked on legType alone, trapping a fresh leg as uneditable the instant it was
                     created whenever any schedule already existed on the shipment. */}
-                <LegRow leg={leg} onSave={saveLeg} canEdit={canEdit} widths={widths} inheritedContractType={inheritedContractType} inheritedContractRef={inheritedContractRef} showContractCols={showContractCols} locked={lockedSeaLegs && leg.legType === "SEA" && !!(leg.vessel || leg.voyage)} onUpdateSchedule={onUpdateSchedule} />
+                <LegRow leg={leg} onSave={saveLeg} canEdit={canEdit} widths={widths} inheritedContractType={inheritedContractType} inheritedContractRef={inheritedContractRef} loopCode={loopCode} showContractCols={showContractCols} locked={lockedSeaLegs && leg.legType === "SEA" && !!(leg.vessel || leg.voyage)} onUpdateSchedule={onUpdateSchedule} />
               </div>
             );
           })}
@@ -1124,38 +1143,9 @@ export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChan
 
 // ─── Form helpers ─────────────────────────────────────────────────────────────
 
-const CommodityHint = () => {
-  const [vis, setVis] = useState(false);
-  return (
-    <span style={{ position: "relative", display: "inline-flex", alignItems: "center" }}
-      onMouseEnter={() => setVis(true)} onMouseLeave={() => setVis(false)}>
-      <span style={{
-        fontFamily: T.body, fontSize: 10, fontWeight: 700, fontStyle: "italic",
-        color: T.info, cursor: "default", background: T.info + "18",
-        border: `1px solid ${T.info}55`, borderRadius: "50%",
-        width: 14, height: 14,
-        display: "inline-flex", alignItems: "center", justifyContent: "center", lineHeight: 1,
-        userSelect: "none",
-      }}>i</span>
-      {vis && (
-        <span style={{
-          position: "absolute", left: 0, top: "calc(100% + 7px)", zIndex: 99,
-          background: T.info + "12", border: `1px solid ${T.info}44`,
-          borderRadius: 8, padding: "8px 12px",
-          fontFamily: T.body, fontSize: 11.5, color: T.text, lineHeight: 1.55,
-          width: 220, pointerEvents: "none",
-          boxShadow: "0 6px 18px rgba(0,0,0,.15)",
-        }}>
-          <span style={{ display: "block", fontWeight: 700, fontSize: 10,
-            textTransform: "uppercase", letterSpacing: "0.07em", color: T.info, marginBottom: 4 }}>
-            About this field
-          </span>
-          Maersk freight type — determines handling, documentation, and service eligibility.
-        </span>
-      )}
-    </span>
-  );
-};
+const CommodityHint = () => (
+  <InfoHint>Maersk freight type — determines handling, documentation, and service eligibility.</InfoHint>
+);
 
 const SectionDivider = ({ label, id }) => (
   <div id={id} style={{ display: "flex", alignItems: "center", gap: 10, margin: "4px 0 0" }}>
@@ -1192,6 +1182,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
     eta:                init.eta                || "",
     bookingRef:         init.bookingRef         || "",
     blNumber:           init.blNumber           || "",
+    blReleaseType:      init.blReleaseType      || "",
     vessel:             init.vessel             || "",
     vesselImo:          init.vesselImo          || "",
     voyage:             init.voyage             || "",
@@ -1642,6 +1633,14 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
           ? <Inp label="B/L Number" value={f.blNumber} onChange={set("blNumber")} placeholder="MAEU123456789" mono />
           : <div />}
       </div>
+      {init.id && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+          <Sel label="B/L Release Type" value={f.blReleaseType} onChange={set("blReleaseType")}
+            hint="What actually releases cargo at destination"
+            options={[{ value: "", label: "— Not yet decided —" },
+              ...BL_RELEASE_TYPES.map(t => ({ value: t, label: t }))]} />
+        </div>
+      )}
       <LegsTable
         shipmentId={init.id}
         draftLegs={draftLegs}
@@ -1650,6 +1649,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
         inheritedCarrier={f.carrierCode}
         inheritedContractType={f.contractType}
         inheritedContractRef={f.contractRef}
+        loopCode={savedSchedules[0]?.service || ""}
         canEdit={canEdit}
       />
 
@@ -1929,11 +1929,24 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
       <ContractTypeInput value={f.contractType} onChange={v => {
         if (v !== "Central") {
           setF(p => ({ ...p, contractType: v, contractId: "", contractRef: "", contractRoutingId: "", allocationId: "" }));
-        } else if (!init.id && !((useContainerManager && draftContainers.length >= 1) || (parseInt(quickCargo.count, 10) > 0 && quickCargo.size && quickCargo.type))) {
-          toast.warning("Add containers first — Central Contract eligibility is verified against your cargo details.");
-        } else {
-          set("contractType")(v);
+          return;
         }
+        if (!init.id) {
+          // Central contract matching needs BOTH a route (contractMatchPol/Pod, fed into
+          // ContractField below) and cargo details — the old check only ever looked at
+          // containers, so clicking Central with neither set silently blamed only the cargo
+          // side and never mentioned the missing POL/POD.
+          const hasContainers = (useContainerManager && draftContainers.length >= 1)
+            || (parseInt(quickCargo.count, 10) > 0 && quickCargo.size && quickCargo.type);
+          const missing = [];
+          if (!derivedPol || !derivedPod) missing.push("POL/POD");
+          if (!hasContainers) missing.push("containers");
+          if (missing.length > 0) {
+            toast.warning(`Add ${missing.join(" and ")} first — Central Contract eligibility is verified against your route and cargo details.`);
+            return;
+          }
+        }
+        set("contractType")(v);
       }} />
       {isCentral && (
         <ContractField

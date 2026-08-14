@@ -448,6 +448,32 @@ const migrations = [
   "ALTER TABLE containers  ADD COLUMN cy_cutoff             TEXT    DEFAULT NULL",
   "ALTER TABLE containers  ADD COLUMN origin_free_time_days INTEGER DEFAULT NULL",
   "ALTER TABLE containers  ADD COLUMN dest_free_time_days   INTEGER DEFAULT NULL",
+  // Demurrage (terminal dwell, Gate In->Sailed / Discharged->Gate Out, the two columns above)
+  // and Detention (carrier EQUIPMENT held outside the terminal, Empty Pickup->Gate In /
+  // Gate Out->Empty Return) are two commercially distinct charge types with separate carrier
+  // tariffs and separate free-time allowances — the original v0.30.0 free-time model only ever
+  // captured demurrage under a generic "free time" name, despite container_events already
+  // logging every event needed to compute detention too. These two new columns are Detention's
+  // own free-time allowance, independent of the (now explicitly demurrage-only) pair above.
+  "ALTER TABLE containers  ADD COLUMN origin_detention_free_days INTEGER DEFAULT NULL",
+  "ALTER TABLE containers  ADD COLUMN dest_detention_free_days   INTEGER DEFAULT NULL",
+  // Reefer (20RF/40RF) has been a registered container type since v0.46.0's Pack Types work,
+  // but nothing on `containers` ever recorded the carrier's required set-point temperature —
+  // essential operational data for a cold-chain booking (food/pharma), and something the
+  // carrier's own booking confirmation and the Bill of Lading both need to state. Nullable,
+  // Celsius (the ocean-freight reefer convention) — only meaningful when type='RF', but not
+  // DB-constrained to that (mirrors this app's existing convention of not enforcing
+  // conditionally-relevant fields at the schema level, e.g. dg_class only means something
+  // when is_dg=1).
+  "ALTER TABLE containers  ADD COLUMN set_temperature_c REAL DEFAULT NULL",
+  // What actually releases cargo at destination — 'Original' (must be physically surrendered,
+  // or a Letter of Indemnity issued), 'Telex Release'/'Surrendered' (shipper already gave up
+  // the original at origin, destination releases on a copy), 'Seaway Bill' (no document
+  // presentation at all, ID verification only). '' means not yet recorded — shipments.bl_number
+  // is free text with zero concept of how it's actually released, which the Import-side ops
+  // team needs to know before they can tell a consignee whether cargo can move without the
+  // physical document in hand.
+  "ALTER TABLE shipments   ADD COLUMN bl_release_type TEXT DEFAULT ''",
   "ALTER TABLE port_locations ADD COLUMN last_synced_at TEXT DEFAULT NULL",
   "ALTER TABLE carriers    ADD COLUMN short_name      TEXT    DEFAULT ''",
   "ALTER TABLE tickets     ADD COLUMN shipment_id     TEXT    DEFAULT NULL",
@@ -1535,6 +1561,14 @@ const migrations = [
   "CREATE INDEX IF NOT EXISTS idx_quotes_status ON quotes(status)",
   "CREATE INDEX IF NOT EXISTS idx_quotes_customer ON quotes(customer_id)",
   "CREATE INDEX IF NOT EXISTS idx_quote_lines_quote ON quote_lines(quote_id)",
+  // Reefer set-point temperature at the pricing stage — a quote's own containerType (e.g. "40RF")
+  // already distinguishes a reefer line from a dry one, but nothing recorded what temperature was
+  // actually being quoted. Same Celsius-only-persisted convention as containers.set_temperature_c
+  // (the frontend's own °C/°F toggle converts before it ever reaches here) — kept independent of
+  // that column: a quote's temperature is what's being OFFERED, not yet a real container's setting,
+  // and quote-to-shipment conversion doesn't create containers at all (it only creates SELL cost
+  // lines), so there's nothing to auto-carry it into regardless.
+  "ALTER TABLE quote_lines ADD COLUMN set_temperature_c REAL DEFAULT NULL",
 ];
 
 // "duplicate column name" is the expected, harmless result of re-running an ADD COLUMN
@@ -2151,7 +2185,15 @@ function screenShipmentById(shipmentId) {
   ];
   const additionalParties = db.prepare("SELECT role, customer_name, customer_id FROM shipment_parties WHERE shipment_id=?")
     .all(shipmentId).map(r => [r.role, r.customer_name, r.customer_id]);
-  for (const [field, name, customerId] of [...fixedParties, ...additionalParties]) {
+  // Service vendors (truckers, CFS/warehousing operators, ... assigned via "Request Service"
+  // on Export/Import Services) were never screened at all — only the 13 party-role slots were.
+  // A sanctioned vendor picked as a Loading/Pickup/Delivery/etc. provider was invisible to
+  // compliance screening even though it's a real counterparty on the shipment. Cancelled
+  // services are excluded (nothing to declare against a withdrawn order).
+  const serviceVendors = db.prepare(
+    "SELECT side, service_type, vendor_name, vendor_id FROM shipment_services WHERE shipment_id=? AND status != 'Cancelled'"
+  ).all(shipmentId).map(r => [`${r.side} ${r.service_type} Vendor`, r.vendor_name, r.vendor_id]);
+  for (const [field, name, customerId] of [...fixedParties, ...additionalParties, ...serviceVendors]) {
     if (!name || !name.trim()) continue;
     const nameMatch = sanctionsMap.get(normSanctionName(name));
     if (nameMatch) {
@@ -2786,6 +2828,7 @@ const TRACKED_FIELDS = {
   commodity_code: 'Commodity',
   booking_ref:    'Booking Reference',
   bl_number:      'B/L Number',
+  bl_release_type: 'B/L Release Type',
   contract_type:  'Contract Type',
   contract_id:    'Contract ID',
   contract_ref:   'Contract Reference',
@@ -2806,8 +2849,11 @@ const TRACKED_CTR_FIELDS = {
   vgm_status:            'VGM Status',
   vgm_cutoff:            'VGM Cutoff',
   cy_cutoff:             'CY Cutoff',
-  origin_free_time_days: 'Origin Free Time (days)',
-  dest_free_time_days:   'Destination Free Time (days)',
+  origin_free_time_days: 'Origin Demurrage Free Time (days)',
+  dest_free_time_days:   'Destination Demurrage Free Time (days)',
+  origin_detention_free_days: 'Origin Detention Free Time (days)',
+  dest_detention_free_days:   'Destination Detention Free Time (days)',
+  set_temperature_c: 'Reefer Set Temperature (°C)',
 };
 
 // Compliance-badge thresholds: how many days out a fixed cutoff (VGM/CY) or a

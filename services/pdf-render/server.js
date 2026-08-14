@@ -13,7 +13,24 @@
 // exactly, not just "mostly").
 const express = require("express");
 const fs = require("fs");
+const os = require("os");
+const path = require("path");
+const http = require("http");
+const { spawn } = require("child_process");
 const { readSecret } = require("./lib/dockerSecret");
+
+// Every log line this service emits for the browser lifecycle carries one of these codes, so a
+// failure is greppable ("PDFR-" + a stable event) instead of only ever showing up as a bare
+// Puppeteer stack trace with no way to correlate it back to a specific step.
+const LOG = {
+  LAUNCH_START:  "PDFR-001",
+  LAUNCH_READY:  "PDFR-002",
+  LAUNCH_FAILED: "PDFR-003",
+  RENDER_FAILED: "PDFR-004",
+  SHUTDOWN:      "PDFR-005",
+};
+const log = (code, msg) => console.log(`[${code}] ${msg}`);
+const logErr = (code, msg) => console.error(`[${code}] ${msg}`);
 
 const PORT = process.env.PDF_RENDER_SERVICE_PORT || 3003;
 const SERVICE_SECRET_DEV_DEFAULT = "cargoDesk-dev-pdf-render-secret-do-not-use-in-prod";
@@ -41,6 +58,7 @@ app.use("/internal", (req, res, next) => {
 // ─── Browser lifecycle (moved verbatim from the monolith's lib/pdf-signing.js) ────────────────
 
 let browserPromise = null;
+let browserChild = null; // the OS process we spawned — tracked so SIGTERM can kill it directly
 
 // Never hardcode a dev machine's browser path — resolve via env var first, then a short
 // well-known-paths fallback list per OS. Errors lazily at render time (not at server boot)
@@ -62,14 +80,63 @@ function resolveBrowserExecutable() {
   return found;
 }
 
+function httpGetJson(url) {
+  return new Promise((resolve, reject) => {
+    http.get(url, res => {
+      let data = "";
+      res.on("data", c => (data += c));
+      res.on("end", () => { try { resolve(JSON.parse(data)); } catch (e) { reject(e); } });
+    }).on("error", reject);
+  });
+}
+
+async function waitForCdp(port, tries = 50, intervalMs = 200) {
+  for (let i = 0; i < tries; i++) {
+    try { return await httpGetJson(`http://127.0.0.1:${port}/json/version`); }
+    catch { await new Promise(r => setTimeout(r, intervalMs)); }
+  }
+  throw new Error(`Browser process started but never answered on CDP port ${port} after ${tries * intervalMs}ms`);
+}
+
+// puppeteer.launch()'s own readiness check watches the child process's stderr for the
+// "DevTools listening on ws://..." line — in this environment, spawning msedge.exe with piped
+// stdio (which launch() requires, to read that line) silently breaks Edge's own internal
+// parent-to-child relaunch, so the real browser never comes up and the pipe closes immediately
+// with exit code 0 and empty output ("Failed to launch the browser process: Code: 0").
+// Confirmed directly: the identical spawn with stdio:'ignore' (no piping at all) launches Edge
+// successfully every time — this app's own CDP verification tooling has relied on exactly that
+// all along. So: spawn the same way (stdio:'ignore', detached), poll the CDP HTTP endpoint
+// ourselves instead of reading stderr, then puppeteer.connect() to the already-running browser
+// instead of asking puppeteer to launch (and therefore stdio-detect) it.
+const CDP_PORT = Number(process.env.PDF_BROWSER_CDP_PORT) || 9350;
+const BROWSER_PROFILE_DIR = path.join(os.tmpdir(), "cargodesk-pdf-render-browser-profile");
+
+async function launchBrowser() {
+  const executablePath = resolveBrowserExecutable();
+  log(LOG.LAUNCH_START, `Spawning ${executablePath} (CDP port ${CDP_PORT})`);
+  const child = spawn(executablePath, [
+    "--headless=new", "--no-sandbox", "--disable-gpu",
+    `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${BROWSER_PROFILE_DIR}`,
+    "--no-first-run",
+  ], { stdio: "ignore", detached: true });
+  child.unref();
+  child.on("error", e => logErr(LOG.LAUNCH_FAILED, `Spawn error: ${e.message}`));
+  await waitForCdp(CDP_PORT);
+  const puppeteer = require("puppeteer-core");
+  const browser = await puppeteer.connect({ browserURL: `http://127.0.0.1:${CDP_PORT}` });
+  browserChild = child;
+  log(LOG.LAUNCH_READY, `Browser ready, pid ${child.pid}`);
+  browser.on("disconnected", () => { browserPromise = null; browserChild = null; });
+  return browser;
+}
+
 async function getBrowser() {
   if (browserPromise) return browserPromise;
-  const puppeteer = require("puppeteer-core");
-  browserPromise = puppeteer.launch({
-    executablePath: resolveBrowserExecutable(),
-    headless: true,
-    args: ["--no-sandbox", "--disable-gpu"],
-  }).catch(e => { browserPromise = null; throw e; });
+  browserPromise = launchBrowser().catch(e => {
+    logErr(LOG.LAUNCH_FAILED, e.message);
+    browserPromise = null;
+    throw e;
+  });
   return browserPromise;
 }
 
@@ -95,7 +162,8 @@ app.post("/internal/render", async (req, res) => {
     const pdf = await renderHtmlToPdf(html);
     res.status(200).set("Content-Type", "application/pdf").send(Buffer.from(pdf));
   } catch (e) {
-    err(res, e.message, 500);
+    logErr(LOG.RENDER_FAILED, e.message);
+    err(res, `[${LOG.RENDER_FAILED}] ${e.message}`, 500);
   }
 });
 
@@ -103,7 +171,14 @@ app.listen(PORT, () => console.log(`PDF Render Service listening on :${PORT}`));
 
 // A stuck/crashed browser shouldn't need a full process restart to recover — the next render
 // call just re-launches it (getBrowser's own catch already clears browserPromise on failure).
-process.on("SIGTERM", async () => {
-  if (browserPromise) { try { (await browserPromise).close(); } catch { /* already gone */ } }
-  process.exit(0);
-});
+// Kills the OS process we tracked directly, rather than going through Puppeteer's close()/
+// disconnect() on a connect()-ed (not launch()-ed) Browser, whose semantics for actually
+// terminating the remote process are less predictable — this is the same orphaned-process
+// concern from this session's own CDP verification cleanup, applied to the service's own
+// long-lived browser instance.
+function killBrowserChild() {
+  if (!browserChild || browserChild.exitCode !== null) return;
+  try { browserChild.kill(); } catch { /* already gone */ }
+}
+process.on("SIGTERM", () => { log(LOG.SHUTDOWN, "SIGTERM received"); killBrowserChild(); process.exit(0); });
+process.on("SIGINT",  () => { log(LOG.SHUTDOWN, "SIGINT received");  killBrowserChild(); process.exit(0); });

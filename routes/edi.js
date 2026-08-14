@@ -190,7 +190,7 @@ module.exports = function ediRoutes(app, ctx) {
     // per-container — a carrier booking request states quantities per equipment type, not
     // individual container numbers (those aren't assigned until the carrier responds).
     const containerRows = db.prepare(
-      "SELECT size, type, gross_weight_kg, volume_cbm, is_dg, dg_class FROM containers WHERE shipment_id=?"
+      "SELECT id, size, type, gross_weight_kg, volume_cbm, is_dg, dg_class, set_temperature_c FROM containers WHERE shipment_id=?"
     ).all(shipment.id);
     const equipmentByType = {};
     for (const c of containerRows) {
@@ -203,15 +203,41 @@ module.exports = function ediRoutes(app, ctx) {
 
     // DG declaration — TKT-O57N94: IFTMBF's DGS segment carries hazmat declarations at
     // booking time, not after the carrier has already allocated space. Same size+type
-    // grouping as equipment above, plus the IMDG class, and only for containers actually
-    // flagged (container-level is_dg — consistent with every other DG signal in the app,
-    // e.g. ShipmentHeaderBar's DG badge; deliberately not also reaching into
-    // container_packages' independent, unsynced pack-level DG flags).
+    // grouping as equipment above, plus the IMDG class. Also reaches into container_packages'
+    // own is_dg/dg_class (v0.47.0) — a container can be clean at its own level but carry a
+    // single DG-flagged pallet/carton inside it; declaring only container-level flags meant
+    // that cargo sailed with zero DG declaration to the carrier. A container counts as DG if
+    // either its own row OR any of its pack items (any depth) is flagged.
+    const dgPackRows = db.prepare(`
+      SELECT cp.container_id, cp.dg_class FROM container_packages cp
+      JOIN containers c ON c.id = cp.container_id
+      WHERE c.shipment_id=? AND cp.is_dg=1
+    `).all(shipment.id);
+    const packDgClassesByContainer = {};
+    for (const p of dgPackRows) {
+      (packDgClassesByContainer[p.container_id] ||= new Set()).add(p.dg_class || '');
+    }
     const dgByType = {};
     for (const c of containerRows) {
-      if (!c.is_dg) continue;
+      const packClasses = packDgClassesByContainer[c.id] || new Set();
+      if (!c.is_dg && packClasses.size === 0) continue;
+      const classes = new Set(packClasses);
+      if (c.dg_class) classes.add(c.dg_class);
+      classes.delete('');
       const key = `${c.size}${c.type}`;
-      const entry = dgByType[key] || (dgByType[key] = { type: key, dgClass: c.dg_class || '', count: 0 });
+      const entry = dgByType[key] || (dgByType[key] = { type: key, dgClass: [...classes].join('/'), count: 0 });
+      entry.count += 1;
+    }
+
+    // Reefer set-point declaration — a carrier can't hold a 20RF/40RF booking without knowing
+    // the required temperature, and different reefer containers on the same shipment can carry
+    // different cargo (and so different set points), so this groups by type+temperature rather
+    // than collapsing every reefer container into one line the way equipment/DG do.
+    const reeferByKey = {};
+    for (const c of containerRows) {
+      if (c.type !== 'RF' || c.set_temperature_c == null) continue;
+      const key = `${c.size}${c.type}_${c.set_temperature_c}`;
+      const entry = reeferByKey[key] || (reeferByKey[key] = { type: `${c.size}${c.type}`, setTemperatureC: c.set_temperature_c, count: 0 });
       entry.count += 1;
     }
 
@@ -241,6 +267,7 @@ module.exports = function ediRoutes(app, ctx) {
       containerCount: containerRows.length,
       equipment: Object.values(equipmentByType),
       dgCargo: Object.values(dgByType),
+      reeferCargo: Object.values(reeferByKey),
       ...(req.body || {}),
     };
 

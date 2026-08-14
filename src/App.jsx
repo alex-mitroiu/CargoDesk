@@ -262,7 +262,8 @@ const buildBillOfLadingHtml = ({ shipment: sh, invNumber, invDate, notes, contai
     </div>
     <div class="shp-block"><div class="block-label">Transport Details</div>
       <div class="details-grid">${_detailGrid([
-        ["B/L Number", _esc(sh.blNumber || invNumber)], ["Booking Ref", _esc(sh.bookingRef || "—")],
+        ["B/L Number", _esc(sh.blNumber || invNumber)], ["Release Type", _esc(sh.blReleaseType || "—")],
+        ["Booking Ref", _esc(sh.bookingRef || "—")],
         ["Vessel", _esc(sh.vessel || "—")], ["Voyage", _esc(sh.voyage || "—")],
         ["Port of Loading", `${_esc(sh.pol)}${sh.polName ? " · " + _esc(sh.polName) : ""}`],
         ["Port of Discharge", `${_esc(sh.pod)}${sh.podName ? " · " + _esc(sh.podName) : ""}`],

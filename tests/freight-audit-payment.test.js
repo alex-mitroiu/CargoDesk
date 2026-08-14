@@ -1,7 +1,8 @@
 /**
  * Freight Audit & Payment — carrier invoice reconciliation against contracted rates / accrued
  * cost lines, plus a Detention & Demurrage pre-audit computed from the existing free-time
- * tracking (containers.origin_free_time_days/dest_free_time_days + container_events).
+ * tracking (containers.origin/dest_free_time_days for Demurrage, origin/dest_detention_free_days
+ * for Detention — two distinct charge types with their own window + container_events anchors).
  *
  * Usage:
  *   node tests/freight-audit-payment.test.js
@@ -85,6 +86,7 @@ async function login() {
     const ctr = await request("POST", "/api/containers", {
       shipmentId, containerNumber: "FAPU1234567", size: "40", type: "HC",
       originFreeTimeDays: 3, destFreeTimeDays: 3,
+      originDetentionFreeDays: 3, destDetentionFreeDays: 3,
     }, token);
     assert("container created", ctr.status === 201, JSON.stringify(ctr.body));
     const containerId = ctr.body.id;
@@ -101,12 +103,14 @@ async function login() {
     const accruedOF = costLines1.body.find(l => l.chargeCode === "Ocean Freight" && l.status === "accrued");
     assert("an accrued Ocean Freight cost line exists", !!accruedOF, JSON.stringify(costLines1.body));
 
-    console.log("\nSimulate a late destination free-time window (7 days late)");
+    console.log("\nSimulate a late destination DETENTION window (7 days late) — Gate Out -> Empty Return,");
+    console.log("deliberately NOT the demurrage anchor pair (Discharged -> Gate Out), to prove the DET");
+    console.log("service code is checked against its own window, not silently reusing the DEM one");
     const now = Date.now();
     const daysAgo = n => new Date(now - n * 86400000).toISOString();
-    await request("POST", `/api/containers/${containerId}/events`, { eventType: "Discharged", occurredAt: daysAgo(10) }, token);
-    await request("POST", `/api/containers/${containerId}/events`, { eventType: "Gate Out", occurredAt: daysAgo(0) }, token);
-    // dest_free_time_days=3, Discharged 10 days ago, Gate Out today -> 10 - 3 = 7 days late
+    await request("POST", `/api/containers/${containerId}/events`, { eventType: "Gate Out", occurredAt: daysAgo(10) }, token);
+    await request("POST", `/api/containers/${containerId}/events`, { eventType: "Empty Return", occurredAt: daysAgo(0) }, token);
+    // dest_detention_free_days=3, Gate Out 10 days ago, Empty Return today -> 10 - 3 = 7 days late
 
     console.log("\nCarrier invoice — OF line (matches the accrued cost line, within tolerance), DET line (D&D pre-audit), and an unmapped MISC line");
     const invoice = await request("POST", "/api/carrier-invoices", {

@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { T, CONTRACT_PRESETS } from "../../tokens";
 import Btn from "./Btn";
+import InfoHint from "./InfoHint";
 
 // BtnToggle — unified selected/unselected toggle button (contract type, container size, etc.)
 const BtnToggle = ({ children, selected, onClick, wide, sub }) => {
@@ -29,21 +30,23 @@ const BtnToggle = ({ children, selected, onClick, wide, sub }) => {
   );
 };
 
-// Label and hint each get their own line rather than sharing one flex row — cramming both
-// onto one line (the previous layout) made wrapping unpredictable: two side-by-side Fields
-// in a grid row, each with a different combined label+hint length, would wrap to a
-// different number of lines and push their inputs to different heights, visibly
-// misaligning the row (found via a real report — the VGM Weight/VGM Status row in
-// ContainerForm, ShipmentDetailPage.jsx). Stacking them still varies with hint length, but
-// only the hint's own line wraps — no more two texts fighting over one line's width.
+// hint renders as an InfoHint icon next to the label, revealed on hover, rather than a
+// permanent caption line underneath — was a real report (originally the Commodity field's own
+// hand-rolled version, ShipmentFormPage.jsx): a plain always-visible caption competed with the
+// label for the same row's height, so two side-by-side Fields in a grid row with different
+// combined label+hint lengths wrapped to a different number of lines and visibly misaligned
+// (VGM Weight/VGM Status, ContainerForm) — an earlier fix (v0.39.1) gave label and hint their
+// own lines, which helped but still let hint length vary row height. Hiding it behind hover
+// removes that variable entirely: every field's visible height is now just label + input,
+// regardless of whether — or how much — hint text it carries.
 const Field = ({ label, required, hint, children }) => (
   <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
     {label && (
-      <label style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".08em" }}>
+      <label style={{ display: "flex", alignItems: "center", gap: 5, fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".08em" }}>
         {label}{required && <span style={{ color: T.danger }}> *</span>}
+        {hint && <InfoHint>{hint}</InfoHint>}
       </label>
     )}
-    {hint && <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.border, lineHeight: 1.4 }}>{hint}</div>}
     {children}
   </div>
 );
@@ -57,11 +60,12 @@ export const inputBase = {
   outline: "none", width: "100%", boxSizing: "border-box",
 };
 
-const Inp = ({ id, label, value, onChange, onBlur, placeholder, mono, maxLength, required, hint, type = "text", inputMode }) => (
+const Inp = ({ id, label, value, onChange, onBlur, placeholder, mono, maxLength, required, hint, type = "text", inputMode, disabled = false }) => (
   <Field label={label} required={required} hint={hint}>
     <input id={id} value={value} onChange={e => onChange(e.target.value)} onBlur={onBlur} placeholder={placeholder}
-      maxLength={maxLength} type={type} inputMode={inputMode}
-      style={{ ...inputBase, fontFamily: mono ? T.mono : T.body, fontSize: mono ? 13 : 14 }} />
+      maxLength={maxLength} type={type} inputMode={inputMode} disabled={disabled}
+      style={{ ...inputBase, fontFamily: mono ? T.mono : T.body, fontSize: mono ? 13 : 14,
+        opacity: disabled ? 0.6 : 1, cursor: disabled ? "not-allowed" : "text" }} />
   </Field>
 );
 

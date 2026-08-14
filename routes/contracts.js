@@ -528,6 +528,15 @@ module.exports = function contractsRoutes(app, ctx) {
     const dup = db.prepare("SELECT id FROM contracts WHERE contract_number=? AND contract_ref=? AND named_account_id=? AND id!=?").get(contractNumber, contractRef, namedAccountId, req.params.id);
     if (dup) return err(res, `A contract with this number${contractRef ? ", reference" : ""}${namedAccountId ? ", and account" : ""} already exists (${dup.id})`);
     if (!CONTRACT_STATUSES.includes(status)) return err(res, `status must be one of: ${CONTRACT_STATUSES.join(", ")}`);
+    // expireStaleContracts() (below) only ever flips Active -> Expired as validTo passes — it
+    // never reverses that. Found live: a contract auto-expired that way stayed stuck showing
+    // Expired forever even after its validTo was edited into the future, since the edit form
+    // just resubmits whatever status it still had (untouched by the user) and this route wrote
+    // it verbatim. Mirrors the sweep's own condition, inverted — only auto-revives when the
+    // caller is still submitting status='Expired' itself; an explicit different choice (Draft,
+    // On Hold) made in the same edit is never overridden.
+    const today = new Date().toISOString().slice(0, 10);
+    const effStatus = (status === 'Expired' && (!validTo || validTo >= today)) ? 'Active' : status;
     const oldRow   = db.prepare("SELECT * FROM contracts WHERE id=?").get(req.params.id);
     const oldRates = db.prepare("SELECT * FROM contract_rates WHERE contract_id=?").all(req.params.id);
     // Old routings' id -> name, resolved BEFORE saveRoutings deletes/regenerates them below —
@@ -541,7 +550,7 @@ module.exports = function contractsRoutes(app, ctx) {
       WHERE id=?`)
       .run(contractNumber, contractRef, carrierCode, namedAccountId, namedAccount, movementType,
            JSON.stringify(containerTypes), dgAllowed ? 1 : 0, JSON.stringify(imdgClasses),
-           validFrom, validTo, currency, status, notes, req.params.id);
+           validFrom, validTo, currency, effStatus, notes, req.params.id);
     if (info.changes === 0) return err(res, "Not found", 404);
     const routingIds = saveRoutings(req.params.id, routings);
     // Fallback correlation for a leg/rate that carries a stale routingId but no routingIndex
@@ -556,7 +565,7 @@ module.exports = function contractsRoutes(app, ctx) {
     const lgs  = db.prepare("SELECT * FROM contract_legs  WHERE contract_id=? ORDER BY leg_order").all(req.params.id);
     const rts  = db.prepare("SELECT * FROM contract_rates WHERE contract_id=? ORDER BY sort_order").all(req.params.id);
     const rtgs = db.prepare("SELECT * FROM contract_routings WHERE contract_id=? ORDER BY sort_order").all(req.params.id);
-    logContractFieldDiffs(req.params.id, oldRow, { contractNumber, contractRef, carrierCode, namedAccountId, namedAccount, movementType, containerTypes, dgAllowed, imdgClasses, validFrom, validTo, currency, status, notes });
+    logContractFieldDiffs(req.params.id, oldRow, { contractNumber, contractRef, carrierCode, namedAccountId, namedAccount, movementType, containerTypes, dgAllowed, imdgClasses, validFrom, validTo, currency, status: effStatus, notes });
     const oldRatesWithRoutingName = oldRates.map(r => ({ ...r, routingName: oldRoutingsById[r.routing_id] || '' }));
     const newRatesWithRoutingName = rates.map(r => ({
       ...r,

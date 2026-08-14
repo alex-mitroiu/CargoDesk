@@ -73,6 +73,11 @@ module.exports = function carrierInvoicesRoutes(app, ctx) {
 
     // Detention/Demurrage pre-audit: independently compute the expected charge from the
     // container's own free-time window instead of trusting the carrier's D&D line at face value.
+    // DET (Detention, carrier equipment held outside the terminal) and DEM (Demurrage, terminal
+    // dwell time) are two distinct charge types with their own free-time allowance and their own
+    // container_events anchor pair — a DET line must be checked against the detention window,
+    // never the demurrage one (previously both service codes were silently compared against the
+    // same demurrage-only window, since that was the only one this app tracked).
     if (line.containerId && line.freeTimeSide && (serviceCode === "DET" || serviceCode === "DEM")) {
       const container = db.prepare("SELECT * FROM containers WHERE id=? AND shipment_id=?").get(line.containerId, shipment.id);
       if (!container) return noMatch;
@@ -80,9 +85,16 @@ module.exports = function carrierInvoicesRoutes(app, ctx) {
       const byType = {};
       for (const e of events) byType[e.event_type] = e.occurred_at;
       const isOrigin = line.freeTimeSide === "origin";
-      const freeDays = isOrigin ? container.origin_free_time_days : container.dest_free_time_days;
-      const startAt = isOrigin ? byType["Gate In"] : byType["Discharged"];
-      const closeAt = isOrigin ? byType["Sailed"] : byType["Gate Out"];
+      const isDetention = serviceCode === "DET";
+      const freeDays = isDetention
+        ? (isOrigin ? container.origin_detention_free_days : container.dest_detention_free_days)
+        : (isOrigin ? container.origin_free_time_days : container.dest_free_time_days);
+      const startAt = isDetention
+        ? (isOrigin ? byType["Empty Pickup"] : byType["Gate Out"])
+        : (isOrigin ? byType["Gate In"] : byType["Discharged"]);
+      const closeAt = isDetention
+        ? (isOrigin ? byType["Gate In"] : byType["Empty Return"])
+        : (isOrigin ? byType["Sailed"] : byType["Gate Out"]);
       const w = freeTimeWindow(freeDays, startAt, closeAt);
       if (w.daysLate <= 0) return { ...noMatch, expectedSource: "dnd_calc" }; // computed: nothing owed
       if (!shipment.contract_id) return { ...noMatch, expectedSource: "dnd_calc" };
