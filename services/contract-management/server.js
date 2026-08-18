@@ -96,7 +96,40 @@ db.exec(`
     created_at   TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_contract_routings_contract ON contract_routings(contract_id);
+
+  -- container_types/imdg_classes junction tables (TKT-5YYLNT) — mirrors the monolith's own
+  -- server.js migration exactly. The contracts.container_types/imdg_classes columns above stay
+  -- in the schema (unused, frozen) rather than being dropped, same as the monolith side.
+  CREATE TABLE IF NOT EXISTS contract_container_types (
+    id             TEXT PRIMARY KEY,
+    contract_id    TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+    container_type TEXT NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS contract_imdg_classes (
+    id             TEXT PRIMARY KEY,
+    contract_id    TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+    imdg_class     TEXT NOT NULL
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_contract_container_types_uniq ON contract_container_types(contract_id, container_type);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_contract_imdg_classes_uniq ON contract_imdg_classes(contract_id, imdg_class);
 `);
+
+// One-time backfill from the legacy JSON columns into the new junction tables — idempotent
+// (INSERT OR IGNORE against the unique index), same shape as the monolith's own
+// backfillContractArrayFields(). Runs synchronously right after the schema above, so the tables
+// are guaranteed to exist first.
+(function backfillContractArrayFields() {
+  const rows = db.prepare("SELECT id, container_types, imdg_classes FROM contracts").all();
+  const insType = db.prepare("INSERT OR IGNORE INTO contract_container_types (id, contract_id, container_type) VALUES (?,?,?)");
+  const insClass = db.prepare("INSERT OR IGNORE INTO contract_imdg_classes (id, contract_id, imdg_class) VALUES (?,?,?)");
+  for (const r of rows) {
+    let types = [], classes = [];
+    try { types = JSON.parse(r.container_types || "[]"); } catch { /* malformed legacy value, skip */ }
+    try { classes = JSON.parse(r.imdg_classes || "[]"); } catch { /* malformed legacy value, skip */ }
+    for (const t of types) if (t) insType.run(`CCT-${uid()}`, r.id, t);
+    for (const c of classes) if (c) insClass.run(`CIC-${uid()}`, r.id, c);
+  }
+})();
 
 // ─── Mappers (duplicated from lib/mappers.js — see dockerSecret.js's own comment on why) ───────
 
@@ -281,6 +314,35 @@ async function saveRates(contractId, rates, routingIds = [], oldNameById = {}, n
   } catch (e) { db.exec("ROLLBACK"); throw e; }
 }
 
+// ─── container_types / imdg_classes (TKT-5YYLNT) — mirrors routes/contracts.js's own
+// saveContractArray/withContractArrays exactly. No get-single-contract getters here (unlike the
+// monolith side) — this service does no audit-diff logging (see the route section's own note on
+// why entity_events is out of scope here), so nothing needs the OLD values before a save.
+function saveContractArray(table, column, contractId, values) {
+  db.exec("BEGIN");
+  try {
+    db.prepare(`DELETE FROM ${table} WHERE contract_id=?`).run(contractId);
+    const ins = db.prepare(`INSERT INTO ${table} (id, contract_id, ${column}) VALUES (?,?,?)`);
+    for (const v of new Set((values || []).filter(Boolean))) ins.run(`${table === "contract_container_types" ? "CCT" : "CIC"}-${uid()}`, contractId, v);
+    db.exec("COMMIT");
+  } catch (e) { db.exec("ROLLBACK"); throw e; }
+}
+const saveContractContainerTypes = (contractId, types) => saveContractArray("contract_container_types", "container_type", contractId, types);
+const saveContractImdgClasses    = (contractId, classes) => saveContractArray("contract_imdg_classes", "imdg_class", contractId, classes);
+function withContractArrays(mappedOrList) {
+  const list = Array.isArray(mappedOrList) ? mappedOrList : [mappedOrList];
+  if (list.length === 0) return mappedOrList;
+  const ids = [...new Set(list.map(c => c.id))];
+  const ph = ids.map(() => '?').join(',');
+  const typesByContract = {}, classesByContract = {};
+  db.prepare(`SELECT contract_id, container_type FROM contract_container_types WHERE contract_id IN (${ph})`).all(...ids)
+    .forEach(r => { (typesByContract[r.contract_id] ||= []).push(r.container_type); });
+  db.prepare(`SELECT contract_id, imdg_class FROM contract_imdg_classes WHERE contract_id IN (${ph})`).all(...ids)
+    .forEach(r => { (classesByContract[r.contract_id] ||= []).push(r.imdg_class); });
+  list.forEach(c => { c.containerTypes = typesByContract[c.id] || []; c.imdgClasses = classesByContract[c.id] || []; });
+  return mappedOrList;
+}
+
 // ─── Auto-expire (mirrors routes/contracts.js's own expireStaleContracts) ──────────────────────
 function expireStaleContracts() {
   const today = new Date().toISOString().slice(0, 10);
@@ -371,7 +433,7 @@ app.get("/internal/contracts/match", (req, res) => {
       result.rates = contractRates.filter(r => r.routing_id === result.routingId || !r.routing_id).map(mapRate);
     }
   }
-  ok(res, results);
+  ok(res, withContractArrays(results));
 });
 
 app.get("/internal/contracts", (req, res) => {
@@ -388,7 +450,7 @@ app.get("/internal/contracts", (req, res) => {
   if (status.trim()) { clauses.push("c.status=?"); params.push(status.trim()); }
   if (dg !== "") { clauses.push("c.dg_allowed=?"); params.push(dg === "1" ? 1 : 0); }
   if (asOf.trim()) { clauses.push("c.valid_from<=? AND c.valid_to>=?"); params.push(asOf, asOf); }
-  if (containerType.trim()) { clauses.push("c.container_types LIKE ?"); params.push(`%"${containerType.trim()}"%`); }
+  if (containerType.trim()) { clauses.push("EXISTS(SELECT 1 FROM contract_container_types t WHERE t.contract_id=c.id AND t.container_type=?)"); params.push(containerType.trim()); }
   if (namedAccount.trim()) { clauses.push("(c.named_account LIKE ? OR c.named_account_id LIKE ?)"); const n = `%${namedAccount.trim()}%`; params.push(n, n); }
   if (pol.trim()) { clauses.push("EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND UPPER(l.pol)=UPPER(?))"); params.push(pol.trim()); }
   if (pod.trim()) { clauses.push("EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND UPPER(l.pod)=UPPER(?))"); params.push(pod.trim()); }
@@ -426,7 +488,8 @@ app.get("/internal/contracts", (req, res) => {
     db.prepare(`SELECT * FROM contract_routings WHERE contract_id IN (${ph}) ORDER BY sort_order`).all(...ids)
       .forEach(rt => { (routingsMap[rt.contract_id] = routingsMap[rt.contract_id] || []).push(mapContractRouting(rt)); });
   }
-  ok(res, { results: rows.map(r => ({ ...mapContract(r), legs: legsMap[r.id] || [], rates: ratesMap[r.id] || [], routings: routingsMap[r.id] || [] })), total, limit: lim, offset: off });
+  const mappedRows = withContractArrays(rows.map(r => ({ ...mapContract(r), legs: legsMap[r.id] || [], rates: ratesMap[r.id] || [], routings: routingsMap[r.id] || [] })));
+  ok(res, { results: mappedRows, total, limit: lim, offset: off });
 });
 
 app.get("/internal/contracts/search", (req, res) => {
@@ -438,7 +501,7 @@ app.get("/internal/contracts/search", (req, res) => {
   clauses.push("c.status='Active'");
   const where = "WHERE " + clauses.join(" AND ");
   const rows = db.prepare(`SELECT c.* FROM contracts c ${where} ORDER BY c.contract_number LIMIT 10`).all(...params);
-  ok(res, rows.map(mapContract));
+  ok(res, withContractArrays(rows.map(mapContract)));
 });
 
 app.get("/internal/contracts/expiring", (req, res) => {
@@ -454,7 +517,7 @@ app.get("/internal/contracts/revalidate", (req, res) => {
   const { ref = "" } = req.query;
   if (!ref.trim()) return ok(res, []);
   const rows = db.prepare("SELECT * FROM contracts WHERE LOWER(contract_number) = LOWER(?) AND status = 'Active' ORDER BY valid_from DESC").all(ref.trim());
-  ok(res, rows.map(mapContract));
+  ok(res, withContractArrays(rows.map(mapContract)));
 });
 
 app.get("/internal/contracts/:id", (req, res) => {
@@ -463,7 +526,7 @@ app.get("/internal/contracts/:id", (req, res) => {
   const legs = db.prepare("SELECT * FROM contract_legs WHERE contract_id=? ORDER BY leg_order").all(req.params.id);
   const rates = db.prepare("SELECT * FROM contract_rates WHERE contract_id=? ORDER BY sort_order").all(req.params.id);
   const routings = db.prepare("SELECT * FROM contract_routings WHERE contract_id=? ORDER BY sort_order").all(req.params.id);
-  ok(res, { ...mapContract(c), legs: legs.map(mapLeg), rates: rates.map(mapRate), routings: routings.map(mapContractRouting) });
+  ok(res, withContractArrays({ ...mapContract(c), legs: legs.map(mapLeg), rates: rates.map(mapRate), routings: routings.map(mapContractRouting) }));
 });
 
 app.post("/internal/contracts", async (req, res) => {
@@ -476,11 +539,14 @@ app.post("/internal/contracts", async (req, res) => {
   if (!CONTRACT_STATUSES.includes(status)) return err(res, `status must be one of: ${CONTRACT_STATUSES.join(", ")}`);
   const id = `CNTR-${uid()}`;
   const createdAt = new Date().toISOString();
-  db.prepare(`INSERT INTO contracts (id,contract_number,contract_ref,carrier_code,named_account_id,named_account,movement_type,container_types,dg_allowed,imdg_classes,valid_from,valid_to,currency,status,notes,created_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+  // container_types/imdg_classes no longer written here (TKT-5YYLNT) — saveContractContainerTypes/
+  // saveContractImdgClasses below are the real write path now.
+  db.prepare(`INSERT INTO contracts (id,contract_number,contract_ref,carrier_code,named_account_id,named_account,movement_type,dg_allowed,valid_from,valid_to,currency,status,notes,created_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
     .run(id, contractNumber, contractRef, carrierCode, namedAccountId, namedAccount, movementType,
-         JSON.stringify(containerTypes), dgAllowed ? 1 : 0, JSON.stringify(imdgClasses),
-         validFrom, validTo, currency, status, notes, createdAt);
+         dgAllowed ? 1 : 0, validFrom, validTo, currency, status, notes, createdAt);
+  saveContractContainerTypes(id, containerTypes);
+  saveContractImdgClasses(id, imdgClasses);
   const routingIds = saveRoutings(id, routings);
   saveLegs(id, legs, routingIds);
   await saveRates(id, rates, routingIds);
@@ -488,7 +554,7 @@ app.post("/internal/contracts", async (req, res) => {
   const lgs = db.prepare("SELECT * FROM contract_legs WHERE contract_id=? ORDER BY leg_order").all(id);
   const rts = db.prepare("SELECT * FROM contract_rates WHERE contract_id=? ORDER BY sort_order").all(id);
   const rtgs = db.prepare("SELECT * FROM contract_routings WHERE contract_id=? ORDER BY sort_order").all(id);
-  ok(res, { ...mapContract(c), legs: lgs.map(mapLeg), rates: rts.map(mapRate), routings: rtgs.map(mapContractRouting) }, 201);
+  ok(res, withContractArrays({ ...mapContract(c), legs: lgs.map(mapLeg), rates: rts.map(mapRate), routings: rtgs.map(mapContractRouting) }), 201);
 });
 
 app.put("/internal/contracts/:id", async (req, res) => {
@@ -503,12 +569,13 @@ app.put("/internal/contracts/:id", async (req, res) => {
     db.prepare("SELECT id, name FROM contract_routings WHERE contract_id=?").all(req.params.id).map(r => [r.id, r.name])
   );
   const info = db.prepare(`UPDATE contracts SET contract_number=?,contract_ref=?,carrier_code=?,named_account_id=?,named_account=?,
-    movement_type=?,container_types=?,dg_allowed=?,imdg_classes=?,valid_from=?,valid_to=?,currency=?,status=?,notes=?
+    movement_type=?,dg_allowed=?,valid_from=?,valid_to=?,currency=?,status=?,notes=?
     WHERE id=?`)
     .run(contractNumber, contractRef, carrierCode, namedAccountId, namedAccount, movementType,
-         JSON.stringify(containerTypes), dgAllowed ? 1 : 0, JSON.stringify(imdgClasses),
-         validFrom, validTo, currency, status, notes, req.params.id);
+         dgAllowed ? 1 : 0, validFrom, validTo, currency, status, notes, req.params.id);
   if (info.changes === 0) return err(res, "Not found", 404);
+  saveContractContainerTypes(req.params.id, containerTypes);
+  saveContractImdgClasses(req.params.id, imdgClasses);
   const routingIds = saveRoutings(req.params.id, routings);
   const newIndexByName = {};
   routings.forEach((r, i) => { if (r.name && !(r.name in newIndexByName)) newIndexByName[r.name] = i; });
@@ -518,7 +585,7 @@ app.put("/internal/contracts/:id", async (req, res) => {
   const lgs = db.prepare("SELECT * FROM contract_legs WHERE contract_id=? ORDER BY leg_order").all(req.params.id);
   const rts = db.prepare("SELECT * FROM contract_rates WHERE contract_id=? ORDER BY sort_order").all(req.params.id);
   const rtgs = db.prepare("SELECT * FROM contract_routings WHERE contract_id=? ORDER BY sort_order").all(req.params.id);
-  ok(res, { ...mapContract(c), legs: lgs.map(mapLeg), rates: rts.map(mapRate), routings: rtgs.map(mapContractRouting) });
+  ok(res, withContractArrays({ ...mapContract(c), legs: lgs.map(mapLeg), rates: rts.map(mapRate), routings: rtgs.map(mapContractRouting) }));
 });
 
 // No shipment/allocation reference guard here — this service doesn't own that data. The caller
@@ -549,7 +616,7 @@ app.post("/internal/contracts/:id/publish", (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
   if (c.valid_to < today) return err(res, "Valid To is already in the past — update the validity window before publishing");
   db.prepare("UPDATE contracts SET status='Active' WHERE id=?").run(req.params.id);
-  ok(res, mapContract({ ...c, status: "Active" }));
+  ok(res, withContractArrays(mapContract({ ...c, status: "Active" })));
 });
 
 // No shipment/allocation reference guard here either — same reasoning as DELETE above.
@@ -558,7 +625,7 @@ app.post("/internal/contracts/:id/withdraw", (req, res) => {
   if (!c) return err(res, "Not found", 404);
   if (c.status !== "Active") return err(res, `Only an Active contract can be withdrawn to Draft (this one is ${c.status})`);
   db.prepare("UPDATE contracts SET status='Draft' WHERE id=?").run(req.params.id);
-  ok(res, mapContract({ ...c, status: "Draft" }));
+  ok(res, withContractArrays(mapContract({ ...c, status: "Draft" })));
 });
 
 // Bulk import for the one-time migration script (scripts/migrate-contracts-to-service.js) — a
@@ -571,11 +638,13 @@ app.post("/internal/contracts/bulk-import", async (req, res) => {
     const id = `CNTR-${uid()}`;
     const createdAt = c.createdAt || new Date().toISOString();
     try {
-      db.prepare(`INSERT INTO contracts (id,contract_number,contract_ref,carrier_code,named_account_id,named_account,movement_type,container_types,dg_allowed,imdg_classes,valid_from,valid_to,currency,status,notes,created_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      db.prepare(`INSERT INTO contracts (id,contract_number,contract_ref,carrier_code,named_account_id,named_account,movement_type,dg_allowed,valid_from,valid_to,currency,status,notes,created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
         .run(id, c.contractNumber || "", c.contractRef || "", c.carrierCode || "", c.namedAccountId || "", c.namedAccount || "",
-             c.movementType || "FCL", JSON.stringify(c.containerTypes || []), c.dgAllowed ? 1 : 0, JSON.stringify(c.imdgClasses || []),
+             c.movementType || "FCL", c.dgAllowed ? 1 : 0,
              c.validFrom || "", c.validTo || "", c.currency || "USD", c.status || "Active", c.notes || "", createdAt);
+      saveContractContainerTypes(id, c.containerTypes || []);
+      saveContractImdgClasses(id, c.imdgClasses || []);
       const routingIds = saveRoutings(id, c.routings || []);
       saveLegs(id, c.legs || [], routingIds);
       await saveRates(id, c.rates || [], routingIds);

@@ -30,14 +30,25 @@ module.exports = function kanbanRoutes(app, ctx) {
   // ─── Tickets ──────────────────────────────────────────────────────────────
 
   app.get("/api/tickets", auth(), (req, res) => {
-    const { shipmentId, projectId } = req.query;
-    let query = `${TICKET_JOIN} WHERE 1=1`;
+    const { shipmentId, projectId, limit, offset } = req.query;
+    let where = " WHERE 1=1";
     const params = [];
-    if (shipmentId) { query += " AND t.shipment_id=?"; params.push(shipmentId); }
+    if (shipmentId) { where += " AND t.shipment_id=?"; params.push(shipmentId); }
     // Include tickets with no project_id so pre-migration tickets always appear.
-    if (projectId)  { query += " AND (t.project_id=? OR t.project_id IS NULL)"; params.push(projectId); }
-    query += " ORDER BY t.status, t.position, t.created_at";
-    ok(res, db.prepare(query).all(...params).map(mapTicket));
+    if (projectId)  { where += " AND (t.project_id=? OR t.project_id IS NULL)"; params.push(projectId); }
+    const order = " ORDER BY t.status, t.position, t.created_at";
+    // Pagination is opt-in (TKT-UAJGR3) — the Kanban board (KanbanPage.jsx) always loads every
+    // ticket at once for drag-and-drop, WIP limits, and Epic progress rings, none of which work
+    // against a partial page, so the default (no params) stays a bare, complete array. A caller
+    // that explicitly wants a bounded page (no JS-side filter sits between here and the response,
+    // unlike /api/shipments) gets a real SQL LIMIT/OFFSET and the {results,total,limit,offset} shape.
+    if (limit === undefined && offset === undefined) {
+      return ok(res, db.prepare(`${TICKET_JOIN}${where}${order}`).all(...params).map(mapTicket));
+    }
+    const lim = Math.min(parseInt(limit) || 50, 500), off = parseInt(offset) || 0;
+    const total = db.prepare(`SELECT COUNT(*) AS n FROM tickets t${where}`).get(...params).n;
+    const rows = db.prepare(`${TICKET_JOIN}${where}${order} LIMIT ? OFFSET ?`).all(...params, lim, off);
+    ok(res, { results: rows.map(mapTicket), total, limit: lim, offset: off });
   });
 
   app.post("/api/tickets", shipmentWrite, (req, res) => {

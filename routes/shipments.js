@@ -93,7 +93,12 @@ module.exports = function shipmentsRoutes(app, ctx) {
         contract = { dg_allowed: c.dgAllowed ? 1 : 0, imdg_classes: JSON.stringify(c.imdgClasses || []), contract_number: c.contractNumber };
       } catch { return null; } // an unreachable/vanished remote contract can't be checked either way — same "don't disprove it" default used elsewhere
     } else {
-      contract = db.prepare("SELECT dg_allowed, imdg_classes, contract_number FROM contracts WHERE id=?").get(shipment.contract_id);
+      const row = db.prepare("SELECT dg_allowed, contract_number FROM contracts WHERE id=?").get(shipment.contract_id);
+      if (!row) return null;
+      // imdg_classes lives in the contract_imdg_classes junction table now (TKT-5YYLNT) —
+      // the contracts.imdg_classes column is frozen/no longer written to.
+      const classes = db.prepare("SELECT imdg_class FROM contract_imdg_classes WHERE contract_id=?").all(shipment.contract_id).map(r => r.imdg_class);
+      contract = { dg_allowed: row.dg_allowed, imdg_classes: JSON.stringify(classes), contract_number: row.contract_number };
     }
     if (!contract) return null;
     if (!contract.dg_allowed)
@@ -225,7 +230,18 @@ module.exports = function shipmentsRoutes(app, ctx) {
     `).all();
     const seaPorts = resolveSeaPorts(rows.map(r => r.id));
     const mapped = rows.map(r => ({ ...mapShipment(r), ...(seaPorts[r.id] || { seaPol: r.pol, seaPod: r.pod, seaPolName: r.pol_name || '', seaPodName: r.pod_name || '' }) }));
-    ok(res, applyShipmentAccessFilter(mapped, req.user, req));
+    const filtered = applyShipmentAccessFilter(mapped, req.user, req);
+    // Pagination is opt-in (TKT-UAJGR3) — every existing caller (App.jsx's own load-everything-
+    // once-into-state model, Command Center, Dashboard, AI Assistant tools) omits limit/offset and
+    // keeps getting today's exact bare-array response, so nothing breaks. Only a caller that
+    // explicitly asks for a page gets the {results,total,limit,offset} shape back. Sliced after
+    // the access filter (not a SQL LIMIT) since that filter is JS/header-driven and can't safely
+    // run after truncation without risking a wrong or short page.
+    if (req.query.limit === undefined && req.query.offset === undefined) {
+      return ok(res, filtered);
+    }
+    const lim = Math.min(parseInt(req.query.limit) || 50, 500), off = parseInt(req.query.offset) || 0;
+    ok(res, { results: filtered.slice(off, off + lim), total: filtered.length, limit: lim, offset: off });
   });
 
   app.get("/api/shipments/compliance-hits", (req, res) => {
@@ -321,7 +337,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
 
   app.post("/api/shipments", shipmentWrite, async (req, res) => {
     const { pol, pod, carrierCode, contractType, contractNotes = "", status = "Active",
-            etd = "", eta = "", bookingRef = "", blNumber = "", blReleaseType = "", vessel = "", voyage = "",
+            etd = "", eta = "", bookingRef = "", blNumber = "", blReleaseType = "", masterBlNumber = "", vessel = "", voyage = "",
             incoterm = "", vesselImo = "", contractId = "", contractRef = "", commodityCode = "",
             shipperId = "", shipperName = "", consigneeId = "", consigneeName = "",
             principalId = "", principalName = "",
@@ -339,8 +355,8 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const id = `SHP-${uid()}`;
     const polU = pol.toUpperCase(), podU = pod.toUpperCase();
     const createdAt = new Date().toISOString();
-    db.prepare("INSERT INTO shipments (id,pol,pod,carrier_code,contract_type,contract_notes,status,created_at,etd,eta,booking_ref,bl_number,bl_release_type,vessel,voyage,incoterm,vessel_imo,contract_id,contract_ref,commodity_code,shipper_id,shipper_name,consignee_id,consignee_name,principal_id,principal_name,allocation_id,space_skip_reason,space_overage_reason,freight_terms,movement_type,service_type,place_of_receipt,place_of_delivery,cargo_ready_date,notify_id,notify_name,declared_value,declared_value_currency,emo_office_id,imo_office_id,controlling_office_id,contract_routing_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-      .run(id, polU, podU, carrierCode, contractType, contractNotes, status, createdAt, etd, eta, bookingRef, blNumber, blReleaseType, vessel, voyage, incoterm, vesselImo, contractId, contractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, allocationId, spaceSkipReason, spaceOverageReason, freightTerms, movementType, serviceType, placeOfReceipt, placeOfDelivery, cargoReadyDate || null, notifyId, notifyName, (declaredValue !== null && declaredValue !== undefined && String(declaredValue).trim() !== '') ? Number(declaredValue) : null, declaredValueCurrency || "USD", emoOfficeId || null, imoOfficeId || null, controllingOfficeId || null, contractRoutingId || "");
+    db.prepare("INSERT INTO shipments (id,pol,pod,carrier_code,contract_type,contract_notes,status,created_at,etd,eta,booking_ref,bl_number,bl_release_type,master_bl_number,vessel,voyage,incoterm,vessel_imo,contract_id,contract_ref,commodity_code,shipper_id,shipper_name,consignee_id,consignee_name,principal_id,principal_name,allocation_id,space_skip_reason,space_overage_reason,freight_terms,movement_type,service_type,place_of_receipt,place_of_delivery,cargo_ready_date,notify_id,notify_name,declared_value,declared_value_currency,emo_office_id,imo_office_id,controlling_office_id,contract_routing_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+      .run(id, polU, podU, carrierCode, contractType, contractNotes, status, createdAt, etd, eta, bookingRef, blNumber, blReleaseType, masterBlNumber, vessel, voyage, incoterm, vesselImo, contractId, contractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, allocationId, spaceSkipReason, spaceOverageReason, freightTerms, movementType, serviceType, placeOfReceipt, placeOfDelivery, cargoReadyDate || null, notifyId, notifyName, (declaredValue !== null && declaredValue !== undefined && String(declaredValue).trim() !== '') ? Number(declaredValue) : null, declaredValueCurrency || "USD", emoOfficeId || null, imoOfficeId || null, controllingOfficeId || null, contractRoutingId || "");
     logEvent(id, 'SHIPMENT_CREATED', null, null, null,
       JSON.stringify({ pol: polU, pod: podU, carrier: carrierCode, status, etd, contractType }));
     maybeAssignLineAgents(id, carrierCode, polU, podU);
@@ -352,7 +368,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
 
   app.put("/api/shipments/:id", shipmentWrite, (req, res) => {
     const { pol, pod, carrierCode, contractType, contractNotes = "", status: statusIn,
-            etd = "", eta = "", bookingRef = "", blNumber = "", blReleaseType = "", vessel = "", voyage = "",
+            etd = "", eta = "", bookingRef = "", blNumber = "", blReleaseType = "", masterBlNumber = "", vessel = "", voyage = "",
             incoterm = "", vesselImo = "", contractId = "", contractRef = "", commodityCode = "",
             shipperId = "", shipperName = "", consigneeId = "", consigneeName = "",
             principalId = "", principalName = "",
@@ -402,7 +418,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
 
     const info = db.prepare(`
       UPDATE shipments SET pol=?, pod=?, carrier_code=?, contract_type=?, contract_notes=?, status=?,
-      etd=?, eta=?, booking_ref=?, bl_number=?, bl_release_type=?, vessel=?, voyage=?, incoterm=?, vessel_imo=?, contract_id=?, contract_ref=?, commodity_code=?,
+      etd=?, eta=?, booking_ref=?, bl_number=?, bl_release_type=?, master_bl_number=?, vessel=?, voyage=?, incoterm=?, vessel_imo=?, contract_id=?, contract_ref=?, commodity_code=?,
       shipper_id=?, shipper_name=?, consignee_id=?, consignee_name=?, principal_id=?, principal_name=?,
       allocation_id=?, space_skip_reason=?, space_overage_reason=?,
       freight_terms=?, movement_type=?, service_type=?, place_of_receipt=?, place_of_delivery=?,
@@ -410,7 +426,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
       declared_value=?, declared_value_currency=?,
       emo_office_id=?, imo_office_id=?, controlling_office_id=?,
       contract_valid_from=?, contract_valid_to=?, contract_routing_id=? WHERE id=?
-    `).run(polU, podU, carrierCode, contractType, contractNotes, effStatus, etd, eta, bookingRef, blNumber, blReleaseType, vessel, voyage, incoterm, vesselImo, effContractId, effContractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, effAllocationId, spaceSkipReason, spaceOverageReason, freightTerms, movementType, serviceType, placeOfReceipt, placeOfDelivery, cargoReadyDate || null, notifyId, notifyName, (declaredValue !== null && declaredValue !== undefined && String(declaredValue).trim() !== '') ? Number(declaredValue) : null, declaredValueCurrency || "USD", emoOfficeId || null, imoOfficeId || null, controllingOfficeId || null, contractValidFrom || null, contractValidTo || null, effContractRoutingId || "", req.params.id);
+    `).run(polU, podU, carrierCode, contractType, contractNotes, effStatus, etd, eta, bookingRef, blNumber, blReleaseType, masterBlNumber, vessel, voyage, incoterm, vesselImo, effContractId, effContractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, effAllocationId, spaceSkipReason, spaceOverageReason, freightTerms, movementType, serviceType, placeOfReceipt, placeOfDelivery, cargoReadyDate || null, notifyId, notifyName, (declaredValue !== null && declaredValue !== undefined && String(declaredValue).trim() !== '') ? Number(declaredValue) : null, declaredValueCurrency || "USD", emoOfficeId || null, imoOfficeId || null, controllingOfficeId || null, contractValidFrom || null, contractValidTo || null, effContractRoutingId || "", req.params.id);
     if (info.changes === 0) return err(res, "Not found", 404);
     // Only re-attempt Line Agent resolution when carrier/route actually changed — the existing
     // partyOrRouteChanged flag (further below) doesn't check carrier_code, so this needs its
@@ -424,7 +440,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
       ensureBookingCreated(req.params.id);
     const newVals = { pol: polU, pod: podU, status: effStatus, etd, eta, carrier_code: carrierCode,
       vessel, vessel_imo: vesselImo, voyage, incoterm, commodity_code: commodityCode,
-      booking_ref: bookingRef, bl_number: blNumber, bl_release_type: blReleaseType, contract_type: contractType,
+      booking_ref: bookingRef, bl_number: blNumber, bl_release_type: blReleaseType, master_bl_number: masterBlNumber, contract_type: contractType,
       contract_id: effContractId, contract_ref: effContractRef, allocation_id: effAllocationId };
     for (const [col] of Object.entries(TRACKED_FIELDS)) {
       const o = String(existing[col] || ''), n = String(newVals[col] || '');

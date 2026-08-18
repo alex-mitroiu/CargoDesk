@@ -658,6 +658,10 @@ const UserConfigPanel = ({ user, onRolesConfigure }) => {
         </div>
         {officeLoading ? (
           <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>Loading…</div>
+        ) : allOffices ? (
+          <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, fontStyle: "italic" }}>
+            Global access already covers every office — no individual assignments needed.
+          </div>
         ) : (
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
             {userOffices.map(o => (

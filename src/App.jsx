@@ -55,6 +55,7 @@ import ShipmentCustomsFilingPage from "./pages/shipments/ShipmentCustomsFilingPa
 import ShipmentHistoryPage from "./pages/shipments/ShipmentHistoryPage";
 import ShipmentHeaderBar from "./components/shared/ShipmentHeaderBar";
 import DashboardPage       from "./pages/DashboardPage";
+import ReportsPage         from "./pages/ReportsPage";
 import DashboardArchive    from "./pages/DashboardArchivePage";
 import UserManualPage      from "./pages/UserManualPage";
 import AboutPage           from "./pages/AboutPage";
@@ -117,6 +118,8 @@ const DOC_TYPES = [
   { code: "PL01", label: "Packing List" },
   { code: "CO01", label: "Certificate of Origin" },
   { code: "CD01", label: "Customs Declaration" },
+  { code: "AN01", label: "Arrival Notice" },
+  { code: "DO01", label: "Delivery Order" },
   { code: "IC01", label: "Insurance Certificate" },
   { code: "DG01", label: "Dangerous Goods Declaration" },
   { code: "LP01", label: "Loading Plan" },
@@ -280,6 +283,7 @@ const buildBillOfLadingHtml = ({ shipment: sh, invNumber, invDate, notes, contai
     <div class="shp-block"><div class="block-label">Transport Details</div>
       <div class="details-grid">${_detailGrid([
         ["B/L Number", _esc(sh.blNumber || invNumber)], ["Release Type", _esc(sh.blReleaseType || "—")],
+        ...(sh.masterBlNumber ? [["Master B/L Number", _esc(sh.masterBlNumber)]] : []),
         ["No. of Originals", originalsLine], ["Booking Ref", _esc(sh.bookingRef || "—")],
         ...(preCarrier ? [["Pre-carriage By", _esc(preCarrier.customerName)]] : []),
         ["Place of Receipt", _esc(sh.placeOfReceipt || "—")],
@@ -645,6 +649,105 @@ const buildCustomsDeclHtml = ({ shipment: sh, invNumber, invDate, notes, contain
   return _invShell(`Customs Declaration — ${invNumber}`, "CUSTOMS DECLARATION", invNumber, invDate, body);
 };
 
+// Carrier/forwarder -> notify party: "your container arrives on X, free time starts" — one of
+// the highest-frequency documents on any import file, previously only reachable via the
+// free-text "Other" doc type with none of the right fields auto-populated (TKT-Q13HBD).
+const buildArrivalNoticeHtml = ({ shipment: sh, invNumber, invDate, notes, containers, consignee, parties }) => {
+  const alsoNotify = partyByRole(parties, "Also Notify Party");
+  const eta = sh.eta ? new Date(sh.eta) : null;
+  // Estimated, not authoritative — the real deadline is whatever the container compliance
+  // badges compute once Discharged is actually logged (container_events); this is a heads-up
+  // for the notify party ahead of that, so every value it's built from is explicitly an estimate.
+  const lastFreeDay = (eta && containers.length > 0 && containers[0].destFreeTimeDays != null)
+    ? new Date(eta.getTime() + containers[0].destFreeTimeDays * 86400000)
+    : null;
+  const rows = containers.length === 0
+    ? `<tr><td colspan="4" style="text-align:center;color:#9ca3af;padding:16px">No containers recorded</td></tr>`
+    : containers.map(c => `<tr>
+        <td><span class="code">${_esc(c.containerNumber || "TBC")}</span></td>
+        <td>${_esc(c.size)}ft ${_esc(c.type)}</td>
+        <td>${_esc(c.sealNumber || "—")}</td>
+        <td class="num">${c.grossWeightKg != null ? Number(c.grossWeightKg).toLocaleString() + " kg" : "—"}</td>
+      </tr>`).join("");
+
+  const body = `
+    <div class="shp-block"><div class="block-label">Notify</div>
+      <div class="details-grid" style="grid-template-columns:repeat(2,1fr)">${_detailGrid([
+        ["Notify Party", _esc(sh.notifyName || "—")],
+        ...(alsoNotify ? [["Also Notify Party", _esc(alsoNotify.customerName)]] : []),
+        ["Consignee", _esc(sh.consigneeName || consignee?.companyName || "—")],
+      ])}</div>
+    </div>
+    <div class="shp-block"><div class="block-label">Arrival Details</div>
+      <div class="details-grid">${_detailGrid([
+        ["B/L Number", _esc(sh.blNumber || "—")], ["Booking Ref", _esc(sh.bookingRef || "—")],
+        ["Vessel", _esc(sh.vessel || "—")], ["Voyage", _esc(sh.voyage || "—")],
+        ["Carrier", _esc(sh.carrierCode || "—")],
+        ["Port of Discharge", `${_esc(sh.pod)}${sh.podName ? " · " + _esc(sh.podName) : ""}`],
+        ["ETA", eta ? eta.toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" }) : "—"],
+        ["Est. Last Free Day", lastFreeDay ? lastFreeDay.toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" }) : "To be confirmed on discharge"],
+      ])}</div>
+    </div>
+    <div class="section-label">Containers</div>
+    <table><thead><tr>
+      <th>Container #</th><th>Type</th><th>Seal #</th><th style="text-align:right">Gross Weight</th>
+    </tr></thead><tbody>${rows}</tbody></table>
+    <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;margin-bottom:20px;font-size:11px;color:#374151;line-height:1.7">
+      This shipment is expected to arrive as shown above. Demurrage and detention free time begins upon
+      discharge — the Last Free Day above is an estimate; the confirmed deadline is issued once discharge
+      is logged. Please arrange customs clearance and cargo release in good time.
+    </div>
+    ${notes ? `<div class="notes"><div class="notes-label">Notes</div><div class="notes-text">${_esc(notes)}</div></div>` : ""}`;
+
+  return _invShell(`Arrival Notice — ${invNumber}`, "ARRIVAL NOTICE", invNumber, invDate, body);
+};
+
+// Cargo-release authorization to the destination trucker once the B/L is surrendered — the
+// other routine, high-frequency import document with no dedicated type before this (TKT-V5KU48).
+const buildDeliveryOrderHtml = ({ shipment: sh, invNumber, invDate, notes, containers, consignee, parties }) => {
+  const trucker = partyByRole(parties, "Trucker (On-carriage)");
+  const releasable = ["Telex Release", "Surrendered", "Seaway Bill"].includes(sh.blReleaseType);
+  const rows = containers.length === 0
+    ? `<tr><td colspan="3" style="text-align:center;color:#9ca3af;padding:16px">No containers recorded</td></tr>`
+    : containers.map(c => `<tr>
+        <td><span class="code">${_esc(c.containerNumber || "TBC")}</span></td>
+        <td>${_esc(c.size)}ft ${_esc(c.type)}</td>
+        <td>${_esc(c.sealNumber || "—")}</td>
+      </tr>`).join("");
+
+  const body = `
+    <div class="shp-block"><div class="block-label">Deliver To</div>
+      <div class="details-grid" style="grid-template-columns:repeat(2,1fr)">${_detailGrid([
+        ["Consignee", _esc(sh.consigneeName || consignee?.companyName || "—")],
+        ...(trucker ? [["Trucker (On-carriage)", _esc(trucker.customerName)]] : []),
+      ])}</div>
+    </div>
+    <div class="shp-block"><div class="block-label">Release Status</div>
+      <div class="details-grid" style="grid-template-columns:repeat(2,1fr)">${_detailGrid([
+        ["B/L Number", _esc(sh.blNumber || "—")],
+        ["Release Type", _esc(sh.blReleaseType || "Not yet decided")],
+      ])}</div>
+      <div style="margin-top:12px;padding:10px 14px;border-radius:8px;font-size:12px;font-weight:600;
+        background:${releasable ? "#f0fdf4" : "#fef2f2"};color:${releasable ? "#166534" : "#991b1b"};
+        border:1px solid ${releasable ? "#bbf7d0" : "#fecaca"}">
+        ${releasable
+          ? `Cargo may be released — ${_esc(sh.blReleaseType)}, no original B/L presentation required.`
+          : "Cargo may NOT be released until an Original B/L is surrendered (or the release type above is confirmed)."}
+      </div>
+    </div>
+    <div class="section-label">Containers</div>
+    <table><thead><tr>
+      <th>Container #</th><th>Type</th><th>Seal #</th>
+    </tr></thead><tbody>${rows}</tbody></table>
+    <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;margin-bottom:20px;font-size:11px;color:#374151;line-height:1.7">
+      This Delivery Order authorises release of the above cargo to the named consignee (or their appointed
+      agent/trucker) upon presentation of valid identification and satisfaction of all outstanding charges.
+    </div>
+    ${notes ? `<div class="notes"><div class="notes-label">Notes</div><div class="notes-text">${_esc(notes)}</div></div>` : ""}`;
+
+  return _invShell(`Delivery Order — ${invNumber}`, "DELIVERY ORDER", invNumber, invDate, body);
+};
+
 const buildGenericDocHtml = ({ shipment: sh, invNumber, invDate, notes }) => {
   const body = `
     <div class="shp-block"><div class="block-label">Shipment Details</div>
@@ -688,6 +791,11 @@ const getMissingDocRequirements = (docCode, { shipment: sh, containers, shipper,
     if (!sh.pol) missing.push("Port of Loading");
     if (!sh.pod) missing.push("Port of Discharge");
   }
+  if (["AN01", "DO01"].includes(docCode)) {
+    if (!hasConsignee) missing.push("Consignee");
+    if (!sh.pod) missing.push("Port of Discharge");
+    if (containers.length === 0) missing.push("At least one container");
+  }
   if (docCode === "CD01" && containers.length > 0) {
     const noHs = containers.filter(c => !c.hsCode).length;
     if (noHs > 0) missing.push(`HS Code (missing on ${noHs} of ${containers.length} container${containers.length > 1 ? "s" : ""})`);
@@ -718,6 +826,8 @@ const dispatchDocBuilder = (code, data) => {
     case "IC01":             return buildInsuranceCertHtml(data);
     case "DG01":             return buildDGDeclHtml(data);
     case "CD01":             return buildCustomsDeclHtml(data);
+    case "AN01":             return buildArrivalNoticeHtml(data);
+    case "DO01":             return buildDeliveryOrderHtml(data);
     // No loadingPlanLines from the generic picker (it has no concept of "service") —
     // buildLoadingPlanHtml still renders a sensible template with blank planned dates;
     // the rich version comes from the dedicated Loading/Unloading Service page
@@ -2215,6 +2325,7 @@ function App() {
     "space-configs":   "api_shipments_enabled",
     "dashboard-archive":"api_shipments_enabled",
     "freight-audit":   "api_shipments_enabled",
+    reports:           "api_shipments_enabled",
     // Promoted shipment sub-pages inherit the same gate "detail" uses — otherwise
     // disabling the Shipments module only hides Overview, not Cargo/Accounting/etc.
     // Flat (non-Accounting) entries come from the shared config; Accounting's own
@@ -2418,16 +2529,11 @@ function App() {
     if (!user) return;
     // If a remembered office is already restored from localStorage, skip picker
     if (activeOffice && localStorage.getItem(OFFICE_REMEMBER_KEY) === "1") return;
-    if (userAllOffices) {
-      api.offices.list()
-        .then(list => {
-          const active = list.filter(o => o.isActive);
-          setPickerOffices(active);
-          if (active.length > 0 && !activeOffice) setOfficePicker(true);
-        })
-        .catch(() => {});
-      return;
-    }
+    // Global-access users already see every office unconditionally (server-side, allOffices
+    // bypasses office scoping entirely — see applyShipmentAccessFilter) — picking a "current
+    // office" is meaningless for them, so skip the forced picker rather than interrupt every
+    // fresh login with a choice that has no actual effect on what they can see or do.
+    if (userAllOffices) return;
     if (userOffices.length === 1 && !activeOffice) {
       setActiveOffice(userOffices[0]);
       return;
@@ -3404,6 +3510,13 @@ function App() {
               </>
             )}
 
+            {/* Reports — same finance-access gate as Dashboard's Margin tab; hidden outright here
+                since (unlike Margin's mask-the-numbers approach) the backend hard-403s a non-
+                finance user rather than serving redacted data. */}
+            {(appSettings.finance_view_enabled !== 'false' && (effectiveRoles.includes('admin') || !!(user?.canViewFinance))) && (
+              <NavBtn pageKey="reports" icon={IconChartBar} label="Reports" />
+            )}
+
             <NavBtn pageKey="kanban" icon={IconClipboard} label="Integration Board"
               activeExtra={["releases", "test-plans", "test-runs", "test-cases", "test-tools"].includes(page)}
               foldable open={kanbanNavOpen} onToggleFold={() => setKanbanNavOpen(o => !o)} />
@@ -3797,6 +3910,8 @@ function App() {
             allocations={allocations}
             financeEnabled={appSettings.finance_view_enabled !== 'false' && (effectiveRoles.includes('admin') || !!(user?.canViewFinance))} />
         )}
+
+        {page === "reports" && isEnabled("reports") && <ReportsPage />}
 
         {page === "space-configs" && (
           <SpaceConfigurationsPage

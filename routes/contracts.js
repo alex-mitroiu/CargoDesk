@@ -59,7 +59,10 @@ module.exports = function contractsRoutes(app, ctx) {
     ["named_account_id", "namedAccountId"], ["named_account", "namedAccount"], ["movement_type", "movementType"],
     ["valid_from", "validFrom"], ["valid_to", "validTo"], ["currency", "currency"], ["status", "status"], ["notes", "notes"],
   ];
-  function logContractFieldDiffs(id, oldRow, newVals) {
+  // oldContainerTypes/oldImdgClasses are pre-resolved by the caller from the junction tables
+  // BEFORE saveContractArray below deletes and re-inserts them — container_types/imdg_classes no
+  // longer live on oldRow itself (TKT-5YYLNT: those columns are frozen, no longer written to).
+  function logContractFieldDiffs(id, oldRow, newVals, oldContainerTypes, oldImdgClasses) {
     for (const [col, key] of CONTRACT_DIFF_FIELDS) {
       const oldVal = oldRow[col] ?? "";
       const newVal = newVals[key] ?? "";
@@ -67,14 +70,52 @@ module.exports = function contractsRoutes(app, ctx) {
     }
     // Array fields — compare by sorted content, not raw string, so reordering the same set
     // doesn't spuriously log a change.
-    const oldTypes = JSON.stringify([...JSON.parse(oldRow.container_types || "[]")].sort());
+    const oldTypes = JSON.stringify([...(oldContainerTypes || [])].sort());
     const newTypes = JSON.stringify([...(newVals.containerTypes || [])].sort());
-    if (oldTypes !== newTypes) logEntityEvent('contract', id, 'UPDATED', 'containerTypes', oldRow.container_types, JSON.stringify(newVals.containerTypes || []), null);
-    const oldClasses = JSON.stringify([...JSON.parse(oldRow.imdg_classes || "[]")].sort());
+    if (oldTypes !== newTypes) logEntityEvent('contract', id, 'UPDATED', 'containerTypes', JSON.stringify(oldContainerTypes || []), JSON.stringify(newVals.containerTypes || []), null);
+    const oldClasses = JSON.stringify([...(oldImdgClasses || [])].sort());
     const newClasses = JSON.stringify([...(newVals.imdgClasses || [])].sort());
-    if (oldClasses !== newClasses) logEntityEvent('contract', id, 'UPDATED', 'imdgClasses', oldRow.imdg_classes, JSON.stringify(newVals.imdgClasses || []), null);
+    if (oldClasses !== newClasses) logEntityEvent('contract', id, 'UPDATED', 'imdgClasses', JSON.stringify(oldImdgClasses || []), JSON.stringify(newVals.imdgClasses || []), null);
     const oldDg = !!oldRow.dg_allowed, newDg = !!newVals.dgAllowed;
     if (oldDg !== newDg) logEntityEvent('contract', id, 'UPDATED', 'dgAllowed', String(oldDg), String(newDg), null);
+  }
+
+  // ─── container_types / imdg_classes (TKT-5YYLNT — normalized off the legacy JSON columns) ──
+  // Flat string arrays with no other per-item fields, so a single generic delete-then-reinsert
+  // helper covers both tables — same transactional shape as saveLegs/saveRoutings above, since
+  // the frontend already always submits the complete array on every save, never an incremental
+  // add/remove.
+  function saveContractArray(table, column, contractId, values) {
+    db.exec("BEGIN");
+    try {
+      db.prepare(`DELETE FROM ${table} WHERE contract_id=?`).run(contractId);
+      const ins = db.prepare(`INSERT INTO ${table} (id, contract_id, ${column}) VALUES (?,?,?)`);
+      for (const v of new Set((values || []).filter(Boolean))) ins.run(`${table === "contract_container_types" ? "CCT" : "CIC"}-${uid()}`, contractId, v);
+      db.exec("COMMIT");
+    } catch (e) { db.exec("ROLLBACK"); throw e; }
+  }
+  const saveContractContainerTypes = (contractId, types) => saveContractArray("contract_container_types", "container_type", contractId, types);
+  const saveContractImdgClasses    = (contractId, classes) => saveContractArray("contract_imdg_classes", "imdg_class", contractId, classes);
+  const getContractContainerTypes = contractId => db.prepare("SELECT container_type FROM contract_container_types WHERE contract_id=?").all(contractId).map(r => r.container_type);
+  const getContractImdgClasses    = contractId => db.prepare("SELECT imdg_class FROM contract_imdg_classes WHERE contract_id=?").all(contractId).map(r => r.imdg_class);
+
+  // Attaches fresh containerTypes/imdgClasses onto one already-mapped contract object, or a whole
+  // array of them (one bulk IN(...) query each, mirroring the legsMap/ratesMap pattern the list
+  // endpoint already uses) — overrides whatever mapContract itself derived from the now-frozen
+  // legacy JSON columns. Every response site below wraps its existing mapContract(...) output
+  // with this instead of duplicating the junction-table query at each call site.
+  function withContractArrays(mappedOrList) {
+    const list = Array.isArray(mappedOrList) ? mappedOrList : [mappedOrList];
+    if (list.length === 0) return mappedOrList;
+    const ids = [...new Set(list.map(c => c.id))];
+    const ph = ids.map(() => '?').join(',');
+    const typesByContract = {}, classesByContract = {};
+    db.prepare(`SELECT contract_id, container_type FROM contract_container_types WHERE contract_id IN (${ph})`).all(...ids)
+      .forEach(r => { (typesByContract[r.contract_id] ||= []).push(r.container_type); });
+    db.prepare(`SELECT contract_id, imdg_class FROM contract_imdg_classes WHERE contract_id IN (${ph})`).all(...ids)
+      .forEach(r => { (classesByContract[r.contract_id] ||= []).push(r.imdg_class); });
+    list.forEach(c => { c.containerTypes = typesByContract[c.id] || []; c.imdgClasses = classesByContract[c.id] || []; });
+    return mappedOrList;
   }
 
   // contract_rates rows get a brand-new id on every save (saveRates always DELETEs and
@@ -257,7 +298,7 @@ module.exports = function contractsRoutes(app, ctx) {
     clauses.push("c.status='Active'");
     const where = "WHERE " + clauses.join(" AND ");
     const rows = db.prepare(`SELECT c.* FROM contracts c ${where} ORDER BY c.contract_number LIMIT 10`).all(...params);
-    ok(res, rows.map(mapContract));
+    ok(res, withContractArrays(rows.map(mapContract)));
   });
 
   // Contract route-match — MUST be before /api/contracts/:id
@@ -338,7 +379,7 @@ module.exports = function contractsRoutes(app, ctx) {
       }
     }
 
-    ok(res, results);
+    ok(res, withContractArrays(results));
   });
 
   app.get("/api/contracts", async (req, res) => {
@@ -359,7 +400,7 @@ module.exports = function contractsRoutes(app, ctx) {
     if (status.trim())        { clauses.push("c.status=?");               params.push(status.trim()); }
     if (dg !== "")            { clauses.push("c.dg_allowed=?");           params.push(dg === "1" ? 1 : 0); }
     if (asOf.trim())          { clauses.push("c.valid_from<=? AND c.valid_to>=?"); params.push(asOf, asOf); }
-    if (containerType.trim()) { clauses.push("c.container_types LIKE ?"); params.push(`%"${containerType.trim()}"%`); }
+    if (containerType.trim()) { clauses.push("EXISTS(SELECT 1 FROM contract_container_types t WHERE t.contract_id=c.id AND t.container_type=?)"); params.push(containerType.trim()); }
     if (namedAccount.trim())  { clauses.push("(c.named_account LIKE ? OR c.named_account_id LIKE ?)"); const n = `%${namedAccount.trim()}%`; params.push(n, n); }
     if (pol.trim()) { clauses.push("EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND UPPER(l.pol)=UPPER(?))"); params.push(pol.trim()); }
     if (pod.trim()) { clauses.push("EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND UPPER(l.pod)=UPPER(?))"); params.push(pod.trim()); }
@@ -399,7 +440,7 @@ module.exports = function contractsRoutes(app, ctx) {
       db.prepare(`SELECT * FROM contract_routings WHERE contract_id IN (${ph}) ORDER BY sort_order`).all(...ids)
         .forEach(rt => { (routingsMap[rt.contract_id] = routingsMap[rt.contract_id] || []).push(mapContractRouting(rt)); });
     }
-    ok(res, { results: rows.map(r => ({ ...mapContract(r), legs: legsMap[r.id] || [], rates: ratesMap[r.id] || [], routings: routingsMap[r.id] || [] })), total, limit: lim, offset: off });
+    ok(res, { results: withContractArrays(rows.map(r => ({ ...mapContract(r), legs: legsMap[r.id] || [], rates: ratesMap[r.id] || [], routings: routingsMap[r.id] || [] }))), total, limit: lim, offset: off });
   });
 
   // Pending-contract revalidation — MUST be before /api/contracts/:id
@@ -411,7 +452,7 @@ module.exports = function contractsRoutes(app, ctx) {
     const { ref = "" } = req.query;
     if (!ref.trim()) return ok(res, []);
     const rows = db.prepare("SELECT * FROM contracts WHERE LOWER(contract_number) = LOWER(?) AND status = 'Active' ORDER BY valid_from DESC").all(ref.trim());
-    ok(res, rows.map(mapContract));
+    ok(res, withContractArrays(rows.map(mapContract)));
   });
 
   // ─── Publish / Withdraw ─────────────────────────────────────────────────────
@@ -447,7 +488,7 @@ module.exports = function contractsRoutes(app, ctx) {
     db.prepare("UPDATE contracts SET status='Active' WHERE id=?").run(req.params.id);
     logEntityEvent('contract', req.params.id, 'PUBLISHED', 'status', 'Draft', 'Active',
       JSON.stringify({ contractNumber: c.contract_number, carrierCode: c.carrier_code, rateCount, legCount }));
-    ok(res, mapContract({ ...c, status: 'Active' }));
+    ok(res, withContractArrays(mapContract({ ...c, status: 'Active' })));
   });
 
   app.post("/api/contracts/:id/withdraw", write, async (req, res) => {
@@ -469,7 +510,7 @@ module.exports = function contractsRoutes(app, ctx) {
     db.prepare("UPDATE contracts SET status='Draft' WHERE id=?").run(req.params.id);
     logEntityEvent('contract', req.params.id, 'WITHDRAWN', 'status', 'Active', 'Draft',
       JSON.stringify({ contractNumber: c.contract_number, carrierCode: c.carrier_code }));
-    ok(res, mapContract({ ...c, status: 'Draft' }));
+    ok(res, withContractArrays(mapContract({ ...c, status: 'Draft' })));
   });
 
   app.get("/api/contracts/:id", async (req, res) => {
@@ -482,7 +523,7 @@ module.exports = function contractsRoutes(app, ctx) {
     const legs     = db.prepare("SELECT * FROM contract_legs  WHERE contract_id=? ORDER BY leg_order").all(req.params.id);
     const rates    = db.prepare("SELECT * FROM contract_rates WHERE contract_id=? ORDER BY sort_order").all(req.params.id);
     const routings = db.prepare("SELECT * FROM contract_routings WHERE contract_id=? ORDER BY sort_order").all(req.params.id);
-    ok(res, { ...mapContract(c), legs: legs.map(mapLeg), rates: rates.map(mapRate), routings: routings.map(mapContractRouting) });
+    ok(res, withContractArrays({ ...mapContract(c), legs: legs.map(mapLeg), rates: rates.map(mapRate), routings: routings.map(mapContractRouting) }));
   });
 
   app.post("/api/contracts", write, async (req, res) => {
@@ -499,11 +540,15 @@ module.exports = function contractsRoutes(app, ctx) {
     if (!CONTRACT_STATUSES.includes(status)) return err(res, `status must be one of: ${CONTRACT_STATUSES.join(", ")}`);
     const id = `CNTR-${uid()}`;
     const createdAt = new Date().toISOString();
-    db.prepare(`INSERT INTO contracts (id,contract_number,contract_ref,carrier_code,named_account_id,named_account,movement_type,container_types,dg_allowed,imdg_classes,valid_from,valid_to,currency,status,notes,created_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    // container_types/imdg_classes no longer written here (TKT-5YYLNT) — saveContractContainerTypes/
+    // saveContractImdgClasses below are the real write path now; the columns stay in the schema
+    // (DEFAULT '[]', unused) rather than being dropped, matching this codebase's additive-only precedent.
+    db.prepare(`INSERT INTO contracts (id,contract_number,contract_ref,carrier_code,named_account_id,named_account,movement_type,dg_allowed,valid_from,valid_to,currency,status,notes,created_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
       .run(id, contractNumber, contractRef, carrierCode, namedAccountId, namedAccount, movementType,
-           JSON.stringify(containerTypes), dgAllowed ? 1 : 0, JSON.stringify(imdgClasses),
-           validFrom, validTo, currency, status, notes, createdAt);
+           dgAllowed ? 1 : 0, validFrom, validTo, currency, status, notes, createdAt);
+    saveContractContainerTypes(id, containerTypes);
+    saveContractImdgClasses(id, imdgClasses);
     const routingIds = saveRoutings(id, routings);
     saveLegs(id, legs, routingIds);
     await saveRates(id, rates, routingIds);
@@ -513,7 +558,7 @@ module.exports = function contractsRoutes(app, ctx) {
     const rtgs = db.prepare("SELECT * FROM contract_routings WHERE contract_id=? ORDER BY sort_order").all(id);
     logEntityEvent('contract', id, 'CREATED', null, null, null,
       JSON.stringify({ contractNumber, contractRef, carrierCode, validFrom, validTo, status }));
-    ok(res, { ...mapContract(c), legs: lgs.map(mapLeg), rates: rts.map(mapRate), routings: rtgs.map(mapContractRouting) }, 201);
+    ok(res, withContractArrays({ ...mapContract(c), legs: lgs.map(mapLeg), rates: rts.map(mapRate), routings: rtgs.map(mapContractRouting) }), 201);
   });
 
   app.put("/api/contracts/:id", write, async (req, res) => {
@@ -539,6 +584,10 @@ module.exports = function contractsRoutes(app, ctx) {
     const effStatus = (status === 'Expired' && (!validTo || validTo >= today)) ? 'Active' : status;
     const oldRow   = db.prepare("SELECT * FROM contracts WHERE id=?").get(req.params.id);
     const oldRates = db.prepare("SELECT * FROM contract_rates WHERE contract_id=?").all(req.params.id);
+    // Resolved BEFORE saveContractContainerTypes/saveContractImdgClasses delete/regenerate them
+    // below — oldRow.container_types/imdg_classes are frozen (TKT-5YYLNT), no longer reliable.
+    const oldContainerTypes = getContractContainerTypes(req.params.id);
+    const oldImdgClasses = getContractImdgClasses(req.params.id);
     // Old routings' id -> name, resolved BEFORE saveRoutings deletes/regenerates them below —
     // needed to give oldRates a stable routingName for logRateDiffs' content key (see its own
     // comment: routing_id itself never survives a save, so name is the only comparable identity).
@@ -546,12 +595,13 @@ module.exports = function contractsRoutes(app, ctx) {
       db.prepare("SELECT id, name FROM contract_routings WHERE contract_id=?").all(req.params.id).map(r => [r.id, r.name])
     );
     const info = db.prepare(`UPDATE contracts SET contract_number=?,contract_ref=?,carrier_code=?,named_account_id=?,named_account=?,
-      movement_type=?,container_types=?,dg_allowed=?,imdg_classes=?,valid_from=?,valid_to=?,currency=?,status=?,notes=?
+      movement_type=?,dg_allowed=?,valid_from=?,valid_to=?,currency=?,status=?,notes=?
       WHERE id=?`)
       .run(contractNumber, contractRef, carrierCode, namedAccountId, namedAccount, movementType,
-           JSON.stringify(containerTypes), dgAllowed ? 1 : 0, JSON.stringify(imdgClasses),
-           validFrom, validTo, currency, effStatus, notes, req.params.id);
+           dgAllowed ? 1 : 0, validFrom, validTo, currency, effStatus, notes, req.params.id);
     if (info.changes === 0) return err(res, "Not found", 404);
+    saveContractContainerTypes(req.params.id, containerTypes);
+    saveContractImdgClasses(req.params.id, imdgClasses);
     const routingIds = saveRoutings(req.params.id, routings);
     // Fallback correlation for a leg/rate that carries a stale routingId but no routingIndex
     // (see resolveRoutingId's own comment) — maps the OLD routing's name to its position in
@@ -565,14 +615,14 @@ module.exports = function contractsRoutes(app, ctx) {
     const lgs  = db.prepare("SELECT * FROM contract_legs  WHERE contract_id=? ORDER BY leg_order").all(req.params.id);
     const rts  = db.prepare("SELECT * FROM contract_rates WHERE contract_id=? ORDER BY sort_order").all(req.params.id);
     const rtgs = db.prepare("SELECT * FROM contract_routings WHERE contract_id=? ORDER BY sort_order").all(req.params.id);
-    logContractFieldDiffs(req.params.id, oldRow, { contractNumber, contractRef, carrierCode, namedAccountId, namedAccount, movementType, containerTypes, dgAllowed, imdgClasses, validFrom, validTo, currency, status: effStatus, notes });
+    logContractFieldDiffs(req.params.id, oldRow, { contractNumber, contractRef, carrierCode, namedAccountId, namedAccount, movementType, containerTypes, dgAllowed, imdgClasses, validFrom, validTo, currency, status: effStatus, notes }, oldContainerTypes, oldImdgClasses);
     const oldRatesWithRoutingName = oldRates.map(r => ({ ...r, routingName: oldRoutingsById[r.routing_id] || '' }));
     const newRatesWithRoutingName = rates.map(r => ({
       ...r,
       routingName: (Number.isInteger(r.routingIndex) && routings[r.routingIndex]) ? (routings[r.routingIndex].name || '') : '',
     }));
     logRateDiffs(req.params.id, oldRatesWithRoutingName, newRatesWithRoutingName);
-    ok(res, { ...mapContract(c), legs: lgs.map(mapLeg), rates: rts.map(mapRate), routings: rtgs.map(mapContractRouting) });
+    ok(res, withContractArrays({ ...mapContract(c), legs: lgs.map(mapLeg), rates: rts.map(mapRate), routings: rtgs.map(mapContractRouting) }));
   });
 
   app.delete("/api/contracts/:id", write, async (req, res) => {

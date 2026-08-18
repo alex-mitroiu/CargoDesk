@@ -1855,7 +1855,19 @@ export const CostLineForm = ({ init = {}, fxRates = {}, containers = [], lockTyp
   const [notes,        setNotes]        = useState(init.notes        || "");
   const [containerId,  setContainerId]  = useState(init.containerId  || "");
   const [paymentIndicator, setPaymentIndicator] = useState(init.paymentIndicator || "Prepaid");
+  const [saving, setSaving] = useState(false);
   const isEdit = !!init.id;
+
+  // Guards against a double-submit: onSave/onSaveAndMirror are async (they await the create/
+  // update API call before the parent closes this modal), and with no visible feedback in that
+  // window, a second click before the request resolves fired a second create — found live as
+  // "added one cost line, got two". disabled+"Saving…" below block the click; this catches any
+  // race the disabled attribute doesn't (e.g. a click already in flight when it re-renders).
+  const submit = async fn => {
+    if (saving) return;
+    setSaving(true);
+    try { await fn(); } finally { setSaving(false); }
+  };
 
   // Auto-fill exchange rate when currency changes (rates are FROM USD: 1 USD = X ccy)
   const handleCurrency = c => {
@@ -1961,15 +1973,15 @@ export const CostLineForm = ({ init = {}, fxRates = {}, containers = [], lockTyp
         </select>
       </div>
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 4 }}>
-        <Btn variant="secondary" onClick={onCancel}>Cancel</Btn>
+        <Btn variant="secondary" onClick={onCancel} disabled={saving}>Cancel</Btn>
         <Btn variant="secondary"
-          onClick={() => onSaveAndMirror({ type, chargeCode, currency, amount: amtNum, exchangeRate: rateNum, vatRate: vatNum, notes, containerId, paymentIndicator })}
-          disabled={!valid}
+          onClick={() => submit(() => onSaveAndMirror({ type, chargeCode, currency, amount: amtNum, exchangeRate: rateNum, vatRate: vatNum, notes, containerId, paymentIndicator }))}
+          disabled={!valid || saving}
           title={`Save this line and create a mirrored ${type === "BUY" ? "SELL" : "BUY"} line with the same values`}>
-          ⇄ Mirror as {type === "BUY" ? "SELL" : "BUY"}
+          {saving ? "Saving…" : `⇄ Mirror as ${type === "BUY" ? "SELL" : "BUY"}`}
         </Btn>
-        <Btn onClick={() => onSave({ type, chargeCode, currency, amount: amtNum, exchangeRate: rateNum, vatRate: vatNum, notes, containerId, paymentIndicator })} disabled={!valid}>
-          {isEdit ? "Save Changes" : "Add Line"}
+        <Btn onClick={() => submit(() => onSave({ type, chargeCode, currency, amount: amtNum, exchangeRate: rateNum, vatRate: vatNum, notes, containerId, paymentIndicator }))} disabled={!valid || saving}>
+          {saving ? "Saving…" : (isEdit ? "Save Changes" : "Add Line")}
         </Btn>
       </div>
     </div>

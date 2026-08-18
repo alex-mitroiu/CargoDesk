@@ -4,14 +4,33 @@ import Badge from "../components/primitives/Badge";
 import IncotermsModal from "../components/shared/IncotermsModal";
 
 // ─── User Manual Page ─────────────────────────────────────────────────────────
+// Two complementary halves, matching how the CargoDesk Field Guide itself frames the split
+// (its own closing chapter says so explicitly): a WALKTHROUGH that processes one shipment
+// start-to-finish in the order you'd actually do it (quote -> shipment -> cargo -> schedule ->
+// booking -> parties -> customs -> documents -> tracking -> money), and a REFERENCE half
+// organized by topic instead of by sequence, for looking something up once you already know
+// your way around. Ported from the Field Guide artifact — not a replacement for the reference
+// half, which the guide's own final chapter points back to by name.
 
 const UserManualPage = () => {
-  const [section, setSection] = useState("overview");
+  const [section, setSection] = useState("welcome");
   const [showIncoterms, setShowIncoterms] = useState(false);
 
-  const SECTIONS = [
-    { id: "overview",          label: "Overview" },
-    { id: "shipments",         label: "Shipments" },
+  const WALKTHROUGH = [
+    { id: "welcome",   label: "Welcome" },
+    { id: "quote",     label: "1. Get a Quote" },
+    { id: "shipment",  label: "2. Create the Shipment" },
+    { id: "cargo",     label: "3. Add Your Cargo" },
+    { id: "schedule",  label: "4. Find a Sailing" },
+    { id: "booking",   label: "5. Book the Carrier" },
+    { id: "parties",   label: "6. Add Parties & Offices" },
+    { id: "customs",   label: "7. Handle Customs" },
+    { id: "documents", label: "8. Generate Documents" },
+    { id: "tracking",  label: "9. Track the Shipment" },
+    { id: "money",     label: "10. Handle the Money" },
+    { id: "help",      label: "Getting Help" },
+  ];
+  const REFERENCE = [
     { id: "dashboard",         label: "Dashboard" },
     { id: "command-center",    label: "Command Center" },
     { id: "integration-board", label: "Integration Board" },
@@ -20,6 +39,11 @@ const UserManualPage = () => {
     { id: "incoterms",         label: "Incoterms" },
     { id: "dg-classes",        label: "DG Classes ⚠" },
   ];
+
+  const GroupLabel = ({ children }) => (
+    <div style={{ fontFamily: T.mono, fontSize: 9.5, color: T.textMuted, fontWeight: 700,
+      textTransform: "uppercase", letterSpacing: ".1em", padding: "16px 14px 6px" }}>{children}</div>
+  );
 
   const SectionBtn = ({ id, label }) => (
     <button onClick={() => setSection(id)} style={{
@@ -45,36 +69,383 @@ const UserManualPage = () => {
     <code style={{ fontFamily: T.mono, fontSize: 12, color: T.textCode, background: T.bg,
       border: `1px solid ${T.border}`, borderRadius: 4, padding: "1px 6px" }}>{children}</code>
   );
+  // Walkthrough-only primitives — a numbered step heading and a tip/warn/note callout box,
+  // matching the Field Guide artifact's own visual language (stepnum badge, colored callout).
+  const Dek = ({ children }) => (
+    <p style={{ fontFamily: T.body, fontSize: 15, color: T.textMuted, lineHeight: 1.7, maxWidth: "62ch", margin: "0 0 26px" }}>{children}</p>
+  );
+  const Step = ({ n, children }) => (
+    <h3 style={{ display: "flex", alignItems: "center", gap: 10, fontFamily: T.head, fontSize: 15,
+      fontWeight: 800, color: T.text, margin: "28px 0 6px" }}>
+      <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, width: 22, height: 22, borderRadius: 6,
+        background: T.accentBg, color: T.accent, display: "inline-flex", alignItems: "center",
+        justifyContent: "center", flexShrink: 0 }}>{n}</span>
+      {children}
+    </h3>
+  );
+  const StepBody = ({ children }) => (
+    <div style={{ marginLeft: 32 }}>{children}</div>
+  );
+  const Callout = ({ type = "note", children }) => {
+    const v = {
+      tip:  { bg: T.accentBg,  border: T.accent + "55",  color: T.accent,     icon: "💡" },
+      warn: { bg: T.warningBg, border: T.warning + "55", color: T.warning,    icon: "⚠" },
+      note: { bg: T.bg,        border: T.border,         color: T.textMuted,  icon: "ℹ" },
+    }[type];
+    return (
+      <div style={{ marginLeft: 32, marginBottom: 20, padding: "12px 15px", borderRadius: 8,
+        background: v.bg, border: `1px solid ${v.border}`, display: "flex", gap: 10 }}>
+        <span style={{ fontSize: 14, color: v.color, flexShrink: 0, lineHeight: 1.6 }}>{v.icon}</span>
+        <div style={{ fontFamily: T.body, fontSize: 13, color: T.text, lineHeight: 1.65 }}>{children}</div>
+      </div>
+    );
+  };
 
   const content = {
-    overview: (
+    // ── Walkthrough ──────────────────────────────────────────────────────────
+    welcome: (
       <div>
-        <H2>CargoDesk — User Manual</H2>
-        <P>CargoDesk is a freight management platform for creating and tracking ocean shipments, monitoring TEU consumption against carrier allocations, and maintaining master data for ports, carriers, trade lanes, and countries.</P>
-        <H3>Navigation</H3>
-        <P>The sidebar is organised into two areas: <strong>Operational</strong> (Shipments and Dashboard) and <strong>Master Data</strong> (MDM). Use the Master Data section header to expand or collapse the sub-menu.</P>
-        <H3>Data model</H3>
-        <P>Everything flows from Master Data. Carriers and ports must exist in the MDM before you can create a shipment. Allocations on the Dashboard are configured per carrier and contract type. Trade lanes link countries to FIATA high-level regions.</P>
+        <H2>Welcome to CargoDesk</H2>
+        <Dek>CargoDesk is where you plan, book, and track ocean freight shipments — from the first
+          price you quote a customer to the last invoice you reconcile. This guide walks you through
+          processing one shipment from start to finish, in the order you'd actually do it.</Dek>
+        <Step n={1}>Sign in</Step>
+        <StepBody>
+          <P>Sign in with the email and password your administrator gave you. If you ever forget
+            your password, use the <strong>Forgot password?</strong> link on the sign-in screen —
+            don't ask a colleague to share theirs.</P>
+        </StepBody>
+        <Step n={2}>Get your bearings</Step>
+        <StepBody>
+          <P>Once you're in, the sidebar on the left is where every chapter in this guide begins:</P>
+          <ul style={{ margin: "0 0 10px", paddingLeft: 20 }}>
+            <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><Tag>Quotes</Tag> — price a shipment for a customer before it's booked (Chapter 1)</li>
+            <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><Tag>Shipments</Tag> — every shipment you've created or are working on (Chapter 2 onward)</li>
+            <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><Tag>Dashboard</Tag> — how much container space you've used against what carriers gave you</li>
+            <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><Tag>Integration Board</Tag> — the internal task board the CargoDesk team uses, not customer-facing</li>
+            <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><Tag>Schedule Search</Tag> — a standalone sailing lookup, outside of any one shipment</li>
+            <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><Tag>AI Assistant</Tag> — ask it about any shipment, contract, or allocation in plain English (Getting Help)</li>
+          </ul>
+          <P>The home screen itself is worth a glance every morning: it shows your fleet-wide shipment
+            counts, overdue milestones, and departures coming up in the next 7 days.</P>
+        </StepBody>
+        <Callout type="tip"><strong>This guide follows one shipment</strong> from a quote all the way to a
+          reconciled invoice — the same order you'd work it in real life. Skip ahead to whichever chapter
+          matches where your own shipment actually is.</Callout>
       </div>
     ),
-    shipments: (
+    quote: (
       <div>
-        <H2>Shipments</H2>
-        <P>A shipment represents one booking with a carrier, from a Port of Loading (POL) to a Port of Discharge (POD).</P>
-        <H3>Creating a shipment</H3>
-        <P>Click <strong>＋ New Shipment</strong>. Search for the POL and POD using the port search — it queries the 14,000+ UN/LOCODE database. Select a carrier, set the contract type, and optionally add dates, booking reference, B/L number, vessel, and voyage.</P>
-        <H3>Contract types</H3>
-        <P>Use the preset buttons for <Tag>Pending</Tag>, <Tag>SPOT</Tag>, or <Tag>Customer Own</Tag>, or type a custom contract label. The contract type links to your Dashboard allocation configuration.</P>
-        <H3>Cargo Details</H3>
-        <P>Open a shipment to access Cargo Details. Add containers by specifying the container number, size (<Tag>20ft = 1 TEU</Tag>, <Tag>40ft = 2 TEU</Tag>), and equipment type (DC, RF, OT, FR, TK). TEU totals update instantly on the Dashboard.</P>
-        <H3>Status workflow</H3>
-        <P>Set the shipment status to <Tag>Active</Tag>, <Tag>Pending</Tag>, <Tag>Completed</Tag>, or <Tag>Cancelled</Tag> as it progresses.</P>
-        <H3>EDI Messages</H3>
-        <P>Click the EDI icon in the shipment header to open the EDI Messages drawer. Sending a booking request to a supported carrier (currently <Tag>MAEU</Tag>, <Tag>SAFM</Tag>, <Tag>MCPU</Tag>) logs an outbound message and — once the carrier responds — an inbound confirmation or rejection, each with a raw/parsed payload toggle. Without a live carrier API key configured in App Settings, responses are generated as clearly-tagged demo data so the flow can be exercised end-to-end.</P>
-        <H3>Container Lifecycle Events (FCL)</H3>
-        <P>Each container tracks its own movement history — <Tag>Empty Pickup</Tag>, <Tag>Gate In</Tag>, <Tag>Loaded</Tag>, <Tag>Sailed</Tag>, <Tag>Discharged</Tag>, <Tag>Gate Out</Tag>, <Tag>Empty Return</Tag>. Open the full container list and click <Tag>📋</Tag> on any row to view or log an event — the form suggests the next stage in sequence. This is the foundation for upcoming demurrage/detention tracking.</P>
+        <H2>1. Get a Quote</H2>
+        <Dek>Not every shipment starts here — if you already know exactly what you're booking, skip
+          straight to Chapter 2. But if a customer has asked "how much to ship 2 containers to New
+          York," a <strong>Quote</strong> is where you answer that without committing to a real,
+          numbered shipment yet.</Dek>
+        <Step n={1}>Open Quotes and start a new one</Step>
+        <StepBody>
+          <P>Click <Tag>Quotes</Tag> in the sidebar, then <Tag>+ New Quote</Tag>. Fill in the customer,
+            route (POL/POD), cargo basics, and — if you already know it — the carrier.</P>
+        </StepBody>
+        <Step n={2}>Price it</Step>
+        <StepBody>
+          <P>You have two ways to fill in the <Tag>Quote Lines</Tag> table at the bottom:</P>
+          <ul style={{ margin: "0 0 10px", paddingLeft: 20 }}>
+            <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}>Type each charge in yourself — a service code like <Tag>OF</Tag> for Ocean Freight, a description, and a rate.</li>
+            <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}>Click <Tag>Find Matching Contracts</Tag> to pull rates from a contract already on file for that route and carrier, then adjust them — the contract rate is usually your cost, so add your margin before saving.</li>
+          </ul>
+          <P>Set a <Tag>Valid Until</Tag> date too — a quote needs one before you can send it, since
+            an open-ended price isn't a real offer.</P>
+        </StepBody>
+        <Step n={3}>Send it, then track the answer</Step>
+        <StepBody>
+          <P>Save the quote — it starts as a <Badge variant="default">Draft</Badge>, which you can
+            still edit freely. Once it's ready, send it to the customer; it locks and moves to{" "}
+            <Badge variant="warning">Sent</Badge>. When they get back to you, mark it{" "}
+            <Badge variant="success">Accepted</Badge> or <Badge variant="danger">Declined</Badge> —
+            an accepted quote left untouched too long expires on its own.</P>
+        </StepBody>
+        <Step n={4}>Convert it to a real shipment</Step>
+        <StepBody>
+          <P>Once a quote is <Badge variant="success">Accepted</Badge>, click{" "}
+            <Tag>Convert to Shipment</Tag>. CargoDesk creates a real, numbered shipment and carries
+            your quoted price straight in as the SELL side of its cost lines — you don't re-type
+            anything.</P>
+        </StepBody>
+        <Callout type="note">A quote's price doesn't have to match what you eventually pay the
+          carrier. When the shipment converts, the SELL side comes from your quote and the BUY side
+          comes from the actual contract — CargoDesk keeps them independent so your margin stays
+          visible.</Callout>
       </div>
     ),
+    shipment: (
+      <div>
+        <H2>2. Create the Shipment</H2>
+        <Dek>A shipment is the one record everything else in this guide hangs off — cargo, booking,
+          parties, documents, and money all attach to it.</Dek>
+        <Step n={1}>Starting from an accepted quote</Step>
+        <StepBody>
+          <P>If you followed Chapter 1, you already have one — <Tag>Convert to Shipment</Tag> did
+            this for you. Skip to Step 3.</P>
+        </StepBody>
+        <Step n={2}>Starting from scratch</Step>
+        <StepBody>
+          <P>From <Tag>Shipments</Tag>, click <Tag>+ New Shipment</Tag>. At minimum you need a Port
+            of Loading, Port of Discharge, carrier, and contract type — everything else (dates,
+            booking reference, B/L number, vessel, voyage) can be filled in later.</P>
+        </StepBody>
+        <Step n={3}>Know your shipment's home screen</Step>
+        <StepBody>
+          <P>Whichever path you took, you'll land on the shipment's <Tag>Overview</Tag> page. This
+            is your dashboard for this one shipment — a persistent header up top shows route,
+            carrier, and status on every sub-page you visit from here.</P>
+        </StepBody>
+        <Callout type="tip">Notice the sidebar below the shipment header — <Tag>Cargo</Tag>,{" "}
+          <Tag>Contracts & Schedules</Tag>, <Tag>Carrier Booking</Tag>, <Tag>Parties & Offices</Tag>,{" "}
+          <Tag>Documents</Tag>, and more all live there. The rest of this guide walks through them in
+          the order that actually unblocks each other.</Callout>
+      </div>
+    ),
+    cargo: (
+      <div>
+        <H2>3. Add Your Cargo</H2>
+        <Dek>Before you can book a carrier or price anything properly, CargoDesk needs to know what's
+          actually moving.</Dek>
+        <Step n={1}>Add a container</Step>
+        <StepBody>
+          <P>Open <Tag>Cargo</Tag> in the shipment's sidebar and click <Tag>+ Add Container</Tag>.
+            Give it a container number, size (20ft = 1 TEU, 40ft = 2 TEU), and equipment type
+            (DC, RF, OT, FR, TK).</P>
+        </StepBody>
+        <Step n={2}>Describe what's inside</Step>
+        <StepBody>
+          <P>Click into a container and add the cargo itself — pallets, boxes, or crates, each with
+            a description, quantity, and (once you know it) a declared value. This is also where
+            you flag a container as Dangerous Goods and set its IMDG class if it needs one.</P>
+        </StepBody>
+        <Callout type="note"><strong>TEU is calculated for you.</strong> A 20-foot container counts
+          as 1 TEU, a 40-foot as 2 — the total rolls up automatically to the shipment header and the
+          Dashboard the moment you save a container.</Callout>
+      </div>
+    ),
+    schedule: (
+      <div>
+        <H2>4. Find a Sailing</H2>
+        <Dek>Before CargoDesk will let you book a carrier, it needs to know <em>which</em> sailing
+          you're on — vessel, voyage, and dates.</Dek>
+        <Step n={1}>Add a route leg</Step>
+        <StepBody>
+          <P>Open <Tag>Booking & Routing → Contracts & Schedules</Tag> in the sidebar. If this is a
+            straightforward port-to-port move, add one SEA leg from your POL to your POD.</P>
+        </StepBody>
+        <Step n={2}>Search for a sailing and apply it</Step>
+        <StepBody>
+          <P>With a leg in place, <Tag>Add Sailing</Tag> becomes available. Search by the leg's own
+            route and pick a real sailing — vessel, voyage, and ETD/ETA all copy onto the leg in one
+            click.</P>
+        </StepBody>
+        <Callout type="warn"><strong>This is a hard gate, not a suggestion.</strong> If you jump
+          straight to Carrier Booking without a contract and a schedule both in place, CargoDesk
+          blocks you outright and sends you back here to finish first.</Callout>
+      </div>
+    ),
+    booking: (
+      <div>
+        <H2>5. Book the Carrier</H2>
+        <Dek>With cargo and a sailing both in place, you're ready to actually reserve space with the
+          carrier.</Dek>
+        <Step n={1}>What you'll see if you're not ready yet</Step>
+        <StepBody>
+          <P>Open <Tag>Booking & Routing → Carrier Booking</Tag>. If Chapter 4 isn't done yet, this
+            page tells you exactly what's missing — "This shipment doesn't have a contract or a
+            schedule assigned yet" — rather than letting you send an incomplete request.</P>
+        </StepBody>
+        <Step n={2}>Send the booking request</Step>
+        <StepBody>
+          <P>Once a schedule's attached, this page turns into a real form. Click{" "}
+            <Tag>Send Booking Request</Tag> to transmit it to the carrier — for the carriers
+            CargoDesk can reach directly, this goes out as a real EDI message with its own outbound
+            record you can review later.</P>
+        </StepBody>
+        <Step n={3}>Wait for the carrier's response, then confirm</Step>
+        <StepBody>
+          <P>The booking sits as <Badge variant="warning">Pending</Badge> until the carrier
+            responds. Once they confirm, click <Tag>Confirm</Tag> yourself — this is a deliberate
+            second step, so a carrier's confirmed response doesn't silently finalize anything
+            without your own review.</P>
+        </StepBody>
+        <Callout type="note">If you change the carrier on a leg after a booking already exists,
+          CargoDesk doesn't edit the old booking in place — it archives it as history and starts a
+          fresh one under the new carrier, so you can always see what actually happened.</Callout>
+      </div>
+    ),
+    parties: (
+      <div>
+        <H2>6. Add Parties & Offices</H2>
+        <Dek>A shipment involves more people than just you and the carrier. This chapter is about
+          making sure everyone who needs to see it can.</Dek>
+        <Step n={1}>The core four</Step>
+        <StepBody>
+          <P>Open <Tag>Parties & Offices</Tag> and click <Tag>Edit</Tag>. Every shipment has four
+            fixed roles worth setting as early as possible: Shipper, Consignee, Notify Party, and
+            Principal — each one feeds compliance screening automatically the moment it's saved.</P>
+        </StepBody>
+        <Step n={2}>Everyone else</Step>
+        <StepBody>
+          <P>Underneath, <Tag>Additional Parties</Tag> covers forwarders, customs brokers (export
+            and import are separate roles, since they're often different companies), truckers, banks,
+            insurance providers, and agents — add only the ones this specific shipment actually
+            needs.</P>
+        </StepBody>
+        <Callout type="tip"><strong>Line agents fill themselves in.</strong> If the carrier has a
+          registered local agent at your port, CargoDesk assigns it automatically — you'll only ever
+          need to set one by hand if there isn't a match on file yet.</Callout>
+      </div>
+    ),
+    customs: (
+      <div>
+        <H2>7. Handle Customs</H2>
+        <Dek>Depending on which side of the shipment you're responsible for, you may need to file
+          with customs before cargo can move.</Dek>
+        <Step n={1}>Know which filing you need</Step>
+        <StepBody>
+          <ul style={{ margin: "0 0 10px", paddingLeft: 20 }}>
+            <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>AES/EEI</strong> (export) — needs a <Tag>Customs Broker (Export)</Tag> on the Parties page.</li>
+            <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>ISF/AMS</strong> (import) — needs a <Tag>Customs Broker (Import)</Tag> on the Parties page.</li>
+          </ul>
+          <P>Both also need priced cargo already on the shipment — another reason Chapter 3 comes
+            before this one.</P>
+        </StepBody>
+        <Step n={2}>Create and submit the filing</Step>
+        <StepBody>
+          <P>Open <Tag>Customs Filing</Tag>. Whichever side is missing its broker shows a
+            greyed-out, disabled Create button with an inline hint explaining exactly what to fix —
+            once both preconditions are met, <Tag>Create Filing</Tag> then <Tag>Submit</Tag> moves
+            it to Filed.</P>
+        </StepBody>
+        <Step n={3}>Track the response</Step>
+        <StepBody>
+          <P>A submitted filing sits as <Tag>Filed</Tag> until a response comes back — Accepted with
+            a confirmation number, or Rejected with a reason you can act on and resubmit.</P>
+        </StepBody>
+      </div>
+    ),
+    documents: (
+      <div>
+        <H2>8. Generate Documents</H2>
+        <Dek>Everything you've entered so far — cargo, parties, booking, filings — feeds straight
+          into the paperwork.</Dek>
+        <Step n={1}>Check what's still missing</Step>
+        <StepBody>
+          <P>Open <Tag>Documents</Tag>. The bar at the top tells you, at a glance, how many of this
+            shipment's documents are Confirmed, still in Draft, or entirely Missing.</P>
+        </StepBody>
+        <Step n={2}>Generate, review, and confirm</Step>
+        <StepBody>
+          <P>Click <Tag>Generate</Tag> next to any missing document. CargoDesk builds it from the
+            shipment's own data, signs it, and saves it as a draft PDF — if something mandatory is
+            still missing (a party, a container, a charge line), it tells you exactly what before
+            generating anything half-finished. Review the draft, then <Tag>Confirm</Tag> it once
+            it's right.</P>
+        </StepBody>
+      </div>
+    ),
+    tracking: (
+      <div>
+        <H2>9. Track the Shipment</H2>
+        <Dek>Once the cargo is actually moving, this is where you keep the record honest — logging
+          what's really happening as it happens.</Dek>
+        <Step n={1}>Log container events</Step>
+        <StepBody>
+          <P>Each container has its own movement history — Empty Pickup, Gate In, Loaded, Sailed,
+            Discharged, Gate Out, Empty Return. Log each stage as it occurs; this is also what
+            demurrage and detention tracking is computed from, so keeping it current matters beyond
+            just visibility.</P>
+        </StepBody>
+        <Step n={2}>Work through the milestones</Step>
+        <StepBody>
+          <P>Open <Tag>Milestones & Events</Tag>. This is the shipment's overall timeline — booking
+            confirmed, SI submitted, cargo gated in, vessel departed, and on through delivery. Several
+            steps complete themselves automatically as you do the real work elsewhere (confirming a
+            booking, logging a Gate In on every container) — you only need to touch the ones that
+            don't have an obvious trigger.</P>
+        </StepBody>
+        <Callout type="note"><strong>Completing things out of order won't block you.</strong> Real
+          operations don't always happen in a neat sequence — the milestone stepper is a record of
+          what's true, not a gate you have to satisfy in order.</Callout>
+      </div>
+    ),
+    money: (
+      <div>
+        <H2>10. Handle the Money</H2>
+        <Dek>The last piece is making sure what you billed the customer, what the carrier billed
+          you, and what you actually agreed to all line up.</Dek>
+        <Step n={1}>Cost Entry — what you owe</Step>
+        <StepBody>
+          <P>Open <Tag>Accounting → Cost Entry</Tag>. This is the buy side — every charge you owe a
+            carrier or vendor, one line per charge code.</P>
+        </StepBody>
+        <Step n={2}>GP Overview — your margin, live</Step>
+        <StepBody>
+          <P><Tag>Accounting → GP Overview</Tag> puts buy and sell side by side and does the
+            subtraction for you — no spreadsheet required.</P>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, margin: "12px 0 14px", maxWidth: 460 }}>
+            {[["Est. Buy", "$1,370.00"], ["Est. Sell", "$1,630.00"], ["Margin", "$260 · 16%"]].map(([k, v]) => (
+              <div key={k} style={{ border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px", background: T.surface }}>
+                <div style={{ fontFamily: T.mono, fontSize: 9.5, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 4 }}>{k}</div>
+                <div style={{ fontFamily: T.body, fontSize: 13, color: T.text, fontWeight: 600 }}>{v}</div>
+              </div>
+            ))}
+          </div>
+        </StepBody>
+        <Step n={3}>Freight Audit & Payment — trust, but verify</Step>
+        <StepBody>
+          <P>When the carrier's actual invoice arrives, don't just pay what it says. Open{" "}
+            <Tag>Dashboard → Freight Audit</Tag> and enter it — CargoDesk matches every line against
+            what was actually accrued or contracted, and independently computes what any detention
+            or demurrage charge <em>should</em> be from the container's own free-time fields, before
+            ever comparing it to what the carrier billed.</P>
+          <P>From here you <Tag>Approve</Tag> a line — which posts it as the real, actualized cost —
+            or <Tag>Dispute</Tag> one that's come in wrong: <Badge variant="success">matched</Badge> lines
+            need no action, a flagged <Badge variant="danger">variance</Badge> does.</P>
+        </StepBody>
+        <Callout type="tip"><strong>Detention and demurrage get the same treatment.</strong> If a
+          carrier bills you for late container return, the audit already knows your contracted free
+          days and checks their math — not just the total.</Callout>
+      </div>
+    ),
+    help: (
+      <div>
+        <H2>Getting Help</H2>
+        <Dek>You've now walked one shipment all the way from a quote to a reconciled invoice. A few
+          more things are worth knowing before you're on your own.</Dek>
+        <Step n={1}>Ask the AI Assistant</Step>
+        <StepBody>
+          <P>Click <Tag>AI Assistant</Tag> in the sidebar (or the icon in the top bar from any
+            screen). It can look up a specific shipment, list shipments matching criteria, and pull
+            contract or allocation details — opened from inside a shipment, it already knows which
+            one you mean.</P>
+        </StepBody>
+        <Step n={2}>Extract data from a document instead of retyping it</Step>
+        <StepBody>
+          <P>On the <Tag>New Carrier Invoice</Tag> form (Chapter 10), look for{" "}
+            <Tag>Extract from document</Tag> — upload the carrier's own PDF or image and it pre-fills
+            the form for your review, instead of you typing every line by hand.</P>
+        </StepBody>
+        <Step n={3}>Where to go from here</Step>
+        <StepBody>
+          <P>This guide covers the core path end to end, but CargoDesk does more than fits in one
+            walkthrough — Master Data (carriers, ports, trade lanes), the Command Center, and the
+            Integration Board among them. For a feature-by-feature reference rather than a
+            step-by-step story, use the <strong>Reference</strong> section below in this same
+            manual — it's organized by topic instead of by sequence, so it's the right place to look
+            something up once you already know your way around.</P>
+        </StepBody>
+        <Callout type="note">🎉 That's the whole lifecycle — quote, shipment, cargo, schedule,
+          booking, parties, customs, documents, tracking, and money. Every shipment you touch from
+          here follows the same shape.</Callout>
+      </div>
+    ),
+    // ── Reference ────────────────────────────────────────────────────────────
     dashboard: (
       <div>
         <H2>Consumption Dashboard</H2>
@@ -242,10 +613,12 @@ const UserManualPage = () => {
   return (
     <div style={{ display: "flex", gap: 28 }}>
       {/* Sidebar TOC */}
-      <div style={{ width: 180, flexShrink: 0 }}>
+      <div style={{ width: 200, flexShrink: 0 }}>
         <div style={{ fontFamily: T.mono, fontSize: 9.5, color: T.textMuted, fontWeight: 700,
-          textTransform: "uppercase", letterSpacing: ".1em", padding: "0 14px 8px" }}>Contents</div>
-        {SECTIONS.map(s => <SectionBtn key={s.id} id={s.id} label={s.label} />)}
+          textTransform: "uppercase", letterSpacing: ".1em", padding: "0 14px 8px" }}>Walkthrough</div>
+        {WALKTHROUGH.map(s => <SectionBtn key={s.id} id={s.id} label={s.label} />)}
+        <GroupLabel>Reference</GroupLabel>
+        {REFERENCE.map(s => <SectionBtn key={s.id} id={s.id} label={s.label} />)}
       </div>
 
       {/* Content */}

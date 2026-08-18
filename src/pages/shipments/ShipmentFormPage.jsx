@@ -1183,6 +1183,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
     bookingRef:         init.bookingRef         || "",
     blNumber:           init.blNumber           || "",
     blReleaseType:      init.blReleaseType      || "",
+    masterBlNumber:     init.masterBlNumber     || "",
     vessel:             init.vessel             || "",
     vesselImo:          init.vesselImo          || "",
     voyage:             init.voyage             || "",
@@ -1639,6 +1640,9 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
             hint="What actually releases cargo at destination"
             options={[{ value: "", label: "— Not yet decided —" },
               ...BL_RELEASE_TYPES.map(t => ({ value: t, label: t }))]} />
+          <Inp label="Master B/L Number" value={f.masterBlNumber} onChange={set("masterBlNumber")}
+            placeholder="MAEU987654321" mono
+            hint="Carrier's own B/L, when booked through an NVOCC/forwarder — B/L Number above is the House B/L" />
         </div>
       )}
       <LegsTable

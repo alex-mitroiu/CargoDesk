@@ -162,8 +162,18 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   });
 
   app.get("/api/shipments/:id/cost-lines", costLineRead, (req, res) => {
-    const rows = db.prepare("SELECT * FROM shipment_cost_lines WHERE shipment_id=? ORDER BY type, created_at ASC").all(req.params.id);
-    ok(res, rows.map(mapCostLine));
+    const { limit, offset } = req.query;
+    // Pagination is opt-in (TKT-UAJGR3) — every existing consumer (CostLineRow lists, GP Overview,
+    // Freight Audit matching) wants the whole shipment's cost lines at once and omits these params,
+    // so the default response stays today's exact bare array.
+    if (limit === undefined && offset === undefined) {
+      const rows = db.prepare("SELECT * FROM shipment_cost_lines WHERE shipment_id=? ORDER BY type, created_at ASC").all(req.params.id);
+      return ok(res, rows.map(mapCostLine));
+    }
+    const lim = Math.min(parseInt(limit) || 50, 500), off = parseInt(offset) || 0;
+    const total = db.prepare("SELECT COUNT(*) AS n FROM shipment_cost_lines WHERE shipment_id=?").get(req.params.id).n;
+    const rows = db.prepare("SELECT * FROM shipment_cost_lines WHERE shipment_id=? ORDER BY type, created_at ASC LIMIT ? OFFSET ?").all(req.params.id, lim, off);
+    ok(res, { results: rows.map(mapCostLine), total, limit: lim, offset: off });
   });
 
   app.post("/api/shipments/:id/cost-lines", shipmentWrite, (req, res) => {

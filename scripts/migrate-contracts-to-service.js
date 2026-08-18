@@ -39,6 +39,10 @@ function loadContracts() {
     const routingRows = db.prepare("SELECT * FROM contract_routings WHERE contract_id=? ORDER BY sort_order").all(c.id);
     const legRows      = db.prepare("SELECT * FROM contract_legs   WHERE contract_id=? ORDER BY leg_order").all(c.id);
     const rateRows      = db.prepare("SELECT * FROM contract_rates  WHERE contract_id=? ORDER BY sort_order").all(c.id);
+    // container_types/imdg_classes columns are frozen (TKT-5YYLNT) — read from the junction
+    // tables instead, which are the real write path now.
+    const containerTypeRows = db.prepare("SELECT container_type FROM contract_container_types WHERE contract_id=?").all(c.id);
+    const imdgClassRows      = db.prepare("SELECT imdg_class FROM contract_imdg_classes WHERE contract_id=?").all(c.id);
     // routing_id never survives a save on the service side either (see routes/contracts.js's own
     // resolveRoutingId) — the only identity that does is a leg/rate's position (routingIndex) in
     // THIS payload's own routings[] array, so every routing_id gets resolved to an index here.
@@ -50,9 +54,9 @@ function loadContracts() {
       contractNumber: c.contract_number, contractRef: c.contract_ref || "", carrierCode: c.carrier_code,
       namedAccountId: c.named_account_id || "", namedAccount: c.named_account || "",
       movementType: c.movement_type || "FCL",
-      containerTypes: JSON.parse(c.container_types || "[]"),
+      containerTypes: containerTypeRows.map(r => r.container_type),
       dgAllowed: !!c.dg_allowed,
-      imdgClasses: JSON.parse(c.imdg_classes || "[]"),
+      imdgClasses: imdgClassRows.map(r => r.imdg_class),
       validFrom: c.valid_from || "", validTo: c.valid_to || "",
       currency: c.currency || "USD", status: c.status || "Active", notes: c.notes || "",
       createdAt: c.created_at,

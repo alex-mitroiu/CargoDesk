@@ -127,7 +127,12 @@ module.exports = function aiRoutes(app, ctx) {
         if (!row) return { error: `Contract ${args.id} not found` };
         const legs  = db.prepare("SELECT * FROM contract_legs  WHERE contract_id=? ORDER BY leg_order").all(args.id);
         const rates = db.prepare("SELECT * FROM contract_rates WHERE contract_id=? ORDER BY sort_order").all(args.id);
-        return { ...row, legs, rates };
+        // container_types/imdg_classes columns are frozen (TKT-5YYLNT) — real data lives in the
+        // junction tables now, attached fresh here instead of the raw (stale) row columns.
+        const { container_types, imdg_classes, ...rowRest } = row;
+        const containerTypes = db.prepare("SELECT container_type FROM contract_container_types WHERE contract_id=?").all(args.id).map(r => r.container_type);
+        const imdgClasses = db.prepare("SELECT imdg_class FROM contract_imdg_classes WHERE contract_id=?").all(args.id).map(r => r.imdg_class);
+        return { ...rowRest, containerTypes, imdgClasses, legs, rates };
       }
       if (name === "get_allocation") {
         const row = db.prepare("SELECT * FROM allocations WHERE id=?").get(args.id);

@@ -1916,6 +1916,39 @@ export default function AppSettingsPage() {
             💡 TKT-6H68IQ — A future improvement will add user-role-based gating so individual accounts
             can have finance access independently of this global toggle.
           </div>
+
+          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
+            padding: "18px 22px", display: "flex", alignItems: "flex-start",
+            justifyContent: "space-between", gap: 20 }}>
+            <div>
+              <div style={{ fontFamily: T.body, fontSize: 14, fontWeight: 700, color: T.text, marginBottom: 4 }}>
+                Reports — GP Target
+              </div>
+              <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, lineHeight: 1.6 }}>
+                A region/country/carrier below this gross-margin percentage is flagged and sorted to
+                the top of the Reports list. One flat target for now, not per-lane — leave blank to
+                disable flagging and keep the default sell-volume ordering.
+              </div>
+              <div style={{ marginTop: 8, fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+                Setting key: <span style={{ color: T.accent }}>gp_target_pct</span>
+              </div>
+            </div>
+            <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 6 }}>
+              <input
+                type="number" min="0" max="100" step="0.5"
+                value={settings.gp_target_pct ?? ''}
+                placeholder="Off"
+                onChange={e => {
+                  const v = e.target.value;
+                  setSettings(s => ({ ...s, gp_target_pct: v }));
+                  saveSetting('gp_target_pct', v);
+                }}
+                style={{ width: 80, padding: "7px 10px", borderRadius: 6, border: `1px solid ${T.border}`,
+                  background: T.bg, color: T.text, fontFamily: T.mono, fontSize: 13, textAlign: "right" }}
+              />
+              <span style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted }}>%</span>
+            </div>
+          </div>
         </div>
       )}
 

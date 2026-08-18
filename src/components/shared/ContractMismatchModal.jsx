@@ -43,10 +43,11 @@ const ContractMismatchModal = ({ shipment, pol, pod, needsPolHaulage, needsPodHa
         {shipment.contractType === "Central" ? (
           <ContractField
             value={{ id: shipment.contractId, ref: shipment.contractRef, allocationId: shipment.allocationId }}
-            onChange={({ id, ref, carrierCode, allocationId, spaceSkipReason, spaceOverageReason }) => {
+            onChange={({ id, ref, carrierCode, routingId, allocationId, spaceSkipReason, spaceOverageReason }) => {
               onUpdate(shipment.id, {
                 ...shipment,
                 contractId: id, contractRef: ref,
+                contractRoutingId: routingId !== undefined ? routingId : shipment.contractRoutingId,
                 allocationId: allocationId !== undefined ? allocationId : shipment.allocationId,
                 spaceSkipReason: spaceSkipReason !== undefined ? spaceSkipReason : shipment.spaceSkipReason,
                 spaceOverageReason: spaceOverageReason !== undefined ? spaceOverageReason : shipment.spaceOverageReason,

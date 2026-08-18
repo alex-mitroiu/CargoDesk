@@ -362,6 +362,42 @@ export const api = {
   margin: {
     summary: (groupByParent = false) => req("GET", `/margin/summary${groupByParent ? "?groupByParent=true" : ""}`),
   },
+  reports: {
+    // No `value` -> browse list, shape { results, targetPct } — see routes/reports.js for how
+    // targetPct (Application Settings -> Finance -> "Reports - GP Target") drives sort order.
+    // With `value` -> that group's own flat cost-line array (same shape api.costLines.list
+    // returns). from/to are optional YYYY-MM-DD bounds on each shipment's etd (falling back to
+    // its created_at).
+    gpByGeo: (groupBy, value, from, to) => {
+      const params = new URLSearchParams({ groupBy });
+      if (value) params.set("value", value);
+      if (from)  params.set("from", from);
+      if (to)    params.set("to", to);
+      return req("GET", `/reports/gp-by-geo?${params.toString()}`);
+    },
+    // Same query shape as gpByGeo, server-rendered as CSV instead of JSON — the list's own
+    // region/country/carrier summary rows when `value` is omitted, or that single group's raw
+    // charge lines when it's set. Direct-fetch + blob + <a>.click(), same pattern as
+    // api.export.shipmentsCSV.
+    gpByGeoCSV: async (groupBy, value, from, to) => {
+      const token = localStorage.getItem("cargodesk_token");
+      const activeRole = localStorage.getItem("cargodesk_active_role");
+      const headers = { Authorization: `Bearer ${token}` };
+      if (activeRole) headers["X-Active-Role"] = activeRole;
+      const params = new URLSearchParams({ groupBy, format: "csv" });
+      if (value) params.set("value", value);
+      if (from)  params.set("from", from);
+      if (to)    params.set("to", to);
+      const res = await fetch(`/api/reports/gp-by-geo?${params.toString()}`, { headers });
+      if (!res.ok) throw new Error("CSV export failed");
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      const date = new Date().toISOString().slice(0, 10);
+      const a    = document.createElement("a");
+      a.href = url; a.download = `reports-${groupBy}${value ? `-${value}` : ""}-${date}.csv`; a.click();
+      URL.revokeObjectURL(url);
+    },
+  },
   systemMessages: {
     list:   ()     => req("GET",    "/system-messages"),
     all:    ()     => req("GET",    "/system-messages/all"),

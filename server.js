@@ -474,6 +474,12 @@ const migrations = [
   // team needs to know before they can tell a consignee whether cargo can move without the
   // physical document in hand.
   "ALTER TABLE shipments   ADD COLUMN bl_release_type TEXT DEFAULT ''",
+  // Master B/L (carrier <-> forwarder) vs House B/L (forwarder <-> actual shipper) — a real,
+  // independent-of-LCL distinction: any shipment booked through an NVOCC/forwarder gets both,
+  // even a single-shipper FCL container with zero consolidation involved. bl_number stays the
+  // House B/L (every existing reader — BL01, carrier-booking link, etc. — is unaffected);
+  // master_bl_number is additive and blank for shipments booked direct with the carrier.
+  "ALTER TABLE shipments   ADD COLUMN master_bl_number TEXT DEFAULT ''",
   "ALTER TABLE port_locations ADD COLUMN last_synced_at TEXT DEFAULT NULL",
   "ALTER TABLE carriers    ADD COLUMN short_name      TEXT    DEFAULT ''",
   "ALTER TABLE tickets     ADD COLUMN shipment_id     TEXT    DEFAULT NULL",
@@ -1569,6 +1575,25 @@ const migrations = [
   // and quote-to-shipment conversion doesn't create containers at all (it only creates SELL cost
   // lines), so there's nothing to auto-carry it into regardless.
   "ALTER TABLE quote_lines ADD COLUMN set_temperature_c REAL DEFAULT NULL",
+  // TKT-5YYLNT — contracts.container_types/imdg_classes were JSON-encoded string arrays, not
+  // queryable/indexable (the GET /api/contracts?containerType= filter had to LIKE-match against
+  // the raw JSON text). Junction tables instead — one row per (contract, type/class) pair, same
+  // delete-then-reinsert-per-save shape contract_legs/contract_rates already use. The old columns
+  // are left in place (SQLite can't cheaply drop them, and this codebase's standing precedent is
+  // additive-only) but are no longer written to after this ships — every read/write path moves to
+  // these tables instead (see routes/contracts.js's withContractArrays/saveContractArray).
+  `CREATE TABLE IF NOT EXISTS contract_container_types (
+    id             TEXT PRIMARY KEY,
+    contract_id    TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+    container_type TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS contract_imdg_classes (
+    id             TEXT PRIMARY KEY,
+    contract_id    TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
+    imdg_class     TEXT NOT NULL
+  )`,
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_contract_container_types_uniq ON contract_container_types(contract_id, container_type)",
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_contract_imdg_classes_uniq ON contract_imdg_classes(contract_id, imdg_class)",
 ];
 
 // "duplicate column name" is the expected, harmless result of re-running an ADD COLUMN
@@ -1590,6 +1615,24 @@ for (const sql of migrations) {
 if (migrationFailures.length) {
   console.error(`[migration] ${migrationFailures.length} startup migration(s) failed — schema may be incomplete, see above.`);
 }
+
+// One-time backfill (TKT-5YYLNT): populate the new junction tables from every contract's existing
+// container_types/imdg_classes JSON column, now that the migration loop above has actually created
+// them. Idempotent via the unique index on each table — a second run (e.g. after a restart) hits
+// the same "UNIQUE constraint failed" INSERT OR IGNORE already treats as the expected no-op, same
+// as every other backfill in this codebase.
+(function backfillContractArrayFields() {
+  const rows = db.prepare("SELECT id, container_types, imdg_classes FROM contracts").all();
+  const insType = db.prepare("INSERT OR IGNORE INTO contract_container_types (id, contract_id, container_type) VALUES (?,?,?)");
+  const insClass = db.prepare("INSERT OR IGNORE INTO contract_imdg_classes (id, contract_id, imdg_class) VALUES (?,?,?)");
+  for (const r of rows) {
+    let types = [], classes = [];
+    try { types = JSON.parse(r.container_types || "[]"); } catch { /* malformed legacy value, skip */ }
+    try { classes = JSON.parse(r.imdg_classes || "[]"); } catch { /* malformed legacy value, skip */ }
+    for (const t of types) if (t) insType.run(`CCT-${uid()}`, r.id, t);
+    for (const c of classes) if (c) insClass.run(`CIC-${uid()}`, r.id, c);
+  }
+})();
 
 // One-time table rebuild: shipment_schedules.shipment_id NOT NULL -> nullable, plus a new
 // self-referential template_id column. SQLite can't drop a NOT NULL constraint via ALTER TABLE
@@ -1837,6 +1880,14 @@ const SETTING_DEFAULTS = {
   // One flat global tolerance, not per-carrier/per-charge-type rules — the configurable-rule-
   // library depth real FAP vendors build is deliberately out of scope for this pass.
   fap_variance_tolerance_pct: '2',
+  // Reports (routes/reports.js) — a region/country/carrier whose GP% falls below this is
+  // flagged and sorted to the top of the list, so "where are we losing money" is a glance, not
+  // a scan. '' (not '0') means unset/no target — a real 0% target is a legitimate (if unusual)
+  // choice and must stay distinguishable from "nobody's configured this yet". One flat global
+  // number, not per-lane/per-region targets — same simplification fap_variance_tolerance_pct
+  // above already makes for the identical reason; a real per-region target scheme is a
+  // meaningfully bigger feature (needs its own table + management UI), not a v1 default.
+  gp_target_pct: '',
 };
 {
   const ins = db.prepare("INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)");
@@ -2828,6 +2879,7 @@ const TRACKED_FIELDS = {
   commodity_code: 'Commodity',
   booking_ref:    'Booking Reference',
   bl_number:      'B/L Number',
+  master_bl_number: 'Master B/L Number',
   bl_release_type: 'B/L Release Type',
   contract_type:  'Contract Type',
   contract_id:    'Contract ID',
@@ -3540,6 +3592,7 @@ require('./routes/shipment-ops')(app, ctx);
 require('./routes/carrier-invoices')(app, ctx);
 require('./routes/quotes')(app, ctx);
 require('./routes/finance')(app, ctx);
+require('./routes/reports')(app, ctx);
 require('./routes/system')(app, ctx);
 require('./routes/export')(app, ctx);
 require('./routes/ai')(app, ctx);
