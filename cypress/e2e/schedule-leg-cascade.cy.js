@@ -178,6 +178,9 @@ describe("Schedule Leg-Removal Cascade Suite", () => {
     // from when the schedule was still valid (ensureBookingCreated auto-created one above).
     cy.window().then(win => { win.location.hash = `shipments/${shipmentId}/booking/details`; });
     cy.contains("Carrier Booking Unavailable", { timeout: 8000 }).should("be.visible");
-    cy.contains("doesn't have a schedule assigned").should("be.visible");
+    // This shipment was created SPOT with no contractId/contractRef ever set, so once the
+    // schedule is also gone, CarrierBookingGateModal reports BOTH as missing, not schedule
+    // alone — its message combines them ("...a contract or a schedule assigned yet.").
+    cy.contains("doesn't have a contract or a schedule assigned").should("be.visible");
   });
 });
