@@ -4,7 +4,7 @@
 Full-stack freight management app. React 18 + Vite frontend, Express + node:sqlite backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.71.0 "Docket"**
+- Version: **v0.72.0 "Clearance"**
 - Run: `npm run dev` (runs the monolith on :3001 + Vite on :5173 + the Document Distribution Service on :3002 + the PDF Render Service on :3003 + the Contract Management Service on :3004, concurrently)
 - Seed: `npm run seed` (runs `scripts/import-mdm-data.js`)
 
@@ -266,7 +266,7 @@ are fully validated.
 | edi_messages | Per-shipment carrier EDI log (direction out/in, raw/parsed payload, `is_mock`) |
 | container_events | FCL container lifecycle log (event_type, location, occurred_at, recorded_by) — Epic TKT-A5LUPD |
 | shipment_parties | Additional party roles beyond the 4 fixed shipper/consignee/notify/principal columns (role, customerId, customerName, UNIQUE(shipmentId, role)) — Epic TKT-5XFCAP |
-| customs_filings | Simulated AES/EEI (export) + ISF/AMS (import) regulatory filings, UNIQUE(shipmentId, filingType) so both coexist independently — Epic TKT-XW6TQK |
+| customs_filings | Simulated AES/EEI (export) + ISF/AMS (import) regulatory filings, UNIQUE(shipmentId, filingType) so both coexist independently — Epic TKT-XW6TQK. `carrier_code`/`vessel_name`/`voyage_number`/`export_date`/`cargo_snapshot` (v0.72.0) — a snapshot of routing + priced cargo captured at Submit time, compared against the shipment's live values to flag a Filed/Accepted filing as stale if either has since changed |
 
 ## Key patterns
 - **DatePicker with time**: pass `withTime` to get a native time input alongside the calendar in the same popover — `value` becomes `"YYYY-MM-DDTHH:mm"` instead of a bare date (defaults the time to `09:00` the first time a day is picked; reopening lets the time be adjusted independently). The calendar/nav logic internally still operates on just the date part, so every other `DatePicker` call site in the app is unaffected by this prop existing. Used by `LoadingServicePage.jsx`'s per-container planned date field, for both Loading and Unloading — reuse the same prop for any future field that needs date+time rather than building a separate picker.
@@ -307,6 +307,42 @@ are fully validated.
 - **Document system**: `DOC_TYPES` in App.jsx (~line 56: BL01/MB01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — `MB01` (Master Bill of Lading, v0.71.0) is the vessel-operator-to-NVOCC document, a genuinely separate build from `BL01` (NVOCC-to-shipper House B/L), not a mode flag on it — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). (The earlier client-side-jsPDF `DocumentsMenu` component this note used to distinguish from was removed as dead code — it had zero references anywhere in the app.)
 - **Lifecycle-stage stepper precedent**: no dedicated stepper component exists yet; `MilestonePanel` (ShipmentDetailPage.jsx 1593-~1870) is the closest analog — linear progress bar (1734-1738, `width: ${progress}%`) plus per-step state coloring via `milestoneState()`/`stateColor()` (1666-1676: completed/overdue/current/upcoming) driven by `shipment_milestones` rows (`id, label, estimatedDate, note, completedAt, completedBy`, fixed step keys `booking_confirmed, si_submitted, cargo_gated_in, vessel_departed, bl_issued, vessel_arrived, customs_cleared, cargo_released, delivered`). Any new per-container lifecycle/stage UI should reuse this state-coloring pattern rather than inventing a new visual language
 - **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages, 📡 EDI). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
+
+## Recent changes (v0.72.0 "Clearance")
+- **Two-phase direct request.** Phase one: a Help Section / User Manual chapter teaching sea-freight
+  fundamentals — Ro-Ro vs Lo-Lo, Master B/L vs House B/L issuance and their interlink — grounded in
+  real external references (docshipper.com, Höegh Autoliners) rather than invented. New **"Ocean
+  Freight Basics"** entry, first in `UserManualPage.jsx`'s reference list, ties back to CargoDesk's
+  own `BL01`/`MB01` documents (v0.71.0).
+- **Phase two — full integration of Epic `TKT-6A7J45`** ("The Missing Manifest" gap analysis: Export
+  Filing ↔ Pickup Service), 10 stories, all shipped this pass.
+- **Filing staleness detection.** `customs_filings` gains `carrier_code`/`vessel_name`/
+  `voyage_number`/`export_date`/`cargo_snapshot` — captured at Submit time via a new
+  `cargoSnapshotFor(shipmentId)` helper (`routes/customs-filing.js`, reads `container_packages`).
+  New `stalenessOf(filing, shipment)`/`mapWithStaleness()` compares a Filed/Accepted filing's
+  stored snapshot against the shipment's current values and flags drift — a "May be stale" badge
+  on the filing card names exactly which fields changed.
+- **USPPI (Shipper) / Ultimate Consignee gate** — both are legally required EEI fields; the filing
+  create gate (`CustomsFilingGateModal`, `ShipmentCustomsFilingPage.jsx`) and the backend create
+  route both now also require `shipment.shipperName`/`consigneeName`.
+- **Pickup cross-reference** on the AES/EEI (export-side only) filing card — Pickup service status
+  + a "View Pickup Service →" link, plus a non-blocking warning on Submit if Pickup isn't yet
+  ordered/confirmed.
+- **Pre-departure filing deadline** — a 24h-before-ETD indicator (`deadlineInfo()`), amber under
+  48h, red once passed; a reasonable placeholder, not a precise per-mode legal citation.
+- **Export Filing ITN on carrier documents** — the booking-request payload (`routes/edi.js`) and
+  both the House (`BL01`) and Master (`MB01`) Bills of Lading now carry the AES/EEI filing's
+  confirmation number once Accepted, as an additive detail row.
+- **Two roadmap errors caught and corrected during implementation**: the published roadmap said to
+  wire AES/EEI Accepted to the `customs_cleared` milestone — direct inspection of the
+  `shipment_milestones` sequence (`customs_cleared` sits AFTER `vessel_arrived`, the
+  destination/import-clearance step) showed this was backwards; wired ISF/AMS instead. The
+  roadmap's story 9 said to move Pickup into Booking & Routing — `App.jsx`'s own code comment
+  showed this would reverse a deliberate v0.45.0 decision; implemented as a cross-link only.
+- Verified live via CDP across all 10 stories in one continuous session; full 30-file backend
+  suite + frontend Vitest suite green, clean build. Six existing test fixtures (2 Cypress specs,
+  2 Node test files) proactively updated with shipper/consignee data ahead of the new gate, to
+  avoid regressing the CI pipeline stabilized in this same release window.
 
 ## Recent changes (v0.71.0 "Docket")
 - **NVOCC (Non-Vessel Operating Common Carrier) readiness audit**, direct request off a detailed

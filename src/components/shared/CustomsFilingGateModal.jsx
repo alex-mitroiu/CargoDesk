@@ -20,10 +20,14 @@ import { IconWarning, IconCheck } from "../primitives/Icon";
 const CHECK_ITEMS = [
   { key: "broker", label: "Customs Broker assigned", detail: "Export or Import — either satisfies this" },
   { key: "cargo",  label: "At least one priced cargo line", detail: "Set a Unit Value on any package under Cargo" },
+  // USPPI (Shipper) / Ultimate Consignee (TKT-6A7J45 story 7) — both legally required EEI
+  // fields the shipment already carries, but nothing previously checked they were actually
+  // filled in before letting a filing be created.
+  { key: "parties", label: "Shipper (USPPI) and Consignee set", detail: "Set both on Parties & Offices" },
 ];
 
-const CustomsFilingGateModal = ({ missingBroker, missingCargo, onGoToParties, onGoToCargo }) => {
-  const missing = { broker: missingBroker, cargo: missingCargo };
+const CustomsFilingGateModal = ({ missingBroker, missingCargo, missingParties, onGoToParties, onGoToCargo }) => {
+  const missing = { broker: missingBroker, cargo: missingCargo, parties: missingParties };
 
   return (
     <Modal title="Customs Filing Unavailable" onClose={() => {}} width={440} hideClose>
@@ -32,7 +36,7 @@ const CustomsFilingGateModal = ({ missingBroker, missingCargo, onGoToParties, on
         marginBottom: 14 }}>
         <span style={{ color: T.warning, flexShrink: 0, marginTop: 1 }}><IconWarning size={15} /></span>
         <div style={{ fontFamily: T.body, fontSize: 12.5, color: T.text, lineHeight: 1.5 }}>
-          Both of the following are required before a customs filing can be created for this
+          All of the following are required before a customs filing can be created for this
           shipment. This page stays locked until whichever is still missing below is set.
         </div>
       </div>
@@ -68,7 +72,8 @@ const CustomsFilingGateModal = ({ missingBroker, missingCargo, onGoToParties, on
       </div>
 
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-        {missingBroker && <Btn variant={missingCargo ? "secondary" : "primary"} onClick={onGoToParties}>Go to Parties</Btn>}
+        {(missingBroker || missingParties) &&
+          <Btn variant={missingCargo ? "secondary" : "primary"} onClick={onGoToParties}>Go to Parties</Btn>}
         {missingCargo  && <Btn onClick={onGoToCargo}>Go to Cargo</Btn>}
       </div>
     </Modal>

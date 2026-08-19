@@ -257,6 +257,16 @@ module.exports = function ediRoutes(app, ctx) {
       "SELECT customer_name FROM shipment_parties WHERE shipment_id=? AND role='NVOCC'"
     ).get(shipment.id);
 
+    // ITN (Internal Transaction Number, TKT-6A7J45 story 1) — an Accepted AES/EEI filing's
+    // confirmation_number IS the ITN. A carrier is legally required to have a valid one on
+    // the export manifest before loading cargo, so it belongs in the booking-request payload
+    // exactly like every other conveyance/compliance field above — previously generated and
+    // then never referenced anywhere else in the app. null when no filing exists yet or it
+    // hasn't been Accepted, same "nothing to show" convention as rateSnapshotId above.
+    const aesFiling = db.prepare(
+      "SELECT confirmation_number FROM customs_filings WHERE shipment_id=? AND filing_type='AES_EEI' AND status='Accepted'"
+    ).get(shipment.id);
+
     const requestPayload = {
       pol: shipment.pol, pod: shipment.pod,
       carrierCode: shipment.carrier_code,
@@ -277,6 +287,7 @@ module.exports = function ediRoutes(app, ctx) {
       equipment: Object.values(equipmentByType),
       dgCargo: Object.values(dgByType),
       reeferCargo: Object.values(reeferByKey),
+      exportFilingItn: aesFiling?.confirmation_number || null,
       ...(req.body || {}),
     };
 

@@ -1607,6 +1607,18 @@ const migrations = [
   // gates whether fmc_number means anything, same as classified_location gates latitude/longitude.
   "ALTER TABLE customers ADD COLUMN is_nvocc INTEGER NOT NULL DEFAULT 0",
   "ALTER TABLE customers ADD COLUMN fmc_number TEXT DEFAULT ''",
+  // Export Filing <-> Pickup integration (Epic TKT-6A7J45). A Submitted AES/EEI filing
+  // previously carried no snapshot of what was actually declared beyond its own reference —
+  // these columns are written once, at Submit time, from the shipment's real conveyance/cargo
+  // data (routes/customs-filing.js), so (a) the transmitted payload actually states carrier/
+  // vessel/voyage/export date, not just pol/pod, and (b) a later mismatch against the
+  // shipment's now-current data can be detected and flagged (see the GET route's own
+  // isStale computation) rather than a Filed/Accepted filing silently going stale.
+  "ALTER TABLE customs_filings ADD COLUMN carrier_code   TEXT DEFAULT ''",
+  "ALTER TABLE customs_filings ADD COLUMN vessel_name    TEXT DEFAULT ''",
+  "ALTER TABLE customs_filings ADD COLUMN voyage_number  TEXT DEFAULT ''",
+  "ALTER TABLE customs_filings ADD COLUMN export_date    TEXT DEFAULT ''",
+  "ALTER TABLE customs_filings ADD COLUMN cargo_snapshot TEXT DEFAULT '[]'",
 ];
 
 // "duplicate column name" is the expected, harmless result of re-running an ADD COLUMN

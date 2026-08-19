@@ -46,12 +46,17 @@ const ShipmentCustomsFilingPage = ({ shipment, onBack, navigate, initialTab = "d
   const hasImportBroker = parties.some(p => p.role === "Customs Broker (Import)");
   const hasBroker = hasExportBroker || hasImportBroker;
   const hasCargo = packages.some(p => p.unitValueUsd != null);
+  // USPPI (Shipper) / Ultimate Consignee (TKT-6A7J45 story 7) — both legally required EEI
+  // fields; server-enforced too (routes/customs-filing.js's own create-gate), this is just
+  // the same precondition surfaced before the user gets as far as clicking Create.
+  const hasParties = !!(shipment.shipperName && shipment.consigneeName);
 
-  if (!hasBroker || !hasCargo) {
+  if (!hasBroker || !hasCargo || !hasParties) {
     return (
       <CustomsFilingGateModal
         missingBroker={!hasBroker}
         missingCargo={!hasCargo}
+        missingParties={!hasParties}
         onGoToParties={() => navigate("shipment-parties", shipment.id)}
         onGoToCargo={() => navigate("shipment-containers", shipment.id)}
       />
@@ -76,7 +81,7 @@ const ShipmentCustomsFilingPage = ({ shipment, onBack, navigate, initialTab = "d
 
       {activeTab === "details" && (
         <ShipmentCustomsFilingDetailsPage shipment={shipment} parties={parties} packages={packages}
-          hasExportBroker={hasExportBroker} hasImportBroker={hasImportBroker} />
+          hasExportBroker={hasExportBroker} hasImportBroker={hasImportBroker} navigate={navigate} />
       )}
       {activeTab === "review" && <ShipmentCustomsFilingReviewPage shipment={shipment} parties={parties} />}
     </div>

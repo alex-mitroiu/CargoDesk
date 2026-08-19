@@ -49,7 +49,8 @@ describe("Customs Filing Lifecycle Suite", () => {
       method: "POST", url: "/api/shipments",
       headers: { Authorization: `Bearer ${tok}` },
       body: { pol: "CNSHA", pod: "USNYC", carrierCode: "CMDU",
-              status: "Active", contractType: "SPOT", etd: "2026-10-01" },
+              status: "Active", contractType: "SPOT", etd: "2026-10-01",
+              shipperName: "Cypress Filing Test Shipper Co", consigneeName: "Cypress Filing Test Consignee Co" },
       failOnStatusCode: false,
     }).then(res => {
       expect(res.status).to.eq(201);

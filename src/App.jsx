@@ -236,7 +236,7 @@ const _ctrTotals = ctrs => {
   return { w, v };
 };
 
-const buildBillOfLadingHtml = ({ shipment: sh, invNumber, invDate, notes, containers, shipper, consignee, parties }) => {
+const buildBillOfLadingHtml = ({ shipment: sh, invNumber, invDate, notes, containers, shipper, consignee, parties, exportFilingItn }) => {
   const { w: totalWeight, v: totalVolume } = _ctrTotals(containers);
   // Additive party roles (Epic TKT-5XFCAP), same falls-back-to-today's-output pattern CD01/IC01
   // already use: an unassigned role renders nothing rather than a blank placeholder row.
@@ -287,6 +287,11 @@ const buildBillOfLadingHtml = ({ shipment: sh, invNumber, invDate, notes, contai
         ["B/L Number", _esc(sh.blNumber || invNumber)], ["Release Type", _esc(sh.blReleaseType || "—")],
         ...(sh.masterBlNumber ? [["Master B/L Number", _esc(sh.masterBlNumber)]] : []),
         ...(nvocc ? [["NVOCC", _esc(nvocc.customerName)]] : []),
+        // ITN (Internal Transaction Number, TKT-6A7J45 story 1) — only present once the
+        // shipment's own AES/EEI export filing has actually been Accepted; additive, so a
+        // shipment with no filing (or one still Draft/Filed/Rejected) renders byte-identical
+        // to today. A carrier is legally required to have this before loading export cargo.
+        ...(exportFilingItn ? [["Export Filing ITN", _esc(exportFilingItn)]] : []),
         ["No. of Originals", originalsLine], ["Booking Ref", _esc(sh.bookingRef || "—")],
         ...(preCarrier ? [["Pre-carriage By", _esc(preCarrier.customerName)]] : []),
         ["Place of Receipt", _esc(sh.placeOfReceipt || "—")],
@@ -347,7 +352,7 @@ const buildBillOfLadingHtml = ({ shipment: sh, invNumber, invDate, notes, contai
 // party; Notify Party is left "—" since the NVOCC's own destination agent isn't modeled yet
 // (see TKT-IB5IEX, logged backlog) and showing the House-side notify here would misattribute a
 // party that has no role on this document.
-const buildMasterBillOfLadingHtml = ({ shipment: sh, invNumber, invDate, notes, containers, parties }) => {
+const buildMasterBillOfLadingHtml = ({ shipment: sh, invNumber, invDate, notes, containers, parties, exportFilingItn }) => {
   const { w: totalWeight, v: totalVolume } = _ctrTotals(containers);
   const nvocc = partyByRole(parties, "NVOCC");
   const rows = containers.length === 0
@@ -379,6 +384,8 @@ const buildMasterBillOfLadingHtml = ({ shipment: sh, invNumber, invDate, notes, 
         ["Master B/L Number", _esc(sh.masterBlNumber || invNumber)],
         ["House B/L Number", _esc(sh.blNumber || "—")],
         ["Booking Ref", _esc(sh.bookingRef || "—")],
+        // Same additive ITN row as the House B/L — see that builder's own comment.
+        ...(exportFilingItn ? [["Export Filing ITN", _esc(exportFilingItn)]] : []),
         ["Vessel", _esc(sh.vessel || "—")], ["Voyage", _esc(sh.voyage || "—")],
         ["Port of Loading", `${_esc(sh.pol)}${sh.polName ? " · " + _esc(sh.polName) : ""}`],
         ["Port of Discharge", `${_esc(sh.pod)}${sh.podName ? " · " + _esc(sh.podName) : ""}`],
@@ -951,14 +958,19 @@ const GenerateDocumentModal = ({ shipment, onClose, onSaved, defaultCode }) => {
     try {
       const needsCostLines = docCode === "FR01" || docCode === "FR02";
       const needsDgSettings = docCode === "DG01";
-      const [ctrsRaw, shipper, consignee, costLines, orgSettings, parties] = await Promise.all([
+      // ITN (TKT-6A7J45 story 1) — only House/Master B/L carry it, no reason to fetch
+      // customs filings for every other document type.
+      const needsExportFiling = docCode === "BL01" || docCode === "MB01";
+      const [ctrsRaw, shipper, consignee, costLines, orgSettings, parties, filings] = await Promise.all([
         api.containers.list(),
         shipment.shipperId   ? api.customers.get(shipment.shipperId).catch(() => null)   : Promise.resolve(null),
         shipment.consigneeId ? api.customers.get(shipment.consigneeId).catch(() => null) : Promise.resolve(null),
         needsCostLines ? api.costLines.list(shipment.id).then(ls => ls.filter(l => l.type === "SELL")) : Promise.resolve([]),
         needsDgSettings ? api.settings.get().catch(() => null) : Promise.resolve(null),
         api.shipmentParties.list(shipment.id).catch(() => []),
+        needsExportFiling ? api.customsFilings.list(shipment.id).catch(() => []) : Promise.resolve([]),
       ]);
+      const exportFilingItn = filings.find(f => f.filingType === "AES_EEI" && f.status === "Accepted")?.confirmationNumber || null;
       const allCtrs         = Array.isArray(ctrsRaw) ? ctrsRaw : (ctrsRaw?.results ?? []);
       const containersBase  = allCtrs.filter(c => c.shipmentId === shipment.id);
       // Structured cargo line items (Epic TKT-P3ASH1, Story TKT-LUNODU) — only CI01/CI02/PL01
@@ -984,7 +996,7 @@ const GenerateDocumentModal = ({ shipment, onClose, onSaved, defaultCode }) => {
         return;
       }
       const html = dispatchDocBuilder(docCode, {
-        shipment, invNumber: docNum, invDate: docDate, notes, containers, shipper, consignee, costLines, dgCompliance, parties,
+        shipment, invNumber: docNum, invDate: docDate, notes, containers, shipper, consignee, costLines, dgCompliance, parties, exportFilingItn,
       });
 
       // Save to shipment documents — server renders + signs the PDF, so the signing key

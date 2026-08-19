@@ -67,6 +67,9 @@ async function scratchShipment(token) {
   const res = await request("POST", "/api/shipments", {
     pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU",
     status: "Active", contractType: "SPOT", etd: "2026-09-01",
+    // Shipper (USPPI) / Consignee (Ultimate Consignee) — TKT-6A7J45 story 7 added these to the
+    // filing-creation gate, so every test in this file needs both set from the start.
+    shipperName: "Test Fixture Shipper Co", consigneeName: "Test Fixture Consignee Co",
   }, token);
   return res.body.id;
 }

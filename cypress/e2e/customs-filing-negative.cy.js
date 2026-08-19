@@ -90,6 +90,9 @@ describe("Customs Filing — Negative / Gated Paths Suite", () => {
         .then(res => { expect(res.status).to.eq(201); customerId = res.body.id; createdCustomerIds.push(customerId); })
         .then(() => api("POST", "/shipments", {
           pol: "DEHAM", pod: "SGSIN", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+          // Shipper/Consignee (USPPI/Ultimate Consignee) must both already be set here — this
+          // test's own point is that ONLY cargo is still missing, not parties too.
+          shipperName: "Cypress Test Shipper Co", consigneeName: "Cypress Test Consignee Co",
         }))
         .then(res => {
           expect(res.status).to.eq(201);
@@ -119,6 +122,7 @@ describe("Customs Filing — Negative / Gated Paths Suite", () => {
         .then(res => { customerId = res.body.id; createdCustomerIds.push(customerId); })
         .then(() => api("POST", "/shipments", {
           pol: "CNSHA", pod: "USLAX", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+          shipperName: "Cypress Export Shipper Co", consigneeName: "Cypress Export Consignee Co",
         }))
         .then(res => {
           shipmentId = res.body.id;
@@ -158,6 +162,7 @@ describe("Customs Filing — Negative / Gated Paths Suite", () => {
         .then(res => { customerId = res.body.id; createdCustomerIds.push(customerId); })
         .then(() => api("POST", "/shipments", {
           pol: "SGSIN", pod: "USLAX", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+          shipperName: "Cypress Import Shipper Co", consigneeName: "Cypress Import Consignee Co",
         }))
         .then(res => {
           shipmentId = res.body.id;

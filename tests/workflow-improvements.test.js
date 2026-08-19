@@ -119,6 +119,9 @@ const SAMPLE_HTML = `<html><body><h1>Test fixture</h1></body></html>`;
     {
       const ship = await request("POST", "/api/shipments", {
         pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", contractType: "SPOT", status: "Active",
+        // Shipper/Consignee set from the start (TKT-6A7J45 story 7 added a USPPI/Consignee
+        // check too) — this test is specifically about the broker/cargo gate, not this one.
+        shipperName: "WF Bug2 Shipper Co", consigneeName: "WF Bug2 Consignee Co",
       }, adminToken);
       const shipmentId = ship.body.id;
       cleanupShipments.push(shipmentId);
