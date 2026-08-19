@@ -31,6 +31,7 @@ const UserManualPage = () => {
     { id: "help",      label: "Getting Help" },
   ];
   const REFERENCE = [
+    { id: "freight-basics",    label: "Ocean Freight Basics" },
     { id: "dashboard",         label: "Dashboard" },
     { id: "command-center",    label: "Command Center" },
     { id: "integration-board", label: "Integration Board" },
@@ -509,6 +510,78 @@ const UserManualPage = () => {
         <P>Once running, point the <Tag>Custom / Local</Tag> endpoint at whatever base URL Hermes Agent's gateway exposes on your machine, save, and use <strong>Test Connection</strong> in App Settings to confirm CargoDesk can reach it before enabling the feature for other users.</P>
         <H3>Context awareness</H3>
         <P>When the chat is opened from a shipment's detail page, its ID is passed as context automatically, so you can ask things like "what's the status of this shipment" without repeating the ID.</P>
+      </div>
+    ),
+    "freight-basics": (
+      <div>
+        <H2>Ocean Freight Basics</H2>
+        <P>New to shipping, or just want the vocabulary straight? This page covers the handful of
+          concepts that show up constantly in ocean freight — how cargo physically moves, and what
+          the two kinds of Bill of Lading actually are and who issues each. It's general shipping
+          knowledge, not a CargoDesk feature guide, but it explains exactly what CargoDesk is doing
+          for you at each step.</P>
+
+        <H3>How cargo moves: containers vs. Ro-Ro</H3>
+        <P>Almost all ocean cargo travels one of two ways. <strong>Lift-on/Lift-off (Lo-Lo)</strong>{" "}
+          is what CargoDesk is built around: cargo is packed into a standard steel container, and a
+          crane lifts that container on and off the vessel. This is what "FCL" (Full Container Load)
+          and the 20'/40' container sizes throughout CargoDesk refer to.</P>
+        <P><strong>Roll-on/Roll-off (Ro-Ro)</strong> is a different method entirely, used for cars,
+          trucks, trailers, and other wheeled or self-propelled cargo — instead of being craned, it's
+          driven or towed directly on and off the vessel via ramps at the bow, stern, or side. A Ro-Ro
+          vessel has no container cranes at all; capacity is measured in vehicle lanes, not TEU.
+          <strong> CargoDesk does not currently model Ro-Ro bookings</strong> — every shipment here
+          assumes containerized (Lo-Lo) cargo — but it's worth knowing the term, since a carrier or
+          port you work with may run both kinds of vessel.</P>
+
+        <H3>Master Bill of Lading vs. House Bill of Lading</H3>
+        <P>A Bill of Lading (B/L) is three things at once: a receipt for the cargo, evidence of the
+          contract of carriage, and (unless marked non-negotiable) a document of title — whoever holds
+          the original can claim the goods. Where things get confusing is that a single shipment often
+          has <strong>two</strong> of them, issued by two different parties.</P>
+        <P><strong>Master Bill of Lading (MBL)</strong> — issued by the actual vessel-operating
+          carrier (the shipping line, e.g. Maersk or CMA CGM) to whoever booked the container space
+          with them. On a shipment routed through a freight forwarder or NVOCC, that "whoever" is the
+          forwarder/NVOCC itself, not your customer — the carrier only ever contracts with the party
+          it directly booked with.</P>
+        <P><strong>House Bill of Lading (HBL)</strong> — issued by the freight forwarder or NVOCC to
+          its own actual customer (the real shipper and consignee). This is the document your customer
+          sees and uses to claim their cargo at destination; they typically never see the Master B/L
+          at all.</P>
+        <H3>How they interlink</H3>
+        <P>The forwarder/NVOCC sits in the middle of both contracts at once — it's the{" "}
+          <strong>consignee</strong> named on the Master B/L (the carrier's customer), and the{" "}
+          <strong>carrier</strong> named on the House B/L (its own customer's counterparty). Both
+          documents describe the same physical container moving on the same vessel, cross-referenced
+          by each other's B/L number, but they're legally two separate contracts of carriage covering
+          two different legs of the same relationship — carrier-to-forwarder, and forwarder-to-shipper.</P>
+        <P>CargoDesk builds this directly: every shipment gets a <Tag>BL01</Tag> House Bill of Lading
+          (from CargoDesk's operator to the shipment's own Shipper/Consignee). If you assign an{" "}
+          <strong>NVOCC</strong> party on the Parties & Offices page, a second, independent{" "}
+          <Tag>MB01</Tag> Master Bill of Lading also becomes available — shipper is the assigned NVOCC,
+          consignee reads <em>"TO ORDER OF {"{NVOCC}"}"</em>, and each document's generated HTML
+          cross-references the other's B/L number, exactly matching how the two are used in practice.</P>
+
+        <H3>Who's who on a shipment</H3>
+        <P><Tag>Shipper</Tag> the party sending the goods · <Tag>Consignee</Tag> the party receiving
+          them · <Tag>Notify Party</Tag> who the carrier alerts on arrival, often the same as the
+          consignee · <Tag>Principal</Tag> CargoDesk's own commercial customer of record for the
+          shipment · <Tag>NVOCC</Tag> a Non-Vessel Operating Common Carrier — acts as a carrier to its
+          own customer while being a shipper to the real vessel operator, exactly the dual role
+          described above. Assign any of these from a shipment's Parties & Offices page.</P>
+
+        <div style={{ marginTop: 16, padding: "12px 16px", background: T.bg,
+          border: `1px solid ${T.border}`, borderRadius: 8 }}>
+          <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, lineHeight: 1.7 }}>
+            📋 <strong style={{ color: T.text }}>Further reading:</strong> for a deeper dive with
+            worked examples, see{" "}
+            <a href="https://docshipper.com/shipping/bill-lading-complete-guide/" target="_blank" rel="noreferrer"
+              style={{ color: T.accent }}>DocShipper's Bill of Lading guide</a>{" "}
+            and{" "}
+            <a href="https://www.hoeghautoliners.com/news/what-is-roro-shipping" target="_blank" rel="noreferrer"
+              style={{ color: T.accent }}>Höegh Autoliners on Ro-Ro shipping</a>.
+          </div>
+        </div>
       </div>
     ),
     mdm: (
