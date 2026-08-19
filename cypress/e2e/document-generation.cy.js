@@ -31,21 +31,35 @@ describe("Document Generation & Signing Suite", () => {
       .then(res => { tok = res.body.token; });
   });
 
+  let scratchCustomerId;
+
   before(() => {
-    cy.request({
-      method: "POST", url: "/api/shipments",
-      headers: { Authorization: `Bearer ${tok}` },
-      body: { pol: "CNSHA", pod: "USNYC", carrierCode: "CMDU",
-              status: "Active", contractType: "SPOT", etd: "2026-10-01" },
-      failOnStatusCode: false,
-    }).then(res => {
-      expect(res.status).to.eq(201);
-      shipmentId = res.body.id;
-    });
+    // CI01 (Commercial Invoice) requires Shipper, Consignee, and at least one container
+    // (getMissingDocRequirements, App.jsx) — provision all three so generation actually
+    // succeeds rather than being blocked by a "missing:" toast.
+    cy.then(() => api("POST", "/customers", { companyName: "Cypress Doc Gen Test Customer Co" }))
+      .then(res => {
+        expect(res.status).to.eq(201);
+        scratchCustomerId = res.body.id;
+        return cy.request({
+          method: "POST", url: "/api/shipments",
+          headers: { Authorization: `Bearer ${tok}` },
+          body: { pol: "CNSHA", pod: "USNYC", carrierCode: "CMDU",
+                  status: "Active", contractType: "SPOT", etd: "2026-10-01",
+                  shipperId: scratchCustomerId, shipperName: "Cypress Doc Gen Test Customer Co",
+                  consigneeId: scratchCustomerId, consigneeName: "Cypress Doc Gen Test Customer Co" },
+          failOnStatusCode: false,
+        });
+      }).then(res => {
+        expect(res.status).to.eq(201);
+        shipmentId = res.body.id;
+        return api("POST", "/containers", { shipmentId, size: "40", type: "GP" });
+      }).then(res => expect(res.status).to.eq(201));
   });
 
   after(() => {
     if (shipmentId) api("DELETE", `/shipments/${shipmentId}`);
+    if (scratchCustomerId) api("DELETE", `/customers/${scratchCustomerId}`);
   });
 
   beforeEach(() => {

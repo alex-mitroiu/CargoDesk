@@ -29,17 +29,26 @@ describe("Shipment Creation Form Suite", () => {
       ...(body !== undefined && { body }),
     });
 
+  let scratchCustomerId;
+
   before(() => {
+    // A fresh environment (npm run seed never populates customers, only commodities) may
+    // have no customers at all — create a scratch one rather than assuming pre-existing data.
     cy.request("POST", "/api/auth/login", { email: ADMIN_EMAIL, password: ADMIN_PASSWORD })
       .then(res => { tok = res.body.token; })
-      .then(() => api("GET", "/customers?limit=1"))
-      .then(res => { customer = res.body.results[0]; })
+      .then(() => api("POST", "/customers", { companyName: "Cypress Form Test Customer Co" }))
+      .then(res => {
+        expect(res.status).to.eq(201);
+        scratchCustomerId = res.body.id;
+        customer = { id: res.body.id, companyName: "Cypress Form Test Customer Co" };
+      })
       .then(() => api("GET", "/commodities?limit=1"))
       .then(res => { commodity = res.body.results[0]; });
   });
 
   after(() => {
     if (createdShipmentId) api("DELETE", `/shipments/${createdShipmentId}`);
+    if (scratchCustomerId) api("DELETE", `/customers/${scratchCustomerId}`);
   });
 
   beforeEach(() => {

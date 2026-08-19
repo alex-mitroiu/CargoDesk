@@ -66,7 +66,10 @@ describe("Customs Filing — Negative / Gated Paths Suite", () => {
       visitHash(`shipments/${shipmentId}/customs-filing/details`);
 
       cy.contains("h2", "Customs Filing Unavailable", { timeout: 20000 }).should("be.visible");
-      cy.contains("no Customs Broker assigned and no priced cargo line yet").should("be.visible");
+      // CustomsFilingGateModal renders a point-by-point checklist (not one combined sentence,
+      // per its own header comment) — both items show a "Missing" badge when nothing is set yet.
+      cy.contains("Customs Broker assigned").parent().parent().should("contain.text", "Missing");
+      cy.contains("At least one priced cargo line").parent().parent().should("contain.text", "Missing");
       // Modal.jsx: the × close button, when rendered, is a sibling of <h2> inside their shared
       // header div — scope from .parent() (not .siblings(), which .find() can never match
       // against since it only searches descendants, never the sibling elements themselves).
@@ -101,7 +104,8 @@ describe("Customs Filing — Negative / Gated Paths Suite", () => {
     it("gate message narrows to just the missing cargo precondition", () => {
       visitHash(`shipments/${shipmentId}/customs-filing/details`);
       cy.contains("h2", "Customs Filing Unavailable", { timeout: 20000 }).should("be.visible");
-      cy.contains("doesn't have any priced cargo line yet").should("be.visible");
+      cy.contains("Customs Broker assigned").parent().parent().should("contain.text", "Set");
+      cy.contains("At least one priced cargo line").parent().parent().should("contain.text", "Missing");
       cy.contains("Go to Parties").should("not.exist"); // broker side is already satisfied
       cy.contains("button", "Go to Cargo").should("be.visible");
     });

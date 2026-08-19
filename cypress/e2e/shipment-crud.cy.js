@@ -69,7 +69,11 @@ describe("POST /api/shipments", () => {
     }).then(res => {
       expect(res.status).to.eq(201);
       const s = res.body;
-      expect(s).to.have.all.keys(
+      // include.keys (not all.keys) — the shipment DTO has grown a great many optional fields
+      // over the project's life (office assignments, margin figures, space-config badges, ...);
+      // this test's job is confirming these core fields are present, not enumerating every
+      // field that exists today, which would break on every future addition.
+      expect(s).to.include.keys(
         "id", "pol", "pod", "carrierCode", "status", "contractType",
         "etd", "eta", "bookingRef", "blNumber", "vessel", "voyage",
         "tradeLane", "routingTerm", "createdAt"
@@ -165,10 +169,12 @@ describe("POST /api/containers", () => {
   });
 
   it("container appears in shipment detail", () => {
-    api("GET", `/shipments/${shipmentId}`).then(res => {
+    // Containers are never embedded on the shipment object itself — GET /api/shipments/:id has
+    // no `containers` key at all (confirmed directly) — they live behind their own endpoint,
+    // filtered by shipmentId.
+    api("GET", `/containers?shipmentId=${shipmentId}`).then(res => {
       expect(res.status).to.eq(200);
-      const containers = res.body.containers ?? [];
-      const found = containers.find(c => c.id === containerId);
+      const found = res.body.find(c => c.id === containerId);
       expect(found).to.not.be.undefined;
     });
   });
@@ -201,23 +207,28 @@ describe("PUT /api/shipments/:id — status change", () => {
     if (shipmentId) api("DELETE", `/shipments/${shipmentId}`);
   });
 
+  // "In Transit" is not (and per SHIPMENT_STATUSES, never has been within this test's reach) a
+  // valid status — the real, current enum is Active/Pending/Completed/Cancelled/Requires Review
+  // (confirmed directly: PUT with "In Transit" 400s with "status must be one of: ..."). Using
+  // "Completed" instead — any value other than the shipment's starting "Active" exercises a
+  // real transition.
   it("updates status and returns 200", () => {
     api("GET", `/shipments/${shipmentId}`).then(res => {
       const shipment = res.body;
       return api("PUT", `/shipments/${shipmentId}`, {
         ...shipment,
-        status: "In Transit",
+        status: "Completed",
       });
     }).then(res => {
       expect(res.status).to.eq(200);
-      expect(res.body.status).to.eq("In Transit");
+      expect(res.body.status).to.eq("Completed");
     });
   });
 
   it("updated status is persisted on GET", () => {
     api("GET", `/shipments/${shipmentId}`).then(res => {
       expect(res.status).to.eq(200);
-      expect(res.body.status).to.eq("In Transit");
+      expect(res.body.status).to.eq("Completed");
     });
   });
 
@@ -265,7 +276,7 @@ describe("GET /api/shipments/:id/events — audit log", () => {
     }).then(res => {
       return api("PUT", `/shipments/${shipmentId}`, {
         ...res.body,
-        status: "In Transit",
+        status: "Completed",
       });
     });
   });
@@ -274,27 +285,31 @@ describe("GET /api/shipments/:id/events — audit log", () => {
     if (shipmentId) api("DELETE", `/shipments/${shipmentId}`);
   });
 
-  it("returns 200 with an array", () => {
+  // GET /api/shipments/:id/events was rewritten to the app's global paginated shape
+  // ({results, total, limit, offset}) back in v0.29.0 — confirmed directly against the live
+  // route, not assumed. Every assertion below reads res.body.results, not a bare res.body.
+
+  it("returns 200 with a results array", () => {
     api("GET", `/shipments/${shipmentId}/events`).then(res => {
       expect(res.status).to.eq(200);
-      expect(res.body).to.be.an("array");
+      expect(res.body.results).to.be.an("array");
     });
   });
 
   it("records a STATUS_CHANGED event after status update", () => {
     api("GET", `/shipments/${shipmentId}/events`).then(res => {
-      const statusEvents = res.body.filter(e => e.eventType === "STATUS_CHANGED");
+      const statusEvents = res.body.results.filter(e => e.eventType === "STATUS_CHANGED");
       expect(statusEvents.length).to.be.at.least(1);
       const ev = statusEvents[0];
-      expect(ev.newValue).to.eq("In Transit");
+      expect(ev.newValue).to.eq("Completed");
       expect(ev.oldValue).to.eq("Active");
     });
   });
 
   it("event shape includes required fields", () => {
     api("GET", `/shipments/${shipmentId}/events`).then(res => {
-      expect(res.body.length).to.be.at.least(1);
-      const ev = res.body[0];
+      expect(res.body.results.length).to.be.at.least(1);
+      const ev = res.body.results[0];
       expect(ev).to.have.all.keys(
         "id", "shipmentId", "eventType", "field",
         "oldValue", "newValue", "actor", "occurredAt", "meta"
@@ -303,16 +318,20 @@ describe("GET /api/shipments/:id/events — audit log", () => {
     });
   });
 
-  it("events are ordered by occurredAt ascending", () => {
-    api("GET", `/shipments/${shipmentId}/events`).then(res => {
-      const dates = res.body.map(e => e.occurredAt);
+  it("events are ordered by occurredAt ascending when sort=asc is requested", () => {
+    // The default order is newest-first (confirmed directly) — sort=asc is the route's own
+    // documented opt-in for ascending order (see CLAUDE.md's "Paginated responses" key pattern),
+    // not the default, so request it explicitly rather than assume it.
+    api("GET", `/shipments/${shipmentId}/events?sort=asc`).then(res => {
+      const dates = res.body.results.map(e => e.occurredAt);
       const sorted = [...dates].sort();
       expect(dates).to.deep.eq(sorted);
     });
   });
 
-  it("returns empty array for a shipment with no events", () => {
-    // Create a fresh shipment, don't update it
+  it("returns only the SHIPMENT_CREATED event for a shipment nobody has touched since", () => {
+    // Shipment creation itself logs a SHIPMENT_CREATED event (confirmed live) — a fresh,
+    // untouched shipment has exactly that one event, never a truly empty array.
     api("POST", "/shipments", {
       pol: "SGSIN", pod: "AEJEA",
       carrierCode: "MSCU",
@@ -323,7 +342,8 @@ describe("GET /api/shipments/:id/events — audit log", () => {
       const freshId = res.body.id;
       return api("GET", `/shipments/${freshId}/events`).then(evRes => {
         expect(evRes.status).to.eq(200);
-        expect(evRes.body).to.be.an("array");
+        expect(evRes.body.results).to.have.length(1);
+        expect(evRes.body.results[0].eventType).to.eq("SHIPMENT_CREATED");
         api("DELETE", `/shipments/${freshId}`);
       });
     });

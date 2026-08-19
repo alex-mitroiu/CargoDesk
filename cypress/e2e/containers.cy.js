@@ -280,9 +280,10 @@ describe("Containers Suite", () => {
     });
 
     it("CONTAINER_EVENT_ADDED appears in the shipment audit log", () => {
+      // /shipments/:id/events is paginated ({results, total, limit, offset}), not a bare array.
       api("GET", `/shipments/${spotShipmentId}/events`).then(res => {
         expect(res.status).to.eq(200);
-        const found = res.body.find(e => e.eventType === "CONTAINER_EVENT_ADDED");
+        const found = res.body.results.find(e => e.eventType === "CONTAINER_EVENT_ADDED");
         expect(found).to.not.be.undefined;
       });
     });

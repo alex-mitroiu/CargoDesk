@@ -9,15 +9,17 @@
  *   - npm run dev  (Vite :5173 + Express :3001)
  *   - Admin account: claudeagent@localhost / TestFixture!2026Zq
  *
- * Fixtures (real data in the live DB):
- *   CMDU-CH-EUN-NAM  — Active contract, 1 match
+ * Fixtures:
+ *   CMDU-CH-EUN-NAM  — Active contract, 1 match (self-provisioned below — a fresh
+ *                      environment's `npm run seed` never creates contracts)
  *   NOSUCHCONTRACT   — No match
  */
 
 const ADMIN_EMAIL    = "claudeagent@localhost";
 const ADMIN_PASSWORD = "TestFixture!2026Zq";
+const CONTRACT_NUMBER = "CMDU-CH-EUN-NAM";
 
-let authToken;
+let authToken, contractId;
 
 const api = (method, path, body) =>
   cy.request({
@@ -28,7 +30,7 @@ const api = (method, path, body) =>
     ...(body !== undefined && { body }),
   });
 
-// ─── Auth ─────────────────────────────────────────────────────────────────────
+// ─── Auth + fixture contract ────────────────────────────────────────────────────
 
 before(() => {
   cy.request("POST", "/api/auth/login", {
@@ -37,7 +39,17 @@ before(() => {
   }).then(res => {
     expect(res.status).to.eq(200);
     authToken = res.body.token;
+  }).then(() => api("POST", "/contracts", {
+    contractNumber: CONTRACT_NUMBER, carrierCode: "CMDU", status: "Active",
+    validFrom: "2020-01-01", validTo: "2030-01-01",
+  })).then(res => {
+    expect(res.status).to.eq(201);
+    contractId = res.body.id;
   });
+});
+
+after(() => {
+  if (contractId) api("DELETE", `/contracts/${contractId}`);
 });
 
 // ─── GET /api/contracts/revalidate ────────────────────────────────────────────

@@ -17,6 +17,7 @@ const CONTAINER_NUMBER = "CYDW1234567";
 
 describe("Shipment Detail Walkthrough Suite", () => {
   let tok, shipmentId, containerId, customers;
+  const createdCustomerIds = [];
 
   const api = (method, path, body) =>
     cy.request({
@@ -27,10 +28,24 @@ describe("Shipment Detail Walkthrough Suite", () => {
     });
 
   before(() => {
+    // A fresh environment (npm run seed never populates customers) may have fewer than 2 —
+    // create scratch ones rather than assuming any pre-existing data.
     cy.request("POST", "/api/auth/login", { email: ADMIN_EMAIL, password: ADMIN_PASSWORD })
       .then(res => { tok = res.body.token; })
-      .then(() => api("GET", "/customers?limit=2"))
-      .then(res => { customers = res.body.results; });
+      .then(() => api("POST", "/customers", { companyName: "Cypress Walkthrough Shipper Co" }))
+      .then(res => {
+        expect(res.status).to.eq(201);
+        createdCustomerIds.push(res.body.id);
+        return api("POST", "/customers", { companyName: "Cypress Walkthrough Consignee Co" });
+      })
+      .then(res => {
+        expect(res.status).to.eq(201);
+        createdCustomerIds.push(res.body.id);
+        customers = [
+          { id: createdCustomerIds[0], companyName: "Cypress Walkthrough Shipper Co" },
+          { id: createdCustomerIds[1], companyName: "Cypress Walkthrough Consignee Co" },
+        ];
+      });
   });
 
   before(() => {
@@ -55,6 +70,7 @@ describe("Shipment Detail Walkthrough Suite", () => {
   after(() => {
     if (containerId) api("DELETE", `/containers/${containerId}`);
     if (shipmentId)  api("DELETE", `/shipments/${shipmentId}`);
+    createdCustomerIds.forEach(id => api("DELETE", `/customers/${id}`));
   });
 
   beforeEach(() => {

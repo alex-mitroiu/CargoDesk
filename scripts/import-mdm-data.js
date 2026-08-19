@@ -336,6 +336,24 @@ for (const [code, name, days] of TRANSIT_DEFAULTS) {
 }
 console.log(`  ✔ Trade lanes: ${tlInserted} inserted, ${tlUpdated} transit-days updated`);
 
+// ─── Seed a minimal country → trade-lane assignment set ────────────────────────
+// country_trade_lanes (which countries fall in which lane, used by longestLane()/
+// GET /api/trade-lanes/transit-suggestion) had the exact same never-actually-seeded gap
+// as trade_lanes above — found the same way, via a genuinely fresh CI database. This app's
+// own Master Data pages expect an admin to configure the full set over time; this seeds
+// only the small, unambiguous set the transit-suggestion feature's own test fixtures need,
+// not an attempt at a full country/lane geography.
+const COUNTRY_LANE_DEFAULTS = [
+  ["CN", "FE"], ["SA", "ME"],
+];
+const insertCtl = db.prepare("INSERT OR IGNORE INTO country_trade_lanes (iso2, lane_code) VALUES (?, ?)");
+let ctlInserted = 0;
+for (const [iso2, laneCode] of COUNTRY_LANE_DEFAULTS) {
+  const info = insertCtl.run(iso2, laneCode);
+  if (info.changes > 0) ctlInserted++;
+}
+console.log(`  ✔ Country trade-lane assignments: ${ctlInserted} inserted`);
+
 const { n: totalPorts }    = db.prepare("SELECT COUNT(*) AS n FROM port_locations").get();
 const { n: totalCarriers } = db.prepare("SELECT COUNT(*) AS n FROM carriers").get();
 const { n: totalRegions }  = db.prepare("SELECT COUNT(*) AS n FROM regions").get();

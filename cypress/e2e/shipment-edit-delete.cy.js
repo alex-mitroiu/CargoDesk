@@ -125,9 +125,13 @@ describe("Shipment Edit + Delete Suite", () => {
     it("Cancel on the confirm modal leaves the shipment untouched", () => {
       openRowMenu();
       cy.contains("button", "Delete").click();
-      cy.contains("h2", "Confirm", { timeout: 8000 }).should("be.visible");
-      cy.contains(`Remove shipment ${shipmentId}`).should("be.visible");
-      cy.contains("button", "Cancel").click();
+      cy.contains("h2", "Confirm", { timeout: 8000 }).should("be.visible")
+        .parent().parent().within(() => {
+          cy.contains(`Remove shipment ${shipmentId}`).should("be.visible");
+          // Unscoped, "Cancel" also substring-matches the "Cancelled" status filter chip on
+          // the Shipments list underneath this modal — scope to the modal itself.
+          cy.contains("button", "Cancel").click();
+        });
       cy.contains("h2", "Confirm").should("not.exist");
 
       cy.then(() => api("GET", `/shipments/${shipmentId}`)).then(res => {

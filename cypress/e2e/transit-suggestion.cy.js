@@ -8,7 +8,7 @@
  *   - npm run dev  (Vite :5173 + Express :3001)
  *   - Admin account: claudeagent@localhost / TestFixture!2026Zq
  *
- * Fixtures (real UN/LOCODE ports in the live DB):
+ * Fixtures (seeded by `npm run seed` — scripts/import-mdm-data.js's COUNTRY_LANE_DEFAULTS):
  *   CNAPP  →  FE lane  (28d transit)
  *   CNAQG  →  FE lane  (28d transit)
  *   SADMM  →  ME lane  (18d transit)

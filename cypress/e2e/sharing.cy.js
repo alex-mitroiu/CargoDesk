@@ -38,7 +38,7 @@ describe("Share Token & Customer Tracking Suite", () => {
         headers: { Authorization: `Bearer ${tok}` },
         body: {
           pol: "CNSHA", pod: "USNYC", carrierCode: "CMDU",
-          status: "In Transit", contractType: "SPOT", etd: "2026-09-01",
+          status: "Active", contractType: "SPOT", etd: "2026-09-01",
           bookingRef: "BKG-CYPRESS-SHARE", shipperName: "Cypress Shipper",
         },
         failOnStatusCode: false,
@@ -119,7 +119,7 @@ describe("Share Token & Customer Tracking Suite", () => {
         expect(res.body.id).to.eq(shipmentId);
         expect(res.body.pol).to.eq("CNSHA");
         expect(res.body.pod).to.eq("USNYC");
-        expect(res.body.status).to.eq("In Transit");
+        expect(res.body.status).to.eq("Active");
       });
     });
 

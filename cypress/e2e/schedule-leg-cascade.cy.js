@@ -94,10 +94,14 @@ describe("Schedule Leg-Removal Cascade Suite", () => {
     // shipment-reorg.cy.js for the identical symptom.
     cy.window().then(win => { win.location.hash = `shipments/${shipmentId}/schedules`; });
     cy.contains(shipmentId, { timeout: 15000 }).should("be.visible");
+    // The shipment header/breadcrumb (matched above) can resolve before the Route Legs
+    // table's own separate fetch finishes — wait for the existing real leg to actually
+    // render before interacting, or "+ Add leg" can race an empty table.
+    cy.get('[id^="leg-row-"]', { timeout: 10000 }).should("have.length.at.least", 1);
     cy.contains("button", "+ Add leg").click();
     // The new row must render a real, enabled Leg Type <select> — not a locked read-only
     // row (which would render plain text with no <select> at all).
-    cy.get('[id^="leg-row-"]').should("have.length", 2);
+    cy.get('[id^="leg-row-"]', { timeout: 8000 }).should("have.length", 2);
     cy.get('[id^="leg-row-"]').last().find("select").first().should("be.enabled");
     // And it must actually be changeable to Pick-up/Delivery, not just present.
     cy.get('[id^="leg-row-"]').last().find("select").first().select("Pick-up");
@@ -107,7 +111,7 @@ describe("Schedule Leg-Removal Cascade Suite", () => {
   it("bug 2 — removing that unconfigured new leg does NOT wipe the real schedule/vessel", () => {
     cy.window().then(win => { win.location.hash = `shipments/${shipmentId}/schedules`; });
     cy.contains(shipmentId, { timeout: 15000 }).should("be.visible");
-    cy.get('[id^="leg-row-"]').should("have.length", 2);
+    cy.get('[id^="leg-row-"]', { timeout: 10000 }).should("have.length", 2);
     // Select the freshly-added (still-blank, no vessel/voyage) leg and remove it.
     cy.get('[id^="leg-row-"]').last().click();
     cy.contains("button", "Remove leg").click();
@@ -129,7 +133,7 @@ describe("Schedule Leg-Removal Cascade Suite", () => {
   it("bug 3 — removing the REAL schedule leg still cascades correctly, clears the header, and blocks Carrier Booking", () => {
     cy.window().then(win => { win.location.hash = `shipments/${shipmentId}/schedules`; });
     cy.contains(shipmentId, { timeout: 15000 }).should("be.visible");
-    cy.contains('[id^="leg-row-"]', "DEMO CADENZA").click();
+    cy.contains('[id^="leg-row-"]', "DEMO CADENZA", { timeout: 10000 }).click();
     cy.contains("button", "Remove leg").click();
     // This one really is the schedule's own leg — the cascade warning SHOULD show.
     cy.contains("This is linked to an assigned schedule").should("be.visible");

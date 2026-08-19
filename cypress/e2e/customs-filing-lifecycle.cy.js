@@ -29,11 +29,19 @@ describe("Customs Filing Lifecycle Suite", () => {
       ...(body !== undefined && { body }),
     });
 
+  let scratchCustomerId;
+
   before(() => {
+    // A fresh environment (npm run seed never populates customers) may have none at all —
+    // create a scratch one rather than assuming any pre-existing data.
     cy.request("POST", "/api/auth/login", { email: ADMIN_EMAIL, password: ADMIN_PASSWORD })
       .then(res => { tok = res.body.token; })
-      .then(() => api("GET", "/customers?limit=1"))
-      .then(res => { customer = res.body.results[0]; });
+      .then(() => api("POST", "/customers", { companyName: "Cypress Filing Test Broker Co" }))
+      .then(res => {
+        expect(res.status).to.eq(201);
+        scratchCustomerId = res.body.id;
+        customer = { id: res.body.id, companyName: "Cypress Filing Test Broker Co" };
+      });
   });
 
   before(() => {
@@ -70,6 +78,7 @@ describe("Customs Filing Lifecycle Suite", () => {
   after(() => {
     if (containerId) api("DELETE", `/containers/${containerId}`);
     if (shipmentId)  api("DELETE", `/shipments/${shipmentId}`);
+    if (scratchCustomerId) api("DELETE", `/customers/${scratchCustomerId}`);
   });
 
   beforeEach(() => {
