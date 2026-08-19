@@ -1,7 +1,7 @@
 "use strict";
 
 module.exports = function ediRoutes(app, ctx) {
-  const { db, ok, err, uid, auth, requireRole, getSettings, shipmentSubs,
+  const { db, ok, err, uid, auth, requireRole, shipmentSubs,
           mapEdiMessage, mapCarrierBooking, mapShipment, applyShipmentAccessFilter,
           autoCompleteMilestone, logEntityEvent, BOOKABLE_CARRIERS, supersedeIfCarrierChanged } = ctx;
 
@@ -16,36 +16,12 @@ module.exports = function ediRoutes(app, ctx) {
     for (const ws of subs) { if (ws.readyState === ws.OPEN) ws.send(json); }
   }
 
-  // Real Maersk Booking API call — same shape as maerskSchedules() in routes/system.js
-  // (Consumer-Key header, 10s timeout, null on any failure so the caller falls back to
-  // the mock response). NOTE: the exact request/response contract below is a best-effort
-  // placeholder — Maersk's real Booking API may use different field names or auth (OAuth2
-  // client-credentials rather than a bare Consumer-Key); verify against their docs before
-  // relying on this against a live account.
-  async function maerskBookingRequest(shipment, payload) {
-    const key = getSettings().maersk_api_key;
-    if (!key) return null;
-    try {
-      const r = await fetch("https://api.maersk.com/booking/v1/bookings", {
-        method: "POST",
-        headers: { "Consumer-Key": key, "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(10000),
-      });
-      if (!r.ok) return null;
-      const data = await r.json();
-      return {
-        status:     data.bookingStatus === "CONFIRMED" ? "confirmed" : "rejected",
-        bookingRef: data.carrierBookingReference || null,
-        raw:        data,
-      };
-    } catch { return null; }
-  }
-
   // Synthetic responses used ONLY by the Test Tools Message Simulator (routes below) —
-  // booking-request itself no longer auto-fabricates a response when no live key is
-  // configured (that was the whole gap motivating the simulator: the old fallback could
-  // only ever produce "confirmed", so a rejection could never be tested).
+  // booking-request itself never auto-fabricates a response (this was always simulated;
+  // the live Maersk Booking API integration this used to attempt first has been removed,
+  // v0.72.0 — Maersk's developer-tools portal it depended on is obsolete). Deliberately
+  // still two separate outcomes here, not one: the old always-"confirmed" fallback this
+  // replaced meant a rejection could never be tested at all.
   function simulatedConfirmedResponse(shipment, bookingRefOverride) {
     const ref = bookingRefOverride || `MAEU${uid()}`;
     return {
@@ -171,7 +147,7 @@ module.exports = function ediRoutes(app, ctx) {
       .map(r => ({ ...mapCarrierBooking(r), shipment: shipmentById.get(r.shipment_id) })));
   });
 
-  app.post("/api/shipments/:id/edi-messages/booking-request", write, async (req, res) => {
+  app.post("/api/shipments/:id/edi-messages/booking-request", write, (req, res) => {
     const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
     if (!shipment) return err(res, "Shipment not found", 404);
     if (!BOOKABLE_CARRIERS.has(shipment.carrier_code))
@@ -307,14 +283,8 @@ module.exports = function ediRoutes(app, ctx) {
     const booking = upsertPendingBooking(shipment, correlationId, requestedBy);
     broadcast(shipment.id, { type: "booking_status_changed", booking: mapCarrierBooking(booking) });
 
-    // Real API attempt only — no synthetic fallback here anymore (see simulatedXResponse
-    // above for why). Unchanged external behavior for the case a live key IS configured.
-    const response = await maerskBookingRequest(shipment, requestPayload);
-    if (response) {
-      const { message, booking: updatedBooking } = applyBookingResponse(shipment, booking, response, false);
-      return ok(res, { sent: sentMsg, received: message, booking: updatedBooking, isMock: false }, 201);
-    }
-
+    // Always pending — the real carrier response is simulated only, via Test Tools →
+    // Message Simulator (see simulatedConfirmedResponse/simulatedRejectedResponse above).
     ok(res, { sent: sentMsg, booking: mapCarrierBooking(booking), pending: true }, 201);
   });
 

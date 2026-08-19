@@ -75,7 +75,7 @@ export async function applySailingToLegs(shipmentId, sailing, { contractType = "
       eta:         sailing.eta          || firstSeaLeg.eta,
       carrierCode: sailing.carrier      || firstSeaLeg.carrierCode,
       // A direct sailing's own pol/pod is always the true door-to-door endpoints
-      // (mockSailings/maerskSchedules both echo the search query here) — reset both
+      // (mockSailings echoes the search query here, same as the catalog) — reset both
       // in case the leg currently holds a TSP hub from a previously-applied sailing.
       pol:         sailing.pol          || firstSeaLeg.pol,
       pod:         sailing.pod          || firstSeaLeg.pod,

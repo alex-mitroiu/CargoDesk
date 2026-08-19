@@ -2677,9 +2677,11 @@ try { db.exec("UPDATE shipments SET vessel = '', vessel_imo = '' WHERE vessel_im
 
 // Carriers a booking request can be sent to. Single source of truth on ctx — routes/edi.js
 // used to hand-copy this same Set locally (matching an equivalent copy on the frontend);
-// centralized here so the two can't silently drift apart. Deliberately separate from
-// MAERSK_CODES (routes/system.js) — that's "carriers you can search schedules for" (a
-// broader, different concept, includes CMDU) — not the same thing as "bookable".
+// centralized here so the two can't silently drift apart. This gates EDI booking eligibility
+// only — the booking request/response itself is fully simulated (v0.35.0), not a real
+// carrier integration; the once-separate "carriers you can search live schedules for" concept
+// (routes/system.js's old MAERSK_CODES) is gone entirely (v0.72.0) along with the live Maersk
+// developer-tools schedule/booking API it gated — schedule search is catalog-then-demo-only now.
 const BOOKABLE_CARRIERS = new Set(["MAEU", "SAFM", "MCPU"]);
 // Fixed, curated additional party roles (Epic TKT-5XFCAP) — alongside the 4 hardcoded
 // shipper/consignee/notify/principal roles on shipments. Frontend keeps its own copy in

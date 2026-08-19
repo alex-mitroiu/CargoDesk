@@ -1122,9 +1122,9 @@ const SchedulePanel = ({ contract, polQuery, podQuery, containers = [] }) => {
         <div style={{ background: `${T.warning}15`, border: `1px solid ${T.warning}44`,
           borderRadius: 6, padding: "8px 14px", fontFamily: T.body, fontSize: 12,
           color: T.warning }}>
-          Demo sailings — no Maersk API key configured. Add{" "}
-          <code style={{ fontFamily: T.mono, fontSize: 11 }}>maersk_api_key</code> in
-          Settings → API Controls for live schedules.
+          Demo sailings — no matching sailing found in the schedule catalog for this route/date
+          window. Save a real sailing (Test Tools → Schedule Generator, or Add Sailing on a
+          shipment) to build up the catalog.
         </div>
       )}
 

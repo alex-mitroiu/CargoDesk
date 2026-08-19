@@ -62,28 +62,6 @@ const EXTERNAL_APIS = [
     recurrenceLabel: "Sync every",
   },
   {
-    id: "maersk",
-    name: "Maersk Schedules",
-    provider: "Maersk Line",
-    description: "Live point-to-point sailing schedules from Maersk's developer API. Active when searching MAEU, SAFM, or MCPU carriers in Schedule Search.",
-    testType: "maersk_schedule",
-    hasApiKey: true,
-    settingKey: "maersk_api_key",
-    keyHelpText: "Register free at developer.maersk.com to get a Consumer Key.",
-    hasRecurrence: false,
-  },
-  {
-    id: "maersk-booking",
-    name: "Maersk Booking (EDI)",
-    provider: "Maersk Line",
-    description: "Send booking requests and receive carrier responses for MAEU, SAFM, or MCPU shipments — stored per shipment in EDI Messages. Shares the same API key as Maersk Schedules.",
-    testType: "maersk_booking",
-    hasApiKey: true,
-    settingKey: "maersk_api_key",
-    keyHelpText: "Register free at developer.maersk.com to get a Consumer Key.",
-    hasRecurrence: false,
-  },
-  {
     id: "ais",
     name: "AIS Vessel Tracking",
     provider: "aisstream.io",
@@ -1514,40 +1492,6 @@ export default function AppSettingsPage() {
           label: status.connected
             ? `Connected · ${status.trackedVesselCount} vessel(s) tracked`
             : (status.lastError || "Not connected"),
-        }}));
-      } else if (apiDef.testType === "maersk_schedule") {
-        const ctrl  = new AbortController();
-        const tmr   = setTimeout(() => ctrl.abort(), 10000);
-        const token = localStorage.getItem(TOKEN_KEY);
-        const resp  = await fetch("/api/schedules/search?pol=NLRTM&pod=USNYC&carrierCode=MAEU&weeks=1", {
-          signal: ctrl.signal, headers: { Authorization: `Bearer ${token}` },
-        });
-        clearTimeout(tmr);
-        if (resp.ok) {
-          const data = await resp.json();
-          setTestResults(r => ({ ...r, [apiDef.id]: {
-            ok: !data.isMock,
-            latency: Date.now() - t0,
-            ...(data.isMock
-              ? { error: "No key — demo data only" }
-              : { label: `Live · ${data.sailings?.length ?? 0} sailing${(data.sailings?.length ?? 0) !== 1 ? "s" : ""} NLRTM→USNYC` }
-            ),
-          }}));
-        } else {
-          setTestResults(r => ({ ...r, [apiDef.id]: { ok: false, error: `HTTP ${resp.status}` } }));
-        }
-      } else if (apiDef.testType === "maersk_booking") {
-        // Sending a real booking request has side effects (creates EDI messages, can set a
-        // shipment's booking_ref), so this isn't a live call like the schedules test — it just
-        // confirms the shared key is configured. Actual API connectivity is exercised for real
-        // the first time a booking request is sent from a shipment.
-        const hasKey = !!settings?.maersk_api_key;
-        setTestResults(r => ({ ...r, [apiDef.id]: {
-          ok: hasKey, latency: Date.now() - t0,
-          ...(hasKey
-            ? { label: "Key configured — shared with Maersk Schedules" }
-            : { error: "No key — booking requests will use demo data" }
-          ),
         }}));
       } else {
         const ctrl    = new AbortController();

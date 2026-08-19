@@ -33,8 +33,8 @@ function signPayload(payload, secret) {
   return crypto.createHmac("sha256", secret).update(JSON.stringify(payload)).digest("hex");
 }
 
-// Same 10s-timeout convention as the monolith's own outbound API call (routes/edi.js's Maersk
-// booking request) — fail fast rather than hang the send action indefinitely.
+// Same 10s-timeout convention as every other outbound external call in this codebase (the AIS
+// listener, the schedule-search route) — fail fast rather than hang the send action indefinitely.
 async function sendWebhook(url, payload, secret) {
   const signature = signPayload(payload, secret);
   const r = await fetch(url, {

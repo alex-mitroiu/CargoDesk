@@ -2,11 +2,17 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.72.0";
+export const VERSION   = "0.72.1";
 export const BUILD     = "2026-08-20";
 export const CODENAME  = "Clearance";
 
 export const CHANGELOG = [
+  {
+    version:  "0.72.1",
+    date:     "2026-08-20",
+    codename: "Clearance",
+    summary:  "Direct request: clean up the Maersk developer tools integration — Maersk's own developer.maersk.com portal it depended on is obsolete, and the app still carried its leftover App Settings configs. Removed the live-API code paths entirely rather than just hiding the Settings cards, since the fetch calls (routes/system.js's maerskSchedules(), routes/edi.js's maerskBookingRequest()) would otherwise sit as unreachable dead code once maersk_api_key had no UI left to set it — this codebase's own standing precedent (v0.65.0 dead-code audit) is to remove code once it's provably unreachable, not leave it as a trap for a future reader. Both were speculative to begin with: maerskBookingRequest()'s own code comment admitted its request/response contract was 'a best-effort placeholder... verify against their docs before relying on this against a live account,' never actually validated against a real account.\n\nSchedule search (GET /api/schedules/search) now goes catalog-then-demo only, dropping the live tier entirely — behavior is unchanged for every environment that never had a working key configured (which, given the above, was every environment). Carrier booking requests were already fully simulated in practice (v0.35.0 removed the old always-confirms fallback; a live key was needed to reach the real endpoint at all) — now explicitly documented as simulated-only, via Test Tools' Message Simulator, with the dead live-attempt branch removed from the send route.\n\nRemoved the two now-purposeless App Settings → API Controls → External APIs cards ('Maersk Schedules', 'Maersk Booking (EDI)') and their connection-test logic. Rewrote the two remaining user-facing 'demo sailings' banners (SchedulesPage.jsx, MdmContractsPage.jsx) that pointed users at configuring the now-gone key — they now correctly explain the demo fallback fires when nothing matches in the schedule catalog. Deliberately left untouched: MAEU/SAFM/MCPU as literal carrier codes (real carriers, used throughout as reference data and Carrier Booking eligibility, e.g. BOOKABLE_CARRIERS — a different, still-live concept from the removed live-API gating), the 294-code Maersk commodity registry (MDM reference data, unrelated to developer tools), and every historical CHANGELOG entry that mentions the old integration (left as accurate history, not rewritten). The maersk_api_key app_settings row itself, where one was ever saved, is left inert in the DB — this codebase's standing no-destructive-migration precedent.\n\nVerified live: schedule search on a real route correctly falls straight to the demo/mock tier with no 'live' source ever appearing; the two Settings cards are confirmed gone from the External APIs list. Full 30-file backend suite (including a direct exercise of the booking-request route) plus the frontend Vitest suite both green, clean production build.",
+  },
   {
     version:  "0.72.0",
     date:     "2026-08-20",

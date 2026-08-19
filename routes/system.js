@@ -124,8 +124,6 @@ module.exports = function systemRoutes(app, ctx) {
 
   // ─── Schedules ────────────────────────────────────────────────────────────
 
-  const MAERSK_CODES = new Set(["MAEU", "SAFM", "MCPU"]);
-
   // Common TSP hubs used in mock data
   const MOCK_TSP_HUBS = ["SGSIN", "AEDXB", "GBFXT", "DEHAM", "MAPTM"];
 
@@ -172,53 +170,6 @@ module.exports = function systemRoutes(app, ctx) {
     });
   }
 
-  async function maerskSchedules(pol, pod, carrierCode, weeks) {
-    const key = getSettings().maersk_api_key;
-    if (!key) return null;
-    try {
-      const startDate = new Date().toISOString().slice(0, 10);
-      const qs = new URLSearchParams({
-        portOfOrigin: pol, portOfDestination: pod,
-        startDateType: "D", startDate, searchRange: String(weeks),
-      });
-      const r = await fetch(`https://api.maersk.com/schedules/point-to-point?${qs}`, {
-        headers: { "Consumer-Key": key, Accept: "application/json" },
-        signal: AbortSignal.timeout(10000),
-      });
-      if (!r.ok) return null;
-      const data = await r.json();
-      const items = Array.isArray(data) ? data : (data.sailings || []);
-      return items.map(s => {
-        // services[]: one entry per sea leg (direct = 1, TSP = 2+)
-        const services = s.services || [];
-        const first    = services[0] || {};
-        const legs = services.length > 1
-          ? services.map(svc => ({
-              pol:          svc.fromLocation?.unloCode || pol,
-              pod:          svc.toLocation?.unloCode   || pod,
-              etd:          (svc.departureDateTime || "").slice(0, 10),
-              eta:          (svc.arrivalDateTime   || "").slice(0, 10),
-              vesselName:   svc.vesselName   || "—",
-              voyageNumber: svc.voyageNumber || "—",
-              service:      svc.serviceCode  || "—",
-            }))
-          : null;   // null = direct sailing, no TSP
-        return {
-          carrier:      carrierCode,
-          vesselName:   first.vesselName   || "—",
-          voyageNumber: first.voyageNumber || "—",
-          service:      first.serviceCode  || "—",
-          pol, pod,
-          etd:          (s.originDepartureDateTimeLocal      || "").slice(0, 10),
-          eta:          (s.destinationArrivalDateTimeLocal   || "").slice(0, 10),
-          transitDays:  s.transitTime || 0,
-          legs,
-          isMock: false,
-        };
-      });
-    } catch { return null; }
-  }
-
   // Catalog-backed matches (Test Tools > Schedule Generator, plus any ordinary Add-Sailing pick
   // saved elsewhere — the catalog search deliberately considers every stored shipment_schedules
   // row, not just Generator-authored ones, to maximize reuse) — checked before live/demo data.
@@ -257,17 +208,14 @@ module.exports = function systemRoutes(app, ctx) {
     });
   };
 
-  app.get("/api/schedules/search", auth(), async (req, res) => {
+  app.get("/api/schedules/search", auth(), (req, res) => {
     const { pol, pod, carrierCode, weeks: w = "4" } = req.query;
     if (!pol || !pod) return res.status(400).json({ error: "pol and pod are required" });
     const weeks = Math.min(Math.max(parseInt(w) || 4, 1), 12);
 
     const catalog = catalogSailings(pol, pod, weeks);
-    let live = null;
-    if (MAERSK_CODES.has(carrierCode)) live = await maerskSchedules(pol, pod, carrierCode, weeks);
-    const liveTagged = (live || []).map(s => ({ ...s, source: "live" }));
 
-    let sailings = [...catalog, ...liveTagged];
+    let sailings = [...catalog];
     const demoEnabled = getSettings().demo_schedules_enabled !== 'false'; // default on
     let usedDemo = false;
     if (sailings.length === 0 && demoEnabled) {

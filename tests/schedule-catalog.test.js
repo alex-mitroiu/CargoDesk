@@ -223,7 +223,7 @@ async function realVesselImo(token) {
 
     console.log("\nToggle off demo schedules — a route/window with no real match returns empty");
     await request("PUT", "/api/settings", { demo_schedules_enabled: "false" }, token);
-    const noMatchPol = "AEDXB", noMatchPod = "NZAKL"; // a pair with no fixture and (almost certainly) no live Maersk coverage
+    const noMatchPol = "AEDXB", noMatchPod = "NZAKL"; // a pair with no catalog fixture
     const emptySearch = await request("GET", `/api/schedules/search?pol=${noMatchPol}&pod=${noMatchPod}&weeks=2`, null, token);
     assert("search returns 200 even with zero results", emptySearch.status === 200);
     assert("sailings is empty with demo disabled and no real match", emptySearch.body.sailings.length === 0, JSON.stringify(emptySearch.body));

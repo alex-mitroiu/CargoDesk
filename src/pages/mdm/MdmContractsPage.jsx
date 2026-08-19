@@ -971,7 +971,7 @@ const SchedulesModal = ({ contract, onClose }) => {
       {result?.isMock && (
         <div style={{ background: `${T.warning}18`, border: `1px solid ${T.warning}44`,
           borderRadius: 6, padding: "8px 12px", fontFamily: T.body, fontSize: 12, color: T.warning }}>
-          Showing demo sailings. Configure a Maersk API key in Settings → API Controls to fetch live schedules.
+          Showing demo sailings — no matching sailing found in the schedule catalog for this route/date window.
         </div>
       )}
 

@@ -956,7 +956,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   `).all(scheduleId);
 
   // A schedule with exactly 1 leg ref is a direct sailing (legs: null, same convention
-  // mockSailings()/maerskSchedules() already use) — only 2+ makes it a real TSP sailing.
+  // mockSailings() already uses) — only 2+ makes it a real TSP sailing.
   const getScheduleLegs = scheduleId => {
     const rows = getScheduleLegRows(scheduleId);
     return rows.length >= 2 ? rows.map(mapScheduleLeg) : null;
