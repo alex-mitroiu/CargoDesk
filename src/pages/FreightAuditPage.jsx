@@ -8,7 +8,7 @@ import { Modal, ConfirmModal } from "../components/primitives/Modal";
 import { Field, Inp, Sel } from "../components/primitives/Form";
 import { inputBase } from "../components/primitives/Form";
 import DatePicker from "../components/primitives/DatePicker";
-import Spinner from "../components/primitives/spinner";
+import Spinner from "../components/primitives/Spinner";
 import CarrierCombobox from "../components/shared/CarrierCombobox";
 import { IconFileCertificate, IconSearch, IconClose, IconUpload } from "../components/primitives/Icon";
 

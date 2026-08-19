@@ -6,7 +6,7 @@ import { Field } from "../components/primitives/Form";
 import PortField from "../components/shared/PortField";
 import CarrierCombobox from "../components/shared/CarrierCombobox";
 import DatePicker from "../components/primitives/DatePicker";
-import Spinner from "../components/primitives/spinner";
+import Spinner from "../components/primitives/Spinner";
 import { IconSearch } from "../components/primitives/Icon";
 
 // ─── Rate Benchmarking ──────────────────────────────────────────────────────

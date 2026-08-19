@@ -10,7 +10,7 @@ import { Inp, Sel, Textarea, Field } from "../components/primitives/Form";
 import PortField from "../components/shared/PortField";
 import CarrierCombobox from "../components/shared/CarrierCombobox";
 import { Modal, ConfirmModal } from "../components/primitives/Modal";
-import Spinner from "../components/primitives/spinner";
+import Spinner from "../components/primitives/Spinner";
 import Pagination from "../components/primitives/Pagination";
 import DatePicker from "../components/primitives/DatePicker";
 import { useResizableColumns, ColResizer } from "../components/primitives/useResizableColumns.jsx";

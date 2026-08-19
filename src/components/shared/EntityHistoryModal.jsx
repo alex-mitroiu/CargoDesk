@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { T } from "../../tokens";
 import { Modal } from "../primitives/Modal";
-import Spinner from "../primitives/spinner";
+import Spinner from "../primitives/Spinner";
 import { api } from "../../api";
 
 const EVENT_CONFIG = {
