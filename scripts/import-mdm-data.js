@@ -343,16 +343,25 @@ console.log(`  ✔ Trade lanes: ${tlInserted} inserted, ${tlUpdated} transit-day
 // own Master Data pages expect an admin to configure the full set over time; this seeds
 // only the small, unambiguous set the transit-suggestion feature's own test fixtures need,
 // not an attempt at a full country/lane geography.
+// `countries` itself is a harder dependency here than it first looked: rebuildPortLanesMap()'s
+// own query JOINs port_locations -> countries -> country_trade_lanes -> trade_lanes, so a
+// country_trade_lanes row is silently useless without a matching `countries` row too — found
+// via a real CI failure even after this exact seeding was added, since `countries` is a whole
+// separate table `npm run seed` has never populated at all (no bundled country-name dataset
+// exists to seed it from in general — see the `smoke.cy.js` gate on that). Seed only the two
+// countries this specific lane assignment needs, not a general country registry.
 const COUNTRY_LANE_DEFAULTS = [
-  ["CN", "FE"], ["SA", "ME"],
+  ["CN", "China",        "FE"],
+  ["SA", "Saudi Arabia", "ME"],
 ];
+const insertCountry = db.prepare("INSERT OR IGNORE INTO countries (iso2, name) VALUES (?, ?)");
 const insertCtl = db.prepare("INSERT OR IGNORE INTO country_trade_lanes (iso2, lane_code) VALUES (?, ?)");
-let ctlInserted = 0;
-for (const [iso2, laneCode] of COUNTRY_LANE_DEFAULTS) {
-  const info = insertCtl.run(iso2, laneCode);
-  if (info.changes > 0) ctlInserted++;
+let countryInserted = 0, ctlInserted = 0;
+for (const [iso2, name, laneCode] of COUNTRY_LANE_DEFAULTS) {
+  if (insertCountry.run(iso2, name).changes > 0) countryInserted++;
+  if (insertCtl.run(iso2, laneCode).changes > 0) ctlInserted++;
 }
-console.log(`  ✔ Country trade-lane assignments: ${ctlInserted} inserted`);
+console.log(`  ✔ Countries: ${countryInserted} inserted, Country trade-lane assignments: ${ctlInserted} inserted`);
 
 const { n: totalPorts }    = db.prepare("SELECT COUNT(*) AS n FROM port_locations").get();
 const { n: totalCarriers } = db.prepare("SELECT COUNT(*) AS n FROM carriers").get();

@@ -112,8 +112,14 @@ describe("Schedule Leg-Removal Cascade Suite", () => {
     cy.window().then(win => { win.location.hash = `shipments/${shipmentId}/schedules`; });
     cy.contains(shipmentId, { timeout: 15000 }).should("be.visible");
     cy.get('[id^="leg-row-"]', { timeout: 10000 }).should("have.length", 2);
-    // Select the freshly-added (still-blank, no vessel/voyage) leg and remove it.
-    cy.get('[id^="leg-row-"]').last().click();
+    // Select the freshly-added (still-blank, no vessel/voyage) leg and remove it — NOT
+    // necessarily the last row: bug 1's own test converted this leg to Pick-up type, and
+    // LegsTable auto-reorders Pick-up-first/SEA-middle/Delivery-last on every save (v0.29.0),
+    // so the blank Pick-up leg now sorts BEFORE the real DEMO CADENZA SEA leg, not after it.
+    cy.get('[id^="leg-row-"]').then($rows => {
+      const blank = [...$rows].find(el => !el.textContent.includes("DEMO CADENZA"));
+      cy.wrap(blank).click();
+    });
     cy.contains("button", "Remove leg").click();
     // Must NOT warn about cascading — this leg was never actually part of the schedule.
     cy.contains("This is linked to an assigned schedule").should("not.exist");

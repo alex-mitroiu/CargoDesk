@@ -139,6 +139,21 @@ jobs:
       - name: Seed database
         run: npm run seed
 
+      # The monolith caches port->trade-lane resolution in memory (portLanesMap,
+      # rebuildPortLanesMap()) exactly once at startup — country_trade_lanes rows the seed
+      # step above just inserted directly into SQLite are invisible to the already-running
+      # process until it restarts and rebuilds that cache from scratch. Found via a real CI
+      # failure: transit-suggestion.cy.js's lane lookups stayed null even though the DB row
+      # was genuinely there. Only the monolith needs this — the 3 auxiliary services own no
+      # trade-lane data of their own.
+      - name: Restart monolith to pick up freshly-seeded MDM caches
+        run: |
+          (fuser -k 3001/tcp || true) 2>/dev/null
+          (lsof -ti:3001 | xargs -r kill -9 || true) 2>/dev/null
+          npx wait-on --reverse http://localhost:3001/api/health --timeout 15000 || true
+          npm run server &
+          npx wait-on http://localhost:3001/api/health --timeout 60000
+
       - name: Run Cypress
         run: npx cypress run --browser chrome
         env:

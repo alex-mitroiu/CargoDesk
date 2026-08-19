@@ -49,11 +49,19 @@ describe("Shipment Detail Walkthrough Suite", () => {
   });
 
   before(() => {
+    // Party roles are derived from actual shipment usage (v0.60.0), not a stored flag —
+    // CustomerCombobox's typeahead hard-filters by role (unlike the picker modal, which has
+    // a bypass toggle), so a scratch customer with zero prior usage is invisible to it. Give
+    // both scratch customers real usage from the start so the Parties & Offices edit test's
+    // combobox search can actually find them.
     cy.request({
       method: "POST", url: "/api/shipments",
       headers: { Authorization: `Bearer ${tok}` },
       body: { pol: "CNSHA", pod: "USNYC", carrierCode: "CMDU",
-              status: "Active", contractType: "SPOT", etd: "2026-10-01" },
+              status: "Active", contractType: "SPOT", etd: "2026-10-01",
+              shipperId: customers[0].id, shipperName: customers[0].companyName,
+              consigneeId: customers[1].id, consigneeName: customers[1].companyName,
+              principalId: customers[0].id, principalName: customers[0].companyName },
       failOnStatusCode: false,
     }).then(res => {
       expect(res.status).to.eq(201);
