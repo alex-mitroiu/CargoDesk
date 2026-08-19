@@ -300,31 +300,41 @@ console.log('Importing regions...');
 const regionResult = importRegions();
 console.log(`  ✔ Regions:  ${regionResult.inserted} inserted, ${regionResult.skipped} skipped`);
 
-// ─── Seed default transit days per trade lane ──────────────────────────────────
-// Industry-standard average FCL sea transit times (days); safe to re-run (UPDATE only if 0).
+// ─── Seed trade lanes + their default transit days ─────────────────────────────
+// The 14 FIATA-style trade lanes this app has always used (routing_term display,
+// longestLane() port resolution, Reports "By Region"). Found missing entirely from this
+// script on a genuinely fresh database (v0.71.0's CI fix pass) — trade_lanes had always been
+// populated some other way on every long-lived dev database this codebase was ever built
+// against, so the gap was invisible until a truly clean install/CI run was actually tested.
+// Industry-standard average FCL sea transit times (days); safe to re-run (INSERT OR IGNORE for
+// the row itself, UPDATE only if transit_days is still unset/0, so a manually-edited value is
+// never clobbered).
 const TRANSIT_DEFAULTS = [
-  ["CAR", 20],  // Caribbean & Central America (from Europe ~20d, from US ~10d; mid estimate)
-  ["EAF", 22],  // East Africa
-  ["EU-N", 14], // Europe North
-  ["EU-S", 12], // Europe South
-  ["FE",  28],  // Far East (already set but included for completeness)
-  ["ISC", 20],  // Indian Subcontinent
-  ["ME",  18],  // Middle East (already set)
-  ["NAF", 16],  // North Africa
-  ["NAM", 21],  // North America
-  ["OCE", 35],  // Oceania
-  ["SAF", 20],  // South Africa
-  ["SAM", 25],  // South America
-  ["SEA", 22],  // Southeast Asia
-  ["WAF", 18],  // West Africa
+  ["CAR", "Caribbean & Central America", 20],
+  ["EAF", "East Africa", 22],
+  ["EU-N", "Europe North", 14],
+  ["EU-S", "Europe South", 12],
+  ["FE",  "Far East", 28],
+  ["ISC", "Indian Subcontinent", 20],
+  ["ME",  "Middle East", 18],
+  ["NAF", "North Africa", 16],
+  ["NAM", "North America", 21],
+  ["OCE", "Oceania", 35],
+  ["SAF", "South Africa", 20],
+  ["SAM", "South America", 25],
+  ["SEA", "Southeast Asia", 22],
+  ["WAF", "West Africa", 18],
 ];
+const insertTl = db.prepare("INSERT OR IGNORE INTO trade_lanes (code, name) VALUES (?, ?)");
 const updateTl = db.prepare("UPDATE trade_lanes SET transit_days=? WHERE code=? AND (transit_days IS NULL OR transit_days=0)");
-let tlUpdated = 0;
-for (const [code, days] of TRANSIT_DEFAULTS) {
-  const info = updateTl.run(days, code);
-  if (info.changes > 0) tlUpdated++;
+let tlInserted = 0, tlUpdated = 0;
+for (const [code, name, days] of TRANSIT_DEFAULTS) {
+  const info = insertTl.run(code, name);
+  if (info.changes > 0) tlInserted++;
+  const upd = updateTl.run(days, code);
+  if (upd.changes > 0) tlUpdated++;
 }
-console.log(`  ✔ Transit days: ${tlUpdated} trade lanes updated`);
+console.log(`  ✔ Trade lanes: ${tlInserted} inserted, ${tlUpdated} transit-days updated`);
 
 const { n: totalPorts }    = db.prepare("SELECT COUNT(*) AS n FROM port_locations").get();
 const { n: totalCarriers } = db.prepare("SELECT COUNT(*) AS n FROM carriers").get();

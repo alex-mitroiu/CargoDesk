@@ -732,11 +732,6 @@ const migrations = [
   // client-side (ShipmentDetailSidebar, App.jsx) against whatever top-level nav ids actually exist today,
   // so a future new section added in code just appends itself rather than silently vanishing.
   "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('shipment_sidebar_order','[]')",
-  // Sequence has no "0th"/negative position in a physical Loading/Unloading/Pickup/Delivery
-  // plan — 1 is the floor, enforced going forward in the PUT loading-plan route (routes/
-  // shipment-ops.js). One-time backfill for the handful of rows already saved as 0 before
-  // this rule existed — idempotent, a re-run after all rows are already >=1 is a no-op.
-  "UPDATE shipment_loading_plan_lines SET sequence_order = 1 WHERE sequence_order <= 0",
   // v0.25.0 — VAT on cost lines
   "ALTER TABLE shipment_cost_lines ADD COLUMN vat_rate REAL NOT NULL DEFAULT 0",
   // v0.26.0 — per-user finance access flag
@@ -955,6 +950,18 @@ const migrations = [
     updated_at     TEXT,
     PRIMARY KEY (service_id, container_id)
   )`,
+  // Sequence has no "0th"/negative position in a physical Loading/Unloading/Pickup/Delivery
+  // plan — 1 is the floor, enforced going forward in the PUT loading-plan route (routes/
+  // shipment-ops.js). One-time backfill for the handful of rows already saved as 0 before
+  // this rule existed — idempotent, a re-run after all rows are already >=1 is a no-op. Moved
+  // here, right after this table's own CREATE TABLE, from its original spot much earlier in
+  // this array (found via a genuinely fresh-database boot, v0.71.0's CI fix pass) — the
+  // migrations array runs top-to-bottom in one pass, so on a brand-new database the original
+  // position ran this UPDATE before the table existed at all ("no such table"), silently
+  // logged as a startup migration failure (GET /api/health's migrations.failed) on every fresh
+  // install/CI run ever since this table was introduced. Harmless in practice (nothing to
+  // backfill on a fresh database anyway), but a real, now-fixed correctness gap.
+  "UPDATE shipment_loading_plan_lines SET sequence_order = 1 WHERE sequence_order <= 0",
   // Automated charge-code registry (TKT-OK5H34) — admin-maintained definitions that get
   // auto-injected as SELL cost lines when their trigger fires. Only trigger today is
   // 'per_container_split' (fired from generateInvoices() when splitting an invoice per
@@ -1676,13 +1683,14 @@ if (migrationFailures.length) {
       atd           TEXT DEFAULT '',
       ata           TEXT DEFAULT '',
       source        TEXT DEFAULT 'search',
-      template_id   TEXT REFERENCES shipment_schedules(id) ON DELETE SET NULL
+      template_id   TEXT REFERENCES shipment_schedules(id) ON DELETE SET NULL,
+      schedule_key  TEXT DEFAULT ''
     )`);
     db.exec(`INSERT INTO shipment_schedules_new
       (id, shipment_id, carrier, vessel_name, voyage_number, service, pol, pod, etd, eta,
-       transit_days, is_mock, saved_at, saved_by, vessel_imo, atd, ata, source, template_id)
+       transit_days, is_mock, saved_at, saved_by, vessel_imo, atd, ata, source, template_id, schedule_key)
       SELECT id, shipment_id, carrier, vessel_name, voyage_number, service, pol, pod, etd, eta,
-             transit_days, is_mock, saved_at, saved_by, vessel_imo, atd, ata, source, NULL
+             transit_days, is_mock, saved_at, saved_by, vessel_imo, atd, ata, source, NULL, schedule_key
       FROM shipment_schedules`);
     db.exec("DROP TABLE shipment_schedules");
     db.exec("ALTER TABLE shipment_schedules_new RENAME TO shipment_schedules");
@@ -1814,6 +1822,29 @@ const shipmentSubs = new Map();
     console.log(`\n⚓  Admin user created: ${ADMIN_EMAIL}`);
     console.log(`   Temporary password : ${TEMP_PW}`);
     console.log(`   Change it via the User Management panel.\n`);
+  }
+})();
+
+// Test-fixture admin — every one of the ~30 backend test files, both Cypress suites, and this
+// session's own CDP verification scripts all hardcode this exact account as a documented
+// prerequisite ("Admin account: claudeagent@localhost / TestFixture!2026Zq", see any
+// tests/*.test.js file header) — but nothing ever actually created it. It only ever existed
+// because this project's own long-lived local cargodesk.db had it created manually at some
+// point; a genuinely fresh database (every CI run, always) had no way to reproduce it. This is
+// why `npm test`/Cypress have never actually passed in CI even after `npm ci` itself started
+// working again — confirmed directly: CI's first real failure past the dependency fix was
+// `Fatal: Login failed (401)` on the very first test file. Idempotent and unconditional, same
+// as seedAdmin() above — same disclosed-insecure-default tradeoff, since it's a fixed, publicly
+// documented password purely for automated verification, never meant to gate anything real.
+;(function seedTestFixtureAdmin() {
+  const EMAIL = "claudeagent@localhost";
+  const PW    = "TestFixture!2026Zq";
+  const exists = db.prepare("SELECT id FROM users WHERE email = ?").get(EMAIL);
+  if (!exists) {
+    db.prepare(
+      "INSERT INTO users (id, email, name, password_hash, role, is_active, created_at) VALUES (?, ?, ?, ?, 'admin', 1, datetime('now'))"
+    ).run(`USR-${uid()}`, EMAIL, "Test Fixture Admin", bcrypt.hashSync(PW, 10));
+    console.log(`⚓  Test-fixture admin created: ${EMAIL} (used by the automated test suite)`);
   }
 })();
 

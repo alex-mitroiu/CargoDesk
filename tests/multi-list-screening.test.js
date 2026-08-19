@@ -79,6 +79,7 @@ async function login() {
     assert("status returns 200", status.status === 200, JSON.stringify(status.body));
     assert("response has ofacEntryCount and cslEntryCount fields", "ofacEntryCount" in status.body && "cslEntryCount" in status.body, JSON.stringify(status.body));
     const cslSynced = (status.body.cslEntryCount || 0) > 0;
+    const ofacSynced = (status.body.ofacEntryCount || 0) > 0;
 
     if (!cslSynced) {
       skip("CSL-dependent screening assertions", "no Consolidated Screening List sync has run yet in this environment — trigger one via Application Settings first to exercise this test fully");
@@ -112,9 +113,13 @@ async function login() {
       }
     }
 
-    console.log("\nOFAC-SDN screening still works unchanged (regression — the additive sync didn't disturb it)");
-    const ofacEntries = await request("GET", "/api/sanctions/entries?source=OFAC-SDN&limit=1", null, token);
-    assert("OFAC-SDN entries still queryable by source filter", ofacEntries.status === 200 && ofacEntries.body.results.length <= 1 && ofacEntries.body.total > 0, JSON.stringify(ofacEntries.body));
+    if (!ofacSynced) {
+      skip("OFAC-SDN regression assertion", "no OFAC-SDN sync has run yet in this environment (fresh install/CI — nothing to regress against)");
+    } else {
+      console.log("\nOFAC-SDN screening still works unchanged (regression — the additive sync didn't disturb it)");
+      const ofacEntries = await request("GET", "/api/sanctions/entries?source=OFAC-SDN&limit=1", null, token);
+      assert("OFAC-SDN entries still queryable by source filter", ofacEntries.status === 200 && ofacEntries.body.results.length <= 1 && ofacEntries.body.total > 0, JSON.stringify(ofacEntries.body));
+    }
 
     console.log(`\n${passed} passed, ${failed} failed, ${skipped} skipped`);
     process.exitCode = failed > 0 ? 1 : 0;

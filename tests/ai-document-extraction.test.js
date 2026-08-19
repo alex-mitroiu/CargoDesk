@@ -64,7 +64,7 @@ const TINY_PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42m
 
 (async () => {
   let token;
-  let savedAgentEnabled, savedApiKey;
+  let savedAgentEnabled, savedApiKey, savedEndpoint;
   try {
     token = await login();
 
@@ -72,7 +72,7 @@ const TINY_PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42m
     assert("settings GET returns 200", settingsBefore.status === 200, JSON.stringify(settingsBefore.body));
     savedAgentEnabled = settingsBefore.body.ai_agent_enabled;
     savedApiKey       = settingsBefore.body.ai_api_key;
-    const savedEndpoint = settingsBefore.body.ai_endpoint || "";
+    savedEndpoint = settingsBefore.body.ai_endpoint || "";
 
     console.log(`\nThis environment's real AI Agent config: enabled=${savedAgentEnabled === '1'}, hasKey=${!!savedApiKey}, endpoint=${savedEndpoint || "(none)"}`);
 
@@ -94,8 +94,15 @@ const TINY_PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42m
     await request("PUT", "/api/settings", { ai_agent_enabled: savedAgentEnabled }, token);
 
     if (!savedApiKey) {
-      console.log("\nNo real key was configured, so it's safe to set a placeholder one here — this reaches every body-validation branch (they all run before the outbound fetch) without ever calling the real provider");
-      await request("PUT", "/api/settings", { ai_agent_enabled: "1", ai_api_key: "test-placeholder-not-a-real-key" }, token);
+      // A placeholder endpoint is just as necessary as the key — the route 503s on either being
+      // blank (routes/ai.js: `if (!endpoint || !apiKey)`), and a genuinely fresh environment
+      // (every CI run) has ai_endpoint = '' by default, same as ai_api_key. Deliberately a
+      // non-Anthropic-shaped URL so the "PDF on a non-Anthropic endpoint" branch below always
+      // exercises deterministically, rather than depending on whatever endpoint (if any)
+      // happened to be pre-configured in this environment.
+      const PLACEHOLDER_ENDPOINT = "https://api.example.com/v1/chat/completions";
+      console.log("\nNo real key/endpoint was configured, so it's safe to set placeholders here — this reaches every body-validation branch (they all run before the outbound fetch) without ever calling a real provider");
+      await request("PUT", "/api/settings", { ai_agent_enabled: "1", ai_api_key: "test-placeholder-not-a-real-key", ai_endpoint: PLACEHOLDER_ENDPOINT }, token);
 
       const missingData = await request("POST", "/api/ai/extract-document",
         { mimeType: "image/png", instructions: "extract" }, token);
@@ -114,15 +121,11 @@ const TINY_PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42m
       assert("unsupported mimeType -> 400", badMime.status === 400 && /Unsupported file type/i.test(badMime.body.error || ""), JSON.stringify(badMime.body));
 
       console.log("\nPDF on a non-Anthropic endpoint -> clean 400, not a silently wrong-shaped request");
-      if (!/anthropic\.com/i.test(savedEndpoint)) {
-        const pdfBlocked = await request("POST", "/api/ai/extract-document",
-          { dataBase64: TINY_PNG_B64, mimeType: "application/pdf", instructions: "extract" }, token);
-        assert("PDF rejected on a non-Anthropic endpoint", pdfBlocked.status === 400 && /Anthropic endpoint/i.test(pdfBlocked.body.error || ""), JSON.stringify(pdfBlocked.body));
-      } else {
-        console.log("  (skipped — configured endpoint is Anthropic, so PDF is actually supported here)");
-      }
+      const pdfBlocked = await request("POST", "/api/ai/extract-document",
+        { dataBase64: TINY_PNG_B64, mimeType: "application/pdf", instructions: "extract" }, token);
+      assert("PDF rejected on a non-Anthropic endpoint", pdfBlocked.status === 400 && /Anthropic endpoint/i.test(pdfBlocked.body.error || ""), JSON.stringify(pdfBlocked.body));
 
-      await request("PUT", "/api/settings", { ai_agent_enabled: savedAgentEnabled, ai_api_key: savedApiKey || "" }, token);
+      await request("PUT", "/api/settings", { ai_agent_enabled: savedAgentEnabled, ai_api_key: savedApiKey || "", ai_endpoint: savedEndpoint }, token);
     } else {
       console.log("\nA real API key is configured in this environment — skipping the placeholder-key validation block rather than overwriting it (its original value can't be reliably restored)");
     }
@@ -135,7 +138,7 @@ const TINY_PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42m
   } finally {
     if (token && savedAgentEnabled !== undefined) {
       // Best-effort final restore in case an assertion threw mid-sequence before its own restore ran.
-      await request("PUT", "/api/settings", { ai_agent_enabled: savedAgentEnabled, ai_api_key: savedApiKey || "" }, token).catch(() => {});
+      await request("PUT", "/api/settings", { ai_agent_enabled: savedAgentEnabled, ai_api_key: savedApiKey || "", ai_endpoint: savedEndpoint || "" }, token).catch(() => {});
     }
   }
 })();

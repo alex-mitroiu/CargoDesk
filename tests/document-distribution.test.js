@@ -98,7 +98,16 @@ async function scratchShipment(token) {
 
     console.log("\nAssign an EMO office, configure its webhook to an unreachable-but-real https host");
     const offices = await request("GET", "/api/offices", null, token);
-    const officeId = offices.body[0]?.id;
+    // Offices are tenant/org-specific data, never MDM-seeded (unlike ports/carriers/vessels) —
+    // a genuinely fresh environment (every CI run) has none at all. Create a scratch one rather
+    // than assuming a pre-existing office, same as every other fixture in this file.
+    let officeId = offices.body[0]?.id;
+    let scratchOfficeId = null;
+    if (!officeId) {
+      const newOffice = await request("POST", "/api/offices",
+        { unlocode: "NLRTM", department: "SE", name: "Test Fixture Office — Rotterdam" }, token);
+      officeId = scratchOfficeId = newOffice.body.id;
+    }
     assert("a real office exists to test with", !!officeId, JSON.stringify(offices.body));
     const shipFull = await request("GET", `/api/shipments/${shipId}`, null, token);
     const putShip = await request("PUT", `/api/shipments/${shipId}`, {
@@ -136,6 +145,9 @@ async function scratchShipment(token) {
 
     console.log("\nCleanup");
     await request("DELETE", `/api/shipments/${shipId}`, null, token);
+    // Office deletion is blocked while any shipment still references it — the shipment above
+    // must go first (it just did).
+    if (scratchOfficeId) await request("DELETE", `/api/offices/${scratchOfficeId}`, null, token);
 
     console.log(`\n${"─".repeat(50)}`);
     console.log(`Results: ${passed} passed, ${failed} failed`);
