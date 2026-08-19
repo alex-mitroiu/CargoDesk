@@ -123,7 +123,13 @@ describe("Schedule Leg-Removal Cascade Suite", () => {
     cy.contains("button", "Remove leg").click();
     // Must NOT warn about cascading — this leg was never actually part of the schedule.
     cy.contains("This is linked to an assigned schedule").should("not.exist");
-    cy.contains("button", "Remove").click();
+    // Unscoped, "Remove" also substring-matches the page's own "Remove leg" button sitting
+    // behind the modal backdrop (still in the DOM, just covered) — cy.contains() can grab
+    // that one instead of the modal's own button. Scope to the modal itself, anchored on
+    // its own title, same pattern already established elsewhere in this suite.
+    cy.contains("h2", "Remove leg?", { timeout: 8000 }).parent().parent().within(() => {
+      cy.contains("button", "Remove").click();
+    });
     // The real schedule leg + vessel data must still be there afterward.
     cy.contains("DEMO CADENZA", { timeout: 8000 }).should("exist");
     cy.get('[id^="leg-row-"]').should("have.length", 1);
@@ -143,7 +149,10 @@ describe("Schedule Leg-Removal Cascade Suite", () => {
     cy.contains("button", "Remove leg").click();
     // This one really is the schedule's own leg — the cascade warning SHOULD show.
     cy.contains("This is linked to an assigned schedule").should("be.visible");
-    cy.contains("button", "Remove").click();
+    // Scoped to the modal itself — see the identical comment in bug 2 above.
+    cy.contains("h2", "Remove leg?", { timeout: 8000 }).parent().parent().within(() => {
+      cy.contains("button", "Remove").click();
+    });
     cy.contains("No legs yet", { timeout: 8000 }).should("be.visible");
     // Header no longer shows the stale vessel/voyage.
     cy.contains("DEMO CADENZA").should("not.exist");
