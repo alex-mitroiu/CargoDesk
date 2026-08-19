@@ -92,6 +92,8 @@ const ProfileTab = ({ init = {}, onSave, saving }) => {
     classifiedLocation: init.classifiedLocation || false,
     latitude:           init.latitude  != null ? String(init.latitude)  : "",
     longitude:          init.longitude != null ? String(init.longitude) : "",
+    isNvocc:            init.isNvocc || false,
+    fmcNumber:          init.fmcNumber || "",
   });
   const set   = k => v => setF(p => ({ ...p, [k]: v }));
   const valid = f.companyName.trim().length > 0;
@@ -193,6 +195,21 @@ const ProfileTab = ({ init = {}, onSave, saving }) => {
         For a branch or subsidiary booked under a larger group — lets margin/GP reporting roll
         this customer's figures up under its parent. Leave blank for a standalone customer.
       </div>
+
+      <div style={{ fontFamily: T.mono, fontSize: 9.5, color: T.border, fontWeight: 700,
+        textTransform: "uppercase", letterSpacing: ".12em", marginBottom: -6 }}>NVOCC</div>
+
+      <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer",
+        fontFamily: T.body, fontSize: 13, color: T.text, width: "fit-content" }}>
+        <input type="checkbox" checked={f.isNvocc}
+          onChange={e => set("isNvocc")(e.target.checked)} />
+        Operates as an NVOCC — eligible for the "NVOCC" party role on a shipment
+      </label>
+      {f.isNvocc && (
+        <Inp label="FMC / License Number" value={f.fmcNumber} onChange={set("fmcNumber")}
+          placeholder="e.g. 025555N" mono
+          hint="FMC-issued NVOCC number (or the equivalent registration outside the US)" />
+      )}
 
       {init.id && (
         <>

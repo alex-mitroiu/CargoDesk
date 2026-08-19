@@ -1,21 +1,26 @@
 # CargoDesk — Architecture Reference
-**Version:** 0.69.0 "Custodian" · **Date:** 2026-08-13
+**Version:** 0.71.0 "Docket" · **Date:** 2026-08-19
 **Audience:** Software architects, senior engineers, technical reviewers
 
-> This document was refreshed from a full pass against the live codebase on 2026-08-13,
-> replacing a version that had gone stale (§1–11 hadn't been touched since v0.30.0 — 39
-> releases behind). Every figure below (line counts, table counts, route counts) was measured
-> directly, not carried over. See `CLAUDE.md`'s own "Recent changes" sections for a
+> This document was fully refreshed from a direct pass against the live codebase on 2026-08-13
+> (v0.69.0), replacing a version that had gone stale since v0.30.0. This latest pass
+> (2026-08-19) is **incremental**, not a full remeasurement — it adds §8.14 (Reports) and §8.15
+> (NVOCC Support), the two subsystems that shipped since the 2026-08-13 pass, and updates the
+> data-model/party-model sections they touch. Appendix A's line-count/table-count figures are
+> still dated to 2026-08-13 and were **not** re-measured this pass — the additions since then are
+> a handful of new columns and one new document builder, not a scale change big enough to move
+> those figures meaningfully. See `CLAUDE.md`'s own "Recent changes" sections for a
 > release-by-release changelog this document doesn't restate — treat that file as the
 > day-to-day source of truth and this one as the standing structural reference.
 >
-> A companion visual diagram, `dev/architecture.html`, is dated v0.20.0 (2026-07-03) and was
-> **not** refreshed as part of this pass — it's now 49 releases behind and should be treated as
-> a historical snapshot, not a current reference, until someone rebuilds it.
+> A companion visual diagram, `dev/architecture.html`, is dated v0.20.0 (2026-07-03) and remains
+> **not** refreshed — it's now well over 50 releases behind and should be treated as a
+> historical snapshot, not a current reference, until someone rebuilds it.
 
 ---
 
 ## Table of Contents
+_(§8.14–8.15 added 2026-08-19; everything else reflects the 2026-08-13 pass)_
 1. [System Overview](#1-system-overview)
 2. [Tech Stack](#2-tech-stack)
 3. [Process & Deployment Topology](#3-process--deployment-topology)
@@ -75,7 +80,10 @@ answer questions about any of it and extract structured data from uploaded docum
 
 Three of these bounded contexts — **Document Distribution**, **PDF Rendering**, and **Contract
 Management** — have been extracted into their own standalone services (§3, §8.1). Everything
-else still lives in the monolith.
+else still lives in the monolith. Not redrawn into the box diagram above (a read-side view over
+existing data, not a new owned domain): **Reports** (§8.14), a GP-by-trade-area aggregation
+layer over `shipment_cost_lines`/`shipments`, reusing the Commercial/Shipments & Cargo domains'
+own data rather than owning any of its own.
 
 ---
 
@@ -373,8 +381,9 @@ shipments ──┬── shipment_legs               (multimodal leg records)
             ├── containers ──┬── container_events    (Empty Pickup → … → Empty Return)
             │                └── container_packages   (cargo manifest tree — pallets/boxes/crates)
             ├── shipment_parties             (Flexible Party Model — shipper/consignee/notify/
-            │                                 principal + 11 additional roles, e.g. Forwarder,
-            │                                 Customs Broker (Export/Import), Line Agent)
+            │                                 principal + 12 additional roles, e.g. Forwarder,
+            │                                 Customs Broker (Export/Import), Line Agent, NVOCC
+            │                                 — §8.15)
             ├── shipment_cost_lines          (BUY/SELL, accrued→actualized→posted state machine)
             ├── shipment_milestones          (per-step timeline, soft out-of-order warning)
             ├── shipment_documents           (generated + signed PDFs, readiness tracking)
@@ -419,6 +428,8 @@ customers ──┬── customer_contacts
             ├── customer_documents
             ├── customer_roles
             └── customer_screenings
+customers.is_nvocc / fmc_number            (§8.15 — flags a customer eligible for the NVOCC
+                                             party role above, carries its FMC/license number)
 branches · offices · office_mail_settings · org_countries · org_signing_certs
 
 OPERATIONS
@@ -590,8 +601,10 @@ open shipment-detail pages, not with total data volume.
 Same `app_settings` key-value shape as before. Grown substantially in count — every new
 subsystem in this document added its own settings (`fap_variance_tolerance_pct`,
 `api_csl_enabled`/`api_csl_interval_*`, `contract_source`, `ai_agent_enabled`/`ai_endpoint`/
-`ai_model`/`ai_api_key`, and more) — no longer enumerable as a short table the way the last
-review did it. `isEnabled(module)` in `App.jsx` still reads from `appSettings` state the same way.
+`ai_model`/`ai_api_key`, `gp_target_pct` (§8.14, blank by default — one flat global target, same
+simplification `fap_variance_tolerance_pct` already made), and more) — no longer enumerable as a
+short table the way the last review did it. `isEnabled(module)` in `App.jsx` still reads from
+`appSettings` state the same way.
 
 ### 8.9 Authentication & RBAC
 
@@ -648,6 +661,77 @@ local/self-hosted OpenAI-compatible server). Two capabilities:
 Both gated by app_settings.ai_agent_enabled + a configured endpoint/model/key; both have their
 own rate limiter (aiChatRateLimit / aiExtractRateLimit, tighter for the extraction endpoint
 since a vision payload is meaningfully more expensive per call).
+```
+
+### 8.14 Reports — GP by Trade Area (added v0.71.0)
+
+```
+GET /api/reports/gp-by-geo?groupBy=region|country|carrier&value=&from=&to=&format=json|csv
+
+Not a new table — an in-memory aggregation over the existing shipment_cost_lines/shipments
+join, the same mapCostLine()/roundCents() USD-computation path every other cost-line reader
+already uses (routes/finance.js's own margin-summary endpoint is the closest sibling; this
+route was built by reading that one first rather than reinventing the aggregation).
+
+Grouping key resolution:
+  region   → portCountryMap[pol] → country_trade_lanes.lane_code  (NOT countries.region_code,
+             confirmed live to be scaffolded but never populated — using it would make "By
+             Region" permanently empty)
+  country  → portCountryMap[pol]                                  (ISO2)
+  carrier  → shipments.carrier_code
+
+Two features layer on top of the base aggregation, both computed server-side over the same
+already-fetched row set (no second query):
+  - Period-over-period comparison: when both `from` and `to` are set, the identical aggregation
+    re-runs over the immediately preceding window of equal length; each result row gets a
+    marginDeltaPts (null when no prior-period data exists for that key, or when the date range
+    is open-ended on either side — no defensible "prior period" to diff against then).
+  - Target-based ranking: app_settings.gp_target_pct (blank by default, same "no per-lane
+    override" simplification as fap_variance_tolerance_pct, §8.3) sorts worst-margin-first and
+    flags below-target rows once set; falls back to sell-volume-descending with no flagging
+    when unset.
+
+Drill-in (value= set) returns the raw per-line-item array for that group, rendered by the same
+GpBreakdownPanel/ShipmentGpSankey components the single-shipment GP Overview page already uses
+(src/components/shared/) — extracted once, reused over a differently-scoped `lines` array rather
+than duplicated. The Sankey gained a separate VAT lane in this same pass (a disconnected
+"VAT on Sales → VAT (Collected)" mini-flow, not merged into the Revenue chain, since every
+SELL line's amountUsd is already VAT-exclusive) — a real, previously-invisible gap: VAT was
+already computed per line (mapCostLine's vatAmountUsd) and shown in a stat card, just never
+drawn in the diagram itself.
+```
+
+### 8.15 NVOCC Support (added v0.71.0, Epic TKT-Q52B38)
+
+```
+An NVOCC (Non-Vessel Operating Common Carrier) is legally both a carrier (to its own customer,
+on a House B/L) and a shipper (to the real vessel operator, on a Master B/L) for one physical
+movement — audited against a detailed mechanics brief rather than assumed. Published as a
+7-finding artifact; 4 closed this pass, 3 logged as scoped backlog (a full structural
+dual-carrier/principal field split beyond the additive fields below, a two-stage destination
+release workflow, NVOCC co-loading/cross-tariff reference). Deliberately NOT the same gap as
+LCL/consolidation, which stays deferred under the standing FCL-first roadmap — the House/Master
+split is real even for a single-shipper FCL container with zero consolidation involved.
+
+Closed this pass, all additive (no existing behavior changes when no NVOCC is involved):
+  - "NVOCC" party role — 12th entry in ADDITIONAL_PARTY_ROLES (§6), resolves via the existing
+    shipment_parties mechanism, zero new party infrastructure.
+  - customers.is_nvocc / fmc_number — licensing fields, gated the same way
+    classified_location/latitude/longitude already are (only persist while the flag is set).
+  - Booking-request payload (routes/edi.js, §8.12's carrier_bookings flow) prefers an assigned
+    NVOCC party's name for shipperName over shipments.shipper_name — the real shipper of record
+    on the vessel-operator side is the NVOCC, not the underlying cargo owner.
+  - A second, genuinely independent document type: MB01 "Master Bill of Lading"
+    (buildMasterBillOfLadingHtml, App.jsx) alongside the existing BL01 House B/L — not a mode
+    flag on one builder, since the two documents' party resolution differs too much to share
+    (NVOCC-as-Shipper + "TO ORDER OF {NVOCC}" Consignee on the MBL, vs. NVOCC-as-caption-identity
+    on the HBL). Each document cross-references the other's B/L number. Gated in
+    getMissingDocRequirements same as every other doc type in the shared Generate Document modal.
+
+shipments.master_bl_number/bl_release_type already existed before this pass (an earlier
+migration's own comment already referenced NVOCC) but were only a caption field on BL01 — the
+gap this epic closed was that nothing else in the system (party model, licensing, the booking
+payload, a second document) knew an NVOCC could exist.
 ```
 
 ---
@@ -848,7 +932,10 @@ Every figure above was read directly from the code or a live `GET /api/health` c
 
 ---
 
-*Document refreshed from a direct pass against the live codebase — CargoDesk v0.69.0 "Custodian"
-· 2026-08-13. Next scheduled review: whichever comes first of (a) the next major structural
-change (a new microservice extraction, a routing framework change, a data-store migration) or
-(b) six months from this date — whichever is sooner, so this doesn't repeat a 39-release gap.*
+*Fully refreshed from a direct pass against the live codebase — CargoDesk v0.69.0 "Custodian" ·
+2026-08-13. Incrementally updated (§8.14, §8.15, and the data-model/context notes they touch) —
+CargoDesk v0.71.0 "Docket" · 2026-08-19; Appendix A's metrics were not re-measured in the
+incremental pass (see the banner at the top of this document). Next scheduled review: whichever
+comes first of (a) the next major structural change (a new microservice extraction, a routing
+framework change, a data-store migration) or (b) six months from the 2026-08-13 full pass —
+whichever is sooner, so this doesn't repeat a 39-release gap.*

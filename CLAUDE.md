@@ -4,7 +4,7 @@
 Full-stack freight management app. React 18 + Vite frontend, Express + node:sqlite backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.70.0 "Waypoint"**
+- Version: **v0.71.0 "Docket"**
 - Run: `npm run dev` (runs the monolith on :3001 + Vite on :5173 + the Document Distribution Service on :3002 + the PDF Render Service on :3003 + the Contract Management Service on :3004, concurrently)
 - Seed: `npm run seed` (runs `scripts/import-mdm-data.js`)
 
@@ -246,7 +246,7 @@ are fully validated.
 | status_log | Shipment status transitions (legacy, kept for compat) |
 | entity_events | Generic audit log for allocations, carriers, contracts |
 | commodities | 294 Maersk freight commodity codes (Grades M/K/E/S/Q) |
-| customers | Customer records with full address and contact details. `credit_limit`/`credit_terms_days`/`credit_hold`/`credit_hold_reason` (v0.57.0) — `credit_hold` hard-blocks generating a NEW invoice for shipments where this customer is Shipper/Consignee/Principal/the linked contract's Named Account; `credit_limit` is a soft over-limit warning only, computed live against confirmed FR01/FR02 invoices, never a hard block. `parent_customer_id` (v0.59.0, self-referential, `ON DELETE SET NULL`) — branch/subsidiary rollup; read via the shared `resolveCustomerGroup(customerId)` helper (walks to the root ancestor then every descendant), never a write-path merge |
+| customers | Customer records with full address and contact details. `credit_limit`/`credit_terms_days`/`credit_hold`/`credit_hold_reason` (v0.57.0) — `credit_hold` hard-blocks generating a NEW invoice for shipments where this customer is Shipper/Consignee/Principal/the linked contract's Named Account; `credit_limit` is a soft over-limit warning only, computed live against confirmed FR01/FR02 invoices, never a hard block. `parent_customer_id` (v0.59.0, self-referential, `ON DELETE SET NULL`) — branch/subsidiary rollup; read via the shared `resolveCustomerGroup(customerId)` helper (walks to the root ancestor then every descendant), never a write-path merge. `is_nvocc`/`fmc_number` (v0.71.0) — flags a customer eligible for the "NVOCC" party role and its FMC (or equivalent) license number; `fmc_number` only persists while `is_nvocc` is set, same gating idiom as `classified_location`/lat-lng |
 | customer_contacts | Named people at a customer (v0.56.0) — name/title/email/phone/department, one `is_primary` per customer; replaces the old free-text-notes-only workaround |
 | customer_roles | Which of `ALL_CUSTOMER_ROLES` (v0.56.0) a customer is eligible for — `CustomerCombobox`'s `roleFilter` prop narrows pickers against this (soft filter, never a hard block) |
 | contracts | Carrier rate contracts with IMDG class filters |
@@ -304,9 +304,56 @@ are fully validated.
 - **Export — XLSX template**: `GET /api/export/dashboard/template` — loads `exports/dashboard-template.xlsx`, overwrites data ranges (WeeklySummary A11:E16, ByCarrier, ByLane), preserves any Excel charts pre-wired to those named ranges; `npm run export:template` regenerates the base file
 - **Export api namespace**: `api.export.shipmentsCSV()`, `api.export.dashboardXlsx()`, `api.export.dashboardTemplate()` — all use direct `fetch` + `blob` → `<a>.click()` pattern (same as documents download)
 - **ShipmentDetailPage section nav**: NOT a React tab/state pattern — `ShipmentDetailSidebar` in App.jsx (~1385-1530) is a hardcoded `sections` array (`{id, icon, label, badge?}`, App.jsx:1407-1414) rendered as a list; clicking calls `scrollTo(id)` (App.jsx:1394-1397) → `document.getElementById(id)?.scrollIntoView(...)`. Adding/reordering a section means editing the App.jsx array AND moving the matching `id="shp-*"` anchor div inside ShipmentDetailPage.jsx — the two files must stay in sync manually, there's no shared source of truth
-- **Document system**: `DOC_TYPES` in App.jsx (~line 56: BL01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). (The earlier client-side-jsPDF `DocumentsMenu` component this note used to distinguish from was removed as dead code — it had zero references anywhere in the app.)
+- **Document system**: `DOC_TYPES` in App.jsx (~line 56: BL01/MB01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — `MB01` (Master Bill of Lading, v0.71.0) is the vessel-operator-to-NVOCC document, a genuinely separate build from `BL01` (NVOCC-to-shipper House B/L), not a mode flag on it — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). (The earlier client-side-jsPDF `DocumentsMenu` component this note used to distinguish from was removed as dead code — it had zero references anywhere in the app.)
 - **Lifecycle-stage stepper precedent**: no dedicated stepper component exists yet; `MilestonePanel` (ShipmentDetailPage.jsx 1593-~1870) is the closest analog — linear progress bar (1734-1738, `width: ${progress}%`) plus per-step state coloring via `milestoneState()`/`stateColor()` (1666-1676: completed/overdue/current/upcoming) driven by `shipment_milestones` rows (`id, label, estimatedDate, note, completedAt, completedBy`, fixed step keys `booking_confirmed, si_submitted, cargo_gated_in, vessel_departed, bl_issued, vessel_arrived, customs_cleared, cargo_released, delivered`). Any new per-container lifecycle/stage UI should reuse this state-coloring pattern rather than inventing a new visual language
 - **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages, 📡 EDI). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
+
+## Recent changes (v0.71.0 "Docket")
+- **NVOCC (Non-Vessel Operating Common Carrier) readiness audit**, direct request off a detailed
+  mechanics brief: "cover ALL gaps regarding the NVOCC." Core finding, confirmed by direct code
+  read rather than assumed: an NVOCC is legally both a carrier (to its own customer, on the
+  House B/L) and a shipper (to the real vessel operator, on the Master B/L) for the identical
+  physical movement — `shipments.master_bl_number`/`bl_release_type` already existed (an earlier
+  migration's own comment literally references NVOCC) but were only a caption field on the single
+  `BL01` document, never a real House/Master split; zero FMC/tariff-license concept existed
+  anywhere; the outbound carrier booking-request payload's `shipperName` always reflected the real
+  underlying cargo owner, never an assigned NVOCC. Published as an artifact (7 findings) plus a
+  real Kanban Epic (`TKT-Q52B38`, 7 stories) — 4 findings closed this pass (below, one of them —
+  the Master B/L document — initially scoped as backlog and pulled forward on direct follow-up
+  request); 3 larger ones (a full structural dual-carrier/principal field split, a two-stage
+  destination release workflow, NVOCC co-loading/cross-tariff reference) remain logged as scoped
+  backlog rather than rushed through in one pass. Explicitly **not** the same gap as
+  LCL/consolidation (still deliberately deferred, FCL-first roadmap) — the brief's own wording
+  confirms the House/Master split is real "even a single-shipper FCL container with zero
+  consolidation involved," so this proceeded independently of that decision.
+- **New "NVOCC" party role** (`ADDITIONAL_PARTY_ROLES`, server.js + tokens.js) — resolves via the
+  existing `shipment_parties` mechanism exactly like Forwarder/Agent/Line Agent already do. New
+  `customers.is_nvocc`/`fmc_number` columns, checkbox-reveals-field UI on the customer Profile tab
+  (mirrors the `classified_location` pattern, v0.63.0).
+- **Booking-request shipper-of-record fix**: `POST .../edi-messages/booking-request`
+  (`routes/edi.js`) now prefers an assigned NVOCC party's name for the outbound `shipperName` —
+  the NVOCC, not the underlying cargo owner, is the real shipper of record to the vessel operator.
+  Falls back to today's exact behavior when no NVOCC party is assigned.
+- **NVOCC identity surfaced on the generated Bill of Lading** (`buildBillOfLadingHtml`, App.jsx) —
+  an additive detail row next to the existing Master B/L Number caption, populated only when an
+  NVOCC party is assigned.
+- **True independent Master B/L document** (`TKT-ABO0TA`, pulled forward from backlog on direct
+  follow-up) — new `MB01` "Master Bill of Lading" `DOC_TYPES` entry, own `buildMasterBillOfLadingHtml`
+  builder (App.jsx, not a mode flag on the House B/L builder — the two documents' party
+  resolution differs too much to share cleanly). Shipper = the assigned NVOCC party; Consignee
+  renders as standard trade language, `TO ORDER OF {NVOCC}`, rather than fabricating an
+  NVOCC-destination-agent party this pass doesn't model; Notify Party is left blank rather than
+  misattributing the House-side notify onto a document it has no role on. Each B/L document
+  cross-references the other's number. Gated in `getMissingDocRequirements` same as every other
+  doc type (NVOCC party, Master B/L Number, ≥1 container, both ports).
+- Verified live via CDP and direct API checks: a scratch NVOCC-flagged customer's `is_nvocc`/
+  `fmc_number` round-tripped through the real Profile tab save; a real outbound booking-request
+  payload correctly showed the NVOCC's name instead of the real shipper's; the actual client-built
+  House B/L HTML (intercepted via a wrapped `fetch`, before the server's signing step) contained
+  the new NVOCC row; a second scratch shipment's actual generated Master B/L HTML carried the
+  right title, NVOCC-as-Shipper, `TO ORDER OF` Consignee, real Master B/L number, and a correct
+  cross-reference to the House B/L number. Full 30-file backend suite plus the frontend Vitest
+  suite both green, clean build. All scratch data deleted after each pass.
 
 ## Recent changes (v0.70.0 "Waypoint")
 - **AI-driven document extraction** (TKT-44PRSK) — new `POST /api/ai/extract-document`

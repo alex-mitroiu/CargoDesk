@@ -253,7 +253,8 @@ module.exports = function customersRoutes(app, ctx) {
             countryIso2='', phone='', fax='', email='', website='', notes='', currency='USD',
             creditLimit=null, creditTermsDays=null, creditHold=false, creditHoldReason='',
             parentCustomerId=null,
-            classifiedLocation=false, latitude=null, longitude=null } = req.body;
+            classifiedLocation=false, latitude=null, longitude=null,
+            isNvocc=false, fmcNumber='' } = req.body;
     if (!companyName?.trim()) return err(res, "companyName required");
     if (parentCustomerId && !db.prepare("SELECT id FROM customers WHERE id=?").get(parentCustomerId))
       return err(res, "Parent customer not found");
@@ -266,11 +267,11 @@ module.exports = function customersRoutes(app, ctx) {
     const ctd = creditTermsDays === null || creditTermsDays === '' ? null : parseInt(creditTermsDays, 10);
     const lat = classifiedLocation && latitude !== '' && latitude != null ? Number(latitude) : null;
     const lng = classifiedLocation && longitude !== '' && longitude != null ? Number(longitude) : null;
-    db.prepare(`INSERT INTO customers (id,company_name,address1,address2,city,state,postal_code,country_iso2,phone,fax,email,website,notes,created_at,currency,credit_limit,credit_terms_days,credit_hold,credit_hold_reason,parent_customer_id,classified_location,latitude,longitude)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    db.prepare(`INSERT INTO customers (id,company_name,address1,address2,city,state,postal_code,country_iso2,phone,fax,email,website,notes,created_at,currency,credit_limit,credit_terms_days,credit_hold,credit_hold_reason,parent_customer_id,classified_location,latitude,longitude,is_nvocc,fmc_number)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
       .run(id, companyName.trim(), address1, address2, city, state, postalCode, ccU, phone, fax, email, website, notes, createdAt, (currency || 'USD').toUpperCase().trim(),
            cl, ctd, creditHold ? 1 : 0, creditHold ? creditHoldReason.trim() : '', parentCustomerId || null,
-           classifiedLocation ? 1 : 0, lat, lng);
+           classifiedLocation ? 1 : 0, lat, lng, isNvocc ? 1 : 0, isNvocc ? fmcNumber.trim() : '');
     if (sanctionsMap.size > 0) screenCustomer(id);
     const row = db.prepare(`${CUST_JOIN} WHERE c.id=?`).get(id);
     ok(res, mapCustomer(row), 201);
@@ -281,7 +282,8 @@ module.exports = function customersRoutes(app, ctx) {
             countryIso2='', phone='', fax='', email='', website='', notes='', currency='USD',
             creditLimit=null, creditTermsDays=null, creditHold=false, creditHoldReason='',
             parentCustomerId=null,
-            classifiedLocation=false, latitude=null, longitude=null } = req.body;
+            classifiedLocation=false, latitude=null, longitude=null,
+            isNvocc=false, fmcNumber='' } = req.body;
     if (!companyName?.trim()) return err(res, "companyName required");
     if (parentCustomerId) {
       if (!db.prepare("SELECT id FROM customers WHERE id=?").get(parentCustomerId))
@@ -301,10 +303,10 @@ module.exports = function customersRoutes(app, ctx) {
     const info = db.prepare(`UPDATE customers SET company_name=?,address1=?,address2=?,city=?,state=?,
       postal_code=?,country_iso2=?,phone=?,fax=?,email=?,website=?,notes=?,currency=?,
       credit_limit=?,credit_terms_days=?,credit_hold=?,credit_hold_reason=?,parent_customer_id=?,
-      classified_location=?,latitude=?,longitude=? WHERE id=?`)
+      classified_location=?,latitude=?,longitude=?,is_nvocc=?,fmc_number=? WHERE id=?`)
       .run(companyName.trim(), address1, address2, city, state, postalCode, ccU, phone, fax, email, website, notes, (currency || 'USD').toUpperCase().trim(),
            cl, ctd, creditHold ? 1 : 0, creditHold ? creditHoldReason.trim() : '', parentCustomerId || null,
-           classifiedLocation ? 1 : 0, lat, lng, req.params.id);
+           classifiedLocation ? 1 : 0, lat, lng, isNvocc ? 1 : 0, isNvocc ? fmcNumber.trim() : '', req.params.id);
     if (info.changes === 0) return err(res, "Not found", 404);
     if (sanctionsMap.size > 0) screenCustomer(req.params.id);
     const row = db.prepare(`${CUST_JOIN} WHERE c.id=?`).get(req.params.id);

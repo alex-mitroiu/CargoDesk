@@ -248,6 +248,15 @@ module.exports = function ediRoutes(app, ctx) {
       "SELECT id FROM shipment_rate_snapshots WHERE shipment_id=? ORDER BY generated_at DESC LIMIT 1"
     ).get(shipment.id);
 
+    // NVOCC support (Epic TKT-Q52B38) — when this shipment is being handled through an NVOCC,
+    // THAT party (not the underlying cargo owner) is the real shipper of record on the vessel
+    // operator's own booking/Master B/L; shipment.shipper_name is the House B/L shipper, a
+    // different, legally distinct party. Falls back to today's exact behavior when no NVOCC
+    // party is assigned — byte-identical payload for every shipment booked direct with a carrier.
+    const nvoccParty = db.prepare(
+      "SELECT customer_name FROM shipment_parties WHERE shipment_id=? AND role='NVOCC'"
+    ).get(shipment.id);
+
     const requestPayload = {
       pol: shipment.pol, pod: shipment.pod,
       carrierCode: shipment.carrier_code,
@@ -260,7 +269,7 @@ module.exports = function ediRoutes(app, ctx) {
       cargoReadyDate: shipment.cargo_ready_date || null,
       placeOfReceipt: shipment.place_of_receipt || null,
       placeOfDelivery: shipment.place_of_delivery || null,
-      shipperName: shipment.shipper_name || null,
+      shipperName: nvoccParty?.customer_name || shipment.shipper_name || null,
       consigneeName: shipment.consignee_name || null,
       notifyName: shipment.notify_name || null,
       commodityCode: shipment.commodity_code || null,

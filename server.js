@@ -1594,6 +1594,12 @@ const migrations = [
   )`,
   "CREATE UNIQUE INDEX IF NOT EXISTS idx_contract_container_types_uniq ON contract_container_types(contract_id, container_type)",
   "CREATE UNIQUE INDEX IF NOT EXISTS idx_contract_imdg_classes_uniq ON contract_imdg_classes(contract_id, imdg_class)",
+  // NVOCC support, Epic TKT-Q52B38 — a customer eligible for the new "NVOCC" party role (below)
+  // can carry its own FMC (or equivalent non-US) license/registration number. Mirrors the
+  // classified_location boolean-flag-plus-detail-field pattern (v0.63.0) exactly: is_nvocc
+  // gates whether fmc_number means anything, same as classified_location gates latitude/longitude.
+  "ALTER TABLE customers ADD COLUMN is_nvocc INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE customers ADD COLUMN fmc_number TEXT DEFAULT ''",
 ];
 
 // "duplicate column name" is the expected, harmless result of re-running an ADD COLUMN
@@ -2646,7 +2652,7 @@ const ADDITIONAL_PARTY_ROLES = [
   "Forwarder", "Customs Broker (Export)", "Customs Broker (Import)",
   "Trucker (Pre-carriage)", "Trucker (On-carriage)",
   "Also Notify Party", "Bank", "Insurance Provider", "Agent",
-  "Line Agent (Export)", "Line Agent (Import)",
+  "Line Agent (Export)", "Line Agent (Import)", "NVOCC",
 ];
 // Customs & Regulatory Filing (Epic TKT-XW6TQK) — the two filing types a shipment can
 // independently need, AES/EEI (export) and ISF/AMS (import). Simulated/mock only.

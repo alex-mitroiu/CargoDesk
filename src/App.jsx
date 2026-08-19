@@ -110,6 +110,7 @@ import TrackingPage            from "./pages/TrackingPage";
 
 const DOC_TYPES = [
   { code: "BL01", label: "Bill of Lading" },
+  { code: "MB01", label: "Master Bill of Lading" },
   { code: "CI01", label: "Commercial Invoice" },
   { code: "CI02", label: "Commercial Invoice (Amendment)" },
   { code: "FR01", label: "Freight Invoice" },
@@ -241,6 +242,7 @@ const buildBillOfLadingHtml = ({ shipment: sh, invNumber, invDate, notes, contai
   // already use: an unassigned role renders nothing rather than a blank placeholder row.
   const alsoNotify = partyByRole(parties, "Also Notify Party");
   const preCarrier = partyByRole(parties, "Trucker (Pre-carriage)");
+  const nvocc      = partyByRole(parties, "NVOCC");
   // Real legal significance, not paperwork trivia — see BL_RELEASE_TYPES' own comment in
   // tokens.js: an Original B/L needs a physical set surrendered before release, so a full set
   // is issued (3 is the standard trade-practice count); Telex/Surrendered already gave up the
@@ -284,6 +286,7 @@ const buildBillOfLadingHtml = ({ shipment: sh, invNumber, invDate, notes, contai
       <div class="details-grid">${_detailGrid([
         ["B/L Number", _esc(sh.blNumber || invNumber)], ["Release Type", _esc(sh.blReleaseType || "—")],
         ...(sh.masterBlNumber ? [["Master B/L Number", _esc(sh.masterBlNumber)]] : []),
+        ...(nvocc ? [["NVOCC", _esc(nvocc.customerName)]] : []),
         ["No. of Originals", originalsLine], ["Booking Ref", _esc(sh.bookingRef || "—")],
         ...(preCarrier ? [["Pre-carriage By", _esc(preCarrier.customerName)]] : []),
         ["Place of Receipt", _esc(sh.placeOfReceipt || "—")],
@@ -332,6 +335,93 @@ const buildBillOfLadingHtml = ({ shipment: sh, invNumber, invDate, notes, contai
     ${notes ? `<div class="notes"><div class="notes-label">Notes / Special Instructions</div><div class="notes-text">${_esc(notes)}</div></div>` : ""}`;
 
   return _invShell(`Bill of Lading — ${invNumber}`, "BILL OF LADING", invNumber, invDate, body);
+};
+
+// Master B/L — issued by the real vessel operator TO the NVOCC, a genuinely different document
+// from the House B/L above (issued BY the NVOCC to the underlying shipper): different Shipper/
+// Consignee, same physical movement (Epic TKT-Q52B38, Finding 05). Deliberately its own builder,
+// not a mode flag on buildBillOfLadingHtml — the two documents' party resolution is different
+// enough (NVOCC-as-shipper here vs. NVOCC-as-carrier-identity there) that branching one function
+// would obscure more than it'd share. Consignee is rendered "TO ORDER OF {NVOCC}" — standard
+// trade language for a non-negotiable master bill controlled by the NVOCC, not a fabricated
+// party; Notify Party is left "—" since the NVOCC's own destination agent isn't modeled yet
+// (see TKT-IB5IEX, logged backlog) and showing the House-side notify here would misattribute a
+// party that has no role on this document.
+const buildMasterBillOfLadingHtml = ({ shipment: sh, invNumber, invDate, notes, containers, parties }) => {
+  const { w: totalWeight, v: totalVolume } = _ctrTotals(containers);
+  const nvocc = partyByRole(parties, "NVOCC");
+  const rows = containers.length === 0
+    ? `<tr><td colspan="7" style="text-align:center;color:#9ca3af;padding:16px">No containers recorded</td></tr>`
+    : containers.map(c => `<tr>
+        <td><span class="code">${_esc(c.containerNumber || "TBC")}</span></td>
+        <td>${_esc(c.sealNumber || "—")}</td>
+        <td>${_esc(c.size)}ft ${_esc(c.type)}${c.isDg ? ` <span class="dg">DG ${_esc(c.dgClass)}</span>` : ""}</td>
+        <td>${_esc(c.cargoDescription || "—")}</td>
+        <td class="num">${c.grossWeightKg != null ? Number(c.grossWeightKg).toLocaleString() + " kg" : "—"}</td>
+        <td class="num">${c.volumeCbm != null ? Number(c.volumeCbm) + " CBM" : "—"}</td>
+        <td>${c.hsCode ? `<span class="code" style="font-size:11px">${_esc(c.hsCode)}</span>` : "—"}</td>
+      </tr>`).join("");
+
+  const body = `
+    <div class="parties" style="grid-template-columns:1fr 1fr 1fr">
+      <div class="party"><div class="party-label">Shipper (NVOCC)</div>
+        <div class="party-name">${_esc(nvocc?.customerName || "—")}</div>
+      </div>
+      <div class="party"><div class="party-label">Consignee</div>
+        <div class="party-name">${nvocc ? `TO ORDER OF ${_esc(nvocc.customerName)}` : "—"}</div>
+      </div>
+      <div class="party"><div class="party-label">Notify Party</div>
+        <div class="party-name">—</div>
+      </div>
+    </div>
+    <div class="shp-block"><div class="block-label">Transport Details</div>
+      <div class="details-grid">${_detailGrid([
+        ["Master B/L Number", _esc(sh.masterBlNumber || invNumber)],
+        ["House B/L Number", _esc(sh.blNumber || "—")],
+        ["Booking Ref", _esc(sh.bookingRef || "—")],
+        ["Vessel", _esc(sh.vessel || "—")], ["Voyage", _esc(sh.voyage || "—")],
+        ["Port of Loading", `${_esc(sh.pol)}${sh.polName ? " · " + _esc(sh.polName) : ""}`],
+        ["Port of Discharge", `${_esc(sh.pod)}${sh.podName ? " · " + _esc(sh.podName) : ""}`],
+        ["ETD", sh.etd ? new Date(sh.etd).toLocaleDateString("en-GB") : "—"],
+        ["ETA", sh.eta ? new Date(sh.eta).toLocaleDateString("en-GB") : "—"],
+        ["Carrier", _esc(sh.carrierCode || "—")],
+        ["Movement", _esc(sh.movementType || "FCL")],
+      ])}</div>
+    </div>
+    <div class="section-label">Containers / Cargo</div>
+    <table><thead><tr>
+      <th>Container #</th><th>Seal #</th><th>Type</th><th>Cargo Description</th>
+      <th style="text-align:right">Gross Weight</th><th style="text-align:right">Volume</th><th>HS Code</th>
+    </tr></thead><tbody>${rows}</tbody>
+    ${containers.length > 0 ? `<tfoot><tr>
+      <td colspan="4" style="font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.5px">
+        ${containers.length} container${containers.length > 1 ? "s" : ""} total
+      </td>
+      <td class="num" style="font-weight:700">${totalWeight > 0 ? totalWeight.toLocaleString() + " kg" : "—"}</td>
+      <td class="num" style="font-weight:700">${totalVolume > 0 ? totalVolume.toFixed(2) + " CBM" : "—"}</td>
+      <td></td>
+    </tr></tfoot>` : ""}
+    </table>
+    <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px;margin-bottom:20px;font-size:11px;color:#374151;line-height:1.7">
+      <strong>SHIPPED ON BOARD</strong> the above named vessel in apparent good order and condition,
+      weight, measure, marks, numbers, quality, contents and value unknown. Freight and charges payable as indicated.
+      In accepting this Bill of Lading, the shipper, consignee and holder agree to be bound by all stipulations,
+      exceptions and conditions stated herein.
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px">
+      <div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px">
+        <div class="party-label">Place and Date of Issue</div>
+        <div style="font-size:12px;margin-top:4px">${_esc(sh.pol || "—")} / ${new Date(invDate + "T00:00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" })}</div>
+      </div>
+      <div style="border:1px solid #e5e7eb;border-radius:8px;padding:14px 16px">
+        <div class="party-label">Signed for the Carrier</div>
+        <div style="height:48px"></div>
+        <div style="border-top:1px solid #d1d5db;padding-top:8px;font-size:11px;color:#6b7280">Authorised Signatory</div>
+      </div>
+    </div>
+    ${notes ? `<div class="notes"><div class="notes-label">Notes / Special Instructions</div><div class="notes-text">${_esc(notes)}</div></div>` : ""}`;
+
+  return _invShell(`Master Bill of Lading — ${invNumber}`, "MASTER BILL OF LADING", invNumber, invDate, body);
 };
 
 const buildPackingListHtml = ({ shipment: sh, invNumber, invDate, notes, containers, shipper, consignee }) => {
@@ -791,6 +881,13 @@ const getMissingDocRequirements = (docCode, { shipment: sh, containers, shipper,
     if (!sh.pol) missing.push("Port of Loading");
     if (!sh.pod) missing.push("Port of Discharge");
   }
+  if (docCode === "MB01") {
+    if (!partyByRole(parties, "NVOCC")?.customerName) missing.push("NVOCC (assign one on Parties & Offices)");
+    if (!sh.masterBlNumber) missing.push("Master B/L Number (set on the Conditions page)");
+    if (containers.length === 0) missing.push("At least one container");
+    if (!sh.pol) missing.push("Port of Loading");
+    if (!sh.pod) missing.push("Port of Discharge");
+  }
   if (["AN01", "DO01"].includes(docCode)) {
     if (!hasConsignee) missing.push("Consignee");
     if (!sh.pod) missing.push("Port of Discharge");
@@ -819,6 +916,7 @@ const getMissingDocRequirements = (docCode, { shipment: sh, containers, shipper,
 const dispatchDocBuilder = (code, data) => {
   switch (code) {
     case "BL01":             return buildBillOfLadingHtml(data);
+    case "MB01":             return buildMasterBillOfLadingHtml(data);
     case "CI01": case "CI02": return buildCommercialInvoiceHtml(data);
     case "FR01": case "FR02": return buildFreightInvoiceHtml(data);
     case "PL01":             return buildPackingListHtml(data);
