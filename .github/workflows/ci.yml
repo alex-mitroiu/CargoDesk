@@ -42,6 +42,15 @@ jobs:
       # default of 20 per 60 seconds (routes/shipment-ops.js) is exhausted well before the suite
       # finishes when they all run back-to-back against one continuous server process.
       DOC_ACTION_RATE_MAX: '500'
+      # Same class again: the real-world default is 15 per 5 minutes (routes/export.js) — fine for
+      # a human clicking Export occasionally, tight for export.test.js's own CSV/XLSX/template
+      # assertions run back-to-back in one continuous process.
+      EXPORT_RATE_MAX: '200'
+      # Same class again: ai-document-extraction.test.js and ai-agent-gating.test.js between them
+      # make 15+ calls to POST /api/ai/extract-document (real-world default: 15 per 15 minutes,
+      # routes/ai.js) against one continuous process — exhausted before either file finishes.
+      AI_EXTRACT_RATE_MAX: '200'
+      AI_CHAT_RATE_MAX: '200'
 
     steps:
       - name: Checkout
@@ -76,7 +85,7 @@ jobs:
       - name: Seed database
         run: npm run seed
 
-      - name: Run monolith test suite (20 files)
+      - name: Run monolith test suite (45 files)
         run: npm test
 
       - name: Run document-distribution service test suite
