@@ -167,7 +167,21 @@ app.post("/internal/render", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => console.log(`PDF Render Service listening on :${PORT}`));
+app.listen(PORT, () => {
+  console.log(`PDF Render Service listening on :${PORT}`);
+  // Browser launch is otherwise fully lazy (see resolveBrowserExecutable's own comment on why —
+  // a machine with no browser installed yet still starts up fine). That laziness meant the FIRST
+  // real render request anywhere paid the full cold-start cost — spawn + CDP-ready poll +
+  // puppeteer.connect() — inside the monolith's own 30s per-call timeout. Found via a real CI
+  // failure: the very first document-generation call in the whole suite (carrier-booking.test.js,
+  // early in the chain) timed out at exactly 30.0s on a loaded runner. Firing this once at boot
+  // gives the launch a head start — by the time `npm run seed` finishes and the first real test
+  // needs it, the browser is very likely already warm. Still fully non-fatal if it fails (no
+  // browser installed, launch error, etc.) — getBrowser()'s own catch already logs via
+  // LAUNCH_FAILED; the trailing catch here only exists to avoid an unhandled-rejection warning,
+  // and the next real render call will simply retry the launch itself, same as today.
+  getBrowser().catch(() => {});
+});
 
 // A stuck/crashed browser shouldn't need a full process restart to recover — the next render
 // call just re-launches it (getBrowser's own catch already clears browserPromise on failure).

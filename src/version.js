@@ -2,11 +2,17 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.72.2";
+export const VERSION   = "0.72.3";
 export const BUILD     = "2026-08-20";
 export const CODENAME  = "Clearance";
 
 export const CHANGELOG = [
+  {
+    version:  "0.72.3",
+    date:     "2026-08-20",
+    codename: "Clearance",
+    summary:  "Direct CI-log report of a fresh failure after the v0.72.2 coverage push. Root cause was real, not flaky: the PDF Render Service's Puppeteer browser launch is entirely lazy (services/pdf-render/server.js's own resolveBrowserExecutable comment: 'errors lazily at render time... so a machine with no browser installed yet still starts up fine') — nothing eagerly warms it at boot. The FIRST document-generation call anywhere in the whole CI job (carrier-booking.test.js's B/L-document test, early in the 45-file chain) therefore always paid the full cold-start cost — spawn the browser, poll until its CDP port answers, puppeteer.connect() — inside the monolith's own 30-second per-call timeout (lib/pdf-signing.js). On this run, on a loaded/shared GitHub Actions runner, that cold start didn't finish in time: the failure's own timing (07:39:55.0067 to 07:40:25.0154) landed at exactly 30.0087 seconds, matching the timeout constant to the millisecond.\n\nFixed at the actual source, not papered over: services/pdf-render/server.js now fires a single getBrowser() call inside its own app.listen() callback, right at boot — fully non-fatal if it fails (getBrowser()'s existing catch/log path is unchanged; a real render call still retries the launch itself exactly as before if the warm-up didn't succeed). This gives the browser a real head start — in CI, services start roughly 19 seconds before the first test that needs one runs, comfortably enough for a cold launch in the common case. Confirmed live: after this fix, the first-ever call to tests/carrier-booking.test.js's B/L-document test — previously the one that timed out — completed the whole file, document generation included, in well under 4 seconds, down from hitting the full 30-second ceiling. Also bumped lib/pdf-signing.js's own timeout from 30s to 45s as defensive headroom on top of the real fix, not instead of it, for the rare case the warm-up itself hasn't finished yet on a genuinely slow runner.\n\nVerified end-to-end from a fresh full-stack restart: the full 45-file backend chain, both service-scoped chains (document-distribution, contract-service-toggle), the frontend Vitest suite, and a production build all green.",
+  },
   {
     version:  "0.72.2",
     date:     "2026-08-20",

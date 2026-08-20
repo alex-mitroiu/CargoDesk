@@ -4,7 +4,7 @@
 Full-stack freight management app. React 18 + Vite frontend, Express + node:sqlite backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.72.2 "Clearance"**
+- Version: **v0.72.3 "Clearance"**
 - Run: `npm run dev` (runs the monolith on :3001 + Vite on :5173 + the Document Distribution Service on :3002 + the PDF Render Service on :3003 + the Contract Management Service on :3004, concurrently)
 - Seed: `npm run seed` (runs `scripts/import-mdm-data.js`)
 
@@ -307,6 +307,20 @@ are fully validated.
 - **Document system**: `DOC_TYPES` in App.jsx (~line 56: BL01/MB01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — `MB01` (Master Bill of Lading, v0.71.0) is the vessel-operator-to-NVOCC document, a genuinely separate build from `BL01` (NVOCC-to-shipper House B/L), not a mode flag on it — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). (The earlier client-side-jsPDF `DocumentsMenu` component this note used to distinguish from was removed as dead code — it had zero references anywhere in the app.)
 - **Lifecycle-stage stepper precedent**: no dedicated stepper component exists yet; `MilestonePanel` (ShipmentDetailPage.jsx 1593-~1870) is the closest analog — linear progress bar (1734-1738, `width: ${progress}%`) plus per-step state coloring via `milestoneState()`/`stateColor()` (1666-1676: completed/overdue/current/upcoming) driven by `shipment_milestones` rows (`id, label, estimatedDate, note, completedAt, completedBy`, fixed step keys `booking_confirmed, si_submitted, cargo_gated_in, vessel_departed, bl_issued, vessel_arrived, customs_cleared, cargo_released, delivered`). Any new per-container lifecycle/stage UI should reuse this state-coloring pattern rather than inventing a new visual language
 - **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages, 📡 EDI). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
+
+## Recent changes (v0.72.3 "Clearance")
+- **Real CI failure fixed at the source, not papered over**: `services/pdf-render/server.js`'s
+  Puppeteer browser launch was fully lazy (by design, so a machine with no browser installed
+  still boots fine) — the first document-generation call anywhere in a run paid the full
+  cold-start cost inside `lib/pdf-signing.js`'s 30s per-call timeout. On a loaded CI runner this
+  timed out at exactly 30.0s (`carrier-booking.test.js`'s B/L-document test, early in the
+  45-file chain). Fixed by firing one `getBrowser()` call inside the service's own
+  `app.listen()` callback at boot — non-fatal if it fails, a real render call still retries the
+  launch itself exactly as before. Confirmed live: the previously-timing-out test file now
+  completes, document generation included, in well under 4 seconds. Also bumped the monolith
+  side's own timeout 30s→45s as defensive headroom on top of the real fix.
+- Full 45-file backend chain + both service-scoped chains + frontend Vitest + build all verified
+  green from a fresh full-stack restart.
 
 ## Recent changes (v0.72.2 "Clearance")
 - **Backend test coverage pushed from 76.56% to 90.15%** (real V8 line coverage, measured via a
