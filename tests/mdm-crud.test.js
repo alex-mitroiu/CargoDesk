@@ -257,7 +257,12 @@ async function login() {
     assert("country locations returns results/total shape", "results" in cLocations.body && "total" in cLocations.body);
     const cUpdate = await request("PUT", `/api/countries/${countryCode}`, { name: "Zedland Renamed", unMember: 0, regionCode: "" }, token);
     assert("country update returns 200", cUpdate.status === 200 && cUpdate.body.name === "Zedland Renamed");
-    const cUpdate404 = await request("PUT", "/api/countries/ZZ", { name: "X" }, token);
+    // "XX", not "ZZ" — every scratch code in this file is Z-prefixed (countryCode itself is
+    // `Z${rand[0]}`), so a sentinel meant to guarantee non-existence must never share that
+    // prefix; rand[0] landing on "Z" would otherwise make countryCode literally "ZZ" and this
+    // "unknown code" check would silently find our own still-live scratch row instead — a real,
+    // if rare (1/36), CI failure this exact way already confirmed it live.
+    const cUpdate404 = await request("PUT", "/api/countries/XX", { name: "X" }, token);
     assert("country update 404 for unknown code", cUpdate404.status === 404);
     const cDelete = await request("DELETE", `/api/countries/${countryCode}`, null, token);
     assert("country delete returns 200", cDelete.status === 200);

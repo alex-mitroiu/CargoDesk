@@ -210,7 +210,11 @@ async function login() {
     const scratchCountry = await request("POST", "/api/countries", { iso2: orgCountryCode, name: "Zedland Org Test" }, token);
     assert("scratch MDM country created for this section", scratchCountry.status === 201, JSON.stringify(scratchCountry.body));
 
-    const orgCountryBad = await request("POST", "/api/org-countries", { countryCode: "ZZ" }, token);
+    // "XX", not "ZZ" — orgCountryCode above is Z-prefixed (`Z${rand[0]}`); if rand[0] ever
+    // landed on "Z" a "ZZ" sentinel here would collide with our own just-created scratch
+    // country instead of testing a genuinely unknown one. Confirmed live: this exact 1/36
+    // collision already broke the equivalent sentinel in tests/mdm-crud.test.js in CI.
+    const orgCountryBad = await request("POST", "/api/org-countries", { countryCode: "XX" }, token);
     assert("unknown country code rejected", orgCountryBad.status >= 400 && /not found/i.test(orgCountryBad.body.error || ""));
 
     const orgCountry = await request("POST", "/api/org-countries", {
@@ -232,7 +236,7 @@ async function login() {
     assert("compliance notes updated", orgCountryUpdate.body.complianceNotes === "Updated note");
     assert("isActive updated", orgCountryUpdate.body.isActive === false);
 
-    const orgCountryUpdate404 = await request("PUT", "/api/org-countries/ZZ", { timezone: "X" }, token);
+    const orgCountryUpdate404 = await request("PUT", "/api/org-countries/XX", { timezone: "X" }, token);
     assert("org country update 404 for unassigned country", orgCountryUpdate404.status === 404);
 
     const orgCountryDelete = await request("DELETE", `/api/org-countries/${orgCountryCode.toLowerCase()}`, null, token);
