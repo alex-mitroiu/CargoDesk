@@ -199,26 +199,35 @@ async function login() {
     assert("branch delete 404 on second attempt", brnDelete404.status === 404);
 
     console.log("\nOrg Countries — create (validated against countries MDM), list, update, duplicate rejection, delete");
-    // Clean up any leftover org_countries row from a previous interrupted run before creating.
-    await request("DELETE", "/api/org-countries/NL", null, token);
+    // npm run seed only ever seeds CN/SA into the countries MDM table (see
+    // scripts/import-mdm-data.js's own comment on this — no bundled country-name dataset
+    // exists to seed a full registry from) — a real country code like "NL" only exists in a
+    // long-lived local dev DB from incidental prior activity, not in a genuinely fresh one
+    // (confirmed live: this exact assumption failed all 9 of this section's assertions in CI).
+    // Own the fixture instead of depending on ambient seed data: create a scratch MDM country
+    // first, same as mdm-crud.test.js already does for the plain Countries CRUD.
+    const orgCountryCode = `Z${rand[0]}`;
+    const scratchCountry = await request("POST", "/api/countries", { iso2: orgCountryCode, name: "Zedland Org Test" }, token);
+    assert("scratch MDM country created for this section", scratchCountry.status === 201, JSON.stringify(scratchCountry.body));
+
     const orgCountryBad = await request("POST", "/api/org-countries", { countryCode: "ZZ" }, token);
     assert("unknown country code rejected", orgCountryBad.status >= 400 && /not found/i.test(orgCountryBad.body.error || ""));
 
     const orgCountry = await request("POST", "/api/org-countries", {
-      countryCode: "nl", defaultCurrency: "EUR", timezone: "Europe/Amsterdam", complianceNotes: "Test note",
+      countryCode: orgCountryCode.toLowerCase(), defaultCurrency: "EUR", timezone: "Europe/Amsterdam", complianceNotes: "Test note",
     }, token);
     assert("org country created", orgCountry.status === 200, JSON.stringify(orgCountry.body));
-    assert("country code uppercased", orgCountry.body.countryCode === "NL");
-    assert("country name resolved from MDM", !!orgCountry.body.countryName);
+    assert("country code uppercased", orgCountry.body.countryCode === orgCountryCode);
+    assert("country name resolved from MDM", orgCountry.body.countryName === "Zedland Org Test");
 
-    const orgCountryDup = await request("POST", "/api/org-countries", { countryCode: "NL" }, token);
+    const orgCountryDup = await request("POST", "/api/org-countries", { countryCode: orgCountryCode }, token);
     assert("duplicate org country rejected", orgCountryDup.status >= 400 && /already/i.test(orgCountryDup.body.error || ""));
 
     const orgCountryList = await request("GET", "/api/org-countries", null, token);
     assert("org countries list returns 200", orgCountryList.status === 200);
-    assert("NL present in the list", orgCountryList.body.some(c => c.countryCode === "NL"));
+    assert("scratch country present in the list", orgCountryList.body.some(c => c.countryCode === orgCountryCode));
 
-    const orgCountryUpdate = await request("PUT", "/api/org-countries/nl", { complianceNotes: "Updated note", isActive: false }, token);
+    const orgCountryUpdate = await request("PUT", `/api/org-countries/${orgCountryCode.toLowerCase()}`, { complianceNotes: "Updated note", isActive: false }, token);
     assert("org country update returns 200", orgCountryUpdate.status === 200);
     assert("compliance notes updated", orgCountryUpdate.body.complianceNotes === "Updated note");
     assert("isActive updated", orgCountryUpdate.body.isActive === false);
@@ -226,10 +235,12 @@ async function login() {
     const orgCountryUpdate404 = await request("PUT", "/api/org-countries/ZZ", { timezone: "X" }, token);
     assert("org country update 404 for unassigned country", orgCountryUpdate404.status === 404);
 
-    const orgCountryDelete = await request("DELETE", "/api/org-countries/nl", null, token);
+    const orgCountryDelete = await request("DELETE", `/api/org-countries/${orgCountryCode.toLowerCase()}`, null, token);
     assert("org country delete returns 200", orgCountryDelete.status === 200);
-    const orgCountryDelete404 = await request("DELETE", "/api/org-countries/nl", null, token);
+    const orgCountryDelete404 = await request("DELETE", `/api/org-countries/${orgCountryCode.toLowerCase()}`, null, token);
     assert("org country delete 404 on second attempt", orgCountryDelete404.status === 404);
+
+    await request("DELETE", `/api/countries/${orgCountryCode}`, null, token);
 
     console.log("\nUnauthenticated / non-admin write attempts are rejected");
     const noAuthBranches = await request("GET", "/api/branches", null, null);
