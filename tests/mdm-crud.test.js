@@ -167,6 +167,17 @@ async function login() {
 
     console.log("\nTrade Lanes — create, countries assignment, transit-suggestion, update, delete");
     const laneCode = `Z${rand}`;
+    // GET .../trade-lanes/:code/countries INNER JOINs against the countries MDM table (unlike
+    // the PUT that writes the assignment, which doesn't validate against it at all) — a real
+    // country code like NL/DE only exists there in a long-lived local dev DB from incidental
+    // prior activity, not in a genuinely fresh one (npm run seed only ever seeds CN/SA — see
+    // scripts/import-mdm-data.js's own comment). Own two scratch MDM countries instead of
+    // assuming NL/DE are seeded, same fix already applied to organization.test.js for the
+    // identical gap.
+    const laneCountryA = `Z${rand[1]}`, laneCountryB = `Z${rand[2]}`;
+    await request("POST", "/api/countries", { iso2: laneCountryA, name: "Zedland Lane A" }, token);
+    await request("POST", "/api/countries", { iso2: laneCountryB, name: "Zedland Lane B" }, token);
+
     const laneCreate = await request("POST", "/api/trade-lanes", { code: laneCode, name: "Zed Test Lane", transitDays: 21 }, token);
     assert("trade lane created", laneCreate.status === 201, JSON.stringify(laneCreate.body));
     const laneMissing = await request("POST", "/api/trade-lanes", { code: "" }, token);
@@ -176,10 +187,10 @@ async function login() {
     const laneList = await request("GET", "/api/trade-lanes", null, token);
     assert("trade lane list includes ours with countryCount", laneList.body.some(l => l.code === laneCode && "countryCount" in l));
 
-    const laneCountriesSet = await request("PUT", `/api/trade-lanes/${laneCode}/countries`, { iso2s: ["NL", "DE"] }, token);
+    const laneCountriesSet = await request("PUT", `/api/trade-lanes/${laneCode}/countries`, { iso2s: [laneCountryA, laneCountryB] }, token);
     assert("trade lane countries set returns 200", laneCountriesSet.status === 200);
     const laneCountriesGet = await request("GET", `/api/trade-lanes/${laneCode}/countries`, null, token);
-    assert("trade lane countries reflects the assignment", laneCountriesGet.body.map(c => c.iso2).sort().join(",") === "DE,NL");
+    assert("trade lane countries reflects the assignment", laneCountriesGet.body.map(c => c.iso2).sort().join(",") === [laneCountryA, laneCountryB].sort().join(","));
 
     const transitKnown = await request("GET", `/api/trade-lanes/transit-suggestion?pol=${portCode}&pod=${portCode}`, null, token);
     assert("transit-suggestion returns a days/lane shape", "days" in transitKnown.body && "lane" in transitKnown.body);
@@ -192,23 +203,26 @@ async function login() {
     assert("trade lane update 404 for unknown code", laneUpdate404.status === 404);
 
     console.log("\nCountry Trade Lanes — direct create/delete on the join table, and the per-country bulk-replace route");
-    await request("DELETE", `/api/country-trade-lanes/NL/${laneCode}`, null, token); // pre-clean from the bulk-set above
-    const ctlCreate = await request("POST", "/api/country-trade-lanes", { iso2: "NL", laneCode }, token);
+    await request("DELETE", `/api/country-trade-lanes/${laneCountryA}/${laneCode}`, null, token); // pre-clean from the bulk-set above
+    const ctlCreate = await request("POST", "/api/country-trade-lanes", { iso2: laneCountryA, laneCode }, token);
     assert("country-trade-lane created", ctlCreate.status === 201, JSON.stringify(ctlCreate.body));
-    const ctlDup = await request("POST", "/api/country-trade-lanes", { iso2: "NL", laneCode }, token);
+    const ctlDup = await request("POST", "/api/country-trade-lanes", { iso2: laneCountryA, laneCode }, token);
     assert("duplicate country-trade-lane rejected", ctlDup.status >= 400);
     const ctlList = await request("GET", "/api/country-trade-lanes", null, token);
-    assert("country-trade-lanes list includes ours", ctlList.body.some(r => r.iso2 === "NL" && r.lane_code === laneCode));
-    const ctlBulkSet = await request("PUT", "/api/countries/DE/trade-lanes", { lanes: [laneCode] }, token);
+    assert("country-trade-lanes list includes ours", ctlList.body.some(r => r.iso2 === laneCountryA && r.lane_code === laneCode));
+    const ctlBulkSet = await request("PUT", `/api/countries/${laneCountryB}/trade-lanes`, { lanes: [laneCode] }, token);
     assert("bulk per-country lane replace returns 200", ctlBulkSet.status === 200);
-    const ctlDelete = await request("DELETE", `/api/country-trade-lanes/NL/${laneCode}`, null, token);
+    const ctlDelete = await request("DELETE", `/api/country-trade-lanes/${laneCountryA}/${laneCode}`, null, token);
     assert("country-trade-lane delete returns 200 (idempotent even if absent)", ctlDelete.status === 200);
-    await request("PUT", "/api/countries/DE/trade-lanes", { lanes: [] }, token); // clean up the bulk-set above
+    await request("PUT", `/api/countries/${laneCountryB}/trade-lanes`, { lanes: [] }, token); // clean up the bulk-set above
 
     const laneDelete = await request("DELETE", `/api/trade-lanes/${laneCode}`, null, token);
     assert("trade lane delete returns 200", laneDelete.status === 200);
     const laneDelete404 = await request("DELETE", `/api/trade-lanes/${laneCode}`, null, token);
     assert("trade lane delete 404 on second attempt", laneDelete404.status === 404);
+
+    await request("DELETE", `/api/countries/${laneCountryA}`, null, token);
+    await request("DELETE", `/api/countries/${laneCountryB}`, null, token);
 
     console.log("\nRegions — create, list, update, duplicate rejection, delete");
     const regionCode = `Z${rand}`;
