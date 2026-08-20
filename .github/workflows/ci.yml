@@ -85,6 +85,25 @@ jobs:
       - name: Seed database
         run: npm run seed
 
+      # Same class of staleness the cypress job below already had to fix, for the same reason:
+      # the monolith caches port->country and port->trade-lane resolution in memory
+      # (portCountryMap/portLanesMap, both built exactly once at startup) — rows the seed step
+      # above just inserted directly into SQLite are invisible to the already-running process
+      # until it restarts and rebuilds those caches from scratch. Found via a real CI failure:
+      # reports.test.js's groupBy=country/region assertions (NLRTM -> country NL) came back
+      # empty even though the seeded port row was genuinely there — reproduced locally by
+      # booting the monolith against a genuinely fresh DB, seeding after boot with no restart
+      # (matching this exact step order), and confirming the same 3 assertions fail; restarting
+      # before testing fixed it. Only the monolith needs this — the 3 auxiliary services own no
+      # port/country/trade-lane data of their own.
+      - name: Restart monolith to pick up freshly-seeded MDM caches
+        run: |
+          (fuser -k 3001/tcp || true) 2>/dev/null
+          (lsof -ti:3001 | xargs -r kill -9 || true) 2>/dev/null
+          npx wait-on --reverse http://localhost:3001/api/health --timeout 15000 || true
+          npm run server &
+          npx wait-on http://localhost:3001/api/health --timeout 60000
+
       - name: Run monolith test suite (45 files)
         run: npm test
 
