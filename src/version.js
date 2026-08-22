@@ -2,11 +2,17 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.72.3";
-export const BUILD     = "2026-08-20";
-export const CODENAME  = "Clearance";
+export const VERSION   = "0.73.0";
+export const BUILD     = "2026-08-22";
+export const CODENAME  = "Solvency";
 
 export const CHANGELOG = [
+  {
+    version:  "0.73.0",
+    date:     "2026-08-22",
+    codename: "Solvency",
+    summary:  "Credit Control Depth (Epic TKT-6XFJQM), first pass — a sourced gap analysis of CargoDesk's Credit Control feature (Epic 2, v0.57.0) against CargoWise One and Magaya Supply Chain, published as an artifact and logged as 7 Kanban stories. This release ships the four that all extend the same GET /api/customers/:id/credit-status endpoint and the customers.currency field, bundled as one coherent backend pass rather than four separate touches of the same file.\n\nAR aging (TKT-O4DNFX): credit-status now returns real Current/1-30/31-60/61-90/90+ buckets (computed from each confirmed invoice's confirmed_at plus the customer's own credit_terms_days as the due-date baseline), not just a flat outstanding total — the confirmed, sourced Magaya gap.\n\nCommitted exposure (TKT-AJAEDO): a new committedExposure figure sums accrued SELL cost lines that were never invoiced at all — a shipment can carry a large accrued balance that's genuinely invisible to a credit check that only looks at confirmed invoices. Kept visibly separate from outstandingAr, never silently merged; overLimit now factors in both.\n\nParent/group rollup (TKT-IA7I7J): wired the existing resolveCustomerGroup() helper (already used for margin-rollup reporting since v0.59.0) into credit-status as an additive groupOutstandingAr, so a subsidiary's own small limit no longer hides real group-wide exposure.\n\nCurrency (TKT-O5I4NK), direct follow-up request: credit_limit was hardcoded USD regardless of what currency a customer actually used — the Profile tab literally said 'Credit Limit (USD, optional)'. customers.currency already existed (used only to pick a multi-currency invoice's grand-total display currency) but defaulted to a flat 'USD' with zero country-awareness and was never consulted by credit_limit at all. Now: a new customer defaults its currency from country (ES -> EUR, JP -> JPY, etc., scoped to the 8 currencies this app's own picker already offers — an unmapped country just keeps the plain USD default, never a broken dropdown value), still fully overridable and never applied retroactively to an existing customer. credit-status converts the limit to creditLimitUsd via the exact toUsd/FX machinery every shipment_cost_lines row already uses for its own amountUsd, at check time — no new FX system. resolveCreditGate (src/utils/invoiceGenerator.js) and the Generate-Invoice warning modal both updated to compare and display the right numbers.\n\nExplicitly out of scope for this pass, named directly: earlier trigger points (shipment/booking-creation gates, TKT-Q00WHF) and the trade-lane-scoped override exclusive to that lane's own trade manager (TKT-GLWMFP) — both real, both logged, both larger pieces of new surface area than 'extend one endpoint,' queued as the next pass. Dunning emails (TKT-SUEDWH) logged lowest-priority.\n\n52 new/extended assertions in tests/customer-credit-control.test.js (now 90 total) — full 45-file backend chain, both service-scoped chains, and a clean build all verified green from a fresh full-stack restart. One disclosed, deliberate coverage gap: the AR aging bucket *boundaries* (31+/61+/90+ days overdue) can't be exercised through pure HTTP with no endpoint to backdate an invoice's confirmed_at — only the 'current' bucket is integration-tested; the day-threshold arithmetic itself is simple, reviewed math, not faked into a false-confidence test.",
+  },
   {
     version:  "0.72.3",
     date:     "2026-08-20",

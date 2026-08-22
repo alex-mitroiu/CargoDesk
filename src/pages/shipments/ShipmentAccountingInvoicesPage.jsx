@@ -94,8 +94,12 @@ const CreditWarningModal = ({ responsibleParty, busy, onClose, onContinue }) => 
         <span style={{ color: T.warning, flexShrink: 0, marginTop: 1 }}><IconWarning size={15} /></span>
         <div style={{ fontFamily: T.body, fontSize: 12.5, color: T.text, lineHeight: 1.5 }}>
           <strong>{responsibleParty.companyName}</strong> already has {fmtUsd(responsibleParty.outstandingAr)} in
-          confirmed, unpaid invoices. This new invoice would bring their total
-          to {fmtUsd(responsibleParty.projectedAr)}, over their {fmtUsd(responsibleParty.creditLimit)} credit
+          confirmed, unpaid invoices{responsibleParty.committedExposure > 0
+            ? <> plus {fmtUsd(responsibleParty.committedExposure)} accrued but not yet invoiced</> : null}.
+          This new invoice would bring their total to {fmtUsd(responsibleParty.projectedAr)}, over
+          their {responsibleParty.creditLimitCurrency === "USD" || !responsibleParty.creditLimitCurrency
+            ? fmtUsd(responsibleParty.creditLimit)
+            : `${responsibleParty.creditLimit.toLocaleString()} ${responsibleParty.creditLimitCurrency} (${fmtUsd(responsibleParty.creditLimitUsd)})`} credit
           limit. This is a warning only; generating it is still allowed.
         </div>
       </div>

@@ -322,17 +322,27 @@ export async function resolveCreditGate(shipment, newAmountUsd = 0) {
 
   // Same principal-then-consignee precedence generateInvoices() itself already uses for
   // responsibleParty — the AR warning is scoped to whoever is actually being billed.
+  // Comparison is always in USD (creditLimitUsd, converted server-side via the same toUsd/FX
+  // machinery every cost line already uses) — creditLimit itself may now be in the customer's
+  // own currency (TKT-O5I4NK), so it's display-only here, never compared against directly.
+  // committedExposure (accrued SELL lines not yet on a confirmed invoice) is folded into the
+  // projection too — a shipment can carry real, uninvoiced exposure this specific invoice
+  // wouldn't be the first sign of.
   const respId = shipment.principalId || shipment.consigneeId || null;
   const respStatus = respId ? resolved.find(r => r.id === respId)?.status : null;
-  const projectedAr = respStatus ? Math.round((respStatus.outstandingAr + newAmountUsd) * 100) / 100 : 0;
-  const overLimit = respStatus?.creditLimit != null && projectedAr > respStatus.creditLimit;
+  const projectedAr = respStatus
+    ? Math.round((respStatus.outstandingAr + (respStatus.committedExposure || 0) + newAmountUsd) * 100) / 100
+    : 0;
+  const overLimit = respStatus?.creditLimitUsd != null && projectedAr > respStatus.creditLimitUsd;
 
   return {
     blocked: holds.length > 0,
     holds,
     overLimit,
     responsibleParty: respStatus
-      ? { companyName: respStatus.companyName, creditLimit: respStatus.creditLimit, outstandingAr: respStatus.outstandingAr, projectedAr }
+      ? { companyName: respStatus.companyName,
+          creditLimit: respStatus.creditLimit, creditLimitCurrency: respStatus.creditLimitCurrency, creditLimitUsd: respStatus.creditLimitUsd,
+          outstandingAr: respStatus.outstandingAr, committedExposure: respStatus.committedExposure || 0, projectedAr }
       : null,
   };
 }

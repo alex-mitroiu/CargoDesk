@@ -7,9 +7,28 @@ module.exports = function customersRoutes(app, ctx) {
           sanctionsMap, normSanctionName, loadSanctionsIndex, scheduleNextOfacSync,
           syncOfacSdn, syncConsolidatedScreeningList, scheduleNextCslSync,
           getFxRates, fxCache, getSettings,
-          validCoord, roundCents,
+          validCoord, roundCents, toUsd, resolveCustomerGroup,
           createRateLimiter,
           UPLOADS_DIR, fs, path } = ctx;
+
+  // Country -> currency default (TKT-O5I4NK) — deliberately scoped to only the currencies this
+  // app's own credit/billing currency picker already offers (CURRENCIES, MdmCustomersPage.jsx),
+  // not a full ISO 4217/world map: suggesting a currency the picker can't even render would be
+  // worse than no suggestion. A country with no entry here just keeps today's plain 'USD'
+  // fallback — never a broken/blank dropdown value.
+  const COUNTRY_TO_CURRENCY = {
+    US: "USD",
+    GB: "GBP",
+    CN: "CNY", HK: "CNY",
+    SG: "SGD",
+    JP: "JPY",
+    AE: "AED",
+    CH: "CHF", LI: "CHF",
+    // Eurozone
+    DE: "EUR", FR: "EUR", ES: "EUR", IT: "EUR", NL: "EUR", BE: "EUR", PT: "EUR",
+    AT: "EUR", IE: "EUR", FI: "EUR", GR: "EUR", LU: "EUR", SI: "EUR", SK: "EUR",
+    EE: "EUR", LV: "EUR", LT: "EUR", MT: "EUR", CY: "EUR", HR: "EUR",
+  };
 
   // Mirrors MdmContractsPage/MdmCustomersPage's own "full CRUD for trade_manager alongside
   // admin/operator" MDM-write tier (routes/contracts.js, routes/allocations.js) — customer
@@ -191,25 +210,30 @@ module.exports = function customersRoutes(app, ctx) {
     ok(res, mapCustomer(r));
   });
 
-  // ─── Credit Status (Organization Model Enhancement Epic 2) ────────────────
+  // ─── Credit Status (Organization Model Enhancement Epic 2, deepened per Epic
+  // TKT-6XFJQM: AR aging, accrued-but-uninvoiced exposure, parent/group rollup, currency) ──
   // outstandingAr sums every CONFIRMED (not voided/draft) FR01/FR02 invoice on a shipment
-  // where this customer is Principal or Consignee — the same "responsible party" resolution
-  // invoiceGenerator.js's own responsibleParty field already uses. Each invoice's real dollar
-  // total is resolved via source_cost_line_ids when present (the same field the invoice
-  // reversal feature, TKT-DUADU3, introduced for exactly this "what was this invoice actually
-  // for" question), falling back to a live container-scoped SELL sum for older invoices
-  // generated before that column existed — identical fallback to the reversal route's own.
-  // A soft number only: no aging buckets, no partial-payment tracking — just "invoiced and
-  // confirmed but not yet reversed," used purely as an over-limit warning at generate time.
-  app.get("/api/customers/:id/credit-status", auth(), (req, res) => {
-    const c = db.prepare("SELECT * FROM customers WHERE id=?").get(req.params.id);
-    if (!c) return err(res, "Not found", 404);
-
+  // where the given customer is Principal or Consignee — the same "responsible party"
+  // resolution invoiceGenerator.js's own responsibleParty field already uses. Each invoice's
+  // real dollar total is resolved via source_cost_line_ids when present (the same field the
+  // invoice reversal feature, TKT-DUADU3, introduced for exactly this "what was this invoice
+  // actually for" question), falling back to a live container-scoped SELL sum for older
+  // invoices generated before that column existed — identical fallback to the reversal
+  // route's own. Also returns which SELL cost-line ids were resolved into a confirmed
+  // invoice, so the caller can derive committedExposure (accrued but not yet invoiced) as
+  // everything else — a genuinely different, forward-looking risk figure a flat "outstanding
+  // AR" number can't see (a shipment can carry a large accrued SELL balance that's never been
+  // invoiced yet and this Ar-only figure would show zero risk from it).
+  function computeArExposure(customerId, creditTermsDays) {
     const shipmentIds = db.prepare(
       "SELECT id FROM shipments WHERE principal_id=? OR consignee_id=?"
-    ).all(req.params.id, req.params.id).map(r => r.id);
+    ).all(customerId, customerId).map(r => r.id);
 
     let outstandingAr = 0;
+    const coveredLineIds = new Set();
+    const aging = { current: 0, d1_30: 0, d31_60: 0, d61_90: 0, d90_plus: 0 };
+    const todayMs = Date.now();
+
     if (shipmentIds.length) {
       const placeholders = shipmentIds.map(() => '?').join(',');
       const docs = db.prepare(
@@ -218,19 +242,73 @@ module.exports = function customersRoutes(app, ctx) {
       for (const doc of docs) {
         const sourceIds = doc.source_cost_line_ids ? JSON.parse(doc.source_cost_line_ids) : null;
         const lines = sourceIds && sourceIds.length
-          ? db.prepare(`SELECT amount, exchange_rate FROM shipment_cost_lines WHERE id IN (${sourceIds.map(() => '?').join(',')})`).all(...sourceIds)
-          : db.prepare("SELECT amount, exchange_rate FROM shipment_cost_lines WHERE shipment_id=? AND type='SELL' AND container_id=?").all(doc.shipment_id, doc.container_id || '');
-        outstandingAr += lines.reduce((s, l) => s + l.amount * l.exchange_rate, 0);
+          ? db.prepare(`SELECT id, amount, exchange_rate FROM shipment_cost_lines WHERE id IN (${sourceIds.map(() => '?').join(',')})`).all(...sourceIds)
+          : db.prepare("SELECT id, amount, exchange_rate FROM shipment_cost_lines WHERE shipment_id=? AND type='SELL' AND container_id=?").all(doc.shipment_id, doc.container_id || '');
+        const docTotal = lines.reduce((s, l) => s + l.amount * l.exchange_rate, 0);
+        for (const l of lines) coveredLineIds.add(l.id);
+        outstandingAr += docTotal;
+
+        // Due date = when the invoice was confirmed (the real "billed" moment) plus this
+        // customer's own payment terms — same baseline GET /api/margin/summary-adjacent
+        // reporting has no equivalent for yet; falls back to created_at for the vanishingly
+        // rare row missing confirmed_at, and to net-0 (due immediately) with no terms set.
+        const refDate = doc.confirmed_at || doc.created_at;
+        const dueMs = new Date(refDate).getTime() + (creditTermsDays || 0) * 86400000;
+        const daysOverdue = Math.floor((todayMs - dueMs) / 86400000);
+        if      (daysOverdue <= 0)  aging.current  += docTotal;
+        else if (daysOverdue <= 30) aging.d1_30    += docTotal;
+        else if (daysOverdue <= 60) aging.d31_60   += docTotal;
+        else if (daysOverdue <= 90) aging.d61_90   += docTotal;
+        else                        aging.d90_plus += docTotal;
       }
     }
-    outstandingAr = roundCents(outstandingAr);
 
+    let committedExposure = 0;
+    if (shipmentIds.length) {
+      const placeholders = shipmentIds.map(() => '?').join(',');
+      const sellLines = db.prepare(
+        `SELECT id, amount, exchange_rate FROM shipment_cost_lines WHERE shipment_id IN (${placeholders}) AND type='SELL'`
+      ).all(...shipmentIds);
+      for (const l of sellLines) if (!coveredLineIds.has(l.id)) committedExposure += l.amount * l.exchange_rate;
+    }
+
+    return {
+      outstandingAr: roundCents(outstandingAr),
+      committedExposure: roundCents(committedExposure),
+      aging: Object.fromEntries(Object.entries(aging).map(([k, v]) => [k, roundCents(v)])),
+    };
+  }
+
+  app.get("/api/customers/:id/credit-status", auth(), async (req, res) => {
+    const c = db.prepare("SELECT * FROM customers WHERE id=?").get(req.params.id);
+    if (!c) return err(res, "Not found", 404);
+
+    const { outstandingAr, committedExposure, aging } = computeArExposure(c.id, c.credit_terms_days);
+
+    const currency = c.currency || 'USD';
     const creditLimit = c.credit_limit ?? null;
+    const creditLimitUsd = creditLimit != null ? await toUsd(creditLimit, currency) : null;
+
+    // Parent/group rollup (v0.59.0's own resolveCustomerGroup, already used for margin
+    // reporting — reused here rather than a second lane-hierarchy concept) — additive: the
+    // individual customer's own outstandingAr above is never replaced by this, only
+    // supplemented, same non-breaking pattern the margin rollup toggle already established.
+    const groupIds = resolveCustomerGroup(c.id).filter(gid => gid !== c.id);
+    let groupOutstandingAr = outstandingAr;
+    for (const gid of groupIds) {
+      groupOutstandingAr += computeArExposure(gid, c.credit_terms_days).outstandingAr;
+    }
+    groupOutstandingAr = roundCents(groupOutstandingAr);
+
+    const currentExposure = roundCents(outstandingAr + committedExposure);
     ok(res, {
       customerId: c.id, companyName: c.company_name,
-      creditLimit, creditTermsDays: c.credit_terms_days ?? null,
+      creditLimit, creditLimitCurrency: currency, creditLimitUsd,
+      creditTermsDays: c.credit_terms_days ?? null,
       creditHold: !!c.credit_hold, creditHoldReason: c.credit_hold_reason || '',
-      outstandingAr, overLimit: creditLimit != null && outstandingAr > creditLimit,
+      outstandingAr, committedExposure, aging,
+      overLimit: creditLimitUsd != null && currentExposure > creditLimitUsd,
+      groupOutstandingAr, hasGroup: groupIds.length > 0,
     });
   });
 
@@ -250,7 +328,7 @@ module.exports = function customersRoutes(app, ctx) {
 
   app.post("/api/customers", auth(), (req, res) => {
     const { companyName, address1='', address2='', city='', state='', postalCode='',
-            countryIso2='', phone='', fax='', email='', website='', notes='', currency='USD',
+            countryIso2='', phone='', fax='', email='', website='', notes='', currency='',
             creditLimit=null, creditTermsDays=null, creditHold=false, creditHoldReason='',
             parentCustomerId=null,
             classifiedLocation=false, latitude=null, longitude=null,
@@ -263,13 +341,16 @@ module.exports = function customersRoutes(app, ctx) {
     const id = `CUS-${uid()}`;
     const createdAt = new Date().toISOString();
     const ccU = countryIso2.toUpperCase().trim();
+    // Only fall back to the country's own default when the caller omitted currency entirely —
+    // an explicit choice (including an explicit "USD") is never overridden.
+    const resolvedCurrency = (currency.trim() || COUNTRY_TO_CURRENCY[ccU] || 'USD').toUpperCase().trim();
     const cl = creditLimit === null || creditLimit === '' ? null : Number(creditLimit);
     const ctd = creditTermsDays === null || creditTermsDays === '' ? null : parseInt(creditTermsDays, 10);
     const lat = classifiedLocation && latitude !== '' && latitude != null ? Number(latitude) : null;
     const lng = classifiedLocation && longitude !== '' && longitude != null ? Number(longitude) : null;
     db.prepare(`INSERT INTO customers (id,company_name,address1,address2,city,state,postal_code,country_iso2,phone,fax,email,website,notes,created_at,currency,credit_limit,credit_terms_days,credit_hold,credit_hold_reason,parent_customer_id,classified_location,latitude,longitude,is_nvocc,fmc_number)
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-      .run(id, companyName.trim(), address1, address2, city, state, postalCode, ccU, phone, fax, email, website, notes, createdAt, (currency || 'USD').toUpperCase().trim(),
+      .run(id, companyName.trim(), address1, address2, city, state, postalCode, ccU, phone, fax, email, website, notes, createdAt, resolvedCurrency,
            cl, ctd, creditHold ? 1 : 0, creditHold ? creditHoldReason.trim() : '', parentCustomerId || null,
            classifiedLocation ? 1 : 0, lat, lng, isNvocc ? 1 : 0, isNvocc ? fmcNumber.trim() : '');
     if (sanctionsMap.size > 0) screenCustomer(id);

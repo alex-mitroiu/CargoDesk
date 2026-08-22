@@ -19,6 +19,17 @@ const ID_TYPES  = ["VAT", "EORI", "Tax ID", "DUNS", "GLN", "Customs Reg", "Other
 const DOC_TYPES = ["KYC", "Commercial Contract", "Compliance Waiver", "Power of Attorney", "Other"];
 const CURRENCIES = ["USD", "EUR", "GBP", "CNY", "SGD", "JPY", "AED", "CHF"];
 
+// Country -> currency default (TKT-O5I4NK) — a Spain-based customer defaults to EUR rather
+// than the old flat "always USD". Scoped to only the currencies CURRENCIES above actually
+// offers (mirrors the backend's own copy, routes/customers.js — two copies since frontend/
+// backend don't share a module, same split this app already uses for role/carrier constants).
+// A country with no entry here just leaves today's plain "USD" default in place.
+const COUNTRY_TO_CURRENCY = {
+  US: "USD", GB: "GBP", CN: "CNY", HK: "CNY", SG: "SGD", JP: "JPY", AE: "AED", CH: "CHF", LI: "CHF",
+  DE: "EUR", FR: "EUR", ES: "EUR", IT: "EUR", NL: "EUR", BE: "EUR", PT: "EUR", AT: "EUR", IE: "EUR",
+  FI: "EUR", GR: "EUR", LU: "EUR", SI: "EUR", SK: "EUR", EE: "EUR", LV: "EUR", LT: "EUR", MT: "EUR", CY: "EUR", HR: "EUR",
+};
+
 const SCREENING_VARIANT = { CLEAR: "success", HIT: "danger", OVERRIDDEN: "warning" };
 
 function ScreeningBadge({ result }) {
@@ -98,6 +109,17 @@ const ProfileTab = ({ init = {}, onSave, saving }) => {
   const set   = k => v => setF(p => ({ ...p, [k]: v }));
   const valid = f.companyName.trim().length > 0;
 
+  // Country -> currency auto-suggestion (TKT-O5I4NK) — only while adding a brand-new
+  // customer, and only until the operator actually touches Currency themselves. Never
+  // retroactively changes an existing, already-saved customer's currency just because their
+  // country field gets edited later — that would silently reinterpret a real credit_limit.
+  const currencyTouched = useRef(!!init.id);
+  const onCountryChange = v => {
+    const cc = v.toUpperCase().slice(0, 2);
+    setF(p => ({ ...p, countryIso2: cc,
+      currency: !currencyTouched.current && COUNTRY_TO_CURRENCY[cc] ? COUNTRY_TO_CURRENCY[cc] : p.currency }));
+  };
+
   // Roles — read-only, derived from actual shipment usage (role-derivation rework; see
   // CUSTOMER_ROLE_USAGE_SQL, routes/customers.js). Nothing to save here: the moment this
   // customer is assigned a role on any shipment, it shows up here automatically. Only shown
@@ -128,7 +150,7 @@ const ProfileTab = ({ init = {}, onSave, saving }) => {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <Inp label="Postal Code"    value={f.postalCode}  onChange={set("postalCode")}  placeholder="3072 AP" mono />
         <Inp label="Country (ISO2)" value={f.countryIso2}
-          onChange={v => setF(p => ({ ...p, countryIso2: v.toUpperCase().slice(0,2) }))}
+          onChange={onCountryChange}
           placeholder="NL" mono maxLength={2} hint="2-letter ISO 3166-1" />
       </div>
 
@@ -162,11 +184,13 @@ const ProfileTab = ({ init = {}, onSave, saving }) => {
       <div style={{ fontFamily: T.mono, fontSize: 9.5, color: T.border, fontWeight: 700,
         textTransform: "uppercase", letterSpacing: ".12em", marginBottom: -6 }}>Billing</div>
 
-      <Sel label="Currency" value={f.currency} onChange={set("currency")}
-        options={CURRENCIES.map(c => ({ value: c, label: c }))} />
+      <Sel label="Currency" value={f.currency}
+        onChange={v => { currencyTouched.current = true; set("currency")(v); }}
+        options={CURRENCIES.map(c => ({ value: c, label: c }))}
+        hint={!init.id ? "Defaults from Country above — pick one to override it" : undefined} />
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <Inp label="Credit Limit (USD, optional)" value={f.creditLimit} onChange={set("creditLimit")}
+        <Inp label={`Credit Limit (${f.currency}, optional)`} value={f.creditLimit} onChange={set("creditLimit")}
           placeholder="Blank = no limit" mono type="number" hint="Soft warning only — a full invoice never blocks past this" />
         <Inp label="Credit Terms (days, optional)" value={f.creditTermsDays} onChange={set("creditTermsDays")}
           placeholder="e.g. 30" mono type="number" />

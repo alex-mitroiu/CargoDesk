@@ -4,7 +4,7 @@
 Full-stack freight management app. React 18 + Vite frontend, Express + node:sqlite backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.72.3 "Clearance"**
+- Version: **v0.73.0 "Solvency"**
 - Run: `npm run dev` (runs the monolith on :3001 + Vite on :5173 + the Document Distribution Service on :3002 + the PDF Render Service on :3003 + the Contract Management Service on :3004, concurrently)
 - Seed: `npm run seed` (runs `scripts/import-mdm-data.js`)
 
@@ -307,6 +307,33 @@ are fully validated.
 - **Document system**: `DOC_TYPES` in App.jsx (~line 56: BL01/MB01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — `MB01` (Master Bill of Lading, v0.71.0) is the vessel-operator-to-NVOCC document, a genuinely separate build from `BL01` (NVOCC-to-shipper House B/L), not a mode flag on it — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). (The earlier client-side-jsPDF `DocumentsMenu` component this note used to distinguish from was removed as dead code — it had zero references anywhere in the app.)
 - **Lifecycle-stage stepper precedent**: no dedicated stepper component exists yet; `MilestonePanel` (ShipmentDetailPage.jsx 1593-~1870) is the closest analog — linear progress bar (1734-1738, `width: ${progress}%`) plus per-step state coloring via `milestoneState()`/`stateColor()` (1666-1676: completed/overdue/current/upcoming) driven by `shipment_milestones` rows (`id, label, estimatedDate, note, completedAt, completedBy`, fixed step keys `booking_confirmed, si_submitted, cargo_gated_in, vessel_departed, bl_issued, vessel_arrived, customs_cleared, cargo_released, delivered`). Any new per-container lifecycle/stage UI should reuse this state-coloring pattern rather than inventing a new visual language
 - **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages, 📡 EDI). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
+
+## Recent changes (v0.73.0 "Solvency")
+- **Credit Control Depth (Epic `TKT-6XFJQM`), first pass** — a sourced gap analysis of the
+  existing Credit Control feature (Epic 2, v0.57.0) against CargoWise One and Magaya Supply
+  Chain, published as an artifact + 7 Kanban stories. This release ships the 4 stories that all
+  extend `GET /api/customers/:id/credit-status` and `customers.currency`, as one bundled
+  backend pass: **AR aging** (`TKT-O4DNFX`, real Current/1-30/31-60/61-90/90+ buckets from
+  each confirmed invoice's `confirmed_at` + `credit_terms_days`, not a flat total — confirmed
+  Magaya gap); **committed exposure** (`TKT-AJAEDO`, a new `committedExposure` figure sums
+  accrued SELL cost lines never invoiced at all, kept visibly separate from `outstandingAr`);
+  **parent/group rollup** (`TKT-IA7I7J`, wires the existing `resolveCustomerGroup()` — already
+  used for margin rollup since v0.59.0 — into an additive `groupOutstandingAr`); **currency**
+  (`TKT-O5I4NK`, direct follow-up request — `credit_limit` was hardcoded USD regardless of
+  `customers.currency`; a new customer now defaults its currency from country, e.g. ES→EUR,
+  scoped to the 8 currencies the app's picker already supports, never applied retroactively to
+  an existing customer; `credit-status` converts to `creditLimitUsd` via the exact `toUsd`/FX
+  machinery every cost line already uses).
+- **Explicitly deferred, named not silently dropped**: earlier trigger points at shipment/
+  booking-creation time (`TKT-Q00WHF`) and the trade-lane-scoped override exclusive to that
+  lane's own trade manager (`TKT-GLWMFP`) — both real, both logged, queued as the next pass.
+  Dunning emails (`TKT-SUEDWH`) logged lowest-priority.
+- 52 new/extended assertions in `tests/customer-credit-control.test.js` (90 total) — full
+  45-file backend chain + both service-scoped chains + clean build all verified green from a
+  fresh full-stack restart. One disclosed coverage gap: AR aging bucket *boundaries* can't be
+  exercised through pure HTTP (no endpoint backdates `confirmed_at`) — only the "current"
+  bucket is integration-tested; the day-threshold math itself is simple, reviewed, not faked
+  into a false-confidence test.
 
 ## Recent changes (v0.72.3 "Clearance")
 - **Real CI failure fixed at the source, not papered over**: `services/pdf-render/server.js`'s

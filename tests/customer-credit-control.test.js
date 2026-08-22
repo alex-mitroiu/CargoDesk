@@ -1,10 +1,21 @@
 /**
- * Organization Model Enhancement — Epic 2: Credit Control
+ * Organization Model Enhancement — Epic 2: Credit Control, deepened per Epic TKT-6XFJQM
+ * ("Credit Control Depth" — a sourced gap analysis against CargoWise One and Magaya).
  *
- * Covers the credit_limit/credit_terms_days/credit_hold/credit_hold_reason fields on
+ * Covers the credit_limit/credit_terms_days/credit_hold/credit_hold_reason/currency fields on
  * customers, and GET /api/customers/:id/credit-status — the outstanding-AR-vs-limit
  * computation that ShipmentAccountingInvoicesPage.jsx's Generate Invoice flow gates on
- * (resolveCreditGate, src/utils/invoiceGenerator.js).
+ * (resolveCreditGate, src/utils/invoiceGenerator.js). Plus, from TKT-6XFJQM: AR aging buckets
+ * (TKT-O4DNFX), accrued-but-uninvoiced committed exposure (TKT-AJAEDO), parent/group rollup
+ * (TKT-IA7I7J), and country-defaulted customer currency wired into the limit itself
+ * (TKT-O5I4NK).
+ *
+ * Known, deliberate coverage gap: the AR aging bucket *boundaries* (31-60/61-90/90+ days
+ * overdue) can't be exercised through pure HTTP — there's no endpoint to backdate an invoice's
+ * confirmed_at, and this suite (like every other test file in this project) only ever talks to
+ * the app over its real API, never the DB directly. Only the "current" bucket (a just-confirmed
+ * invoice) is integration-tested below; the day-threshold arithmetic itself is plain, low-risk
+ * math reviewed at implementation time, not something faked into a false-confidence test here.
  *
  * Usage:
  *   node tests/customer-credit-control.test.js
@@ -164,6 +175,87 @@ async function confirmDoc(docId, token) {
     console.log("\n404 on a bogus customer id");
     const bogus = await request("GET", "/api/customers/CUS-DOESNOTEXIST/credit-status", null, token);
     assert("bogus id returns 404", bogus.status === 404);
+
+    // ── TKT-6XFJQM — Credit Control Depth ────────────────────────────────────────
+
+    console.log("\nCommitted exposure — accrued SELL lines never invoiced still count as risk");
+    const setLowLimit = await request("PUT", `/api/customers/${customerId}`, {
+      companyName: "Test Credit Co", creditLimit: 100, creditTermsDays: 30,
+    }, token);
+    assert("limit lowered to 100", setLowLimit.body.creditLimit === 100);
+    // Every SELL line from earlier in this file is already covered by a confirmed or reversed
+    // invoice (net zero after reversal, verified above) — this is a genuinely fresh, never-
+    // invoiced line, so committedExposure should reflect exactly this and nothing carried over.
+    const exposureLine = await addSellLine(shipmentId, token, 300, "WHS");
+    const statusExposure = await request("GET", `/api/customers/${customerId}/credit-status`, null, token);
+    assert("outstandingAr unaffected by an uninvoiced line", statusExposure.body.outstandingAr === 700, JSON.stringify(statusExposure.body));
+    assert("committedExposure reflects the uninvoiced line", statusExposure.body.committedExposure === 300, JSON.stringify(statusExposure.body));
+    assert("overLimit now true from exposure alone (700+300=1000 > 100 limit, AR alone would say false)",
+      statusExposure.body.overLimit === true);
+    // Clean up this one line directly so it doesn't pollute the aging assertion below.
+    await request("DELETE", `/api/shipments/${shipmentId}/cost-lines/${exposureLine.id}`, null, token);
+    await request("PUT", `/api/customers/${customerId}`, { companyName: "Test Credit Co", creditLimit: 1000, creditTermsDays: 30 }, token);
+
+    console.log("\nAR aging — a just-confirmed invoice lands entirely in the 'current' bucket");
+    const statusAging = await request("GET", `/api/customers/${customerId}/credit-status`, null, token);
+    const aging = statusAging.body.aging;
+    assert("aging object present with all 5 buckets", aging && ["current","d1_30","d31_60","d61_90","d90_plus"].every(k => k in aging), JSON.stringify(aging));
+    assert("the confirmed invoice (700) is entirely in 'current'", aging.current === 700, JSON.stringify(aging));
+    assert("no overdue buckets have anything in them yet", aging.d1_30 === 0 && aging.d31_60 === 0 && aging.d61_90 === 0 && aging.d90_plus === 0, JSON.stringify(aging));
+
+    console.log("\nCurrency — credit_limit is interpreted in the customer's own currency, not hardcoded USD");
+    const eurCust = await request("POST", "/api/customers", { companyName: "Test Credit EUR Co", currency: "EUR", creditLimit: 500 }, token);
+    assert("EUR customer created", !!eurCust.body.id);
+    assert("currency round-trips as EUR", eurCust.body.currency === "EUR");
+    const eurStatus = await request("GET", `/api/customers/${eurCust.body.id}/credit-status`, null, token);
+    assert("creditLimitCurrency reflects EUR, not a hardcoded USD assumption", eurStatus.body.creditLimitCurrency === "EUR", JSON.stringify(eurStatus.body));
+    assert("creditLimit itself stays the raw EUR number (display value, never silently rewritten)", eurStatus.body.creditLimit === 500);
+    // Live FX (frankfurter.app) may or may not be reachable in this environment — assert the
+    // conversion ran and produced a real number, not a specific rate (that would be flaky).
+    assert("creditLimitUsd is populated as a real positive number", typeof eurStatus.body.creditLimitUsd === "number" && eurStatus.body.creditLimitUsd > 0, JSON.stringify(eurStatus.body));
+    await request("DELETE", `/api/customers/${eurCust.body.id}`, null, token);
+
+    console.log("\nCurrency — new customer defaults from country when currency is omitted entirely");
+    const esCust = await request("POST", "/api/customers", { companyName: "Test Credit ES Co", countryIso2: "ES" }, token);
+    assert("Spain customer defaults to EUR", esCust.body.currency === "EUR", JSON.stringify(esCust.body));
+    const jpCust = await request("POST", "/api/customers", { companyName: "Test Credit JP Co", countryIso2: "JP" }, token);
+    assert("Japan customer defaults to JPY", jpCust.body.currency === "JPY", JSON.stringify(jpCust.body));
+    const unmappedCust = await request("POST", "/api/customers", { companyName: "Test Credit BR Co", countryIso2: "BR" }, token);
+    assert("a country with no mapping falls back to plain USD, not a broken value", unmappedCust.body.currency === "USD", JSON.stringify(unmappedCust.body));
+    const explicitCust = await request("POST", "/api/customers", { companyName: "Test Credit Explicit Co", countryIso2: "ES", currency: "GBP" }, token);
+    assert("an explicit currency is never overridden by the country default", explicitCust.body.currency === "GBP", JSON.stringify(explicitCust.body));
+    for (const cid of [esCust.body.id, jpCust.body.id, unmappedCust.body.id, explicitCust.body.id]) {
+      await request("DELETE", `/api/customers/${cid}`, null, token);
+    }
+
+    console.log("\nParent/group credit-limit rollup");
+    const parentCust = await request("POST", "/api/customers", { companyName: "Test Credit Parent Co" }, token);
+    const childCust = await request("POST", "/api/customers", { companyName: "Test Credit Child Co", parentCustomerId: parentCust.body.id }, token);
+    assert("parent created", !!parentCust.body.id);
+    assert("child linked to parent", childCust.body.parentCustomerId === parentCust.body.id);
+
+    const groupShip = await request("POST", "/api/shipments", {
+      pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+      principalId: childCust.body.id, principalName: "Test Credit Child Co",
+    }, token);
+    const groupLine = await addSellLine(groupShip.body.id, token, 400, "OFR");
+    const groupDoc = await generateInvoiceDoc(groupShip.body.id, token, [groupLine.id]);
+    await confirmDoc(groupDoc.id, token);
+
+    const parentStatus = await request("GET", `/api/customers/${parentCust.body.id}/credit-status`, null, token);
+    const childStatus  = await request("GET", `/api/customers/${childCust.body.id}/credit-status`, null, token);
+    assert("parent's own outstandingAr is 0 (the AR is on the child, not the parent directly)", parentStatus.body.outstandingAr === 0, JSON.stringify(parentStatus.body));
+    assert("child's own outstandingAr reflects its own invoice", childStatus.body.outstandingAr === 400, JSON.stringify(childStatus.body));
+    assert("parent's groupOutstandingAr sees the whole group's AR", parentStatus.body.groupOutstandingAr === 400, JSON.stringify(parentStatus.body));
+    assert("child's groupOutstandingAr matches the parent's (same group, same total, either direction)", childStatus.body.groupOutstandingAr === 400, JSON.stringify(childStatus.body));
+    assert("both report hasGroup true", parentStatus.body.hasGroup === true && childStatus.body.hasGroup === true);
+
+    const standaloneStatus = await request("GET", `/api/customers/${customerId}/credit-status`, null, token);
+    assert("a customer with no parent/children reports hasGroup false", standaloneStatus.body.hasGroup === false, JSON.stringify(standaloneStatus.body));
+
+    await request("DELETE", `/api/shipments/${groupShip.body.id}`, null, token);
+    await request("DELETE", `/api/customers/${childCust.body.id}`, null, token);
+    await request("DELETE", `/api/customers/${parentCust.body.id}`, null, token);
 
     console.log("\nCleanup");
     await request("DELETE", `/api/shipments/${shipmentId}`, null, token);
