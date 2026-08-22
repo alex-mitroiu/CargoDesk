@@ -350,6 +350,13 @@ export const api = {
     update: (chapter, d) => req("PUT",  `/duty-rate-chapters/${chapter}`, d),
     remove: (chapter)  => req("DELETE", `/duty-rate-chapters/${chapter}`),
   },
+  scheduledReports: {
+    list:    ()      => req("GET",    "/scheduled-reports"),
+    create:  (d)     => req("POST",   "/scheduled-reports", d),
+    update:  (id, d) => req("PUT",    `/scheduled-reports/${id}`, d),
+    remove:  (id)    => req("DELETE", `/scheduled-reports/${id}`),
+    sendDue: ()      => req("POST",   "/scheduled-reports/send-due"),
+  },
   services: {
     list:   (shipmentId)             => req("GET",    `/shipments/${shipmentId}/services`),
     create: (shipmentId, d)          => req("POST",   `/shipments/${shipmentId}/services`, d),

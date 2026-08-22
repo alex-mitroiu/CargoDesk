@@ -1734,6 +1734,26 @@ const migrations = [
   // (this new column), separate from the NVOCC's own release to the actual consignee
   // (bl_release_type, unchanged, still governs the existing Delivery Order document).
   "ALTER TABLE shipments ADD COLUMN master_bl_release_type TEXT DEFAULT ''",
+  // Scheduled / emailed reports (TKT-IXAR9G, Competitive Gap Analysis epic TKT-GTGM6R) —
+  // reporting today is manual-trigger only (fixed dashboard tabs, one-click CSV/XLSX export).
+  // Reuses office_mail_settings/sendViaOffice (already built for the invoice-email flow) —
+  // no new mail infrastructure. report_type is a small, deliberately extensible dispatch key
+  // (see runScheduledReportsSweep) — this first pass ships exactly one ('shipments-csv'),
+  // the ticket's own cheapest, most representative case; adding another report type later is
+  // one more dispatch branch, not a schema change. last_run_at null means never run — due
+  // immediately regardless of frequency, same "never synced yet" convention scheduleNextOfacSync
+  // already uses.
+  `CREATE TABLE IF NOT EXISTS scheduled_reports (
+    id           TEXT PRIMARY KEY,
+    report_type  TEXT NOT NULL DEFAULT 'shipments-csv',
+    frequency    TEXT NOT NULL DEFAULT 'weekly',
+    recipients   TEXT NOT NULL DEFAULT '',
+    office_id    TEXT NOT NULL,
+    is_active    INTEGER NOT NULL DEFAULT 1,
+    last_run_at  TEXT DEFAULT NULL,
+    created_by   TEXT DEFAULT '',
+    created_at   TEXT NOT NULL
+  )`,
 ];
 
 // "duplicate column name" is the expected, harmless result of re-running an ADD COLUMN
@@ -2377,6 +2397,9 @@ try { scheduleNextCslSync(); } catch {}
 // syncing a sanctions list, sending real customer-facing email on every dev restart would be
 // a real surprise) — the first real run is 24h after this process started.
 setInterval(() => { runDunningSweep().catch(e => console.error("Dunning sweep failed:", e.message)); }, 24 * 60 * 60 * 1000);
+// Scheduled reports (TKT-IXAR9G) — same deliberate choice as the dunning sweep above: no fire-
+// at-boot, so a dev restart never sends real report email; the first real run is 24h out.
+setInterval(() => { runScheduledReportsSweep().catch(e => console.error("Scheduled reports sweep failed:", e.message)); }, 24 * 60 * 60 * 1000);
 
 function screenShipmentById(shipmentId) {
   const s = db.prepare("SELECT * FROM shipments WHERE id=?").get(shipmentId);
@@ -2618,6 +2641,53 @@ async function runDunningSweep() {
       sent.push({ docId: r.id, shipmentId: r.shipment_id, customerId: cust.id, companyName: cust.company_name, daysOverdue, outstandingUsd });
     } catch (e) {
       console.warn(`Dunning reminder failed for ${r.id}:`, e.message);
+    }
+  }
+  return sent;
+}
+
+// Scheduled / emailed reports (TKT-IXAR9G) — same daily-tick-re-evaluate-everything shape as
+// runDunningSweep just above, for the same reason: last_run_at + each report's own frequency
+// already tells us exactly what's due on every run, so there's no need for OFAC/CSL's more
+// complex precise-single-timer machinery. report_type is a small dispatch key, deliberately
+// narrow this pass (only 'shipments-csv' — the ticket's own cheapest, most representative
+// case); ctx.buildShipmentsCsvReport is handed back from routes/export.js at boot, since the
+// actual CSV-building logic lives in that file's closure, not here.
+async function runScheduledReportsSweep() {
+  const sent = [];
+  const DUE_DAYS = { daily: 1, weekly: 7, monthly: 30 };
+  const reports = db.prepare("SELECT * FROM scheduled_reports WHERE is_active=1").all();
+  const nowMs = Date.now();
+
+  for (const r of reports) {
+    const thresholdDays = DUE_DAYS[r.frequency] ?? 7;
+    const lastRunMs = r.last_run_at ? new Date(r.last_run_at).getTime() : 0; // never run -> due now
+    if ((nowMs - lastRunMs) / 86400000 < thresholdDays) continue;
+
+    const recipients = r.recipients.split(",").map(s => s.trim()).filter(Boolean);
+    if (recipients.length === 0) continue;
+    const mailSettings = db.prepare("SELECT * FROM office_mail_settings WHERE office_id=? AND is_active=1").get(r.office_id);
+    if (!mailSettings) continue;
+
+    let report;
+    if (r.report_type === 'shipments-csv') report = ctx.buildShipmentsCsvReport();
+    else { console.warn(`Unknown scheduled report type: ${r.report_type}`); continue; }
+
+    try {
+      const mailOptions = buildMailOptions({
+        from: mailSettings.from_address, fromName: mailSettings.from_name,
+        to: recipients.join(","),
+        subject: `Scheduled Report — ${report.filename}`,
+        message: `Attached is your ${r.frequency} scheduled report, generated automatically by CargoDesk.`,
+        attachmentContent: report.csv, attachmentFilename: report.filename, attachmentContentType: "text/csv",
+      });
+      await sendViaOffice(db, r.office_id, mailOptions);
+      db.prepare("UPDATE scheduled_reports SET last_run_at=? WHERE id=?").run(new Date().toISOString(), r.id);
+      logEntityEvent('scheduled_report', r.id, 'REPORT_SENT', null, null, null,
+        JSON.stringify({ reportType: r.report_type, recipients, frequency: r.frequency }));
+      sent.push({ id: r.id, reportType: r.report_type, recipients, filename: report.filename });
+    } catch (e) {
+      console.warn(`Scheduled report ${r.id} failed:`, e.message);
     }
   }
   return sent;
@@ -3044,7 +3114,7 @@ const {
   SVC_ABBR, longestLane, cutoffState, roundCents,
   mapShipment, mapShipmentLeg, mapCostLine, mapService, mapRateSnapshot, mapRateSnapshotLine,
   mapChargeCodeDefinition, mapContainer, mapContainerEvent, mapContainerPackage, mapShipmentParty,
-  mapPackTypeDefinition, mapDutyRateChapter, mapContainerTypeDefinition, mapAllocation, mapCarrier, mapVessel, mapPortLocation, mapLinkedPort,
+  mapPackTypeDefinition, mapDutyRateChapter, mapScheduledReport, mapContainerTypeDefinition, mapAllocation, mapCarrier, mapVessel, mapPortLocation, mapLinkedPort,
   mapCarrierAgent, mapTradeLane, mapScopeItem, mapAccessConfig, mapOffice, mapOfficeMailSettings,
   mapSystemEmailSettings,
   mapBranch, mapOrgCountry, mapRegion, mapCountry, mapTicketLink, mapTicket, mapTestItem,
@@ -3904,7 +3974,7 @@ const ctx = {
   SERVICE_CODE_MAP, importContractRates, createRateSnapshot, generateCostLinesFromSnapshot,
   mapShipment, mapShipmentLeg, mapCostLine, mapService, mapContainer, mapContainerEvent, mapContainerPackage, mapAllocation,
   mapShipmentParty, ADDITIONAL_PARTY_ROLES,
-  mapRateSnapshot, mapRateSnapshotLine, mapChargeCodeDefinition, mapPackTypeDefinition, mapDutyRateChapter, mapContainerTypeDefinition,
+  mapRateSnapshot, mapRateSnapshotLine, mapChargeCodeDefinition, mapPackTypeDefinition, mapDutyRateChapter, mapScheduledReport, mapContainerTypeDefinition,
   mapCarrier, mapVessel, mapPortLocation, mapLinkedPort, mapTradeLane, mapCarrierAgent,
   mapScopeItem, mapAccessConfig, mapOffice, mapBranch, mapOrgCountry, mapRegion, mapCountry, mapTicketLink, mapTicket,
   mapTestItem, mapTestCaseLink,
@@ -3930,7 +4000,7 @@ const ctx = {
   runOpsAutomationSweep,
   linkedPortCodes, findMatchingContractLegs, resolveCarrierAgent,
   screenShipmentById, rescreenActiveShipments, resolveCustomerGroup,
-  computeArExposure, docAmountUsd, runDunningSweep, matchesScopeItem, userOwnsLaneForShipment, userOwnsLaneForCustomer,
+  computeArExposure, docAmountUsd, runDunningSweep, runScheduledReportsSweep, matchesScopeItem, userOwnsLaneForShipment, userOwnsLaneForCustomer,
   OVERRIDE_GRACE_MS,
   bcrypt, jwt, JWT_SECRET,
   DISTRIBUTION_SERVICE_URL, DISTRIBUTION_SERVICE_SECRET,
@@ -3968,6 +4038,7 @@ require('./routes/charge-codes')(app, ctx);
 require('./routes/pack-types')(app, ctx);
 require('./routes/container-types')(app, ctx);
 require('./routes/duty-rates')(app, ctx);
+require('./routes/scheduled-reports')(app, ctx);
 require('./routes/ais')(app, ctx);
 
 // ─── Static frontend (production only) ─────────────────────────────────────────

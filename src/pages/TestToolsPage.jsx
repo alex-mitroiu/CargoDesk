@@ -9,7 +9,7 @@ import EdiMessageList from "../components/shared/EdiMessageList";
 import { VesselField, VesselCombobox } from "../components/shared/VesselCombobox";
 import CarrierCombobox from "../components/shared/CarrierCombobox";
 import PortCombobox from "../components/shared/PortCombobox";
-import { IconBaseStation, IconCheck, IconClose, IconAnchor, IconFileCertificate, IconShip, IconLink, IconMail } from "../components/primitives/Icon";
+import { IconBaseStation, IconCheck, IconClose, IconAnchor, IconFileCertificate, IconShip, IconLink, IconMail, IconClipboard } from "../components/primitives/Icon";
 
 // ─── Test Tools ────────────────────────────────────────────────────────────────
 // Reached both from Integration Board's sidebar and a header shortcut icon (App.jsx).
@@ -353,6 +353,18 @@ const TestToolsPage = ({ navigate }) => {
     setDunningRunning(false);
   };
 
+  // ─── Report Scheduler — manual trigger ────────────────────────────────────────
+  // Same idiom as the Reminder Sweep tab above — server.js's runScheduledReportsSweep
+  // (TKT-IXAR9G) otherwise only runs once a day, impractical to wait on during testing.
+  const [reportsRunning, setReportsRunning] = useState(false);
+  const [reportsResult,  setReportsResult]  = useState(null); // { sentCount, sent }
+  const runReportsNow = async () => {
+    setReportsRunning(true);
+    try { setReportsResult(await api.scheduledReports.sendDue()); }
+    catch (e) { toast.error(e.message); }
+    setReportsRunning(false);
+  };
+
   useEffect(() => {
     if (activeTab !== "webhook") return;
     loadWebhookReceived();
@@ -382,6 +394,7 @@ const TestToolsPage = ({ navigate }) => {
     { key: "ais",        label: "AIS Simulator", icon: IconShip },
     { key: "webhook",    label: "Webhook Simulator", icon: IconLink },
     { key: "dunning",    label: "Reminder Sweep", icon: IconMail },
+    { key: "reports",    label: "Report Scheduler", icon: IconClipboard },
   ];
 
   return (
@@ -1093,6 +1106,50 @@ const TestToolsPage = ({ navigate }) => {
                       </div>
                       <span style={{ fontFamily: T.mono, fontSize: 11, color: T.warning }}>
                         ${Number(s.outstandingUsd).toFixed(2)} · {s.daysOverdue}d overdue
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === "reports" && (
+        <div style={{ maxWidth: 640 }}>
+          <h2 style={{ fontFamily: T.head, fontSize: 16, fontWeight: 800, color: T.text, margin: "0 0 14px" }}>
+            Report Scheduler
+          </h2>
+          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8,
+            padding: "10px 12px", marginBottom: 16, fontFamily: T.body, fontSize: 11.5, color: T.textMuted, lineHeight: 1.6 }}>
+            Generates and sends every scheduled report that's currently due (Reports → Scheduled
+            Reports) right now — the same real sweep that otherwise only runs once a day. A
+            schedule not yet due (per its own frequency and last run) is skipped, not re-sent.
+          </div>
+          <Btn onClick={runReportsNow} disabled={reportsRunning}>
+            {reportsRunning ? "Sending…" : "Send Due Reports Now"}
+          </Btn>
+
+          {reportsResult && (
+            <div style={{ marginTop: 20 }}>
+              <div style={{ fontFamily: T.body, fontSize: 12, fontWeight: 600, color: T.text, marginBottom: 10 }}>
+                {reportsResult.sentCount} report{reportsResult.sentCount === 1 ? "" : "s"} sent
+              </div>
+              {reportsResult.sentCount === 0 ? (
+                <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, fontStyle: "italic" }}>
+                  Nothing due right now — no active schedule has passed its own frequency window.
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {reportsResult.sent.map(s => (
+                    <div key={s.id} style={{ background: T.surface, border: `1px solid ${T.border}`,
+                      borderRadius: 8, padding: "8px 12px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div>
+                        <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.text }}>{s.filename}</span>
+                      </div>
+                      <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+                        {s.recipients.join(", ")}
                       </span>
                     </div>
                   ))}

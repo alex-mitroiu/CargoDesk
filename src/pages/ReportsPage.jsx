@@ -4,6 +4,7 @@ import { api } from "../api";
 import { toast } from "../toast";
 import GpBreakdownPanel from "../components/shared/GpBreakdownPanel";
 import BillingPerformancePanel from "../components/shared/BillingPerformancePanel";
+import ScheduledReportsPanel from "../components/shared/ScheduledReportsPanel";
 import DatePicker from "../components/primitives/DatePicker";
 import Btn from "../components/primitives/Btn";
 
@@ -81,12 +82,14 @@ const ReportsPage = () => {
         <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, margin: 0 }}>
           {tab === "gp"
             ? "GP breakdown by trade area — origin region/country or carrier, from every shipment's own cost lines"
-            : "Every generated invoice, filterable by status, sent, payment, office, customer, trade lane, and carrier"}
+            : tab === "billing"
+            ? "Every generated invoice, filterable by status, sent, payment, office, customer, trade lane, and carrier"
+            : "Reports that generate and email themselves automatically, on their own recurring cadence"}
         </p>
       </div>
 
       <div id="reports-tab-bar" style={{ display: "flex", borderBottom: `1px solid ${T.border}`, marginBottom: 20 }}>
-        {[{ key: "gp", label: "GP by Trade Area" }, { key: "billing", label: "Billing Performance" }].map(t => (
+        {[{ key: "gp", label: "GP by Trade Area" }, { key: "billing", label: "Billing Performance" }, { key: "scheduled", label: "Scheduled Reports" }].map(t => (
           <button key={t.key} type="button" onClick={() => setTab(t.key)} style={{
             padding: "10px 20px", background: "none", border: "none",
             borderBottom: tab === t.key ? `2px solid ${T.accent}` : "2px solid transparent",
@@ -99,6 +102,8 @@ const ReportsPage = () => {
 
       {tab === "billing" ? (
         <BillingPerformancePanel />
+      ) : tab === "scheduled" ? (
+        <ScheduledReportsPanel />
       ) : (
       <>
       <div id="reports-groupby-toggle" style={{ display: "inline-flex", gap: 2, padding: 3, background: T.bg, border: `1px solid ${T.border}`, borderRadius: 9, marginBottom: 18 }}>

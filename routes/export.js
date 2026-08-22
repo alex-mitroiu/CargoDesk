@@ -256,6 +256,23 @@ module.exports = function exportRoutes(app, ctx) {
 
   // ─── GET /api/export/shipments.csv ────────────────────────────────────────
 
+  // Extracted so the scheduled-report sweep (TKT-IXAR9G, server.js) can build the exact same
+  // export with no live HTTP request behind it — same full-field, no-filter shape as a caller
+  // who never opens the field-picker modal (the route below's own "no ?fields=" default).
+  function buildShipmentsCsvReport() {
+    const rows = queryShipmentRows({ roles: ["admin"] }, {});
+    const cols = CSV_FIELDS;
+    const header = cols.map(([, label]) => escCSV(label)).join(",");
+    const body   = rows.map(r => cols.map(([, , , fn]) => escCSV(fn(r))).join(",")).join("\n");
+    const date   = new Date().toISOString().slice(0, 10);
+    return { csv: `${header}\n${body}`, filename: `shipments-${date}.csv` };
+  }
+  // Handed back onto ctx (not defined in server.js directly, since this closure needs
+  // queryShipmentRows/CSV_FIELDS/escCSV, all local to this file) so the scheduled-report sweep
+  // in server.js can call it — safe: route registration runs synchronously at boot, well before
+  // the sweep's own daily timer or any manual trigger could ever fire.
+  ctx.buildShipmentsCsvReport = buildShipmentsCsvReport;
+
   app.get("/api/export/shipments.csv", auth(), exportRateLimit, (req, res) => {
     const rows = queryShipmentRows(req.user, req);
     // No ?fields= (or an empty one) means "export everything" — preserves the old one-click
