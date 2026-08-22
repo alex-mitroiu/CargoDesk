@@ -404,6 +404,24 @@ export const api = {
       a.href = url; a.download = `reports-${groupBy}${value ? `-${value}` : ""}-${date}.csv`; a.click();
       URL.revokeObjectURL(url);
     },
+    // Row-level FR01/FR02 invoices, enriched with status/sent/paid/lane/office/customer/carrier
+    // — the frontend owns filtering/slicing over the full set, same shape as ShipmentsPage's own
+    // client-side filtering rather than a server-side groupBy.
+    billingPerformance: () => req("GET", "/reports/billing-performance"),
+    billingPerformanceCSV: async () => {
+      const token = localStorage.getItem("cargodesk_token");
+      const activeRole = localStorage.getItem("cargodesk_active_role");
+      const headers = { Authorization: `Bearer ${token}` };
+      if (activeRole) headers["X-Active-Role"] = activeRole;
+      const res = await fetch(`/api/reports/billing-performance?format=csv`, { headers });
+      if (!res.ok) throw new Error("CSV export failed");
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      const date = new Date().toISOString().slice(0, 10);
+      const a    = document.createElement("a");
+      a.href = url; a.download = `billing-performance-${date}.csv`; a.click();
+      URL.revokeObjectURL(url);
+    },
   },
   systemMessages: {
     list:   ()     => req("GET",    "/system-messages"),

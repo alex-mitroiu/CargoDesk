@@ -2,11 +2,17 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.75.1";
+export const VERSION   = "0.76.0";
 export const BUILD     = "2026-08-22";
 export const CODENAME  = "Remittance";
 
 export const CHANGELOG = [
+  {
+    version:  "0.76.0",
+    date:     "2026-08-22",
+    codename: "Remittance",
+    summary:  "Invoicing Discipline & Billing Performance, third pass (Story TKT-B4VBDH of Epic TKT-KR6ZBT) -- the report itself, bumped to top priority alongside Story 5 (configurable reminder cadence) on direct request. New GET /api/reports/billing-performance returns every FR01/FR02 invoice ever generated, row-level and enriched -- status (draft/confirmed/voided), sent (from first_sent_at, v0.75.0), payment status and days overdue (from paid_at/paid_amount, v0.75.0, and each customer's own credit_terms_days), plus office/customer/trade-lane/carrier -- so the frontend can filter and slice by any combination at once rather than being locked into one groupBy the way the existing GP-by-Trade-Area report is. Deliberately returns the full row set rather than a server-side pre-aggregation, matching how ShipmentsPage already owns its own client-side filtering.\n\nJoins GP by Trade Area as a second tab on the existing Reports page (DashboardPage.jsx's own tab-bar pattern, not a new nav item) -- five stat cards (Invoiced/Outstanding/Overdue/Sent %/Paid %), filter chips for Status/Sent/Payment (including an Overdue chip), and facet dropdowns for office/customer/trade lane/carrier populated live from the actual data, all update the same filtered table and CSV export together. Same canViewFinance gate the existing Reports page and Margin tab already use.\n\nA real layout bug caught during live verification, not left for later: the OUTSTANDING column header rendered wide enough to visually collide with OFFICE next to it -- flexbox children were letting their fixed width compress under the row's own space pressure with no floor. Fixed with flexShrink:0 on every fixed-width column (header and data rows) plus explicit gaps between columns, verified with a second live screenshot before shipping.\n\n12 new assertions in tests/billing-performance.test.js (46 total in that file) covering the full invoice lifecycle as it appears in the report -- draft to confirmed to partially paid to fully paid to sent, plus a voided invoice correctly carrying no payment status, plus the finance gate and CSV export. Full 46-file backend chain, both service-scoped chains, frontend Vitest, and a clean build all verified green. Verified live via CDP against real data: the report's stat cards, filters, and table all rendered correctly, and the column-width fix was re-verified with a fresh screenshot.\n\n4 of 5 Epic stories now shipped; only Story 5 (configurable per-customer reminder cadence) remains.",
+  },
   {
     version:  "0.75.1",
     date:     "2026-08-22",

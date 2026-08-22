@@ -1,5 +1,5 @@
 /**
- * Invoicing Discipline & Billing Performance (Epic TKT-KR6ZBT) — Stories 1, 2 & 3.
+ * Invoicing Discipline & Billing Performance (Epic TKT-KR6ZBT) — Stories 1, 2, 3 & 4.
  *
  * Story 1 (TKT-NQ87D3, Mark as Paid): a real payment-receipt primitive — before this,
  * computeArExposure's outstandingAr meant purely "confirmed, non-voided invoice", with no
@@ -18,6 +18,11 @@
  * purely informational (never a block) — a shipment appears once its own "delivered" milestone
  * has been completed longer ago than the responsible party's configured deadline, with no
  * confirmed FR01/FR02 yet.
+ *
+ * Story 4 (TKT-B4VBDH, Billing Performance report): GET /api/reports/billing-performance
+ * returns row-level FR01/FR02 invoices enriched with status/sent/payment/office/customer/lane/
+ * carrier, gated by the same finance access (canViewFinance or admin) Reports and Margin
+ * already use.
  *
  * Usage:
  *   node tests/billing-performance.test.js
@@ -250,6 +255,67 @@ async function confirmDoc(docId, token) {
     const queueNoDl = await request("GET", "/api/invoice-deadlines/overdue", null, token);
     assert("never appears without invoiceDeadlineDays configured", !queueNoDl.body.some(d => d.shipmentId === shipNoDl.body.id), JSON.stringify(queueNoDl.body));
 
+    console.log("\nBilling Performance report — finance gate");
+    const reportAsOcc = await request("GET", "/api/reports/billing-performance", null, occLogin.body.token);
+    assert("occ_bk with no canViewFinance flag is rejected (403)", reportAsOcc.status === 403, JSON.stringify(reportAsOcc.body));
+
+    console.log("\nBilling Performance report — row shape tracks a real invoice through its whole lifecycle");
+    const custBp = await request("POST", "/api/customers", { companyName: "Test Billing Report Co", creditTermsDays: 0 }, token);
+    const shipBp = await request("POST", "/api/shipments", {
+      pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+      principalId: custBp.body.id, principalName: "Test Billing Report Co",
+    }, token);
+    const shipBpId = shipBp.body.id;
+    const lineBp = await addSellLine(shipBpId, token, 1000, "OFR");
+    const docBp = await generateInvoiceDoc(shipBpId, token, [lineBp.id]);
+
+    const reportRow = async () => {
+      const rpt = await request("GET", "/api/reports/billing-performance", null, token);
+      return rpt.body.find(r => r.docId === docBp.id);
+    };
+
+    let row = await reportRow();
+    assert("draft invoice appears with status draft, no payment status, not sent",
+      row && row.status === "draft" && row.paymentStatus === null && row.sent === false, JSON.stringify(row));
+    assert("amountUsd correctly resolved from the source cost line", row?.amountUsd === 1000, JSON.stringify(row));
+    assert("customer/carrier/lane correctly resolved", row?.customerName === "Test Billing Report Co" && row?.carrierCode === "MAEU" && row?.laneCode === "EU-N", JSON.stringify(row));
+
+    await confirmDoc(docBp.id, token);
+    row = await reportRow();
+    assert("confirmed invoice shows paymentStatus unpaid, full amount outstanding", row?.status === "confirmed" && row?.paymentStatus === "unpaid" && row?.outstandingUsd === 1000, JSON.stringify(row));
+
+    await request("POST", `/api/shipments/${shipBpId}/documents/${docBp.id}/mark-paid`, { paidAt: "2026-08-20", paidAmount: 400 }, token);
+    row = await reportRow();
+    assert("partially paid invoice shows paymentStatus partial with the right remaining balance", row?.paymentStatus === "partial" && row?.outstandingUsd === 600, JSON.stringify(row));
+
+    await request("POST", `/api/shipments/${shipBpId}/documents/${docBp.id}/mark-paid`, { paidAt: "2026-08-21", paidAmount: 1000 }, token);
+    row = await reportRow();
+    assert("fully paid invoice shows paymentStatus paid, zero outstanding", row?.paymentStatus === "paid" && row?.outstandingUsd === 0, JSON.stringify(row));
+
+    const ediSendBp = await request("POST", `/api/shipments/${shipBpId}/documents/${docBp.id}/send-edi`, { recipientCode: "MAEU", recipientLabel: "Maersk Line" }, token);
+    assert("send-edi for the report test fixture succeeds", ediSendBp.status === 201, JSON.stringify(ediSendBp.body));
+    row = await reportRow();
+    assert("sent invoice shows sent:true with a firstSentAt", row?.sent === true && !!row?.firstSentAt, JSON.stringify(row));
+
+    console.log("\nBilling Performance report — a voided invoice carries no payment status (matches Draft, not Confirmed)");
+    const lineBp2 = await addSellLine(shipBpId, token, 200, "DOC");
+    const docBp2 = await generateInvoiceDoc(shipBpId, token, [lineBp2.id]);
+    await confirmDoc(docBp2.id, token);
+    await request("POST", `/api/shipments/${shipBpId}/documents/${docBp2.id}/reverse`, { reason: "test" }, token);
+    const rpt2 = await request("GET", "/api/reports/billing-performance", null, token);
+    const rowVoided = rpt2.body.find(r => r.docId === docBp2.id);
+    assert("voided invoice shows status voided with no payment status", rowVoided?.status === "voided" && rowVoided?.paymentStatus === null, JSON.stringify(rowVoided));
+
+    console.log("\nBilling Performance report — CSV export");
+    const csvRes = await new Promise((resolve, reject) => {
+      const req = http.request({ method: "GET", hostname: "localhost", port: 3001,
+        path: "/api/reports/billing-performance?format=csv", headers: { Authorization: `Bearer ${token}` } },
+        res => { let data = ""; res.on("data", c => data += c); res.on("end", () => resolve({ status: res.statusCode, headers: res.headers, body: data })); });
+      req.on("error", reject); req.end();
+    });
+    assert("CSV export returns 200 with a csv content-type", csvRes.status === 200 && /text\/csv/.test(csvRes.headers["content-type"] || ""), JSON.stringify(csvRes.headers));
+    assert("CSV body has a header row and at least one data row", csvRes.body.split("\n").length >= 2 && csvRes.body.includes("Shipment"));
+
     console.log("\nCleanup");
     await request("DELETE", `/api/users/${(await request("GET", "/api/users", null, token)).body.find(u => u.email === occEmail)?.id}`, null, token).catch(() => {});
     await request("DELETE", `/api/shipments/${shipmentId}`, null, token);
@@ -258,6 +324,8 @@ async function confirmDoc(docId, token) {
     await request("DELETE", `/api/customers/${custDl.body.id}`, null, token);
     await request("DELETE", `/api/shipments/${shipNoDl.body.id}`, null, token);
     await request("DELETE", `/api/customers/${custNoDl.body.id}`, null, token);
+    await request("DELETE", `/api/shipments/${shipBpId}`, null, token);
+    await request("DELETE", `/api/customers/${custBp.body.id}`, null, token);
 
     console.log("\n" + "─".repeat(50));
     console.log(`Results: ${passed} passed, ${failed} failed`);

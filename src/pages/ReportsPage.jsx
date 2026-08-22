@@ -3,6 +3,7 @@ import { T, todayIso, addDays } from "../tokens";
 import { api } from "../api";
 import { toast } from "../toast";
 import GpBreakdownPanel from "../components/shared/GpBreakdownPanel";
+import BillingPerformancePanel from "../components/shared/BillingPerformancePanel";
 import DatePicker from "../components/primitives/DatePicker";
 import Btn from "../components/primitives/Btn";
 
@@ -22,6 +23,10 @@ const GROUP_MODES = {
 // default. "Where is the business losing money" is the list view itself (sorted worst-margin-
 // first once a target's configured); drilling into one group is the "why".
 const ReportsPage = () => {
+  // TKT-B4VBDH — Billing Performance joins GP by Trade Area as a second top-level tab on this
+  // page rather than its own nav item, mirroring DashboardPage.jsx's own tab-bar pattern for
+  // "several distinct reports under one nav entry."
+  const [tab, setTab] = useState("gp"); // "gp" | "billing"
   const [groupBy, setGroupBy] = useState("region"); // "region" | "country" | "carrier"
   // Default window is today -> today+30 (a forward-looking "what's coming up" slice) rather
   // than all-time — "" still means no bound at all, reachable via Clear below, since an
@@ -71,23 +76,40 @@ const ReportsPage = () => {
 
   return (
     <div id="reports-page" style={{ maxWidth: 1100, margin: "0 auto" }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 18 }}>
-        <div>
-          <h1 style={{ fontFamily: T.head, fontSize: 22, fontWeight: 800, color: T.text, margin: "0 0 4px" }}>Reports</h1>
-          <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, margin: 0 }}>
-            GP breakdown by trade area — origin region/country or carrier, from every shipment's own cost lines
-          </p>
-        </div>
-        <div id="reports-groupby-toggle" style={{ display: "inline-flex", gap: 2, padding: 3, background: T.bg, border: `1px solid ${T.border}`, borderRadius: 9 }}>
-          {Object.entries(GROUP_MODES).map(([key, m]) => (
-            <button key={key} type="button" onClick={() => setGroupBy(key)} style={{
-              padding: "6px 14px", fontFamily: T.body, fontSize: 12.5, fontWeight: groupBy === key ? 700 : 500,
-              color: groupBy === key ? T.btnPrimaryText : T.textMuted,
-              background: groupBy === key ? T.accent : "transparent",
-              border: "none", borderRadius: 6, cursor: "pointer", transition: "background .12s, color .12s",
-            }}>{m.label}</button>
-          ))}
-        </div>
+      <div style={{ marginBottom: 18 }}>
+        <h1 style={{ fontFamily: T.head, fontSize: 22, fontWeight: 800, color: T.text, margin: "0 0 4px" }}>Reports</h1>
+        <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, margin: 0 }}>
+          {tab === "gp"
+            ? "GP breakdown by trade area — origin region/country or carrier, from every shipment's own cost lines"
+            : "Every generated invoice, filterable by status, sent, payment, office, customer, trade lane, and carrier"}
+        </p>
+      </div>
+
+      <div id="reports-tab-bar" style={{ display: "flex", borderBottom: `1px solid ${T.border}`, marginBottom: 20 }}>
+        {[{ key: "gp", label: "GP by Trade Area" }, { key: "billing", label: "Billing Performance" }].map(t => (
+          <button key={t.key} type="button" onClick={() => setTab(t.key)} style={{
+            padding: "10px 20px", background: "none", border: "none",
+            borderBottom: tab === t.key ? `2px solid ${T.accent}` : "2px solid transparent",
+            color: tab === t.key ? T.accent : T.textMuted,
+            fontFamily: T.body, fontSize: 13, fontWeight: 600,
+            cursor: "pointer", marginBottom: -1, transition: "color .15s, border-color .15s",
+          }}>{t.label}</button>
+        ))}
+      </div>
+
+      {tab === "billing" ? (
+        <BillingPerformancePanel />
+      ) : (
+      <>
+      <div id="reports-groupby-toggle" style={{ display: "inline-flex", gap: 2, padding: 3, background: T.bg, border: `1px solid ${T.border}`, borderRadius: 9, marginBottom: 18 }}>
+        {Object.entries(GROUP_MODES).map(([key, m]) => (
+          <button key={key} type="button" onClick={() => setGroupBy(key)} style={{
+            padding: "6px 14px", fontFamily: T.body, fontSize: 12.5, fontWeight: groupBy === key ? 700 : 500,
+            color: groupBy === key ? T.btnPrimaryText : T.textMuted,
+            background: groupBy === key ? T.accent : "transparent",
+            border: "none", borderRadius: 6, cursor: "pointer", transition: "background .12s, color .12s",
+          }}>{m.label}</button>
+        ))}
       </div>
 
       <div id="reports-date-range" style={{ display: "flex", alignItems: "flex-end", gap: 10, marginBottom: 18,
@@ -197,6 +219,8 @@ const ReportsPage = () => {
             emptyLabel="No cost or invoice lines for this selection."
           />
         </>
+      )}
+      </>
       )}
     </div>
   );

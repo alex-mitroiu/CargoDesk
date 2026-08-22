@@ -4,7 +4,7 @@
 Full-stack freight management app. React 18 + Vite frontend, Express + node:sqlite backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.75.1 "Remittance"**
+- Version: **v0.76.0 "Remittance"**
 - Run: `npm run dev` (runs the monolith on :3001 + Vite on :5173 + the Document Distribution Service on :3002 + the PDF Render Service on :3003 + the Contract Management Service on :3004, concurrently)
 - Seed: `npm run seed` (runs `scripts/import-mdm-data.js`)
 
@@ -307,6 +307,23 @@ are fully validated.
 - **Document system**: `DOC_TYPES` in App.jsx (~line 56: BL01/MB01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — `MB01` (Master Bill of Lading, v0.71.0) is the vessel-operator-to-NVOCC document, a genuinely separate build from `BL01` (NVOCC-to-shipper House B/L), not a mode flag on it — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). (The earlier client-side-jsPDF `DocumentsMenu` component this note used to distinguish from was removed as dead code — it had zero references anywhere in the app.)
 - **Lifecycle-stage stepper precedent**: no dedicated stepper component exists yet; `MilestonePanel` (ShipmentDetailPage.jsx 1593-~1870) is the closest analog — linear progress bar (1734-1738, `width: ${progress}%`) plus per-step state coloring via `milestoneState()`/`stateColor()` (1666-1676: completed/overdue/current/upcoming) driven by `shipment_milestones` rows (`id, label, estimatedDate, note, completedAt, completedBy`, fixed step keys `booking_confirmed, si_submitted, cargo_gated_in, vessel_departed, bl_issued, vessel_arrived, customs_cleared, cargo_released, delivered`). Any new per-container lifecycle/stage UI should reuse this state-coloring pattern rather than inventing a new visual language
 - **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages, 📡 EDI). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
+
+## Recent changes (v0.76.0 "Remittance")
+- **The Billing Performance report itself** (`TKT-B4VBDH`, Epic `TKT-KR6ZBT`) — new
+  `GET /api/reports/billing-performance` returns every FR01/FR02 invoice, row-level and
+  enriched (status, sent, payment status + days overdue, office/customer/lane/carrier), so the
+  frontend can filter/slice by any combination at once rather than one groupBy at a time.
+- Joins GP by Trade Area as a second tab on the existing Reports page (same tab-bar pattern
+  Dashboard already uses) — 5 stat cards, filter chips (Status/Sent/Payment/Overdue), and facet
+  dropdowns populated live, all driving the same filtered table + CSV export. Same
+  `canViewFinance` gate the rest of Reports already uses.
+- Real layout bug caught live and fixed before shipping: the OUTSTANDING column header
+  collided with OFFICE next to it — fixed-width flex columns had no floor under space pressure.
+  Fixed with `flexShrink:0` everywhere, re-verified with a fresh screenshot.
+- 12 new assertions (`tests/billing-performance.test.js`, 46 total). Full backend + frontend
+  suites and a build verified green. Verified live via CDP against real data.
+- 4 of 5 Epic stories shipped; only Story 5 (configurable per-customer reminder cadence)
+  remains, next up.
 
 ## Recent changes (v0.75.1 "Remittance")
 - **Per-customer invoice-generation deadline** (`TKT-YC7PZP`, Epic `TKT-KR6ZBT`) — direct

@@ -25,6 +25,19 @@
 module.exports = function reportsRoutes(app, ctx) {
   const { db, ok, err, auth, mapCostLine, roundCents, portCountryMap, getSettings } = ctx;
 
+  // Row-level amount resolution for one FR01/FR02 doc — same source_cost_line_ids-first, live-
+  // container-scoped-fallback logic computeArExposure (server.js) already uses for AR, kept
+  // separate here rather than sharing that function since this needs the whole row (per-line
+  // detail isn't relevant, just the one total) and runs over draft/voided docs too, which
+  // computeArExposure never sees (it only ever looks at confirmed, non-voided invoices).
+  function docAmountUsd(doc) {
+    const sourceIds = doc.source_cost_line_ids ? JSON.parse(doc.source_cost_line_ids) : null;
+    const lines = sourceIds && sourceIds.length
+      ? db.prepare(`SELECT amount, exchange_rate FROM shipment_cost_lines WHERE id IN (${sourceIds.map(() => '?').join(',')})`).all(...sourceIds)
+      : db.prepare("SELECT amount, exchange_rate FROM shipment_cost_lines WHERE shipment_id=? AND type='SELL' AND container_id=?").all(doc.shipment_id, doc.container_id || '');
+    return roundCents(lines.reduce((s, l) => s + l.amount * l.exchange_rate, 0));
+  }
+
   const financeGate = (req, res) => {
     const u = req.user;
     const roles = Array.isArray(u.roles) ? u.roles : [u.role || 'viewer'];
@@ -190,5 +203,88 @@ module.exports = function reportsRoutes(app, ctx) {
       return res.send(`${header}\n${body}`);
     }
     ok(res, lines);
+  });
+
+  // Billing Performance report (TKT-B4VBDH, Epic TKT-KR6ZBT) — every FR01/FR02 invoice ever
+  // generated, row-level and enriched, so the frontend can filter/slice by any combination of
+  // office, customer, trade lane, and carrier rather than being locked into one groupBy at a
+  // time the way gp-by-geo above is. Deliberately returns the full row set (bounded by however
+  // many invoices actually exist — not a scale concern for this kind of platform) rather than a
+  // pre-aggregated summary, so the frontend owns the slicing the same way ShipmentsPage already
+  // owns its own client-side filtering.
+  app.get("/api/reports/billing-performance", auth(), (req, res) => {
+    if (!financeGate(req, res)) return;
+    const format = req.query.format === 'csv' ? 'csv' : 'json';
+
+    const rows = db.prepare(`
+      SELECT d.*, s.carrier_code, s.pol, s.pod, s.emo_office_id,
+             s.principal_id, s.principal_name, s.consignee_id, s.consignee_name
+      FROM shipment_documents d
+      JOIN shipments s ON s.id = d.shipment_id
+      WHERE d.doc_type IN ('FR01','FR02')
+      ORDER BY d.created_at DESC
+    `).all();
+
+    const officeNames = {};
+    db.prepare("SELECT id, code, name FROM offices").all().forEach(o => { officeNames[o.id] = `${o.code} — ${o.name}`; });
+    const carrierNames = {};
+    db.prepare("SELECT code, name FROM carriers").all().forEach(c => { carrierNames[c.code] = c.name; });
+    const countryLane = {};
+    db.prepare("SELECT iso2, lane_code FROM country_trade_lanes").all()
+      .forEach(r => { if (!(r.iso2 in countryLane)) countryLane[r.iso2] = r.lane_code; });
+    const laneNames = {};
+    db.prepare("SELECT code, name FROM trade_lanes").all().forEach(l => { laneNames[l.code] = l.name; });
+    const custTermsById = {};
+    db.prepare("SELECT id, credit_terms_days FROM customers").all().forEach(c => { custTermsById[c.id] = c.credit_terms_days; });
+
+    const todayMs = Date.now();
+    const results = rows.map(r => {
+      const respId   = r.principal_id || r.consignee_id || null;
+      const respName = r.principal_id ? r.principal_name : r.consignee_name;
+      const amountUsd = docAmountUsd(r);
+      const isLive = r.status === 'confirmed'; // draft/voided never carry a real payment status
+      const outstandingUsd = isLive ? Math.max(0, roundCents(amountUsd - (r.paid_amount || 0))) : null;
+      const paymentStatus = !isLive ? null : outstandingUsd <= 0 ? 'paid' : (r.paid_amount || 0) > 0 ? 'partial' : 'unpaid';
+      let daysOverdue = null;
+      if (isLive && outstandingUsd > 0) {
+        const termsDays = respId ? (custTermsById[respId] ?? 0) : 0;
+        const refDate = r.confirmed_at || r.created_at;
+        const dueMs = new Date(refDate).getTime() + (termsDays || 0) * 86400000;
+        daysOverdue = Math.floor((todayMs - dueMs) / 86400000);
+      }
+      const laneCode = countryLane[portCountryMap[r.pol]] || '';
+      return {
+        docId: r.id, shipmentId: r.shipment_id, docType: r.doc_type, filename: r.filename,
+        status: r.status || 'draft', createdAt: r.created_at, confirmedAt: r.confirmed_at || null,
+        firstSentAt: r.first_sent_at || null, sent: !!r.first_sent_at,
+        paidAt: r.paid_at || null, paidAmount: r.paid_amount ?? null, transactionId: r.transaction_id || '',
+        amountUsd, outstandingUsd, paymentStatus, daysOverdue,
+        officeId: r.emo_office_id || null, officeName: officeNames[r.emo_office_id] || null,
+        customerId: respId, customerName: respName || null,
+        carrierCode: r.carrier_code || null, carrierName: carrierNames[r.carrier_code] || r.carrier_code || null,
+        laneCode: laneCode || null, laneName: laneCode ? (laneNames[laneCode] || laneCode) : null,
+        pol: r.pol || null, pod: r.pod || null,
+      };
+    });
+
+    if (format === 'csv') {
+      const cols = [
+        ["Shipment", r => r.shipmentId], ["Doc Type", r => r.docType], ["Filename", r => r.filename],
+        ["Status", r => r.status], ["Sent", r => r.sent ? "Yes" : "No"],
+        ["Payment Status", r => r.paymentStatus ?? ""], ["Days Overdue", r => r.daysOverdue ?? ""],
+        ["Amount (USD)", r => r.amountUsd], ["Outstanding (USD)", r => r.outstandingUsd ?? ""],
+        ["Paid On", r => r.paidAt ?? ""], ["Paid Amount", r => r.paidAmount ?? ""], ["Transaction ID", r => r.transactionId],
+        ["Office", r => r.officeName ?? ""], ["Customer", r => r.customerName ?? ""],
+        ["Carrier", r => r.carrierName ?? ""], ["Trade Lane", r => r.laneName ?? ""],
+        ["Created", r => r.createdAt], ["Confirmed", r => r.confirmedAt ?? ""],
+      ];
+      const header = cols.map(([label]) => escCSV(label)).join(",");
+      const body = results.map(r => cols.map(([, fn]) => escCSV(fn(r))).join(",")).join("\n");
+      const date = new Date().toISOString().slice(0, 10);
+      res.setHeader("Content-Type", "text/csv; charset=utf-8");
+      res.setHeader("Content-Disposition", `attachment; filename="billing-performance-${date}.csv"`);
+      return res.send(`${header}\n${body}`);
+    }
+    ok(res, results);
   });
 };
