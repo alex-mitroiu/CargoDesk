@@ -1726,6 +1726,14 @@ const migrations = [
   "INSERT OR IGNORE INTO duty_rate_chapters (hs_chapter,label,rate_pct,created_at) VALUES ('22','Beverages & spirits',3.0,datetime('now'))",
   "INSERT OR IGNORE INTO duty_rate_chapters (hs_chapter,label,rate_pct,created_at) VALUES ('09','Coffee, tea, spices',0.0,datetime('now'))",
   "INSERT OR IGNORE INTO duty_rate_chapters (hs_chapter,label,rate_pct,created_at) VALUES ('42','Leather goods, bags & luggage',8.0,datetime('now'))",
+  // Dual carrier/shipper identity, second half (TKT-9O2B3T, NVOCC epic TKT-Q52B38) — the actual
+  // structural gap wasn't a new carrier_code/principal_id pair (the existing shipment_parties
+  // NVOCC role already carries that identity, see routes/share.js and buildBillOfLadingHtml);
+  // it was that bl_release_type only ever modeled ONE release event, when an NVOCC shipment
+  // genuinely has two: the vessel operator releasing to the NVOCC's own destination agent
+  // (this new column), separate from the NVOCC's own release to the actual consignee
+  // (bl_release_type, unchanged, still governs the existing Delivery Order document).
+  "ALTER TABLE shipments ADD COLUMN master_bl_release_type TEXT DEFAULT ''",
 ];
 
 // "duplicate column name" is the expected, harmless result of re-running an ADD COLUMN
@@ -3233,6 +3241,7 @@ const TRACKED_FIELDS = {
   bl_number:      'B/L Number',
   master_bl_number: 'Master B/L Number',
   bl_release_type: 'B/L Release Type',
+  master_bl_release_type: 'Master B/L Release Type',
   contract_type:  'Contract Type',
   contract_id:    'Contract ID',
   contract_ref:   'Contract Reference',

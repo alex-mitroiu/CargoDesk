@@ -248,7 +248,14 @@ export default function TrackingPage({ token }) {
             {polLabel} → {podLabel}
           </div>
           <div style={{ color: "#64748b", fontSize: 14 }}>
-            {data.carrierCode && <span>{data.carrierCode} &nbsp;·&nbsp; </span>}
+            {/* Dual carrier identity (TKT-9O2B3T) — when an NVOCC is assigned, THEY are who the
+                customer actually contracted with; the real vessel operator is still shown, just
+                demoted to a secondary "via" note rather than the primary carrier identity. */}
+            {data.nvoccName ? (
+              <span>{data.nvoccName}{data.carrierCode && <span style={{ color: "#94a3b8" }}> (via {data.carrierCode})</span>} &nbsp;·&nbsp; </span>
+            ) : (
+              data.carrierCode && <span>{data.carrierCode} &nbsp;·&nbsp; </span>
+            )}
             {data.serviceType} &nbsp;·&nbsp; {data.movementType}
             {data.bookingRef && <span> &nbsp;·&nbsp; BKG: {data.bookingRef}</span>}
             {data.blNumber && <span> &nbsp;·&nbsp; B/L: {data.blNumber}</span>}

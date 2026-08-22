@@ -1184,6 +1184,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
     blNumber:           init.blNumber           || "",
     blReleaseType:      init.blReleaseType      || "",
     masterBlNumber:     init.masterBlNumber     || "",
+    masterBlReleaseType: init.masterBlReleaseType || "",
     vessel:             init.vessel             || "",
     vesselImo:          init.vesselImo          || "",
     voyage:             init.voyage             || "",
@@ -1643,6 +1644,10 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
           <Inp label="Master B/L Number" value={f.masterBlNumber} onChange={set("masterBlNumber")}
             placeholder="MAEU987654321" mono
             hint="Carrier's own B/L, when booked through an NVOCC/forwarder — B/L Number above is the House B/L" />
+          <Sel label="Master B/L Release Type" value={f.masterBlReleaseType} onChange={set("masterBlReleaseType")}
+            hint="A separate release event: the vessel operator to the NVOCC's own agent — distinct from B/L Release Type above, which governs the NVOCC's release to the actual consignee"
+            options={[{ value: "", label: "— Not yet decided —" },
+              ...BL_RELEASE_TYPES.map(t => ({ value: t, label: t }))]} />
         </div>
       )}
       <LegsTable

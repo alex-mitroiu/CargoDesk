@@ -40,6 +40,12 @@ module.exports = function shareRoutes(app, ctx) {
     const milestones = db.prepare(
       "SELECT milestone_key, label, sequence_order, completed_at, estimated_date FROM shipment_milestones WHERE shipment_id=? ORDER BY sequence_order ASC"
     ).all(ship.id);
+    // Structural dual carrier/shipper identity (TKT-9O2B3T, NVOCC epic TKT-Q52B38) — a customer
+    // whose shipment moves through an NVOCC contracted with the NVOCC, not the underlying vessel
+    // operator, so the public tracking page's "Carrier" should read as the NVOCC when one is
+    // assigned (same identity already used for the House B/L and the booking-request shipper
+    // field) — carrierCode is kept alongside, unchanged, as the real operational vessel operator.
+    const nvoccParty = db.prepare("SELECT customer_name FROM shipment_parties WHERE shipment_id=? AND role='NVOCC'").get(ship.id);
 
     ok(res, {
       id: ship.id,
@@ -47,6 +53,7 @@ module.exports = function shareRoutes(app, ctx) {
       pol: ship.pol, polName: ship.pol_name || '',
       pod: ship.pod, podName: ship.pod_name || '',
       carrierCode: ship.carrier_code || '',
+      nvoccName: nvoccParty?.customer_name || '',
       vessel: ship.vessel || '',
       voyage: ship.voyage || '',
       etd: ship.etd || null,

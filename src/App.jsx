@@ -288,7 +288,7 @@ const buildBillOfLadingHtml = ({ shipment: sh, invNumber, invDate, notes, contai
       <div class="details-grid">${_detailGrid([
         ["B/L Number", _esc(sh.blNumber || invNumber)], ["Release Type", _esc(sh.blReleaseType || "—")],
         ...(sh.masterBlNumber ? [["Master B/L Number", _esc(sh.masterBlNumber)]] : []),
-        ...(nvocc ? [["NVOCC", _esc(nvocc.customerName)]] : []),
+        ...(nvocc ? [["Carrier of Record (NVOCC)", _esc(nvocc.customerName)]] : []),
         // ITN (Internal Transaction Number, TKT-6A7J45 story 1) — only present once the
         // shipment's own AES/EEI export filing has actually been Accepted; additive, so a
         // shipment with no filing (or one still Draft/Filed/Rejected) renders byte-identical
@@ -395,7 +395,19 @@ const buildMasterBillOfLadingHtml = ({ shipment: sh, invNumber, invDate, notes, 
         ["ETA", sh.eta ? new Date(sh.eta).toLocaleDateString("en-GB") : "—"],
         ["Carrier", _esc(sh.carrierCode || "—")],
         ["Movement", _esc(sh.movementType || "FCL")],
+        // Two-stage release (TKT-IB5IEX): the vessel operator's own release of the container to
+        // the NVOCC's destination agent is a genuinely separate event from the NVOCC's later
+        // release to the actual consignee (bl_release_type, on the House B/L / Delivery Order).
+        ["Master B/L Release Type", _esc(sh.masterBlReleaseType || "Not yet decided")],
       ])}</div>
+    </div>
+    <div style="background:${["Telex Release", "Surrendered", "Seaway Bill"].includes(sh.masterBlReleaseType) ? "#f0fdf4" : "#fef2f2"};
+      color:${["Telex Release", "Surrendered", "Seaway Bill"].includes(sh.masterBlReleaseType) ? "#166534" : "#991b1b"};
+      border:1px solid ${["Telex Release", "Surrendered", "Seaway Bill"].includes(sh.masterBlReleaseType) ? "#bbf7d0" : "#fecaca"};
+      border-radius:8px;padding:10px 14px;margin-bottom:20px;font-size:12px;font-weight:600">
+      ${["Telex Release", "Surrendered", "Seaway Bill"].includes(sh.masterBlReleaseType)
+        ? `Released to the NVOCC's destination agent — ${_esc(sh.masterBlReleaseType)}. The NVOCC's own release to the actual consignee (House B/L) is a separate, later event.`
+        : "Not yet released to the NVOCC's destination agent — an Original Master B/L must be surrendered (or the release type above confirmed) before the NVOCC's own agent can take custody."}
     </div>
     <div class="section-label">Containers / Cargo</div>
     <table><thead><tr>
