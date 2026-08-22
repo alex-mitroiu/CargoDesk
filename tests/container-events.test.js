@@ -4,6 +4,11 @@
  * Exercises create → add container (with seal_number) → log/list/delete
  * container_events → audit-log cross-check, via the live server.
  *
+ * Also covers Equipment Condition Capture / EIR (TKT-QSUTQ7, FCL Coverage Audit epic
+ * TKT-6PO7SV): condition_notes/damage_flag/chassis_provider round-trip on an event, and a
+ * condition photo uploaded through the existing generic document mechanism, correlated back
+ * to the specific event it documents via the new container_event_id column.
+ *
  * Usage:
  *   node tests/container-events.test.js
  *
@@ -173,6 +178,53 @@ async function testAuditLogCrossCheck(token, shipmentId) {
   assert("CONTAINER_EVENT_ADDED logged to shipment_events", !!found);
 }
 
+// Equipment condition capture at gate in/out (EIR, TKT-QSUTQ7) — condition_notes/damage_flag/
+// chassis_provider round-trip, plus a condition photo uploaded through the existing generic
+// document mechanism and correctly correlated back to the specific event it documents (not
+// just the container in general — the whole point is proving condition at a SPECIFIC movement).
+async function testConditionCapture(token, containerId, shipmentId) {
+  console.log("\nEquipment condition capture (EIR) — condition_notes/damage_flag/chassis_provider + photo evidence");
+
+  const ev = await request("POST", `/api/containers/${containerId}/events`, {
+    eventType: "Discharged", occurredAt: "2026-09-06", location: "USNYC Terminal",
+    damageFlag: true, conditionNotes: "Dented corner post, rear right", chassisProvider: "ABC Chassis Pool",
+  }, token);
+  assert("returns 201", ev.status === 201);
+  assert("damageFlag round-trips true", ev.body?.damageFlag === true, JSON.stringify(ev.body));
+  assert("conditionNotes round-trips", ev.body?.conditionNotes === "Dented corner post, rear right");
+  assert("chassisProvider round-trips", ev.body?.chassisProvider === "ABC Chassis Pool");
+
+  const evClean = await request("POST", `/api/containers/${containerId}/events`, {
+    eventType: "Gate Out", occurredAt: "2026-09-07",
+  }, token);
+  assert("damageFlag defaults false when omitted", evClean.body?.damageFlag === false, JSON.stringify(evClean.body));
+  assert("conditionNotes defaults blank when omitted", evClean.body?.conditionNotes === "");
+  assert("chassisProvider defaults blank when omitted", evClean.body?.chassisProvider === "");
+
+  const listBefore = await request("GET", `/api/containers/${containerId}/events`, null, token);
+  const rowBefore = listBefore.body.find(e => e.id === ev.body.id);
+  assert("no photos before any upload", Array.isArray(rowBefore?.photos) && rowBefore.photos.length === 0, JSON.stringify(rowBefore));
+
+  const photo = await request("POST", `/api/shipments/${shipmentId}/documents`, {
+    filename: "damage-photo.jpg", mimeType: "image/jpeg",
+    data: Buffer.from("fake-jpeg-bytes-for-testing").toString("base64"),
+    docType: "OT", containerId, containerEventId: ev.body.id,
+  }, token);
+  assert("photo upload returns 201", photo.status === 201, JSON.stringify(photo.body));
+
+  const listAfter = await request("GET", `/api/containers/${containerId}/events`, null, token);
+  const rowAfter = listAfter.body.find(e => e.id === ev.body.id);
+  assert("photo now attached to the specific event it documents", rowAfter?.photos?.length === 1, JSON.stringify(rowAfter));
+  assert("attached photo has the right filename", rowAfter?.photos?.[0]?.filename === "damage-photo.jpg");
+
+  const otherRow = listAfter.body.find(e => e.id === evClean.body.id);
+  assert("a different event on the same container carries no photos of its own", otherRow?.photos?.length === 0, JSON.stringify(otherRow));
+
+  await request("DELETE", `/api/documents/${photo.body.id}`, null, token);
+  await request("DELETE", `/api/container-events/${ev.body.id}`, null, token);
+  await request("DELETE", `/api/container-events/${evClean.body.id}`, null, token);
+}
+
 // ─── Runner ───────────────────────────────────────────────────────────────────
 
 (async () => {
@@ -192,6 +244,7 @@ async function testAuditLogCrossCheck(token, shipmentId) {
     await testEventValidation(token, containerId);
     remainingEventId = await testEventCrud(token, containerId, shipmentId);
     await testAuditLogCrossCheck(token, shipmentId);
+    await testConditionCapture(token, containerId, shipmentId);
   } catch (e) {
     console.error("\nFatal:", e.message);
     process.exit(1);

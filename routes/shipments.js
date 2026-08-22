@@ -632,11 +632,24 @@ module.exports = function shipmentsRoutes(app, ctx) {
 
   app.get("/api/containers/:id/events", auth(), (req, res) => {
     const rows = db.prepare("SELECT * FROM container_events WHERE container_id=? ORDER BY occurred_at ASC, created_at ASC").all(req.params.id);
-    ok(res, rows.map(mapContainerEvent));
+    const events = rows.map(mapContainerEvent);
+    // Batch-attach any condition/damage photos uploaded against a specific event (EIR,
+    // TKT-QSUTQ7) — one query for the whole list, matching the batched-not-N+1 idiom the
+    // demurrage/detention free-time computation already established for this same table.
+    if (events.length > 0) {
+      const eventIds = events.map(e => e.id);
+      const photos = db.prepare(
+        `SELECT id, container_event_id, filename FROM shipment_documents WHERE container_event_id IN (${eventIds.map(() => '?').join(',')})`
+      ).all(...eventIds);
+      const photosByEvent = {};
+      photos.forEach(p => { (photosByEvent[p.container_event_id] ||= []).push({ id: p.id, filename: p.filename }); });
+      events.forEach(e => { e.photos = photosByEvent[e.id] || []; });
+    }
+    ok(res, events);
   });
 
   app.post("/api/containers/:id/events", shipmentWrite, (req, res) => {
-    const { eventType, occurredAt, location = "", notes = "" } = req.body || {};
+    const { eventType, occurredAt, location = "", notes = "", conditionNotes = "", damageFlag = false, chassisProvider = "" } = req.body || {};
     if (!eventType || !CONTAINER_EVENT_TYPES.includes(eventType))
       return err(res, `eventType must be one of: ${CONTAINER_EVENT_TYPES.join(", ")}`);
     if (!occurredAt) return err(res, "occurredAt required");
@@ -646,9 +659,10 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const now = new Date().toISOString();
     const recordedBy = req.user?.name || req.user?.email || "";
     db.prepare(`INSERT INTO container_events
-      (id, container_id, shipment_id, event_type, location, occurred_at, recorded_by, notes, created_at)
-      VALUES (?,?,?,?,?,?,?,?,?)`)
-      .run(id, req.params.id, ctr.shipment_id, eventType, location, occurredAt, recordedBy, notes, now);
+      (id, container_id, shipment_id, event_type, location, occurred_at, recorded_by, notes, condition_notes, damage_flag, chassis_provider, created_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
+      .run(id, req.params.id, ctr.shipment_id, eventType, location, occurredAt, recordedBy, notes,
+           conditionNotes, damageFlag ? 1 : 0, chassisProvider, now);
     const event = mapContainerEvent(db.prepare("SELECT * FROM container_events WHERE id=?").get(id));
     logEvent(ctr.shipment_id, 'CONTAINER_EVENT_ADDED', null, null, `${eventType} — ${ctr.container_number}`,
       JSON.stringify({ containerId: req.params.id, eventType, occurredAt }));

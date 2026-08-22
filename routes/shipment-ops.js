@@ -602,7 +602,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   });
 
   app.post("/api/shipments/:id/documents", shipmentWrite, (req, res) => {
-    const { filename, mimeType, docType, data, containerId = '', responsibleParty = '' } = req.body;
+    const { filename, mimeType, docType, data, containerId = '', responsibleParty = '', containerEventId = '' } = req.body;
     if (!filename || !data) return err(res, "filename and data are required");
     try {
       const buf        = Buffer.from(data, "base64");
@@ -613,9 +613,9 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       const now      = new Date().toISOString();
       const uploader = req.user?.name || req.user?.email || "";
       db.prepare(`INSERT INTO shipment_documents
-        (id, shipment_id, filename, stored_name, mime_type, size_bytes, doc_type, uploaded_by, created_at, status, container_id, responsible_party)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?)`)
-        .run(id, req.params.id, filename, storedName, mimeType || "", buf.length, docType || "OT", uploader, now, containerId, responsibleParty);
+        (id, shipment_id, filename, stored_name, mime_type, size_bytes, doc_type, uploaded_by, created_at, status, container_id, responsible_party, container_event_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)`)
+        .run(id, req.params.id, filename, storedName, mimeType || "", buf.length, docType || "OT", uploader, now, containerId, responsibleParty, containerEventId);
       logEntityEvent('document', id, 'GENERATED', null, null, null,
         JSON.stringify({ shipmentId: req.params.id, docType: docType || "OT", filename, containerId }));
       const row = db.prepare("SELECT * FROM shipment_documents WHERE id = ?").get(id);

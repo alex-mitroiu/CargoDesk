@@ -1682,6 +1682,25 @@ const migrations = [
   "ALTER TABLE customers ADD COLUMN reminder_interval_days INTEGER DEFAULT NULL",
   // Tracks the sweep's own cadence per invoice — null means never reminded yet.
   "ALTER TABLE shipment_documents ADD COLUMN last_reminder_sent_at TEXT DEFAULT NULL",
+  // Equipment condition capture at gate in/out (TKT-QSUTQ7, FCL Coverage Audit epic
+  // TKT-6PO7SV) — container_events logged WHEN a container moved but never its CONDITION.
+  // condition_notes is deliberately separate from the pre-existing free-text `notes` column
+  // (general event commentary, e.g. "processed by Agent Jones") — this is specifically a
+  // damage/condition observation, the evidence a disputed detention charge usually comes
+  // down to. damage_flag lets the row be queried/badged without parsing notes text.
+  "ALTER TABLE container_events ADD COLUMN condition_notes TEXT DEFAULT ''",
+  "ALTER TABLE container_events ADD COLUMN damage_flag INTEGER NOT NULL DEFAULT 0",
+  // Chassis / drayage tracking (TKT-V8MIG0) rides directly on the EIR columns above per that
+  // ticket's own scoping — a chassis-provider field on the same gate-event row a condition
+  // photo is already being attached to, rather than a separate subsystem. Per-diem charges
+  // need no new machinery — the existing generic charge-code/cost-line system already accepts
+  // any charge code, chassis per-diem included.
+  "ALTER TABLE container_events ADD COLUMN chassis_provider TEXT DEFAULT ''",
+  // Lets an uploaded document (a condition/damage photo, via the existing generic upload
+  // route) point at the specific gate-movement event it documents, not just the container in
+  // general — a disputed charge needs "this photo proves the state at Gate In on this date,"
+  // not just "some photo of this container exists somewhere."
+  "ALTER TABLE shipment_documents ADD COLUMN container_event_id TEXT DEFAULT ''",
 ];
 
 // "duplicate column name" is the expected, harmless result of re-running an ADD COLUMN
