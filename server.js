@@ -1665,6 +1665,23 @@ const migrations = [
   // never a hard block (matches this Epic's own credit-hold-vs-limit precedent: blocking
   // shipment progress over a billing-process lag would hold up the wrong side of the business).
   "ALTER TABLE customers ADD COLUMN invoice_deadline_days INTEGER DEFAULT NULL",
+  // Story TKT-4TEYT1 (Epic TKT-KR6ZBT) — configurable per-customer reminder cadence, direct
+  // follow-up: "some clients may pay the same day, but some clients make the payment at the end
+  // of the month ... notifications need to be configurable". Opt-in (default off) rather than
+  // spammy-by-default — reminder_enabled gates whether this customer gets automated dunning
+  // emails at all. reminder_interval_days controls repeats once overdue: null/0 means send a
+  // single reminder and stop; a real value re-sends every N days for as long as the invoice
+  // stays overdue and unpaid. Deliberately does NOT duplicate credit_terms_days/
+  // invoice_deadline_days — "is this invoice overdue" is already fully answered by the existing
+  // credit_terms_days-anchored due-date math (computeArExposure's aging, the Billing
+  // Performance report's daysOverdue) — a same-day payer's short terms and an end-of-month
+  // consolidator's 30-day terms already produce naturally different "overdue" dates with zero
+  // new fields; these two columns only control the SEPARATE question of whether/how often to
+  // remind once that's true.
+  "ALTER TABLE customers ADD COLUMN reminder_enabled INTEGER NOT NULL DEFAULT 0",
+  "ALTER TABLE customers ADD COLUMN reminder_interval_days INTEGER DEFAULT NULL",
+  // Tracks the sweep's own cadence per invoice — null means never reminded yet.
+  "ALTER TABLE shipment_documents ADD COLUMN last_reminder_sent_at TEXT DEFAULT NULL",
 ];
 
 // "duplicate column name" is the expected, harmless result of re-running an ADD COLUMN
@@ -2301,6 +2318,14 @@ function scheduleNextCslSync(retryDelayMs = null) {
 }
 try { scheduleNextCslSync(); } catch {}
 
+// Dunning sweep (Story TKT-4TEYT1) — deliberately simpler than the OFAC/CSL schedulers above:
+// no "catch up to a due date" logic needed, since runDunningSweep itself already re-evaluates
+// what's actually due (per-invoice last_reminder_sent_at + each customer's own cadence) on
+// every single run — a plain daily interval is sufficient. Does NOT fire once at boot (unlike
+// syncing a sanctions list, sending real customer-facing email on every dev restart would be
+// a real surprise) — the first real run is 24h after this process started.
+setInterval(() => { runDunningSweep().catch(e => console.error("Dunning sweep failed:", e.message)); }, 24 * 60 * 60 * 1000);
+
 function screenShipmentById(shipmentId) {
   const s = db.prepare("SELECT * FROM shipments WHERE id=?").get(shipmentId);
   if (!s) return null;
@@ -2460,6 +2485,90 @@ function computeArExposure(customerId, creditTermsDays) {
     committedExposure: roundCents(committedExposure),
     aging: Object.fromEntries(Object.entries(aging).map(([k, v]) => [k, roundCents(v)])),
   };
+}
+
+// Row-level amount resolution for one FR01/FR02 doc — same source_cost_line_ids-first, live-
+// container-scoped-fallback logic computeArExposure above already uses for AR, factored out so
+// both the Billing Performance report (routes/reports.js) and the dunning sweep below share one
+// implementation instead of drifting apart.
+function docAmountUsd(doc) {
+  const sourceIds = doc.source_cost_line_ids ? JSON.parse(doc.source_cost_line_ids) : null;
+  const lines = sourceIds && sourceIds.length
+    ? db.prepare(`SELECT amount, exchange_rate FROM shipment_cost_lines WHERE id IN (${sourceIds.map(() => '?').join(',')})`).all(...sourceIds)
+    : db.prepare("SELECT amount, exchange_rate FROM shipment_cost_lines WHERE shipment_id=? AND type='SELL' AND container_id=?").all(doc.shipment_id, doc.container_id || '');
+  return roundCents(lines.reduce((s, l) => s + l.amount * l.exchange_rate, 0));
+}
+
+// ─── Overdue-invoice reminder sweep (Story TKT-4TEYT1, Epic TKT-KR6ZBT) ───────
+// Configurable per-customer, not one fixed schedule — a same-day payer and an end-of-month
+// consolidator should never get the same cadence, per direct request. "Is this invoice overdue"
+// is already fully answered by the existing credit_terms_days-anchored due-date math (same
+// formula computeArExposure's aging and the Billing Performance report's daysOverdue already
+// use) — this sweep only adds the separate opt-in/cadence layer: reminder_enabled gates whether
+// a customer gets reminders at all (default off), reminder_interval_days controls repeats
+// (null/0 = a single reminder, never repeated). Reuses the exact EMO-office-mail machinery the
+// manual send-email route already uses — same clean-failure-per-recipient behavior, a customer
+// with no configured office mail settings or no email on file is skipped, not a hard error that
+// aborts the whole sweep.
+async function runDunningSweep() {
+  const sent = [];
+  const rows = db.prepare(`
+    SELECT d.*, s.principal_id, s.principal_name, s.consignee_id, s.consignee_name, s.emo_office_id
+    FROM shipment_documents d
+    JOIN shipments s ON s.id = d.shipment_id
+    WHERE d.doc_type IN ('FR01','FR02') AND d.status='confirmed'
+  `).all();
+
+  const nowMs = Date.now();
+  for (const r of rows) {
+    const respId = r.principal_id || r.consignee_id || null;
+    if (!respId) continue;
+    const cust = db.prepare("SELECT * FROM customers WHERE id=?").get(respId);
+    if (!cust || !cust.reminder_enabled) continue;
+
+    const amountUsd = docAmountUsd(r);
+    const outstandingUsd = Math.max(0, roundCents(amountUsd - (r.paid_amount || 0)));
+    if (outstandingUsd <= 0) continue;
+
+    const refDate = r.confirmed_at || r.created_at;
+    const dueMs = new Date(refDate).getTime() + (cust.credit_terms_days || 0) * 86400000;
+    const daysOverdue = Math.floor((nowMs - dueMs) / 86400000);
+    if (daysOverdue <= 0) continue;
+
+    if (r.last_reminder_sent_at) {
+      if (!cust.reminder_interval_days) continue; // no repeat configured — already reminded once
+      const daysSinceLast = Math.floor((nowMs - new Date(r.last_reminder_sent_at).getTime()) / 86400000);
+      if (daysSinceLast < cust.reminder_interval_days) continue;
+    }
+
+    if (!r.emo_office_id) continue; // same EMO-only resolution the manual send-email route uses
+    const mailSettings = db.prepare("SELECT * FROM office_mail_settings WHERE office_id=? AND is_active=1").get(r.emo_office_id);
+    if (!mailSettings) continue; // no configured SMTP for this office — skip, don't error the whole sweep
+    const primaryContact = db.prepare("SELECT email FROM customer_contacts WHERE customer_id=? AND is_primary=1").get(cust.id);
+    const to = (primaryContact?.email || cust.email || '').trim();
+    if (!to) continue;
+
+    try {
+      const filePath = path.join(UPLOADS_DIR, r.stored_name);
+      const mailOptions = buildMailOptions({
+        from: mailSettings.from_address, fromName: mailSettings.from_name,
+        to,
+        subject: `Payment reminder — invoice ${r.filename} (${daysOverdue}d overdue)`,
+        message: `This is an automated reminder that invoice ${r.filename} for ${cust.company_name}, `
+          + `totaling $${outstandingUsd.toFixed(2)} outstanding, is ${daysOverdue} day${daysOverdue === 1 ? '' : 's'} past its due date. `
+          + `Please arrange payment at your earliest convenience, or contact us if this has already been settled.`,
+        ...(fs.existsSync(filePath) ? { attachmentPath: filePath, attachmentFilename: r.filename } : {}),
+      });
+      await sendViaOffice(db, r.emo_office_id, mailOptions);
+      db.prepare("UPDATE shipment_documents SET last_reminder_sent_at=? WHERE id=?").run(new Date().toISOString(), r.id);
+      logEntityEvent('document', r.id, 'REMINDER_SENT', null, null, null,
+        JSON.stringify({ shipmentId: r.shipment_id, customerId: cust.id, to, daysOverdue, outstandingUsd }));
+      sent.push({ docId: r.id, shipmentId: r.shipment_id, customerId: cust.id, companyName: cust.company_name, daysOverdue, outstandingUsd });
+    } catch (e) {
+      console.warn(`Dunning reminder failed for ${r.id}:`, e.message);
+    }
+  }
+  return sent;
 }
 
 // ─── Backfill transit_days on generated schedules ─────────────────────────────
@@ -3768,7 +3877,7 @@ const ctx = {
   runOpsAutomationSweep,
   linkedPortCodes, findMatchingContractLegs, resolveCarrierAgent,
   screenShipmentById, rescreenActiveShipments, resolveCustomerGroup,
-  computeArExposure, matchesScopeItem, userOwnsLaneForShipment, userOwnsLaneForCustomer,
+  computeArExposure, docAmountUsd, runDunningSweep, matchesScopeItem, userOwnsLaneForShipment, userOwnsLaneForCustomer,
   OVERRIDE_GRACE_MS,
   bcrypt, jwt, JWT_SECRET,
   DISTRIBUTION_SERVICE_URL, DISTRIBUTION_SERVICE_SECRET,

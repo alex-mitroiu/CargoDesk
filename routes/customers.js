@@ -428,6 +428,7 @@ module.exports = function customersRoutes(app, ctx) {
     const { companyName, address1='', address2='', city='', state='', postalCode='',
             countryIso2='', phone='', fax='', email='', website='', notes='', currency='',
             creditLimit=null, creditTermsDays=null, invoiceDeadlineDays=null, creditHold=false, creditHoldReason='',
+            reminderEnabled=false, reminderIntervalDays=null,
             parentCustomerId=null,
             classifiedLocation=false, latitude=null, longitude=null,
             isNvocc=false, fmcNumber='' } = req.body;
@@ -445,12 +446,13 @@ module.exports = function customersRoutes(app, ctx) {
     const cl = creditLimit === null || creditLimit === '' ? null : Number(creditLimit);
     const ctd = creditTermsDays === null || creditTermsDays === '' ? null : parseInt(creditTermsDays, 10);
     const idd = invoiceDeadlineDays === null || invoiceDeadlineDays === '' ? null : parseInt(invoiceDeadlineDays, 10);
+    const rid = reminderIntervalDays === null || reminderIntervalDays === '' ? null : parseInt(reminderIntervalDays, 10);
     const lat = classifiedLocation && latitude !== '' && latitude != null ? Number(latitude) : null;
     const lng = classifiedLocation && longitude !== '' && longitude != null ? Number(longitude) : null;
-    db.prepare(`INSERT INTO customers (id,company_name,address1,address2,city,state,postal_code,country_iso2,phone,fax,email,website,notes,created_at,currency,credit_limit,credit_terms_days,invoice_deadline_days,credit_hold,credit_hold_reason,parent_customer_id,classified_location,latitude,longitude,is_nvocc,fmc_number)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    db.prepare(`INSERT INTO customers (id,company_name,address1,address2,city,state,postal_code,country_iso2,phone,fax,email,website,notes,created_at,currency,credit_limit,credit_terms_days,invoice_deadline_days,credit_hold,credit_hold_reason,reminder_enabled,reminder_interval_days,parent_customer_id,classified_location,latitude,longitude,is_nvocc,fmc_number)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
       .run(id, companyName.trim(), address1, address2, city, state, postalCode, ccU, phone, fax, email, website, notes, createdAt, resolvedCurrency,
-           cl, ctd, idd, creditHold ? 1 : 0, creditHold ? creditHoldReason.trim() : '', parentCustomerId || null,
+           cl, ctd, idd, creditHold ? 1 : 0, creditHold ? creditHoldReason.trim() : '', reminderEnabled ? 1 : 0, rid, parentCustomerId || null,
            classifiedLocation ? 1 : 0, lat, lng, isNvocc ? 1 : 0, isNvocc ? fmcNumber.trim() : '');
     if (sanctionsMap.size > 0) screenCustomer(id);
     const row = db.prepare(`${CUST_JOIN} WHERE c.id=?`).get(id);
@@ -461,6 +463,7 @@ module.exports = function customersRoutes(app, ctx) {
     const { companyName, address1='', address2='', city='', state='', postalCode='',
             countryIso2='', phone='', fax='', email='', website='', notes='', currency='USD',
             creditLimit=null, creditTermsDays=null, invoiceDeadlineDays=null, creditHold=false, creditHoldReason='',
+            reminderEnabled=false, reminderIntervalDays=null,
             parentCustomerId=null,
             classifiedLocation=false, latitude=null, longitude=null,
             isNvocc=false, fmcNumber='' } = req.body;
@@ -485,16 +488,17 @@ module.exports = function customersRoutes(app, ctx) {
     const cl = creditLimit === null || creditLimit === '' ? null : Number(creditLimit);
     const ctd = creditTermsDays === null || creditTermsDays === '' ? null : parseInt(creditTermsDays, 10);
     const idd = invoiceDeadlineDays === null || invoiceDeadlineDays === '' ? null : parseInt(invoiceDeadlineDays, 10);
+    const rid = reminderIntervalDays === null || reminderIntervalDays === '' ? null : parseInt(reminderIntervalDays, 10);
     // classifiedLocation off force-clears any stored coordinates server-side, regardless of what
     // the request body still carries — same hygiene idiom as credit_hold_reason on the line above.
     const lat = classifiedLocation && latitude !== '' && latitude != null ? Number(latitude) : null;
     const lng = classifiedLocation && longitude !== '' && longitude != null ? Number(longitude) : null;
     const info = db.prepare(`UPDATE customers SET company_name=?,address1=?,address2=?,city=?,state=?,
       postal_code=?,country_iso2=?,phone=?,fax=?,email=?,website=?,notes=?,currency=?,
-      credit_limit=?,credit_terms_days=?,invoice_deadline_days=?,credit_hold=?,credit_hold_reason=?,parent_customer_id=?,
+      credit_limit=?,credit_terms_days=?,invoice_deadline_days=?,credit_hold=?,credit_hold_reason=?,reminder_enabled=?,reminder_interval_days=?,parent_customer_id=?,
       classified_location=?,latitude=?,longitude=?,is_nvocc=?,fmc_number=? WHERE id=?`)
       .run(companyName.trim(), address1, address2, city, state, postalCode, ccU, phone, fax, email, website, notes, (currency || 'USD').toUpperCase().trim(),
-           cl, ctd, idd, creditHold ? 1 : 0, creditHold ? creditHoldReason.trim() : '', parentCustomerId || null,
+           cl, ctd, idd, creditHold ? 1 : 0, creditHold ? creditHoldReason.trim() : '', reminderEnabled ? 1 : 0, rid, parentCustomerId || null,
            classifiedLocation ? 1 : 0, lat, lng, isNvocc ? 1 : 0, isNvocc ? fmcNumber.trim() : '', req.params.id);
     if (info.changes === 0) return err(res, "Not found", 404);
     if (sanctionsMap.size > 0) screenCustomer(req.params.id);

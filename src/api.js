@@ -422,6 +422,10 @@ export const api = {
       a.href = url; a.download = `billing-performance-${date}.csv`; a.click();
       URL.revokeObjectURL(url);
     },
+    // Manual trigger for the dunning sweep (TKT-4TEYT1) — the real recurring version runs daily
+    // at server boot; this is the same core function for testing/an operator who wants reminders
+    // sent right now. Admin-only server-side.
+    sendReminders: () => req("POST", "/billing/send-reminders"),
   },
   systemMessages: {
     list:   ()     => req("GET",    "/system-messages"),

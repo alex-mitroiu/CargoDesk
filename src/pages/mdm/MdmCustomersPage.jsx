@@ -97,6 +97,8 @@ const ProfileTab = ({ init = {}, onSave, saving }) => {
     creditLimit:      init.creditLimit      != null ? String(init.creditLimit)      : "",
     creditTermsDays:  init.creditTermsDays  != null ? String(init.creditTermsDays)  : "",
     invoiceDeadlineDays: init.invoiceDeadlineDays != null ? String(init.invoiceDeadlineDays) : "",
+    reminderEnabled:      init.reminderEnabled || false,
+    reminderIntervalDays: init.reminderIntervalDays != null ? String(init.reminderIntervalDays) : "",
     creditHold:       init.creditHold       || false,
     creditHoldReason: init.creditHoldReason || "",
     parentCustomerId:   init.parentCustomerId   || "",
@@ -199,6 +201,19 @@ const ProfileTab = ({ init = {}, onSave, saving }) => {
       <Inp label="Invoice Generation Deadline (days, optional)" value={f.invoiceDeadlineDays} onChange={set("invoiceDeadlineDays")}
         placeholder="e.g. 5" mono type="number"
         hint="Flags a shipment (informational only, never a block) if it's still un-invoiced this many days after cargo delivery — some customers need same-day billing, others consolidate at month-end" />
+
+      <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer",
+        fontFamily: T.body, fontSize: 13, color: T.text, width: "fit-content" }}>
+        <input type="checkbox" checked={f.reminderEnabled}
+          onChange={e => set("reminderEnabled")(e.target.checked)} />
+        Send automated payment reminders for overdue invoices
+      </label>
+      {f.reminderEnabled && (
+        <Inp label="Reminder Interval (days, optional)" value={f.reminderIntervalDays} onChange={set("reminderIntervalDays")}
+          placeholder="Blank = send once, don't repeat" mono type="number"
+          hint="How often to re-send once overdue — a same-day payer might want this aggressive, an end-of-month consolidator might want it left blank so they're not nagged before their own cycle" />
+      )}
+
       <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer",
         fontFamily: T.body, fontSize: 13, color: T.text, width: "fit-content" }}>
         <input type="checkbox" checked={f.creditHold}

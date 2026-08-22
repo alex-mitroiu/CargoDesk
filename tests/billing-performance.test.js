@@ -24,6 +24,13 @@
  * carrier, gated by the same finance access (canViewFinance or admin) Reports and Margin
  * already use.
  *
+ * Story 5 (TKT-4TEYT1, configurable per-customer reminder cadence): customers.reminderEnabled/
+ * reminderIntervalDays let a customer opt into automated overdue-payment reminder emails, on
+ * their own cadence. POST /api/billing/send-reminders (admin-only) manually triggers the same
+ * runDunningSweep() the daily scheduler calls. This environment has no reachable SMTP server, so
+ * a real successful send can't be exercised end-to-end (same disclosed limitation as
+ * office-mail.test.js) — these tests cover every gating branch up to that network boundary.
+ *
  * Usage:
  *   node tests/billing-performance.test.js
  *
@@ -316,6 +323,76 @@ async function confirmDoc(docId, token) {
     assert("CSV export returns 200 with a csv content-type", csvRes.status === 200 && /text\/csv/.test(csvRes.headers["content-type"] || ""), JSON.stringify(csvRes.headers));
     assert("CSV body has a header row and at least one data row", csvRes.body.split("\n").length >= 2 && csvRes.body.includes("Shipment"));
 
+    console.log("\nreminderEnabled/reminderIntervalDays — round-trip through customer create/update");
+    const custRem = await request("POST", "/api/customers", { companyName: "Test Reminder Co", reminderEnabled: true, reminderIntervalDays: 7 }, token);
+    assert("reminderEnabled round-trips true on create", custRem.body.reminderEnabled === true, JSON.stringify(custRem.body));
+    assert("reminderIntervalDays round-trips on create", custRem.body.reminderIntervalDays === 7, JSON.stringify(custRem.body));
+    const custRemDefault = await request("POST", "/api/customers", { companyName: "Test Reminder Default Co" }, token);
+    assert("reminderEnabled defaults to false when omitted", custRemDefault.body.reminderEnabled === false, JSON.stringify(custRemDefault.body));
+    assert("reminderIntervalDays defaults to null when omitted", custRemDefault.body.reminderIntervalDays === null, JSON.stringify(custRemDefault.body));
+    const custRemUpdate = await request("PUT", `/api/customers/${custRem.body.id}`, { companyName: "Test Reminder Co", reminderEnabled: false, reminderIntervalDays: "" }, token);
+    assert("reminderEnabled round-trips false on update", custRemUpdate.body.reminderEnabled === false, JSON.stringify(custRemUpdate.body));
+    assert("blank reminderIntervalDays clears back to null", custRemUpdate.body.reminderIntervalDays === null, JSON.stringify(custRemUpdate.body));
+
+    console.log("\nManual reminder sweep trigger — admin-only gate (a step above canViewFinance, since this sends real outbound email)");
+    const sweepAsOcc = await request("POST", "/api/billing/send-reminders", {}, occLogin.body.token);
+    assert("occ_bk (not admin) cannot trigger the reminder sweep", sweepAsOcc.status === 403, JSON.stringify(sweepAsOcc.body));
+
+    // This environment has no reachable SMTP server (matches office-mail.test.js's own disclosed
+    // limitation) — a fully eligible reminder will be attempted and fail cleanly rather than land
+    // in the sweep's `sent` array. These tests exercise every gating branch (enabled/overdue/
+    // office/mail-settings) up to that network boundary and confirm no crash and no false-positive
+    // "sent" report; the actual successful-send + last_reminder_sent_at write is verified by direct
+    // code review, not faked into a false-confidence test.
+    console.log("\nReminder sweep — scratch office + fully eligible overdue unpaid invoice");
+    const officeSweep = await request("POST", "/api/offices", { unlocode: `X${rand.slice(0, 4).toUpperCase()}`, department: "SE", name: "Test Sweep Office" }, token);
+    await request("PUT", `/api/offices/${officeSweep.body.id}/mail-settings`, {
+      smtpHost: "127.0.0.1", smtpPort: 1, secureMode: "none", fromAddress: "noreply@example.com", fromName: "Test Sweep Office",
+    }, token);
+    const custSweep = await request("POST", "/api/customers", { companyName: "Test Sweep Co", creditTermsDays: 0, reminderEnabled: true, reminderIntervalDays: 5 }, token);
+    const shipSweep = await request("POST", "/api/shipments", {
+      pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+      principalId: custSweep.body.id, principalName: "Test Sweep Co", emoOfficeId: officeSweep.body.id,
+    }, token);
+    const shipSweepId = shipSweep.body.id;
+    const lineSweep = await addSellLine(shipSweepId, token, 500, "OFR");
+    const docSweep = await generateInvoiceDoc(shipSweepId, token, [lineSweep.id]);
+    await confirmDoc(docSweep.id, token);
+
+    const sweep1 = await request("POST", "/api/billing/send-reminders", {}, token);
+    assert("sweep run returns 200 (no crash walking the full eligible-invoice path)", sweep1.status === 200, JSON.stringify(sweep1.body));
+    assert("sentCount matches the sent array length", sweep1.body.sentCount === sweep1.body.sent.length, JSON.stringify(sweep1.body));
+    assert("a fully eligible invoice against an unreachable SMTP host does not falsely report as sent", !sweep1.body.sent.some(s => s.docId === docSweep.id), JSON.stringify(sweep1.body));
+
+    console.log("\nReminder sweep — a customer with reminders disabled is never picked up, even when otherwise identically overdue and unpaid");
+    const custDisabled = await request("POST", "/api/customers", { companyName: "Test Sweep Disabled Co", creditTermsDays: 0, reminderEnabled: false }, token);
+    const shipDisabled = await request("POST", "/api/shipments", {
+      pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+      principalId: custDisabled.body.id, principalName: "Test Sweep Disabled Co", emoOfficeId: officeSweep.body.id,
+    }, token);
+    const lineDisabled = await addSellLine(shipDisabled.body.id, token, 500, "OFR");
+    const docDisabled = await generateInvoiceDoc(shipDisabled.body.id, token, [lineDisabled.id]);
+    await confirmDoc(docDisabled.id, token);
+    const sweep2 = await request("POST", "/api/billing/send-reminders", {}, token);
+    assert("reminder-disabled customer never appears in the sweep results", !sweep2.body.sent.some(s => s.docId === docDisabled.id), JSON.stringify(sweep2.body));
+
+    console.log("\nReminder sweep — a not-yet-overdue invoice for a reminder-enabled customer is never picked up");
+    const custFuture = await request("POST", "/api/customers", { companyName: "Test Sweep Future Co", creditTermsDays: 365, reminderEnabled: true }, token);
+    const shipFuture = await request("POST", "/api/shipments", {
+      pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+      principalId: custFuture.body.id, principalName: "Test Sweep Future Co", emoOfficeId: officeSweep.body.id,
+    }, token);
+    const lineFuture = await addSellLine(shipFuture.body.id, token, 500, "OFR");
+    const docFuture = await generateInvoiceDoc(shipFuture.body.id, token, [lineFuture.id]);
+    await confirmDoc(docFuture.id, token);
+    const sweep3 = await request("POST", "/api/billing/send-reminders", {}, token);
+    assert("an invoice not yet past its credit terms is never picked up for a reminder", !sweep3.body.sent.some(s => s.docId === docFuture.id), JSON.stringify(sweep3.body));
+
+    console.log("\nBilling Performance report — surfaces lastReminderSentAt (null here, since no real SMTP server exists in this test environment)");
+    const rptSweep = await request("GET", "/api/reports/billing-performance", null, token);
+    const rowSweep = rptSweep.body.find(r => r.docId === docSweep.id);
+    assert("lastReminderSentAt is present on the row shape and still null", rowSweep && rowSweep.lastReminderSentAt === null, JSON.stringify(rowSweep));
+
     console.log("\nCleanup");
     await request("DELETE", `/api/users/${(await request("GET", "/api/users", null, token)).body.find(u => u.email === occEmail)?.id}`, null, token).catch(() => {});
     await request("DELETE", `/api/shipments/${shipmentId}`, null, token);
@@ -326,6 +403,15 @@ async function confirmDoc(docId, token) {
     await request("DELETE", `/api/customers/${custNoDl.body.id}`, null, token);
     await request("DELETE", `/api/shipments/${shipBpId}`, null, token);
     await request("DELETE", `/api/customers/${custBp.body.id}`, null, token);
+    await request("DELETE", `/api/customers/${custRem.body.id}`, null, token);
+    await request("DELETE", `/api/customers/${custRemDefault.body.id}`, null, token);
+    await request("DELETE", `/api/shipments/${shipSweepId}`, null, token);
+    await request("DELETE", `/api/customers/${custSweep.body.id}`, null, token);
+    await request("DELETE", `/api/shipments/${shipDisabled.body.id}`, null, token);
+    await request("DELETE", `/api/customers/${custDisabled.body.id}`, null, token);
+    await request("DELETE", `/api/shipments/${shipFuture.body.id}`, null, token);
+    await request("DELETE", `/api/customers/${custFuture.body.id}`, null, token);
+    await request("DELETE", `/api/offices/${officeSweep.body.id}`, null, token);
 
     console.log("\n" + "─".repeat(50));
     console.log(`Results: ${passed} passed, ${failed} failed`);

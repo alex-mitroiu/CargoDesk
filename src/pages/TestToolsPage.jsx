@@ -9,7 +9,7 @@ import EdiMessageList from "../components/shared/EdiMessageList";
 import { VesselField, VesselCombobox } from "../components/shared/VesselCombobox";
 import CarrierCombobox from "../components/shared/CarrierCombobox";
 import PortCombobox from "../components/shared/PortCombobox";
-import { IconBaseStation, IconCheck, IconClose, IconAnchor, IconFileCertificate, IconShip, IconLink } from "../components/primitives/Icon";
+import { IconBaseStation, IconCheck, IconClose, IconAnchor, IconFileCertificate, IconShip, IconLink, IconMail } from "../components/primitives/Icon";
 
 // ─── Test Tools ────────────────────────────────────────────────────────────────
 // Reached both from Integration Board's sidebar and a header shortcut icon (App.jsx).
@@ -339,6 +339,20 @@ const TestToolsPage = ({ navigate }) => {
     return api.webhookSimulator.list().then(setWebhookReceived).catch(() => setWebhookReceived([])).finally(() => setWebhookLoading(false));
   }, []);
 
+  // ─── Reminder Sweep (dunning) — manual trigger ────────────────────────────────
+  // The real sweep runs on a daily interval at server boot (server.js's runDunningSweep,
+  // Story TKT-4TEYT1) — this tab exposes the identical core function as an admin action, same
+  // "inject/observe through the real code path" idiom as the other simulators here, since
+  // waiting up to 24h to see a real reminder fire during development/testing isn't practical.
+  const [dunningRunning, setDunningRunning] = useState(false);
+  const [dunningResult,  setDunningResult]  = useState(null); // { sentCount, sent }
+  const runDunningNow = async () => {
+    setDunningRunning(true);
+    try { setDunningResult(await api.reports.sendReminders()); }
+    catch (e) { toast.error(e.message); }
+    setDunningRunning(false);
+  };
+
   useEffect(() => {
     if (activeTab !== "webhook") return;
     loadWebhookReceived();
@@ -367,6 +381,7 @@ const TestToolsPage = ({ navigate }) => {
     { key: "filings",    label: "Filing Simulator", icon: IconFileCertificate },
     { key: "ais",        label: "AIS Simulator", icon: IconShip },
     { key: "webhook",    label: "Webhook Simulator", icon: IconLink },
+    { key: "dunning",    label: "Reminder Sweep", icon: IconMail },
   ];
 
   return (
@@ -1037,6 +1052,54 @@ const TestToolsPage = ({ navigate }) => {
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {activeTab === "dunning" && (
+        <div style={{ maxWidth: 640 }}>
+          <h2 style={{ fontFamily: T.head, fontSize: 16, fontWeight: 800, color: T.text, margin: "0 0 14px" }}>
+            Reminder Sweep
+          </h2>
+          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8,
+            padding: "10px 12px", marginBottom: 16, fontFamily: T.body, fontSize: 11.5, color: T.textMuted, lineHeight: 1.6 }}>
+            Sends overdue-payment reminder emails right now for every confirmed, unpaid, overdue
+            invoice belonging to a customer with reminders enabled (Master Data → Customers →
+            Billing) — the same real sweep that otherwise only runs once a day. Each customer's
+            own cadence is respected: one already reminded within its own configured interval is
+            skipped, not re-sent.
+          </div>
+          <Btn onClick={runDunningNow} disabled={dunningRunning}>
+            {dunningRunning ? "Sending…" : "Send Reminders Now"}
+          </Btn>
+
+          {dunningResult && (
+            <div style={{ marginTop: 20 }}>
+              <div style={{ fontFamily: T.body, fontSize: 12, fontWeight: 600, color: T.text, marginBottom: 10 }}>
+                {dunningResult.sentCount} reminder{dunningResult.sentCount === 1 ? "" : "s"} sent
+              </div>
+              {dunningResult.sentCount === 0 ? (
+                <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, fontStyle: "italic" }}>
+                  Nothing due — no reminder-enabled customer has a confirmed, unpaid, overdue
+                  invoice past its own cadence right now.
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {dunningResult.sent.map(s => (
+                    <div key={s.docId} style={{ background: T.surface, border: `1px solid ${T.border}`,
+                      borderRadius: 8, padding: "8px 12px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div>
+                        <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.text }}>{s.shipmentId}</span>
+                        <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, marginLeft: 8 }}>{s.companyName}</span>
+                      </div>
+                      <span style={{ fontFamily: T.mono, fontSize: 11, color: T.warning }}>
+                        ${Number(s.outstandingUsd).toFixed(2)} · {s.daysOverdue}d overdue
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -23,20 +23,8 @@
 // blank in this data) while country_trade_lanes has real, complete coverage — using the dormant
 // one would make "By Region" permanently empty.
 module.exports = function reportsRoutes(app, ctx) {
-  const { db, ok, err, auth, mapCostLine, roundCents, portCountryMap, getSettings } = ctx;
-
-  // Row-level amount resolution for one FR01/FR02 doc — same source_cost_line_ids-first, live-
-  // container-scoped-fallback logic computeArExposure (server.js) already uses for AR, kept
-  // separate here rather than sharing that function since this needs the whole row (per-line
-  // detail isn't relevant, just the one total) and runs over draft/voided docs too, which
-  // computeArExposure never sees (it only ever looks at confirmed, non-voided invoices).
-  function docAmountUsd(doc) {
-    const sourceIds = doc.source_cost_line_ids ? JSON.parse(doc.source_cost_line_ids) : null;
-    const lines = sourceIds && sourceIds.length
-      ? db.prepare(`SELECT amount, exchange_rate FROM shipment_cost_lines WHERE id IN (${sourceIds.map(() => '?').join(',')})`).all(...sourceIds)
-      : db.prepare("SELECT amount, exchange_rate FROM shipment_cost_lines WHERE shipment_id=? AND type='SELL' AND container_id=?").all(doc.shipment_id, doc.container_id || '');
-    return roundCents(lines.reduce((s, l) => s + l.amount * l.exchange_rate, 0));
-  }
+  const { db, ok, err, auth, requireRole, mapCostLine, roundCents, portCountryMap, getSettings,
+          docAmountUsd, runDunningSweep } = ctx;
 
   const financeGate = (req, res) => {
     const u = req.user;
@@ -257,6 +245,7 @@ module.exports = function reportsRoutes(app, ctx) {
         docId: r.id, shipmentId: r.shipment_id, docType: r.doc_type, filename: r.filename,
         status: r.status || 'draft', createdAt: r.created_at, confirmedAt: r.confirmed_at || null,
         firstSentAt: r.first_sent_at || null, sent: !!r.first_sent_at,
+        lastReminderSentAt: r.last_reminder_sent_at || null,
         paidAt: r.paid_at || null, paidAmount: r.paid_amount ?? null, transactionId: r.transaction_id || '',
         amountUsd, outstandingUsd, paymentStatus, daysOverdue,
         officeId: r.emo_office_id || null, officeName: officeNames[r.emo_office_id] || null,
@@ -286,5 +275,17 @@ module.exports = function reportsRoutes(app, ctx) {
       return res.send(`${header}\n${body}`);
     }
     ok(res, results);
+  });
+
+  // Manual trigger for the dunning sweep (Story TKT-4TEYT1) — the real recurring version runs
+  // on a daily interval at server boot (see server.js), this is the same core function exposed
+  // as an admin action for testing and for an operator who wants reminders sent right now rather
+  // than waiting for the next automatic pass. Admin-only (not just canViewFinance) since this
+  // sends real outbound email on behalf of the organization, a step above viewing a report.
+  app.post("/api/billing/send-reminders", auth(), requireRole(["admin"]), async (req, res) => {
+    try {
+      const sent = await runDunningSweep();
+      ok(res, { sentCount: sent.length, sent });
+    } catch (e) { err(res, e.message || "Reminder sweep failed", 500); }
   });
 };
