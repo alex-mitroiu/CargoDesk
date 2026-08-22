@@ -85,6 +85,9 @@ module.exports = function documentDistributionRoutes(app, ctx) {
       // checksum) is the distribution service's own, as the owning source of truth.
       logEntityEvent('document', doc.id, 'EDI_SENT', null, null, null,
         JSON.stringify({ shipmentId: req.params.id, recipientCode, recipientLabel: recipientLabel || "", transmittalId: result.transmittalId }));
+      // TKT-PLAVEK — see routes/shipment-ops.js's send-email route for why: a fast, denormalized
+      // "was this ever sent" signal for the Billing Performance report, first channel wins.
+      if (!doc.first_sent_at) db.prepare("UPDATE shipment_documents SET first_sent_at=? WHERE id=?").run(new Date().toISOString(), doc.id);
       ok(res, { sent: true, transmittalId: result.transmittalId }, 201);
     } catch (e) {
       logEntityEvent('document', doc.id, 'EDI_SEND_FAILED', null, null, null,
@@ -115,6 +118,7 @@ module.exports = function documentDistributionRoutes(app, ctx) {
       });
       logEntityEvent('document', doc.id, 'WEBHOOK_SENT', null, null, null,
         JSON.stringify({ shipmentId: req.params.id, officeId: shipment.emo_office_id, deliveryId: result.deliveryId }));
+      if (!doc.first_sent_at) db.prepare("UPDATE shipment_documents SET first_sent_at=? WHERE id=?").run(new Date().toISOString(), doc.id);
       ok(res, { sent: true, deliveryId: result.deliveryId }, 201);
     } catch (e) {
       logEntityEvent('document', doc.id, 'WEBHOOK_SEND_FAILED', null, null, null,

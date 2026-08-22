@@ -53,6 +53,8 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       containerId: r.container_id || '', responsibleParty: r.responsible_party || '',
       relatedDocId: r.related_doc_id || null,
       sourceCostLineIds: r.source_cost_line_ids ? JSON.parse(r.source_cost_line_ids) : null,
+      paidAt: r.paid_at || null, paidAmount: r.paid_amount ?? null, transactionId: r.transaction_id || '',
+      firstSentAt: r.first_sent_at || null,
     };
   };
 
@@ -772,6 +774,11 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       await sendViaOffice(db, shipment.emo_office_id, mailOptions);
       logEntityEvent('document', doc.id, 'EMAILED', null, null, null,
         JSON.stringify({ shipmentId: req.params.id, to, subject: subject || doc.filename }));
+      // TKT-PLAVEK — a fast, denormalized "was this ever sent" signal for the Billing
+      // Performance report; the full multi-channel history stays in entity_events exactly as
+      // before, this never replaces it. Written once (first channel wins) — a later resend via
+      // any channel doesn't overwrite an earlier first_sent_at.
+      if (!doc.first_sent_at) db.prepare("UPDATE shipment_documents SET first_sent_at=? WHERE id=?").run(new Date().toISOString(), doc.id);
       ok(res, { sent: true });
     } catch (e) { err(res, e.message, 502); }
   });
@@ -859,6 +866,37 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       const voidedDoc = mapDoc(db.prepare("SELECT * FROM shipment_documents WHERE id=?").get(doc.id), doc.shipment_id);
       ok(res, { reversalLines, voidedDoc });
     } catch (e) { db.exec("ROLLBACK"); err(res, e.message, 500); }
+  });
+
+  // ─── Mark as Paid (TKT-NQ87D3, Epic TKT-KR6ZBT) ────────────────────────────
+  // A real payment-receipt primitive — before this, computeArExposure's outstandingAr meant
+  // purely "confirmed, non-voided invoice", with no concept anywhere of a customer having
+  // actually paid. paidAt is REQUIRED and never defaulted to "now" server-side — the financial
+  // controller enters the real payment date (often a few days after actually reconciling
+  // against a bank statement), and aging needs to reflect that date, not whenever this endpoint
+  // happened to be called. paidAmount is REQUIRED too, so a partial payment can never silently
+  // read as fully settled. transactionId is optional, free-text reference data only (bank
+  // reference, wire confirmation) — never validated or acted on. Same postGate (admin/operator)
+  // as Confirm/Reverse above — this is the same class of financial-state-changing action on the
+  // same document, not a new gate tier.
+  app.post("/api/shipments/:shipmentId/documents/:docId/mark-paid", postGate, (req, res) => {
+    const doc = db.prepare("SELECT * FROM shipment_documents WHERE id=? AND shipment_id=?").get(req.params.docId, req.params.shipmentId);
+    if (!doc) return err(res, "Not found", 404);
+    if (doc.doc_type !== "FR01" && doc.doc_type !== "FR02") return err(res, "Only a generated invoice can be marked paid", 400);
+    if (doc.status !== "confirmed") return err(res, "Only a confirmed invoice can be marked paid", 409);
+
+    const { paidAt, paidAmount, transactionId = "" } = req.body || {};
+    if (!paidAt) return err(res, "paidAt is required");
+    if (paidAmount === undefined || paidAmount === null || paidAmount === "" || Number(paidAmount) <= 0)
+      return err(res, "paidAmount must be a positive number");
+
+    db.prepare("UPDATE shipment_documents SET paid_at=?, paid_amount=?, transaction_id=? WHERE id=?")
+      .run(paidAt, Number(paidAmount), transactionId.trim(), doc.id);
+    logEntityEvent('document', doc.id, 'MARKED_PAID', null, null, null,
+      JSON.stringify({ shipmentId: doc.shipment_id, docType: doc.doc_type, filename: doc.filename, paidAt, paidAmount: Number(paidAmount), transactionId: transactionId.trim() || undefined }));
+
+    const updated = mapDoc(db.prepare("SELECT * FROM shipment_documents WHERE id=?").get(doc.id), doc.shipment_id);
+    ok(res, updated);
   });
 
   app.get("/api/documents/:docId/download", auth(), (req, res) => {

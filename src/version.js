@@ -2,11 +2,17 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.74.0";
+export const VERSION   = "0.75.0";
 export const BUILD     = "2026-08-22";
-export const CODENAME  = "Solvency";
+export const CODENAME  = "Remittance";
 
 export const CHANGELOG = [
+  {
+    version:  "0.75.0",
+    date:     "2026-08-22",
+    codename: "Remittance",
+    summary:  "Invoicing Discipline & Billing Performance (Epic TKT-KR6ZBT), first pass — direct follow-up right after Credit Control Depth (TKT-6XFJQM) shipped: the app tracked AR aging on the RECEIVING end (days since an invoice was confirmed) but had no control at all on the GENERATING end (days since a shipment earned the right to be invoiced) or on actual payment receipt. Confirmed by direct code check before building anything: shipment_documents had no paid_at/payment_status field and no payments table existed anywhere -- outstandingAr literally just meant 'confirmed, non-voided invoice', not 'unpaid'. This release ships the two foundational primitives (Stories 1-2 of 5); the deadline flag, the Billing Performance report, and configurable reminder cadence follow in later passes.\n\nMark as Paid (TKT-NQ87D3) -- the app's first real payment-receipt record. New paid_at/paid_amount/transaction_id on shipment_documents. Both paidAt and paidAmount are REQUIRED at the API level and paidAt is never auto-defaulted to 'now' -- a financial controller reconciling against a bank statement often enters the date a few days after the fact, and aging needs to reflect when the money actually arrived, not when someone got around to clicking the button. transactionId is optional, free-text reference data only. A partial payment reduces (never zeroes below what's actually still owed) the invoice's own contribution to outstandingAr, and does NOT reset its aging clock -- the remainder keeps aging from the original confirmed_at, matching standard AR treatment. Gated to the same postGate (admin/operator) tier as Confirm/Reverse -- the same class of financial-state-changing action on the same document, not a new permission tier. New 'Mark Paid' action + modal on ShipmentAccountingInvoicesPage.jsx, with a live partial-payment warning showing exactly what remains outstanding.\n\nDenormalized first_sent_at (TKT-PLAVEK) -- whether a document was ever sent used to be reconstructed by joining entity_events (email) and the document-distribution microservice's own edi_transmittals/webhook_deliveries tables, each keyed by document_id and never written back to the monolith -- fine for an on-demand history modal, too expensive to join live for every row of a report. Written once, by whichever channel (email/EDI/webhook) succeeds first; the full multi-channel history stays exactly where it already lived, this is purely a fast read-side signal. Surfaced as a small 'Sent' badge next to each invoice's status pill.\n\n24 new assertions in a new tests/billing-performance.test.js, added to the main npm test chain (46 files now). Full 46-file backend chain, both service-scoped chains, frontend Vitest, and a clean build all verified green from a fresh full-stack restart. Verified live via CDP: the Mark as Paid modal correctly pre-fills the invoiced total, requires a date before the submit button enables, and round-trips a partial payment with the correct remaining-balance warning.\n\nNew Epic TKT-KR6ZBT logged with all 5 stories up front (matching how Credit Control Depth was tracked) -- Stories 3-5 (per-customer invoice-generation deadline, the Billing Performance report itself, and configurable per-customer reminder cadence reviving the previously-lowest-priority TKT-SUEDWH) remain queued for the next passes.",
+  },
   {
     version:  "0.74.0",
     date:     "2026-08-22",

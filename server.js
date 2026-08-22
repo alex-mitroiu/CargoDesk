@@ -1640,6 +1640,31 @@ const migrations = [
     consumed_at      TEXT DEFAULT NULL
   )`,
   "CREATE INDEX IF NOT EXISTS idx_credit_overrides_shipment ON credit_overrides(shipment_id, override_type, consumed_at)",
+  // Invoicing Discipline & Billing Performance (Epic TKT-KR6ZBT), Story TKT-NQ87D3 — a real
+  // payment-receipt primitive. Before this, "outstanding AR" (computeArExposure) meant purely
+  // "confirmed, non-voided invoice" — there was no concept anywhere of a customer having
+  // actually paid. paid_at is the date the financial controller enters (required at the API
+  // level when marking paid, never defaulted to "now" — a payment recorded a few days after the
+  // fact should still age from when the money actually arrived). paid_amount supports a partial
+  // payment without silently reading as fully settled. transaction_id is optional reference
+  // data only (bank reference, wire confirmation, etc.) — never validated or acted on.
+  "ALTER TABLE shipment_documents ADD COLUMN paid_at        TEXT DEFAULT NULL",
+  "ALTER TABLE shipment_documents ADD COLUMN paid_amount    REAL DEFAULT NULL",
+  "ALTER TABLE shipment_documents ADD COLUMN transaction_id TEXT DEFAULT ''",
+  // Story TKT-PLAVEK — whether a document was ever sent is reconstructed today by joining
+  // entity_events (email, routes/shipment-ops.js's send-email route) and the document-
+  // distribution microservice's own edi_transmittals/webhook_deliveries tables (each keyed by
+  // document_id, never written back here) — fine for an on-demand history modal, too expensive
+  // to join live for every row of a report. Written once by whichever channel succeeds first;
+  // purely a fast read-side signal — the full multi-channel history stays exactly where it
+  // already lives, this column never replaces it.
+  "ALTER TABLE shipment_documents ADD COLUMN first_sent_at  TEXT DEFAULT NULL",
+  // Story TKT-YC7PZP — mirrors credit_terms_days exactly: nullable, per-customer, blank means
+  // no deadline configured (not "0 days"). Days after the shipment's own "delivered" milestone
+  // within which an invoice should be generated and sent — a soft, informational flag only,
+  // never a hard block (matches this Epic's own credit-hold-vs-limit precedent: blocking
+  // shipment progress over a billing-process lag would hold up the wrong side of the business).
+  "ALTER TABLE customers ADD COLUMN invoice_deadline_days INTEGER DEFAULT NULL",
 ];
 
 // "duplicate column name" is the expected, harmless result of re-running an ADD COLUMN
@@ -2400,16 +2425,24 @@ function computeArExposure(customerId, creditTermsDays) {
         : db.prepare("SELECT id, amount, exchange_rate FROM shipment_cost_lines WHERE shipment_id=? AND type='SELL' AND container_id=?").all(doc.shipment_id, doc.container_id || '');
       const docTotal = lines.reduce((s, l) => s + l.amount * l.exchange_rate, 0);
       for (const l of lines) coveredLineIds.add(l.id);
-      outstandingAr += docTotal;
+      // Mark as Paid (TKT-NQ87D3) — paid_amount is recorded in the same USD-equivalent unit as
+      // docTotal itself (never the invoice's own display currency, which can differ per line —
+      // see buildFreightInvoiceHtml's multi-currency handling). A partial payment reduces this
+      // invoice's own contribution to both outstandingAr and its aging bucket, floored at 0
+      // (never negative even if somehow overpaid) — it does NOT reset the aging clock to the
+      // payment date; the remainder still ages from the original confirmed_at, matching standard
+      // AR treatment (a partial payment shrinks the balance, it doesn't make the debt younger).
+      const netOutstanding = Math.max(0, docTotal - (doc.paid_amount || 0));
+      outstandingAr += netOutstanding;
 
       const refDate = doc.confirmed_at || doc.created_at;
       const dueMs = new Date(refDate).getTime() + (creditTermsDays || 0) * 86400000;
       const daysOverdue = Math.floor((todayMs - dueMs) / 86400000);
-      if      (daysOverdue <= 0)  aging.current  += docTotal;
-      else if (daysOverdue <= 30) aging.d1_30    += docTotal;
-      else if (daysOverdue <= 60) aging.d31_60   += docTotal;
-      else if (daysOverdue <= 90) aging.d61_90   += docTotal;
-      else                        aging.d90_plus += docTotal;
+      if      (daysOverdue <= 0)  aging.current  += netOutstanding;
+      else if (daysOverdue <= 30) aging.d1_30    += netOutstanding;
+      else if (daysOverdue <= 60) aging.d31_60   += netOutstanding;
+      else if (daysOverdue <= 90) aging.d61_90   += netOutstanding;
+      else                        aging.d90_plus += netOutstanding;
     }
   }
 

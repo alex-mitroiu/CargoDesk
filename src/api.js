@@ -451,6 +451,7 @@ export const api = {
     sendEdi:     (shipmentId, docId, data) => req("POST", `/shipments/${shipmentId}/documents/${docId}/send-edi`, data),
     sendWebhook: (shipmentId, docId)       => req("POST", `/shipments/${shipmentId}/documents/${docId}/send-webhook`),
     reverse:  (shipmentId, docId, data = {}) => req("POST", `/shipments/${shipmentId}/documents/${docId}/reverse`, data),
+    markPaid: (shipmentId, docId, data)      => req("POST", `/shipments/${shipmentId}/documents/${docId}/mark-paid`, data),
     patch:    (docId, data)      => req("PATCH",  `/documents/${docId}`, data),
     remove:   (docId)            => req("DELETE", `/documents/${docId}`),
     download: async (docId, filename) => {

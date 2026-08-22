@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { T } from "../../tokens";
+import { T, todayIso } from "../../tokens";
 import { useAuth } from "../../AuthContext";
 import Btn from "../../components/primitives/Btn";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
@@ -9,7 +9,8 @@ import { CostLineForm, CostLineHistoryModal, CostLineRow, CostLineActualizeModal
 import { generateInvoices, resolveInvoiceCurrency, resolveCreditGate, buildCreditDebitNoteHtml } from "../../utils/invoiceGenerator";
 import { api } from "../../api";
 import { toast } from "../../toast";
-import { Textarea } from "../../components/primitives/Form";
+import { Textarea, Inp } from "../../components/primitives/Form";
+import DatePicker from "../../components/primitives/DatePicker";
 import { IconCheck, IconWarning, IconClipboard, IconReceipt, IconPackage, IconEye } from "../../components/primitives/Icon";
 
 const fmtUsd = v => v == null ? "—" : `$${Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -42,6 +43,49 @@ const ReverseInvoiceModal = ({ doc, busy, onClose, onConfirm }) => {
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
           <Btn variant="secondary" onClick={onClose} disabled={busy}>Cancel</Btn>
           <Btn onClick={() => onConfirm(reason)} disabled={busy}>{busy ? "Reversing…" : "Reverse Invoice"}</Btn>
+        </div>
+      </div>
+    </Modal>
+  );
+};
+
+// Mark as Paid (TKT-NQ87D3, Epic TKT-KR6ZBT) — the app's first real payment-receipt record.
+// Both paidAt and paidAmount are required, per direct instruction: the financial controller
+// enters the actual payment date (never auto-defaulted to today — a payment recorded a few
+// days after reconciling against a bank statement should still age from when the money really
+// arrived, so the date field starts blank, not pre-filled), and the amount must be explicit so
+// a partial payment can never silently read as fully settled. transactionId is optional
+// reference data only (bank/wire reference) — never validated or acted on downstream.
+const MarkPaidModal = ({ doc, defaultAmount, busy, onClose, onConfirm }) => {
+  const [paidAt, setPaidAt] = useState("");
+  const [paidAmount, setPaidAmount] = useState(defaultAmount != null ? String(defaultAmount) : "");
+  const [transactionId, setTransactionId] = useState("");
+  const amountNum = Number(paidAmount);
+  const valid = !!paidAt && paidAmount !== "" && !Number.isNaN(amountNum) && amountNum > 0;
+  const isPartial = defaultAmount != null && valid && amountNum < defaultAmount;
+  return (
+    <Modal title="Mark as Paid" onClose={() => !busy && onClose()} width={420}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, lineHeight: 1.5 }}>
+          Records payment receipt for <strong style={{ color: T.text }}>{doc.filename}</strong>
+          {defaultAmount != null && <> — invoiced total {fmtUsd(defaultAmount)}</>}.
+        </div>
+        <DatePicker label="Paid On" required value={paidAt} onChange={setPaidAt} maxDate={todayIso()} />
+        <Inp label="Amount Paid (USD)" required type="number" value={paidAmount} onChange={setPaidAmount}
+          hint="A partial payment is fine — the remainder stays in outstanding AR" />
+        <Inp label="Transaction ID (optional)" value={transactionId} onChange={setTransactionId}
+          placeholder="e.g. wire reference, bank confirmation #" />
+        {isPartial && (
+          <div style={{ padding: "8px 12px", borderRadius: 6, background: `${T.warning}18`,
+            border: `1px solid ${T.warning}44`, fontFamily: T.body, fontSize: 11.5, color: T.text }}>
+            Partial payment — {fmtUsd(defaultAmount - amountNum)} will remain outstanding.
+          </div>
+        )}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <Btn variant="secondary" onClick={onClose} disabled={busy}>Cancel</Btn>
+          <Btn onClick={() => onConfirm({ paidAt, paidAmount: amountNum, transactionId })} disabled={!valid || busy}>
+            {busy ? "Saving…" : "Mark as Paid"}
+          </Btn>
         </div>
       </div>
     </Modal>
@@ -103,6 +147,8 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
   const [confirmPost,   setConfirmPost]   = useState(null); // line pending Post confirmation
   const [reverseDoc,    setReverseDoc]    = useState(null); // invoice doc pending Reverse confirmation
   const [reverseBusy,   setReverseBusy]   = useState(false);
+  const [markPaidDoc,   setMarkPaidDoc]   = useState(null); // invoice doc pending Mark as Paid
+  const [markPaidBusy,  setMarkPaidBusy]  = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -243,6 +289,16 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
     return ctr ? `Container ${ctr.containerNumber || `(${ctr.size || ""}${ctr.type || ""})`}` : "Container";
   };
 
+  // Mirrors the server's own computeArExposure math (docTotal = sum of amountUsd for this
+  // doc's sourceCostLineIds) — used only as the Mark as Paid modal's starting default, never
+  // persisted or compared against server-side; the server is the actual source of truth.
+  const docTotalFor = doc => {
+    if (!doc.sourceCostLineIds?.length) return null;
+    const matched = lines.filter(l => doc.sourceCostLineIds.includes(l.id));
+    if (!matched.length) return null;
+    return matched.reduce((s, l) => s + l.amountUsd, 0);
+  };
+
   const statusPill = doc => {
     const isConfirmed = doc.status === "confirmed";
     const isVoided    = doc.status === "voided";
@@ -337,6 +393,18 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
       loadDocs();
     } catch (e) { toast.error(e.message); }
     setReverseBusy(false);
+  };
+
+  const handleMarkPaid = async ({ paidAt, paidAmount, transactionId }) => {
+    const doc = markPaidDoc;
+    setMarkPaidBusy(true);
+    try {
+      await api.documents.markPaid(shipment.id, doc.id, { paidAt, paidAmount, transactionId });
+      toast.success("Marked as paid");
+      setMarkPaidDoc(null);
+      loadDocs();
+    } catch (e) { toast.error(e.message); }
+    setMarkPaidBusy(false);
   };
 
   const th = { fontFamily: T.body, fontSize: 10, fontWeight: 600, color: T.textMuted,
@@ -440,12 +508,13 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
             <div style={{ ...th, width: 110 }}>Status</div>
             <div style={{ ...th, width: 100 }}>Created</div>
             <div style={{ ...th, flex: 1 }}>Responsible Party</div>
-            <div style={{ width: 240 }} />
+            <div style={{ width: 320 }} />
           </div>
           {docs.map(doc => {
             const isVoided = doc.status === "voided";
             const relatedDoc = doc.relatedDocId ? docs.find(d => d.id === doc.relatedDocId) : null;
             const canReverse = canEdit && doc.docType !== "CN01" && doc.status === "confirmed" && !doc.relatedDocId;
+            const canMarkPaid = canEdit && doc.docType !== "CN01" && doc.status === "confirmed" && !doc.paidAt;
             return (
             <div key={doc.id} id={`shpacct-invoices-doc-${doc.id}`}
               onDoubleClick={() => setPreviewDoc(doc)}
@@ -466,12 +535,33 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
                   </div>
                 )}
               </div>
-              <div style={{ width: 110 }}>{statusPill(doc)}</div>
+              <div style={{ width: 110, display: "flex", flexDirection: "column", gap: 3 }}>
+                {statusPill(doc)}
+                {doc.firstSentAt && (
+                  <span title={`First sent ${fmtDate(doc.firstSentAt)}`}
+                    style={{ fontFamily: T.mono, fontSize: 9.5, fontWeight: 700, color: T.info,
+                      background: T.info + "18", border: `1px solid ${T.info}44`, borderRadius: 6,
+                      padding: "2px 7px", whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 3, width: "fit-content" }}>
+                    Sent
+                  </span>
+                )}
+                {doc.paidAt && (
+                  <span title={`Paid ${fmtDate(doc.paidAt)}${doc.transactionId ? ` · ${doc.transactionId}` : ""}`}
+                    style={{ fontFamily: T.mono, fontSize: 9.5, fontWeight: 700, color: T.success,
+                      background: T.success + "18", border: `1px solid ${T.success}44`, borderRadius: 6,
+                      padding: "2px 7px", whiteSpace: "nowrap", display: "inline-flex", alignItems: "center", gap: 3, width: "fit-content" }}>
+                    <IconCheck size={9} />{fmtUsd(doc.paidAmount)} paid
+                  </span>
+                )}
+              </div>
               <div style={{ width: 100, fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>{fmtDate(doc.createdAt)}</div>
               <div style={{ flex: 1, fontFamily: T.body, fontSize: 12, color: doc.responsibleParty ? T.text : T.border }}>
                 {doc.responsibleParty || "—"}
               </div>
-              <div style={{ width: 240, textAlign: "right", display: "flex", justifyContent: "flex-end", gap: 6 }}>
+              <div style={{ width: 320, textAlign: "right", display: "flex", justifyContent: "flex-end", gap: 6 }}>
+                {canMarkPaid && (
+                  <Btn size="sm" variant="secondary" onClick={() => setMarkPaidDoc(doc)}><IconCheck size={12} />Mark Paid</Btn>
+                )}
                 {canReverse && (
                   <Btn size="sm" variant="secondary" onClick={() => setReverseDoc(doc)}>↩ Reverse</Btn>
                 )}
@@ -554,6 +644,11 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
       {reverseDoc && (
         <ReverseInvoiceModal doc={reverseDoc} busy={reverseBusy}
           onClose={() => !reverseBusy && setReverseDoc(null)} onConfirm={handleReverse} />
+      )}
+
+      {markPaidDoc && (
+        <MarkPaidModal doc={markPaidDoc} defaultAmount={docTotalFor(markPaidDoc)} busy={markPaidBusy}
+          onClose={() => !markPaidBusy && setMarkPaidDoc(null)} onConfirm={handleMarkPaid} />
       )}
 
       {confirmPost && (
