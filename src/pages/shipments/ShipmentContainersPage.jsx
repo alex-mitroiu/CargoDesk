@@ -12,7 +12,7 @@ import { api } from "../../api";
 import { toast } from "../../toast";
 import { setNavigationGuard, clearNavigationGuard } from "../../navigationGuard";
 import { dgPolicyConflict } from "../../utils/dgPolicy";
-import { IconWarning, IconClipboard, IconPackage, IconArchive, IconClose } from "../../components/primitives/Icon";
+import { IconWarning, IconClipboard, IconPackage, IconArchive, IconClose, IconCoin } from "../../components/primitives/Icon";
 
 // ─── Shipment Containers Page — unified Containers + Cargo Manifest tree ──────
 // Cargo Manifest & Container Details Redesign (TKT-OTKNJN), direct user-drawn concept:
@@ -45,6 +45,74 @@ const PackageTreeNode = ({ pkg, allPackages, containerId, depth, navOpen, onTogg
   );
 };
 
+// Landed-cost / duty estimate (TKT-U6IZCL, FCL Coverage Audit epic TKT-6PO7SV) — self-fetching,
+// opened as a modal from the Cargo page toolbar since HS codes and cargo pricing are entered
+// right here. Explicitly a ballpark tool (see the disclaimer the endpoint itself returns), not
+// a customs broker's system of record — real per-country tariff data is a data-business gap,
+// not a code gap (same caveat already applied to carrier networks, v0.69.0 competitive analysis).
+const CARGO_VALUE_SOURCE_LABEL = {
+  "pack-items": "Based on real priced cargo line items",
+  "shipment-declared-value": "Based on the shipment's single declared value (no cargo line items priced yet)",
+  "none": "No pricing available — price cargo line items or set a declared value to estimate duty",
+};
+
+const LandedCostEstimateModal = ({ shipmentId, onClose }) => {
+  const [data, setData] = useState(null); // null = loading
+  useEffect(() => {
+    api.shipments.landedCostEstimate(shipmentId).then(setData).catch(e => { toast.error(e.message); onClose(); });
+  }, [shipmentId]);
+
+  return (
+    <Modal title="Landed-Cost Estimate" onClose={onClose} width={560}>
+      {data === null ? (
+        <div style={{ padding: "24px 0", textAlign: "center", fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
+          Calculating…
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+            {[["Freight", data.freightUsd], ["Est. Duty", data.dutyEstimateUsd], ["Est. Landed Cost", data.landedCostUsd]].map(([label, val]) => (
+              <div key={label} style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px" }}>
+                <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, textTransform: "uppercase", letterSpacing: 0.4 }}>{label}</div>
+                <div style={{ fontFamily: T.mono, fontSize: 16, fontWeight: 700, color: T.text, marginTop: 2 }}>{fmtCurr(val, "USD")}</div>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted, fontStyle: "italic" }}>
+            {CARGO_VALUE_SOURCE_LABEL[data.cargoValueSource]}
+          </div>
+
+          {data.byChapter.length > 0 && (
+            <div>
+              <div style={{ fontFamily: T.body, fontSize: 11, fontWeight: 700, color: T.text, textTransform: "uppercase",
+                letterSpacing: 0.4, marginBottom: 6 }}>
+                By HS Chapter
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                {data.byChapter.map(c => (
+                  <div key={c.chapter || "unk"} style={{ display: "flex", justifyContent: "space-between", alignItems: "center",
+                    padding: "7px 10px", background: T.bg, border: `1px solid ${T.border}`, borderRadius: 6,
+                    fontFamily: T.body, fontSize: 11.5 }}>
+                    <span style={{ color: T.text }}>{c.chapter ? `${c.chapter} — ${c.label}` : c.label}</span>
+                    <span style={{ fontFamily: T.mono, color: T.textMuted, flexShrink: 0, marginLeft: 10 }}>
+                      {fmtCurr(c.valueUsd, "USD")} × {c.ratePct}% = {fmtCurr(c.dutyUsd, "USD")}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, borderTop: `1px solid ${T.border}`, paddingTop: 10 }}>
+            {data.disclaimer}
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+};
+
 const ShipmentContainersPage = ({ shipment, containers, onBack, onAddContainer, onEditContainer, onDeleteContainer }) => {
   const { canEditShipments: canEdit } = useAuth();
   const ctrs     = containers.filter(c => c.shipmentId === shipment.id);
@@ -59,6 +127,7 @@ const ShipmentContainersPage = ({ shipment, containers, onBack, onAddContainer, 
   const [eventsCtr,      setEventsCtr]     = useState(null);
   const [confirmCtr,     setConfirmCtr]    = useState(null);
   const [dgPolicy,       setDgPolicy]      = useState(null);
+  const [landedCostOpen, setLandedCostOpen] = useState(false);
   const ctrFormRef = useRef(null);
 
   const loadPackages = useCallback(() => {
@@ -198,7 +267,13 @@ const ShipmentContainersPage = ({ shipment, containers, onBack, onAddContainer, 
             </span>
           )}
         </div>
+        {ctrs.length > 0 && (
+          <Btn size="sm" variant="secondary" onClick={() => setLandedCostOpen(true)}>
+            <IconCoin size={13} /> Landed-Cost Estimate
+          </Btn>
+        )}
       </div>
+      {landedCostOpen && <LandedCostEstimateModal shipmentId={shipment.id} onClose={() => setLandedCostOpen(false)} />}
 
       {ctrs.length === 0 && !canEdit ? (
         <div id="shpctr-empty" style={{ padding: 48, textAlign: "center", fontFamily: T.body,

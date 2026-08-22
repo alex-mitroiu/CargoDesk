@@ -101,6 +101,7 @@ export const api = {
     update: (id, data)=> req("PUT",    `/shipments/${id}`, data),
     remove: (id)      => req("DELETE", `/shipments/${id}`),
     shareToken: (id)  => req("POST",   `/shipments/${id}/share-token`),
+    landedCostEstimate: (id) => req("GET", `/shipments/${id}/landed-cost-estimate`),
     creditOverride: {
       get:     (id)       => req("GET",  `/shipments/${id}/credit-override`),
       approve: (id, data) => req("POST", `/shipments/${id}/credit-override/approve`, data),
@@ -342,6 +343,12 @@ export const api = {
     create: (d)     => req("POST",   "/container-type-definitions", d),
     update: (id, d) => req("PUT",    `/container-type-definitions/${id}`, d),
     remove: (id)    => req("DELETE", `/container-type-definitions/${id}`),
+  },
+  dutyRates: {
+    list:   ()        => req("GET",    "/duty-rate-chapters"),
+    create: (d)        => req("POST",   "/duty-rate-chapters", d),
+    update: (chapter, d) => req("PUT",  `/duty-rate-chapters/${chapter}`, d),
+    remove: (chapter)  => req("DELETE", `/duty-rate-chapters/${chapter}`),
   },
   services: {
     list:   (shipmentId)             => req("GET",    `/shipments/${shipmentId}/services`),

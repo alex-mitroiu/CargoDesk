@@ -58,6 +58,76 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     };
   };
 
+  // ─── Landed-cost / duty estimate (TKT-U6IZCL, FCL Coverage Audit epic TKT-6PO7SV) ─────────
+  // Explicitly a ballpark estimator, not a customs broker's system of record — a real duty
+  // figure needs a versioned, per-country HS-tariff data feed this app doesn't have (same
+  // "needs a data business, not code" gap already named for carrier networks, v0.69.0). Prefers
+  // real per-item pricing (container_packages.unitValueUsd, Epic TKT-P3ASH1) grouped by each
+  // item's own effective HS code — falling back to the single shipment-level declaredValue,
+  // attributed to one chapter, only when NO pack item anywhere on the shipment is priced at all.
+  const DEFAULT_DUTY_RATE_PCT = 5;
+
+  app.get("/api/shipments/:id/landed-cost-estimate", auth(), async (req, res) => {
+    const shipment = db.prepare("SELECT declared_value, declared_value_currency FROM shipments WHERE id=?").get(req.params.id);
+    if (!shipment) return err(res, "Shipment not found", 404);
+
+    const containers = db.prepare("SELECT id, hs_code FROM containers WHERE shipment_id=?").all(req.params.id);
+    const hsByContainer = {};
+    containers.forEach(c => { hsByContainer[c.id] = c.hs_code || ''; });
+
+    const chapterTotals = {}; // chapter ('' = unclassified) -> valueUsd
+    const addToChapter = (chapter, valueUsd) => { chapterTotals[chapter] = (chapterTotals[chapter] || 0) + valueUsd; };
+
+    let totalPricedValueUsd = 0;
+    if (containers.length > 0) {
+      const containerIds = containers.map(c => c.id);
+      const packages = db.prepare(
+        `SELECT container_id, hs_code, quantity, unit_value_usd FROM container_packages
+         WHERE container_id IN (${containerIds.map(() => '?').join(',')}) AND unit_value_usd IS NOT NULL`
+      ).all(...containerIds);
+      for (const p of packages) {
+        const effectiveHs = p.hs_code || hsByContainer[p.container_id] || '';
+        const chapter = effectiveHs ? effectiveHs.slice(0, 2) : '';
+        const valueUsd = (p.quantity || 0) * p.unit_value_usd;
+        addToChapter(chapter, valueUsd);
+        totalPricedValueUsd += valueUsd;
+      }
+    }
+
+    let cargoValueSource = totalPricedValueUsd > 0 ? "pack-items" : "none";
+    if (totalPricedValueUsd === 0 && shipment.declared_value != null) {
+      const distinctHs = [...new Set(containers.map(c => c.hs_code).filter(Boolean))];
+      const chapter = distinctHs.length === 1 ? distinctHs[0].slice(0, 2) : "";
+      const valueUsd = await toUsd(shipment.declared_value, shipment.declared_value_currency || "USD");
+      addToChapter(chapter, valueUsd);
+      cargoValueSource = "shipment-declared-value";
+    }
+
+    const rateRows = db.prepare("SELECT * FROM duty_rate_chapters").all();
+    const rateByChapter = {};
+    rateRows.forEach(r => { rateByChapter[r.hs_chapter] = r; });
+
+    const byChapter = Object.entries(chapterTotals).map(([chapter, valueUsd]) => {
+      const known = chapter && rateByChapter[chapter];
+      const ratePct = known ? known.rate_pct : DEFAULT_DUTY_RATE_PCT;
+      const label = known ? known.label
+        : chapter ? `HS Chapter ${chapter} (no seeded rate — default ${DEFAULT_DUTY_RATE_PCT}% applied)`
+        : "Unclassified (no HS code available)";
+      return { chapter: chapter || null, label, valueUsd: roundCents(valueUsd), ratePct, dutyUsd: roundCents(valueUsd * ratePct / 100) };
+    }).sort((a, b) => b.valueUsd - a.valueUsd);
+
+    const dutyEstimateUsd = roundCents(byChapter.reduce((s, c) => s + c.dutyUsd, 0));
+
+    const sellLines = db.prepare("SELECT amount, exchange_rate FROM shipment_cost_lines WHERE shipment_id=? AND type='SELL'").all(req.params.id);
+    const freightUsd = roundCents(sellLines.reduce((s, l) => s + l.amount * l.exchange_rate, 0));
+
+    ok(res, {
+      freightUsd, dutyEstimateUsd, landedCostUsd: roundCents(freightUsd + dutyEstimateUsd),
+      cargoValueSource, byChapter,
+      disclaimer: "Ballpark estimate only — not a customs broker's system of record. Duty rates are illustrative flat rates by HS chapter, not live tariff data. Does not include destination fees, insurance, or brokerage.",
+    });
+  });
+
   // ─── Screening ────────────────────────────────────────────────────────────
 
   app.get("/api/shipments/:id/screening", (req, res) => {

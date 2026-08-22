@@ -1701,6 +1701,31 @@ const migrations = [
   // general — a disputed charge needs "this photo proves the state at Gate In on this date,"
   // not just "some photo of this container exists somewhere."
   "ALTER TABLE shipment_documents ADD COLUMN container_event_id TEXT DEFAULT ''",
+  // Landed-cost / duty estimate (TKT-U6IZCL, FCL Coverage Audit epic TKT-6PO7SV) — an
+  // explicit ballpark tool, not a customs broker's system of record (a real per-country HS-
+  // tariff feed is the same "needs a data business, not code" gap already named for carrier
+  // networks in the v0.69.0 competitive analysis). Admin-maintained flat-rate-by-HS-chapter
+  // registry, same shape/role pack_type_definitions/charge_code_definitions already have —
+  // any HS chapter not listed here falls back to a constant default rate at compute time.
+  `CREATE TABLE IF NOT EXISTS duty_rate_chapters (
+    hs_chapter TEXT PRIMARY KEY,
+    label      TEXT NOT NULL,
+    rate_pct   REAL NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+  )`,
+  "INSERT OR IGNORE INTO duty_rate_chapters (hs_chapter,label,rate_pct,created_at) VALUES ('84','Machinery & mechanical appliances',2.5,datetime('now'))",
+  "INSERT OR IGNORE INTO duty_rate_chapters (hs_chapter,label,rate_pct,created_at) VALUES ('85','Electrical machinery & electronics',2.6,datetime('now'))",
+  "INSERT OR IGNORE INTO duty_rate_chapters (hs_chapter,label,rate_pct,created_at) VALUES ('61','Apparel, knitted or crocheted',16.0,datetime('now'))",
+  "INSERT OR IGNORE INTO duty_rate_chapters (hs_chapter,label,rate_pct,created_at) VALUES ('62','Apparel, not knitted or crocheted',16.0,datetime('now'))",
+  "INSERT OR IGNORE INTO duty_rate_chapters (hs_chapter,label,rate_pct,created_at) VALUES ('64','Footwear',11.0,datetime('now'))",
+  "INSERT OR IGNORE INTO duty_rate_chapters (hs_chapter,label,rate_pct,created_at) VALUES ('94','Furniture & lighting',0.0,datetime('now'))",
+  "INSERT OR IGNORE INTO duty_rate_chapters (hs_chapter,label,rate_pct,created_at) VALUES ('39','Plastics & articles thereof',5.0,datetime('now'))",
+  "INSERT OR IGNORE INTO duty_rate_chapters (hs_chapter,label,rate_pct,created_at) VALUES ('73','Articles of iron or steel',3.0,datetime('now'))",
+  "INSERT OR IGNORE INTO duty_rate_chapters (hs_chapter,label,rate_pct,created_at) VALUES ('87','Vehicles & parts',2.5,datetime('now'))",
+  "INSERT OR IGNORE INTO duty_rate_chapters (hs_chapter,label,rate_pct,created_at) VALUES ('95','Toys, games & sports equipment',0.0,datetime('now'))",
+  "INSERT OR IGNORE INTO duty_rate_chapters (hs_chapter,label,rate_pct,created_at) VALUES ('22','Beverages & spirits',3.0,datetime('now'))",
+  "INSERT OR IGNORE INTO duty_rate_chapters (hs_chapter,label,rate_pct,created_at) VALUES ('09','Coffee, tea, spices',0.0,datetime('now'))",
+  "INSERT OR IGNORE INTO duty_rate_chapters (hs_chapter,label,rate_pct,created_at) VALUES ('42','Leather goods, bags & luggage',8.0,datetime('now'))",
 ];
 
 // "duplicate column name" is the expected, harmless result of re-running an ADD COLUMN
@@ -3011,7 +3036,7 @@ const {
   SVC_ABBR, longestLane, cutoffState, roundCents,
   mapShipment, mapShipmentLeg, mapCostLine, mapService, mapRateSnapshot, mapRateSnapshotLine,
   mapChargeCodeDefinition, mapContainer, mapContainerEvent, mapContainerPackage, mapShipmentParty,
-  mapPackTypeDefinition, mapContainerTypeDefinition, mapAllocation, mapCarrier, mapVessel, mapPortLocation, mapLinkedPort,
+  mapPackTypeDefinition, mapDutyRateChapter, mapContainerTypeDefinition, mapAllocation, mapCarrier, mapVessel, mapPortLocation, mapLinkedPort,
   mapCarrierAgent, mapTradeLane, mapScopeItem, mapAccessConfig, mapOffice, mapOfficeMailSettings,
   mapSystemEmailSettings,
   mapBranch, mapOrgCountry, mapRegion, mapCountry, mapTicketLink, mapTicket, mapTestItem,
@@ -3870,7 +3895,7 @@ const ctx = {
   SERVICE_CODE_MAP, importContractRates, createRateSnapshot, generateCostLinesFromSnapshot,
   mapShipment, mapShipmentLeg, mapCostLine, mapService, mapContainer, mapContainerEvent, mapContainerPackage, mapAllocation,
   mapShipmentParty, ADDITIONAL_PARTY_ROLES,
-  mapRateSnapshot, mapRateSnapshotLine, mapChargeCodeDefinition, mapPackTypeDefinition, mapContainerTypeDefinition,
+  mapRateSnapshot, mapRateSnapshotLine, mapChargeCodeDefinition, mapPackTypeDefinition, mapDutyRateChapter, mapContainerTypeDefinition,
   mapCarrier, mapVessel, mapPortLocation, mapLinkedPort, mapTradeLane, mapCarrierAgent,
   mapScopeItem, mapAccessConfig, mapOffice, mapBranch, mapOrgCountry, mapRegion, mapCountry, mapTicketLink, mapTicket,
   mapTestItem, mapTestCaseLink,
@@ -3933,6 +3958,7 @@ require('./routes/organization')(app, ctx);
 require('./routes/charge-codes')(app, ctx);
 require('./routes/pack-types')(app, ctx);
 require('./routes/container-types')(app, ctx);
+require('./routes/duty-rates')(app, ctx);
 require('./routes/ais')(app, ctx);
 
 // ─── Static frontend (production only) ─────────────────────────────────────────
