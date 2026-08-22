@@ -5,10 +5,12 @@ import { api } from "../../api";
 import { toast } from "../../toast";
 import EdiMessageList from "../../components/shared/EdiMessageList";
 import CarrierBookingsTable from "../../components/shared/CarrierBookingsTable";
+import CreditHoldModal from "../../components/shared/CreditHoldModal";
 import Spinner from "../../components/primitives/Spinner";
 import { CommodityDisplay } from "./ShipmentDetailPage";
 import { IconSendPlane, IconAnchor, IconWarning } from "../../components/primitives/Icon";
 import { BOOKABLE_CARRIERS } from "../../utils/carrierBooking";
+import { resolveCreditGate } from "../../utils/invoiceGenerator";
 
 // ─── Carrier Booking — Details ────────────────────────────────────────────────
 // The outbound half of a booking: what we're asking the carrier for, and the Send
@@ -30,6 +32,7 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
   const [loading,    setLoading]    = useState(true);
   const [sending,    setSending]    = useState(false);
   const [savingFreightTerms, setSavingFreightTerms] = useState(false);
+  const [creditHoldModal, setCreditHoldModal] = useState(null); // { holds } — Credit Control Depth / TKT-Q00WHF
 
   // Freight Terms already exists on the shipment (set on the Shipment Form) but wasn't
   // editable from the one place it's operationally most relevant — here, while actually
@@ -144,6 +147,14 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
 
   const handleSend = async () => {
     if (!canSend || sending) return;
+    // Earlier credit-check trigger point (TKT-Q00WHF, Credit Control Depth) — a real,
+    // blocking gate at the actual commitment moment (sending a real request to a carrier),
+    // not just at invoice-generation time. Reuses the exact resolveCreditGate/CreditHoldModal
+    // already proven for invoicing rather than a parallel check — newAmountUsd is 0 here since
+    // nothing's being invoiced yet, so only credit_hold (a real block) fires, not the softer
+    // over-limit warning (that stays scoped to the moment an actual invoice amount exists).
+    const gate = await resolveCreditGate(shipment, 0);
+    if (gate.blocked) { setCreditHoldModal({ holds: gate.holds }); return; }
     setSending(true);
     try {
       const result = await api.ediMessages.sendBookingRequest(shipment.id);
@@ -375,6 +386,11 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
         Sent Requests
       </h3>
       <EdiMessageList messages={outboundMessages} emptyText="No booking requests sent yet." />
+
+      {creditHoldModal && (
+        <CreditHoldModal holds={creditHoldModal.holds} action="sending a carrier booking request"
+          onClose={() => setCreditHoldModal(null)} />
+      )}
     </div>
   );
 };

@@ -4,7 +4,7 @@
 Full-stack freight management app. React 18 + Vite frontend, Express + node:sqlite backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.73.0 "Solvency"**
+- Version: **v0.73.1 "Solvency"**
 - Run: `npm run dev` (runs the monolith on :3001 + Vite on :5173 + the Document Distribution Service on :3002 + the PDF Render Service on :3003 + the Contract Management Service on :3004, concurrently)
 - Seed: `npm run seed` (runs `scripts/import-mdm-data.js`)
 
@@ -307,6 +307,28 @@ are fully validated.
 - **Document system**: `DOC_TYPES` in App.jsx (~line 56: BL01/MB01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — `MB01` (Master Bill of Lading, v0.71.0) is the vessel-operator-to-NVOCC document, a genuinely separate build from `BL01` (NVOCC-to-shipper House B/L), not a mode flag on it — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). (The earlier client-side-jsPDF `DocumentsMenu` component this note used to distinguish from was removed as dead code — it had zero references anywhere in the app.)
 - **Lifecycle-stage stepper precedent**: no dedicated stepper component exists yet; `MilestonePanel` (ShipmentDetailPage.jsx 1593-~1870) is the closest analog — linear progress bar (1734-1738, `width: ${progress}%`) plus per-step state coloring via `milestoneState()`/`stateColor()` (1666-1676: completed/overdue/current/upcoming) driven by `shipment_milestones` rows (`id, label, estimatedDate, note, completedAt, completedBy`, fixed step keys `booking_confirmed, si_submitted, cargo_gated_in, vessel_departed, bl_issued, vessel_arrived, customs_cleared, cargo_released, delivered`). Any new per-container lifecycle/stage UI should reuse this state-coloring pattern rather than inventing a new visual language
 - **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages, 📡 EDI). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
+
+## Recent changes (v0.73.1 "Solvency")
+- **Credit Control Depth, second pass** — ships the earlier trigger points (`TKT-Q00WHF`)
+  explicitly deferred from v0.73.0. Shipment creation stays soft/informational by design (a
+  held Shipper/Consignee/Principal never blocks creating the shipment, but the response carries
+  `creditWarning.onHold` and `App.jsx` mirrors it into a toast right next to the existing
+  sanctions-screening one). Carrier booking send is a real, server-enforced 409 block instead
+  (`routes/edi.js`) — a booking request is a genuine external commitment, checked both
+  server-side (unbypassable) and client-side (`ShipmentCarrierBookingDetailsPage.jsx`, via
+  `resolveCreditGate`). New shared `CreditHoldModal` (`src/components/shared/`) — extracted
+  from what used to be a component local to `ShipmentAccountingInvoicesPage.jsx` — now backs
+  both the invoice-generation gate and this new booking-send gate, parametrized by an `action`
+  string so the wording matches the call site.
+- 7 new assertions in `tests/customer-credit-control.test.js` (59 total in that file). Full
+  45-file backend chain, both service-scoped chains, frontend Vitest, clean build all green from
+  a fresh full-stack restart. Verified live via CDP: the booking-send `CreditHoldModal` renders
+  correctly against a real held customer. The shipment-creation toast's wiring was confirmed by
+  direct code review instead of a full click-through — the New Shipment form's interdependent
+  Commodity/Route-Leg pickers proved too brittle to drive reliably via scripted automation in
+  the time available; the toast itself is a 6-line addition structurally identical to the
+  already-shipped, already-verified sanctions-screening toast in the same function — a
+  disclosed scope boundary on the verification method, not a skipped check on the code.
 
 ## Recent changes (v0.73.0 "Solvency")
 - **Credit Control Depth (Epic `TKT-6XFJQM`), first pass** — a sourced gap analysis of the

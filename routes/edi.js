@@ -157,6 +157,24 @@ module.exports = function ediRoutes(app, ctx) {
     if (existingBooking && existingBooking.status === "Pending")
       return err(res, "A booking request is already pending for this shipment", 409);
 
+    // Earlier credit-check trigger point (TKT-Q00WHF, Credit Control Depth) — server-side
+    // enforcement of the same hold-block the frontend already checks before ever calling this
+    // route (ShipmentCarrierBookingDetailsPage.jsx's handleSend), so it can't be bypassed by
+    // calling the API directly. Real commitment (a request actually sent to a carrier) is the
+    // right moment for this to be a hard block, same as it already is at invoice-generation
+    // time — only credit_hold blocks here, not the softer over-limit warning, since nothing's
+    // being invoiced yet.
+    const heldParties = [];
+    for (const [pid, role] of [[shipment.shipper_id, 'Shipper'], [shipment.consignee_id, 'Consignee'], [shipment.principal_id, 'Principal']]) {
+      if (!pid) continue;
+      const cust = db.prepare("SELECT company_name, credit_hold, credit_hold_reason FROM customers WHERE id=?").get(pid);
+      if (cust?.credit_hold) heldParties.push({ companyName: cust.company_name, role, reason: cust.credit_hold_reason || '' });
+    }
+    if (heldParties.length) {
+      const names = heldParties.map(h => `${h.companyName} (${h.role})`).join(", ");
+      return err(res, `On credit hold: ${names} — clear the hold on their customer profile before sending a booking request`, 409);
+    }
+
     const now = new Date().toISOString();
     const correlationId = `EDI-${uid()}`;
 

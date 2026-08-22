@@ -362,8 +362,29 @@ module.exports = function shipmentsRoutes(app, ctx) {
     maybeAssignLineAgents(id, carrierCode, polU, podU);
     if (contractType === 'Central' && contractId) await importContractRates(id);
     const silentScreening = sanctionsMap.size > 0 ? screenShipmentById(id) : null;
+
+    // Earlier credit-check trigger point (TKT-Q00WHF, Credit Control Depth) — soft and
+    // informational only, same non-blocking shape screening already uses above: whichever
+    // parties are already known at creation get checked for credit_hold, surfaced as a
+    // creditWarning the frontend can toast (mirrors the existing screening.result==='HIT'
+    // toast in App.jsx) without ever stopping shipment creation itself. Deliberately does NOT
+    // also check the credit_limit here — a limit check needs the full outstandingAr/
+    // committedExposure computation (routes/customers.js), and this is meant to stay a cheap,
+    // creation-time glance, not a duplicate of the real gate; the real limit check still lives
+    // at invoice-generation time, and the real hold *block* now also lives at carrier-booking
+    // send time (routes/edi.js).
+    const heldParties = [];
+    for (const [pid, role] of [[shipperId, 'Shipper'], [consigneeId, 'Consignee'], [principalId, 'Principal']]) {
+      if (!pid) continue;
+      const cust = db.prepare("SELECT company_name, credit_hold, credit_hold_reason FROM customers WHERE id=?").get(pid);
+      if (cust?.credit_hold) heldParties.push({ customerId: pid, companyName: cust.company_name, role, reason: cust.credit_hold_reason || '' });
+    }
+
     const base = mapShipment(db.prepare("SELECT * FROM shipments WHERE id=?").get(id));
-    ok(res, silentScreening ? { ...base, screening: silentScreening } : base, 201);
+    const extra = {};
+    if (silentScreening) extra.screening = silentScreening;
+    if (heldParties.length) extra.creditWarning = { onHold: heldParties };
+    ok(res, { ...base, ...extra }, 201);
   });
 
   app.put("/api/shipments/:id", shipmentWrite, (req, res) => {

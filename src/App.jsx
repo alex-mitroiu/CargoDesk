@@ -3817,6 +3817,10 @@ function App() {
                   const parties = (created.screening.hits || []).map(h => `${h.field}: ${h.value}`).join(", ");
                   toast.warning(`Compliance review required — sanctioned party detected${parties ? ` (${parties})` : ""}`);
                 }
+                if (created.creditWarning?.onHold?.length) {
+                  const names = created.creditWarning.onHold.map(h => `${h.companyName} (${h.role})`).join(", ");
+                  toast.warning(`On credit hold: ${names} — this will block sending a carrier booking request and generating invoices until it's cleared`);
+                }
                 for (const { id: _draftId, polName: _pn, podName: _ppn, ...leg } of draftLegs.filter(l => l.pol || l.pod)) {
                   await api.legs.create(created.id, leg);
                 }

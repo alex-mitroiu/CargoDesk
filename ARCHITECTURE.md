@@ -1,17 +1,19 @@
 # CargoDesk — Architecture Reference
-**Version:** 0.71.0 "Docket" · **Date:** 2026-08-19
+**Version:** 0.73.1 "Solvency" · **Date:** 2026-08-22
 **Audience:** Software architects, senior engineers, technical reviewers
 
 > This document was fully refreshed from a direct pass against the live codebase on 2026-08-13
-> (v0.69.0), replacing a version that had gone stale since v0.30.0. This latest pass
-> (2026-08-19) is **incremental**, not a full remeasurement — it adds §8.14 (Reports) and §8.15
-> (NVOCC Support), the two subsystems that shipped since the 2026-08-13 pass, and updates the
-> data-model/party-model sections they touch. Appendix A's line-count/table-count figures are
+> (v0.69.0), replacing a version that had gone stale since v0.30.0. The 2026-08-19 pass was
+> **incremental** — it added §8.14 (Reports) and §8.15 (NVOCC Support), the two subsystems that
+> shipped since the 2026-08-13 pass. This latest pass (2026-08-22) is also incremental — it adds
+> §8.16 (Credit Control), a feature that had shipped as far back as v0.57.0 but was never
+> documented here at all; the section covers the whole feature end-to-end, not just the
+> v0.73.0–v0.73.1 work that prompted writing it. Appendix A's line-count/table-count figures are
 > still dated to 2026-08-13 and were **not** re-measured this pass — the additions since then are
-> a handful of new columns and one new document builder, not a scale change big enough to move
-> those figures meaningfully. See `CLAUDE.md`'s own "Recent changes" sections for a
-> release-by-release changelog this document doesn't restate — treat that file as the
-> day-to-day source of truth and this one as the standing structural reference.
+> a handful of new columns/routes, not a scale change big enough to move those figures
+> meaningfully. See `CLAUDE.md`'s own "Recent changes" sections for a release-by-release
+> changelog this document doesn't restate — treat that file as the day-to-day source of truth
+> and this one as the standing structural reference.
 >
 > A companion visual diagram, `dev/architecture.html`, is dated v0.20.0 (2026-07-03) and remains
 > **not** refreshed — it's now well over 50 releases behind and should be treated as a
@@ -20,7 +22,7 @@
 ---
 
 ## Table of Contents
-_(§8.14–8.15 added 2026-08-19; everything else reflects the 2026-08-13 pass)_
+_(§8.16 added 2026-08-22; §8.14–8.15 added 2026-08-19; everything else reflects the 2026-08-13 pass)_
 1. [System Overview](#1-system-overview)
 2. [Tech Stack](#2-tech-stack)
 3. [Process & Deployment Topology](#3-process--deployment-topology)
@@ -734,6 +736,63 @@ gap this epic closed was that nothing else in the system (party model, licensing
 payload, a second document) knew an NVOCC could exist.
 ```
 
+### 8.16 Credit Control (added v0.57.0, deepened v0.73.0–v0.73.1, Epic TKT-6XFJQM)
+
+```
+customers.credit_limit/credit_terms_days/credit_hold/credit_hold_reason (v0.57.0) is the base
+model. credit_hold is a HARD BLOCK; credit_limit is a SOFT WARNING — this split is deliberate
+and load-bearing throughout every trigger point below, never conflated.
+
+GET /api/customers/:id/credit-status (routes/customers.js) is the single computed source both
+the hold and the limit checks read from — computeArExposure(customerId, creditTermsDays) returns:
+  - outstandingAr        sum of confirmed (non-voided) FR01/FR02 invoice totals, resolved via
+                          each invoice's source_cost_line_ids (falls back to a live
+                          container-scoped SELL-line query for invoices predating that column)
+  - committedExposure    (v0.73.0) sum of accrued SELL cost lines NEVER invoiced at all — kept
+                          visibly separate from outstandingAr, never merged; a shipment can carry
+                          real risk a hold check that only looks at invoices would miss entirely
+  - aging                (v0.73.0) Current/1-30/31-60/61-90/90+ buckets, from each invoice's
+                          confirmed_at + credit_terms_days as the due-date baseline
+  - creditLimitUsd        (v0.73.0) credit_limit converted via the same toUsd()/FX machinery
+                          every shipment_cost_lines row already uses — customers.currency
+                          (pre-existing, previously only read by resolveInvoiceCurrency() for
+                          multi-currency invoice display) now also drives credit_limit's
+                          interpretation; a new customer defaults its currency from country
+                          (COUNTRY_TO_CURRENCY map, e.g. ES→EUR), never applied retroactively
+  - groupOutstandingAr    (v0.73.0) resolveCustomerGroup() (§6, customer hierarchy, v0.59.0)
+                          summed across every group member except self — reused, not duplicated
+
+Trigger points (chronological in a shipment's life, hold-vs-limit behavior noted per point):
+  1. Shipment/booking creation (v0.73.1, TKT-Q00WHF) — POST /api/shipments checks the Shipper/
+     Consignee/Principal for credit_hold and returns a soft, informational creditWarning.onHold
+     array (never blocks creation); App.jsx mirrors it into a toast next to the existing
+     sanctions-screening one. No limit check here — computing full AR/exposure at creation time
+     was deliberately kept out of scope, this trigger point is cheap by design.
+  2. Carrier booking send (v0.73.1) — POST .../edi-messages/booking-request (routes/edi.js) is a
+     REAL 409 BLOCK on credit_hold, checked server-side (unbypassable) and mirrored client-side
+     (ShipmentCarrierBookingDetailsPage.jsx via resolveCreditGate) for a modal instead of a raw
+     error. A carrier booking is a genuine external commitment — categorically harder-blocked
+     than shipment creation above.
+  3. Invoice generation (v0.57.0, extended v0.73.0) — the original and still-primary gate.
+     credit_hold blocks generating a NEW invoice outright (existing cost lines/documents stay
+     editable; only Generate Invoice/Generate Per-Container Invoices are blocked) via
+     src/components/shared/CreditHoldModal.jsx (extracted to shared in v0.73.1 — previously
+     local to ShipmentAccountingInvoicesPage.jsx; same component now also backs trigger point 2,
+     parametrized by an `action` string for call-site-specific wording). credit_limit is
+     resolveCreditGate()'s soft warning: overLimit = (outstandingAr + committedExposure +
+     the new invoice's amount) > creditLimitUsd — Cancel/Generate Anyway, never a hard block.
+
+Deliberately still deferred, named not silently dropped: a trade-lane-scoped override role
+(only the trade manager working that lane may ever clear a hold — TKT-GLWMFP) and dunning
+emails (TKT-SUEDWH, lowest priority). Both real, both logged in Kanban.
+
+Test coverage: tests/customer-credit-control.test.js (59 assertions as of v0.73.1) covers every
+trigger point above via live HTTP calls. One disclosed, permanent gap: AR aging bucket
+*boundaries* (31+/61+/90+ days) can't be exercised through pure HTTP — no endpoint backdates an
+invoice's confirmed_at — only the "current" bucket is integration-tested; the day-threshold
+arithmetic itself is simple, reviewed math, not faked into a false-confidence test.
+```
+
 ---
 
 ## 9. Data Flow Diagrams
@@ -934,8 +993,11 @@ Every figure above was read directly from the code or a live `GET /api/health` c
 
 *Fully refreshed from a direct pass against the live codebase — CargoDesk v0.69.0 "Custodian" ·
 2026-08-13. Incrementally updated (§8.14, §8.15, and the data-model/context notes they touch) —
-CargoDesk v0.71.0 "Docket" · 2026-08-19; Appendix A's metrics were not re-measured in the
-incremental pass (see the banner at the top of this document). Next scheduled review: whichever
-comes first of (a) the next major structural change (a new microservice extraction, a routing
-framework change, a data-store migration) or (b) six months from the 2026-08-13 full pass —
-whichever is sooner, so this doesn't repeat a 39-release gap.*
+CargoDesk v0.71.0 "Docket" · 2026-08-19. Incrementally updated again (§8.16, and the
+CUSTOMERS/ORGANIZATION domain-grouping context it touches) — CargoDesk v0.73.1 "Solvency" ·
+2026-08-22, backfilling a feature (Credit Control, shipped v0.57.0) that had never been
+documented here at all. Appendix A's metrics were not re-measured in either incremental pass
+(see the banner at the top of this document). Next scheduled review: whichever comes first of
+(a) the next major structural change (a new microservice extraction, a routing framework
+change, a data-store migration) or (b) six months from the 2026-08-13 full pass — whichever is
+sooner, so this doesn't repeat a 39-release gap.*

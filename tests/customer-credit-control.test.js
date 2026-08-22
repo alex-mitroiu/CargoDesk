@@ -257,6 +257,37 @@ async function confirmDoc(docId, token) {
     await request("DELETE", `/api/customers/${childCust.body.id}`, null, token);
     await request("DELETE", `/api/customers/${parentCust.body.id}`, null, token);
 
+    console.log("\nEarlier trigger point — shipment creation surfaces a soft creditWarning (never blocks)");
+    const heldCust = await request("POST", "/api/customers", {
+      companyName: "Test Credit Held Co", creditHold: true, creditHoldReason: "Overdue — test fixture",
+    }, token);
+    const heldShip = await request("POST", "/api/shipments", {
+      pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+      principalId: heldCust.body.id, principalName: "Test Credit Held Co",
+    }, token);
+    assert("shipment creation itself is never blocked by a hold", heldShip.status === 201);
+    assert("creation response carries a creditWarning naming the held party", heldShip.body.creditWarning?.onHold?.length === 1, JSON.stringify(heldShip.body.creditWarning));
+    assert("creditWarning names the right company/role", heldShip.body.creditWarning.onHold[0].companyName === "Test Credit Held Co" && heldShip.body.creditWarning.onHold[0].role === "Principal");
+
+    const cleanShip = await request("POST", "/api/shipments", {
+      pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+      principalId: customerId, principalName: "Test Credit Co",
+    }, token);
+    assert("a shipment with no held party carries no creditWarning at all", cleanShip.body.creditWarning === undefined, JSON.stringify(cleanShip.body.creditWarning));
+    await request("DELETE", `/api/shipments/${cleanShip.body.id}`, null, token);
+
+    console.log("\nEarlier trigger point — carrier-booking send is a real, server-enforced block");
+    const sendBlocked = await request("POST", `/api/shipments/${heldShip.body.id}/edi-messages/booking-request`, {}, token);
+    assert("sending a booking request is blocked (409) while the principal is on hold", sendBlocked.status === 409, JSON.stringify(sendBlocked.body));
+    assert("the block names the held party", /Test Credit Held Co/.test(sendBlocked.body.error || ""), JSON.stringify(sendBlocked.body));
+
+    await request("PUT", `/api/customers/${heldCust.body.id}`, { companyName: "Test Credit Held Co", creditHold: false }, token);
+    const sendAfterClear = await request("POST", `/api/shipments/${heldShip.body.id}/edi-messages/booking-request`, {}, token);
+    assert("clearing the hold unblocks sending", sendAfterClear.status === 201, JSON.stringify(sendAfterClear.body));
+
+    await request("DELETE", `/api/shipments/${heldShip.body.id}`, null, token);
+    await request("DELETE", `/api/customers/${heldCust.body.id}`, null, token);
+
     console.log("\nCleanup");
     await request("DELETE", `/api/shipments/${shipmentId}`, null, token);
     await request("DELETE", `/api/customers/${customerId}`, null, token);
