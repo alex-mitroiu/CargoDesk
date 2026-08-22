@@ -96,6 +96,7 @@ const ProfileTab = ({ init = {}, onSave, saving }) => {
     currency:    init.currency    || "USD",
     creditLimit:      init.creditLimit      != null ? String(init.creditLimit)      : "",
     creditTermsDays:  init.creditTermsDays  != null ? String(init.creditTermsDays)  : "",
+    invoiceDeadlineDays: init.invoiceDeadlineDays != null ? String(init.invoiceDeadlineDays) : "",
     creditHold:       init.creditHold       || false,
     creditHoldReason: init.creditHoldReason || "",
     parentCustomerId:   init.parentCustomerId   || "",
@@ -191,10 +192,13 @@ const ProfileTab = ({ init = {}, onSave, saving }) => {
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <Inp label={`Credit Limit (${f.currency}, optional)`} value={f.creditLimit} onChange={set("creditLimit")}
-          placeholder="Blank = no limit" mono type="number" hint="Soft warning only — a full invoice never blocks past this" />
+          placeholder="Blank = no limit" mono type="number" hint="A real block once over — the trade lane's own manager can approve an override" />
         <Inp label="Credit Terms (days, optional)" value={f.creditTermsDays} onChange={set("creditTermsDays")}
-          placeholder="e.g. 30" mono type="number" />
+          placeholder="e.g. 30" mono type="number" hint="Payment due this many days after invoicing" />
       </div>
+      <Inp label="Invoice Generation Deadline (days, optional)" value={f.invoiceDeadlineDays} onChange={set("invoiceDeadlineDays")}
+        placeholder="e.g. 5" mono type="number"
+        hint="Flags a shipment (informational only, never a block) if it's still un-invoiced this many days after cargo delivery — some customers need same-day billing, others consolidate at month-end" />
       <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer",
         fontFamily: T.body, fontSize: 13, color: T.text, width: "fit-content" }}>
         <input type="checkbox" checked={f.creditHold}

@@ -370,6 +370,46 @@ module.exports = function customersRoutes(app, ctx) {
     ok(res, rows);
   });
 
+  // Invoicing Discipline & Billing Performance (Epic TKT-KR6ZBT), Story TKT-YC7PZP — a shipment
+  // that's actually delivered but has gone past its own responsible party's configured
+  // invoice-generation window with no confirmed invoice yet. Purely informational (mirrors the
+  // existing expiring-contracts notification-bell pattern, GET /api/contracts/expiring) — never
+  // a block, per this Epic's own explicit scope decision (holding up shipment progress over a
+  // billing-process lag would block the wrong side of the business). Bounded by construction:
+  // only shipments with a genuinely completed "delivered" milestone are ever considered.
+  app.get("/api/invoice-deadlines/overdue", auth(), (req, res) => {
+    const rows = db.prepare(`
+      SELECT s.id AS shipment_id, s.principal_id, s.principal_name, s.consignee_id, s.consignee_name,
+             m.completed_at AS delivered_at
+      FROM shipments s
+      JOIN shipment_milestones m ON m.shipment_id = s.id AND m.milestone_key = 'delivered' AND m.completed_at != ''
+      WHERE s.status != 'Cancelled'
+    `).all();
+
+    const todayMs = Date.now();
+    const results = [];
+    for (const r of rows) {
+      const respId   = r.principal_id || r.consignee_id || null;
+      const respName = r.principal_id ? r.principal_name : r.consignee_name;
+      if (!respId) continue;
+      const c = db.prepare("SELECT invoice_deadline_days FROM customers WHERE id=?").get(respId);
+      if (!c || c.invoice_deadline_days == null) continue;
+      const daysSinceDelivery = Math.floor((todayMs - new Date(r.delivered_at).getTime()) / 86400000);
+      const daysOverdue = daysSinceDelivery - c.invoice_deadline_days;
+      if (daysOverdue <= 0) continue;
+      const hasInvoice = db.prepare(
+        "SELECT 1 FROM shipment_documents WHERE shipment_id=? AND doc_type IN ('FR01','FR02') AND status='confirmed' LIMIT 1"
+      ).get(r.shipment_id);
+      if (hasInvoice) continue;
+      results.push({
+        shipmentId: r.shipment_id, customerId: respId, companyName: respName || '',
+        deliveredAt: r.delivered_at, deadlineDays: c.invoice_deadline_days, daysOverdue,
+      });
+    }
+    results.sort((a, b) => b.daysOverdue - a.daysOverdue);
+    ok(res, results.slice(0, 20));
+  });
+
   // Organization Model Enhancement Epic 4 — walks the parent chain to make sure setting
   // newParentId as customerId's parent could never loop back on itself (A -> B -> A), since a
   // rollup read (resolveCustomerGroup below) that walked a cycle would never terminate.
@@ -387,7 +427,7 @@ module.exports = function customersRoutes(app, ctx) {
   app.post("/api/customers", auth(), (req, res) => {
     const { companyName, address1='', address2='', city='', state='', postalCode='',
             countryIso2='', phone='', fax='', email='', website='', notes='', currency='',
-            creditLimit=null, creditTermsDays=null, creditHold=false, creditHoldReason='',
+            creditLimit=null, creditTermsDays=null, invoiceDeadlineDays=null, creditHold=false, creditHoldReason='',
             parentCustomerId=null,
             classifiedLocation=false, latitude=null, longitude=null,
             isNvocc=false, fmcNumber='' } = req.body;
@@ -404,12 +444,13 @@ module.exports = function customersRoutes(app, ctx) {
     const resolvedCurrency = (currency.trim() || COUNTRY_TO_CURRENCY[ccU] || 'USD').toUpperCase().trim();
     const cl = creditLimit === null || creditLimit === '' ? null : Number(creditLimit);
     const ctd = creditTermsDays === null || creditTermsDays === '' ? null : parseInt(creditTermsDays, 10);
+    const idd = invoiceDeadlineDays === null || invoiceDeadlineDays === '' ? null : parseInt(invoiceDeadlineDays, 10);
     const lat = classifiedLocation && latitude !== '' && latitude != null ? Number(latitude) : null;
     const lng = classifiedLocation && longitude !== '' && longitude != null ? Number(longitude) : null;
-    db.prepare(`INSERT INTO customers (id,company_name,address1,address2,city,state,postal_code,country_iso2,phone,fax,email,website,notes,created_at,currency,credit_limit,credit_terms_days,credit_hold,credit_hold_reason,parent_customer_id,classified_location,latitude,longitude,is_nvocc,fmc_number)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    db.prepare(`INSERT INTO customers (id,company_name,address1,address2,city,state,postal_code,country_iso2,phone,fax,email,website,notes,created_at,currency,credit_limit,credit_terms_days,invoice_deadline_days,credit_hold,credit_hold_reason,parent_customer_id,classified_location,latitude,longitude,is_nvocc,fmc_number)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
       .run(id, companyName.trim(), address1, address2, city, state, postalCode, ccU, phone, fax, email, website, notes, createdAt, resolvedCurrency,
-           cl, ctd, creditHold ? 1 : 0, creditHold ? creditHoldReason.trim() : '', parentCustomerId || null,
+           cl, ctd, idd, creditHold ? 1 : 0, creditHold ? creditHoldReason.trim() : '', parentCustomerId || null,
            classifiedLocation ? 1 : 0, lat, lng, isNvocc ? 1 : 0, isNvocc ? fmcNumber.trim() : '');
     if (sanctionsMap.size > 0) screenCustomer(id);
     const row = db.prepare(`${CUST_JOIN} WHERE c.id=?`).get(id);
@@ -419,7 +460,7 @@ module.exports = function customersRoutes(app, ctx) {
   app.put("/api/customers/:id", auth(), (req, res) => {
     const { companyName, address1='', address2='', city='', state='', postalCode='',
             countryIso2='', phone='', fax='', email='', website='', notes='', currency='USD',
-            creditLimit=null, creditTermsDays=null, creditHold=false, creditHoldReason='',
+            creditLimit=null, creditTermsDays=null, invoiceDeadlineDays=null, creditHold=false, creditHoldReason='',
             parentCustomerId=null,
             classifiedLocation=false, latitude=null, longitude=null,
             isNvocc=false, fmcNumber='' } = req.body;
@@ -443,16 +484,17 @@ module.exports = function customersRoutes(app, ctx) {
     const ccU = countryIso2.toUpperCase().trim();
     const cl = creditLimit === null || creditLimit === '' ? null : Number(creditLimit);
     const ctd = creditTermsDays === null || creditTermsDays === '' ? null : parseInt(creditTermsDays, 10);
+    const idd = invoiceDeadlineDays === null || invoiceDeadlineDays === '' ? null : parseInt(invoiceDeadlineDays, 10);
     // classifiedLocation off force-clears any stored coordinates server-side, regardless of what
     // the request body still carries — same hygiene idiom as credit_hold_reason on the line above.
     const lat = classifiedLocation && latitude !== '' && latitude != null ? Number(latitude) : null;
     const lng = classifiedLocation && longitude !== '' && longitude != null ? Number(longitude) : null;
     const info = db.prepare(`UPDATE customers SET company_name=?,address1=?,address2=?,city=?,state=?,
       postal_code=?,country_iso2=?,phone=?,fax=?,email=?,website=?,notes=?,currency=?,
-      credit_limit=?,credit_terms_days=?,credit_hold=?,credit_hold_reason=?,parent_customer_id=?,
+      credit_limit=?,credit_terms_days=?,invoice_deadline_days=?,credit_hold=?,credit_hold_reason=?,parent_customer_id=?,
       classified_location=?,latitude=?,longitude=?,is_nvocc=?,fmc_number=? WHERE id=?`)
       .run(companyName.trim(), address1, address2, city, state, postalCode, ccU, phone, fax, email, website, notes, (currency || 'USD').toUpperCase().trim(),
-           cl, ctd, creditHold ? 1 : 0, creditHold ? creditHoldReason.trim() : '', parentCustomerId || null,
+           cl, ctd, idd, creditHold ? 1 : 0, creditHold ? creditHoldReason.trim() : '', parentCustomerId || null,
            classifiedLocation ? 1 : 0, lat, lng, isNvocc ? 1 : 0, isNvocc ? fmcNumber.trim() : '', req.params.id);
     if (info.changes === 0) return err(res, "Not found", 404);
     if (sanctionsMap.size > 0) screenCustomer(req.params.id);

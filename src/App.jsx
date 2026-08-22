@@ -2989,6 +2989,18 @@ function App() {
       return () => clearInterval(t);
     }, []);
 
+    // Invoicing Discipline (TKT-YC7PZP) — shipments delivered past their responsible party's
+    // own configured invoice-generation window with no confirmed invoice yet. Same shape as
+    // expiring contracts above: a small dedicated endpoint (already scoped/bounded server-side),
+    // purely informational — clicking navigates to Invoice Entry, never a block.
+    const [overdueInvoiceDeadlines, setOverdueInvoiceDeadlines] = useState([]);
+    useEffect(() => {
+      const load = () => api.invoiceDeadlinesOverdue().then(setOverdueInvoiceDeadlines).catch(() => {});
+      load();
+      const t = setInterval(load, 60000);
+      return () => clearInterval(t);
+    }, []);
+
     const BELL_DISMISS_KEY = "cargodesk_dismissed_bell";
     const todayStr = new Date().toISOString().split('T')[0];
     // Fixed rather than a configurable setting — same "surface it at all" scoping as the
@@ -3011,7 +3023,8 @@ function App() {
       const remainingBell        = visibleBellItems.filter(a => a.id !== id);
       const remainingBookingBell = visibleBookingBellItems.filter(b => b.id !== id);
       const remainingExpiring    = visibleExpiringContracts.filter(c => c.id !== id);
-      if (remainingBell.length === 0 && remainingBookingBell.length === 0 && remainingExpiring.length === 0 && activeSysMsgs.length === 0) setBellOpen(false);
+      const remainingOverdueInv = visibleOverdueInvoiceDeadlines.filter(d => d.shipmentId !== id);
+      if (remainingBell.length === 0 && remainingBookingBell.length === 0 && remainingExpiring.length === 0 && remainingOverdueInv.length === 0 && activeSysMsgs.length === 0) setBellOpen(false);
     };
 
     // Active allocations above their alert threshold, sorted worst-first (max 5 shown)
@@ -3057,8 +3070,9 @@ function App() {
     })();
     const visibleBookingBellItems = bookingBellItems.filter(b => !dismissedBell[b.id]);
     const visibleExpiringContracts = expiringContracts.filter(c => !dismissedBell[c.id]);
+    const visibleOverdueInvoiceDeadlines = overdueInvoiceDeadlines.filter(d => !dismissedBell[d.shipmentId]);
 
-    const bellCount = visibleBellItems.length + visibleBookingBellItems.length + visibleExpiringContracts.length + activeSysMsgs.length;
+    const bellCount = visibleBellItems.length + visibleBookingBellItems.length + visibleExpiringContracts.length + visibleOverdueInvoiceDeadlines.length + activeSysMsgs.length;
 
     useEffect(() => {
       const h = e => {
@@ -3328,6 +3342,59 @@ function App() {
                       onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = T.textMuted; }}>
                       View all in Master Data →
                     </button>
+                  </>
+                )}
+
+                {/* ── Overdue invoice-generation deadline section (TKT-YC7PZP) ── */}
+                {visibleOverdueInvoiceDeadlines.length > 0 && (
+                  <>
+                    <div style={{ padding: "10px 16px 8px",
+                      borderBottom: `1px solid ${T.border}`,
+                      display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <span style={{ fontFamily: T.body, fontSize: 12, fontWeight: 700, color: T.warning }}>
+                        🧾 Invoicing Overdue
+                      </span>
+                      <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted }}>
+                        {visibleOverdueInvoiceDeadlines.length} shipment{visibleOverdueInvoiceDeadlines.length > 1 ? "s" : ""}
+                      </span>
+                    </div>
+                    {visibleOverdueInvoiceDeadlines.map(d => (
+                      <div key={d.shipmentId} style={{
+                          display: "flex", alignItems: "center",
+                          borderBottom: `1px solid ${T.border}22`,
+                        }}>
+                        <button type="button"
+                          onClick={() => { navigate("shipment-accounting-invoices", d.shipmentId); setBellOpen(false); }}
+                          style={{
+                            display: "flex", alignItems: "center", justifyContent: "space-between",
+                            flex: 1, padding: "10px 12px 10px 16px", background: "none", border: "none",
+                            cursor: "pointer", textAlign: "left",
+                          }}
+                          onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
+                          onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                            <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.accent }}>
+                              {d.shipmentId}
+                            </span>
+                            <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+                              {d.companyName}
+                            </span>
+                          </div>
+                          <span style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600, color: T.warning }}>
+                            {d.daysOverdue}d over
+                          </span>
+                        </button>
+                        <button type="button"
+                          onClick={() => dismissBellItem(d.shipmentId)}
+                          title="Dismiss until tomorrow"
+                          style={{ background: "none", border: "none", cursor: "pointer",
+                            color: T.textMuted, fontSize: 14, padding: "10px 12px", lineHeight: 1, flexShrink: 0 }}
+                          onMouseEnter={e => e.currentTarget.style.color = T.text}
+                          onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>
+                          ✕
+                        </button>
+                      </div>
+                    ))}
                   </>
                 )}
 

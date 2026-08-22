@@ -2,11 +2,17 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.75.0";
+export const VERSION   = "0.75.1";
 export const BUILD     = "2026-08-22";
 export const CODENAME  = "Remittance";
 
 export const CHANGELOG = [
+  {
+    version:  "0.75.1",
+    date:     "2026-08-22",
+    codename: "Remittance",
+    summary:  "Invoicing Discipline & Billing Performance, second pass (Story TKT-YC7PZP of Epic TKT-KR6ZBT) -- the per-customer invoice-generation deadline, a direct follow-up request: 'some clients may pay the same day, but some clients make the payment at the end of the month along with other outstanding bills that they need to handle' -- notifications/deadlines need to be configurable per customer, not one fixed schedule for everyone.\n\nNew customers.invoice_deadline_days mirrors credit_terms_days exactly: nullable, per-customer, blank means no deadline configured. Anchored to the shipment's own 'delivered' milestone (shipment_milestones) -- not shipment.status=Completed (which can be set later than actual delivery) and not a manually-entered field (relies on remembering to set it). Deliberately soft/informational only, never a block, matching this Epic's own stance on billing-process lags: new GET /api/invoice-deadlines/overdue (bounded, server-scoped) flags a shipment once it's been delivered longer ago than its responsible party's configured deadline with no confirmed FR01/FR02 yet.\n\nSurfaced via the exact same lightweight pattern the notification bell already established for expiring contracts (GET /api/contracts/expiring) -- a new 'Invoicing Overdue' bell section, self-fetched on a 60s poll, click-to-navigate straight to Invoice Entry, dismiss-until-tomorrow. No new page needed for this pass -- the full Billing Performance report (Story 4) is where this gets real drill-down. New 'Invoice Generation Deadline (days, optional)' field added to the customer Profile/Billing tab, right alongside Credit Limit and Credit Terms.\n\n10 new assertions in tests/billing-performance.test.js (34 total in that file). Full 46-file backend chain, both service-scoped chains, frontend Vitest, and a clean build all verified green. Verified live via CDP: a shipment delivered 12 days ago with a 5-day deadline correctly shows '7d over' in the real notification bell, and the new customer field round-trips through the real Profile tab.\n\n3 of 5 Epic stories now shipped (TKT-NQ87D3, TKT-PLAVEK, TKT-YC7PZP); the Billing Performance report itself and configurable per-customer reminder cadence remain queued.",
+  },
   {
     version:  "0.75.0",
     date:     "2026-08-22",

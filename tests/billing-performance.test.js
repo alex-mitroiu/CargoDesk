@@ -1,5 +1,5 @@
 /**
- * Invoicing Discipline & Billing Performance (Epic TKT-KR6ZBT) — Stories 1 & 2.
+ * Invoicing Discipline & Billing Performance (Epic TKT-KR6ZBT) — Stories 1, 2 & 3.
  *
  * Story 1 (TKT-NQ87D3, Mark as Paid): a real payment-receipt primitive — before this,
  * computeArExposure's outstandingAr meant purely "confirmed, non-voided invoice", with no
@@ -12,6 +12,12 @@
  * Tested via send-edi (the one channel that genuinely succeeds against the real, locally
  * running Document Distribution Service — send-email needs a real SMTP host this environment
  * doesn't have, and send-webhook's own test file deliberately points at an unreachable host).
+ *
+ * Story 3 (TKT-YC7PZP, invoice-generation deadline): customers.invoice_deadline_days mirrors
+ * credit_terms_days exactly (nullable, per-customer). GET /api/invoice-deadlines/overdue is
+ * purely informational (never a block) — a shipment appears once its own "delivered" milestone
+ * has been completed longer ago than the responsible party's configured deadline, with no
+ * confirmed FR01/FR02 yet.
  *
  * Usage:
  *   node tests/billing-performance.test.js
@@ -191,10 +197,67 @@ async function confirmDoc(docId, token) {
     assert("firstSentAt is unchanged after a second send", doc3AfterSend2.firstSentAt === firstSentAtValue,
       `before=${firstSentAtValue} after=${doc3AfterSend2.firstSentAt}`);
 
+    console.log("\ninvoiceDeadlineDays — round-trips through customer create/update, mirrors creditTermsDays");
+    const custDl = await request("POST", "/api/customers", { companyName: "Test Deadline Co", invoiceDeadlineDays: 5 }, token);
+    assert("invoiceDeadlineDays round-trips on create", custDl.body.invoiceDeadlineDays === 5, JSON.stringify(custDl.body));
+    const custDlUpdate = await request("PUT", `/api/customers/${custDl.body.id}`, { companyName: "Test Deadline Co", invoiceDeadlineDays: 10 }, token);
+    assert("invoiceDeadlineDays round-trips on update", custDlUpdate.body.invoiceDeadlineDays === 10, JSON.stringify(custDlUpdate.body));
+    const custDlBlank = await request("PUT", `/api/customers/${custDl.body.id}`, { companyName: "Test Deadline Co", invoiceDeadlineDays: "" }, token);
+    assert("blank clears it back to null (no deadline configured)", custDlBlank.body.invoiceDeadlineDays === null, JSON.stringify(custDlBlank.body));
+
+    console.log("\nInvoice-deadline queue — a shipment delivered past its deadline with no confirmed invoice shows up");
+    await request("PUT", `/api/customers/${custDl.body.id}`, { companyName: "Test Deadline Co", invoiceDeadlineDays: 5 }, token);
+    const shipDl = await request("POST", "/api/shipments", {
+      pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+      principalId: custDl.body.id, principalName: "Test Deadline Co",
+    }, token);
+    const shipDlId = shipDl.body.id;
+    await request("POST", `/api/shipments/${shipDlId}/milestones/init`, {}, token);
+    const milestones = await request("GET", `/api/shipments/${shipDlId}/milestones`, null, token);
+    const deliveredMs = milestones.body.find(m => m.milestoneKey === "delivered");
+    assert("delivered milestone exists from the init template", !!deliveredMs, JSON.stringify(milestones.body.map(m => m.milestoneKey)));
+
+    const beforeComplete = await request("GET", "/api/invoice-deadlines/overdue", null, token);
+    assert("not yet in the queue — delivered milestone isn't completed yet", !beforeComplete.body.some(d => d.shipmentId === shipDlId));
+
+    // 12 days ago, deadline is 5 days -> 7 days overdue
+    const twelveDaysAgo = new Date(Date.now() - 12 * 86400000).toISOString();
+    await request("PUT", `/api/milestones/${deliveredMs.id}`, { completedAt: twelveDaysAgo }, token);
+
+    const afterComplete = await request("GET", "/api/invoice-deadlines/overdue", null, token);
+    const queueRow = afterComplete.body.find(d => d.shipmentId === shipDlId);
+    assert("shows up in the overdue queue once delivered past the deadline with no invoice", !!queueRow, JSON.stringify(afterComplete.body));
+    assert("daysOverdue is roughly 7 (12 days since delivery - 5 day deadline)", queueRow && queueRow.daysOverdue >= 6 && queueRow.daysOverdue <= 8, JSON.stringify(queueRow));
+    assert("companyName is the responsible party", queueRow?.companyName === "Test Deadline Co");
+
+    console.log("\nInvoice-deadline queue — disappears once a confirmed invoice exists");
+    const lineDl = await addSellLine(shipDlId, token, 500, "OFR");
+    const docDl = await generateInvoiceDoc(shipDlId, token, [lineDl.id]);
+    await confirmDoc(docDl.id, token);
+    const afterInvoice = await request("GET", "/api/invoice-deadlines/overdue", null, token);
+    assert("no longer in the queue once invoiced", !afterInvoice.body.some(d => d.shipmentId === shipDlId), JSON.stringify(afterInvoice.body));
+
+    console.log("\nInvoice-deadline queue — a customer with no invoiceDeadlineDays configured never appears");
+    const custNoDl = await request("POST", "/api/customers", { companyName: "Test No Deadline Co" }, token);
+    const shipNoDl = await request("POST", "/api/shipments", {
+      pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+      principalId: custNoDl.body.id, principalName: "Test No Deadline Co",
+    }, token);
+    await request("POST", `/api/shipments/${shipNoDl.body.id}/milestones/init`, {}, token);
+    const milestonesNoDl = await request("GET", `/api/shipments/${shipNoDl.body.id}/milestones`, null, token);
+    const deliveredNoDl = milestonesNoDl.body.find(m => m.milestoneKey === "delivered");
+    await request("PUT", `/api/milestones/${deliveredNoDl.id}`, { completedAt: twelveDaysAgo }, token);
+    const queueNoDl = await request("GET", "/api/invoice-deadlines/overdue", null, token);
+    assert("never appears without invoiceDeadlineDays configured", !queueNoDl.body.some(d => d.shipmentId === shipNoDl.body.id), JSON.stringify(queueNoDl.body));
+
     console.log("\nCleanup");
     await request("DELETE", `/api/users/${(await request("GET", "/api/users", null, token)).body.find(u => u.email === occEmail)?.id}`, null, token).catch(() => {});
     await request("DELETE", `/api/shipments/${shipmentId}`, null, token);
     await request("DELETE", `/api/customers/${customerId}`, null, token);
+    await request("DELETE", `/api/shipments/${shipDlId}`, null, token);
+    await request("DELETE", `/api/customers/${custDl.body.id}`, null, token);
+    await request("DELETE", `/api/shipments/${shipNoDl.body.id}`, null, token);
+    await request("DELETE", `/api/customers/${custNoDl.body.id}`, null, token);
 
     console.log("\n" + "─".repeat(50));
     console.log(`Results: ${passed} passed, ${failed} failed`);

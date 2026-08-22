@@ -107,6 +107,7 @@ export const api = {
     },
   },
   creditOverridesQueue: () => req("GET", "/credit-overrides/queue"),
+  invoiceDeadlinesOverdue: () => req("GET", "/invoice-deadlines/overdue"),
   containers: {
     list:   (p = {})  => req("GET",    `/containers?${new URLSearchParams(p)}`),
     create: (data)    => req("POST",   "/containers", data),
