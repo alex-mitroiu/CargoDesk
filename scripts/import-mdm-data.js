@@ -341,11 +341,15 @@ console.log(`  ✔ Trade lanes: ${tlInserted} inserted, ${tlUpdated} transit-day
 // GET /api/trade-lanes/transit-suggestion) had the exact same never-actually-seeded gap
 // as trade_lanes above — found the same way, via a genuinely fresh CI database. This app's
 // own Master Data pages expect an admin to configure the full set over time; this seeds
-// only the small, unambiguous set real test fixtures need (CN/SA for transit-suggestion, NL
-// for tests/billing-performance.test.js's Story 4 lane-resolution assertion — added after a
-// fresh-CI run failed on exactly this gap: NL->EU-N held on every long-lived dev DB this test
-// was ever written/run against, but was never actually in this seed list), not an attempt at a
-// full country/lane geography.
+// only the small, unambiguous set real test fixtures need (CN/SA for transit-suggestion; NL +
+// US for the NLRTM->USNYC route used by both tests/billing-performance.test.js's Story 4
+// lane-resolution assertion and tests/customer-credit-control.test.js's whole trade-lane-scoped
+// hold/override-approval mechanism, matchesScopeItem() in server.js — same
+// port_locations->countries->country_trade_lanes->trade_lanes chain as portLanesMap itself.
+// Both added after fresh-CI runs failed on exactly this gap, one country at a time: NL->EU-N
+// held on every long-lived dev DB either test was ever written/run against, and once that was
+// fixed CI got further and hit the exact same gap on the US->NAM half of the same route — not
+// an attempt at a full country/lane geography.
 // `countries` itself is a harder dependency here than it first looked: rebuildPortLanesMap()'s
 // own query JOINs port_locations -> countries -> country_trade_lanes -> trade_lanes, so a
 // country_trade_lanes row is silently useless without a matching `countries` row too — found
@@ -354,9 +358,10 @@ console.log(`  ✔ Trade lanes: ${tlInserted} inserted, ${tlUpdated} transit-day
 // exists to seed it from in general — see the `smoke.cy.js` gate on that). Seed only the
 // countries these specific lane assignments need, not a general country registry.
 const COUNTRY_LANE_DEFAULTS = [
-  ["CN", "China",        "FE"],
-  ["SA", "Saudi Arabia", "ME"],
-  ["NL", "Netherlands",  "EU-N"],
+  ["CN", "China",         "FE"],
+  ["SA", "Saudi Arabia",  "ME"],
+  ["NL", "Netherlands",   "EU-N"],
+  ["US", "United States", "NAM"],
 ];
 const insertCountry = db.prepare("INSERT OR IGNORE INTO countries (iso2, name) VALUES (?, ?)");
 const insertCtl = db.prepare("INSERT OR IGNORE INTO country_trade_lanes (iso2, lane_code) VALUES (?, ?)");
