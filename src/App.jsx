@@ -32,7 +32,7 @@ import {
   IconBuilding, IconShip, IconPackage, IconMapPin, IconLink, IconRoute,
   IconFlag, IconHashtag, IconEarth, IconGovernment, IconSettings, IconChartBar, AnyIcon,
   IconReceipt, IconCoin, IconAnchor, IconSearch, IconMail, IconMailUnread, IconBaseStation,
-  IconUpload, IconDownload, IconLock, IconFileCertificate,
+  IconUpload, IconDownload, IconLock, IconFileCertificate, IconWarning,
 } from "./components/primitives/Icon";
 import TrackedDocPreviewModal from "./components/shared/TrackedDocPreviewModal";
 import EntityHistoryModal from "./components/shared/EntityHistoryModal";
@@ -99,6 +99,7 @@ import CountryPage             from "./pages/org/CountryPage";
 import SpaceConfigurationsPage from "./pages/SpaceConfigurationsPage";
 import FreightAuditPage from "./pages/FreightAuditPage";
 import QuotesPage from "./pages/QuotesPage";
+import CreditOverridesPage from "./pages/CreditOverridesPage";
 import LicensePage             from "./pages/LicensePage";
 import SchedulesPage           from "./pages/SchedulesPage";
 import AiChatDrawer            from "./components/shared/AiChatDrawer";
@@ -2435,6 +2436,7 @@ function App() {
     "space-configs":   "api_shipments_enabled",
     "dashboard-archive":"api_shipments_enabled",
     "freight-audit":   "api_shipments_enabled",
+    "credit-overrides":"api_shipments_enabled",
     reports:           "api_shipments_enabled",
     // Promoted shipment sub-pages inherit the same gate "detail" uses — otherwise
     // disabling the Shipments module only hides Overview, not Cargo/Accounting/etc.
@@ -2878,6 +2880,7 @@ function App() {
     "space-configs":     "Space Configurations",
     "dashboard-archive": "Dashboard — Archive",
     "freight-audit":     "Freight Audit & Payment",
+    "credit-overrides":  "Credit Overrides",
     kanban:             "Integration Board",
     "test-tools":       "Test Tools",
     "user-manual":      "User Manual",
@@ -3608,6 +3611,15 @@ function App() {
             <NavBtn pageKey="quotes" icon={IconReceipt} label="Quotes" />
             <NavBtn pageKey="shipments" icon={IconSailboat} label="Shipments" />
 
+            {/* Credit Overrides (TKT-GLWMFP) — deliberately a standalone top-level item, NOT
+                nested under Accounting (that whole section is hidden from trade_manager's nav,
+                v0.29.0) — a narrow carve-out so the one action a trade_manager IS exclusively
+                authorized for stays reachable. Gated to the same 3 roles the backend queue
+                endpoint itself accepts, so occ_bk/viewer never see a link that would just 403. */}
+            {effectiveRoles.some(r => ["admin", "operator", "trade_manager"].includes(r)) && (
+              <NavBtn pageKey="credit-overrides" icon={IconWarning} label="Credit Overrides" />
+            )}
+
             {/* Dashboard sub-group — folded by default (see NavBtn's foldable prop) */}
             <NavBtn pageKey="dashboard" icon={IconDashboard} label="Dashboard"
               activeExtra={["space-configs", "dashboard-archive", "freight-audit"].includes(page)}
@@ -4067,6 +4079,8 @@ function App() {
           <QuotesPage navigate={navigate}
             onShipmentCreated={shp => setShipments(p => [shp, ...p])} />
         )}
+
+        {page === "credit-overrides" && <CreditOverridesPage />}
 
         {/* MDM pages */}
         {page === "mdm-carriers" && isEnabled("mdm-carriers") && (

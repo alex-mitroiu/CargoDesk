@@ -127,6 +127,30 @@ async function confirmDoc(docId, token) {
     assert("scratch shipment created", !!shipmentId);
     assert("principalId round-trips on the shipment", ship.body.principalId === customerId);
 
+    // TKT-GLWMFP fixture setup — two trade_manager users, scoped to different trade lanes, set
+    // up early so both the credit-hold-release AND over-limit-override sections below (and the
+    // "second invoice" scenario right after this) can all use them. NLRTM -> USNYC resolves to
+    // trade lane EU-N -> NAM (confirmed live: the shipment header's own Trade Lane field shows
+    // exactly this for the identical route).
+    const rand = Math.random().toString(36).slice(2, 8);
+    const outOfLaneEmail = `tm-out-${rand}@example.com`;
+    await request("POST", "/api/users", { email: outOfLaneEmail, name: "TM Out Of Lane", roles: ["trade_manager"], password: "TmFixture!2026Zq" }, token);
+    const outOfLaneUser = (await request("GET", "/api/users", null, token)).body.find(u => u.email === outOfLaneEmail);
+    await request("POST", `/api/users/${outOfLaneUser.id}/scope`, {
+      role: "trade_manager", itemType: "trade_lane", value: JSON.stringify({ origin: "APAC", dest: "NAM" }), label: "Out of lane",
+    }, token);
+    const outOfLaneLogin = await request("POST", "/api/auth/login", { email: outOfLaneEmail, password: "TmFixture!2026Zq" });
+    const outOfLaneToken = outOfLaneLogin.body.token;
+
+    const inLaneEmail = `tm-in-${rand}@example.com`;
+    await request("POST", "/api/users", { email: inLaneEmail, name: "TM In Lane", roles: ["trade_manager"], password: "TmFixture!2026Zq" }, token);
+    const inLaneUser = (await request("GET", "/api/users", null, token)).body.find(u => u.email === inLaneEmail);
+    await request("POST", `/api/users/${inLaneUser.id}/scope`, {
+      role: "trade_manager", itemType: "trade_lane", value: JSON.stringify({ origin: "EU-N", dest: "NAM" }), label: "EU-N to NAM",
+    }, token);
+    const inLaneLogin = await request("POST", "/api/auth/login", { email: inLaneEmail, password: "TmFixture!2026Zq" });
+    const inLaneToken = inLaneLogin.body.token;
+
     console.log("\nFirst confirmed invoice — 700 USD, under the 1000 limit");
     const line1 = await addSellLine(shipmentId, token, 500, "OFR");
     const line2 = await addSellLine(shipmentId, token, 200, "DOC");
@@ -140,8 +164,16 @@ async function confirmDoc(docId, token) {
     assert("still under limit", status1.body.overLimit === false);
 
     console.log("\nSecond confirmed invoice — 500 USD more, now 1200 total, OVER the 1000 limit");
+    // Generating this one would itself push the customer over their limit — as of TKT-GLWMFP
+    // that's now a real, server-enforced block (see the dedicated section further down for the
+    // block/approve/consume mechanics in isolation); here it just needs a quick approval from
+    // the shipment's own lane trade_manager (inLaneToken, set up earlier) to get past it, since
+    // this section's actual point is credit-status's aggregation once 1200 is really on record.
     const line3 = await addSellLine(shipmentId, token, 500, "THC");
+    await request("POST", `/api/shipments/${shipmentId}/credit-override/approve`,
+      { reason: "test fixture — proceeding despite the limit" }, inLaneToken);
     const doc2 = await generateInvoiceDoc(shipmentId, token, [line3.id]);
+    assert("invoice 2 generated (over-limit override in place)", !!doc2.id, JSON.stringify(doc2));
     const confirm2 = await confirmDoc(doc2.id, token);
     assert("invoice 2 confirmed", confirm2.body.status === "confirmed");
 
@@ -156,7 +188,7 @@ async function confirmDoc(docId, token) {
     assert("outstandingAr back to 700 after reversal", status3.body.outstandingAr === 700, JSON.stringify(status3.body));
     assert("back under limit", status3.body.overLimit === false);
 
-    console.log("\nCredit hold — set, verify, then clear");
+    console.log("\nCredit hold — set (unrestricted), then clear (exclusive to the shipment's own lane trade_manager)");
     const setHold = await request("PUT", `/api/customers/${customerId}`, {
       companyName: "Test Credit Co", creditLimit: 1000, creditTermsDays: 30,
       creditHold: true, creditHoldReason: "Overdue balance — test fixture",
@@ -166,11 +198,40 @@ async function confirmDoc(docId, token) {
     const statusHold = await request("GET", `/api/customers/${customerId}/credit-status`, null, token);
     assert("credit-status reflects the hold", statusHold.body.creditHold === true && statusHold.body.creditHoldReason === "Overdue balance — test fixture");
 
-    const clearHold = await request("PUT", `/api/customers/${customerId}`, {
+    // TKT-GLWMFP — releasing is exclusive to the shipment's own lane trade_manager. Direct
+    // explicit business rule: never admin, operator, or an out-of-lane trade_manager, no
+    // fallback — verified against every one of those, not just the happy path.
+    const clearAsAdminViaPut = await request("PUT", `/api/customers/${customerId}`, {
       companyName: "Test Credit Co", creditLimit: 1000, creditTermsDays: 30, creditHold: false,
     }, token);
+    assert("admin CANNOT clear a hold via the generic PUT route", clearAsAdminViaPut.status === 403, JSON.stringify(clearAsAdminViaPut.body));
+    const stillHeld = await request("GET", `/api/customers/${customerId}/credit-status`, null, token);
+    assert("hold is still set after the rejected admin attempt", stillHeld.body.creditHold === true);
+
+    const releaseAsAdmin = await request("POST", `/api/customers/${customerId}/credit-hold/release`,
+      { shipmentId, reason: "test" }, token);
+    assert("admin CANNOT release via the dedicated endpoint either", releaseAsAdmin.status === 403, JSON.stringify(releaseAsAdmin.body));
+
+    const releaseOutOfLane = await request("POST", `/api/customers/${customerId}/credit-hold/release`,
+      { shipmentId, reason: "test" }, outOfLaneToken);
+    assert("an out-of-lane trade_manager CANNOT release the hold", releaseOutOfLane.status === 403, JSON.stringify(releaseOutOfLane.body));
+
+    const releaseNoReason = await request("POST", `/api/customers/${customerId}/credit-hold/release`, { shipmentId }, inLaneToken);
+    assert("a reason is required", releaseNoReason.status >= 400);
+
+    const releaseWrongShipment = await request("POST", `/api/customers/${customerId}/credit-hold/release`,
+      { shipmentId: "SHP-DOESNOTEXIST", reason: "test" }, inLaneToken);
+    assert("a bogus shipmentId is rejected", releaseWrongShipment.status >= 400);
+
+    const clearHold = await request("POST", `/api/customers/${customerId}/credit-hold/release`,
+      { shipmentId, reason: "Confirmed with customer — payment received" }, inLaneToken);
+    assert("the in-lane trade_manager CAN release the hold", clearHold.status === 200, JSON.stringify(clearHold.body));
     assert("hold cleared", clearHold.body.creditHold === false);
     assert("hold reason cleared alongside it (no stale reason left behind)", clearHold.body.creditHoldReason === "");
+
+    const releaseAlreadyClear = await request("POST", `/api/customers/${customerId}/credit-hold/release`,
+      { shipmentId, reason: "test" }, inLaneToken);
+    assert("releasing an already-clear hold is rejected", releaseAlreadyClear.status >= 400);
 
     console.log("\n404 on a bogus customer id");
     const bogus = await request("GET", "/api/customers/CUS-DOESNOTEXIST/credit-status", null, token);
@@ -281,14 +342,84 @@ async function confirmDoc(docId, token) {
     assert("sending a booking request is blocked (409) while the principal is on hold", sendBlocked.status === 409, JSON.stringify(sendBlocked.body));
     assert("the block names the held party", /Test Credit Held Co/.test(sendBlocked.body.error || ""), JSON.stringify(sendBlocked.body));
 
-    await request("PUT", `/api/customers/${heldCust.body.id}`, { companyName: "Test Credit Held Co", creditHold: false }, token);
+    // TKT-GLWMFP shipped after this Story 3 block was originally written — releasing now goes
+    // through the exclusive lane-scoped endpoint (inLaneToken, set up earlier in this file),
+    // not a bare admin PUT, which would 403 as of this pass.
+    await request("POST", `/api/customers/${heldCust.body.id}/credit-hold/release`,
+      { shipmentId: heldShip.body.id, reason: "test" }, inLaneToken);
     const sendAfterClear = await request("POST", `/api/shipments/${heldShip.body.id}/edi-messages/booking-request`, {}, token);
     assert("clearing the hold unblocks sending", sendAfterClear.status === 201, JSON.stringify(sendAfterClear.body));
 
     await request("DELETE", `/api/shipments/${heldShip.body.id}`, null, token);
     await request("DELETE", `/api/customers/${heldCust.body.id}`, null, token);
 
+    console.log("\nOver-limit is now a real server-enforced block, exclusive-override same as a hold");
+    // A second, fresh scratch shipment for the same customer — deliberately not reusing
+    // shipmentId, which already picked up a still-valid (grace-window) override from the
+    // "Second confirmed invoice" workaround above; credit_overrides is looked up per-shipment,
+    // so a fresh one starts genuinely un-approved.
+    const ship2 = await request("POST", "/api/shipments", {
+      pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+      principalId: customerId, principalName: "Test Credit Co",
+    }, token);
+    const shipment2Id = ship2.body.id;
+    await request("PUT", `/api/customers/${customerId}`, { companyName: "Test Credit Co", creditLimit: 50, creditTermsDays: 30 }, token);
+    const overLine = await addSellLine(shipment2Id, token, 400, "OFR");
+    const overStatus = await request("GET", `/api/customers/${customerId}/credit-status`, null, token);
+    assert("customer is genuinely over limit now", overStatus.body.overLimit === true, JSON.stringify(overStatus.body));
+
+    const genNoOverride = await generateInvoiceDoc(shipment2Id, token, [overLine.id]);
+    assert("generating while over limit with no override is blocked (409)", !genNoOverride.id, JSON.stringify(genNoOverride));
+
+    const approveAsAdmin = await request("POST", `/api/shipments/${shipment2Id}/credit-override/approve`, { reason: "test" }, token);
+    assert("admin CANNOT approve an over-limit override", approveAsAdmin.status === 403, JSON.stringify(approveAsAdmin.body));
+    const approveOutOfLane = await request("POST", `/api/shipments/${shipment2Id}/credit-override/approve`, { reason: "test" }, outOfLaneToken);
+    assert("an out-of-lane trade_manager CANNOT approve it either", approveOutOfLane.status === 403, JSON.stringify(approveOutOfLane.body));
+    const approveNoReason = await request("POST", `/api/shipments/${shipment2Id}/credit-override/approve`, {}, inLaneToken);
+    assert("a reason is required to approve", approveNoReason.status >= 400);
+
+    const preApprovalCheck = await request("GET", `/api/shipments/${shipment2Id}/credit-override`, null, token);
+    assert("no override exists yet", preApprovalCheck.body === null);
+
+    const approve = await request("POST", `/api/shipments/${shipment2Id}/credit-override/approve`,
+      { reason: "Customer confirmed payment in transit — ref #4521" }, inLaneToken);
+    assert("the in-lane trade_manager CAN approve an over-limit override", approve.status === 201, JSON.stringify(approve.body));
+
+    const postApprovalCheck = await request("GET", `/api/shipments/${shipment2Id}/credit-override`, null, token);
+    assert("the approved override is now visible", postApprovalCheck.body?.id === approve.body.id, JSON.stringify(postApprovalCheck.body));
+
+    const genWithOverride = await generateInvoiceDoc(shipment2Id, token, [overLine.id]);
+    assert("generating now succeeds with the approval in place", !!genWithOverride.id, JSON.stringify(genWithOverride));
+
+    // Grace-window behavior (not strict single-use) — a second FR01 generated moments later,
+    // still over limit, still succeeds off the SAME approval. This is the real-world shape of a
+    // per-container split invoice run (invoiceGenerator.js's generateInvoices), which calls this
+    // same route once per container for one logical action — single-use-on-first-call would
+    // silently re-block containers 2..N of that same batch.
+    const graceLine = await addSellLine(shipment2Id, token, 10, "DOC");
+    const genSecondCall = await generateInvoiceDoc(shipment2Id, token, [graceLine.id]);
+    assert("a second generate call within the grace window also succeeds off the same approval",
+      !!genSecondCall.id, JSON.stringify(genSecondCall));
+
+    console.log("\nCredit Overrides queue — visibility scoped by lane, action gated the same way");
+    const queueAsAdmin = await request("GET", "/api/credit-overrides/queue", null, token);
+    const adminRow = queueAsAdmin.body.find(r => r.shipmentId === shipment2Id && r.blockType === "over_limit");
+    assert("admin sees the over-limit row for visibility", !!adminRow, JSON.stringify(queueAsAdmin.body.slice(0, 3)));
+    assert("admin's row is never actionable", adminRow?.canAct === false);
+
+    const queueInLane = await request("GET", "/api/credit-overrides/queue", null, inLaneToken);
+    const inLaneRow = queueInLane.body.find(r => r.shipmentId === shipment2Id && r.blockType === "over_limit");
+    assert("the in-lane trade_manager sees the row too", !!inLaneRow);
+    assert("and it IS actionable for them", inLaneRow?.canAct === true);
+
+    const queueOutOfLane = await request("GET", "/api/credit-overrides/queue", null, outOfLaneToken);
+    assert("an out-of-lane trade_manager doesn't see this shipment's row at all",
+      !queueOutOfLane.body.some(r => r.shipmentId === shipment2Id));
+
     console.log("\nCleanup");
+    await request("DELETE", `/api/shipments/${shipment2Id}`, null, token);
+    await request("DELETE", `/api/users/${outOfLaneUser.id}`, null, token).catch(() => {});
+    await request("DELETE", `/api/users/${inLaneUser.id}`, null, token).catch(() => {});
     await request("DELETE", `/api/shipments/${shipmentId}`, null, token);
     await request("DELETE", `/api/customers/${customerId}`, null, token);
 

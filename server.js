@@ -1619,6 +1619,27 @@ const migrations = [
   "ALTER TABLE customs_filings ADD COLUMN voyage_number  TEXT DEFAULT ''",
   "ALTER TABLE customs_filings ADD COLUMN export_date    TEXT DEFAULT ''",
   "ALTER TABLE customs_filings ADD COLUMN cargo_snapshot TEXT DEFAULT '[]'",
+  // Credit Control Depth, third pass (Epic TKT-6XFJQM, Story TKT-GLWMFP) — a consumable
+  // "permission slip" for the one class of credit block that's a soft warning rather than a
+  // hard gate: generating an invoice while the responsible party is over their credit_limit.
+  // credit_hold's release needs no equivalent table — it's an instant, global action recorded
+  // directly on customers.credit_hold/credit_hold_reason, not a standing grant. An over-limit
+  // approval is scoped to one shipment (the context it was requested from) and consumed the
+  // moment the invoice it was approved for is actually generated — a customer going over limit
+  // again later (a fresh invoice, a lowered limit) needs a fresh approval, never a standing
+  // bypass. consumed_at NULL = still valid/unused.
+  `CREATE TABLE IF NOT EXISTS credit_overrides (
+    id               TEXT PRIMARY KEY,
+    customer_id      TEXT NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+    shipment_id      TEXT NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
+    override_type    TEXT NOT NULL,
+    reason           TEXT NOT NULL,
+    approved_by      TEXT NOT NULL,
+    approved_by_name TEXT DEFAULT '',
+    created_at       TEXT NOT NULL,
+    consumed_at      TEXT DEFAULT NULL
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_credit_overrides_shipment ON credit_overrides(shipment_id, override_type, consumed_at)",
 ];
 
 // "duplicate column name" is the expected, harmless result of re-running an ADD COLUMN
@@ -2351,6 +2372,63 @@ async function toUsd(amount, currency) {
   return rate ? roundCents(amount / rate) : roundCents(amount);
 }
 
+// Credit Control's own AR/exposure computation (v0.73.0, TKT-O4DNFX/TKT-AJAEDO) — moved here
+// from routes/customers.js (v0.73.1, TKT-GLWMFP) so routes/shipment-ops.js's invoice-generation
+// gate can reuse the exact same figures the credit-status endpoint and the trade-lane override
+// queue both already show, rather than a second, drifting computation. outstandingAr/
+// committedExposure are already USD-equivalent (each line's own amount * exchange_rate at
+// posting time), same convention as every other cost-line USD figure in this codebase.
+function computeArExposure(customerId, creditTermsDays) {
+  const shipmentIds = db.prepare(
+    "SELECT id FROM shipments WHERE principal_id=? OR consignee_id=?"
+  ).all(customerId, customerId).map(r => r.id);
+
+  let outstandingAr = 0;
+  const coveredLineIds = new Set();
+  const aging = { current: 0, d1_30: 0, d31_60: 0, d61_90: 0, d90_plus: 0 };
+  const todayMs = Date.now();
+
+  if (shipmentIds.length) {
+    const placeholders = shipmentIds.map(() => '?').join(',');
+    const docs = db.prepare(
+      `SELECT * FROM shipment_documents WHERE shipment_id IN (${placeholders}) AND doc_type IN ('FR01','FR02') AND status='confirmed'`
+    ).all(...shipmentIds);
+    for (const doc of docs) {
+      const sourceIds = doc.source_cost_line_ids ? JSON.parse(doc.source_cost_line_ids) : null;
+      const lines = sourceIds && sourceIds.length
+        ? db.prepare(`SELECT id, amount, exchange_rate FROM shipment_cost_lines WHERE id IN (${sourceIds.map(() => '?').join(',')})`).all(...sourceIds)
+        : db.prepare("SELECT id, amount, exchange_rate FROM shipment_cost_lines WHERE shipment_id=? AND type='SELL' AND container_id=?").all(doc.shipment_id, doc.container_id || '');
+      const docTotal = lines.reduce((s, l) => s + l.amount * l.exchange_rate, 0);
+      for (const l of lines) coveredLineIds.add(l.id);
+      outstandingAr += docTotal;
+
+      const refDate = doc.confirmed_at || doc.created_at;
+      const dueMs = new Date(refDate).getTime() + (creditTermsDays || 0) * 86400000;
+      const daysOverdue = Math.floor((todayMs - dueMs) / 86400000);
+      if      (daysOverdue <= 0)  aging.current  += docTotal;
+      else if (daysOverdue <= 30) aging.d1_30    += docTotal;
+      else if (daysOverdue <= 60) aging.d31_60   += docTotal;
+      else if (daysOverdue <= 90) aging.d61_90   += docTotal;
+      else                        aging.d90_plus += docTotal;
+    }
+  }
+
+  let committedExposure = 0;
+  if (shipmentIds.length) {
+    const placeholders = shipmentIds.map(() => '?').join(',');
+    const sellLines = db.prepare(
+      `SELECT id, amount, exchange_rate FROM shipment_cost_lines WHERE shipment_id IN (${placeholders}) AND type='SELL'`
+    ).all(...shipmentIds);
+    for (const l of sellLines) if (!coveredLineIds.has(l.id)) committedExposure += l.amount * l.exchange_rate;
+  }
+
+  return {
+    outstandingAr: roundCents(outstandingAr),
+    committedExposure: roundCents(committedExposure),
+    aging: Object.fromEntries(Object.entries(aging).map(([k, v]) => [k, roundCents(v)])),
+  };
+}
+
 // ─── Backfill transit_days on generated schedules ─────────────────────────────
 // POST /api/schedules (Schedule Generator) unconditionally hardcoded transit_days to 0 at
 // insert time instead of deriving it from etd/eta — every schedule created through the
@@ -2810,6 +2888,43 @@ function matchesScopeItem(s, item) {
   if (item.item_type === 'pol')     return item.value === s.pol;
   if (item.item_type === 'country') return portCountryMap[s.pol] === item.value;
   return false;
+}
+
+// Credit Control Depth, third pass (TKT-GLWMFP) — "only the trade manager working that trade
+// lane may ever override a credit block" is a direct, explicit business rule, not inferred: no
+// fallback to admin/operator, and no fallback to a trade_manager whose own scope doesn't cover
+// this shipment's lane. Plain role-membership check (req.user.roles.includes(...), matching
+// requireRole's own convention exactly) rather than primaryRoleSV's effective-role/rank logic —
+// trade_manager isn't the top of a hierarchy here, it's a specific, narrow grant that should
+// hold even for a user who also carries a higher-ranked role.
+// A credit_overrides row for an over-limit generation stays valid for this long after approval
+// — a grace window, not strict single-use (see routes/shipment-ops.js's findOverLimitBlock for
+// why: one logical "generate invoices" action can fire this route several times in a row for a
+// per-container split, and single-use-on-first-call would silently re-block containers 2..N).
+const OVERRIDE_GRACE_MS = 60 * 60 * 1000;
+
+function userOwnsLaneForShipment(user, shipment) {
+  if (!user?.roles?.includes('trade_manager') || !shipment) return false;
+  const scopeItems = db.prepare(
+    "SELECT * FROM user_scope_items WHERE user_id=? AND item_type='trade_lane'"
+  ).all(user.id);
+  return scopeItems.some(item => matchesScopeItem(shipment, item));
+}
+
+// Same authority, scoped to a customer rather than one shipment — true when ANY shipment where
+// this customer is Shipper/Consignee/Principal falls in one of the user's own trade lanes.
+// Deliberately broader than userOwnsLaneForShipment (credit_hold lives on the customer, not one
+// shipment) but never broader than the user's own actual lane grants.
+function userOwnsLaneForCustomer(user, customerId) {
+  if (!user?.roles?.includes('trade_manager')) return false;
+  const scopeItems = db.prepare(
+    "SELECT * FROM user_scope_items WHERE user_id=? AND item_type='trade_lane'"
+  ).all(user.id);
+  if (!scopeItems.length) return false;
+  const shipments = db.prepare(
+    "SELECT pol, pod FROM shipments WHERE shipper_id=? OR consignee_id=? OR principal_id=?"
+  ).all(customerId, customerId, customerId);
+  return shipments.some(s => scopeItems.some(item => matchesScopeItem(s, item)));
 }
 
 function applyShipmentAccessFilter(shipments, user, req) {
@@ -3620,6 +3735,8 @@ const ctx = {
   runOpsAutomationSweep,
   linkedPortCodes, findMatchingContractLegs, resolveCarrierAgent,
   screenShipmentById, rescreenActiveShipments, resolveCustomerGroup,
+  computeArExposure, matchesScopeItem, userOwnsLaneForShipment, userOwnsLaneForCustomer,
+  OVERRIDE_GRACE_MS,
   bcrypt, jwt, JWT_SECRET,
   DISTRIBUTION_SERVICE_URL, DISTRIBUTION_SERVICE_SECRET,
   CONTRACT_SERVICE_URL, CONTRACT_SERVICE_SECRET, callContractService,

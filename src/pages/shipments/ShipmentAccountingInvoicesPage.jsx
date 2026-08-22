@@ -48,15 +48,18 @@ const ReverseInvoiceModal = ({ doc, busy, onClose, onConfirm }) => {
   );
 };
 
-// Over-limit — a soft warning only (Organization Model Enhancement Epic 2's own explicit
-// scope: a hard block needs a real AR-aging view this app doesn't have yet). Cancel or
-// proceed anyway, straight into whatever the normal generate flow would have done next.
-const CreditWarningModal = ({ responsibleParty, busy, onClose, onContinue }) => (
-  <Modal title="Credit Limit Warning" onClose={() => !busy && onClose()} width={460}>
+// Over-limit — a real, server-enforced block since v0.73.1 (TKT-GLWMFP), not the soft warning
+// this used to be through v0.73.0 (that scope decision explicitly said a hard block needed a
+// real AR-aging view this app didn't have yet — v0.73.0 shipped exactly that). No "Generate
+// Anyway" anymore — the only way past this is the shipment's own lane trade_manager approving
+// an override from the Credit Overrides queue, an exclusive authority (never admin/operator/an
+// out-of-lane trade_manager), matching CreditHoldModal's own no-bypass shape.
+const OverLimitBlockModal = ({ responsibleParty, onClose }) => (
+  <Modal title="Blocked — Over Credit Limit" onClose={onClose} width={460}>
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <div style={{ padding: "10px 14px", borderRadius: 8, background: `${T.warning}18`,
-        border: `1px solid ${T.warning}44`, display: "flex", gap: 10, alignItems: "flex-start" }}>
-        <span style={{ color: T.warning, flexShrink: 0, marginTop: 1 }}><IconWarning size={15} /></span>
+      <div style={{ padding: "10px 14px", borderRadius: 8, background: `${T.danger}18`,
+        border: `1px solid ${T.danger}44`, display: "flex", gap: 10, alignItems: "flex-start" }}>
+        <span style={{ color: T.danger, flexShrink: 0, marginTop: 1 }}><IconWarning size={15} /></span>
         <div style={{ fontFamily: T.body, fontSize: 12.5, color: T.text, lineHeight: 1.5 }}>
           <strong>{responsibleParty.companyName}</strong> already has {fmtUsd(responsibleParty.outstandingAr)} in
           confirmed, unpaid invoices{responsibleParty.committedExposure > 0
@@ -65,12 +68,12 @@ const CreditWarningModal = ({ responsibleParty, busy, onClose, onContinue }) => 
           their {responsibleParty.creditLimitCurrency === "USD" || !responsibleParty.creditLimitCurrency
             ? fmtUsd(responsibleParty.creditLimit)
             : `${responsibleParty.creditLimit.toLocaleString()} ${responsibleParty.creditLimitCurrency} (${fmtUsd(responsibleParty.creditLimitUsd)})`} credit
-          limit. This is a warning only; generating it is still allowed.
+          limit. Generating can't proceed until this shipment's own trade lane manager approves an
+          override in the Credit Overrides queue.
         </div>
       </div>
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-        <Btn variant="secondary" onClick={onClose} disabled={busy}>Cancel</Btn>
-        <Btn onClick={onContinue} disabled={busy}>{busy ? "Generating…" : "Generate Anyway"}</Btn>
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <Btn onClick={onClose}>Close</Btn>
       </div>
     </div>
   </Modal>
@@ -95,7 +98,7 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
   const [splitBusy,     setSplitBusy]    = useState(false);
   const [currencyModal, setCurrencyModal] = useState(null); // { splitPerContainer, distinctCurrencies, currency, isFallback, principalName }
   const [creditHoldModal, setCreditHoldModal] = useState(null); // { holds } — hard block, no continuation
-  const [creditWarnModal, setCreditWarnModal] = useState(null); // { splitPerContainer, responsibleParty } — soft warning
+  const [creditWarnModal, setCreditWarnModal] = useState(null); // { responsibleParty } — hard block since v0.73.1 (TKT-GLWMFP), no bypass
   const [actualizeLine, setActualizeLine] = useState(null); // line pending actualization
   const [confirmPost,   setConfirmPost]   = useState(null); // line pending Post confirmation
   const [reverseDoc,    setReverseDoc]    = useState(null); // invoice doc pending Reverse confirmation
@@ -145,16 +148,18 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
       return;
     }
     // Credit gate (Organization Model Enhancement Epic 2) runs before the currency check below
-    // — a credit hold or over-limit warning is about whether to invoice at all, which should be
-    // resolved before asking which currency to invoice in. newAmountUsd is THIS invoice's own
-    // total, added to prior outstanding AR — otherwise the very first invoice that pushes a
-    // customer over their limit would never be caught, only ones generated after they already are.
-    const newAmountUsd = scopedLinesFor(splitPerContainer).reduce((s, l) => s + l.amountUsd, 0);
+    // — a credit hold or over-limit block is about whether to invoice at all, which should be
+    // resolved before asking which currency to invoice in. No need to compute this invoice's own
+    // amount separately — resolveCreditGate's committedExposure already reflects it (the cost
+    // lines being invoiced already exist in the DB by the time Generate is clicked).
     setGenBusy(true);
-    const gate = await resolveCreditGate(shipment, newAmountUsd);
+    const gate = await resolveCreditGate(shipment);
     setGenBusy(false);
     if (gate.blocked) { setCreditHoldModal({ holds: gate.holds }); return; }
-    if (gate.overLimit) { setCreditWarnModal({ splitPerContainer, responsibleParty: gate.responsibleParty }); return; }
+    if (gate.overLimit && !gate.overLimitApproved) { setCreditWarnModal({ responsibleParty: gate.responsibleParty }); return; }
+    if (gate.overLimit && gate.overLimitApproved) {
+      toast.info(`Over-limit override approved by ${gate.override.approvedBy || "the trade lane manager"} — generating`);
+    }
     await checkCurrencyAndGenerate(splitPerContainer);
   };
 
@@ -511,13 +516,8 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
       )}
 
       {creditWarnModal && (
-        <CreditWarningModal responsibleParty={creditWarnModal.responsibleParty} busy={genBusy}
-          onClose={() => setCreditWarnModal(null)}
-          onContinue={async () => {
-            const { splitPerContainer } = creditWarnModal;
-            setCreditWarnModal(null);
-            await checkCurrencyAndGenerate(splitPerContainer);
-          }} />
+        <OverLimitBlockModal responsibleParty={creditWarnModal.responsibleParty}
+          onClose={() => setCreditWarnModal(null)} />
       )}
 
       {currencyModal && (

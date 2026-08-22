@@ -150,10 +150,10 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
     // Earlier credit-check trigger point (TKT-Q00WHF, Credit Control Depth) — a real,
     // blocking gate at the actual commitment moment (sending a real request to a carrier),
     // not just at invoice-generation time. Reuses the exact resolveCreditGate/CreditHoldModal
-    // already proven for invoicing rather than a parallel check — newAmountUsd is 0 here since
-    // nothing's being invoiced yet, so only credit_hold (a real block) fires, not the softer
-    // over-limit warning (that stays scoped to the moment an actual invoice amount exists).
-    const gate = await resolveCreditGate(shipment, 0);
+    // already proven for invoicing rather than a parallel check — only gate.blocked (credit_hold)
+    // is acted on here; gate.overLimit is ignored on purpose, since nothing's being invoiced yet
+    // at booking-send time — the over-limit block stays scoped to actual invoice generation.
+    const gate = await resolveCreditGate(shipment);
     if (gate.blocked) { setCreditHoldModal({ holds: gate.holds }); return; }
     setSending(true);
     try {

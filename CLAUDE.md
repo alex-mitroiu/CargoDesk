@@ -4,7 +4,7 @@
 Full-stack freight management app. React 18 + Vite frontend, Express + node:sqlite backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.73.1 "Solvency"**
+- Version: **v0.74.0 "Solvency"**
 - Run: `npm run dev` (runs the monolith on :3001 + Vite on :5173 + the Document Distribution Service on :3002 + the PDF Render Service on :3003 + the Contract Management Service on :3004, concurrently)
 - Seed: `npm run seed` (runs `scripts/import-mdm-data.js`)
 
@@ -307,6 +307,39 @@ are fully validated.
 - **Document system**: `DOC_TYPES` in App.jsx (~line 56: BL01/MB01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — `MB01` (Master Bill of Lading, v0.71.0) is the vessel-operator-to-NVOCC document, a genuinely separate build from `BL01` (NVOCC-to-shipper House B/L), not a mode flag on it — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). (The earlier client-side-jsPDF `DocumentsMenu` component this note used to distinguish from was removed as dead code — it had zero references anywhere in the app.)
 - **Lifecycle-stage stepper precedent**: no dedicated stepper component exists yet; `MilestonePanel` (ShipmentDetailPage.jsx 1593-~1870) is the closest analog — linear progress bar (1734-1738, `width: ${progress}%`) plus per-step state coloring via `milestoneState()`/`stateColor()` (1666-1676: completed/overdue/current/upcoming) driven by `shipment_milestones` rows (`id, label, estimatedDate, note, completedAt, completedBy`, fixed step keys `booking_confirmed, si_submitted, cargo_gated_in, vessel_departed, bl_issued, vessel_arrived, customs_cleared, cargo_released, delivered`). Any new per-container lifecycle/stage UI should reuse this state-coloring pattern rather than inventing a new visual language
 - **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages, 📡 EDI). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
+
+## Recent changes (v0.74.0 "Solvency")
+- **Credit Control Depth, third and final pass (TKT-GLWMFP)** — closes Epic `TKT-6XFJQM`.
+  Explicit business rule: credit-hold and over-limit override authority belongs EXCLUSIVELY to
+  the trade_manager responsible for a shipment's own trade lane — never admin, operator, or an
+  out-of-lane trade_manager. Reuses `user_scope_items`' `trade_lane` scope + `matchesScopeItem()`
+  (the same mechanism that already scopes shipment visibility) via two new helpers,
+  `userOwnsLaneForShipment`/`userOwnsLaneForCustomer`.
+- **Releasing a hold** is now a dedicated action (`POST /api/customers/:id/credit-hold/release`,
+  reason required) gated by the lane check — the SAME check was also added to the generic
+  `PUT /api/customers/:id` route (only for the true→false transition) to close the direct-API
+  bypass the dedicated endpoint alone would have left open.
+- **Over-limit is now a real, server-enforced hard block** (`POST .../documents/generate`,
+  FR01/FR02 only) for the first time — v0.57.0's original scope said this needed a proper
+  AR-aging view; v0.73.0 shipped it. The only way past it is a `credit_overrides` row approved
+  by the shipment's own lane trade_manager (`POST .../credit-override/approve`), valid for a
+  60-minute grace window (not strict single-use — a per-container split invoice run calls the
+  generate route once per container for one logical action). `ShipmentAccountingInvoicesPage.jsx`'s
+  old "Generate Anyway" soft warning is gone, replaced by a real no-bypass `OverLimitBlockModal`.
+- **New "Credit Overrides" page** (top-level nav, deliberately not nested under Accounting,
+  which stays hidden from trade_manager per v0.29.0) lists every blocked shipment, server-scoped
+  per viewer: admin/operator see the full queue for visibility only, a trade_manager sees and
+  can act on exactly the shipments their own lane covers.
+- **Real pre-existing bug caught while testing this pass**: the over-limit projection
+  (`resolveCreditGate` and its new server mirror) double-counted the current invoice's own
+  amount on top of `committedExposure`, which already includes it — harmless while the block was
+  a soft warning (since v0.73.0), a real correctness bug now that it's a hard block. Fixed on
+  both sides.
+- 24 new assertions (`tests/customer-credit-control.test.js`, 83 total in that file) — full
+  45-file backend chain, both service-scoped chains, frontend Vitest, and a clean build all
+  verified green from a fresh restart. Verified live via CDP: the queue and approval flow for
+  an in-lane trade_manager, and the hard-block modal's figures/messaging for an unapproved
+  over-limit shipment.
 
 ## Recent changes (v0.73.1 "Solvency")
 - **Credit Control Depth, second pass** — ships the earlier trigger points (`TKT-Q00WHF`)

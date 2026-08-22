@@ -9,7 +9,8 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
           UPLOADS_DIR, fs, path,
           renderHtmlToPdf, getActiveSigningCert, signPdfBuffer,
           buildMailOptions, sendViaOffice,
-          createRateLimiter, getSettings, callContractService } = ctx;
+          createRateLimiter, getSettings, callContractService,
+          computeArExposure, toUsd, roundCents, OVERRIDE_GRACE_MS } = ctx;
 
   const shipmentWrite = requireRole(["admin", "operator", "occ_bk"]);
 
@@ -630,10 +631,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   // direct API call produced a fully signed invoice PDF for a customer on credit hold with no
   // check at all. Scoped to FR01/FR02 (the only two doc types that are actually invoices) —
   // every other generated document (B/L, packing list, service docs, ...) is unaffected by a
-  // credit hold and must keep generating normally. Only the hard block (credit_hold) is
-  // enforced here — the soft over-limit warning stays client-side-only by design (a real hard
-  // block there would need a proper AR-aging view this app doesn't have yet, per the Epic 2
-  // scope decision).
+  // credit hold and must keep generating normally.
   async function findCreditHold(shipment) {
     const candidateIds = [shipment.shipper_id, shipment.consignee_id, shipment.principal_id].filter(Boolean);
     if (shipment.contract_id) {
@@ -653,13 +651,60 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     return null;
   }
 
+  // Credit Control Depth, third pass (TKT-GLWMFP) — the over-limit warning was deliberately
+  // client-side-only through v0.73.0 ("a real hard block there would need a proper AR-aging
+  // view this app doesn't have yet"). v0.73.0 shipped that AR-aging view; this closes the loop:
+  // a direct API call now hits the same real block resolveCreditGate already showed a warning
+  // for, and the only way past it is a live credit_overrides row approved by the shipment's own
+  // lane trade_manager (POST .../credit-override/approve, routes/customers.js).
+  //
+  // Validity is a grace window (OVERRIDE_GRACE_MS from approval), not strict single-use —
+  // a split-per-container generation calls this route once PER CONTAINER for what's really one
+  // logical action, and single-use-on-first-call would silently re-block containers 2..N of the
+  // same batch. The window is short enough that it can't become a standing bypass for a later,
+  // genuinely new over-limit event (a customer whose balance rises again days later needs a
+  // fresh approval), long enough to cover any realistic one-batch generation.
+  // Real bug found while testing this pass, not introduced by it: committedExposure (above)
+  // already sums EVERY uninvoiced SELL line for the customer's shipments — which necessarily
+  // already includes the very lines THIS generation is about to invoice (cost lines are always
+  // added, and so already exist as shipment_cost_lines rows, before Generate Invoice is ever
+  // clicked in this app's real workflow). A separate "newAmountUsd" term summing those same
+  // sourceCostLineIds again — inherited from resolveCreditGate's pre-v0.73.0 formula, when
+  // committedExposure didn't exist yet and outstandingAr alone genuinely couldn't see the
+  // current invoice — double-counted them. Harmless while over-limit was a soft, bypassable
+  // warning; a real correctness bug now that it's a hard block (the very FIRST invoice for any
+  // customer with a limit near their typical invoice size would have been wrongly refused).
+  // Fixed by dropping the redundant term — see the matching fix in resolveCreditGate.
+  async function findOverLimitBlock(shipment) {
+    const respId = shipment.principal_id || shipment.consignee_id || null;
+    if (!respId) return null;
+    const c = db.prepare("SELECT * FROM customers WHERE id=?").get(respId);
+    if (!c || c.credit_limit == null) return null;
+    const { outstandingAr, committedExposure } = computeArExposure(c.id, c.credit_terms_days);
+    const limitUsd = await toUsd(c.credit_limit, c.currency || 'USD');
+    const projected = roundCents(outstandingAr + committedExposure);
+    if (projected <= limitUsd) return null;
+    const latest = db.prepare(
+      "SELECT * FROM credit_overrides WHERE shipment_id=? AND customer_id=? AND override_type='over_limit' ORDER BY created_at DESC LIMIT 1"
+    ).get(shipment.id, c.id);
+    const withinGrace = latest && (Date.now() - new Date(latest.created_at).getTime()) <= OVERRIDE_GRACE_MS;
+    return { companyName: c.company_name, override: withinGrace ? latest : null };
+  }
+
   app.post("/api/shipments/:id/documents/generate", shipmentWrite, documentActionRateLimit, async (req, res) => {
     const { html, filename, docType, containerId = '', responsibleParty = '', sourceCostLineIds = null, relatedDocId = null } = req.body;
     if (!html || !filename) return err(res, "html and filename are required");
+    let consumeOverrideId = null;
     if (docType === 'FR01' || docType === 'FR02') {
-      const shipment = db.prepare("SELECT shipper_id, consignee_id, principal_id, contract_id FROM shipments WHERE id=?").get(req.params.id);
+      const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
       const hold = shipment && await findCreditHold(shipment);
       if (hold) return err(res, `Cannot generate this invoice — ${hold.companyName} is on credit hold${hold.reason ? ` (${hold.reason})` : ''}`, 409);
+      const overLimit = shipment && await findOverLimitBlock(shipment);
+      if (overLimit) {
+        if (!overLimit.override)
+          return err(res, `${overLimit.companyName} is over their credit limit — ask the trade lane's own trade manager to approve an override before generating`, 409);
+        consumeOverrideId = overLimit.override.id;
+      }
     }
     // Written BEFORE the render/sign calls (both real, per-call network round-trips to the
     // pdf-render service) so a crash or hang mid-call still leaves a durable trace — previously
@@ -692,6 +737,9 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
              Array.isArray(sourceCostLineIds) ? JSON.stringify(sourceCostLineIds) : null, relatedDocId);
       logEntityEvent('document', id, 'GENERATED', null, null, null,
         JSON.stringify({ shipmentId: req.params.id, docType: docType || "OT", filename: pdfFilename, containerId, signed: true, certFingerprint: cert.fingerprint_sha256 }));
+      if (consumeOverrideId) {
+        db.prepare("UPDATE credit_overrides SET consumed_at=? WHERE id=?").run(now, consumeOverrideId);
+      }
       const row = db.prepare("SELECT * FROM shipment_documents WHERE id = ?").get(id);
       ok(res, mapDoc(row, req.params.id), 201);
     } catch (e) {

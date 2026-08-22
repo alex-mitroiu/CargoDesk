@@ -287,15 +287,19 @@ export async function resolveInvoiceCurrency(shipment) {
 
 // Organization Model Enhancement Epic 2 (Credit Control) — resolves whether generating a NEW
 // invoice for this shipment should be hard-blocked (any of Shipper/Consignee/Principal, or the
-// linked contract's Named Account, is on credit_hold) or should carry a soft over-limit warning.
-// `newAmountUsd` is the dollar total of THIS generation action (the caller already knows it —
-// scoped by splitPerContainer, same as the currency check right after this one) — overLimit is
-// deliberately computed as outstandingAr + newAmountUsd > creditLimit, not just outstandingAr
-// alone: checking only prior confirmed invoices would never catch the very FIRST invoice that
-// actually pushes a customer over their limit, only ones generated after they're already over.
+// linked contract's Named Account, is on credit_hold) or is over the credit limit (also a hard
+// block as of TKT-GLWMFP — the only way past it is an approved credit_overrides row).
 // Mirrors resolveInvoiceCurrency's shape: resolve up front, let the caller decide how to present
 // it, rather than baking UI decisions into this helper.
-export async function resolveCreditGate(shipment, newAmountUsd = 0) {
+//
+// No separate "amount of this invoice" argument, on purpose — a real bug caught while adding
+// the server-side mirror of this check (routes/shipment-ops.js's findOverLimitBlock): this used
+// to take a `newAmountUsd` param and add it on top of committedExposure, but committedExposure
+// already sums every uninvoiced SELL line for the customer, which necessarily already includes
+// whatever's about to be invoiced (cost lines always exist before Generate is clicked in this
+// app) — double-counting the current invoice's own amount. Harmless while this was a soft,
+// bypassable warning (pre-v0.73.1); a real correctness bug now that it's a hard block.
+export async function resolveCreditGate(shipment) {
   const candidates = [];
   if (shipment.shipperId)   candidates.push({ id: shipment.shipperId,   role: "Shipper" });
   if (shipment.consigneeId) candidates.push({ id: shipment.consigneeId, role: "Consignee" });
@@ -331,14 +335,26 @@ export async function resolveCreditGate(shipment, newAmountUsd = 0) {
   const respId = shipment.principalId || shipment.consigneeId || null;
   const respStatus = respId ? resolved.find(r => r.id === respId)?.status : null;
   const projectedAr = respStatus
-    ? Math.round((respStatus.outstandingAr + (respStatus.committedExposure || 0) + newAmountUsd) * 100) / 100
+    ? Math.round((respStatus.outstandingAr + (respStatus.committedExposure || 0)) * 100) / 100
     : 0;
   const overLimit = respStatus?.creditLimitUsd != null && projectedAr > respStatus.creditLimitUsd;
+
+  // Credit Control Depth, third pass (TKT-GLWMFP) — over-limit is now a real, server-enforced
+  // block (routes/shipment-ops.js's own findOverLimitBlock, the actual source of truth this
+  // only mirrors for the UI) — the only way past it is a live, unconsumed override the
+  // shipment's own lane trade_manager already approved. Fetched only when actually over limit,
+  // since it's meaningless otherwise.
+  let override = null;
+  if (overLimit) {
+    try { override = await api.shipments.creditOverride.get(shipment.id); } catch { /* treat as not yet approved */ }
+  }
 
   return {
     blocked: holds.length > 0,
     holds,
     overLimit,
+    overLimitApproved: !!override,
+    override,
     responsibleParty: respStatus
       ? { companyName: respStatus.companyName,
           creditLimit: respStatus.creditLimit, creditLimitCurrency: respStatus.creditLimitCurrency, creditLimitUsd: respStatus.creditLimitUsd,

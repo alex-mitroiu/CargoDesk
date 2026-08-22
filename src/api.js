@@ -101,7 +101,12 @@ export const api = {
     update: (id, data)=> req("PUT",    `/shipments/${id}`, data),
     remove: (id)      => req("DELETE", `/shipments/${id}`),
     shareToken: (id)  => req("POST",   `/shipments/${id}/share-token`),
+    creditOverride: {
+      get:     (id)       => req("GET",  `/shipments/${id}/credit-override`),
+      approve: (id, data) => req("POST", `/shipments/${id}/credit-override/approve`, data),
+    },
   },
+  creditOverridesQueue: () => req("GET", "/credit-overrides/queue"),
   containers: {
     list:   (p = {})  => req("GET",    `/containers?${new URLSearchParams(p)}`),
     create: (data)    => req("POST",   "/containers", data),
@@ -187,6 +192,7 @@ export const api = {
     remove:         (id)       => req("DELETE", `/customers/${id}`),
     sanctionsCheck: ()         => req("GET",    "/customers/sanctions-check"),
     creditStatus:   (id)       => req("GET",    `/customers/${id}/credit-status`),
+    releaseCreditHold: (id, data) => req("POST", `/customers/${id}/credit-hold/release`, data),
     identifiers: {
       list:   (cid)            => req("GET",    `/customers/${cid}/identifiers`),
       create: (cid, data)      => req("POST",   `/customers/${cid}/identifiers`, data),

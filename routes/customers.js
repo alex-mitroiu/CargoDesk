@@ -8,6 +8,8 @@ module.exports = function customersRoutes(app, ctx) {
           syncOfacSdn, syncConsolidatedScreeningList, scheduleNextCslSync,
           getFxRates, fxCache, getSettings,
           validCoord, roundCents, toUsd, resolveCustomerGroup,
+          computeArExposure, matchesScopeItem, userOwnsLaneForShipment, userOwnsLaneForCustomer,
+          OVERRIDE_GRACE_MS, logEntityEvent,
           createRateLimiter,
           UPLOADS_DIR, fs, path } = ctx;
 
@@ -217,68 +219,6 @@ module.exports = function customersRoutes(app, ctx) {
   // resolution invoiceGenerator.js's own responsibleParty field already uses. Each invoice's
   // real dollar total is resolved via source_cost_line_ids when present (the same field the
   // invoice reversal feature, TKT-DUADU3, introduced for exactly this "what was this invoice
-  // actually for" question), falling back to a live container-scoped SELL sum for older
-  // invoices generated before that column existed — identical fallback to the reversal
-  // route's own. Also returns which SELL cost-line ids were resolved into a confirmed
-  // invoice, so the caller can derive committedExposure (accrued but not yet invoiced) as
-  // everything else — a genuinely different, forward-looking risk figure a flat "outstanding
-  // AR" number can't see (a shipment can carry a large accrued SELL balance that's never been
-  // invoiced yet and this Ar-only figure would show zero risk from it).
-  function computeArExposure(customerId, creditTermsDays) {
-    const shipmentIds = db.prepare(
-      "SELECT id FROM shipments WHERE principal_id=? OR consignee_id=?"
-    ).all(customerId, customerId).map(r => r.id);
-
-    let outstandingAr = 0;
-    const coveredLineIds = new Set();
-    const aging = { current: 0, d1_30: 0, d31_60: 0, d61_90: 0, d90_plus: 0 };
-    const todayMs = Date.now();
-
-    if (shipmentIds.length) {
-      const placeholders = shipmentIds.map(() => '?').join(',');
-      const docs = db.prepare(
-        `SELECT * FROM shipment_documents WHERE shipment_id IN (${placeholders}) AND doc_type IN ('FR01','FR02') AND status='confirmed'`
-      ).all(...shipmentIds);
-      for (const doc of docs) {
-        const sourceIds = doc.source_cost_line_ids ? JSON.parse(doc.source_cost_line_ids) : null;
-        const lines = sourceIds && sourceIds.length
-          ? db.prepare(`SELECT id, amount, exchange_rate FROM shipment_cost_lines WHERE id IN (${sourceIds.map(() => '?').join(',')})`).all(...sourceIds)
-          : db.prepare("SELECT id, amount, exchange_rate FROM shipment_cost_lines WHERE shipment_id=? AND type='SELL' AND container_id=?").all(doc.shipment_id, doc.container_id || '');
-        const docTotal = lines.reduce((s, l) => s + l.amount * l.exchange_rate, 0);
-        for (const l of lines) coveredLineIds.add(l.id);
-        outstandingAr += docTotal;
-
-        // Due date = when the invoice was confirmed (the real "billed" moment) plus this
-        // customer's own payment terms — same baseline GET /api/margin/summary-adjacent
-        // reporting has no equivalent for yet; falls back to created_at for the vanishingly
-        // rare row missing confirmed_at, and to net-0 (due immediately) with no terms set.
-        const refDate = doc.confirmed_at || doc.created_at;
-        const dueMs = new Date(refDate).getTime() + (creditTermsDays || 0) * 86400000;
-        const daysOverdue = Math.floor((todayMs - dueMs) / 86400000);
-        if      (daysOverdue <= 0)  aging.current  += docTotal;
-        else if (daysOverdue <= 30) aging.d1_30    += docTotal;
-        else if (daysOverdue <= 60) aging.d31_60   += docTotal;
-        else if (daysOverdue <= 90) aging.d61_90   += docTotal;
-        else                        aging.d90_plus += docTotal;
-      }
-    }
-
-    let committedExposure = 0;
-    if (shipmentIds.length) {
-      const placeholders = shipmentIds.map(() => '?').join(',');
-      const sellLines = db.prepare(
-        `SELECT id, amount, exchange_rate FROM shipment_cost_lines WHERE shipment_id IN (${placeholders}) AND type='SELL'`
-      ).all(...shipmentIds);
-      for (const l of sellLines) if (!coveredLineIds.has(l.id)) committedExposure += l.amount * l.exchange_rate;
-    }
-
-    return {
-      outstandingAr: roundCents(outstandingAr),
-      committedExposure: roundCents(committedExposure),
-      aging: Object.fromEntries(Object.entries(aging).map(([k, v]) => [k, roundCents(v)])),
-    };
-  }
-
   app.get("/api/customers/:id/credit-status", auth(), async (req, res) => {
     const c = db.prepare("SELECT * FROM customers WHERE id=?").get(req.params.id);
     if (!c) return err(res, "Not found", 404);
@@ -310,6 +250,124 @@ module.exports = function customersRoutes(app, ctx) {
       overLimit: creditLimitUsd != null && currentExposure > creditLimitUsd,
       groupOutstandingAr, hasGroup: groupIds.length > 0,
     });
+  });
+
+  // Credit Control Depth, third pass (TKT-GLWMFP) — releasing an active credit_hold is
+  // EXCLUSIVELY the authority of the trade_manager who owns the shipment's own trade lane, a
+  // direct explicit business rule: never admin, operator, or an out-of-lane trade_manager, no
+  // fallback. Deliberately a NEW dedicated action rather than folding into the generic
+  // PUT /api/customers/:id (which stays open to admin/operator/trade_manager for every other
+  // profile field, credit_hold included when SETTING it — only the release direction is this
+  // exclusive) — mirrors this file's own screening/override precedent (a dedicated,
+  // reason-required action, not a side effect of a generic edit).
+  app.post("/api/customers/:id/credit-hold/release", auth(), (req, res) => {
+    const { shipmentId = '', reason = '' } = req.body;
+    if (!reason.trim()) return err(res, "A reason is required to release a credit hold");
+    const c = db.prepare("SELECT * FROM customers WHERE id=?").get(req.params.id);
+    if (!c) return err(res, "Customer not found", 404);
+    if (!c.credit_hold) return err(res, "This customer is not currently on credit hold");
+    const shipment = shipmentId ? db.prepare("SELECT * FROM shipments WHERE id=?").get(shipmentId) : null;
+    if (!shipment) return err(res, "shipmentId must reference a real shipment involving this customer");
+    if (shipment.shipper_id !== c.id && shipment.consignee_id !== c.id && shipment.principal_id !== c.id)
+      return err(res, "That shipment doesn't involve this customer");
+    if (!userOwnsLaneForShipment(req.user, shipment))
+      return err(res, "Only the trade manager responsible for this shipment's own trade lane may release a credit hold", 403);
+    db.prepare("UPDATE customers SET credit_hold=0, credit_hold_reason='' WHERE id=?").run(c.id);
+    logEntityEvent('customer', c.id, 'CREDIT_HOLD_RELEASED', 'creditHold', 'true', 'false',
+      JSON.stringify({ reason: reason.trim(), shipmentId, releasedBy: req.user.email || req.user.id }));
+    const row = db.prepare(`${CUST_JOIN} WHERE c.id=?`).get(c.id);
+    ok(res, mapCustomer(row));
+  });
+
+  // Same exclusivity, for the OTHER credit block: over-limit is a soft warning everywhere else
+  // in this app (Epic 2's own deliberate v0.57.0 scope decision — a hard block needed a real
+  // AR-aging view, which v0.73.0 finally shipped) — this is the one place it becomes a real,
+  // consumable gate. Approving here does not itself generate anything; it hands operator/admin
+  // a one-time permission slip that POST .../documents/generate consumes on the very next
+  // FR01/FR02 it produces for this shipment while still over limit.
+  app.post("/api/shipments/:id/credit-override/approve", auth(), (req, res) => {
+    const { reason = '' } = req.body;
+    if (!reason.trim()) return err(res, "A reason is required to approve an over-limit override");
+    const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
+    if (!shipment) return err(res, "Shipment not found", 404);
+    if (!userOwnsLaneForShipment(req.user, shipment))
+      return err(res, "Only the trade manager responsible for this shipment's own trade lane may approve an over-limit override", 403);
+    const respId = shipment.principal_id || shipment.consignee_id || null;
+    if (!respId) return err(res, "This shipment has no Principal or Consignee to bill");
+    const c = db.prepare("SELECT * FROM customers WHERE id=?").get(respId);
+    if (!c || c.credit_limit == null) return err(res, "The responsible party has no credit limit set");
+    (async () => {
+      const { outstandingAr, committedExposure } = computeArExposure(c.id, c.credit_terms_days);
+      const limitUsd = await toUsd(c.credit_limit, c.currency || 'USD');
+      if (roundCents(outstandingAr + committedExposure) <= limitUsd)
+        return err(res, "This shipment's responsible party is not currently over their credit limit");
+      const id = `COV-${uid()}`;
+      const now = new Date().toISOString();
+      db.prepare(`INSERT INTO credit_overrides (id,customer_id,shipment_id,override_type,reason,approved_by,approved_by_name,created_at)
+        VALUES (?,?,?,?,?,?,?,?)`)
+        .run(id, c.id, shipment.id, 'over_limit', reason.trim(), req.user.id, req.user.email || '', now);
+      ok(res, { id, customerId: c.id, shipmentId: shipment.id, reason: reason.trim(), approvedBy: req.user.email || '', createdAt: now }, 201);
+    })().catch(e => err(res, e.message || "Failed to approve override", 500));
+  });
+
+  app.get("/api/shipments/:id/credit-override", auth(), (req, res) => {
+    const row = db.prepare(
+      "SELECT * FROM credit_overrides WHERE shipment_id=? AND override_type='over_limit' ORDER BY created_at DESC LIMIT 1"
+    ).get(req.params.id);
+    const stillValid = row && (Date.now() - new Date(row.created_at).getTime()) <= OVERRIDE_GRACE_MS;
+    ok(res, stillValid ? {
+      id: row.id, customerId: row.customer_id, shipmentId: row.shipment_id,
+      reason: row.reason, approvedBy: row.approved_by_name, createdAt: row.created_at,
+    } : null);
+  });
+
+  // The dedicated, non-Accounting surface the ticket calls for — every currently-blocked
+  // shipment (hard credit_hold or a real over-limit situation), one row per (shipment, block).
+  // admin/operator see the FULL queue for visibility/escalation but can never act on it
+  // (canAct always false for them — the whole point of this story); a trade_manager only ever
+  // sees rows their OWN trade_lane scope actually covers, so for them canAct is always true —
+  // there's nothing in their own result set they couldn't act on. Bounded computation: only
+  // customers that are actually held or actually carry a credit_limit are ever checked.
+  app.get("/api/credit-overrides/queue", auth(), requireRole(["admin", "operator", "trade_manager"]), async (req, res) => {
+    const isTradeManager = req.user.roles?.includes('trade_manager');
+    const rows = [];
+
+    const heldCustomers = db.prepare("SELECT * FROM customers WHERE credit_hold=1").all();
+    for (const c of heldCustomers) {
+      const shipments = db.prepare(
+        `SELECT * FROM shipments WHERE (shipper_id=? OR consignee_id=? OR principal_id=?) AND status NOT IN ('Completed','Cancelled')`
+      ).all(c.id, c.id, c.id);
+      for (const s of shipments) {
+        const canAct = userOwnsLaneForShipment(req.user, s);
+        if (isTradeManager && !canAct) continue;
+        const role = s.shipper_id === c.id ? 'Shipper' : s.consignee_id === c.id ? 'Consignee' : 'Principal';
+        rows.push({
+          shipmentId: s.id, customerId: c.id, companyName: c.company_name, role,
+          blockType: 'hold', detail: c.credit_hold_reason || '', canAct,
+        });
+      }
+    }
+
+    const limitedCustomers = db.prepare("SELECT * FROM customers WHERE credit_hold=0 AND credit_limit IS NOT NULL").all();
+    for (const c of limitedCustomers) {
+      const { outstandingAr, committedExposure } = computeArExposure(c.id, c.credit_terms_days);
+      const limitUsd = await toUsd(c.credit_limit, c.currency || 'USD');
+      if (roundCents(outstandingAr + committedExposure) <= limitUsd) continue;
+      const shipments = db.prepare(
+        `SELECT * FROM shipments WHERE (principal_id=? OR consignee_id=?) AND status NOT IN ('Completed','Cancelled')`
+      ).all(c.id, c.id);
+      for (const s of shipments) {
+        const canAct = userOwnsLaneForShipment(req.user, s);
+        if (isTradeManager && !canAct) continue;
+        const role = s.principal_id === c.id ? 'Principal' : 'Consignee';
+        rows.push({
+          shipmentId: s.id, customerId: c.id, companyName: c.company_name, role,
+          blockType: 'over_limit', detail: `Exposure ${roundCents(outstandingAr + committedExposure)} > limit ${limitUsd} (USD)`, canAct,
+        });
+      }
+    }
+
+    ok(res, rows);
   });
 
   // Organization Model Enhancement Epic 4 — walks the parent chain to make sure setting
@@ -374,6 +432,14 @@ module.exports = function customersRoutes(app, ctx) {
     }
     if (!validCoord(latitude, -90, 90)) return err(res, "Latitude must be between -90 and 90");
     if (!validCoord(longitude, -180, 180)) return err(res, "Longitude must be between -180 and 180");
+    // Credit Control Depth, third pass (TKT-GLWMFP) — releasing a credit_hold is exclusively
+    // the shipment's own lane trade_manager's call, never admin/operator, no exception. The
+    // generic PUT is otherwise the normal, unrestricted profile-edit path (SETTING a hold, or
+    // editing anything else about this customer, is untouched) — this only closes the one
+    // direct-API bypass of the dedicated POST .../credit-hold/release endpoint's own check.
+    const existing = db.prepare("SELECT credit_hold FROM customers WHERE id=?").get(req.params.id);
+    if (existing?.credit_hold && !creditHold && !userOwnsLaneForCustomer(req.user, req.params.id))
+      return err(res, "Only the trade manager responsible for this customer's trade lane may release a credit hold — use the Credit Overrides queue", 403);
     const ccU = countryIso2.toUpperCase().trim();
     const cl = creditLimit === null || creditLimit === '' ? null : Number(creditLimit);
     const ctd = creditTermsDays === null || creditTermsDays === '' ? null : parseInt(creditTermsDays, 10);

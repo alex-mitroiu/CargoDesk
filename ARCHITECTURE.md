@@ -1,5 +1,5 @@
 # CargoDesk — Architecture Reference
-**Version:** 0.73.1 "Solvency" · **Date:** 2026-08-22
+**Version:** 0.74.0 "Solvency" · **Date:** 2026-08-22
 **Audience:** Software architects, senior engineers, technical reviewers
 
 > This document was fully refreshed from a direct pass against the live codebase on 2026-08-13
@@ -736,12 +736,12 @@ gap this epic closed was that nothing else in the system (party model, licensing
 payload, a second document) knew an NVOCC could exist.
 ```
 
-### 8.16 Credit Control (added v0.57.0, deepened v0.73.0–v0.73.1, Epic TKT-6XFJQM)
+### 8.16 Credit Control (added v0.57.0, deepened v0.73.0–v0.74.0, Epic TKT-6XFJQM)
 
 ```
 customers.credit_limit/credit_terms_days/credit_hold/credit_hold_reason (v0.57.0) is the base
-model. credit_hold is a HARD BLOCK; credit_limit is a SOFT WARNING — this split is deliberate
-and load-bearing throughout every trigger point below, never conflated.
+model. credit_hold and (as of v0.74.0) credit_limit are both HARD BLOCKS — the "credit_limit is
+a soft warning" framing was true through v0.73.0 but is now stale; see trigger point 3 below.
 
 GET /api/customers/:id/credit-status (routes/customers.js) is the single computed source both
 the hold and the limit checks read from — computeArExposure(customerId, creditTermsDays) returns:
@@ -773,21 +773,62 @@ Trigger points (chronological in a shipment's life, hold-vs-limit behavior noted
      (ShipmentCarrierBookingDetailsPage.jsx via resolveCreditGate) for a modal instead of a raw
      error. A carrier booking is a genuine external commitment — categorically harder-blocked
      than shipment creation above.
-  3. Invoice generation (v0.57.0, extended v0.73.0) — the original and still-primary gate.
-     credit_hold blocks generating a NEW invoice outright (existing cost lines/documents stay
-     editable; only Generate Invoice/Generate Per-Container Invoices are blocked) via
-     src/components/shared/CreditHoldModal.jsx (extracted to shared in v0.73.1 — previously
-     local to ShipmentAccountingInvoicesPage.jsx; same component now also backs trigger point 2,
-     parametrized by an `action` string for call-site-specific wording). credit_limit is
-     resolveCreditGate()'s soft warning: overLimit = (outstandingAr + committedExposure +
-     the new invoice's amount) > creditLimitUsd — Cancel/Generate Anyway, never a hard block.
+  3. Invoice generation (v0.57.0, extended v0.73.0, credit_limit hardened v0.74.0) — the
+     original and still-primary gate. credit_hold blocks generating a NEW invoice outright
+     (existing cost lines/documents stay editable; only Generate Invoice/Generate Per-Container
+     Invoices are blocked) via src/components/shared/CreditHoldModal.jsx (extracted to shared in
+     v0.73.1 — previously local to ShipmentAccountingInvoicesPage.jsx; also backs trigger point
+     2, parametrized by an `action` string). credit_limit is now the SAME class of hard block —
+     overLimit = (outstandingAr + committedExposure) > creditLimitUsd, enforced server-side in
+     POST .../documents/generate (FR01/FR02 only) via findOverLimitBlock, mirrored client-side
+     via resolveCreditGate for OverLimitBlockModal (no bypass, replaces the old v0.57.0-v0.73.0
+     "Generate Anyway" soft warning). NOTE: this formula deliberately does NOT add a separate
+     "this invoice's own amount" term — committedExposure already includes it, since a cost line
+     always exists in the DB before Generate is clicked; a real bug where the pre-v0.74.0 code
+     added it anyway (double-counting) was caught and fixed in the same pass, on both the client
+     and server copies of this formula.
 
-Deliberately still deferred, named not silently dropped: a trade-lane-scoped override role
-(only the trade manager working that lane may ever clear a hold — TKT-GLWMFP) and dunning
-emails (TKT-SUEDWH, lowest priority). Both real, both logged in Kanban.
+Exclusive trade-lane override (v0.74.0, TKT-GLWMFP) — closes this Epic. Direct, explicit
+business rule: only the trade_manager scoped to a shipment's own trade lane may ever release a
+credit_hold or approve an over-limit generation — never admin, operator, or an out-of-lane
+trade_manager. Reuses user_scope_items' existing item_type='trade_lane' + matchesScopeItem()/
+portLanesMap (server.js, same mechanism applyShipmentAccessFilter already uses to scope
+shipment visibility) via two new helpers: userOwnsLaneForShipment(user, shipment) — true if any
+of the user's own trade_lane scope items match the shipment's pol/pod — and
+userOwnsLaneForCustomer(user, customerId) — same check, but true if ANY shipment where this
+customer is Shipper/Consignee/Principal matches (credit_hold lives on the customer, not one
+shipment). Plain role-membership check (req.user.roles.includes('trade_manager'), matching
+requireRole's own convention) rather than primaryRoleSV's rank/effective-role logic — this is a
+narrow grant, not a hierarchy position, and should hold even for a user who also carries a
+higher-ranked role.
+  - Releasing a hold: POST /api/customers/:id/credit-hold/release (reason required, mirrors the
+    existing screening/override pattern) — the SAME lane check was also added inline to the
+    generic PUT /api/customers/:id route (only for the credit_hold true->false transition;
+    setting a hold, or editing anything else about a customer, is unrestricted as before) to
+    close the direct-API bypass the dedicated endpoint alone would have left open.
+  - Approving an over-limit generation: POST /api/shipments/:id/credit-override/approve (reason
+    required, re-verifies the party is genuinely over limit right now) inserts a credit_overrides
+    row (customer_id, shipment_id, override_type='over_limit', approved_by, created_at). Validity
+    is a 60-MINUTE GRACE WINDOW from approval, not strict single-use — a per-container split
+    invoice run (invoiceGenerator.js's generateInvoices) calls POST .../documents/generate once
+    PER CONTAINER for what's really one logical action; single-use-on-first-call would have
+    silently re-blocked containers 2..N of the same batch. Short enough that it can't become a
+    standing bypass for a later, genuinely new over-limit event (a customer whose balance rises
+    again days later needs a fresh approval); long enough to cover any realistic one-batch
+    generation. GET /api/shipments/:id/credit-override surfaces the current valid override (or
+    null) so the frontend can skip straight to generating instead of re-showing the block.
+  - New "Credit Overrides" page (src/pages/CreditOverridesPage.jsx, top-level nav — deliberately
+    NOT nested under Accounting, which stays hidden from trade_manager's nav per v0.29.0, a
+    narrow carve-out so this one exclusive authority stays reachable) lists every currently-
+    blocked shipment via GET /api/credit-overrides/queue, server-scoped per viewer: admin/
+    operator get the full queue for visibility/escalation with canAct always false; a
+    trade_manager's own result set is pre-filtered to shipments their lane scope actually
+    covers, so canAct is always true for everything they see.
 
-Test coverage: tests/customer-credit-control.test.js (59 assertions as of v0.73.1) covers every
-trigger point above via live HTTP calls. One disclosed, permanent gap: AR aging bucket
+Test coverage: tests/customer-credit-control.test.js (83 assertions as of v0.74.0) covers every
+trigger point above via live HTTP calls, including the full authorization matrix for both
+exclusive actions (in-lane/out-of-lane/admin, each tested against both allow and deny paths) and
+the grace-window/queue-scoping behavior. One disclosed, permanent gap: AR aging bucket
 *boundaries* (31+/61+/90+ days) can't be exercised through pure HTTP — no endpoint backdates an
 invoice's confirmed_at — only the "current" bucket is integration-tested; the day-threshold
 arithmetic itself is simple, reviewed math, not faked into a false-confidence test.
@@ -996,7 +1037,9 @@ Every figure above was read directly from the code or a live `GET /api/health` c
 CargoDesk v0.71.0 "Docket" · 2026-08-19. Incrementally updated again (§8.16, and the
 CUSTOMERS/ORGANIZATION domain-grouping context it touches) — CargoDesk v0.73.1 "Solvency" ·
 2026-08-22, backfilling a feature (Credit Control, shipped v0.57.0) that had never been
-documented here at all. Appendix A's metrics were not re-measured in either incremental pass
+documented here at all; §8.16 updated again in place the same day for v0.74.0 "Solvency" to
+cover that release's trade-lane override authorization model and grace-window design (Epic
+`TKT-6XFJQM` closing pass). Appendix A's metrics were not re-measured in any incremental pass
 (see the banner at the top of this document). Next scheduled review: whichever comes first of
 (a) the next major structural change (a new microservice extraction, a routing framework
 change, a data-store migration) or (b) six months from the 2026-08-13 full pass — whichever is
