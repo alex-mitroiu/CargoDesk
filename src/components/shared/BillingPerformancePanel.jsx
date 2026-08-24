@@ -4,6 +4,7 @@ import { api } from "../../api";
 import { toast } from "../../toast";
 import Btn from "../primitives/Btn";
 import Spinner from "../primitives/Spinner";
+import ShipmentGpSankey from "./ShipmentGpSankey";
 
 // Billing Performance report (TKT-B4VBDH, Epic TKT-KR6ZBT) — row-level FR01/FR02 invoices,
 // filterable by any combination of status/sent/paid and office/customer/lane/carrier, per
@@ -15,8 +16,21 @@ import Spinner from "../primitives/Spinner";
 const fmtUsd = v => v == null ? "—" : `$${Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const fmtDate = s => s ? new Date(s).toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" }) : "—";
 
-const STATUS_OPTIONS = ["draft", "confirmed", "voided"];
-const PAY_OPTIONS = ["unpaid", "partial", "paid"];
+// paymentState — the one status this report leads with: "is this paid, and if not, how late is
+// it" is what a manager actually cares about, not the invoice document's own draft/confirmed/
+// voided lifecycle label. A function, not a frozen object, since T's colors mutate in place on
+// theme toggle (same class of bug this codebase already fixed once — see ShipmentGpSankey's own
+// kindColor, v0.55.1's LEG_TYPE_COLOR note).
+const PAYMENT_STATE_ORDER = ["missing", "draft", "unpaid", "partial", "overdue", "paid", "voided"];
+const paymentStateMeta = state => ({
+  missing: { label: "Missing", color: T.textMuted },
+  draft:   { label: "Draft",   color: T.info },
+  unpaid:  { label: "Unpaid",  color: T.textMuted },
+  partial: { label: "Partial", color: T.warning },
+  overdue: { label: "Overdue", color: T.danger },
+  paid:    { label: "Paid",    color: T.success },
+  voided:  { label: "Voided",  color: T.textMuted },
+}[state] || { label: state, color: T.textMuted });
 
 const Chip = ({ active, onClick, children, color }) => (
   <button type="button" onClick={onClick} style={{
@@ -46,9 +60,8 @@ const BillingPerformancePanel = () => {
   const [error,   setError]   = useState(false);
   const [exporting, setExporting] = useState(false);
 
-  const [statusFilter, setStatusFilter] = useState(new Set());   // subset of STATUS_OPTIONS, empty = all
+  const [stateFilter,  setStateFilter]  = useState(new Set());   // subset of PAYMENT_STATE_ORDER, empty = all
   const [sentFilter,   setSentFilter]   = useState("");           // "" | "sent" | "not_sent"
-  const [payFilter,    setPayFilter]    = useState(new Set());    // subset of PAY_OPTIONS + "overdue"
   const [officeId,     setOfficeId]     = useState("");
   const [customerId,   setCustomerId]   = useState("");
   const [laneCode,     setLaneCode]     = useState("");
@@ -84,21 +97,16 @@ const BillingPerformancePanel = () => {
   const filtered = useMemo(() => {
     if (!rows) return [];
     return rows.filter(r => {
-      if (statusFilter.size && !statusFilter.has(r.status)) return false;
+      if (stateFilter.size && !stateFilter.has(r.paymentState)) return false;
       if (sentFilter === "sent" && !r.sent) return false;
       if (sentFilter === "not_sent" && r.sent) return false;
-      if (payFilter.size) {
-        const matchesOverdue = payFilter.has("overdue") && r.daysOverdue != null && r.daysOverdue > 0;
-        const matchesPay = r.paymentStatus && payFilter.has(r.paymentStatus);
-        if (!matchesOverdue && !matchesPay) return false;
-      }
       if (officeId && r.officeId !== officeId) return false;
       if (customerId && r.customerId !== customerId) return false;
       if (laneCode && r.laneCode !== laneCode) return false;
       if (carrierCode && r.carrierCode !== carrierCode) return false;
       return true;
     });
-  }, [rows, statusFilter, sentFilter, payFilter, officeId, customerId, laneCode, carrierCode]);
+  }, [rows, stateFilter, sentFilter, officeId, customerId, laneCode, carrierCode]);
 
   const stats = useMemo(() => {
     const confirmed = filtered.filter(r => r.status === "confirmed");
@@ -108,11 +116,25 @@ const BillingPerformancePanel = () => {
     const overdueUsd = overdue.reduce((s, r) => s + (r.outstandingUsd || 0), 0);
     const sentPct = confirmed.length ? Math.round(confirmed.filter(r => r.sent).length / confirmed.length * 100) : null;
     const paidPct = confirmed.length ? Math.round(confirmed.filter(r => r.paymentStatus === "paid").length / confirmed.length * 100) : null;
-    return { invoicedUsd, outstandingUsd, overdueCount: overdue.length, overdueUsd, sentPct, paidPct };
+    const missingCount = filtered.filter(r => r.paymentState === "missing").length;
+    return { invoicedUsd, outstandingUsd, overdueCount: overdue.length, overdueUsd, sentPct, paidPct, missingCount };
   }, [filtered]);
 
-  const hasFilters = statusFilter.size || sentFilter || payFilter.size || officeId || customerId || laneCode || carrierCode;
-  const clearFilters = () => { setStatusFilter(new Set()); setSentFilter(""); setPayFilter(new Set()); setOfficeId(""); setCustomerId(""); setLaneCode(""); setCarrierCode(""); };
+  const hasFilters = stateFilter.size || sentFilter || officeId || customerId || laneCode || carrierCode;
+  const clearFilters = () => { setStateFilter(new Set()); setSentFilter(""); setOfficeId(""); setCustomerId(""); setLaneCode(""); setCarrierCode(""); };
+
+  // Profit Breakdown graph — the same Sankey used on GP by Trade Area and the shipment GP
+  // Overview page, scoped here to exactly the shipments behind whatever's currently filtered
+  // below. Direct request: raw numbers in a table are "too complicated" for a quick read — a
+  // picture of where the money's going answers "how are we looking" at a glance instead.
+  const [gpLines, setGpLines] = useState(null);
+  const shipmentIdsKey = useMemo(() => [...new Set(filtered.map(r => r.shipmentId))].sort().join(","), [filtered]);
+  useEffect(() => {
+    if (!shipmentIdsKey) { setGpLines([]); return; }
+    api.reports.billingPerformanceGpLines(shipmentIdsKey.split(","))
+      .then(({ lines }) => setGpLines(lines))
+      .catch(() => setGpLines([]));
+  }, [shipmentIdsKey]);
 
   const runExport = async () => {
     setExporting(true);
@@ -135,13 +157,14 @@ const BillingPerformancePanel = () => {
     { label: "Invoiced", value: fmtUsd(stats.invoicedUsd), color: T.text },
     { label: "Outstanding", value: fmtUsd(stats.outstandingUsd), color: stats.outstandingUsd > 0 ? T.warning : T.text },
     { label: "Overdue", value: `${stats.overdueCount} · ${fmtUsd(stats.overdueUsd)}`, color: stats.overdueCount > 0 ? T.danger : T.text },
+    { label: "Missing", value: `${stats.missingCount}`, color: stats.missingCount > 0 ? T.danger : T.text },
     { label: "Sent", value: stats.sentPct != null ? `${stats.sentPct}%` : "—", color: T.text },
     { label: "Paid", value: stats.paidPct != null ? `${stats.paidPct}%` : "—", color: T.text },
   ];
 
   return (
     <div id="billing-performance-panel">
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10, marginBottom: 18 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 10, marginBottom: 18 }}>
         {STAT_CARDS.map(c => (
           <div key={c.label} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: "12px 14px" }}>
             <div style={{ fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".06em" }}>{c.label}</div>
@@ -150,27 +173,30 @@ const BillingPerformancePanel = () => {
         ))}
       </div>
 
+      {gpLines === null ? (
+        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 40, textAlign: "center", marginBottom: 18 }}>
+          <Spinner />
+        </div>
+      ) : (
+        <ShipmentGpSankey lines={gpLines} />
+      )}
+
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: "14px 16px", marginBottom: 14,
         display: "flex", flexDirection: "column", gap: 10 }}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" }}>
           <span style={{ ...th, marginRight: 4 }}>Status</span>
-          {STATUS_OPTIONS.map(s => (
-            <Chip key={s} active={statusFilter.has(s)} onClick={() => toggleSet(statusFilter, setStatusFilter, s)}>
-              {s[0].toUpperCase() + s.slice(1)}
-            </Chip>
-          ))}
+          {PAYMENT_STATE_ORDER.map(s => {
+            const meta = paymentStateMeta(s);
+            return (
+              <Chip key={s} active={stateFilter.has(s)} onClick={() => toggleSet(stateFilter, setStateFilter, s)} color={meta.color}>
+                {meta.label}
+              </Chip>
+            );
+          })}
           <span style={{ width: 1, height: 18, background: T.border, margin: "0 4px" }} />
           <span style={{ ...th, marginRight: 4 }}>Sent</span>
           <Chip active={sentFilter === "sent"} onClick={() => setSentFilter(p => p === "sent" ? "" : "sent")} color={T.info}>Sent</Chip>
           <Chip active={sentFilter === "not_sent"} onClick={() => setSentFilter(p => p === "not_sent" ? "" : "not_sent")} color={T.info}>Not Sent</Chip>
-          <span style={{ width: 1, height: 18, background: T.border, margin: "0 4px" }} />
-          <span style={{ ...th, marginRight: 4 }}>Payment</span>
-          {PAY_OPTIONS.map(p => (
-            <Chip key={p} active={payFilter.has(p)} onClick={() => toggleSet(payFilter, setPayFilter, p)} color={T.success}>
-              {p[0].toUpperCase() + p.slice(1)}
-            </Chip>
-          ))}
-          <Chip active={payFilter.has("overdue")} onClick={() => toggleSet(payFilter, setPayFilter, "overdue")} color={T.danger}>Overdue</Chip>
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
           <Select value={officeId} onChange={setOfficeId} options={facets.offices} placeholder="All offices" />
@@ -191,36 +217,37 @@ const BillingPerformancePanel = () => {
         </div>
       ) : (
         <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden", background: T.surface, overflowX: "auto" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 16px", borderBottom: `1px solid ${T.border}`, background: T.bg, minWidth: 1060 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 16px", borderBottom: `1px solid ${T.border}`, background: T.bg, minWidth: 1000 }}>
             <div style={{ ...th, width: 90, flexShrink: 0 }}>Shipment</div>
             <div style={{ ...th, flex: 1, minWidth: 100 }}>Customer</div>
-            <div style={{ ...th, width: 80, flexShrink: 0 }}>Status</div>
-            <div style={{ ...th, width: 60, flexShrink: 0 }}>Sent</div>
-            <div style={{ ...th, width: 120, flexShrink: 0 }}>Payment</div>
+            <div style={{ ...th, width: 90, flexShrink: 0 }}>Status</div>
+            <div style={{ ...th, width: 55, flexShrink: 0 }}>Sent</div>
             <div style={{ ...th, width: 95, flexShrink: 0, textAlign: "right" }}>Amount</div>
             <div style={{ ...th, width: 105, flexShrink: 0, textAlign: "right" }}>Outstanding</div>
+            <div style={{ ...th, width: 70, flexShrink: 0, textAlign: "right" }}>Days Over</div>
             <div style={{ ...th, width: 130, flexShrink: 0 }}>Office</div>
             <div style={{ ...th, width: 70, flexShrink: 0 }}>Carrier</div>
           </div>
           {filtered.slice(0, 200).map(r => {
-            const isOverdue = r.daysOverdue != null && r.daysOverdue > 0;
-            const payColor = r.paymentStatus === "paid" ? T.success : r.paymentStatus === "partial" ? T.warning : isOverdue ? T.danger : T.textMuted;
+            const meta = paymentStateMeta(r.paymentState);
             return (
-              <div key={r.docId} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 16px",
-                borderBottom: `1px solid ${T.border}22`, minWidth: 1060 }}>
+              <div key={r.docId || r.shipmentId} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 16px",
+                borderBottom: `1px solid ${T.border}22`, minWidth: 1000 }}>
                 <div style={{ width: 90, flexShrink: 0, fontFamily: T.mono, fontSize: 11.5, color: T.text, fontWeight: 600 }}>{r.shipmentId}</div>
                 <div style={{ flex: 1, minWidth: 100, fontFamily: T.body, fontSize: 12.5, color: r.customerName ? T.text : T.border,
                   overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.customerName || "—"}</div>
-                <div style={{ width: 80, flexShrink: 0, fontFamily: T.mono, fontSize: 10.5, fontWeight: 700, textTransform: "uppercase",
-                  color: r.status === "voided" ? T.textMuted : r.status === "confirmed" ? T.success : T.warning }}>{r.status}</div>
-                <div style={{ width: 60, flexShrink: 0, fontFamily: T.body, fontSize: 11.5, color: r.sent ? T.info : T.border }}>{r.sent ? "Sent" : "—"}</div>
-                <div style={{ width: 120, flexShrink: 0, fontFamily: T.body, fontSize: 11.5, fontWeight: 600, color: payColor,
-                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {r.paymentStatus ? (isOverdue ? `${r.paymentStatus} · ${r.daysOverdue}d over` : r.paymentStatus) : "—"}
+                <div style={{ width: 90, flexShrink: 0 }}>
+                  <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, textTransform: "uppercase",
+                    padding: "2px 8px", borderRadius: 20, color: meta.color, background: `${meta.color}18`,
+                    border: `1px solid ${meta.color}44`, whiteSpace: "nowrap" }}>{meta.label}</span>
                 </div>
+                <div style={{ width: 55, flexShrink: 0, fontFamily: T.body, fontSize: 11.5, color: r.sent ? T.info : T.border }}>{r.sent ? "Sent" : "—"}</div>
                 <div style={{ width: 95, flexShrink: 0, textAlign: "right", fontFamily: T.mono, fontSize: 12, color: T.text }}>{fmtUsd(r.amountUsd)}</div>
                 <div style={{ width: 105, flexShrink: 0, textAlign: "right", fontFamily: T.mono, fontSize: 12, color: r.outstandingUsd > 0 ? T.warning : T.textMuted }}>
                   {r.outstandingUsd != null ? fmtUsd(r.outstandingUsd) : "—"}
+                </div>
+                <div style={{ width: 70, flexShrink: 0, textAlign: "right", fontFamily: T.mono, fontSize: 12, color: r.daysOverdue > 0 ? T.danger : T.textMuted }}>
+                  {r.daysOverdue != null && r.daysOverdue > 0 ? `${r.daysOverdue}d` : "—"}
                 </div>
                 <div style={{ width: 130, flexShrink: 0, fontFamily: T.body, fontSize: 11, color: T.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {r.officeName || "—"}

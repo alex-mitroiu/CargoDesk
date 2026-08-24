@@ -22,7 +22,9 @@
  * Story 4 (TKT-B4VBDH, Billing Performance report): GET /api/reports/billing-performance
  * returns row-level FR01/FR02 invoices enriched with status/sent/payment/office/customer/lane/
  * carrier, gated by the same finance access (canViewFinance or admin) Reports and Margin
- * already use.
+ * already use. POST /api/reports/billing-performance/gp-lines feeds the same ShipmentGpSankey
+ * "Profit Breakdown" graph the GP-by-Trade-Area report already uses, scoped to an explicit
+ * shipment-id list (the frontend's own currently-filtered rows) instead of a geography grouping.
  *
  * Story 5 (TKT-4TEYT1, configurable per-customer reminder cadence): customers.reminderEnabled/
  * reminderIntervalDays let a customer opt into automated overdue-payment reminder emails, on
@@ -286,18 +288,22 @@ async function confirmDoc(docId, token) {
       row && row.status === "draft" && row.paymentStatus === null && row.sent === false, JSON.stringify(row));
     assert("amountUsd correctly resolved from the source cost line", row?.amountUsd === 1000, JSON.stringify(row));
     assert("customer/carrier/lane correctly resolved", row?.customerName === "Test Billing Report Co" && row?.carrierCode === "MAEU" && row?.laneCode === "EU-N", JSON.stringify(row));
+    assert("paymentState leads with 'draft' before confirmation", row?.paymentState === "draft", JSON.stringify(row));
 
     await confirmDoc(docBp.id, token);
     row = await reportRow();
     assert("confirmed invoice shows paymentStatus unpaid, full amount outstanding", row?.status === "confirmed" && row?.paymentStatus === "unpaid" && row?.outstandingUsd === 1000, JSON.stringify(row));
+    assert("paymentState mirrors paymentStatus once confirmed", row?.paymentState === "unpaid", JSON.stringify(row));
 
     await request("POST", `/api/shipments/${shipBpId}/documents/${docBp.id}/mark-paid`, { paidAt: "2026-08-20", paidAmount: 400 }, token);
     row = await reportRow();
     assert("partially paid invoice shows paymentStatus partial with the right remaining balance", row?.paymentStatus === "partial" && row?.outstandingUsd === 600, JSON.stringify(row));
+    assert("paymentState is 'partial'", row?.paymentState === "partial", JSON.stringify(row));
 
     await request("POST", `/api/shipments/${shipBpId}/documents/${docBp.id}/mark-paid`, { paidAt: "2026-08-21", paidAmount: 1000 }, token);
     row = await reportRow();
     assert("fully paid invoice shows paymentStatus paid, zero outstanding", row?.paymentStatus === "paid" && row?.outstandingUsd === 0, JSON.stringify(row));
+    assert("paymentState is 'paid' regardless of how many partial payments led there", row?.paymentState === "paid", JSON.stringify(row));
 
     const ediSendBp = await request("POST", `/api/shipments/${shipBpId}/documents/${docBp.id}/send-edi`, { recipientCode: "MAEU", recipientLabel: "Maersk Line" }, token);
     assert("send-edi for the report test fixture succeeds", ediSendBp.status === 201, JSON.stringify(ediSendBp.body));
@@ -312,6 +318,39 @@ async function confirmDoc(docId, token) {
     const rpt2 = await request("GET", "/api/reports/billing-performance", null, token);
     const rowVoided = rpt2.body.find(r => r.docId === docBp2.id);
     assert("voided invoice shows status voided with no payment status", rowVoided?.status === "voided" && rowVoided?.paymentStatus === null, JSON.stringify(rowVoided));
+    assert("paymentState is 'voided', its own distinct state", rowVoided?.paymentState === "voided", JSON.stringify(rowVoided));
+
+    console.log("\nBilling Performance report — Missing (real bug fix: a shipment past its invoice deadline with NO invoice at all was completely invisible to this report, since it only ever scanned shipment_documents)");
+    const custMiss = await request("POST", "/api/customers", { companyName: "Test Billing Missing Co", invoiceDeadlineDays: 5 }, token);
+    const shipMiss = await request("POST", "/api/shipments", {
+      pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+      principalId: custMiss.body.id, principalName: "Test Billing Missing Co",
+    }, token);
+    const rptBeforeDelivery = await request("GET", "/api/reports/billing-performance", null, token);
+    assert("not yet in the report — no delivered milestone completed yet", !rptBeforeDelivery.body.some(r => r.shipmentId === shipMiss.body.id));
+
+    await request("POST", `/api/shipments/${shipMiss.body.id}/milestones/init`, {}, token);
+    const msMiss = await request("GET", `/api/shipments/${shipMiss.body.id}/milestones`, null, token);
+    const deliveredMiss = msMiss.body.find(m => m.milestoneKey === "delivered");
+    const twelveDaysAgoBp = new Date(Date.now() - 12 * 86400000).toISOString();
+    await request("PUT", `/api/milestones/${deliveredMiss.id}`, { completedAt: twelveDaysAgoBp }, token);
+
+    const rptAfterDelivery = await request("GET", "/api/reports/billing-performance", null, token);
+    const missingRow = rptAfterDelivery.body.find(r => r.shipmentId === shipMiss.body.id);
+    assert("delivered past the deadline with no invoice at all now shows up", !!missingRow, JSON.stringify(rptAfterDelivery.body.filter(r => r.customerName === "Test Billing Missing Co")));
+    assert("paymentState is 'missing'", missingRow?.paymentState === "missing", JSON.stringify(missingRow));
+    assert("no docId — there is no document behind this row", missingRow?.docId === null, JSON.stringify(missingRow));
+    assert("no dollar amounts — nothing has been invoiced to have an amount", missingRow?.amountUsd === null && missingRow?.outstandingUsd === null, JSON.stringify(missingRow));
+    assert("daysOverdue reflects days past the deadline (12 days since delivery - 5 day deadline ~= 7)", missingRow && missingRow.daysOverdue >= 6 && missingRow.daysOverdue <= 8, JSON.stringify(missingRow));
+    assert("customer/office/carrier still resolve normally for a Missing row", missingRow?.customerName === "Test Billing Missing Co" && missingRow?.carrierCode === "MAEU", JSON.stringify(missingRow));
+
+    const lineMiss = await addSellLine(shipMiss.body.id, token, 300, "OFR");
+    const docMiss = await generateInvoiceDoc(shipMiss.body.id, token, [lineMiss.id]);
+    await confirmDoc(docMiss.id, token);
+    const rptAfterInvoiced = await request("GET", "/api/reports/billing-performance", null, token);
+    assert("no longer 'missing' once a real invoice exists — it's a normal confirmed row instead",
+      !rptAfterInvoiced.body.some(r => r.shipmentId === shipMiss.body.id && r.paymentState === "missing"), JSON.stringify(rptAfterInvoiced.body.filter(r => r.shipmentId === shipMiss.body.id)));
+    assert("the real invoice itself is present with docId set", rptAfterInvoiced.body.some(r => r.docId === docMiss.id), JSON.stringify(rptAfterInvoiced.body.filter(r => r.shipmentId === shipMiss.body.id)));
 
     console.log("\nBilling Performance report — CSV export");
     const csvRes = await new Promise((resolve, reject) => {
@@ -322,6 +361,27 @@ async function confirmDoc(docId, token) {
     });
     assert("CSV export returns 200 with a csv content-type", csvRes.status === 200 && /text\/csv/.test(csvRes.headers["content-type"] || ""), JSON.stringify(csvRes.headers));
     assert("CSV body has a header row and at least one data row", csvRes.body.split("\n").length >= 2 && csvRes.body.includes("Shipment"));
+
+    console.log("\nBilling Performance — GP Sankey lines, scoped to exactly the requested shipments");
+    const gpAsOcc = await request("POST", "/api/reports/billing-performance/gp-lines", { shipmentIds: [shipBpId] }, occLogin.body.token);
+    assert("occ_bk with no canViewFinance flag is rejected (403)", gpAsOcc.status === 403, JSON.stringify(gpAsOcc.body));
+
+    const gpEmpty = await request("POST", "/api/reports/billing-performance/gp-lines", { shipmentIds: [] }, token);
+    assert("an empty shipmentIds list returns an empty lines array, not an error", gpEmpty.status === 200 && Array.isArray(gpEmpty.body.lines) && gpEmpty.body.lines.length === 0, JSON.stringify(gpEmpty.body));
+
+    const gpScoped = await request("POST", "/api/reports/billing-performance/gp-lines", { shipmentIds: [shipBpId] }, token);
+    assert("returns 200 with a lines array", gpScoped.status === 200 && Array.isArray(gpScoped.body.lines), JSON.stringify(gpScoped.body));
+    const gpSellLine = gpScoped.body.lines.find(l => l.id === lineBp.id);
+    assert("the fixture's own $1000 OFR SELL cost line is present, in mapCostLine shape", gpSellLine && gpSellLine.type === "SELL" && gpSellLine.chargeCode === "OFR" && gpSellLine.amountUsd === 1000, JSON.stringify(gpSellLine));
+
+    const custGpOther = await request("POST", "/api/customers", { companyName: "Test GP Lines Other Co" }, token);
+    const shipGpOther = await request("POST", "/api/shipments", {
+      pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+      principalId: custGpOther.body.id, principalName: "Test GP Lines Other Co",
+    }, token);
+    await addSellLine(shipGpOther.body.id, token, 5000, "THC");
+    const gpNotRequested = await request("POST", "/api/reports/billing-performance/gp-lines", { shipmentIds: [shipBpId] }, token);
+    assert("a shipment not in the requested id list never leaks into the response", !gpNotRequested.body.lines.some(l => l.chargeCode === "THC" && l.amountUsd === 5000), JSON.stringify(gpNotRequested.body.lines));
 
     console.log("\nreminderEnabled/reminderIntervalDays — round-trip through customer create/update");
     const custRem = await request("POST", "/api/customers", { companyName: "Test Reminder Co", reminderEnabled: true, reminderIntervalDays: 7 }, token);

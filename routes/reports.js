@@ -223,8 +223,8 @@ module.exports = function reportsRoutes(app, ctx) {
       .forEach(r => { if (!(r.iso2 in countryLane)) countryLane[r.iso2] = r.lane_code; });
     const laneNames = {};
     db.prepare("SELECT code, name FROM trade_lanes").all().forEach(l => { laneNames[l.code] = l.name; });
-    const custTermsById = {};
-    db.prepare("SELECT id, credit_terms_days FROM customers").all().forEach(c => { custTermsById[c.id] = c.credit_terms_days; });
+    const custById = {};
+    db.prepare("SELECT id, credit_terms_days, invoice_deadline_days FROM customers").all().forEach(c => { custById[c.id] = c; });
 
     const todayMs = Date.now();
     const results = rows.map(r => {
@@ -236,15 +236,25 @@ module.exports = function reportsRoutes(app, ctx) {
       const paymentStatus = !isLive ? null : outstandingUsd <= 0 ? 'paid' : (r.paid_amount || 0) > 0 ? 'partial' : 'unpaid';
       let daysOverdue = null;
       if (isLive && outstandingUsd > 0) {
-        const termsDays = respId ? (custTermsById[respId] ?? 0) : 0;
+        const termsDays = respId ? (custById[respId]?.credit_terms_days ?? 0) : 0;
         const refDate = r.confirmed_at || r.created_at;
         const dueMs = new Date(refDate).getTime() + (termsDays || 0) * 86400000;
         daysOverdue = Math.floor((todayMs - dueMs) / 86400000);
       }
+      // paymentState — the single unified status this report leads with (filter chips + the
+      // table's own STATUS column): a manager cares "is this paid, and if not, how late is it",
+      // not the document's own draft/confirmed/voided lifecycle label first. Draft/voided still
+      // resolve to their own distinct states rather than being folded away, so nothing about the
+      // existing document-status data is lost — they're just no longer the LEADING concept.
+      const paymentState = r.status === 'voided' ? 'voided'
+        : !isLive ? 'draft'
+        : paymentStatus === 'paid' ? 'paid'
+        : (daysOverdue != null && daysOverdue > 0) ? 'overdue'
+        : paymentStatus;
       const laneCode = countryLane[portCountryMap[r.pol]] || '';
       return {
         docId: r.id, shipmentId: r.shipment_id, docType: r.doc_type, filename: r.filename,
-        status: r.status || 'draft', createdAt: r.created_at, confirmedAt: r.confirmed_at || null,
+        status: r.status || 'draft', paymentState, createdAt: r.created_at, confirmedAt: r.confirmed_at || null,
         firstSentAt: r.first_sent_at || null, sent: !!r.first_sent_at,
         lastReminderSentAt: r.last_reminder_sent_at || null,
         paidAt: r.paid_at || null, paidAmount: r.paid_amount ?? null, transactionId: r.transaction_id || '',
@@ -257,12 +267,53 @@ module.exports = function reportsRoutes(app, ctx) {
       };
     });
 
+    // Missing — a shipment that's earned the right to be invoiced (delivered, past its
+    // responsible party's own invoice_deadline_days) but has NO FR01/FR02 at all, so it can
+    // never show up above (that scan only ever walks shipment_documents). Same "delivered +
+    // past deadline" definition GET /api/invoice-deadlines/overdue and the Invoice Collections
+    // report already use — reused here, not reinvented, so all three can never disagree about
+    // what "missing" means. Direct bug report: these shipments were invisible to Billing
+    // Performance entirely, which defeats the report's own purpose of surfacing collection risk.
+    const invoicedShipmentIds = new Set(rows.map(r => r.shipment_id));
+    const deliveredRows = db.prepare(`
+      SELECT s.id AS shipment_id, s.carrier_code, s.pol, s.pod, s.emo_office_id,
+             s.principal_id, s.principal_name, s.consignee_id, s.consignee_name,
+             m.completed_at AS delivered_at
+      FROM shipments s
+      JOIN shipment_milestones m ON m.shipment_id = s.id AND m.milestone_key = 'delivered' AND m.completed_at != ''
+      WHERE s.status != 'Cancelled'
+    `).all();
+    for (const r of deliveredRows) {
+      if (invoicedShipmentIds.has(r.shipment_id)) continue;
+      const respId   = r.principal_id || r.consignee_id || null;
+      const respName = r.principal_id ? r.principal_name : r.consignee_name;
+      const deadlineDays = respId ? custById[respId]?.invoice_deadline_days : null;
+      if (deadlineDays == null) continue; // no configured deadline -> nothing to be "missing" against
+      const daysSinceDelivery = Math.floor((todayMs - new Date(r.delivered_at).getTime()) / 86400000);
+      const daysOverdue = daysSinceDelivery - deadlineDays;
+      if (daysOverdue <= 0) continue;
+      const laneCode = countryLane[portCountryMap[r.pol]] || '';
+      results.push({
+        docId: null, shipmentId: r.shipment_id, docType: null, filename: null,
+        status: null, paymentState: 'missing', createdAt: r.delivered_at, confirmedAt: null,
+        firstSentAt: null, sent: false, lastReminderSentAt: null,
+        paidAt: null, paidAmount: null, transactionId: '',
+        amountUsd: null, outstandingUsd: null, paymentStatus: null, daysOverdue,
+        officeId: r.emo_office_id || null, officeName: officeNames[r.emo_office_id] || null,
+        customerId: respId, customerName: respName || null,
+        carrierCode: r.carrier_code || null, carrierName: carrierNames[r.carrier_code] || r.carrier_code || null,
+        laneCode: laneCode || null, laneName: laneCode ? (laneNames[laneCode] || laneCode) : null,
+        pol: r.pol || null, pod: r.pod || null,
+      });
+    }
+    results.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+
     if (format === 'csv') {
       const cols = [
-        ["Shipment", r => r.shipmentId], ["Doc Type", r => r.docType], ["Filename", r => r.filename],
-        ["Status", r => r.status], ["Sent", r => r.sent ? "Yes" : "No"],
+        ["Shipment", r => r.shipmentId], ["Doc Type", r => r.docType ?? ""], ["Filename", r => r.filename ?? ""],
+        ["Status", r => r.status ?? ""], ["Payment State", r => r.paymentState], ["Sent", r => r.sent ? "Yes" : "No"],
         ["Payment Status", r => r.paymentStatus ?? ""], ["Days Overdue", r => r.daysOverdue ?? ""],
-        ["Amount (USD)", r => r.amountUsd], ["Outstanding (USD)", r => r.outstandingUsd ?? ""],
+        ["Amount (USD)", r => r.amountUsd ?? ""], ["Outstanding (USD)", r => r.outstandingUsd ?? ""],
         ["Paid On", r => r.paidAt ?? ""], ["Paid Amount", r => r.paidAmount ?? ""], ["Transaction ID", r => r.transactionId],
         ["Office", r => r.officeName ?? ""], ["Customer", r => r.customerName ?? ""],
         ["Carrier", r => r.carrierName ?? ""], ["Trade Lane", r => r.laneName ?? ""],
@@ -276,6 +327,22 @@ module.exports = function reportsRoutes(app, ctx) {
       return res.send(`${header}\n${body}`);
     }
     ok(res, results);
+  });
+
+  // GP breakdown for whatever slice of invoices Billing Performance is currently showing — a
+  // manager filtering "this office, unpaid, overdue" wants to SEE the profit picture for exactly
+  // those shipments, not click over to a separate report and re-filter by hand. Reuses the exact
+  // same ShipmentGpSankey component gp-by-geo already feeds above — only the scoping differs
+  // (an explicit shipment-id list from the frontend's own already-filtered rows, instead of a
+  // geography/date-range grouping) — so this returns the identical `lines` shape (mapCostLine
+  // output) with zero new frontend chart code needed.
+  app.post("/api/reports/billing-performance/gp-lines", auth(), (req, res) => {
+    if (!financeGate(req, res)) return;
+    const ids = [...new Set((req.body?.shipmentIds || []).filter(Boolean))].slice(0, 1000);
+    if (!ids.length) return ok(res, { lines: [] });
+    const placeholders = ids.map(() => '?').join(',');
+    const rows = db.prepare(`SELECT * FROM shipment_cost_lines WHERE shipment_id IN (${placeholders})`).all(...ids);
+    ok(res, { lines: rows.map(mapCostLine) });
   });
 
   // Invoice Collections report (Epic TKT-G11AHW) — "scan all shipments" + Paid/Not Paid/Overdue/

@@ -91,6 +91,8 @@ import MdmPackTypesPage       from "./pages/mdm/MdmPackTypesPage";
 import MdmInvoiceReasonCodesPage from "./pages/mdm/MdmInvoiceReasonCodesPage";
 import MdmContainerTypesPage  from "./pages/mdm/MdmContainerTypesPage";
 import MdmEquipmentPage       from "./pages/mdm/MdmEquipmentPage";
+import MdmFinancePage         from "./pages/mdm/MdmFinancePage";
+import MdmLocationsPage       from "./pages/mdm/MdmLocationsPage";
 import MdmCustomersPage           from "./pages/mdm/MdmCustomersPage";
 import MdmSanctionedCustomersPage from "./pages/mdm/MdmSanctionedCustomersPage";
 import MdmContractsPage        from "./pages/mdm/MdmContractsPage";
@@ -2578,6 +2580,12 @@ function App() {
   const [orgOpen,      setOrgOpen]      = useFoldState("cd_navfold_org");
   const [dashboardNavOpen, setDashboardNavOpen] = useFoldState("cd_navfold_dashboard");
   const [kanbanNavOpen,    setKanbanNavOpen]    = useFoldState("cd_navfold_kanban");
+  const [financeNavOpen,   setFinanceNavOpen]   = useFoldState("cd_navfold_mdm_finance");
+  const [locationsNavOpen, setLocationsNavOpen] = useFoldState("cd_navfold_mdm_locations");
+  const [customersNavOpen, setCustomersNavOpen] = useFoldState("cd_navfold_mdm_customers");
+  const [contractsNavOpen, setContractsNavOpen] = useFoldState("cd_navfold_mdm_contracts");
+  const [carriersNavOpen,  setCarriersNavOpen]  = useFoldState("cd_navfold_mdm_carriers");
+  const [portsNavOpen,     setPortsNavOpen]     = useFoldState("cd_navfold_mdm_ports");
   const [detailAction, setDetailAction] = useState(null);
   const [user,         setUser]         = useState(null);
   const [authLoading,  setAuthLoading]  = useState(true);
@@ -2822,7 +2830,7 @@ function App() {
   }, [page, selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // kanban is top-level, not MDM
-  const MDM_PAGES = ["mdm-carriers", "mdm-carrier-agents", "mdm-ports", "mdm-linked", "mdm-vessels", "mdm-commodities", "mdm-tradelanes", "mdm-countries", "mdm-unlocodes", "mdm-customers", "mdm-sanctioned-customers", "mdm-contracts", "rate-benchmark", "mdm-charge-codes", "mdm-duty-rates", "mdm-equipment", "mdm-pack-types", "mdm-container-types", "mdm-invoice-reason-codes"];
+  const MDM_PAGES = ["mdm-carriers", "mdm-carrier-agents", "mdm-ports", "mdm-linked", "mdm-vessels", "mdm-commodities", "mdm-tradelanes", "mdm-countries", "mdm-unlocodes", "mdm-customers", "mdm-sanctioned-customers", "mdm-contracts", "rate-benchmark", "mdm-finance", "mdm-charge-codes", "mdm-duty-rates", "mdm-equipment", "mdm-pack-types", "mdm-container-types", "mdm-invoice-reason-codes", "mdm-locations"];
   const ORG_PAGES = ["org-country", "org-branch", "org-office"];
   const ALL_PAGES = [...MDM_PAGES, ...ORG_PAGES, "manual"];
   const isMdmActive = MDM_PAGES.includes(page);
@@ -2914,12 +2922,14 @@ function App() {
     "mdm-sanctioned-customers":  "Master Data — Sanctioned Customers",
     "mdm-contracts":    "Master Data — Contracts",
     "rate-benchmark":   "Rate Benchmarking",
+    "mdm-finance": "Master Data — Finance",
     "mdm-charge-codes": "Master Data — Automated Charge Codes",
     "mdm-duty-rates": "Master Data — Duty Rate Chapters",
     "mdm-equipment": "Master Data — Equipment",
     "mdm-pack-types": "Master Data — Pack Types",
     "mdm-container-types": "Master Data — Container Types",
     "mdm-invoice-reason-codes": "Master Data — Invoice Reason Codes",
+    "mdm-locations": "Master Data — Locations",
     "org-country":      "Organization — Countries",
     "org-branch":       "Organization — Branches",
     "org-office":       "Organization — Offices",
@@ -3777,28 +3787,57 @@ function App() {
                   {/* Sea Freight */}
                   <div style={{ fontFamily: T.mono, fontSize: 9, color: T.textMuted, fontWeight: 700,
                     textTransform: "uppercase", letterSpacing: ".1em", padding: "5px 12px 3px 28px" }}>Sea Freight</div>
-                  <NavBtn pageKey="mdm-customers"            icon={IconGroup} label="Customers"            indent />
-                  <NavBtn pageKey="mdm-sanctioned-customers" icon={IconCircle} iconColor="#ef4444" label="Sanctioned Customers" subIndent />
-                  <NavBtn pageKey="mdm-contracts"   icon={IconClipboard} label="Contracts"       indent />
-                  <NavBtn pageKey="rate-benchmark"  icon={IconSearch}    label="Rate Benchmarking" subIndent />
-                  <NavBtn pageKey="mdm-charge-codes" icon={IconTag} label="Charge Codes"    indent />
-                  <NavBtn pageKey="mdm-duty-rates" icon={IconCoin} label="Duty Rate Chapters" indent />
-                  <NavBtn pageKey="mdm-invoice-reason-codes" icon={IconTag} label="Invoice Reason Codes" indent />
-                  <NavBtn pageKey="mdm-carriers" icon={IconBuilding} label="Carriers"       indent />
-                  <NavBtn pageKey="mdm-carrier-agents" icon={IconLink} label="Carrier Agents" subIndent />
+                  <NavBtn pageKey="mdm-customers"            icon={IconGroup} label="Customers"            indent
+                    foldable open={customersNavOpen} onToggleFold={() => setCustomersNavOpen(o => !o)} />
+                  {customersNavOpen && (
+                    <NavBtn pageKey="mdm-sanctioned-customers" icon={IconCircle} iconColor="#ef4444" label="Sanctioned Customers" subIndent />
+                  )}
+                  <NavBtn pageKey="mdm-contracts"   icon={IconClipboard} label="Contracts"       indent
+                    foldable open={contractsNavOpen} onToggleFold={() => setContractsNavOpen(o => !o)} />
+                  {contractsNavOpen && (
+                    <NavBtn pageKey="rate-benchmark"  icon={IconSearch}    label="Rate Benchmarking" subIndent />
+                  )}
+                  <NavBtn pageKey="mdm-carriers" icon={IconBuilding} label="Carriers"       indent
+                    foldable open={carriersNavOpen} onToggleFold={() => setCarriersNavOpen(o => !o)} />
+                  {carriersNavOpen && (
+                    <NavBtn pageKey="mdm-carrier-agents" icon={IconLink} label="Carrier Agents" subIndent />
+                  )}
                   <NavBtn pageKey="mdm-vessels"      icon={IconShip} label="Vessels"         indent />
                   <NavBtn pageKey="mdm-commodities" icon={IconPackage} label="Commodities"     indent />
-                  <NavBtn pageKey="mdm-ports"    icon={IconMapPin} label="Port Locations" indent />
-                  <NavBtn pageKey="mdm-linked"   icon={IconLink} label="Linked Ports"   subIndent />
+                  <NavBtn pageKey="mdm-ports"    icon={IconMapPin} label="Port Locations" indent
+                    foldable open={portsNavOpen} onToggleFold={() => setPortsNavOpen(o => !o)} />
+                  {portsNavOpen && (
+                    <NavBtn pageKey="mdm-linked"   icon={IconLink} label="Linked Ports"   subIndent />
+                  )}
 
                   <NavBtn pageKey="mdm-equipment" icon={IconArchive} label="Equipment"      indent />
 
-                  {/* Locations sub-section */}
-                  <div style={{ fontFamily: T.mono, fontSize: 9, color: T.textMuted, fontWeight: 700,
-                    textTransform: "uppercase", letterSpacing: ".1em", padding: "10px 12px 3px 28px" }}>Locations</div>
-                  <NavBtn pageKey="mdm-tradelanes" icon={IconRoute} label="Trade Lanes"         indent />
-                  <NavBtn pageKey="mdm-countries" icon={IconFlag} label="Countries"          indent />
-                  <NavBtn pageKey="mdm-unlocodes" icon={IconHashtag} label="UN Location Codes"  indent />
+                  {/* Finance sub-section — a real hub page (MdmFinancePage), not just a label,
+                      per direct request; its children stay listed right here too for one-click
+                      repeat access instead of always detouring through the hub's own cards.
+                      Foldable, minimized by default (same NavBtn foldable prop the Dashboard/
+                      Integration Board sub-groups already use). */}
+                  <div style={{ marginTop: 10 }} />
+                  <NavBtn pageKey="mdm-finance" icon={IconCoin} label="Finance" indent
+                    foldable open={financeNavOpen} onToggleFold={() => setFinanceNavOpen(o => !o)} />
+                  {financeNavOpen && (
+                    <>
+                      <NavBtn pageKey="mdm-charge-codes" icon={IconTag} label="Charge Codes"    subIndent />
+                      <NavBtn pageKey="mdm-duty-rates" icon={IconCoin} label="Duty Rate Chapters" subIndent />
+                      <NavBtn pageKey="mdm-invoice-reason-codes" icon={IconTag} label="Invoice Reason Codes" subIndent />
+                    </>
+                  )}
+
+                  {/* Locations sub-section — same real-hub-page + foldable treatment as Finance. */}
+                  <NavBtn pageKey="mdm-locations" icon={IconEarth} label="Locations" indent
+                    foldable open={locationsNavOpen} onToggleFold={() => setLocationsNavOpen(o => !o)} />
+                  {locationsNavOpen && (
+                    <>
+                      <NavBtn pageKey="mdm-tradelanes" icon={IconRoute} label="Trade Lanes"         subIndent />
+                      <NavBtn pageKey="mdm-countries" icon={IconFlag} label="Countries"          subIndent />
+                      <NavBtn pageKey="mdm-unlocodes" icon={IconHashtag} label="UN Location Codes"  subIndent />
+                    </>
+                  )}
                 </div>
               )}
             </div>
@@ -4193,6 +4232,8 @@ function App() {
         {page === "mdm-countries"  &&                                 <MdmCountriesPage />}
         {page === "mdm-unlocodes"  &&                                 <MdmUNLocationCodesPage />}
         {page === "mdm-commodities"&&                                 <MdmCommoditiesPage />}
+        {page === "mdm-finance"&&                                     <MdmFinancePage navigate={navigate} />}
+        {page === "mdm-locations"&&                                   <MdmLocationsPage navigate={navigate} />}
         {page === "mdm-charge-codes"&&                                <MdmChargeCodesPage />}
         {page === "mdm-duty-rates"&&                                  <MdmDutyRatesPage />}
         {page === "mdm-equipment"&&                                   <MdmEquipmentPage navigate={navigate} />}

@@ -442,6 +442,10 @@ export const api = {
       a.href = url; a.download = `billing-performance-${date}.csv`; a.click();
       URL.revokeObjectURL(url);
     },
+    // GP breakdown (BUY/SELL cost lines) for exactly the shipments behind whatever set of
+    // invoice rows Billing Performance is currently showing — feeds the same ShipmentGpSankey
+    // chart gp-by-geo already uses, scoped to the panel's own live filters instead of geography.
+    billingPerformanceGpLines: (shipmentIds) => req("POST", "/reports/billing-performance/gp-lines", { shipmentIds }),
     // Manual trigger for the dunning sweep (TKT-4TEYT1) — the real recurring version runs daily
     // at server boot; this is the same core function for testing/an operator who wants reminders
     // sent right now. Admin-only server-side.
