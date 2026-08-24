@@ -3030,6 +3030,18 @@ function App() {
       return () => clearInterval(t);
     }, []);
 
+    // Command Center — Quality & Exception Management, TKT-Q09G0T. Same shape as the two bell
+    // sections above (a milestone can silently blow past its planned date with nothing watching
+    // it until now) — backed by the same bulk overdue-summary endpoint the Command Center's own
+    // KPI card/breakdown panel use, so the bell and the always-on control-tower view never drift.
+    const [milestoneAlerts, setMilestoneAlerts] = useState([]);
+    useEffect(() => {
+      const load = () => api.milestonesOverdueSummary().then(d => setMilestoneAlerts(d.items || [])).catch(() => {});
+      load();
+      const t = setInterval(load, 60000);
+      return () => clearInterval(t);
+    }, []);
+
     const BELL_DISMISS_KEY = "cargodesk_dismissed_bell";
     const todayStr = new Date().toISOString().split('T')[0];
     // Fixed rather than a configurable setting — same "surface it at all" scoping as the
@@ -3053,7 +3065,8 @@ function App() {
       const remainingBookingBell = visibleBookingBellItems.filter(b => b.id !== id);
       const remainingExpiring    = visibleExpiringContracts.filter(c => c.id !== id);
       const remainingOverdueInv = visibleOverdueInvoiceDeadlines.filter(d => d.shipmentId !== id);
-      if (remainingBell.length === 0 && remainingBookingBell.length === 0 && remainingExpiring.length === 0 && remainingOverdueInv.length === 0 && activeSysMsgs.length === 0) setBellOpen(false);
+      const remainingMilestones = visibleMilestoneAlerts.filter(m => `${m.shipmentId}-${m.milestoneKey}` !== id);
+      if (remainingBell.length === 0 && remainingBookingBell.length === 0 && remainingExpiring.length === 0 && remainingOverdueInv.length === 0 && remainingMilestones.length === 0 && activeSysMsgs.length === 0) setBellOpen(false);
     };
 
     // Active allocations above their alert threshold, sorted worst-first (max 5 shown)
@@ -3100,8 +3113,9 @@ function App() {
     const visibleBookingBellItems = bookingBellItems.filter(b => !dismissedBell[b.id]);
     const visibleExpiringContracts = expiringContracts.filter(c => !dismissedBell[c.id]);
     const visibleOverdueInvoiceDeadlines = overdueInvoiceDeadlines.filter(d => !dismissedBell[d.shipmentId]);
+    const visibleMilestoneAlerts = milestoneAlerts.filter(m => !dismissedBell[`${m.shipmentId}-${m.milestoneKey}`]);
 
-    const bellCount = visibleBellItems.length + visibleBookingBellItems.length + visibleExpiringContracts.length + visibleOverdueInvoiceDeadlines.length + activeSysMsgs.length;
+    const bellCount = visibleBellItems.length + visibleBookingBellItems.length + visibleExpiringContracts.length + visibleOverdueInvoiceDeadlines.length + visibleMilestoneAlerts.length + activeSysMsgs.length;
 
     useEffect(() => {
       const h = e => {
@@ -3424,6 +3438,62 @@ function App() {
                         </button>
                       </div>
                     ))}
+                  </>
+                )}
+
+                {/* ── Milestone alerts section (TKT-Q09G0T) ── */}
+                {visibleMilestoneAlerts.length > 0 && (
+                  <>
+                    <div style={{ padding: "10px 16px 8px",
+                      borderBottom: `1px solid ${T.border}`,
+                      display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <span style={{ fontFamily: T.body, fontSize: 12, fontWeight: 700, color: T.warning }}>
+                        🎯 Milestone Alerts
+                      </span>
+                      <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted }}>
+                        {visibleMilestoneAlerts.length} alert{visibleMilestoneAlerts.length > 1 ? "s" : ""}
+                      </span>
+                    </div>
+                    {visibleMilestoneAlerts.slice(0, 5).map(m => {
+                      const id = `${m.shipmentId}-${m.milestoneKey}`;
+                      return (
+                      <div key={id} style={{
+                          display: "flex", alignItems: "center",
+                          borderBottom: `1px solid ${T.border}22`,
+                        }}>
+                        <button type="button"
+                          onClick={() => { navigate("shipment-milestones", m.shipmentId); setBellOpen(false); }}
+                          style={{
+                            display: "flex", alignItems: "center", justifyContent: "space-between",
+                            flex: 1, padding: "10px 12px 10px 16px", background: "none", border: "none",
+                            cursor: "pointer", textAlign: "left",
+                          }}
+                          onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
+                          onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                            <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.accent }}>
+                              {m.shipmentId}
+                            </span>
+                            <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+                              {m.label}
+                            </span>
+                          </div>
+                          <span style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600, color: T.warning }}>
+                            {m.daysOverdue}d over
+                          </span>
+                        </button>
+                        <button type="button"
+                          onClick={() => dismissBellItem(id)}
+                          title="Dismiss until tomorrow"
+                          style={{ background: "none", border: "none", cursor: "pointer",
+                            color: T.textMuted, fontSize: 14, padding: "10px 12px", lineHeight: 1, flexShrink: 0 }}
+                          onMouseEnter={e => e.currentTarget.style.color = T.text}
+                          onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>
+                          ✕
+                        </button>
+                      </div>
+                      );
+                    })}
                   </>
                 )}
 

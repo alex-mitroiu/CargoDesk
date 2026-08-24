@@ -109,6 +109,13 @@ export const api = {
   },
   creditOverridesQueue: () => req("GET", "/credit-overrides/queue"),
   invoiceDeadlinesOverdue: () => req("GET", "/invoice-deadlines/overdue"),
+  // Command Center — Quality & Exception Management (Epic TKT-IBHB0K). All four are plain
+  // auth()-gated + applyShipmentAccessFilter-scoped, same shape as invoiceDeadlinesOverdue above
+  // — no finance/trade_manager gate, since Command Center itself has none.
+  milestonesOverdueSummary: () => req("GET", "/milestones/overdue-summary"),
+  exceptionsQueue: () => req("GET", "/exceptions/queue"),
+  carrierOnTimeScorecard: (toleranceDays) => req("GET", `/command-center/carrier-scorecard${toleranceDays ? `?toleranceDays=${toleranceDays}` : ""}`),
+  laneTransitTimeTrend: () => req("GET", "/command-center/transit-time-trend"),
   containers: {
     list:   (p = {})  => req("GET",    `/containers?${new URLSearchParams(p)}`),
     create: (data)    => req("POST",   "/containers", data),

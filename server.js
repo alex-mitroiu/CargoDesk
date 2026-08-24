@@ -4194,6 +4194,7 @@ require('./routes/carrier-invoices')(app, ctx);
 require('./routes/quotes')(app, ctx);
 require('./routes/finance')(app, ctx);
 require('./routes/reports')(app, ctx);
+require('./routes/command-center')(app, ctx);
 require('./routes/invoice-reason-codes')(app, ctx);
 require('./routes/system')(app, ctx);
 require('./routes/export')(app, ctx);
