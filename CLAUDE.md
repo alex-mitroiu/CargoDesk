@@ -4,7 +4,7 @@
 Full-stack freight management app. React 18 + Vite frontend, Express + node:sqlite backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.76.0 "Remittance"**
+- Version: **v0.78.0 "Tonnage"**
 - Run: `npm run dev` (runs the monolith on :3001 + Vite on :5173 + the Document Distribution Service on :3002 + the PDF Render Service on :3003 + the Contract Management Service on :3004, concurrently)
 - Seed: `npm run seed` (runs `scripts/import-mdm-data.js`)
 
@@ -44,6 +44,9 @@ routes/
   contracts.js       /api/contracts/*, /api/entity-events/*
   carrier-invoices.js /api/carrier-invoices/*, /api/carrier-invoice-lines/:id/(approve|dispute) —
                      Freight Audit & Payment (v0.69.0)
+  command-center.js  /api/milestones/overdue-summary, /api/exceptions/queue,
+                     /api/command-center/carrier-scorecard, /api/command-center/transit-time-trend
+                     — Command Center Quality & Exception Management (v0.77.0, Epic TKT-IBHB0K)
   shipment-ops.js    /api/shipments/:id/screening, cost-lines, milestones, documents,
                      services, services/:serviceId/loading-plan
   finance.js         /api/margin/summary
@@ -152,6 +155,8 @@ src/
     primitives/
       ActionMenu.jsx   Btn.jsx Modal.jsx Form.jsx Badge.jsx Spinner.jsx
       ToastContainer.jsx DatePicker.jsx Pagination.jsx useResizableColumns.jsx
+      PageSizeSelect.jsx           50/75/100 dropdown paired with Pagination.jsx — one shared
+                                   `cargodesk_page_size` localStorage preference app-wide (v0.78.0)
     shared/
       PortCombobox.jsx             position:fixed dropdown (escapes modal overflow)
       CommodityCombobox.jsx        Typeahead with GradePill + CommodityPickerModal
@@ -272,6 +277,7 @@ are fully validated.
 - **DatePicker with time**: pass `withTime` to get a native time input alongside the calendar in the same popover — `value` becomes `"YYYY-MM-DDTHH:mm"` instead of a bare date (defaults the time to `09:00` the first time a day is picked; reopening lets the time be adjusted independently). The calendar/nav logic internally still operates on just the date part, so every other `DatePicker` call site in the app is unaffected by this prop existing. Used by `LoadingServicePage.jsx`'s per-container planned date field, for both Loading and Unloading — reuse the same prop for any future field that needs date+time rather than building a separate picker.
 - **PortCombobox dropdown**: always `position: fixed` with `getBoundingClientRect()` to escape modal `overflow:auto` — `CarrierCombobox` and `DatePicker` (as of v0.40.1) follow the same pattern; any *new* dropdown/popover primitive should too, rather than `position: absolute`, which breaks the moment it lands inside any scrolling/clipped container
 - **Paginated responses**: `api.ports.search(...)` returns `{ results: [], total, limit, offset }` — always use `.results`
+- **Page-size dropdown (v0.78.0)**: `<PageSizeSelect value={limit} onChange={setLimit} />` (primitives) rendered next to `<Pagination>` on every table that scales with real usage — 50/75/100, one shared `cargodesk_page_size` localStorage key (not per-table). `GET /api/shipments`/`/linked-ports`/`/carrier-agents` all use the same opt-in shape: omit `limit`/`offset` entirely and get today's bare-array response (every existing zero-arg caller, e.g. App.jsx's own shared full-array load, is unaffected); pass them and get `{results,total,limit,offset}` with `status`/`carrier`/`search`/`sort` also opt-in on `/shipments`. Small/bounded tables (a shipment's own cost lines, containers, milestones; org headcount) deliberately stay unpaginated or get lighter client-side slicing — see ARCHITECTURE.md §8.18 for the full scope split.
 - **mapCountry** includes `portCount: r.port_count ?? 0` from a LEFT JOIN in GET /api/countries
 - **Migrations**: safe `try/catch` array in server.js startup — add new columns there
 - **Backfill**: `backfillPortCountryCodes()` IIFE runs on startup
@@ -307,6 +313,90 @@ are fully validated.
 - **Document system**: `DOC_TYPES` in App.jsx (~line 56: BL01/MB01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — `MB01` (Master Bill of Lading, v0.71.0) is the vessel-operator-to-NVOCC document, a genuinely separate build from `BL01` (NVOCC-to-shipper House B/L), not a mode flag on it — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). (The earlier client-side-jsPDF `DocumentsMenu` component this note used to distinguish from was removed as dead code — it had zero references anywhere in the app.)
 - **Lifecycle-stage stepper precedent**: no dedicated stepper component exists yet; `MilestonePanel` (ShipmentDetailPage.jsx 1593-~1870) is the closest analog — linear progress bar (1734-1738, `width: ${progress}%`) plus per-step state coloring via `milestoneState()`/`stateColor()` (1666-1676: completed/overdue/current/upcoming) driven by `shipment_milestones` rows (`id, label, estimatedDate, note, completedAt, completedBy`, fixed step keys `booking_confirmed, si_submitted, cargo_gated_in, vessel_departed, bl_issued, vessel_arrived, customs_cleared, cargo_released, delivered`). Any new per-container lifecycle/stage UI should reuse this state-coloring pattern rather than inventing a new visual language
 - **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages, 📡 EDI). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
+
+## Recent changes (v0.78.0 "Tonnage")
+- **Table pagination standardized app-wide** — direct request prompted by a real scaling
+  concern: "if we have 1000 shipments a week, the list is going to be absolutely insane to
+  scroll, and it will overload in the RAM for the browser." Confirmed true: `ShipmentsPage.jsx`
+  received the full shipment list as one fully-loaded prop and did all filtering/sorting/
+  pagination client-side over the complete in-memory array. New shared
+  `PageSizeSelect.jsx` (50/75/100, one global `cargodesk_page_size` localStorage preference)
+  pairs with the existing `Pagination.jsx` everywhere it now matters — see "Key patterns" above.
+- **`GET /api/shipments` real server-side filter/sort/pagination** — the one change that
+  actually fixes the RAM concern. New opt-in `status`/`carrier`/`search`/`sort` params (a
+  verbatim port of what was `ShipmentsPage.jsx`'s own client logic) plus a real `teu` column
+  (fourth `LEFT JOIN SUM` subquery, mirrors the existing margin buy/sell subqueries).
+  `ShipmentsPage.jsx` now self-fetches its own page instead of slicing the shared array, while
+  still reading that shared array for account-wide totals (header subtitle, status-chip counts,
+  CSV-export-disabled check). A genuine out-of-order-response race (two requests in flight
+  resolving in the wrong order, overwriting a newer filter's result with a stale one) was caught
+  live and fixed with a request-generation counter (`loadSeqRef`).
+- **Linked Ports and Carrier Agents were mislabeled as paginated** — both pages already imported
+  `Pagination` and looked converted, but both backend routes (`routes/mdm.js`) had zero
+  `WHERE`/`LIMIT` support and were silently client-slicing an entirely unbounded fetch. Both
+  routes now support the same opt-in `limit`/`offset`/`search` shape `GET /api/shipments` does.
+- **Quotes and Freight Audit's invoice list had working backend pagination the frontend never
+  called** — a real bug, not a style gap: anything past the backend's own default 50-row page
+  was silently invisible. Wired up.
+- **Billing Performance and Invoice Collections** replace a hard `.slice(0, 200)` client cutoff
+  (real data loss past row 200) with actual pagination over the same already-filtered array.
+- **User Management, Dashboard's "Shipments in Period," Space Configurations, and the Archive
+  page** get client-side pagination — deliberately lighter than the Shipments-list conversion,
+  since none of these datasets scale with shipment volume.
+- **Notification bell dropdown had no max-height** — an account with several active alert
+  sections grew the panel as tall as its content instead of scrolling ("ended up in an infinite
+  type of scroll situation"). Now bounded with an internal scroll wrapper; two sections that
+  rendered fully unbounded lists (Contract Expiry, Invoicing Overdue) are capped to 5 rows like
+  every other bell section already was.
+- **`api.js`'s `req()` now distinguishes a network failure from a server error** — `fetch()`
+  itself rejecting (offline, DNS failure, server down) now rethrows a clear "Network error —
+  check your connection and try again" instead of a cryptic raw browser string, fixing
+  `ForgotPasswordPage.jsx`/`ResetPasswordPage.jsx`'s vague "Something went wrong" fallback for
+  every page using `req()`, not just those two.
+- 24 new assertions (`tests/pagination-standardization.test.js`). Full 43-file backend chain,
+  both service-scoped chains, frontend Vitest, and a clean build all verified green from a fresh
+  restart. Verified live via CDP: Shipments-list filter/sort/page-size round-trip through the
+  server (including the race-condition fix), an MDM page's dropdown, Billing Performance's real
+  pagination, and the bell's bounded scroll.
+- Full architecture writeup: `ARCHITECTURE.md` §8.18. The `routes/*.js` table in that doc's §5
+  was also fully remeasured this pass (25→31 files, several genuinely missing) while in there.
+
+## Recent changes (v0.77.0 "Overwatch")
+- **Command Center — Quality & Exception Management** (Epic `TKT-IBHB0K`) — a sourced gap
+  analysis of Cargo iQ (IATA's air-cargo quality-management interest group)'s Master Operating
+  Plan / Freight Status Update model against the Command Center's existing volume-only
+  analytics. Every planned-vs-actual signal Cargo iQ's model runs on already existed
+  per-shipment (`shipment_milestones`, `shipment_legs`' AIS-confirmation provenance) but nothing
+  aggregated it across the fleet — the only exception signal was one blunt "Overdue" tile with
+  no differentiation of *why*. Ocean/FCL scope only; real IATA EDI formats, formal MOP
+  membership, and cross-company benchmarking are named as structurally out of reach.
+- **New `routes/command-center.js`**, four endpoints, all scoped per-caller via the same
+  `applyShipmentAccessFilter()` every shipment-list read already uses (no separate role gate):
+  `GET /api/milestones/overdue-summary` (fleet-wide milestone-breach KPI + per-milestone-key
+  breakdown, backs a new 6th Command Center KPI card + a new "Milestone Alerts" bell section
+  using the exact shape Invoicing Overdue/Carrier Bookings already established), `GET
+  /api/exceptions/queue` (root-cause classified: `scheduleSlip`/`unconfirmedBooking`/
+  `stalledMilestone`, replacing the old blunt Overdue count with a tabbed queue), `GET
+  /api/command-center/carrier-scorecard` (AIS-confirmed-only on-time % as a new column on the
+  existing Carrier Consumption ranking — note the `/command-center/` path, not `/carriers/`:
+  `routes/mdm.js`'s pre-existing `GET /api/carriers/:code` would swallow the natural-seeming
+  `/api/carriers/on-time-scorecard` path, a real collision caught live), `GET
+  /api/command-center/transit-time-trend` (planned vs. AIS-confirmed-actual transit days per
+  trade lane over time, a new "Transit-Time Variance by Lane" card).
+- **`CommandCenterView.jsx`'s font sizes reset** — unchanged since v0.34.4, running 30-100%
+  larger than every other page (18px section labels, 40px KPI numbers vs. the rest of the app's
+  10-13px/18-22px). Reset to the same scale `BillingPerformancePanel` and other current pages
+  use, both for existing UI and everything new added this pass.
+- 38 new assertions (`tests/command-center.test.js`), including a fixture driven through the
+  real AIS simulator. Two real bugs caught while writing it: the AIS listener correlates a
+  position report via `Number(vessel.mmsi)` — a base36 test id silently produced `NaN`; and a
+  lane-contamination test fragility from an intentionally-kept persistent verification shipment
+  sharing a trade lane with a fresh fixture — fixed by asserting internal consistency instead of
+  a hardcoded expected value. Full 44-file backend chain, both service-scoped chains, frontend
+  Vitest, and a clean build all verified green. Verified live via CDP across all five new UI
+  surfaces plus the notification bell, using one persistent seeded shipment kept in place for
+  future reference.
+- Full architecture writeup: `ARCHITECTURE.md` §8.17.
 
 ## Recent changes (v0.76.0 "Remittance")
 - **The Billing Performance report itself** (`TKT-B4VBDH`, Epic `TKT-KR6ZBT`) — new

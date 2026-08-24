@@ -22,7 +22,7 @@
 ---
 
 ## Table of Contents
-_(§8.16 added 2026-08-22; §8.14–8.15 added 2026-08-19; everything else reflects the 2026-08-13 pass)_
+_(§8.17–8.18 and the §5 routes/ table added 2026-08-24; §8.16 added 2026-08-22; §8.14–8.15 added 2026-08-19; everything else reflects the 2026-08-13 pass)_
 1. [System Overview](#1-system-overview)
 2. [Tech Stack](#2-tech-stack)
 3. [Process & Deployment Topology](#3-process--deployment-topology)
@@ -265,12 +265,14 @@ by `applyTheme(isDark)`. No CSS variables.
 
 ### The monolith today: composition root, not a route dumping ground
 
-`server.js` was **3,987 lines** at the point this doc was last (inaccurately) measured. It is now
-**3,529 lines** — smaller despite the app having grown substantially, because route handling has
-moved almost entirely into `routes/*.js`. `server.js`'s actual job today:
+`server.js` is **4,292 lines** as of v0.78.0 (remeasured for this pass — the doc's earlier
+"3,529 lines" figure was accurate at the time it was taken but has since grown again as more
+tables/migrations/`ctx` entries accumulated across releases; route *handling* itself still lives
+almost entirely in `routes/*.js`, not back in this file — the growth is schema/startup/shared-
+helper surface, the composition-root shape below is unchanged). `server.js`'s actual job today:
 
 ```
-server.js  (3,529 lines)
+server.js  (4,292 lines)
 │
 ├─ Imports & constants
 ├─ Database setup
@@ -311,37 +313,48 @@ server.js  (3,529 lines)
 └─ httpServer.listen(3001)
 ```
 
-### routes/ — 25 files, 8,290 lines
+### routes/ — 31 files, 10,057 lines
 
 Each file is a factory function `module.exports = function xRoutes(app, ctx) { ... }`, called
-once from `server.js` with the shared `ctx`. Roughly ordered by size:
+once from `server.js` with the shared `ctx`. Roughly ordered by size — remeasured directly for
+this pass (the doc's previous "25 files, 8,290 lines" figure had drifted six files and ~1,800
+lines out of date, not from any one release but from several additive passes never circling back
+to update this table; corrected here rather than left compounding):
 
 ```
-routes/shipment-ops.js    1,250   Cost lines, milestones, documents, container events, services
-routes/shipments.js         859   Core shipment CRUD, legs, routing-term engine
-routes/auth.js               651   Login, users, password reset, RBAC role management
-routes/export.js             623   CSV/Excel export (configurable field sets)
-routes/contracts.js          615   Contract CRUD, matching, publish/withdraw, local/remote toggle
-routes/customers.js          585   Customer CRUD, contacts, screening, documents, sanctions sync
-routes/edi.js                426   Carrier booking EDI (request/response/confirm/supersede)
-routes/mdm.js                380   Ports, carriers, vessels, trade lanes, countries, commodities
-routes/ai.js                 371   AI chat (tool-calling) + document extraction (v0.69.0)
-routes/carrier-invoices.js   320   Freight Audit & Payment matching engine (v0.69.0)
-routes/system.js             280   Settings, system messages, contract-source toggle
-routes/quotes.js             264   Quoting/RFQ lifecycle (v0.69.0)
-routes/kanban.js             248   Tickets, ticket links, Kanban projects/columns
-routes/organization.js       221   Branches, offices, org countries
-routes/allocations.js        191   Space allocation CRUD + conflict detection
-routes/document-distribution.js 169  Proxy to the Document Distribution service
-routes/testcases.js          157   Test plans/runs/cases, ticket↔test-case links
-routes/customs-filing.js     141   AES/EEI + ISF/AMS filing lifecycle
-routes/offices.js            100   Office CRUD
-routes/office-mail.js         96   Per-office SMTP settings
-routes/share.js               92   Public read-only shipment-tracking share links
-routes/finance.js             87   Margin/GP aggregation
-routes/ais.js                 85   AIS listener status + manual controls
-routes/pack-types.js          40   Pack type definitions (cargo manifest tree)
-routes/charge-codes.js        39   Charge code registry
+routes/shipment-ops.js     1,486   Cost lines, milestones, documents, container events, services
+routes/shipments.js          968   Core shipment CRUD, legs, routing-term engine, list-page
+                                    status/carrier/search/sort filters (v0.78.0)
+routes/customers.js          794   Customer CRUD, contacts, screening, documents, sanctions sync
+routes/contracts.js          674   Contract CRUD, matching, publish/withdraw, local/remote toggle
+routes/auth.js                657   Login, users, password reset, RBAC role management
+routes/export.js              649   CSV/Excel export (configurable field sets)
+routes/reports.js             488   GP by Trade Area, Billing Performance, Invoice Collections
+routes/edi.js                  461   Carrier booking EDI (request/response/confirm/supersede)
+routes/mdm.js                  422   Ports, carriers, vessels, trade lanes, countries, commodities,
+                                    linked ports + carrier agents (real pagination, v0.78.0)
+routes/ai.js                   376   AI chat (tool-calling) + document extraction (v0.69.0)
+routes/carrier-invoices.js     337   Freight Audit & Payment matching engine (v0.69.0)
+routes/quotes.js                269   Quoting/RFQ lifecycle (v0.69.0)
+routes/command-center.js        260   Command Center — Quality & Exception Management (v0.77.0, §8.17)
+routes/kanban.js                259   Tickets, ticket links, Kanban projects/columns
+routes/system.js                228   Settings, system messages, contract-source toggle
+routes/organization.js          221   Branches, offices, org countries
+routes/customs-filing.js        203   AES/EEI + ISF/AMS filing lifecycle
+routes/allocations.js           191   Space allocation CRUD + conflict detection
+routes/document-distribution.js 173   Proxy to the Document Distribution service
+routes/testcases.js             157   Test plans/runs/cases, ticket↔test-case links
+routes/offices.js               125   Office CRUD
+routes/share.js                  99   Public read-only shipment-tracking share links
+routes/office-mail.js            96   Per-office SMTP settings
+routes/finance.js                87   Margin/GP aggregation
+routes/ais.js                    85   AIS listener status + manual controls
+routes/scheduled-reports.js      82   Recurring emailed reports (TKT-IXAR9G)
+routes/duty-rates.js             46   Duty rate chapters — HS-chapter flat-rate registry
+routes/invoice-reason-codes.js   45   Invoice status override reason codes (Epic TKT-G11AHW)
+routes/pack-types.js             40   Pack type definitions (cargo manifest tree)
+routes/container-types.js        40   Container type registry (Equipment section)
+routes/charge-codes.js           39   Charge code registry
 ```
 
 ### lib/ — shared, non-route modules
@@ -834,6 +847,153 @@ invoice's confirmed_at — only the "current" bucket is integration-tested; the 
 arithmetic itself is simple, reviewed math, not faked into a false-confidence test.
 ```
 
+### 8.17 Command Center — Quality & Exception Management (added v0.77.0, Epic TKT-IBHB0K)
+
+```
+A sourced gap analysis of Cargo iQ (IATA's air-cargo quality-management interest group)'s
+Master Operating Plan / Freight Status Update model against the Command Center's pre-existing
+volume-only analytics (status breakdown, TEU booked, carrier consumption, top routes, monthly
+trend — all still unchanged). The gap: every planned-vs-actual signal Cargo iQ's model runs on
+already existed per-shipment in this app (shipment_milestones' estimatedDate/completedAt,
+shipment_legs' etd/eta + etd_source/eta_source='ais' provenance) but nothing aggregated it across
+the fleet — the Command Center's only exception signal was one blunt "Overdue" tile (etd < today,
+status not Completed/Cancelled), with no differentiation of *why* a shipment was late. Ocean/FCL
+scope only, applying Cargo iQ's methodology to data already captured — not its air-cargo message
+formats (real IATA FSU/FWB/FHL EDI, formal MOP membership/certification, cross-company
+benchmarking are named as structurally out of reach, not silently dropped).
+
+New routes/command-center.js (260 lines), four endpoints — all auth()-only (no reportsGate; the
+Command Center itself has no role gate at all, unlike the Reports page) and scoped per-caller via
+the same applyShipmentAccessFilter() every shipment-list read already uses:
+
+  GET /api/milestones/overdue-summary
+    Walks every active (not Completed/Cancelled) shipment's shipment_milestones for rows where
+    estimatedDate < today && completedAt is empty — the same "overdue" definition
+    ShipmentDetailPage.jsx's own milestoneState() already used per-shipment, just aggregated.
+    Returns {totalActiveShipments, shipmentsWithBreach, onTimePct, byMilestoneKey[], items[]}.
+    Backs both a new 6th Command Center KPI card and (via the same response, re-fetched by
+    App.jsx's Header) a new "Milestone Alerts" notification-bell section — same self-poll/
+    dismiss-until-tomorrow shape the pre-existing Invoicing Overdue/Carrier Bookings bell
+    sections already established, not a new pattern.
+
+  GET /api/exceptions/queue
+    Three independent root-cause classifications (a shipment can appear in more than one):
+    scheduleSlip (an AIS-reconfirmed SEA leg date, etd_source/eta_source='ais', landed later than
+    the shipment's own vessel_departed/vessel_arrived milestone estimate — the carrier actually
+    moved the date), unconfirmedBooking (ETD has passed but carrier_bookings.status never left
+    Pending/Created), stalledMilestone (the shipment's current — first sequence_order-incomplete —
+    milestone's own estimatedDate has passed, independent of ETD). Replaces the single "Overdue"
+    tile's blunt count with a tabbed exception queue naming *what kind* of intervention is needed.
+
+  GET /api/command-center/carrier-scorecard?toleranceDays=1
+    Per carrier_code: % of AIS-confirmed SEA leg dates (etd/eta) landing within toleranceDays of
+    the shipment's own milestone estimate. Only AIS-confirmed samples count — a manual-only date
+    isn't a reliable "actual," so a shipment with no AIS confirmation yet contributes no sample
+    rather than counting as late. Surfaced as an added on-time% column on the pre-existing Carrier
+    Consumption (TEU) ranking, not a separate panel — a chronically-late carrier no longer looks
+    identical to an on-time one just because both move the same TEU.
+    NOTE: this route lives under /api/command-center/, not /api/carriers/ — routes/mdm.js already
+    registers GET /api/carriers/:code ahead of this file in server.js's require order, so
+    /api/carriers/on-time-scorecard would be swallowed by that :code route and 404 as an unknown
+    carrier code. A real routing collision caught live before settling on this path.
+
+  GET /api/command-center/transit-time-trend
+    Planned (shipment_schedules.transit_days, most recently saved per shipment) vs. actual (the
+    ETD→ETA span reconstructed from AIS-confirmed SEA leg dates — min confirmed ETD to max
+    confirmed ETA across the shipment's own legs, so a TSP's transshipment dwell time folds into
+    the whole-journey span rather than being summed leg-by-leg) — bucketed by the shipment's own
+    tradeLane (mapShipment, §6) × the month its journey departed. New "Transit-Time Variance by
+    Lane" Command Center card, worst-variance-lane first, each row carrying a small trend
+    sparkline of actual days across the returned months.
+
+All four reuse mapShipment's fields directly rather than re-deriving shipment state — the only
+schema addition anywhere in this epic is a `teu` column on GET /api/shipments' own response
+(§8.18 below), added for a different, unrelated reason but incidentally useful here too via the
+shared mapper. shipment_milestones/shipment_legs/carrier_bookings/shipment_schedules are all
+read-only from this file — nothing here writes to them.
+
+Test coverage: tests/command-center.test.js (38 assertions) — two scratch-shipment fixtures (one
+built via /milestones/init with a deliberately backdated etd/eta so every one of the 9 fixed
+milestone steps lands overdue by construction; one driven through the real AIS simulator,
+POST /api/test-tools/ais/simulate-position, with one milestone's estimate corrected to today so
+the fixture proves a real mixed on-time/late sample rather than an all-or-nothing one) prove all
+four endpoints against real HTTP calls, not mocked data.
+```
+
+### 8.18 Table Pagination Standardization (added v0.78.0)
+
+```
+Direct request, prompted by a real scaling concern: "if we have 1000 shipments a week, the list
+is going to be absolutely insane to scroll, and it will overload in the RAM for the browser."
+Investigation found this was already true — ShipmentsPage.jsx received the entire shipment list
+as one fully-loaded prop from App.jsx's shared top-level state and did all filtering/sorting/
+pagination client-side over the complete in-memory array, regardless of what page size was
+displayed. Two existing pagination shapes already existed to build on: the src/scaffold/
+MdmPageScaffold.jsx copy-paste template's real server-side {results,total,limit,offset} contract
+(used by ~8 MDM pages already), and src/components/primitives/Pagination.jsx (prev/next UI,
+{total,offset,limit,onPage}, no page-size concept). Nothing new was invented — this pass extends
+both and adds one new shared primitive, PageSizeSelect.jsx (41 lines): a bare <select> (50/75/100,
+matching the inline-filter-bar convention every other toolbar dropdown in this app already uses,
+not the vertical Sel/Field form primitives) reading/writing ONE global localStorage key
+(cargodesk_page_size) — a scalar app-wide preference, same idiom as cd_theme/
+cargodesk_active_role, deliberately not per-table like the independent cd_navfold_* keys, so
+raising the page size once on any table raises the default everywhere else too.
+
+GET /api/shipments (routes/shipments.js) is the one route that changed shape, not just gained a
+caller: still returns a bare array when the caller omits limit/offset (every existing consumer —
+App.jsx's own shared full-array load, Dashboard, Command Center, AI-assistant tools — is
+unaffected, opt-in pagination already existed here from an earlier pass, TKT-UAJGR3). New,
+also opt-in: status/carrier/search filters and a sort param, applied as JS-array steps AFTER
+applyShipmentAccessFilter() (the authorization boundary must run on the full, unfiltered set) —
+a verbatim port of what was, until this pass, ShipmentsPage.jsx's own client-side filter/sort
+logic, so behavior is unchanged from the caller's point of view, just computed server-side. A new
+`teu` column (a fourth LEFT JOIN SUM subquery on the same query, mirroring the pre-existing
+margin buy/sell subquery shape) makes teu_desc sort possible without a second per-shipment query.
+ShipmentsPage.jsx itself now self-fetches its own page via this endpoint instead of slicing the
+shared array — but still receives and reads that shared `shipments` prop for the three things
+that must reflect the true full-account totals regardless of the current filter: the header
+subtitle, the per-status quick-filter chip counts, and the CSV-export-disabled check.
+DELIBERATELY OUT OF SCOPE, named not silently dropped: the SQL query itself still has no WHERE
+clause — every filter/sort/pagination step still runs in JS over a fully-queried row set on the
+server. This fixes the stated problem (browser RAM, network payload — the client now only ever
+holds one page) but not per-request server DB/CPU cost, which stays proportional to total
+shipment count on every App.jsx-level unbounded call (initial load, role-switch, manual refresh).
+A real SQL rewrite is a larger, separate future pass if this becomes an actual bottleneck.
+
+A genuine race condition was caught and fixed during this same pass, not a pre-existing bug: two
+requests in flight at once (React 18 StrictMode's dev-only double-invoked mount effect, or in
+production two filter clicks issued in quick succession) could resolve out of order, with the
+slower/earlier response silently overwriting a newer filter's already-correct result. Fixed with
+a request-generation counter (loadSeqRef) — a response is only applied if no newer request has
+been issued since it was sent, discarded otherwise.
+
+Elsewhere, this pass closes a few small pre-existing correctness gaps found while auditing the
+app's other tables, alongside the mechanical page-size-dropdown rollout: GET /api/linked-ports
+and GET /api/carrier-agents (routes/mdm.js) were mislabeled as paginated — both pages already
+imported Pagination and looked like the scaffold, but both backend routes had zero WHERE/LIMIT
+support and the "pagination" was a client slice over the entire unbounded fetch; both routes now
+support the same opt-in limit/offset/search shape as GET /api/shipments. QuotesPage.jsx and
+FreightAuditPage.jsx's invoice list had fully-built backend pagination (routes/quotes.js,
+routes/carrier-invoices.js) that the frontend simply never called with limit/offset — a real bug,
+not a missing feature: anything past the backend's own default 50-row page was silently
+invisible, now fixed by wiring up the existing capability. BillingPerformancePanel.jsx and
+InvoiceCollectionsPanel.jsx replace a hard `.slice(0, 200)` client-side cutoff (genuine data
+loss past row 200, not just an unpaginated-but-complete list) with real client-side pagination
+over the same already-filtered array — chosen over server-side pagination here since both
+already fetch their full filtered dataset for client-side multi-facet filtering by design, and
+converting that to server-side filtering is a separately-scoped, larger reports-architecture
+change. User Management, Dashboard's "Shipments in Period" table, Space Configurations, and the
+Archive page get the same client-side treatment — all four are genuinely bounded, non-shipment-
+volume datasets (org headcount, a date-filtered view of the same shared array, carrier space
+configs), so the lighter, lower-risk client-side slice was the deliberate choice over a
+ShipmentsPage-style backend conversion.
+
+Test coverage: tests/pagination-standardization.test.js (24 assertions) exercises the new
+status/carrier/search/sort/teu behavior on GET /api/shipments and the new opt-in pagination on
+GET /api/linked-ports and GET /api/carrier-agents via real scratch fixtures, confirming every
+existing zero-arg caller's bare-array response is unaffected.
+```
+
 ---
 
 ## 9. Data Flow Diagrams
@@ -924,7 +1084,7 @@ Referential integrity is genuinely enforced at the SQLite level, not just by app
 | ~~C1~~ | ~~No transactions on multi-step writes~~ | **RESOLVED** — see §10. Not exhaustive (a genuinely new multi-step write path isn't automatically covered), but the blanket "none" claim is false. |
 | ~~C2~~ | ~~No authentication~~ | **RESOLVED v0.19.0** (unchanged from last review) |
 | ~~C3~~ | ~~No FK constraints~~ | **RESOLVED** — confirmed directly this pass (§10); the last review's own §10/§11 contradicted each other on this exact point. |
-| C4 | **`server.js`** — still the composition root (§5), now 3,529 lines. Route handling has moved almost entirely to `routes/*.js` (25 files, 8,290 lines) — a much better split than the last review credited, but the file is still large and still owns schema/migrations, shared runtime helpers, and `ctx` wiring in one place. | Splitting the migrations block into its own module remains a logged, not-yet-executed follow-up. |
+| C4 | **`server.js`** — still the composition root (§5), now 4,292 lines. Route handling has moved almost entirely to `routes/*.js` (31 files, 10,057 lines) — a much better split than the last review credited, but the file is still large and still owns schema/migrations, shared runtime helpers, and `ctx` wiring in one place. | Splitting the migrations block into its own module remains a logged, not-yet-executed follow-up. |
 | ~~C5~~ | ~~No test suite~~ | **RESOLVED, and grown further** — 36 backend test files (`npm test`), 2 frontend files (Vitest), both wired into CI (`.github/workflows/ci.yml`). |
 
 ### High
@@ -933,7 +1093,7 @@ Referential integrity is genuinely enforced at the SQLite level, not just by app
 |---|---|---|
 | H1 | **`ShipmentDetailPage.jsx`** | **RESOLVED** — was 4,275 lines; now 2,811, with every section broken into its own routed page under `src/pages/shipments/` (§8.11). |
 | H2 | **No migration framework** | Still true. Additive-only `ALTER TABLE` array in `server.js`, no version table, no rollback. |
-| H3 | **No pagination on shipments/tickets/cost-lines** | Still true (§10) — now also true of `quotes` and `carrier_invoices`, both added without pagination. |
+| ~~H3~~ | ~~No pagination on shipments/tickets/cost-lines~~ | **RESOLVED for `shipments`, `quotes`, and `carrier_invoices`** — v0.78.0 (§8.18) gave `GET /api/shipments` real filter/sort/pagination and converted `ShipmentsPage.jsx` to use it, and wired the frontend up to `quotes`/`carrier_invoices`' pagination that already existed server-side but was never called with `limit`/`offset`. `tickets`/`shipment_cost_lines` remain genuinely unpaginated by design (§8.18's own scope note) — both are bounded per-shipment/per-board lists, not the open-ended, business-volume-scaling case this item was actually about. |
 | H4 | **JSON stored in columns** (`container_types`, `imdg_classes`) | Still true. |
 | ~~H5~~ | ~~No SQLite indexes beyond primary keys~~ | **RESOLVED** — 25 `CREATE INDEX IF NOT EXISTS` statements exist, covering the highest-traffic lookup columns (`shipment_cost_lines(shipment_id)`, `containers(shipment_id)`, `entity_events(entity_type, entity_id)`, `shipment_documents`, `shipment_parties`, and more). |
 | H6 | **Hash-based routing (manual)** | Still true — no React Router adopted. |
@@ -961,11 +1121,11 @@ Referential integrity is genuinely enforced at the SQLite level, not just by app
 | L2 | WAL mode for SQLite | Not re-verified this pass. |
 | L3 | `crypto.randomUUID()` instead of manual `uid()` | Still using manual `uid()` — the 6-char ID format is now load-bearing in a lot of places (prefixes, display), so this is a bigger change than it looks. |
 | L4 | Extract `SERVICE_CODE_MAP`/`TRACKED_FIELDS` to shared config | Not re-verified this pass. |
-| L5 | OpenAPI/Swagger spec | Still true — no route documentation beyond this file and inline comments; now covering well over 200 routes across 25 files. |
+| L5 | OpenAPI/Swagger spec | Still true — no route documentation beyond this file and inline comments; now covering well over 200 routes across 31 files. |
 | ~~L6~~ | ~~Version column on `app_settings`~~ | Not applicable — no migration framework exists to version against (see H2). |
 | ~~L7~~ | ~~Containerise with Docker~~ | **RESOLVED** — Dockerfiles + `docker-compose.yml` exist for all 4 processes (§3). |
 | L8 | Cost-line validation endpoint (orphaned/missing lines) | Not re-verified — check ticket TKT-1X8R29's current status before assuming either way. |
-| **L9 (new)** | **`package.json`'s own `"version"` field reads `0.66.0`** while `src/version.js` (the actual source of truth for the in-app version badge and changelog) is at `0.69.0`. Cosmetic — nothing reads `package.json`'s version at runtime — but worth a fix next time either file is touched, since it's the kind of drift that erodes trust in version numbers generally. | Open |
+| ~~L9~~ | ~~`package.json`'s own `"version"` field drifts from `src/version.js`~~ | **RESOLVED v0.78.0** — both bumped together in this pass (`package.json` had drifted to `0.71.0` against `src/version.js`'s `0.76.0`). Still nothing reads `package.json`'s version at runtime, and still no automated check keeping the two in sync — a future bump could drift again if only `src/version.js` is touched. |
 | **L10 (new)** | **This document itself has no enforced freshness process.** It went 39 releases stale silently — nothing in CI or the release process checks it. If it's worth maintaining at all, it's worth a lightweight check (even just a version-number diff against `src/version.js` at release time) so the next drift is caught in weeks, not months. | Open — a process gap, not a code gap. |
 
 ---

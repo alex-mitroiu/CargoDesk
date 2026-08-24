@@ -138,14 +138,14 @@ async function login() {
     assert("Principal and Bank both present", rolesAfterBoth.body.includes("Principal") && rolesAfterBoth.body.includes("Bank") && rolesAfterBoth.body.length === 2);
 
     console.log("\nRole filter — GET /api/customers?role=Bank only returns customers actually used as Bank");
-    const roleSearch = await request("GET", `/api/customers?role=Bank&search=Test%20`, null, token);
+    const roleSearch = await request("GET", `/api/customers?role=Bank&search=Test%20&limit=200`, null, token);
     assert("search returns 200", roleSearch.status === 200);
     const ids = roleSearch.body.results.map(c => c.id);
     assert("customer used as Bank is included", ids.includes(customerId));
     assert("never-used customer is excluded", !ids.includes(unflagged.body.id));
 
     console.log("\nRole filter — comma-separated multi-role (category filter) matches either role");
-    const multiRoleSearch = await request("GET", `/api/customers?role=Principal,Bank&search=Test%20`, null, token);
+    const multiRoleSearch = await request("GET", `/api/customers?role=Principal,Bank&search=Test%20&limit=200`, null, token);
     const multiIds = multiRoleSearch.body.results.map(c => c.id);
     assert("multi-role filter still includes the customer", multiIds.includes(customerId));
     assert("multi-role filter still excludes the never-used customer", !multiIds.includes(unflagged.body.id));
