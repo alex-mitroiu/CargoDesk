@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { T, todayIso, addDays } from "../tokens";
 import { api } from "../api";
 import { toast } from "../toast";
+import { useAuth } from "../AuthContext";
 import GpBreakdownPanel from "../components/shared/GpBreakdownPanel";
 import BillingPerformancePanel from "../components/shared/BillingPerformancePanel";
 import ScheduledReportsPanel from "../components/shared/ScheduledReportsPanel";
@@ -25,10 +26,23 @@ const GROUP_MODES = {
 // default. "Where is the business losing money" is the list view itself (sorted worst-margin-
 // first once a target's configured); drilling into one group is the "why".
 const ReportsPage = () => {
+  // Client-side mirror of the backend's own gate (reportsGate/scopedShipmentIds,
+  // routes/reports.js) — the nav link is already hidden for anyone without one of these, but
+  // hiding a link isn't an access control (a direct URL still reached the full page shell before
+  // this). admin/canViewFinance get the unscoped whole company on every tab; a trade_manager is
+  // admitted too, on GP by Trade Area / Billing Performance / Invoice Collections alike, each
+  // silently scoped server-side to exactly their own profile configuration (office + trade-lane/
+  // pol/country scope items) — direct feedback: they should see their own numbers, not a
+  // narrowed tab set or a 403. Scheduled Reports (configuring automated org-wide report emails)
+  // stays finance-only — a genuinely different, more privileged action with no per-lane meaning.
+  const { isAdmin, isTradeManager, user } = useAuth();
+  const hasFinanceAccess = isAdmin || !!user?.canViewFinance;
+  const hasAnyAccess = hasFinanceAccess || isTradeManager;
+
   // TKT-B4VBDH — Billing Performance joins GP by Trade Area as a second top-level tab on this
   // page rather than its own nav item, mirroring DashboardPage.jsx's own tab-bar pattern for
   // "several distinct reports under one nav entry."
-  const [tab, setTab] = useState("gp"); // "gp" | "billing"
+  const [tab, setTab] = useState("gp"); // "gp" | "billing" | "collections" | "scheduled"
   const [groupBy, setGroupBy] = useState("region"); // "region" | "country" | "carrier"
   // Default window is today -> today+30 (a forward-looking "what's coming up" slice) rather
   // than all-time — "" still means no bound at all, reachable via Clear below, since an
@@ -53,18 +67,19 @@ const ReportsPage = () => {
   useEffect(() => { setSelected(null); }, [groupBy]);
 
   useEffect(() => {
+    if (!hasAnyAccess) { setListLoading(false); return; } // would only ever 403 — don't ask
     setListLoading(true);
     api.reports.gpByGeo(groupBy, null, dateFrom, dateTo)
       .then(({ results, targetPct, comparisonAvailable }) => { setList(results); setTargetPct(targetPct); setComparisonAvailable(!!comparisonAvailable); })
       .catch(() => { setList([]); setTargetPct(null); setComparisonAvailable(false); })
       .finally(() => setListLoading(false));
-  }, [groupBy, dateFrom, dateTo]);
+  }, [groupBy, dateFrom, dateTo, hasAnyAccess]);
 
   useEffect(() => {
-    if (!selected) { setLines([]); return; }
+    if (!hasAnyAccess || !selected) { setLines([]); return; }
     setLinesLoading(true);
     api.reports.gpByGeo(groupBy, selected, dateFrom, dateTo).then(setLines).catch(() => setLines([])).finally(() => setLinesLoading(false));
-  }, [groupBy, selected, dateFrom, dateTo]);
+  }, [groupBy, selected, dateFrom, dateTo, hasAnyAccess]);
 
   const runExport = async (value) => {
     setExporting(true);
@@ -75,6 +90,26 @@ const ReportsPage = () => {
 
   const th = { fontFamily: T.body, fontSize: 10, fontWeight: 600, color: T.textMuted,
     textTransform: "uppercase", letterSpacing: ".07em" };
+
+  // A direct URL hit bypasses the sidebar's own link-hiding entirely — this is the actual
+  // access control the nav link visibility only ever hinted at, matching the backend's own
+  // reportsGate (routes/reports.js) rather than trusting the link being hidden.
+  if (!hasAnyAccess) return (
+    <div id="reports-page" style={{ maxWidth: 640, margin: "80px auto 0", textAlign: "center" }}>
+      <h1 style={{ fontFamily: T.head, fontSize: 20, fontWeight: 800, color: T.text, margin: "0 0 8px" }}>Reports</h1>
+      <p style={{ fontFamily: T.body, fontSize: 13.5, color: T.textMuted, margin: 0 }}>
+        Reports access isn't enabled for your account. Ask an administrator to enable finance
+        access, or reach out if you believe this is wrong.
+      </p>
+    </div>
+  );
+
+  const TAB_DEFS = [
+    { key: "gp",         label: "GP by Trade Area",     financeOnly: false },
+    { key: "billing",    label: "Billing Performance",  financeOnly: false },
+    { key: "collections",label: "Invoice Collections",  financeOnly: false },
+    { key: "scheduled",  label: "Scheduled Reports",    financeOnly: true },
+  ].filter(t => hasFinanceAccess || !t.financeOnly);
 
   return (
     <div id="reports-page" style={{ maxWidth: 1100, margin: "0 auto" }}>
@@ -92,7 +127,7 @@ const ReportsPage = () => {
       </div>
 
       <div id="reports-tab-bar" style={{ display: "flex", borderBottom: `1px solid ${T.border}`, marginBottom: 20 }}>
-        {[{ key: "gp", label: "GP by Trade Area" }, { key: "billing", label: "Billing Performance" }, { key: "collections", label: "Invoice Collections" }, { key: "scheduled", label: "Scheduled Reports" }].map(t => (
+        {TAB_DEFS.map(t => (
           <button key={t.key} type="button" onClick={() => setTab(t.key)} style={{
             padding: "10px 20px", background: "none", border: "none",
             borderBottom: tab === t.key ? `2px solid ${T.accent}` : "2px solid transparent",

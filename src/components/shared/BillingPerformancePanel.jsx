@@ -1,20 +1,21 @@
 import { useState, useEffect, useMemo } from "react";
-import { BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, LabelList, ResponsiveContainer } from "recharts";
+import { BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, LabelList, ResponsiveContainer } from "recharts";
 import { T } from "../../tokens";
 import { api } from "../../api";
 import { toast } from "../../toast";
 import Btn from "../primitives/Btn";
 import Spinner from "../primitives/Spinner";
+import DatePicker from "../primitives/DatePicker";
 
 // Billing Performance report (TKT-B4VBDH, Epic TKT-KR6ZBT) — row-level FR01/FR02 invoices,
-// filterable by any combination of status/sent/paid and office/customer/lane/carrier, per
+// filterable by any combination of status/sent/paid/date and office/customer/lane/carrier, per
 // direct request: "the granularity is important because of the performance metrics, and we can
 // easily identify where we have certain problems." Deliberately a filter-and-scan table, not a
 // single groupBy toggle like the GP-by-Trade-Area tab next to this one — the whole point here is
 // slicing several dimensions at once (e.g. "unpaid AND overdue AND this one office").
 
 const fmtUsd = v => v == null ? "—" : `$${Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const fmtDate = s => s ? new Date(s).toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" }) : "—";
+const fmtUsdCompact = v => v == null ? "—" : `$${Number(v).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 
 // paymentState — the one status this report leads with: "is this paid, and if not, how late is
 // it" is what a manager actually cares about, not the invoice document's own draft/confirmed/
@@ -32,6 +33,16 @@ const paymentStateMeta = state => ({
   voided:  { label: "Voided",  color: T.textMuted },
 }[state] || { label: state, color: T.textMuted });
 
+// What's actually "in the hole" for a row: real money still owed for a live invoice
+// (outstandingUsd), falling back to face value for a state that never carries an outstanding
+// balance (Draft/Voided — informational only) or 0 for Missing (nothing invoiced yet to owe).
+const rowValueUsd = r => r.outstandingUsd != null ? r.outstandingUsd : (r.amountUsd || 0);
+
+const fmtMonthLabel = monthKey => {
+  const [y, m] = monthKey.split("-").map(Number);
+  return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString(undefined, { month: "short", year: "numeric", timeZone: "UTC" });
+};
+
 const Chip = ({ active, onClick, children, color }) => (
   <button type="button" onClick={onClick} style={{
     padding: "5px 12px", borderRadius: 20, cursor: "pointer",
@@ -45,7 +56,20 @@ const Chip = ({ active, onClick, children, color }) => (
   </button>
 );
 
-const StatusBarTooltip = ({ active, payload }) => {
+const SegButton = ({ active, onClick, children }) => (
+  <button type="button" onClick={onClick} style={{
+    padding: "5px 12px", fontFamily: T.body, fontSize: 12, fontWeight: active ? 700 : 500,
+    color: active ? T.btnPrimaryText : T.textMuted,
+    background: active ? T.accent : "transparent",
+    border: "none", borderRadius: 6, cursor: "pointer", transition: "background .12s, color .12s",
+  }}>
+    {children}
+  </button>
+);
+
+const fmtMetric = (v, metric) => metric === "amount" ? fmtUsdCompact(v) : `${v}`;
+
+const StatusBarTooltip = ({ active, payload, metric }) => {
   if (!active || !payload?.length) return null;
   const d = payload[0].payload;
   return (
@@ -53,11 +77,32 @@ const StatusBarTooltip = ({ active, payload }) => {
       boxShadow: "0 4px 20px rgba(0,0,0,.18)", padding: "8px 12px", minWidth: 130 }}>
       <div style={{ fontFamily: T.body, fontSize: 12, fontWeight: 700, color: d.color }}>{d.label}</div>
       <div style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 800, color: T.text, marginTop: 2 }}>
-        {d.count} invoice{d.count === 1 ? "" : "s"}
+        {metric === "amount" ? fmtUsd(d.valueUsd) : `${d.count} invoice${d.count === 1 ? "" : "s"}`}
       </div>
-      {d.amountUsd > 0 && (
-        <div style={{ fontFamily: T.mono, fontSize: 11.5, color: T.textMuted, marginTop: 1 }}>{fmtUsd(d.amountUsd)}</div>
+      {metric === "count" && d.valueUsd > 0 && (
+        <div style={{ fontFamily: T.mono, fontSize: 11.5, color: T.textMuted, marginTop: 1 }}>{fmtUsd(d.valueUsd)} at stake</div>
       )}
+    </div>
+  );
+};
+
+const MonthBarTooltip = ({ active, payload, label, metric }) => {
+  if (!active || !payload?.length) return null;
+  const total = payload.reduce((s, p) => s + (p.value || 0), 0);
+  return (
+    <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8,
+      boxShadow: "0 4px 20px rgba(0,0,0,.18)", padding: "8px 12px", minWidth: 160 }}>
+      <div style={{ fontFamily: T.body, fontSize: 12, fontWeight: 700, color: T.text, marginBottom: 4 }}>{label}</div>
+      {payload.filter(p => p.value > 0).map(p => (
+        <div key={p.dataKey} style={{ display: "flex", justifyContent: "space-between", gap: 14,
+          fontFamily: T.mono, fontSize: 11.5, color: p.fill }}>
+          <span>{p.name}</span><span>{fmtMetric(p.value, metric)}</span>
+        </div>
+      ))}
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 14, marginTop: 4, paddingTop: 4,
+        borderTop: `1px solid ${T.border}`, fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.text }}>
+        <span>Total</span><span>{fmtMetric(total, metric)}</span>
+      </div>
     </div>
   );
 };
@@ -83,6 +128,20 @@ const BillingPerformancePanel = () => {
   const [customerId,   setCustomerId]   = useState("");
   const [laneCode,     setLaneCode]     = useState("");
   const [carrierCode,  setCarrierCode]  = useState("");
+  // Date range — filters each row's own createdAt (a Missing row's synthetic createdAt is when
+  // it was delivered, its own real "became relevant" event). "" on either side = no bound, same
+  // convention GP by Trade Area's own date range already uses — unlike that tab, defaults to no
+  // bound at all rather than a forward-looking window, since billing history is inherently
+  // backward-looking and a narrow default would silently hide what's normally shown today.
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo,   setDateTo]   = useState("");
+
+  // "By Status" (triage — what needs attention right now) vs "By Month" (trend — compare one
+  // month against another), and a Count/$ metric toggle that applies to both. Direct request:
+  // "we need to also get the accurate numbers of how much we're in the hole" — the $ mode uses
+  // rowValueUsd (real money still owed), not face value, so Paid correctly reads $0.
+  const [chartView,   setChartView]   = useState("status"); // "status" | "month"
+  const [chartMetric, setChartMetric] = useState("count");  // "count" | "amount"
 
   const load = () => {
     setError(false);
@@ -121,9 +180,12 @@ const BillingPerformancePanel = () => {
       if (customerId && r.customerId !== customerId) return false;
       if (laneCode && r.laneCode !== laneCode) return false;
       if (carrierCode && r.carrierCode !== carrierCode) return false;
+      const ref = (r.createdAt || "").slice(0, 10);
+      if (dateFrom && (!ref || ref < dateFrom)) return false;
+      if (dateTo && (!ref || ref > dateTo)) return false;
       return true;
     });
-  }, [rows, stateFilter, sentFilter, officeId, customerId, laneCode, carrierCode]);
+  }, [rows, stateFilter, sentFilter, officeId, customerId, laneCode, carrierCode, dateFrom, dateTo]);
 
   const stats = useMemo(() => {
     const confirmed = filtered.filter(r => r.status === "confirmed");
@@ -137,22 +199,44 @@ const BillingPerformancePanel = () => {
     return { invoicedUsd, outstandingUsd, overdueCount: overdue.length, overdueUsd, sentPct, paidPct, missingCount };
   }, [filtered]);
 
-  const hasFilters = stateFilter.size || sentFilter || officeId || customerId || laneCode || carrierCode;
-  const clearFilters = () => { setStateFilter(new Set()); setSentFilter(""); setOfficeId(""); setCustomerId(""); setLaneCode(""); setCarrierCode(""); };
+  const hasFilters = stateFilter.size || sentFilter || officeId || customerId || laneCode || carrierCode || dateFrom || dateTo;
+  const clearFilters = () => {
+    setStateFilter(new Set()); setSentFilter(""); setOfficeId(""); setCustomerId(""); setLaneCode(""); setCarrierCode("");
+    setDateFrom(""); setDateTo("");
+  };
 
-  // Invoices by Status graph — a direct request to make this report readable at a glance
-  // instead of a scan-the-numbers table. Sourced entirely from this report's own rows (never
-  // GP/cost-line data, which is a different concept — profitability, not billing status) and
-  // scoped to exactly whatever's currently filtered below, same as the stat cards above it.
-  const chartData = useMemo(() => {
+  // "Invoices by Status" — a direct request to make this report readable at a glance instead of
+  // a scan-the-numbers table. Sourced entirely from this report's own rows (never GP/cost-line
+  // data, which is a different concept — profitability, not billing status) and scoped to
+  // exactly whatever's currently filtered, same as the stat cards above it.
+  const statusChartData = useMemo(() => {
     return PAYMENT_STATE_ORDER
       .map(state => {
         const rowsForState = filtered.filter(r => r.paymentState === state);
-        const amountUsd = rowsForState.reduce((s, r) => s + (r.amountUsd || 0), 0);
-        return { state, label: paymentStateMeta(state).label, color: paymentStateMeta(state).color, count: rowsForState.length, amountUsd };
+        const valueUsd = rowsForState.reduce((s, r) => s + rowValueUsd(r), 0);
+        const meta = paymentStateMeta(state);
+        return { state, label: meta.label, color: meta.color, count: rowsForState.length, valueUsd };
       })
       .filter(d => d.count > 0);
   }, [filtered]);
+
+  // "By Month" — month-over-month comparison, stacked by the same status so a bad month is
+  // visibly identifiable (not just a bigger number, but which status grew). Grouped by each
+  // row's own createdAt month, respecting every other active filter first.
+  const monthChartData = useMemo(() => {
+    const byMonth = new Map();
+    for (const r of filtered) {
+      const month = (r.createdAt || "").slice(0, 7);
+      if (!month) continue;
+      if (!byMonth.has(month)) {
+        const blank = { month };
+        PAYMENT_STATE_ORDER.forEach(s => { blank[s] = 0; });
+        byMonth.set(month, blank);
+      }
+      byMonth.get(month)[r.paymentState] += chartMetric === "amount" ? rowValueUsd(r) : 1;
+    }
+    return [...byMonth.values()].sort((a, b) => a.month.localeCompare(b.month)).map(b => ({ ...b, label: fmtMonthLabel(b.month) }));
+  }, [filtered, chartMetric]);
 
   const runExport = async () => {
     setExporting(true);
@@ -180,6 +264,8 @@ const BillingPerformancePanel = () => {
     { label: "Paid", value: stats.paidPct != null ? `${stats.paidPct}%` : "—", color: T.text },
   ];
 
+  const hasChart = chartView === "status" ? statusChartData.length > 0 : monthChartData.length > 0;
+
   return (
     <div id="billing-performance-panel">
       <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 10, marginBottom: 18 }}>
@@ -191,26 +277,63 @@ const BillingPerformancePanel = () => {
         ))}
       </div>
 
-      {chartData.length > 0 && (
+      {hasChart && (
         <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "18px 18px 14px", marginBottom: 18 }}>
-          <div style={{ marginBottom: 4 }}>
-            <h3 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: "0 0 2px" }}>Invoices by Status</h3>
-            <p style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, margin: 0 }}>
-              {filtered.length} invoice{filtered.length === 1 ? "" : "s"} currently shown, by payment status
-            </p>
+          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 4, flexWrap: "wrap", gap: 10 }}>
+            <div>
+              <h3 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: "0 0 2px" }}>
+                {chartView === "status" ? "Invoices by Status" : "Month by Month"}
+              </h3>
+              <p style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, margin: 0 }}>
+                {chartView === "status"
+                  ? `${filtered.length} invoice${filtered.length === 1 ? "" : "s"} currently shown, by payment status`
+                  : "Same statuses, trended by the month each invoice was created — compare month to month"}
+              </p>
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <div style={{ display: "inline-flex", gap: 2, padding: 3, background: T.bg, border: `1px solid ${T.border}`, borderRadius: 9 }}>
+                <SegButton active={chartMetric === "count"} onClick={() => setChartMetric("count")}>Count</SegButton>
+                <SegButton active={chartMetric === "amount"} onClick={() => setChartMetric("amount")}>$ Outstanding</SegButton>
+              </div>
+              <div style={{ display: "inline-flex", gap: 2, padding: 3, background: T.bg, border: `1px solid ${T.border}`, borderRadius: 9 }}>
+                <SegButton active={chartView === "status"} onClick={() => setChartView("status")}>By Status</SegButton>
+                <SegButton active={chartView === "month"} onClick={() => setChartView("month")}>By Month</SegButton>
+              </div>
+            </div>
           </div>
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={chartData} margin={{ top: 20, right: 8, left: -8, bottom: 4 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke={T.border} vertical={false} />
-              <XAxis dataKey="label" tick={{ fontFamily: T.body, fontSize: 11, fill: T.textMuted }} axisLine={{ stroke: T.border }} tickLine={false} />
-              <YAxis tick={{ fontFamily: T.mono, fontSize: 10, fill: T.textMuted }} axisLine={false} tickLine={false} allowDecimals={false} />
-              <Tooltip content={<StatusBarTooltip />} cursor={{ fill: `${T.accent}0c` }} />
-              <Bar dataKey="count" radius={[3, 3, 0, 0]} maxBarSize={64}>
-                {chartData.map(d => <Cell key={d.state} fill={d.color} />)}
-                <LabelList dataKey="count" position="top" style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, fill: T.text }} />
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
+
+          {chartView === "status" ? (
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={statusChartData} margin={{ top: 20, right: 8, left: -8, bottom: 4 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={T.border} vertical={false} />
+                <XAxis dataKey="label" tick={{ fontFamily: T.body, fontSize: 11, fill: T.textMuted }} axisLine={{ stroke: T.border }} tickLine={false} />
+                <YAxis tick={{ fontFamily: T.mono, fontSize: 10, fill: T.textMuted }} axisLine={false} tickLine={false} allowDecimals={false}
+                  tickFormatter={v => chartMetric === "amount" ? fmtUsdCompact(v) : v} />
+                <Tooltip content={<StatusBarTooltip metric={chartMetric} />} cursor={{ fill: `${T.accent}0c` }} />
+                <Bar dataKey={chartMetric === "amount" ? "valueUsd" : "count"} radius={[3, 3, 0, 0]} maxBarSize={64} isAnimationActive={false}>
+                  {statusChartData.map(d => <Cell key={d.state} fill={d.color} />)}
+                  <LabelList dataKey={chartMetric === "amount" ? "valueUsd" : "count"}
+                    formatter={v => fmtMetric(v, chartMetric)} position="top"
+                    style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, fill: T.text }} />
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <ResponsiveContainer width="100%" height={260}>
+              <BarChart data={monthChartData} margin={{ top: 4, right: 8, left: -8, bottom: 4 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={T.border} vertical={false} />
+                <XAxis dataKey="label" tick={{ fontFamily: T.body, fontSize: 11, fill: T.textMuted }} axisLine={{ stroke: T.border }} tickLine={false} />
+                <YAxis tick={{ fontFamily: T.mono, fontSize: 10, fill: T.textMuted }} axisLine={false} tickLine={false} allowDecimals={false}
+                  tickFormatter={v => chartMetric === "amount" ? fmtUsdCompact(v) : v} />
+                <Tooltip content={<MonthBarTooltip metric={chartMetric} />} cursor={{ fill: `${T.accent}0c` }} />
+                <Legend wrapperStyle={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, paddingTop: 10 }} />
+                {PAYMENT_STATE_ORDER.map(state => (
+                  <Bar key={state} dataKey={state} name={paymentStateMeta(state).label} stackId="a"
+                    fill={paymentStateMeta(state).color} maxBarSize={64} isAnimationActive={false} />
+                ))}
+              </BarChart>
+            </ResponsiveContainer>
+          )}
         </div>
       )}
 
@@ -231,14 +354,21 @@ const BillingPerformancePanel = () => {
           <Chip active={sentFilter === "sent"} onClick={() => setSentFilter(p => p === "sent" ? "" : "sent")} color={T.info}>Sent</Chip>
           <Chip active={sentFilter === "not_sent"} onClick={() => setSentFilter(p => p === "not_sent" ? "" : "not_sent")} color={T.info}>Not Sent</Chip>
         </div>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "flex-end" }}>
+          <div style={{ width: 168 }}>
+            <DatePicker label="From" value={dateFrom} onChange={setDateFrom} maxDate={dateTo || undefined} placeholder="Any" />
+          </div>
+          <div style={{ fontFamily: T.mono, fontSize: 14, color: T.textMuted, paddingBottom: 9, userSelect: "none" }}>—</div>
+          <div style={{ width: 168 }}>
+            <DatePicker label="To" value={dateTo} onChange={setDateTo} minDate={dateFrom || undefined} placeholder="Any" />
+          </div>
           <Select value={officeId} onChange={setOfficeId} options={facets.offices} placeholder="All offices" />
           <Select value={customerId} onChange={setCustomerId} options={facets.customers} placeholder="All customers" />
           <Select value={laneCode} onChange={setLaneCode} options={facets.lanes} placeholder="All trade lanes" />
           <Select value={carrierCode} onChange={setCarrierCode} options={facets.carriers} placeholder="All carriers" />
           {hasFilters && <Btn variant="ghost" size="sm" onClick={clearFilters}>Clear filters</Btn>}
           <div style={{ flex: 1 }} />
-          <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>{filtered.length} of {rows.length} invoices</span>
+          <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, paddingBottom: 8 }}>{filtered.length} of {rows.length} invoices</span>
           <Btn variant="secondary" size="sm" onClick={runExport} disabled={exporting}>{exporting ? "Exporting…" : "⬇ Export CSV"}</Btn>
         </div>
       </div>

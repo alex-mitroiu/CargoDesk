@@ -3725,10 +3725,13 @@ function App() {
               </>
             )}
 
-            {/* Reports — same finance-access gate as Dashboard's Margin tab; hidden outright here
-                since (unlike Margin's mask-the-numbers approach) the backend hard-403s a non-
-                finance user rather than serving redacted data. */}
-            {(appSettings.finance_view_enabled !== 'false' && (effectiveRoles.includes('admin') || !!(user?.canViewFinance))) && (
+            {/* Reports — same finance-access gate as Dashboard's Margin tab for the GP/Billing
+                tabs (the backend hard-403s a non-finance user rather than serving redacted
+                data); a trade_manager also sees this link even without canViewFinance, since
+                Invoice Collections is where their own lane-scoped status-override authority
+                actually gets exercised — ReportsPage itself hides the finance-only tabs and
+                defaults straight to Collections for a trade_manager-only visitor. */}
+            {(appSettings.finance_view_enabled !== 'false' && (effectiveRoles.includes('admin') || !!(user?.canViewFinance) || authCtxValue.isTradeManager)) && (
               <NavBtn pageKey="reports" icon={IconChartBar} label="Reports" />
             )}
 

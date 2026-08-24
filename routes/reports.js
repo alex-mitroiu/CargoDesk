@@ -23,15 +23,35 @@
 // blank in this data) while country_trade_lanes has real, complete coverage — using the dormant
 // one would make "By Region" permanently empty.
 module.exports = function reportsRoutes(app, ctx) {
-  const { db, ok, err, auth, requireRole, mapCostLine, roundCents, portCountryMap, getSettings,
-          docAmountUsd, runDunningSweep,
+  const { db, ok, err, auth, requireRole, mapCostLine, mapShipment, roundCents, portCountryMap, getSettings,
+          docAmountUsd, runDunningSweep, applyShipmentAccessFilter,
           resolveInvoiceThresholds, runInvoiceCollectionsSweep, businessDaysBetween, mapInvoiceStatusOverride } = ctx;
 
-  const financeGate = (req, res) => {
+  // A trade_manager has a real, standing reason to be in Reports regardless of canViewFinance —
+  // direct feedback: they should see their own lane's numbers (GP, billing, collections), not a
+  // hidden tab or an all-or-nothing 403. Everyone in this gate gets in; scopedShipmentIds below
+  // decides how MUCH of the data they actually see. admin/canViewFinance get the unscoped whole
+  // company; a trade_manager gets exactly what applyShipmentAccessFilter already grants them
+  // everywhere else in the app (their own office + trade-lane/pol/country scope items) — the
+  // same "profile configuration" the shipment list itself already respects, not a parallel rule.
+  // Anyone else (occ_bk, viewer) is still turned away outright.
+  const reportsGate = (req, res) => {
     const u = req.user;
     const roles = Array.isArray(u.roles) ? u.roles : [u.role || 'viewer'];
-    if (!roles.includes('admin') && !u.canViewFinance) { err(res, "Finance access not enabled for your account", 403); return false; }
-    return true;
+    if (roles.includes('admin') || roles.includes('trade_manager') || u.canViewFinance) return true;
+    err(res, "Finance access not enabled for your account", 403);
+    return false;
+  };
+
+  // null = unrestricted (admin/canViewFinance sees the whole company); a Set = exactly the
+  // shipment ids this trade_manager's own office/scope-item configuration already grants them.
+  const scopedShipmentIds = req => {
+    const u = req.user;
+    const roles = Array.isArray(u.roles) ? u.roles : [u.role || 'viewer'];
+    if (roles.includes('admin') || u.canViewFinance) return null;
+    const all = db.prepare("SELECT * FROM shipments").all().map(mapShipment);
+    const allowed = applyShipmentAccessFilter(all, u, req);
+    return new Set(allowed.map(s => s.id));
   };
 
   function escCSV(v) {
@@ -52,18 +72,20 @@ module.exports = function reportsRoutes(app, ctx) {
   const GROUP_LABEL = { region: "Region", country: "Country", carrier: "Carrier" };
 
   app.get("/api/reports/gp-by-geo", auth(), (req, res) => {
-    if (!financeGate(req, res)) return;
+    if (!reportsGate(req, res)) return;
     const groupBy = ['region', 'country', 'carrier'].includes(req.query.groupBy) ? req.query.groupBy : 'country';
     const value = (req.query.value || '').trim();
     const dateFrom = (req.query.from || '').trim();
     const dateTo   = (req.query.to || '').trim();
     const format = req.query.format === 'csv' ? 'csv' : 'json';
 
-    const allRows = db.prepare(`
+    const scopeIds = scopedShipmentIds(req);
+    let allRows = db.prepare(`
       SELECT cl.*, s.pol, s.carrier_code, s.etd, s.created_at AS shp_created_at
       FROM shipment_cost_lines cl
       JOIN shipments s ON s.id = cl.shipment_id
     `).all();
+    if (scopeIds) allRows = allRows.filter(r => scopeIds.has(r.shipment_id));
     let rows = allRows;
 
     // Same reference-date convention GET /api/margin/summary's own weeklyBreakdown already
@@ -202,9 +224,15 @@ module.exports = function reportsRoutes(app, ctx) {
   // pre-aggregated summary, so the frontend owns the slicing the same way ShipmentsPage already
   // owns its own client-side filtering.
   app.get("/api/reports/billing-performance", auth(), (req, res) => {
-    if (!financeGate(req, res)) return;
+    if (!reportsGate(req, res)) return;
     const format = req.query.format === 'csv' ? 'csv' : 'json';
+    const scopeIds = scopedShipmentIds(req);
 
+    // Deliberately fetched unscoped — invoicedShipmentIds below (used purely to exclude an
+    // already-invoiced shipment from ever being synthesized as "Missing") must reflect reality
+    // company-wide, not just this caller's own scope, or an out-of-scope invoice would make an
+    // in-scope Missing candidate look uninvoiced. The actual scoping happens once, at the very
+    // end, over the combined real-invoice + Missing result set.
     const rows = db.prepare(`
       SELECT d.*, s.carrier_code, s.pol, s.pod, s.emo_office_id,
              s.principal_id, s.principal_name, s.consignee_id, s.consignee_name
@@ -306,7 +334,8 @@ module.exports = function reportsRoutes(app, ctx) {
         pol: r.pol || null, pod: r.pod || null,
       });
     }
-    results.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+    const scopedResults = scopeIds ? results.filter(r => scopeIds.has(r.shipmentId)) : results;
+    scopedResults.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
 
     if (format === 'csv') {
       const cols = [
@@ -320,13 +349,13 @@ module.exports = function reportsRoutes(app, ctx) {
         ["Created", r => r.createdAt], ["Confirmed", r => r.confirmedAt ?? ""],
       ];
       const header = cols.map(([label]) => escCSV(label)).join(",");
-      const body = results.map(r => cols.map(([, fn]) => escCSV(fn(r))).join(",")).join("\n");
+      const body = scopedResults.map(r => cols.map(([, fn]) => escCSV(fn(r))).join(",")).join("\n");
       const date = new Date().toISOString().slice(0, 10);
       res.setHeader("Content-Type", "text/csv; charset=utf-8");
       res.setHeader("Content-Disposition", `attachment; filename="billing-performance-${date}.csv"`);
       return res.send(`${header}\n${body}`);
     }
-    ok(res, results);
+    ok(res, scopedResults);
   });
 
   // Invoice Collections report (Epic TKT-G11AHW) — "scan all shipments" + Paid/Not Paid/Overdue/
@@ -339,7 +368,8 @@ module.exports = function reportsRoutes(app, ctx) {
   // never a hardcoded 5, so this can never disagree with the collections sweep about what
   // "overdue" means for a given shipment.
   app.get("/api/reports/invoice-collections", auth(), (req, res) => {
-    if (!financeGate(req, res)) return;
+    if (!reportsGate(req, res)) return;
+    const scopeIds = scopedShipmentIds(req);
 
     const latestDocRows = db.prepare(`
       SELECT d.* FROM shipment_documents d
@@ -427,9 +457,10 @@ module.exports = function reportsRoutes(app, ctx) {
       });
     }
 
+    const scopedResults = scopeIds ? results.filter(r => scopeIds.has(r.shipmentId)) : results;
     const STATUS_RANK = { overdue: 0, missing: 1, not_paid: 2, overridden: 3, paid: 4, cancelled: 5 };
-    results.sort((a, b) => (STATUS_RANK[a.status] ?? 9) - (STATUS_RANK[b.status] ?? 9) || (b.daysElapsed ?? 0) - (a.daysElapsed ?? 0));
-    ok(res, results);
+    scopedResults.sort((a, b) => (STATUS_RANK[a.status] ?? 9) - (STATUS_RANK[b.status] ?? 9) || (b.daysElapsed ?? 0) - (a.daysElapsed ?? 0));
+    ok(res, scopedResults);
   });
 
   // Manual trigger for the invoice collections sweep (Epic TKT-G11AHW) — same shape as the

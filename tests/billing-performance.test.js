@@ -21,11 +21,17 @@
  *
  * Story 4 (TKT-B4VBDH, Billing Performance report): GET /api/reports/billing-performance
  * returns row-level FR01/FR02 invoices enriched with status/sent/payment/office/customer/lane/
- * carrier, gated by the same finance access (canViewFinance or admin) Reports and Margin
- * already use. paymentState unifies that per-row status around payment lifecycle (Missing/
- * Draft/Unpaid/Partial/Overdue/Paid/Voided); a "Missing" row (no docId at all) surfaces a
- * shipment past its invoice deadline with no invoice whatsoever, reusing the exact same
- * delivered+past-deadline definition GET /api/invoice-deadlines/overdue already uses.
+ * carrier. Direct feedback fixed two real bugs in this same pass: (1) admin/canViewFinance get
+ * the full, unscoped company view; a trade_manager (regardless of canViewFinance) is admitted
+ * too, but scoped to exactly the shipments their own profile configuration already grants them
+ * everywhere else in the app (applyShipmentAccessFilter — office assignment + trade-lane/pol/
+ * country scope items), not the whole company and not a hard 403. The identical scoping applies
+ * to GET /api/reports/gp-by-geo and GET /api/reports/invoice-collections (reportsGate/
+ * scopedShipmentIds, routes/reports.js) — one mechanism, three reports. (2) paymentState unifies
+ * the per-row status around payment lifecycle (Missing/Draft/Unpaid/Partial/Overdue/Paid/
+ * Voided); a "Missing" row (no docId at all) surfaces a shipment past its invoice deadline with
+ * no invoice whatsoever, reusing the exact same delivered+past-deadline definition GET
+ * /api/invoice-deadlines/overdue already uses.
  *
  * Story 5 (TKT-4TEYT1, configurable per-customer reminder cadence): customers.reminderEnabled/
  * reminderIntervalDays let a customer opt into automated overdue-payment reminder emails, on
@@ -352,6 +358,53 @@ async function confirmDoc(docId, token) {
     assert("no longer 'missing' once a real invoice exists — it's a normal confirmed row instead",
       !rptAfterInvoiced.body.some(r => r.shipmentId === shipMiss.body.id && r.paymentState === "missing"), JSON.stringify(rptAfterInvoiced.body.filter(r => r.shipmentId === shipMiss.body.id)));
     assert("the real invoice itself is present with docId set", rptAfterInvoiced.body.some(r => r.docId === docMiss.id), JSON.stringify(rptAfterInvoiced.body.filter(r => r.shipmentId === shipMiss.body.id)));
+
+    console.log("\nReport access — a trade_manager reaches Billing Performance (real bug fix: used to be an all-or-nothing 403), scoped to their own profile configuration (applyShipmentAccessFilter — same mechanism the shipment list itself already uses), not the whole company");
+    const tmEmailBp = `tm-bp-scope-${Date.now()}@example.com`;
+    await request("POST", "/api/users", { email: tmEmailBp, name: "TM Billing Scope Test", roles: ["trade_manager"], password: "TmBpScope!2026Zq" }, token);
+    const tmUsers = await request("GET", "/api/users", null, token);
+    const tmUserId = tmUsers.body.find(u => u.email === tmEmailBp).id;
+    // Scope this trade_manager to POL=NLRTM only (a plain string-equality scope item — no
+    // trade-lane lookup dependency, the simplest reliable way to prove real exclusion in a test).
+    await request("POST", `/api/users/${tmUserId}/scope`, { itemType: "pol", value: "NLRTM", label: "Rotterdam only" }, token);
+    const tmBpLogin = await request("POST", "/api/auth/login", { email: tmEmailBp, password: "TmBpScope!2026Zq" });
+
+    const custInScope = await request("POST", "/api/customers", { companyName: "Test Scope In Co" }, token);
+    const shipInScope = await request("POST", "/api/shipments", {
+      pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+      principalId: custInScope.body.id, principalName: "Test Scope In Co",
+    }, token);
+    const lineInScope = await addSellLine(shipInScope.body.id, token, 700, "OFR");
+    const docInScope = await generateInvoiceDoc(shipInScope.body.id, token, [lineInScope.id]);
+    await confirmDoc(docInScope.id, token);
+
+    const custOutOfScope = await request("POST", "/api/customers", { companyName: "Test Scope Out Co" }, token);
+    const shipOutOfScope = await request("POST", "/api/shipments", {
+      pol: "DEHAM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+      principalId: custOutOfScope.body.id, principalName: "Test Scope Out Co",
+    }, token);
+    const lineOutOfScope = await addSellLine(shipOutOfScope.body.id, token, 900, "OFR");
+    const docOutOfScope = await generateInvoiceDoc(shipOutOfScope.body.id, token, [lineOutOfScope.id]);
+    await confirmDoc(docOutOfScope.id, token);
+
+    const rptAsScopedTm = await request("GET", "/api/reports/billing-performance", null, tmBpLogin.body.token);
+    assert("scoped trade_manager reaches the report at all (200, not 403)", rptAsScopedTm.status === 200, JSON.stringify(rptAsScopedTm.body));
+    assert("the in-scope (NLRTM) shipment's invoice IS visible", rptAsScopedTm.body.some(r => r.docId === docInScope.id), "not found");
+    assert("the out-of-scope (DEHAM) shipment's invoice is NOT visible", !rptAsScopedTm.body.some(r => r.docId === docOutOfScope.id), "leaked!");
+
+    const rptAsAdminUnscoped = await request("GET", "/api/reports/billing-performance", null, token);
+    assert("admin (unscoped) sees BOTH — scoping is per-caller, not global", rptAsAdminUnscoped.body.some(r => r.docId === docInScope.id) && rptAsAdminUnscoped.body.some(r => r.docId === docOutOfScope.id), "admin view missing one");
+
+    console.log("\nReport access — GP by Trade Area and Invoice Collections apply the exact same per-caller scoping");
+    const gpAsScopedTm = await request("GET", "/api/reports/gp-by-geo?groupBy=carrier", null, tmBpLogin.body.token);
+    assert("scoped trade_manager reaches GP by Trade Area (200, not 403)", gpAsScopedTm.status === 200, JSON.stringify(gpAsScopedTm.body));
+    const gpLinesAsScopedTm = await request("GET", "/api/reports/gp-by-geo?groupBy=carrier&value=MAEU", null, tmBpLogin.body.token);
+    assert("the out-of-scope shipment's own cost line never appears in the scoped drill-down", !gpLinesAsScopedTm.body.some(l => l.amountUsd === 900 && l.chargeCode === "OFR"), JSON.stringify(gpLinesAsScopedTm.body));
+
+    const icAsScopedTm = await request("GET", "/api/reports/invoice-collections", null, tmBpLogin.body.token);
+    assert("scoped trade_manager reaches Invoice Collections (200, not 403)", icAsScopedTm.status === 200, JSON.stringify(icAsScopedTm.body));
+    assert("the in-scope shipment shows up in Invoice Collections", icAsScopedTm.body.some(r => r.shipmentId === shipInScope.body.id), "not found");
+    assert("the out-of-scope shipment does NOT show up in Invoice Collections", !icAsScopedTm.body.some(r => r.shipmentId === shipOutOfScope.body.id), "leaked!");
 
     console.log("\nBilling Performance report — CSV export");
     const csvRes = await new Promise((resolve, reject) => {

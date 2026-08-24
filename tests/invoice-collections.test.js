@@ -244,6 +244,14 @@ async function confirmDoc(docId, token) {
     const reportAsOcc = await request("GET", "/api/reports/invoice-collections", null, occLogin.body.token);
     assert("occ_bk with no canViewFinance flag is rejected (403)", reportAsOcc.status === 403, JSON.stringify(reportAsOcc.body));
 
+    // Real bug fix, direct report: a trade_manager without canViewFinance could not reach this
+    // report at all (blocked by the same all-or-nothing financeGate as GP/Billing), even though
+    // Invoice Collections is exactly where their own lane-scoped override authority (tested
+    // above) gets exercised. collectionsGate now admits any trade_manager, regardless of
+    // canViewFinance — GP by Trade Area / Billing Performance stay finance-only.
+    const reportAsTm = await request("GET", "/api/reports/invoice-collections", null, tmLogin.body.token);
+    assert("a trade_manager with no canViewFinance flag CAN reach Invoice Collections", reportAsTm.status === 200, JSON.stringify(reportAsTm.body));
+
     console.log("\nManual sweep trigger — admin-only, shape, active override suppresses it");
     const sweepAsOcc = await request("POST", "/api/billing/run-collections-sweep", {}, occLogin.body.token);
     assert("occ_bk cannot trigger the sweep", sweepAsOcc.status === 403, JSON.stringify(sweepAsOcc.body));
