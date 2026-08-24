@@ -22,9 +22,10 @@
  * Story 4 (TKT-B4VBDH, Billing Performance report): GET /api/reports/billing-performance
  * returns row-level FR01/FR02 invoices enriched with status/sent/payment/office/customer/lane/
  * carrier, gated by the same finance access (canViewFinance or admin) Reports and Margin
- * already use. POST /api/reports/billing-performance/gp-lines feeds the same ShipmentGpSankey
- * "Profit Breakdown" graph the GP-by-Trade-Area report already uses, scoped to an explicit
- * shipment-id list (the frontend's own currently-filtered rows) instead of a geography grouping.
+ * already use. paymentState unifies that per-row status around payment lifecycle (Missing/
+ * Draft/Unpaid/Partial/Overdue/Paid/Voided); a "Missing" row (no docId at all) surfaces a
+ * shipment past its invoice deadline with no invoice whatsoever, reusing the exact same
+ * delivered+past-deadline definition GET /api/invoice-deadlines/overdue already uses.
  *
  * Story 5 (TKT-4TEYT1, configurable per-customer reminder cadence): customers.reminderEnabled/
  * reminderIntervalDays let a customer opt into automated overdue-payment reminder emails, on
@@ -361,27 +362,6 @@ async function confirmDoc(docId, token) {
     });
     assert("CSV export returns 200 with a csv content-type", csvRes.status === 200 && /text\/csv/.test(csvRes.headers["content-type"] || ""), JSON.stringify(csvRes.headers));
     assert("CSV body has a header row and at least one data row", csvRes.body.split("\n").length >= 2 && csvRes.body.includes("Shipment"));
-
-    console.log("\nBilling Performance — GP Sankey lines, scoped to exactly the requested shipments");
-    const gpAsOcc = await request("POST", "/api/reports/billing-performance/gp-lines", { shipmentIds: [shipBpId] }, occLogin.body.token);
-    assert("occ_bk with no canViewFinance flag is rejected (403)", gpAsOcc.status === 403, JSON.stringify(gpAsOcc.body));
-
-    const gpEmpty = await request("POST", "/api/reports/billing-performance/gp-lines", { shipmentIds: [] }, token);
-    assert("an empty shipmentIds list returns an empty lines array, not an error", gpEmpty.status === 200 && Array.isArray(gpEmpty.body.lines) && gpEmpty.body.lines.length === 0, JSON.stringify(gpEmpty.body));
-
-    const gpScoped = await request("POST", "/api/reports/billing-performance/gp-lines", { shipmentIds: [shipBpId] }, token);
-    assert("returns 200 with a lines array", gpScoped.status === 200 && Array.isArray(gpScoped.body.lines), JSON.stringify(gpScoped.body));
-    const gpSellLine = gpScoped.body.lines.find(l => l.id === lineBp.id);
-    assert("the fixture's own $1000 OFR SELL cost line is present, in mapCostLine shape", gpSellLine && gpSellLine.type === "SELL" && gpSellLine.chargeCode === "OFR" && gpSellLine.amountUsd === 1000, JSON.stringify(gpSellLine));
-
-    const custGpOther = await request("POST", "/api/customers", { companyName: "Test GP Lines Other Co" }, token);
-    const shipGpOther = await request("POST", "/api/shipments", {
-      pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
-      principalId: custGpOther.body.id, principalName: "Test GP Lines Other Co",
-    }, token);
-    await addSellLine(shipGpOther.body.id, token, 5000, "THC");
-    const gpNotRequested = await request("POST", "/api/reports/billing-performance/gp-lines", { shipmentIds: [shipBpId] }, token);
-    assert("a shipment not in the requested id list never leaks into the response", !gpNotRequested.body.lines.some(l => l.chargeCode === "THC" && l.amountUsd === 5000), JSON.stringify(gpNotRequested.body.lines));
 
     console.log("\nreminderEnabled/reminderIntervalDays — round-trip through customer create/update");
     const custRem = await request("POST", "/api/customers", { companyName: "Test Reminder Co", reminderEnabled: true, reminderIntervalDays: 7 }, token);

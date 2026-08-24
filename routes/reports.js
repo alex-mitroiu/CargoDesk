@@ -329,22 +329,6 @@ module.exports = function reportsRoutes(app, ctx) {
     ok(res, results);
   });
 
-  // GP breakdown for whatever slice of invoices Billing Performance is currently showing — a
-  // manager filtering "this office, unpaid, overdue" wants to SEE the profit picture for exactly
-  // those shipments, not click over to a separate report and re-filter by hand. Reuses the exact
-  // same ShipmentGpSankey component gp-by-geo already feeds above — only the scoping differs
-  // (an explicit shipment-id list from the frontend's own already-filtered rows, instead of a
-  // geography/date-range grouping) — so this returns the identical `lines` shape (mapCostLine
-  // output) with zero new frontend chart code needed.
-  app.post("/api/reports/billing-performance/gp-lines", auth(), (req, res) => {
-    if (!financeGate(req, res)) return;
-    const ids = [...new Set((req.body?.shipmentIds || []).filter(Boolean))].slice(0, 1000);
-    if (!ids.length) return ok(res, { lines: [] });
-    const placeholders = ids.map(() => '?').join(',');
-    const rows = db.prepare(`SELECT * FROM shipment_cost_lines WHERE shipment_id IN (${placeholders})`).all(...ids);
-    ok(res, { lines: rows.map(mapCostLine) });
-  });
-
   // Invoice Collections report (Epic TKT-G11AHW) — "scan all shipments" + Paid/Not Paid/Overdue/
   // Missing/Cancelled, per shipment's own MOST RECENT FR01/FR02 (not confirmed-only — a voided-
   // then-reissued invoice correctly shows the reissued one's real status, not stuck Cancelled).

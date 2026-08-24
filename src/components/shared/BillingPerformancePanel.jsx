@@ -1,10 +1,10 @@
 import { useState, useEffect, useMemo } from "react";
+import { BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, LabelList, ResponsiveContainer } from "recharts";
 import { T } from "../../tokens";
 import { api } from "../../api";
 import { toast } from "../../toast";
 import Btn from "../primitives/Btn";
 import Spinner from "../primitives/Spinner";
-import ShipmentGpSankey from "./ShipmentGpSankey";
 
 // Billing Performance report (TKT-B4VBDH, Epic TKT-KR6ZBT) — row-level FR01/FR02 invoices,
 // filterable by any combination of status/sent/paid and office/customer/lane/carrier, per
@@ -44,6 +44,23 @@ const Chip = ({ active, onClick, children, color }) => (
     {children}
   </button>
 );
+
+const StatusBarTooltip = ({ active, payload }) => {
+  if (!active || !payload?.length) return null;
+  const d = payload[0].payload;
+  return (
+    <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8,
+      boxShadow: "0 4px 20px rgba(0,0,0,.18)", padding: "8px 12px", minWidth: 130 }}>
+      <div style={{ fontFamily: T.body, fontSize: 12, fontWeight: 700, color: d.color }}>{d.label}</div>
+      <div style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 800, color: T.text, marginTop: 2 }}>
+        {d.count} invoice{d.count === 1 ? "" : "s"}
+      </div>
+      {d.amountUsd > 0 && (
+        <div style={{ fontFamily: T.mono, fontSize: 11.5, color: T.textMuted, marginTop: 1 }}>{fmtUsd(d.amountUsd)}</div>
+      )}
+    </div>
+  );
+};
 
 const Select = ({ value, onChange, options, placeholder }) => (
   <select value={value} onChange={e => onChange(e.target.value)} style={{
@@ -123,18 +140,19 @@ const BillingPerformancePanel = () => {
   const hasFilters = stateFilter.size || sentFilter || officeId || customerId || laneCode || carrierCode;
   const clearFilters = () => { setStateFilter(new Set()); setSentFilter(""); setOfficeId(""); setCustomerId(""); setLaneCode(""); setCarrierCode(""); };
 
-  // Profit Breakdown graph — the same Sankey used on GP by Trade Area and the shipment GP
-  // Overview page, scoped here to exactly the shipments behind whatever's currently filtered
-  // below. Direct request: raw numbers in a table are "too complicated" for a quick read — a
-  // picture of where the money's going answers "how are we looking" at a glance instead.
-  const [gpLines, setGpLines] = useState(null);
-  const shipmentIdsKey = useMemo(() => [...new Set(filtered.map(r => r.shipmentId))].sort().join(","), [filtered]);
-  useEffect(() => {
-    if (!shipmentIdsKey) { setGpLines([]); return; }
-    api.reports.billingPerformanceGpLines(shipmentIdsKey.split(","))
-      .then(({ lines }) => setGpLines(lines))
-      .catch(() => setGpLines([]));
-  }, [shipmentIdsKey]);
+  // Invoices by Status graph — a direct request to make this report readable at a glance
+  // instead of a scan-the-numbers table. Sourced entirely from this report's own rows (never
+  // GP/cost-line data, which is a different concept — profitability, not billing status) and
+  // scoped to exactly whatever's currently filtered below, same as the stat cards above it.
+  const chartData = useMemo(() => {
+    return PAYMENT_STATE_ORDER
+      .map(state => {
+        const rowsForState = filtered.filter(r => r.paymentState === state);
+        const amountUsd = rowsForState.reduce((s, r) => s + (r.amountUsd || 0), 0);
+        return { state, label: paymentStateMeta(state).label, color: paymentStateMeta(state).color, count: rowsForState.length, amountUsd };
+      })
+      .filter(d => d.count > 0);
+  }, [filtered]);
 
   const runExport = async () => {
     setExporting(true);
@@ -173,12 +191,27 @@ const BillingPerformancePanel = () => {
         ))}
       </div>
 
-      {gpLines === null ? (
-        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 40, textAlign: "center", marginBottom: 18 }}>
-          <Spinner />
+      {chartData.length > 0 && (
+        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "18px 18px 14px", marginBottom: 18 }}>
+          <div style={{ marginBottom: 4 }}>
+            <h3 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: "0 0 2px" }}>Invoices by Status</h3>
+            <p style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, margin: 0 }}>
+              {filtered.length} invoice{filtered.length === 1 ? "" : "s"} currently shown, by payment status
+            </p>
+          </div>
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={chartData} margin={{ top: 20, right: 8, left: -8, bottom: 4 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke={T.border} vertical={false} />
+              <XAxis dataKey="label" tick={{ fontFamily: T.body, fontSize: 11, fill: T.textMuted }} axisLine={{ stroke: T.border }} tickLine={false} />
+              <YAxis tick={{ fontFamily: T.mono, fontSize: 10, fill: T.textMuted }} axisLine={false} tickLine={false} allowDecimals={false} />
+              <Tooltip content={<StatusBarTooltip />} cursor={{ fill: `${T.accent}0c` }} />
+              <Bar dataKey="count" radius={[3, 3, 0, 0]} maxBarSize={64}>
+                {chartData.map(d => <Cell key={d.state} fill={d.color} />)}
+                <LabelList dataKey="count" position="top" style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, fill: T.text }} />
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
         </div>
-      ) : (
-        <ShipmentGpSankey lines={gpLines} />
       )}
 
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: "14px 16px", marginBottom: 14,
