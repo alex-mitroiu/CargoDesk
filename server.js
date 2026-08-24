@@ -20,6 +20,7 @@ const { createAisListener } = require("./lib/ais-listener");
 const { createMappers } = require("./lib/mappers");
 const { readSecret } = require("./lib/dockerSecret");
 const { createRateLimiter } = require("./lib/rateLimit");
+const { addBusinessDays, businessDaysBetween } = require("./lib/business-days");
 
 const JWT_DEV_DEFAULT = "cargoDesk-dev-secret-do-not-use-in-prod";
 const JWT_SECRET = readSecret("JWT_SECRET", JWT_DEV_DEFAULT);
@@ -1754,6 +1755,74 @@ const migrations = [
     created_by   TEXT DEFAULT '',
     created_at   TEXT NOT NULL
   )`,
+
+  // Invoice Collections Report + Automated Escalation (Epic TKT-G11AHW). "User responsible" and
+  // "local branch manager" are genuinely new concepts — grep confirmed neither existed anywhere
+  // (shipments/shipment_documents had no owner/assignee field, offices had no manager field).
+  // invoice_owner_id defaults to whoever confirmed the invoice (a real, present person) and is
+  // reassignable afterward. collections_alerted_at/collections_escalated_at are sibling columns
+  // to the pre-existing last_reminder_sent_at (same dunning-sweep-timestamp idiom, just for the
+  // new internal-alert sweep instead of the existing customer-facing reminder one).
+  "ALTER TABLE shipment_documents ADD COLUMN invoice_owner_id       TEXT DEFAULT ''",
+  "ALTER TABLE shipment_documents ADD COLUMN collections_alerted_at   TEXT DEFAULT NULL",
+  "ALTER TABLE shipment_documents ADD COLUMN collections_escalated_at TEXT DEFAULT NULL",
+
+  // Per-customer billing cycle (direct follow-up: "the business day helper can be a section of
+  // the customer profile ... billing by date ... payment settlement date"). Both are day-of-month
+  // integers (1-31), recurring — not literal calendar dates — same shape as the existing
+  // invoice_deadline_days, chosen over a DatePicker per direct clarification since a single
+  // stored date wouldn't repeat on its own and the real business case (end-of-month payers) is
+  // inherently a recurring monthly pattern. unlocode is a placeholder for a future public-holiday
+  // lookup — explicitly not wired to any live data source yet ("skip for now, but add a
+  // placeholder... UNLocationCode based").
+  "ALTER TABLE customers ADD COLUMN billing_by_day         INTEGER DEFAULT NULL",
+  "ALTER TABLE customers ADD COLUMN payment_settlement_day INTEGER DEFAULT NULL",
+  "ALTER TABLE customers ADD COLUMN holiday_unlocode       TEXT    DEFAULT ''",
+
+  // Configurable per-office / per-country alert & escalation thresholds (direct follow-up: real
+  // invoicing-deadline law varies by jurisdiction — "For Spain we would get fined if we issue the
+  // invoice too late"). Resolution order, most specific wins: office -> country -> the sweep's own
+  // hardcoded DEFAULT_ALERT_DAYS/DEFAULT_ESCALATION_DAYS fallback. offices.manager_user_id is the
+  // "local branch manager" this epic needs (also absent from the schema before this) — it doubles
+  // as both the escalation recipient AND the authority allowed to edit that office's own
+  // thresholds, since no "branch manager"/"country manager" role exists in this app's role model
+  // (trade_manager is lane-scoped, a different axis entirely) — a deliberate scoping choice, not
+  // an oversight.
+  "ALTER TABLE offices ADD COLUMN manager_user_id                TEXT    DEFAULT ''",
+  "ALTER TABLE offices ADD COLUMN invoice_alert_business_days      INTEGER DEFAULT NULL",
+  "ALTER TABLE offices ADD COLUMN invoice_escalation_business_days INTEGER DEFAULT NULL",
+  "ALTER TABLE countries ADD COLUMN invoice_alert_business_days      INTEGER DEFAULT NULL",
+  "ALTER TABLE countries ADD COLUMN invoice_escalation_business_days INTEGER DEFAULT NULL",
+
+  // Reason codes are admin-configurable (same dual precedent as Pack Types/Duty Rate Chapters —
+  // sensible defaults out of the box, fully editable via Master Data on top), seeded below with
+  // the exact business case described.
+  `CREATE TABLE IF NOT EXISTS invoice_status_reason_codes (
+    id         TEXT PRIMARY KEY,
+    code       TEXT NOT NULL,
+    label      TEXT NOT NULL,
+    is_active  INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL
+  )`,
+  "INSERT OR IGNORE INTO invoice_status_reason_codes (id,code,label,is_active,created_at) VALUES ('IRC-END-OF-MONTH','END_OF_MONTH_TERMS','Customer pays on a fixed end-of-month cycle — expected once their cycle closes, not within standard terms',1,datetime('now'))",
+  "INSERT OR IGNORE INTO invoice_status_reason_codes (id,code,label,is_active,created_at) VALUES ('IRC-DISPUTE','DISPUTE','Customer disputes the invoice amount or line items',1,datetime('now'))",
+  "INSERT OR IGNORE INTO invoice_status_reason_codes (id,code,label,is_active,created_at) VALUES ('IRC-PENDING-DOCS','PENDING_DOCS','Awaiting supporting documentation before the customer will process payment',1,datetime('now'))",
+  "INSERT OR IGNORE INTO invoice_status_reason_codes (id,code,label,is_active,created_at) VALUES ('IRC-INTERNAL-DELAY','INTERNAL_DELAY','Payment confirmed by the customer, not yet reconciled internally',1,datetime('now'))",
+  "INSERT OR IGNORE INTO invoice_status_reason_codes (id,code,label,is_active,created_at) VALUES ('IRC-OTHER','OTHER','Other — see description',1,datetime('now'))",
+
+  // An audit-trail INSERT per override event (never an overwritten single field) — same
+  // convention entity_events/CostLineHistoryModal's diff history already use throughout this
+  // codebase. The most recent row for a document is its active override.
+  `CREATE TABLE IF NOT EXISTS invoice_status_overrides (
+    id                TEXT PRIMARY KEY,
+    document_id       TEXT NOT NULL,
+    reason_code       TEXT NOT NULL,
+    description       TEXT NOT NULL DEFAULT '',
+    overridden_status TEXT NOT NULL,
+    overridden_by     TEXT NOT NULL DEFAULT '',
+    overridden_at     TEXT NOT NULL
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_invoice_status_overrides_doc ON invoice_status_overrides(document_id)",
 ];
 
 // "duplicate column name" is the expected, harmless result of re-running an ADD COLUMN
@@ -2693,6 +2762,102 @@ async function runScheduledReportsSweep() {
   return sent;
 }
 
+// ─── Invoice Collections thresholds + sweep (Epic TKT-G11AHW) ─────────────────
+const DEFAULT_ALERT_DAYS = 5;
+const DEFAULT_ESCALATION_DAYS = 8;
+
+// Resolution order, most specific wins — same "specific override beats general default" shape
+// this codebase already uses elsewhere (a pack item's own HS code override falling back to its
+// container's, a customer's own currency default vs. the country default): the shipment's own
+// EMO office's thresholds, then that office's own country, then the hardcoded default. Both the
+// report and the sweep call this so they can never disagree on what "overdue" means for a given
+// shipment.
+function resolveInvoiceThresholds(emoOfficeId) {
+  const office = emoOfficeId ? db.prepare("SELECT * FROM offices WHERE id=?").get(emoOfficeId) : null;
+  if (office?.invoice_alert_business_days != null && office?.invoice_escalation_business_days != null) {
+    return { alertBusinessDays: office.invoice_alert_business_days, escalationBusinessDays: office.invoice_escalation_business_days };
+  }
+  const country = office?.country_code ? db.prepare("SELECT * FROM countries WHERE iso2=?").get(office.country_code) : null;
+  return {
+    alertBusinessDays: office?.invoice_alert_business_days ?? country?.invoice_alert_business_days ?? DEFAULT_ALERT_DAYS,
+    escalationBusinessDays: office?.invoice_escalation_business_days ?? country?.invoice_escalation_business_days ?? DEFAULT_ESCALATION_DAYS,
+  };
+}
+
+// Mirrors runDunningSweep()'s exact daily-interval, re-evaluate-everything shape — a resolved
+// threshold + each document's own collections_alerted_at/collections_escalated_at timestamp
+// already tells us what's due on every run, no need for more complex single-timer machinery.
+// An active override (invoice_status_overrides, most recent row per document) suppresses BOTH
+// the alert and the escalation entirely — the whole reason Trade Manager override authority
+// exists (an explained end-of-month payment cycle isn't a collections problem to keep escalating).
+async function runInvoiceCollectionsSweep() {
+  const sent = [];
+  const rows = db.prepare(`
+    SELECT d.*, s.emo_office_id
+    FROM shipment_documents d
+    JOIN shipments s ON s.id = d.shipment_id
+    WHERE d.doc_type IN ('FR01','FR02') AND d.status='confirmed'
+  `).all();
+
+  const todayIso = new Date().toISOString();
+  for (const r of rows) {
+    const amountUsd = docAmountUsd(r);
+    const outstandingUsd = Math.max(0, roundCents(amountUsd - (r.paid_amount || 0)));
+    if (outstandingUsd <= 0) continue;
+
+    const activeOverride = db.prepare(
+      "SELECT * FROM invoice_status_overrides WHERE document_id=? ORDER BY overridden_at DESC LIMIT 1"
+    ).get(r.id);
+    if (activeOverride) continue;
+
+    const { alertBusinessDays, escalationBusinessDays } = resolveInvoiceThresholds(r.emo_office_id);
+    const refDate = r.confirmed_at || r.created_at;
+    const elapsed = businessDaysBetween(refDate, todayIso);
+
+    if (elapsed >= alertBusinessDays && !r.collections_alerted_at) {
+      const ownerId = r.invoice_owner_id;
+      const owner = ownerId ? db.prepare("SELECT * FROM users WHERE id=?").get(ownerId) : null;
+      const mailSettings = r.emo_office_id ? db.prepare("SELECT * FROM office_mail_settings WHERE office_id=? AND is_active=1").get(r.emo_office_id) : null;
+      if (owner?.email && mailSettings) {
+        try {
+          const mailOptions = buildMailOptions({
+            from: mailSettings.from_address, fromName: mailSettings.from_name,
+            to: owner.email,
+            subject: `Invoice ${r.filename} is now overdue — Shipment ${r.shipment_id}`,
+            message: `This invoice has passed its ${alertBusinessDays}-business-day collections threshold with no payment recorded. Please follow up with the customer or record an override with a reason if there's a known cause (e.g. end-of-month payment terms).`,
+          });
+          await sendViaOffice(db, r.emo_office_id, mailOptions);
+          sent.push({ id: r.id, shipmentId: r.shipment_id, stage: 'alert', to: owner.email });
+        } catch (e) { console.warn(`Invoice collections alert ${r.id} failed:`, e.message); }
+      }
+      db.prepare("UPDATE shipment_documents SET collections_alerted_at=? WHERE id=?").run(todayIso, r.id);
+    }
+
+    if (elapsed >= escalationBusinessDays && !r.collections_escalated_at) {
+      const office = r.emo_office_id ? db.prepare("SELECT * FROM offices WHERE id=?").get(r.emo_office_id) : null;
+      const manager = office?.manager_user_id ? db.prepare("SELECT * FROM users WHERE id=?").get(office.manager_user_id) : null;
+      const mailSettings = r.emo_office_id ? db.prepare("SELECT * FROM office_mail_settings WHERE office_id=? AND is_active=1").get(r.emo_office_id) : null;
+      if (manager?.email && mailSettings) {
+        try {
+          const mailOptions = buildMailOptions({
+            from: mailSettings.from_address, fromName: mailSettings.from_name,
+            to: manager.email,
+            subject: `Escalation — invoice ${r.filename} still unpaid — Shipment ${r.shipment_id}`,
+            message: `This invoice has now passed its ${escalationBusinessDays}-business-day escalation threshold with no payment recorded and no override on file.`,
+          });
+          await sendViaOffice(db, r.emo_office_id, mailOptions);
+          sent.push({ id: r.id, shipmentId: r.shipment_id, stage: 'escalation', to: manager.email });
+        } catch (e) { console.warn(`Invoice collections escalation ${r.id} failed:`, e.message); }
+      } else {
+        console.warn(`Invoice collections escalation ${r.id} skipped — no branch manager configured for office ${r.emo_office_id || '(none)'}`);
+      }
+      db.prepare("UPDATE shipment_documents SET collections_escalated_at=? WHERE id=?").run(todayIso, r.id);
+    }
+  }
+  return sent;
+}
+setInterval(() => { runInvoiceCollectionsSweep().catch(e => console.error("Invoice collections sweep failed:", e.message)); }, 24 * 60 * 60 * 1000);
+
 // ─── Backfill transit_days on generated schedules ─────────────────────────────
 // POST /api/schedules (Schedule Generator) unconditionally hardcoded transit_days to 0 at
 // insert time instead of deriving it from etd/eta — every schedule created through the
@@ -3123,6 +3288,7 @@ const {
   mapCustomerContact, mapCommodity, mapSystemMessage, mapMilestone, mapMilestoneTemplate,
   mapContract, mapLeg, mapRate, mapContractRouting, mapCarrierInvoice, mapCarrierInvoiceLine,
   mapQuote, mapQuoteLine,
+  mapInvoiceReasonCode, mapInvoiceStatusOverride,
 } = createMappers({ portLanesMap, CUTOFF_WARNING_DAYS });
 
 function shipmentMatchesAccessConfig(s, cfg) {
@@ -3986,6 +4152,8 @@ const ctx = {
   mapCommodity, mapSystemMessage, mapMilestone, mapMilestoneTemplate,
   mapContract, mapLeg, mapRate, mapContractRouting, mapCarrierInvoice, mapCarrierInvoiceLine,
   mapQuote, mapQuoteLine,
+  mapInvoiceReasonCode, mapInvoiceStatusOverride,
+  resolveInvoiceThresholds, runInvoiceCollectionsSweep, addBusinessDays, businessDaysBetween,
   logEvent, logEntityEvent, logAdminEvent, TRACKED_FIELDS, TRACKED_CTR_FIELDS,
   CUTOFF_WARNING_DAYS, FREE_TIME_WARNING_DAYS,
   ssoNonces,
@@ -4026,6 +4194,7 @@ require('./routes/carrier-invoices')(app, ctx);
 require('./routes/quotes')(app, ctx);
 require('./routes/finance')(app, ctx);
 require('./routes/reports')(app, ctx);
+require('./routes/invoice-reason-codes')(app, ctx);
 require('./routes/system')(app, ctx);
 require('./routes/export')(app, ctx);
 require('./routes/ai')(app, ctx);

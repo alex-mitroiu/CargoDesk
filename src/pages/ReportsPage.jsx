@@ -5,6 +5,7 @@ import { toast } from "../toast";
 import GpBreakdownPanel from "../components/shared/GpBreakdownPanel";
 import BillingPerformancePanel from "../components/shared/BillingPerformancePanel";
 import ScheduledReportsPanel from "../components/shared/ScheduledReportsPanel";
+import InvoiceCollectionsPanel from "../components/shared/InvoiceCollectionsPanel";
 import DatePicker from "../components/primitives/DatePicker";
 import Btn from "../components/primitives/Btn";
 
@@ -84,12 +85,14 @@ const ReportsPage = () => {
             ? "GP breakdown by trade area — origin region/country or carrier, from every shipment's own cost lines"
             : tab === "billing"
             ? "Every generated invoice, filterable by status, sent, payment, office, customer, trade lane, and carrier"
+            : tab === "collections"
+            ? "Every shipment's own invoice status — Paid, Not Paid, Overdue, Missing, or Cancelled — with automated alerts and Trade Manager override"
             : "Reports that generate and email themselves automatically, on their own recurring cadence"}
         </p>
       </div>
 
       <div id="reports-tab-bar" style={{ display: "flex", borderBottom: `1px solid ${T.border}`, marginBottom: 20 }}>
-        {[{ key: "gp", label: "GP by Trade Area" }, { key: "billing", label: "Billing Performance" }, { key: "scheduled", label: "Scheduled Reports" }].map(t => (
+        {[{ key: "gp", label: "GP by Trade Area" }, { key: "billing", label: "Billing Performance" }, { key: "collections", label: "Invoice Collections" }, { key: "scheduled", label: "Scheduled Reports" }].map(t => (
           <button key={t.key} type="button" onClick={() => setTab(t.key)} style={{
             padding: "10px 20px", background: "none", border: "none",
             borderBottom: tab === t.key ? `2px solid ${T.accent}` : "2px solid transparent",
@@ -102,6 +105,8 @@ const ReportsPage = () => {
 
       {tab === "billing" ? (
         <BillingPerformancePanel />
+      ) : tab === "collections" ? (
+        <InvoiceCollectionsPanel />
       ) : tab === "scheduled" ? (
         <ScheduledReportsPanel />
       ) : (

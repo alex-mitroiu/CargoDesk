@@ -10,7 +10,8 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
           renderHtmlToPdf, getActiveSigningCert, signPdfBuffer,
           buildMailOptions, sendViaOffice,
           createRateLimiter, getSettings, callContractService,
-          computeArExposure, toUsd, roundCents, OVERRIDE_GRACE_MS } = ctx;
+          computeArExposure, toUsd, roundCents, OVERRIDE_GRACE_MS,
+          userOwnsLaneForShipment, mapInvoiceStatusOverride, docAmountUsd } = ctx;
 
   const shipmentWrite = requireRole(["admin", "operator", "occ_bk"]);
 
@@ -55,6 +56,8 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       sourceCostLineIds: r.source_cost_line_ids ? JSON.parse(r.source_cost_line_ids) : null,
       paidAt: r.paid_at || null, paidAmount: r.paid_amount ?? null, transactionId: r.transaction_id || '',
       firstSentAt: r.first_sent_at || null,
+      invoiceOwnerId: r.invoice_owner_id || null,
+      collectionsAlertedAt: r.collections_alerted_at || null, collectionsEscalatedAt: r.collections_escalated_at || null,
     };
   };
 
@@ -863,6 +866,12 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       if (status === "confirmed") {
         db.prepare("UPDATE shipment_documents SET status=?, confirmed_at=?, confirmed_by=? WHERE id=?")
           .run(status, now, req.user?.name || req.user?.email || "", req.params.docId);
+        // Invoice Collections "user responsible" (Epic TKT-G11AHW) — defaults to whoever confirmed
+        // an FR01/FR02, since they're a real, present person; never overwrites a manual
+        // reassignment already on the row (e.g. a re-confirm after a correction).
+        if ((doc.doc_type === "FR01" || doc.doc_type === "FR02") && !doc.invoice_owner_id) {
+          db.prepare("UPDATE shipment_documents SET invoice_owner_id=? WHERE id=?").run(req.user?.id || "", req.params.docId);
+        }
       } else {
         // draft/voided don't touch confirmed_at/confirmed_by — a voided doc WAS confirmed once
         // and that history stays true, it's just no longer the active record.
@@ -967,6 +976,64 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
 
     const updated = mapDoc(db.prepare("SELECT * FROM shipment_documents WHERE id=?").get(doc.id), doc.shipment_id);
     ok(res, updated);
+  });
+
+  // Invoice Collections status override (Epic TKT-G11AHW) — an audit-trail INSERT per override
+  // event, never an overwritten single field (same convention entity_events/CostLineHistoryModal
+  // already use). Gated EXCLUSIVELY to the shipment's own lane trade_manager, mirroring Credit
+  // Control Depth's own established precedent (v0.74.0) — never admin, operator, or an
+  // out-of-lane trade_manager. An active override suppresses the collections sweep's alert AND
+  // escalation for this document entirely, re-checked on every sweep run.
+  app.post("/api/shipments/:shipmentId/documents/:docId/status-override", auth(), (req, res) => {
+    const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.shipmentId);
+    if (!shipment) return err(res, "Shipment not found", 404);
+    if (!userOwnsLaneForShipment(req.user, shipment))
+      return err(res, "Only the trade manager responsible for this shipment's own trade lane may override an invoice's collections status", 403);
+    const doc = db.prepare("SELECT * FROM shipment_documents WHERE id=? AND shipment_id=?").get(req.params.docId, req.params.shipmentId);
+    if (!doc) return err(res, "Not found", 404);
+    if (doc.doc_type !== "FR01" && doc.doc_type !== "FR02") return err(res, "Only a generated invoice can have its collections status overridden", 400);
+
+    const { reasonCode, description = "", overriddenStatus } = req.body || {};
+    if (!reasonCode) return err(res, "reasonCode is required");
+    if (!overriddenStatus) return err(res, "overriddenStatus is required");
+    const validCode = db.prepare("SELECT 1 FROM invoice_status_reason_codes WHERE code=? AND is_active=1").get(reasonCode);
+    if (!validCode) return err(res, "reasonCode is not a recognized, active reason code");
+
+    const id = `ISO-${uid()}`;
+    const now = new Date().toISOString();
+    db.prepare(`INSERT INTO invoice_status_overrides (id, document_id, reason_code, description, overridden_status, overridden_by, overridden_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, doc.id, reasonCode, description.trim(), overriddenStatus, req.user.email || req.user.id, now);
+    logEntityEvent('document', doc.id, 'COLLECTIONS_STATUS_OVERRIDDEN', null, null, null,
+      JSON.stringify({ shipmentId: doc.shipment_id, reasonCode, overriddenStatus, overriddenBy: req.user.email || req.user.id }));
+
+    ok(res, mapInvoiceStatusOverride({ id, document_id: doc.id, reason_code: reasonCode, description: description.trim(), overridden_status: overriddenStatus, overridden_by: req.user.email || req.user.id, overridden_at: now }), 201);
+  });
+
+  app.get("/api/shipments/:shipmentId/documents/:docId/status-overrides", auth(), (req, res) => {
+    const rows = db.prepare("SELECT * FROM invoice_status_overrides WHERE document_id=? ORDER BY overridden_at DESC").all(req.params.docId);
+    ok(res, rows.map(mapInvoiceStatusOverride));
+  });
+
+  // Reassigns "user responsible" for a generated invoice — defaults to whoever confirmed it
+  // (see the documents/generate route), but admin/operator/the shipment's own lane trade_manager
+  // can hand it off afterward (e.g. an account manager change).
+  app.patch("/api/shipments/:shipmentId/documents/:docId/invoice-owner", auth(), (req, res) => {
+    const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.shipmentId);
+    if (!shipment) return err(res, "Shipment not found", 404);
+    const roles = req.user.roles || [req.user.role];
+    const isAdminOrOperator = roles.includes('admin') || roles.includes('operator');
+    if (!isAdminOrOperator && !userOwnsLaneForShipment(req.user, shipment))
+      return err(res, "Only admin, operator, or the trade manager responsible for this shipment's own trade lane may reassign the invoice owner", 403);
+    const doc = db.prepare("SELECT * FROM shipment_documents WHERE id=? AND shipment_id=?").get(req.params.docId, req.params.shipmentId);
+    if (!doc) return err(res, "Not found", 404);
+    const { ownerId } = req.body || {};
+    if (ownerId) {
+      const user = db.prepare("SELECT id FROM users WHERE id=?").get(ownerId);
+      if (!user) return err(res, "ownerId must reference a real user");
+    }
+    db.prepare("UPDATE shipment_documents SET invoice_owner_id=? WHERE id=?").run(ownerId || '', doc.id);
+    ok(res, mapDoc(db.prepare("SELECT * FROM shipment_documents WHERE id=?").get(doc.id), doc.shipment_id));
   });
 
   app.get("/api/documents/:docId/download", auth(), (req, res) => {

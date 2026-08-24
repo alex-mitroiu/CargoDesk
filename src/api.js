@@ -357,6 +357,12 @@ export const api = {
     remove:  (id)    => req("DELETE", `/scheduled-reports/${id}`),
     sendDue: ()      => req("POST",   "/scheduled-reports/send-due"),
   },
+  invoiceReasonCodes: {
+    list:   ()       => req("GET",    "/invoice-status-reason-codes"),
+    create: (d)       => req("POST",   "/invoice-status-reason-codes", d),
+    update: (id, d)   => req("PUT",    `/invoice-status-reason-codes/${id}`, d),
+    remove: (id)       => req("DELETE", `/invoice-status-reason-codes/${id}`),
+  },
   services: {
     list:   (shipmentId)             => req("GET",    `/shipments/${shipmentId}/services`),
     create: (shipmentId, d)          => req("POST",   `/shipments/${shipmentId}/services`, d),
@@ -440,6 +446,11 @@ export const api = {
     // at server boot; this is the same core function for testing/an operator who wants reminders
     // sent right now. Admin-only server-side.
     sendReminders: () => req("POST", "/billing/send-reminders"),
+    // Invoice Collections (Epic TKT-G11AHW) — every shipment's own most-recent FR01/FR02 status
+    // (Paid/Not Paid/Overdue/Missing/Cancelled), plus the manual sweep trigger mirroring
+    // sendReminders' own shape.
+    invoiceCollections: () => req("GET", "/reports/invoice-collections"),
+    runCollectionsSweep: () => req("POST", "/billing/run-collections-sweep"),
   },
   systemMessages: {
     list:   ()     => req("GET",    "/system-messages"),
@@ -489,6 +500,11 @@ export const api = {
     sendWebhook: (shipmentId, docId)       => req("POST", `/shipments/${shipmentId}/documents/${docId}/send-webhook`),
     reverse:  (shipmentId, docId, data = {}) => req("POST", `/shipments/${shipmentId}/documents/${docId}/reverse`, data),
     markPaid: (shipmentId, docId, data)      => req("POST", `/shipments/${shipmentId}/documents/${docId}/mark-paid`, data),
+    // Invoice Collections (Epic TKT-G11AHW) — status override (Trade Manager only, own trade
+    // lane), its audit history, and reassigning "user responsible".
+    statusOverride:  (shipmentId, docId, data) => req("POST", `/shipments/${shipmentId}/documents/${docId}/status-override`, data),
+    overrideHistory: (shipmentId, docId)       => req("GET",  `/shipments/${shipmentId}/documents/${docId}/status-overrides`),
+    setInvoiceOwner: (shipmentId, docId, ownerId) => req("PATCH", `/shipments/${shipmentId}/documents/${docId}/invoice-owner`, { ownerId }),
     patch:    (docId, data)      => req("PATCH",  `/documents/${docId}`, data),
     remove:   (docId)            => req("DELETE", `/documents/${docId}`),
     download: async (docId, filename) => {

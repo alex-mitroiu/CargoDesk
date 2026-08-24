@@ -24,7 +24,8 @@
 // one would make "By Region" permanently empty.
 module.exports = function reportsRoutes(app, ctx) {
   const { db, ok, err, auth, requireRole, mapCostLine, roundCents, portCountryMap, getSettings,
-          docAmountUsd, runDunningSweep } = ctx;
+          docAmountUsd, runDunningSweep,
+          resolveInvoiceThresholds, runInvoiceCollectionsSweep, businessDaysBetween, mapInvoiceStatusOverride } = ctx;
 
   const financeGate = (req, res) => {
     const u = req.user;
@@ -275,6 +276,120 @@ module.exports = function reportsRoutes(app, ctx) {
       return res.send(`${header}\n${body}`);
     }
     ok(res, results);
+  });
+
+  // Invoice Collections report (Epic TKT-G11AHW) — "scan all shipments" + Paid/Not Paid/Overdue/
+  // Missing/Cancelled, per shipment's own MOST RECENT FR01/FR02 (not confirmed-only — a voided-
+  // then-reissued invoice correctly shows the reissued one's real status, not stuck Cancelled).
+  // Status resolution order matters: Cancelled first (the resolved document is voided — the
+  // existing v0.53.0 Reverse/Debit-Credit-Note mechanism, reused not rebuilt), then Missing (no
+  // confirmed invoice at all, reusing GET /api/invoice-deadlines/overdue's own definition), then
+  // Paid/Overdue/Not Paid against the resolved per-office/per-country business-day threshold —
+  // never a hardcoded 5, so this can never disagree with the collections sweep about what
+  // "overdue" means for a given shipment.
+  app.get("/api/reports/invoice-collections", auth(), (req, res) => {
+    if (!financeGate(req, res)) return;
+
+    const latestDocRows = db.prepare(`
+      SELECT d.* FROM shipment_documents d
+      INNER JOIN (
+        SELECT shipment_id, MAX(created_at) AS max_created
+        FROM shipment_documents WHERE doc_type IN ('FR01','FR02') GROUP BY shipment_id
+      ) latest ON latest.shipment_id = d.shipment_id AND latest.max_created = d.created_at
+      WHERE d.doc_type IN ('FR01','FR02')
+    `).all();
+    const latestDocByShipment = {};
+    for (const r of latestDocRows) latestDocByShipment[r.shipment_id] = r;
+
+    const shipmentIds = new Set(Object.keys(latestDocByShipment));
+    const missingRows = db.prepare(`
+      SELECT s.id AS shipment_id, s.principal_id, s.principal_name, s.emo_office_id,
+             m.completed_at AS delivered_at
+      FROM shipments s
+      JOIN shipment_milestones m ON m.shipment_id = s.id AND m.milestone_key = 'delivered' AND m.completed_at != ''
+      WHERE s.status != 'Cancelled'
+    `).all();
+    const todayIso = new Date().toISOString();
+    const todayMs = Date.now();
+    const missingShipmentIds = new Set();
+    for (const r of missingRows) {
+      if (shipmentIds.has(r.shipment_id)) continue; // has a real invoice, not missing
+      if (!r.principal_id) continue;
+      const c = db.prepare("SELECT invoice_deadline_days FROM customers WHERE id=?").get(r.principal_id);
+      if (!c || c.invoice_deadline_days == null) continue;
+      const daysSinceDelivery = Math.floor((todayMs - new Date(r.delivered_at).getTime()) / 86400000);
+      if (daysSinceDelivery - c.invoice_deadline_days <= 0) continue;
+      missingShipmentIds.add(r.shipment_id);
+    }
+
+    const userNames = {};
+    db.prepare("SELECT id, name, email FROM users").all().forEach(u => { userNames[u.id] = u.name || u.email; });
+    const overrideByDoc = {};
+    db.prepare(`
+      SELECT o.* FROM invoice_status_overrides o
+      INNER JOIN (SELECT document_id, MAX(overridden_at) AS max_at FROM invoice_status_overrides GROUP BY document_id) latest
+        ON latest.document_id = o.document_id AND latest.max_at = o.overridden_at
+    `).all().forEach(o => { overrideByDoc[o.document_id] = o; });
+
+    const results = [];
+    for (const [shipmentId, doc] of Object.entries(latestDocByShipment)) {
+      const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(shipmentId);
+      if (!shipment) continue;
+      const override = overrideByDoc[doc.id] || null;
+
+      let status, daysElapsed = null, alertBusinessDays = null;
+      if (doc.status === "voided") {
+        status = "cancelled";
+      } else if (doc.status !== "confirmed") {
+        continue; // draft — nothing to report yet
+      } else {
+        const amountUsd = docAmountUsd(doc);
+        const outstandingUsd = Math.max(0, roundCents(amountUsd - (doc.paid_amount || 0)));
+        const refDate = doc.confirmed_at || doc.created_at;
+        daysElapsed = businessDaysBetween(refDate, todayIso);
+        const thresholds = resolveInvoiceThresholds(shipment.emo_office_id);
+        alertBusinessDays = thresholds.alertBusinessDays;
+        if (override) status = "overridden";
+        else if (outstandingUsd <= 0) status = "paid";
+        else if (daysElapsed >= alertBusinessDays) status = "overdue";
+        else status = "not_paid";
+      }
+
+      results.push({
+        shipmentId, docId: doc.id, docType: doc.doc_type, filename: doc.filename,
+        principalId: shipment.principal_id || null, principalName: shipment.principal_name || null,
+        status, daysElapsed, alertBusinessDays,
+        invoiceOwnerId: doc.invoice_owner_id || null,
+        invoiceOwnerName: doc.invoice_owner_id ? (userNames[doc.invoice_owner_id] || null) : null,
+        relatedDocId: doc.related_doc_id || null,
+        override: override ? mapInvoiceStatusOverride(override) : null,
+      });
+    }
+    for (const shipmentId of missingShipmentIds) {
+      const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(shipmentId);
+      if (!shipment) continue;
+      results.push({
+        shipmentId, docId: null, docType: null, filename: null,
+        principalId: shipment.principal_id || null, principalName: shipment.principal_name || null,
+        status: "missing", daysElapsed: null, alertBusinessDays: null,
+        invoiceOwnerId: null, invoiceOwnerName: null, relatedDocId: null, override: null,
+      });
+    }
+
+    const STATUS_RANK = { overdue: 0, missing: 1, not_paid: 2, overridden: 3, paid: 4, cancelled: 5 };
+    results.sort((a, b) => (STATUS_RANK[a.status] ?? 9) - (STATUS_RANK[b.status] ?? 9) || (b.daysElapsed ?? 0) - (a.daysElapsed ?? 0));
+    ok(res, results);
+  });
+
+  // Manual trigger for the invoice collections sweep (Epic TKT-G11AHW) — same shape as the
+  // existing dunning-sweep trigger below: the real recurring version runs on a daily interval at
+  // server boot, this exposes the same core function for testing / an operator who wants alerts
+  // sent right now. Admin-only — sends real outbound email on behalf of the organization.
+  app.post("/api/billing/run-collections-sweep", auth(), requireRole(["admin"]), async (req, res) => {
+    try {
+      const sent = await runInvoiceCollectionsSweep();
+      ok(res, { sentCount: sent.length, sent });
+    } catch (e) { err(res, e.message || "Invoice collections sweep failed", 500); }
   });
 
   // Manual trigger for the dunning sweep (Story TKT-4TEYT1) — the real recurring version runs

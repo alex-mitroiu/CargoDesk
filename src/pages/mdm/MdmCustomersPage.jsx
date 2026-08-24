@@ -12,6 +12,7 @@ import ActionMenu from "../../components/primitives/ActionMenu";
 import { inputBase, Inp, Sel, Textarea } from "../../components/primitives/Form";
 import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns.jsx";
 import CustomerCombobox from "../../components/shared/CustomerCombobox";
+import PortCombobox from "../../components/shared/PortCombobox";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -788,9 +789,75 @@ const DocumentsTab = ({ customerId, canEdit }) => {
   );
 };
 
+// ─── Billing Cycle tab (Epic TKT-G11AHW) ───────────────────────────────────────
+// Direct follow-up: "the business day helper can be a section (sub tab) of the customer profile
+// - would make more sense this way." Billing By Day / Payment Settlement Day are day-of-month
+// integers (1-31), recurring — not literal calendar dates — per direct clarification, same shape
+// as the existing Invoice Generation Deadline field on the Profile tab. Both genuinely optional;
+// blank means the Invoice Collections sweep falls back to its own default 5/8-business-day
+// thresholds. Saves via a full customer PUT (spreads the already-normalized `customer` prop so
+// every other field round-trips unchanged) rather than a partial PATCH, matching ProfileTab's own
+// save shape — this route has no partial-update variant.
+const BillingCycleTab = ({ customer, canEdit, onUpdated }) => {
+  const [billingByDay, setBillingByDay] = useState(customer.billingByDay != null ? String(customer.billingByDay) : "");
+  const [paymentSettlementDay, setPaymentSettlementDay] = useState(customer.paymentSettlementDay != null ? String(customer.paymentSettlementDay) : "");
+  const [holidayPort, setHolidayPort] = useState(customer.holidayUnlocode ? { unlocode: customer.holidayUnlocode, name: customer.holidayUnlocode } : null);
+  const [saving, setSaving] = useState(false);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const updated = await api.customers.update(customer.id, {
+        ...customer,
+        billingByDay: billingByDay === "" ? null : billingByDay,
+        paymentSettlementDay: paymentSettlementDay === "" ? null : paymentSettlementDay,
+        holidayUnlocode: holidayPort?.unlocode || "",
+      });
+      toast.success("Billing cycle saved");
+      onUpdated(updated);
+    } catch (e) { toast.error(e.message); }
+    setSaving(false);
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <p style={{ fontFamily: T.body, fontSize: 12.5, color: T.textMuted, margin: 0, lineHeight: 1.6 }}>
+        Both fields are optional and recur every month — not a one-off date. Leave either blank to
+        fall back to the standard collections timeline.
+      </p>
+      <Inp label="Billing By Day (day of month, optional)" value={billingByDay} onChange={setBillingByDay}
+        placeholder="e.g. 25" mono type="number" disabled={!canEdit}
+        hint="The cutoff day of the month by which an invoice must be submitted to this customer to be included in that period's payment run" />
+      <Inp label="Payment Settlement Day (day of month, optional)" value={paymentSettlementDay} onChange={setPaymentSettlementDay}
+        placeholder="e.g. 30" mono type="number" disabled={!canEdit}
+        hint="The day of the month this customer typically settles / pays invoices" />
+
+      <div>
+        <div style={{ fontFamily: T.body, fontSize: 11, fontWeight: 700, color: T.textMuted,
+          textTransform: "uppercase", letterSpacing: ".05em", marginBottom: 4 }}>
+          Public Holiday Location (placeholder)
+        </div>
+        {canEdit ? <PortCombobox value={holidayPort} onChange={setHolidayPort} placeholder="Search port or UN/LOCODE…" />
+          : <div style={{ fontFamily: T.mono, fontSize: 13, color: T.text }}>{holidayPort?.unlocode || "—"}</div>}
+        <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted, marginTop: 5, lineHeight: 1.5 }}>
+          Public holiday calendar — not yet available. Would source this customer's public
+          holidays from its UN/LOCODE once a data provider is picked (business-day math is Mon-Fri
+          only for now).
+        </div>
+      </div>
+
+      {canEdit && (
+        <div style={{ display: "flex", justifyContent: "flex-end" }}>
+          <Btn onClick={save} disabled={saving}>{saving ? "Saving…" : "Save Billing Cycle"}</Btn>
+        </div>
+      )}
+    </div>
+  );
+};
+
 // ─── Customer detail modal ────────────────────────────────────────────────────
 
-const TABS = ["Profile", "Contacts", "Identifiers", "Compliance", "Documents"];
+const TABS = ["Profile", "Billing Cycle", "Contacts", "Identifiers", "Compliance", "Documents"];
 
 const CustomerDetailModal = ({ customer, isNew, onClose, onUpdated }) => {
   const { canEdit } = useAuth();
@@ -837,6 +904,7 @@ const CustomerDetailModal = ({ customer, isNew, onClose, onUpdated }) => {
       )}
 
       {tab === "Profile"     && <ProfileTab     init={customer}           onSave={handleProfileSave} saving={saving} />}
+      {tab === "Billing Cycle" && <BillingCycleTab customer={customer} canEdit={canEdit} onUpdated={onUpdated} />}
       {tab === "Contacts"    && <ContactsTab    customerId={customer.id} canEdit={canEdit} />}
       {tab === "Identifiers" && <IdentifiersTab  customerId={customer.id} canEdit={canEdit} />}
       {tab === "Compliance"  && <ComplianceTab   customerId={customer.id} canEdit={canEdit} />}

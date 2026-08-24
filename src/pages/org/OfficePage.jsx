@@ -389,12 +389,17 @@ function OfficeForm({ office, branches, onSave, onCancel }) {
     department: office?.department || "SE",
     name:       office?.name       || "",
     branchId:   office?.branchId   || "",
+    managerUserId: office?.managerUserId || "",
+    invoiceAlertBusinessDays: office?.invoiceAlertBusinessDays != null ? String(office.invoiceAlertBusinessDays) : "",
+    invoiceEscalationBusinessDays: office?.invoiceEscalationBusinessDays != null ? String(office.invoiceEscalationBusinessDays) : "",
   });
   const [saving,     setSaving]     = useState(false);
   const [resolving,  setResolving]  = useState(false);
   const [codePreview,setCodePreview]= useState(
     office ? "" : ""
   );
+  const [users, setUsers] = useState([]);
+  useEffect(() => { api.users.list().then(setUsers).catch(() => setUsers([])); }, []);
 
   const inp = { width: "100%", padding: "7px 10px", borderRadius: 7, border: `1px solid ${T.border}`,
     background: T.bg, fontFamily: T.body, fontSize: 13, color: T.text, outline: "none", boxSizing: "border-box" };
@@ -420,7 +425,12 @@ function OfficeForm({ office, branches, onSave, onCancel }) {
     setSaving(true);
     try {
       if (isEdit) {
-        await api.offices.update(office.id, { name: form.name, branchId: form.branchId || null, isActive: true });
+        await api.offices.update(office.id, {
+          name: form.name, branchId: form.branchId || null, isActive: true,
+          managerUserId: form.managerUserId || null,
+          invoiceAlertBusinessDays: form.invoiceAlertBusinessDays === "" ? null : form.invoiceAlertBusinessDays,
+          invoiceEscalationBusinessDays: form.invoiceEscalationBusinessDays === "" ? null : form.invoiceEscalationBusinessDays,
+        });
         toast.success("Office updated");
       } else {
         const country = form.unlocode.slice(0, 2);
@@ -478,6 +488,42 @@ function OfficeForm({ office, branches, onSave, onCancel }) {
           ))}
         </select>
       </div>
+      {isEdit && (
+        <div style={{ marginBottom: 14, padding: "14px 16px", background: T.bg, borderRadius: 8, border: `1px solid ${T.border}` }}>
+          <div style={{ fontFamily: T.body, fontSize: 11, fontWeight: 700, color: T.textMuted,
+            textTransform: "uppercase", letterSpacing: ".05em", marginBottom: 10 }}>
+            Invoice Collections (Epic TKT-G11AHW)
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
+            <div>
+              <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 4 }}>Branch Manager (optional)</div>
+              <select value={form.managerUserId}
+                onChange={e => setForm(p => ({ ...p, managerUserId: e.target.value }))}
+                style={{ ...inp, cursor: "pointer" }}>
+                <option value="">— None —</option>
+                {users.map(u => <option key={u.id} value={u.id}>{u.name || u.email}</option>)}
+              </select>
+            </div>
+            <div>
+              <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 4 }}>Alert (business days, optional)</div>
+              <input type="number" value={form.invoiceAlertBusinessDays}
+                onChange={e => setForm(p => ({ ...p, invoiceAlertBusinessDays: e.target.value }))}
+                placeholder="Default: 5" style={{ ...inp, fontFamily: T.mono }} />
+            </div>
+            <div>
+              <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 4 }}>Escalation (business days, optional)</div>
+              <input type="number" value={form.invoiceEscalationBusinessDays}
+                onChange={e => setForm(p => ({ ...p, invoiceEscalationBusinessDays: e.target.value }))}
+                placeholder="Default: 8" style={{ ...inp, fontFamily: T.mono }} />
+            </div>
+          </div>
+          <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginTop: 8, lineHeight: 1.5 }}>
+            Overrides the global default for shipments run through this office — useful where local
+            invoicing-deadline law is stricter (e.g. Spain). Leave blank to inherit the country's own
+            setting, or the global default if that's blank too.
+          </div>
+        </div>
+      )}
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
         <button type="button" onClick={onCancel} disabled={saving}
           style={{ padding: "6px 14px", borderRadius: 7, border: `1px solid ${T.border}`,

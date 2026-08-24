@@ -9,7 +9,7 @@ import EdiMessageList from "../components/shared/EdiMessageList";
 import { VesselField, VesselCombobox } from "../components/shared/VesselCombobox";
 import CarrierCombobox from "../components/shared/CarrierCombobox";
 import PortCombobox from "../components/shared/PortCombobox";
-import { IconBaseStation, IconCheck, IconClose, IconAnchor, IconFileCertificate, IconShip, IconLink, IconMail, IconClipboard } from "../components/primitives/Icon";
+import { IconBaseStation, IconCheck, IconClose, IconAnchor, IconFileCertificate, IconShip, IconLink, IconMail, IconClipboard, IconReceipt } from "../components/primitives/Icon";
 
 // ─── Test Tools ────────────────────────────────────────────────────────────────
 // Reached both from Integration Board's sidebar and a header shortcut icon (App.jsx).
@@ -365,6 +365,18 @@ const TestToolsPage = ({ navigate }) => {
     setReportsRunning(false);
   };
 
+  // ─── Invoice Collections sweep — manual trigger ────────────────────────────────
+  // Same idiom as Reminder Sweep / Report Scheduler above — server.js's
+  // runInvoiceCollectionsSweep (TKT-G11AHW) otherwise only runs once a day.
+  const [collectionsRunning, setCollectionsRunning] = useState(false);
+  const [collectionsResult,  setCollectionsResult]  = useState(null); // { sentCount, sent }
+  const runCollectionsNow = async () => {
+    setCollectionsRunning(true);
+    try { setCollectionsResult(await api.reports.runCollectionsSweep()); }
+    catch (e) { toast.error(e.message); }
+    setCollectionsRunning(false);
+  };
+
   useEffect(() => {
     if (activeTab !== "webhook") return;
     loadWebhookReceived();
@@ -395,6 +407,7 @@ const TestToolsPage = ({ navigate }) => {
     { key: "webhook",    label: "Webhook Simulator", icon: IconLink },
     { key: "dunning",    label: "Reminder Sweep", icon: IconMail },
     { key: "reports",    label: "Report Scheduler", icon: IconClipboard },
+    { key: "collections", label: "Invoice Collections", icon: IconReceipt },
   ];
 
   return (
@@ -1151,6 +1164,50 @@ const TestToolsPage = ({ navigate }) => {
                       <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
                         {s.recipients.join(", ")}
                       </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === "collections" && (
+        <div style={{ maxWidth: 640 }}>
+          <h2 style={{ fontFamily: T.head, fontSize: 16, fontWeight: 800, color: T.text, margin: "0 0 14px" }}>
+            Invoice Collections Sweep
+          </h2>
+          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8,
+            padding: "10px 12px", marginBottom: 16, fontFamily: T.body, fontSize: 11.5, color: T.textMuted, lineHeight: 1.6 }}>
+            Runs every confirmed invoice against its own resolved office/country business-day
+            threshold (Reports → Invoice Collections) right now — the same real sweep that
+            otherwise only runs once a day. An invoice with an active Trade Manager override, or
+            already alerted/escalated, is skipped.
+          </div>
+          <Btn onClick={runCollectionsNow} disabled={collectionsRunning}>
+            {collectionsRunning ? "Sending…" : "Send Due Alerts Now"}
+          </Btn>
+
+          {collectionsResult && (
+            <div style={{ marginTop: 20 }}>
+              <div style={{ fontFamily: T.body, fontSize: 12, fontWeight: 600, color: T.text, marginBottom: 10 }}>
+                {collectionsResult.sentCount} alert{collectionsResult.sentCount === 1 ? "" : "s"} sent
+              </div>
+              {collectionsResult.sentCount === 0 ? (
+                <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, fontStyle: "italic" }}>
+                  Nothing due right now — no active invoice has crossed its own threshold, or all have an override.
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {collectionsResult.sent.map((s, i) => (
+                    <div key={`${s.id}-${s.stage}-${i}`} style={{ background: T.surface, border: `1px solid ${T.border}`,
+                      borderRadius: 8, padding: "8px 12px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <div>
+                        <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.text }}>{s.shipmentId}</span>
+                        <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginLeft: 8, textTransform: "uppercase" }}>{s.stage}</span>
+                      </div>
+                      <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>{s.to}</span>
                     </div>
                   ))}
                 </div>

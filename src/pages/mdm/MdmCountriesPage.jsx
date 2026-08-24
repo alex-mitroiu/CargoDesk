@@ -78,6 +78,8 @@ const MdmCountriesPage = () => {
     const [name,      setName]      = useState(init.name || "");
     const [unMember,  setUnMember]  = useState(init.unMember !== false);
     const [selLanes,  setSelLanes]  = useState(init.tradeLanes || []);
+    const [alertDays, setAlertDays] = useState(init.invoiceAlertBusinessDays != null ? String(init.invoiceAlertBusinessDays) : "");
+    const [escalationDays, setEscalationDays] = useState(init.invoiceEscalationBusinessDays != null ? String(init.invoiceEscalationBusinessDays) : "");
     const isEdit = !!init.iso2;
     const valid  = (isEdit || iso2.trim().length === 2) && name.trim().length >= 2;
 
@@ -110,10 +112,21 @@ const MdmCountriesPage = () => {
             ))}
           </div>
         </Field>
+        {isEdit && (
+          <Field label="Invoice Collections thresholds (Epic TKT-G11AHW, optional)"
+            hint="Country-level default for offices in this country that haven't set their own — leave blank to inherit the global 5/8-business-day default">
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <Inp label="Alert (business days)" value={alertDays} onChange={setAlertDays} placeholder="Default: 5" mono type="number" />
+              <Inp label="Escalation (business days)" value={escalationDays} onChange={setEscalationDays} placeholder="Default: 8" mono type="number" />
+            </div>
+          </Field>
+        )}
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", paddingTop: 4 }}>
           <Btn variant="secondary" onClick={onCancel}>Cancel</Btn>
           <Btn disabled={!valid} onClick={() => onSave({
-            iso2: iso2.trim().toUpperCase(), name: name.trim(), unMember, tradeLanes: selLanes
+            iso2: iso2.trim().toUpperCase(), name: name.trim(), unMember, tradeLanes: selLanes,
+            invoiceAlertBusinessDays: alertDays === "" ? null : alertDays,
+            invoiceEscalationBusinessDays: escalationDays === "" ? null : escalationDays,
           })}>
             {isEdit ? "Save Changes" : "Add Country"}
           </Btn>
@@ -124,7 +137,8 @@ const MdmCountriesPage = () => {
 
   const handleSave = async (d, isEdit) => {
     if (isEdit) {
-      await api.countries.update(d.iso2, { name: d.name, unMember: d.unMember });
+      await api.countries.update(d.iso2, { name: d.name, unMember: d.unMember,
+        invoiceAlertBusinessDays: d.invoiceAlertBusinessDays, invoiceEscalationBusinessDays: d.invoiceEscalationBusinessDays });
     } else {
       await api.countries.create({ iso2: d.iso2, name: d.name, unMember: d.unMember });
     }

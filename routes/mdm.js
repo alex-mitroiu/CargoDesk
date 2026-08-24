@@ -314,10 +314,28 @@ module.exports = function mdmRoutes(app, ctx) {
     catch(e) { err(res, isUniqueViolation(e) ? `Country ${iso2} already exists` : e.message); }
   });
   app.put("/api/countries/:iso2", write, (req, res) => {
-    const { name, unMember=1, regionCode='' } = req.body;
-    const info = db.prepare("UPDATE countries SET name=?, un_member=?, region_code=? WHERE iso2=?").run(name, unMember ? 1 : 0, regionCode, req.params.iso2.toUpperCase());
-    if (info.changes===0) return err(res,"Not found",404);
-    ok(res, mapCountry({ iso2: req.params.iso2.toUpperCase(), name, un_member: unMember ? 1 : 0, region_code: regionCode }));
+    const iso2 = req.params.iso2.toUpperCase();
+    const existing = db.prepare("SELECT * FROM countries WHERE iso2=?").get(iso2);
+    if (!existing) return err(res, "Not found", 404);
+    const { name, unMember=1, regionCode='', invoiceAlertBusinessDays, invoiceEscalationBusinessDays } = req.body;
+    // Invoice Collections thresholds (Epic TKT-G11AHW) — country-level, admin-only for this pass:
+    // no "country manager" role exists in this app's role model, a deliberate scoping decision
+    // rather than an oversight (see the epic's own story description).
+    const alertDays = invoiceAlertBusinessDays !== undefined
+      ? (invoiceAlertBusinessDays === null || invoiceAlertBusinessDays === '' ? null : parseInt(invoiceAlertBusinessDays, 10))
+      : existing.invoice_alert_business_days;
+    const escalationDays = invoiceEscalationBusinessDays !== undefined
+      ? (invoiceEscalationBusinessDays === null || invoiceEscalationBusinessDays === '' ? null : parseInt(invoiceEscalationBusinessDays, 10))
+      : existing.invoice_escalation_business_days;
+    if (alertDays != null && alertDays < 1) return err(res, "invoiceAlertBusinessDays must be at least 1");
+    if (escalationDays != null && escalationDays < 1) return err(res, "invoiceEscalationBusinessDays must be at least 1");
+    if (alertDays != null && escalationDays != null && escalationDays <= alertDays)
+      return err(res, "invoiceEscalationBusinessDays must be greater than invoiceAlertBusinessDays");
+    db.prepare(`UPDATE countries SET name=?, un_member=?, region_code=?,
+      invoice_alert_business_days=?, invoice_escalation_business_days=? WHERE iso2=?`)
+      .run(name, unMember ? 1 : 0, regionCode, alertDays, escalationDays, iso2);
+    ok(res, mapCountry({ iso2, name, un_member: unMember ? 1 : 0, region_code: regionCode,
+      invoice_alert_business_days: alertDays, invoice_escalation_business_days: escalationDays }));
   });
   app.delete("/api/countries/:iso2", write, (req, res) => { const info = db.prepare("DELETE FROM countries WHERE iso2=?").run(req.params.iso2.toUpperCase()); if (info.changes===0) return err(res,"Not found",404); ok(res,{deleted:req.params.iso2}); });
   app.get("/api/countries/:iso2/locations", (req, res) => {
