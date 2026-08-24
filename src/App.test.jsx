@@ -65,4 +65,29 @@ describe("App — core shell / auth gating", () => {
     expect(await screen.findByText("Shipments")).toBeInTheDocument();
     expect(screen.getByText("Dashboard")).toBeInTheDocument();
   });
+
+  it("role switcher offers only this account's own assigned roles, not every role in the system", async () => {
+    // Direct bug report: an admin account with exactly 2 assigned roles (Admin, OCC Booking —
+    // confirmed via the real User Management table) saw all 5 system roles in the switcher.
+    // Root cause was availableRoles() offering every role ranked at-or-below the user's own
+    // primary rank (an "impersonate any lower role" shortcut) rather than the roles actually on
+    // the account. Fixed to be strictly this account's own roles.
+    localStorage.setItem("cargodesk_token", "valid-token");
+    localStorage.setItem("cargodesk_license_accepted", "1");
+    api.auth.me.mockResolvedValueOnce({
+      id: "USR-1", name: "Test Admin", email: "admin@test.local",
+      roles: ["admin", "occ_bk"], allOffices: true, offices: [], passwordExpired: false,
+    });
+
+    render(<App />);
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "Sign in" })).not.toBeInTheDocument());
+    await screen.findByText("Shipments");
+
+    const roleSelect = screen.getByTitle("Roles: Admin, OCC Booking");
+    const optionLabels = Array.from(roleSelect.querySelectorAll("option")).map(o => o.textContent);
+    expect(optionLabels.sort()).toEqual(["Admin", "OCC Booking"].sort());
+    expect(optionLabels).not.toContain("Operator");
+    expect(optionLabels).not.toContain("Trade Manager");
+    expect(optionLabels).not.toContain("Viewer");
+  });
 });

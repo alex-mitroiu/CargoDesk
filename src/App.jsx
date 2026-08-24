@@ -2681,10 +2681,13 @@ function App() {
   const ROLE_RANK   = { viewer: 0, occ_bk: 1, trade_manager: 1, operator: 2, admin: 3 };
   const ROLE_LABELS = { admin: "Admin", operator: "Operator", occ_bk: "OCC Booking", trade_manager: "Trade Manager", viewer: "Viewer" };
   const primaryRole    = (roles) => [...(roles || [])].sort((a, b) => ROLE_RANK[b] - ROLE_RANK[a])[0] || 'viewer';
+  // Direct bug report: this used to offer every role in the whole system ranked at or below the
+  // user's own primary role (an admin's own "impersonate any lower role" testing shortcut) —
+  // surprising and wrong from the account owner's side, since the switcher's options had no
+  // relationship to what was actually assigned to them (User Management showed 2 roles, the
+  // switcher offered all 5). Now strictly the roles this account actually has, nothing more.
   const availableRoles = (roles) =>
-    Object.keys(ROLE_RANK)
-      .filter(r => ROLE_RANK[r] <= ROLE_RANK[primaryRole(roles)])
-      .sort((a, b) => ROLE_RANK[b] - ROLE_RANK[a]);
+    [...new Set(roles || [])].sort((a, b) => (ROLE_RANK[b] ?? -1) - (ROLE_RANK[a] ?? -1));
   const userRoles       = Array.isArray(user?.roles) ? user.roles : (user?.role ? [user.role] : ['viewer']);
   const userPrimaryRole = primaryRole(userRoles);
 

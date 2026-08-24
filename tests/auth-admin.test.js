@@ -82,6 +82,12 @@ async function login(email = "claudeagent@localhost", password = "TestFixture!20
     assert("me returns 200", me.status === 200);
     assert("me includes passwordExpired flag", "passwordExpired" in me.body);
     assert("me email matches", me.body.email === "claudeagent@localhost");
+    // Real bug fix: this used to return the raw JSON-text DB column for roles (a literal
+    // string like '["admin"]'), never parsed — App.jsx's Array.isArray(user.roles) check then
+    // silently fell back to the single legacy `role` field on every silent session restore
+    // (a page reload with an already-valid token — the common case, not fresh login).
+    assert("me returns roles as a real array, not a JSON-text string", Array.isArray(me.body.roles), JSON.stringify(me.body.roles));
+    assert("me's roles array actually contains this account's roles", me.body.roles.includes("admin"), JSON.stringify(me.body.roles));
     const meNoAuth = await request("GET", "/api/auth/me", null, null);
     assert("me without a token is rejected (401)", meNoAuth.status === 401);
 

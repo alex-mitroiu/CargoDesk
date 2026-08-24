@@ -157,7 +157,13 @@ module.exports = function authRoutes(app, ctx) {
     // the login endpoint entirely — without this, a user who never re-enters credentials
     // could stay on an expired password indefinitely. Same check as login's.
     const { passwordExpiryDays } = getSecuritySettings();
-    ok(res, { ...user, passwordExpired: isPasswordExpired(user, passwordExpiryDays) });
+    // Real bug fix: this returned user.roles as the raw JSON-text DB column (e.g. the literal
+    // string '["admin","occ_bk"]'), never parsed like every other roles-emitting route already
+    // does via parseUserRoles. App.jsx's own Array.isArray(user.roles) check then silently fell
+    // back to the single legacy `role` column — a multi-role account lost every role but its
+    // primary one on any silent session restore (a page reload with an already-valid token),
+    // which is the common case, not the fresh-login one.
+    ok(res, { ...user, roles: parseUserRoles(user), passwordExpired: isPasswordExpired(user, passwordExpiryDays) });
   });
 
   app.post("/api/auth/logout", (req, res) => ok(res, { ok: true }));
