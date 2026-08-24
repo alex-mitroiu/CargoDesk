@@ -7,13 +7,12 @@ import Spinner from "../components/primitives/Spinner";
 import Btn from "../components/primitives/Btn";
 import Badge from "../components/primitives/Badge";
 import Pagination from "../components/primitives/Pagination";
+import PageSizeSelect, { getStoredPageSize } from "../components/primitives/PageSizeSelect";
 import { inputBase } from "../components/primitives/Form";
 import PortCombobox from "../components/shared/PortCombobox";
 import { Modal } from "../components/primitives/Modal";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-
-const LIMIT = 25;
 
 const CONTRACT_STATUSES = ["Active", "Draft", "Expired", "On Hold"];
 
@@ -1210,6 +1209,7 @@ const SchedulesPage = () => {
   const [results,   setResults]   = useState([]);
   const [total,     setTotal]     = useState(0);
   const [offset,    setOffset]    = useState(0);
+  const [limit,     setLimit]     = useState(getStoredPageSize);
   const [lastQuery, setLastQuery] = useState(null);
   const [selected,       setSelected]       = useState(null);
   const [expandedGroups, setExpandedGroups] = useState(new Set());
@@ -1238,11 +1238,11 @@ const SchedulesPage = () => {
     return groups;
   }, [results]);
 
-  const doSearch = useCallback(async (params, off = 0) => {
+  const doSearch = useCallback(async (params, off = 0, lim = limit) => {
     setLoading(true);
     setSelected(null);
     try {
-      const res = await api.contracts.search({ ...params, limit: LIMIT, offset: off });
+      const res = await api.contracts.search({ ...params, limit: lim, offset: off });
       setResults(res.results || []);
       setTotal(res.total   || 0);
       setOffset(off);
@@ -1251,7 +1251,7 @@ const SchedulesPage = () => {
       toast.error(e.message || "Search failed");
     }
     setLoading(false);
-  }, []);
+  }, [limit]);
 
   const handleSearch = params => {
     if (!params) { setSearched(false); setResults([]); setTotal(0); setLastQuery(null); return; }
@@ -1260,6 +1260,7 @@ const SchedulesPage = () => {
   };
 
   const handlePage = off => { if (lastQuery) doSearch(lastQuery, off); };
+  const changeLimit = n => { setLimit(n); if (lastQuery) doSearch(lastQuery, 0, n); };
 
   return (
     <div>
@@ -1299,8 +1300,8 @@ const SchedulesPage = () => {
               {loading ? "Searching…" : (
                 total === 0
                   ? "No contracts found"
-                  : `${total} contract${total !== 1 ? "s" : ""} found${total > LIMIT
-                      ? ` — showing ${LIMIT} per page` : ""}`
+                  : `${total} contract${total !== 1 ? "s" : ""} found${total > limit
+                      ? ` — showing ${limit} per page` : ""}`
               )}
             </span>
           </div>
@@ -1398,11 +1399,10 @@ const SchedulesPage = () => {
                 })()}
               </div>
 
-              {total > LIMIT && (
-                <div style={{ marginTop: 16 }}>
-                  <Pagination total={total} limit={LIMIT} offset={offset} onPage={handlePage} />
-                </div>
-              )}
+              <div style={{ marginTop: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                <PageSizeSelect value={limit} onChange={changeLimit} />
+                <div style={{ flex: 1 }}><Pagination total={total} limit={limit} offset={offset} onPage={handlePage} /></div>
+              </div>
             </>
           )}
         </>

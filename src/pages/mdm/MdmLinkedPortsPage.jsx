@@ -9,16 +9,17 @@ import { Modal, ConfirmModal } from "../../components/primitives/Modal";
 import PortField from "../../components/shared/PortField";
 import ActionMenu from "../../components/primitives/ActionMenu";
 import Pagination from "../../components/primitives/Pagination";
+import PageSizeSelect, { getStoredPageSize } from "../../components/primitives/PageSizeSelect";
 import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns.jsx";
 
 // ─── MDM: Linked Ports Page ───────────────────────────────────────────────────
 
-const LP_LIMIT = 50;
-
 const MdmLinkedPortsPage = () => {
   const { canManageMdm } = useAuth();
   const [links,   setLinks]   = useState([]);
+  const [total,   setTotal]   = useState(0);
   const [offset,  setOffset]  = useState(0);
+  const [limit,   setLimit]   = useState(getStoredPageSize);
   const [loading, setLoading] = useState(true);
   const [modal,   setModal]   = useState(null); // null | "add" | link obj
   const [confirm, setConfirm] = useState(null);
@@ -26,14 +27,23 @@ const MdmLinkedPortsPage = () => {
   const { template, startResize } = useResizableColumns("mdm-linked-ports", [100,160,30,100,160,160,120]);
   const headers = ["Primary","Port Name","","Linked To","Port Name","Note","Actions"];
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts = {}) => {
+    const off = opts.offset !== undefined ? opts.offset : offset;
+    const lim = opts.limit  !== undefined ? opts.limit  : limit;
     setLoading(true);
-    try { setLinks(await api.linkedPorts.list()); setApiErr(null); }
-    catch (e) { setApiErr(e.message); }
+    try {
+      const res = await api.linkedPorts.list({ limit: lim, offset: off });
+      setLinks(res.results || []);
+      setTotal(res.total ?? 0);
+      setApiErr(null);
+    } catch (e) { setApiErr(e.message); }
     setLoading(false);
-  }, []);
+  }, [offset, limit]);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load({ offset: 0 }); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const goPage = off => { setOffset(off); load({ offset: off }); };
+  const changeLimit = n => { setLimit(n); setOffset(0); load({ limit: n, offset: 0 }); };
 
   const LinkForm = ({ init = {}, onSave, onCancel }) => {
     const [primary, setPrimary] = useState(init.primaryUnlocode ? { unlocode: init.primaryUnlocode, name: init.primaryName || "" } : null);
@@ -91,8 +101,7 @@ const MdmLinkedPortsPage = () => {
         <div>
           <h1 style={{ fontFamily: T.head, fontSize: 26, fontWeight: 800, color: T.text, margin: 0 }}>Linked Ports</h1>
           <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, margin: "4px 0 0" }}>
-            {links.length} link{links.length !== 1 ? "s" : ""} configured · map one UN/LOCODE to another (e.g. USLAX → USLGB)
-
+            {total} link{total !== 1 ? "s" : ""} configured · map one UN/LOCODE to another (e.g. USLAX → USLGB)
           </p>
         </div>
         {canManageMdm && <Btn onClick={() => setModal("add")} size="lg">＋ Add Link</Btn>}
@@ -121,7 +130,7 @@ const MdmLinkedPortsPage = () => {
           <div style={{ padding: 40, textAlign: "center", color: T.textMuted, fontFamily: T.body, fontSize: 14 }}>
             No port links configured yet. Use "+ Add Link" to create one.
           </div>
-        ) : links.slice(offset, offset + LP_LIMIT).map(l => (
+        ) : links.map(l => (
           <div key={l.id}
             style={{ display: "grid", gridTemplateColumns: template,
               padding: "13px 20px", borderBottom: `1px solid ${T.border}22`, alignItems: "center",
@@ -146,11 +155,10 @@ const MdmLinkedPortsPage = () => {
         ))}
       </div>
 
-      {links.length > LP_LIMIT && (
-        <div style={{ marginTop: 16 }}>
-          <Pagination total={links.length} limit={LP_LIMIT} offset={offset} onPage={off => setOffset(off)} />
-        </div>
-      )}
+      <div style={{ marginTop: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+        <PageSizeSelect value={limit} onChange={changeLimit} />
+        <div style={{ flex: 1 }}><Pagination total={total} limit={limit} offset={offset} onPage={goPage} /></div>
+      </div>
 
       {modal === "add" && (
         <Modal title="Add Port Link" onClose={() => setModal(null)} width={560}>

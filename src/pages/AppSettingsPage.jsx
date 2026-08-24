@@ -7,6 +7,8 @@ import archHtml           from "../dev/architecture.html?raw";
 import epicHtml           from "../dev/epic-TKT-D7AUBQ-coverage.html?raw";
 import { toast } from "../toast";
 import { useAuth } from "../AuthContext";
+import Pagination from "../components/primitives/Pagination";
+import PageSizeSelect, { getStoredPageSize } from "../components/primitives/PageSizeSelect";
 import UserManagementPanel from "../components/UserManagementPanel";
 import { AiOrb, ORB_STYLES } from "../components/shared/AiOrb";
 
@@ -733,21 +735,24 @@ function AdminActivityLog() {
   const [events,  setEvents]  = useState([]);
   const [loading, setLoading] = useState(true);
   const [total,   setTotal]   = useState(0);
-  const [page,    setPage]    = useState(0);
+  const [offset,  setOffset]  = useState(0);
+  const [limit,   setLimit]   = useState(getStoredPageSize);
   const [filter,  setFilter]  = useState("");
-  const PAGE_SIZE = 50;
 
-  const load = useCallback((p = 0, f = "") => {
+  const load = useCallback((off = 0, f = "", lim = limit) => {
     setLoading(true);
-    const params = { limit: PAGE_SIZE, offset: p * PAGE_SIZE };
+    const params = { limit: lim, offset: off };
     if (f) params.action = f;
     api.adminEvents.list(params)
       .then(({ results, total }) => { setEvents(results); setTotal(total); })
       .catch(() => toast.error("Failed to load activity log"))
       .finally(() => setLoading(false));
-  }, []);
+  }, [limit]);
 
-  useEffect(() => { load(0, filter); setPage(0); }, [filter, load]);
+  useEffect(() => { load(0, filter); setOffset(0); }, [filter, load]);
+
+  const goPage = off => { setOffset(off); load(off, filter); };
+  const changeLimit = n => { setLimit(n); setOffset(0); load(0, filter, n); };
 
   const fmtDate = (iso) => new Date(iso).toLocaleString("en-GB", {
     day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
@@ -766,7 +771,7 @@ function AdminActivityLog() {
               <option key={k} value={k}>{v.label}</option>
             ))}
           </select>
-          <button onClick={() => load(page, filter)} type="button"
+          <button onClick={() => load(offset, filter)} type="button"
             style={{ ...inp(), width: 70, cursor: "pointer", textAlign: "center" }}>
             Refresh
           </button>
@@ -830,17 +835,10 @@ function AdminActivityLog() {
         </div>
       )}
 
-      {total > PAGE_SIZE && (
-        <div style={{ display: "flex", justifyContent: "center", gap: 8, marginTop: 16 }}>
-          <button disabled={page === 0} onClick={() => { const p = page - 1; setPage(p); load(p, filter); }}
-            style={{ ...inp(), width: 80, cursor: "pointer" }}>← Prev</button>
-          <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, padding: "5px 0" }}>
-            {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, total)} of {total}
-          </span>
-          <button disabled={(page + 1) * PAGE_SIZE >= total} onClick={() => { const p = page + 1; setPage(p); load(p, filter); }}
-            style={{ ...inp(), width: 80, cursor: "pointer" }}>Next →</button>
-        </div>
-      )}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 16, flexWrap: "wrap" }}>
+        <PageSizeSelect value={limit} onChange={changeLimit} />
+        <div style={{ flex: 1 }}><Pagination total={total} limit={limit} offset={offset} onPage={goPage} /></div>
+      </div>
     </div>
   );
 }

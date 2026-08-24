@@ -207,7 +207,8 @@ module.exports = function shipmentsRoutes(app, ctx) {
              COALESCE(sell.total, 0) AS margin_sell_usd,
              COALESCE(ms.overdue_count, 0) AS overdue_count,
              cb.status AS booking_status,
-             cb.requested_at AS booking_requested_at
+             cb.requested_at AS booking_requested_at,
+             COALESCE(ctr_teu.teu, 0) AS teu
       FROM shipments s
       LEFT JOIN port_locations p1 ON p1.unlocode = s.pol
       LEFT JOIN port_locations p2 ON p2.unlocode = s.pod
@@ -226,11 +227,14 @@ module.exports = function shipmentsRoutes(app, ctx) {
                  GROUP BY shipment_id) ms
              ON ms.shipment_id = s.id
       LEFT JOIN carrier_bookings cb ON cb.shipment_id = s.id
+      LEFT JOIN (SELECT shipment_id, COALESCE(SUM(CASE WHEN size='40' THEN 2 ELSE 1 END),0) AS teu
+                 FROM containers GROUP BY shipment_id) ctr_teu
+             ON ctr_teu.shipment_id = s.id
       ORDER BY s.created_at DESC
     `).all();
     const seaPorts = resolveSeaPorts(rows.map(r => r.id));
     const mapped = rows.map(r => ({ ...mapShipment(r), ...(seaPorts[r.id] || { seaPol: r.pol, seaPod: r.pod, seaPolName: r.pol_name || '', seaPodName: r.pod_name || '' }) }));
-    const filtered = applyShipmentAccessFilter(mapped, req.user, req);
+    let filtered = applyShipmentAccessFilter(mapped, req.user, req);
     // Pagination is opt-in (TKT-UAJGR3) — every existing caller (App.jsx's own load-everything-
     // once-into-state model, Command Center, Dashboard, AI Assistant tools) omits limit/offset and
     // keeps getting today's exact bare-array response, so nothing breaks. Only a caller that
@@ -240,6 +244,34 @@ module.exports = function shipmentsRoutes(app, ctx) {
     if (req.query.limit === undefined && req.query.offset === undefined) {
       return ok(res, filtered);
     }
+    // status/carrier/search/sort are new — opt-in the same way limit/offset already are, applied
+    // only when the caller passes them (ShipmentsPage.jsx's real server-side pagination, TKT-none
+    // yet-ticketed pagination-standardization pass). Verbatim port of what was, until this pass,
+    // purely client-side filter/sort logic in ShipmentsPage.jsx, so behavior is unchanged from the
+    // caller's point of view — just computed here instead of over a fully-downloaded array.
+    const today = new Date().toISOString().slice(0, 10);
+    if (req.query.status === "_overdue") {
+      filtered = filtered.filter(s => s.etd && s.etd < today && s.status !== "Completed" && s.status !== "Cancelled");
+    } else if (req.query.status) {
+      filtered = filtered.filter(s => s.status === req.query.status);
+    }
+    if (req.query.carrier) filtered = filtered.filter(s => s.carrierCode === req.query.carrier);
+    if (req.query.search) {
+      const q = req.query.search.toLowerCase();
+      filtered = filtered.filter(s =>
+        s.id.toLowerCase().includes(q) || s.pol.toLowerCase().includes(q) || s.pod.toLowerCase().includes(q)
+        || (s.seaPol || '').toLowerCase().includes(q) || (s.seaPod || '').toLowerCase().includes(q)
+        || (s.bookingRef || '').toLowerCase().includes(q) || (s.blNumber || '').toLowerCase().includes(q));
+    }
+    const SORTERS = {
+      etd_asc:  (a, b) => (a.etd || "9").localeCompare(b.etd || "9"),
+      etd_desc: (a, b) => (b.etd || "0").localeCompare(a.etd || "0"),
+      eta_asc:  (a, b) => (a.eta || "9").localeCompare(b.eta || "9"),
+      teu_desc: (a, b) => b.teu - a.teu,
+      status:   (a, b) => (a.status || "").localeCompare(b.status || ""),
+    };
+    if (SORTERS[req.query.sort]) filtered = [...filtered].sort(SORTERS[req.query.sort]);
+
     const lim = Math.min(parseInt(req.query.limit) || 50, 500), off = parseInt(req.query.offset) || 0;
     ok(res, { results: filtered.slice(off, off + lim), total: filtered.length, limit: lim, offset: off });
   });

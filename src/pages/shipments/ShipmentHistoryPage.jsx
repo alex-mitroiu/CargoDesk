@@ -3,6 +3,7 @@ import { T } from "../../tokens";
 import { api } from "../../api";
 import Spinner from "../../components/primitives/Spinner";
 import Pagination from "../../components/primitives/Pagination";
+import PageSizeSelect, { getStoredPageSize } from "../../components/primitives/PageSizeSelect";
 import { EVENT_CONFIG, getEventSummary, fmtDateTime } from "./ShipmentDetailPage";
 import { AnyIcon, IconArrowDown, IconArrowUp } from "../../components/primitives/Icon";
 
@@ -13,8 +14,6 @@ import { AnyIcon, IconArrowDown, IconArrowUp } from "../../components/primitives
 // page in the app uses — types/date-range/search filter server-side too, so
 // `total` (and the Pagination control) always reflect what's actually being
 // paged through.
-
-const LIMIT = 25;
 
 const TYPE_GROUPS = {
   Shipment:     ["SHIPMENT_CREATED", "STATUS_CHANGED"],
@@ -33,6 +32,7 @@ const ShipmentHistoryPage = ({ shipment }) => {
   const [results, setResults] = useState([]);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
+  const [limit, setLimit] = useState(getStoredPageSize);
   const [loading, setLoading] = useState(true);
 
   // Deselecting every group would send types="" to the backend, which reads as
@@ -47,11 +47,11 @@ const ShipmentHistoryPage = ({ shipment }) => {
 
   const activeTypesKey = GROUP_NAMES.filter(g => activeGroups.has(g)).join(",");
 
-  const load = useCallback((off = 0) => {
+  const load = useCallback((off = 0, lim = limit) => {
     setLoading(true);
     const types = GROUP_NAMES.filter(g => activeGroups.has(g)).flatMap(g => TYPE_GROUPS[g]).join(",");
     api.shipmentEvents.list(shipment.id, {
-      limit: LIMIT, offset: off, types, sort: sortDir,
+      limit: lim, offset: off, types, sort: sortDir,
       ...(dateRange !== "all" && { dateRange }),
       ...(search.trim() && { search: search.trim() }),
     }).then(r => {
@@ -61,9 +61,11 @@ const ShipmentHistoryPage = ({ shipment }) => {
     }).catch(() => { setResults([]); setTotal(0); })
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shipment.id, activeTypesKey, dateRange, search, sortDir]);
+  }, [shipment.id, activeTypesKey, dateRange, search, sortDir, limit]);
 
   useEffect(() => { load(0); }, [load]);
+
+  const changeLimit = n => { setLimit(n); load(0, n); };
 
   const exportCSV = () => {
     const rows = [["Event Type", "Summary", "Date/Time", "Actor"]];
@@ -76,7 +78,7 @@ const ShipmentHistoryPage = ({ shipment }) => {
     const csv = rows.map(r => r.join(",")).join("\n");
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
     const a = document.createElement("a");
-    a.href = url; a.download = `${shipment.id}-history-p${Math.floor(offset / LIMIT) + 1}.csv`; a.click();
+    a.href = url; a.download = `${shipment.id}-history-p${Math.floor(offset / limit) + 1}.csv`; a.click();
     URL.revokeObjectURL(url);
   };
 
@@ -176,8 +178,9 @@ const ShipmentHistoryPage = ({ shipment }) => {
         })}
       </div>
 
-      <div id="shphist-pagination">
-        <Pagination total={total} limit={LIMIT} offset={offset} onPage={load} />
+      <div id="shphist-pagination" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+        <PageSizeSelect value={limit} onChange={changeLimit} />
+        <div style={{ flex: 1 }}><Pagination total={total} limit={limit} offset={offset} onPage={load} /></div>
       </div>
     </div>
   );

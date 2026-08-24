@@ -8,6 +8,7 @@ import { Inp, Sel } from "../../components/primitives/Form";
 import { inputBase } from "../../components/primitives/Form";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
 import Pagination from "../../components/primitives/Pagination";
+import PageSizeSelect, { getStoredPageSize } from "../../components/primitives/PageSizeSelect";
 import ActionMenu from "../../components/primitives/ActionMenu";
 import { GradePill } from "../../components/shared/CommodityCombobox";
 import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns.jsx";
@@ -67,12 +68,12 @@ const MdmCommoditiesPage = () => {
   const [results, setResults] = useState([]);
   const [total,   setTotal]   = useState(0);
   const [offset,  setOffset]  = useState(0);
+  const [limit,   setLimit]   = useState(getStoredPageSize);
   const [search,  setSearch]  = useState("");
   const [grade,   setGrade]   = useState("");
   const [loading, setLoading] = useState(true);
   const [modal,   setModal]   = useState(null);
   const [confirm, setConfirm] = useState(null);
-  const LIMIT = 50;
   const timer = useRef(null);
   const { template, startResize } = useResizableColumns("mdm-commodities", [90,250,180,130]);
   const headers = ["Code","Description","Grade","Actions"];
@@ -83,14 +84,14 @@ const MdmCommoditiesPage = () => {
       const s   = opts.search !== undefined ? opts.search : search;
       const res = await api.commodities.list({
         search: grade ? `${s} ${grade}`.trim() : s,
-        limit:  LIMIT,
+        limit:  opts.limit !== undefined ? opts.limit : limit,
         offset: opts.offset !== undefined ? opts.offset : offset,
       });
       setResults(res.results);
       setTotal(res.total);
     } catch {}
     setLoading(false);
-  }, [search, offset, grade]);
+  }, [search, offset, limit, grade]);
 
   useEffect(() => { load(); }, []);
 
@@ -101,6 +102,7 @@ const MdmCommoditiesPage = () => {
   };
 
   const goPage = off => { setOffset(off); load({ offset: off }); };
+  const changeLimit = n => { setLimit(n); setOffset(0); load({ limit: n, offset: 0 }); };
 
   return (
     <div>
@@ -165,7 +167,10 @@ const MdmCommoditiesPage = () => {
         ))}
       </div>
 
-      <Pagination total={total} offset={offset} limit={LIMIT} onPage={goPage} />
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+        <PageSizeSelect value={limit} onChange={changeLimit} />
+        <div style={{ flex: 1 }}><Pagination total={total} offset={offset} limit={limit} onPage={goPage} /></div>
+      </div>
 
       {modal === "add" && (
         <Modal title="Add Commodity" onClose={() => setModal(null)} width={480}>

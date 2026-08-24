@@ -3,10 +3,9 @@ import { T } from "../../tokens";
 import { api } from "../../api";
 import Badge from "../../components/primitives/Badge";
 import Pagination from "../../components/primitives/Pagination";
+import PageSizeSelect, { getStoredPageSize } from "../../components/primitives/PageSizeSelect";
 import { PageSpinner } from "../../components/primitives/Spinner";
 import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns.jsx";
-
-const LIMIT = 50;
 
 const PROGRAM_COLORS = {
   "SDGT":    "danger",
@@ -29,6 +28,7 @@ const MdmSanctionedCustomersPage = () => {
   const [results,  setResults]  = useState([]);
   const [total,    setTotal]    = useState(0);
   const [offset,   setOffset]   = useState(0);
+  const [limit,    setLimit]    = useState(getStoredPageSize);
   const [search,   setSearch]   = useState("");
   const [loading,  setLoading]  = useState(true);
   const [synced,   setSynced]   = useState(null);
@@ -40,10 +40,11 @@ const MdmSanctionedCustomersPage = () => {
   const load = useCallback(async (opts = {}) => {
     const s   = opts.search !== undefined ? opts.search  : search;
     const off = opts.offset !== undefined ? opts.offset  : offset;
+    const lim = opts.limit  !== undefined ? opts.limit   : limit;
     setLoading(true);
     try {
       const [r, st] = await Promise.all([
-        api.sanctions.entries({ search: s, limit: LIMIT, offset: off }),
+        api.sanctions.entries({ search: s, limit: lim, offset: off }),
         api.sanctions.status(),
       ]);
       setResults(r.results || []);
@@ -52,7 +53,7 @@ const MdmSanctionedCustomersPage = () => {
       setSynced(sync ? new Date(sync.synced_at).toLocaleString("en-GB") : null);
     } catch { setResults([]); setTotal(0); }
     setLoading(false);
-  }, [search, offset]);
+  }, [search, offset, limit]);
 
   useEffect(() => { load({ search: "", offset: 0 }); }, []);
 
@@ -64,6 +65,7 @@ const MdmSanctionedCustomersPage = () => {
   };
 
   const goPage = off => { setOffset(off); load({ offset: off }); };
+  const changeLimit = n => { setLimit(n); setOffset(0); load({ limit: n, offset: 0 }); };
 
   const th = {
     position: "relative", paddingLeft: 6,
@@ -180,11 +182,10 @@ const MdmSanctionedCustomersPage = () => {
         })}
       </div>
 
-      {total > LIMIT && (
-        <div style={{ marginTop: 16 }}>
-          <Pagination total={total} limit={LIMIT} offset={offset} onPage={goPage} />
-        </div>
-      )}
+      <div style={{ marginTop: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+        <PageSizeSelect value={limit} onChange={changeLimit} />
+        <div style={{ flex: 1 }}><Pagination total={total} limit={limit} offset={offset} onPage={goPage} /></div>
+      </div>
     </div>
   );
 };

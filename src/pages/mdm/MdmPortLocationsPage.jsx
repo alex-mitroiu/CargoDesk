@@ -8,6 +8,7 @@ import Btn from "../../components/primitives/Btn";
 import Badge from "../../components/primitives/Badge";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
 import Pagination from "../../components/primitives/Pagination";
+import PageSizeSelect, { getStoredPageSize } from "../../components/primitives/PageSizeSelect";
 import ActionMenu from "../../components/primitives/ActionMenu";
 import { inputBase, Inp, Sel, Field } from "../../components/primitives/Form";
 import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns.jsx";
@@ -21,10 +22,10 @@ const MdmPortLocationsPage = () => {
   const [results,  setResults]  = useState([]);
   const [total,    setTotal]    = useState(0);
   const [offset,   setOffset]   = useState(0);
+  const [limit,    setLimit]    = useState(getStoredPageSize);
   const [loading,  setLoading]  = useState(false);
   const [modal,    setModal]    = useState(null); // null | "add" | port obj
   const [confirm,  setConfirm]  = useState(null);
-  const LIMIT = 50;
   const timer  = useRef(null);
   const { template, startResize } = useResizableColumns("mdm-ports", [90,200,70,110,110,110,80]);
   const headers = ["UN/LOCODE","Name","Country","Latitude","Longitude","Zone","Map"];
@@ -35,14 +36,14 @@ const MdmPortLocationsPage = () => {
       const res = await api.ports.search({
         search:  opts.search  !== undefined ? opts.search  : search,
         country: opts.country !== undefined ? opts.country : country,
-        limit:   LIMIT,
+        limit:   opts.limit   !== undefined ? opts.limit   : limit,
         offset:  opts.offset  !== undefined ? opts.offset  : offset,
       });
       setResults(res.results);
       setTotal(res.total);
     } catch {}
     setLoading(false);
-  }, [search, country, offset]);
+  }, [search, country, offset, limit]);
 
   useEffect(() => { load(); }, []);
 
@@ -60,6 +61,7 @@ const MdmPortLocationsPage = () => {
   };
 
   const goPage = (newOffset) => { setOffset(newOffset); load({ offset: newOffset }); };
+  const changeLimit = n => { setLimit(n); setOffset(0); load({ limit: n, offset: 0 }); };
 
   const PortForm = ({ init = {}, onSave, onCancel }) => {
     const [f, setF] = useState({
@@ -156,8 +158,13 @@ const MdmPortLocationsPage = () => {
         ))}
       </div>
 
-      {/* Pagination */}
-      <Pagination total={total} offset={offset} limit={LIMIT} onPage={goPage} />
+      {/* Pagination — was rendered twice here before this pass (a pre-existing duplicate, since
+          Pagination silently no-ops when not needed rather than visibly erroring); collapsed to
+          one, paired with the new page-size dropdown. */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+        <PageSizeSelect value={limit} onChange={changeLimit} />
+        <div style={{ flex: 1 }}><Pagination total={total} offset={offset} limit={limit} onPage={goPage} /></div>
+      </div>
 
       {modal === "add" && (
         <Modal title="Add Port Location" onClose={() => setModal(null)}>
@@ -171,7 +178,6 @@ const MdmPortLocationsPage = () => {
             onCancel={() => setModal(null)} />
         </Modal>
       )}
-      <Pagination total={total} offset={offset} limit={LIMIT} onPage={goPage} />
 
       {confirm && (
         <ConfirmModal

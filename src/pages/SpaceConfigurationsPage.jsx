@@ -12,6 +12,7 @@ import CarrierCombobox from "../components/shared/CarrierCombobox";
 import { Modal, ConfirmModal } from "../components/primitives/Modal";
 import Spinner from "../components/primitives/Spinner";
 import Pagination from "../components/primitives/Pagination";
+import PageSizeSelect, { getStoredPageSize } from "../components/primitives/PageSizeSelect";
 import DatePicker from "../components/primitives/DatePicker";
 import { useResizableColumns, ColResizer } from "../components/primitives/useResizableColumns.jsx";
 import ActionMenu from "../components/primitives/ActionMenu";
@@ -671,6 +672,11 @@ const SpaceConfigurationsPage = ({
   }, [allocations, shipments, containers]);
 
   const currentAllocs = allocations.filter(a => a.endDate >= today);
+  const [allocOffset, setAllocOffset] = useState(0);
+  const [allocLimit,  setAllocLimit]  = useState(getStoredPageSize);
+  // A create/delete/expiry can shrink the result set below whatever page was showing.
+  useEffect(() => { setAllocOffset(0); }, [currentAllocs.length]);
+  const pageAllocs = currentAllocs.slice(allocOffset, allocOffset + allocLimit);
 
   return (
     <div>
@@ -714,7 +720,7 @@ const SpaceConfigurationsPage = ({
           <div style={{ padding: 48, textAlign: "center", color: T.textMuted, fontFamily: T.body, fontSize: 14 }}>
             No active configurations. Use "+ Add Configuration" to set up carrier space allocations.
           </div>
-        ) : currentAllocs.map(a => {
+        ) : pageAllocs.map(a => {
           const consumed  = a.consumedTEU ?? 0;
           const remaining = a.remainingTEU ?? Math.max(0, a.allocatedTEU - consumed);
           const pct       = a.allocatedTEU > 0 ? (consumed / a.allocatedTEU) * 100 : 0;
@@ -834,6 +840,13 @@ const SpaceConfigurationsPage = ({
           );
         })}
       </div>
+
+      {currentAllocs.length > 0 && (
+        <div style={{ marginTop: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+          <PageSizeSelect value={allocLimit} onChange={n => { setAllocLimit(n); setAllocOffset(0); }} />
+          <div style={{ flex: 1 }}><Pagination total={currentAllocs.length} offset={allocOffset} limit={allocLimit} onPage={setAllocOffset} /></div>
+        </div>
+      )}
 
       {/* ── Add / Edit modal ── */}
       {allocModal === "add" && (

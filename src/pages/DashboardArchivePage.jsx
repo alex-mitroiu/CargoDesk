@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { T, LANE_BADGE_VARIANT, diffDays, todayIso } from "../tokens";
 import Btn from "../components/primitives/Btn";
 import Badge from "../components/primitives/Badge";
+import Pagination from "../components/primitives/Pagination";
+import PageSizeSelect, { getStoredPageSize } from "../components/primitives/PageSizeSelect";
 import { useAuth } from "../AuthContext";
 import { IconRefresh, IconClose } from "../components/primitives/Icon";
 
@@ -36,11 +38,21 @@ const DashboardArchive = ({ allocations = [], carriers = [], onRenew, onDelete, 
   // incorrectly also granted occ_bk allocation-write rights here).
   const { canManageConfigs: canEdit } = useAuth();
   const [open, setOpen] = useState(false);
+  const [offset, setOffset] = useState(0);
+  const [limit,  setLimit]  = useState(getStoredPageSize);
+  useEffect(() => { setOffset(0); }, [allocations.length]);
+  const pageAllocs = allocations.slice(offset, offset + limit);
 
   if (!standalone && allocations.length === 0) return null;
 
   const COLS = "150px 1fr 100px 150px 130px 130px";
   const HEADERS = ["Carrier", "Name / Route", "TEU", "Effective Period", "Expired", "Actions"];
+  const pager = allocations.length > 0 && (
+    <div style={{ marginTop: 12, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+      <PageSizeSelect value={limit} onChange={n => { setLimit(n); setOffset(0); }} />
+      <div style={{ flex: 1 }}><Pagination total={allocations.length} offset={offset} limit={limit} onPage={setOffset} /></div>
+    </div>
+  );
 
   const tableContent = (
     <div style={{ background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`,
@@ -60,7 +72,7 @@ const DashboardArchive = ({ allocations = [], carriers = [], onRenew, onDelete, 
           fontSize: 14, color: T.textMuted, fontStyle: "italic" }}>
           No expired configurations yet.
         </div>
-      ) : allocations.map(a => {
+      ) : pageAllocs.map(a => {
         const carrier = carriers.find(c => c.code === a.carrierCode);
         return (
           <div key={a.id}
@@ -121,6 +133,7 @@ const DashboardArchive = ({ allocations = [], carriers = [], onRenew, onDelete, 
         </p>
       </div>
       {tableContent}
+      {pager}
     </div>
   );
 
@@ -155,7 +168,7 @@ const DashboardArchive = ({ allocations = [], carriers = [], onRenew, onDelete, 
           </div>
 
           {/* Rows */}
-          {allocations.map(a => {
+          {pageAllocs.map(a => {
             const carrier = carriers.find(c => c.code === a.carrierCode);
             return (
               <div key={a.id}
@@ -225,6 +238,7 @@ const DashboardArchive = ({ allocations = [], carriers = [], onRenew, onDelete, 
           })}
         </div>
       )}
+      {open && pager}
     </div>
   );
 };

@@ -121,7 +121,19 @@ module.exports = function mdmRoutes(app, ctx) {
 
   app.get("/api/linked-ports", (req, res) => {
     const rows = db.prepare(`SELECT lp.*, p1.name AS primary_name, p2.name AS linked_name FROM linked_ports lp LEFT JOIN port_locations p1 ON p1.unlocode=lp.primary_unlocode LEFT JOIN port_locations p2 ON p2.unlocode=lp.linked_unlocode ORDER BY lp.primary_unlocode`).all();
-    ok(res, rows.map(mapLinkedPort));
+    let mapped = rows.map(mapLinkedPort);
+    // Pagination is opt-in (same shape as GET /api/shipments) — every existing caller that
+    // omits limit/offset keeps getting today's exact bare-array response.
+    if (req.query.limit === undefined && req.query.offset === undefined) return ok(res, mapped);
+    if (req.query.search) {
+      const q = req.query.search.toLowerCase();
+      mapped = mapped.filter(l =>
+        l.primaryUnlocode.toLowerCase().includes(q) || l.linkedUnlocode.toLowerCase().includes(q)
+        || (l.primaryName || '').toLowerCase().includes(q) || (l.linkedName || '').toLowerCase().includes(q)
+        || (l.note || '').toLowerCase().includes(q));
+    }
+    const lim = Math.min(parseInt(req.query.limit) || 50, 500), off = parseInt(req.query.offset) || 0;
+    ok(res, { results: mapped.slice(off, off + lim), total: mapped.length, limit: lim, offset: off });
   });
   app.post("/api/linked-ports", write, (req, res) => {
     const { primaryUnlocode, linkedUnlocode, note='' } = req.body;
@@ -157,7 +169,19 @@ module.exports = function mdmRoutes(app, ctx) {
 
   app.get("/api/carrier-agents", (req, res) => {
     const rows = db.prepare(`${CARRIER_AGENT_JOIN} ORDER BY ca.carrier_code, ca.port_unlocode`).all();
-    ok(res, rows.map(mapCarrierAgent));
+    let mapped = rows.map(mapCarrierAgent);
+    // Pagination is opt-in (same shape as GET /api/shipments) — every existing caller that
+    // omits limit/offset keeps getting today's exact bare-array response.
+    if (req.query.limit === undefined && req.query.offset === undefined) return ok(res, mapped);
+    if (req.query.search) {
+      const q = req.query.search.toLowerCase();
+      mapped = mapped.filter(a =>
+        a.carrierCode.toLowerCase().includes(q) || a.portUnlocode.toLowerCase().includes(q)
+        || (a.portName || '').toLowerCase().includes(q) || (a.agentCustomerName || '').toLowerCase().includes(q)
+        || (a.note || '').toLowerCase().includes(q));
+    }
+    const lim = Math.min(parseInt(req.query.limit) || 50, 500), off = parseInt(req.query.offset) || 0;
+    ok(res, { results: mapped.slice(off, off + lim), total: mapped.length, limit: lim, offset: off });
   });
   app.post("/api/carrier-agents", write, (req, res) => {
     const { carrierCode, portUnlocode, agentCustomerId, note = '' } = req.body;

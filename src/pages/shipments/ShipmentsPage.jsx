@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { T, STATUSES, statusVariant, contractVariant, teuOf } from "../../tokens";
+import { T, statusVariant, contractVariant } from "../../tokens";
 import { useAuth } from "../../AuthContext";
 import { api } from "../../api";
 import { toast } from "../../toast";
@@ -12,10 +12,10 @@ import ActionMenu from "../../components/primitives/ActionMenu";
 import EntityHistoryModal from "../../components/shared/EntityHistoryModal";
 import ExportFieldsModal, { ALL_EXPORT_FIELDS } from "../../components/shared/ExportFieldsModal";
 import Pagination from "../../components/primitives/Pagination";
+import PageSizeSelect, { getStoredPageSize } from "../../components/primitives/PageSizeSelect";
+import { PageSpinner } from "../../components/primitives/Spinner";
 import { IconRefresh, IconDownload, IconClose, IconWarning, IconTime, IconEye, IconClipboard }
   from "../../components/primitives/Icon";
-
-const PAGE_SIZE = 50;
 
 const SORT_OPTIONS = [
   { value: "",         label: "Default order" },
@@ -28,7 +28,13 @@ const SORT_OPTIONS = [
 
 const STATUS_CHIPS = ["Active", "Pending", "Requires Review", "Completed", "Cancelled"];
 
-const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, onNew, onRefresh, financeEnabled = true }) => {
+// Real server-side pagination (TKT-none — pagination-standardization pass). `shipments` (the
+// full, unbounded App.jsx-shared array) is kept ONLY for app-wide totals that must reflect
+// everything regardless of this page's own filters — the header subtitle, the status-chip
+// counts, and the CSV-export-disabled check. The actual table rows come from this page's own
+// self-fetched, server-filtered/sorted/paginated slice, so the browser never has to hold or
+// render more than one page's worth of shipments at a time — the thing this pass exists to fix.
+const ShipmentsPage = ({ shipments, carriers, onDelete, onNew, onRefresh, financeEnabled = true }) => {
   const { canEditShipments: canEdit } = useAuth();
   const [confirm,         setConfirm]         = useState(null);
   const [historyShipment, setHistoryShipment] = useState(null);
@@ -45,19 +51,61 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
   const [staleCount,      setStaleCount]      = useState(0);
   const [refreshing,      setRefreshing]      = useState(false);
   const [offset,          setOffset]          = useState(0);
+  const [limit,           setLimit]           = useState(getStoredPageSize);
+  const [pageItems,       setPageItems]       = useState([]);
+  const [pageTotal,       setPageTotal]       = useState(0);
+  const [pageLoading,     setPageLoading]     = useState(true);
   const knownIdsRef = useRef(new Set(shipments.map(s => s.id)));
+  const searchTimer = useRef(null);
+  // Guards against out-of-order responses (StrictMode's dev-only double-mount fires the initial
+  // load twice; in production, a user clicking two filters in quick succession has the same
+  // shape) — a slower earlier request resolving after a newer one would otherwise silently
+  // overwrite the current filter's results with stale ones. Only the response matching the most
+  // recently *issued* request is ever applied.
+  const loadSeqRef = useRef(0);
 
-  // A new filter/sort can shrink the result set below the page a user was already on —
-  // reset to page 1 whenever the filtered set's shape changes, not just on mount.
-  useEffect(() => { setOffset(0); }, [filters.search, filters.status, filters.carrier, sort]);
+  // Fetches this page's own rows — always explicit about which filters/sort/offset/limit to use
+  // (rather than reading current state) so callers never race a stale closure against a state
+  // update that hasn't landed yet, matching src/scaffold/MdmPageScaffold.jsx's own load() shape.
+  const loadPage = async (opts = {}) => {
+    const f   = opts.filters ?? filters;
+    const s   = opts.sort    ?? sort;
+    const off = opts.offset  ?? offset;
+    const lim = opts.limit   ?? limit;
+    const seq = ++loadSeqRef.current;
+    setPageLoading(true);
+    try {
+      const params = { limit: lim, offset: off };
+      if (f.status)  params.status  = f.status;
+      if (f.carrier) params.carrier = f.carrier;
+      if (f.search)  params.search  = f.search;
+      if (s)         params.sort    = s;
+      const r = await api.shipments.list(params);
+      if (seq !== loadSeqRef.current) return; // a newer request has since been issued — discard
+      setPageItems(r.results || []);
+      setPageTotal(r.total ?? 0);
+    } catch {
+      if (seq !== loadSeqRef.current) return;
+      setPageItems([]); setPageTotal(0);
+    }
+    if (seq !== loadSeqRef.current) return;
+    setPageLoading(false);
+  };
 
-  // Sync known IDs when parent pushes a fresh list (after manual refresh or other updates)
+  useEffect(() => { loadPage({ offset: 0 }); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Sync known IDs when the parent's shared array changes (after a create/delete elsewhere, or
+  // a role switch) — feeds the stale-shipment poll below, unrelated to this page's own fetch.
   useEffect(() => {
     knownIdsRef.current = new Set(shipments.map(s => s.id));
     setStaleCount(0);
   }, [shipments]);
 
-  // Poll every 90 s for new shipments the parent hasn't loaded yet
+  // Poll every 90s for new shipments the parent hasn't loaded yet. Deliberately still reads the
+  // full app-wide list — this is a lightweight, thrown-away-immediately diff against
+  // knownIdsRef (built from the shared App.jsx array, not this page's own paginated slice), not
+  // data held in persistent state, so it isn't the same "held forever" RAM concern this pass
+  // targets.
   useEffect(() => {
     if (!onRefresh) return;
     const id = setInterval(async () => {
@@ -75,6 +123,38 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
     setRefreshing(true);
     try { await onRefresh(); } finally { setRefreshing(false); }
   };
+
+  // ── Filter/sort/page handlers — each updates its own state slice and immediately kicks off
+  // the (explicit-opts) refetch, resetting to page 1 since a new filter/sort shape can shrink
+  // the result set below whatever page was previously showing. Search alone is debounced so
+  // typing doesn't fire a request per keystroke.
+  const handleSearchChange = v => {
+    setFilters(f => ({ ...f, search: v }));
+    setOffset(0);
+    clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => loadPage({ filters: { ...filters, search: v }, offset: 0 }), 300);
+  };
+  const handleCarrierChange = v => {
+    const nf = { ...filters, carrier: v };
+    setFilters(nf); setOffset(0);
+    loadPage({ filters: nf, offset: 0 });
+  };
+  const handleStatusChip = v => {
+    const nf = { ...filters, status: v };
+    setFilters(nf); setOffset(0);
+    loadPage({ filters: nf, offset: 0 });
+  };
+  const handleSortChange = v => {
+    setSort(v); setOffset(0);
+    loadPage({ sort: v, offset: 0 });
+  };
+  const handleClear = () => {
+    const nf = { search: '', status: '', carrier: '' };
+    setFilters(nf); setSort(""); setOffset(0);
+    loadPage({ filters: nf, sort: "", offset: 0 });
+  };
+  const goPage = off => { setOffset(off); loadPage({ offset: off }); };
+  const changeLimit = n => { setLimit(n); setOffset(0); loadPage({ limit: n, offset: 0 }); };
 
   // Remembers the operator's field selection across visits (same localStorage-preference idiom
   // as cd_theme/cd_navfold_*/cargodesk_wip_limits elsewhere in this app) — falls back to "every
@@ -102,43 +182,17 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
     } catch { return ALL_EXPORT_FIELDS; }
   };
 
-  const teuFor = id => containers.filter(c => c.shipmentId === id).reduce((s, c) => s + teuOf(c.size), 0);
   const { template: shipTemplate, startResize: shipStartResize } = useResizableColumns("shipments", [140,70,70,80,100,150,165,46,60,80,90]);
   const shipHeaders = ["Shipment ID","POL","POD","Routing Term","Trade Lane","Carrier","Contract","TEU","Status","Margin","Actions"];
 
-  const today = new Date().toISOString().slice(0, 10);
-  const filtered = shipments.filter(s => {
-    if (filters.status === "_overdue") {
-      if (!s.etd || s.etd >= today) return false;
-      if (s.status === "Completed" || s.status === "Cancelled") return false;
-    } else if (filters.status) {
-      if (s.status !== filters.status) return false;
-    }
-    if (filters.carrier && s.carrierCode !== filters.carrier) return false;
-    if (filters.search) {
-      const q = filters.search.toLowerCase();
-      if (!s.id.toLowerCase().includes(q)
-        && !s.pol.toLowerCase().includes(q)
-        && !s.pod.toLowerCase().includes(q)
-        && !(s.seaPol || '').toLowerCase().includes(q)
-        && !(s.seaPod || '').toLowerCase().includes(q)
-        && !(s.bookingRef || '').toLowerCase().includes(q)
-        && !(s.blNumber   || '').toLowerCase().includes(q)) return false;
-    }
-    return true;
-  });
-
   const hasFilters = !!(filters.search || filters.status || filters.carrier);
 
-  const teuFor2 = s => containers.filter(c => c.shipmentId === s.id).reduce((n, c) => n + teuOf(c.size), 0);
-  const displayed = sort === "etd_asc"  ? [...filtered].sort((a,b) => (a.etd||"9").localeCompare(b.etd||"9"))
-                  : sort === "etd_desc" ? [...filtered].sort((a,b) => (b.etd||"0").localeCompare(a.etd||"0"))
-                  : sort === "eta_asc"  ? [...filtered].sort((a,b) => (a.eta||"9").localeCompare(b.eta||"9"))
-                  : sort === "teu_desc" ? [...filtered].sort((a,b) => teuFor2(b) - teuFor2(a))
-                  : sort === "status"   ? [...filtered].sort((a,b) => (a.status||"").localeCompare(b.status||""))
-                  : filtered;
-
-  const pageItems = displayed.slice(offset, offset + PAGE_SIZE);
+  const confirmDelete = async () => {
+    const id = confirm;
+    setConfirm(null);
+    await onDelete(id);
+    loadPage();
+  };
 
   return (
     <div>
@@ -146,7 +200,7 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
         <div>
           <h1 style={{ fontFamily: T.head, fontSize: 26, fontWeight: 800, color: T.text, margin: 0 }}>Shipments</h1>
           <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, margin: "4px 0 0" }}>
-            {hasFilters ? `${displayed.length} of ${shipments.length}` : shipments.length} total
+            {hasFilters ? `${pageTotal} of ${shipments.length}` : shipments.length} total
             · {shipments.filter(s => s.status === "Active").length} active
           </p>
         </div>
@@ -188,13 +242,13 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
       <div style={{ display: "flex", gap: 10, marginBottom: 8, flexWrap: "wrap", alignItems: "center" }}>
         <input
           value={filters.search}
-          onChange={e => setFilters(f => ({ ...f, search: e.target.value }))}
+          onChange={e => handleSearchChange(e.target.value)}
           placeholder="Search ID, POL, POD, booking ref…"
           style={{ ...inputBase, flex: "1 1 200px", minWidth: 160 }}
         />
         <select
           value={filters.carrier}
-          onChange={e => setFilters(f => ({ ...f, carrier: e.target.value }))}
+          onChange={e => handleCarrierChange(e.target.value)}
           style={{ ...inputBase, width: 180, cursor: "pointer" }}
         >
           <option value="">All carriers</option>
@@ -202,14 +256,14 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
         </select>
         <select
           value={sort}
-          onChange={e => setSort(e.target.value)}
+          onChange={e => handleSortChange(e.target.value)}
           style={{ ...inputBase, width: 160, cursor: "pointer" }}
         >
           {SORT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
         {(hasFilters || sort) && (
           <button
-            onClick={() => { setFilters({ search: '', status: '', carrier: '' }); setSort(""); }}
+            onClick={handleClear}
             style={{ background: "none", border: `1px solid ${T.border}`, borderRadius: 6,
               color: T.textMuted, cursor: "pointer", padding: "6px 12px",
               fontFamily: T.body, fontSize: 12, whiteSpace: "nowrap",
@@ -229,7 +283,7 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
           const col = s ? colors[s] || T.accent : T.textMuted;
           return (
             <button key={s || "all"} type="button"
-              onClick={() => setFilters(f => ({ ...f, status: s }))}
+              onClick={() => handleStatusChip(s)}
               style={{ padding:"3px 11px", borderRadius:20,
                 border:`1px solid ${active ? col : T.border}`,
                 background: active ? `${col}18` : "none",
@@ -277,7 +331,9 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
           })}
         </div>
 
-        {displayed.length === 0 ? (
+        {pageLoading ? (
+          <div style={{ padding: 48 }}><PageSpinner /></div>
+        ) : pageTotal === 0 ? (
           <div style={{ padding: 48, textAlign: "center", color: T.textMuted, fontFamily: T.body, fontSize: 14 }}>
             {hasFilters ? "No shipments match your filters." : "No shipments yet. Create your first one above."}
           </div>
@@ -326,7 +382,7 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
                 <Badge variant={contractVariant(s.contractType)}>{s.contractType}</Badge>
                 {s.contractRef && <span style={{ fontFamily: T.mono, fontSize: 10.5, color: T.textMuted }}>{s.contractRef}</span>}
               </div>
-              <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text }}>{teuFor(s.id)}</span>
+              <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text }}>{s.teu}</span>
               <div style={{ display: "flex", flexDirection: "column", gap: 3, alignItems: "center" }}>
                 <Badge variant={statusVariant(s.status)}>{s.status}</Badge>
                 {s.overdueCount > 0 && (
@@ -366,12 +422,17 @@ const ShipmentsPage = ({ shipments, containers, carriers, onSelect, onDelete, on
         })}
       </div>
 
-      <Pagination total={displayed.length} offset={offset} limit={PAGE_SIZE} onPage={setOffset} />
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 8, flexWrap: "wrap", gap: 8 }}>
+        <PageSizeSelect value={limit} onChange={changeLimit} />
+        <div style={{ flex: 1 }}>
+          <Pagination total={pageTotal} offset={offset} limit={limit} onPage={goPage} />
+        </div>
+      </div>
 
       {confirm && (
         <ConfirmModal
           message={`Remove shipment ${confirm} and all its containers? This cannot be undone.`}
-          onConfirm={() => { onDelete(confirm); setConfirm(null); }}
+          onConfirm={confirmDelete}
           onCancel={() => setConfirm(null)} />
       )}
       {historyShipment && (

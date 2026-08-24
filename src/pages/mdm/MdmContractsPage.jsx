@@ -9,6 +9,7 @@ import Btn from "../../components/primitives/Btn";
 import Badge from "../../components/primitives/Badge";
 import { Modal } from "../../components/primitives/Modal";
 import Pagination from "../../components/primitives/Pagination";
+import PageSizeSelect, { getStoredPageSize } from "../../components/primitives/PageSizeSelect";
 import { inputBase, Field } from "../../components/primitives/Form";
 import DatePicker from "../../components/primitives/DatePicker";
 import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns.jsx";
@@ -46,7 +47,6 @@ const MOVEMENT_TYPES = ["FCL","LCL"];
 const CONTRACT_STATUSES = ["Active","Draft","Expired","On Hold"];
 
 const EMPTY_FILTERS = { search:"", carrier:"", status:"", dg:"", asOf:"", containerType:"" };
-const LIMIT = 25;
 
 const EMPTY_FORM = {
   contractNumber: "", contractRef: "", carrierCode: "", namedAccountId: "", namedAccount: "",
@@ -1024,6 +1024,7 @@ const MdmContractsPage = () => {
   const [results, setResults] = useState([]);
   const [total,   setTotal]   = useState(0);
   const [offset,  setOffset]  = useState(0);
+  const [limit,   setLimit]   = useState(getStoredPageSize);
   const [filters, setFilters] = useState(EMPTY_FILTERS);
   const [loading, setLoading] = useState(true);
   const [modal,            setModal]            = useState(null);
@@ -1033,7 +1034,7 @@ const MdmContractsPage = () => {
   const [schedulesContract, setSchedulesContract] = useState(null);
   const timer = useRef(null);
 
-  const doLoad = useCallback(async (f, off) => {
+  const doLoad = useCallback(async (f, off, lim) => {
     setLoading(true);
     try {
       const res = await api.contracts.search({
@@ -1043,20 +1044,21 @@ const MdmContractsPage = () => {
         dg:            f.dg,
         asOf:          f.asOf,
         containerType: f.containerType,
-        limit:         LIMIT,
+        limit:         lim ?? limit,
         offset:        off,
       });
       setResults(res.results || []);
       setTotal(res.total || 0);
     } catch {}
     setLoading(false);
-  }, []);
+  }, [limit]);
 
   useEffect(() => { doLoad(EMPTY_FILTERS, 0); }, []);
 
   const handleSearch = () => { setOffset(0); doLoad(filters, 0); };
   const handleClear  = () => { setFilters(EMPTY_FILTERS); setOffset(0); doLoad(EMPTY_FILTERS, 0); };
   const goPage = off => { setOffset(off); doLoad(filters, off); };
+  const changeLimit = n => { setLimit(n); setOffset(0); doLoad(filters, 0, n); };
 
   const handleSaved = () => { setModal(null); setCloneSource(null); doLoad(filters, offset); };
 
@@ -1339,11 +1341,10 @@ const MdmContractsPage = () => {
       </div>
 
       {/* Pagination */}
-      {total > LIMIT && (
-        <div style={{ marginTop: 16 }}>
-          <Pagination total={total} limit={LIMIT} offset={offset} onPage={goPage} />
-        </div>
-      )}
+      <div style={{ marginTop: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+        <PageSizeSelect value={limit} onChange={changeLimit} />
+        <div style={{ flex: 1 }}><Pagination total={total} limit={limit} offset={offset} onPage={goPage} /></div>
+      </div>
 
       {/* Contract modal */}
       {modal && (

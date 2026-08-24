@@ -4,6 +4,8 @@ import { api } from "../api";
 import { toast } from "../toast";
 import { Modal } from "./primitives/Modal";
 import Btn from "./primitives/Btn";
+import Pagination from "./primitives/Pagination";
+import PageSizeSelect, { getStoredPageSize } from "./primitives/PageSizeSelect";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -886,6 +888,8 @@ export default function UserManagementPanel() {
   const [editTarget,    setEditTarget]    = useState(null);
   const [deleteTarget,  setDeleteTarget]  = useState(null);
   const [rolesTarget,   setRolesTarget]   = useState(null);
+  const [offset,        setOffset]        = useState(0);
+  const [limit,         setLimit]         = useState(getStoredPageSize);
   const configPanelRef = useRef(null);
 
   const load = () => {
@@ -968,6 +972,13 @@ export default function UserManagementPanel() {
         u.email.toLowerCase().includes(search.toLowerCase()))
     : users;
 
+  // A changed search can shrink the result set below whatever page was showing — reset to
+  // page 1 whenever it does (not just on mount). A newly-created user always sorts onto the
+  // LAST page of the unfiltered list (created_at ascending) — searching their name/email finds
+  // them immediately regardless, since the search filters the full list before pagination.
+  useEffect(() => { setOffset(0); }, [search]);
+  const pageUsers = filteredUsers.slice(offset, offset + limit);
+
   const colHd = (label, width) => (
     <th style={{ textAlign: "left", padding: "8px 14px", fontFamily: T.mono, fontSize: 11,
       fontWeight: 700, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em",
@@ -1016,12 +1027,12 @@ export default function UserManagementPanel() {
               </tr>
             </thead>
             <tbody>
-              {filteredUsers.map((u, i) => {
+              {pageUsers.map((u, i) => {
                 const isSelected = selectedUser?.id === u.id;
                 return (
                   <tr key={u.id} data-testid={`user-row-${u.id}`} data-user-email={u.email}
                     style={{
-                      borderBottom: i < filteredUsers.length - 1 ? `1px solid ${T.border}` : "none",
+                      borderBottom: i < pageUsers.length - 1 ? `1px solid ${T.border}` : "none",
                       background: isSelected ? T.accent + "08" : i % 2 === 0 ? "transparent" : T.bg + "55",
                       cursor: "pointer",
                     }} onClick={() => handleConfigure(u)}>
@@ -1137,6 +1148,10 @@ export default function UserManagementPanel() {
               )}
             </tbody>
           </table>
+          <div style={{ padding: "10px 14px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+            <PageSizeSelect value={limit} onChange={n => { setLimit(n); setOffset(0); }} />
+            <div style={{ flex: 1 }}><Pagination total={filteredUsers.length} offset={offset} limit={limit} onPage={setOffset} /></div>
+          </div>
         </div>
       )}
 

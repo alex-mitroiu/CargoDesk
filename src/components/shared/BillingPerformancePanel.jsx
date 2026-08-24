@@ -6,6 +6,8 @@ import { toast } from "../../toast";
 import Btn from "../primitives/Btn";
 import Spinner from "../primitives/Spinner";
 import DatePicker from "../primitives/DatePicker";
+import Pagination from "../primitives/Pagination";
+import PageSizeSelect, { getStoredPageSize } from "../primitives/PageSizeSelect";
 
 // Billing Performance report (TKT-B4VBDH, Epic TKT-KR6ZBT) — row-level FR01/FR02 invoices,
 // filterable by any combination of status/sent/paid/date and office/customer/lane/carrier, per
@@ -143,6 +145,9 @@ const BillingPerformancePanel = () => {
   const [chartView,   setChartView]   = useState("status"); // "status" | "month"
   const [chartMetric, setChartMetric] = useState("count");  // "count" | "amount"
 
+  const [offset, setOffset] = useState(0);
+  const [limit,  setLimit]  = useState(getStoredPageSize);
+
   const load = () => {
     setError(false);
     api.reports.billingPerformance().then(setRows).catch(() => { setRows([]); setError(true); });
@@ -198,6 +203,11 @@ const BillingPerformancePanel = () => {
     const missingCount = filtered.filter(r => r.paymentState === "missing").length;
     return { invoicedUsd, outstandingUsd, overdueCount: overdue.length, overdueUsd, sentPct, paidPct, missingCount };
   }, [filtered]);
+
+  // A changed filter can shrink the result set below whatever page was showing — reset to
+  // page 1 whenever the filtered set itself changes (not just on mount).
+  useEffect(() => { setOffset(0); }, [filtered]);
+  const pageItems = useMemo(() => filtered.slice(offset, offset + limit), [filtered, offset, limit]);
 
   const hasFilters = stateFilter.size || sentFilter || officeId || customerId || laneCode || carrierCode || dateFrom || dateTo;
   const clearFilters = () => {
@@ -379,6 +389,7 @@ const BillingPerformancePanel = () => {
           No invoices match these filters.
         </div>
       ) : (
+        <>
         <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden", background: T.surface, overflowX: "auto" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 16px", borderBottom: `1px solid ${T.border}`, background: T.bg, minWidth: 1000 }}>
             <div style={{ ...th, width: 90, flexShrink: 0 }}>Shipment</div>
@@ -391,7 +402,7 @@ const BillingPerformancePanel = () => {
             <div style={{ ...th, width: 130, flexShrink: 0 }}>Office</div>
             <div style={{ ...th, width: 70, flexShrink: 0 }}>Carrier</div>
           </div>
-          {filtered.slice(0, 200).map(r => {
+          {pageItems.map(r => {
             const meta = paymentStateMeta(r.paymentState);
             return (
               <div key={r.docId || r.shipmentId} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 16px",
@@ -419,12 +430,12 @@ const BillingPerformancePanel = () => {
               </div>
             );
           })}
-          {filtered.length > 200 && (
-            <div style={{ padding: "10px 16px", textAlign: "center", fontFamily: T.body, fontSize: 11.5, color: T.textMuted, fontStyle: "italic" }}>
-              Showing the first 200 of {filtered.length} matching invoices — narrow the filters or export CSV for the full set.
-            </div>
-          )}
         </div>
+        <div style={{ padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+          <PageSizeSelect value={limit} onChange={n => { setLimit(n); setOffset(0); }} />
+          <div style={{ flex: 1 }}><Pagination total={filtered.length} offset={offset} limit={limit} onPage={setOffset} /></div>
+        </div>
+        </>
       )}
     </div>
   );

@@ -13,6 +13,7 @@ import CarrierCombobox from "../components/shared/CarrierCombobox";
 import { Modal, ConfirmModal } from "../components/primitives/Modal";
 import Spinner from "../components/primitives/Spinner";
 import Pagination from "../components/primitives/Pagination";
+import PageSizeSelect, { getStoredPageSize } from "../components/primitives/PageSizeSelect";
 import DatePicker from "../components/primitives/DatePicker";
 import { useResizableColumns, ColResizer } from "../components/primitives/useResizableColumns.jsx";
 import { IconClose, IconWarning, IconPencil, IconCheck, IconRefresh, IconLock, IconUnlock,
@@ -627,6 +628,12 @@ const MatchedShipmentsTable = ({ shipments, containers, carriers, activeAllocati
     return { ...s, teu, carrier, alloc };
   }), [shipments, activeAllocations, containers, carriers]);
 
+  const [offset, setOffset] = useState(0);
+  const [limit,  setLimit]  = useState(getStoredPageSize);
+  // A changed date range can shrink the result set below whatever page was showing.
+  useEffect(() => { setOffset(0); }, [rows]);
+  const pageRows = rows.slice(offset, offset + limit);
+
   const HDR = ["Shipment ID", "POL → POD", "Carrier", "Contract", "Space Config", "TEU", "Status"];
   const { template: COL, startResize } = useResizableColumns("dashboard-matched-shipments", [130, 120, 120, 110, 140, 48, 90]);
 
@@ -656,7 +663,7 @@ const MatchedShipmentsTable = ({ shipments, containers, carriers, activeAllocati
               </div>
             ))}
           </div>
-          {rows.map(s => (
+          {pageRows.map(s => (
             <div key={s.id}
               style={{ display: "grid", gridTemplateColumns: COL,
                 padding: "12px 20px", borderBottom: `1px solid ${T.border}22`,
@@ -684,6 +691,10 @@ const MatchedShipmentsTable = ({ shipments, containers, carriers, activeAllocati
               <Badge variant={statusVariant(s.status)}>{s.status}</Badge>
             </div>
           ))}
+          <div style={{ padding: "10px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+            <PageSizeSelect value={limit} onChange={n => { setLimit(n); setOffset(0); }} />
+            <div style={{ flex: 1 }}><Pagination total={rows.length} offset={offset} limit={limit} onPage={setOffset} /></div>
+          </div>
         </>
       )}
     </div>

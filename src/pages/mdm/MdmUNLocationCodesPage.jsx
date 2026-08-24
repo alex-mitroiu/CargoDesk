@@ -5,6 +5,7 @@ import { inputBase } from "../../components/primitives/Form";
 import { api } from "../../api";
 import Badge from "../../components/primitives/Badge";
 import Pagination from "../../components/primitives/Pagination";
+import PageSizeSelect, { getStoredPageSize } from "../../components/primitives/PageSizeSelect";
 import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns.jsx";
 
 // ─── MDM Locations: UN Location Codes Page ────────────────────────────────────
@@ -13,9 +14,9 @@ const MdmUNLocationCodesPage = () => {
   const [rows,     setRows]     = useState([]);
   const [total,    setTotal]    = useState(0);
   const [offset,   setOffset]   = useState(0);
+  const [limit,    setLimit]    = useState(getStoredPageSize);
   const [search,   setSearch]   = useState("");
   const [loading,  setLoading]  = useState(true);
-  const LIMIT = 50;
   const timer  = useRef(null);
   const { template, startResize } = useResizableColumns("mdm-unlocodes", [110,200,80,130,120]);
   const headers = ["UN/LOCODE","Port / Location Name","Country","Zone","Has Seaport?"];
@@ -25,14 +26,14 @@ const MdmUNLocationCodesPage = () => {
     try {
       const res = await api.unlocodes.search({
         search: opts.search  !== undefined ? opts.search  : search,
-        limit:  LIMIT,
+        limit:  opts.limit   !== undefined ? opts.limit   : limit,
         offset: opts.offset  !== undefined ? opts.offset  : offset,
       });
       setRows(res.results);
       setTotal(res.total);
     } catch {}
     setLoading(false);
-  }, [search, offset]);
+  }, [search, offset, limit]);
 
   useEffect(() => { load(); }, []);
 
@@ -44,6 +45,7 @@ const MdmUNLocationCodesPage = () => {
   };
 
   const goPage = off => { setOffset(off); load({ offset: off }); };
+  const changeLimit = n => { setLimit(n); setOffset(0); load({ limit: n, offset: 0 }); };
 
   return (
     <div>
@@ -99,7 +101,10 @@ const MdmUNLocationCodesPage = () => {
         ))}
       </div>
 
-      <Pagination total={total} offset={offset} limit={LIMIT} onPage={goPage} />
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+        <PageSizeSelect value={limit} onChange={changeLimit} />
+        <div style={{ flex: 1 }}><Pagination total={total} offset={offset} limit={limit} onPage={goPage} /></div>
+      </div>
     </div>
   );
 };

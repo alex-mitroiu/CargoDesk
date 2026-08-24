@@ -9,20 +9,19 @@ import { Modal, ConfirmModal } from "../../components/primitives/Modal";
 import CountryCombobox from "../../components/shared/CountryCombobox";
 import ActionMenu from "../../components/primitives/ActionMenu";
 import Pagination from "../../components/primitives/Pagination";
+import PageSizeSelect, { getStoredPageSize } from "../../components/primitives/PageSizeSelect";
 import CountryLocationsModal from "../../components/shared/CountryLocationsModal";
 import { PageSpinner } from "../../components/primitives/Spinner";
 import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns.jsx";
 
 // ─── MDM Locations: Countries Page ────────────────────────────────────────────
 
-
-const LIMIT = 50;
-
 const MdmCountriesPage = () => {
   const { canManageMdm } = useAuth();
   const [countries,      setCountries]      = useState([]);
   const [total,          setTotal]          = useState(0);
   const [offset,         setOffset]         = useState(0);
+  const [limit,          setLimit]          = useState(getStoredPageSize);
   const [allLanes,       setAllLanes]       = useState([]);
   const [laneMap,        setLaneMap]        = useState({});
   const [search,         setSearch]         = useState("");
@@ -37,10 +36,11 @@ const MdmCountriesPage = () => {
   const load = useCallback(async (opts = {}) => {
     const s   = opts.search  !== undefined ? opts.search  : search;
     const off = opts.offset  !== undefined ? opts.offset  : offset;
+    const lim = opts.limit   !== undefined ? opts.limit   : limit;
     setLoading(true);
     try {
       const [cRes, l, assignments] = await Promise.all([
-        api.countries.list({ search: s, limit: String(LIMIT), offset: String(off) }),
+        api.countries.list({ search: s, limit: String(lim), offset: String(off) }),
         allLanes.length ? Promise.resolve(allLanes) : api.tradeLanes.list(),
         Object.keys(laneMap).length ? Promise.resolve(null) : api.countryLanes.list(),
       ]);
@@ -60,7 +60,7 @@ const MdmCountriesPage = () => {
       setCountries(rows.map(c => ({ ...c, tradeLanes: newLaneMap[c.iso2] || [] })));
     } catch (e) { console.error("Countries load error:", e); }
     setLoading(false);
-  }, [search, offset, allLanes, laneMap]);
+  }, [search, offset, limit, allLanes, laneMap]);
 
   useEffect(() => { load({ search: "", offset: 0 }); }, []);
 
@@ -72,6 +72,7 @@ const MdmCountriesPage = () => {
   };
 
   const goPage = off => { setOffset(off); load({ offset: off }); };
+  const changeLimit = n => { setLimit(n); setOffset(0); load({ limit: n, offset: 0 }); };
 
   const CountryForm = ({ init = {}, onSave, onCancel }) => {
     const [iso2,      setIso2]      = useState(init.iso2 || "");
@@ -210,11 +211,10 @@ const MdmCountriesPage = () => {
         ))}
       </div>
 
-      {total > LIMIT && (
-        <div style={{ marginTop: 16 }}>
-          <Pagination total={total} limit={LIMIT} offset={offset} onPage={goPage} />
-        </div>
-      )}
+      <div style={{ marginTop: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+        <PageSizeSelect value={limit} onChange={changeLimit} />
+        <div style={{ flex: 1 }}><Pagination total={total} limit={limit} offset={offset} onPage={goPage} /></div>
+      </div>
 
       {modal === "add" && (
         <Modal title="Add Country" onClose={() => setModal(null)} width={560}>

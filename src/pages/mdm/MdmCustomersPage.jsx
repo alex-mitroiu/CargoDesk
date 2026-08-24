@@ -8,6 +8,7 @@ import Btn from "../../components/primitives/Btn";
 import Badge from "../../components/primitives/Badge";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
 import Pagination from "../../components/primitives/Pagination";
+import PageSizeSelect, { getStoredPageSize } from "../../components/primitives/PageSizeSelect";
 import ActionMenu from "../../components/primitives/ActionMenu";
 import { inputBase, Inp, Sel, Textarea } from "../../components/primitives/Form";
 import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns.jsx";
@@ -915,8 +916,6 @@ const CustomerDetailModal = ({ customer, isNew, onClose, onUpdated }) => {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-const LIMIT = 50;
-
 // Segmented list-page filter (role-derivation rework) — "All" omits the role param entirely;
 // the other two segments send their category's roles as one comma-joined `role` filter, so the
 // backend still only ever reasons about individual roles (see CUSTOMER_ROLE_USAGE_SQL).
@@ -927,6 +926,7 @@ const MdmCustomersPage = () => {
   const [results,  setResults]  = useState([]);
   const [total,    setTotal]    = useState(0);
   const [offset,   setOffset]   = useState(0);
+  const [limit,    setLimit]    = useState(getStoredPageSize);
   const [search,   setSearch]   = useState("");
   const [category, setCategory] = useState("All");
   const [loading,  setLoading]  = useState(true);
@@ -941,14 +941,14 @@ const MdmCustomersPage = () => {
       const res = await api.customers.list({
         search: opts.search !== undefined ? opts.search : search,
         ...(cat !== "All" ? { role: CUSTOMER_ROLE_CATEGORIES[cat].join(",") } : {}),
-        limit:  LIMIT,
+        limit:  opts.limit !== undefined ? opts.limit : limit,
         offset: opts.offset !== undefined ? opts.offset : offset,
       });
       setResults(res.results);
       setTotal(res.total);
     } catch {}
     setLoading(false);
-  }, [search, offset, category]);
+  }, [search, offset, limit, category]);
 
   useEffect(() => { load(); }, []);
 
@@ -964,6 +964,7 @@ const MdmCustomersPage = () => {
   };
 
   const goPage = off => { setOffset(off); load({ offset: off }); };
+  const changeLimit = n => { setLimit(n); setOffset(0); load({ limit: n, offset: 0 }); };
 
   const handleUpdated = updated => {
     setResults(prev => prev.map(c => c.id === updated.id ? updated : c));
@@ -1099,11 +1100,10 @@ const MdmCustomersPage = () => {
         ))}
       </div>
 
-      {total > LIMIT && (
-        <div style={{ marginTop: 16 }}>
-          <Pagination total={total} limit={LIMIT} offset={offset} onPage={goPage} />
-        </div>
-      )}
+      <div style={{ marginTop: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+        <PageSizeSelect value={limit} onChange={changeLimit} />
+        <div style={{ flex: 1 }}><Pagination total={total} limit={limit} offset={offset} onPage={goPage} /></div>
+      </div>
 
       {modal && (
         <CustomerDetailModal

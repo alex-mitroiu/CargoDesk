@@ -7,6 +7,8 @@ import Btn from "../primitives/Btn";
 import Spinner from "../primitives/Spinner";
 import { Modal } from "../primitives/Modal";
 import { Sel, Textarea, Field } from "../primitives/Form";
+import Pagination from "../primitives/Pagination";
+import PageSizeSelect, { getStoredPageSize } from "../primitives/PageSizeSelect";
 
 // Invoice Collections report (Epic TKT-G11AHW) — every shipment's own most recent FR01/FR02:
 // who's the responsible customer (Principal), what's the status, who owns chasing it, and how
@@ -82,6 +84,8 @@ const InvoiceCollectionsPanel = () => {
   const [statusFilter, setStatusFilter] = useState(new Set());
   const [overrideRow, setOverrideRow]   = useState(null);
   const [running, setRunning] = useState(false);
+  const [offset, setOffset] = useState(0);
+  const [limit,  setLimit]  = useState(getStoredPageSize);
 
   const load = () => {
     setError(false);
@@ -100,6 +104,11 @@ const InvoiceCollectionsPanel = () => {
     next.has(s) ? next.delete(s) : next.add(s);
     return next;
   });
+
+  // A changed filter can shrink the result set below whatever page was showing — reset to
+  // page 1 whenever the filtered set itself changes (not just on mount).
+  useEffect(() => { setOffset(0); }, [filtered]);
+  const pageItems = useMemo(() => filtered.slice(offset, offset + limit), [filtered, offset, limit]);
 
   const runSweep = async () => {
     setRunning(true);
@@ -148,6 +157,7 @@ const InvoiceCollectionsPanel = () => {
           No shipments match these filters.
         </div>
       ) : (
+        <>
         <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden", background: T.surface, overflowX: "auto" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 16px", borderBottom: `1px solid ${T.border}`, background: T.bg, minWidth: 780 }}>
             <div style={{ ...th, width: 90, flexShrink: 0 }}>Shipment</div>
@@ -157,7 +167,7 @@ const InvoiceCollectionsPanel = () => {
             <div style={{ ...th, width: 90, flexShrink: 0, textAlign: "right" }}>Business Days</div>
             <div style={{ ...th, width: 90, flexShrink: 0 }} />
           </div>
-          {filtered.slice(0, 200).map(r => (
+          {pageItems.map(r => (
             <div key={r.shipmentId} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 16px",
               borderBottom: `1px solid ${T.border}22`, minWidth: 780 }}>
               <div style={{ width: 90, flexShrink: 0, fontFamily: T.mono, fontSize: 11.5, color: T.text, fontWeight: 600 }}>{r.shipmentId}</div>
@@ -176,12 +186,12 @@ const InvoiceCollectionsPanel = () => {
               </div>
             </div>
           ))}
-          {filtered.length > 200 && (
-            <div style={{ padding: "10px 16px", textAlign: "center", fontFamily: T.body, fontSize: 11.5, color: T.textMuted, fontStyle: "italic" }}>
-              Showing the first 200 of {filtered.length} matching shipments.
-            </div>
-          )}
         </div>
+        <div style={{ padding: "10px 16px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+          <PageSizeSelect value={limit} onChange={n => { setLimit(n); setOffset(0); }} />
+          <div style={{ flex: 1 }}><Pagination total={filtered.length} offset={offset} limit={limit} onPage={setOffset} /></div>
+        </div>
+        </>
       )}
 
       {overrideRow && (

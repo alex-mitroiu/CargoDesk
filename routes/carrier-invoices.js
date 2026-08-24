@@ -181,11 +181,16 @@ module.exports = function carrierInvoicesRoutes(app, ctx) {
 
   // ─── Exception queue — MUST be before /:id ─────────────────────────────────
   app.get("/api/carrier-invoices/exceptions", (req, res) => {
+    // Worst-variance-first, capped rather than fully paginated — this is a queue meant to be
+    // worked down to zero (Approve/Dispute each line), not browsed page by page, so a plain
+    // LIMIT here (previously absent entirely) is a reasonable safety cap without adding full
+    // pagination UI to what should rarely have more than a couple hundred open lines at once.
     const rows = db.prepare(`
       SELECT l.*, i.shipment_id, i.carrier_code, i.invoice_number, i.invoice_date, i.currency AS invoice_currency
       FROM carrier_invoice_lines l JOIN carrier_invoices i ON i.id = l.invoice_id
       WHERE l.status IN ('pending','variance')
       ORDER BY ABS(COALESCE(l.variance_usd, 0)) DESC
+      LIMIT 200
     `).all();
     ok(res, rows.map(r => ({
       ...mapCarrierInvoiceLine(r),

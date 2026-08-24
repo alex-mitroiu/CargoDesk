@@ -10,6 +10,7 @@ import PortField from "../../components/shared/PortField";
 import CustomerCombobox from "../../components/shared/CustomerCombobox";
 import ActionMenu from "../../components/primitives/ActionMenu";
 import Pagination from "../../components/primitives/Pagination";
+import PageSizeSelect, { getStoredPageSize } from "../../components/primitives/PageSizeSelect";
 import { PageSpinner } from "../../components/primitives/Spinner";
 import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns.jsx";
 
@@ -22,12 +23,12 @@ import { useResizableColumns, ColResizer } from "../../components/primitives/use
 // over time while carrier+port stay fixed, so editing an existing link lets you reassign the
 // agent customer, not just the note.
 
-const CA_LIMIT = 50;
-
 const MdmCarrierAgentsPage = () => {
   const { canManageMdm } = useAuth();
   const [agents,  setAgents]  = useState([]);
+  const [total,   setTotal]   = useState(0);
   const [offset,  setOffset]  = useState(0);
+  const [limit,   setLimit]   = useState(getStoredPageSize);
   const [loading, setLoading] = useState(true);
   const [modal,   setModal]   = useState(null); // null | "add" | agent obj
   const [confirm, setConfirm] = useState(null);
@@ -35,14 +36,23 @@ const MdmCarrierAgentsPage = () => {
   const { template, startResize } = useResizableColumns("mdm-carrier-agents", [100, 130, 150, 220, 160, 100]);
   const headers = ["Carrier", "Port", "Port Name", "Agent", "Note", "Actions"];
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts = {}) => {
+    const off = opts.offset !== undefined ? opts.offset : offset;
+    const lim = opts.limit  !== undefined ? opts.limit  : limit;
     setLoading(true);
-    try { setAgents(await api.carrierAgents.list()); setApiErr(null); }
-    catch (e) { setApiErr(e.message); }
+    try {
+      const res = await api.carrierAgents.list({ limit: lim, offset: off });
+      setAgents(res.results || []);
+      setTotal(res.total ?? 0);
+      setApiErr(null);
+    } catch (e) { setApiErr(e.message); }
     setLoading(false);
-  }, []);
+  }, [offset, limit]);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load({ offset: 0 }); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const goPage = off => { setOffset(off); load({ offset: off }); };
+  const changeLimit = n => { setLimit(n); setOffset(0); load({ limit: n, offset: 0 }); };
 
   const AgentForm = ({ init = {}, onSave, onCancel }) => {
     const [carrierCode, setCarrierCode] = useState(init.carrierCode || "");
@@ -88,7 +98,7 @@ const MdmCarrierAgentsPage = () => {
         <div>
           <h1 style={{ fontFamily: T.head, fontSize: 26, fontWeight: 800, color: T.text, margin: 0 }}>Carrier Agents</h1>
           <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, margin: "4px 0 0" }}>
-            {agents.length} link{agents.length !== 1 ? "s" : ""} configured · which company represents a carrier at a given port
+            {total} link{total !== 1 ? "s" : ""} configured · which company represents a carrier at a given port
           </p>
         </div>
         {canManageMdm && <Btn onClick={() => setModal("add")} size="lg">＋ Add Carrier Agent</Btn>}
@@ -117,7 +127,7 @@ const MdmCarrierAgentsPage = () => {
           <div style={{ padding: 40, textAlign: "center", color: T.textMuted, fontFamily: T.body, fontSize: 14 }}>
             No carrier agents configured yet. Use "+ Add Carrier Agent" to register one.
           </div>
-        ) : agents.slice(offset, offset + CA_LIMIT).map(a => (
+        ) : agents.map(a => (
           <div key={a.id}
             style={{ display: "grid", gridTemplateColumns: template,
               padding: "13px 20px", borderBottom: `1px solid ${T.border}22`, alignItems: "center",
@@ -141,11 +151,10 @@ const MdmCarrierAgentsPage = () => {
         ))}
       </div>
 
-      {agents.length > CA_LIMIT && (
-        <div style={{ marginTop: 16 }}>
-          <Pagination total={agents.length} limit={CA_LIMIT} offset={offset} onPage={off => setOffset(off)} />
-        </div>
-      )}
+      <div style={{ marginTop: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+        <PageSizeSelect value={limit} onChange={changeLimit} />
+        <div style={{ flex: 1 }}><Pagination total={total} limit={limit} offset={offset} onPage={goPage} /></div>
+      </div>
 
       {modal === "add" && (
         <Modal title="Add Carrier Agent" onClose={() => setModal(null)} width={560}>

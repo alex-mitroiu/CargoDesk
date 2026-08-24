@@ -9,6 +9,8 @@ import { Field, Sel } from "../components/primitives/Form";
 import { inputBase } from "../components/primitives/Form";
 import DatePicker from "../components/primitives/DatePicker";
 import Spinner from "../components/primitives/Spinner";
+import Pagination from "../components/primitives/Pagination";
+import PageSizeSelect, { getStoredPageSize } from "../components/primitives/PageSizeSelect";
 import CarrierCombobox from "../components/shared/CarrierCombobox";
 import CustomerCombobox from "../components/shared/CustomerCombobox";
 import PortField from "../components/shared/PortField";
@@ -388,15 +390,24 @@ const QuoteDetailModal = ({ quoteId, navigate, onClose, onChanged, onShipmentCre
 const QuotesPage = ({ navigate, onShipmentCreated }) => {
   const [statusFilter, setStatusFilter] = useState("");
   const [quotes, setQuotes] = useState(null);
+  const [total, setTotal] = useState(0);
+  const [offset, setOffset] = useState(0);
+  const [limit, setLimit] = useState(getStoredPageSize);
   const [newOpen, setNewOpen] = useState(false);
   const [detailId, setDetailId] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
 
-  const load = useCallback(() => {
-    api.quotes.list(statusFilter ? { status: statusFilter } : {})
-      .then(r => setQuotes(r.results)).catch(() => setQuotes([]));
-  }, [statusFilter]);
-  useEffect(() => { load(); }, [load]);
+  const load = useCallback((opts = {}) => {
+    const off = opts.offset !== undefined ? opts.offset : offset;
+    const lim = opts.limit  !== undefined ? opts.limit  : limit;
+    api.quotes.list({ ...(statusFilter ? { status: statusFilter } : {}), limit: lim, offset: off })
+      .then(r => { setQuotes(r.results); setTotal(r.total ?? (r.results || []).length); })
+      .catch(() => { setQuotes([]); setTotal(0); });
+  }, [statusFilter, offset, limit]);
+  useEffect(() => { setOffset(0); load({ offset: 0 }); }, [statusFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const goPage = off => { setOffset(off); load({ offset: off }); };
+  const changeLimit = n => { setLimit(n); setOffset(0); load({ limit: n, offset: 0 }); };
 
   const doDelete = async id => {
     try { await api.quotes.remove(id); toast.success("Quote deleted"); load(); }
@@ -453,6 +464,13 @@ const QuotesPage = ({ navigate, onShipmentCreated }) => {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {quotes !== null && quotes.length > 0 && (
+        <div style={{ marginTop: 12, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+          <PageSizeSelect value={limit} onChange={changeLimit} />
+          <div style={{ flex: 1 }}><Pagination total={total} offset={offset} limit={limit} onPage={goPage} /></div>
         </div>
       )}
 

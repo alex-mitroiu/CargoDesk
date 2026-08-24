@@ -9,6 +9,8 @@ import { Field, Inp, Sel } from "../components/primitives/Form";
 import { inputBase } from "../components/primitives/Form";
 import DatePicker from "../components/primitives/DatePicker";
 import Spinner from "../components/primitives/Spinner";
+import Pagination from "../components/primitives/Pagination";
+import PageSizeSelect, { getStoredPageSize } from "../components/primitives/PageSizeSelect";
 import CarrierCombobox from "../components/shared/CarrierCombobox";
 import { IconFileCertificate, IconSearch, IconClose, IconUpload } from "../components/primitives/Icon";
 
@@ -375,21 +377,30 @@ const InvoiceDetailModal = ({ invoiceId, shipments, navigate, onClose, onChanged
 const FreightAuditPage = ({ shipments, navigate }) => {
   const [activeTab, setActiveTab] = useState("all"); // 'all' | 'exceptions'
   const [invoices, setInvoices] = useState(null);
+  const [invoicesTotal, setInvoicesTotal] = useState(0);
+  const [offset, setOffset] = useState(0);
+  const [limit, setLimit] = useState(getStoredPageSize);
   const [exceptions, setExceptions] = useState(null);
   const [statusFilter, setStatusFilter] = useState("");
   const [newOpen, setNewOpen] = useState(false);
   const [detailId, setDetailId] = useState(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState(null);
 
-  const loadInvoices = useCallback(() => {
-    api.carrierInvoices.list(statusFilter ? { status: statusFilter } : {})
-      .then(r => setInvoices(r.results)).catch(() => setInvoices([]));
-  }, [statusFilter]);
+  const loadInvoices = useCallback((opts = {}) => {
+    const off = opts.offset !== undefined ? opts.offset : offset;
+    const lim = opts.limit  !== undefined ? opts.limit  : limit;
+    api.carrierInvoices.list({ ...(statusFilter ? { status: statusFilter } : {}), limit: lim, offset: off })
+      .then(r => { setInvoices(r.results); setInvoicesTotal(r.total ?? (r.results || []).length); })
+      .catch(() => { setInvoices([]); setInvoicesTotal(0); });
+  }, [statusFilter, offset, limit]);
   const loadExceptions = useCallback(() => {
     api.carrierInvoices.exceptions().then(setExceptions).catch(() => setExceptions([]));
   }, []);
 
-  useEffect(() => { loadInvoices(); loadExceptions(); }, [loadInvoices, loadExceptions]);
+  useEffect(() => { setOffset(0); loadInvoices({ offset: 0 }); loadExceptions(); }, [statusFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const goPage = off => { setOffset(off); loadInvoices({ offset: off }); };
+  const changeLimit = n => { setLimit(n); setOffset(0); loadInvoices({ limit: n, offset: 0 }); };
 
   const shipmentLabel = id => {
     const s = shipments.find(x => x.id === id);
@@ -465,6 +476,12 @@ const FreightAuditPage = ({ shipments, navigate }) => {
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+          {invoices !== null && invoices.length > 0 && (
+            <div style={{ marginTop: 12, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+              <PageSizeSelect value={limit} onChange={changeLimit} />
+              <div style={{ flex: 1 }}><Pagination total={invoicesTotal} offset={offset} limit={limit} onPage={goPage} /></div>
             </div>
           )}
         </>

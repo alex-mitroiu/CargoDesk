@@ -3225,6 +3225,11 @@ function App() {
                 borderRadius: 12, boxShadow: "0 12px 36px rgba(0,0,0,.35)",
                 minWidth: 320, maxWidth: 380, overflow: "hidden",
               }}>
+              {/* Inner scroll wrapper — the outer div's own overflow:hidden only exists to clip
+                  the rounded corners; without a bounded-height inner scroller, an account with
+                  several active alert sections at once grows this panel as tall as its content,
+                  stretching the page rather than scrolling ("infinite scroll" reported live). */}
+              <div style={{ maxHeight: "70vh", overflowY: "auto" }}>
 
                 {/* ── System Messages section ── */}
                 {activeSysMsgs.length > 0 && (() => {
@@ -3338,7 +3343,7 @@ function App() {
                         {visibleExpiringContracts.length} contract{visibleExpiringContracts.length > 1 ? "s" : ""}
                       </span>
                     </div>
-                    {visibleExpiringContracts.map(c => (
+                    {visibleExpiringContracts.slice(0, 5).map(c => (
                       <div key={c.id} style={{
                           display: "flex", alignItems: "center",
                           borderBottom: `1px solid ${T.border}22`,
@@ -3401,7 +3406,7 @@ function App() {
                         {visibleOverdueInvoiceDeadlines.length} shipment{visibleOverdueInvoiceDeadlines.length > 1 ? "s" : ""}
                       </span>
                     </div>
-                    {visibleOverdueInvoiceDeadlines.map(d => (
+                    {visibleOverdueInvoiceDeadlines.slice(0, 5).map(d => (
                       <div key={d.shipmentId} style={{
                           display: "flex", alignItems: "center",
                           borderBottom: `1px solid ${T.border}22`,
@@ -3438,6 +3443,15 @@ function App() {
                         </button>
                       </div>
                     ))}
+                    <button type="button"
+                      onClick={() => { navigate("reports"); setBellOpen(false); }}
+                      style={{ width: "100%", padding: "9px 16px", background: "none",
+                        border: "none", cursor: "pointer",
+                        fontFamily: T.body, fontSize: 12, color: T.textMuted, textAlign: "center" }}
+                      onMouseEnter={e => { e.currentTarget.style.background = T.surfaceHover; e.currentTarget.style.color = T.text; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = T.textMuted; }}>
+                      View all in Reports →
+                    </button>
                   </>
                 )}
 
@@ -3560,6 +3574,7 @@ function App() {
                   </>
                 )}
 
+              </div>
               </div>
             )}
           </div>

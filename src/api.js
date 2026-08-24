@@ -15,11 +15,22 @@ const req = async (method, path, body) => {
   if (activeRole)    headers["X-Active-Role"]  = activeRole;
   if (activeOffice)  headers["X-Office-Id"]    = activeOffice;
 
-  const res = await fetch(`${BASE}${path}`, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  let res;
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch {
+    // fetch() itself rejected — no response was ever received (offline, DNS failure, the
+    // server process is down, CORS). The raw exception's own message is a cryptic browser
+    // string (e.g. "Failed to fetch") that doesn't tell a caller anything actionable; every
+    // page that surfaces e.message directly (ForgotPasswordPage, ResetPasswordPage, etc.) was
+    // showing that raw string verbatim. Rethrow with a message that at least names the actual
+    // point of failure — a connectivity problem, not "something went wrong."
+    throw new Error("Network error — check your connection and try again");
+  }
 
   if (res.status === 401) {
     // /auth/login's own 401 means "wrong credentials", not "a session went stale" —
@@ -95,7 +106,7 @@ export const api = {
     remove: (shipmentId, legId)       => req("DELETE", `/shipments/${shipmentId}/legs/${legId}`),
   },
   shipments: {
-    list:   ()        => req("GET",    "/shipments"),
+    list:   (p = {})  => req("GET",    `/shipments?${new URLSearchParams(p)}`),
     get:    (id)      => req("GET",    `/shipments/${id}`),
     create: (data)    => req("POST",   "/shipments", data),
     update: (id, data)=> req("PUT",    `/shipments/${id}`, data),
@@ -151,13 +162,13 @@ export const api = {
     remove: (code)       => req("DELETE", `/port-locations/${code}`),
   },
   linkedPorts: {
-    list:   ()           => req("GET",    "/linked-ports"),
+    list:   (p = {})     => req("GET",    `/linked-ports?${new URLSearchParams(p)}`),
     create: (data)       => req("POST",   "/linked-ports", data),
     update: (id, data)   => req("PUT",    `/linked-ports/${id}`, data),
     remove: (id)         => req("DELETE", `/linked-ports/${id}`),
   },
   carrierAgents: {
-    list:   ()           => req("GET",    "/carrier-agents"),
+    list:   (p = {})     => req("GET",    `/carrier-agents?${new URLSearchParams(p)}`),
     create: (data)       => req("POST",   "/carrier-agents", data),
     update: (id, data)   => req("PUT",    `/carrier-agents/${id}`, data),
     remove: (id)         => req("DELETE", `/carrier-agents/${id}`),
