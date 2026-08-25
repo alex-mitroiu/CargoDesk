@@ -1,0 +1,566 @@
+<!doctype html><html><head><!-- frame-runtime --><base href="/_f/1787174475-c45c/"><script>window.__FRAME_PREAMBLE={"capabilities":{"artifact":"artifact.oqIe8shs.js","assets":"assets.DBUJcvq_.js","comments":"comments.GLuHR3zP.js","db":"db.CRhVHzSt.js","downloads":"downloads.C3GSvEDP.js","embed":"embed.CZsbekoQ.js","mcp":"mcp.Bvma3qD7.js","network":"network.B5UA9Su4.js","permissions":"permissions.BNySkLV5.js","room":"room.DE7EMui-.js","sample":"sample.BW2Uysoh.js","self":"artifact.oqIe8shs.js","user":"user.BpKav-Rf.js"},"transforms":"_transforms.h3_8GSUa.js","comments":"_comments.BOgkE6qU.js","translate":"_translate.5HCW4BJh.js"}</script><script>(function(){"use strict";var Y=["light","dark","system"],X=/^[A-Za-z0-9_-]{1,64}$/,D=/^[a-zA-Z_:][a-zA-Z0-9_:.-]{0,127}$/,G=new Set(["class","hidden","value","checked"]);function V(e){const t=e.toLowerCase();return t.startsWith("data-")||t.startsWith("aria-")||G.has(t)}var be="http://www.w3.org/1999/xhtml",Z="http://www.w3.org/2000/svg",J=new Set(["script","style","iframe","noscript","noframes","noembed","xmp","plaintext","template","title","textarea","object","embed"]),Q=new Set(["script","style"]);function ee(e){const t=e.localName.toLowerCase();return e.namespaceURI==="http://www.w3.org/1999/xhtml"?!J.has(t):e.namespaceURI===Z?!Q.has(t):!1}var te=new Set(["html","head","body","frameset"]);function re(e){return e.namespaceURI==="http://www.w3.org/1999/xhtml"&&te.has(e.localName)}function ne(e){if(e===null||typeof e!="object")return!1;const t=e;if(typeof t.target!="string"||!X.test(t.target)||t.text!==void 0&&typeof t.text!="string")return!1;if(t.attrsSet!==void 0){if(t.attrsSet===null||typeof t.attrsSet!="object")return!1;for(const[n,s]of Object.entries(t.attrsSet))if(!D.test(n)||typeof s!="string")return!1}if(t.attrsRemoved!==void 0){if(!Array.isArray(t.attrsRemoved))return!1;for(const n of t.attrsRemoved)if(typeof n!="string"||!D.test(n))return!1}return!0}function se(e,t){if(e===null||typeof e!="object")return!1;const{seq:n,elements:s}=e;if(typeof n!="number"||!Number.isSafeInteger(n)||!Array.isArray(s)||s.length===0||s.length>64)return!1;for(let o=0;o<s.length;o++)if(!t(s[o]))return!1;return!0}function ae(e){return e===null||typeof e!="object"?!1:se(e.__frame_patch,ne)}function oe(e){if(e===null||typeof e!="object")return!1;const t=e.__frame_init;return t!==null&&typeof t=="object"}function ie(e){return e!==null&&typeof e=="object"&&e.__frame_size_poke===!0}function le(e){if(e===null||typeof e!="object")return!1;const t=e.__frame_theme;if(t===null||typeof t!="object")return!1;const n=t.theme;return typeof n=="string"&&Y.includes(n)}var O="__frame_scroll",ce=150,ue=310,fe=160,pe=3e4;function de(){let e=0,t=!1,n=!1,s=!1,o=0,l=null;const c=i=>{try{sessionStorage.setItem(O,JSON.stringify({y:i}))}catch{}},f=()=>{if(clearTimeout(e),l===null)return;const i=l;l=null,c(i)},S=()=>{if(t){t=!1;return}n=!0,l=scrollY,clearTimeout(e),e=setTimeout(f,ce)};try{addEventListener("scroll",S,{passive:!0}),addEventListener("pagehide",f)}catch{}const v=()=>{let i;try{i=sessionStorage.getItem(O)}catch{return null}if(i===null)return null;let d;try{d=JSON.parse(i)}catch{d=null}const u=d?.y;if(!(typeof u=="number"&&Number.isFinite(u)&&u>=0)){try{sessionStorage.removeItem(O)}catch{}return null}return u};let b=!1;const m=i=>{try{const d=scrollY;scrollTo({top:i,left:0,behavior:"instant"}),o=i,s=!0,clearTimeout(e),l=null,c(i);const u=scrollY;u!==d&&(t=!0),u!==i&&!b&&(b=!0,addEventListener("load",()=>{try{if(scrollY===u){const h=v();m(h!==null?h:o)}}catch{}},{once:!0}))}catch{}},y=()=>{try{return!!location.hash}catch{return!0}};let g=!1;const E=()=>{try{if(g||innerWidth>ue||innerHeight>fe)return;g=!0;const i=Date.now(),d=()=>{try{removeEventListener("resize",d)}catch{}if(Date.now()-i>pe||n||y())return;const u=v();m(u!==null?u:o)};addEventListener("resize",d)}catch{}};let r=!1,p=!1;return{restore(){if(r||(r=!0,y()))return;const i=v();i!==null&&(m(i),E())},promoted(){if(p||(p=!0,y()))return;const i=v();i!==null?(m(i),E()):s&&m(o)}}}var Ee="modulepreload",Ae=function(e){return"/"+e},Re={},me=function(t,n,s){let o=Promise.resolve();function l(c){const f=new Event("vite:preloadError",{cancelable:!0});if(f.payload=c,window.dispatchEvent(f),!f.defaultPrevented)throw c}return o.then(c=>{for(const f of c||[])f.status==="rejected"&&l(f.reason);return t().catch(l)})};(function(){const e=Object.defineProperty,t=globalThis,n=["RTCPeerConnection","webkitRTCPeerConnection","RTCDataChannel","RTCIceCandidate","RTCSessionDescription","RTCRtpSender","RTCRtpReceiver"];let s=0;for(let o=0;o<n.length;o++){const l=n[o];try{e(t,l,{value:void 0,writable:!1,configurable:!1})}catch{try{delete t[l]}catch{}try{e(t,l,{value:void 0,writable:!1,configurable:!0})}catch{}}typeof t[l]=="function"&&s++}if(s&&window!==top)try{parent.postMessage({__frame_rtc_lockdown_failed:s},"*")}catch{}})();var he=1e4,_e=Object.freeze([...window.__FRAME_PREAMBLE?.origins??["https://claude.ai","https://preview.claude.ai"]]);function F(e){for(const t of _e)if(t.endsWith(":*"))try{const n=new URL(e);if(`${n.protocol}//${n.hostname}:*`===t)return!0}catch{}else if(e===t)return!0;return!1}var M=Object.freeze({...window.__FRAME_PREAMBLE?.capabilities}),j=window.__FRAME_PREAMBLE?.transforms,N=window.__FRAME_PREAMBLE?.comments,I=window.__FRAME_PREAMBLE?.translate,L=/^[\w.-]+\.js$/;function T(e){return me(()=>import("/_runtime/"+e),void 0)}function z(e,t){return{contract:e.contract,changes:new Set(e.changes??[]),flags:new Set(e.flags??[]),capabilities:e.capabilities??{},capBudgets:e.capBudgets??{},transforms:new Map,shellOrigin:t,mount:W,pipe:()=>({wrap:(n,s)=>(...o)=>{try{return s(...o)}catch(l){return Promise.reject(l)}}})}}var P=null,w=null;function q(e,t,n){try{Object.defineProperty(e,t,{value:n,writable:!1,configurable:!1,enumerable:!0})}catch{try{Object.defineProperty(e,t,{value:n,writable:!1,configurable:!0,enumerable:!0})}catch{}}}var B=!1;function ve(e,t){const n=[];for(const s of e.elements){const o=document.querySelector(`[data-id="${s.target}"]`);if(!o){parent.postMessage({__frame_patch_miss:{seq:e.seq}},t);return}if([...Object.keys(s.attrsSet??{}),...s.attrsRemoved??[]].some(l=>!V(l))){parent.postMessage({__frame_patch_miss:{seq:e.seq}},t);return}if(s.text!==void 0&&(!ee(o)||re(o))){parent.postMessage({__frame_patch_miss:{seq:e.seq}},t);return}for(const[l,c]of Object.entries(s.attrsSet??{}))if(!$(o,l)){try{o.setAttribute(l,c)}catch{}H(o,l,c)}for(const l of s.attrsRemoved??[])$(o,l)||(o.removeAttribute(l),H(o,l,null));typeof s.text=="string"&&(o.textContent=s.text),n.push(s.target)}try{document.dispatchEvent(new CustomEvent("claude:edit",{detail:{seq:e.seq,targets:n}}))}catch{}}function H(e,t,n){if(!(e instanceof HTMLInputElement))return;const s=t.toLowerCase();s==="checked"?e.checked=n!==null:s==="value"&&e.type!=="file"&&(e.value=n??"")}function $(e,t){const n=t.toLowerCase(),s=e;return n==="data-id"||(n==="value"||n==="checked")&&(s.__artifactSecret===!0||/^(password|hidden|file)$/.test(s.type??"")||/(^|\s)(cc-|one-time-code|current-password|new-password)/i.test(`${e.getAttribute("autocomplete")??""} ${s.autocomplete??""}`))}function K(e){const t=document.documentElement;e==="light"||e==="dark"?(t.dataset.theme=e,t.style.colorScheme=e,B=!0):B&&(delete t.dataset.theme,t.style.colorScheme="",B=!1)}var R=new Map;function ye(){let e;const t={u:new Promise(n=>{e=n}),r:n=>{t.done=!0,e(n)},done:!1,nulled:!1};return t}var ge=Object.freeze(Object.assign(Object.create(null),{call:Function.prototype.call,apply:Function.prototype.apply,bind:Function.prototype.bind})),W=(e,t)=>{const n=R.get(e);if(!n||n.done){n?.nulled&&w&&parent.postMessage({__frame_cap_telemetry:{kind:"cap-load-error",cap:e}},w);return}const s=typeof t=="function"?Object.setPrototypeOf(t,ge):Object.assign(Object.create(null),t);typeof s.then=="function"&&delete s.then,n.r(Object.freeze(s))},U=Object.getOwnPropertyDescriptor(window,"claude");if(window!==top&&!(U&&U.writable===!1)){const e=j&&L.test(j)?T(j).catch(()=>{}):Promise.resolve(void 0),t=r=>{if(r.type==="auxclick"&&r.button!==1)return;const p=r.target,i=p&&p.closest?p.closest("a[href],area[href]"):null;if(!i)return;const d=i.getAttribute("href");if(!d)return;let u,h;try{u=new URL(d,document.baseURI),h=new URL(document.baseURI).origin}catch{return}if((u.protocol==="http:"||u.protocol==="https:")&&u.origin!==h){r.preventDefault();const _=(i.getAttribute("target")??"").toLowerCase(),C=r.type==="auxclick"||r.metaKey||r.ctrlKey||r.shiftKey||r.altKey||!["","_self","_top","_parent"].includes(_);parent.postMessage({__frame_nav:!0,url:u.href,newTab:C},"*")}};addEventListener("click",t,!0),addEventListener("auxclick",t,!0);const n={},s=r=>{r.isTrusted&&(n.pointer=!0)},o=r=>{r.isTrusted&&(n.click=!0)};addEventListener("pointermove",s,{capture:!0,passive:!0}),addEventListener("click",o,{capture:!0,passive:!0}),e.then(r=>{r?.wireNav&&(r.wireNav(),removeEventListener("click",t,!0),removeEventListener("auxclick",t,!0),removeEventListener("pointermove",s,!0),removeEventListener("click",o,!0),r.wireEngagement?.(n))});let l=null;try{l=de()}catch{}const c=U?.value??{};q(window,"claude",c);for(const r of Object.keys(M)){if(c[r]!==void 0){q(c,r,c[r]);continue}R.set(r,ye())}if(c.use===void 0){const r=p=>{if(typeof p!="string"||!Object.hasOwn(M,p))return Promise.resolve(null);const i=R.get(p);return i?i.u:Promise.resolve(c[p]??null)};try{Object.defineProperty(c,"use",{value:r,writable:!0,configurable:!0,enumerable:!1})}catch{}}let f=null,S=null,v=0;const b=r=>{r.source!==parent||!F(r.origin)||oe(r.data)&&(f=r.data.__frame_init,w=r.origin,removeEventListener("message",b),clearTimeout(v),S?.())};addEventListener("message",b),parent.postMessage({__frame_connect:!0},"*");const m=new Promise(r=>{S=r,v=setTimeout(()=>{removeEventListener("message",b),r()},he)}),y=document.readyState==="loading"?new Promise(r=>document.addEventListener("DOMContentLoaded",()=>r(),{once:!0})):Promise.resolve();y.then(()=>{try{l?.restore()}catch{}});const g={cb:null},E=r=>{if(!(r.source!==parent||!F(r.origin))&&ie(r.data)){try{l?.promoted()}catch{}g.cb?.()}};addEventListener("message",E),m.then(async()=>{if(!f||!w){for(const a of R.values())a.nulled=!0,a.r(null);return}K(f.theme);const r=w;let p=!1,i=!1;addEventListener("message",a=>{if(a.source!==parent||a.origin!==r)return;le(a.data)&&K(a.data.__frame_theme.theme),ae(a.data)&&ve(a.data.__frame_patch,r);const k=a.data?.__fc_mode;k&&typeof k=="object"&&!p&&N&&L.test(N)&&(p=!0,T(N).then(x=>x.install?.(r,k.on===!0)).catch(()=>{}));const A=a.data?.__ft_cmd;A&&typeof A=="object"&&!i&&I&&L.test(I)&&(i=!0,T(I).then(x=>x.install?.(r,A)).catch(()=>{}))});const d=Object.keys(f.capabilities??{}).filter(a=>Object.hasOwn(M,a)).map(a=>[a,M[a]]).filter(a=>typeof a[1]=="string"&&L.test(a[1])),u=await Promise.allSettled(d.map(([,a])=>T(a))),h=await e,_=w;if(h?.buildBoot||parent.postMessage({__frame_cap_telemetry:{kind:"cap-load-error",cap:"_transforms"}},_),h?.buildBoot)try{P=h.buildBoot(f,h.TRANSFORMS??{},{shellOrigin:_,mount:W},a=>parent.postMessage({__frame_cap_telemetry:a},_))}catch{parent.postMessage({__frame_cap_telemetry:{kind:"cap-load-error",cap:"_transforms"}},_),P=z(f,_)}else P=z(f,_);const C=a=>parent.postMessage({__frame_cap_telemetry:{kind:"cap-load-error",cap:a}},_),we=P;u.forEach((a,k)=>{const A=d[k][0];if(a.status!=="fulfilled"){C(A);return}try{a.value?.install?.(we)}catch{C(A)}});for(const a of R.values())a.done||(a.nulled=!0,a.r(null));await y,parent.postMessage({__frame_ready:!0},w),e.then(a=>a?.installSizeReporter?.(_,g))})}})();</script><!-- /frame-runtime --><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}</style></head><body>
+<title>The Missing Manifest</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Expanded:wght@700;800&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper:       #EDF1F0;
+    --paper-raise: #FFFFFF;
+    --ink:         #121A1F;
+    --ink-soft:    #47555C;
+    --ink-faint:   #7B8890;
+    --line:        #CBD3D1;
+    --line-soft:   #DDE3E1;
+    --accent:      #B84E1D;
+    --accent-soft: #B84E1D14;
+    --accent-ink:  #FFFFFF;
+
+    --good:      #276A4E;
+    --good-bg:   #276A4E14;
+    --gap:       #A73434;
+    --gap-bg:    #A7343414;
+    --partial:   #96631A;
+    --partial-bg:#96631A14;
+
+    --shadow: 0 1px 2px rgba(18,26,31,.06), 0 8px 24px rgba(18,26,31,.05);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:       #12181C;
+      --paper-raise: #1A2226;
+      --ink:         #EAEFEC;
+      --ink-soft:    #AEBAB8;
+      --ink-faint:   #7C8A88;
+      --line:        #303B3E;
+      --line-soft:   #263034;
+      --accent:      #E37B3F;
+      --accent-soft: #E37B3F1E;
+      --accent-ink:  #14100B;
+
+      --good:      #58B78E;
+      --good-bg:   #58B78E1C;
+      --gap:       #E17272;
+      --gap-bg:    #E172721C;
+      --partial:   #D9A54E;
+      --partial-bg:#D9A54E1C;
+
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 12px 32px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:       #12181C;
+    --paper-raise: #1A2226;
+    --ink:         #EAEFEC;
+    --ink-soft:    #AEBAB8;
+    --ink-faint:   #7C8A88;
+    --line:        #303B3E;
+    --line-soft:   #263034;
+    --accent:      #E37B3F;
+    --accent-soft: #E37B3F1E;
+    --accent-ink:  #14100B;
+
+    --good:      #58B78E;
+    --good-bg:   #58B78E1C;
+    --gap:       #E17272;
+    --gap-bg:    #E172721C;
+    --partial:   #D9A54E;
+    --partial-bg:#D9A54E1C;
+
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 12px 32px rgba(0,0,0,.35);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", system-ui, sans-serif;
+    font-size: 15.5px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: var(--accent-soft); }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+  .wrap { max-width: 900px; margin: 0 auto; padding: 56px 28px 96px; }
+
+  .eyebrow {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11.5px;
+    font-weight: 500;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .eyebrow::before {
+    content: "";
+    width: 22px; height: 1px;
+    background: var(--accent);
+  }
+
+  h1 {
+    font-family: "Archivo Expanded", sans-serif;
+    font-weight: 800;
+    font-size: clamp(34px, 6vw, 52px);
+    letter-spacing: -.01em;
+    line-height: 1.03;
+    margin: 14px 0 16px;
+    text-wrap: balance;
+  }
+  .dek {
+    font-size: 17px;
+    color: var(--ink-soft);
+    max-width: 62ch;
+    margin: 0 0 6px;
+  }
+  .meta-row {
+    display: flex; flex-wrap: wrap; gap: 8px 18px;
+    margin-top: 22px;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11.5px;
+    color: var(--ink-faint);
+  }
+  .meta-row b { color: var(--ink-soft); font-weight: 500; }
+
+  /* ── Verdict stamp ─────────────────────────────────────────── */
+  .verdict {
+    margin: 40px 0 44px;
+    padding: 26px 28px;
+    background: var(--paper-raise);
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--gap);
+    border-radius: 4px;
+    box-shadow: var(--shadow);
+    position: relative;
+  }
+  .verdict-label {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--gap);
+    margin-bottom: 10px;
+  }
+  .verdict p {
+    margin: 0;
+    font-size: 18.5px;
+    font-weight: 500;
+    line-height: 1.45;
+    max-width: 60ch;
+  }
+  .verdict .sub {
+    margin-top: 10px;
+    font-size: 14px;
+    font-weight: 400;
+    color: var(--ink-soft);
+  }
+
+  /* ── Section headers ──────────────────────────────────────── */
+  section { margin-top: 56px; }
+  .sec-head {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 6px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--line);
+  }
+  .sec-head h2 {
+    font-family: "Archivo Expanded", sans-serif;
+    font-weight: 700;
+    font-size: 22px;
+    letter-spacing: -.005em;
+    margin: 0;
+  }
+  .sec-head .count {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    color: var(--ink-faint);
+  }
+  .sec-intro { color: var(--ink-soft); max-width: 68ch; margin: 14px 0 0; }
+
+  /* ── Why it matters ───────────────────────────────────────── */
+  .facts { display: grid; gap: 14px; margin-top: 22px; }
+  .fact {
+    display: grid;
+    grid-template-columns: 34px 1fr;
+    gap: 14px;
+    padding: 16px 0;
+    border-top: 1px solid var(--line-soft);
+  }
+  .fact:first-child { border-top: none; padding-top: 4px; }
+  .fact-n {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent);
+    padding-top: 2px;
+  }
+  .fact p { margin: 0; color: var(--ink); }
+  .fact .fine { color: var(--ink-faint); font-size: 13px; margin-top: 4px; }
+
+  /* ── Evidence comparison ──────────────────────────────────── */
+  .evidence {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-top: 22px;
+  }
+  .ev-col { background: var(--paper-raise); padding: 20px 22px; }
+  .ev-head {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    margin-bottom: 14px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .ev-head.exists { color: var(--good); }
+  .ev-head.gap { color: var(--gap); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+  .ev-col ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 10px; }
+  .ev-col li {
+    font-size: 13.5px;
+    color: var(--ink-soft);
+    padding-left: 16px;
+    position: relative;
+    line-height: 1.5;
+  }
+  .ev-col li::before {
+    content: "—";
+    position: absolute; left: 0;
+    color: var(--ink-faint);
+  }
+  .ev-col code {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12.5px;
+    color: var(--ink);
+    background: var(--paper);
+    padding: 1px 5px;
+    border-radius: 3px;
+    border: 1px solid var(--line-soft);
+  }
+  @media (max-width: 640px) { .evidence { grid-template-columns: 1fr; } }
+
+  /* ── The link (singular) ──────────────────────────────────── */
+  .link-note {
+    margin-top: 14px;
+    padding: 14px 18px;
+    background: var(--partial-bg);
+    border: 1px solid color-mix(in srgb, var(--partial) 35%, transparent);
+    border-radius: 4px;
+    font-size: 13.5px;
+    color: var(--ink);
+  }
+  .link-note b { color: var(--partial); }
+
+  /* ── Roadmap ledger ───────────────────────────────────────── */
+  .card {
+    display: grid;
+    grid-template-columns: 56px 1fr;
+    background: var(--paper-raise);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    margin-top: 14px;
+    overflow: hidden;
+    box-shadow: var(--shadow);
+  }
+  .card-n {
+    font-family: "Archivo Expanded", sans-serif;
+    font-weight: 800;
+    font-size: 20px;
+    color: var(--paper-raise);
+    background: var(--ink);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .card[data-tier="critical"] .card-n { background: var(--gap); }
+  .card[data-tier="high"] .card-n { background: var(--accent); }
+  .card[data-tier="ux"] .card-n { background: var(--ink-soft); }
+
+  .card-body { padding: 18px 22px 20px; }
+  .card-top {
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+    margin-bottom: 8px;
+  }
+  .card h3 {
+    font-family: "IBM Plex Sans", sans-serif;
+    font-size: 16.5px;
+    font-weight: 600;
+    margin: 0;
+    line-height: 1.35;
+    text-wrap: balance;
+  }
+  .tier-chip {
+    flex-shrink: 0;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    border-radius: 3px;
+    white-space: nowrap;
+    margin-top: 2px;
+  }
+  .card[data-tier="critical"] .tier-chip { color: var(--gap); background: var(--gap-bg); }
+  .card[data-tier="high"] .tier-chip { color: var(--accent); background: var(--accent-soft); }
+  .card[data-tier="ux"] .tier-chip { color: var(--ink-soft); background: var(--line-soft); }
+
+  .card p { margin: 0 0 10px; color: var(--ink-soft); font-size: 14px; }
+  .card .touch {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11.5px;
+    color: var(--ink-faint);
+    display: flex; align-items: center; gap: 7px;
+    padding-top: 10px;
+    border-top: 1px solid var(--line-soft);
+  }
+  .card .touch b { color: var(--ink-soft); font-weight: 500; }
+  .card .ticket {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    color: var(--accent);
+  }
+
+  @media (max-width: 560px) {
+    .card { grid-template-columns: 1fr; }
+    .card-n { padding: 10px 0; font-size: 15px; }
+  }
+
+  /* ── Footer ────────────────────────────────────────────────── */
+  footer {
+    margin-top: 64px;
+    padding-top: 22px;
+    border-top: 1px solid var(--line);
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    color: var(--ink-faint);
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px;
+  }
+  footer b { color: var(--ink-soft); }
+</style>
+
+<div class="wrap">
+
+  <div class="eyebrow">Gap Analysis · CargoDesk</div>
+  <h1>The Missing Manifest</h1>
+  <p class="dek">AES/EEI Export Filing and the Pickup service both sit on the same shipment record — and, apart from one indirect gate, know nothing about each other. This traces exactly what each side has today, what real export-compliance rules require of that relationship, and the 10 fixes that close it.</p>
+  <div class="meta-row">
+    <span><b>Scope</b> routes/customs-filing.js · LoadingServicePage.jsx · shipment_services · shipment_loading_plan_lines</span>
+    <span><b>Epic</b> TKT-6A7J45</span>
+    <span><b>Stories</b> 10, logged in Kanban</span>
+  </div>
+
+  <div class="verdict">
+    <div class="verdict-label">Finding</div>
+    <p>Zero functional integration exists between the two subsystems. The only connection is a shared <code style="font-family:'IBM Plex Mono',monospace;background:var(--paper);border:1px solid var(--line-soft);padding:1px 5px;border-radius:3px;">shipment_id</code> and one indirect gate — an export filing can be created and submitted without a Pickup ever being ordered, and its ITN never reaches the document a carrier actually checks.</p>
+    <div class="sub">Confirmed by direct code read of both subsystems' full route files, schemas, UI pages, and every cross-table reference in the repo — not inferred.</div>
+  </div>
+
+  <section>
+    <div class="sec-head">
+      <h2>Why the link matters</h2>
+    </div>
+    <p class="sec-intro">This isn't a nice-to-have wiring gap — AES/EEI is a real regulatory filing (15&nbsp;CFR&nbsp;Part&nbsp;30, US Census Bureau Foreign Trade Regulations), and its rules are built around the physical movement of cargo, which is exactly what the Pickup service tracks.</p>
+    <div class="facts">
+      <div class="fact">
+        <div class="fact-n">01</div>
+        <div>
+          <p>A filed AES/EEI declaration generates an <b>ITN (Internal Transaction Number)</b>, and a carrier is required to have a valid one on the export manifest before it will load the cargo. A shipment can be turned away at the port without it.</p>
+        </div>
+      </div>
+      <div class="fact">
+        <div class="fact-n">02</div>
+        <div>
+          <p>Filing deadlines are set relative to <b>actual vessel loading</b>, not to when someone happens to click Submit in the app — which means the filing's timing is genuinely coupled to when cargo is picked up and gated in, not just to when a contract or schedule exists.</p>
+        </div>
+      </div>
+      <div class="fact">
+        <div class="fact-n">03</div>
+        <div>
+          <p>EEI requires <b>per-line commodity data</b> — Schedule&nbsp;B/HTS number, quantity, weight, value — and the <b>USPPI</b> (U.S. Principal Party in Interest) and Ultimate Consignee. A "some package somewhere is priced" gate isn't the same thing as a filing that actually carries that data.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <h2>Current state</h2>
+      <span class="count">verified by direct code read</span>
+    </div>
+    <div class="evidence">
+      <div class="ev-col">
+        <div class="ev-head exists"><span class="dot"></span>What each side actually has</div>
+        <ul>
+          <li><code>customs_filings</code>: id, type, status, filing_reference, confirmation_number, rejection_reason, timestamps — nothing else.</li>
+          <li>Filing lifecycle: Draft → Filed → Accepted / Rejected → Draft (reset), fully simulated via Test Tools, no live gov EDI.</li>
+          <li>Filing gate: a Customs Broker party assigned, plus one priced <code>container_packages</code> row anywhere on the shipment.</li>
+          <li><code>shipment_services</code> (Pickup row): status, vendor, office, requested/confirmed/completed dates.</li>
+          <li><code>shipment_loading_plan_lines</code>: per-container planned date, sequence, notes — feeds the PU01 document.</li>
+          <li>Pickup's own Routing card already resolves Merchant's vs. Carrier's Haulage from the real leg data.</li>
+        </ul>
+      </div>
+      <div class="ev-col">
+        <div class="ev-head gap"><span class="dot"></span>What never connects</div>
+        <ul>
+          <li>The AES/EEI submit payload carries only <code>{filingType, filingReference, pol, pod, note}</code> — no carrier, vessel, voyage, or export date.</li>
+          <li><code>cargoReadyDate</code> exists on the shipment and feeds the carrier booking-request payload, but is read nowhere in customs-filing code.</li>
+          <li><code>container_events</code> (Gate In, Loaded, Sailed…) is referenced nowhere in either the filing routes or the Pickup/Loading service code.</li>
+          <li>The <code>customs_cleared</code> milestone exists but is never auto-completed by anything, Accepted filings included.</li>
+          <li>The ITN (<code>confirmation_number</code>) appears in zero other files — not the Bill of Lading builder, not the booking-request payload.</li>
+          <li>Pickup sits under "Export Services" in the sidebar; Customs Filing sits under "Booking & Routing" — different groups, no cross-link.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="link-note"><b>The one indirect link:</b> the filing-creation gate checks for a priced <code>container_packages</code> row — that's Cargo/Epic&nbsp;2 data, not Pickup data. It's the only place customs-filing code reaches outside its own table.</div>
+  </section>
+
+  <section>
+    <div class="sec-head">
+      <h2>The 10 fixes</h2>
+      <span class="count">ordered: compliance risk → data completeness → workflow</span>
+    </div>
+    <p class="sec-intro">Logged as Epic <b style="color:var(--ink);">TKT-6A7J45</b> with one Story per item below, in this same priority order.</p>
+
+    <div class="card" data-tier="critical">
+      <div class="card-n">1</div>
+      <div class="card-body">
+        <div class="card-top">
+          <h3>Propagate the ITN to the Bill of Lading and booking-request payload</h3>
+          <span class="tier-chip">Compliance risk</span>
+        </div>
+        <p>The single most serious gap. An Accepted filing's ITN is generated and then goes nowhere — not onto BL01/MB01, not into the carrier booking-request payload. Add it as an additive detail row on both, populated only once AES_EEI status is Accepted, same pattern the Master B/L's NVOCC row already uses.</p>
+        <div class="touch"><span class="ticket">TKT-US6LV7</span></div>
+      </div>
+    </div>
+
+    <div class="card" data-tier="critical">
+      <div class="card-n">2</div>
+      <div class="card-body">
+        <div class="card-top">
+          <h3>Warn on Submit if Pickup hasn't been ordered or confirmed yet</h3>
+          <span class="tier-chip">Compliance risk</span>
+        </div>
+        <p>A filing can be Submitted today with no Pickup service on the shipment at all. Real AES timing is tied to actual cargo movement — add a soft warning (not a hard block, matching this app's existing credit-limit-style philosophy) when Pickup is missing or still Requested.</p>
+        <div class="touch"><span class="ticket">TKT-JOYVCD</span></div>
+      </div>
+    </div>
+
+    <div class="card" data-tier="high">
+      <div class="card-n">3</div>
+      <div class="card-body">
+        <div class="card-top">
+          <h3>Add carrier, vessel, voyage, and export date to the submit payload</h3>
+          <span class="tier-chip">Data completeness</span>
+        </div>
+        <p>Today's payload is just pol/pod/reference/note. Pull conveyance information and export date from the shipment's own SEA leg — the same resolution the booking-request payload already performs — so the transmitted filing actually matches what's shipping.</p>
+        <div class="touch"><span class="ticket">TKT-WUFH7Y</span></div>
+      </div>
+    </div>
+
+    <div class="card" data-tier="high">
+      <div class="card-n">4</div>
+      <div class="card-body">
+        <div class="card-top">
+          <h3>Snapshot per-line commodity, HS code, and value at filing time</h3>
+          <span class="tier-chip">Data completeness</span>
+        </div>
+        <p>The filing has zero commodity columns of its own today — the gate only checks that some package somewhere is priced. Snapshot the actual priced container_packages list (HS code, qty, weight, value) onto the filing at Submit, mirroring the write-time-snapshot idiom already used for contract rates.</p>
+        <div class="touch"><span class="ticket">TKT-9MVPZP</span></div>
+      </div>
+    </div>
+
+    <div class="card" data-tier="high">
+      <div class="card-n">5</div>
+      <div class="card-body">
+        <div class="card-top">
+          <h3>Flag a Filed filing as stale when Pickup, carrier, or cargo changes</h3>
+          <span class="tier-chip">Data completeness</span>
+        </div>
+        <p>Once story 4's snapshot exists, compare it against the shipment's live data and surface a mismatch badge — reusing the exact badge-vs-modal split pattern ContractMismatchModal and PendingRevalidationModal already established — prompting an amend rather than letting a stale filing sit silently Accepted.</p>
+        <div class="touch"><span class="ticket">TKT-6FMU34</span></div>
+      </div>
+    </div>
+
+    <div class="card" data-tier="high">
+      <div class="card-n">6</div>
+      <div class="card-body">
+        <div class="card-top">
+          <h3>Wire an Accepted AES/EEI response to the customs_cleared milestone</h3>
+          <span class="tier-chip">Data completeness</span>
+        </div>
+        <p>The milestone step already exists in the schema — it's simply never completed by anything. One autoCompleteMilestone(shipmentId, 'customs_cleared', …) call in the simulate-response handler, identical to how booking_confirmed/cargo_gated_in/si_submitted already work.</p>
+        <div class="link-note"><b>Correction, caught during implementation:</b> this proposed mechanism was wrong — <code style="font-family:'IBM Plex Mono',monospace;background:var(--paper);border:1px solid var(--line-soft);padding:1px 5px;border-radius:3px;">customs_cleared</code> sits AFTER <code style="font-family:'IBM Plex Mono',monospace;background:var(--paper);border:1px solid var(--line-soft);padding:1px 5px;border-radius:3px;">vessel_arrived</code> in the milestone sequence — it's the import/destination-side clearance step, not an export-side one. An Accepted AES/EEI (export) filing was the wrong trigger; ISF/AMS (the import filing) Accepted was wired instead.</div>
+        <div class="touch"><span class="ticket">TKT-8E858J</span></div>
+      </div>
+    </div>
+
+    <div class="card" data-tier="high">
+      <div class="card-n">7</div>
+      <div class="card-body">
+        <div class="card-top">
+          <h3>Check USPPI and Ultimate Consignee completeness in the gate</h3>
+          <span class="tier-chip">Data completeness</span>
+        </div>
+        <p>The gate checks for a broker and a priced line — never that Shipper (USPPI) and Consignee (Ultimate Consignee) data is actually filled in, despite both being legally required EEI fields the shipment already carries. Add a third checklist item to the existing two-item gate.</p>
+        <div class="touch"><span class="ticket">TKT-GKXJ11</span></div>
+      </div>
+    </div>
+
+    <div class="card" data-tier="ux">
+      <div class="card-n">8</div>
+      <div class="card-body">
+        <div class="card-top">
+          <h3>Show Pickup status directly on the AES/EEI filing card</h3>
+          <span class="tier-chip">Workflow</span>
+        </div>
+        <p>A one-line, read-only cross-reference — "Pickup: Confirmed for Aug 20" — on the Customs Filing Details page, so an operator isn't tab-hopping between two sidebar groups to answer "is this shipment physically ready to file."</p>
+        <div class="touch"><span class="ticket">TKT-33GVIF</span></div>
+      </div>
+    </div>
+
+    <div class="card" data-tier="ux">
+      <div class="card-n">9</div>
+      <div class="card-body">
+        <div class="card-top">
+          <h3>Close the sidebar gap between Pickup and Customs Filing</h3>
+          <span class="tier-chip">Workflow</span>
+        </div>
+        <p>Relocate Pickup (Export side only, so Import's Delivery stays untouched) into Booking & Routing next to Customs Filing, or add a direct "View Pickup Service →" link from story 8's card — either closes a navigation gap between two pages that are functionally adjacent but currently live apart.</p>
+        <div class="touch"><span class="ticket">TKT-7HRYOB</span></div>
+      </div>
+    </div>
+
+    <div class="card" data-tier="ux">
+      <div class="card-n">10</div>
+      <div class="card-body">
+        <div class="card-top">
+          <h3>Show a pre-departure filing deadline once a schedule exists</h3>
+          <span class="tier-chip">Workflow</span>
+        </div>
+        <p>The filing page has zero time-awareness today. Once shipments.etd is set, show a simple "Xh until filing deadline" / "Filing overdue" indicator against a configurable offset — the exact regulatory deadline varies by mode and filer type, so a hardcoded precise rule is out of scope here.</p>
+        <div class="touch"><span class="ticket">TKT-6BCRUI</span></div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span>Evidence: full read of <b>routes/customs-filing.js</b>, <b>routes/shipment-ops.js</b>, <b>LoadingServicePage.jsx</b>, and every cross-table reference in the repo.</span>
+    <span>CargoDesk v0.71.0 · 2026-08-19</span>
+  </footer>
+
+</div>
+
+</body></html>

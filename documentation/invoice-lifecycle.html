@@ -1,0 +1,550 @@
+<title>Invoice Lifecycle</title>
+<style>
+  :root {
+    --bg: #eef2f1;
+    --surface: #ffffff;
+    --surface-2: #e2e9e7;
+    --ink: #142229;
+    --ink-muted: #56666b;
+    --border: #c7d2ce;
+    --accent: #0e7c86;
+    --accent-ink: #ffffff;
+    --good: #2e7d53;
+    --good-tint: #e1f1e7;
+    --warn: #a97600;
+    --warn-tint: #fbf0d2;
+    --bad: #b23a2e;
+    --bad-tint: #f7e4e1;
+    --data: #3b5e86;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0b1418;
+      --surface: #101d22;
+      --surface-2: #16262c;
+      --ink: #e8edea;
+      --ink-muted: #96a7a9;
+      --border: #24373c;
+      --accent: #43c6ce;
+      --accent-ink: #06171a;
+      --good: #4cbe85;
+      --good-tint: #12271c;
+      --warn: #e0ac33;
+      --warn-tint: #2e2510;
+      --bad: #e2695c;
+      --bad-tint: #2a1613;
+      --data: #7fa8d6;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0b1418;
+    --surface: #101d22;
+    --surface-2: #16262c;
+    --ink: #e8edea;
+    --ink-muted: #96a7a9;
+    --border: #24373c;
+    --accent: #43c6ce;
+    --accent-ink: #06171a;
+    --good: #4cbe85;
+    --good-tint: #12271c;
+    --warn: #e0ac33;
+    --warn-tint: #2e2510;
+    --bad: #e2695c;
+    --bad-tint: #2a1613;
+    --data: #7fa8d6;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: 'IBM Plex Sans', -apple-system, 'Segoe UI', sans-serif;
+    line-height: 1.5;
+  }
+  .wrap { max-width: 1160px; margin: 0 auto; padding: 56px 28px 90px; }
+
+  header.page h1 {
+    font-family: 'Fraunces', Georgia, serif;
+    font-optical-sizing: auto;
+    font-weight: 600;
+    font-size: clamp(34px, 5vw, 52px);
+    letter-spacing: -0.01em;
+    margin: 0 0 6px;
+    text-wrap: balance;
+  }
+  header.page .kicker {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 600;
+    margin-bottom: 14px;
+  }
+  header.page p.lede {
+    max-width: 66ch;
+    font-size: 16.5px;
+    color: var(--ink-muted);
+    margin: 0 0 8px;
+  }
+
+  .scope-note {
+    margin-top: 22px;
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--data);
+    background: var(--surface);
+    border-radius: 6px;
+    padding: 14px 18px;
+    font-size: 13.5px;
+    color: var(--ink-muted);
+    max-width: 74ch;
+  }
+  .scope-note b { color: var(--ink); }
+
+  /* legend */
+  .legend {
+    margin: 34px 0 8px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 22px;
+    padding: 16px 20px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  .legend-item { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--ink-muted); }
+  .legend-item .swatch { flex: none; }
+  .sw-rect { width: 20px; height: 13px; border-radius: 3px; border: 1.5px solid var(--accent); background: var(--surface); }
+  .sw-diamond { width: 15px; height: 15px; border: 1.5px solid var(--accent); background: var(--surface-2); transform: rotate(45deg); }
+  .sw-bad { width: 20px; height: 13px; border-radius: 3px; border: 1.5px solid var(--bad); background: var(--bad-tint); }
+  .sw-warn { width: 20px; height: 13px; border-radius: 3px; border: 1.5px solid var(--warn); background: var(--warn-tint); }
+  .sw-good { width: 20px; height: 13px; border-radius: 8px; border: 1.5px solid var(--good); background: var(--good-tint); }
+  .sw-dash { width: 20px; height: 13px; border-radius: 3px; border: 1.5px dashed var(--ink-muted); background: transparent; }
+  .sw-mono { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--data); font-weight: 600; }
+  .sw-and { width: 20px; height: 20px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); font-size: 9px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+
+  figure.diagram { margin: 26px 0 44px; }
+  .svg-scroll {
+    overflow-x: auto;
+    overflow-y: hidden;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+    padding: 6px;
+  }
+  .svg-scroll svg { display: block; width: 100%; height: auto; min-width: 900px; }
+  figcaption {
+    margin-top: 10px;
+    font-size: 12.5px;
+    color: var(--ink-muted);
+    text-align: center;
+  }
+
+  svg text { font-family: 'IBM Plex Sans', sans-serif; }
+  .mono { font-family: 'IBM Plex Mono', monospace; }
+  .eyebrow { font-family: 'IBM Plex Mono', monospace; font-weight: 700; letter-spacing: 0.08em; font-size: 13px; fill: var(--ink); }
+  .eyebrow-sub { font-family: 'IBM Plex Mono', monospace; font-weight: 500; font-size: 13px; fill: var(--ink-muted); }
+
+  /* data-sources reference table */
+  .refs h2 {
+    font-family: 'Fraunces', Georgia, serif;
+    font-weight: 600;
+    font-size: 26px;
+    margin: 8px 0 4px;
+  }
+  .refs p.sub { color: var(--ink-muted); font-size: 14px; margin: 0 0 20px; max-width: 70ch; }
+  table.refs-table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    font-size: 13.5px;
+  }
+  table.refs-table th {
+    text-align: left;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+    background: var(--surface-2);
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  table.refs-table td {
+    padding: 11px 16px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+    color: var(--ink);
+  }
+  table.refs-table tr:last-child td { border-bottom: none; }
+  table.refs-table td.src { font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; color: var(--data); font-weight: 600; white-space: nowrap; }
+  table.refs-table td.desc { color: var(--ink-muted); }
+  table.refs-table tbody tr:hover { background: var(--surface-2); }
+
+  footer.page {
+    margin-top: 48px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--ink-muted);
+    font-family: 'IBM Plex Mono', monospace;
+  }
+</style>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<div class="wrap">
+
+  <header class="page">
+    <div class="kicker">CargoDesk · Billing &amp; Invoicing Subsystem</div>
+    <h1>Invoice Lifecycle</h1>
+    <p class="lede">
+      How a freight invoice actually moves through CargoDesk — from an accrued cost line to cash
+      received — including every gate it has to clear, every place the system reads or writes
+      data, and the two ways it can end.
+    </p>
+  </header>
+
+  <div class="scope-note">
+    <b>Scope.</b> This traces customer-facing invoicing (accounts receivable) — the FR01/FR02
+    freight invoice and its CN01 credit/debit note. Freight Audit &amp; Payment, the mirror-image
+    system for reconciling what <i>carriers</i> bill CargoDesk, is a separate subsystem
+    (<span class="mono" style="font-size:12.5px">routes/carrier-invoices.js</span>) not shown here.
+  </div>
+
+  <div class="legend">
+    <div class="legend-item"><span class="swatch sw-rect"></span> Process step</div>
+    <div class="legend-item"><span class="swatch sw-diamond"></span> System-checked decision</div>
+    <div class="legend-item"><span class="swatch sw-and"></span> AND / OR gate</div>
+    <div class="legend-item"><span class="swatch sw-bad"></span> Hard block</div>
+    <div class="legend-item"><span class="swatch sw-warn"></span> Blocked, needs approval</div>
+    <div class="legend-item"><span class="swatch sw-good"></span> Terminal — resolved</div>
+    <div class="legend-item"><span class="swatch sw-dash"></span> Parallel / external process</div>
+    <div class="legend-item"><span class="swatch sw-mono">⛁ table_name</span> data read or written here</div>
+  </div>
+
+  <figure class="diagram">
+    <div class="svg-scroll">
+      <svg viewBox="0 0 1520 3220" role="img" aria-label="Flowchart of CargoDesk's invoice lifecycle: cost lines accrue, an invoice is generated, a credit hold check AND a credit limit check must both clear (with an override sub-check gated by a trade manager approval), the invoice is rendered and digitally signed, confirmed, distributed by an OR choice of email, EDI or webhook, then either marked paid or reversed via a credit note, feeding Billing Performance, Invoice Collections and Credit Overrides reports. A parallel Invoice Deadline Monitor watches for a missing invoice independently.">
+        <defs>
+          <marker id="arAccent" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="var(--accent)"/></marker>
+          <marker id="arBad" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="var(--bad)"/></marker>
+          <marker id="arWarn" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="var(--warn)"/></marker>
+          <marker id="arGood" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 Z" fill="var(--good)"/></marker>
+          <marker id="arMuted" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="var(--ink-muted)"/></marker>
+        </defs>
+
+        <g fill="var(--ink)">
+
+        <!-- ================= PHASE 1 : CHARGE ACCUMULATION ================= -->
+        <text class="eyebrow" x="40" y="50">PHASE 1 · CHARGE ACCUMULATION</text>
+
+        <!-- Node A : start pill -->
+        <rect x="260" y="95" width="440" height="110" rx="55" fill="var(--surface)" stroke="var(--accent)" stroke-width="2.5"/>
+        <text x="480" y="138" text-anchor="middle" font-size="15" font-weight="700">Cost lines accrue on the shipment</text>
+        <text class="mono" x="480" y="161" text-anchor="middle" font-size="10.5" fill="var(--data)">⛁ shipment_cost_lines (BUY / SELL)</text>
+        <text class="mono" x="480" y="178" text-anchor="middle" font-size="10.5" fill="var(--data)">⛁ contract_rates · quote_lines · charge_code_definitions</text>
+
+        <line x1="480" y1="205" x2="480" y2="253" stroke="var(--accent)" stroke-width="2" marker-end="url(#arAccent)"/>
+
+        <!-- Node B -->
+        <rect x="260" y="255" width="440" height="90" rx="8" fill="var(--surface)" stroke="var(--border)" stroke-width="1.5"/>
+        <text x="480" y="290" text-anchor="middle" font-size="14.5" font-weight="700">Operator clicks Generate Invoice</text>
+        <text x="480" y="308" text-anchor="middle" font-size="11.5" fill="var(--ink-muted)">consolidated (FR01) or per-container (FR02)</text>
+        <text class="mono" x="480" y="330" text-anchor="middle" font-size="10.5" fill="var(--data)">Invoice Entry page → POST .../documents/generate</text>
+
+        <line x1="480" y1="345" x2="480" y2="393" stroke="var(--accent)" stroke-width="2" marker-end="url(#arAccent)"/>
+
+        <!-- ================= PHASE 2 : CREDIT GATE ================= -->
+        <text class="eyebrow" x="40" y="420">PHASE 2 · CREDIT GATE</text>
+        <text class="eyebrow-sub" x="255" y="420">— AND: every check below must clear before a PDF is ever rendered</text>
+
+        <!-- AND bracket -->
+        <path d="M235,440 L222,440 L222,900 L235,900" fill="none" stroke="var(--accent)" stroke-width="1.5"/>
+        <circle cx="200" cy="670" r="17" fill="var(--accent)"/>
+        <text x="200" y="674" text-anchor="middle" font-size="10" font-weight="700" fill="var(--accent-ink)">AND</text>
+
+        <!-- data-note for diamond C, placed in the clear gap above it -->
+        <text class="mono" x="560" y="374" font-size="10" fill="var(--data)">⛁ customers.credit_hold (+ contracts.named_account_id)</text>
+
+        <!-- Diamond C : credit hold -->
+        <polygon points="480,420 670,490 480,560 290,490" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="2"/>
+        <text x="480" y="486" text-anchor="middle" font-size="13.5" font-weight="700">On credit_hold?</text>
+        <text x="480" y="502" text-anchor="middle" font-size="10.5" fill="var(--ink-muted)">shipper / consignee / principal / named account</text>
+
+        <line x1="670" y1="490" x2="895" y2="490" stroke="var(--bad)" stroke-width="2" marker-end="url(#arBad)"/>
+        <text x="765" y="480" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--bad)">YES</text>
+
+        <rect x="900" y="435" width="340" height="110" rx="8" fill="var(--bad-tint)" stroke="var(--bad)" stroke-width="1.5"/>
+        <text x="1070" y="470" text-anchor="middle" font-size="14" font-weight="700" fill="var(--bad)">BLOCKED — HTTP 409</text>
+        <text x="1070" y="490" text-anchor="middle" font-size="11.5" fill="var(--ink-muted)">no override exists for a hold —</text>
+        <text x="1070" y="507" text-anchor="middle" font-size="11.5" fill="var(--ink-muted)">not even the lane trade_manager can bypass it</text>
+        <text class="mono" x="1070" y="527" text-anchor="middle" font-size="10" fill="var(--data)">resolve via Customer Profile → release hold</text>
+
+        <line x1="480" y1="560" x2="480" y2="605" stroke="var(--accent)" stroke-width="2"/>
+        <text x="498" y="588" font-size="11.5" font-weight="700" fill="var(--accent)">NO</text>
+
+        <!-- Diamond D : over limit -->
+        <polygon points="480,610 670,680 480,750 290,680" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="2"/>
+        <text x="480" y="676" text-anchor="middle" font-size="13" font-weight="700">Projected AR &gt;</text>
+        <text x="480" y="692" text-anchor="middle" font-size="13" font-weight="700">credit_limit?</text>
+
+        <line x1="480" y1="750" x2="480" y2="895" stroke="var(--accent)" stroke-width="2"/>
+        <text x="498" y="825" font-size="11.5" font-weight="700" fill="var(--accent)">NO</text>
+
+        <line x1="670" y1="680" x2="838" y2="680" stroke="var(--warn)" stroke-width="2" marker-end="url(#arWarn)"/>
+        <text x="755" y="670" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--warn)">YES</text>
+
+        <!-- data-notes for D and E, placed in the clear band below both diamonds -->
+        <text class="mono" x="460" y="772" text-anchor="end" font-size="10" fill="var(--data)">⛁ credit_limit vs AR</text>
+        <text class="mono" x="900" y="772" text-anchor="middle" font-size="10" fill="var(--data)">⛁ credit_overrides</text>
+
+        <!-- Diamond E : override grace window -->
+        <polygon points="1010,615 1180,680 1010,745 840,680" fill="var(--surface-2)" stroke="var(--accent)" stroke-width="2"/>
+        <text x="1010" y="672" text-anchor="middle" font-size="12" font-weight="700">Override approved,</text>
+        <text x="1010" y="688" text-anchor="middle" font-size="12" font-weight="700">60-min grace?</text>
+
+        <line x1="1010" y1="745" x2="1010" y2="880" stroke="var(--accent)" stroke-width="2"/>
+        <line x1="1010" y1="880" x2="486" y2="880" stroke="var(--accent)" stroke-width="2"/>
+        <text x="1028" y="800" font-size="11.5" font-weight="700" fill="var(--accent)">YES</text>
+
+        <line x1="1180" y1="680" x2="1180" y2="850" stroke="var(--warn)" stroke-width="2"/>
+        <line x1="1180" y1="850" x2="1165" y2="850" stroke="var(--warn)" stroke-width="2" marker-end="url(#arWarn)"/>
+        <text x="1195" y="705" font-size="11.5" font-weight="700" fill="var(--warn)">NO</text>
+
+        <rect x="1160" y="790" width="340" height="120" rx="8" fill="var(--warn-tint)" stroke="var(--warn)" stroke-width="1.5"/>
+        <text x="1330" y="827" text-anchor="middle" font-size="14" font-weight="700" fill="var(--warn)">BLOCKED — needs approval</text>
+        <text x="1330" y="848" text-anchor="middle" font-size="11.5" fill="var(--ink-muted)">the shipment's own lane trade_manager</text>
+        <text x="1330" y="865" text-anchor="middle" font-size="11.5" fill="var(--ink-muted)">must approve — never admin/operator</text>
+        <text class="mono" x="1330" y="885" text-anchor="middle" font-size="10" fill="var(--data)">visible in the Credit Overrides queue</text>
+
+        <circle cx="480" cy="900" r="6" fill="var(--accent)"/>
+        <text x="500" y="905" font-size="10.5" font-style="italic" fill="var(--ink-muted)">both checks cleared</text>
+        <line x1="480" y1="900" x2="480" y2="953" stroke="var(--accent)" stroke-width="2" marker-end="url(#arAccent)"/>
+
+        <!-- Parallel watch box -->
+        <rect x="1270" y="420" width="230" height="345" rx="8" fill="none" stroke="var(--ink-muted)" stroke-width="1.5" stroke-dasharray="6,5"/>
+        <text x="1385" y="445" text-anchor="middle" font-size="10.5" font-weight="700" letter-spacing="0.08em" fill="var(--ink-muted)">PARALLEL WATCH</text>
+
+        <rect x="1290" y="460" width="190" height="110" rx="7" fill="var(--surface)" stroke="var(--border)"/>
+        <text x="1385" y="488" text-anchor="middle" font-size="12" font-weight="700">Invoice Deadline</text>
+        <text x="1385" y="503" text-anchor="middle" font-size="12" font-weight="700">Monitor</text>
+        <text class="mono" x="1385" y="523" text-anchor="middle" font-size="9.5" fill="var(--data)">⛁ shipment_milestones (delivered)</text>
+        <text class="mono" x="1385" y="537" text-anchor="middle" font-size="9.5" fill="var(--data)">⛁ customers.invoice_deadline_days</text>
+        <text x="1385" y="558" text-anchor="middle" font-size="9.5" fill="var(--ink-muted)">soft/informational, never a block</text>
+
+        <line x1="1385" y1="570" x2="1385" y2="598" stroke="var(--ink-muted)" stroke-width="1.5" marker-end="url(#arMuted)"/>
+
+        <rect x="1290" y="600" width="190" height="80" rx="7" fill="var(--surface)" stroke="var(--border)"/>
+        <text x="1385" y="627" text-anchor="middle" font-size="13">🔔 Notification Bell</text>
+        <text x="1385" y="645" text-anchor="middle" font-size="10" fill="var(--ink-muted)">"Invoicing Overdue" section</text>
+
+        <text x="1385" y="705" text-anchor="middle" font-size="9.5" font-style="italic" fill="var(--ink-muted)">watches for a MISSING</text>
+        <text x="1385" y="718" text-anchor="middle" font-size="9.5" font-style="italic" fill="var(--ink-muted)">invoice — not a step</text>
+        <text x="1385" y="731" text-anchor="middle" font-size="9.5" font-style="italic" fill="var(--ink-muted)">that follows this flow</text>
+
+        <!-- ================= PHASE 3 : GENERATION & SIGNING ================= -->
+        <text class="eyebrow" x="40" y="940">PHASE 3 · GENERATION &amp; SIGNING</text>
+
+        <circle cx="480" cy="978" r="19" fill="var(--accent)"/>
+        <text x="480" y="982" text-anchor="middle" font-size="10" font-weight="700" fill="var(--accent-ink)">OR</text>
+        <text x="512" y="1005" font-size="10.5" font-style="italic" fill="var(--ink-muted)">split per container?</text>
+
+        <line x1="480" y1="997" x2="480" y2="1030" stroke="var(--accent)" stroke-width="2"/>
+        <line x1="300" y1="1030" x2="660" y2="1030" stroke="var(--accent)" stroke-width="2"/>
+        <line x1="300" y1="1030" x2="300" y2="1058" stroke="var(--accent)" stroke-width="2" marker-end="url(#arAccent)"/>
+        <line x1="660" y1="1030" x2="660" y2="1058" stroke="var(--accent)" stroke-width="2" marker-end="url(#arAccent)"/>
+
+        <rect x="140" y="1060" width="320" height="110" rx="8" fill="var(--surface)" stroke="var(--border)"/>
+        <text x="300" y="1096" text-anchor="middle" font-size="14" font-weight="700">Consolidated</text>
+        <text x="300" y="1114" text-anchor="middle" font-size="11" fill="var(--ink-muted)">FR01 — one invoice, every SELL line</text>
+
+        <rect x="500" y="1060" width="320" height="130" rx="8" fill="var(--surface)" stroke="var(--border)"/>
+        <text x="660" y="1096" text-anchor="middle" font-size="14" font-weight="700">Per-container</text>
+        <text x="660" y="1114" text-anchor="middle" font-size="11" fill="var(--ink-muted)">FR02 — one invoice per container</text>
+        <text class="mono" x="660" y="1134" text-anchor="middle" font-size="9.5" fill="var(--data)">⛁ charge_code_definitions auto-injects</text>
+        <text class="mono" x="660" y="1148" text-anchor="middle" font-size="9.5" fill="var(--data)">a fee line into every container missing one</text>
+
+        <line x1="300" y1="1170" x2="300" y2="1250" stroke="var(--accent)" stroke-width="2"/>
+        <line x1="660" y1="1190" x2="660" y2="1250" stroke="var(--accent)" stroke-width="2"/>
+        <line x1="300" y1="1250" x2="660" y2="1250" stroke="var(--accent)" stroke-width="2"/>
+        <circle cx="480" cy="1250" r="6" fill="var(--accent)"/>
+        <line x1="480" y1="1250" x2="480" y2="1288" stroke="var(--accent)" stroke-width="2" marker-end="url(#arAccent)"/>
+
+        <rect x="260" y="1290" width="440" height="110" rx="8" fill="var(--surface)" stroke="var(--border)"/>
+        <text x="480" y="1328" text-anchor="middle" font-size="14" font-weight="700">Compute VAT + subtotal per currency</text>
+        <text x="480" y="1348" text-anchor="middle" font-size="11" fill="var(--ink-muted)">capture the exact sourceCostLineIds invoiced</text>
+        <text class="mono" x="480" y="1372" text-anchor="middle" font-size="10" fill="var(--data)">⛁ shipment_cost_lines (SELL lines, this invoice's scope)</text>
+
+        <line x1="480" y1="1400" x2="480" y2="1448" stroke="var(--accent)" stroke-width="2" marker-end="url(#arAccent)"/>
+
+        <rect x="240" y="1450" width="480" height="150" rx="8" fill="var(--surface)" stroke="var(--border)"/>
+        <text x="480" y="1487" text-anchor="middle" font-size="15" font-weight="700">Render → Sign → Store</text>
+        <text class="mono" x="480" y="1509" text-anchor="middle" font-size="10.5" fill="var(--data)">→ PDF Render Service — Puppeteer, port 3003</text>
+        <text class="mono" x="480" y="1527" text-anchor="middle" font-size="10.5" fill="var(--data)">→ org_signing_certs — CAdES-detached PKCS#7 signature</text>
+        <text class="mono" x="480" y="1545" text-anchor="middle" font-size="10.5" fill="var(--data)">→ INSERT ⛁ shipment_documents, status = draft</text>
+        <text x="480" y="1580" text-anchor="middle" font-size="9.5" font-style="italic" fill="var(--ink-muted)">attempt logged first — durable even if rendering crashes</text>
+
+        <line x1="480" y1="1600" x2="480" y2="1648" stroke="var(--accent)" stroke-width="2" marker-end="url(#arAccent)"/>
+
+        <!-- ================= PHASE 4 : CONFIRMATION & DISTRIBUTION ================= -->
+        <text class="eyebrow" x="40" y="1630">PHASE 4 · CONFIRMATION &amp; DISTRIBUTION</text>
+
+        <rect x="260" y="1650" width="440" height="110" rx="8" fill="var(--surface)" stroke="var(--border)"/>
+        <text x="480" y="1688" text-anchor="middle" font-size="14.5" font-weight="700">Operator clicks Confirm</text>
+        <text class="mono" x="480" y="1710" text-anchor="middle" font-size="10.5" fill="var(--data)">status → confirmed · confirmed_at stamped</text>
+        <text x="480" y="1730" text-anchor="middle" font-size="10.5" fill="var(--ink-muted)">(this date anchors AR aging) · invoice_owner_id defaulted</text>
+
+        <line x1="480" y1="1760" x2="480" y2="1808" stroke="var(--accent)" stroke-width="2"/>
+        <circle cx="480" cy="1828" r="19" fill="var(--accent)"/>
+        <text x="480" y="1832" text-anchor="middle" font-size="10" font-weight="700" fill="var(--accent-ink)">OR</text>
+
+        <line x1="480" y1="1847" x2="480" y2="1868" stroke="var(--accent)" stroke-width="2"/>
+        <line x1="180" y1="1868" x2="780" y2="1868" stroke="var(--accent)" stroke-width="2"/>
+        <line x1="180" y1="1868" x2="180" y2="1898" stroke="var(--accent)" stroke-width="2" marker-end="url(#arAccent)"/>
+        <line x1="480" y1="1868" x2="480" y2="1898" stroke="var(--accent)" stroke-width="2" marker-end="url(#arAccent)"/>
+        <line x1="780" y1="1868" x2="780" y2="1898" stroke="var(--accent)" stroke-width="2" marker-end="url(#arAccent)"/>
+
+        <rect x="40" y="1900" width="280" height="110" rx="8" fill="var(--surface)" stroke="var(--border)"/>
+        <text x="180" y="1937" text-anchor="middle" font-size="14" font-weight="700">Email</text>
+        <text class="mono" x="180" y="1958" text-anchor="middle" font-size="10" fill="var(--data)">⛁ office_mail_settings</text>
+        <text x="180" y="1976" text-anchor="middle" font-size="10" fill="var(--ink-muted)">EMO office only, no fallback</text>
+
+        <rect x="340" y="1900" width="280" height="110" rx="8" fill="var(--surface)" stroke="var(--border)"/>
+        <text x="480" y="1937" text-anchor="middle" font-size="14" font-weight="700">EDI</text>
+        <text class="mono" x="480" y="1958" text-anchor="middle" font-size="10" fill="var(--data)">document-distribution svc · :3002</text>
+        <text x="480" y="1976" text-anchor="middle" font-size="10" fill="var(--ink-muted)">formal transmittal + SHA-256 checksum</text>
+
+        <rect x="640" y="1900" width="280" height="110" rx="8" fill="var(--surface)" stroke="var(--border)"/>
+        <text x="780" y="1937" text-anchor="middle" font-size="14" font-weight="700">Webhook</text>
+        <text class="mono" x="780" y="1958" text-anchor="middle" font-size="10" fill="var(--data)">document-distribution svc · :3002</text>
+        <text x="780" y="1976" text-anchor="middle" font-size="10" fill="var(--ink-muted)">HMAC-signed outbound HTTPS POST</text>
+
+        <line x1="180" y1="2010" x2="180" y2="2078" stroke="var(--accent)" stroke-width="2"/>
+        <line x1="480" y1="2010" x2="480" y2="2078" stroke="var(--accent)" stroke-width="2"/>
+        <line x1="780" y1="2010" x2="780" y2="2078" stroke="var(--accent)" stroke-width="2"/>
+        <line x1="180" y1="2078" x2="780" y2="2078" stroke="var(--accent)" stroke-width="2"/>
+        <circle cx="480" cy="2078" r="6" fill="var(--accent)"/>
+        <line x1="480" y1="2078" x2="480" y2="2128" stroke="var(--accent)" stroke-width="2" marker-end="url(#arAccent)"/>
+
+        <rect x="260" y="2130" width="440" height="90" rx="8" fill="var(--surface)" stroke="var(--border)"/>
+        <text x="480" y="2167" text-anchor="middle" font-size="14" font-weight="700">first_sent_at stamped</text>
+        <text x="480" y="2189" text-anchor="middle" font-size="10.5" fill="var(--ink-muted)">first channel to send wins — a resend never overwrites it</text>
+
+        <line x1="480" y1="2220" x2="480" y2="2268" stroke="var(--accent)" stroke-width="2" marker-end="url(#arAccent)"/>
+
+        <!-- ================= PHASE 5 : LIVE IN THE LEDGER ================= -->
+        <text class="eyebrow" x="40" y="2250">PHASE 5 · LIVE IN THE LEDGER</text>
+
+        <rect x="260" y="2270" width="440" height="120" rx="8" fill="var(--surface)" stroke="var(--border)"/>
+        <text x="480" y="2308" text-anchor="middle" font-size="14" font-weight="700">Confirmed invoice now counted in AR</text>
+        <text class="mono" x="480" y="2331" text-anchor="middle" font-size="10" fill="var(--data)">AR aging = confirmed_at + customers.credit_terms_days</text>
+        <text class="mono" x="480" y="2348" text-anchor="middle" font-size="10" fill="var(--data)">→ 5 buckets: current/1-30/31-60/61-90/90+, net of paid_amount</text>
+
+        <line x1="480" y1="2390" x2="480" y2="2438" stroke="var(--accent)" stroke-width="2" marker-end="url(#arAccent)"/>
+
+        <!-- ================= PHASE 6 : RESOLUTION ================= -->
+        <text class="eyebrow" x="40" y="2420">PHASE 6 · RESOLUTION</text>
+        <text class="eyebrow-sub" x="228" y="2420">— OR: pick one path (or neither, yet)</text>
+
+        <circle cx="480" cy="2460" r="19" fill="var(--accent)"/>
+        <text x="480" y="2464" text-anchor="middle" font-size="10" font-weight="700" fill="var(--accent-ink)">OR</text>
+
+        <path d="M480,2480 L240,2480 L240,2518" fill="none" stroke="var(--accent)" stroke-width="2" marker-end="url(#arAccent)"/>
+        <path d="M480,2480 L760,2480 L760,2518" fill="none" stroke="var(--accent)" stroke-width="2" marker-end="url(#arAccent)"/>
+        <line x1="480" y1="2480" x2="480" y2="2895" stroke="var(--ink-muted)" stroke-width="1.5" stroke-dasharray="5,5" marker-end="url(#arMuted)"/>
+        <text x="480" y="2650" text-anchor="middle" font-size="10" font-style="italic" fill="var(--ink-muted)">(ages normally)</text>
+
+        <rect x="60" y="2520" width="360" height="140" rx="8" fill="var(--surface)" stroke="var(--border)"/>
+        <text x="240" y="2557" text-anchor="middle" font-size="14.5" font-weight="700">Mark as Paid</text>
+        <text class="mono" x="240" y="2580" text-anchor="middle" font-size="10" fill="var(--data)">paidAt + paidAmount both required</text>
+        <text x="240" y="2598" text-anchor="middle" font-size="10" fill="var(--ink-muted)">(never auto-defaulted) · gated admin / operator</text>
+        <text x="240" y="2618" text-anchor="middle" font-size="10" fill="var(--ink-muted)">reduces outstandingAr — aging clock NOT reset</text>
+        <text class="mono" x="240" y="2640" text-anchor="middle" font-size="9.5" fill="var(--data)">⛁ paid_at / paid_amount / transaction_id</text>
+
+        <line x1="240" y1="2660" x2="240" y2="2738" stroke="var(--good)" stroke-width="2" marker-end="url(#arGood)"/>
+        <rect x="100" y="2740" width="280" height="80" rx="40" fill="var(--good-tint)" stroke="var(--good)" stroke-width="2"/>
+        <text x="240" y="2775" text-anchor="middle" font-size="14" font-weight="700" fill="var(--good)">PAID</text>
+        <text x="240" y="2793" text-anchor="middle" font-size="10.5" fill="var(--ink-muted)">in full or in part</text>
+
+        <rect x="580" y="2520" width="360" height="160" rx="8" fill="var(--surface)" stroke="var(--border)"/>
+        <text x="760" y="2554" text-anchor="middle" font-size="14.5" font-weight="700">Reverse</text>
+        <text x="760" y="2572" text-anchor="middle" font-size="10" font-style="italic" fill="var(--accent)">gate (AND): status=confirmed AND not already reversed</text>
+        <text class="mono" x="760" y="2593" text-anchor="middle" font-size="9.5" fill="var(--data)">⛁ new shipment_cost_lines rows — type SELL, amount</text>
+        <text class="mono" x="760" y="2607" text-anchor="middle" font-size="9.5" fill="var(--data)">negated, source=reversal, already posted</text>
+        <text class="mono" x="760" y="2627" text-anchor="middle" font-size="9.5" fill="var(--data)">⛁ original shipment_documents → status = voided</text>
+        <text x="760" y="2648" text-anchor="middle" font-size="10" fill="var(--ink-muted)">both writes are one atomic transaction</text>
+        <text x="760" y="2665" text-anchor="middle" font-size="10" fill="var(--ink-muted)">then generates a CN01 Credit / Debit Note ↑</text>
+
+        <path d="M940,2600 L1470,2600 L1470,1465 L724,1465" fill="none" stroke="var(--accent)" stroke-width="2" stroke-dasharray="7,6" marker-end="url(#arAccent)"/>
+        <text x="1483" y="2060" text-anchor="middle" font-size="10.5" font-style="italic" fill="var(--ink-muted)" transform="rotate(-90 1483 2060)">CN01 is rendered &amp; signed exactly like any other document</text>
+
+        <!-- feed to credit overrides queue -->
+        <line x1="1330" y1="910" x2="1330" y2="2955" stroke="var(--ink-muted)" stroke-width="1.5" stroke-dasharray="5,5" marker-end="url(#arMuted)"/>
+        <text x="1345" y="1650" font-size="10" font-style="italic" fill="var(--ink-muted)" transform="rotate(-90 1345 1650)">feeds</text>
+
+        <!-- ================= PHASE 7 : REPORTING ================= -->
+        <text class="eyebrow" x="40" y="2920">PHASE 7 · REPORTING &amp; VISIBILITY</text>
+
+        <path d="M480,2895 L280,2895 L280,2955" fill="none" stroke="var(--ink-muted)" stroke-width="1.5" stroke-dasharray="5,5" marker-end="url(#arMuted)"/>
+        <path d="M480,2895 L760,2895 L760,2955" fill="none" stroke="var(--ink-muted)" stroke-width="1.5" stroke-dasharray="5,5" marker-end="url(#arMuted)"/>
+
+        <rect x="60" y="2960" width="440" height="140" rx="8" fill="var(--surface)" stroke="var(--border)"/>
+        <text x="280" y="2996" text-anchor="middle" font-size="14" font-weight="700">Billing Performance Report</text>
+        <text class="mono" x="280" y="3018" text-anchor="middle" font-size="10" fill="var(--data)">GET /api/reports/billing-performance</text>
+        <text x="280" y="3038" text-anchor="middle" font-size="10" fill="var(--ink-muted)">every FR01/FR02, row-level — status, sent,</text>
+        <text x="280" y="3054" text-anchor="middle" font-size="10" fill="var(--ink-muted)">payment status, days overdue</text>
+        <text x="280" y="3074" text-anchor="middle" font-size="10" fill="var(--ink-muted)">by office / customer / lane / carrier</text>
+
+        <rect x="540" y="2960" width="440" height="140" rx="8" fill="var(--surface)" stroke="var(--border)"/>
+        <text x="760" y="2996" text-anchor="middle" font-size="14" font-weight="700">Invoice Collections + Escalation</text>
+        <text class="mono" x="760" y="3018" text-anchor="middle" font-size="10" fill="var(--data)">Epic TKT-G11AHW</text>
+        <text x="760" y="3038" text-anchor="middle" font-size="10" fill="var(--ink-muted)">aging-driven reminder cadence,</text>
+        <text x="760" y="3054" text-anchor="middle" font-size="10" fill="var(--ink-muted)">lane-scoped status override log</text>
+        <text class="mono" x="760" y="3074" text-anchor="middle" font-size="9.5" fill="var(--data)">⛁ shipment_documents.invoice_owner_id</text>
+
+        <rect x="1020" y="2960" width="440" height="140" rx="8" fill="var(--surface)" stroke="var(--border)"/>
+        <text x="1240" y="2996" text-anchor="middle" font-size="14" font-weight="700">Credit Overrides Queue</text>
+        <text class="mono" x="1240" y="3018" text-anchor="middle" font-size="10" fill="var(--data)">⛁ credit_overrides</text>
+        <text x="1240" y="3038" text-anchor="middle" font-size="10" fill="var(--ink-muted)">every blocked shipment, visible fleet-wide</text>
+        <text x="1240" y="3054" text-anchor="middle" font-size="10" fill="var(--ink-muted)">to admin/operator; only the shipment's own</text>
+        <text x="1240" y="3070" text-anchor="middle" font-size="10" fill="var(--ink-muted)">lane trade_manager can act on it</text>
+
+        </g>
+      </svg>
+    </div>
+    <figcaption>Scroll horizontally on small screens. The accent-colored dashed loop shows a Reverse action generating a new signed document — the only cycle in the flow.</figcaption>
+  </figure>
+
+  <section class="refs">
+    <h2>Data sources referenced</h2>
+    <p class="sub">Every table, column set, or external service this flow reads from or writes to, in the order it first appears above.</p>
+    <table class="refs-table">
+      <thead>
+        <tr><th>Source</th><th>Role in this flow</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="src">shipment_cost_lines</td><td class="desc">BUY/SELL charge lines. SELL lines are what an invoice is built from; a Reverse writes new negative, already-posted SELL lines back into this same table.</td></tr>
+        <tr><td class="src">contract_rates · quote_lines</td><td class="desc">Where a cost line's figure usually originates from — a contract's live rate, or a quote's own independently-priced line.</td></tr>
+        <tr><td class="src">charge_code_definitions</td><td class="desc">Admin-maintained automated charges (e.g. a per-container fee) auto-injected only when generating a split-per-container invoice.</td></tr>
+        <tr><td class="src">customers</td><td class="desc"><span class="mono">credit_hold</span>/<span class="mono">credit_hold_reason</span>, <span class="mono">credit_limit</span>/<span class="mono">currency</span>, <span class="mono">credit_terms_days</span>, and <span class="mono">invoice_deadline_days</span> — the four fields the credit gate and the deadline monitor both read.</td></tr>
+        <tr><td class="src">contracts.named_account_id</td><td class="desc">On a Central contract, the credit hold check also covers the contract's own Named Account, not just the shipment's Shipper/Consignee/Principal.</td></tr>
+        <tr><td class="src">shipment_documents</td><td class="desc">The invoice record itself — <span class="mono">status</span>, <span class="mono">confirmed_at</span> (the AR-aging anchor), <span class="mono">source_cost_line_ids</span>, <span class="mono">first_sent_at</span>, <span class="mono">paid_at</span>/<span class="mono">paid_amount</span>, <span class="mono">related_doc_id</span> (links a CN01 back to what it reversed).</td></tr>
+        <tr><td class="src">credit_overrides</td><td class="desc">One-time approvals from a shipment's own lane trade_manager, each valid for a 60-minute grace window — the only way past an over-limit block.</td></tr>
+        <tr><td class="src">PDF Render Service (:3003)</td><td class="desc">Separate microservice — renders the client-built invoice HTML to a PDF via a real headless browser.</td></tr>
+        <tr><td class="src">org_signing_certs</td><td class="desc">The org's self-signed key, kept out of the plaintext app-settings table on purpose — used for a genuine CAdES-detached PKCS#7 signature over every generated document.</td></tr>
+        <tr><td class="src">office_mail_settings</td><td class="desc">Per-office SMTP config. Email always sends from the shipment's Export Managing Office specifically — no fallback to another office.</td></tr>
+        <tr><td class="src">document-distribution service (:3002)</td><td class="desc">Separate microservice owning EDI transmittals and HMAC-signed outbound webhooks — never touches the monolith's own database.</td></tr>
+        <tr><td class="src">shipment_milestones</td><td class="desc">The <span class="mono">delivered</span> step's completion date anchors the Invoice Deadline Monitor, independently of whether an invoice exists yet.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <footer class="page">CargoDesk v0.78.0 — traced directly from routes/shipment-ops.js, src/utils/invoiceGenerator.js, and server.js</footer>
+
+</div>

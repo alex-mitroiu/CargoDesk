@@ -9,7 +9,6 @@ import { Modal } from "../../components/primitives/Modal";
 import EdiMessageList, { EDI_STATUS_COLOR } from "../../components/shared/EdiMessageList";
 import CarrierBookingsTable from "../../components/shared/CarrierBookingsTable";
 import { IconCheck, IconClose, IconAnchor, IconFile } from "../../components/primitives/Icon";
-import { BOOKABLE_CARRIERS } from "../../utils/carrierBooking";
 
 // ─── Carrier Booking — Review ─────────────────────────────────────────────────
 // The inbound half: the carrier's response (real or Test-Tools-simulated) plus the
@@ -29,7 +28,16 @@ const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
   const [linkModal,    setLinkModal]    = useState(false);
   const [blDocs,       setBlDocs]       = useState([]);
   const [busy, setBusy] = useState(false);
+  const [bookableCarriers, setBookableCarriers] = useState(null); // eAdapter — live effective bookable set, replaces the static BOOKABLE_CARRIERS Set
   const loadRef = useRef(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.eadapter.bookableCarriers()
+      .then(r => !cancelled && setBookableCarriers(r.carriers))
+      .catch(() => !cancelled && setBookableCarriers([]));
+    return () => { cancelled = true; };
+  }, []);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -69,7 +77,7 @@ const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
   const status = booking?.status || "Created";
   const canConfirm = canEdit && status !== "Confirmed" && status !== "Cancelled";
   const canCancel  = canEdit && status !== "Cancelled";
-  const willNotifyCarrier = BOOKABLE_CARRIERS.has(shipment.carrierCode) && !!booking?.correlationId;
+  const willNotifyCarrier = (bookableCarriers || []).includes(shipment.carrierCode) && !!booking?.correlationId;
   const latestInbound = messages.filter(m => m.direction === "in")
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] || null;
 

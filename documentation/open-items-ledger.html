@@ -1,0 +1,522 @@
+<!doctype html><html><head><!-- frame-runtime --><base href="/_f/1787401979-9f4a/"><script>window.__FRAME_PREAMBLE={"capabilities":{"artifact":"artifact.oqIe8shs.js","assets":"assets.DBUJcvq_.js","comments":"comments.GLuHR3zP.js","db":"db.CRhVHzSt.js","downloads":"downloads.C3GSvEDP.js","embed":"embed.CZsbekoQ.js","mcp":"mcp.Bvma3qD7.js","network":"network.B5UA9Su4.js","permissions":"permissions.BNySkLV5.js","room":"room.DE7EMui-.js","sample":"sample.BW2Uysoh.js","self":"artifact.oqIe8shs.js","user":"user.BpKav-Rf.js"},"transforms":"_transforms.h3_8GSUa.js","comments":"_comments.BOgkE6qU.js","translate":"_translate.5HCW4BJh.js"}</script><script>(function(){"use strict";var Y=["light","dark","system"],X=/^[A-Za-z0-9_-]{1,64}$/,D=/^[a-zA-Z_:][a-zA-Z0-9_:.-]{0,127}$/,G=new Set(["class","hidden","value","checked"]);function V(e){const t=e.toLowerCase();return t.startsWith("data-")||t.startsWith("aria-")||G.has(t)}var be="http://www.w3.org/1999/xhtml",Z="http://www.w3.org/2000/svg",J=new Set(["script","style","iframe","noscript","noframes","noembed","xmp","plaintext","template","title","textarea","object","embed"]),Q=new Set(["script","style"]);function ee(e){const t=e.localName.toLowerCase();return e.namespaceURI==="http://www.w3.org/1999/xhtml"?!J.has(t):e.namespaceURI===Z?!Q.has(t):!1}var te=new Set(["html","head","body","frameset"]);function re(e){return e.namespaceURI==="http://www.w3.org/1999/xhtml"&&te.has(e.localName)}function ne(e){if(e===null||typeof e!="object")return!1;const t=e;if(typeof t.target!="string"||!X.test(t.target)||t.text!==void 0&&typeof t.text!="string")return!1;if(t.attrsSet!==void 0){if(t.attrsSet===null||typeof t.attrsSet!="object")return!1;for(const[n,s]of Object.entries(t.attrsSet))if(!D.test(n)||typeof s!="string")return!1}if(t.attrsRemoved!==void 0){if(!Array.isArray(t.attrsRemoved))return!1;for(const n of t.attrsRemoved)if(typeof n!="string"||!D.test(n))return!1}return!0}function se(e,t){if(e===null||typeof e!="object")return!1;const{seq:n,elements:s}=e;if(typeof n!="number"||!Number.isSafeInteger(n)||!Array.isArray(s)||s.length===0||s.length>64)return!1;for(let o=0;o<s.length;o++)if(!t(s[o]))return!1;return!0}function ae(e){return e===null||typeof e!="object"?!1:se(e.__frame_patch,ne)}function oe(e){if(e===null||typeof e!="object")return!1;const t=e.__frame_init;return t!==null&&typeof t=="object"}function ie(e){return e!==null&&typeof e=="object"&&e.__frame_size_poke===!0}function le(e){if(e===null||typeof e!="object")return!1;const t=e.__frame_theme;if(t===null||typeof t!="object")return!1;const n=t.theme;return typeof n=="string"&&Y.includes(n)}var O="__frame_scroll",ce=150,ue=310,fe=160,pe=3e4;function de(){let e=0,t=!1,n=!1,s=!1,o=0,l=null;const c=i=>{try{sessionStorage.setItem(O,JSON.stringify({y:i}))}catch{}},f=()=>{if(clearTimeout(e),l===null)return;const i=l;l=null,c(i)},S=()=>{if(t){t=!1;return}n=!0,l=scrollY,clearTimeout(e),e=setTimeout(f,ce)};try{addEventListener("scroll",S,{passive:!0}),addEventListener("pagehide",f)}catch{}const v=()=>{let i;try{i=sessionStorage.getItem(O)}catch{return null}if(i===null)return null;let d;try{d=JSON.parse(i)}catch{d=null}const u=d?.y;if(!(typeof u=="number"&&Number.isFinite(u)&&u>=0)){try{sessionStorage.removeItem(O)}catch{}return null}return u};let b=!1;const m=i=>{try{const d=scrollY;scrollTo({top:i,left:0,behavior:"instant"}),o=i,s=!0,clearTimeout(e),l=null,c(i);const u=scrollY;u!==d&&(t=!0),u!==i&&!b&&(b=!0,addEventListener("load",()=>{try{if(scrollY===u){const h=v();m(h!==null?h:o)}}catch{}},{once:!0}))}catch{}},y=()=>{try{return!!location.hash}catch{return!0}};let g=!1;const E=()=>{try{if(g||innerWidth>ue||innerHeight>fe)return;g=!0;const i=Date.now(),d=()=>{try{removeEventListener("resize",d)}catch{}if(Date.now()-i>pe||n||y())return;const u=v();m(u!==null?u:o)};addEventListener("resize",d)}catch{}};let r=!1,p=!1;return{restore(){if(r||(r=!0,y()))return;const i=v();i!==null&&(m(i),E())},promoted(){if(p||(p=!0,y()))return;const i=v();i!==null?(m(i),E()):s&&m(o)}}}var Ee="modulepreload",Ae=function(e){return"/"+e},Re={},me=function(t,n,s){let o=Promise.resolve();function l(c){const f=new Event("vite:preloadError",{cancelable:!0});if(f.payload=c,window.dispatchEvent(f),!f.defaultPrevented)throw c}return o.then(c=>{for(const f of c||[])f.status==="rejected"&&l(f.reason);return t().catch(l)})};(function(){const e=Object.defineProperty,t=globalThis,n=["RTCPeerConnection","webkitRTCPeerConnection","RTCDataChannel","RTCIceCandidate","RTCSessionDescription","RTCRtpSender","RTCRtpReceiver"];let s=0;for(let o=0;o<n.length;o++){const l=n[o];try{e(t,l,{value:void 0,writable:!1,configurable:!1})}catch{try{delete t[l]}catch{}try{e(t,l,{value:void 0,writable:!1,configurable:!0})}catch{}}typeof t[l]=="function"&&s++}if(s&&window!==top)try{parent.postMessage({__frame_rtc_lockdown_failed:s},"*")}catch{}})();var he=1e4,_e=Object.freeze([...window.__FRAME_PREAMBLE?.origins??["https://claude.ai","https://preview.claude.ai"]]);function F(e){for(const t of _e)if(t.endsWith(":*"))try{const n=new URL(e);if(`${n.protocol}//${n.hostname}:*`===t)return!0}catch{}else if(e===t)return!0;return!1}var M=Object.freeze({...window.__FRAME_PREAMBLE?.capabilities}),j=window.__FRAME_PREAMBLE?.transforms,N=window.__FRAME_PREAMBLE?.comments,I=window.__FRAME_PREAMBLE?.translate,L=/^[\w.-]+\.js$/;function T(e){return me(()=>import("/_runtime/"+e),void 0)}function z(e,t){return{contract:e.contract,changes:new Set(e.changes??[]),flags:new Set(e.flags??[]),capabilities:e.capabilities??{},capBudgets:e.capBudgets??{},transforms:new Map,shellOrigin:t,mount:W,pipe:()=>({wrap:(n,s)=>(...o)=>{try{return s(...o)}catch(l){return Promise.reject(l)}}})}}var P=null,w=null;function q(e,t,n){try{Object.defineProperty(e,t,{value:n,writable:!1,configurable:!1,enumerable:!0})}catch{try{Object.defineProperty(e,t,{value:n,writable:!1,configurable:!0,enumerable:!0})}catch{}}}var B=!1;function ve(e,t){const n=[];for(const s of e.elements){const o=document.querySelector(`[data-id="${s.target}"]`);if(!o){parent.postMessage({__frame_patch_miss:{seq:e.seq}},t);return}if([...Object.keys(s.attrsSet??{}),...s.attrsRemoved??[]].some(l=>!V(l))){parent.postMessage({__frame_patch_miss:{seq:e.seq}},t);return}if(s.text!==void 0&&(!ee(o)||re(o))){parent.postMessage({__frame_patch_miss:{seq:e.seq}},t);return}for(const[l,c]of Object.entries(s.attrsSet??{}))if(!$(o,l)){try{o.setAttribute(l,c)}catch{}H(o,l,c)}for(const l of s.attrsRemoved??[])$(o,l)||(o.removeAttribute(l),H(o,l,null));typeof s.text=="string"&&(o.textContent=s.text),n.push(s.target)}try{document.dispatchEvent(new CustomEvent("claude:edit",{detail:{seq:e.seq,targets:n}}))}catch{}}function H(e,t,n){if(!(e instanceof HTMLInputElement))return;const s=t.toLowerCase();s==="checked"?e.checked=n!==null:s==="value"&&e.type!=="file"&&(e.value=n??"")}function $(e,t){const n=t.toLowerCase(),s=e;return n==="data-id"||(n==="value"||n==="checked")&&(s.__artifactSecret===!0||/^(password|hidden|file)$/.test(s.type??"")||/(^|\s)(cc-|one-time-code|current-password|new-password)/i.test(`${e.getAttribute("autocomplete")??""} ${s.autocomplete??""}`))}function K(e){const t=document.documentElement;e==="light"||e==="dark"?(t.dataset.theme=e,t.style.colorScheme=e,B=!0):B&&(delete t.dataset.theme,t.style.colorScheme="",B=!1)}var R=new Map;function ye(){let e;const t={u:new Promise(n=>{e=n}),r:n=>{t.done=!0,e(n)},done:!1,nulled:!1};return t}var ge=Object.freeze(Object.assign(Object.create(null),{call:Function.prototype.call,apply:Function.prototype.apply,bind:Function.prototype.bind})),W=(e,t)=>{const n=R.get(e);if(!n||n.done){n?.nulled&&w&&parent.postMessage({__frame_cap_telemetry:{kind:"cap-load-error",cap:e}},w);return}const s=typeof t=="function"?Object.setPrototypeOf(t,ge):Object.assign(Object.create(null),t);typeof s.then=="function"&&delete s.then,n.r(Object.freeze(s))},U=Object.getOwnPropertyDescriptor(window,"claude");if(window!==top&&!(U&&U.writable===!1)){const e=j&&L.test(j)?T(j).catch(()=>{}):Promise.resolve(void 0),t=r=>{if(r.type==="auxclick"&&r.button!==1)return;const p=r.target,i=p&&p.closest?p.closest("a[href],area[href]"):null;if(!i)return;const d=i.getAttribute("href");if(!d)return;let u,h;try{u=new URL(d,document.baseURI),h=new URL(document.baseURI).origin}catch{return}if((u.protocol==="http:"||u.protocol==="https:")&&u.origin!==h){r.preventDefault();const _=(i.getAttribute("target")??"").toLowerCase(),C=r.type==="auxclick"||r.metaKey||r.ctrlKey||r.shiftKey||r.altKey||!["","_self","_top","_parent"].includes(_);parent.postMessage({__frame_nav:!0,url:u.href,newTab:C},"*")}};addEventListener("click",t,!0),addEventListener("auxclick",t,!0);const n={},s=r=>{r.isTrusted&&(n.pointer=!0)},o=r=>{r.isTrusted&&(n.click=!0)};addEventListener("pointermove",s,{capture:!0,passive:!0}),addEventListener("click",o,{capture:!0,passive:!0}),e.then(r=>{r?.wireNav&&(r.wireNav(),removeEventListener("click",t,!0),removeEventListener("auxclick",t,!0),removeEventListener("pointermove",s,!0),removeEventListener("click",o,!0),r.wireEngagement?.(n))});let l=null;try{l=de()}catch{}const c=U?.value??{};q(window,"claude",c);for(const r of Object.keys(M)){if(c[r]!==void 0){q(c,r,c[r]);continue}R.set(r,ye())}if(c.use===void 0){const r=p=>{if(typeof p!="string"||!Object.hasOwn(M,p))return Promise.resolve(null);const i=R.get(p);return i?i.u:Promise.resolve(c[p]??null)};try{Object.defineProperty(c,"use",{value:r,writable:!0,configurable:!0,enumerable:!1})}catch{}}let f=null,S=null,v=0;const b=r=>{r.source!==parent||!F(r.origin)||oe(r.data)&&(f=r.data.__frame_init,w=r.origin,removeEventListener("message",b),clearTimeout(v),S?.())};addEventListener("message",b),parent.postMessage({__frame_connect:!0},"*");const m=new Promise(r=>{S=r,v=setTimeout(()=>{removeEventListener("message",b),r()},he)}),y=document.readyState==="loading"?new Promise(r=>document.addEventListener("DOMContentLoaded",()=>r(),{once:!0})):Promise.resolve();y.then(()=>{try{l?.restore()}catch{}});const g={cb:null},E=r=>{if(!(r.source!==parent||!F(r.origin))&&ie(r.data)){try{l?.promoted()}catch{}g.cb?.()}};addEventListener("message",E),m.then(async()=>{if(!f||!w){for(const a of R.values())a.nulled=!0,a.r(null);return}K(f.theme);const r=w;let p=!1,i=!1;addEventListener("message",a=>{if(a.source!==parent||a.origin!==r)return;le(a.data)&&K(a.data.__frame_theme.theme),ae(a.data)&&ve(a.data.__frame_patch,r);const k=a.data?.__fc_mode;k&&typeof k=="object"&&!p&&N&&L.test(N)&&(p=!0,T(N).then(x=>x.install?.(r,k.on===!0)).catch(()=>{}));const A=a.data?.__ft_cmd;A&&typeof A=="object"&&!i&&I&&L.test(I)&&(i=!0,T(I).then(x=>x.install?.(r,A)).catch(()=>{}))});const d=Object.keys(f.capabilities??{}).filter(a=>Object.hasOwn(M,a)).map(a=>[a,M[a]]).filter(a=>typeof a[1]=="string"&&L.test(a[1])),u=await Promise.allSettled(d.map(([,a])=>T(a))),h=await e,_=w;if(h?.buildBoot||parent.postMessage({__frame_cap_telemetry:{kind:"cap-load-error",cap:"_transforms"}},_),h?.buildBoot)try{P=h.buildBoot(f,h.TRANSFORMS??{},{shellOrigin:_,mount:W},a=>parent.postMessage({__frame_cap_telemetry:a},_))}catch{parent.postMessage({__frame_cap_telemetry:{kind:"cap-load-error",cap:"_transforms"}},_),P=z(f,_)}else P=z(f,_);const C=a=>parent.postMessage({__frame_cap_telemetry:{kind:"cap-load-error",cap:a}},_),we=P;u.forEach((a,k)=>{const A=d[k][0];if(a.status!=="fulfilled"){C(A);return}try{a.value?.install?.(we)}catch{C(A)}});for(const a of R.values())a.done||(a.nulled=!0,a.r(null));await y,parent.postMessage({__frame_ready:!0},w),e.then(a=>a?.installSizeReporter?.(_,g))})}})();</script><!-- /frame-runtime --><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}</style></head><body>
+<title>Open Items Ledger</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Source+Sans+3:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #16232e;
+    --ink-soft: #3a4a58;
+    --paper: #f6f1e7;
+    --paper-raised: #fffdf8;
+    --line: #d8cfba;
+    --brass: #9c6a1f;
+    --brass-ink: #7a5218;
+    --chart-blue: #2b4c6f;
+    --sea: #2f6b4a;
+    --sea-bg: #e4efe6;
+    --amber: #a6741f;
+    --amber-bg: #f5ecd8;
+    --rust: #9c4326;
+    --rust-bg: #f2e5df;
+    --muted-bg: #e9e4d6;
+    --shadow: rgba(22, 35, 46, 0.08);
+  }
+  :root:not([data-theme="light"]) {
+    @media (prefers-color-scheme: dark) {
+      --ink: #ece4d2;
+      --ink-soft: #b9ae97;
+      --paper: #10191f;
+      --paper-raised: #172128;
+      --line: #2c3945;
+      --brass: #d3a54a;
+      --brass-ink: #e2bc72;
+      --chart-blue: #6f9bc2;
+      --sea: #6fbf8f;
+      --sea-bg: #163024;
+      --amber: #dcb15c;
+      --amber-bg: #332711;
+      --rust: #d98764;
+      --rust-bg: #34201a;
+      --muted-bg: #202b33;
+      --shadow: rgba(0, 0, 0, 0.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ink: #ece4d2;
+    --ink-soft: #b9ae97;
+    --paper: #10191f;
+    --paper-raised: #172128;
+    --line: #2c3945;
+    --brass: #d3a54a;
+    --brass-ink: #e2bc72;
+    --chart-blue: #6f9bc2;
+    --sea: #6fbf8f;
+    --sea-bg: #163024;
+    --amber: #dcb15c;
+    --amber-bg: #332711;
+    --rust: #d98764;
+    --rust-bg: #34201a;
+    --muted-bg: #202b33;
+    --shadow: rgba(0, 0, 0, 0.35);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Source Sans 3", ui-sans-serif, system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.55;
+  }
+  .wrap {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 56px 24px 96px;
+  }
+
+  h1, h2, h3 { font-family: "Fraunces", Georgia, serif; text-wrap: balance; margin: 0; }
+
+  .eyebrow {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 11.5px;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--brass-ink);
+    margin: 0 0 10px;
+  }
+  h1 {
+    font-size: clamp(30px, 4.4vw, 42px);
+    font-weight: 600;
+    color: var(--ink);
+  }
+  .lede {
+    font-size: 16.5px;
+    color: var(--ink-soft);
+    max-width: 62ch;
+    margin: 16px 0 0;
+  }
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    overflow: hidden;
+    margin: 32px 0 8px;
+  }
+  .stat {
+    background: var(--paper-raised);
+    padding: 18px 20px;
+  }
+  .stat-num {
+    font-family: "IBM Plex Mono", monospace;
+    font-variant-numeric: tabular-nums;
+    font-size: 26px;
+    font-weight: 600;
+    color: var(--ink);
+  }
+  .stat-label {
+    font-size: 12px;
+    color: var(--ink-soft);
+    margin-top: 2px;
+  }
+
+  .note {
+    font-size: 13px;
+    color: var(--ink-soft);
+    border-left: 2px solid var(--brass);
+    padding: 10px 16px;
+    margin: 28px 0 0;
+    background: var(--paper-raised);
+    border-radius: 0 6px 6px 0;
+  }
+  .note strong { color: var(--ink); }
+  .note code {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    background: var(--muted-bg);
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+
+  section.tier {
+    margin-top: 56px;
+  }
+  .tier-head {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 6px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--line);
+  }
+  .tier-head h2 {
+    font-size: 22px;
+    font-weight: 600;
+  }
+  .tier-count {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    color: var(--ink-soft);
+    background: var(--muted-bg);
+    padding: 2px 9px;
+    border-radius: 20px;
+  }
+  .tier-desc {
+    font-size: 13.5px;
+    color: var(--ink-soft);
+    margin: 10px 0 22px;
+    max-width: 68ch;
+  }
+
+  .epic {
+    background: var(--paper-raised);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 18px 20px 6px;
+    margin-bottom: 18px;
+    box-shadow: 0 1px 2px var(--shadow);
+  }
+  .epic-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .epic-title {
+    font-family: "Fraunces", serif;
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--ink);
+  }
+  .epic-id {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    color: var(--ink-soft);
+    margin-left: 8px;
+    font-weight: 400;
+  }
+  .epic-context {
+    font-size: 13px;
+    color: var(--ink-soft);
+    margin: 8px 0 14px;
+    max-width: 70ch;
+  }
+
+  .items { border-top: 1px solid var(--line); }
+  .item {
+    display: grid;
+    grid-template-columns: 90px 1fr auto;
+    gap: 12px;
+    align-items: start;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .item:last-child { border-bottom: none; }
+  .item-id {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    color: var(--ink-soft);
+    padding-top: 2px;
+  }
+  .item-title { font-size: 14px; color: var(--ink); font-weight: 500; }
+  .item-why { font-size: 12.5px; color: var(--ink-soft); margin-top: 3px; }
+  .pill {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    padding: 3px 9px;
+    border-radius: 20px;
+    white-space: nowrap;
+    height: fit-content;
+  }
+  .pill-high { color: var(--rust); background: var(--rust-bg); }
+  .pill-medium { color: var(--amber); background: var(--amber-bg); }
+  .pill-low { color: var(--ink-soft); background: var(--muted-bg); }
+  .pill-done { color: var(--sea); background: var(--sea-bg); }
+
+  .fixes {
+    margin-top: 56px;
+    padding: 20px 22px;
+    background: var(--sea-bg);
+    border: 1px solid var(--sea);
+    border-radius: 10px;
+  }
+  .fixes h2 {
+    font-size: 17px;
+    color: var(--sea);
+    margin-bottom: 10px;
+  }
+  .fixes ul { margin: 0; padding-left: 20px; }
+  .fixes li { font-size: 13.5px; margin-bottom: 6px; color: var(--ink); }
+  .fixes code {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    background: var(--paper-raised);
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+
+  footer {
+    margin-top: 64px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+    font-size: 12px;
+    color: var(--ink-soft);
+    font-family: "IBM Plex Mono", monospace;
+  }
+
+  @media (max-width: 560px) {
+    .stats { grid-template-columns: 1fr; }
+    .item { grid-template-columns: 1fr; }
+    .item-id { padding-top: 0; }
+  }
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">CargoDesk · Kanban Audit · 2026-08-22</p>
+  <h1>Open Items Ledger</h1>
+  <p class="lede">
+    Every open Epic and Story in the board right now, pulled live and cross-checked against
+    the actual codebase rather than recalled from memory — two entries turned out to be stale
+    against work already shipped and were reconciled in the process (see the note at the bottom).
+  </p>
+
+  <div class="stats">
+    <div class="stat">
+      <div class="stat-num">16</div>
+      <div class="stat-label">open stories <span style="font-weight:400;font-size:11px">(was 24 — see ✓ Done tags, verified 2026-08-25)</span></div>
+    </div>
+    <div class="stat">
+      <div class="stat-num">7</div>
+      <div class="stat-label">active epics</div>
+    </div>
+    <div class="stat">
+      <div class="stat-num">2</div>
+      <div class="stat-label">tickets reconciled this pass</div>
+    </div>
+  </div>
+
+  <section class="tier">
+    <div class="tier-head">
+      <h2>Mid-epic — the natural next step</h2>
+      <span class="tier-count">2 stories</span>
+    </div>
+    <p class="tier-desc">
+      Invoicing Discipline &amp; Billing Performance is 3 of 5 stories in — the payment-receipt
+      record, the sent-status signal, and the per-customer deadline flag all shipped this
+      session. These two are what's left to close the epic out.
+    </p>
+
+    <div class="epic">
+      <div class="epic-head">
+        <div><span class="epic-title">Invoicing Discipline &amp; Billing Performance</span><span class="epic-id">TKT-KR6ZBT</span></div>
+      </div>
+      <p class="epic-context">3 of 5 shipped (Mark as Paid, first_sent_at, invoice-generation deadline) — both remaining stories now have real data to draw on.</p>
+      <div class="items">
+        <div class="item">
+          <span class="item-id">TKT-B4VBDH</span>
+          <div>
+            <div class="item-title">Billing Performance report — new Reports child page</div>
+            <div class="item-why">Draft/Confirmed/Voided × Sent/Not-Sent × Paid/Unpaid/Overdue, sliceable by office, customer, trade lane, carrier. The shell/aging slice could ship before the rest.</div>
+          </div>
+          <span class="pill pill-done">✓ Done v0.76.0</span>
+        </div>
+        <div class="item">
+          <span class="item-id">TKT-4TEYT1</span>
+          <div>
+            <div class="item-title">Configurable per-customer reminder cadence</div>
+            <div class="item-why">Keyed off each customer's own credit_terms_days/invoice_deadline_days — a same-day payer and an end-of-month consolidator get different cadences, not one fixed schedule. Absorbs the older, generic TKT-SUEDWH.</div>
+          </div>
+          <span class="pill pill-done">✓ Done</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="tier">
+    <div class="tier-head">
+      <h2>Standalone, ready, not started</h2>
+      <span class="tier-count">14 stories · 3 epics</span>
+    </div>
+    <p class="tier-desc">
+      Each of these has its own prior gap-analysis writeup already published as an artifact —
+      the research is done, only the build is queued.
+    </p>
+
+    <div class="epic">
+      <div class="epic-head">
+        <div><span class="epic-title">FCL Coverage Audit — Gap Closure</span><span class="epic-id">TKT-6PO7SV</span></div>
+      </div>
+      <p class="epic-context">DocShipper shipping-glossary cross-check against CargoDesk's actual FCL schema/routes. Confirms the FCL core already matches or exceeds industry-standard definitions — these are the 5 real gaps it found (a 6th, the Master/House B/L split, turned out already shipped — see the reconciliation note below).</p>
+      <div class="items">
+        <div class="item">
+          <span class="item-id">TKT-Q13HBD</span>
+          <div><div class="item-title">Arrival Notice document (AN01)</div><div class="item-why">One of the highest-frequency import documents — no dedicated doc type today, only the generic "Other."</div></div>
+          <span class="pill pill-done">✓ Done</span>
+        </div>
+        <div class="item">
+          <span class="item-id">TKT-V5KU48</span>
+          <div><div class="item-title">Delivery Order document (DO01)</div><div class="item-why">Cargo-release authorization to the destination trucker once the B/L is surrendered — routine, high-frequency, no dedicated type today.</div></div>
+          <span class="pill pill-done">✓ Done</span>
+        </div>
+        <div class="item">
+          <span class="item-id">TKT-QSUTQ7</span>
+          <div><div class="item-title">Equipment condition capture at gate in/out (EIR)</div><div class="item-why">container_events logs when a container moved, not its condition — no damage notation, photo, or interchange signature. A disputed detention charge usually comes down to proving condition.</div></div>
+          <span class="pill pill-done">✓ Done</span>
+        </div>
+        <div class="item">
+          <span class="item-id">TKT-V8MIG0</span>
+          <div><div class="item-title">Chassis / drayage equipment tracking</div><div class="item-why">movement_by captures the mode (Truck/Rail/Barge/Vessel) but nothing models the chassis itself — a real, separate cost and delay driver in US drayage.</div></div>
+          <span class="pill pill-done">✓ Done</span>
+        </div>
+        <div class="item">
+          <span class="item-id">TKT-U6IZCL</span>
+          <div><div class="item-title">Landed-cost / duty estimate</div><div class="item-why">Both inputs a duty estimate needs (declared_value, hs_code) already exist — nothing computes from them yet. CD01 declares the goods, doesn't cost them.</div></div>
+          <span class="pill pill-done">✓ Done</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="epic">
+      <div class="epic-head">
+        <div><span class="epic-title">NVOCC Support — remaining scope</span><span class="epic-id">TKT-Q52B38</span></div>
+      </div>
+      <p class="epic-context">4 of 7 findings shipped in v0.71.0 (party role, licensing, booking shipper-of-record, Master B/L document). These 3 are the larger structural pieces deliberately not rushed through in that pass.</p>
+      <div class="items">
+        <div class="item">
+          <span class="item-id">TKT-9O2B3T</span>
+          <div><div class="item-title">Structural dual carrier/shipper split on the shipment record</div><div class="item-why">carrier_code/principal_id are single-slot — no way to independently record "who we bought vessel capacity from" vs. "who we are as carrier-of-record to our own customer."</div></div>
+          <span class="pill pill-medium">Medium</span>
+        </div>
+        <div class="item">
+          <span class="item-id">TKT-IB5IEX</span>
+          <div><div class="item-title">Destination deconsolidation / two-stage cargo release</div><div class="item-why">Real NVOCC destination handling is two distinct release events — carrier to the NVOCC's agent, then the NVOCC to the actual consignee. Only the first is modeled today.</div></div>
+          <span class="pill pill-medium">Medium</span>
+        </div>
+        <div class="item">
+          <span class="item-id">TKT-UR1X17</span>
+          <div><div class="item-title">NVOCC co-loading / cross-tariff reference</div><div class="item-why">One NVOCC occasionally tenders cargo through another NVOCC's tariff rather than direct to a vessel operator — a real but less common pattern.</div></div>
+          <span class="pill pill-low">Low</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="epic">
+      <div class="epic-head">
+        <div><span class="epic-title">Competitive Gap Analysis — remaining roadmap</span><span class="epic-id">TKT-GTGM6R</span></div>
+      </div>
+      <p class="epic-context">The original CargoWise/Magaya/Descartes/project44/Flexport research sweep — Freight Audit &amp; Payment and multi-list screening already shipped (v0.69.0). These 5 are what's left, ranked by how confirmed the gap is versus how large the build is.</p>
+      <div class="items">
+        <div class="item">
+          <span class="item-id">TKT-EWEFV1</span>
+          <div><div class="item-title">Customer self-service portal</div><div class="item-why">Every competitor has some branded customer-facing surface (CargoWise Neo, Magaya Digital Freight Portal). CargoDesk's only customer-facing surface today is an unauthenticated, 30-day-expiring tracking link.</div></div>
+          <span class="pill pill-high">High</span>
+        </div>
+        <div class="item">
+          <span class="item-id">TKT-WW8THL</span>
+          <div><div class="item-title">CRM / pre-sales pipeline</div><div class="item-why">No opportunity/lead-tracking layer ahead of the shipment lifecycle — every competitor platform bundles one.</div></div>
+          <span class="pill pill-medium">Medium</span>
+        </div>
+        <div class="item">
+          <span class="item-id">TKT-IXAR9G</span>
+          <div><div class="item-title">Scheduled / emailed reports</div><div class="item-why">Reporting today is manual-trigger only. Reuses office_mail_settings, already built for the invoice-email flow.</div></div>
+          <span class="pill pill-done">✓ Done</span>
+        </div>
+        <div class="item">
+          <span class="item-id">TKT-EEV4I9</span>
+          <div><div class="item-title">Multi-entity / multi-branch accounting</div><div class="item-why">shipment_cost_lines has no office_id or ledger boundary at all — offices is routing metadata today, not an accounting entity.</div></div>
+          <span class="pill pill-low">Low</span>
+        </div>
+        <div class="item">
+          <span class="item-id">TKT-PS8LGU</span>
+          <div><div class="item-title">External rate benchmarking (real market index)</div><div class="item-why">RateBenchmarkPage already exists but only compares CargoDesk's own contracts against each other — a real index needs a paid third-party data source.</div></div>
+          <span class="pill pill-low">Low</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="tier">
+    <div class="tier-head">
+      <h2>Deliberately deferred</h2>
+      <span class="tier-count">1 item</span>
+    </div>
+    <p class="tier-desc">
+      Not a blind spot — a standing decision, re-confirmed by two independent research passes.
+    </p>
+    <div class="epic">
+      <div class="items">
+        <div class="item">
+          <span class="item-id">TKT-YAQK5C</span>
+          <div>
+            <div class="item-title">LCL / consolidation / bundled WMS</div>
+            <div class="item-why">The single largest real capability gap this platform has, confirmed independently by both the CargoWise and Magaya research angles — consol/deconsol wizards, W/M revenue-ton rating, pro-rata surcharge allocation. Explicitly not scheduled under the standing FCL-first roadmap decision.</div>
+          </div>
+          <span class="pill pill-low">Not scheduled</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="tier">
+    <div class="tier-head">
+      <h2>Technical debt &amp; infrastructure</h2>
+      <span class="tier-count">7 stories · 3 epics</span>
+    </div>
+    <p class="tier-desc">
+      No user-facing gap — these are about keeping the codebase and the platform itself
+      workable as it grows.
+    </p>
+
+    <div class="epic">
+      <div class="epic-head">
+        <div><span class="epic-title">Split KanbanPage.jsx (4,358 lines)</span><span class="epic-id">TKT-GKO9UN</span></div>
+      </div>
+      <p class="epic-context">Into a components/ folder — 4 extraction passes (ticket-detail, board-management, test-suite, remaining misc + final bundle verification).</p>
+    </div>
+
+    <div class="epic">
+      <div class="epic-head">
+        <div><span class="epic-title">Split App.jsx's modal components (3,977 lines)</span><span class="epic-id">TKT-MRFL3O</span></div>
+      </div>
+      <p class="epic-context">Into their own files — document-action modals, then the remaining shell components.</p>
+    </div>
+
+    <div class="epic">
+      <div class="epic-head">
+        <div><span class="epic-title">SQLite ceiling — Postgres proof-of-concept</span><span class="epic-id">TKT-FYVYGR</span></div>
+      </div>
+      <p class="epic-context">Design doc already written. One story left: migrate one small, low-traffic table to a real local Postgres instance in a throwaway branch and confirm the pattern actually works.</p>
+    </div>
+
+    <div class="epic">
+      <div class="epic-head">
+        <div><span class="epic-title">Work Item Management Parity</span><span class="epic-id">TKT-TKVVSZ</span></div>
+      </div>
+      <p class="epic-context">Port the Work Item Management feature set already shipped in the sibling Athena project — per-ticket comment threads, file attachments, bulk multi-select operations, labels &amp; components, story points, custom fields. CargoDesk tickets already carry shipment_id, so bulk-patch and custom-fields logic need a compatibility check against shipment-linked tickets first. Explicitly backlogged behind the FCL shipment-management work.</p>
+    </div>
+  </section>
+
+  <div class="fixes">
+    <h2>Reconciled while building this ledger</h2>
+    <ul>
+      <li><code>TKT-8DXLP7</code> ("Master B/L vs House B/L split," under the FCL Coverage Audit) proposed adding exactly what <strong>v0.71.0 already shipped</strong> — <code>master_bl_number</code> existed even earlier, and that release added the NVOCC identity row on the House B/L plus a full independent MB01 Master Bill of Lading document, going further than this ticket asked. Marked <strong>Done</strong> as stale rather than left open as if still a gap.</li>
+      <li><code>TKT-SUEDWH</code> (the original, generic "dunning emails" story under Credit Control Depth) is now superseded by the more specific <code>TKT-4TEYT1</code> built from a direct follow-up request. Linked as <strong>Duplicates</strong> rather than silently left open twice.</li>
+    </ul>
+    <h2 style="margin-top:26px">Status update — verified 2026-08-25</h2>
+    <p class="sans" style="margin:0 0 10px">8 more tickets marked <span class="pill pill-done" style="display:inline">✓ Done</span> above have shipped since this ledger was written: <code>TKT-B4VBDH</code> (Billing Performance report, v0.76.0), <code>TKT-4TEYT1</code> (reminder cadence), <code>TKT-Q13HBD</code> (Arrival Notice/AN01), <code>TKT-V5KU48</code> (Delivery Order/DO01), <code>TKT-QSUTQ7</code> (EIR condition capture), <code>TKT-V8MIG0</code> (chassis/drayage tracking), <code>TKT-U6IZCL</code> (landed-cost estimate), and <code>TKT-IXAR9G</code> (Scheduled Reports). Real open count today is materially below the "24" this ledger originally reported — see the updated stat above.</p>
+  </div>
+
+  <footer>Pulled live from the Kanban API and cross-checked against the current codebase — not recalled from memory.</footer>
+</div>
+
+</body></html>

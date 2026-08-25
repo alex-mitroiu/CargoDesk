@@ -11,6 +11,8 @@ import Pagination from "../components/primitives/Pagination";
 import PageSizeSelect, { getStoredPageSize } from "../components/primitives/PageSizeSelect";
 import UserManagementPanel from "../components/UserManagementPanel";
 import { AiOrb, ORB_STYLES } from "../components/shared/AiOrb";
+import { IconSettings } from "../components/primitives/Icon";
+import EadapterConfigModal from "../components/shared/EadapterConfigModal";
 
 // ─── External API definitions ─────────────────────────────────────────────────
 
@@ -1585,6 +1587,51 @@ export default function AppSettingsPage() {
     </div>
   );
 
+  // ── eAdapter card — the whole per-carrier EDI-connectivity feature lives behind this one
+  // toggle + gear icon, not the generic ExternalCard/EXTERNAL_APIS shape below (that assumes one
+  // scalar API key; this needs N carrier sub-configs, hence the tabbed modal). Turning the
+  // toggle off gates ALL carriers uniformly — see isEdiBookable() (server.js) — including the
+  // built-in 3 (MAEU/SAFM/MCPU), which don't need a config row here to keep working today.
+  const EadapterCard = () => {
+    const [modalOpen, setModalOpen] = useState(false);
+    const enabled = settings?.api_eadapter_enabled !== 'false';
+    return (
+      <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, background: T.surface,
+        overflow: "hidden", opacity: enabled ? 1 : 0.65, transition: "opacity 0.2s" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", padding: "16px 20px 14px" }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 5 }}>
+              <span style={{ fontFamily: T.body, fontSize: 15, fontWeight: 700, color: T.text }}>Carrier EDI Adapter (eAdapter)</span>
+              {!enabled && (
+                <span style={{ fontFamily: T.mono, fontSize: 10, color: T.warning,
+                  background: `${T.warning}18`, border: `1px solid ${T.warning}44`,
+                  borderRadius: 4, padding: "2px 8px" }}>DISABLED</span>
+              )}
+            </div>
+            <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, lineHeight: 1.5 }}>
+              Real per-carrier EDI connectivity for carrier booking communication. MAEU/SAFM/MCPU
+              work out of the box; add more carriers below.
+            </div>
+            {!enabled && (
+              <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.warning, marginTop: 6, lineHeight: 1.5 }}>
+                All carriers fall back to manual booking (no EDI messaging) while this is off.
+              </div>
+            )}
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
+            <button type="button" onClick={() => setModalOpen(true)} title="Configure carriers"
+              style={{ width: 32, height: 32, borderRadius: 8, border: `1px solid ${T.border}`,
+                background: T.bg, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <IconSettings size={15} color={T.textMuted} />
+            </button>
+            <Toggle on={enabled} onChange={() => toggle({ name: "eAdapter", settingKey: "api_eadapter_enabled" })} />
+          </div>
+        </div>
+        {modalOpen && <EadapterConfigModal onClose={() => setModalOpen(false)} />}
+      </div>
+    );
+  };
+
   // ── External API card ──
   const ExternalCard = ({ apiDef }) => {
     const enabled       = settings[`api_${apiDef.id}_enabled`] !== 'false';
@@ -1922,6 +1969,7 @@ export default function AppSettingsPage() {
 
           {activeApiSub === "External APIs" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <EadapterCard />
               {settings && (
                 <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
                   padding: "14px 16px" }}>

@@ -1,0 +1,1014 @@
+<!doctype html><html><head><!-- frame-runtime --><base href="/_f/1783596313-fdc8/"><script>window.__FRAME_PREAMBLE={"capabilities":{"artifact":"artifact.oqIe8shs.js","assets":"assets.DBUJcvq_.js","comments":"comments.GLuHR3zP.js","db":"db.CRhVHzSt.js","downloads":"downloads.C3GSvEDP.js","embed":"embed.CZsbekoQ.js","mcp":"mcp.Bvma3qD7.js","network":"network.B5UA9Su4.js","permissions":"permissions.BNySkLV5.js","room":"room.DE7EMui-.js","sample":"sample.BW2Uysoh.js","self":"artifact.oqIe8shs.js","user":"user.BpKav-Rf.js"},"transforms":"_transforms.h3_8GSUa.js","comments":"_comments.BOgkE6qU.js","translate":"_translate.5HCW4BJh.js"}</script><script>(function(){"use strict";var Y=["light","dark","system"],X=/^[A-Za-z0-9_-]{1,64}$/,D=/^[a-zA-Z_:][a-zA-Z0-9_:.-]{0,127}$/,G=new Set(["class","hidden","value","checked"]);function V(e){const t=e.toLowerCase();return t.startsWith("data-")||t.startsWith("aria-")||G.has(t)}var be="http://www.w3.org/1999/xhtml",Z="http://www.w3.org/2000/svg",J=new Set(["script","style","iframe","noscript","noframes","noembed","xmp","plaintext","template","title","textarea","object","embed"]),Q=new Set(["script","style"]);function ee(e){const t=e.localName.toLowerCase();return e.namespaceURI==="http://www.w3.org/1999/xhtml"?!J.has(t):e.namespaceURI===Z?!Q.has(t):!1}var te=new Set(["html","head","body","frameset"]);function re(e){return e.namespaceURI==="http://www.w3.org/1999/xhtml"&&te.has(e.localName)}function ne(e){if(e===null||typeof e!="object")return!1;const t=e;if(typeof t.target!="string"||!X.test(t.target)||t.text!==void 0&&typeof t.text!="string")return!1;if(t.attrsSet!==void 0){if(t.attrsSet===null||typeof t.attrsSet!="object")return!1;for(const[n,s]of Object.entries(t.attrsSet))if(!D.test(n)||typeof s!="string")return!1}if(t.attrsRemoved!==void 0){if(!Array.isArray(t.attrsRemoved))return!1;for(const n of t.attrsRemoved)if(typeof n!="string"||!D.test(n))return!1}return!0}function se(e,t){if(e===null||typeof e!="object")return!1;const{seq:n,elements:s}=e;if(typeof n!="number"||!Number.isSafeInteger(n)||!Array.isArray(s)||s.length===0||s.length>64)return!1;for(let o=0;o<s.length;o++)if(!t(s[o]))return!1;return!0}function ae(e){return e===null||typeof e!="object"?!1:se(e.__frame_patch,ne)}function oe(e){if(e===null||typeof e!="object")return!1;const t=e.__frame_init;return t!==null&&typeof t=="object"}function ie(e){return e!==null&&typeof e=="object"&&e.__frame_size_poke===!0}function le(e){if(e===null||typeof e!="object")return!1;const t=e.__frame_theme;if(t===null||typeof t!="object")return!1;const n=t.theme;return typeof n=="string"&&Y.includes(n)}var O="__frame_scroll",ce=150,ue=310,fe=160,pe=3e4;function de(){let e=0,t=!1,n=!1,s=!1,o=0,l=null;const c=i=>{try{sessionStorage.setItem(O,JSON.stringify({y:i}))}catch{}},f=()=>{if(clearTimeout(e),l===null)return;const i=l;l=null,c(i)},S=()=>{if(t){t=!1;return}n=!0,l=scrollY,clearTimeout(e),e=setTimeout(f,ce)};try{addEventListener("scroll",S,{passive:!0}),addEventListener("pagehide",f)}catch{}const v=()=>{let i;try{i=sessionStorage.getItem(O)}catch{return null}if(i===null)return null;let d;try{d=JSON.parse(i)}catch{d=null}const u=d?.y;if(!(typeof u=="number"&&Number.isFinite(u)&&u>=0)){try{sessionStorage.removeItem(O)}catch{}return null}return u};let b=!1;const m=i=>{try{const d=scrollY;scrollTo({top:i,left:0,behavior:"instant"}),o=i,s=!0,clearTimeout(e),l=null,c(i);const u=scrollY;u!==d&&(t=!0),u!==i&&!b&&(b=!0,addEventListener("load",()=>{try{if(scrollY===u){const h=v();m(h!==null?h:o)}}catch{}},{once:!0}))}catch{}},y=()=>{try{return!!location.hash}catch{return!0}};let g=!1;const E=()=>{try{if(g||innerWidth>ue||innerHeight>fe)return;g=!0;const i=Date.now(),d=()=>{try{removeEventListener("resize",d)}catch{}if(Date.now()-i>pe||n||y())return;const u=v();m(u!==null?u:o)};addEventListener("resize",d)}catch{}};let r=!1,p=!1;return{restore(){if(r||(r=!0,y()))return;const i=v();i!==null&&(m(i),E())},promoted(){if(p||(p=!0,y()))return;const i=v();i!==null?(m(i),E()):s&&m(o)}}}var Ee="modulepreload",Ae=function(e){return"/"+e},Re={},me=function(t,n,s){let o=Promise.resolve();function l(c){const f=new Event("vite:preloadError",{cancelable:!0});if(f.payload=c,window.dispatchEvent(f),!f.defaultPrevented)throw c}return o.then(c=>{for(const f of c||[])f.status==="rejected"&&l(f.reason);return t().catch(l)})};(function(){const e=Object.defineProperty,t=globalThis,n=["RTCPeerConnection","webkitRTCPeerConnection","RTCDataChannel","RTCIceCandidate","RTCSessionDescription","RTCRtpSender","RTCRtpReceiver"];let s=0;for(let o=0;o<n.length;o++){const l=n[o];try{e(t,l,{value:void 0,writable:!1,configurable:!1})}catch{try{delete t[l]}catch{}try{e(t,l,{value:void 0,writable:!1,configurable:!0})}catch{}}typeof t[l]=="function"&&s++}if(s&&window!==top)try{parent.postMessage({__frame_rtc_lockdown_failed:s},"*")}catch{}})();var he=1e4,_e=Object.freeze([...window.__FRAME_PREAMBLE?.origins??["https://claude.ai","https://preview.claude.ai"]]);function F(e){for(const t of _e)if(t.endsWith(":*"))try{const n=new URL(e);if(`${n.protocol}//${n.hostname}:*`===t)return!0}catch{}else if(e===t)return!0;return!1}var M=Object.freeze({...window.__FRAME_PREAMBLE?.capabilities}),j=window.__FRAME_PREAMBLE?.transforms,N=window.__FRAME_PREAMBLE?.comments,I=window.__FRAME_PREAMBLE?.translate,L=/^[\w.-]+\.js$/;function T(e){return me(()=>import("/_runtime/"+e),void 0)}function z(e,t){return{contract:e.contract,changes:new Set(e.changes??[]),flags:new Set(e.flags??[]),capabilities:e.capabilities??{},capBudgets:e.capBudgets??{},transforms:new Map,shellOrigin:t,mount:W,pipe:()=>({wrap:(n,s)=>(...o)=>{try{return s(...o)}catch(l){return Promise.reject(l)}}})}}var P=null,w=null;function q(e,t,n){try{Object.defineProperty(e,t,{value:n,writable:!1,configurable:!1,enumerable:!0})}catch{try{Object.defineProperty(e,t,{value:n,writable:!1,configurable:!0,enumerable:!0})}catch{}}}var B=!1;function ve(e,t){const n=[];for(const s of e.elements){const o=document.querySelector(`[data-id="${s.target}"]`);if(!o){parent.postMessage({__frame_patch_miss:{seq:e.seq}},t);return}if([...Object.keys(s.attrsSet??{}),...s.attrsRemoved??[]].some(l=>!V(l))){parent.postMessage({__frame_patch_miss:{seq:e.seq}},t);return}if(s.text!==void 0&&(!ee(o)||re(o))){parent.postMessage({__frame_patch_miss:{seq:e.seq}},t);return}for(const[l,c]of Object.entries(s.attrsSet??{}))if(!$(o,l)){try{o.setAttribute(l,c)}catch{}H(o,l,c)}for(const l of s.attrsRemoved??[])$(o,l)||(o.removeAttribute(l),H(o,l,null));typeof s.text=="string"&&(o.textContent=s.text),n.push(s.target)}try{document.dispatchEvent(new CustomEvent("claude:edit",{detail:{seq:e.seq,targets:n}}))}catch{}}function H(e,t,n){if(!(e instanceof HTMLInputElement))return;const s=t.toLowerCase();s==="checked"?e.checked=n!==null:s==="value"&&e.type!=="file"&&(e.value=n??"")}function $(e,t){const n=t.toLowerCase(),s=e;return n==="data-id"||(n==="value"||n==="checked")&&(s.__artifactSecret===!0||/^(password|hidden|file)$/.test(s.type??"")||/(^|\s)(cc-|one-time-code|current-password|new-password)/i.test(`${e.getAttribute("autocomplete")??""} ${s.autocomplete??""}`))}function K(e){const t=document.documentElement;e==="light"||e==="dark"?(t.dataset.theme=e,t.style.colorScheme=e,B=!0):B&&(delete t.dataset.theme,t.style.colorScheme="",B=!1)}var R=new Map;function ye(){let e;const t={u:new Promise(n=>{e=n}),r:n=>{t.done=!0,e(n)},done:!1,nulled:!1};return t}var ge=Object.freeze(Object.assign(Object.create(null),{call:Function.prototype.call,apply:Function.prototype.apply,bind:Function.prototype.bind})),W=(e,t)=>{const n=R.get(e);if(!n||n.done){n?.nulled&&w&&parent.postMessage({__frame_cap_telemetry:{kind:"cap-load-error",cap:e}},w);return}const s=typeof t=="function"?Object.setPrototypeOf(t,ge):Object.assign(Object.create(null),t);typeof s.then=="function"&&delete s.then,n.r(Object.freeze(s))},U=Object.getOwnPropertyDescriptor(window,"claude");if(window!==top&&!(U&&U.writable===!1)){const e=j&&L.test(j)?T(j).catch(()=>{}):Promise.resolve(void 0),t=r=>{if(r.type==="auxclick"&&r.button!==1)return;const p=r.target,i=p&&p.closest?p.closest("a[href],area[href]"):null;if(!i)return;const d=i.getAttribute("href");if(!d)return;let u,h;try{u=new URL(d,document.baseURI),h=new URL(document.baseURI).origin}catch{return}if((u.protocol==="http:"||u.protocol==="https:")&&u.origin!==h){r.preventDefault();const _=(i.getAttribute("target")??"").toLowerCase(),C=r.type==="auxclick"||r.metaKey||r.ctrlKey||r.shiftKey||r.altKey||!["","_self","_top","_parent"].includes(_);parent.postMessage({__frame_nav:!0,url:u.href,newTab:C},"*")}};addEventListener("click",t,!0),addEventListener("auxclick",t,!0);const n={},s=r=>{r.isTrusted&&(n.pointer=!0)},o=r=>{r.isTrusted&&(n.click=!0)};addEventListener("pointermove",s,{capture:!0,passive:!0}),addEventListener("click",o,{capture:!0,passive:!0}),e.then(r=>{r?.wireNav&&(r.wireNav(),removeEventListener("click",t,!0),removeEventListener("auxclick",t,!0),removeEventListener("pointermove",s,!0),removeEventListener("click",o,!0),r.wireEngagement?.(n))});let l=null;try{l=de()}catch{}const c=U?.value??{};q(window,"claude",c);for(const r of Object.keys(M)){if(c[r]!==void 0){q(c,r,c[r]);continue}R.set(r,ye())}if(c.use===void 0){const r=p=>{if(typeof p!="string"||!Object.hasOwn(M,p))return Promise.resolve(null);const i=R.get(p);return i?i.u:Promise.resolve(c[p]??null)};try{Object.defineProperty(c,"use",{value:r,writable:!0,configurable:!0,enumerable:!1})}catch{}}let f=null,S=null,v=0;const b=r=>{r.source!==parent||!F(r.origin)||oe(r.data)&&(f=r.data.__frame_init,w=r.origin,removeEventListener("message",b),clearTimeout(v),S?.())};addEventListener("message",b),parent.postMessage({__frame_connect:!0},"*");const m=new Promise(r=>{S=r,v=setTimeout(()=>{removeEventListener("message",b),r()},he)}),y=document.readyState==="loading"?new Promise(r=>document.addEventListener("DOMContentLoaded",()=>r(),{once:!0})):Promise.resolve();y.then(()=>{try{l?.restore()}catch{}});const g={cb:null},E=r=>{if(!(r.source!==parent||!F(r.origin))&&ie(r.data)){try{l?.promoted()}catch{}g.cb?.()}};addEventListener("message",E),m.then(async()=>{if(!f||!w){for(const a of R.values())a.nulled=!0,a.r(null);return}K(f.theme);const r=w;let p=!1,i=!1;addEventListener("message",a=>{if(a.source!==parent||a.origin!==r)return;le(a.data)&&K(a.data.__frame_theme.theme),ae(a.data)&&ve(a.data.__frame_patch,r);const k=a.data?.__fc_mode;k&&typeof k=="object"&&!p&&N&&L.test(N)&&(p=!0,T(N).then(x=>x.install?.(r,k.on===!0)).catch(()=>{}));const A=a.data?.__ft_cmd;A&&typeof A=="object"&&!i&&I&&L.test(I)&&(i=!0,T(I).then(x=>x.install?.(r,A)).catch(()=>{}))});const d=Object.keys(f.capabilities??{}).filter(a=>Object.hasOwn(M,a)).map(a=>[a,M[a]]).filter(a=>typeof a[1]=="string"&&L.test(a[1])),u=await Promise.allSettled(d.map(([,a])=>T(a))),h=await e,_=w;if(h?.buildBoot||parent.postMessage({__frame_cap_telemetry:{kind:"cap-load-error",cap:"_transforms"}},_),h?.buildBoot)try{P=h.buildBoot(f,h.TRANSFORMS??{},{shellOrigin:_,mount:W},a=>parent.postMessage({__frame_cap_telemetry:a},_))}catch{parent.postMessage({__frame_cap_telemetry:{kind:"cap-load-error",cap:"_transforms"}},_),P=z(f,_)}else P=z(f,_);const C=a=>parent.postMessage({__frame_cap_telemetry:{kind:"cap-load-error",cap:a}},_),we=P;u.forEach((a,k)=>{const A=d[k][0];if(a.status!=="fulfilled"){C(A);return}try{a.value?.install?.(we)}catch{C(A)}});for(const a of R.values())a.done||(a.nulled=!0,a.r(null));await y,parent.postMessage({__frame_ready:!0},w),e.then(a=>a?.installSizeReporter?.(_,g))})}})();</script><!-- /frame-runtime --><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}</style></head><body>
+<title>CargoDesk — Data Hub Migration Plan</title>
+<style>
+:root {
+  --bg: #EEF1F7;
+  --surface: #FFFFFF;
+  --surface-2: #E4E8F2;
+  --border: #CDD5E4;
+  --border-faint: #DDE3EE;
+  --text: #0F1523;
+  --text-muted: #576078;
+  --text-faint: #9BA8C2;
+  --accent: #4654DC;
+  --accent-bg: rgba(70,84,220,.07);
+  --auth: #C07B0A;
+  --auth-bg: rgba(192,123,10,.1);
+  --ops: #4654DC;
+  --ops-bg: rgba(70,84,220,.09);
+  --mdm: #0A7A55;
+  --mdm-bg: rgba(10,122,85,.09);
+  --intg: #6D28C5;
+  --intg-bg: rgba(109,40,197,.09);
+  --anlt: #C4500A;
+  --anlt-bg: rgba(196,80,10,.09);
+  --sched: #0875A0;
+  --sched-bg: rgba(8,117,160,.09);
+  --maeu: #E84900;
+  --maeu-bg: rgba(232,73,0,.09);
+  --mono: 'Cascadia Code','SF Mono','Fira Code','Consolas','Monaco',monospace;
+  --sans: system-ui,-apple-system,'Segoe UI',sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0C0F1A; --surface: #141826; --surface-2: #1C2235;
+    --border: #283047; --border-faint: #1E2640; --text: #E2E8F8;
+    --text-muted: #8994B0; --text-faint: #4E5D7A;
+    --accent: #7080FF; --accent-bg: rgba(112,128,255,.1);
+    --auth: #F6B445; --auth-bg: rgba(246,180,69,.1);
+    --ops: #7080FF; --ops-bg: rgba(112,128,255,.1);
+    --mdm: #34D99A; --mdm-bg: rgba(52,217,154,.1);
+    --intg: #B07EFF; --intg-bg: rgba(176,126,255,.1);
+    --anlt: #FF8C4A; --anlt-bg: rgba(255,140,74,.1);
+    --sched: #4BBEE0; --sched-bg: rgba(75,190,224,.1);
+    --maeu: #FF7A40; --maeu-bg: rgba(255,122,64,.1);
+  }
+}
+:root[data-theme="light"] {
+  --bg: #EEF1F7; --surface: #FFFFFF; --surface-2: #E4E8F2;
+  --border: #CDD5E4; --border-faint: #DDE3EE; --text: #0F1523;
+  --text-muted: #576078; --text-faint: #9BA8C2;
+  --accent: #4654DC; --accent-bg: rgba(70,84,220,.07);
+  --auth: #C07B0A; --auth-bg: rgba(192,123,10,.1);
+  --ops: #4654DC; --ops-bg: rgba(70,84,220,.09);
+  --mdm: #0A7A55; --mdm-bg: rgba(10,122,85,.09);
+  --intg: #6D28C5; --intg-bg: rgba(109,40,197,.09);
+  --anlt: #C4500A; --anlt-bg: rgba(196,80,10,.09);
+  --sched: #0875A0; --sched-bg: rgba(8,117,160,.09);
+  --maeu: #E84900; --maeu-bg: rgba(232,73,0,.09);
+}
+:root[data-theme="dark"] {
+  --bg: #0C0F1A; --surface: #141826; --surface-2: #1C2235;
+  --border: #283047; --border-faint: #1E2640; --text: #E2E8F8;
+  --text-muted: #8994B0; --text-faint: #4E5D7A;
+  --accent: #7080FF; --accent-bg: rgba(112,128,255,.1);
+  --auth: #F6B445; --auth-bg: rgba(246,180,69,.1);
+  --ops: #7080FF; --ops-bg: rgba(112,128,255,.1);
+  --mdm: #34D99A; --mdm-bg: rgba(52,217,154,.1);
+  --intg: #B07EFF; --intg-bg: rgba(176,126,255,.1);
+  --anlt: #FF8C4A; --anlt-bg: rgba(255,140,74,.1);
+  --sched: #4BBEE0; --sched-bg: rgba(75,190,224,.1);
+  --maeu: #FF7A40; --maeu-bg: rgba(255,122,64,.1);
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: var(--sans); background: var(--bg);
+  color: var(--text); line-height: 1.6; font-size: 14px;
+}
+.wrap { max-width: 980px; margin: 0 auto; padding: 32px 24px 64px; }
+code { font-family: var(--mono); font-size: .9em; background: var(--surface-2);
+  padding: 1px 5px; border-radius: 3px; color: var(--accent); }
+
+/* ── Header ── */
+.header { margin-bottom: 40px; }
+.eyebrow { font-family: var(--mono); font-size: 10px; font-weight: 700;
+  letter-spacing: .18em; text-transform: uppercase; color: var(--text-faint); margin-bottom: 10px; }
+h1 { font-size: 30px; font-weight: 800; color: var(--text); margin-bottom: 18px; line-height: 1.15; }
+.header-meta { display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; flex-wrap: wrap; }
+.meta-cell { padding: 10px 16px; border-right: 1px solid var(--border); flex: 1 1 120px; background: var(--surface); }
+.meta-cell:last-child { border-right: none; }
+.meta-key { font-family: var(--mono); font-size: 9px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .13em; color: var(--text-faint); margin-bottom: 3px; }
+.meta-val { font-size: 13px; font-weight: 600; color: var(--text); }
+.status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  background: #22c55e; box-shadow: 0 0 6px #22c55e; margin-right: 6px; }
+
+/* ── Section ── */
+.section { margin-bottom: 40px; }
+.section-label { font-family: var(--mono); font-size: 9px; font-weight: 700;
+  letter-spacing: .18em; text-transform: uppercase; color: var(--text-faint);
+  border-bottom: 1px solid var(--border); padding-bottom: 8px; margin-bottom: 18px; }
+p { color: var(--text-muted); line-height: 1.7; margin-bottom: 0; }
+.gap { height: 20px; }
+.gap-sm { height: 10px; }
+
+/* ── Reasons ── */
+.reasons { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px,1fr)); gap: 12px; }
+.reason { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+.reason-title { font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 5px; }
+.reason-body { font-size: 12px; color: var(--text-muted); line-height: 1.55; }
+
+/* ── Schema grid ── */
+.schema-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px,1fr)); gap: 14px; }
+.schema-card { border-radius: 8px; border: 1px solid var(--border); overflow: hidden; }
+.schema-card.auth .schema-head { background: var(--auth-bg); border-color: var(--auth); }
+.schema-card.ops .schema-head  { background: var(--ops-bg);  border-color: var(--ops); }
+.schema-card.mdm .schema-head  { background: var(--mdm-bg);  border-color: var(--mdm); }
+.schema-card.intg .schema-head { background: var(--intg-bg); border-color: var(--intg); }
+.schema-card.anlt .schema-head { background: var(--anlt-bg); border-color: var(--anlt); }
+.schema-head { padding: 10px 14px; border-bottom: 1px solid var(--border); display: flex;
+  align-items: center; gap: 8px; }
+.schema-badge { font-family: var(--mono); font-size: 11px; font-weight: 800;
+  letter-spacing: .06em; padding: 2px 8px; border-radius: 4px; }
+.auth .schema-badge { background: var(--auth-bg); color: var(--auth); border: 1px solid var(--auth); }
+.ops .schema-badge  { background: var(--ops-bg);  color: var(--ops);  border: 1px solid var(--ops);  }
+.mdm .schema-badge  { background: var(--mdm-bg);  color: var(--mdm);  border: 1px solid var(--mdm);  }
+.intg .schema-badge { background: var(--intg-bg); color: var(--intg); border: 1px solid var(--intg); }
+.anlt .schema-badge { background: var(--anlt-bg); color: var(--anlt); border: 1px solid var(--anlt); }
+.schema-count { font-size: 11px; color: var(--text-muted); margin-left: auto; }
+.schema-body { padding: 12px 14px; background: var(--surface); display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font-family: var(--mono); font-size: 10px; padding: 2px 7px; border-radius: 4px;
+  background: var(--surface-2); color: var(--text); border: 1px solid var(--border); }
+.chip.new { border-color: var(--sched); color: var(--sched); background: var(--sched-bg); font-weight: 700; }
+.chip.note { font-family: var(--sans); font-size: 10px; font-style: italic; color: var(--text-faint);
+  background: none; border: none; padding: 0; }
+
+/* ── Migration pipeline ── */
+.pipeline-wrap { overflow-x: auto; }
+.pipeline { display: flex; gap: 12px; min-width: 700px; }
+.phase { flex: 1; background: var(--surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 16px; display: flex; flex-direction: column; gap: 6px; }
+.phase.current { border-color: var(--ops); box-shadow: 0 0 0 3px var(--ops-bg); }
+.phase-tag { font-family: var(--mono); font-size: 9px; font-weight: 700; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--text-faint); }
+.phase-name { font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: 4px; }
+.phase-id { font-family: var(--mono); font-size: 9px; color: var(--ops); font-weight: 700;
+  background: var(--ops-bg); border: 1px solid var(--ops); border-radius: 3px; padding: 1px 5px;
+  display: inline-block; margin-bottom: 4px; }
+.phase-dep { font-family: var(--mono); font-size: 9px; color: var(--text-faint);
+  margin-bottom: 4px; }
+.phase-dep span { color: var(--ops); font-weight: 700; }
+.phase-list { list-style: none; display: flex; flex-direction: column; gap: 4px; }
+.phase-list li { font-size: 11px; color: var(--text-muted); padding-left: 10px;
+  position: relative; line-height: 1.4; }
+.phase-list li::before { content: "–"; position: absolute; left: 0; color: var(--text-faint); }
+.phase-days { margin-top: 12px; font-family: var(--mono); font-size: 10px; color: var(--text-faint); }
+.phase-days span { color: var(--accent); font-weight: 700; }
+
+/* ── Epic cards ── */
+.epic-section { display: flex; flex-direction: column; gap: 28px; }
+.epic-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.epic-head { padding: 14px 18px; display: flex; align-items: center; gap: 12px;
+  border-bottom: 1px solid var(--border); }
+.epic-badge { font-family: var(--mono); font-size: 10px; font-weight: 800;
+  letter-spacing: .08em; padding: 3px 10px; border-radius: 4px; }
+.epic-badge.sched { background: var(--sched-bg); color: var(--sched); border: 1px solid var(--sched); }
+.epic-badge.maeu  { background: var(--maeu-bg);  color: var(--maeu);  border: 1px solid var(--maeu);  }
+.epic-title { font-size: 15px; font-weight: 700; color: var(--text); }
+.epic-meta { font-size: 12px; color: var(--text-muted); margin-left: auto; white-space: nowrap; }
+.stories { display: flex; flex-direction: column; gap: 0; }
+.story { display: flex; gap: 14px; padding: 13px 18px; border-bottom: 1px solid var(--border-faint);
+  align-items: flex-start; }
+.story:last-child { border-bottom: none; }
+.story-id { font-family: var(--mono); font-size: 10px; font-weight: 700; color: var(--text-faint);
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 3px;
+  padding: 2px 6px; white-space: nowrap; flex-shrink: 0; margin-top: 2px; }
+.story-id.done { color: #22c55e; border-color: #22c55e; background: rgba(34,197,94,.08); }
+.story-body { flex: 1; min-width: 0; }
+.story-title { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 3px; }
+.story-desc { font-size: 12px; color: var(--text-muted); line-height: 1.5; }
+.story-tags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+.tag { font-family: var(--mono); font-size: 9px; font-weight: 700; letter-spacing: .06em;
+  text-transform: uppercase; padding: 2px 7px; border-radius: 3px; }
+.tag.layer-be  { background: var(--ops-bg);  color: var(--ops);  border: 1px solid var(--ops)44;  }
+.tag.layer-fe  { background: var(--mdm-bg);  color: var(--mdm);  border: 1px solid var(--mdm)44;  }
+.tag.layer-db  { background: var(--auth-bg); color: var(--auth); border: 1px solid var(--auth)44; }
+.tag.layer-api { background: var(--maeu-bg); color: var(--maeu); border: 1px solid var(--maeu)44; }
+.tag.status-done    { background: rgba(34,197,94,.1); color: #22c55e; border: 1px solid rgba(34,197,94,.3); }
+.tag.status-pending { background: var(--surface-2); color: var(--text-faint); border: 1px solid var(--border); }
+.tag.dep { background: var(--sched-bg); color: var(--sched); border: 1px solid var(--sched)44; }
+
+/* ── Dep graph ── */
+.dep-grid { display: grid; grid-template-columns: 1fr auto 1fr; gap: 0; align-items: start; }
+.dep-col { display: flex; flex-direction: column; gap: 6px; }
+.dep-node { font-family: var(--mono); font-size: 11px; font-weight: 700; color: var(--accent);
+  background: var(--accent-bg); border: 1px solid var(--accent)55; border-radius: 5px;
+  padding: 5px 10px; white-space: nowrap; text-align: center; }
+.dep-node.done { color: #22c55e; background: rgba(34,197,94,.08); border-color: rgba(34,197,94,.3); }
+.dep-node.blocked { color: var(--text-faint); background: var(--surface-2); border-color: var(--border); }
+.dep-arrows { display: flex; flex-direction: column; justify-content: center; gap: 6px;
+  padding: 0 12px; color: var(--text-faint); font-size: 13px; }
+
+/* ── Decisions table ── */
+.table-wrap { overflow-x: auto; }
+table.decisions { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.decisions th { font-family: var(--mono); font-size: 9px; font-weight: 700; letter-spacing: .14em;
+  text-transform: uppercase; color: var(--text-faint); text-align: left; padding: 7px 14px;
+  border-bottom: 2px solid var(--border); white-space: nowrap; background: var(--surface-2); }
+.decisions td { padding: 10px 14px; border-bottom: 1px solid var(--border-faint);
+  vertical-align: top; background: var(--surface); }
+.decisions tr:last-child td { border-bottom: none; }
+.decisions .d-decision { font-weight: 600; color: var(--text); white-space: nowrap; }
+.decisions .d-options { color: var(--text-muted); }
+.decisions .d-rec { font-family: var(--mono); font-size: 11px; color: var(--accent); white-space: nowrap; }
+.decisions .d-why { color: var(--text-muted); font-size: 12px; }
+
+/* ── Adapter flow ── */
+.flow { display: flex; align-items: center; gap: 0; flex-wrap: wrap; row-gap: 12px; }
+.flow-node { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 11px 15px; }
+.flow-node.hub { border-color: var(--ops); background: var(--ops-bg); }
+.flow-arrow { padding: 0 8px; color: var(--text-faint); font-size: 16px; font-family: var(--mono); align-self: center; }
+.fn-label { font-family: var(--mono); font-size: 9px; font-weight: 700; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--text-faint); margin-bottom: 4px; }
+.fn-name { font-size: 12.5px; font-weight: 700; color: var(--text); }
+.fn-detail { font-family: var(--mono); font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+
+/* ── Effort ── */
+.effort-wrap { overflow-x: auto; }
+table.effort { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.effort th { font-family: var(--mono); font-size: 9px; font-weight: 700;
+  letter-spacing: .14em; text-transform: uppercase; color: var(--text-faint);
+  text-align: left; padding: 7px 14px; border-bottom: 2px solid var(--border); background: var(--surface-2); }
+.effort td { padding: 9px 14px; border-bottom: 1px solid var(--border-faint); background: var(--surface); }
+.effort .e-phase { font-weight: 600; color: var(--text); }
+.effort .e-scope { color: var(--text-muted); }
+.effort .e-days { font-family: var(--mono); font-variant-numeric: tabular-nums;
+  color: var(--accent); font-weight: 700; text-align: right; white-space: nowrap; }
+.effort tr.total td { border-top: 2px solid var(--border); border-bottom: none;
+  font-weight: 700; color: var(--text); }
+.effort tr.total .e-days { color: var(--text); font-size: 14px; }
+
+/* ── Questions ── */
+.questions { display: flex; flex-direction: column; gap: 8px; }
+.question { display: flex; gap: 12px; padding: 11px 15px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: 6px; align-items: flex-start; }
+.q-tag { font-family: var(--mono); font-size: 9px; font-weight: 700;
+  color: var(--text-faint); background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: 3px;
+  padding: 2px 6px; white-space: nowrap; margin-top: 1px; flex-shrink: 0; }
+.q-text { font-size: 13px; color: var(--text-muted); }
+.q-text strong { color: var(--text); font-weight: 600; }
+
+@media (max-width: 600px) {
+  h1 { font-size: 22px; }
+  .header-meta { flex-direction: column; }
+  .meta-cell { border-right: none; border-bottom: 1px solid var(--border); }
+  .meta-cell:last-child { border-bottom: none; }
+}
+</style>
+
+<div class="wrap">
+
+  <!-- ── Header ── -->
+  <div class="header">
+    <div class="eyebrow">Architecture Decision Record · CargoDesk</div>
+    <h1>Data Hub Migration Plan</h1>
+    <div class="header-meta">
+      <div class="meta-cell">
+        <div class="meta-key">Baseline</div>
+        <div class="meta-val">v0.24.0 "Sentinel"</div>
+      </div>
+      <div class="meta-cell">
+        <div class="meta-key">Current DB</div>
+        <div class="meta-val">SQLite (node:sqlite)</div>
+      </div>
+      <div class="meta-cell">
+        <div class="meta-key">Target DB</div>
+        <div class="meta-val">PostgreSQL + DuckDB</div>
+      </div>
+      <div class="meta-cell">
+        <div class="meta-key">Tables</div>
+        <div class="meta-val">36 → 4 schemas</div>
+      </div>
+      <div class="meta-cell">
+        <div class="meta-key">Status</div>
+        <div class="meta-val"><span class="status-dot"></span>Never executed — see status update</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin:0 0 28px;padding:18px 24px;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;">
+    <div style="font-weight:700;color:var(--text);margin-bottom:6px;">Status update — verified 2026-08-25</div>
+    <div style="font-size:13.5px;color:var(--text-muted);line-height:1.6;">
+      This plan was never executed. The codebase instead built 3 real extracted microservices along a
+      completely different path — <code>document-distribution</code> (:3002, v0.64.0),
+      <code>pdf-render</code> (:3003, v0.66.0), and <code>contract-management</code> (:3004, v0.68.0, the
+      only one running alongside local tables via an <code>app_settings.contract_source</code> toggle
+      rather than replacing them) — none of which existed yet when this plan was written and none of
+      which it anticipates. No Postgres/DuckDB split happened; the schema is still one SQLite file (plus
+      each service's own). The live schema is 77 tables today, not the 36 this plan's own header states
+      as baseline. The entire "MAEU Epic" below (MAEU-001–004, and SCHED-006 which blocks on it) is dead —
+      the Maersk Developer Portal integration it depends on was removed as obsolete in v0.72.1; treat every
+      MAEU-* story on this page as removed, not pending. <code>booking_offices</code>,
+      <code>admin_events</code>, and <code>schedule_syncs</code> don't exist anywhere in the real schema.
+      Real shipment IDs are <code>SHP-</code> prefixed (e.g. <code>SHP-XXGOJ1</code>), not the
+      <code>SHPMT-XXXXXX</code> convention this document proposes. And SCHED-001's own "Done" claim that
+      <code>shipment_schedules</code> has a hard FK-cascade to shipments is now false — since v0.54.0 that
+      column is nullable, to support ownerless "template" rows from the Schedule Generator.
+    </div>
+  </div>
+
+  <!-- ── Why ── -->
+  <div class="section">
+    <div class="section-label">Motivation</div>
+    <div class="reasons">
+      <div class="reason">
+        <div class="reason-title">Security isolation</div>
+        <div class="reason-body">Password hashes, API keys, and JWT secrets live in <code>auth</code> schema with separate DB-level permissions. A shipment data export can never expose credentials.</div>
+      </div>
+      <div class="reason">
+        <div class="reason-title">Concurrent writes</div>
+        <div class="reason-body">SQLite serialises all writes through a single lock. Multiple operators working simultaneously will hit contention as shipment volume grows.</div>
+      </div>
+      <div class="reason">
+        <div class="reason-title">Event-driven integrations</div>
+        <div class="reason-body">Inbound adapters (Maersk schedule sync, future PDM user provisioning) need atomic cross-table transactions — write event log + update shipment in one commit.</div>
+      </div>
+      <div class="reason">
+        <div class="reason-title">Migration cost grows</div>
+        <div class="reason-body">36 tables today. Each new feature adds cross-schema dependencies. A 12–18 day migration now becomes 30+ days in 6 months.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Schema Map ── -->
+  <div class="section">
+    <div class="section-label">Target schema layout — 36 tables across 4 PostgreSQL schemas + DuckDB</div>
+    <div class="schema-grid">
+
+      <div class="schema-card auth">
+        <div class="schema-head">
+          <div class="schema-badge">auth</div>
+          <div class="schema-count">4 tables · PII</div>
+        </div>
+        <div class="schema-body">
+          <span class="chip">users</span>
+          <span class="chip">user_scope_items</span>
+          <span class="chip">user_access_configs</span>
+          <span class="chip">app_settings</span>
+        </div>
+      </div>
+
+      <div class="schema-card ops">
+        <div class="schema-head">
+          <div class="schema-badge">ops</div>
+          <div class="schema-count">14 tables · operational</div>
+        </div>
+        <div class="schema-body">
+          <span class="chip">shipments</span>
+          <span class="chip">containers</span>
+          <span class="chip">shipment_legs</span>
+          <span class="chip">shipment_events</span>
+          <span class="chip">shipment_messages</span>
+          <span class="chip">shipment_cost_lines</span>
+          <span class="chip">shipment_milestones</span>
+          <span class="chip">shipment_screenings</span>
+          <span class="chip">shipment_documents</span>
+          <span class="chip new">shipment_schedules</span>
+          <span class="chip">status_log</span>
+          <span class="chip">tickets</span>
+          <span class="chip">ticket_links</span>
+          <span class="chip">allocations</span>
+        </div>
+      </div>
+
+      <div class="schema-card mdm">
+        <div class="schema-head">
+          <div class="schema-badge">mdm</div>
+          <div class="schema-count">15 tables · reference</div>
+        </div>
+        <div class="schema-body">
+          <span class="chip">carriers</span>
+          <span class="chip">vessels</span>
+          <span class="chip">port_locations</span>
+          <span class="chip">linked_ports</span>
+          <span class="chip">trade_lanes</span>
+          <span class="chip">country_trade_lanes</span>
+          <span class="chip">regions</span>
+          <span class="chip">countries</span>
+          <span class="chip">commodities</span>
+          <span class="chip">customers</span>
+          <span class="chip">contracts</span>
+          <span class="chip">contract_legs</span>
+          <span class="chip">contract_rates</span>
+          <span class="chip">milestone_templates</span>
+          <span class="chip new">booking_offices</span>
+        </div>
+      </div>
+
+      <div class="schema-card intg">
+        <div class="schema-head">
+          <div class="schema-badge">integrations</div>
+          <div class="schema-count">6 tables · ext. data</div>
+        </div>
+        <div class="schema-body">
+          <span class="chip">sanctions_entries</span>
+          <span class="chip">sanctions_syncs</span>
+          <span class="chip">system_messages</span>
+          <span class="chip">admin_events</span>
+          <span class="chip">entity_events</span>
+          <span class="chip new">schedule_syncs</span>
+        </div>
+      </div>
+
+      <div class="schema-card anlt external">
+        <div class="schema-head">
+          <div class="schema-badge">analytics</div>
+          <div class="schema-count">DuckDB · read layer</div>
+        </div>
+        <div class="schema-body">
+          <span class="chip note">Not a PG schema.</span>
+          <span class="chip">margin summaries</span>
+          <span class="chip">weekly trends</span>
+          <span class="chip">lane analysis</span>
+          <span class="chip">carrier stats</span>
+          <span class="chip note">Reads from ops + mdm via FDW or periodic sync.</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── Migration Pipeline ── -->
+  <div class="section">
+    <div class="section-label">Migration phases — PostgreSQL rollout</div>
+    <div class="pipeline-wrap">
+      <div class="pipeline">
+
+        <div class="phase">
+          <div class="phase-tag">Phase 0</div>
+          <div class="phase-id">PGMGR-001</div>
+          <div class="phase-name">Prepare</div>
+          <ul class="phase-list">
+            <li>PostgreSQL via Docker Compose for local dev</li>
+            <li>Create schemas + roles + permissions</li>
+            <li>Write one-shot SQLite → PG migration script</li>
+            <li>Verify row counts + FK integrity</li>
+            <li>No application code changes</li>
+          </ul>
+          <div class="phase-days"><span>1–2</span> days</div>
+        </div>
+
+        <div class="phase">
+          <div class="phase-tag">Phase 1</div>
+          <div class="phase-id">PGMGR-002</div>
+          <div class="phase-dep">Depends on: <span>PGMGR-001</span></div>
+          <div class="phase-name">Driver Infrastructure</div>
+          <ul class="phase-list">
+            <li>Add <code>pg</code> + connection pool alongside SQLite</li>
+            <li><code>DB_DRIVER=pg|sqlite</code> env toggle</li>
+            <li>Establish async pattern for all route files</li>
+            <li>Shared db adapter wrapping both drivers</li>
+          </ul>
+          <div class="phase-days"><span>2–3</span> days</div>
+        </div>
+
+        <div class="phase current">
+          <div class="phase-tag">Phase 2</div>
+          <div class="phase-id">PGMGR-003</div>
+          <div class="phase-dep">Depends on: <span>PGMGR-002</span></div>
+          <div class="phase-name">Auth Schema</div>
+          <ul class="phase-list">
+            <li>Migrate <code>routes/auth.js</code> first — self-contained</li>
+            <li>SSO callback writes to <code>auth.users</code></li>
+            <li>JWT + lockout logic unchanged</li>
+            <li>Validate all login flows before proceeding</li>
+          </ul>
+          <div class="phase-days"><span>1–2</span> days</div>
+        </div>
+
+        <div class="phase">
+          <div class="phase-tag">Phase 3</div>
+          <div class="phase-id">PGMGR-004</div>
+          <div class="phase-dep">Depends on: <span>PGMGR-002</span></div>
+          <div class="phase-name">MDM + Integrations</div>
+          <ul class="phase-list">
+            <li>Read-heavy routes — lower blast radius</li>
+            <li>Carriers, vessels, ports, contracts, trade lanes</li>
+            <li>OFAC sync writes to <code>integrations</code></li>
+            <li>Maersk MDM sync adapters (MAEU-001–004)</li>
+            <li>Port–lane index rebuilt on PG startup</li>
+          </ul>
+          <div class="phase-days"><span>2–3</span> days</div>
+        </div>
+
+        <div class="phase">
+          <div class="phase-tag">Phase 4</div>
+          <div class="phase-id">PGMGR-005</div>
+          <div class="phase-dep">Depends on: <span>PGMGR-003 + PGMGR-004</span></div>
+          <div class="phase-name">Ops + Analytics</div>
+          <ul class="phase-list">
+            <li>Shipments, legs, cost lines, milestones, tickets</li>
+            <li><code>syncShipmentFromLegs</code> — async refactor</li>
+            <li>Schedule write-back adapter wired (SCHED-006)</li>
+            <li>DuckDB for dashboard/margin queries</li>
+            <li>Remove SQLite, drop adapter shim</li>
+          </ul>
+          <div class="phase-days"><span>5–7</span> days</div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Feature Epics ── -->
+  <div class="section">
+    <div class="section-label">Feature epics — implemented in current SQLite release</div>
+    <div class="epic-section">
+
+      <!-- SCHED Epic -->
+      <div class="epic-card">
+        <div class="epic-head">
+          <span class="epic-badge sched">SCHED</span>
+          <span class="epic-title">Shipment-Level Schedule Booking</span>
+          <span class="epic-meta">6 stories · 4 done</span>
+        </div>
+        <div class="stories">
+
+          <div class="story">
+            <span class="story-id done">SCHED-001</span>
+            <div class="story-body">
+              <div class="story-title">DB migration — shipment_schedules table</div>
+              <div class="story-desc">New table with FK to shipments (CASCADE DELETE). Columns: carrier, vessel_name, voyage_number, service, pol, pod, etd, eta, transit_days, is_mock, saved_at, saved_by. Added to server.js migrations array.</div>
+              <div class="story-tags">
+                <span class="tag layer-db">DB</span>
+                <span class="tag status-done">Done</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="story">
+            <span class="story-id done">SCHED-002</span>
+            <div class="story-body">
+              <div class="story-title">Backend CRUD routes — GET / POST / DELETE</div>
+              <div class="story-desc">Three routes added to <code>routes/shipment-ops.js</code>: <code>GET /api/shipments/:id/schedules</code> lists saved sailings, <code>POST</code> saves a selected sailing, <code>DELETE :scheduleId</code> removes one. Auth-protected.</div>
+              <div class="story-tags">
+                <span class="tag layer-be">Backend</span>
+                <span class="tag dep">Needs SCHED-001</span>
+                <span class="tag status-done">Done</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="story">
+            <span class="story-id done">SCHED-003</span>
+            <div class="story-body">
+              <div class="story-title">api.schedules namespace in src/api.js</div>
+              <div class="story-desc">Adds <code>api.schedules.search(params)</code>, <code>.list(shipmentId)</code>, <code>.save(shipmentId, sailing)</code>, <code>.remove(shipmentId, id)</code> wrapping the existing schedule search endpoint and the new SCHED-002 routes.</div>
+              <div class="story-tags">
+                <span class="tag layer-fe">Frontend</span>
+                <span class="tag dep">Needs SCHED-002</span>
+                <span class="tag status-done">Done</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="story">
+            <span class="story-id done">SCHED-004</span>
+            <div class="story-body">
+              <div class="story-title">Sailing picker in ShipmentFormPage (create + edit)</div>
+              <div class="story-desc"><code>SailingPickerModal</code> with 2/4/8/12-week window selector. "Sailing" section added to ShipmentForm after Contract section. New mode: selected sailing passed as 4th arg to <code>onSave</code> → saved in App.jsx after shipment creation. Edit mode: saves directly via <code>api.schedules.save()</code>. Loads existing schedules on mount in edit mode.</div>
+              <div class="story-tags">
+                <span class="tag layer-fe">Frontend</span>
+                <span class="tag dep">Needs SCHED-003</span>
+                <span class="tag status-done">Done</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="story">
+            <span class="story-id">SCHED-005</span>
+            <div class="story-body">
+              <div class="story-title">Schedules panel in ShipmentDetailPage</div>
+              <div class="story-desc"><code>SchedulesPanel</code> component below the MilestonePanel. Lists all saved sailings with vessel, voyage, ETD/ETA, transit days, saved date/user. "Add Sailing" button opens <code>ScheduleSailingPicker</code> (mirror of the form modal). Remove via confirm modal. Disabled when POL/POD/carrier not set.</div>
+              <div class="story-tags">
+                <span class="tag layer-fe">Frontend</span>
+                <span class="tag dep">Needs SCHED-003</span>
+                <span class="tag status-done">Done</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="story">
+            <span class="story-id">SCHED-006</span>
+            <div class="story-body">
+              <div class="story-title">Live schedule write-back adapter (Maersk API)</div>
+              <div class="story-desc">Scheduled adapter that polls Maersk P2P Schedules API for active shipments within 30 days of ETD. When a voyage match is found and ETD/ETA have drifted, creates a FIELD_UPDATED shipment event (source: "maersk_api") and optionally updates the shipment. Requires <code>maersk_api_key</code> in <code>app_settings</code>. Blocks on MAEU-001.</div>
+              <div class="story-tags">
+                <span class="tag layer-be">Backend</span>
+                <span class="tag layer-api">API</span>
+                <span class="tag dep">Needs MAEU-001</span>
+                <span class="tag status-pending">Pending</span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- MAEU Epic -->
+      <div class="epic-card">
+        <div class="epic-head">
+          <span class="epic-badge maeu">MAEU</span>
+          <span class="epic-title">Maersk API Integration — MDM Sync Adapters</span>
+          <span class="epic-meta">4 stories · 0 done · Consumer Key configured</span>
+        </div>
+        <div class="stories">
+
+          <div class="story">
+            <span class="story-id">MAEU-001</span>
+            <div class="story-body">
+              <div class="story-title">Maersk Commodities API → commodities table live sync</div>
+              <div class="story-desc">Adapter in <code>routes/system.js</code> or a new <code>routes/maersk-sync.js</code>. Calls Maersk Commodities API with <code>Consumer-Key</code> header. Diffs against the existing 294-row static table. UPSERT on commodity code. Writes a <code>schedule_syncs</code> row on completion. UI trigger in AppSettings → External APIs panel (separate from the P2P Schedules key).</div>
+              <div class="story-tags">
+                <span class="tag layer-be">Backend</span>
+                <span class="tag layer-api">API</span>
+                <span class="tag layer-db">DB</span>
+                <span class="tag status-pending">Pending</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="story">
+            <span class="story-id">MAEU-002</span>
+            <div class="story-body">
+              <div class="story-title">Maersk Vessels API → vessels table live sync</div>
+              <div class="story-desc">Same Consumer Key as MAEU-001. Syncs the 349-vessel static table against the live Maersk vessel registry. Upserts on IMO number. Adds <code>last_synced_at</code> column to vessels (mirrors port_locations pattern). Keeps vessels not in the Maersk registry (other carriers). Manual trigger + optional cron via <code>app_settings</code>.</div>
+              <div class="story-tags">
+                <span class="tag layer-be">Backend</span>
+                <span class="tag layer-api">API</span>
+                <span class="tag layer-db">DB</span>
+                <span class="tag status-pending">Pending</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="story">
+            <span class="story-id">MAEU-003</span>
+            <div class="story-body">
+              <div class="story-title">Maersk Locations API → port_locations sync</div>
+              <div class="story-desc">Syncs the 14,269-row UN/LOCODE port table against Maersk's Locations API. The existing <code>last_synced_at</code> column on <code>port_locations</code> tracks freshness. Paginated fetch with backoff. Updates port name, country, lat/lon where the API provides enriched data. Existing manually-added ports are preserved. Large payload — runs in the background, reports progress via WebSocket.</div>
+              <div class="story-tags">
+                <span class="tag layer-be">Backend</span>
+                <span class="tag layer-api">API</span>
+                <span class="tag layer-db">DB</span>
+                <span class="tag status-pending">Pending</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="story">
+            <span class="story-id">MAEU-004</span>
+            <div class="story-body">
+              <div class="story-title">Maersk Ocean Booking Offices API → new booking_offices table</div>
+              <div class="story-desc">New <code>booking_offices</code> table in MDM (or <code>mdm</code> schema post-migration). Columns: <code>office_code</code>, <code>office_name</code>, <code>country_iso2</code>, <code>city</code>, <code>email</code>, <code>phone</code>, <code>carrier_code</code>. Synced from Maersk Ocean Booking Offices API. Surfaced in shipment form as a "Booking Office" reference field and in the Carrier MDM page. Requires schema migration entry.</div>
+              <div class="story-tags">
+                <span class="tag layer-be">Backend</span>
+                <span class="tag layer-fe">Frontend</span>
+                <span class="tag layer-api">API</span>
+                <span class="tag layer-db">DB</span>
+                <span class="tag status-pending">Pending</span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── Dependency Graph ── -->
+  <div class="section">
+    <div class="section-label">Story dependency map</div>
+    <div style="background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 20px;">
+      <div style="display: flex; flex-direction: column; gap: 16px;">
+
+        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+          <span class="dep-node done">SCHED-001 DB</span>
+          <span style="color: var(--text-faint)">→</span>
+          <span class="dep-node done">SCHED-002 Routes</span>
+          <span style="color: var(--text-faint)">→</span>
+          <span class="dep-node done">SCHED-003 api.js</span>
+          <span style="color: var(--text-faint)">→</span>
+          <span class="dep-node done">SCHED-004 Form</span>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+          <span style="width: 120px; display: inline-block; text-align: center;"></span>
+          <span style="color: var(--text-faint)"> </span>
+          <span style="color: var(--text-faint)"> </span>
+          <span style="color: var(--text-faint)"> </span>
+          <span class="dep-node done" style="margin-left: 16px;">SCHED-003</span>
+          <span style="color: var(--text-faint)">→</span>
+          <span class="dep-node done">SCHED-005 Detail</span>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding-top: 8px; border-top: 1px solid var(--border-faint);">
+          <span class="dep-node">MAEU-001 Commodities</span>
+          <span style="color: var(--text-faint)">→</span>
+          <span class="dep-node blocked">SCHED-006 Write-back</span>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+          <span class="dep-node">MAEU-002 Vessels</span>
+          <span style="color: var(--text-faint)">  independent</span>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+          <span class="dep-node">MAEU-003 Locations</span>
+          <span style="color: var(--text-faint)">  independent (large payload)</span>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+          <span class="dep-node">MAEU-004 Booking Offices</span>
+          <span style="color: var(--text-faint)">→</span>
+          <span class="dep-node blocked">New DB migration needed</span>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding-top: 8px; border-top: 1px solid var(--border-faint);">
+          <span class="dep-node">PGMGR-001</span>
+          <span style="color: var(--text-faint)">→</span>
+          <span class="dep-node">PGMGR-002</span>
+          <span style="color: var(--text-faint)">→</span>
+          <span class="dep-node">PGMGR-003</span>
+          <span style="color: var(--text-faint)">+</span>
+          <span class="dep-node">PGMGR-004</span>
+          <span style="color: var(--text-faint)">→</span>
+          <span class="dep-node">PGMGR-005</span>
+        </div>
+
+      </div>
+      <div style="margin-top: 14px; font-size: 11px; color: var(--text-faint); font-family: var(--mono);">
+        <span style="background: rgba(34,197,94,.1); color: #22c55e; border: 1px solid rgba(34,197,94,.3); padding: 1px 6px; border-radius: 3px;">Done</span>
+        implemented &nbsp;·&nbsp;
+        <span style="background: var(--accent-bg); color: var(--accent); border: 1px solid var(--accent); padding: 1px 6px; border-radius: 3px;">Name</span>
+        pending &nbsp;·&nbsp;
+        <span style="background: var(--surface-2); color: var(--text-faint); border: 1px solid var(--border); padding: 1px 6px; border-radius: 3px;">Name</span>
+        blocked
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Key Decisions ── -->
+  <div class="section">
+    <div class="section-label">Key technical decisions</div>
+    <div class="table-wrap">
+      <table class="decisions">
+        <thead>
+          <tr>
+            <th>Decision</th>
+            <th>Options</th>
+            <th>Recommendation</th>
+            <th>Rationale</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="d-decision">Query driver</td>
+            <td class="d-options"><code>pg</code> (raw SQL) vs Prisma ORM vs Drizzle</td>
+            <td class="d-rec">pg (node-postgres)</td>
+            <td class="d-why">Keeps the existing hand-written SQL style. No schema generation step. Easier to review each query individually during migration.</td>
+          </tr>
+          <tr>
+            <td class="d-decision">Async conversion</td>
+            <td class="d-options">Adapter shim (fakes sync) vs full per-route async rewrite</td>
+            <td class="d-rec">Per-route async</td>
+            <td class="d-why">A sync shim using worker threads is fragile. Taking the async debt route-by-route is more work upfront but yields clean, auditable code.</td>
+          </tr>
+          <tr>
+            <td class="d-decision">Row IDs</td>
+            <td class="d-options">Keep custom UIDs (<code>SHPMT-XXXXXX</code>) vs UUID vs BIGSERIAL</td>
+            <td class="d-rec">Keep UIDs</td>
+            <td class="d-why">No data migration needed. Human-readable in logs and URLs. Can add a BIGSERIAL surrogate key later for internal FK performance if needed.</td>
+          </tr>
+          <tr>
+            <td class="d-decision">Schema migrations (ongoing)</td>
+            <td class="d-options">Manual versioned SQL vs Flyway vs Liquibase vs Prisma Migrate</td>
+            <td class="d-rec">Versioned SQL files</td>
+            <td class="d-why">Matches the current migration array pattern. No new toolchain dependency. Files committed alongside code, reviewed in PRs.</td>
+          </tr>
+          <tr>
+            <td class="d-decision">Local dev</td>
+            <td class="d-options">Docker Compose vs local PG install vs Neon serverless</td>
+            <td class="d-rec">Docker Compose</td>
+            <td class="d-why">Reproducible across machines. <code>docker-compose up</code> replaces the current zero-setup SQLite file. Works offline.</td>
+          </tr>
+          <tr>
+            <td class="d-decision">Connection pooling</td>
+            <td class="d-options"><code>pg-pool</code> (app-level) vs PgBouncer (server-level)</td>
+            <td class="d-rec">pg-pool</td>
+            <td class="d-why">Simpler for a single Express process. PgBouncer adds a separate infrastructure component — revisit only if connection count becomes a bottleneck.</td>
+          </tr>
+          <tr>
+            <td class="d-decision">Analytics layer</td>
+            <td class="d-options">PG materialized views vs DuckDB vs Snowflake</td>
+            <td class="d-rec">DuckDB</td>
+            <td class="d-why">In-process, no server, reads PG via FDW or nightly sync. Replaces the slow GROUP BY aggregations in the margin/dashboard routes without infrastructure overhead.</td>
+          </tr>
+          <tr>
+            <td class="d-decision">Maersk API key scope</td>
+            <td class="d-options">Single Consumer Key for all 4 APIs vs per-API keys</td>
+            <td class="d-rec">Single key (confirmed)</td>
+            <td class="d-why">The developer portal shows one Consumer Key covering Commodities, Vessels, Locations, and Ocean Booking Offices. Stored in <code>app_settings</code> — separate from the P2P Schedules key.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── Integration Adapter Pattern ── -->
+  <div class="section">
+    <div class="section-label">Integration adapter pattern — the K+N data hub model</div>
+    <p>External systems push or are polled by inbound adapters. The hub is the canonical write model. The application never reads directly from external sources — only from the hub's copy. Every inbound update logs an event atomically with the data change.</p>
+    <div class="gap"></div>
+
+    <div class="flow">
+      <div class="flow-node">
+        <div class="fn-label">Source</div>
+        <div class="fn-name">Maersk API</div>
+        <div class="fn-detail">P2P Schedules</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node hub">
+        <div class="fn-label">Hub · ops schema</div>
+        <div class="fn-name">Schedule Adapter</div>
+        <div class="fn-detail">Match voyage · diff ETD/ETA · write-back</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node">
+        <div class="fn-label">Writes (atomic)</div>
+        <div class="fn-name">shipments</div>
+        <div class="fn-detail">UPDATE etd, eta, vessel</div>
+      </div>
+      <div class="flow-arrow">+</div>
+      <div class="flow-node">
+        <div class="fn-label">Event log</div>
+        <div class="fn-name">shipment_events</div>
+        <div class="fn-detail">source: "maersk_api"</div>
+      </div>
+    </div>
+
+    <div class="gap"></div>
+
+    <div class="flow">
+      <div class="flow-node">
+        <div class="fn-label">Source</div>
+        <div class="fn-name">Maersk MDM APIs</div>
+        <div class="fn-detail">Vessels · Ports · Commodities</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node hub">
+        <div class="fn-label">Hub · mdm schema</div>
+        <div class="fn-name">MDM Sync Adapters</div>
+        <div class="fn-detail">UPSERT on code/IMO · diff only</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node">
+        <div class="fn-label">Writes</div>
+        <div class="fn-name">vessels / port_locations</div>
+        <div class="fn-detail">UPSERT + last_synced_at</div>
+      </div>
+      <div class="flow-arrow">+</div>
+      <div class="flow-node">
+        <div class="fn-label">Sync log</div>
+        <div class="fn-name">schedule_syncs</div>
+        <div class="fn-detail">timestamp · source · count</div>
+      </div>
+    </div>
+
+    <div class="gap"></div>
+
+    <div class="flow">
+      <div class="flow-node">
+        <div class="fn-label">Source</div>
+        <div class="fn-name">Azure AD / PDM</div>
+        <div class="fn-detail">Identity provider</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node hub">
+        <div class="fn-label">Hub · auth schema</div>
+        <div class="fn-name">User Sync Adapter</div>
+        <div class="fn-detail">SSO callback · find-or-create</div>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-node">
+        <div class="fn-label">Writes</div>
+        <div class="fn-name">auth.users</div>
+        <div class="fn-detail">UPSERT on email</div>
+      </div>
+      <div class="flow-arrow">+</div>
+      <div class="flow-node">
+        <div class="fn-label">Event log</div>
+        <div class="fn-name">admin_events</div>
+        <div class="fn-detail">USER_CREATED_SSO</div>
+      </div>
+    </div>
+
+    <div class="gap-sm"></div>
+    <p style="margin-top:12px;">Both adapters already exist in embryonic form in CargoDesk. The migration completes the pattern by making the write-back atomic and adding <code>integrations.schedule_syncs</code> for sync history tracking — matching how <code>sanctions_syncs</code> tracks OFAC imports today.</p>
+  </div>
+
+  <!-- ── Effort ── -->
+  <div class="section">
+    <div class="section-label">Effort estimate</div>
+    <div class="effort-wrap">
+      <table class="effort">
+        <thead>
+          <tr>
+            <th>Phase / Epic</th>
+            <th>Scope</th>
+            <th style="text-align:right">Days</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="e-phase">PGMGR-001 — Prepare</td>
+            <td class="e-scope">Docker Compose, PG schemas, migration script, data verification</td>
+            <td class="e-days">1–2</td>
+          </tr>
+          <tr>
+            <td class="e-phase">PGMGR-002 — Driver infra</td>
+            <td class="e-scope">pg driver, pool, DB_DRIVER toggle, async adapter pattern</td>
+            <td class="e-days">2–3</td>
+          </tr>
+          <tr>
+            <td class="e-phase">PGMGR-003 — Auth schema</td>
+            <td class="e-scope">routes/auth.js, SSO, lockout, token revocation</td>
+            <td class="e-days">1–2</td>
+          </tr>
+          <tr>
+            <td class="e-phase">PGMGR-004 — MDM + Integrations</td>
+            <td class="e-scope">7 route files, port–lane index rebuild, OFAC sync, Maersk MDM adapters</td>
+            <td class="e-days">3–4</td>
+          </tr>
+          <tr>
+            <td class="e-phase">PGMGR-005 — Ops + Analytics</td>
+            <td class="e-scope">Shipments, legs, tickets, cost lines, DuckDB analytics, remove SQLite</td>
+            <td class="e-days">5–7</td>
+          </tr>
+          <tr>
+            <td class="e-phase">SCHED-001–005 (done)</td>
+            <td class="e-scope">shipment_schedules table + routes + form/detail UI</td>
+            <td class="e-days">1</td>
+          </tr>
+          <tr>
+            <td class="e-phase">SCHED-006 — write-back adapter</td>
+            <td class="e-scope">Voyage matching, ETD/ETA diff, event log, cron trigger</td>
+            <td class="e-days">1–2</td>
+          </tr>
+          <tr>
+            <td class="e-phase">MAEU-001–003 — MDM sync</td>
+            <td class="e-scope">Commodities, Vessels, Locations API adapters + AppSettings triggers</td>
+            <td class="e-days">2–3</td>
+          </tr>
+          <tr>
+            <td class="e-phase">MAEU-004 — Booking Offices</td>
+            <td class="e-scope">New table + sync adapter + carrier MDM UI</td>
+            <td class="e-days">1–2</td>
+          </tr>
+          <tr class="total">
+            <td class="e-phase">Total (excluding done stories)</td>
+            <td class="e-scope">Working days, single developer, no parallel work assumed</td>
+            <td class="e-days">17–25</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ── Open Questions ── -->
+  <div class="section">
+    <div class="section-label">Open questions — decide before Phase 1</div>
+    <div class="questions">
+      <div class="question">
+        <span class="q-tag">Q1</span>
+        <div class="q-text"><strong>PostgreSQL hosting target.</strong> Local Docker for dev is clear. For production: self-hosted VPS, managed (AWS RDS, Neon, Supabase), or on-premise? This affects connection string config, SSL requirements, and whether PgBouncer is needed.</div>
+      </div>
+      <div class="question">
+        <span class="q-tag">Q2</span>
+        <div class="q-text"><strong>DuckDB sync strategy.</strong> Does DuckDB read PostgreSQL in real-time via FDW, or is it fed by a nightly ETL job? Real-time FDW is simpler to set up but adds a PG extension dependency. A sync job is more portable.</div>
+      </div>
+      <div class="question">
+        <span class="q-tag">Q3</span>
+        <div class="q-text"><strong>Schedule write-back opt-in.</strong> When Maersk returns live ETD/ETA that differs from the stored value, should the adapter update automatically or prompt the operator? Automatic is cleaner for the hub model; prompted preserves manual overrides.</div>
+      </div>
+      <div class="question">
+        <span class="q-tag">Q4</span>
+        <div class="q-text"><strong>Future identity provider.</strong> Is there a corporate PDM or directory (Azure AD, Okta, LDAP) that should provision users into <code>auth.users</code>? Knowing this upfront shapes the user sync adapter design in Phase 2.</div>
+      </div>
+      <div class="question">
+        <span class="q-tag">Q5</span>
+        <div class="q-text"><strong>Cutover strategy.</strong> Big-bang cutover (all routes switch at once, risky) or rolling per-schema (auth first, then MDM, then ops)? Rolling is safer but requires the dual-driver shim to stay stable for 2–3 weeks.</div>
+      </div>
+      <div class="question">
+        <span class="q-tag">Q6</span>
+        <div class="q-text"><strong>Maersk MDM sync frequency.</strong> Commodities and vessels are slow-moving MDM — weekly sync is sufficient. Port locations (14,269 rows) change more frequently. Should the Locations adapter run nightly or be manually triggered? WebSocket progress reporting is already in scope.</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+</body></html>

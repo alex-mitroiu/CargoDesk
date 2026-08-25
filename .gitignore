@@ -148,7 +148,11 @@ services/document-distribution/distribution.db
 services/contract-management/contracts.db
 *.db-shm
 *.db-wal
-!sampleDB/cargodesk.db
+# db/cargodesk.sample.db is the one exception — a committed, pre-seeded copy carrying only
+# static MDM reference data (ports/carriers/vessels/commodities/regions/trade lanes/countries),
+# never shipments/contracts/customers/users. server.js copies it to cargodesk.db automatically
+# on first boot if no database exists yet, so a fresh clone runs with zero setup scripts.
+!db/cargodesk.sample.db
 .env
 
 # Real Docker Compose secret files (docker-compose.yml's own secrets: block reads from here) —

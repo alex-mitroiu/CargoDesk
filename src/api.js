@@ -356,6 +356,15 @@ export const api = {
     update: (id, d) => req("PUT",    `/pack-type-definitions/${id}`, d),
     remove: (id)    => req("DELETE", `/pack-type-definitions/${id}`),
   },
+  eadapter: {
+    configs: {
+      list:   ()      => req("GET",    "/eadapter/configs"),
+      create: (d)     => req("POST",   "/eadapter/configs", d),
+      update: (id, d) => req("PUT",    `/eadapter/configs/${id}`, d),
+      remove: (id)    => req("DELETE", `/eadapter/configs/${id}`),
+    },
+    bookableCarriers: () => req("GET", "/eadapter/bookable-carriers"),
+  },
   containerTypes: {
     list:   ()      => req("GET",    "/container-type-definitions"),
     create: (d)     => req("POST",   "/container-type-definitions", d),

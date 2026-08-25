@@ -1,0 +1,663 @@
+<!doctype html><html><head><!-- frame-runtime --><base href="/_f/1786750973-98c2/"><script>window.__FRAME_PREAMBLE={"capabilities":{"artifact":"artifact.oqIe8shs.js","assets":"assets.DBUJcvq_.js","comments":"comments.GLuHR3zP.js","db":"db.CRhVHzSt.js","downloads":"downloads.C3GSvEDP.js","embed":"embed.CZsbekoQ.js","mcp":"mcp.Bvma3qD7.js","network":"network.B5UA9Su4.js","permissions":"permissions.BNySkLV5.js","room":"room.DE7EMui-.js","sample":"sample.BW2Uysoh.js","self":"artifact.oqIe8shs.js","user":"user.BpKav-Rf.js"},"transforms":"_transforms.h3_8GSUa.js","comments":"_comments.BOgkE6qU.js","translate":"_translate.5HCW4BJh.js"}</script><script>(function(){"use strict";var Y=["light","dark","system"],X=/^[A-Za-z0-9_-]{1,64}$/,D=/^[a-zA-Z_:][a-zA-Z0-9_:.-]{0,127}$/,G=new Set(["class","hidden","value","checked"]);function V(e){const t=e.toLowerCase();return t.startsWith("data-")||t.startsWith("aria-")||G.has(t)}var be="http://www.w3.org/1999/xhtml",Z="http://www.w3.org/2000/svg",J=new Set(["script","style","iframe","noscript","noframes","noembed","xmp","plaintext","template","title","textarea","object","embed"]),Q=new Set(["script","style"]);function ee(e){const t=e.localName.toLowerCase();return e.namespaceURI==="http://www.w3.org/1999/xhtml"?!J.has(t):e.namespaceURI===Z?!Q.has(t):!1}var te=new Set(["html","head","body","frameset"]);function re(e){return e.namespaceURI==="http://www.w3.org/1999/xhtml"&&te.has(e.localName)}function ne(e){if(e===null||typeof e!="object")return!1;const t=e;if(typeof t.target!="string"||!X.test(t.target)||t.text!==void 0&&typeof t.text!="string")return!1;if(t.attrsSet!==void 0){if(t.attrsSet===null||typeof t.attrsSet!="object")return!1;for(const[n,s]of Object.entries(t.attrsSet))if(!D.test(n)||typeof s!="string")return!1}if(t.attrsRemoved!==void 0){if(!Array.isArray(t.attrsRemoved))return!1;for(const n of t.attrsRemoved)if(typeof n!="string"||!D.test(n))return!1}return!0}function se(e,t){if(e===null||typeof e!="object")return!1;const{seq:n,elements:s}=e;if(typeof n!="number"||!Number.isSafeInteger(n)||!Array.isArray(s)||s.length===0||s.length>64)return!1;for(let o=0;o<s.length;o++)if(!t(s[o]))return!1;return!0}function ae(e){return e===null||typeof e!="object"?!1:se(e.__frame_patch,ne)}function oe(e){if(e===null||typeof e!="object")return!1;const t=e.__frame_init;return t!==null&&typeof t=="object"}function ie(e){return e!==null&&typeof e=="object"&&e.__frame_size_poke===!0}function le(e){if(e===null||typeof e!="object")return!1;const t=e.__frame_theme;if(t===null||typeof t!="object")return!1;const n=t.theme;return typeof n=="string"&&Y.includes(n)}var O="__frame_scroll",ce=150,ue=310,fe=160,pe=3e4;function de(){let e=0,t=!1,n=!1,s=!1,o=0,l=null;const c=i=>{try{sessionStorage.setItem(O,JSON.stringify({y:i}))}catch{}},f=()=>{if(clearTimeout(e),l===null)return;const i=l;l=null,c(i)},S=()=>{if(t){t=!1;return}n=!0,l=scrollY,clearTimeout(e),e=setTimeout(f,ce)};try{addEventListener("scroll",S,{passive:!0}),addEventListener("pagehide",f)}catch{}const v=()=>{let i;try{i=sessionStorage.getItem(O)}catch{return null}if(i===null)return null;let d;try{d=JSON.parse(i)}catch{d=null}const u=d?.y;if(!(typeof u=="number"&&Number.isFinite(u)&&u>=0)){try{sessionStorage.removeItem(O)}catch{}return null}return u};let b=!1;const m=i=>{try{const d=scrollY;scrollTo({top:i,left:0,behavior:"instant"}),o=i,s=!0,clearTimeout(e),l=null,c(i);const u=scrollY;u!==d&&(t=!0),u!==i&&!b&&(b=!0,addEventListener("load",()=>{try{if(scrollY===u){const h=v();m(h!==null?h:o)}}catch{}},{once:!0}))}catch{}},y=()=>{try{return!!location.hash}catch{return!0}};let g=!1;const E=()=>{try{if(g||innerWidth>ue||innerHeight>fe)return;g=!0;const i=Date.now(),d=()=>{try{removeEventListener("resize",d)}catch{}if(Date.now()-i>pe||n||y())return;const u=v();m(u!==null?u:o)};addEventListener("resize",d)}catch{}};let r=!1,p=!1;return{restore(){if(r||(r=!0,y()))return;const i=v();i!==null&&(m(i),E())},promoted(){if(p||(p=!0,y()))return;const i=v();i!==null?(m(i),E()):s&&m(o)}}}var Ee="modulepreload",Ae=function(e){return"/"+e},Re={},me=function(t,n,s){let o=Promise.resolve();function l(c){const f=new Event("vite:preloadError",{cancelable:!0});if(f.payload=c,window.dispatchEvent(f),!f.defaultPrevented)throw c}return o.then(c=>{for(const f of c||[])f.status==="rejected"&&l(f.reason);return t().catch(l)})};(function(){const e=Object.defineProperty,t=globalThis,n=["RTCPeerConnection","webkitRTCPeerConnection","RTCDataChannel","RTCIceCandidate","RTCSessionDescription","RTCRtpSender","RTCRtpReceiver"];let s=0;for(let o=0;o<n.length;o++){const l=n[o];try{e(t,l,{value:void 0,writable:!1,configurable:!1})}catch{try{delete t[l]}catch{}try{e(t,l,{value:void 0,writable:!1,configurable:!0})}catch{}}typeof t[l]=="function"&&s++}if(s&&window!==top)try{parent.postMessage({__frame_rtc_lockdown_failed:s},"*")}catch{}})();var he=1e4,_e=Object.freeze([...window.__FRAME_PREAMBLE?.origins??["https://claude.ai","https://preview.claude.ai"]]);function F(e){for(const t of _e)if(t.endsWith(":*"))try{const n=new URL(e);if(`${n.protocol}//${n.hostname}:*`===t)return!0}catch{}else if(e===t)return!0;return!1}var M=Object.freeze({...window.__FRAME_PREAMBLE?.capabilities}),j=window.__FRAME_PREAMBLE?.transforms,N=window.__FRAME_PREAMBLE?.comments,I=window.__FRAME_PREAMBLE?.translate,L=/^[\w.-]+\.js$/;function T(e){return me(()=>import("/_runtime/"+e),void 0)}function z(e,t){return{contract:e.contract,changes:new Set(e.changes??[]),flags:new Set(e.flags??[]),capabilities:e.capabilities??{},capBudgets:e.capBudgets??{},transforms:new Map,shellOrigin:t,mount:W,pipe:()=>({wrap:(n,s)=>(...o)=>{try{return s(...o)}catch(l){return Promise.reject(l)}}})}}var P=null,w=null;function q(e,t,n){try{Object.defineProperty(e,t,{value:n,writable:!1,configurable:!1,enumerable:!0})}catch{try{Object.defineProperty(e,t,{value:n,writable:!1,configurable:!0,enumerable:!0})}catch{}}}var B=!1;function ve(e,t){const n=[];for(const s of e.elements){const o=document.querySelector(`[data-id="${s.target}"]`);if(!o){parent.postMessage({__frame_patch_miss:{seq:e.seq}},t);return}if([...Object.keys(s.attrsSet??{}),...s.attrsRemoved??[]].some(l=>!V(l))){parent.postMessage({__frame_patch_miss:{seq:e.seq}},t);return}if(s.text!==void 0&&(!ee(o)||re(o))){parent.postMessage({__frame_patch_miss:{seq:e.seq}},t);return}for(const[l,c]of Object.entries(s.attrsSet??{}))if(!$(o,l)){try{o.setAttribute(l,c)}catch{}H(o,l,c)}for(const l of s.attrsRemoved??[])$(o,l)||(o.removeAttribute(l),H(o,l,null));typeof s.text=="string"&&(o.textContent=s.text),n.push(s.target)}try{document.dispatchEvent(new CustomEvent("claude:edit",{detail:{seq:e.seq,targets:n}}))}catch{}}function H(e,t,n){if(!(e instanceof HTMLInputElement))return;const s=t.toLowerCase();s==="checked"?e.checked=n!==null:s==="value"&&e.type!=="file"&&(e.value=n??"")}function $(e,t){const n=t.toLowerCase(),s=e;return n==="data-id"||(n==="value"||n==="checked")&&(s.__artifactSecret===!0||/^(password|hidden|file)$/.test(s.type??"")||/(^|\s)(cc-|one-time-code|current-password|new-password)/i.test(`${e.getAttribute("autocomplete")??""} ${s.autocomplete??""}`))}function K(e){const t=document.documentElement;e==="light"||e==="dark"?(t.dataset.theme=e,t.style.colorScheme=e,B=!0):B&&(delete t.dataset.theme,t.style.colorScheme="",B=!1)}var R=new Map;function ye(){let e;const t={u:new Promise(n=>{e=n}),r:n=>{t.done=!0,e(n)},done:!1,nulled:!1};return t}var ge=Object.freeze(Object.assign(Object.create(null),{call:Function.prototype.call,apply:Function.prototype.apply,bind:Function.prototype.bind})),W=(e,t)=>{const n=R.get(e);if(!n||n.done){n?.nulled&&w&&parent.postMessage({__frame_cap_telemetry:{kind:"cap-load-error",cap:e}},w);return}const s=typeof t=="function"?Object.setPrototypeOf(t,ge):Object.assign(Object.create(null),t);typeof s.then=="function"&&delete s.then,n.r(Object.freeze(s))},U=Object.getOwnPropertyDescriptor(window,"claude");if(window!==top&&!(U&&U.writable===!1)){const e=j&&L.test(j)?T(j).catch(()=>{}):Promise.resolve(void 0),t=r=>{if(r.type==="auxclick"&&r.button!==1)return;const p=r.target,i=p&&p.closest?p.closest("a[href],area[href]"):null;if(!i)return;const d=i.getAttribute("href");if(!d)return;let u,h;try{u=new URL(d,document.baseURI),h=new URL(document.baseURI).origin}catch{return}if((u.protocol==="http:"||u.protocol==="https:")&&u.origin!==h){r.preventDefault();const _=(i.getAttribute("target")??"").toLowerCase(),C=r.type==="auxclick"||r.metaKey||r.ctrlKey||r.shiftKey||r.altKey||!["","_self","_top","_parent"].includes(_);parent.postMessage({__frame_nav:!0,url:u.href,newTab:C},"*")}};addEventListener("click",t,!0),addEventListener("auxclick",t,!0);const n={},s=r=>{r.isTrusted&&(n.pointer=!0)},o=r=>{r.isTrusted&&(n.click=!0)};addEventListener("pointermove",s,{capture:!0,passive:!0}),addEventListener("click",o,{capture:!0,passive:!0}),e.then(r=>{r?.wireNav&&(r.wireNav(),removeEventListener("click",t,!0),removeEventListener("auxclick",t,!0),removeEventListener("pointermove",s,!0),removeEventListener("click",o,!0),r.wireEngagement?.(n))});let l=null;try{l=de()}catch{}const c=U?.value??{};q(window,"claude",c);for(const r of Object.keys(M)){if(c[r]!==void 0){q(c,r,c[r]);continue}R.set(r,ye())}if(c.use===void 0){const r=p=>{if(typeof p!="string"||!Object.hasOwn(M,p))return Promise.resolve(null);const i=R.get(p);return i?i.u:Promise.resolve(c[p]??null)};try{Object.defineProperty(c,"use",{value:r,writable:!0,configurable:!0,enumerable:!1})}catch{}}let f=null,S=null,v=0;const b=r=>{r.source!==parent||!F(r.origin)||oe(r.data)&&(f=r.data.__frame_init,w=r.origin,removeEventListener("message",b),clearTimeout(v),S?.())};addEventListener("message",b),parent.postMessage({__frame_connect:!0},"*");const m=new Promise(r=>{S=r,v=setTimeout(()=>{removeEventListener("message",b),r()},he)}),y=document.readyState==="loading"?new Promise(r=>document.addEventListener("DOMContentLoaded",()=>r(),{once:!0})):Promise.resolve();y.then(()=>{try{l?.restore()}catch{}});const g={cb:null},E=r=>{if(!(r.source!==parent||!F(r.origin))&&ie(r.data)){try{l?.promoted()}catch{}g.cb?.()}};addEventListener("message",E),m.then(async()=>{if(!f||!w){for(const a of R.values())a.nulled=!0,a.r(null);return}K(f.theme);const r=w;let p=!1,i=!1;addEventListener("message",a=>{if(a.source!==parent||a.origin!==r)return;le(a.data)&&K(a.data.__frame_theme.theme),ae(a.data)&&ve(a.data.__frame_patch,r);const k=a.data?.__fc_mode;k&&typeof k=="object"&&!p&&N&&L.test(N)&&(p=!0,T(N).then(x=>x.install?.(r,k.on===!0)).catch(()=>{}));const A=a.data?.__ft_cmd;A&&typeof A=="object"&&!i&&I&&L.test(I)&&(i=!0,T(I).then(x=>x.install?.(r,A)).catch(()=>{}))});const d=Object.keys(f.capabilities??{}).filter(a=>Object.hasOwn(M,a)).map(a=>[a,M[a]]).filter(a=>typeof a[1]=="string"&&L.test(a[1])),u=await Promise.allSettled(d.map(([,a])=>T(a))),h=await e,_=w;if(h?.buildBoot||parent.postMessage({__frame_cap_telemetry:{kind:"cap-load-error",cap:"_transforms"}},_),h?.buildBoot)try{P=h.buildBoot(f,h.TRANSFORMS??{},{shellOrigin:_,mount:W},a=>parent.postMessage({__frame_cap_telemetry:a},_))}catch{parent.postMessage({__frame_cap_telemetry:{kind:"cap-load-error",cap:"_transforms"}},_),P=z(f,_)}else P=z(f,_);const C=a=>parent.postMessage({__frame_cap_telemetry:{kind:"cap-load-error",cap:a}},_),we=P;u.forEach((a,k)=>{const A=d[k][0];if(a.status!=="fulfilled"){C(A);return}try{a.value?.install?.(we)}catch{C(A)}});for(const a of R.values())a.done||(a.nulled=!0,a.r(null));await y,parent.postMessage({__frame_ready:!0},w),e.then(a=>a?.installSizeReporter?.(_,g))})}})();</script><!-- /frame-runtime --><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}</style></head><body>
+<title>FCL Coverage Audit</title>
+<style>
+  :root {
+    --bg: #F4F6F8;
+    --surface: #FFFFFF;
+    --surface-2: #EEF1F4;
+    --surface-3: #E4E9EE;
+    --border: #DCE2E8;
+    --border-strong: #C4CDD6;
+    --text: #142234;
+    --text-muted: #5C7086;
+    --text-faint: #8A9AAC;
+    --accent: #C46A2C;
+    --accent-strong: #A85620;
+    --accent-soft: rgba(196, 106, 44, 0.10);
+    --success: #2E8564;
+    --success-soft: rgba(46, 133, 100, 0.10);
+    --warning: #A5760E;
+    --warning-soft: rgba(165, 118, 14, 0.12);
+    --critical: #B84A3D;
+    --critical-soft: rgba(184, 74, 61, 0.10);
+    --shadow: 0 1px 2px rgba(20, 34, 52, 0.04), 0 8px 24px rgba(20, 34, 52, 0.05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0A121C;
+      --surface: #101C2B;
+      --surface-2: #16283C;
+      --surface-3: #1D3149;
+      --border: #223448;
+      --border-strong: #2C4258;
+      --text: #E8EEF4;
+      --text-muted: #8399B0;
+      --text-faint: #5C7086;
+      --accent: #E38B4A;
+      --accent-strong: #F0A464;
+      --accent-soft: rgba(227, 139, 74, 0.14);
+      --success: #4FB08A;
+      --success-soft: rgba(79, 176, 138, 0.14);
+      --warning: #D9A441;
+      --warning-soft: rgba(217, 164, 65, 0.14);
+      --critical: #DD6B5B;
+      --critical-soft: rgba(221, 107, 91, 0.14);
+      --shadow: 0 1px 2px rgba(0, 0, 0, 0.2), 0 12px 32px rgba(0, 0, 0, 0.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0A121C;
+    --surface: #101C2B;
+    --surface-2: #16283C;
+    --surface-3: #1D3149;
+    --border: #223448;
+    --border-strong: #2C4258;
+    --text: #E8EEF4;
+    --text-muted: #8399B0;
+    --text-faint: #5C7086;
+    --accent: #E38B4A;
+    --accent-strong: #F0A464;
+    --accent-soft: rgba(227, 139, 74, 0.14);
+    --success: #4FB08A;
+    --success-soft: rgba(79, 176, 138, 0.14);
+    --warning: #D9A441;
+    --warning-soft: rgba(217, 164, 65, 0.14);
+    --critical: #DD6B5B;
+    --critical-soft: rgba(221, 107, 91, 0.14);
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.2), 0 12px 32px rgba(0, 0, 0, 0.35);
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    font-size: 15px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  }
+
+  .display {
+    font-family: "Archivo Narrow", "Roboto Condensed", "Arial Narrow", sans-serif;
+    font-stretch: condensed;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+  }
+  .mono {
+    font-family: "SF Mono", "Cascadia Code", Consolas, "Roboto Mono", monospace;
+    font-variant-numeric: tabular-nums;
+  }
+
+  a { color: var(--accent-strong); }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) a { color: var(--accent-strong); } }
+  :root[data-theme="dark"] a { color: var(--accent-strong); }
+
+  .wrap { max-width: 900px; margin: 0 auto; padding: 0 24px 96px; }
+
+  /* ── Manifest header ───────────────────────────────────────────── */
+  .manifest {
+    border-bottom: 3px solid var(--text);
+    padding: 56px 0 22px;
+    margin-bottom: 40px;
+  }
+  .manifest-eyebrow {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 11px; font-weight: 700; color: var(--text-muted);
+    letter-spacing: 0.14em; text-transform: uppercase; margin-bottom: 18px;
+  }
+  .manifest-eyebrow .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+  h1.manifest-title {
+    margin: 0 0 20px;
+    font-size: clamp(34px, 6vw, 52px);
+    font-weight: 800;
+    line-height: 1.02;
+    text-wrap: balance;
+  }
+  .manifest-meta {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 14px 28px;
+    padding-top: 18px;
+    border-top: 1px solid var(--border);
+  }
+  .manifest-meta dt {
+    font-size: 10px; font-weight: 700; color: var(--text-faint);
+    text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 4px;
+  }
+  .manifest-meta dd { margin: 0; font-size: 13.5px; color: var(--text); font-weight: 600; }
+
+  /* ── Section scaffolding ───────────────────────────────────────── */
+  section.block { margin-bottom: 64px; }
+  .section-head {
+    display: flex; align-items: baseline; gap: 14px;
+    margin-bottom: 22px;
+  }
+  .section-tag {
+    flex-shrink: 0;
+    font-family: "SF Mono", "Cascadia Code", Consolas, monospace;
+    font-size: 11px; font-weight: 700;
+    color: var(--text-muted);
+    border: 1px solid var(--border-strong);
+    border-radius: 4px;
+    padding: 3px 7px;
+    letter-spacing: 0.04em;
+  }
+  h2.section-title {
+    margin: 0; font-size: 24px; font-weight: 800; letter-spacing: -0.01em;
+  }
+  .section-intro {
+    color: var(--text-muted); font-size: 14.5px; max-width: 62ch; margin: 0 0 26px;
+  }
+  p { margin: 0 0 14px; }
+  .prose p:last-child { margin-bottom: 0; }
+
+  /* ── Executive summary callout ─────────────────────────────────── */
+  .lede {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 10px;
+    padding: 22px 24px;
+    box-shadow: var(--shadow);
+    font-size: 15.5px;
+  }
+  .lede strong { color: var(--text); }
+
+  /* ── Stat row ───────────────────────────────────────────────────── */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    margin-top: 22px;
+  }
+  .stat { background: var(--surface); padding: 18px 16px; }
+  .stat-num { font-family: "SF Mono", "Cascadia Code", Consolas, monospace; font-variant-numeric: tabular-nums; font-size: 26px; font-weight: 700; color: var(--accent-strong); line-height: 1; }
+  .stat-label { margin-top: 7px; font-size: 11px; color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+
+  /* ── Capability grid (current state) ───────────────────────────── */
+  .cap-grid { display: flex; flex-direction: column; gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .cap-row { display: grid; grid-template-columns: 20px 1fr 1.6fr; gap: 16px; align-items: start; background: var(--surface); padding: 14px 18px; }
+  .cap-check { color: var(--success); margin-top: 2px; flex-shrink: 0; }
+  .cap-term { font-weight: 700; font-size: 14px; }
+  .cap-term .glossary-def { display: block; font-weight: 400; color: var(--text-faint); font-size: 12px; margin-top: 2px; font-style: italic; }
+  .cap-detail { color: var(--text-muted); font-size: 13.5px; }
+  .cap-detail code { font-family: "SF Mono", "Cascadia Code", Consolas, monospace; font-size: 12px; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; color: var(--text); }
+
+  /* ── Gap cards ──────────────────────────────────────────────────── */
+  .gap-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px 26px;
+    box-shadow: var(--shadow);
+    margin-bottom: 18px;
+  }
+  .gap-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 6px; }
+  .gap-title { font-size: 17px; font-weight: 800; margin: 0; }
+  .gap-glossary { color: var(--text-faint); font-size: 12.5px; margin: 4px 0 16px; font-style: italic; }
+  .pill {
+    flex-shrink: 0;
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+    padding: 4px 10px; border-radius: 20px; white-space: nowrap;
+  }
+  .pill-p0 { background: var(--critical-soft); color: var(--critical); }
+  .pill-p1 { background: var(--warning-soft); color: var(--warning); }
+  .pill-p2 { background: var(--accent-soft); color: var(--accent-strong); }
+  .pill-p3 { background: var(--surface-3); color: var(--text-muted); }
+  .pill-closed { background: var(--success-soft); color: var(--success); margin-left: 6px; }
+  .status-update { margin: 0 0 32px; padding: 20px 24px; background: var(--success-soft); border: 1px solid var(--success); border-radius: 10px; }
+  .status-update h2 { margin: 0 0 8px; font-size: 16px; color: var(--success); }
+  .status-update p { margin: 0; font-size: 13.5px; color: var(--text); }
+
+  .lens { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 16px; }
+  @media (max-width: 620px) { .lens { grid-template-columns: 1fr; } }
+  .lens-box { background: var(--surface-2); border-radius: 8px; padding: 14px 16px; }
+  .lens-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.09em; color: var(--text-faint); margin-bottom: 7px; }
+  .lens-label.pm::before { content: "PM"; display: inline-block; margin-right: 6px; background: var(--accent-soft); color: var(--accent-strong); border-radius: 4px; padding: 1px 5px; font-size: 9px; }
+  .lens-label.arch::before { content: "ARCH"; display: inline-block; margin-right: 6px; background: var(--surface-3); color: var(--text-muted); border-radius: 4px; padding: 1px 5px; font-size: 9px; }
+  .lens-box p { font-size: 13px; color: var(--text-muted); margin: 0; }
+  .lens-box code { font-family: "SF Mono", "Cascadia Code", Consolas, monospace; font-size: 11.5px; background: var(--surface-3); padding: 1px 5px; border-radius: 4px; color: var(--text); }
+
+  .correction {
+    margin-top: 14px;
+    border: 1px dashed var(--border-strong);
+    border-radius: 8px;
+    padding: 12px 14px;
+    font-size: 12.5px;
+    color: var(--text-muted);
+  }
+  .correction strong { color: var(--text); }
+
+  /* ── Roadmap table ──────────────────────────────────────────────── */
+  .roadmap-group { margin-bottom: 28px; }
+  .roadmap-group:last-child { margin-bottom: 0; }
+  .roadmap-group-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .roadmap-group-head .pill { position: relative; top: -1px; }
+  .roadmap-group-head h3 { margin: 0; font-size: 15px; font-weight: 800; }
+  .roadmap-group-head .count { color: var(--text-faint); font-size: 12.5px; }
+
+  .rtable { width: 100%; border-collapse: collapse; }
+  .rtable-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; }
+  .rtable th, .rtable td { text-align: left; padding: 11px 16px; font-size: 13px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  .rtable th:nth-child(2), .rtable td:nth-child(2) { white-space: normal; min-width: 220px; }
+  .rtable th { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-faint); background: var(--surface-2); font-weight: 700; }
+  .rtable tbody tr:last-child td { border-bottom: none; }
+  .rtable tbody tr:nth-child(even) { background: var(--surface-2); }
+  .rtable td.item-name { font-weight: 700; }
+  .rtable td.effort { color: var(--text-muted); }
+
+  .not-rec {
+    background: var(--surface-2);
+    border-radius: 10px;
+    padding: 16px 18px;
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+  .not-rec strong { color: var(--text); }
+
+  /* ── Closing note ──────────────────────────────────────────────── */
+  .closer {
+    border-top: 1px solid var(--border);
+    padding-top: 28px;
+    margin-top: 8px;
+    color: var(--text-muted);
+    font-size: 14px;
+  }
+  .closer strong { color: var(--text); }
+
+  footer.page-footer {
+    max-width: 900px; margin: 0 auto; padding: 32px 24px 48px;
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 11.5px; color: var(--text-faint);
+    border-top: 1px solid var(--border);
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="manifest">
+    <div class="manifest-eyebrow"><span class="dot"></span>CargoDesk &middot; Internal Analysis</div>
+    <h1 class="manifest-title display">FCL Coverage Audit</h1>
+    <dl class="manifest-meta">
+      <div><dt>Scope</dt><dd>Full Container Load only</dd></div>
+      <div><dt>Method</dt><dd>Glossary cross-check</dd></div>
+      <div><dt>Source</dt><dd>DocShipper glossary</dd></div>
+      <div><dt>Reviewed by</dt><dd>PM &amp; Architect lens</dd></div>
+    </dl>
+  </header>
+
+  <div class="status-update">
+    <h2>Status update — verified 2026-08-25</h2>
+    <p>All 6 gaps below have shipped. Master/House B/L split (v0.71.0, refined further by TKT-9O2B3T),
+    Arrival Notice &amp; Delivery Order documents, equipment-condition tracking (EIR), a landed-cost/duty
+    estimate, and chassis/drayage tracking are all live in the current codebase — see the "✓ Closed" tag
+    on each gap below for exactly what shipped and where. Letter of Credit / documentary compliance
+    remains correctly not built, per this document's own "Not recommended" call.</p>
+  </div>
+
+  <section class="block">
+    <div class="lede">
+      Cross-checked CargoDesk's FCL data model and routes against the standard vocabulary and document
+      set the freight industry itself uses &mdash; not a competitor's feature list this time, but the
+      <strong>terminology and paperwork</strong> an ocean-freight glossary treats as baseline. The result:
+      CargoDesk's core FCL mechanics (demurrage/detention, VGM, B/L release types, booking, customs filing)
+      match the textbook definitions closely and in some places exceed them. The real gaps cluster around
+      <strong>a handful of specific documents and equipment-condition tracking</strong> that a working FCL
+      desk touches daily but CargoDesk has no dedicated place for yet.
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="stat-num mono">~50</div><div class="stat-label">Glossary terms checked</div></div>
+      <div class="stat"><div class="stat-num mono">11</div><div class="stat-label">Confirmed strong matches</div></div>
+      <div class="stat"><div class="stat-num mono">6</div><div class="stat-label">Real gaps found</div></div>
+      <div class="stat"><div class="stat-num mono">2</div><div class="stat-label">Recommended for "Now"</div></div>
+    </div>
+  </section>
+
+  <section class="block">
+    <div class="section-head">
+      <span class="section-tag">01</span>
+      <h2 class="section-title">Methodology</h2>
+    </div>
+    <div class="prose section-intro" style="max-width:68ch">
+      <p>
+        Pulled the FCL/ocean-freight-relevant subset of DocShipper's glossary (<code class="mono" style="font-size:12px">docshipper.com/glossary</code>
+        and its curated <code class="mono" style="font-size:12px">/logistics-glossary</code> index) &mdash; booking, equipment,
+        documentation, customs/regulatory, ports &amp; terminals, and freight charges. Each term was checked
+        against CargoDesk's actual schema and route code directly (grep &amp; read, not assumed).
+      </p>
+      <p>
+        Scoped to FCL only, per the standing FCL-first sequencing decision &mdash; LCL/consolidation is
+        confirmed already logged and deliberately deferred, not re-litigated here.
+      </p>
+      <p>
+        This is CargoDesk's second gap-analysis pass. The first (v0.69.0) was competitor-driven &mdash; it
+        compared CargoDesk against CargoWise, Magaya, Descartes and others, and shipped Freight Audit &amp;
+        Payment plus multi-list denied-party screening off the back of it. This pass asks a different
+        question &mdash; not "what do other platforms have," but "does CargoDesk's own model match the
+        industry's own definitions and paper trail" &mdash; and surfaces a different, more document-shaped
+        set of gaps as a result.
+      </p>
+    </div>
+  </section>
+
+  <section class="block">
+    <div class="section-head">
+      <span class="section-tag">02</span>
+      <h2 class="section-title">Where CargoDesk already matches the standard</h2>
+    </div>
+    <p class="section-intro">
+      Checked against the glossary's own wording. This list is worth reading before the gaps below &mdash;
+      the FCL core is in genuinely good shape.
+    </p>
+    <div class="cap-grid">
+
+      <div class="cap-row">
+        <span class="cap-check">&#10003;</span>
+        <div class="cap-term">Demurrage vs. Detention
+          <span class="glossary-def">"Demurrage applies when a container remains at the terminal beyond free time&hellip; Detention applies when you've taken the container outside the terminal but haven't returned it." &mdash; DocShipper</span>
+        </div>
+        <div class="cap-detail">Textbook match, independently computed per container: origin demurrage runs Gate&nbsp;In&rarr;Sailed, origin detention runs Empty&nbsp;Pickup&rarr;Gate&nbsp;In; destination mirrors it (Discharged&rarr;Gate&nbsp;Out demurrage, Gate&nbsp;Out&rarr;Empty&nbsp;Return detention). Four independent live-state windows, not two.</div>
+      </div>
+
+      <div class="cap-row">
+        <span class="cap-check">&#10003;</span>
+        <div class="cap-term">VGM (Verified Gross Mass)
+          <span class="glossary-def">SOLAS-mandated container weight verification before loading.</span>
+        </div>
+        <div class="cap-detail">Weight, status, and cutoff tracked per container, with its own compliance badge state.</div>
+      </div>
+
+      <div class="cap-row">
+        <span class="cap-check">&#10003;</span>
+        <div class="cap-term">B/L Release Types
+          <span class="glossary-def">Original / Telex Release / Surrendered / Seaway Bill &mdash; matches the glossary's own definitions almost word for word.</span>
+        </div>
+        <div class="cap-detail">Shipped this session &mdash; drives the new "No. of Originals" line on the generated Bill of Lading.</div>
+      </div>
+
+      <div class="cap-row">
+        <span class="cap-check">&#10003;</span>
+        <div class="cap-term">TEU / FEU container types
+          <span class="glossary-def">20ft / 40ft standard sizes, plus reefer, open-top, flat-rack, tank.</span>
+        </div>
+        <div class="cap-detail">Modeled at the container level (<code>DC/HC/RF/OT/FR/TK</code>), with a full pack-item tree underneath for pallets, cartons, and mixed cargo.</div>
+      </div>
+
+      <div class="cap-row">
+        <span class="cap-check">&#10003;</span>
+        <div class="cap-term">THC &amp; accessorial charges</div>
+        <div class="cap-detail">No fixed THC/BAF/CAF field set &mdash; instead a generic charge-code registry on cost lines, flexible enough to capture any accessorial a carrier bills, including automated per-container fees.</div>
+      </div>
+
+      <div class="cap-row">
+        <span class="cap-check">&#10003;</span>
+        <div class="cap-term">Booking lifecycle</div>
+        <div class="cap-detail">Real, simulated EDI booking-request flow: Created&rarr;Pending&rarr;Confirmed/Rejected, with full archived history when a carrier change supersedes a live booking.</div>
+      </div>
+
+      <div class="cap-row">
+        <span class="cap-check">&#10003;</span>
+        <div class="cap-term">EEI/AES &amp; ISF/AMS filing
+          <span class="glossary-def">"Electronic Entry Information&hellip; advance cargo information requirement." &mdash; DocShipper</span>
+        </div>
+        <div class="cap-detail">Simulated but structurally faithful export (AES/EEI) and import (ISF/AMS) filing lifecycle, with Customs Broker role assignment feeding it directly.</div>
+      </div>
+
+      <div class="cap-row">
+        <span class="cap-check">&#10003;</span>
+        <div class="cap-term">IMDG / Dangerous Goods</div>
+        <div class="cap-detail">Class and declaration tracked from the container down to the individual pack item &mdash; a single DG pallet in an otherwise clean container doesn't force the whole box to be flagged.</div>
+      </div>
+
+      <div class="cap-row">
+        <span class="cap-check">&#10003;</span>
+        <div class="cap-term">HS Code</div>
+        <div class="cap-detail">Tracked at both container and per-pack-item level, with a per-item override of the container's own default.</div>
+      </div>
+
+      <div class="cap-row">
+        <span class="cap-check">&#10003;</span>
+        <div class="cap-term">Notify Party</div>
+        <div class="cap-detail">Both the fixed shipment role and an extensible "Also Notify Party" additional role.</div>
+      </div>
+
+      <div class="cap-row">
+        <span class="cap-check">&#10003;</span>
+        <div class="cap-term">Live vessel tracking (AIS)</div>
+        <div class="cap-detail">Genuinely ahead of the glossary's own baseline &mdash; a persistent AIS feed auto-confirms ETD/ETA from real position reports, something a definitions glossary wouldn't even describe as standard practice yet.</div>
+      </div>
+
+    </div>
+  </section>
+
+  <section class="block">
+    <div class="section-head">
+      <span class="section-tag">03</span>
+      <h2 class="section-title">Gaps</h2>
+    </div>
+    <p class="section-intro">
+      Six real gaps, each read through two lenses: what it costs the business/user if left unbuilt (PM),
+      and how it would actually land in CargoDesk's existing patterns (Architect).
+    </p>
+
+    <div class="gap-card">
+      <div class="gap-head">
+        <h3 class="gap-title">Master B/L vs. House B/L</h3>
+        <span class="pill pill-p0">Now</span><span class="pill pill-closed">✓ Closed v0.71.0</span>
+      </div>
+      <p class="gap-glossary">"A Master B/L is issued by the ocean carrier to the freight forwarder. The forwarder then issues House B/Ls to individual shippers." &mdash; DocShipper</p>
+      <div class="lens">
+        <div class="lens-box">
+          <div class="lens-label pm"></div>
+          <p>CargoDesk's own most likely operator persona <em>is</em> the forwarder/NVOCC &mdash; issuing paper to their own customer while holding different paper from the ocean carrier. <code>shipments.bl_number</code> is one field; it can't hold both.</p>
+        </div>
+        <div class="lens-box">
+          <div class="lens-label arch"></div>
+          <p>Additive only: keep <code>bl_number</code> as the House B/L (avoids touching every existing reader), add one nullable <code>master_bl_number</code> column, and one conditional row on the BL01 document builder &mdash; same pattern as the Booking Ref row already there.</p>
+        </div>
+      </div>
+      <div class="correction">
+        <strong>Correction to the v0.69.0 analysis:</strong> that pass bucketed Master/House B/L together
+        with "LCL/consolidation" as one deferred item. That conflates two different things &mdash; an FCL
+        container booked through an NVOCC gets a Master and House B/L with zero consolidation involved.
+        The LCL half stays correctly deferred; the Master/House split itself is pure-FCL scope.
+      </div>
+    </div>
+
+    <div class="gap-card">
+      <div class="gap-head">
+        <h3 class="gap-title">Equipment condition at gate in/out (EIR)</h3>
+        <span class="pill pill-p1">Next</span><span class="pill pill-closed">✓ Closed — container_events.condition_notes/damage_flag</span>
+      </div>
+      <p class="gap-glossary">Standard terminal/drayage practice: container condition (damage, cleanliness) is recorded and photographed at every gate movement, signed by trucker and terminal.</p>
+      <div class="lens">
+        <div class="lens-box">
+          <div class="lens-label pm"></div>
+          <p>A disputed detention charge almost always comes down to proving condition at a specific gate movement. CargoDesk's own D&amp;D pre-audit is otherwise excellent, but has no evidence to point to when a carrier's invoice is contested.</p>
+        </div>
+        <div class="lens-box">
+          <div class="lens-label arch"></div>
+          <p><code>container_events</code> already logs <em>when</em>; extend with nullable <code>condition_notes</code> / <code>damage_flag</code>, and reuse the existing document-upload mechanism for photos (it already carries <code>container_id</code>). Wires into <code>ContainerEventsPanel.jsx</code>'s existing log-event form &mdash; no new subsystem.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="gap-card">
+      <div class="gap-head">
+        <h3 class="gap-title">Arrival Notice &amp; Delivery Order documents</h3>
+        <span class="pill pill-p0">Now</span><span class="pill pill-closed">✓ Closed — AN01/DO01 documents</span>
+      </div>
+      <p class="gap-glossary">Arrival Notice: carrier/forwarder &rarr; notify party, "your container arrives on X, free time starts." Delivery Order: cargo-release authorization to the destination trucker once the B/L is surrendered.</p>
+      <div class="lens">
+        <div class="lens-box">
+          <div class="lens-label pm"></div>
+          <p>Two of the highest-frequency documents on any import file &mdash; every single shipment touches both. Today a user has to hand-build one via the free-text "Other" doc type, with none of the right fields auto-populated the way BL01/CI01 already are.</p>
+        </div>
+        <div class="lens-box">
+          <div class="lens-label arch"></div>
+          <p>Two new <code>DOC_TYPES</code> entries + two builder functions, following the existing <code>buildXHtml</code> pattern exactly. Arrival Notice reads <code>eta</code>/<code>podName</code>/<code>notifyName</code> + the container's own <code>dest_free_time_days</code> (already computed) to state the real free-time deadline. Delivery Order reads the Trucker (On-carriage) party and B/L release status (both already exist). Zero new backend routes &mdash; the document-generate endpoint already does everything needed.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="gap-card">
+      <div class="gap-head">
+        <h3 class="gap-title">Duty / tariff / landed-cost estimate</h3>
+        <span class="pill pill-p2">Later</span><span class="pill pill-closed">✓ Closed — duty_rate_chapters</span>
+      </div>
+      <p class="gap-glossary">Ad Valorem Duty, Duty Drawback, Customs Duty &mdash; the actual dollar cost of importing, beyond freight.</p>
+      <div class="lens">
+        <div class="lens-box">
+          <div class="lens-label pm"></div>
+          <p>"True landed cost" (freight + duty + fees) is one of the most-requested capabilities in any shipper-facing tool &mdash; and CargoDesk already tracks both inputs an estimate needs (<code>declared_value</code>, <code>hs_code</code>).</p>
+        </div>
+        <div class="lens-box">
+          <div class="lens-label arch"></div>
+          <p>The genuinely hard gap on this list &mdash; an accurate duty estimate needs a real, versioned, per-country HS-tariff data source, the same "needs a data business, not code" caveat already applied to carrier networks in the v0.69.0 pass. Realistic first step: a manually-seeded flat-rate-by-HS-chapter estimator, explicitly a ballpark tool, not a broker system of record.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="gap-card">
+      <div class="gap-head">
+        <h3 class="gap-title">Chassis / drayage equipment</h3>
+        <span class="pill pill-p2">Later</span><span class="pill pill-closed">✓ Closed — container_events.chassis_provider</span>
+      </div>
+      <p class="gap-glossary">Chassis: the wheeled equipment a container rides on for the trucking leg &mdash; chassis shortage/pool fees are their own real cost and delay driver.</p>
+      <div class="lens">
+        <div class="lens-box">
+          <div class="lens-label pm"></div>
+          <p><code>movement_by</code> already captures Truck/Rail/Barge/Vessel as a mode, but nothing models the chassis itself. Matters a lot for US import-heavy drayage, much less elsewhere &mdash; correctly a narrower, later item.</p>
+        </div>
+        <div class="lens-box">
+          <div class="lens-label arch"></div>
+          <p>Piggybacks on the EIR extension above rather than needing its own subsystem &mdash; a chassis-provider field plus a per-diem charge code is additive once gate-event condition capture exists.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="gap-card">
+      <div class="gap-head">
+        <h3 class="gap-title">Letter of Credit / documentary compliance</h3>
+        <span class="pill pill-p3">Not recommended</span>
+      </div>
+      <p class="gap-glossary">Financial instrument guaranteeing payment, with strict document-compliance requirements against the LC's own exact wording.</p>
+      <div class="lens">
+        <div class="lens-box">
+          <div class="lens-label pm"></div>
+          <p>Real for trade-finance-heavy shippers, but this is fundamentally a <em>banking</em> workflow that CargoDesk's own documents would need to comply with &mdash; not a freight-forwarding workflow. Flagged for completeness, correctly out of the app's core lane.</p>
+        </div>
+        <div class="lens-box">
+          <div class="lens-label arch"></div>
+          <p>No architecture note &mdash; not recommended for build.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <div class="section-head">
+      <span class="section-tag">04</span>
+      <h2 class="section-title">Recommended sequencing</h2>
+    </div>
+
+    <div class="roadmap-group">
+      <div class="roadmap-group-head">
+        <span class="pill pill-p0">Now</span>
+        <h3>High value, low build cost, unblocks a daily workflow</h3>
+      </div>
+      <div class="rtable-wrap">
+        <table class="rtable">
+          <thead><tr><th>Item</th><th>Why now</th><th>Build size</th></tr></thead>
+          <tbody>
+            <tr>
+              <td class="item-name">Master / House B/L split</td>
+              <td>Blocks any workflow where CargoDesk's user is the forwarder, not the carrier &mdash; arguably the most common real persona.</td>
+              <td class="effort mono">1 column + 1 doc row</td>
+            </tr>
+            <tr>
+              <td class="item-name">Arrival Notice + Delivery Order</td>
+              <td>Two of the highest-frequency documents on every import file; currently forced into generic free-text.</td>
+              <td class="effort mono">2 doc types</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="roadmap-group">
+      <div class="roadmap-group-head">
+        <span class="pill pill-p1">Next</span>
+        <h3>Real value, moderate build cost</h3>
+      </div>
+      <div class="rtable-wrap">
+        <table class="rtable">
+          <thead><tr><th>Item</th><th>Why next</th><th>Build size</th></tr></thead>
+          <tbody>
+            <tr>
+              <td class="item-name">Equipment condition (EIR)</td>
+              <td>Strengthens the existing D&amp;D pre-audit with real dispute evidence, not just timestamps.</td>
+              <td class="effort mono">2 columns + upload wiring</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="roadmap-group">
+      <div class="roadmap-group-head">
+        <span class="pill pill-p2">Later</span>
+        <h3>Real, but narrower or structurally harder</h3>
+      </div>
+      <div class="rtable-wrap">
+        <table class="rtable">
+          <thead><tr><th>Item</th><th>Why later</th><th>Build size</th></tr></thead>
+          <tbody>
+            <tr>
+              <td class="item-name">Chassis / drayage tracking</td>
+              <td>US-market-specific; rides on the EIR work above once it exists.</td>
+              <td class="effort mono">Small, after EIR</td>
+            </tr>
+            <tr>
+              <td class="item-name">Landed-cost / duty estimate</td>
+              <td>Needs a real tariff data source to do properly &mdash; scope down to a flat-rate ballpark first.</td>
+              <td class="effort mono">Data-sourcing, not just code</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="roadmap-group">
+      <div class="not-rec">
+        <strong>Not recommended:</strong> Letter of Credit / documentary-compliance tracking &mdash; a banking workflow adjacent to freight forwarding, not part of it.
+      </div>
+    </div>
+  </section>
+
+  <section class="block closer">
+    <p>
+      This is analysis only &mdash; nothing here has been built yet. The "Now" items are small enough to
+      execute directly; say the word and I'll draw up real Kanban tickets the same way the v0.69.0 pass did,
+      or just start with whichever one matters most first.
+    </p>
+  </section>
+
+</div>
+
+<footer class="page-footer">
+  <span>CargoDesk &middot; FCL Coverage Audit</span>
+  <span class="mono">Source: docshipper.com/glossary</span>
+</footer>
+
+</body></html>

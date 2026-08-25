@@ -1,0 +1,483 @@
+<!doctype html><html><head><!-- frame-runtime --><base href="/_f/1787688843-dc29/"><script>window.__FRAME_PREAMBLE={"capabilities":{"artifact":"artifact.oqIe8shs.js","assets":"assets.DBUJcvq_.js","comments":"comments.GLuHR3zP.js","db":"db.CRhVHzSt.js","downloads":"downloads.C3GSvEDP.js","embed":"embed.CZsbekoQ.js","mcp":"mcp.Bvma3qD7.js","network":"network.B5UA9Su4.js","permissions":"permissions.BNySkLV5.js","room":"room.DE7EMui-.js","sample":"sample.BW2Uysoh.js","self":"artifact.oqIe8shs.js","user":"user.BpKav-Rf.js"},"transforms":"_transforms.Dj21_51u.js","comments":"_comments.BOgkE6qU.js","translate":"_translate.5HCW4BJh.js"}</script><script>(function(){"use strict";var Y=["light","dark","system"],X=/^[A-Za-z0-9_-]{1,64}$/,D=/^[a-zA-Z_:][a-zA-Z0-9_:.-]{0,127}$/,G=new Set(["class","hidden","value","checked"]);function V(e){const t=e.toLowerCase();return t.startsWith("data-")||t.startsWith("aria-")||G.has(t)}var be="http://www.w3.org/1999/xhtml",Z="http://www.w3.org/2000/svg",J=new Set(["script","style","iframe","noscript","noframes","noembed","xmp","plaintext","template","title","textarea","object","embed"]),Q=new Set(["script","style"]);function ee(e){const t=e.localName.toLowerCase();return e.namespaceURI==="http://www.w3.org/1999/xhtml"?!J.has(t):e.namespaceURI===Z?!Q.has(t):!1}var te=new Set(["html","head","body","frameset"]);function re(e){return e.namespaceURI==="http://www.w3.org/1999/xhtml"&&te.has(e.localName)}function ne(e){if(e===null||typeof e!="object")return!1;const t=e;if(typeof t.target!="string"||!X.test(t.target)||t.text!==void 0&&typeof t.text!="string")return!1;if(t.attrsSet!==void 0){if(t.attrsSet===null||typeof t.attrsSet!="object")return!1;for(const[n,s]of Object.entries(t.attrsSet))if(!D.test(n)||typeof s!="string")return!1}if(t.attrsRemoved!==void 0){if(!Array.isArray(t.attrsRemoved))return!1;for(const n of t.attrsRemoved)if(typeof n!="string"||!D.test(n))return!1}return!0}function se(e,t){if(e===null||typeof e!="object")return!1;const{seq:n,elements:s}=e;if(typeof n!="number"||!Number.isSafeInteger(n)||!Array.isArray(s)||s.length===0||s.length>64)return!1;for(let o=0;o<s.length;o++)if(!t(s[o]))return!1;return!0}function ae(e){return e===null||typeof e!="object"?!1:se(e.__frame_patch,ne)}function oe(e){if(e===null||typeof e!="object")return!1;const t=e.__frame_init;return t!==null&&typeof t=="object"}function ie(e){return e!==null&&typeof e=="object"&&e.__frame_size_poke===!0}function le(e){if(e===null||typeof e!="object")return!1;const t=e.__frame_theme;if(t===null||typeof t!="object")return!1;const n=t.theme;return typeof n=="string"&&Y.includes(n)}var O="__frame_scroll",ce=150,ue=310,fe=160,pe=3e4;function de(){let e=0,t=!1,n=!1,s=!1,o=0,l=null;const c=i=>{try{sessionStorage.setItem(O,JSON.stringify({y:i}))}catch{}},f=()=>{if(clearTimeout(e),l===null)return;const i=l;l=null,c(i)},S=()=>{if(t){t=!1;return}n=!0,l=scrollY,clearTimeout(e),e=setTimeout(f,ce)};try{addEventListener("scroll",S,{passive:!0}),addEventListener("pagehide",f)}catch{}const v=()=>{let i;try{i=sessionStorage.getItem(O)}catch{return null}if(i===null)return null;let d;try{d=JSON.parse(i)}catch{d=null}const u=d?.y;if(!(typeof u=="number"&&Number.isFinite(u)&&u>=0)){try{sessionStorage.removeItem(O)}catch{}return null}return u};let b=!1;const m=i=>{try{const d=scrollY;scrollTo({top:i,left:0,behavior:"instant"}),o=i,s=!0,clearTimeout(e),l=null,c(i);const u=scrollY;u!==d&&(t=!0),u!==i&&!b&&(b=!0,addEventListener("load",()=>{try{if(scrollY===u){const h=v();m(h!==null?h:o)}}catch{}},{once:!0}))}catch{}},y=()=>{try{return!!location.hash}catch{return!0}};let g=!1;const E=()=>{try{if(g||innerWidth>ue||innerHeight>fe)return;g=!0;const i=Date.now(),d=()=>{try{removeEventListener("resize",d)}catch{}if(Date.now()-i>pe||n||y())return;const u=v();m(u!==null?u:o)};addEventListener("resize",d)}catch{}};let r=!1,p=!1;return{restore(){if(r||(r=!0,y()))return;const i=v();i!==null&&(m(i),E())},promoted(){if(p||(p=!0,y()))return;const i=v();i!==null?(m(i),E()):s&&m(o)}}}var Ee="modulepreload",Ae=function(e){return"/"+e},Re={},me=function(t,n,s){let o=Promise.resolve();function l(c){const f=new Event("vite:preloadError",{cancelable:!0});if(f.payload=c,window.dispatchEvent(f),!f.defaultPrevented)throw c}return o.then(c=>{for(const f of c||[])f.status==="rejected"&&l(f.reason);return t().catch(l)})};(function(){const e=Object.defineProperty,t=globalThis,n=["RTCPeerConnection","webkitRTCPeerConnection","RTCDataChannel","RTCIceCandidate","RTCSessionDescription","RTCRtpSender","RTCRtpReceiver"];let s=0;for(let o=0;o<n.length;o++){const l=n[o];try{e(t,l,{value:void 0,writable:!1,configurable:!1})}catch{try{delete t[l]}catch{}try{e(t,l,{value:void 0,writable:!1,configurable:!0})}catch{}}typeof t[l]=="function"&&s++}if(s&&window!==top)try{parent.postMessage({__frame_rtc_lockdown_failed:s},"*")}catch{}})();var he=1e4,_e=Object.freeze([...window.__FRAME_PREAMBLE?.origins??["https://claude.ai","https://preview.claude.ai"]]);function F(e){for(const t of _e)if(t.endsWith(":*"))try{const n=new URL(e);if(`${n.protocol}//${n.hostname}:*`===t)return!0}catch{}else if(e===t)return!0;return!1}var M=Object.freeze({...window.__FRAME_PREAMBLE?.capabilities}),j=window.__FRAME_PREAMBLE?.transforms,N=window.__FRAME_PREAMBLE?.comments,I=window.__FRAME_PREAMBLE?.translate,L=/^[\w.-]+\.js$/;function T(e){return me(()=>import("/_runtime/"+e),void 0)}function z(e,t){return{contract:e.contract,changes:new Set(e.changes??[]),flags:new Set(e.flags??[]),capabilities:e.capabilities??{},capBudgets:e.capBudgets??{},transforms:new Map,shellOrigin:t,mount:W,pipe:()=>({wrap:(n,s)=>(...o)=>{try{return s(...o)}catch(l){return Promise.reject(l)}}})}}var P=null,w=null;function q(e,t,n){try{Object.defineProperty(e,t,{value:n,writable:!1,configurable:!1,enumerable:!0})}catch{try{Object.defineProperty(e,t,{value:n,writable:!1,configurable:!0,enumerable:!0})}catch{}}}var B=!1;function ve(e,t){const n=[];for(const s of e.elements){const o=document.querySelector(`[data-id="${s.target}"]`);if(!o){parent.postMessage({__frame_patch_miss:{seq:e.seq}},t);return}if([...Object.keys(s.attrsSet??{}),...s.attrsRemoved??[]].some(l=>!V(l))){parent.postMessage({__frame_patch_miss:{seq:e.seq}},t);return}if(s.text!==void 0&&(!ee(o)||re(o))){parent.postMessage({__frame_patch_miss:{seq:e.seq}},t);return}for(const[l,c]of Object.entries(s.attrsSet??{}))if(!$(o,l)){try{o.setAttribute(l,c)}catch{}H(o,l,c)}for(const l of s.attrsRemoved??[])$(o,l)||(o.removeAttribute(l),H(o,l,null));typeof s.text=="string"&&(o.textContent=s.text),n.push(s.target)}try{document.dispatchEvent(new CustomEvent("claude:edit",{detail:{seq:e.seq,targets:n}}))}catch{}}function H(e,t,n){if(!(e instanceof HTMLInputElement))return;const s=t.toLowerCase();s==="checked"?e.checked=n!==null:s==="value"&&e.type!=="file"&&(e.value=n??"")}function $(e,t){const n=t.toLowerCase(),s=e;return n==="data-id"||(n==="value"||n==="checked")&&(s.__artifactSecret===!0||/^(password|hidden|file)$/.test(s.type??"")||/(^|\s)(cc-|one-time-code|current-password|new-password)/i.test(`${e.getAttribute("autocomplete")??""} ${s.autocomplete??""}`))}function K(e){const t=document.documentElement;e==="light"||e==="dark"?(t.dataset.theme=e,t.style.colorScheme=e,B=!0):B&&(delete t.dataset.theme,t.style.colorScheme="",B=!1)}var R=new Map;function ye(){let e;const t={u:new Promise(n=>{e=n}),r:n=>{t.done=!0,e(n)},done:!1,nulled:!1};return t}var ge=Object.freeze(Object.assign(Object.create(null),{call:Function.prototype.call,apply:Function.prototype.apply,bind:Function.prototype.bind})),W=(e,t)=>{const n=R.get(e);if(!n||n.done){n?.nulled&&w&&parent.postMessage({__frame_cap_telemetry:{kind:"cap-load-error",cap:e}},w);return}const s=typeof t=="function"?Object.setPrototypeOf(t,ge):Object.assign(Object.create(null),t);typeof s.then=="function"&&delete s.then,n.r(Object.freeze(s))},U=Object.getOwnPropertyDescriptor(window,"claude");if(window!==top&&!(U&&U.writable===!1)){const e=j&&L.test(j)?T(j).catch(()=>{}):Promise.resolve(void 0),t=r=>{if(r.type==="auxclick"&&r.button!==1)return;const p=r.target,i=p&&p.closest?p.closest("a[href],area[href]"):null;if(!i)return;const d=i.getAttribute("href");if(!d)return;let u,h;try{u=new URL(d,document.baseURI),h=new URL(document.baseURI).origin}catch{return}if((u.protocol==="http:"||u.protocol==="https:")&&u.origin!==h){r.preventDefault();const _=(i.getAttribute("target")??"").toLowerCase(),C=r.type==="auxclick"||r.metaKey||r.ctrlKey||r.shiftKey||r.altKey||!["","_self","_top","_parent"].includes(_);parent.postMessage({__frame_nav:!0,url:u.href,newTab:C},"*")}};addEventListener("click",t,!0),addEventListener("auxclick",t,!0);const n={},s=r=>{r.isTrusted&&(n.pointer=!0)},o=r=>{r.isTrusted&&(n.click=!0)};addEventListener("pointermove",s,{capture:!0,passive:!0}),addEventListener("click",o,{capture:!0,passive:!0}),e.then(r=>{r?.wireNav&&(r.wireNav(),removeEventListener("click",t,!0),removeEventListener("auxclick",t,!0),removeEventListener("pointermove",s,!0),removeEventListener("click",o,!0),r.wireEngagement?.(n))});let l=null;try{l=de()}catch{}const c=U?.value??{};q(window,"claude",c);for(const r of Object.keys(M)){if(c[r]!==void 0){q(c,r,c[r]);continue}R.set(r,ye())}if(c.use===void 0){const r=p=>{if(typeof p!="string"||!Object.hasOwn(M,p))return Promise.resolve(null);const i=R.get(p);return i?i.u:Promise.resolve(c[p]??null)};try{Object.defineProperty(c,"use",{value:r,writable:!0,configurable:!0,enumerable:!1})}catch{}}let f=null,S=null,v=0;const b=r=>{r.source!==parent||!F(r.origin)||oe(r.data)&&(f=r.data.__frame_init,w=r.origin,removeEventListener("message",b),clearTimeout(v),S?.())};addEventListener("message",b),parent.postMessage({__frame_connect:!0},"*");const m=new Promise(r=>{S=r,v=setTimeout(()=>{removeEventListener("message",b),r()},he)}),y=document.readyState==="loading"?new Promise(r=>document.addEventListener("DOMContentLoaded",()=>r(),{once:!0})):Promise.resolve();y.then(()=>{try{l?.restore()}catch{}});const g={cb:null},E=r=>{if(!(r.source!==parent||!F(r.origin))&&ie(r.data)){try{l?.promoted()}catch{}g.cb?.()}};addEventListener("message",E),m.then(async()=>{if(!f||!w){for(const a of R.values())a.nulled=!0,a.r(null);return}K(f.theme);const r=w;let p=!1,i=!1;addEventListener("message",a=>{if(a.source!==parent||a.origin!==r)return;le(a.data)&&K(a.data.__frame_theme.theme),ae(a.data)&&ve(a.data.__frame_patch,r);const k=a.data?.__fc_mode;k&&typeof k=="object"&&!p&&N&&L.test(N)&&(p=!0,T(N).then(x=>x.install?.(r,k.on===!0)).catch(()=>{}));const A=a.data?.__ft_cmd;A&&typeof A=="object"&&!i&&I&&L.test(I)&&(i=!0,T(I).then(x=>x.install?.(r,A)).catch(()=>{}))});const d=Object.keys(f.capabilities??{}).filter(a=>Object.hasOwn(M,a)).map(a=>[a,M[a]]).filter(a=>typeof a[1]=="string"&&L.test(a[1])),u=await Promise.allSettled(d.map(([,a])=>T(a))),h=await e,_=w;if(h?.buildBoot||parent.postMessage({__frame_cap_telemetry:{kind:"cap-load-error",cap:"_transforms"}},_),h?.buildBoot)try{P=h.buildBoot(f,h.TRANSFORMS??{},{shellOrigin:_,mount:W},a=>parent.postMessage({__frame_cap_telemetry:a},_))}catch{parent.postMessage({__frame_cap_telemetry:{kind:"cap-load-error",cap:"_transforms"}},_),P=z(f,_)}else P=z(f,_);const C=a=>parent.postMessage({__frame_cap_telemetry:{kind:"cap-load-error",cap:a}},_),we=P;u.forEach((a,k)=>{const A=d[k][0];if(a.status!=="fulfilled"){C(A);return}try{a.value?.install?.(we)}catch{C(A)}});for(const a of R.values())a.done||(a.nulled=!0,a.r(null));await y,parent.postMessage({__frame_ready:!0},w),e.then(a=>a?.installSizeReporter?.(_,g))})}})();</script><!-- /frame-runtime --><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}</style></head><body>
+<title>Splitting MDM First</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+  :root {
+    --bg: #F5F5F7;
+    --surface: #FFFFFF;
+    --surface-2: #F0F0F4;
+    --border: #D2D2D7;
+    --border-mid: #AEAEB2;
+    --text: #1D1D1F;
+    --text-muted: #6E6E73;
+    --accent: #0071E3;
+    --accent-bg: rgba(0,113,227,0.07);
+    --success: #28CD41;
+    --success-bg: rgba(40,205,65,0.08);
+    --danger: #FF3B30;
+    --danger-bg: rgba(255,59,48,0.08);
+    --mono: 'IBM Plex Mono', 'SF Mono', monospace;
+    --head: 'Syne', 'Helvetica Neue', sans-serif;
+    --body: 'DM Sans', 'Helvetica Neue', sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #080f1a;
+      --surface: #0e1c2f;
+      --surface-2: #0a1626;
+      --border: #1a3354;
+      --border-mid: #213f65;
+      --text: #dde8f5;
+      --text-muted: #587a9b;
+      --accent: #e8a217;
+      --accent-bg: rgba(232,162,23,0.12);
+      --success: #2dcc8f;
+      --success-bg: rgba(45,204,143,0.10);
+      --danger: #ef5050;
+      --danger-bg: rgba(239,80,80,0.10);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #080f1a;
+    --surface: #0e1c2f;
+    --surface-2: #0a1626;
+    --border: #1a3354;
+    --border-mid: #213f65;
+    --text: #dde8f5;
+    --text-muted: #587a9b;
+    --accent: #e8a217;
+    --accent-bg: rgba(232,162,23,0.12);
+    --success: #2dcc8f;
+    --success-bg: rgba(45,204,143,0.10);
+    --danger: #ef5050;
+    --danger-bg: rgba(239,80,80,0.10);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--body);
+    -webkit-font-smoothing: antialiased;
+  }
+  .page {
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 64px 24px 100px;
+    display: flex;
+    flex-direction: column;
+    gap: 56px;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 14px;
+  }
+  h1 {
+    font-family: var(--head);
+    font-weight: 800;
+    font-size: clamp(32px, 5vw, 46px);
+    line-height: 1.08;
+    letter-spacing: -.01em;
+    margin: 0 0 18px;
+    text-wrap: balance;
+  }
+  .dek {
+    font-size: 17px;
+    line-height: 1.65;
+    color: var(--text-muted);
+    max-width: 640px;
+    margin: 0;
+  }
+  .dek strong { color: var(--text); font-weight: 600; }
+
+  h2 {
+    font-family: var(--head);
+    font-weight: 700;
+    font-size: 24px;
+    letter-spacing: -.005em;
+    margin: 0 0 6px;
+    text-wrap: balance;
+  }
+  .section-note {
+    font-size: 14.5px;
+    color: var(--text-muted);
+    line-height: 1.6;
+    max-width: 620px;
+    margin: 0 0 28px;
+  }
+  section { display: flex; flex-direction: column; }
+
+  p { line-height: 1.7; font-size: 15.5px; }
+
+  figure {
+    margin: 0;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 28px 28px 22px;
+  }
+  figure svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    overflow: visible;
+  }
+  figcaption {
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    font-size: 13.5px;
+    line-height: 1.65;
+    color: var(--text-muted);
+  }
+  figcaption code, .callout code, td code {
+    font-family: var(--mono);
+    font-size: 12px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1.5px 5px;
+    color: var(--text);
+  }
+
+  svg text { font-family: var(--body); fill: var(--text); }
+  svg .mono { font-family: var(--mono); }
+  svg .muted { fill: var(--text-muted); }
+  svg .accent-fill { fill: var(--accent); }
+  svg .box { fill: var(--surface-2); stroke: var(--border-mid); stroke-width: 1.25; }
+  svg .box-accent { fill: var(--accent-bg); stroke: var(--accent); stroke-width: 1.5; }
+  svg .box-danger { fill: var(--danger-bg); stroke: var(--danger); stroke-width: 1.25; }
+  svg .box-muted { fill: var(--surface-2); stroke: var(--border); stroke-width: 1; stroke-dasharray: 3 3; }
+  svg .arrow { stroke: var(--text-muted); stroke-width: 1.4; fill: none; }
+  svg .arrow-dashed { stroke: var(--text-muted); stroke-width: 1.4; fill: none; stroke-dasharray: 5 4; }
+  svg .arrow-accent { stroke: var(--accent); stroke-width: 1.6; fill: none; }
+  /* Defined last so it wins over .arrow/.arrow-dashed when combined on one element
+     (equal specificity — source order decides) without needing a bespoke combo class. */
+  svg .accent-stroke { stroke: var(--accent); }
+
+  .callout {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 10px;
+    padding: 22px 26px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .callout h3 {
+    font-family: var(--head);
+    font-size: 15px;
+    font-weight: 700;
+    margin: 0;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+  th, td {
+    text-align: left;
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  th {
+    font-family: var(--mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--text-muted);
+    font-weight: 500;
+  }
+  td.mdm { color: var(--success); font-weight: 600; }
+  td.users { color: var(--danger); font-weight: 600; }
+  .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+  .table-wrap table { min-width: 560px; }
+  .table-wrap tr:last-child td { border-bottom: none; }
+
+  footer {
+    border-top: 1px solid var(--border);
+    padding-top: 24px;
+    font-size: 13px;
+    color: var(--text-muted);
+    font-family: var(--mono);
+  }
+</style>
+
+<div class="page">
+
+  <header>
+    <p class="eyebrow">Architecture proposal · draft for discussion</p>
+    <h1>Splitting MDM First</h1>
+    <p class="dek">
+      Following up on the DB-split conversation: MDM (carriers, vessels, ports, trade lanes,
+      commodities) is the simpler of the two candidates to extract first, and it follows a
+      mechanism CargoDesk has already proven once. <strong>Users/Auth stays put</strong> —
+      it's the harder cut, not the first one.
+    </p>
+  </header>
+
+  <section>
+    <h2>Where we are today</h2>
+    <p class="section-note">
+      This isn't CargoDesk's first extraction. Three services already run standalone; Contract
+      Management is the one that matters here, since it already coexists with local tables
+      behind a toggle — exactly the shape an MDM split would reuse.
+    </p>
+    <figure>
+      <svg viewBox="0 0 920 380" role="img" aria-label="CargoDesk's current architecture: one monolith with a single SQLite file, calling out to three already-extracted services — Document Distribution, PDF Render, and Contract Management, the last gated behind a source toggle.">
+        <defs>
+          <marker id="arrow1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor" class="muted"/>
+          </marker>
+        </defs>
+
+        <rect class="box" x="30" y="90" width="300" height="200" rx="10"/>
+        <text x="180" y="150" text-anchor="middle" font-size="18" font-weight="700" font-family="var(--head)">CargoDesk Monolith</text>
+        <text x="180" y="172" text-anchor="middle" font-size="12.5" class="muted mono">Express + node:sqlite</text>
+
+        <g transform="translate(60,205)">
+          <line x1="0" y1="8" x2="0" y2="40" class="box" stroke-width="1.25"/>
+          <line x1="40" y1="8" x2="40" y2="40" class="box" stroke-width="1.25"/>
+          <path d="M0,40 A20,7 0 0,0 40,40" class="box" stroke-width="1.25" fill="none"/>
+          <ellipse cx="20" cy="8" rx="20" ry="7" class="box" stroke-width="1.25"/>
+        </g>
+        <text x="180" y="244" text-anchor="middle" font-size="12" class="muted">one shared&#160;<tspan class="mono">.db</tspan>&#160;file</text>
+        <text x="180" y="264" text-anchor="middle" font-size="11" class="muted">shipments · contracts · customers</text>
+        <text x="180" y="279" text-anchor="middle" font-size="11" class="muted">MDM · users · kanban · ...</text>
+
+        <rect class="box" x="650" y="40" width="240" height="76" rx="8"/>
+        <text x="770" y="72" text-anchor="middle" font-size="14" font-weight="600">Document Distribution</text>
+        <text x="770" y="92" text-anchor="middle" font-size="11.5" class="muted mono">:3002 · own SQLite</text>
+
+        <rect class="box" x="650" y="152" width="240" height="76" rx="8"/>
+        <text x="770" y="184" text-anchor="middle" font-size="14" font-weight="600">PDF Render</text>
+        <text x="770" y="204" text-anchor="middle" font-size="11.5" class="muted mono">:3003 · stateless</text>
+
+        <rect class="box-accent" x="650" y="264" width="240" height="76" rx="8"/>
+        <text x="770" y="296" text-anchor="middle" font-size="14" font-weight="600">Contract Management</text>
+        <text x="770" y="316" text-anchor="middle" font-size="11.5" class="mono accent-fill">:3004 · own SQLite</text>
+
+        <line x1="330" y1="110" x2="648" y2="78" class="arrow" marker-end="url(#arrow1)"/>
+        <text x="470" y="86" text-anchor="middle" font-size="11.5" class="muted mono">HTTP</text>
+
+        <line x1="330" y1="190" x2="648" y2="190" class="arrow" marker-end="url(#arrow1)"/>
+        <text x="470" y="182" text-anchor="middle" font-size="11.5" class="muted mono">HTTP</text>
+
+        <line x1="330" y1="270" x2="648" y2="302" class="arrow-dashed accent-stroke" marker-end="url(#arrow1)"/>
+        <line x1="648" y1="302" x2="330" y2="270" class="arrow-dashed accent-stroke" marker-end="url(#arrow1)"/>
+        <text x="470" y="278" text-anchor="middle" font-size="11.5" class="mono accent-fill">HTTP ⇄ toggle</text>
+      </svg>
+      <figcaption>
+        The monolith already calls three independently-deployed services over authenticated HTTP.
+        Contract Management is the template for what MDM would become: its own SQLite file,
+        reached through <code>callContractService()</code>, gated by an admin-only
+        <code>app_settings.contract_source</code> toggle (<code>local</code> | <code>remote</code>)
+        — flip it back any time, nothing is a one-way door.
+      </figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>MDM vs. Users — why one is simpler</h2>
+    <p class="section-note">
+      Same question, drawn twice. MDM is read by a handful of named lookup functions and written
+      to almost nowhere outside admin/import tooling. Users sits in front of <em>every single
+      request</em> and is joined into features that have nothing to do with authentication.
+    </p>
+    <figure>
+      <svg viewBox="0 0 940 370" role="img" aria-label="Side-by-side comparison: MDM is read by four isolated lookup functions with no request-path involvement, while Users sits behind the global auth gate on every API request and is additionally joined directly by three unrelated features.">
+        <defs>
+          <marker id="arrow2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor" class="muted"/>
+          </marker>
+        </defs>
+
+        <line x1="470" y1="30" x2="470" y2="345" stroke="var(--border)" stroke-width="1"/>
+
+        <text x="235" y="50" text-anchor="middle" font-size="17" font-weight="700" font-family="var(--head)" class="accent-fill">MDM</text>
+        <text x="235" y="72" text-anchor="middle" font-size="12" class="muted">read-mostly · no request hot path</text>
+
+        <g font-size="11.5">
+          <rect class="box" x="40" y="120" width="190" height="34" rx="7"/>
+          <text x="135" y="141" text-anchor="middle" class="mono">portLanesMap</text>
+          <rect class="box" x="40" y="170" width="190" height="34" rx="7"/>
+          <text x="135" y="191" text-anchor="middle" class="mono">findMatchingContractLeg</text>
+          <rect class="box" x="40" y="220" width="190" height="34" rx="7"/>
+          <text x="135" y="241" text-anchor="middle" class="mono">resolveCarrierAgent</text>
+          <rect class="box" x="40" y="270" width="190" height="34" rx="7"/>
+          <text x="135" y="291" text-anchor="middle" class="mono">checkOverlap</text>
+        </g>
+
+        <rect class="box-accent" x="300" y="150" width="150" height="140" rx="9"/>
+        <text x="375" y="205" text-anchor="middle" font-size="14" font-weight="600">MDM tables</text>
+        <text x="375" y="224" text-anchor="middle" font-size="10.5" class="muted">carriers · vessels</text>
+        <text x="375" y="240" text-anchor="middle" font-size="10.5" class="muted">ports · trade lanes</text>
+        <text x="375" y="256" text-anchor="middle" font-size="10.5" class="muted">commodities · ...</text>
+
+        <line x1="230" y1="137" x2="298" y2="185" class="arrow" marker-end="url(#arrow2)"/>
+        <line x1="230" y1="187" x2="298" y2="205" class="arrow" marker-end="url(#arrow2)"/>
+        <line x1="230" y1="237" x2="298" y2="225" class="arrow" marker-end="url(#arrow2)"/>
+        <line x1="230" y1="287" x2="298" y2="255" class="arrow" marker-end="url(#arrow2)"/>
+        <text x="264" y="130" text-anchor="middle" font-size="10.5" class="muted mono">read</text>
+
+        <text x="705" y="50" text-anchor="middle" font-size="17" font-weight="700" font-family="var(--head)" class="accent-fill">Users / Auth</text>
+        <text x="705" y="72" text-anchor="middle" font-size="12" class="muted">on every request, plus direct joins</text>
+
+        <text x="710" y="92" text-anchor="middle" font-size="11" class="muted mono">every /api/* request</text>
+        <line x1="520" y1="100" x2="900" y2="100" stroke="var(--border-mid)" stroke-width="1.25"/>
+        <line x1="520" y1="96" x2="520" y2="104" stroke="var(--border-mid)" stroke-width="1.25"/>
+        <line x1="900" y1="96" x2="900" y2="104" stroke="var(--border-mid)" stroke-width="1.25"/>
+        <line x1="710" y1="100" x2="710" y2="118" class="arrow-dashed" marker-end="url(#arrow2)"/>
+
+        <path d="M610,118 L810,118 L760,172 L660,172 Z" class="box-danger"/>
+        <text x="710" y="150" text-anchor="middle" font-size="13" font-weight="600" class="mono">auth()</text>
+
+        <line x1="710" y1="172" x2="710" y2="193" class="arrow-dashed" marker-end="url(#arrow2)"/>
+
+        <rect class="box-accent" x="615" y="195" width="190" height="64" rx="9"/>
+        <text x="710" y="217" text-anchor="middle" font-size="14" font-weight="600">users</text>
+        <text x="710" y="235" text-anchor="middle" font-size="10" class="muted mono">user_scope_items</text>
+        <text x="710" y="249" text-anchor="middle" font-size="10" class="muted mono">user_access_configs</text>
+
+        <g font-size="11.5">
+          <rect class="box" x="490" y="300" width="120" height="32" rx="7"/>
+          <text x="550" y="320" text-anchor="middle">Kanban · assignee</text>
+          <rect class="box" x="625" y="300" width="120" height="32" rx="7"/>
+          <text x="685" y="320" text-anchor="middle">Milestone · by</text>
+          <rect class="box" x="760" y="300" width="120" height="32" rx="7"/>
+          <text x="820" y="320" text-anchor="middle">Ticket · savedBy</text>
+        </g>
+
+        <line x1="550" y1="298" x2="650" y2="261" class="arrow" marker-end="url(#arrow2)"/>
+        <line x1="685" y1="298" x2="710" y2="261" class="arrow" marker-end="url(#arrow2)"/>
+        <line x1="820" y1="298" x2="770" y2="261" class="arrow" marker-end="url(#arrow2)"/>
+      </svg>
+      <figcaption>
+        Left: four resolver functions read MDM directly; nothing writes to it outside admin/import
+        tooling, and nothing in the request path depends on it being fast. Right: the global
+        <code>auth()</code> gate runs before <em>every</em> <code>/api/*</code> route resolves, and
+        three unrelated features (Kanban, Milestones, Tickets) additionally join straight into
+        <code>users</code> for display names — a much wider, much hotter cut.
+      </figcaption>
+    </figure>
+  </section>
+
+  <div class="callout">
+    <h3>Why MDM, not Users</h3>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Dimension</th><th>MDM</th><th>Users / Auth</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Tables</td><td class="mdm">~11, self-contained</td><td class="users">3 — but woven into every route</td></tr>
+          <tr><td>Write frequency</td><td class="mdm">Admin / import only</td><td class="users">Every login, every request's <code>last_login</code></td></tr>
+          <tr><td>Request hot path</td><td class="mdm">None</td><td class="users">Every single <code>/api/*</code> call</td></tr>
+          <tr><td>Existing seam</td><td class="mdm">Resolver functions already isolate reads</td><td class="users">None — direct joins scattered across features</td></tr>
+          <tr><td>Proven precedent</td><td class="mdm">Same shape as Contract Management (shipped)</td><td class="users">None — identity extraction is its own discipline (Cognito/Auth0-style), not a table move</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <section>
+    <h2>The proposed cut</h2>
+    <p class="section-note">
+      Same shape as Contract Management, renamed: a new MDM Service with its own database, a
+      <code>callMdmService()</code> helper, and an <code>mdm_source</code> toggle so the switch
+      is reversible in a config change, not a deploy.
+    </p>
+    <figure>
+      <svg viewBox="0 0 940 400" role="img" aria-label="Proposed state: the monolith keeps MDM tables locally as a fallback, while a new MDM Service holds the same tables in its own database, reached through a callMdmService helper gated by an mdm_source toggle.">
+        <defs>
+          <marker id="arrow3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor" class="accent-fill"/>
+          </marker>
+        </defs>
+
+        <rect class="box" x="40" y="120" width="280" height="180" rx="10"/>
+        <text x="180" y="158" text-anchor="middle" font-size="16" font-weight="700" font-family="var(--head)">CargoDesk Monolith</text>
+        <text x="180" y="180" text-anchor="middle" font-size="11" class="muted">auth · shipments · contracts</text>
+        <text x="180" y="196" text-anchor="middle" font-size="11" class="muted">customers · kanban · ...</text>
+        <line x1="66" y1="220" x2="294" y2="220" stroke="var(--border)" stroke-width="1"/>
+        <text x="180" y="245" text-anchor="middle" font-size="10.5" class="muted mono">MDM tables kept locally</text>
+        <text x="180" y="260" text-anchor="middle" font-size="10.5" class="muted mono">— fallback when mdm_source=local</text>
+
+        <rect class="box-accent" x="620" y="120" width="280" height="180" rx="10"/>
+        <g transform="translate(650,133)">
+          <line x1="0" y1="6" x2="0" y2="32" class="accent-stroke" stroke-width="1.25"/>
+          <line x1="36" y1="6" x2="36" y2="32" class="accent-stroke" stroke-width="1.25"/>
+          <path d="M0,32 A18,6 0 0,0 36,32" fill="none" class="accent-stroke" stroke-width="1.25"/>
+          <ellipse cx="18" cy="6" rx="18" ry="6" fill="var(--surface)" class="accent-stroke" stroke-width="1.25"/>
+        </g>
+        <text x="760" y="158" text-anchor="middle" font-size="16" font-weight="700" font-family="var(--head)">MDM Service</text>
+        <text x="760" y="180" text-anchor="middle" font-size="11" class="muted">carriers · vessels · port_locations</text>
+        <text x="760" y="196" text-anchor="middle" font-size="11" class="muted">trade_lanes · commodities · ...</text>
+        <text x="760" y="220" text-anchor="middle" font-size="11" class="mono accent-fill">:3005 (new) · own SQLite</text>
+
+        <line x1="320" y1="200" x2="618" y2="200" class="arrow-accent" marker-end="url(#arrow3)" stroke-dasharray="6 4"/>
+        <line x1="618" y1="200" x2="320" y2="200" class="arrow-accent" marker-end="url(#arrow3)" stroke-dasharray="6 4"/>
+        <text x="470" y="185" text-anchor="middle" font-size="12" class="mono accent-fill">callMdmService()</text>
+
+        <rect x="375" y="212" width="190" height="26" rx="13" fill="none" class="accent-stroke" stroke-width="1.25"/>
+        <text x="470" y="229" text-anchor="middle" font-size="10" class="mono accent-fill">mdm_source: local ⇄ remote</text>
+
+        <text x="470" y="270" text-anchor="middle" font-size="11" class="muted">resolves: port &amp; carrier names</text>
+        <text x="470" y="286" text-anchor="middle" font-size="11" class="muted">contract-leg matching (POL/POD)</text>
+        <text x="470" y="302" text-anchor="middle" font-size="11" class="muted">carrier line-agent lookups</text>
+      </svg>
+      <figcaption>
+        Nothing about the read call sites changes shape — <code>portLanesMap</code>,
+        <code>findMatchingContractLeg</code>, and <code>resolveCarrierAgent</code> just gain a
+        source branch, exactly like <code>importContractRates</code> did for
+        <code>contract_source</code>. Local tables stay in place and keep working the moment the
+        toggle flips back — the same escape hatch Contract Management already relies on.
+      </figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>Sequencing</h2>
+    <p class="section-note">
+      MDM first, then the already-logged Customer/Organization epic, then Shipments last — it's
+      the core of the app and the highest blast radius, so it earns the most runway before it moves.
+    </p>
+    <figure>
+      <svg viewBox="0 0 900 150" role="img" aria-label="A three-stop roadmap: MDM now, Customer and Organization next as the already-logged Epic 5, and Shipments last given its highest blast radius.">
+        <line x1="70" y1="75" x2="830" y2="75" stroke="var(--border-mid)" stroke-width="1.5"/>
+
+        <circle cx="150" cy="75" r="10" class="accent-fill"/>
+        <text x="150" y="42" text-anchor="middle" font-size="14" font-weight="700" font-family="var(--head)">① MDM</text>
+        <text x="150" y="105" text-anchor="middle" font-size="11" class="mono accent-fill">this proposal</text>
+
+        <circle cx="450" cy="75" r="9" fill="var(--surface)" stroke="var(--border-mid)" stroke-width="1.5"/>
+        <text x="450" y="42" text-anchor="middle" font-size="14" font-weight="700" font-family="var(--head)">② Customer / Organization</text>
+        <text x="450" y="105" text-anchor="middle" font-size="11" class="muted mono">Epic 5 — logged, not started</text>
+
+        <circle cx="750" cy="75" r="9" fill="var(--surface)" stroke="var(--border)" stroke-width="1.5"/>
+        <text x="750" y="42" text-anchor="middle" font-size="14" font-weight="700" font-family="var(--head)" class="muted">③ Shipments</text>
+        <text x="750" y="105" text-anchor="middle" font-size="11" class="muted mono">last — highest blast radius</text>
+      </svg>
+    </figure>
+  </section>
+
+  <footer>
+    Draft for discussion — nothing here is built yet. Based on CargoDesk v0.78.0's actual table
+    layout and the Contract Management extraction (v0.68.0) as precedent.
+  </footer>
+
+</div>
+
+</body></html>

@@ -4,9 +4,9 @@
 Full-stack freight management app. React 18 + Vite frontend, Express + node:sqlite backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.78.0 "Tonnage"**
-- Run: `npm run dev` (runs the monolith on :3001 + Vite on :5173 + the Document Distribution Service on :3002 + the PDF Render Service on :3003 + the Contract Management Service on :3004, concurrently)
-- Seed: `npm run seed` (runs `scripts/import-mdm-data.js`)
+- Version: **v0.79.0 "Keel"**
+- Run: `npm run dev` (runs the monolith on :3001 + Vite on :5173 + the Document Distribution Service on :3002 + the PDF Render Service on :3003 + the Contract Management Service on :3004, concurrently) — zero-script onboarding: first boot with no `cargodesk.db` auto-copies the committed `db/cargodesk.sample.db` (MDM reference data only) into place
+- Re-seed: `npm run seed` (runs `scripts/import-mdm-data.js`) — only needed to refresh MDM data from `data/*.csv`/`.json`, not for a normal first run
 
 ## Stack
 - Frontend: React 18, Vite, JSX with inline styles (no CSS files, no Tailwind)
@@ -64,8 +64,11 @@ scripts/
                                    flip app_settings.contract_source itself
 exports/
   dashboard-template.xlsx          Base XLSX template with named ranges for chart wiring
-sampleDB/
-  cargodesk.db                     Pre-loaded sample DB — copy to project root to use
+db/
+  cargodesk.sample.db              Committed MDM reference DB (ports/carriers/vessels/commodities/
+                                   regions/trade lanes/countries only — no shipments, contracts,
+                                   customers, or users). server.js copies it to cargodesk.db
+                                   automatically on first boot if none exists yet.
 src/
   App.jsx                          Root: routing, nav, state, theme toggle, auth guards, role switcher;
                                    also hosts ShipmentDetailSidebar (~1385-1530, anchor-scroll section
@@ -313,6 +316,82 @@ are fully validated.
 - **Document system**: `DOC_TYPES` in App.jsx (~line 56: BL01/MB01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — `MB01` (Master Bill of Lading, v0.71.0) is the vessel-operator-to-NVOCC document, a genuinely separate build from `BL01` (NVOCC-to-shipper House B/L), not a mode flag on it — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). (The earlier client-side-jsPDF `DocumentsMenu` component this note used to distinguish from was removed as dead code — it had zero references anywhere in the app.)
 - **Lifecycle-stage stepper precedent**: no dedicated stepper component exists yet; `MilestonePanel` (ShipmentDetailPage.jsx 1593-~1870) is the closest analog — linear progress bar (1734-1738, `width: ${progress}%`) plus per-step state coloring via `milestoneState()`/`stateColor()` (1666-1676: completed/overdue/current/upcoming) driven by `shipment_milestones` rows (`id, label, estimatedDate, note, completedAt, completedBy`, fixed step keys `booking_confirmed, si_submitted, cargo_gated_in, vessel_departed, bl_issued, vessel_arrived, customs_cleared, cargo_released, delivered`). Any new per-container lifecycle/stage UI should reuse this state-coloring pattern rather than inventing a new visual language
 - **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages, 📡 EDI). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
+
+## Recent changes (v0.79.0 "Keel")
+- **eAdapter** — first story of the carrier-communication-via-EDI epic, direct request: "a
+  feature toggle that has a configuration icon, and when clicking on the configuration icon,
+  open a pop-up window that supports tabbing... 'Add carrier config' button in the top right."
+  Generalizes the hardcoded `BOOKABLE_CARRIERS` Set (`MAEU`/`SAFM`/`MCPU`) into
+  `isEdiBookable(carrierCode)` (server.js), unioning the built-in three with any carrier holding
+  an *active* row in a new `carrier_eadapter_configs` table (`transport_type` REST API/AS2/SFTP,
+  `endpoint_url`, `auth_header_name`, `credential`) — modeled directly on `office_mail_settings`'
+  own shape and secret-hygiene convention: `mapEadapterConfig` (`lib/mappers.js`) never returns
+  the raw credential, only a `hasCredential` boolean.
+- **One master toggle governs the whole surface** (`app_settings.api_eadapter_enabled`, default
+  on) — per direct clarification, turning it off must collapse *every* carrier, built-in three
+  included, to **manual mode** uniformly, not just gate new carriers on top of an always-on
+  legacy three. Manual mode reuses the existing non-EDI-carrier lifecycle as-is (Send/EDI UI
+  hidden, operator confirms via a typed `bookingRef`) rather than building a second flow, since
+  document generation + email already exist as a separate, always-available tool independent of
+  the booking flow. New `routes/eadapter.js`: CRUD on `/api/eadapter/configs`
+  (admin/operator-gated) plus a public `GET /api/eadapter/bookable-carriers` — both Carrier
+  Booking pages now poll this live effective set instead of importing the static
+  `BOOKABLE_CARRIERS` Set directly. **Config + CRUD only this pass** — no live outbound HTTP
+  call is attempted yet; a real per-carrier send (mirroring the deleted Maersk `fetch()` pattern
+  from v0.72.1) is a clean, separately-scoped follow-up.
+- **New `EadapterConfigModal`** (`src/components/shared/`) — a hand-rolled tab bar inside
+  `Modal.jsx` (which has no built-in tab support), one tab per configured carrier, "+ Add
+  Carrier Config" in the header — same pattern `MdmCustomersPage.jsx`'s `CustomerDetailModal`
+  already established. Reached via a new `EadapterCard` (Settings → API Controls → External
+  APIs, ahead of the generic `EXTERNAL_APIS` list, since this needs N per-carrier sub-configs
+  rather than one scalar key).
+- **Billing Performance bar charts fixed**, direct report: a hardcoded `maxBarSize={64}` left
+  large empty gaps whenever a chart had few categories in a wide container — worst on the By
+  Month view, where two months left the chart mostly blank on both sides. Removed the cap
+  entirely so bars size off the available band width instead (Recharts' own `barCategoryGap`).
+- **A full Cypress run surfaced three unrelated issues, none of them app bugs** — all found and
+  fixed live rather than guessed at: the login rate limiter (20/15min/IP) exhausting partway
+  through ~30 spec files that each log in fresh (known issue, CI already sets `LOGIN_RATE_MAX`
+  for exactly this — the plain `npm run cy:run` script doesn't); two Carrier Booking specs
+  failing because the eAdapter master toggle had been left off in the live dev DB from an
+  earlier verification pass, not a code defect; and one genuinely flaky
+  `schedule-generator.cy.js` test whose own cleanup only captured a schedule's id for deletion
+  *after* its success-toast assertion passed — every past flake permanently orphaned one more
+  blank schedule in the catalog, and 167 had silently accumulated. Fixed by capturing the id
+  straight off the real `POST /api/schedules` network response (`cy.intercept`/`cy.wait`)
+  instead of parsing it out of toast text, decoupling cleanup from an unrelated UI assertion's
+  success. All 167 orphaned rows (plus their now-unreferenced `sailing_legs`/
+  `schedule_leg_refs`) deleted.
+- **Zero-script onboarding** — following a DB-architecture discussion (a senior architect's own
+  DSV/Kuehne+Nagel/CEVA-style push for clear DB-per-domain splits ahead of an eventual AWS
+  migration; see the published proposal, `documentation/splitting-mdm-first.html`, recommending
+  MDM as the lowest-risk first cut and Users/Auth as deliberately *not* first, since it sits
+  behind literally every request). Direct audit found the project's own previously-documented
+  "copy `sampleDB/cargodesk.db` to get started" path was aspirational, not real — that file was
+  referenced in README.md/CLAUDE.md and even had its own changelog entry (v0.18.1) but was never
+  actually committed; `git ls-files` showed zero tracked `.db` files in this repo's history.
+- **New `db/cargodesk.sample.db`** (committed, ~2.5MB) replaces it: real ports/carriers/vessels/
+  commodities/regions/trade lanes plus the full 208-country list and 182-row country↔trade-lane
+  mapping (both had accumulated through the admin UI over time with zero backing script, unlike
+  the seed script's own 4-of-each minimum) — deliberately zero shipments/contracts/customers/
+  users, matching direct instruction that those are for a real install to create itself.
+  `server.js` copies this file to `cargodesk.db` automatically on first boot if none exists yet
+  — verified end-to-end (fresh boot, watched it copy, seed its own admin + test-fixture accounts
+  and a unique signing cert, come up clean). `users` and `org_signing_certs` are deliberately
+  left OUT of the committed file despite being non-empty on a running instance — both already
+  have their own idempotent startup bootstrap, and baking a shared private signing key into a
+  file every clone gets identically would be actively worse than redundant.
+- **`seedAdmin()` genericized**, caught in the same pass — it had hardcoded the maintainer's own
+  personal email/name as the seeded admin account, both leaking personal identity into this
+  public repo's source and already stale against what README.md documented as the default. Now
+  reads `ADMIN_EMAIL`/`ADMIN_PASSWORD` (optional, e.g. via `.env`), falling back to that
+  documented generic default (`admin@cargodesk.com`/`admin123`) — same disclosed-insecure-default
+  idiom as `JWT_SECRET`.
+- 29 new assertions (`tests/eadapter.test.js`). Full 53-file backend chain, both service-scoped
+  chains, frontend Vitest, and a clean build all verified green from a fresh restart. Verified
+  live via CDP end-to-end for eAdapter (toggle, modal, credential masking, master-off blocking)
+  and directly reproduced/confirmed for the DB auto-copy mechanism.
+- Full architecture writeup: `ARCHITECTURE.md` §8.12 (deepened) and §8.19 (new).
 
 ## Recent changes (v0.78.0 "Tonnage")
 - **Table pagination standardized app-wide** — direct request prompted by a real scaling

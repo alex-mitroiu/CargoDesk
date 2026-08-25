@@ -106,15 +106,22 @@ npm install
 ```bash
 # Start the API + WebSocket server (port 3001) and Vite dev server (port 5173) together
 npm run dev
-
-# Seed master data -- run once after the first server start
-npm run seed
-
-# Seed sample contracts (optional)
-npm run seed:contracts
 ```
 
+That's it — no seed step required. On first start, the server finds no `cargodesk.db` yet and
+copies the bundled `db/cargodesk.sample.db` into place automatically: real ports, carriers,
+vessels, commodities, regions, and trade lanes, ready to use. It carries no shipments,
+contracts, customers, or users — those are yours to create.
+
 Open [http://localhost:5173](http://localhost:5173)
+
+Want to re-import master data from scratch instead (e.g. after editing `data/*.csv`), or add
+sample carrier contracts to poke around with?
+
+```bash
+npm run seed             # re-imports ports, carriers, vessels, regions, commodities
+npm run seed:contracts   # seeds sample carrier contracts (optional)
+```
 
 ### Default Login
 
@@ -141,9 +148,11 @@ On first startup, if no users exist, the server seeds a default admin account:
 
 ### Notes
 
-- `cargodesk.db` is created automatically on the first server start.
+- `cargodesk.db` is created automatically on the first server start — seeded from the bundled
+  `db/cargodesk.sample.db` if no database exists yet (see above).
 - Schema changes are applied via safe `ALTER TABLE` migrations at startup — no manual DB intervention needed.
-- The database file is excluded from version control (see `.gitignore`).
+- `cargodesk.db` itself is excluded from version control (see `.gitignore`) — only the reference
+  sample it's seeded from, `db/cargodesk.sample.db`, is committed.
 - Run `npm run seed` and `npm run seed:contracts` with the server already running so they write to the same `cargodesk.db` instance.
 - The FX converter and weather widget use free public APIs — no API keys required.
 - The WebSocket server shares port 3001 with the Express API (`/ws` path). The Vite dev server proxies WebSocket connections automatically.
@@ -227,12 +236,14 @@ lsof -ti:3001 | xargs kill
 ```
 
 **App starts but the database is empty**
-The database is not included in the repository. Run the seed scripts once after the first server start:
+This shouldn't happen on a normal first run — the server auto-copies `db/cargodesk.sample.db`
+(ports, carriers, vessels, commodities, regions, trade lanes) into place the first time it finds
+no `cargodesk.db`. If you're seeing an empty database anyway (e.g. `db/cargodesk.sample.db` was
+deleted, or you deliberately started from a blank file), re-import it directly:
 ```bash
 npm run seed            # ports, carriers, vessels, commodities
 npm run seed:contracts  # sample carrier contracts (optional)
 ```
-Alternatively, copy `sampleDB/cargodesk.db` to the project root for a pre-loaded database.
 
 **XLSX template export returns 404**
 The base template has not been generated yet. Run:
@@ -274,8 +285,9 @@ CargoDesk/
 │   ├── seaports.csv           # 14,269 UN/LOCODE records
 │   ├── carriers.csv           # 68 carrier records
 │   └── vessels.json           # 349 vessels (IMO registry)
-├── sampleDB/
-│   └── cargodesk.db           # Pre-loaded sample database — copy to project root to use
+├── db/
+│   └── cargodesk.sample.db    # Committed MDM reference DB — server.js copies this to
+│                               #   cargodesk.db automatically on first start if none exists
 └── src/
     ├── api.js                 # All fetch wrappers (api.shipments, api.export, api.costLines…)
     ├── tokens.js              # Design tokens, theme system, route-matching helpers
@@ -403,6 +415,7 @@ See the built-in **About** page (i in the sidebar) for the full interactive sche
 
 | Version | Codename | Summary |
 |---------|----------|---------|
+| 0.79.0 | Keel | **eAdapter** — first story of the carrier-EDI epic: generalizes the hardcoded `BOOKABLE_CARRIERS` Set into `isEdiBookable()`, unioning the built-in three carriers with any carrier holding an active row in a new `carrier_eadapter_configs` table (transport type, endpoint, credential — never returned raw), all gated by one master toggle that collapses every carrier uniformly to manual mode when off. New gear-icon-triggered, tabbed config modal in Settings. **Billing Performance's bar charts** fixed — a hardcoded pixel cap left large gaps whenever a chart had few categories; now sized off the available band width instead. **Zero-script onboarding** — a new committed `db/cargodesk.sample.db` (ports/carriers/vessels/commodities/regions/trade lanes/countries only, no business data) that `server.js` auto-copies to `cargodesk.db` on first boot if none exists; replaces a previously-documented `sampleDB/` path that turned out to have never actually been committed. `seedAdmin()` genericized (`ADMIN_EMAIL`/`ADMIN_PASSWORD` env override, generic fallback) — it had been hardcoding the maintainer's own personal email. 29 new assertions, full suites + build green, live-CDP-verified. |
 | 0.78.0 | Tonnage | Table pagination standardized app-wide, prompted by a real scaling concern: "if we have 1000 shipments a week, the list is going to be absolutely insane to scroll, and it will overload in the RAM for the browser." New shared `PageSizeSelect` (50/75/100, one global preference) pairs with the existing `Pagination` component everywhere it matters. `GET /api/shipments` gained real opt-in status/carrier/search filters, sort, and a `teu` column — the Shipments list now self-fetches its own server-side page instead of holding the entire dataset in browser memory (the actual fix for the stated concern). Linked Ports/Carrier Agents (mislabeled as paginated), Quotes/Freight Audit (backend pagination the frontend never called), and Billing Performance/Invoice Collections (a hard 200-row cutoff that was real data loss) all got wired up to real pagination. Also fixed: the notification bell dropdown had no max-height and could grow unboundedly with an account's active alerts; `api.js` now distinguishes a network failure from a server error, sharpening the vague "Something went wrong" auth pages used to show. 24 new assertions, full suites + build green, live-CDP-verified. |
 | 0.77.0 | Overwatch | Command Center — Quality & Exception Management (Epic `TKT-IBHB0K`), a Cargo iQ-inspired gap analysis: every planned-vs-actual signal Cargo iQ's quality model runs on already existed per-shipment in this app, but nothing aggregated it across the fleet — the Command Center's only exception signal was one blunt "Overdue" tile. New `routes/command-center.js` ships four endpoints: a fleet-wide milestone on-time KPI + breakdown (backing a new 6th KPI card and a new "Milestone Alerts" bell section), a root-cause-classified exception queue (schedule slip / unconfirmed booking / stalled milestone, replacing the old undifferentiated count), an AIS-confirmed-only carrier on-time-performance scorecard, and a transit-time variance chart by trade lane. `CommandCenterView.jsx`'s font sizes — unchanged since v0.34.4 and 30-100% larger than the rest of the app — were reset to match current pages. 38 new assertions, full suites + build green, live-CDP-verified across all five new UI surfaces. |
 | 0.76.0 | Remittance | Invoicing Discipline & Billing Performance, third pass (`TKT-B4VBDH`) — the report itself. New `GET /api/reports/billing-performance` returns every invoice, row-level and enriched (status/sent/payment/office/customer/lane/carrier), filterable by any combination at once. Joins GP by Trade Area as a second Reports tab — stat cards, filter chips, facet dropdowns, CSV export. A real column-overlap layout bug was caught live and fixed before shipping. 12 new assertions, full suites + build green, live-CDP-verified. 4 of 5 Epic stories shipped. |

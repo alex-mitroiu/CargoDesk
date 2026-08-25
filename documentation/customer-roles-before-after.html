@@ -1,0 +1,247 @@
+<!doctype html><html><head><!-- frame-runtime --><base href="/_f/1785738117-1a51/"><script>window.__FRAME_PREAMBLE={"capabilities":{"artifact":"artifact.oqIe8shs.js","assets":"assets.DBUJcvq_.js","comments":"comments.GLuHR3zP.js","db":"db.CRhVHzSt.js","downloads":"downloads.C3GSvEDP.js","embed":"embed.CZsbekoQ.js","mcp":"mcp.Bvma3qD7.js","network":"network.B5UA9Su4.js","permissions":"permissions.BNySkLV5.js","room":"room.DE7EMui-.js","sample":"sample.BW2Uysoh.js","self":"artifact.oqIe8shs.js","user":"user.BpKav-Rf.js"},"transforms":"_transforms.h3_8GSUa.js","comments":"_comments.BOgkE6qU.js","translate":"_translate.5HCW4BJh.js"}</script><script>(function(){"use strict";var Y=["light","dark","system"],X=/^[A-Za-z0-9_-]{1,64}$/,D=/^[a-zA-Z_:][a-zA-Z0-9_:.-]{0,127}$/,G=new Set(["class","hidden","value","checked"]);function V(e){const t=e.toLowerCase();return t.startsWith("data-")||t.startsWith("aria-")||G.has(t)}var be="http://www.w3.org/1999/xhtml",Z="http://www.w3.org/2000/svg",J=new Set(["script","style","iframe","noscript","noframes","noembed","xmp","plaintext","template","title","textarea","object","embed"]),Q=new Set(["script","style"]);function ee(e){const t=e.localName.toLowerCase();return e.namespaceURI==="http://www.w3.org/1999/xhtml"?!J.has(t):e.namespaceURI===Z?!Q.has(t):!1}var te=new Set(["html","head","body","frameset"]);function re(e){return e.namespaceURI==="http://www.w3.org/1999/xhtml"&&te.has(e.localName)}function ne(e){if(e===null||typeof e!="object")return!1;const t=e;if(typeof t.target!="string"||!X.test(t.target)||t.text!==void 0&&typeof t.text!="string")return!1;if(t.attrsSet!==void 0){if(t.attrsSet===null||typeof t.attrsSet!="object")return!1;for(const[n,s]of Object.entries(t.attrsSet))if(!D.test(n)||typeof s!="string")return!1}if(t.attrsRemoved!==void 0){if(!Array.isArray(t.attrsRemoved))return!1;for(const n of t.attrsRemoved)if(typeof n!="string"||!D.test(n))return!1}return!0}function se(e,t){if(e===null||typeof e!="object")return!1;const{seq:n,elements:s}=e;if(typeof n!="number"||!Number.isSafeInteger(n)||!Array.isArray(s)||s.length===0||s.length>64)return!1;for(let o=0;o<s.length;o++)if(!t(s[o]))return!1;return!0}function ae(e){return e===null||typeof e!="object"?!1:se(e.__frame_patch,ne)}function oe(e){if(e===null||typeof e!="object")return!1;const t=e.__frame_init;return t!==null&&typeof t=="object"}function ie(e){return e!==null&&typeof e=="object"&&e.__frame_size_poke===!0}function le(e){if(e===null||typeof e!="object")return!1;const t=e.__frame_theme;if(t===null||typeof t!="object")return!1;const n=t.theme;return typeof n=="string"&&Y.includes(n)}var O="__frame_scroll",ce=150,ue=310,fe=160,pe=3e4;function de(){let e=0,t=!1,n=!1,s=!1,o=0,l=null;const c=i=>{try{sessionStorage.setItem(O,JSON.stringify({y:i}))}catch{}},f=()=>{if(clearTimeout(e),l===null)return;const i=l;l=null,c(i)},S=()=>{if(t){t=!1;return}n=!0,l=scrollY,clearTimeout(e),e=setTimeout(f,ce)};try{addEventListener("scroll",S,{passive:!0}),addEventListener("pagehide",f)}catch{}const v=()=>{let i;try{i=sessionStorage.getItem(O)}catch{return null}if(i===null)return null;let d;try{d=JSON.parse(i)}catch{d=null}const u=d?.y;if(!(typeof u=="number"&&Number.isFinite(u)&&u>=0)){try{sessionStorage.removeItem(O)}catch{}return null}return u};let b=!1;const m=i=>{try{const d=scrollY;scrollTo({top:i,left:0,behavior:"instant"}),o=i,s=!0,clearTimeout(e),l=null,c(i);const u=scrollY;u!==d&&(t=!0),u!==i&&!b&&(b=!0,addEventListener("load",()=>{try{if(scrollY===u){const h=v();m(h!==null?h:o)}}catch{}},{once:!0}))}catch{}},y=()=>{try{return!!location.hash}catch{return!0}};let g=!1;const E=()=>{try{if(g||innerWidth>ue||innerHeight>fe)return;g=!0;const i=Date.now(),d=()=>{try{removeEventListener("resize",d)}catch{}if(Date.now()-i>pe||n||y())return;const u=v();m(u!==null?u:o)};addEventListener("resize",d)}catch{}};let r=!1,p=!1;return{restore(){if(r||(r=!0,y()))return;const i=v();i!==null&&(m(i),E())},promoted(){if(p||(p=!0,y()))return;const i=v();i!==null?(m(i),E()):s&&m(o)}}}var Ee="modulepreload",Ae=function(e){return"/"+e},Re={},me=function(t,n,s){let o=Promise.resolve();function l(c){const f=new Event("vite:preloadError",{cancelable:!0});if(f.payload=c,window.dispatchEvent(f),!f.defaultPrevented)throw c}return o.then(c=>{for(const f of c||[])f.status==="rejected"&&l(f.reason);return t().catch(l)})};(function(){const e=Object.defineProperty,t=globalThis,n=["RTCPeerConnection","webkitRTCPeerConnection","RTCDataChannel","RTCIceCandidate","RTCSessionDescription","RTCRtpSender","RTCRtpReceiver"];let s=0;for(let o=0;o<n.length;o++){const l=n[o];try{e(t,l,{value:void 0,writable:!1,configurable:!1})}catch{try{delete t[l]}catch{}try{e(t,l,{value:void 0,writable:!1,configurable:!0})}catch{}}typeof t[l]=="function"&&s++}if(s&&window!==top)try{parent.postMessage({__frame_rtc_lockdown_failed:s},"*")}catch{}})();var he=1e4,_e=Object.freeze([...window.__FRAME_PREAMBLE?.origins??["https://claude.ai","https://preview.claude.ai"]]);function F(e){for(const t of _e)if(t.endsWith(":*"))try{const n=new URL(e);if(`${n.protocol}//${n.hostname}:*`===t)return!0}catch{}else if(e===t)return!0;return!1}var M=Object.freeze({...window.__FRAME_PREAMBLE?.capabilities}),j=window.__FRAME_PREAMBLE?.transforms,N=window.__FRAME_PREAMBLE?.comments,I=window.__FRAME_PREAMBLE?.translate,L=/^[\w.-]+\.js$/;function T(e){return me(()=>import("/_runtime/"+e),void 0)}function z(e,t){return{contract:e.contract,changes:new Set(e.changes??[]),flags:new Set(e.flags??[]),capabilities:e.capabilities??{},capBudgets:e.capBudgets??{},transforms:new Map,shellOrigin:t,mount:W,pipe:()=>({wrap:(n,s)=>(...o)=>{try{return s(...o)}catch(l){return Promise.reject(l)}}})}}var P=null,w=null;function q(e,t,n){try{Object.defineProperty(e,t,{value:n,writable:!1,configurable:!1,enumerable:!0})}catch{try{Object.defineProperty(e,t,{value:n,writable:!1,configurable:!0,enumerable:!0})}catch{}}}var B=!1;function ve(e,t){const n=[];for(const s of e.elements){const o=document.querySelector(`[data-id="${s.target}"]`);if(!o){parent.postMessage({__frame_patch_miss:{seq:e.seq}},t);return}if([...Object.keys(s.attrsSet??{}),...s.attrsRemoved??[]].some(l=>!V(l))){parent.postMessage({__frame_patch_miss:{seq:e.seq}},t);return}if(s.text!==void 0&&(!ee(o)||re(o))){parent.postMessage({__frame_patch_miss:{seq:e.seq}},t);return}for(const[l,c]of Object.entries(s.attrsSet??{}))if(!$(o,l)){try{o.setAttribute(l,c)}catch{}H(o,l,c)}for(const l of s.attrsRemoved??[])$(o,l)||(o.removeAttribute(l),H(o,l,null));typeof s.text=="string"&&(o.textContent=s.text),n.push(s.target)}try{document.dispatchEvent(new CustomEvent("claude:edit",{detail:{seq:e.seq,targets:n}}))}catch{}}function H(e,t,n){if(!(e instanceof HTMLInputElement))return;const s=t.toLowerCase();s==="checked"?e.checked=n!==null:s==="value"&&e.type!=="file"&&(e.value=n??"")}function $(e,t){const n=t.toLowerCase(),s=e;return n==="data-id"||(n==="value"||n==="checked")&&(s.__artifactSecret===!0||/^(password|hidden|file)$/.test(s.type??"")||/(^|\s)(cc-|one-time-code|current-password|new-password)/i.test(`${e.getAttribute("autocomplete")??""} ${s.autocomplete??""}`))}function K(e){const t=document.documentElement;e==="light"||e==="dark"?(t.dataset.theme=e,t.style.colorScheme=e,B=!0):B&&(delete t.dataset.theme,t.style.colorScheme="",B=!1)}var R=new Map;function ye(){let e;const t={u:new Promise(n=>{e=n}),r:n=>{t.done=!0,e(n)},done:!1,nulled:!1};return t}var ge=Object.freeze(Object.assign(Object.create(null),{call:Function.prototype.call,apply:Function.prototype.apply,bind:Function.prototype.bind})),W=(e,t)=>{const n=R.get(e);if(!n||n.done){n?.nulled&&w&&parent.postMessage({__frame_cap_telemetry:{kind:"cap-load-error",cap:e}},w);return}const s=typeof t=="function"?Object.setPrototypeOf(t,ge):Object.assign(Object.create(null),t);typeof s.then=="function"&&delete s.then,n.r(Object.freeze(s))},U=Object.getOwnPropertyDescriptor(window,"claude");if(window!==top&&!(U&&U.writable===!1)){const e=j&&L.test(j)?T(j).catch(()=>{}):Promise.resolve(void 0),t=r=>{if(r.type==="auxclick"&&r.button!==1)return;const p=r.target,i=p&&p.closest?p.closest("a[href],area[href]"):null;if(!i)return;const d=i.getAttribute("href");if(!d)return;let u,h;try{u=new URL(d,document.baseURI),h=new URL(document.baseURI).origin}catch{return}if((u.protocol==="http:"||u.protocol==="https:")&&u.origin!==h){r.preventDefault();const _=(i.getAttribute("target")??"").toLowerCase(),C=r.type==="auxclick"||r.metaKey||r.ctrlKey||r.shiftKey||r.altKey||!["","_self","_top","_parent"].includes(_);parent.postMessage({__frame_nav:!0,url:u.href,newTab:C},"*")}};addEventListener("click",t,!0),addEventListener("auxclick",t,!0);const n={},s=r=>{r.isTrusted&&(n.pointer=!0)},o=r=>{r.isTrusted&&(n.click=!0)};addEventListener("pointermove",s,{capture:!0,passive:!0}),addEventListener("click",o,{capture:!0,passive:!0}),e.then(r=>{r?.wireNav&&(r.wireNav(),removeEventListener("click",t,!0),removeEventListener("auxclick",t,!0),removeEventListener("pointermove",s,!0),removeEventListener("click",o,!0),r.wireEngagement?.(n))});let l=null;try{l=de()}catch{}const c=U?.value??{};q(window,"claude",c);for(const r of Object.keys(M)){if(c[r]!==void 0){q(c,r,c[r]);continue}R.set(r,ye())}if(c.use===void 0){const r=p=>{if(typeof p!="string"||!Object.hasOwn(M,p))return Promise.resolve(null);const i=R.get(p);return i?i.u:Promise.resolve(c[p]??null)};try{Object.defineProperty(c,"use",{value:r,writable:!0,configurable:!0,enumerable:!1})}catch{}}let f=null,S=null,v=0;const b=r=>{r.source!==parent||!F(r.origin)||oe(r.data)&&(f=r.data.__frame_init,w=r.origin,removeEventListener("message",b),clearTimeout(v),S?.())};addEventListener("message",b),parent.postMessage({__frame_connect:!0},"*");const m=new Promise(r=>{S=r,v=setTimeout(()=>{removeEventListener("message",b),r()},he)}),y=document.readyState==="loading"?new Promise(r=>document.addEventListener("DOMContentLoaded",()=>r(),{once:!0})):Promise.resolve();y.then(()=>{try{l?.restore()}catch{}});const g={cb:null},E=r=>{if(!(r.source!==parent||!F(r.origin))&&ie(r.data)){try{l?.promoted()}catch{}g.cb?.()}};addEventListener("message",E),m.then(async()=>{if(!f||!w){for(const a of R.values())a.nulled=!0,a.r(null);return}K(f.theme);const r=w;let p=!1,i=!1;addEventListener("message",a=>{if(a.source!==parent||a.origin!==r)return;le(a.data)&&K(a.data.__frame_theme.theme),ae(a.data)&&ve(a.data.__frame_patch,r);const k=a.data?.__fc_mode;k&&typeof k=="object"&&!p&&N&&L.test(N)&&(p=!0,T(N).then(x=>x.install?.(r,k.on===!0)).catch(()=>{}));const A=a.data?.__ft_cmd;A&&typeof A=="object"&&!i&&I&&L.test(I)&&(i=!0,T(I).then(x=>x.install?.(r,A)).catch(()=>{}))});const d=Object.keys(f.capabilities??{}).filter(a=>Object.hasOwn(M,a)).map(a=>[a,M[a]]).filter(a=>typeof a[1]=="string"&&L.test(a[1])),u=await Promise.allSettled(d.map(([,a])=>T(a))),h=await e,_=w;if(h?.buildBoot||parent.postMessage({__frame_cap_telemetry:{kind:"cap-load-error",cap:"_transforms"}},_),h?.buildBoot)try{P=h.buildBoot(f,h.TRANSFORMS??{},{shellOrigin:_,mount:W},a=>parent.postMessage({__frame_cap_telemetry:a},_))}catch{parent.postMessage({__frame_cap_telemetry:{kind:"cap-load-error",cap:"_transforms"}},_),P=z(f,_)}else P=z(f,_);const C=a=>parent.postMessage({__frame_cap_telemetry:{kind:"cap-load-error",cap:a}},_),we=P;u.forEach((a,k)=>{const A=d[k][0];if(a.status!=="fulfilled"){C(A);return}try{a.value?.install?.(we)}catch{C(A)}});for(const a of R.values())a.done||(a.nulled=!0,a.r(null));await y,parent.postMessage({__frame_ready:!0},w),e.then(a=>a?.installSizeReporter?.(_,g))})}})();</script><!-- /frame-runtime --><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}</style></head><body>
+<title>Customer Roles — Before / After</title>
+<style>
+  :root {
+    --bg: #F5F5F7; --surface: #FFFFFF; --surface-hover: #F0F0F4;
+    --border: #D2D2D7; --border-mid: #AEAEB2;
+    --accent: #0071E3; --accent-bg: rgba(0,113,227,0.07); --accent-hover: #0077ED;
+    --text: #1D1D1F; --text-muted: #6E6E73;
+    --success: #28CD41; --success-bg: rgba(40,205,65,0.08);
+    --danger: #FF3B30;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
+    --head: -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    --body: -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #080f1a; --surface: #0e1c2f; --surface-hover: #122338;
+      --border: #1a3354; --border-mid: #213f65;
+      --accent: #e8a217; --accent-bg: rgba(232,162,23,0.12); --accent-hover: #f0b428;
+      --text: #dde8f5; --text-muted: #587a9b;
+      --success: #2dcc8f; --success-bg: rgba(45,204,143,0.10);
+      --danger: #ef5050;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #080f1a; --surface: #0e1c2f; --surface-hover: #122338;
+    --border: #1a3354; --border-mid: #213f65;
+    --accent: #e8a217; --accent-bg: rgba(232,162,23,0.12); --accent-hover: #f0b428;
+    --text: #dde8f5; --text-muted: #587a9b;
+    --success: #2dcc8f; --success-bg: rgba(45,204,143,0.10);
+    --danger: #ef5050;
+  }
+  :root[data-theme="light"] {
+    --bg: #F5F5F7; --surface: #FFFFFF; --surface-hover: #F0F0F4;
+    --border: #D2D2D7; --border-mid: #AEAEB2;
+    --accent: #0071E3; --accent-bg: rgba(0,113,227,0.07); --accent-hover: #0077ED;
+    --text: #1D1D1F; --text-muted: #6E6E73;
+    --success: #28CD41; --success-bg: rgba(40,205,65,0.08);
+    --danger: #FF3B30;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--body); padding: 32px 24px 56px;
+  }
+  .wrap { max-width: 1040px; margin: 0 auto; }
+
+  .intro { margin-bottom: 32px; }
+  .eyebrow {
+    font-family: var(--mono); font-size: 11px; font-weight: 700; color: var(--accent);
+    text-transform: uppercase; letter-spacing: .14em; margin-bottom: 8px;
+  }
+  h1 { font-family: var(--head); font-size: 26px; font-weight: 800; margin: 0 0 8px; letter-spacing: -0.3px; }
+  .sub { font-size: 14px; color: var(--text-muted); max-width: 640px; line-height: 1.6; margin: 0; }
+
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+  @media (max-width: 820px) { .cols { grid-template-columns: 1fr; } }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    overflow: hidden;
+  }
+  .card-head {
+    padding: 16px 20px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+  }
+  .tag {
+    font-family: var(--mono); font-size: 10px; font-weight: 700; letter-spacing: .08em;
+    text-transform: uppercase; padding: 3px 9px; border-radius: 5px; white-space: nowrap;
+  }
+  .tag.current { color: var(--text-muted); background: var(--border); background: color-mix(in srgb, var(--border) 55%, transparent); border: 1px solid var(--border-mid); }
+  .tag.proposed { color: var(--success); background: var(--success-bg); border: 1px solid color-mix(in srgb, var(--success) 40%, transparent); }
+  .card-title { font-family: var(--head); font-size: 16px; font-weight: 700; margin: 0 0 4px; }
+  .card-desc { font-size: 12.5px; color: var(--text-muted); line-height: 1.5; margin: 0; }
+
+  .card-body { padding: 20px; }
+
+  .field-label {
+    font-family: var(--mono); font-size: 9.5px; color: var(--text-muted); font-weight: 700;
+    text-transform: uppercase; letter-spacing: .12em; margin-bottom: 10px;
+  }
+  .hint { font-size: 11.5px; color: var(--text-muted); line-height: 1.5; margin: -4px 0 14px; }
+
+  /* --- Current: checkbox chip grid --- */
+  .chip-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    display: flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 6px;
+    font-size: 12px; border: 1px solid var(--border); color: var(--text-muted);
+  }
+  .chip.on { border-color: color-mix(in srgb, var(--accent) 55%, transparent); background: var(--accent-bg); color: var(--accent); }
+  .chip input { width: 12px; height: 12px; accent-color: var(--accent); margin: 0; }
+
+  .maint-note {
+    margin-top: 16px; padding: 10px 12px; border-radius: 8px;
+    background: color-mix(in srgb, var(--danger) 8%, transparent);
+    border: 1px solid color-mix(in srgb, var(--danger) 30%, transparent);
+    font-size: 12px; color: var(--text); line-height: 1.55; display: flex; gap: 9px; align-items: flex-start;
+  }
+  .maint-note .dot { color: var(--danger); flex-shrink: 0; margin-top: 1px; font-weight: 700; }
+
+  /* --- Proposed: read-only usage badges --- */
+  .usage-badges { display: flex; flex-wrap: wrap; gap: 6px; }
+  .badge {
+    display: flex; align-items: center; gap: 6px; padding: 5px 11px; border-radius: 999px;
+    font-size: 12px; font-weight: 600; color: var(--success);
+    background: var(--success-bg); border: 1px solid color-mix(in srgb, var(--success) 40%, transparent);
+  }
+  .badge .src { font-family: var(--mono); font-size: 10px; font-weight: 700; opacity: .75; }
+
+  .usage-log {
+    margin-top: 16px; border-top: 1px solid var(--border); padding-top: 14px;
+  }
+  .usage-log-label {
+    font-family: var(--mono); font-size: 9.5px; color: var(--text-muted); font-weight: 700;
+    text-transform: uppercase; letter-spacing: .1em; margin-bottom: 8px;
+  }
+  .log-row {
+    display: flex; align-items: baseline; gap: 8px; font-size: 12px; padding: 5px 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+  }
+  .log-row:last-child { border-bottom: none; }
+  .log-role { font-weight: 600; min-width: 90px; flex-shrink: 0; }
+  .log-src { color: var(--text-muted); font-family: var(--mono); font-size: 11px; }
+
+  .good-note {
+    margin-top: 16px; padding: 10px 12px; border-radius: 8px;
+    background: var(--success-bg);
+    border: 1px solid color-mix(in srgb, var(--success) 35%, transparent);
+    font-size: 12px; color: var(--text); line-height: 1.55; display: flex; gap: 9px; align-items: flex-start;
+  }
+  .good-note .dot { color: var(--success); flex-shrink: 0; margin-top: 1px; font-weight: 700; }
+
+  .footer-note {
+    margin-top: 28px; font-size: 12px; color: var(--text-muted); line-height: 1.6;
+    padding: 14px 18px; border: 1px dashed var(--border); border-radius: 10px;
+  }
+  .footer-note b { color: var(--text); }
+</style>
+
+<div class="wrap">
+  <div class="intro">
+    <div class="eyebrow">CargoDesk · Customer Profile · Roles section</div>
+    <h1>Before / after — same customer, same 13 roles</h1>
+    <p class="sub">
+      Both panels show the same fictional customer, "Rotterdam Cargo Services B.V.", who has
+      actually been used as Principal on one shipment and Bank on another. The difference is
+      where that information comes from.
+    </p>
+  </div>
+
+  <div class="cols">
+    <!-- CURRENT -->
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <div class="card-title">Current</div>
+          <p class="card-desc">Manually maintained — 13 checkboxes, someone has to remember to keep them right.</p>
+        </div>
+        <span class="tag current">Editable</span>
+      </div>
+      <div class="card-body">
+        <div class="field-label">Roles</div>
+        <p class="hint">
+          Which shipment/party roles this customer is eligible for — narrows customer pickers
+          elsewhere in the app.
+        </p>
+        <div class="chip-grid">
+          <label class="chip"><input type="checkbox"> Shipper</label>
+          <label class="chip"><input type="checkbox"> Consignee</label>
+          <label class="chip on"><input type="checkbox" checked> Principal</label>
+          <label class="chip"><input type="checkbox"> Notify Party</label>
+          <label class="chip"><input type="checkbox"> Forwarder</label>
+          <label class="chip"><input type="checkbox"> Customs Broker (Export)</label>
+          <label class="chip"><input type="checkbox"> Customs Broker (Import)</label>
+          <label class="chip"><input type="checkbox"> Trucker (Pre-carriage)</label>
+          <label class="chip"><input type="checkbox"> Trucker (On-carriage)</label>
+          <label class="chip"><input type="checkbox"> Also Notify Party</label>
+          <label class="chip on"><input type="checkbox" checked> Bank</label>
+          <label class="chip"><input type="checkbox"> Insurance Provider</label>
+          <label class="chip"><input type="checkbox"> Agent</label>
+        </div>
+        <div class="maint-note">
+          <span class="dot">&#9679;</span>
+          <span>Only <b>Principal</b> and <b>Bank</b> got checked — by chance, whoever set this
+          customer up remembered those two. Nothing catches it if they're wrong, or if this
+          customer starts getting used as a Trucker next month and nobody comes back to update
+          this list.</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- PROPOSED -->
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <div class="card-title">Proposed</div>
+          <p class="card-desc">Derived from real usage — nothing to check, nothing to forget.</p>
+        </div>
+        <span class="tag proposed">Read-only</span>
+      </div>
+      <div class="card-body">
+        <div class="field-label">Roles</div>
+        <p class="hint">
+          Computed from where this customer has actually been assigned — updates itself the
+          moment a new assignment happens, no maintenance required.
+        </p>
+        <div class="usage-badges">
+          <span class="badge">Principal</span>
+          <span class="badge">Bank</span>
+        </div>
+
+        <div class="usage-log">
+          <div class="usage-log-label">Where this comes from <span style="font-weight:400;opacity:.7">(proposed here — not built)</span></div>
+          <div class="log-row"><span class="log-role">Principal</span><span class="log-src">SHP-XXGOJ1 &middot; assigned 2026-07-14</span></div>
+          <div class="log-row"><span class="log-role">Bank</span><span class="log-src">SHP-9K3RTL &middot; assigned 2026-06-02</span></div>
+        </div>
+        <p class="hint" style="margin-top:6px"><em>Status update, verified 2026-08-25: this per-role provenance
+        drill-down (shipment id + assignment date) was never built. <code>GET /api/customers/:id/roles</code>
+        returns a bare array of role-name strings only — the shipped "After" panel renders just the badges
+        above, with no source/date detail.</em></p>
+
+        <div class="good-note">
+          <span class="dot">&#10003;</span>
+          <span>The moment this customer is assigned as a Trucker on any shipment, "Trucker
+          (Pre/On-carriage)" appears here automatically — same list, same picker-narrowing
+          behavior, zero one ever has to open this page and click a box.</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer-note">
+    <b>What stays identical either way:</b> the role vocabulary (13 roles at the time this mockup
+    was built — now 16, see status update below), the picker behavior
+    (CustomerCombobox's role filter is always a soft suggestion — an operator can still reach any
+    customer via "show all"), and every screen that reads a role today. Only where the role list
+    itself comes from changes — a hand-kept flag vs. a live read of shipments already on file.
+    <br><br>
+    <em>Status update, verified 2026-08-25: the "Current" panel's 13-checkbox grid is historically
+    accurate for what it documented. The vocabulary has since grown to 16 roles (Line Agent Export/
+    Import v0.61.0, NVOCC v0.71.0) — those additions land under Service Providers in the "Proposed"
+    panel's shipped equivalent, same as any other role.</em>
+  </div>
+</div>
+
+</body></html>

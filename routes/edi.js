@@ -3,7 +3,7 @@
 module.exports = function ediRoutes(app, ctx) {
   const { db, ok, err, uid, auth, requireRole, shipmentSubs,
           mapEdiMessage, mapCarrierBooking, mapShipment, applyShipmentAccessFilter,
-          autoCompleteMilestone, logEntityEvent, BOOKABLE_CARRIERS, supersedeIfCarrierChanged } = ctx;
+          autoCompleteMilestone, logEntityEvent, isEdiBookable, supersedeIfCarrierChanged } = ctx;
 
   // occ_bk has canEditShipments:true on the frontend and already sees an enabled Send
   // button — this used to exclude occ_bk (a pre-existing 403-on-click gap), fixed here.
@@ -150,7 +150,7 @@ module.exports = function ediRoutes(app, ctx) {
   app.post("/api/shipments/:id/edi-messages/booking-request", write, (req, res) => {
     const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
     if (!shipment) return err(res, "Shipment not found", 404);
-    if (!BOOKABLE_CARRIERS.has(shipment.carrier_code))
+    if (!isEdiBookable(shipment.carrier_code))
       return err(res, `Booking requests are not supported for carrier ${shipment.carrier_code}`, 400);
 
     const existingBooking = db.prepare("SELECT * FROM carrier_bookings WHERE shipment_id=?").get(shipment.id);
@@ -391,7 +391,7 @@ module.exports = function ediRoutes(app, ctx) {
     const cancelledBy = req.user?.name || req.user?.email || "";
 
     // Notify the carrier only if something was actually transmitted for this booking.
-    if (existing?.correlation_id && BOOKABLE_CARRIERS.has(shipment.carrier_code)) {
+    if (existing?.correlation_id && isEdiBookable(shipment.carrier_code)) {
       const cancelId = `EDI-${uid()}`;
       db.prepare(`
         INSERT INTO edi_messages (id, shipment_id, carrier_code, direction, message_type, format, raw_payload, status, correlation_id, is_mock, created_at)

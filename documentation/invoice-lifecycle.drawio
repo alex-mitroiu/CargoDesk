@@ -1,0 +1,311 @@
+<mxfile host="app.diagrams.net" agent="Claude" version="24.0.0">
+  <diagram name="Invoice Lifecycle" id="invoiceLifecycle">
+    <mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1520" pageHeight="3220" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <!-- ============ PHASE 1 : CHARGE ACCUMULATION ============ -->
+        <mxCell id="p1" value="PHASE 1 &#183; CHARGE ACCUMULATION" style="text;html=1;align=left;fontSize=13;fontStyle=1;fontColor=#142229;" vertex="1" parent="1">
+          <mxGeometry x="40" y="35" width="400" height="24" as="geometry" />
+        </mxCell>
+
+        <mxCell id="nA" value="&lt;b&gt;Cost lines accrue on the shipment&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#3B5E86&quot; style=&quot;font-family:monospace;font-size:10px&quot;&gt;&#9861; shipment_cost_lines (BUY / SELL)&lt;br&gt;&#9861; contract_rates &#183; quote_lines &#183; charge_code_definitions&lt;/font&gt;" style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#0E7C86;strokeWidth=2.5;fontSize=13;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="260" y="95" width="440" height="110" as="geometry" />
+        </mxCell>
+
+        <mxCell id="nB" value="&lt;b&gt;Operator clicks Generate Invoice&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#56666B&quot; style=&quot;font-size:11px&quot;&gt;consolidated (FR01) or per-container (FR02)&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#3B5E86&quot; style=&quot;font-family:monospace;font-size:10px&quot;&gt;Invoice Entry page &#8594; POST .../documents/generate&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#C7D2CE;strokeWidth=1.5;fontSize=13;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="260" y="255" width="440" height="90" as="geometry" />
+        </mxCell>
+
+        <mxCell id="eAB" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;endArrow=block;strokeColor=#0E7C86;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="nA" target="nB">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- ============ PHASE 2 : CREDIT GATE ============ -->
+        <mxCell id="p2" value="PHASE 2 &#183; CREDIT GATE &#8212; &lt;font color=&quot;#56666B&quot; style=&quot;font-weight:normal&quot;&gt;AND: every check below must clear before a PDF is ever rendered&lt;/font&gt;" style="text;html=1;align=left;fontSize=13;fontStyle=1;fontColor=#142229;" vertex="1" parent="1">
+          <mxGeometry x="40" y="405" width="900" height="24" as="geometry" />
+        </mxCell>
+
+        <mxCell id="andBadge" value="AND" style="ellipse;whiteSpace=wrap;html=1;fillColor=#0E7C86;strokeColor=#0E7C86;fontColor=#FFFFFF;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="183" y="653" width="34" height="34" as="geometry" />
+        </mxCell>
+        <mxCell id="andBracket" style="edgeStyle=none;html=1;endArrow=none;startArrow=none;strokeColor=#0E7C86;strokeWidth=1.5;rounded=0;" edge="1" parent="1">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="235" y="440" />
+              <mxPoint x="222" y="440" />
+              <mxPoint x="222" y="900" />
+              <mxPoint x="235" y="900" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <mxCell id="noteC" value="&#9861; customers.credit_hold (+ contracts.named_account_id)" style="text;html=1;align=left;fontSize=10;fontColor=#3B5E86;fontFamily=monospace;" vertex="1" parent="1">
+          <mxGeometry x="560" y="362" width="420" height="18" as="geometry" />
+        </mxCell>
+
+        <mxCell id="dC" value="On credit_hold?&lt;br&gt;&lt;font color=&quot;#56666B&quot; style=&quot;font-weight:normal;font-size:10px&quot;&gt;shipper / consignee / principal / named account&lt;/font&gt;" style="rhombus;whiteSpace=wrap;html=1;fillColor=#E2E9E7;strokeColor=#0E7C86;strokeWidth=2;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="290" y="420" width="380" height="140" as="geometry" />
+        </mxCell>
+
+        <mxCell id="rSTOP1" value="&lt;b&gt;&lt;font color=&quot;#B23A2E&quot;&gt;BLOCKED &#8212; HTTP 409&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#56666B&quot; style=&quot;font-weight:normal;font-size:11px&quot;&gt;no override exists for a hold &#8212;&lt;br&gt;not even the lane trade_manager can bypass it&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#3B5E86&quot; style=&quot;font-family:monospace;font-size:10px&quot;&gt;resolve via Customer Profile &#8594; release hold&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F7E4E1;strokeColor=#B23A2E;strokeWidth=1.5;fontSize=13;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="900" y="435" width="340" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="eC_yes" value="YES" style="edgeStyle=none;html=1;endArrow=block;strokeColor=#B23A2E;strokeWidth=2;fontColor=#B23A2E;fontStyle=1;fontSize=11;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="dC" target="rSTOP1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="dD" value="Projected AR &gt;&lt;br&gt;credit_limit?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#E2E9E7;strokeColor=#0E7C86;strokeWidth=2;fontSize=13;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="290" y="610" width="380" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="eC_no" value="NO" style="edgeStyle=none;html=1;endArrow=block;strokeColor=#0E7C86;strokeWidth=2;fontColor=#0E7C86;fontStyle=1;fontSize=11;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="dC" target="dD">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="noteD" value="&#9861; credit_limit vs AR" style="text;html=1;align=right;fontSize=10;fontColor=#3B5E86;fontFamily=monospace;" vertex="1" parent="1">
+          <mxGeometry x="200" y="763" width="260" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="noteE" value="&#9861; credit_overrides" style="text;html=1;align=center;fontSize=10;fontColor=#3B5E86;fontFamily=monospace;" vertex="1" parent="1">
+          <mxGeometry x="800" y="763" width="200" height="18" as="geometry" />
+        </mxCell>
+
+        <mxCell id="dE" value="Override approved,&lt;br&gt;60-min grace?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#E2E9E7;strokeColor=#0E7C86;strokeWidth=2;fontSize=12;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="840" y="615" width="340" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="eD_yes" value="YES" style="edgeStyle=none;html=1;endArrow=block;strokeColor=#A97600;strokeWidth=2;fontColor=#A97600;fontStyle=1;fontSize=11;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="dD" target="dE">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="mergeAND" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=#0E7C86;strokeColor=#0E7C86;" vertex="1" parent="1">
+          <mxGeometry x="474" y="894" width="12" height="12" as="geometry" />
+        </mxCell>
+        <mxCell id="noteMerge" value="both checks cleared" style="text;html=1;align=left;fontSize=10;fontStyle=2;fontColor=#56666B;" vertex="1" parent="1">
+          <mxGeometry x="500" y="895" width="220" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="eD_no" value="NO" style="edgeStyle=none;html=1;endArrow=none;strokeColor=#0E7C86;strokeWidth=2;fontColor=#0E7C86;fontStyle=1;fontSize=11;exitX=0.5;exitY=1;entryX=0.5;entryY=0.5;" edge="1" parent="1" source="dD" target="mergeAND">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="eE_yes" value="YES" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=none;strokeColor=#0E7C86;strokeWidth=2;fontColor=#0E7C86;fontStyle=1;fontSize=11;exitX=0.5;exitY=1;entryX=0.5;entryY=0.5;" edge="1" parent="1" source="dE" target="mergeAND">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="rSTOP2" value="&lt;b&gt;&lt;font color=&quot;#A97600&quot;&gt;BLOCKED &#8212; needs approval&lt;/font&gt;&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#56666B&quot; style=&quot;font-weight:normal;font-size:11px&quot;&gt;the shipment's own lane trade_manager&lt;br&gt;must approve &#8212; never admin/operator&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#3B5E86&quot; style=&quot;font-family:monospace;font-size:10px&quot;&gt;visible in the Credit Overrides queue&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FBF0D2;strokeColor=#A97600;strokeWidth=1.5;fontSize=13;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="1160" y="790" width="340" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="eE_no" value="NO" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeColor=#A97600;strokeWidth=2;fontColor=#A97600;fontStyle=1;fontSize=11;exitX=1;exitY=0.5;entryX=0;entryY=0.5;" edge="1" parent="1" source="dE" target="rSTOP2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- Parallel watch box -->
+        <mxCell id="rParallel" value="PARALLEL WATCH" style="rounded=1;whiteSpace=wrap;html=1;fillColor=none;strokeColor=#56666B;dashed=1;fontSize=10;fontStyle=1;verticalAlign=top;align=center;fontColor=#56666B;spacingTop=8;" vertex="1" parent="1">
+          <mxGeometry x="1270" y="420" width="230" height="345" as="geometry" />
+        </mxCell>
+        <mxCell id="rMonitor" value="&lt;b&gt;Invoice Deadline Monitor&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#3B5E86&quot; style=&quot;font-family:monospace;font-size:9.5px&quot;&gt;&#9861; shipment_milestones (delivered)&lt;br&gt;&#9861; customers.invoice_deadline_days&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#56666B&quot; style=&quot;font-size:9.5px&quot;&gt;soft/informational, never a block&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#C7D2CE;fontSize=12;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="1290" y="460" width="190" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="rBell" value="&#128276; Notification Bell&lt;br&gt;&lt;font color=&quot;#56666B&quot; style=&quot;font-size:10px&quot;&gt;&amp;quot;Invoicing Overdue&amp;quot; section&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#C7D2CE;fontSize=13;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="1290" y="600" width="190" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="eMonitorBell" style="edgeStyle=none;html=1;endArrow=block;strokeColor=#56666B;strokeWidth=1.5;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="rMonitor" target="rBell">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="noteWatch" value="watches for a MISSING invoice &#8212; not a step that follows this flow" style="text;html=1;align=center;fontSize=9.5;fontStyle=2;fontColor=#56666B;whiteSpace=wrap;" vertex="1" parent="1">
+          <mxGeometry x="1290" y="685" width="190" height="60" as="geometry" />
+        </mxCell>
+
+        <!-- ============ PHASE 3 : GENERATION & SIGNING ============ -->
+        <mxCell id="p3" value="PHASE 3 &#183; GENERATION &amp; SIGNING" style="text;html=1;align=left;fontSize=13;fontStyle=1;fontColor=#142229;" vertex="1" parent="1">
+          <mxGeometry x="40" y="925" width="400" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="orBadge1" value="OR" style="ellipse;whiteSpace=wrap;html=1;fillColor=#0E7C86;strokeColor=#0E7C86;fontColor=#FFFFFF;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="461" y="959" width="38" height="38" as="geometry" />
+        </mxCell>
+        <mxCell id="eMergeOr1" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeColor=#0E7C86;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="mergeAND" target="orBadge1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="noteSplit" value="split per container?" style="text;html=1;align=left;fontSize=10.5;fontStyle=2;fontColor=#56666B;" vertex="1" parent="1">
+          <mxGeometry x="512" y="995" width="220" height="18" as="geometry" />
+        </mxCell>
+
+        <mxCell id="rConsolidated" value="&lt;b&gt;Consolidated&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#56666B&quot; style=&quot;font-size:11px&quot;&gt;FR01 &#8212; one invoice, every SELL line&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#C7D2CE;fontSize=13;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="140" y="1060" width="320" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="rPerContainer" value="&lt;b&gt;Per-container&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#56666B&quot; style=&quot;font-size:11px&quot;&gt;FR02 &#8212; one invoice per container&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#3B5E86&quot; style=&quot;font-family:monospace;font-size:9.5px&quot;&gt;&#9861; charge_code_definitions auto-injects a fee line into every container missing one&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#C7D2CE;fontSize=13;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="500" y="1060" width="320" height="130" as="geometry" />
+        </mxCell>
+        <mxCell id="eOR1_left" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeColor=#0E7C86;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="orBadge1" target="rConsolidated">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="eOR1_right" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeColor=#0E7C86;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="orBadge1" target="rPerContainer">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="mergeSplit" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=#0E7C86;strokeColor=#0E7C86;" vertex="1" parent="1">
+          <mxGeometry x="474" y="1244" width="12" height="12" as="geometry" />
+        </mxCell>
+        <mxCell id="eCons_merge" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=none;strokeColor=#0E7C86;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0.5;" edge="1" parent="1" source="rConsolidated" target="mergeSplit">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ePer_merge" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=none;strokeColor=#0E7C86;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0.5;" edge="1" parent="1" source="rPerContainer" target="mergeSplit">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="nVat" value="&lt;b&gt;Compute VAT + subtotal per currency&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#56666B&quot; style=&quot;font-size:11px&quot;&gt;capture the exact sourceCostLineIds invoiced&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#3B5E86&quot; style=&quot;font-family:monospace;font-size:10px&quot;&gt;&#9861; shipment_cost_lines (SELL lines, this invoice's scope)&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#C7D2CE;fontSize=13;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="260" y="1290" width="440" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="eMergeSplitVat" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeColor=#0E7C86;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="mergeSplit" target="nVat">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="nSign" value="&lt;b&gt;Render &#8594; Sign &#8594; Store&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#3B5E86&quot; style=&quot;font-family:monospace;font-size:10.5px&quot;&gt;&#8594; PDF Render Service &#8212; Puppeteer, port 3003&lt;br&gt;&#8594; org_signing_certs &#8212; CAdES-detached PKCS#7 signature&lt;br&gt;&#8594; INSERT &#9861; shipment_documents, status = draft&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#56666B&quot; style=&quot;font-size:9.5px&quot;&gt;attempt logged first &#8212; durable even if rendering crashes&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#C7D2CE;fontSize=14;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="240" y="1450" width="480" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="eVatSign" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeColor=#0E7C86;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="nVat" target="nSign">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- ============ PHASE 4 : CONFIRMATION & DISTRIBUTION ============ -->
+        <mxCell id="p4" value="PHASE 4 &#183; CONFIRMATION &amp; DISTRIBUTION" style="text;html=1;align=left;fontSize=13;fontStyle=1;fontColor=#142229;" vertex="1" parent="1">
+          <mxGeometry x="40" y="1615" width="400" height="24" as="geometry" />
+        </mxCell>
+
+        <mxCell id="nConfirm" value="&lt;b&gt;Operator clicks Confirm&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#3B5E86&quot; style=&quot;font-family:monospace;font-size:10.5px&quot;&gt;status &#8594; confirmed &#183; confirmed_at stamped&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#56666B&quot; style=&quot;font-size:10.5px&quot;&gt;(this date anchors AR aging) &#183; invoice_owner_id defaulted&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#C7D2CE;fontSize=13;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="260" y="1650" width="440" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="eSignConfirm" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeColor=#0E7C86;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="nSign" target="nConfirm">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="orBadge2" value="OR" style="ellipse;whiteSpace=wrap;html=1;fillColor=#0E7C86;strokeColor=#0E7C86;fontColor=#FFFFFF;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="461" y="1809" width="38" height="38" as="geometry" />
+        </mxCell>
+        <mxCell id="eConfirmOr" style="edgeStyle=none;html=1;endArrow=block;strokeColor=#0E7C86;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="nConfirm" target="orBadge2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="rEmail" value="&lt;b&gt;Email&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#3B5E86&quot; style=&quot;font-family:monospace;font-size:10px&quot;&gt;&#9861; office_mail_settings&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#56666B&quot; style=&quot;font-size:10px&quot;&gt;EMO office only, no fallback&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#C7D2CE;fontSize=13;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="40" y="1900" width="280" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="rEdi" value="&lt;b&gt;EDI&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#3B5E86&quot; style=&quot;font-family:monospace;font-size:10px&quot;&gt;document-distribution svc &#183; :3002&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#56666B&quot; style=&quot;font-size:10px&quot;&gt;formal transmittal + SHA-256 checksum&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#C7D2CE;fontSize=13;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="340" y="1900" width="280" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="rWebhook" value="&lt;b&gt;Webhook&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#3B5E86&quot; style=&quot;font-family:monospace;font-size:10px&quot;&gt;document-distribution svc &#183; :3002&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#56666B&quot; style=&quot;font-size:10px&quot;&gt;HMAC-signed outbound HTTPS POST&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#C7D2CE;fontSize=13;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="640" y="1900" width="280" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="eOR2_email" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeColor=#0E7C86;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="orBadge2" target="rEmail">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="eOR2_edi" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeColor=#0E7C86;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="orBadge2" target="rEdi">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="eOR2_web" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeColor=#0E7C86;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="orBadge2" target="rWebhook">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="mergeDist" value="" style="ellipse;whiteSpace=wrap;html=1;fillColor=#0E7C86;strokeColor=#0E7C86;" vertex="1" parent="1">
+          <mxGeometry x="474" y="2072" width="12" height="12" as="geometry" />
+        </mxCell>
+        <mxCell id="eEmail_merge" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=none;strokeColor=#0E7C86;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0.5;" edge="1" parent="1" source="rEmail" target="mergeDist">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="eEdi_merge" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=none;strokeColor=#0E7C86;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0.5;" edge="1" parent="1" source="rEdi" target="mergeDist">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="eWeb_merge" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=none;strokeColor=#0E7C86;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0.5;" edge="1" parent="1" source="rWebhook" target="mergeDist">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="nFirstSent" value="&lt;b&gt;first_sent_at stamped&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#56666B&quot; style=&quot;font-size:10.5px&quot;&gt;first channel to send wins &#8212; a resend never overwrites it&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#C7D2CE;fontSize=13;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="260" y="2130" width="440" height="90" as="geometry" />
+        </mxCell>
+        <mxCell id="eMergeDistFs" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeColor=#0E7C86;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="mergeDist" target="nFirstSent">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- ============ PHASE 5 : LIVE IN THE LEDGER ============ -->
+        <mxCell id="p5" value="PHASE 5 &#183; LIVE IN THE LEDGER" style="text;html=1;align=left;fontSize=13;fontStyle=1;fontColor=#142229;" vertex="1" parent="1">
+          <mxGeometry x="40" y="2235" width="400" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="nAr" value="&lt;b&gt;Confirmed invoice now counted in AR&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#3B5E86&quot; style=&quot;font-family:monospace;font-size:10px&quot;&gt;AR aging = confirmed_at + customers.credit_terms_days&lt;br&gt;&#8594; 5 buckets: current/1-30/31-60/61-90/90+, net of paid_amount&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#C7D2CE;fontSize=13;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="260" y="2270" width="440" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="eFsAr" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeColor=#0E7C86;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="nFirstSent" target="nAr">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <!-- ============ PHASE 6 : RESOLUTION ============ -->
+        <mxCell id="p6" value="PHASE 6 &#183; RESOLUTION &#8212; &lt;font color=&quot;#56666B&quot; style=&quot;font-weight:normal&quot;&gt;OR: pick one path (or neither, yet)&lt;/font&gt;" style="text;html=1;align=left;fontSize=13;fontStyle=1;fontColor=#142229;" vertex="1" parent="1">
+          <mxGeometry x="40" y="2405" width="700" height="24" as="geometry" />
+        </mxCell>
+        <mxCell id="orBadge3" value="OR" style="ellipse;whiteSpace=wrap;html=1;fillColor=#0E7C86;strokeColor=#0E7C86;fontColor=#FFFFFF;fontSize=10;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="461" y="2441" width="38" height="38" as="geometry" />
+        </mxCell>
+        <mxCell id="eArOr" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeColor=#0E7C86;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="nAr" target="orBadge3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="rMarkPaid" value="&lt;b&gt;Mark as Paid&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#3B5E86&quot; style=&quot;font-family:monospace;font-size:10px&quot;&gt;paidAt + paidAmount both required&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#56666B&quot; style=&quot;font-size:10px&quot;&gt;(never auto-defaulted) &#183; gated admin / operator&lt;br&gt;reduces outstandingAr &#8212; aging clock NOT reset&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#3B5E86&quot; style=&quot;font-family:monospace;font-size:9.5px&quot;&gt;&#9861; paid_at / paid_amount / transaction_id&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#C7D2CE;fontSize=13;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="60" y="2520" width="360" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="eOr3_paid" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeColor=#0E7C86;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="orBadge3" target="rMarkPaid">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="rPaidEnd" value="&lt;b&gt;PAID&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#56666B&quot; style=&quot;font-weight:normal;font-size:10.5px&quot;&gt;in full or in part&lt;/font&gt;" style="rounded=1;arcSize=50;whiteSpace=wrap;html=1;fillColor=#E1F1E7;strokeColor=#2E7D53;strokeWidth=2;fontColor=#2E7D53;fontSize=14;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="100" y="2740" width="280" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="ePaid" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeColor=#2E7D53;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="rMarkPaid" target="rPaidEnd">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="rReverse" value="&lt;b&gt;Reverse&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#0E7C86&quot; style=&quot;font-style:italic;font-size:10px&quot;&gt;gate (AND): status=confirmed AND not already reversed&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#3B5E86&quot; style=&quot;font-family:monospace;font-size:9.5px&quot;&gt;&#9861; new shipment_cost_lines rows &#8212; type SELL, amount negated, source=reversal, already posted&lt;br&gt;&#9861; original shipment_documents &#8594; status = voided&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#56666B&quot; style=&quot;font-size:10px&quot;&gt;both writes are one atomic transaction&lt;br&gt;then generates a CN01 Credit / Debit Note &#8593;&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#C7D2CE;fontSize=13;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="580" y="2520" width="360" height="160" as="geometry" />
+        </mxCell>
+        <mxCell id="eOr3_rev" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeColor=#0E7C86;strokeWidth=2;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="orBadge3" target="rReverse">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="noteNeither" value="(ages normally)" style="text;html=1;align=center;fontSize=10;fontStyle=2;fontColor=#56666B;" vertex="1" parent="1">
+          <mxGeometry x="380" y="2640" width="200" height="18" as="geometry" />
+        </mxCell>
+        <mxCell id="eOr3_neither" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeColor=#56666B;strokeWidth=1.5;dashed=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="orBadge3" target="rReport1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="eReverseLoop" value="CN01 rendered &amp; signed like any other document" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeColor=#0E7C86;strokeWidth=2;dashed=1;dashPattern=7 6;fontColor=#56666B;fontStyle=2;fontSize=10;exitX=1;exitY=0.5;entryX=1;entryY=0.5;" edge="1" parent="1" source="rReverse" target="nSign">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1470" y="2600" />
+              <mxPoint x="1470" y="1465" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+
+        <!-- ============ PHASE 7 : REPORTING ============ -->
+        <mxCell id="p7" value="PHASE 7 &#183; REPORTING &amp; VISIBILITY" style="text;html=1;align=left;fontSize=13;fontStyle=1;fontColor=#142229;" vertex="1" parent="1">
+          <mxGeometry x="40" y="2905" width="400" height="24" as="geometry" />
+        </mxCell>
+
+        <mxCell id="rReport1" value="&lt;b&gt;Billing Performance Report&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#3B5E86&quot; style=&quot;font-family:monospace;font-size:10px&quot;&gt;GET /api/reports/billing-performance&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#56666B&quot; style=&quot;font-size:10px&quot;&gt;every FR01/FR02, row-level &#8212; status, sent, payment status, days overdue&lt;br&gt;by office / customer / lane / carrier&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#C7D2CE;fontSize=13;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="60" y="2960" width="440" height="140" as="geometry" />
+        </mxCell>
+
+        <mxCell id="rReport2" value="&lt;b&gt;Invoice Collections + Escalation&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#3B5E86&quot; style=&quot;font-family:monospace;font-size:10px&quot;&gt;Epic TKT-G11AHW&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#56666B&quot; style=&quot;font-size:10px&quot;&gt;aging-driven reminder cadence, lane-scoped status override log&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#3B5E86&quot; style=&quot;font-family:monospace;font-size:9.5px&quot;&gt;&#9861; shipment_documents.invoice_owner_id&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#C7D2CE;fontSize=13;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="540" y="2960" width="440" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="eArReport2" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeColor=#56666B;strokeWidth=1.5;dashed=1;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="orBadge3" target="rReport2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="rReport3" value="&lt;b&gt;Credit Overrides Queue&lt;/b&gt;&lt;br&gt;&lt;font color=&quot;#3B5E86&quot; style=&quot;font-family:monospace;font-size:10px&quot;&gt;&#9861; credit_overrides&lt;/font&gt;&lt;br&gt;&lt;font color=&quot;#56666B&quot; style=&quot;font-size:10px&quot;&gt;every blocked shipment, visible fleet-wide to admin/operator; only the shipment's own lane trade_manager can act on it&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#C7D2CE;fontSize=13;verticalAlign=middle;" vertex="1" parent="1">
+          <mxGeometry x="1020" y="2960" width="440" height="140" as="geometry" />
+        </mxCell>
+        <mxCell id="eStop2Report3" value="feeds" style="edgeStyle=orthogonalEdgeStyle;html=1;endArrow=block;strokeColor=#56666B;strokeWidth=1.5;dashed=1;fontColor=#56666B;fontStyle=2;fontSize=10;exitX=0.5;exitY=1;entryX=0.5;entryY=0;" edge="1" parent="1" source="rSTOP2" target="rReport3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

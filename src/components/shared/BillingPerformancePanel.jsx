@@ -320,7 +320,7 @@ const BillingPerformancePanel = () => {
                 <YAxis tick={{ fontFamily: T.mono, fontSize: 10, fill: T.textMuted }} axisLine={false} tickLine={false} allowDecimals={false}
                   tickFormatter={v => chartMetric === "amount" ? fmtUsdCompact(v) : v} />
                 <Tooltip content={<StatusBarTooltip metric={chartMetric} />} cursor={{ fill: `${T.accent}0c` }} />
-                <Bar dataKey={chartMetric === "amount" ? "valueUsd" : "count"} radius={[3, 3, 0, 0]} maxBarSize={64} isAnimationActive={false}>
+                <Bar dataKey={chartMetric === "amount" ? "valueUsd" : "count"} radius={[3, 3, 0, 0]} isAnimationActive={false}>
                   {statusChartData.map(d => <Cell key={d.state} fill={d.color} />)}
                   <LabelList dataKey={chartMetric === "amount" ? "valueUsd" : "count"}
                     formatter={v => fmtMetric(v, chartMetric)} position="top"
@@ -339,7 +339,7 @@ const BillingPerformancePanel = () => {
                 <Legend wrapperStyle={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, paddingTop: 10 }} />
                 {PAYMENT_STATE_ORDER.map(state => (
                   <Bar key={state} dataKey={state} name={paymentStateMeta(state).label} stackId="a"
-                    fill={paymentStateMeta(state).color} maxBarSize={64} isAnimationActive={false} />
+                    fill={paymentStateMeta(state).color} isAnimationActive={false} />
                 ))}
               </BarChart>
             </ResponsiveContainer>

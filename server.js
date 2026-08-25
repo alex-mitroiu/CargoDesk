@@ -74,8 +74,20 @@ async function callContractService(method, urlPath, body) {
   return data;
 }
 
+// Zero-script onboarding: a fresh clone has no cargodesk.db yet. db/cargodesk.sample.db is a
+// committed, pre-seeded copy carrying only static MDM reference data (ports, carriers, vessels,
+// commodities, regions, trade lanes, countries) — never shipments/contracts/customers/users,
+// which every real install should create for itself. Copied once, in place; never overwrites an
+// already-running install's own database.
+const DB_PATH = path.join(__dirname, "cargodesk.db");
+const SAMPLE_DB_PATH = path.join(__dirname, "db", "cargodesk.sample.db");
+if (!fs.existsSync(DB_PATH) && fs.existsSync(SAMPLE_DB_PATH)) {
+  fs.copyFileSync(SAMPLE_DB_PATH, DB_PATH);
+  console.log("⚓  No cargodesk.db found — copied the bundled MDM reference sample (db/cargodesk.sample.db) to get started.");
+}
+
 const app = express();
-const db  = new DatabaseSync(path.join(__dirname, "cargodesk.db"));
+const db  = new DatabaseSync(DB_PATH);
 app.use(express.json({ limit: "25mb" }));
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -1823,6 +1835,30 @@ const migrations = [
     overridden_at     TEXT NOT NULL
   )`,
   "CREATE INDEX IF NOT EXISTS idx_invoice_status_overrides_doc ON invoice_status_overrides(document_id)",
+
+  // eAdapter — per-carrier EDI connectivity configuration, first story of the carrier-EDI epic.
+  // One row per carrier (UNIQUE carrier_code), mirrors office_mail_settings' own shape (typed
+  // transport columns, is_active, timestamps). credential is stored plaintext but — same
+  // precedent as office_mail_settings.smtp_password/org_signing_certs — NO mapper or route ever
+  // returns it raw; only a hasCredential boolean. This pass is configuration + CRUD only, no
+  // live outbound call is attempted yet (see isEdiBookable below).
+  `CREATE TABLE IF NOT EXISTS carrier_eadapter_configs (
+    id               TEXT PRIMARY KEY,
+    carrier_code     TEXT NOT NULL UNIQUE,
+    transport_type   TEXT NOT NULL DEFAULT 'rest_api',
+    endpoint_url     TEXT NOT NULL DEFAULT '',
+    auth_header_name TEXT NOT NULL DEFAULT '',
+    credential       TEXT NOT NULL DEFAULT '',
+    is_active        INTEGER NOT NULL DEFAULT 1,
+    notes            TEXT NOT NULL DEFAULT '',
+    created_at       TEXT NOT NULL,
+    updated_at       TEXT NOT NULL
+  )`,
+  // Defaults ON — the original 3 hardcoded BOOKABLE_CARRIERS (MAEU/SAFM/MCPU) keep working
+  // exactly as they do today on every existing install; nothing breaks silently on upgrade.
+  // Turning this off collapses ALL carriers (built-in or eAdapter-configured) to manual mode
+  // uniformly — see isEdiBookable.
+  "INSERT OR IGNORE INTO app_settings (key, value) VALUES ('api_eadapter_enabled', 'true')",
 ];
 
 // "duplicate column name" is the expected, harmless result of re-running an ADD COLUMN
@@ -2027,14 +2063,20 @@ const shipmentSubs = new Map();
 
 // ─── Seed admin user ──────────────────────────────────────────────────────────
 
+// Was hardcoded to the maintainer's own personal email/name — harmless for a single-operator
+// local dev DB, but wrong for anyone else's fresh clone (a stranger self-hosting this repo has
+// no way to know or use that login) and stale against what README.md/CLAUDE.md already
+// documented as "the" default. Now reads ADMIN_EMAIL/ADMIN_PASSWORD if set (e.g. in .env),
+// falling back to the generic default the docs describe — same disclosed-insecure-default
+// tradeoff as JWT_SECRET etc., logged loudly so it's never mistaken for a real credential.
 ;(function seedAdmin() {
-  const ADMIN_EMAIL = "alex.mitroiu@gmail.com";
-  const TEMP_PW    = "Admin2026!";
+  const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "admin@cargodesk.com";
+  const TEMP_PW    = process.env.ADMIN_PASSWORD || "admin123";
   const exists = db.prepare("SELECT id FROM users WHERE email = ?").get(ADMIN_EMAIL);
   if (!exists) {
     db.prepare(
       "INSERT INTO users (id, email, name, password_hash, role, is_active, created_at) VALUES (?, ?, ?, ?, 'admin', 1, datetime('now'))"
-    ).run(`USR-${uid()}`, ADMIN_EMAIL, "Alex Mitroiu", bcrypt.hashSync(TEMP_PW, 10));
+    ).run(`USR-${uid()}`, ADMIN_EMAIL, "Admin", bcrypt.hashSync(TEMP_PW, 10));
     console.log(`\n⚓  Admin user created: ${ADMIN_EMAIL}`);
     console.log(`   Temporary password : ${TEMP_PW}`);
     console.log(`   Change it via the User Management panel.\n`);
@@ -3190,6 +3232,20 @@ try { db.exec("UPDATE shipments SET vessel = '', vessel_imo = '' WHERE vessel_im
 // (routes/system.js's old MAERSK_CODES) is gone entirely (v0.72.0) along with the live Maersk
 // developer-tools schedule/booking API it gated — schedule search is catalog-then-demo-only now.
 const BOOKABLE_CARRIERS = new Set(["MAEU", "SAFM", "MCPU"]);
+
+// eAdapter (carrier-EDI epic, story 1) — generalizes BOOKABLE_CARRIERS from a fixed 3-carrier
+// set into "the built-in 3 OR any carrier with an active eAdapter config," gated behind one
+// master toggle. Turning api_eadapter_enabled off blocks EVERY carrier, including the built-in
+// 3 — a deliberate choice so the toggle governs the whole EDI-carrier-communication surface
+// uniformly, with no special-casing; a carrier that isn't bookable already has a complete
+// fallback lifecycle (manual Confirm with a hand-entered bookingRef, no EDI message ever sent),
+// so "off" just means every carrier uses that same path.
+function isEdiBookable(carrierCode) {
+  if (getSettings().api_eadapter_enabled === 'false') return false;
+  if (BOOKABLE_CARRIERS.has(carrierCode)) return true;
+  const cfg = db.prepare("SELECT is_active FROM carrier_eadapter_configs WHERE carrier_code=?").get(carrierCode);
+  return !!cfg?.is_active;
+}
 // Fixed, curated additional party roles (Epic TKT-5XFCAP) — alongside the 4 hardcoded
 // shipper/consignee/notify/principal roles on shipments. Frontend keeps its own copy in
 // src/tokens.js (same split as BOOKABLE_CARRIERS — frontend/backend don't share a module).
@@ -3289,6 +3345,7 @@ const {
   mapContract, mapLeg, mapRate, mapContractRouting, mapCarrierInvoice, mapCarrierInvoiceLine,
   mapQuote, mapQuoteLine,
   mapInvoiceReasonCode, mapInvoiceStatusOverride,
+  mapEadapterConfig,
 } = createMappers({ portLanesMap, CUTOFF_WARNING_DAYS });
 
 function shipmentMatchesAccessConfig(s, cfg) {
@@ -3600,7 +3657,7 @@ const supersedeIfCarrierChanged = (shipment, existing) => {
   if (existing.status !== "Cancelled") {
     // Notify the old carrier only if something was actually transmitted for THIS booking —
     // its own carrier_code (who the request actually went to), not the shipment's new one.
-    if (existing.correlation_id && BOOKABLE_CARRIERS.has(existing.carrier_code)) {
+    if (existing.correlation_id && isEdiBookable(existing.carrier_code)) {
       const cancelId = `EDI-${uid()}`;
       db.prepare(`
         INSERT INTO edi_messages (id, shipment_id, carrier_code, direction, message_type, format, raw_payload, status, correlation_id, is_mock, created_at)
@@ -4145,7 +4202,7 @@ const ctx = {
   mapScopeItem, mapAccessConfig, mapOffice, mapBranch, mapOrgCountry, mapRegion, mapCountry, mapTicketLink, mapTicket,
   mapTestItem, mapTestCaseLink,
   mapEdiMessage,
-  mapCarrierBooking, BOOKABLE_CARRIERS,
+  mapCarrierBooking, BOOKABLE_CARRIERS, isEdiBookable, mapEadapterConfig,
   mapCustomsFiling, CUSTOMS_FILING_TYPES,
   mapKbProject, mapKbVersion, mapKbColumn,
   mapCustomer, mapCustomerIdentifier, mapCustomerScreening, mapCustomerDoc, mapCustomerContact,
@@ -4202,6 +4259,7 @@ require('./routes/ai')(app, ctx);
 require('./routes/share')(app, ctx);
 require('./routes/offices')(app, ctx);
 require('./routes/office-mail')(app, ctx);
+require('./routes/eadapter')(app, ctx);
 require('./routes/document-distribution')(app, ctx);
 require('./routes/organization')(app, ctx);
 require('./routes/charge-codes')(app, ctx);

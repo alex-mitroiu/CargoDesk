@@ -37,6 +37,11 @@ describe("Schedule Generator Suite", () => {
   });
 
   beforeEach(() => {
+    // Captured from the real network response (see the 3 happy-path tests below), not parsed out
+    // of the success toast — a flaked/mistimed toast assertion must never leave the schedule it
+    // was reporting on permanently orphaned in the catalog. Registered before cy.visit so it's
+    // armed for every Generate click the test makes afterward.
+    cy.intercept("POST", "/api/schedules").as("createSchedule");
     cy.loginSession(ADMIN_EMAIL, ADMIN_PASSWORD, { acceptLicense: true });
     cy.visit("/");
     cy.window().then(win => { win.location.hash = "test-tools"; });
@@ -76,11 +81,10 @@ describe("Schedule Generator Suite", () => {
       cy.contains("Direct sailing (no transshipment)").should("be.visible");
 
       cy.contains("button", "Generate").click();
-      cy.contains(/Schedule SCHED-\S+ created/, { timeout: 15000 }).should("be.visible")
-        .invoke("text").then(text => {
-          const id = text.match(/SCHED-\S+/)?.[0];
-          if (id) createdScheduleIds.push(id);
-        });
+      cy.wait("@createSchedule").then(({ response }) => {
+        if (response?.statusCode === 201 && response.body?.id) createdScheduleIds.push(response.body.id);
+      });
+      cy.contains(/Schedule SCHED-\S+ created/, { timeout: 15000 }).should("be.visible");
 
       // Form resets after a successful generate.
       cy.get('input[placeholder="Search by name or IMO…"]').should("exist");
@@ -116,11 +120,10 @@ describe("Schedule Generator Suite", () => {
       cy.contains("2-leg TSP sailing configured", { timeout: 8000 }).should("be.visible");
 
       cy.contains("button", "Generate").click();
-      cy.contains(/Schedule SCHED-\S+ created.*2-leg TSP/, { timeout: 15000 })
-        .invoke("text").then(text => {
-          const id = text.match(/SCHED-\S+/)?.[0];
-          if (id) createdScheduleIds.push(id);
-        });
+      cy.wait("@createSchedule").then(({ response }) => {
+        if (response?.statusCode === 201 && response.body?.id) createdScheduleIds.push(response.body.id);
+      });
+      cy.contains(/Schedule SCHED-\S+ created.*2-leg TSP/, { timeout: 15000 });
 
       cy.contains("Generated Schedules").parent().within(() => {
         cy.contains("TSP · 2 legs", { timeout: 10000 }).should("be.visible");
@@ -163,14 +166,13 @@ describe("Schedule Generator Suite", () => {
       cy.contains("USNYC").should("be.visible");
 
       cy.contains("button", "Generate").should("not.be.disabled").click();
+      cy.wait("@createSchedule").then(({ response }) => {
+        if (response?.statusCode === 201 && response.body?.id) createdScheduleIds.push(response.body.id);
+      });
       cy.contains("Pick a vessel").should("not.exist");
       cy.contains("Pick a carrier").should("not.exist");
       cy.contains("Pick POL and POD").should("not.exist");
-      cy.contains(/Schedule SCHED-\S+ created.*2-leg TSP/, { timeout: 15000 })
-        .invoke("text").then(text => {
-          const id = text.match(/SCHED-\S+/)?.[0];
-          if (id) createdScheduleIds.push(id);
-        });
+      cy.contains(/Schedule SCHED-\S+ created.*2-leg TSP/, { timeout: 15000 });
     });
 
     it("deletes a generated schedule from the catalog browser", () => {

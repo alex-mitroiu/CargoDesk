@@ -1,0 +1,295 @@
+<!doctype html><html><head><!-- frame-runtime --><base href="/_f/1785740624-979b/"><script>window.__FRAME_PREAMBLE={"capabilities":{"artifact":"artifact.oqIe8shs.js","assets":"assets.DBUJcvq_.js","comments":"comments.GLuHR3zP.js","db":"db.CRhVHzSt.js","downloads":"downloads.C3GSvEDP.js","embed":"embed.CZsbekoQ.js","mcp":"mcp.Bvma3qD7.js","network":"network.B5UA9Su4.js","permissions":"permissions.BNySkLV5.js","room":"room.DE7EMui-.js","sample":"sample.BW2Uysoh.js","self":"artifact.oqIe8shs.js","user":"user.BpKav-Rf.js"},"transforms":"_transforms.h3_8GSUa.js","comments":"_comments.BOgkE6qU.js","translate":"_translate.5HCW4BJh.js"}</script><script>(function(){"use strict";var Y=["light","dark","system"],X=/^[A-Za-z0-9_-]{1,64}$/,D=/^[a-zA-Z_:][a-zA-Z0-9_:.-]{0,127}$/,G=new Set(["class","hidden","value","checked"]);function V(e){const t=e.toLowerCase();return t.startsWith("data-")||t.startsWith("aria-")||G.has(t)}var be="http://www.w3.org/1999/xhtml",Z="http://www.w3.org/2000/svg",J=new Set(["script","style","iframe","noscript","noframes","noembed","xmp","plaintext","template","title","textarea","object","embed"]),Q=new Set(["script","style"]);function ee(e){const t=e.localName.toLowerCase();return e.namespaceURI==="http://www.w3.org/1999/xhtml"?!J.has(t):e.namespaceURI===Z?!Q.has(t):!1}var te=new Set(["html","head","body","frameset"]);function re(e){return e.namespaceURI==="http://www.w3.org/1999/xhtml"&&te.has(e.localName)}function ne(e){if(e===null||typeof e!="object")return!1;const t=e;if(typeof t.target!="string"||!X.test(t.target)||t.text!==void 0&&typeof t.text!="string")return!1;if(t.attrsSet!==void 0){if(t.attrsSet===null||typeof t.attrsSet!="object")return!1;for(const[n,s]of Object.entries(t.attrsSet))if(!D.test(n)||typeof s!="string")return!1}if(t.attrsRemoved!==void 0){if(!Array.isArray(t.attrsRemoved))return!1;for(const n of t.attrsRemoved)if(typeof n!="string"||!D.test(n))return!1}return!0}function se(e,t){if(e===null||typeof e!="object")return!1;const{seq:n,elements:s}=e;if(typeof n!="number"||!Number.isSafeInteger(n)||!Array.isArray(s)||s.length===0||s.length>64)return!1;for(let o=0;o<s.length;o++)if(!t(s[o]))return!1;return!0}function ae(e){return e===null||typeof e!="object"?!1:se(e.__frame_patch,ne)}function oe(e){if(e===null||typeof e!="object")return!1;const t=e.__frame_init;return t!==null&&typeof t=="object"}function ie(e){return e!==null&&typeof e=="object"&&e.__frame_size_poke===!0}function le(e){if(e===null||typeof e!="object")return!1;const t=e.__frame_theme;if(t===null||typeof t!="object")return!1;const n=t.theme;return typeof n=="string"&&Y.includes(n)}var O="__frame_scroll",ce=150,ue=310,fe=160,pe=3e4;function de(){let e=0,t=!1,n=!1,s=!1,o=0,l=null;const c=i=>{try{sessionStorage.setItem(O,JSON.stringify({y:i}))}catch{}},f=()=>{if(clearTimeout(e),l===null)return;const i=l;l=null,c(i)},S=()=>{if(t){t=!1;return}n=!0,l=scrollY,clearTimeout(e),e=setTimeout(f,ce)};try{addEventListener("scroll",S,{passive:!0}),addEventListener("pagehide",f)}catch{}const v=()=>{let i;try{i=sessionStorage.getItem(O)}catch{return null}if(i===null)return null;let d;try{d=JSON.parse(i)}catch{d=null}const u=d?.y;if(!(typeof u=="number"&&Number.isFinite(u)&&u>=0)){try{sessionStorage.removeItem(O)}catch{}return null}return u};let b=!1;const m=i=>{try{const d=scrollY;scrollTo({top:i,left:0,behavior:"instant"}),o=i,s=!0,clearTimeout(e),l=null,c(i);const u=scrollY;u!==d&&(t=!0),u!==i&&!b&&(b=!0,addEventListener("load",()=>{try{if(scrollY===u){const h=v();m(h!==null?h:o)}}catch{}},{once:!0}))}catch{}},y=()=>{try{return!!location.hash}catch{return!0}};let g=!1;const E=()=>{try{if(g||innerWidth>ue||innerHeight>fe)return;g=!0;const i=Date.now(),d=()=>{try{removeEventListener("resize",d)}catch{}if(Date.now()-i>pe||n||y())return;const u=v();m(u!==null?u:o)};addEventListener("resize",d)}catch{}};let r=!1,p=!1;return{restore(){if(r||(r=!0,y()))return;const i=v();i!==null&&(m(i),E())},promoted(){if(p||(p=!0,y()))return;const i=v();i!==null?(m(i),E()):s&&m(o)}}}var Ee="modulepreload",Ae=function(e){return"/"+e},Re={},me=function(t,n,s){let o=Promise.resolve();function l(c){const f=new Event("vite:preloadError",{cancelable:!0});if(f.payload=c,window.dispatchEvent(f),!f.defaultPrevented)throw c}return o.then(c=>{for(const f of c||[])f.status==="rejected"&&l(f.reason);return t().catch(l)})};(function(){const e=Object.defineProperty,t=globalThis,n=["RTCPeerConnection","webkitRTCPeerConnection","RTCDataChannel","RTCIceCandidate","RTCSessionDescription","RTCRtpSender","RTCRtpReceiver"];let s=0;for(let o=0;o<n.length;o++){const l=n[o];try{e(t,l,{value:void 0,writable:!1,configurable:!1})}catch{try{delete t[l]}catch{}try{e(t,l,{value:void 0,writable:!1,configurable:!0})}catch{}}typeof t[l]=="function"&&s++}if(s&&window!==top)try{parent.postMessage({__frame_rtc_lockdown_failed:s},"*")}catch{}})();var he=1e4,_e=Object.freeze([...window.__FRAME_PREAMBLE?.origins??["https://claude.ai","https://preview.claude.ai"]]);function F(e){for(const t of _e)if(t.endsWith(":*"))try{const n=new URL(e);if(`${n.protocol}//${n.hostname}:*`===t)return!0}catch{}else if(e===t)return!0;return!1}var M=Object.freeze({...window.__FRAME_PREAMBLE?.capabilities}),j=window.__FRAME_PREAMBLE?.transforms,N=window.__FRAME_PREAMBLE?.comments,I=window.__FRAME_PREAMBLE?.translate,L=/^[\w.-]+\.js$/;function T(e){return me(()=>import("/_runtime/"+e),void 0)}function z(e,t){return{contract:e.contract,changes:new Set(e.changes??[]),flags:new Set(e.flags??[]),capabilities:e.capabilities??{},capBudgets:e.capBudgets??{},transforms:new Map,shellOrigin:t,mount:W,pipe:()=>({wrap:(n,s)=>(...o)=>{try{return s(...o)}catch(l){return Promise.reject(l)}}})}}var P=null,w=null;function q(e,t,n){try{Object.defineProperty(e,t,{value:n,writable:!1,configurable:!1,enumerable:!0})}catch{try{Object.defineProperty(e,t,{value:n,writable:!1,configurable:!0,enumerable:!0})}catch{}}}var B=!1;function ve(e,t){const n=[];for(const s of e.elements){const o=document.querySelector(`[data-id="${s.target}"]`);if(!o){parent.postMessage({__frame_patch_miss:{seq:e.seq}},t);return}if([...Object.keys(s.attrsSet??{}),...s.attrsRemoved??[]].some(l=>!V(l))){parent.postMessage({__frame_patch_miss:{seq:e.seq}},t);return}if(s.text!==void 0&&(!ee(o)||re(o))){parent.postMessage({__frame_patch_miss:{seq:e.seq}},t);return}for(const[l,c]of Object.entries(s.attrsSet??{}))if(!$(o,l)){try{o.setAttribute(l,c)}catch{}H(o,l,c)}for(const l of s.attrsRemoved??[])$(o,l)||(o.removeAttribute(l),H(o,l,null));typeof s.text=="string"&&(o.textContent=s.text),n.push(s.target)}try{document.dispatchEvent(new CustomEvent("claude:edit",{detail:{seq:e.seq,targets:n}}))}catch{}}function H(e,t,n){if(!(e instanceof HTMLInputElement))return;const s=t.toLowerCase();s==="checked"?e.checked=n!==null:s==="value"&&e.type!=="file"&&(e.value=n??"")}function $(e,t){const n=t.toLowerCase(),s=e;return n==="data-id"||(n==="value"||n==="checked")&&(s.__artifactSecret===!0||/^(password|hidden|file)$/.test(s.type??"")||/(^|\s)(cc-|one-time-code|current-password|new-password)/i.test(`${e.getAttribute("autocomplete")??""} ${s.autocomplete??""}`))}function K(e){const t=document.documentElement;e==="light"||e==="dark"?(t.dataset.theme=e,t.style.colorScheme=e,B=!0):B&&(delete t.dataset.theme,t.style.colorScheme="",B=!1)}var R=new Map;function ye(){let e;const t={u:new Promise(n=>{e=n}),r:n=>{t.done=!0,e(n)},done:!1,nulled:!1};return t}var ge=Object.freeze(Object.assign(Object.create(null),{call:Function.prototype.call,apply:Function.prototype.apply,bind:Function.prototype.bind})),W=(e,t)=>{const n=R.get(e);if(!n||n.done){n?.nulled&&w&&parent.postMessage({__frame_cap_telemetry:{kind:"cap-load-error",cap:e}},w);return}const s=typeof t=="function"?Object.setPrototypeOf(t,ge):Object.assign(Object.create(null),t);typeof s.then=="function"&&delete s.then,n.r(Object.freeze(s))},U=Object.getOwnPropertyDescriptor(window,"claude");if(window!==top&&!(U&&U.writable===!1)){const e=j&&L.test(j)?T(j).catch(()=>{}):Promise.resolve(void 0),t=r=>{if(r.type==="auxclick"&&r.button!==1)return;const p=r.target,i=p&&p.closest?p.closest("a[href],area[href]"):null;if(!i)return;const d=i.getAttribute("href");if(!d)return;let u,h;try{u=new URL(d,document.baseURI),h=new URL(document.baseURI).origin}catch{return}if((u.protocol==="http:"||u.protocol==="https:")&&u.origin!==h){r.preventDefault();const _=(i.getAttribute("target")??"").toLowerCase(),C=r.type==="auxclick"||r.metaKey||r.ctrlKey||r.shiftKey||r.altKey||!["","_self","_top","_parent"].includes(_);parent.postMessage({__frame_nav:!0,url:u.href,newTab:C},"*")}};addEventListener("click",t,!0),addEventListener("auxclick",t,!0);const n={},s=r=>{r.isTrusted&&(n.pointer=!0)},o=r=>{r.isTrusted&&(n.click=!0)};addEventListener("pointermove",s,{capture:!0,passive:!0}),addEventListener("click",o,{capture:!0,passive:!0}),e.then(r=>{r?.wireNav&&(r.wireNav(),removeEventListener("click",t,!0),removeEventListener("auxclick",t,!0),removeEventListener("pointermove",s,!0),removeEventListener("click",o,!0),r.wireEngagement?.(n))});let l=null;try{l=de()}catch{}const c=U?.value??{};q(window,"claude",c);for(const r of Object.keys(M)){if(c[r]!==void 0){q(c,r,c[r]);continue}R.set(r,ye())}if(c.use===void 0){const r=p=>{if(typeof p!="string"||!Object.hasOwn(M,p))return Promise.resolve(null);const i=R.get(p);return i?i.u:Promise.resolve(c[p]??null)};try{Object.defineProperty(c,"use",{value:r,writable:!0,configurable:!0,enumerable:!1})}catch{}}let f=null,S=null,v=0;const b=r=>{r.source!==parent||!F(r.origin)||oe(r.data)&&(f=r.data.__frame_init,w=r.origin,removeEventListener("message",b),clearTimeout(v),S?.())};addEventListener("message",b),parent.postMessage({__frame_connect:!0},"*");const m=new Promise(r=>{S=r,v=setTimeout(()=>{removeEventListener("message",b),r()},he)}),y=document.readyState==="loading"?new Promise(r=>document.addEventListener("DOMContentLoaded",()=>r(),{once:!0})):Promise.resolve();y.then(()=>{try{l?.restore()}catch{}});const g={cb:null},E=r=>{if(!(r.source!==parent||!F(r.origin))&&ie(r.data)){try{l?.promoted()}catch{}g.cb?.()}};addEventListener("message",E),m.then(async()=>{if(!f||!w){for(const a of R.values())a.nulled=!0,a.r(null);return}K(f.theme);const r=w;let p=!1,i=!1;addEventListener("message",a=>{if(a.source!==parent||a.origin!==r)return;le(a.data)&&K(a.data.__frame_theme.theme),ae(a.data)&&ve(a.data.__frame_patch,r);const k=a.data?.__fc_mode;k&&typeof k=="object"&&!p&&N&&L.test(N)&&(p=!0,T(N).then(x=>x.install?.(r,k.on===!0)).catch(()=>{}));const A=a.data?.__ft_cmd;A&&typeof A=="object"&&!i&&I&&L.test(I)&&(i=!0,T(I).then(x=>x.install?.(r,A)).catch(()=>{}))});const d=Object.keys(f.capabilities??{}).filter(a=>Object.hasOwn(M,a)).map(a=>[a,M[a]]).filter(a=>typeof a[1]=="string"&&L.test(a[1])),u=await Promise.allSettled(d.map(([,a])=>T(a))),h=await e,_=w;if(h?.buildBoot||parent.postMessage({__frame_cap_telemetry:{kind:"cap-load-error",cap:"_transforms"}},_),h?.buildBoot)try{P=h.buildBoot(f,h.TRANSFORMS??{},{shellOrigin:_,mount:W},a=>parent.postMessage({__frame_cap_telemetry:a},_))}catch{parent.postMessage({__frame_cap_telemetry:{kind:"cap-load-error",cap:"_transforms"}},_),P=z(f,_)}else P=z(f,_);const C=a=>parent.postMessage({__frame_cap_telemetry:{kind:"cap-load-error",cap:a}},_),we=P;u.forEach((a,k)=>{const A=d[k][0];if(a.status!=="fulfilled"){C(A);return}try{a.value?.install?.(we)}catch{C(A)}});for(const a of R.values())a.done||(a.nulled=!0,a.r(null));await y,parent.postMessage({__frame_ready:!0},w),e.then(a=>a?.installSizeReporter?.(_,g))})}})();</script><!-- /frame-runtime --><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}</style></head><body>
+<title>Customers MDM — Filtered View Mockup</title>
+<style>
+  :root {
+    --bg: #F5F5F7; --surface: #FFFFFF; --surface-hover: #F0F0F4;
+    --border: #D2D2D7; --border-mid: #AEAEB2;
+    --accent: #0071E3; --accent-bg: rgba(0,113,227,0.07);
+    --text: #1D1D1F; --text-muted: #6E6E73; --border-faint: #1D1D1F1a;
+    --success: #28CD41; --success-bg: rgba(40,205,65,0.08);
+    --purple: #7C3AED; --purple-bg: rgba(124,58,237,0.08);
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, monospace;
+    --head: -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    --body: -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #080f1a; --surface: #0e1c2f; --surface-hover: #122338;
+      --border: #1a3354; --border-mid: #213f65; --border-faint: #1a335444;
+      --accent: #e8a217; --accent-bg: rgba(232,162,23,0.12);
+      --text: #dde8f5; --text-muted: #587a9b;
+      --success: #2dcc8f; --success-bg: rgba(45,204,143,0.10);
+      --purple: #a855f7; --purple-bg: rgba(168,85,247,0.12);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #080f1a; --surface: #0e1c2f; --surface-hover: #122338;
+    --border: #1a3354; --border-mid: #213f65; --border-faint: #1a335444;
+    --accent: #e8a217; --accent-bg: rgba(232,162,23,0.12);
+    --text: #dde8f5; --text-muted: #587a9b;
+    --success: #2dcc8f; --success-bg: rgba(45,204,143,0.10);
+    --purple: #a855f7; --purple-bg: rgba(168,85,247,0.12);
+  }
+  :root[data-theme="light"] {
+    --bg: #F5F5F7; --surface: #FFFFFF; --surface-hover: #F0F0F4;
+    --border: #D2D2D7; --border-mid: #AEAEB2; --border-faint: #1D1D1F1a;
+    --accent: #0071E3; --accent-bg: rgba(0,113,227,0.07);
+    --text: #1D1D1F; --text-muted: #6E6E73;
+    --success: #28CD41; --success-bg: rgba(40,205,65,0.08);
+    --purple: #7C3AED; --purple-bg: rgba(124,58,237,0.08);
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: var(--body); padding: 28px 24px 56px; }
+  .wrap { max-width: 980px; margin: 0 auto; }
+
+  .eyebrow {
+    font-family: var(--mono); font-size: 11px; font-weight: 700; color: var(--accent);
+    text-transform: uppercase; letter-spacing: .14em; margin-bottom: 8px;
+  }
+  h1 { font-family: var(--head); font-size: 24px; font-weight: 800; margin: 0 0 6px; letter-spacing: -0.3px; }
+  .sub { font-size: 13.5px; color: var(--text-muted); max-width: 640px; line-height: 1.6; margin: 0 0 24px; }
+
+  .page-head { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 18px; gap: 12px; flex-wrap: wrap; }
+  .page-title { font-family: var(--head); font-size: 22px; font-weight: 800; margin: 0; }
+  .page-count { font-family: var(--body); font-size: 12.5px; color: var(--text-muted); margin: 4px 0 0; }
+  .add-btn {
+    font-family: var(--body); font-size: 13px; font-weight: 600; color: #fff;
+    background: var(--accent); border: none; border-radius: 8px; padding: 9px 16px; cursor: pointer;
+  }
+  @media (prefers-color-scheme: dark) { .add-btn { color: #07111e; } }
+  :root[data-theme="dark"] .add-btn { color: #07111e; }
+  :root[data-theme="light"] .add-btn { color: #fff; }
+
+  /* Segmented view control */
+  .segmented {
+    display: inline-flex; gap: 2px; padding: 3px; background: var(--surface);
+    border: 1px solid var(--border); border-radius: 10px; margin-bottom: 16px;
+  }
+  .seg-btn {
+    font-family: var(--body); font-size: 12.5px; font-weight: 600; color: var(--text-muted);
+    background: transparent; border: none; border-radius: 7px; padding: 7px 14px; cursor: pointer;
+    display: flex; align-items: center; gap: 7px; transition: background .12s, color .12s;
+  }
+  .seg-btn:hover { color: var(--text); }
+  .seg-btn.active { background: var(--accent-bg); color: var(--accent); }
+  .seg-count {
+    font-family: var(--mono); font-size: 10px; font-weight: 700; padding: 1px 6px; border-radius: 999px;
+    background: var(--border-faint); color: inherit;
+  }
+  .seg-btn.active .seg-count { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+
+  .search-row { display: flex; margin-bottom: 16px; }
+  .search-input {
+    width: 300px; max-width: 100%; font-family: var(--body); font-size: 13px; color: var(--text);
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px;
+  }
+  .search-input::placeholder { color: var(--text-muted); }
+
+  .table-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  .thead {
+    display: grid; grid-template-columns: 1.9fr 1.6fr 1fr 1.3fr 0.7fr;
+    padding: 10px 20px; border-bottom: 1px solid var(--border);
+  }
+  .th {
+    font-family: var(--body); font-size: 10.5px; font-weight: 600; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: .08em;
+  }
+  .th.actions { text-align: right; }
+
+  .row {
+    display: grid; grid-template-columns: 1.9fr 1.6fr 1fr 1.3fr 0.7fr;
+    padding: 13px 20px; align-items: center; border-bottom: 1px solid var(--border-faint);
+    transition: background .1s;
+  }
+  .row:last-child { border-bottom: none; }
+  .row:hover { background: var(--surface-hover); }
+  .row.hidden { display: none; }
+
+  .company { font-family: var(--body); font-size: 13px; font-weight: 600; color: var(--text); }
+  .code { font-family: var(--mono); font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+
+  .role-badges { display: flex; flex-wrap: wrap; gap: 4px; }
+  .role-badge {
+    font-family: var(--mono); font-size: 9.5px; font-weight: 700; letter-spacing: .02em;
+    padding: 2px 7px; border-radius: 4px; white-space: nowrap;
+  }
+  .role-badge.customer { color: var(--accent); background: var(--accent-bg); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); }
+  .role-badge.vendor { color: var(--purple); background: var(--purple-bg); border: 1px solid color-mix(in srgb, var(--purple) 35%, transparent); }
+
+  .city { font-family: var(--body); font-size: 12.5px; color: var(--text-muted); }
+  .email { font-family: var(--body); font-size: 12px; color: var(--accent); }
+
+  .actions-cell { display: flex; justify-content: flex-end; }
+  .kebab {
+    width: 24px; height: 24px; border-radius: 6px; border: 1px solid var(--border);
+    background: transparent; color: var(--text-muted); display: flex; align-items: center;
+    justify-content: center; font-size: 13px; cursor: pointer;
+  }
+
+  .empty-state {
+    padding: 48px; text-align: center; font-family: var(--body); font-size: 13.5px;
+    color: var(--text-muted); font-style: italic;
+  }
+
+  .footer-note {
+    margin-top: 22px; font-size: 12px; color: var(--text-muted); line-height: 1.6;
+    padding: 14px 18px; border: 1px dashed var(--border); border-radius: 10px;
+  }
+  .footer-note b { color: var(--text); }
+</style>
+
+<div class="wrap">
+  <div class="eyebrow">CargoDesk · Master Data · Customers</div>
+  <h1>One table, filtered by what it's actually used for</h1>
+  <p class="sub">
+    Same underlying <code>customers</code> table, same single record per company — the segmented
+    control below filters which rows show, using the same derived-role signal from the earlier
+    mockup. No second table, no risk of the same real company existing as two disconnected records.
+  </p>
+
+  <div class="page-head">
+    <div>
+      <div class="page-title">Customers</div>
+      <div class="page-count" id="count-label">9 records</div>
+    </div>
+    <button class="add-btn">+ Add Customer</button>
+  </div>
+
+  <div class="segmented" id="segmented">
+    <button class="seg-btn active" data-filter="all">All <span class="seg-count">9</span></button>
+    <button class="seg-btn" data-filter="customer">Trading Customers <span class="seg-count">3</span></button>
+    <button class="seg-btn" data-filter="vendor">Service Providers <span class="seg-count">6</span></button>
+  </div>
+
+  <div class="search-row">
+    <input class="search-input" placeholder="Search company, city, email, phone…" disabled>
+  </div>
+
+  <div class="table-card">
+    <div class="thead">
+      <div class="th">Company</div>
+      <div class="th">Roles</div>
+      <div class="th">City / Country</div>
+      <div class="th">Email</div>
+      <div class="th actions">Actions</div>
+    </div>
+    <div id="rows">
+
+      <div class="row" data-cats="customer">
+        <div><div class="company">Trans-Pacific Logistics Inc</div><div class="code">CUS-4KZ91X</div></div>
+        <div class="role-badges"><span class="role-badge customer">CONSIGNEE</span><span class="role-badge customer">PRINCIPAL</span></div>
+        <div class="city">New York · US</div>
+        <div class="email">ops@transpacific.example</div>
+        <div class="actions-cell"><button class="kebab">&#8942;</button></div>
+      </div>
+
+      <div class="row" data-cats="customer">
+        <div><div class="company">Rotterdam Cargo Services B.V.</div><div class="code">CUS-92V4K9</div></div>
+        <div class="role-badges"><span class="role-badge customer">SHIPPER</span></div>
+        <div class="city">Rotterdam · NL</div>
+        <div class="email">export@rotterdamcargo.example</div>
+        <div class="actions-cell"><button class="kebab">&#8942;</button></div>
+      </div>
+
+      <div class="row" data-cats="customer">
+        <div><div class="company">Global Traders Ltd</div><div class="code">CUS-MFWK03</div></div>
+        <div class="role-badges"><span class="role-badge customer">SHIPPER</span><span class="role-badge customer">CONSIGNEE</span></div>
+        <div class="city">Singapore · SG</div>
+        <div class="email">logistics@globaltraders.example</div>
+        <div class="actions-cell"><button class="kebab">&#8942;</button></div>
+      </div>
+
+      <div class="row" data-cats="vendor">
+        <div><div class="company">Customs Broker NL</div><div class="code">CUS-HSHFGP</div></div>
+        <div class="role-badges"><span class="role-badge vendor">CUSTOMS BROKER (EXPORT)</span></div>
+        <div class="city">Rotterdam · NL</div>
+        <div class="email">filings@customsbrokernl.example</div>
+        <div class="actions-cell"><button class="kebab">&#8942;</button></div>
+      </div>
+
+      <div class="row" data-cats="vendor">
+        <div><div class="company">Pacific Customs Brokerage</div><div class="code">CUS-7QPX51</div></div>
+        <div class="role-badges"><span class="role-badge vendor">CUSTOMS BROKER (IMPORT)</span></div>
+        <div class="city">Los Angeles · US</div>
+        <div class="email">clearance@pacificcb.example</div>
+        <div class="actions-cell"><button class="kebab">&#8942;</button></div>
+      </div>
+
+      <div class="row" data-cats="vendor">
+        <div><div class="company">Rotterdam Trucking Co</div><div class="code">CUS-3TNRLQ</div></div>
+        <div class="role-badges"><span class="role-badge vendor">TRUCKER (PRE-CARRIAGE)</span></div>
+        <div class="city">Rotterdam · NL</div>
+        <div class="email">dispatch@rdamtrucking.example</div>
+        <div class="actions-cell"><button class="kebab">&#8942;</button></div>
+      </div>
+
+      <div class="row" data-cats="vendor">
+        <div><div class="company">Atlantic Marine Insurance</div><div class="code">CUS-D8LMZC</div></div>
+        <div class="role-badges"><span class="role-badge vendor">INSURANCE PROVIDER</span></div>
+        <div class="city">London · UK</div>
+        <div class="email">claims@atlanticmarine.example</div>
+        <div class="actions-cell"><button class="kebab">&#8942;</button></div>
+      </div>
+
+      <div class="row" data-cats="vendor">
+        <div><div class="company">First Continental Bank</div><div class="code">CUS-Q1WYX7</div></div>
+        <div class="role-badges"><span class="role-badge vendor">BANK</span></div>
+        <div class="city">Frankfurt · DE</div>
+        <div class="email">trade.finance@fcbank.example</div>
+        <div class="actions-cell"><button class="kebab">&#8942;</button></div>
+      </div>
+
+      <div class="row" data-cats="vendor">
+        <div><div class="company">Singapore Freight Agents Pte</div><div class="code">CUS-8HNP2R</div></div>
+        <div class="role-badges"><span class="role-badge vendor">AGENT</span></div>
+        <div class="city">Singapore · SG</div>
+        <div class="email">agency@sgfreightagents.example</div>
+        <div class="actions-cell"><button class="kebab">&#8942;</button></div>
+      </div>
+
+    </div>
+    <div class="empty-state" id="empty-state" style="display:none">No records in this view.</div>
+  </div>
+
+  <div class="footer-note">
+    <b>Same role vocabulary as before</b> — "Trading Customers" groups Shipper/Consignee/
+    Principal/Notify Party/Also Notify Party (who CargoDesk bills or acts for); "Service Providers"
+    groups Forwarder/Customs Broker/Trucker/Bank/Insurance/Agent (who CargoDesk pays or coordinates
+    with). A company used as both would simply show role badges from both groups and appear under
+    "All" — nothing forces a company into only one bucket. <b>CFS and Terminal aren't modeled as
+    roles yet</b> — if you want those trackable the same way, that's a small addition to the
+    existing role list (not a new table), separate from this filtering decision.
+    <br><br>
+    <em>Status update, verified 2026-08-25: the role vocabulary was 13 (4 fixed + 9 additional) when
+    this mockup was built — it's grown to 16 (4 fixed + 12 additional) since, adding Line Agent (Export)/
+    Line Agent (Import) (v0.61.0) and NVOCC (v0.71.0) to the Service Providers group, now 11 roles there
+    not 6/8. Also: the real shipped table has 7 columns, not 5 — Phone and Website are shown alongside
+    Company/Roles/City-Country/Email/Actions.</em>
+  </div>
+</div>
+
+<script>
+  const buttons = document.querySelectorAll('.seg-btn');
+  const rows = document.querySelectorAll('.row');
+  const countLabel = document.getElementById('count-label');
+  const emptyState = document.getElementById('empty-state');
+
+  buttons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      buttons.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const filter = btn.dataset.filter;
+      let visible = 0;
+      rows.forEach(row => {
+        const show = filter === 'all' || row.dataset.cats.split(' ').includes(filter);
+        row.classList.toggle('hidden', !show);
+        if (show) visible++;
+      });
+      countLabel.textContent = visible + ' record' + (visible !== 1 ? 's' : '');
+      emptyState.style.display = visible === 0 ? 'block' : 'none';
+    });
+  });
+</script>
+
+</body></html>

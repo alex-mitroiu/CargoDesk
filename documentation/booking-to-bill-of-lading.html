@@ -1,0 +1,678 @@
+<!doctype html><html><head><!-- frame-runtime --><base href="/_f/1787559733-193a/"><script>window.__FRAME_PREAMBLE={"capabilities":{"artifact":"artifact.oqIe8shs.js","assets":"assets.DBUJcvq_.js","comments":"comments.GLuHR3zP.js","db":"db.CRhVHzSt.js","downloads":"downloads.C3GSvEDP.js","embed":"embed.CZsbekoQ.js","mcp":"mcp.Bvma3qD7.js","network":"network.B5UA9Su4.js","permissions":"permissions.BNySkLV5.js","room":"room.DE7EMui-.js","sample":"sample.BW2Uysoh.js","self":"artifact.oqIe8shs.js","user":"user.BpKav-Rf.js"},"transforms":"_transforms.h3_8GSUa.js","comments":"_comments.BOgkE6qU.js","translate":"_translate.5HCW4BJh.js"}</script><script>(function(){"use strict";var Y=["light","dark","system"],X=/^[A-Za-z0-9_-]{1,64}$/,D=/^[a-zA-Z_:][a-zA-Z0-9_:.-]{0,127}$/,G=new Set(["class","hidden","value","checked"]);function V(e){const t=e.toLowerCase();return t.startsWith("data-")||t.startsWith("aria-")||G.has(t)}var be="http://www.w3.org/1999/xhtml",Z="http://www.w3.org/2000/svg",J=new Set(["script","style","iframe","noscript","noframes","noembed","xmp","plaintext","template","title","textarea","object","embed"]),Q=new Set(["script","style"]);function ee(e){const t=e.localName.toLowerCase();return e.namespaceURI==="http://www.w3.org/1999/xhtml"?!J.has(t):e.namespaceURI===Z?!Q.has(t):!1}var te=new Set(["html","head","body","frameset"]);function re(e){return e.namespaceURI==="http://www.w3.org/1999/xhtml"&&te.has(e.localName)}function ne(e){if(e===null||typeof e!="object")return!1;const t=e;if(typeof t.target!="string"||!X.test(t.target)||t.text!==void 0&&typeof t.text!="string")return!1;if(t.attrsSet!==void 0){if(t.attrsSet===null||typeof t.attrsSet!="object")return!1;for(const[n,s]of Object.entries(t.attrsSet))if(!D.test(n)||typeof s!="string")return!1}if(t.attrsRemoved!==void 0){if(!Array.isArray(t.attrsRemoved))return!1;for(const n of t.attrsRemoved)if(typeof n!="string"||!D.test(n))return!1}return!0}function se(e,t){if(e===null||typeof e!="object")return!1;const{seq:n,elements:s}=e;if(typeof n!="number"||!Number.isSafeInteger(n)||!Array.isArray(s)||s.length===0||s.length>64)return!1;for(let o=0;o<s.length;o++)if(!t(s[o]))return!1;return!0}function ae(e){return e===null||typeof e!="object"?!1:se(e.__frame_patch,ne)}function oe(e){if(e===null||typeof e!="object")return!1;const t=e.__frame_init;return t!==null&&typeof t=="object"}function ie(e){return e!==null&&typeof e=="object"&&e.__frame_size_poke===!0}function le(e){if(e===null||typeof e!="object")return!1;const t=e.__frame_theme;if(t===null||typeof t!="object")return!1;const n=t.theme;return typeof n=="string"&&Y.includes(n)}var O="__frame_scroll",ce=150,ue=310,fe=160,pe=3e4;function de(){let e=0,t=!1,n=!1,s=!1,o=0,l=null;const c=i=>{try{sessionStorage.setItem(O,JSON.stringify({y:i}))}catch{}},f=()=>{if(clearTimeout(e),l===null)return;const i=l;l=null,c(i)},S=()=>{if(t){t=!1;return}n=!0,l=scrollY,clearTimeout(e),e=setTimeout(f,ce)};try{addEventListener("scroll",S,{passive:!0}),addEventListener("pagehide",f)}catch{}const v=()=>{let i;try{i=sessionStorage.getItem(O)}catch{return null}if(i===null)return null;let d;try{d=JSON.parse(i)}catch{d=null}const u=d?.y;if(!(typeof u=="number"&&Number.isFinite(u)&&u>=0)){try{sessionStorage.removeItem(O)}catch{}return null}return u};let b=!1;const m=i=>{try{const d=scrollY;scrollTo({top:i,left:0,behavior:"instant"}),o=i,s=!0,clearTimeout(e),l=null,c(i);const u=scrollY;u!==d&&(t=!0),u!==i&&!b&&(b=!0,addEventListener("load",()=>{try{if(scrollY===u){const h=v();m(h!==null?h:o)}}catch{}},{once:!0}))}catch{}},y=()=>{try{return!!location.hash}catch{return!0}};let g=!1;const E=()=>{try{if(g||innerWidth>ue||innerHeight>fe)return;g=!0;const i=Date.now(),d=()=>{try{removeEventListener("resize",d)}catch{}if(Date.now()-i>pe||n||y())return;const u=v();m(u!==null?u:o)};addEventListener("resize",d)}catch{}};let r=!1,p=!1;return{restore(){if(r||(r=!0,y()))return;const i=v();i!==null&&(m(i),E())},promoted(){if(p||(p=!0,y()))return;const i=v();i!==null?(m(i),E()):s&&m(o)}}}var Ee="modulepreload",Ae=function(e){return"/"+e},Re={},me=function(t,n,s){let o=Promise.resolve();function l(c){const f=new Event("vite:preloadError",{cancelable:!0});if(f.payload=c,window.dispatchEvent(f),!f.defaultPrevented)throw c}return o.then(c=>{for(const f of c||[])f.status==="rejected"&&l(f.reason);return t().catch(l)})};(function(){const e=Object.defineProperty,t=globalThis,n=["RTCPeerConnection","webkitRTCPeerConnection","RTCDataChannel","RTCIceCandidate","RTCSessionDescription","RTCRtpSender","RTCRtpReceiver"];let s=0;for(let o=0;o<n.length;o++){const l=n[o];try{e(t,l,{value:void 0,writable:!1,configurable:!1})}catch{try{delete t[l]}catch{}try{e(t,l,{value:void 0,writable:!1,configurable:!0})}catch{}}typeof t[l]=="function"&&s++}if(s&&window!==top)try{parent.postMessage({__frame_rtc_lockdown_failed:s},"*")}catch{}})();var he=1e4,_e=Object.freeze([...window.__FRAME_PREAMBLE?.origins??["https://claude.ai","https://preview.claude.ai"]]);function F(e){for(const t of _e)if(t.endsWith(":*"))try{const n=new URL(e);if(`${n.protocol}//${n.hostname}:*`===t)return!0}catch{}else if(e===t)return!0;return!1}var M=Object.freeze({...window.__FRAME_PREAMBLE?.capabilities}),j=window.__FRAME_PREAMBLE?.transforms,N=window.__FRAME_PREAMBLE?.comments,I=window.__FRAME_PREAMBLE?.translate,L=/^[\w.-]+\.js$/;function T(e){return me(()=>import("/_runtime/"+e),void 0)}function z(e,t){return{contract:e.contract,changes:new Set(e.changes??[]),flags:new Set(e.flags??[]),capabilities:e.capabilities??{},capBudgets:e.capBudgets??{},transforms:new Map,shellOrigin:t,mount:W,pipe:()=>({wrap:(n,s)=>(...o)=>{try{return s(...o)}catch(l){return Promise.reject(l)}}})}}var P=null,w=null;function q(e,t,n){try{Object.defineProperty(e,t,{value:n,writable:!1,configurable:!1,enumerable:!0})}catch{try{Object.defineProperty(e,t,{value:n,writable:!1,configurable:!0,enumerable:!0})}catch{}}}var B=!1;function ve(e,t){const n=[];for(const s of e.elements){const o=document.querySelector(`[data-id="${s.target}"]`);if(!o){parent.postMessage({__frame_patch_miss:{seq:e.seq}},t);return}if([...Object.keys(s.attrsSet??{}),...s.attrsRemoved??[]].some(l=>!V(l))){parent.postMessage({__frame_patch_miss:{seq:e.seq}},t);return}if(s.text!==void 0&&(!ee(o)||re(o))){parent.postMessage({__frame_patch_miss:{seq:e.seq}},t);return}for(const[l,c]of Object.entries(s.attrsSet??{}))if(!$(o,l)){try{o.setAttribute(l,c)}catch{}H(o,l,c)}for(const l of s.attrsRemoved??[])$(o,l)||(o.removeAttribute(l),H(o,l,null));typeof s.text=="string"&&(o.textContent=s.text),n.push(s.target)}try{document.dispatchEvent(new CustomEvent("claude:edit",{detail:{seq:e.seq,targets:n}}))}catch{}}function H(e,t,n){if(!(e instanceof HTMLInputElement))return;const s=t.toLowerCase();s==="checked"?e.checked=n!==null:s==="value"&&e.type!=="file"&&(e.value=n??"")}function $(e,t){const n=t.toLowerCase(),s=e;return n==="data-id"||(n==="value"||n==="checked")&&(s.__artifactSecret===!0||/^(password|hidden|file)$/.test(s.type??"")||/(^|\s)(cc-|one-time-code|current-password|new-password)/i.test(`${e.getAttribute("autocomplete")??""} ${s.autocomplete??""}`))}function K(e){const t=document.documentElement;e==="light"||e==="dark"?(t.dataset.theme=e,t.style.colorScheme=e,B=!0):B&&(delete t.dataset.theme,t.style.colorScheme="",B=!1)}var R=new Map;function ye(){let e;const t={u:new Promise(n=>{e=n}),r:n=>{t.done=!0,e(n)},done:!1,nulled:!1};return t}var ge=Object.freeze(Object.assign(Object.create(null),{call:Function.prototype.call,apply:Function.prototype.apply,bind:Function.prototype.bind})),W=(e,t)=>{const n=R.get(e);if(!n||n.done){n?.nulled&&w&&parent.postMessage({__frame_cap_telemetry:{kind:"cap-load-error",cap:e}},w);return}const s=typeof t=="function"?Object.setPrototypeOf(t,ge):Object.assign(Object.create(null),t);typeof s.then=="function"&&delete s.then,n.r(Object.freeze(s))},U=Object.getOwnPropertyDescriptor(window,"claude");if(window!==top&&!(U&&U.writable===!1)){const e=j&&L.test(j)?T(j).catch(()=>{}):Promise.resolve(void 0),t=r=>{if(r.type==="auxclick"&&r.button!==1)return;const p=r.target,i=p&&p.closest?p.closest("a[href],area[href]"):null;if(!i)return;const d=i.getAttribute("href");if(!d)return;let u,h;try{u=new URL(d,document.baseURI),h=new URL(document.baseURI).origin}catch{return}if((u.protocol==="http:"||u.protocol==="https:")&&u.origin!==h){r.preventDefault();const _=(i.getAttribute("target")??"").toLowerCase(),C=r.type==="auxclick"||r.metaKey||r.ctrlKey||r.shiftKey||r.altKey||!["","_self","_top","_parent"].includes(_);parent.postMessage({__frame_nav:!0,url:u.href,newTab:C},"*")}};addEventListener("click",t,!0),addEventListener("auxclick",t,!0);const n={},s=r=>{r.isTrusted&&(n.pointer=!0)},o=r=>{r.isTrusted&&(n.click=!0)};addEventListener("pointermove",s,{capture:!0,passive:!0}),addEventListener("click",o,{capture:!0,passive:!0}),e.then(r=>{r?.wireNav&&(r.wireNav(),removeEventListener("click",t,!0),removeEventListener("auxclick",t,!0),removeEventListener("pointermove",s,!0),removeEventListener("click",o,!0),r.wireEngagement?.(n))});let l=null;try{l=de()}catch{}const c=U?.value??{};q(window,"claude",c);for(const r of Object.keys(M)){if(c[r]!==void 0){q(c,r,c[r]);continue}R.set(r,ye())}if(c.use===void 0){const r=p=>{if(typeof p!="string"||!Object.hasOwn(M,p))return Promise.resolve(null);const i=R.get(p);return i?i.u:Promise.resolve(c[p]??null)};try{Object.defineProperty(c,"use",{value:r,writable:!0,configurable:!0,enumerable:!1})}catch{}}let f=null,S=null,v=0;const b=r=>{r.source!==parent||!F(r.origin)||oe(r.data)&&(f=r.data.__frame_init,w=r.origin,removeEventListener("message",b),clearTimeout(v),S?.())};addEventListener("message",b),parent.postMessage({__frame_connect:!0},"*");const m=new Promise(r=>{S=r,v=setTimeout(()=>{removeEventListener("message",b),r()},he)}),y=document.readyState==="loading"?new Promise(r=>document.addEventListener("DOMContentLoaded",()=>r(),{once:!0})):Promise.resolve();y.then(()=>{try{l?.restore()}catch{}});const g={cb:null},E=r=>{if(!(r.source!==parent||!F(r.origin))&&ie(r.data)){try{l?.promoted()}catch{}g.cb?.()}};addEventListener("message",E),m.then(async()=>{if(!f||!w){for(const a of R.values())a.nulled=!0,a.r(null);return}K(f.theme);const r=w;let p=!1,i=!1;addEventListener("message",a=>{if(a.source!==parent||a.origin!==r)return;le(a.data)&&K(a.data.__frame_theme.theme),ae(a.data)&&ve(a.data.__frame_patch,r);const k=a.data?.__fc_mode;k&&typeof k=="object"&&!p&&N&&L.test(N)&&(p=!0,T(N).then(x=>x.install?.(r,k.on===!0)).catch(()=>{}));const A=a.data?.__ft_cmd;A&&typeof A=="object"&&!i&&I&&L.test(I)&&(i=!0,T(I).then(x=>x.install?.(r,A)).catch(()=>{}))});const d=Object.keys(f.capabilities??{}).filter(a=>Object.hasOwn(M,a)).map(a=>[a,M[a]]).filter(a=>typeof a[1]=="string"&&L.test(a[1])),u=await Promise.allSettled(d.map(([,a])=>T(a))),h=await e,_=w;if(h?.buildBoot||parent.postMessage({__frame_cap_telemetry:{kind:"cap-load-error",cap:"_transforms"}},_),h?.buildBoot)try{P=h.buildBoot(f,h.TRANSFORMS??{},{shellOrigin:_,mount:W},a=>parent.postMessage({__frame_cap_telemetry:a},_))}catch{parent.postMessage({__frame_cap_telemetry:{kind:"cap-load-error",cap:"_transforms"}},_),P=z(f,_)}else P=z(f,_);const C=a=>parent.postMessage({__frame_cap_telemetry:{kind:"cap-load-error",cap:a}},_),we=P;u.forEach((a,k)=>{const A=d[k][0];if(a.status!=="fulfilled"){C(A);return}try{a.value?.install?.(we)}catch{C(A)}});for(const a of R.values())a.done||(a.nulled=!0,a.r(null));await y,parent.postMessage({__frame_ready:!0},w),e.then(a=>a?.installSizeReporter?.(_,g))})}})();</script><!-- /frame-runtime --><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}</style></head><body>
+<title>Booking to Bill of Lading</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<style>
+  :root {
+    --paper: #eef1f4;
+    --surface: #ffffff;
+    --surface-2: #e4e9ee;
+    --border: #d3dbe2;
+    --ink: #121a24;
+    --ink-muted: #55636f;
+    --ink-faint: #8593a0;
+
+    --cd: #d3591f;         /* CargoDesk accent (from the app's own #f97316, deepened for paper) */
+    --cd-bg: #fbe9dd;
+    --cw: #2a5c99;         /* CargoWise accent */
+    --cw-bg: #e2ecf7;
+
+    --sev-critical: #b3261e;
+    --sev-critical-bg: #fbe4e2;
+    --sev-major: #a05a00;
+    --sev-major-bg: #f8e8cf;
+    --sev-minor: #3f6b52;
+    --sev-minor-bg: #e2ede6;
+
+    --shadow: 0 1px 2px rgba(18,26,36,.05), 0 8px 24px -12px rgba(18,26,36,.18);
+
+    --font-display: "Barlow Condensed", "Arial Narrow", sans-serif;
+    --font-body: "Source Serif 4", Georgia, "Times New Roman", serif;
+    --font-mono: "IBM Plex Mono", "SFMono-Regular", Menlo, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #0a0f16;
+      --surface: #10171f;
+      --surface-2: #16202a;
+      --border: #22303c;
+      --ink: #dfe7ee;
+      --ink-muted: #93a4b2;
+      --ink-faint: #5f7182;
+
+      --cd: #ff8c4c;
+      --cd-bg: #34220f;
+      --cw: #7fb0e8;
+      --cw-bg: #142235;
+
+      --sev-critical: #ff7a70;
+      --sev-critical-bg: #3a1614;
+      --sev-major: #e3ab5a;
+      --sev-major-bg: #3a2b0f;
+      --sev-minor: #8fc7a6;
+      --sev-minor-bg: #17281f;
+
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 12px 30px -14px rgba(0,0,0,.6);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #0a0f16;
+    --surface: #10171f;
+    --surface-2: #16202a;
+    --border: #22303c;
+    --ink: #dfe7ee;
+    --ink-muted: #93a4b2;
+    --ink-faint: #5f7182;
+
+    --cd: #ff8c4c;
+    --cd-bg: #34220f;
+    --cw: #7fb0e8;
+    --cw-bg: #142235;
+
+    --sev-critical: #ff7a70;
+    --sev-critical-bg: #3a1614;
+    --sev-major: #e3ab5a;
+    --sev-major-bg: #3a2b0f;
+    --sev-minor: #8fc7a6;
+    --sev-minor-bg: #17281f;
+
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 12px 30px -14px rgba(0,0,0,.6);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-body);
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: var(--cd-bg); color: var(--ink); }
+
+  .wrap {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 56px 24px 96px;
+  }
+
+  /* ── Header ───────────────────────────────────────────── */
+  .kicker {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 18px;
+  }
+  .kicker .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--cd); flex-shrink: 0; }
+
+  h1 {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: clamp(38px, 6vw, 58px);
+    line-height: 1.02;
+    letter-spacing: -.01em;
+    margin: 0 0 14px;
+    text-wrap: balance;
+  }
+  .lede {
+    font-size: 18px;
+    line-height: 1.6;
+    color: var(--ink-muted);
+    max-width: 62ch;
+    margin: 0 0 6px;
+  }
+  .lede strong { color: var(--ink); font-weight: 600; }
+
+  .scope-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 26px 0 8px;
+  }
+  .scope-chip {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    letter-spacing: .04em;
+    padding: 5px 11px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    color: var(--ink-muted);
+    background: var(--surface);
+  }
+  .scope-chip.in { border-color: var(--cd); color: var(--cd); background: var(--cd-bg); }
+  .scope-chip.out { text-decoration: line-through; opacity: .55; }
+
+  hr.rule {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 40px 0 34px;
+  }
+
+  /* ── Legend ───────────────────────────────────────────── */
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    align-items: center;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--ink-muted);
+    margin-bottom: 8px;
+  }
+  .legend-item { display: flex; align-items: center; gap: 7px; }
+  .legend-swatch { width: 11px; height: 11px; border-radius: 3px; flex-shrink: 0; }
+
+  /* ── Category ─────────────────────────────────────────── */
+  .category {
+    margin-bottom: 46px;
+  }
+  .category-head {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 4px;
+  }
+  .category-num {
+    font-family: var(--font-mono);
+    font-size: 14px;
+    color: var(--ink-faint);
+    flex-shrink: 0;
+  }
+  .category-title {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 26px;
+    letter-spacing: -.005em;
+  }
+  .category-sub {
+    font-size: 14.5px;
+    color: var(--ink-muted);
+    margin: 2px 0 20px;
+    max-width: 66ch;
+  }
+
+  /* ── Gap item ─────────────────────────────────────────── */
+  .gap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+    padding: 18px 20px 20px;
+    margin-bottom: 14px;
+  }
+  .gap-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 14px;
+    margin-bottom: 12px;
+  }
+  .gap-title {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 19px;
+    letter-spacing: -.003em;
+    line-height: 1.25;
+  }
+  .sev {
+    flex-shrink: 0;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    padding: 4px 9px;
+    border-radius: 5px;
+    white-space: nowrap;
+  }
+  .sev.critical { color: var(--sev-critical); background: var(--sev-critical-bg); }
+  .sev.major    { color: var(--sev-major);    background: var(--sev-major-bg); }
+  .sev.minor    { color: var(--sev-minor);    background: var(--sev-minor-bg); }
+
+  .compare { display: grid; gap: 10px; margin-bottom: 12px; }
+  .row {
+    display: grid;
+    grid-template-columns: 96px 1fr;
+    gap: 12px;
+    align-items: start;
+    border-left: 3px solid var(--border);
+    padding: 1px 0 1px 12px;
+  }
+  .row.cw { border-left-color: var(--cw); }
+  .row.cd { border-left-color: var(--cd); }
+  .row-label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    padding-top: 2px;
+  }
+  .row.cw .row-label { color: var(--cw); }
+  .row.cd .row-label { color: var(--cd); }
+  .row-text {
+    font-size: 15px;
+    line-height: 1.55;
+    color: var(--ink);
+  }
+  .row-text code {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    background: var(--surface-2);
+    padding: 1px 5px;
+    border-radius: 4px;
+    color: var(--ink);
+  }
+
+  .why {
+    font-size: 13.5px;
+    line-height: 1.55;
+    color: var(--ink-muted);
+    padding-top: 10px;
+    border-top: 1px dashed var(--border);
+  }
+  .why b { color: var(--ink); font-weight: 600; }
+
+  /* ── Verdict ──────────────────────────────────────────── */
+  .verdict {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-top: 3px solid var(--cd);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+    padding: 30px 30px 28px;
+    margin-top: 12px;
+  }
+  .verdict-kicker {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--ink-faint);
+    margin-bottom: 10px;
+  }
+  .verdict h2 {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 28px;
+    margin: 0 0 14px;
+    letter-spacing: -.01em;
+  }
+  .verdict p {
+    font-size: 16px;
+    line-height: 1.65;
+    color: var(--ink);
+    margin: 0 0 14px;
+    max-width: 68ch;
+  }
+  .verdict p:last-child { margin-bottom: 0; }
+  .verdict strong.cw-mark { color: var(--cw); }
+  .verdict strong.cd-mark { color: var(--cd); }
+
+  .tally {
+    display: flex;
+    gap: 22px;
+    margin: 20px 0 22px;
+    flex-wrap: wrap;
+  }
+  .tally-item { }
+  .tally-num {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 34px;
+    line-height: 1;
+  }
+  .tally-num.critical { color: var(--sev-critical); }
+  .tally-num.major { color: var(--sev-major); }
+  .tally-num.minor { color: var(--sev-minor); }
+  .tally-label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+    margin-top: 2px;
+  }
+
+  footer {
+    margin-top: 48px;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--ink-faint);
+    text-align: center;
+  }
+
+  @media (max-width: 600px) {
+    .row { grid-template-columns: 1fr; gap: 3px; }
+    .gap-top { flex-direction: column; }
+  }
+</style>
+
+<div class="wrap">
+
+  <div class="kicker"><span class="dot"></span>Vendor evaluation memo — FCL ocean forwarding</div>
+  <h1>Booking to Bill of Lading</h1>
+  <p class="lede">
+    If a business ran <strong>FCL-only ocean freight forwarding</strong> and had to pick one platform
+    to actually move shipments on — CargoWise One or CargoDesk — where does CargoDesk fall short
+    on the shipment process itself: booking, tracking, documenting, and clearing a container from
+    origin to destination? Not billing, not BI, not the customer portal. Just handling the shipment.
+  </p>
+
+  <div class="scope-bar">
+    <span class="scope-chip in">Booking &amp; carrier connectivity</span>
+    <span class="scope-chip in">Schedule &amp; vessel visibility</span>
+    <span class="scope-chip in">Container &amp; terminal data</span>
+    <span class="scope-chip in">Milestones &amp; exceptions</span>
+    <span class="scope-chip in">Trade documentation</span>
+    <span class="scope-chip in">Customs filing</span>
+    <span class="scope-chip out">Accounting / GL</span>
+    <span class="scope-chip out">BI &amp; reporting</span>
+    <span class="scope-chip out">Customer portal</span>
+    <span class="scope-chip out">LCL / air</span>
+  </div>
+
+  <div class="legend" style="margin-top:28px;">
+    <div class="legend-item"><span class="legend-swatch" style="background:var(--cw)"></span>CargoWise One (sourced)</div>
+    <div class="legend-item"><span class="legend-swatch" style="background:var(--cd)"></span>CargoDesk (current code)</div>
+    <div class="legend-item"><span class="legend-swatch" style="background:var(--sev-critical)"></span>Critical</div>
+    <div class="legend-item"><span class="legend-swatch" style="background:var(--sev-major)"></span>Major</div>
+    <div class="legend-item"><span class="legend-swatch" style="background:var(--sev-minor)"></span>Minor / partial</div>
+  </div>
+
+  <hr class="rule">
+
+  <!-- ══ 1. Booking & Carrier Connectivity ══ -->
+  <div class="category">
+    <div class="category-head">
+      <span class="category-num">01</span>
+      <span class="category-title">Booking &amp; Carrier Connectivity</span>
+    </div>
+    <p class="category-sub">Sending a booking to the carrier and getting real rates back — the first step of every shipment.</p>
+
+    <div class="gap">
+      <div class="gap-top">
+        <div class="gap-title">Live carrier booking, no real connection behind it</div>
+        <span class="sev critical">Critical</span>
+      </div>
+      <div class="compare">
+        <div class="row cw">
+          <div class="row-label">CargoWise</div>
+          <div class="row-text">Direct carrier REST APIs (Hapag-Lloyd, CMA CGM, ONE) plus <code>eAdaptor</code> XML/SOAP EDI — <code>IFTMIN</code> booking submission, <code>IFTMBF</code> confirmation — with INTTRA / Infor Nexus / CargoSmart as a neutral-hub fallback for carriers without a direct link.</div>
+        </div>
+        <div class="row cd">
+          <div class="row-label">CargoDesk</div>
+          <div class="row-text"><code>POST /edi-messages/booking-request</code> builds a genuinely complete payload (equipment summary, DG declaration, contract ref, rate snapshot) — but the only thing that ever answers it is Test Tools' own manual simulator. No carrier, anywhere, is actually connected.</div>
+        </div>
+      </div>
+      <div class="why"><b>Why it matters:</b> a forwarder sending dozens of bookings a week across several carriers needs a real send-and-confirm loop, not a developer console standing in for one.</div>
+    </div>
+
+    <div class="gap">
+      <div class="gap-top">
+        <div class="gap-title">VGM is a status flip, not a SOLAS filing</div>
+        <span class="sev major">Major</span>
+      </div>
+      <div class="compare">
+        <div class="row cw">
+          <div class="row-label">CargoWise</div>
+          <div class="row-text"><code>VERMAS</code> EDI message actually transmits Verified Gross Mass to the carrier/terminal ahead of the cutoff.</div>
+        </div>
+        <div class="row cd">
+          <div class="row-label">CargoDesk</div>
+          <div class="row-text"><code>containers.vgm_status</code> is a real field with real cutoff-badge logic, but "Submitted" only ever changes a row in CargoDesk's own database — nothing leaves the building.</div>
+        </div>
+      </div>
+      <div class="why"><b>Why it matters:</b> VGM is a legal SOLAS obligation to the carrier, not internal bookkeeping — a green badge in CargoDesk proves nothing to the port.</div>
+    </div>
+
+    <div class="gap">
+      <div class="gap-top">
+        <div class="gap-title">Contract rates never arrive on their own</div>
+        <span class="sev minor">Minor</span>
+      </div>
+      <div class="compare">
+        <div class="row cw">
+          <div class="row-label">CargoWise</div>
+          <div class="row-text">Carriers (e.g. ONE) push contract rates and published tariff surcharges directly into the platform.</div>
+        </div>
+        <div class="row cd">
+          <div class="row-label">CargoDesk</div>
+          <div class="row-text"><code>contract_rates</code> is a solid, well-modeled table (multi-routing, per-lane, IMDG-aware) — entirely hand-entered via the MDM form. <em>Status update, verified 2026-08-25: no CSV-import path exists anywhere in the codebase for contract rates — the original claim that it was "hand-entered or CSV-imported" overstated this; only OFAC/CSL sanctions data has a CSV-import route.</em> A carrier rate change never reaches it on its own.</div>
+        </div>
+      </div>
+      <div class="why"><b>Why it matters:</b> manageable on a small book; a real drag once contract volume and update frequency grow.</div>
+    </div>
+  </div>
+
+  <!-- ══ 2. Schedule & Vessel Visibility ══ -->
+  <div class="category">
+    <div class="category-head">
+      <span class="category-num">02</span>
+      <span class="category-title">Schedule &amp; Vessel Visibility</span>
+    </div>
+    <p class="category-sub">Finding a real, bookable sailing — and knowing where the vessel actually is afterward.</p>
+
+    <div class="gap">
+      <div class="gap-top">
+        <div class="gap-title">Sailing search has no real carrier behind it</div>
+        <span class="sev critical">Critical</span>
+      </div>
+      <div class="compare">
+        <div class="row cw">
+          <div class="row-label">CargoWise</div>
+          <div class="row-text">Real-time schedule search across leading carriers, with live ETD/ETA flowing straight into the job.</div>
+        </div>
+        <div class="row cd">
+          <div class="row-label">CargoDesk</div>
+          <div class="row-text"><code>GET /schedules/search</code> is catalog-first (real, previously-saved sailings), falling back to synthetic <code>"DEMO&nbsp;…"</code> results. A live Maersk-API tier existed once and was deliberately removed in v0.72.1 — no environment ever had a working key.</div>
+        </div>
+      </div>
+      <div class="why"><b>Why it matters:</b> booking a real shipment starts with picking a real sailing. CargoDesk cannot show a customer one today.</div>
+    </div>
+
+    <div class="gap">
+      <div class="gap-top">
+        <div class="gap-title">AIS vessel tracking — the one place CargoDesk is genuinely live</div>
+        <span class="sev minor">Minor / partial parity</span>
+      </div>
+      <div class="compare">
+        <div class="row cw">
+          <div class="row-label">CargoWise</div>
+          <div class="row-text">Global AIS coverage feeding automated ETD/ETA updates and delay notifications directly into the workflow.</div>
+        </div>
+        <div class="row cd">
+          <div class="row-label">CargoDesk</div>
+          <div class="row-text">A real, persistent <code>aisstream.io</code> WebSocket (<code>lib/ais-listener.js</code>) resolves vessel identity and confirms a tracked leg's actual ETD/ETA in place, with provenance (<code>etd_source='ais'</code>) — genuinely live data, just narrower in scope than a full schedule feed.</div>
+        </div>
+      </div>
+      <div class="why"><b>Why it matters:</b> worth stating plainly — this is the one shipment-process area where CargoDesk isn't simulating anything.</div>
+    </div>
+
+    <div class="gap">
+      <div class="gap-top">
+        <div class="gap-title">No electronic port/terminal connection</div>
+        <span class="sev major">Major</span>
+      </div>
+      <div class="compare">
+        <div class="row cw">
+          <div class="row-label">CargoWise</div>
+          <div class="row-text">Electronic Port Connection — <code>COPARN</code>/<code>BAPLIE</code> terminal-layer EDI updates container movement automatically from the terminal itself.</div>
+        </div>
+        <div class="row cd">
+          <div class="row-label">CargoDesk</div>
+          <div class="row-text"><code>container_events</code> (Empty&nbsp;Pickup → Gate&nbsp;In → Loaded → Sailed → Discharged → Gate&nbsp;Out → Empty&nbsp;Return) is a real, well-modeled lifecycle log feeding demurrage/detention math — every event is typed in by an operator by hand.</div>
+        </div>
+      </div>
+      <div class="why"><b>Why it matters:</b> free-time and cutoff exposure is only as current as whoever remembered to log in and type an event.</div>
+    </div>
+  </div>
+
+  <!-- ══ 3. Milestones & Exceptions ══ -->
+  <div class="category">
+    <div class="category-head">
+      <span class="category-num">03</span>
+      <span class="category-title">Milestone Tracking &amp; Exceptions</span>
+    </div>
+    <p class="category-sub">Knowing a shipment has slipped — before the customer has to ask.</p>
+
+    <div class="gap">
+      <div class="gap-top">
+        <div class="gap-title">Milestones are hand-completed, not EDI-driven</div>
+        <span class="sev major">Major</span>
+      </div>
+      <div class="compare">
+        <div class="row cw">
+          <div class="row-label">CargoWise</div>
+          <div class="row-text"><code>IFTSTA</code> messages update milestones automatically; 2026 doubled down on linking container milestones directly to automated workflow triggers and delay notifications.</div>
+        </div>
+        <div class="row cd">
+          <div class="row-label">CargoDesk</div>
+          <div class="row-text"><code>shipment_milestones</code> is a real planned-vs-actual model (9 fixed steps, estimated vs completed date) — structurally close to an actual Cargo iQ Route Map — but is either completed by hand or by a handful of internal auto-triggers. No external carrier or terminal feed ever completes one.</div>
+        </div>
+      </div>
+      <div class="why"><b>Why it matters:</b> this is exactly the gap the Command Center's new exception-management epic (<code>TKT-IBHB0K</code>) targets — but that epic aggregates what's already there; it doesn't make the milestones themselves arrive automatically.</div>
+    </div>
+
+    <div class="gap">
+      <div class="gap-top">
+        <div class="gap-title">No proactive delay notification to the customer</div>
+        <span class="sev minor">Minor</span>
+      </div>
+      <div class="compare">
+        <div class="row cw">
+          <div class="row-label">CargoWise</div>
+          <div class="row-text">Automatic delay notifications ride on the same real-time tracking feed.</div>
+        </div>
+        <div class="row cd">
+          <div class="row-label">CargoDesk</div>
+          <div class="row-text">The public tracking link (<code>routes/share.js</code>) shows current data whenever a customer checks it — nothing pushes a notice out when a milestone slips.</div>
+        </div>
+      </div>
+      <div class="why"><b>Why it matters:</b> "the system knew three days ago" is a bad conversation to have with a customer.</div>
+    </div>
+  </div>
+
+  <!-- ══ 4. Trade Documentation ══ -->
+  <div class="category">
+    <div class="category-head">
+      <span class="category-num">04</span>
+      <span class="category-title">Trade Documentation</span>
+    </div>
+    <p class="category-sub">The Bill of Lading isn't paperwork — it's the title document. This is where "signed" and "electronic" stop meaning the same thing.</p>
+
+    <div class="gap">
+      <div class="gap-top">
+        <div class="gap-title">A signed PDF is not an eBL</div>
+        <span class="sev critical">Critical</span>
+      </div>
+      <div class="compare">
+        <div class="row cw">
+          <div class="row-label">CargoWise</div>
+          <div class="row-text">Real electronic Bills of Lading aligned with DCSA, FIATA, ICC, BIMCO, SWIFT and FIT Alliance standards, approved by the International Group of P&amp;I Clubs — legally negotiable, and able to effect cargo release and trade finance on their own.</div>
+        </div>
+        <div class="row cd">
+          <div class="row-label">CargoDesk</div>
+          <div class="row-text">A genuinely tamper-evident, CAdES/PKCS#7-signed PDF Bill of Lading — real cryptographic proof CargoDesk authored it unaltered. That is <em>not</em> the same claim as a DCSA-standard eBL: it has no legal negotiability, and no carrier, bank, or P&amp;I club recognizes it as a title document.</div>
+        </div>
+      </div>
+      <div class="why"><b>Why it matters:</b> for anything on Telex Release, Surrendered, or negotiable terms at real volume, this is the single largest "looks similar, isn't" gap in the whole stack — and it needs an accredited eBL platform relationship, not more code inside CargoDesk.</div>
+    </div>
+
+    <div class="gap">
+      <div class="gap-top">
+        <div class="gap-title">Document capture is one call site, not an inbox</div>
+        <span class="sev minor">Minor</span>
+      </div>
+      <div class="compare">
+        <div class="row cw">
+          <div class="row-label">CargoWise</div>
+          <div class="row-text">Automated document capture across the inbound document flow, streamlining FCL data entry generally.</div>
+        </div>
+        <div class="row cd">
+          <div class="row-label">CargoDesk</div>
+          <div class="row-text">A real vision-model extraction endpoint (<code>POST /ai/extract-document</code>, v0.70.0) exists and genuinely works — but it's wired to exactly one place: the Freight Audit carrier-invoice intake.</div>
+        </div>
+      </div>
+      <div class="why"><b>Why it matters:</b> the hard part (a working extraction call) is already solved — this is a wiring gap, not a capability gap.</div>
+    </div>
+  </div>
+
+  <!-- ══ 5. Customs & Regulatory Filing ══ -->
+  <div class="category">
+    <div class="category-head">
+      <span class="category-num">05</span>
+      <span class="category-title">Customs &amp; Regulatory Filing</span>
+    </div>
+    <p class="category-sub">Getting the container legally across a border — anywhere but the US.</p>
+
+    <div class="gap">
+      <div class="gap-top">
+        <div class="gap-title">One country's filings, entirely simulated</div>
+        <span class="sev critical">Critical</span>
+      </div>
+      <div class="compare">
+        <div class="row cw">
+          <div class="row-label">CargoWise</div>
+          <div class="row-text">Cited directly as a comparative strength — deeper configurability and broader non-US customs support, with real electronic government filing integrations, built for global enterprises.</div>
+        </div>
+        <div class="row cd">
+          <div class="row-label">CargoDesk</div>
+          <div class="row-text"><code>customs_filings</code> is explicitly, deliberately scoped as simulated/mock-only — US AES/EEI export and ISF/AMS import, full stop. Zero real government EDI connection. Zero non-US regime modeled at all.</div>
+        </div>
+      </div>
+      <div class="why"><b>Why it matters:</b> a hard blocker for real compliance on any lane that isn't US-only — which, for an FCL forwarder, is most lanes.</div>
+    </div>
+  </div>
+
+  <hr class="rule">
+
+  <div class="verdict">
+    <div class="verdict-kicker">Verdict — if I had to choose today</div>
+    <h2>CargoWise wins the operational spine. CargoDesk wins everything built on top of it.</h2>
+
+    <div class="tally">
+      <div class="tally-item"><div class="tally-num critical">4</div><div class="tally-label">Critical</div></div>
+      <div class="tally-item"><div class="tally-num major">3</div><div class="tally-label">Major</div></div>
+      <div class="tally-item"><div class="tally-num minor">4</div><div class="tally-label">Minor / partial</div></div>
+    </div>
+
+    <p>
+      Four of the gaps above aren't things CargoDesk's own engineering can close by itself: a live
+      carrier connection, a real-time schedule feed, a DCSA-accredited eBL, and multi-country
+      government customs EDI all require a <strong>commercial relationship</strong> — a carrier API
+      agreement, an INTTRA/e2open subscription, an eBL platform partnership, a customs-broker
+      credential per country — not another sprint. That's the honest reason the earlier
+      competitive-gap-analysis work in this project (v0.69.0) named several gaps as structurally
+      out of reach rather than backlog items, and the same logic applies here.
+    </p>
+    <p>
+      For a business actually transacting real bookings with real carriers across real borders today,
+      <strong class="cw-mark">CargoWise</strong> is the only one of the two that can actually run the
+      shipment end to end without a human standing in for the carrier, the terminal, and the customs
+      authority.
+    </p>
+    <p>
+      What <strong class="cd-mark">CargoDesk</strong> already does well sits one layer up from all
+      of this: once a shipment's data exists — parties, cargo, containers, milestones, cost lines —
+      the depth of the FCL data model (per-pack-item HS codes and value, container lifecycle events
+      tied to real demurrage/detention math, a 13-role party model, multi-list compliance screening,
+      NVOCC dual-identity documents, credit control) is genuinely strong, and every part of it is
+      fully own-able and extensible because CargoDesk is the team's own code. That's real value —
+      it just isn't the same question as "can this system talk to a real carrier today," which is
+      what handling an actual shipment ultimately requires.
+    </p>
+  </div>
+
+  <footer>Prepared against the live CargoDesk codebase and publicly sourced CargoWise One documentation · FCL ocean scope only</footer>
+
+</div>
+
+</body></html>

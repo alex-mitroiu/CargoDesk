@@ -1,19 +1,24 @@
 # CargoDesk — Architecture Reference
-**Version:** 0.74.0 "Solvency" · **Date:** 2026-08-22
+**Version:** 0.79.0 "Keel" · **Date:** 2026-08-25
 **Audience:** Software architects, senior engineers, technical reviewers
 
 > This document was fully refreshed from a direct pass against the live codebase on 2026-08-13
 > (v0.69.0), replacing a version that had gone stale since v0.30.0. The 2026-08-19 pass was
 > **incremental** — it added §8.14 (Reports) and §8.15 (NVOCC Support), the two subsystems that
-> shipped since the 2026-08-13 pass. This latest pass (2026-08-22) is also incremental — it adds
+> shipped since the 2026-08-13 pass. The 2026-08-22 pass was also incremental — it added
 > §8.16 (Credit Control), a feature that had shipped as far back as v0.57.0 but was never
 > documented here at all; the section covers the whole feature end-to-end, not just the
-> v0.73.0–v0.73.1 work that prompted writing it. Appendix A's line-count/table-count figures are
-> still dated to 2026-08-13 and were **not** re-measured this pass — the additions since then are
-> a handful of new columns/routes, not a scale change big enough to move those figures
-> meaningfully. See `CLAUDE.md`'s own "Recent changes" sections for a release-by-release
-> changelog this document doesn't restate — treat that file as the day-to-day source of truth
-> and this one as the standing structural reference.
+> v0.73.0–v0.73.1 work that prompted writing it. This latest pass (2026-08-25) adds §8.19
+> (Zero-Script Onboarding) and deepens §8.12 (EDI Messaging & Carrier Booking Lifecycle) with the
+> eAdapter per-carrier configuration layer — also **corrects this banner itself**, which had
+> drifted to a stale "0.74.0" even while §8.17–8.18 below it already documented v0.77.0/v0.78.0
+> work; the version line and the section content had quietly gone out of sync with each other.
+> Appendix A's line-count/table-count figures are still dated to 2026-08-13 and were **not**
+> re-measured this pass — the additions since then are a handful of new columns/routes/tables,
+> not a scale change big enough to move those figures meaningfully. See `CLAUDE.md`'s own
+> "Recent changes" sections for a release-by-release changelog this document doesn't restate —
+> treat that file as the day-to-day source of truth and this one as the standing structural
+> reference.
 >
 > A companion visual diagram, `dev/architecture.html`, is dated v0.20.0 (2026-07-03) and remains
 > **not** refreshed — it's now well over 50 releases behind and should be treated as a
@@ -22,7 +27,7 @@
 ---
 
 ## Table of Contents
-_(§8.17–8.18 and the §5 routes/ table added 2026-08-24; §8.16 added 2026-08-22; §8.14–8.15 added 2026-08-19; everything else reflects the 2026-08-13 pass)_
+_(§8.19 and the version-banner fix added 2026-08-25; §8.12 deepened 2026-08-25; §8.17–8.18 and the §5 routes/ table added 2026-08-24; §8.16 added 2026-08-22; §8.14–8.15 added 2026-08-19; everything else reflects the 2026-08-13 pass)_
 1. [System Overview](#1-system-overview)
 2. [Tech Stack](#2-tech-stack)
 3. [Process & Deployment Topology](#3-process--deployment-topology)
@@ -645,7 +650,7 @@ Carrier Booking, Customs Filing, History) is a real, independently-routed page u
 `src/pages/shipments/`, with the hash-routing table centralized in `shipmentSections.js` (§4) —
 imported by both files instead of hand-duplicated.
 
-### 8.12 EDI Messaging & Carrier Booking Lifecycle
+### 8.12 EDI Messaging & Carrier Booking Lifecycle (deepened v0.79.0 — eAdapter, carrier-EDI epic)
 
 Substantially more complete than the last review's "v1, demoable" framing. `carrier_bookings` /
 `carrier_booking_archive` now model a real state machine: a booking created via
@@ -653,7 +658,45 @@ Substantially more complete than the last review's "v1, demoable" framing. `carr
 unconfirmed booking triggers `supersedeIfCarrierChanged()`, which archives the old booking (full
 history preserved, an auto-cancellation EDI message sent to the old carrier if it was still
 Pending) and starts a fresh one — a **confirmed** booking is never silently rewritten, only ever
-archived-and-superseded before confirmation. `BOOKABLE_CARRIERS` today: MAEU, SAFM, MCPU.
+archived-and-superseded before confirmation.
+
+`BOOKABLE_CARRIERS` (`MAEU`/`SAFM`/`MCPU`, the built-in three) is no longer the whole story.
+First story of the carrier-EDI epic, eAdapter, generalizes it into `isEdiBookable(carrierCode)`:
+```
+function isEdiBookable(carrierCode) {
+  if (getSettings().api_eadapter_enabled === 'false') return false;
+  if (BOOKABLE_CARRIERS.has(carrierCode)) return true;
+  const cfg = db.prepare("SELECT is_active FROM carrier_eadapter_configs WHERE carrier_code=?").get(carrierCode);
+  return !!cfg?.is_active;
+}
+```
+New `carrier_eadapter_configs` table (one row per carrier: `transport_type` REST API/AS2/SFTP,
+`endpoint_url`, `auth_header_name`, `credential`) is modeled directly on `office_mail_settings`'
+shape and secret-hygiene convention — `mapEadapterConfig` (`lib/mappers.js`) never returns the
+raw `credential`, only a `hasCredential` boolean, same as that table's own `smtp_password`. New
+`routes/eadapter.js`: CRUD on `/api/eadapter/configs` (admin/operator write-gated), plus a public
+`GET /api/eadapter/bookable-carriers` (`{enabled, carriers}`) that both Carrier Booking pages now
+poll instead of importing the static `BOOKABLE_CARRIERS` Set directly — the live effective set,
+not a compile-time constant.
+
+The master toggle (`app_settings.api_eadapter_enabled`, default `'true'`) is deliberately a
+single switch over the **entire** EDI-carrier-communication surface, built-in three included —
+not a per-new-carrier flag layered on top of an always-on legacy three. Turning it off collapses
+every carrier uniformly to **manual mode**: the existing non-EDI-carrier lifecycle (Send/EDI UI
+hidden, operator records the outcome via the existing manual Confirm action with a typed
+`bookingRef`), which already existed for any carrier that was never in `BOOKABLE_CARRIERS` —
+reused as-is rather than building a second document-generation path (document generation + email
+already exist as a separate, always-available tool, independent of the booking flow). This is
+explicitly config + CRUD only for this first story — no live outbound HTTP call is attempted yet;
+wiring a real send attempt per carrier (mirroring the deleted Maersk `fetch()` pattern from
+v0.72.1, generalized) is a clean, separately-scoped follow-up story once this scaffolding exists.
+
+Frontend: a new `EadapterCard` (Settings → API Controls → External APIs, ahead of the generic
+`EXTERNAL_APIS` list — it needs N per-carrier sub-configs, not one scalar key, so it isn't built
+through that generic component) pairs the master toggle with a gear-icon button opening
+`EadapterConfigModal` — a hand-rolled tab bar (one tab per configured carrier, `+ Add Carrier
+Config` in the header, same tab-bar-inside-a-`Modal` pattern `MdmCustomersPage.jsx`'s
+`CustomerDetailModal` already established, since `Modal.jsx` has no built-in tab support).
 
 ### 8.13 AI Agent (added v0.68.0–v0.69.0)
 
@@ -992,6 +1035,58 @@ Test coverage: tests/pagination-standardization.test.js (24 assertions) exercise
 status/carrier/search/sort/teu behavior on GET /api/shipments and the new opt-in pagination on
 GET /api/linked-ports and GET /api/carrier-agents via real scratch fixtures, confirming every
 existing zero-arg caller's bare-array response is unaffected.
+```
+
+### 8.19 Zero-Script Onboarding — Sample MDM Database (added v0.79.0)
+
+```
+A fresh clone previously needed npm run seed (and, for an already-broken alternate path,
+"copy sampleDB/cargodesk.db to the project root") before the app held any real data. Direct
+audit found that alternate path was aspirational, not real: sampleDB/ was documented in
+README.md/CLAUDE.md, even carried its own changelog entry (v0.18.1), but did not exist on disk
+and was never actually committed — git ls-files showed zero tracked .db files in this repo's
+entire history.
+
+New db/cargodesk.sample.db (committed, ~2.5MB) replaces it, generated by booting the monolith
+against a genuinely empty database (schema + migrations only, no seed data), running the
+existing npm run seed import, then layering in the two static reference sets that have no
+backing script at all — the full 208-row ISO country list and the 182-row country↔trade-lane
+mapping, both of which had only ever been built up a few rows at a time through the admin UI
+across this project's history (import-mdm-data.js's own seed only ever created the 4 of each its
+own 14 hardcoded trade lanes strictly need). server.js now copies this file to cargodesk.db
+automatically on first boot if none exists yet:
+
+  const DB_PATH = path.join(__dirname, "cargodesk.db");
+  const SAMPLE_DB_PATH = path.join(__dirname, "db", "cargodesk.sample.db");
+  if (!fs.existsSync(DB_PATH) && fs.existsSync(SAMPLE_DB_PATH)) {
+    fs.copyFileSync(SAMPLE_DB_PATH, DB_PATH);
+  }
+
+The committed file deliberately holds only static reference data — ports, carriers, vessels,
+commodities, regions, trade lanes, countries, country↔trade-lane mappings, plus the handful of
+migration-seeded structural defaults (milestone/pack-type/container-type templates) every fresh
+schema already gets regardless. Two categories were deliberately kept OUT, not overlooked:
+  - shipments/contracts/customers/users/anything business-generated — matches the direct
+    instruction this shipped against ("they can create their own contracts and configurations").
+  - users and org_signing_certs specifically, despite both being non-empty on a normal running
+    instance — both already have their own idempotent startup bootstrap (seedAdmin(),
+    seedTestFixtureAdmin(), the signing-cert IIFE, all "if none exists, create one" — same idiom
+    as backfillPortCountryCodes()), so baking a snapshot into the committed file would be pure
+    redundancy at best. For org_signing_certs specifically it would be worse than redundant — it
+    holds a private signing key, and every clone sharing the one baked into a committed file
+    defeats the point of it being a per-install secret; letting each fresh boot generate its own
+    is strictly better. Sanctions/OFAC data (25,865 rows on a real running instance) was excluded
+    for a related but distinct reason: a synced snapshot looks live the moment a fresh clone
+    boots, but is stale from clone-day forward with no code path to notice — better for a fresh
+    install to trigger its own real sync (already-existing app_settings.api_ofac_interval_*
+    scheduling) than to ship a snapshot that quietly ages without anyone realizing it's not current.
+
+seedAdmin() itself was corrected in the same pass — it had hardcoded the maintainer's own
+personal email/name as the seeded admin account, which both leaked personal identity into this
+public repo's source and was already-stale against what README.md documented as the default
+(admin@cargodesk.com / admin123). Now reads ADMIN_EMAIL/ADMIN_PASSWORD (optional, e.g. via .env)
+falling back to that documented generic default — same disclosed-insecure-default tradeoff as
+JWT_SECRET, logged loudly on creation so it's never mistaken for a real credential.
 ```
 
 ---

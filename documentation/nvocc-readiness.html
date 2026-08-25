@@ -1,0 +1,352 @@
+<!doctype html><html><head><!-- frame-runtime --><base href="/_f/1787129423-8bf2/"><script>window.__FRAME_PREAMBLE={"capabilities":{"artifact":"artifact.oqIe8shs.js","assets":"assets.DBUJcvq_.js","comments":"comments.GLuHR3zP.js","db":"db.CRhVHzSt.js","downloads":"downloads.C3GSvEDP.js","embed":"embed.CZsbekoQ.js","mcp":"mcp.Bvma3qD7.js","network":"network.B5UA9Su4.js","permissions":"permissions.BNySkLV5.js","room":"room.DE7EMui-.js","sample":"sample.BW2Uysoh.js","self":"artifact.oqIe8shs.js","user":"user.BpKav-Rf.js"},"transforms":"_transforms.h3_8GSUa.js","comments":"_comments.BOgkE6qU.js","translate":"_translate.5HCW4BJh.js"}</script><script>(function(){"use strict";var Y=["light","dark","system"],X=/^[A-Za-z0-9_-]{1,64}$/,D=/^[a-zA-Z_:][a-zA-Z0-9_:.-]{0,127}$/,G=new Set(["class","hidden","value","checked"]);function V(e){const t=e.toLowerCase();return t.startsWith("data-")||t.startsWith("aria-")||G.has(t)}var be="http://www.w3.org/1999/xhtml",Z="http://www.w3.org/2000/svg",J=new Set(["script","style","iframe","noscript","noframes","noembed","xmp","plaintext","template","title","textarea","object","embed"]),Q=new Set(["script","style"]);function ee(e){const t=e.localName.toLowerCase();return e.namespaceURI==="http://www.w3.org/1999/xhtml"?!J.has(t):e.namespaceURI===Z?!Q.has(t):!1}var te=new Set(["html","head","body","frameset"]);function re(e){return e.namespaceURI==="http://www.w3.org/1999/xhtml"&&te.has(e.localName)}function ne(e){if(e===null||typeof e!="object")return!1;const t=e;if(typeof t.target!="string"||!X.test(t.target)||t.text!==void 0&&typeof t.text!="string")return!1;if(t.attrsSet!==void 0){if(t.attrsSet===null||typeof t.attrsSet!="object")return!1;for(const[n,s]of Object.entries(t.attrsSet))if(!D.test(n)||typeof s!="string")return!1}if(t.attrsRemoved!==void 0){if(!Array.isArray(t.attrsRemoved))return!1;for(const n of t.attrsRemoved)if(typeof n!="string"||!D.test(n))return!1}return!0}function se(e,t){if(e===null||typeof e!="object")return!1;const{seq:n,elements:s}=e;if(typeof n!="number"||!Number.isSafeInteger(n)||!Array.isArray(s)||s.length===0||s.length>64)return!1;for(let o=0;o<s.length;o++)if(!t(s[o]))return!1;return!0}function ae(e){return e===null||typeof e!="object"?!1:se(e.__frame_patch,ne)}function oe(e){if(e===null||typeof e!="object")return!1;const t=e.__frame_init;return t!==null&&typeof t=="object"}function ie(e){return e!==null&&typeof e=="object"&&e.__frame_size_poke===!0}function le(e){if(e===null||typeof e!="object")return!1;const t=e.__frame_theme;if(t===null||typeof t!="object")return!1;const n=t.theme;return typeof n=="string"&&Y.includes(n)}var O="__frame_scroll",ce=150,ue=310,fe=160,pe=3e4;function de(){let e=0,t=!1,n=!1,s=!1,o=0,l=null;const c=i=>{try{sessionStorage.setItem(O,JSON.stringify({y:i}))}catch{}},f=()=>{if(clearTimeout(e),l===null)return;const i=l;l=null,c(i)},S=()=>{if(t){t=!1;return}n=!0,l=scrollY,clearTimeout(e),e=setTimeout(f,ce)};try{addEventListener("scroll",S,{passive:!0}),addEventListener("pagehide",f)}catch{}const v=()=>{let i;try{i=sessionStorage.getItem(O)}catch{return null}if(i===null)return null;let d;try{d=JSON.parse(i)}catch{d=null}const u=d?.y;if(!(typeof u=="number"&&Number.isFinite(u)&&u>=0)){try{sessionStorage.removeItem(O)}catch{}return null}return u};let b=!1;const m=i=>{try{const d=scrollY;scrollTo({top:i,left:0,behavior:"instant"}),o=i,s=!0,clearTimeout(e),l=null,c(i);const u=scrollY;u!==d&&(t=!0),u!==i&&!b&&(b=!0,addEventListener("load",()=>{try{if(scrollY===u){const h=v();m(h!==null?h:o)}}catch{}},{once:!0}))}catch{}},y=()=>{try{return!!location.hash}catch{return!0}};let g=!1;const E=()=>{try{if(g||innerWidth>ue||innerHeight>fe)return;g=!0;const i=Date.now(),d=()=>{try{removeEventListener("resize",d)}catch{}if(Date.now()-i>pe||n||y())return;const u=v();m(u!==null?u:o)};addEventListener("resize",d)}catch{}};let r=!1,p=!1;return{restore(){if(r||(r=!0,y()))return;const i=v();i!==null&&(m(i),E())},promoted(){if(p||(p=!0,y()))return;const i=v();i!==null?(m(i),E()):s&&m(o)}}}var Ee="modulepreload",Ae=function(e){return"/"+e},Re={},me=function(t,n,s){let o=Promise.resolve();function l(c){const f=new Event("vite:preloadError",{cancelable:!0});if(f.payload=c,window.dispatchEvent(f),!f.defaultPrevented)throw c}return o.then(c=>{for(const f of c||[])f.status==="rejected"&&l(f.reason);return t().catch(l)})};(function(){const e=Object.defineProperty,t=globalThis,n=["RTCPeerConnection","webkitRTCPeerConnection","RTCDataChannel","RTCIceCandidate","RTCSessionDescription","RTCRtpSender","RTCRtpReceiver"];let s=0;for(let o=0;o<n.length;o++){const l=n[o];try{e(t,l,{value:void 0,writable:!1,configurable:!1})}catch{try{delete t[l]}catch{}try{e(t,l,{value:void 0,writable:!1,configurable:!0})}catch{}}typeof t[l]=="function"&&s++}if(s&&window!==top)try{parent.postMessage({__frame_rtc_lockdown_failed:s},"*")}catch{}})();var he=1e4,_e=Object.freeze([...window.__FRAME_PREAMBLE?.origins??["https://claude.ai","https://preview.claude.ai"]]);function F(e){for(const t of _e)if(t.endsWith(":*"))try{const n=new URL(e);if(`${n.protocol}//${n.hostname}:*`===t)return!0}catch{}else if(e===t)return!0;return!1}var M=Object.freeze({...window.__FRAME_PREAMBLE?.capabilities}),j=window.__FRAME_PREAMBLE?.transforms,N=window.__FRAME_PREAMBLE?.comments,I=window.__FRAME_PREAMBLE?.translate,L=/^[\w.-]+\.js$/;function T(e){return me(()=>import("/_runtime/"+e),void 0)}function z(e,t){return{contract:e.contract,changes:new Set(e.changes??[]),flags:new Set(e.flags??[]),capabilities:e.capabilities??{},capBudgets:e.capBudgets??{},transforms:new Map,shellOrigin:t,mount:W,pipe:()=>({wrap:(n,s)=>(...o)=>{try{return s(...o)}catch(l){return Promise.reject(l)}}})}}var P=null,w=null;function q(e,t,n){try{Object.defineProperty(e,t,{value:n,writable:!1,configurable:!1,enumerable:!0})}catch{try{Object.defineProperty(e,t,{value:n,writable:!1,configurable:!0,enumerable:!0})}catch{}}}var B=!1;function ve(e,t){const n=[];for(const s of e.elements){const o=document.querySelector(`[data-id="${s.target}"]`);if(!o){parent.postMessage({__frame_patch_miss:{seq:e.seq}},t);return}if([...Object.keys(s.attrsSet??{}),...s.attrsRemoved??[]].some(l=>!V(l))){parent.postMessage({__frame_patch_miss:{seq:e.seq}},t);return}if(s.text!==void 0&&(!ee(o)||re(o))){parent.postMessage({__frame_patch_miss:{seq:e.seq}},t);return}for(const[l,c]of Object.entries(s.attrsSet??{}))if(!$(o,l)){try{o.setAttribute(l,c)}catch{}H(o,l,c)}for(const l of s.attrsRemoved??[])$(o,l)||(o.removeAttribute(l),H(o,l,null));typeof s.text=="string"&&(o.textContent=s.text),n.push(s.target)}try{document.dispatchEvent(new CustomEvent("claude:edit",{detail:{seq:e.seq,targets:n}}))}catch{}}function H(e,t,n){if(!(e instanceof HTMLInputElement))return;const s=t.toLowerCase();s==="checked"?e.checked=n!==null:s==="value"&&e.type!=="file"&&(e.value=n??"")}function $(e,t){const n=t.toLowerCase(),s=e;return n==="data-id"||(n==="value"||n==="checked")&&(s.__artifactSecret===!0||/^(password|hidden|file)$/.test(s.type??"")||/(^|\s)(cc-|one-time-code|current-password|new-password)/i.test(`${e.getAttribute("autocomplete")??""} ${s.autocomplete??""}`))}function K(e){const t=document.documentElement;e==="light"||e==="dark"?(t.dataset.theme=e,t.style.colorScheme=e,B=!0):B&&(delete t.dataset.theme,t.style.colorScheme="",B=!1)}var R=new Map;function ye(){let e;const t={u:new Promise(n=>{e=n}),r:n=>{t.done=!0,e(n)},done:!1,nulled:!1};return t}var ge=Object.freeze(Object.assign(Object.create(null),{call:Function.prototype.call,apply:Function.prototype.apply,bind:Function.prototype.bind})),W=(e,t)=>{const n=R.get(e);if(!n||n.done){n?.nulled&&w&&parent.postMessage({__frame_cap_telemetry:{kind:"cap-load-error",cap:e}},w);return}const s=typeof t=="function"?Object.setPrototypeOf(t,ge):Object.assign(Object.create(null),t);typeof s.then=="function"&&delete s.then,n.r(Object.freeze(s))},U=Object.getOwnPropertyDescriptor(window,"claude");if(window!==top&&!(U&&U.writable===!1)){const e=j&&L.test(j)?T(j).catch(()=>{}):Promise.resolve(void 0),t=r=>{if(r.type==="auxclick"&&r.button!==1)return;const p=r.target,i=p&&p.closest?p.closest("a[href],area[href]"):null;if(!i)return;const d=i.getAttribute("href");if(!d)return;let u,h;try{u=new URL(d,document.baseURI),h=new URL(document.baseURI).origin}catch{return}if((u.protocol==="http:"||u.protocol==="https:")&&u.origin!==h){r.preventDefault();const _=(i.getAttribute("target")??"").toLowerCase(),C=r.type==="auxclick"||r.metaKey||r.ctrlKey||r.shiftKey||r.altKey||!["","_self","_top","_parent"].includes(_);parent.postMessage({__frame_nav:!0,url:u.href,newTab:C},"*")}};addEventListener("click",t,!0),addEventListener("auxclick",t,!0);const n={},s=r=>{r.isTrusted&&(n.pointer=!0)},o=r=>{r.isTrusted&&(n.click=!0)};addEventListener("pointermove",s,{capture:!0,passive:!0}),addEventListener("click",o,{capture:!0,passive:!0}),e.then(r=>{r?.wireNav&&(r.wireNav(),removeEventListener("click",t,!0),removeEventListener("auxclick",t,!0),removeEventListener("pointermove",s,!0),removeEventListener("click",o,!0),r.wireEngagement?.(n))});let l=null;try{l=de()}catch{}const c=U?.value??{};q(window,"claude",c);for(const r of Object.keys(M)){if(c[r]!==void 0){q(c,r,c[r]);continue}R.set(r,ye())}if(c.use===void 0){const r=p=>{if(typeof p!="string"||!Object.hasOwn(M,p))return Promise.resolve(null);const i=R.get(p);return i?i.u:Promise.resolve(c[p]??null)};try{Object.defineProperty(c,"use",{value:r,writable:!0,configurable:!0,enumerable:!1})}catch{}}let f=null,S=null,v=0;const b=r=>{r.source!==parent||!F(r.origin)||oe(r.data)&&(f=r.data.__frame_init,w=r.origin,removeEventListener("message",b),clearTimeout(v),S?.())};addEventListener("message",b),parent.postMessage({__frame_connect:!0},"*");const m=new Promise(r=>{S=r,v=setTimeout(()=>{removeEventListener("message",b),r()},he)}),y=document.readyState==="loading"?new Promise(r=>document.addEventListener("DOMContentLoaded",()=>r(),{once:!0})):Promise.resolve();y.then(()=>{try{l?.restore()}catch{}});const g={cb:null},E=r=>{if(!(r.source!==parent||!F(r.origin))&&ie(r.data)){try{l?.promoted()}catch{}g.cb?.()}};addEventListener("message",E),m.then(async()=>{if(!f||!w){for(const a of R.values())a.nulled=!0,a.r(null);return}K(f.theme);const r=w;let p=!1,i=!1;addEventListener("message",a=>{if(a.source!==parent||a.origin!==r)return;le(a.data)&&K(a.data.__frame_theme.theme),ae(a.data)&&ve(a.data.__frame_patch,r);const k=a.data?.__fc_mode;k&&typeof k=="object"&&!p&&N&&L.test(N)&&(p=!0,T(N).then(x=>x.install?.(r,k.on===!0)).catch(()=>{}));const A=a.data?.__ft_cmd;A&&typeof A=="object"&&!i&&I&&L.test(I)&&(i=!0,T(I).then(x=>x.install?.(r,A)).catch(()=>{}))});const d=Object.keys(f.capabilities??{}).filter(a=>Object.hasOwn(M,a)).map(a=>[a,M[a]]).filter(a=>typeof a[1]=="string"&&L.test(a[1])),u=await Promise.allSettled(d.map(([,a])=>T(a))),h=await e,_=w;if(h?.buildBoot||parent.postMessage({__frame_cap_telemetry:{kind:"cap-load-error",cap:"_transforms"}},_),h?.buildBoot)try{P=h.buildBoot(f,h.TRANSFORMS??{},{shellOrigin:_,mount:W},a=>parent.postMessage({__frame_cap_telemetry:a},_))}catch{parent.postMessage({__frame_cap_telemetry:{kind:"cap-load-error",cap:"_transforms"}},_),P=z(f,_)}else P=z(f,_);const C=a=>parent.postMessage({__frame_cap_telemetry:{kind:"cap-load-error",cap:a}},_),we=P;u.forEach((a,k)=>{const A=d[k][0];if(a.status!=="fulfilled"){C(A);return}try{a.value?.install?.(we)}catch{C(A)}});for(const a of R.values())a.done||(a.nulled=!0,a.r(null));await y,parent.postMessage({__frame_ready:!0},w),e.then(a=>a?.installSizeReporter?.(_,g))})}})();</script><!-- /frame-runtime --><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}</style></head><body>
+<style>
+  :root{
+    --bg:#F3F5F6; --surface:#FFFFFF; --surface-alt:#EAEEF0; --border:#D7DEE2; --border-strong:#B9C4CA;
+    --ink:#16222E; --ink-muted:#5C707E; --ink-faint:#8CA0AC;
+    --stamp:#B23A22; --stamp-soft:#F7E2DB; --stamp-ink:#7A2716;
+    --closed:#1F7A63; --closed-soft:#DFF0E9;
+    --shadow: 0 1px 2px rgba(16,28,38,.05), 0 10px 26px -14px rgba(16,28,38,.20);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#0B161F; --surface:#101E29; --surface-alt:#0D1922; --border:#203440; --border-strong:#324857;
+      --ink:#E7EEF2; --ink-muted:#93A7B2; --ink-faint:#607480;
+      --stamp:#E2694F; --stamp-soft:#2C1712; --stamp-ink:#F3A88F;
+      --closed:#4FBFA0; --closed-soft:#0F2620;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 14px 34px -16px rgba(0,0,0,.6);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0B161F; --surface:#101E29; --surface-alt:#0D1922; --border:#203440; --border-strong:#324857;
+    --ink:#E7EEF2; --ink-muted:#93A7B2; --ink-faint:#607480;
+    --stamp:#E2694F; --stamp-soft:#2C1712; --stamp-ink:#F3A88F;
+    --closed:#4FBFA0; --closed-soft:#0F2620;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 14px 34px -16px rgba(0,0,0,.6);
+  }
+
+  *{box-sizing:border-box;}
+  body{ margin:0; background:var(--bg); color:var(--ink);
+    font-family: Georgia, "Iowan Old Style", "Palatino Linotype", serif; }
+  .sans{ font-family:"Segoe UI", ui-sans-serif, system-ui, -apple-system, sans-serif; }
+  .mono{ font-family:"Cascadia Mono","Cascadia Code", Consolas, ui-monospace, monospace; font-variant-numeric:tabular-nums; }
+
+  .page{ max-width:920px; margin:0 auto; padding:60px 28px 90px; }
+
+  .eyebrow{ display:flex; align-items:center; gap:10px; font-family:inherit;
+    font-size:12px; letter-spacing:.12em; text-transform:uppercase; color:var(--ink-faint); }
+  .eyebrow .dot{ width:6px; height:6px; border-radius:50%; background:var(--stamp); flex:none; }
+  h1{ font-size:40px; line-height:1.08; margin:14px 0 12px; font-weight:700; text-wrap:balance; }
+  .lede{ font-size:16.5px; line-height:1.62; color:var(--ink-muted); max-width:64ch; margin:0 0 8px; }
+  .meta{ font-family:inherit; }
+  .metaline{ display:flex; flex-wrap:wrap; gap:14px; padding-top:18px; margin-top:18px;
+    border-top:1px dashed var(--border-strong); font-size:12px; color:var(--ink-faint); }
+  .metaline b{ color:var(--ink-muted); font-weight:600; }
+  .metaline .sep{ color:var(--border-strong); }
+
+  /* ---------- diagram ---------- */
+  .diagram-wrap{ margin:40px 0 46px; background:var(--surface); border:1px solid var(--border);
+    border-radius:12px; padding:26px 22px 20px; box-shadow:var(--shadow); }
+  .diagram-title{ font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-faint);
+    margin-bottom:14px; text-align:center; }
+  svg.mech text{ font-family:"Segoe UI", ui-sans-serif, system-ui, sans-serif; }
+  .diagram-caption{ text-align:center; font-size:12.5px; color:var(--ink-muted); margin-top:12px;
+    max-width:56ch; margin-left:auto; margin-right:auto; line-height:1.5; }
+
+  /* ---------- section head ---------- */
+  .section-head{ margin:0 0 18px; }
+  .section-head h2{ font-size:22px; margin:0 0 4px; font-weight:700; }
+  .section-head p{ font-family:"Segoe UI", ui-sans-serif, system-ui, sans-serif; font-size:13px;
+    color:var(--ink-muted); margin:0; }
+
+  /* ---------- docket entries ---------- */
+  .docket{ display:flex; flex-direction:column; gap:14px; margin-bottom:54px; }
+  .entry{ background:var(--surface); border:1px solid var(--border); border-radius:10px;
+    padding:20px 22px; box-shadow:var(--shadow); }
+  .entry-top{ display:flex; align-items:flex-start; justify-content:space-between; gap:14px; margin-bottom:8px; }
+  .entry-num{ font-family:"Cascadia Mono", Consolas, monospace; font-size:11.5px; color:var(--ink-faint);
+    display:flex; align-items:center; gap:9px; }
+  .entry-num .idx{ display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px;
+    border-radius:5px; background:var(--surface-alt); color:var(--ink-muted); font-weight:700; font-size:10.5px; }
+  .stamp-badge{ font-family:"Cascadia Mono", Consolas, monospace; font-size:10px; font-weight:700;
+    letter-spacing:.08em; text-transform:uppercase; padding:4px 10px; border-radius:4px; white-space:nowrap;
+    border:1.5px solid; transform:rotate(-2deg); }
+  .stamp-badge.closed{ color:var(--closed); border-color:var(--closed); background:var(--closed-soft); }
+  .stamp-badge.open{ color:var(--stamp); border-color:var(--stamp); background:var(--stamp-soft); }
+  .entry h3{ font-size:18.5px; margin:8px 0 10px; font-weight:700; }
+  .entry .sans-body{ font-family:"Segoe UI", ui-sans-serif, system-ui, sans-serif; font-size:13.5px;
+    line-height:1.6; color:var(--ink-muted); margin:0 0 12px; }
+  .compare{ display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:12px; }
+  .compare-col{ background:var(--surface-alt); border:1px solid var(--border); border-radius:8px; padding:11px 13px; }
+  .compare-col .lbl{ font-family:"Segoe UI", ui-sans-serif, system-ui, sans-serif; font-size:10px;
+    letter-spacing:.08em; text-transform:uppercase; font-weight:700; margin-bottom:5px; }
+  .compare-col.need .lbl{ color:var(--stamp); }
+  .compare-col.have .lbl{ color:var(--ink-faint); }
+  .compare-col p{ font-family:"Segoe UI", ui-sans-serif, system-ui, sans-serif; font-size:12.5px;
+    line-height:1.5; color:var(--ink); margin:0; }
+  .ticket-ref{ margin-top:12px; font-family:"Cascadia Mono", Consolas, monospace; font-size:11px; color:var(--ink-faint); }
+
+  @media (max-width:620px){
+    .compare{ grid-template-columns:1fr; }
+    h1{ font-size:30px; }
+    .page{ padding:42px 18px 70px; }
+  }
+
+  /* ---------- footer ref table ---------- */
+  .refs{ border:1px solid var(--border); border-radius:10px; overflow:hidden; background:var(--surface); }
+  .refs table{ width:100%; border-collapse:collapse; font-family:"Segoe UI", ui-sans-serif, system-ui, sans-serif; font-size:13px; }
+  .refs thead th{ text-align:left; padding:10px 16px; font-size:10.5px; letter-spacing:.08em; text-transform:uppercase;
+    color:var(--ink-faint); border-bottom:1px solid var(--border); background:var(--surface-alt); font-weight:700; }
+  .refs tbody td{ padding:11px 16px; border-bottom:1px solid var(--border); color:var(--ink-muted); vertical-align:top; }
+  .refs tbody tr:last-child td{ border-bottom:none; }
+  .refs td.code{ font-family:"Cascadia Mono", Consolas, monospace; color:var(--ink); white-space:nowrap; }
+  .refs .table-wrap{ overflow-x:auto; }
+
+  footer.pagefoot{ margin-top:60px; padding-top:18px; border-top:1px solid var(--border);
+    display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap;
+    font-family:"Cascadia Mono", Consolas, monospace; font-size:10.5px; color:var(--ink-faint); }
+</style>
+
+<div class="page">
+
+  <div class="eyebrow"><span class="dot"></span> CargoDesk &middot; Systems Audit</div>
+  <h1>NVOCC Readiness</h1>
+  <p class="lede">
+    An NVOCC is legally both a carrier and a shipper for the same physical move — carrier to its
+    own customer on the House B/L, shipper to the real vessel operator on the Master B/L.
+    This audits CargoDesk's data model against that dual role and closes what could be closed
+    safely in one pass.
+  </p>
+  <div class="metaline mono">
+    <span><b>Audited</b> 2026-08-19</span>
+    <span class="sep">&middot;</span>
+    <span><b>Epic</b> TKT-Q52B38</span>
+    <span class="sep">&middot;</span>
+    <span><b>Findings</b> 7</span>
+    <span class="sep">&middot;</span>
+    <span><b>Closed this pass</b> 4</span>
+  </div>
+
+  <div class="diagram-wrap">
+    <div class="diagram-title sans">Where the ambiguity actually lives</div>
+    <svg class="mech" viewBox="0 0 860 220" width="100%" height="auto" role="img"
+      aria-label="Shipper issues a House Bill of Lading to the NVOCC, who is the carrier on that document; the NVOCC in turn receives a Master Bill of Lading from the vessel operator, on which the NVOCC is the shipper.">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="var(--ink-faint)"></path>
+        </marker>
+      </defs>
+      <!-- nodes -->
+      <g>
+        <rect x="10" y="70" width="150" height="72" rx="8" fill="var(--surface-alt)" stroke="var(--border-strong)"></rect>
+        <text x="85" y="100" text-anchor="middle" font-size="13" font-weight="700" fill="var(--ink)">Shipper</text>
+        <text x="85" y="118" text-anchor="middle" font-size="10.5" fill="var(--ink-muted)">underlying cargo owner</text>
+      </g>
+      <g>
+        <rect x="355" y="60" width="150" height="92" rx="8" fill="var(--surface)" stroke="var(--stamp)" stroke-width="2"></rect>
+        <text x="430" y="90" text-anchor="middle" font-size="13.5" font-weight="700" fill="var(--ink)">NVOCC</text>
+        <text x="430" y="107" text-anchor="middle" font-size="10.5" fill="var(--ink-muted)">forwarder / consolidator</text>
+        <text x="430" y="140" text-anchor="middle" font-size="9.5" fill="var(--stamp)" font-weight="700">ONE ENTITY,</text>
+      </g>
+      <g>
+        <rect x="700" y="70" width="150" height="72" rx="8" fill="var(--surface-alt)" stroke="var(--border-strong)"></rect>
+        <text x="775" y="100" text-anchor="middle" font-size="13" font-weight="700" fill="var(--ink)">Vessel Operator</text>
+        <text x="775" y="118" text-anchor="middle" font-size="10.5" fill="var(--ink-muted)">Maersk, MSC, CMA CGM…</text>
+      </g>
+      <!-- arrows -->
+      <line x1="160" y1="106" x2="350" y2="106" stroke="var(--ink-faint)" stroke-width="1.5" marker-end="url(#arrow)"></line>
+      <line x1="505" y1="106" x2="695" y2="106" stroke="var(--ink-faint)" stroke-width="1.5" marker-end="url(#arrow)"></line>
+      <!-- doc labels above arrows -->
+      <text x="255" y="30" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--stamp)">House B/L</text>
+      <text x="255" y="46" text-anchor="middle" font-size="9.5" fill="var(--ink-muted)">NVOCC is CARRIER here</text>
+      <text x="600" y="30" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--stamp)">Master B/L</text>
+      <text x="600" y="46" text-anchor="middle" font-size="9.5" fill="var(--ink-muted)">NVOCC is SHIPPER here</text>
+      <!-- bottom note -->
+      <text x="430" y="190" text-anchor="middle" font-size="10.5" fill="var(--ink-faint)">
+        two roles, two documents, one shipment — a single Principal/carrier field can only ever hold one
+      </text>
+    </svg>
+    <div class="diagram-caption">
+      Every field-level mapping break this audit found traces back to this one picture: CargoDesk's
+      shipment record has one carrier slot and one principal slot, not one per document.
+    </div>
+  </div>
+
+  <div class="section-head">
+    <h2>Findings</h2>
+    <p class="sans">Ordered as audited. Closed entries shipped in this pass; open entries are logged as Epic TKT-Q52B38's backlog.</p>
+  </div>
+
+  <div class="docket">
+
+    <div class="entry">
+      <div class="entry-top">
+        <div class="entry-num"><span class="idx">01</span> party-model</div>
+        <span class="stamp-badge closed">Closed</span>
+      </div>
+      <h3>No way to record who the NVOCC even is</h3>
+      <p class="sans-body">Nothing in the data model could name the NVOCC handling a shipment, let alone
+        its license number — "Forwarder" is a related but different, broader relationship.</p>
+      <div class="compare">
+        <div class="compare-col need"><div class="lbl sans">NVOCC needs</div><p>A first-class party role, resolvable to a real organization record.</p></div>
+        <div class="compare-col have"><div class="lbl sans">Shipped</div><p>New "NVOCC" role in the existing extensible party system — assign any customer, same as Forwarder or Agent.</p></div>
+      </div>
+      <div class="ticket-ref">TKT-Q0I482</div>
+    </div>
+
+    <div class="entry">
+      <div class="entry-top">
+        <div class="entry-num"><span class="idx">02</span> licensing</div>
+        <span class="stamp-badge closed">Closed</span>
+      </div>
+      <h3>Zero FMC / tariff-license concept anywhere</h3>
+      <p class="sans-body">An NVOCC operating in/out of the US must hold an FMC license and file a
+        tariff; CargoDesk had no field to record that anywhere in the system.</p>
+      <div class="compare">
+        <div class="compare-col need"><div class="lbl sans">NVOCC needs</div><p>A place to record the license/registration number backing its NVOCC status.</p></div>
+        <div class="compare-col have"><div class="lbl sans">Shipped</div><p>customers.is_nvocc + fmc_number — a checkbox-reveals-field on the customer Profile tab.</p></div>
+      </div>
+      <div class="ticket-ref">TKT-Q0I482</div>
+    </div>
+
+    <div class="entry">
+      <div class="entry-top">
+        <div class="entry-num"><span class="idx">03</span> booking-payload</div>
+        <span class="stamp-badge closed">Closed</span>
+      </div>
+      <h3>The carrier booking named the wrong shipper</h3>
+      <p class="sans-body">The outbound booking-request payload to the vessel operator always sent
+        the underlying cargo owner as <code class="mono">shipperName</code> — legally, the NVOCC is the
+        shipper of record on that side, not the cargo owner.</p>
+      <div class="compare">
+        <div class="compare-col need"><div class="lbl sans">NVOCC needs</div><p>The Master B/L-side booking to name the NVOCC as shipper when one is handling the move.</p></div>
+        <div class="compare-col have"><div class="lbl sans">Shipped</div><p>Booking payload now prefers the assigned NVOCC party's name; falls back to today's behavior otherwise.</p></div>
+      </div>
+      <div class="ticket-ref">TKT-ARVN18 &middot; verified live — payload correctly read "Pacific Bridge NVOCC Ltd," not the real cargo owner</div>
+    </div>
+
+    <div class="entry">
+      <div class="entry-top">
+        <div class="entry-num"><span class="idx">04</span> document-identity</div>
+        <span class="stamp-badge closed">Closed</span>
+      </div>
+      <h3>The Bill of Lading never named who issued it</h3>
+      <p class="sans-body">A Master B/L Number field already existed as a caption, but nothing on the
+        document said which licensed party was actually standing behind it.</p>
+      <div class="compare">
+        <div class="compare-col need"><div class="lbl sans">NVOCC needs</div><p>Its own identity visible on the House B/L it issues.</p></div>
+        <div class="compare-col have"><div class="lbl sans">Shipped</div><p>An NVOCC detail row now renders on the generated Bill of Lading when one is assigned.</p></div>
+      </div>
+      <div class="ticket-ref">TKT-NZB9EI &middot; verified live — captured the actual generated document HTML, confirmed the row renders</div>
+    </div>
+
+    <div class="entry">
+      <div class="entry-top">
+        <div class="entry-num"><span class="idx">05</span> dual-document</div>
+        <span class="stamp-badge closed">Closed</span>
+      </div>
+      <h3>Still one document, not two</h3>
+      <p class="sans-body">A House B/L and a Master B/L are independently issued, independently
+        signed documents with different parties in the Shipper/Consignee/Carrier slots. Today's
+        single BL01 plus a caption field couldn't represent that.</p>
+      <div class="compare">
+        <div class="compare-col need"><div class="lbl sans">NVOCC needs</div><p>Two real, separately generatable documents for one shipment.</p></div>
+        <div class="compare-col have"><div class="lbl sans">Shipped</div><p>New MB01 Master Bill of Lading, its own builder — NVOCC as Shipper, Consignee reads "TO ORDER OF {NVOCC}", cross-referenced against the House B/L number.</p></div>
+      </div>
+      <div class="ticket-ref">TKT-ABO0TA &middot; pulled forward from backlog on direct follow-up &middot; verified live — generated MB01 HTML confirmed to carry the right title, parties, and cross-reference</div>
+    </div>
+
+    <div class="entry">
+      <div class="entry-top">
+        <div class="entry-num"><span class="idx">06</span> structural-fields</div>
+        <span class="stamp-badge closed">Closed</span>
+      </div>
+      <h3>Carrier and Principal are still single-slot</h3>
+      <p class="sans-body">The exact ambiguity the sourcing brief warned about: <code class="mono">carrier_code</code>
+        and <code class="mono">principal_id</code> each hold one value, with no structural way to
+        separate "who we bought vessel capacity from" from "who we are, as carrier, to our own
+        customer." A crosswalk against CargoWise/SALog/ZenCargo-style Principal fields breaks here.</p>
+      <div class="compare">
+        <div class="compare-col need"><div class="lbl sans">NVOCC needs</div><p>Independent MBL-side and HBL-side carrier/principal resolution.</p></div>
+        <div class="compare-col have"><div class="lbl sans">Today</div><p>One carrier_code, one principal_id — whichever side wrote last, wins.</p></div>
+      </div>
+      <div class="ticket-ref">TKT-9O2B3T &middot; Status update — verified 2026-08-25: resolved narrower than
+        originally scoped here, rather than the structural field split above. <code class="mono">carrier_code</code>
+        keeps meaning the real vessel operator everywhere internally; the NVOCC identity that was missing is
+        now surfaced on the one place it actually mattered — the public tracking page (<code class="mono">routes/share.js</code>
+        adds <code class="mono">nvoccName</code>; <code class="mono">TrackingPage.jsx</code> renders the NVOCC as
+        primary carrier, the real operator demoted to "via {carrierCode}"). See <code class="mono">tests/nvocc-carrier-identity.test.js</code>
+        for the documented scoping conclusion.</div>
+    </div>
+
+    <div class="entry">
+      <div class="entry-top">
+        <div class="entry-num"><span class="idx">07</span> destination-release</div>
+        <span class="stamp-badge closed">Closed</span>
+      </div>
+      <h3>Cargo release is modeled as one event, not two</h3>
+      <p class="sans-body">At destination, the vessel operator releases the container to the NVOCC's
+        agent against the Master B/L; the NVOCC separately releases cargo to the real consignee
+        against the House B/L. CargoDesk's release-type field and Delivery Order model only
+        represent the second half.</p>
+      <div class="compare">
+        <div class="compare-col need"><div class="lbl sans">NVOCC needs</div><p>Two distinct, sequenced release events against two different documents.</p></div>
+        <div class="compare-col have"><div class="lbl sans">Today</div><p>One bl_release_type field, one Delivery Order.</p></div>
+      </div>
+      <div class="ticket-ref">TKT-IB5IEX &middot; Status update — verified 2026-08-25: shipped as a real second
+        release-event field, <code class="mono">shipments.master_bl_release_type</code>, exposed on the shipment
+        form/Conditions page and rendered as a two-stage release note on the MB01 document.</div>
+    </div>
+
+  </div>
+
+  <div class="section-head">
+    <h2>Deliberately not re-litigated here</h2>
+    <p class="sans">Two things this audit touches but doesn't reopen.</p>
+  </div>
+  <div class="entry" style="margin-bottom:18px;">
+    <p class="sans-body" style="margin:0;">
+      <b style="color:var(--ink)">LCL / multi-shipper consolidation</b> — already the largest known gap
+      from the earlier competitive analysis, and deliberately deferred under the standing FCL-first
+      roadmap decision. It overlaps with NVOCC support but isn't the same thing: the House/Master B/L
+      split is real "even a single-shipper FCL container with zero consolidation involved," so
+      Findings 01&ndash;04 above were correctly buildable without touching that decision.
+    </p>
+  </div>
+  <div class="entry" style="margin-bottom:46px;">
+    <p class="sans-body" style="margin:0;">
+      <b style="color:var(--ink)">NVOCC co-loading / cross-tariff reference</b> — one NVOCC occasionally
+      tenders cargo through another NVOCC's own tariff rather than direct to a vessel operator. Real,
+      but less common than the direct case the rest of this audit targets — logged for completeness
+      (TKT-UR1X17), not scoped in detail.
+    </p>
+  </div>
+
+  <div class="section-head">
+    <h2>Ticket reference</h2>
+  </div>
+  <div class="refs">
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Ticket</th><th>Finding</th><th>Status</th></tr></thead>
+        <tbody>
+          <tr><td class="code">TKT-Q52B38</td><td>Epic — NVOCC Support</td><td>Done except co-loading reference (below)</td></tr>
+          <tr><td class="code">TKT-Q0I482</td><td>01/02 &middot; Party role + FMC/license fields</td><td>Done</td></tr>
+          <tr><td class="code">TKT-ARVN18</td><td>03 &middot; Booking-payload shipper-of-record fix</td><td>Done</td></tr>
+          <tr><td class="code">TKT-NZB9EI</td><td>04 &middot; NVOCC identity on the Bill of Lading</td><td>Done</td></tr>
+          <tr><td class="code">TKT-ABO0TA</td><td>05 &middot; True independent Master B/L document</td><td>Done</td></tr>
+          <tr><td class="code">TKT-9O2B3T</td><td>06 &middot; Structural dual carrier/shipper split</td><td>Done (narrower scope — see Finding 06)</td></tr>
+          <tr><td class="code">TKT-IB5IEX</td><td>07 &middot; Destination deconsolidation workflow</td><td>Done</td></tr>
+          <tr><td class="code">TKT-UR1X17</td><td>Co-loading / cross-tariff reference</td><td>Ready — still genuinely open</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <footer class="pagefoot">
+    <span>CargoDesk v0.70.0 &ldquo;Waypoint&rdquo;</span>
+    <span>NVOCC Readiness &middot; systems audit</span>
+  </footer>
+
+</div>
+
+</body></html>

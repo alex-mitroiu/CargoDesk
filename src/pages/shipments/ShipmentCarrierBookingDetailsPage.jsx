@@ -9,7 +9,6 @@ import CreditHoldModal from "../../components/shared/CreditHoldModal";
 import Spinner from "../../components/primitives/Spinner";
 import { CommodityDisplay } from "./ShipmentDetailPage";
 import { IconSendPlane, IconAnchor, IconWarning } from "../../components/primitives/Icon";
-import { BOOKABLE_CARRIERS } from "../../utils/carrierBooking";
 import { resolveCreditGate } from "../../utils/invoiceGenerator";
 
 // ─── Carrier Booking — Details ────────────────────────────────────────────────
@@ -33,6 +32,15 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
   const [sending,    setSending]    = useState(false);
   const [savingFreightTerms, setSavingFreightTerms] = useState(false);
   const [creditHoldModal, setCreditHoldModal] = useState(null); // { holds } — Credit Control Depth / TKT-Q00WHF
+  const [bookableCarriers, setBookableCarriers] = useState(null); // eAdapter — live effective bookable set, replaces the static BOOKABLE_CARRIERS Set
+
+  useEffect(() => {
+    let cancelled = false;
+    api.eadapter.bookableCarriers()
+      .then(r => !cancelled && setBookableCarriers(r.carriers))
+      .catch(() => !cancelled && setBookableCarriers([]));
+    return () => { cancelled = true; };
+  }, []);
 
   // Freight Terms already exists on the shipment (set on the Shipment Form) but wasn't
   // editable from the one place it's operationally most relevant — here, while actually
@@ -140,7 +148,7 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
 
   useEffect(() => { load(); }, [load]);
 
-  const bookable = BOOKABLE_CARRIERS.has(shipment.carrierCode);
+  const bookable = (bookableCarriers || []).includes(shipment.carrierCode);
   const status = booking?.status || "Created";
   const canSend = canEdit && bookable && status !== "Pending" && status !== "Confirmed";
   const outboundMessages = messages.filter(m => m.direction === "out");

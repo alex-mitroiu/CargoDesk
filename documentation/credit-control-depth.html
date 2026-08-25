@@ -1,0 +1,586 @@
+<!doctype html><html><head><!-- frame-runtime --><base href="/_f/1787379636-cf12/"><script>window.__FRAME_PREAMBLE={"capabilities":{"artifact":"artifact.oqIe8shs.js","assets":"assets.DBUJcvq_.js","comments":"comments.GLuHR3zP.js","db":"db.CRhVHzSt.js","downloads":"downloads.C3GSvEDP.js","embed":"embed.CZsbekoQ.js","mcp":"mcp.Bvma3qD7.js","network":"network.B5UA9Su4.js","permissions":"permissions.BNySkLV5.js","room":"room.DE7EMui-.js","sample":"sample.BW2Uysoh.js","self":"artifact.oqIe8shs.js","user":"user.BpKav-Rf.js"},"transforms":"_transforms.h3_8GSUa.js","comments":"_comments.BOgkE6qU.js","translate":"_translate.5HCW4BJh.js"}</script><script>(function(){"use strict";var Y=["light","dark","system"],X=/^[A-Za-z0-9_-]{1,64}$/,D=/^[a-zA-Z_:][a-zA-Z0-9_:.-]{0,127}$/,G=new Set(["class","hidden","value","checked"]);function V(e){const t=e.toLowerCase();return t.startsWith("data-")||t.startsWith("aria-")||G.has(t)}var be="http://www.w3.org/1999/xhtml",Z="http://www.w3.org/2000/svg",J=new Set(["script","style","iframe","noscript","noframes","noembed","xmp","plaintext","template","title","textarea","object","embed"]),Q=new Set(["script","style"]);function ee(e){const t=e.localName.toLowerCase();return e.namespaceURI==="http://www.w3.org/1999/xhtml"?!J.has(t):e.namespaceURI===Z?!Q.has(t):!1}var te=new Set(["html","head","body","frameset"]);function re(e){return e.namespaceURI==="http://www.w3.org/1999/xhtml"&&te.has(e.localName)}function ne(e){if(e===null||typeof e!="object")return!1;const t=e;if(typeof t.target!="string"||!X.test(t.target)||t.text!==void 0&&typeof t.text!="string")return!1;if(t.attrsSet!==void 0){if(t.attrsSet===null||typeof t.attrsSet!="object")return!1;for(const[n,s]of Object.entries(t.attrsSet))if(!D.test(n)||typeof s!="string")return!1}if(t.attrsRemoved!==void 0){if(!Array.isArray(t.attrsRemoved))return!1;for(const n of t.attrsRemoved)if(typeof n!="string"||!D.test(n))return!1}return!0}function se(e,t){if(e===null||typeof e!="object")return!1;const{seq:n,elements:s}=e;if(typeof n!="number"||!Number.isSafeInteger(n)||!Array.isArray(s)||s.length===0||s.length>64)return!1;for(let o=0;o<s.length;o++)if(!t(s[o]))return!1;return!0}function ae(e){return e===null||typeof e!="object"?!1:se(e.__frame_patch,ne)}function oe(e){if(e===null||typeof e!="object")return!1;const t=e.__frame_init;return t!==null&&typeof t=="object"}function ie(e){return e!==null&&typeof e=="object"&&e.__frame_size_poke===!0}function le(e){if(e===null||typeof e!="object")return!1;const t=e.__frame_theme;if(t===null||typeof t!="object")return!1;const n=t.theme;return typeof n=="string"&&Y.includes(n)}var O="__frame_scroll",ce=150,ue=310,fe=160,pe=3e4;function de(){let e=0,t=!1,n=!1,s=!1,o=0,l=null;const c=i=>{try{sessionStorage.setItem(O,JSON.stringify({y:i}))}catch{}},f=()=>{if(clearTimeout(e),l===null)return;const i=l;l=null,c(i)},S=()=>{if(t){t=!1;return}n=!0,l=scrollY,clearTimeout(e),e=setTimeout(f,ce)};try{addEventListener("scroll",S,{passive:!0}),addEventListener("pagehide",f)}catch{}const v=()=>{let i;try{i=sessionStorage.getItem(O)}catch{return null}if(i===null)return null;let d;try{d=JSON.parse(i)}catch{d=null}const u=d?.y;if(!(typeof u=="number"&&Number.isFinite(u)&&u>=0)){try{sessionStorage.removeItem(O)}catch{}return null}return u};let b=!1;const m=i=>{try{const d=scrollY;scrollTo({top:i,left:0,behavior:"instant"}),o=i,s=!0,clearTimeout(e),l=null,c(i);const u=scrollY;u!==d&&(t=!0),u!==i&&!b&&(b=!0,addEventListener("load",()=>{try{if(scrollY===u){const h=v();m(h!==null?h:o)}}catch{}},{once:!0}))}catch{}},y=()=>{try{return!!location.hash}catch{return!0}};let g=!1;const E=()=>{try{if(g||innerWidth>ue||innerHeight>fe)return;g=!0;const i=Date.now(),d=()=>{try{removeEventListener("resize",d)}catch{}if(Date.now()-i>pe||n||y())return;const u=v();m(u!==null?u:o)};addEventListener("resize",d)}catch{}};let r=!1,p=!1;return{restore(){if(r||(r=!0,y()))return;const i=v();i!==null&&(m(i),E())},promoted(){if(p||(p=!0,y()))return;const i=v();i!==null?(m(i),E()):s&&m(o)}}}var Ee="modulepreload",Ae=function(e){return"/"+e},Re={},me=function(t,n,s){let o=Promise.resolve();function l(c){const f=new Event("vite:preloadError",{cancelable:!0});if(f.payload=c,window.dispatchEvent(f),!f.defaultPrevented)throw c}return o.then(c=>{for(const f of c||[])f.status==="rejected"&&l(f.reason);return t().catch(l)})};(function(){const e=Object.defineProperty,t=globalThis,n=["RTCPeerConnection","webkitRTCPeerConnection","RTCDataChannel","RTCIceCandidate","RTCSessionDescription","RTCRtpSender","RTCRtpReceiver"];let s=0;for(let o=0;o<n.length;o++){const l=n[o];try{e(t,l,{value:void 0,writable:!1,configurable:!1})}catch{try{delete t[l]}catch{}try{e(t,l,{value:void 0,writable:!1,configurable:!0})}catch{}}typeof t[l]=="function"&&s++}if(s&&window!==top)try{parent.postMessage({__frame_rtc_lockdown_failed:s},"*")}catch{}})();var he=1e4,_e=Object.freeze([...window.__FRAME_PREAMBLE?.origins??["https://claude.ai","https://preview.claude.ai"]]);function F(e){for(const t of _e)if(t.endsWith(":*"))try{const n=new URL(e);if(`${n.protocol}//${n.hostname}:*`===t)return!0}catch{}else if(e===t)return!0;return!1}var M=Object.freeze({...window.__FRAME_PREAMBLE?.capabilities}),j=window.__FRAME_PREAMBLE?.transforms,N=window.__FRAME_PREAMBLE?.comments,I=window.__FRAME_PREAMBLE?.translate,L=/^[\w.-]+\.js$/;function T(e){return me(()=>import("/_runtime/"+e),void 0)}function z(e,t){return{contract:e.contract,changes:new Set(e.changes??[]),flags:new Set(e.flags??[]),capabilities:e.capabilities??{},capBudgets:e.capBudgets??{},transforms:new Map,shellOrigin:t,mount:W,pipe:()=>({wrap:(n,s)=>(...o)=>{try{return s(...o)}catch(l){return Promise.reject(l)}}})}}var P=null,w=null;function q(e,t,n){try{Object.defineProperty(e,t,{value:n,writable:!1,configurable:!1,enumerable:!0})}catch{try{Object.defineProperty(e,t,{value:n,writable:!1,configurable:!0,enumerable:!0})}catch{}}}var B=!1;function ve(e,t){const n=[];for(const s of e.elements){const o=document.querySelector(`[data-id="${s.target}"]`);if(!o){parent.postMessage({__frame_patch_miss:{seq:e.seq}},t);return}if([...Object.keys(s.attrsSet??{}),...s.attrsRemoved??[]].some(l=>!V(l))){parent.postMessage({__frame_patch_miss:{seq:e.seq}},t);return}if(s.text!==void 0&&(!ee(o)||re(o))){parent.postMessage({__frame_patch_miss:{seq:e.seq}},t);return}for(const[l,c]of Object.entries(s.attrsSet??{}))if(!$(o,l)){try{o.setAttribute(l,c)}catch{}H(o,l,c)}for(const l of s.attrsRemoved??[])$(o,l)||(o.removeAttribute(l),H(o,l,null));typeof s.text=="string"&&(o.textContent=s.text),n.push(s.target)}try{document.dispatchEvent(new CustomEvent("claude:edit",{detail:{seq:e.seq,targets:n}}))}catch{}}function H(e,t,n){if(!(e instanceof HTMLInputElement))return;const s=t.toLowerCase();s==="checked"?e.checked=n!==null:s==="value"&&e.type!=="file"&&(e.value=n??"")}function $(e,t){const n=t.toLowerCase(),s=e;return n==="data-id"||(n==="value"||n==="checked")&&(s.__artifactSecret===!0||/^(password|hidden|file)$/.test(s.type??"")||/(^|\s)(cc-|one-time-code|current-password|new-password)/i.test(`${e.getAttribute("autocomplete")??""} ${s.autocomplete??""}`))}function K(e){const t=document.documentElement;e==="light"||e==="dark"?(t.dataset.theme=e,t.style.colorScheme=e,B=!0):B&&(delete t.dataset.theme,t.style.colorScheme="",B=!1)}var R=new Map;function ye(){let e;const t={u:new Promise(n=>{e=n}),r:n=>{t.done=!0,e(n)},done:!1,nulled:!1};return t}var ge=Object.freeze(Object.assign(Object.create(null),{call:Function.prototype.call,apply:Function.prototype.apply,bind:Function.prototype.bind})),W=(e,t)=>{const n=R.get(e);if(!n||n.done){n?.nulled&&w&&parent.postMessage({__frame_cap_telemetry:{kind:"cap-load-error",cap:e}},w);return}const s=typeof t=="function"?Object.setPrototypeOf(t,ge):Object.assign(Object.create(null),t);typeof s.then=="function"&&delete s.then,n.r(Object.freeze(s))},U=Object.getOwnPropertyDescriptor(window,"claude");if(window!==top&&!(U&&U.writable===!1)){const e=j&&L.test(j)?T(j).catch(()=>{}):Promise.resolve(void 0),t=r=>{if(r.type==="auxclick"&&r.button!==1)return;const p=r.target,i=p&&p.closest?p.closest("a[href],area[href]"):null;if(!i)return;const d=i.getAttribute("href");if(!d)return;let u,h;try{u=new URL(d,document.baseURI),h=new URL(document.baseURI).origin}catch{return}if((u.protocol==="http:"||u.protocol==="https:")&&u.origin!==h){r.preventDefault();const _=(i.getAttribute("target")??"").toLowerCase(),C=r.type==="auxclick"||r.metaKey||r.ctrlKey||r.shiftKey||r.altKey||!["","_self","_top","_parent"].includes(_);parent.postMessage({__frame_nav:!0,url:u.href,newTab:C},"*")}};addEventListener("click",t,!0),addEventListener("auxclick",t,!0);const n={},s=r=>{r.isTrusted&&(n.pointer=!0)},o=r=>{r.isTrusted&&(n.click=!0)};addEventListener("pointermove",s,{capture:!0,passive:!0}),addEventListener("click",o,{capture:!0,passive:!0}),e.then(r=>{r?.wireNav&&(r.wireNav(),removeEventListener("click",t,!0),removeEventListener("auxclick",t,!0),removeEventListener("pointermove",s,!0),removeEventListener("click",o,!0),r.wireEngagement?.(n))});let l=null;try{l=de()}catch{}const c=U?.value??{};q(window,"claude",c);for(const r of Object.keys(M)){if(c[r]!==void 0){q(c,r,c[r]);continue}R.set(r,ye())}if(c.use===void 0){const r=p=>{if(typeof p!="string"||!Object.hasOwn(M,p))return Promise.resolve(null);const i=R.get(p);return i?i.u:Promise.resolve(c[p]??null)};try{Object.defineProperty(c,"use",{value:r,writable:!0,configurable:!0,enumerable:!1})}catch{}}let f=null,S=null,v=0;const b=r=>{r.source!==parent||!F(r.origin)||oe(r.data)&&(f=r.data.__frame_init,w=r.origin,removeEventListener("message",b),clearTimeout(v),S?.())};addEventListener("message",b),parent.postMessage({__frame_connect:!0},"*");const m=new Promise(r=>{S=r,v=setTimeout(()=>{removeEventListener("message",b),r()},he)}),y=document.readyState==="loading"?new Promise(r=>document.addEventListener("DOMContentLoaded",()=>r(),{once:!0})):Promise.resolve();y.then(()=>{try{l?.restore()}catch{}});const g={cb:null},E=r=>{if(!(r.source!==parent||!F(r.origin))&&ie(r.data)){try{l?.promoted()}catch{}g.cb?.()}};addEventListener("message",E),m.then(async()=>{if(!f||!w){for(const a of R.values())a.nulled=!0,a.r(null);return}K(f.theme);const r=w;let p=!1,i=!1;addEventListener("message",a=>{if(a.source!==parent||a.origin!==r)return;le(a.data)&&K(a.data.__frame_theme.theme),ae(a.data)&&ve(a.data.__frame_patch,r);const k=a.data?.__fc_mode;k&&typeof k=="object"&&!p&&N&&L.test(N)&&(p=!0,T(N).then(x=>x.install?.(r,k.on===!0)).catch(()=>{}));const A=a.data?.__ft_cmd;A&&typeof A=="object"&&!i&&I&&L.test(I)&&(i=!0,T(I).then(x=>x.install?.(r,A)).catch(()=>{}))});const d=Object.keys(f.capabilities??{}).filter(a=>Object.hasOwn(M,a)).map(a=>[a,M[a]]).filter(a=>typeof a[1]=="string"&&L.test(a[1])),u=await Promise.allSettled(d.map(([,a])=>T(a))),h=await e,_=w;if(h?.buildBoot||parent.postMessage({__frame_cap_telemetry:{kind:"cap-load-error",cap:"_transforms"}},_),h?.buildBoot)try{P=h.buildBoot(f,h.TRANSFORMS??{},{shellOrigin:_,mount:W},a=>parent.postMessage({__frame_cap_telemetry:a},_))}catch{parent.postMessage({__frame_cap_telemetry:{kind:"cap-load-error",cap:"_transforms"}},_),P=z(f,_)}else P=z(f,_);const C=a=>parent.postMessage({__frame_cap_telemetry:{kind:"cap-load-error",cap:a}},_),we=P;u.forEach((a,k)=>{const A=d[k][0];if(a.status!=="fulfilled"){C(A);return}try{a.value?.install?.(we)}catch{C(A)}});for(const a of R.values())a.done||(a.nulled=!0,a.r(null));await y,parent.postMessage({__frame_ready:!0},w),e.then(a=>a?.installSizeReporter?.(_,g))})}})();</script><!-- /frame-runtime --><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}</style></head><body>
+<title>Credit Control Depth</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f3f4f7;
+    --paper: #ffffff;
+    --paper-sunken: #eceef2;
+    --ink: #171a22;
+    --ink-2: #454b59;
+    --ink-3: #767d8c;
+    --line: #d8dbe3;
+    --line-strong: #b8bcc8;
+    --accent: #0e6e63;
+    --accent-ink: #08453d;
+    --accent-tint: #e2f1ee;
+    --confirmed: #0e6e63;
+    --confirmed-bg: #e2f1ee;
+    --unconfirmed: #96650e;
+    --unconfirmed-bg: #faf1de;
+    --gap-out: #8a2c2c;
+    --gap-out-bg: #f8e9e9;
+    --shadow: 0 1px 2px rgba(23,26,34,.06), 0 8px 24px -12px rgba(23,26,34,.12);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #14161c;
+      --paper: #1b1e26;
+      --paper-sunken: #21242e;
+      --ink: #eceef3;
+      --ink-2: #b9bec9;
+      --ink-3: #868d9c;
+      --line: #313644;
+      --line-strong: #454c5e;
+      --accent: #4fc4b3;
+      --accent-ink: #a8ede1;
+      --accent-tint: #1c332f;
+      --confirmed: #4fc4b3;
+      --confirmed-bg: #1c332f;
+      --unconfirmed: #e0b356;
+      --unconfirmed-bg: #332c19;
+      --gap-out: #e08585;
+      --gap-out-bg: #33201f;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 12px 32px -16px rgba(0,0,0,.5);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #14161c;
+    --paper: #1b1e26;
+    --paper-sunken: #21242e;
+    --ink: #eceef3;
+    --ink-2: #b9bec9;
+    --ink-3: #868d9c;
+    --line: #313644;
+    --line-strong: #454c5e;
+    --accent: #4fc4b3;
+    --accent-ink: #a8ede1;
+    --accent-tint: #1c332f;
+    --confirmed: #4fc4b3;
+    --confirmed-bg: #1c332f;
+    --unconfirmed: #e0b356;
+    --unconfirmed-bg: #332c19;
+    --gap-out: #e08585;
+    --gap-out-bg: #33201f;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 12px 32px -16px rgba(0,0,0,.5);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    margin: 0;
+    padding: 56px 20px 100px;
+  }
+  .page {
+    max-width: 860px;
+    margin: 0 auto;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
+  .head {
+    padding: 52px 56px 36px;
+    border-bottom: 1px solid var(--line);
+  }
+  .eyebrow {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    letter-spacing: .09em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 600;
+    margin: 0 0 14px;
+  }
+  h1 {
+    font-family: "Fraunces", Georgia, serif;
+    font-weight: 600;
+    font-size: 40px;
+    line-height: 1.12;
+    letter-spacing: -0.01em;
+    margin: 0 0 14px;
+    text-wrap: balance;
+    color: var(--ink);
+  }
+  .dek {
+    font-size: 17px;
+    color: var(--ink-2);
+    max-width: 62ch;
+    margin: 0 0 22px;
+  }
+  .meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+  }
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12.5px;
+    padding: 5px 11px;
+    border-radius: 999px;
+    border: 1px solid var(--line-strong);
+    color: var(--ink-2);
+    background: var(--paper-sunken);
+  }
+  .pill.epic { border-color: var(--accent); color: var(--accent-ink); background: var(--accent-tint); font-weight: 600; }
+
+  section { padding: 40px 56px; border-bottom: 1px solid var(--line); }
+  section:last-of-type { border-bottom: none; }
+  section > h2 {
+    font-family: "Fraunces", Georgia, serif;
+    font-weight: 600;
+    font-size: 24px;
+    margin: 0 0 6px;
+    letter-spacing: -0.005em;
+  }
+  section > .section-sub {
+    color: var(--ink-3);
+    font-size: 14.5px;
+    margin: 0 0 26px;
+    max-width: 68ch;
+  }
+  h3 {
+    font-family: "IBM Plex Sans", sans-serif;
+    font-weight: 600;
+    font-size: 16.5px;
+    margin: 28px 0 10px;
+    color: var(--ink);
+  }
+  h3:first-child { margin-top: 0; }
+  p { margin: 0 0 14px; color: var(--ink-2); max-width: 70ch; }
+  p:last-child { margin-bottom: 0; }
+  strong { color: var(--ink); font-weight: 600; }
+  a { color: var(--accent-ink); text-decoration-color: var(--accent); text-underline-offset: 2px; }
+
+  .lede-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    overflow: hidden;
+    margin-bottom: 4px;
+  }
+  .lede-cell { background: var(--paper); padding: 18px 20px; }
+  .lede-num { font-family: "IBM Plex Mono", monospace; font-size: 26px; font-weight: 600; color: var(--accent-ink); line-height: 1; margin-bottom: 6px; }
+  .lede-label { font-size: 12.5px; color: var(--ink-3); }
+
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: .02em;
+    padding: 3px 9px 3px 7px;
+    border-radius: 6px;
+    white-space: nowrap;
+  }
+  .tag.confirmed { background: var(--confirmed-bg); color: var(--confirmed); }
+  .tag.unconfirmed { background: var(--unconfirmed-bg); color: var(--unconfirmed); }
+  .tag.out { background: var(--gap-out-bg); color: var(--gap-out); }
+  .tag::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
+
+  .quote {
+    border-left: 3px solid var(--accent);
+    background: var(--accent-tint);
+    padding: 12px 16px;
+    border-radius: 0 8px 8px 0;
+    font-size: 14.5px;
+    color: var(--ink-2);
+    margin: 12px 0 16px;
+  }
+  .quote cite {
+    display: block;
+    font-style: normal;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11.5px;
+    color: var(--ink-3);
+    margin-top: 6px;
+  }
+  .quote cite a { color: var(--ink-3); }
+
+  .finding {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    padding: 14px 0;
+    border-top: 1px solid var(--line);
+  }
+  .finding:first-of-type { border-top: none; padding-top: 4px; }
+  .finding .tag { margin-top: 3px; flex: none; }
+  .finding-body { flex: 1; }
+  .finding-body p { margin: 0; font-size: 14.5px; }
+  .finding-body .q { color: var(--ink-3); font-size: 12.5px; margin-top: 4px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 14px; margin: 8px 0 4px; }
+  caption { text-align: left; font-size: 12.5px; color: var(--ink-3); margin-bottom: 8px; caption-side: top; }
+  th { text-align: left; font-size: 11.5px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink-3); font-weight: 600; padding: 0 12px 10px 0; border-bottom: 1px solid var(--line-strong); }
+  td { padding: 12px 12px 12px 0; border-bottom: 1px solid var(--line); vertical-align: top; color: var(--ink-2); }
+  td:first-child, th:first-child { padding-left: 0; }
+  tr:last-child td { border-bottom: none; }
+  .tbl-wrap { overflow-x: auto; }
+  .val-hi { color: var(--confirmed); font-weight: 600; }
+  .val-med { color: var(--unconfirmed); font-weight: 600; }
+  .val-lo { color: var(--ink-3); }
+  .ticket-id { font-family: "IBM Plex Mono", monospace; font-size: 12.5px; color: var(--accent-ink); background: var(--accent-tint); padding: 2px 7px; border-radius: 5px; white-space: nowrap; }
+
+  .story {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 18px 20px;
+    margin-bottom: 12px;
+  }
+  .story:last-child { margin-bottom: 0; }
+  .story-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 8px; flex-wrap: wrap; }
+  .story-title { font-weight: 600; color: var(--ink); font-size: 15.5px; }
+  .story p { font-size: 14px; margin: 0; }
+  .story-rank { font-family: "IBM Plex Mono", monospace; font-size: 11px; color: var(--ink-3); }
+
+  .out-box {
+    background: var(--gap-out-bg);
+    border: 1px solid color-mix(in srgb, var(--gap-out) 30%, var(--line));
+    border-radius: 10px;
+    padding: 18px 20px;
+  }
+  .out-box h3 { margin-top: 0; color: var(--gap-out); font-size: 14.5px; text-transform: uppercase; letter-spacing: .03em; font-family: "IBM Plex Mono", monospace; font-weight: 600; }
+  .out-box ul { margin: 8px 0 0; padding-left: 20px; }
+  .out-box li { color: var(--ink-2); font-size: 14.5px; margin-bottom: 8px; }
+  .out-box li:last-child { margin-bottom: 0; }
+
+  ul.plain { margin: 0; padding-left: 20px; }
+  ul.plain li { color: var(--ink-2); margin-bottom: 8px; font-size: 14.5px; }
+
+  .sources {
+    font-size: 13px;
+    color: var(--ink-3);
+  }
+  .sources ol { padding-left: 20px; margin: 10px 0 0; }
+  .sources li { margin-bottom: 6px; word-break: break-word; }
+  .sources a { color: var(--ink-3); }
+
+  .foot {
+    padding: 28px 56px 40px;
+    font-size: 13px;
+    color: var(--ink-3);
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  @media (max-width: 640px) {
+    body { padding: 24px 10px 80px; }
+    .head, section, .foot { padding-left: 22px; padding-right: 22px; }
+    h1 { font-size: 30px; }
+    .lede-grid { grid-template-columns: 1fr; }
+  }
+</style>
+
+<div class="page">
+  <div class="head">
+    <p class="eyebrow">Gap analysis &amp; integration plan</p>
+    <h1>Credit Control Depth</h1>
+    <p class="dek">CargoDesk's credit-control feature (shipped v0.57.0) audited against confirmed, sourced behavior in CargoWise One and Magaya Supply Chain — with a phased plan to close what's real and buildable.</p>
+    <div class="meta-row">
+      <span class="pill epic">Epic TKT-6XFJQM</span>
+      <span class="pill">7 stories logged</span>
+      <span class="pill">2026-08-22</span>
+    </div>
+  </div>
+
+  <section>
+    <h2>Status update — verified 2026-08-25</h2>
+    <p class="section-sub">Added after the fact, checked directly against the live codebase. The analysis and stories below are left exactly as originally published.</p>
+    <div class="quote">
+      <strong>Epic TKT-6XFJQM shipped in full</strong>, across v0.73.0 → v0.73.1 → v0.74.0 ("Solvency"). The override mechanism this document proposed for TKT-GLWMFP matches exactly what was built: authority restricted to the shipment's own lane <code>trade_manager</code> only — never admin, operator, or an out-of-lane trade manager — with a 60-minute grace window per approval, consumed on the next invoice generated for that shipment.
+      <cite>Verified against routes/customers.js, routes/shipment-ops.js, server.js</cite>
+    </div>
+    <p>Every "CargoDesk today" / "What's absent" claim below describes the pre-Solvency system and is no longer an accurate description of current behavior. Closed since this analysis:</p>
+    <ul class="plain">
+      <li><span class="tag confirmed">closed v0.73.0</span> Credit limit is now currency-aware — the Profile tab label reads "Credit Limit ({customer's currency}, optional)," no longer hardcoded USD (TKT-O5I4NK).</li>
+      <li><span class="tag confirmed">closed v0.73.1</span> Two earlier trigger points now exist alongside invoice generation: a soft warning at shipment creation, a hard 409 block at carrier-booking send (TKT-Q00WHF).</li>
+      <li><span class="tag confirmed">closed v0.74.0</span> Credit hold now has a dedicated release action, <code>POST /api/customers/:id/credit-hold/release</code>, gated to the shipment's own lane trade_manager.</li>
+      <li><span class="tag confirmed">closed v0.74.0</span> Credit limit is now a real, server-enforced hard block at invoice generation — "Generate Anyway" is gone; the only bypass is a lane-trade_manager-approved override (TKT-GLWMFP).</li>
+      <li><span class="tag confirmed">closed v0.73.0</span> AR aging buckets ship — Current / 1-30 / 31-60 / 61-90 / 90+ (TKT-O4DNFX).</li>
+      <li><span class="tag confirmed">closed v0.73.0</span> Accrued-but-uninvoiced exposure ships as a distinct <code>committedExposure</code> figure, kept separate from outstanding AR, never silently merged (TKT-AJAEDO).</li>
+      <li><span class="tag confirmed">closed v0.73.0</span> Parent/group credit rollup ships as <code>groupOutstandingAr</code>, wired off the existing <code>resolveCustomerGroup()</code> (TKT-IA7I7J).</li>
+      <li><span class="tag confirmed">closed</span> Dunning/statement automation ships — opt-in per-customer reminder cadence with a scheduled reminder sweep (TKT-SUEDWH).</li>
+    </ul>
+    <p>Still genuinely open: a role gate on who can set credit fields in general. <code>PUT /api/customers/:id</code> remains unrestricted to admin/operator for setting <code>credit_limit</code> or <code>credit_hold</code> directly — only the hold's true→false release transition is lane-gated.</p>
+  </section>
+
+  <section>
+    <h2>Where this starts</h2>
+    <p class="section-sub">Every claim below is grounded one of two ways — read directly from CargoDesk's own source, or sourced to a specific external URL / primary document. Nothing is asserted from general ERP familiarity.</p>
+    <div class="lede-grid">
+      <div class="lede-cell">
+        <div class="lede-num">1</div>
+        <div class="lede-label">trigger point today — invoice generation only</div>
+      </div>
+      <div class="lede-cell">
+        <div class="lede-num">2</div>
+        <div class="lede-label">platforms researched with primary sources — CargoWise One, Magaya</div>
+      </div>
+      <div class="lede-cell">
+        <div class="lede-num">7</div>
+        <div class="lede-label">buildable stories scoped, ranked by value × feasibility</div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>CargoDesk today</h2>
+    <p class="section-sub">Read directly from <code>routes/customers.js</code> and <code>src/utils/invoiceGenerator.js</code> — not from memory or documentation, which had drifted.</p>
+
+    <h3>Data model</h3>
+    <p><code>customers.credit_limit</code> (nullable, <strong>USD only</strong> — the Profile tab literally labels the field "Credit Limit (USD, optional)"), <code>credit_terms_days</code> (stored on every customer, but not read by any other code path in the app), <code>credit_hold</code> / <code>credit_hold_reason</code>.</p>
+
+    <h3>The one trigger point</h3>
+    <p><code>resolveCreditGate()</code> runs exclusively when a user clicks Generate Invoice on the Accounting → Invoice Entry page. Nothing checks credit at shipment creation, carrier booking, or quote stage — by the time the gate fires, the shipment has typically already been fully executed.</p>
+
+    <h3>What the gate actually does</h3>
+    <p><strong>Credit hold</strong> — a hard block, no override in the UI, checked against whichever of Shipper / Consignee / Principal / the linked contract's Named Account is on hold.<br>
+    <strong>Credit limit</strong> — a soft warning only: outstanding AR (confirmed, non-voided FR01/FR02 invoices billed to Principal-then-Consignee, resolved to the cent via <code>source_cost_line_ids</code>) plus the invoice about to be generated, compared to the limit. "Cancel" or "Generate Anyway" — available to anyone who can generate invoices at all, no separate permission tier.</p>
+
+    <h3>What's absent</h3>
+    <p>AR aging buckets, accrued-but-not-yet-invoiced exposure, a parent/group credit-limit rollup (despite <code>parent_customer_id</code> + <code>resolveCustomerGroup()</code> already existing for margin reporting since v0.59.0), a role gate on who can set credit fields or override the warning, dunning/statement automation, credit-insurance or bad-debt tracking, and any formal limit-request/approval workflow.</p>
+  </section>
+
+  <section>
+    <h2>CargoWise One — confirmed vs. unconfirmed</h2>
+    <p class="section-sub">WiseTech publishes no technical/data-model documentation for CW1 — every claim below is sourced to a specific cargowise.com product page or news post, not inferred.</p>
+
+    <div class="finding">
+      <span class="tag confirmed">confirmed</span>
+      <div class="finding-body">
+        <p>Credit is configured on the <strong>Organization (customer) record</strong> itself — "your customers and suppliers have their own individual accounting configuration for both receivables and payables... you can also set up client invoicing preferences – and manage their credit – directly within this organisation record." Matches CargoDesk's existing per-customer model.</p>
+      </div>
+    </div>
+
+    <div class="finding">
+      <span class="tag confirmed">confirmed</span>
+      <div class="finding-body">
+        <p>The credit check fires <strong>at shipment creation</strong>, not only at invoicing: "Evaluate customer balance and credit status during shipment creation, giving your collections team the leverage to collect without disrupting business from key customers." — the single most load-bearing finding in this whole analysis.</p>
+      </div>
+    </div>
+
+    <div class="finding">
+      <span class="tag confirmed">confirmed</span>
+      <div class="finding-body">
+        <p>Access to run a credit check or set a limit can be <strong>restricted to a specific department</strong> — "you can also easily set accounting as the only department that can run a credit check or set a credit limit," under a "Configure powerful security settings" heading.</p>
+      </div>
+    </div>
+
+    <div class="finding">
+      <span class="tag confirmed">confirmed</span>
+      <div class="finding-body">
+        <p>CW1 generates real <strong>WIP/accrual GL transactions</strong> for job revenue that's operationally recognized but not yet invoiced (a 2022 release note). Whether that figure specifically feeds the credit-check exposure calculation is <em>not</em> confirmed — noted honestly rather than assumed.</p>
+      </div>
+    </div>
+
+    <div class="finding">
+      <span class="tag confirmed">confirmed</span>
+      <div class="finding-body">
+        <p>A distinct "CargoWise Credit Reports" add-on integrates <strong>illion and Dun &amp; Bradstreet</strong> commercial credit-bureau data for external risk appraisal of new and existing customers — a genuinely different capability from internal AR tracking, and one CargoDesk has no equivalent of.</p>
+      </div>
+    </div>
+
+    <div class="finding">
+      <span class="tag unconfirmed">unconfirmed</span>
+      <div class="finding-body">
+        <p>Per-currency vs. base-currency limit representation; a parent/group credit-limit hierarchy; whether the trigger point is configurable to quote or booking stage; whether a credit hold is a true hard block and what role can override it; whether AR aging buckets (vs. a flat total) drive the calculation; any dunning/statement automation; any bad-debt or credit-insurance tracking; any formal limit-approval workflow. No sourced CW1 material was found for any of these — they are not asserted as fact anywhere in this document.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Magaya Supply Chain — confirmed vs. unconfirmed</h2>
+    <p class="section-sub">Sourced to the official <em>Magaya Cargo System User Manual, Part II: Accounting</em> — a real primary-source PDF with screenshots of the actual product. Dated 2009, pre-dating the 2023 Descartes acquisition; current-version confirmation wasn't reachable (help.magaya.com is a JS-rendered SPA that returned an empty shell to fetch tools).</p>
+
+    <div class="finding">
+      <span class="tag confirmed">confirmed</span>
+      <div class="finding-body">
+        <p>When a customer is over the limit, the system can independently enforce any combination of three gates: <strong>"Do not receive more cargo," "Do not accept more bookings (online also)," "Do not release the cargo."</strong> Three distinct, earlier, more granular lifecycle stops than CargoDesk's single invoice-time check.</p>
+      </div>
+    </div>
+
+    <div class="finding">
+      <span class="tag confirmed">confirmed</span>
+      <div class="finding-body">
+        <p>A real <strong>Aging A/R report</strong> — Current, 1–30, 31–60, 61–90, &gt;90 days, dollar totals per bucket per customer. Genuinely bucketed, not a flat total.</p>
+      </div>
+    </div>
+
+    <div class="finding">
+      <span class="tag confirmed">confirmed</span>
+      <div class="finding-body">
+        <p>Overpayments are tracked as <strong>customer credits</strong> (unapplied cash), usable against future invoices or refundable — implies a real payment/cash-application subledger CargoDesk doesn't have at all.</p>
+      </div>
+    </div>
+
+    <div class="finding">
+      <span class="tag unconfirmed">unconfirmed</span>
+      <div class="finding-body">
+        <p>Whether the credit-limit check itself nets out unapplied credits or accounts for committed-but-unbilled exposure — the manual's documented trigger conditions describe AR (invoiced) balances only.</p>
+      </div>
+    </div>
+
+    <div class="finding">
+      <span class="tag out">not documented</span>
+      <div class="finding-body">
+        <p>No override/bypass role for the hard block; no dunning or statement-of-account automation; no credit-insurance or bad-debt provisioning; no formal credit-approval workflow — none of these appear anywhere in the 106-page manual.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Gap analysis</h2>
+    <p class="section-sub">Ranked by value × feasibility, the same methodology the prior 8-platform competitive sweep (v0.69.0) used. Confirmed-by names which researched platform(s) actually back the finding — a gap logged without one is still real, just not a proven competitive gap.</p>
+    <div class="tbl-wrap">
+    <table>
+      <thead>
+        <tr><th>Gap</th><th>Confirmed by</th><th>Value</th><th>Feasibility</th><th>Story</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Only one trigger point (invoice time), not shipment/booking creation</td>
+          <td>CW1 + Magaya</td>
+          <td class="val-hi">High</td>
+          <td class="val-med">Medium</td>
+          <td><span class="ticket-id">TKT-Q00WHF</span></td>
+        </tr>
+        <tr>
+          <td>No AR aging — one flat total, not Current/30/60/90+ buckets</td>
+          <td>Magaya</td>
+          <td class="val-hi">High</td>
+          <td class="val-hi">Low</td>
+          <td><span class="ticket-id">TKT-O4DNFX</span></td>
+        </tr>
+        <tr>
+          <td>Only confirmed invoices count — accrued/uninvoiced exposure invisible</td>
+          <td>Logical gap<sup>†</sup></td>
+          <td class="val-med">Med–High</td>
+          <td class="val-med">Medium</td>
+          <td><span class="ticket-id">TKT-AJAEDO</span></td>
+        </tr>
+        <tr>
+          <td>No parent/group credit-limit rollup despite the hierarchy already existing</td>
+          <td>Neither<sup>‡</sup></td>
+          <td class="val-med">Medium</td>
+          <td class="val-hi">Low</td>
+          <td><span class="ticket-id">TKT-IA7I7J</span></td>
+        </tr>
+        <tr>
+          <td>Override authority not restricted to the lane's own trade manager</td>
+          <td>CW1 + direct rule</td>
+          <td class="val-hi">High</td>
+          <td class="val-med">Medium</td>
+          <td><span class="ticket-id">TKT-GLWMFP</span></td>
+        </tr>
+        <tr>
+          <td>No overdue-invoice reminder / dunning email</td>
+          <td>Neither<sup>‡</sup></td>
+          <td class="val-lo">Low–Med</td>
+          <td class="val-hi">Low</td>
+          <td><span class="ticket-id">TKT-SUEDWH</span></td>
+        </tr>
+        <tr>
+          <td>Credit limit hardcoded USD, ignores the customer's own currency</td>
+          <td>Direct rule</td>
+          <td class="val-med">Medium</td>
+          <td class="val-hi">Low</td>
+          <td><span class="ticket-id">TKT-O5I4NK</span></td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+    <p style="font-size:13px;color:var(--ink-3);margin-top:14px;">† Not claimed as a platform feature — CW1's confirmed WIP/accrual tracking suggests the concern is real, but whether it feeds CW1's own credit check is unconfirmed. Logged because a forward-looking credit check that only sees already-invoiced debt misses the actual point of the control. &nbsp;‡ Included despite no sourced confirmation from either platform, because CargoDesk already half-built the underlying plumbing (or already has the reusable infrastructure) and simply never wired it to credit control.</p>
+  </section>
+
+  <section>
+    <h2>The six stories</h2>
+    <p class="section-sub">All logged under Epic <span class="ticket-id">TKT-6XFJQM</span>, status Ready. Ordered by the ranking above.</p>
+
+    <div class="story">
+      <div class="story-head"><span class="story-title">AR aging buckets on credit-status</span><span class="ticket-id">TKT-O4DNFX</span></div>
+      <p>Extend <code>GET /api/customers/:id/credit-status</code> with Current/1-30/31-60/61-90/90+ buckets, computed from each confirmed invoice's date plus the customer's own <code>credit_terms_days</code>. Read-side aggregation only — no schema change. Surfaces on the Profile Billing tab and inside the existing invoice-generation gate warning.</p>
+    </div>
+
+    <div class="story">
+      <div class="story-head"><span class="story-title">Count accrued-but-uninvoiced exposure</span><span class="ticket-id">TKT-AJAEDO</span></div>
+      <p>Add a separate <code>committedExposure</code> figure — accrued/actualized SELL cost lines not yet invoiced — kept visibly distinct from real invoiced AR, never silently merged into one number.</p>
+    </div>
+
+    <div class="story">
+      <div class="story-head"><span class="story-title">Earlier trigger points</span><span class="ticket-id">TKT-Q00WHF</span></div>
+      <p>A soft, informational check at shipment creation (parties often aren't all known yet), and a real blocking gate at carrier-booking send time — reusing <code>CarrierBookingGateModal</code>'s already-established blocking pattern rather than inventing a new one.</p>
+    </div>
+
+    <div class="story">
+      <div class="story-head"><span class="story-title">Parent/group credit rollup</span><span class="ticket-id">TKT-IA7I7J</span></div>
+      <p>Wire the existing <code>resolveCustomerGroup()</code> helper into <code>credit-status</code> as an additive <code>groupOutstandingAr</code>, mirroring the non-breaking pattern the v0.59.0 margin-rollup toggle already used.</p>
+    </div>
+
+    <div class="story">
+      <div class="story-head"><span class="story-title">Trade-lane-scoped credit override, exclusive to that lane's trade manager</span><span class="ticket-id">TKT-GLWMFP</span></div>
+      <p>Explicit rule, not inferred: override authority belongs <strong>only</strong> to the <code>trade_manager</code> responsible for that shipment's own trade lane — never admin, operator, or a trade manager outside it. No fallback bypass for any other role, matching CW1's own confirmed department-exclusive precedent. <code>trade_manager</code> keeps its existing Accounting-wide hide (v0.29.0) — this is a narrow carve-out, not a reopening. Reuses <code>user_scope_items</code>'s already-working <code>item_type='trade_lane'</code> (matched via the same <code>portLanesMap</code> infrastructure <code>applyShipmentAccessFilter</code> already uses to scope a user's own shipment visibility) rather than inventing lane-ownership from scratch. A new, small surface outside Accounting lists credit-blocked/over-limit shipments scoped to the viewing manager's own lane(s); releasing there is step one, the actual invoice generation by operator/admin is step two — <code>trade_manager</code> still has no invoicing UI of its own. Server-side enforcement in both <code>resolveCreditGate</code> and the customer PUT route, not just hidden client-side.</p>
+    </div>
+
+    <div class="story">
+      <div class="story-head"><span class="story-title">Overdue-invoice reminders</span><span class="ticket-id">TKT-SUEDWH</span></div>
+      <p>Lower priority, deliberately not claimed as a competitive gap. Reuses the existing per-office SMTP mailer once AR aging (story one) exists to trigger off of.</p>
+    </div>
+
+    <div class="story">
+      <div class="story-head"><span class="story-title">Country-defaulted customer currency, wired into credit-limit interpretation</span><span class="ticket-id">TKT-O5I4NK</span></div>
+      <p>Direct follow-up request: a Spain-based customer's credit limit should default to EUR, not hardcoded USD, with conversion done at the shipment level. <code>customers.currency</code> already exists (used today only to pick a multi-currency invoice's grand-total display currency) — this extends its purpose rather than adding a second field. A small static ISO2→currency lookup (mirrors the existing <code>COUNTRY_TZ</code> map's own precedent) auto-fills it at customer-create time, still a real dropdown constrained to the existing currency list, always overridable. Conversion reuses the exact <code>toUsd</code>/FX machinery every cost line already uses — no new FX system. <strong>Data-safety note:</strong> every existing <code>credit_limit</code> was entered assuming USD; a one-time backfill locks <code>currency='USD'</code> on all existing customers first, so nothing already stored is silently reinterpreted — only new customers pick up the country default.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Explicitly out of scope</h2>
+    <p class="section-sub">Named directly rather than silently dropped — the same discipline the original competitive gap analysis applied to carrier networks and market-rate indices.</p>
+    <div class="out-box">
+      <h3>Not pursued</h3>
+      <ul>
+        <li><strong>Credit-bureau / external risk-reference integration.</strong> CW1's illion/Dun &amp; Bradstreet partnership needs a paid data-vendor relationship — the same structurally-out-of-reach class as the original sweep's carrier-network and market-index findings. No amount of engineering closes this alone.</li>
+        <li><strong>Trade credit insurance / bad-debt provisioning.</strong> Neither researched platform confirmed this as a real, documented feature — not a proven gap.</li>
+        <li><strong>A full payment/cash-application subledger.</strong> Magaya's "unapplied cash as customer credit" implies a genuine AR receipts module CargoDesk has no equivalent of at all. That's a separate, materially larger epic in its own right — a real receivables ledger, not a credit-control tweak — and shouldn't be scoped into this pass.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="sources">
+    <h2 style="font-size:16px;">Sources</h2>
+    <ol>
+      <li>cargowise.com/solutions/cargowise-enterprise/accounting/</li>
+      <li>cargowise.com/news/3-ways-configurations-can-help-you-digitise-your-logistics-operations-at-speed-and-scale/</li>
+      <li>cargowise.com/news/how-to-streamline-your-accounting-operations-and-speed-up-your-invoice-to-cash-process/</li>
+      <li>cargowise.com/news/streamline-credit-controls-and-improve-your-end-to-end-risk-management/</li>
+      <li>cargowise.com/solutions/cargowise-enterprise/credit-reports/</li>
+      <li>cargowise.com/news/five-new-accounting-features-in-cargowise-you-should-know-about/</li>
+      <li>Magaya Cargo System User Manual, Part II: Accounting — magaya.com/downloads/accounting_manual.pdf</li>
+    </ol>
+  </section>
+
+  <div class="foot">
+    <span>CargoDesk — Credit Control Depth</span>
+    <span>Epic TKT-6XFJQM · 7 stories · Ready</span>
+  </div>
+</div>
+
+</body></html>
