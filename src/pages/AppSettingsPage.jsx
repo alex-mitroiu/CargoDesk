@@ -1430,6 +1430,7 @@ export default function AppSettingsPage() {
   const [mdmSourceSaving, setMdmSourceSaving] = useState(false);
   const [screeningSourceSaving, setScreeningSourceSaving] = useState(false);
   const [kanbanSourceSaving, setKanbanSourceSaving] = useState(false);
+  const [customerSourceSaving, setCustomerSourceSaving] = useState(false);
   const fileInputRef = useRef(null);
   const saveTimers   = useRef({});
   const [previewOpen, setPreviewOpen] = useState({});
@@ -2148,6 +2149,46 @@ export default function AppSettingsPage() {
                     Same one-way cutover lever as the three sources above: switching back does not
                     pull remote changes back, and existing local board data is never copied
                     automatically — run the migration script first if switching to Remote.
+                  </p>
+                </div>
+              )}
+              {settings && isAdmin && (
+                <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
+                  padding: "14px 16px" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                    <div style={{ fontFamily: T.body, fontSize: 13, color: T.text, fontWeight: 600 }}>
+                      Customer data source
+                    </div>
+                    <select
+                      value={settings.customer_source || 'local'}
+                      disabled={customerSourceSaving}
+                      onChange={e => {
+                        const v = e.target.value;
+                        const prev = settings.customer_source || 'local';
+                        if (v === prev) return;
+                        setCustomerSourceSaving(true);
+                        api.settings.updateCustomerSource(v)
+                          .then(() => {
+                            setSettings(s => ({ ...s, customer_source: v }));
+                            toast.success(`Customer data source switched to ${v === 'remote' ? 'Customer Service' : 'Local (this app)'}`);
+                          })
+                          .catch(() => toast.error("Failed to switch customer data source"))
+                          .finally(() => setCustomerSourceSaving(false));
+                      }}
+                      style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${T.border}`,
+                        background: T.bg, color: T.text, fontFamily: T.mono, fontSize: 12, cursor: customerSourceSaving ? "wait" : "pointer" }}>
+                      <option value="local">Local (this app)</option>
+                      <option value="remote">Remote (Customer Service)</option>
+                    </select>
+                  </div>
+                  <p style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted, margin: "8px 0 0 0", lineHeight: 1.5 }}>
+                    Where customers/identifiers/screening records/contacts are read from and
+                    written to — the standalone Customer Service, or this app's own local tables
+                    (today's behavior, and the default). Uploaded customer documents always stay
+                    local regardless of this setting. Same one-way cutover lever as the four
+                    sources above: switching back does not pull remote changes back, and existing
+                    local customer data is never copied automatically — run the migration script
+                    first if switching to Remote.
                   </p>
                 </div>
               )}

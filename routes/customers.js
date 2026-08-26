@@ -5,11 +5,19 @@ module.exports = function customersRoutes(app, ctx) {
           mapCustomer, mapCustomerIdentifier, mapCustomerScreening, mapCustomerDoc, mapCustomerContact,
           screenShipmentById,
           sanctionsMap, normSanctionName,
-          getFxRates, fxCache, getSettings,
+          getFxRates, fxCache, getSettings, callCustomerService, getCustomerRow,
           validCoord, roundCents, toUsd, resolveCustomerGroup,
           computeArExposure, matchesScopeItem, userOwnsLaneForShipment, userOwnsLaneForCustomer,
           OVERRIDE_GRACE_MS, logEntityEvent,
           UPLOADS_DIR, fs, path } = ctx;
+
+  // 'local' (default) = every route below runs against this monolith's own tables, exactly as
+  // before this cut. 'remote' = the standalone Customer Service (services/customers/), reached
+  // through callCustomerService — same one-way-toggle shape routes/contracts.js/mdm.js/
+  // sanctions.js/kanban.js already established. customer_documents and customer_roles are
+  // deliberately NOT part of this toggle (see ARCHITECTURE.md §8.1) — their routes stay local
+  // unconditionally, regardless of customer_source.
+  const isRemote = () => (getSettings().customer_source || "local") === "remote";
 
   // Country -> currency default (TKT-O5I4NK) — deliberately scoped to only the currencies this
   // app's own credit/billing currency picker already offers (CURRENCIES, MdmCustomersPage.jsx),
@@ -44,7 +52,9 @@ module.exports = function customersRoutes(app, ctx) {
   // name-match anyway, just lazily). Now screenCustomer() immediately re-screens every shipment
   // that references this customer via any of its 13 possible party slots — the 4 fixed FK
   // columns plus shipment_parties — so a HIT propagates the moment it's discovered, not later.
-  function rescreenShipmentsForCustomer(customerId) {
+  // shipments/shipment_parties are permanently monolith-owned regardless of customer_source, so
+  // this lookup never needs a toggle branch of its own — only the screenShipmentById it drives.
+  async function rescreenShipmentsForCustomer(customerId) {
     const ids = new Set([
       ...db.prepare("SELECT id FROM shipments WHERE shipper_id=? OR consignee_id=? OR principal_id=? OR notify_id=?")
         .all(customerId, customerId, customerId, customerId).map(r => r.id),
@@ -54,28 +64,38 @@ module.exports = function customersRoutes(app, ctx) {
     for (const shipmentId of ids) {
       const prev = db.prepare("SELECT result, overridden_at FROM shipment_screenings WHERE shipment_id=?").get(shipmentId);
       const isOverridden = prev?.result === 'CLEAR' && prev?.overridden_at;
-      if (!isOverridden) screenShipmentById(shipmentId);
+      if (!isOverridden) await screenShipmentById(shipmentId);
     }
   }
 
-  // Screen a customer against the loaded sanctions map and persist the result
-  function screenCustomer(customerId) {
-    const c = db.prepare("SELECT * FROM customers WHERE id=?").get(customerId);
+  // Screen a customer against the loaded sanctions map and persist the result. The MATCH decision
+  // itself can never move into the Customer Service (it depends on sanctionsMap, monolith-owned)
+  // — but the customer row being matched against must come through getCustomerRow, same as every
+  // other customer read in this cut, or a customer created after a remote cutover would never be
+  // found here at all. Only the already-decided result's WRITE branches on customer_source.
+  async function screenCustomer(customerId) {
+    const c = await getCustomerRow(customerId);
     if (!c) return null;
-    const match  = sanctionsMap.get(normSanctionName(c.company_name || ''));
+    const match  = sanctionsMap.get(normSanctionName(c.companyName || ''));
     const result = match ? "HIT" : "CLEAR";
     const hits   = match ? [{ entityName: match.entityName, program: match.program, source: match.source }] : [];
     const now    = new Date().toISOString();
-    const id     = `CSC-${uid()}`;
-    db.prepare(`INSERT INTO customer_screenings (id,customer_id,screened_at,result,hits)
-      VALUES (?,?,?,?,?)
-      ON CONFLICT(customer_id) DO UPDATE SET
-        screened_at=excluded.screened_at, result=excluded.result,
-        hits=excluded.hits, overridden_at=NULL, override_reason=NULL`)
-      .run(id, customerId, now, result, JSON.stringify(hits));
-    rescreenShipmentsForCustomer(customerId);
-    const row = db.prepare("SELECT * FROM customer_screenings WHERE customer_id=?").get(customerId);
-    return mapCustomerScreening(row);
+    let screening;
+    if (isRemote()) {
+      screening = await callCustomerService("PUT", `/internal/customers/${customerId}/screening`, { result, hits, screenedAt: now });
+    } else {
+      const id = `CSC-${uid()}`;
+      db.prepare(`INSERT INTO customer_screenings (id,customer_id,screened_at,result,hits)
+        VALUES (?,?,?,?,?)
+        ON CONFLICT(customer_id) DO UPDATE SET
+          screened_at=excluded.screened_at, result=excluded.result,
+          hits=excluded.hits, overridden_at=NULL, override_reason=NULL`)
+        .run(id, customerId, now, result, JSON.stringify(hits));
+      const row = db.prepare("SELECT * FROM customer_screenings WHERE customer_id=?").get(customerId);
+      screening = mapCustomerScreening(row);
+    }
+    await rescreenShipmentsForCustomer(customerId);
+    return screening;
   }
 
   const CUST_JOIN = `SELECT c.*, cs.result AS screening_result, pc.company_name AS parent_customer_name
@@ -98,9 +118,43 @@ module.exports = function customersRoutes(app, ctx) {
 
   // ─── Customers ────────────────────────────────────────────────────────────
 
-  app.get("/api/customers", (req, res) => {
+  app.get("/api/customers", async (req, res) => {
     const { search='', city='', country='', customerId='', role='', limit='50', offset='0' } = req.query;
     const lim = Math.min(parseInt(limit)||50, 200), off = parseInt(offset)||0;
+    // roleFilter (CustomerCombobox) / category segment (MdmCustomersPage list) — narrows to
+    // customers actually used in any of one-or-more comma-separated roles; deliberately a soft
+    // filter (a not-yet-used customer is still reachable by clearing it client-side), never a
+    // hard block enforced server-side beyond the query itself.
+    const roleList = role.split(',').map(r => r.trim()).filter(Boolean);
+
+    if (isRemote()) {
+      // Role-eligibility resolution never needs a toggle branch of its own — it's a UNION over
+      // shipments/shipment_parties, both permanently monolith-owned regardless of customer_source
+      // — resolved locally, then passed to the service as a plain ids= filter.
+      let roleEligibleIds = null;
+      if (roleList.length) {
+        roleEligibleIds = db.prepare(
+          `SELECT DISTINCT customer_id FROM (${CUSTOMER_ROLE_USAGE_SQL}) WHERE role IN (${roleList.map(() => '?').join(',')})`
+        ).all(...roleList).map(r => r.customer_id);
+        if (roleEligibleIds.length === 0) return ok(res, { results: [], total: 0, limit: lim, offset: off });
+      }
+      try {
+        const qs = new URLSearchParams({ search, city, country, customerId, limit: String(lim), offset: String(off) });
+        if (roleEligibleIds) qs.set("ids", roleEligibleIds.join(","));
+        const data = await callCustomerService("GET", `/internal/customers?${qs}`);
+        // Same live derived-roles batch-attach as local mode, against the returned page only.
+        let rolesByCustomer = {};
+        if (data.results.length) {
+          const ids = data.results.map(r => r.id);
+          const roleRows = db.prepare(
+            `SELECT customer_id, role FROM (${CUSTOMER_ROLE_USAGE_SQL}) WHERE customer_id IN (${ids.map(() => '?').join(',')})`
+          ).all(...ids);
+          for (const r of roleRows) (rolesByCustomer[r.customer_id] ??= []).push(r.role);
+        }
+        return ok(res, { ...data, results: data.results.map(r => ({ ...r, roles: rolesByCustomer[r.id] || [] })) });
+      } catch (e) { return err(res, e.message, e.status || 502); }
+    }
+
     const conditions = [], params = [];
     const s = search.trim();
     if (s) { conditions.push("(c.company_name LIKE ? OR c.email LIKE ? OR c.phone LIKE ? OR c.id LIKE ?)"); params.push(`%${s}%`, `%${s}%`, `%${s}%`, `%${s}%`); }
@@ -110,11 +164,6 @@ module.exports = function customersRoutes(app, ctx) {
     if (co) { conditions.push("c.country_iso2 = ?"); params.push(co); }
     const cid = customerId.trim();
     if (cid) { conditions.push("c.id LIKE ?"); params.push(`%${cid}%`); }
-    // roleFilter (CustomerCombobox) / category segment (MdmCustomersPage list) — narrows to
-    // customers actually used in any of one-or-more comma-separated roles; deliberately a soft
-    // filter (a not-yet-used customer is still reachable by clearing it client-side), never a
-    // hard block enforced server-side beyond the query itself.
-    const roleList = role.split(',').map(r => r.trim()).filter(Boolean);
     if (roleList.length) {
       conditions.push(`c.id IN (SELECT customer_id FROM (${CUSTOMER_ROLE_USAGE_SQL}) WHERE role IN (${roleList.map(() => '?').join(',')}))`);
       params.push(...roleList);
@@ -151,7 +200,11 @@ module.exports = function customersRoutes(app, ctx) {
     ok(res, { enabled: true, hits });
   });
 
-  app.get("/api/customers/:id", (req, res) => {
+  app.get("/api/customers/:id", async (req, res) => {
+    if (isRemote()) {
+      try { return ok(res, await callCustomerService("GET", `/internal/customers/${req.params.id}`)); }
+      catch (e) { return err(res, e.message, e.status || 502); }
+    }
     const r = db.prepare(`${CUST_JOIN} WHERE c.id=?`).get(req.params.id);
     if (!r) return err(res, "Not found", 404);
     ok(res, mapCustomer(r));
@@ -178,7 +231,7 @@ module.exports = function customersRoutes(app, ctx) {
     // reporting — reused here rather than a second lane-hierarchy concept) — additive: the
     // individual customer's own outstandingAr above is never replaced by this, only
     // supplemented, same non-breaking pattern the margin rollup toggle already established.
-    const groupIds = resolveCustomerGroup(c.id).filter(gid => gid !== c.id);
+    const groupIds = (await resolveCustomerGroup(c.id)).filter(gid => gid !== c.id);
     let groupOutstandingAr = outstandingAr;
     for (const gid of groupIds) {
       groupOutstandingAr += computeArExposure(gid, c.credit_terms_days).outstandingAr;
@@ -205,23 +258,28 @@ module.exports = function customersRoutes(app, ctx) {
   // profile field, credit_hold included when SETTING it — only the release direction is this
   // exclusive) — mirrors this file's own screening/override precedent (a dedicated,
   // reason-required action, not a side effect of a generic edit).
-  app.post("/api/customers/:id/credit-hold/release", auth(), (req, res) => {
+  app.post("/api/customers/:id/credit-hold/release", auth(), async (req, res) => {
     const { shipmentId = '', reason = '' } = req.body;
     if (!reason.trim()) return err(res, "A reason is required to release a credit hold");
-    const c = db.prepare("SELECT * FROM customers WHERE id=?").get(req.params.id);
+    const c = await getCustomerRow(req.params.id);
     if (!c) return err(res, "Customer not found", 404);
-    if (!c.credit_hold) return err(res, "This customer is not currently on credit hold");
+    if (!c.creditHold) return err(res, "This customer is not currently on credit hold");
     const shipment = shipmentId ? db.prepare("SELECT * FROM shipments WHERE id=?").get(shipmentId) : null;
     if (!shipment) return err(res, "shipmentId must reference a real shipment involving this customer");
     if (shipment.shipper_id !== c.id && shipment.consignee_id !== c.id && shipment.principal_id !== c.id)
       return err(res, "That shipment doesn't involve this customer");
     if (!userOwnsLaneForShipment(req.user, shipment))
       return err(res, "Only the trade manager responsible for this shipment's own trade lane may release a credit hold", 403);
-    db.prepare("UPDATE customers SET credit_hold=0, credit_hold_reason='' WHERE id=?").run(c.id);
+    if (isRemote()) {
+      try { await callCustomerService("PUT", `/internal/customers/${c.id}`, { ...c, creditHold: false, creditHoldReason: '' }); }
+      catch (e) { return err(res, e.message, e.status || 502); }
+    } else {
+      db.prepare("UPDATE customers SET credit_hold=0, credit_hold_reason='' WHERE id=?").run(c.id);
+    }
     logEntityEvent('customer', c.id, 'CREDIT_HOLD_RELEASED', 'creditHold', 'true', 'false',
       JSON.stringify({ reason: reason.trim(), shipmentId, releasedBy: req.user.email || req.user.id }));
-    const row = db.prepare(`${CUST_JOIN} WHERE c.id=?`).get(c.id);
-    ok(res, mapCustomer(row));
+    const row = await getCustomerRow(c.id);
+    ok(res, row);
   });
 
   // Same exclusivity, for the OTHER credit block: over-limit is a soft warning everywhere else
@@ -230,29 +288,33 @@ module.exports = function customersRoutes(app, ctx) {
   // consumable gate. Approving here does not itself generate anything; it hands operator/admin
   // a one-time permission slip that POST .../documents/generate consumes on the very next
   // FR01/FR02 it produces for this shipment while still over limit.
-  app.post("/api/shipments/:id/credit-override/approve", auth(), (req, res) => {
-    const { reason = '' } = req.body;
-    if (!reason.trim()) return err(res, "A reason is required to approve an over-limit override");
-    const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
-    if (!shipment) return err(res, "Shipment not found", 404);
-    if (!userOwnsLaneForShipment(req.user, shipment))
-      return err(res, "Only the trade manager responsible for this shipment's own trade lane may approve an over-limit override", 403);
-    const respId = shipment.principal_id || shipment.consignee_id || null;
-    if (!respId) return err(res, "This shipment has no Principal or Consignee to bill");
-    const c = db.prepare("SELECT * FROM customers WHERE id=?").get(respId);
-    if (!c || c.credit_limit == null) return err(res, "The responsible party has no credit limit set");
-    (async () => {
-      const { outstandingAr, committedExposure } = computeArExposure(c.id, c.credit_terms_days);
-      const limitUsd = await toUsd(c.credit_limit, c.currency || 'USD');
+  app.post("/api/shipments/:id/credit-override/approve", auth(), async (req, res) => {
+    try {
+      const { reason = '' } = req.body;
+      if (!reason.trim()) return err(res, "A reason is required to approve an over-limit override");
+      const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
+      if (!shipment) return err(res, "Shipment not found", 404);
+      if (!userOwnsLaneForShipment(req.user, shipment))
+        return err(res, "Only the trade manager responsible for this shipment's own trade lane may approve an over-limit override", 403);
+      const respId = shipment.principal_id || shipment.consignee_id || null;
+      if (!respId) return err(res, "This shipment has no Principal or Consignee to bill");
+      const c = await getCustomerRow(respId);
+      if (!c || c.creditLimit == null) return err(res, "The responsible party has no credit limit set");
+      const { outstandingAr, committedExposure } = computeArExposure(c.id, c.creditTermsDays);
+      const limitUsd = await toUsd(c.creditLimit, c.currency || 'USD');
       if (roundCents(outstandingAr + committedExposure) <= limitUsd)
         return err(res, "This shipment's responsible party is not currently over their credit limit");
+      // credit_overrides itself stays monolith-owned regardless of customer_source — it's a
+      // real hard FK to customers.id today, but that FK is only ever meaningfully enforced in
+      // local mode; a remote-mode row still records the right customerId, just without the DB
+      // itself validating that id exists.
       const id = `COV-${uid()}`;
       const now = new Date().toISOString();
       db.prepare(`INSERT INTO credit_overrides (id,customer_id,shipment_id,override_type,reason,approved_by,approved_by_name,created_at)
         VALUES (?,?,?,?,?,?,?,?)`)
         .run(id, c.id, shipment.id, 'over_limit', reason.trim(), req.user.id, req.user.email || '', now);
       ok(res, { id, customerId: c.id, shipmentId: shipment.id, reason: reason.trim(), approvedBy: req.user.email || '', createdAt: now }, 201);
-    })().catch(e => err(res, e.message || "Failed to approve override", 500));
+    } catch (e) { err(res, e.message || "Failed to approve override", 500); }
   });
 
   app.get("/api/shipments/:id/credit-override", auth(), (req, res) => {
@@ -277,7 +339,19 @@ module.exports = function customersRoutes(app, ctx) {
     const isTradeManager = req.user.roles?.includes('trade_manager');
     const rows = [];
 
-    const heldCustomers = db.prepare("SELECT * FROM customers WHERE credit_hold=1").all();
+    // Both bulk scans normalize to the same camelCase shape either way — local rows go through
+    // mapCustomer, remote rows already arrive mapped — so the loop bodies below never branch.
+    let heldCustomers, limitedCustomers;
+    if (isRemote()) {
+      try {
+        heldCustomers = await callCustomerService("GET", "/internal/customers?creditHold=1");
+        limitedCustomers = await callCustomerService("GET", "/internal/customers?creditHold=0&hasCreditLimit=1");
+      } catch (e) { return err(res, e.message, e.status || 502); }
+    } else {
+      heldCustomers = db.prepare("SELECT * FROM customers WHERE credit_hold=1").all().map(mapCustomer);
+      limitedCustomers = db.prepare("SELECT * FROM customers WHERE credit_hold=0 AND credit_limit IS NOT NULL").all().map(mapCustomer);
+    }
+
     for (const c of heldCustomers) {
       const shipments = db.prepare(
         `SELECT * FROM shipments WHERE (shipper_id=? OR consignee_id=? OR principal_id=?) AND status NOT IN ('Completed','Cancelled')`
@@ -287,16 +361,15 @@ module.exports = function customersRoutes(app, ctx) {
         if (isTradeManager && !canAct) continue;
         const role = s.shipper_id === c.id ? 'Shipper' : s.consignee_id === c.id ? 'Consignee' : 'Principal';
         rows.push({
-          shipmentId: s.id, customerId: c.id, companyName: c.company_name, role,
-          blockType: 'hold', detail: c.credit_hold_reason || '', canAct,
+          shipmentId: s.id, customerId: c.id, companyName: c.companyName, role,
+          blockType: 'hold', detail: c.creditHoldReason || '', canAct,
         });
       }
     }
 
-    const limitedCustomers = db.prepare("SELECT * FROM customers WHERE credit_hold=0 AND credit_limit IS NOT NULL").all();
     for (const c of limitedCustomers) {
-      const { outstandingAr, committedExposure } = computeArExposure(c.id, c.credit_terms_days);
-      const limitUsd = await toUsd(c.credit_limit, c.currency || 'USD');
+      const { outstandingAr, committedExposure } = computeArExposure(c.id, c.creditTermsDays);
+      const limitUsd = await toUsd(c.creditLimit, c.currency || 'USD');
       if (roundCents(outstandingAr + committedExposure) <= limitUsd) continue;
       const shipments = db.prepare(
         `SELECT * FROM shipments WHERE (principal_id=? OR consignee_id=?) AND status NOT IN ('Completed','Cancelled')`
@@ -306,7 +379,7 @@ module.exports = function customersRoutes(app, ctx) {
         if (isTradeManager && !canAct) continue;
         const role = s.principal_id === c.id ? 'Principal' : 'Consignee';
         rows.push({
-          shipmentId: s.id, customerId: c.id, companyName: c.company_name, role,
+          shipmentId: s.id, customerId: c.id, companyName: c.companyName, role,
           blockType: 'over_limit', detail: `Exposure ${roundCents(outstandingAr + committedExposure)} > limit ${limitUsd} (USD)`, canAct,
         });
       }
@@ -322,7 +395,7 @@ module.exports = function customersRoutes(app, ctx) {
   // a block, per this Epic's own explicit scope decision (holding up shipment progress over a
   // billing-process lag would block the wrong side of the business). Bounded by construction:
   // only shipments with a genuinely completed "delivered" milestone are ever considered.
-  app.get("/api/invoice-deadlines/overdue", auth(), (req, res) => {
+  app.get("/api/invoice-deadlines/overdue", auth(), async (req, res) => {
     const rows = db.prepare(`
       SELECT s.id AS shipment_id, s.principal_id, s.principal_name, s.consignee_id, s.consignee_name,
              m.completed_at AS delivered_at
@@ -331,16 +404,34 @@ module.exports = function customersRoutes(app, ctx) {
       WHERE s.status != 'Cancelled'
     `).all();
 
+    // In remote mode, one bulk fetch keyed by every distinct responsible-party id, rather than a
+    // remote round trip per shipment — same batching shape reports.js's own two customer-heavy
+    // reports use. Local mode is untouched: still one cheap per-row SQLite lookup, exactly as
+    // before this cut.
+    let deadlineDaysById = null;
+    if (isRemote()) {
+      const respIds = [...new Set(rows.map(r => r.principal_id || r.consignee_id).filter(Boolean))];
+      deadlineDaysById = {};
+      if (respIds.length) {
+        try {
+          const custRows = await callCustomerService("GET", `/internal/customers?ids=${respIds.map(encodeURIComponent).join(",")}`);
+          custRows.forEach(c => { deadlineDaysById[c.id] = c.invoiceDeadlineDays; });
+        } catch (e) { return err(res, e.message, e.status || 502); }
+      }
+    }
+
     const todayMs = Date.now();
     const results = [];
     for (const r of rows) {
       const respId   = r.principal_id || r.consignee_id || null;
       const respName = r.principal_id ? r.principal_name : r.consignee_name;
       if (!respId) continue;
-      const c = db.prepare("SELECT invoice_deadline_days FROM customers WHERE id=?").get(respId);
-      if (!c || c.invoice_deadline_days == null) continue;
+      const invoiceDeadlineDays = deadlineDaysById
+        ? deadlineDaysById[respId]
+        : db.prepare("SELECT invoice_deadline_days FROM customers WHERE id=?").get(respId)?.invoice_deadline_days;
+      if (invoiceDeadlineDays == null) continue;
       const daysSinceDelivery = Math.floor((todayMs - new Date(r.delivered_at).getTime()) / 86400000);
-      const daysOverdue = daysSinceDelivery - c.invoice_deadline_days;
+      const daysOverdue = daysSinceDelivery - invoiceDeadlineDays;
       if (daysOverdue <= 0) continue;
       const hasInvoice = db.prepare(
         "SELECT 1 FROM shipment_documents WHERE shipment_id=? AND doc_type IN ('FR01','FR02') AND status='confirmed' LIMIT 1"
@@ -348,7 +439,7 @@ module.exports = function customersRoutes(app, ctx) {
       if (hasInvoice) continue;
       results.push({
         shipmentId: r.shipment_id, customerId: respId, companyName: respName || '',
-        deliveredAt: r.delivered_at, deadlineDays: c.invoice_deadline_days, daysOverdue,
+        deliveredAt: r.delivered_at, deadlineDays: invoiceDeadlineDays, daysOverdue,
       });
     }
     results.sort((a, b) => b.daysOverdue - a.daysOverdue);
@@ -369,7 +460,17 @@ module.exports = function customersRoutes(app, ctx) {
     return false;
   }
 
-  app.post("/api/customers", auth(), (req, res) => {
+  app.post("/api/customers", auth(), async (req, res) => {
+    if (isRemote()) {
+      try {
+        const created = await callCustomerService("POST", "/internal/customers", req.body);
+        if (sanctionsMap.size > 0) {
+          await screenCustomer(created.id);
+          return ok(res, await getCustomerRow(created.id), 201);
+        }
+        return ok(res, created, 201);
+      } catch (e) { return err(res, e.message, e.status || 502); }
+    }
     const { companyName, address1='', address2='', city='', state='', postalCode='',
             countryIso2='', phone='', fax='', email='', website='', notes='', currency='',
             creditLimit=null, creditTermsDays=null, invoiceDeadlineDays=null, creditHold=false, creditHoldReason='',
@@ -406,12 +507,28 @@ module.exports = function customersRoutes(app, ctx) {
       .run(id, companyName.trim(), address1, address2, city, state, postalCode, ccU, phone, fax, email, website, notes, createdAt, resolvedCurrency,
            cl, ctd, idd, creditHold ? 1 : 0, creditHold ? creditHoldReason.trim() : '', reminderEnabled ? 1 : 0, rid, parentCustomerId || null,
            classifiedLocation ? 1 : 0, lat, lng, isNvocc ? 1 : 0, isNvocc ? fmcNumber.trim() : '', bbd, psd, holidayUnlocode.trim().toUpperCase());
-    if (sanctionsMap.size > 0) screenCustomer(id);
+    if (sanctionsMap.size > 0) await screenCustomer(id);
     const row = db.prepare(`${CUST_JOIN} WHERE c.id=?`).get(id);
     ok(res, mapCustomer(row), 201);
   });
 
-  app.put("/api/customers/:id", auth(), (req, res) => {
+  app.put("/api/customers/:id", auth(), async (req, res) => {
+    if (isRemote()) {
+      const { creditHold = false } = req.body;
+      try {
+        // Same exclusivity check as local mode, just fetched remotely first — releasing an
+        // active credit_hold is exclusively the shipment's own lane trade_manager's call.
+        const existing = await callCustomerService("GET", `/internal/customers/${req.params.id}`).catch(() => null);
+        if (existing?.creditHold && !creditHold && !userOwnsLaneForCustomer(req.user, req.params.id))
+          return err(res, "Only the trade manager responsible for this customer's trade lane may release a credit hold — use the Credit Overrides queue", 403);
+        const updated = await callCustomerService("PUT", `/internal/customers/${req.params.id}`, req.body);
+        if (sanctionsMap.size > 0) {
+          await screenCustomer(req.params.id);
+          return ok(res, await getCustomerRow(req.params.id));
+        }
+        return ok(res, updated);
+      } catch (e) { return err(res, e.message, e.status || 502); }
+    }
     const { companyName, address1='', address2='', city='', state='', postalCode='',
             countryIso2='', phone='', fax='', email='', website='', notes='', currency='USD',
             creditLimit=null, creditTermsDays=null, invoiceDeadlineDays=null, creditHold=false, creditHoldReason='',
@@ -460,23 +577,35 @@ module.exports = function customersRoutes(app, ctx) {
            classifiedLocation ? 1 : 0, lat, lng, isNvocc ? 1 : 0, isNvocc ? fmcNumber.trim() : '',
            bbd, psd, holidayUnlocode.trim().toUpperCase(), req.params.id);
     if (info.changes === 0) return err(res, "Not found", 404);
-    if (sanctionsMap.size > 0) screenCustomer(req.params.id);
+    if (sanctionsMap.size > 0) await screenCustomer(req.params.id);
     const row = db.prepare(`${CUST_JOIN} WHERE c.id=?`).get(req.params.id);
     ok(res, mapCustomer(row));
   });
 
-  app.delete("/api/customers/:id", auth(), (req, res) => {
+  app.delete("/api/customers/:id", auth(), async (req, res) => {
     // Carrier Line Agents — agent_customer_id has no ON DELETE clause (deliberately: neither
     // CASCADE nor SET NULL fits a NOT NULL master-data pointer that IS the row's reason for
     // existing), so this app-level guard is the actual enforcement, mirroring offices.js's own
     // "referenced by shipments — deactivate it instead" pattern for the same class of problem.
+    // Kept unconditional, regardless of customer_source — carrier_agents itself moved to the MDM
+    // Service at v0.80.0, so this guard already only reflects reality when mdm_source='local';
+    // a named, pre-existing gap (ARCHITECTURE.md §8.1), not this cut's job to widen or fix.
     const inUse = db.prepare("SELECT id FROM carrier_agents WHERE agent_customer_id=? LIMIT 1").get(req.params.id);
     if (inUse) return err(res, "Customer is assigned as a carrier line agent — remove that assignment first");
-    const info = db.prepare("DELETE FROM customers WHERE id=?").run(req.params.id);
-    if (info.changes === 0) return err(res, "Not found", 404);
-    db.prepare("DELETE FROM customer_identifiers WHERE customer_id=?").run(req.params.id);
-    db.prepare("DELETE FROM customer_screenings  WHERE customer_id=?").run(req.params.id);
-    db.prepare("DELETE FROM customer_contacts    WHERE customer_id=?").run(req.params.id);
+
+    if (isRemote()) {
+      try { await callCustomerService("DELETE", `/internal/customers/${req.params.id}`); }
+      catch (e) { return err(res, e.message, e.status || 502); }
+    } else {
+      const info = db.prepare("DELETE FROM customers WHERE id=?").run(req.params.id);
+      if (info.changes === 0) return err(res, "Not found", 404);
+      db.prepare("DELETE FROM customer_identifiers WHERE customer_id=?").run(req.params.id);
+      db.prepare("DELETE FROM customer_screenings  WHERE customer_id=?").run(req.params.id);
+      db.prepare("DELETE FROM customer_contacts    WHERE customer_id=?").run(req.params.id);
+    }
+    // customer_documents stays local-only regardless of customer_source (see ARCHITECTURE.md
+    // §8.1) — its own cleanup always runs, even when the customer row itself just got deleted
+    // remotely.
     const docs = db.prepare("SELECT stored_name FROM customer_documents WHERE customer_id=?").all(req.params.id);
     for (const d of docs) {
       try { fs.unlinkSync(path.join(UPLOADS_DIR, d.stored_name)); } catch {}
@@ -487,12 +616,20 @@ module.exports = function customersRoutes(app, ctx) {
 
   // ─── Customer Identifiers ─────────────────────────────────────────────────
 
-  app.get("/api/customers/:id/identifiers", auth(), (req, res) => {
+  app.get("/api/customers/:id/identifiers", auth(), async (req, res) => {
+    if (isRemote()) {
+      try { return ok(res, await callCustomerService("GET", `/internal/customers/${req.params.id}/identifiers`)); }
+      catch (e) { return err(res, e.message, e.status || 502); }
+    }
     const rows = db.prepare("SELECT * FROM customer_identifiers WHERE customer_id=? ORDER BY is_primary DESC, created_at ASC").all(req.params.id);
     ok(res, rows.map(mapCustomerIdentifier));
   });
 
-  app.post("/api/customers/:id/identifiers", auth(), (req, res) => {
+  app.post("/api/customers/:id/identifiers", auth(), async (req, res) => {
+    if (isRemote()) {
+      try { return ok(res, await callCustomerService("POST", `/internal/customers/${req.params.id}/identifiers`, req.body), 201); }
+      catch (e) { return err(res, e.message, e.status || 502); }
+    }
     if (!db.prepare("SELECT id FROM customers WHERE id=?").get(req.params.id))
       return err(res, "Customer not found", 404);
     const { idType='VAT', idCode='', countryIso2='', label='', isPrimary=false } = req.body;
@@ -507,7 +644,11 @@ module.exports = function customersRoutes(app, ctx) {
     ok(res, mapCustomerIdentifier(row), 201);
   });
 
-  app.put("/api/customers/:id/identifiers/:iid", auth(), (req, res) => {
+  app.put("/api/customers/:id/identifiers/:iid", auth(), async (req, res) => {
+    if (isRemote()) {
+      try { return ok(res, await callCustomerService("PUT", `/internal/customers/${req.params.id}/identifiers/${req.params.iid}`, req.body)); }
+      catch (e) { return err(res, e.message, e.status || 502); }
+    }
     const existing = db.prepare("SELECT * FROM customer_identifiers WHERE id=? AND customer_id=?").get(req.params.iid, req.params.id);
     if (!existing) return err(res, "Not found", 404);
     const { idType=existing.id_type, idCode=existing.id_code, countryIso2=existing.country_iso2,
@@ -521,7 +662,11 @@ module.exports = function customersRoutes(app, ctx) {
     ok(res, mapCustomerIdentifier(row));
   });
 
-  app.delete("/api/customers/:id/identifiers/:iid", auth(), (req, res) => {
+  app.delete("/api/customers/:id/identifiers/:iid", auth(), async (req, res) => {
+    if (isRemote()) {
+      try { return ok(res, await callCustomerService("DELETE", `/internal/customers/${req.params.id}/identifiers/${req.params.iid}`)); }
+      catch (e) { return err(res, e.message, e.status || 502); }
+    }
     const info = db.prepare("DELETE FROM customer_identifiers WHERE id=? AND customer_id=?").run(req.params.iid, req.params.id);
     if (info.changes === 0) return err(res, "Not found", 404);
     ok(res, { deleted: req.params.iid });
@@ -531,12 +676,20 @@ module.exports = function customersRoutes(app, ctx) {
   // Named people at this customer (Sales/Operations/Accounts/Other) — replaces the old
   // "cram it into the notes field" workaround. Mirrors the identifiers CRUD shape exactly.
 
-  app.get("/api/customers/:id/contacts", auth(), (req, res) => {
+  app.get("/api/customers/:id/contacts", auth(), async (req, res) => {
+    if (isRemote()) {
+      try { return ok(res, await callCustomerService("GET", `/internal/customers/${req.params.id}/contacts`)); }
+      catch (e) { return err(res, e.message, e.status || 502); }
+    }
     const rows = db.prepare("SELECT * FROM customer_contacts WHERE customer_id=? ORDER BY is_primary DESC, created_at ASC").all(req.params.id);
     ok(res, rows.map(mapCustomerContact));
   });
 
-  app.post("/api/customers/:id/contacts", auth(), (req, res) => {
+  app.post("/api/customers/:id/contacts", auth(), async (req, res) => {
+    if (isRemote()) {
+      try { return ok(res, await callCustomerService("POST", `/internal/customers/${req.params.id}/contacts`, req.body), 201); }
+      catch (e) { return err(res, e.message, e.status || 502); }
+    }
     if (!db.prepare("SELECT id FROM customers WHERE id=?").get(req.params.id))
       return err(res, "Customer not found", 404);
     const { name='', title='', email='', phone='', department='Other', isPrimary=false } = req.body;
@@ -551,7 +704,11 @@ module.exports = function customersRoutes(app, ctx) {
     ok(res, mapCustomerContact(row), 201);
   });
 
-  app.put("/api/customers/:id/contacts/:cid", auth(), (req, res) => {
+  app.put("/api/customers/:id/contacts/:cid", auth(), async (req, res) => {
+    if (isRemote()) {
+      try { return ok(res, await callCustomerService("PUT", `/internal/customers/${req.params.id}/contacts/${req.params.cid}`, req.body)); }
+      catch (e) { return err(res, e.message, e.status || 502); }
+    }
     const existing = db.prepare("SELECT * FROM customer_contacts WHERE id=? AND customer_id=?").get(req.params.cid, req.params.id);
     if (!existing) return err(res, "Not found", 404);
     const { name=existing.name, title=existing.title, email=existing.email, phone=existing.phone,
@@ -565,7 +722,11 @@ module.exports = function customersRoutes(app, ctx) {
     ok(res, mapCustomerContact(row));
   });
 
-  app.delete("/api/customers/:id/contacts/:cid", auth(), (req, res) => {
+  app.delete("/api/customers/:id/contacts/:cid", auth(), async (req, res) => {
+    if (isRemote()) {
+      try { return ok(res, await callCustomerService("DELETE", `/internal/customers/${req.params.id}/contacts/${req.params.cid}`)); }
+      catch (e) { return err(res, e.message, e.status || 502); }
+    }
     const info = db.prepare("DELETE FROM customer_contacts WHERE id=? AND customer_id=?").run(req.params.cid, req.params.id);
     if (info.changes === 0) return err(res, "Not found", 404);
     ok(res, { deleted: req.params.cid });
@@ -583,26 +744,34 @@ module.exports = function customersRoutes(app, ctx) {
 
   // ─── Customer Screening ───────────────────────────────────────────────────
 
-  app.get("/api/customers/:id/screening", auth(), (req, res) => {
+  app.get("/api/customers/:id/screening", auth(), async (req, res) => {
+    if (isRemote()) {
+      try { return ok(res, await callCustomerService("GET", `/internal/customers/${req.params.id}/screening`)); }
+      catch (e) { return err(res, e.message, e.status || 502); }
+    }
     const row = db.prepare("SELECT * FROM customer_screenings WHERE customer_id=?").get(req.params.id);
     if (!row) return ok(res, null);
     ok(res, mapCustomerScreening(row));
   });
 
-  app.post("/api/customers/:id/screen", auth(), (req, res) => {
-    if (!db.prepare("SELECT id FROM customers WHERE id=?").get(req.params.id))
+  app.post("/api/customers/:id/screen", auth(), async (req, res) => {
+    if (!(await getCustomerRow(req.params.id)))
       return err(res, "Not found", 404);
     if (sanctionsMap.size === 0)
       return err(res, "Sanctions list not yet synced — use POST /api/sanctions/sync first.", 400);
-    ok(res, screenCustomer(req.params.id));
+    ok(res, await screenCustomer(req.params.id));
   });
 
   // Previously gated only by auth() (any authenticated user, viewer included) — the frontend's
   // own override button IS canEdit-gated (MdmCustomersPage.jsx), so this was a direct-API-only
   // gap, unlike the shipment-level equivalent which was reachable through the real UI too.
-  app.post("/api/customers/:id/screening/override", auth(), customerWrite, (req, res) => {
+  app.post("/api/customers/:id/screening/override", auth(), customerWrite, async (req, res) => {
     const { reason = "" } = req.body;
     if (!reason.trim()) return err(res, "Override reason is required");
+    if (isRemote()) {
+      try { return ok(res, await callCustomerService("POST", `/internal/customers/${req.params.id}/screening/override`, { reason })); }
+      catch (e) { return err(res, e.message, e.status || 502); }
+    }
     const row = db.prepare("SELECT id FROM customer_screenings WHERE customer_id=?").get(req.params.id);
     if (!row) return err(res, "No screening record found for this customer", 404);
     const now = new Date().toISOString();
@@ -619,8 +788,11 @@ module.exports = function customersRoutes(app, ctx) {
     ok(res, rows.map(mapCustomerDoc));
   });
 
-  app.post("/api/customers/:id/documents", auth(), (req, res) => {
-    if (!db.prepare("SELECT id FROM customers WHERE id=?").get(req.params.id))
+  app.post("/api/customers/:id/documents", auth(), async (req, res) => {
+    // customer_documents itself stays local-only regardless of customer_source (see the delete
+    // guard's own note below and ARCHITECTURE.md §8.1) — only this existence check needs to be
+    // remote-aware, or a customer created after a remote cutover would wrongly 404 an upload.
+    if (!(await getCustomerRow(req.params.id)))
       return err(res, "Customer not found", 404);
     const { filename, mimeType, docType, data } = req.body;
     if (!filename || !data) return err(res, "filename and data are required");

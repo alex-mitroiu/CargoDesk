@@ -9,7 +9,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
           UPLOADS_DIR, fs, path,
           renderHtmlToPdf, getActiveSigningCert, signPdfBuffer,
           buildMailOptions, sendViaOffice,
-          createRateLimiter, getSettings, callContractService,
+          createRateLimiter, getSettings, callContractService, getCustomerRow,
           computeArExposure, toUsd, roundCents, OVERRIDE_GRACE_MS,
           userOwnsLaneForShipment, mapInvoiceStatusOverride, docAmountUsd } = ctx;
 
@@ -141,10 +141,10 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       overriddenAt: row.overridden_at || null, overrideReason: row.override_reason || null });
   });
 
-  app.post("/api/shipments/:id/screen", (req, res) => {
+  app.post("/api/shipments/:id/screen", async (req, res) => {
     if (!db.prepare("SELECT id FROM shipments WHERE id=?").get(req.params.id)) return err(res, "Not found", 404);
     if (sanctionsMap.size === 0) return err(res, "Sanctions list not yet synced — use POST /api/sanctions/sync first.", 400);
-    ok(res, screenShipmentById(req.params.id));
+    ok(res, await screenShipmentById(req.params.id));
   });
 
   // Previously had NO role gate at all — any authenticated user, including a viewer, could
@@ -720,8 +720,8 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       if (namedAccountId) candidateIds.push(namedAccountId);
     }
     for (const id of [...new Set(candidateIds)]) {
-      const c = db.prepare("SELECT company_name, credit_hold, credit_hold_reason FROM customers WHERE id=?").get(id);
-      if (c?.credit_hold) return { companyName: c.company_name, reason: c.credit_hold_reason || '' };
+      const c = await getCustomerRow(id);
+      if (c?.creditHold) return { companyName: c.companyName, reason: c.creditHoldReason || '' };
     }
     return null;
   }
@@ -753,17 +753,17 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   async function findOverLimitBlock(shipment) {
     const respId = shipment.principal_id || shipment.consignee_id || null;
     if (!respId) return null;
-    const c = db.prepare("SELECT * FROM customers WHERE id=?").get(respId);
-    if (!c || c.credit_limit == null) return null;
-    const { outstandingAr, committedExposure } = computeArExposure(c.id, c.credit_terms_days);
-    const limitUsd = await toUsd(c.credit_limit, c.currency || 'USD');
+    const c = await getCustomerRow(respId);
+    if (!c || c.creditLimit == null) return null;
+    const { outstandingAr, committedExposure } = computeArExposure(c.id, c.creditTermsDays);
+    const limitUsd = await toUsd(c.creditLimit, c.currency || 'USD');
     const projected = roundCents(outstandingAr + committedExposure);
     if (projected <= limitUsd) return null;
     const latest = db.prepare(
       "SELECT * FROM credit_overrides WHERE shipment_id=? AND customer_id=? AND override_type='over_limit' ORDER BY created_at DESC LIMIT 1"
     ).get(shipment.id, c.id);
     const withinGrace = latest && (Date.now() - new Date(latest.created_at).getTime()) <= OVERRIDE_GRACE_MS;
-    return { companyName: c.company_name, override: withinGrace ? latest : null };
+    return { companyName: c.companyName, override: withinGrace ? latest : null };
   }
 
   app.post("/api/shipments/:id/documents/generate", shipmentWrite, documentActionRateLimit, async (req, res) => {

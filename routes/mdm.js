@@ -1,7 +1,7 @@
 "use strict";
 
 module.exports = function mdmRoutes(app, ctx) {
-  const { db, ok, err, uid, isUniqueViolation, requireRole, getSettings, callMdmService,
+  const { db, ok, err, uid, isUniqueViolation, requireRole, getSettings, callMdmService, callCustomerService,
           mapCarrier, mapVessel, mapPortLocation, mapLinkedPort, mapTradeLane, mapCarrierAgent,
           mapCountry, mapRegion, mapCommodity,
           logEntityEvent, rebuildPortLanesMap, longestLane } = ctx;
@@ -295,14 +295,21 @@ module.exports = function mdmRoutes(app, ctx) {
     LEFT JOIN customers c ON c.id = ca.agent_customer_id
   `;
 
-  function attachAgentNames(mapped) {
+  // customer_source is independent of this file's own mdm_source toggle — a batch lookup either
+  // way (never one call per agent), matching resolveSeaPorts'/resolveAssigneeNames' own idiom.
+  async function attachAgentNames(mapped) {
     const list = Array.isArray(mapped) ? mapped : mapped.results;
     const ids = [...new Set((list || []).map(a => a.agentCustomerId).filter(Boolean))];
     if (ids.length === 0) return mapped;
-    const ph = ids.map(() => "?").join(",");
     const names = {};
-    db.prepare(`SELECT id, company_name FROM customers WHERE id IN (${ph})`).all(...ids)
-      .forEach(c => { names[c.id] = c.company_name; });
+    if ((getSettings().customer_source || "local") === "remote") {
+      const customers = await callCustomerService("GET", `/internal/customers?ids=${ids.join(",")}`);
+      (customers || []).forEach(c => { names[c.id] = c.companyName; });
+    } else {
+      const ph = ids.map(() => "?").join(",");
+      db.prepare(`SELECT id, company_name FROM customers WHERE id IN (${ph})`).all(...ids)
+        .forEach(c => { names[c.id] = c.company_name; });
+    }
     (list || []).forEach(a => { a.agentCustomerName = names[a.agentCustomerId] || ''; });
     return mapped;
   }
@@ -310,7 +317,7 @@ module.exports = function mdmRoutes(app, ctx) {
   app.get("/api/carrier-agents", async (req, res) => {
     if (isRemote()) {
       const qs = new URLSearchParams(req.query).toString();
-      try { return ok(res, attachAgentNames(await callMdmService("GET", `/internal/carrier-agents${qs ? `?${qs}` : ""}`))); }
+      try { return ok(res, await attachAgentNames(await callMdmService("GET", `/internal/carrier-agents${qs ? `?${qs}` : ""}`))); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
     const rows = db.prepare(`${CARRIER_AGENT_JOIN} ORDER BY ca.carrier_code, ca.port_unlocode`).all();
@@ -334,7 +341,7 @@ module.exports = function mdmRoutes(app, ctx) {
     if (isRemote()) {
       try {
         const created = await callMdmService("POST", "/internal/carrier-agents", { carrierCode, portUnlocode, agentCustomerId, note });
-        attachAgentNames([created]);
+        await attachAgentNames([created]);
         return ok(res, created, 201);
       } catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -353,7 +360,7 @@ module.exports = function mdmRoutes(app, ctx) {
     if (isRemote()) {
       try {
         const updated = await callMdmService("PUT", `/internal/carrier-agents/${req.params.id}`, req.body);
-        attachAgentNames([updated]);
+        await attachAgentNames([updated]);
         return ok(res, updated);
       } catch (e) { return err(res, e.message, e.status || 502); }
     }

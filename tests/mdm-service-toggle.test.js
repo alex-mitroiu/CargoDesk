@@ -132,6 +132,24 @@ async function setSource(token, value) {
     const found = (agentsList.body.results || agentsList.body).find(a => a.carrierCode === remoteCarrier);
     assert("carrier agent list attaches agentCustomerName field locally (even if blank for a fake id)", found && "agentCustomerName" in found, JSON.stringify(found));
 
+    console.log("\nmdm_source=remote AND customer_source=remote together — the one place two extracted services interact");
+    const flipCustRemote = await request("PUT", "/api/settings/customer-source", { value: "remote" }, token);
+    assert("customer_source also flips to remote", flipCustRemote.status === 200 && flipCustRemote.body.customerSource === "remote", JSON.stringify(flipCustRemote.body));
+    const remoteCust = await request("POST", "/api/customers", { companyName: `Toggle MDM+Customer Agent Co ${stamp}` }, token);
+    assert("real remote customer created", remoteCust.status === 201, JSON.stringify(remoteCust.body));
+    const agentCreate2 = await request("POST", "/api/carrier-agents", { carrierCode: remoteCarrier, portUnlocode: port2, agentCustomerId: remoteCust.body.id }, token);
+    assert("carrier agent create 201 with a real remote customer id", agentCreate2.status === 201, JSON.stringify(agentCreate2.body));
+    assert("attachAgentNames resolves the name through the remote Customer Service (create response)",
+      agentCreate2.body.agentCustomerName === remoteCust.body.companyName, JSON.stringify(agentCreate2.body));
+    const agentsList2 = await request("GET", "/api/carrier-agents", null, token);
+    const found2 = (agentsList2.body.results || agentsList2.body).find(a => a.id === agentCreate2.body.id);
+    assert("attachAgentNames resolves the name through the remote Customer Service (list response, batched)",
+      found2?.agentCustomerName === remoteCust.body.companyName, JSON.stringify(found2));
+    await request("DELETE", `/api/carrier-agents/${agentCreate2.body.id}`, null, token).catch(() => {});
+    await request("DELETE", `/api/customers/${remoteCust.body.id}`, null, token).catch(() => {});
+    const flipCustLocal = await request("PUT", "/api/settings/customer-source", { value: "local" }, token);
+    assert("customer_source flips back to local", flipCustLocal.status === 200 && flipCustLocal.body.customerSource === "local", JSON.stringify(flipCustLocal.body));
+
     console.log("\nProves two independent datastores, not a live sync");
     await request("DELETE", `/api/carrier-agents/${agentCreate.body.id}`, null, token).catch(() => {});
     await request("DELETE", `/api/linked-ports/${link.body.id}`, null, token).catch(() => {});

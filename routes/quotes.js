@@ -249,7 +249,7 @@ module.exports = function quotesRoutes(app, ctx) {
         JSON.stringify({ shipmentId: id, chargeCode, source: 'quote', quoteId: req.params.id }));
     }
 
-    const silentScreening = screenShipmentById(id);
+    const silentScreening = await screenShipmentById(id);
     db.prepare("UPDATE quotes SET status='Converted', converted_shipment_id=?, converted_at=? WHERE id=?").run(id, now, req.params.id);
     logEntityEvent("quote", req.params.id, "UPDATED", "status", "Accepted", "Converted",
       JSON.stringify({ customerName: q.customer_name, shipmentId: id }));

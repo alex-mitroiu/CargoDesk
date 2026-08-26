@@ -3,7 +3,8 @@
 module.exports = function ediRoutes(app, ctx) {
   const { db, ok, err, uid, auth, requireRole, shipmentSubs,
           mapEdiMessage, mapCarrierBooking, mapShipment, applyShipmentAccessFilter,
-          autoCompleteMilestone, logEntityEvent, isEdiBookable, supersedeIfCarrierChanged } = ctx;
+          autoCompleteMilestone, logEntityEvent, isEdiBookable, supersedeIfCarrierChanged,
+          getCustomerRow } = ctx;
 
   // occ_bk has canEditShipments:true on the frontend and already sees an enabled Send
   // button — this used to exclude occ_bk (a pre-existing 403-on-click gap), fixed here.
@@ -147,7 +148,7 @@ module.exports = function ediRoutes(app, ctx) {
       .map(r => ({ ...mapCarrierBooking(r), shipment: shipmentById.get(r.shipment_id) })));
   });
 
-  app.post("/api/shipments/:id/edi-messages/booking-request", write, (req, res) => {
+  app.post("/api/shipments/:id/edi-messages/booking-request", write, async (req, res) => {
     const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
     if (!shipment) return err(res, "Shipment not found", 404);
     if (!isEdiBookable(shipment.carrier_code, shipment.emo_office_id))
@@ -167,8 +168,8 @@ module.exports = function ediRoutes(app, ctx) {
     const heldParties = [];
     for (const [pid, role] of [[shipment.shipper_id, 'Shipper'], [shipment.consignee_id, 'Consignee'], [shipment.principal_id, 'Principal']]) {
       if (!pid) continue;
-      const cust = db.prepare("SELECT company_name, credit_hold, credit_hold_reason FROM customers WHERE id=?").get(pid);
-      if (cust?.credit_hold) heldParties.push({ companyName: cust.company_name, role, reason: cust.credit_hold_reason || '' });
+      const cust = await getCustomerRow(pid);
+      if (cust?.creditHold) heldParties.push({ companyName: cust.companyName, role, reason: cust.creditHoldReason || '' });
     }
     if (heldParties.length) {
       const names = heldParties.map(h => `${h.companyName} (${h.role})`).join(", ");

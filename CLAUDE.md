@@ -4,8 +4,8 @@
 Full-stack freight management app. React 18 + Vite frontend, Express + node:sqlite backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.83.0 "Berth"**
-- Run: `npm run dev` (runs the monolith on :3001 + Vite on :5173 + the Document Distribution Service on :3002 + the PDF Render Service on :3003 + the Contract Management Service on :3004 + the MDM Service on :3005 + the Screening Service on :3006 + the Kanban Service on :3007, concurrently) — zero-script onboarding: first boot with no `cargodesk.db` auto-copies the committed `db/cargodesk.sample.db` (MDM reference data only) into place
+- Version: **v0.84.0 "Capstone"**
+- Run: `npm run dev` (runs the monolith on :3001 + Vite on :5173 + the Document Distribution Service on :3002 + the PDF Render Service on :3003 + the Contract Management Service on :3004 + the MDM Service on :3005 + the Screening Service on :3006 + the Kanban Service on :3007 + the Customer Service on :3008, concurrently) — zero-script onboarding: first boot with no `cargodesk.db` auto-copies the committed `db/cargodesk.sample.db` (MDM reference data only) into place
 - Re-seed: `npm run seed` (runs `scripts/import-mdm-data.js`) — only needed to refresh MDM data from `data/*.csv`/`.json`, not for a normal first run
 
 ## Stack
@@ -81,6 +81,14 @@ scripts/
                                    test_items/test_case_links) in one POST to that service's own
                                    /internal/kanban/bulk-import route, INSERT OR IGNORE keyed on
                                    each table's own original id
+  migrate-customers-to-service.js  Same shape, for the Customer Service (npm run
+                                   migrate:customers-to-service) — migrates all 4 owned tables
+                                   (customers/customer_identifiers/customer_contacts/
+                                   customer_screenings) in one POST to /internal/customers/
+                                   bulk-import, INSERT OR IGNORE keyed on each table's own
+                                   original id. Deliberately does not touch customer_documents
+                                   (local-only, no cross-service blob storage) or customer_roles
+                                   (confirmed dead, derived live from shipments elsewhere)
 exports/
   dashboard-template.xlsx          Base XLSX template with named ranges for chart wiring
 db/
@@ -273,9 +281,9 @@ are fully validated.
 | status_log | Shipment status transitions (legacy, kept for compat) |
 | entity_events | Generic audit log for allocations, carriers, contracts |
 | commodities | 294 Maersk freight commodity codes (Grades M/K/E/S/Q) |
-| customers | Customer records with full address and contact details. `credit_limit`/`credit_terms_days`/`credit_hold`/`credit_hold_reason` (v0.57.0) — `credit_hold` hard-blocks generating a NEW invoice for shipments where this customer is Shipper/Consignee/Principal/the linked contract's Named Account; `credit_limit` is a soft over-limit warning only, computed live against confirmed FR01/FR02 invoices, never a hard block. `parent_customer_id` (v0.59.0, self-referential, `ON DELETE SET NULL`) — branch/subsidiary rollup; read via the shared `resolveCustomerGroup(customerId)` helper (walks to the root ancestor then every descendant), never a write-path merge. `is_nvocc`/`fmc_number` (v0.71.0) — flags a customer eligible for the "NVOCC" party role and its FMC (or equivalent) license number; `fmc_number` only persists while `is_nvocc` is set, same gating idiom as `classified_location`/lat-lng |
-| customer_contacts | Named people at a customer (v0.56.0) — name/title/email/phone/department, one `is_primary` per customer; replaces the old free-text-notes-only workaround |
-| customer_roles | Which of `ALL_CUSTOMER_ROLES` (v0.56.0) a customer is eligible for — `CustomerCombobox`'s `roleFilter` prop narrows pickers against this (soft filter, never a hard block) |
+| customers | Customer records with full address and contact details. `credit_limit`/`credit_terms_days`/`credit_hold`/`credit_hold_reason` (v0.57.0) — `credit_hold` hard-blocks generating a NEW invoice for shipments where this customer is Shipper/Consignee/Principal/the linked contract's Named Account; `credit_limit` is a soft over-limit warning only, computed live against confirmed FR01/FR02 invoices, never a hard block. `parent_customer_id` (v0.59.0, self-referential, `ON DELETE SET NULL`) — branch/subsidiary rollup; read via the shared `resolveCustomerGroup(customerId)` helper (walks to the root ancestor then every descendant), never a write-path merge. `is_nvocc`/`fmc_number` (v0.71.0) — flags a customer eligible for the "NVOCC" party role and its FMC (or equivalent) license number; `fmc_number` only persists while `is_nvocc` is set, same gating idiom as `classified_location`/lat-lng. Also fully duplicated (own schema, own db file) in `services/customers/` since v0.84.0 — see that section below |
+| customer_contacts | Named people at a customer (v0.56.0) — name/title/email/phone/department, one `is_primary` per customer; replaces the old free-text-notes-only workaround. Also in `services/customers/` since v0.84.0 |
+| customer_roles | Which of `ALL_CUSTOMER_ROLES` (v0.56.0) a customer is eligible for — `CustomerCombobox`'s `roleFilter` prop narrows pickers against this (soft filter, never a hard block). Confirmed dead (derived live from `shipments`/`shipment_parties` elsewhere) — deliberately excluded from the v0.84.0 Customer Service extraction and its toggle |
 | contracts | Carrier rate contracts with IMDG class filters |
 | contract_legs | POL/POD pairs per contract with linked-port flags + haulage columns + loc types. `routing_id` (v0.68.0, blank = ungrouped) optionally groups a leg into a named `contract_routings` bundle |
 | contract_rates | Rate entries per contract. `routing_id` (v0.68.0) same optional grouping as `contract_legs` |
@@ -335,6 +343,56 @@ are fully validated.
 - **Document system**: `DOC_TYPES` in App.jsx (~line 56: BL01/MB01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — `MB01` (Master Bill of Lading, v0.71.0) is the vessel-operator-to-NVOCC document, a genuinely separate build from `BL01` (NVOCC-to-shipper House B/L), not a mode flag on it — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). (The earlier client-side-jsPDF `DocumentsMenu` component this note used to distinguish from was removed as dead code — it had zero references anywhere in the app.)
 - **Lifecycle-stage stepper precedent**: no dedicated stepper component exists yet; `MilestonePanel` (ShipmentDetailPage.jsx 1593-~1870) is the closest analog — linear progress bar (1734-1738, `width: ${progress}%`) plus per-step state coloring via `milestoneState()`/`stateColor()` (1666-1676: completed/overdue/current/upcoming) driven by `shipment_milestones` rows (`id, label, estimatedDate, note, completedAt, completedBy`, fixed step keys `booking_confirmed, si_submitted, cargo_gated_in, vessel_departed, bl_issued, vessel_arrived, customs_cleared, cargo_released, delivered`). Any new per-container lifecycle/stage UI should reuse this state-coloring pattern rather than inventing a new visual language
 - **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages, 📡 EDI). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
+
+## Recent changes (v0.84.0 "Capstone")
+- **Customer/Organization Service extraction (Epic 5)** — the fifth and final planned
+  database-per-domain cut (Contract Management v0.68.0, MDM v0.80.0, Screening v0.81.0, Kanban
+  v0.82.0), completing the 5-epic Organization Model roadmap begun at v0.56.0. New
+  `services/customers/` (port 3008) owns `customers`/`customer_identifiers`/`customer_contacts`/
+  `customer_screenings`; new `app_settings.customer_source` toggle (`'local'` default |
+  `'remote'`), same one-way-cutover shape as the four toggles before it. `customer_documents`
+  (local-only, no cross-service blob storage exists in this codebase) and `customer_roles`
+  (confirmed dead — derived live from `shipments`/`shipment_parties` elsewhere) are deliberately
+  excluded from the toggle.
+- **The screening write/match split** — the hardest technical problem in this cut. The sanctions
+  MATCH decision (`screenCustomer()`) can never leave the monolith (depends on the in-memory
+  `sanctionsMap`, itself sourced from the Screening Service); only the already-decided result's
+  WRITE branches on `customer_source` (new `PUT /internal/customers/:id/screening`). New
+  `getCustomerScreeningResult(id)` backs `screenShipmentById`'s own customer-level cross-reference
+  read. `screenShipmentById` becoming `async` rippled through every call site across `server.js`,
+  `routes/customers.js`, `routes/shipments.js`, `routes/quotes.js`, `routes/shipment-ops.js`, and
+  `routes/sanctions.js` — each converted and directly verified.
+- **A real gap found and fixed while implementing it**: `screenCustomer()` read the customer row
+  directly from the LOCAL table even in remote mode — a customer created after cutover would
+  silently never get screened at all. Fixed by routing through `getCustomerRow` (the same shared
+  helper backing every credit-hold/over-limit site), which also closed two gaps Stage 2 had left
+  explicitly open: `POST`/`PUT /api/customers`'s remote branches now actually call
+  `screenCustomer` instead of skipping it.
+- **One shared `getCustomerRow(id)` helper** (`server.js`) backs every credit-hold/over-limit read
+  site. `resolveCustomerGroup` became `async` with a remote branch calling the service's own
+  `GET /internal/customers/:id/group`; `routes/finance.js`'s `rootOf()` (called synchronously
+  inside a `.map()`) pre-warms a cache via one `Promise.all` up front rather than going async in
+  place. `routes/mdm.js`'s `attachAgentNames()` now batches customer names through
+  `callCustomerService`'s own `ids=` filter — a new combined `mdm_source=remote` AND
+  `customer_source=remote` test covers the one place two extracted services actually interact.
+  `routes/reports.js`'s billing-performance/invoice-collections reports batch every referenced
+  customer's credit-terms/deadline fields into one call instead of N-per-row.
+- **A second, unrelated real bug found and fixed**: `routes/customers.js` used `getCustomerRow`
+  throughout the file but never actually destructured it from `ctx` — crashed the entire monolith
+  process the moment the credit-hold-release remote-mode test exercised that path.
+- **Also surfaced, not by this cut's own code**: `npm test`'s 53-file chain is `&&`-chained, so
+  the first non-zero-exit file (`carrier-booking.test.js`, 5 known PDF-Render-service-dependent
+  failures, present long before this session) silently stops everything after it — every "full
+  suite green" claim in this project's history was, in practice, only ever confirming that first
+  handful of files. Starting the three services that happened to be unavailable this session (PDF
+  Render, Document Distribution, Contract Management — all work fine here) let the chain run to
+  completion for the first time; logged as a real gap in the test-runner script itself, not fixed
+  as a side effect of this cut.
+- New `scripts/migrate-customers-to-service.js` (one combined-payload POST to
+  `/internal/customers/bulk-import`, INSERT OR IGNORE, idempotent, doesn't flip the toggle).
+- 230+ new assertions across `services/customers/tests/`, `tests/customer-service-toggle.test.js`.
+  Every directly relevant existing suite re-run green in local mode.
+- Full architecture writeup: `ARCHITECTURE.md` §8.1 (extended a fifth and final time).
 
 ## Recent changes (v0.83.0 "Berth")
 - **eAdapter is now scoped per office, not just per carrier** — direct follow-up: a real carrier

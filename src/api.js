@@ -558,6 +558,7 @@ export const api = {
     updateMdmSource: (value) => req("PUT", "/settings/mdm-source", { value }),
     updateScreeningSource: (value) => req("PUT", "/settings/screening-source", { value }),
     updateKanbanSource: (value) => req("PUT", "/settings/kanban-source", { value }),
+    updateCustomerSource: (value) => req("PUT", "/settings/customer-source", { value }),
   },
   schedules: {
     search:  (p = {})         => req("GET",    `/schedules/search?${new URLSearchParams(p)}`),

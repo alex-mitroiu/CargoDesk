@@ -23,9 +23,23 @@
 // blank in this data) while country_trade_lanes has real, complete coverage — using the dormant
 // one would make "By Region" permanently empty.
 module.exports = function reportsRoutes(app, ctx) {
-  const { db, ok, err, auth, requireRole, mapCostLine, mapShipment, roundCents, portCountryMap, getSettings,
+  const { db, ok, err, auth, requireRole, mapCostLine, mapShipment, roundCents, portCountryMap, getSettings, callCustomerService,
           docAmountUsd, runDunningSweep, applyShipmentAccessFilter,
           resolveInvoiceThresholds, runInvoiceCollectionsSweep, businessDaysBetween, mapInvoiceStatusOverride } = ctx;
+
+  // Both billing-performance and invoice-collections bulk-read every customer's own
+  // creditTermsDays/invoiceDeadlineDays for potentially hundreds of rows per render — one batched
+  // call either way (never one remote call per row), keyed the same regardless of customer_source.
+  async function getCustTermsMap() {
+    const custById = {};
+    if ((getSettings().customer_source || "local") === "remote") {
+      const customers = await callCustomerService("GET", "/internal/customers");
+      (customers || []).forEach(c => { custById[c.id] = { credit_terms_days: c.creditTermsDays, invoice_deadline_days: c.invoiceDeadlineDays }; });
+    } else {
+      db.prepare("SELECT id, credit_terms_days, invoice_deadline_days FROM customers").all().forEach(c => { custById[c.id] = c; });
+    }
+    return custById;
+  }
 
   // A trade_manager has a real, standing reason to be in Reports regardless of canViewFinance —
   // direct feedback: they should see their own lane's numbers (GP, billing, collections), not a
@@ -223,7 +237,7 @@ module.exports = function reportsRoutes(app, ctx) {
   // many invoices actually exist — not a scale concern for this kind of platform) rather than a
   // pre-aggregated summary, so the frontend owns the slicing the same way ShipmentsPage already
   // owns its own client-side filtering.
-  app.get("/api/reports/billing-performance", auth(), (req, res) => {
+  app.get("/api/reports/billing-performance", auth(), async (req, res) => {
     if (!reportsGate(req, res)) return;
     const format = req.query.format === 'csv' ? 'csv' : 'json';
     const scopeIds = scopedShipmentIds(req);
@@ -251,8 +265,7 @@ module.exports = function reportsRoutes(app, ctx) {
       .forEach(r => { if (!(r.iso2 in countryLane)) countryLane[r.iso2] = r.lane_code; });
     const laneNames = {};
     db.prepare("SELECT code, name FROM trade_lanes").all().forEach(l => { laneNames[l.code] = l.name; });
-    const custById = {};
-    db.prepare("SELECT id, credit_terms_days, invoice_deadline_days FROM customers").all().forEach(c => { custById[c.id] = c; });
+    const custById = await getCustTermsMap();
 
     const todayMs = Date.now();
     const results = rows.map(r => {
@@ -367,7 +380,7 @@ module.exports = function reportsRoutes(app, ctx) {
   // Paid/Overdue/Not Paid against the resolved per-office/per-country business-day threshold —
   // never a hardcoded 5, so this can never disagree with the collections sweep about what
   // "overdue" means for a given shipment.
-  app.get("/api/reports/invoice-collections", auth(), (req, res) => {
+  app.get("/api/reports/invoice-collections", auth(), async (req, res) => {
     if (!reportsGate(req, res)) return;
     const scopeIds = scopedShipmentIds(req);
 
@@ -392,11 +405,12 @@ module.exports = function reportsRoutes(app, ctx) {
     `).all();
     const todayIso = new Date().toISOString();
     const todayMs = Date.now();
+    const custById = await getCustTermsMap();
     const missingShipmentIds = new Set();
     for (const r of missingRows) {
       if (shipmentIds.has(r.shipment_id)) continue; // has a real invoice, not missing
       if (!r.principal_id) continue;
-      const c = db.prepare("SELECT invoice_deadline_days FROM customers WHERE id=?").get(r.principal_id);
+      const c = custById[r.principal_id];
       if (!c || c.invoice_deadline_days == null) continue;
       const daysSinceDelivery = Math.floor((todayMs - new Date(r.delivered_at).getTime()) / 86400000);
       if (daysSinceDelivery - c.invoice_deadline_days <= 0) continue;

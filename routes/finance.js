@@ -3,7 +3,7 @@
 module.exports = function financeRoutes(app, ctx) {
   const { db, ok, err, auth, resolveCustomerGroup, roundCents } = ctx;
 
-  app.get("/api/margin/summary", auth(), (req, res) => {
+  app.get("/api/margin/summary", auth(), async (req, res) => {
     const u = req.user;
     const roles = Array.isArray(u.roles) ? u.roles : [u.role || 'viewer'];
     if (!roles.includes('admin') && !u.canViewFinance)
@@ -65,13 +65,16 @@ module.exports = function financeRoutes(app, ctx) {
     const groupByParent = req.query.groupByParent === 'true';
     const custKey = r => r.principal_id || r.consignee_id || '';
     const custName = r => r.principal_id ? r.principal_name : r.consignee_id ? r.consignee_name : '';
-    const rootCache = new Map();
-    const rootOf = id => {
-      if (!groupByParent || !id) return id;
-      if (!rootCache.has(id)) rootCache.set(id, resolveCustomerGroup(id)[0]);
-      return rootCache.get(id);
-    };
     const custRows = lines.filter(r => custKey(r));
+    // resolveCustomerGroup is async (customer_source can be 'remote'), but rootOf is called
+    // synchronously inside the .map()s below — pre-warm the cache for every distinct id up front,
+    // then read it back synchronously, rather than making rootOf itself async in place.
+    const rootCache = new Map();
+    if (groupByParent) {
+      const distinctIds = [...new Set(custRows.map(r => custKey(r)))];
+      await Promise.all(distinctIds.map(async id => { rootCache.set(id, (await resolveCustomerGroup(id))[0]); }));
+    }
+    const rootOf = id => (!groupByParent || !id) ? id : (rootCache.get(id) ?? id);
     const customerIds = [...new Set(custRows.map(r => rootOf(custKey(r))))];
     const byCustomer = customerIds.map(rootId => {
       const rows = custRows.filter(r => rootOf(custKey(r)) === rootId);

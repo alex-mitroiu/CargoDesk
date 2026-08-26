@@ -173,6 +173,40 @@ async function callKanbanService(method, urlPath, body) {
   return data;
 }
 
+// Customer Service (services/customers/) — customers/customer_identifiers/customer_screenings/
+// customer_contacts, selected per-request via the app_settings.customer_source toggle
+// ('local'|'remote'), same shape as contract_source/mdm_source/screening_source/kanban_source.
+// The fifth and final "toggle" extraction (Epic 5 of the Organization Model roadmap, deliberately
+// sequenced last). This secret must match CUSTOMER_SERVICE_SECRET in that service's own env.
+const CUSTOMER_SERVICE_URL = process.env.CUSTOMER_SERVICE_URL || "http://localhost:3008";
+const CUSTOMER_SECRET_DEV_DEFAULT = "cargoDesk-dev-customers-service-secret-do-not-use-in-prod";
+const CUSTOMER_SERVICE_SECRET = readSecret("CUSTOMER_SERVICE_SECRET", CUSTOMER_SECRET_DEV_DEFAULT);
+if (CUSTOMER_SERVICE_SECRET === CUSTOMER_SECRET_DEV_DEFAULT)
+  console.warn("⚠  CUSTOMER_SERVICE_SECRET not set (checked CUSTOMER_SERVICE_SECRET_FILE, then CUSTOMER_SERVICE_SECRET) — using insecure dev default. Set it (matching the customers service's own env) before deploying.");
+
+async function callCustomerService(method, urlPath, body) {
+  let r;
+  try {
+    r = await fetch(`${CUSTOMER_SERVICE_URL}${urlPath}`, {
+      method,
+      headers: { Authorization: `Bearer ${CUSTOMER_SERVICE_SECRET}`, "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch {
+    const e = new Error("Customer Service is unreachable — try again shortly");
+    e.status = 503;
+    throw e;
+  }
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const e = new Error(data.error || `Customer service returned HTTP ${r.status}`);
+    e.status = r.status;
+    throw e;
+  }
+  return data;
+}
+
 // Zero-script onboarding: a fresh clone has no cargodesk.db yet. db/cargodesk.sample.db is a
 // committed, pre-seeded copy carrying only static MDM reference data (ports, carriers, vessels,
 // commodities, regions, trade lanes, countries) — never shipments/contracts/customers/users,
@@ -2352,6 +2386,11 @@ const SETTING_DEFAULTS = {
   // (services/kanban/) — tickets/ticket_links/test_items/test_case_links/kb_projects/
   // kb_versions/kb_columns.
   kanban_source:              'local',
+  // Same one-way cutover lever as the four above, for the Customer Service (services/customers/)
+  // — customers/customer_identifiers/customer_screenings/customer_contacts. customer_documents
+  // and customer_roles are deliberately NOT part of this toggle — see ARCHITECTURE.md §8.1's
+  // "Customer-specific notes" for why.
+  customer_source:            'local',
   // Freight Audit & Payment — a carrier invoice line whose |variance| exceeds this percentage of
   // the expected (contracted/accrued) amount is flagged 'variance' instead of auto-'matched'.
   // One flat global tolerance, not per-carrier/per-charge-type rules — the configurable-rule-
@@ -2461,7 +2500,7 @@ async function syncOfacSdn() {
   if ((getSettings().screening_source || 'local') === 'remote') {
     const r = await callScreeningService("POST", "/internal/sanctions/sync");
     await loadSanctionsIndex();
-    rescreenActiveShipments();
+    await rescreenActiveShipments();
     return r;
   }
   const resp = await httpsGetFollowRedirects("https://www.treasury.gov/ofac/downloads/sdn.xml");
@@ -2508,7 +2547,7 @@ async function syncOfacSdn() {
   const now = new Date().toISOString();
   db.prepare("INSERT OR REPLACE INTO sanctions_syncs (source,synced_at,entry_count) VALUES ('OFAC-SDN',?,?)").run(now, entries.length);
   await loadSanctionsIndex();
-  rescreenActiveShipments();
+  await rescreenActiveShipments();
   return { source: "OFAC-SDN", syncedAt: now, entries: entries.length };
 }
 
@@ -2532,7 +2571,7 @@ async function syncConsolidatedScreeningList() {
   if ((getSettings().screening_source || 'local') === 'remote') {
     const result = await callScreeningService("POST", "/internal/sanctions/sync-csl");
     await loadSanctionsIndex();
-    rescreenActiveShipments();
+    await rescreenActiveShipments();
     return result;
   }
   const r = await fetch("https://data.trade.gov/downloadable_consolidated_screening_list/v1/consolidated.json");
@@ -2558,7 +2597,7 @@ async function syncConsolidatedScreeningList() {
   const now = new Date().toISOString();
   db.prepare("INSERT OR REPLACE INTO sanctions_syncs (source,synced_at,entry_count) VALUES ('CSL',?,?)").run(now, entries.length);
   await loadSanctionsIndex();
-  rescreenActiveShipments();
+  await rescreenActiveShipments();
   return { source: "CSL", syncedAt: now, entries: entries.length };
 }
 
@@ -2569,12 +2608,12 @@ async function syncConsolidatedScreeningList() {
 // CargoWise's own "rescan on list update" behavior without a full-table sweep of every
 // shipment ever created, most of which are no longer operationally relevant. Same
 // don't-overwrite-a-compliance-officer's-override guard every other re-screen trigger uses.
-function rescreenActiveShipments() {
+async function rescreenActiveShipments() {
   const ids = db.prepare("SELECT id FROM shipments WHERE status NOT IN ('Completed','Cancelled')").all().map(r => r.id);
   for (const shipmentId of ids) {
     const prev = db.prepare("SELECT result, overridden_at FROM shipment_screenings WHERE shipment_id=?").get(shipmentId);
     const isOverridden = prev?.result === 'CLEAR' && prev?.overridden_at;
-    if (!isOverridden) screenShipmentById(shipmentId);
+    if (!isOverridden) await screenShipmentById(shipmentId);
   }
 }
 
@@ -2586,7 +2625,18 @@ function rescreenActiveShipments() {
 // fixed FKs, shipment_parties, contracts.named_account_id) keep writing plain denormalized
 // customer_id/customer_name pairs exactly as they already do everywhere else in this codebase;
 // this doesn't unify or change that convention, it just reads across it for reporting.
-function resolveCustomerGroup(customerId) {
+// A caller can't know the mode in advance, so this is async unconditionally — the local branch's
+// own walk-to-root-then-BFS-down logic is byte-for-byte unchanged from before this function had a
+// remote branch at all. Remote does the identical walk server-side via the Customer Service's own
+// GET /internal/customers/:id/group (mirrors Kanban's co-located-table-JOIN precedent) — both
+// branches return the same root-first array; routes/finance.js's rootOf() depends on that order.
+async function resolveCustomerGroup(customerId) {
+  if ((getSettings().customer_source || "local") === "remote") {
+    try {
+      const { ids } = await callCustomerService("GET", `/internal/customers/${customerId}/group`);
+      return ids;
+    } catch { return [customerId]; }
+  }
   let root = customerId;
   let current = customerId;
   const walked = new Set();
@@ -2605,6 +2655,36 @@ function resolveCustomerGroup(customerId) {
     }
   }
   return [...group];
+}
+
+// One shared read helper for the 4 independent credit-hold/over-limit sites (routes/customers.js
+// {credit-hold/release, credit-override/approve, credit-overrides/queue, invoice-deadlines/
+// overdue}, routes/shipments.js's create-time warning, routes/edi.js's booking-request block,
+// routes/shipment-ops.js's findCreditHold/findOverLimitBlock) — one remote shape, not four.
+// Both branches return the exact same mapCustomer camelCase shape. References mapCustomer
+// (assigned later in this same module, via createMappers) — safe: this function is only ever
+// invoked from a request handler, long after the whole module has finished loading.
+async function getCustomerRow(id) {
+  if (!id) return null;
+  if ((getSettings().customer_source || "local") === "remote") {
+    try { return await callCustomerService("GET", `/internal/customers/${id}`); }
+    catch { return null; }
+  }
+  const r = db.prepare("SELECT * FROM customers WHERE id=?").get(id);
+  return r ? mapCustomer(r) : null;
+}
+
+// screenShipmentById's own read of a party's customer-level screening result — the match DECISION
+// (screenCustomer, routes/customers.js) can never move into the Customer Service, since it depends
+// on the monolith-owned sanctionsMap cache; only the already-decided result's WRITE and this READ
+// of it can. Local: direct query, unchanged. Remote: the service's own write-only screening record.
+async function getCustomerScreeningResult(id) {
+  if (!id) return null;
+  if ((getSettings().customer_source || "local") === "remote") {
+    try { return (await callCustomerService("GET", `/internal/customers/${id}/screening`))?.result || null; }
+    catch { return null; }
+  }
+  return db.prepare("SELECT result FROM customer_screenings WHERE customer_id=?").get(id)?.result || null;
 }
 
 // ─── OFAC auto-sync scheduler ─────────────────────────────────────────────────
@@ -2743,7 +2823,7 @@ setInterval(() => { runDunningSweep().catch(e => console.error("Dunning sweep fa
 // at-boot, so a dev restart never sends real report email; the first real run is 24h out.
 setInterval(() => { runScheduledReportsSweep().catch(e => console.error("Scheduled reports sweep failed:", e.message)); }, 24 * 60 * 60 * 1000);
 
-function screenShipmentById(shipmentId) {
+async function screenShipmentById(shipmentId) {
   const s = db.prepare("SELECT * FROM shipments WHERE id=?").get(shipmentId);
   if (!s) return null;
 
@@ -2788,8 +2868,8 @@ function screenShipmentById(shipmentId) {
       hits.push({ field, value: name, matchedEntry: nameMatch.entityName, program: nameMatch.program, source: nameMatch.source });
       continue;
     }
-    const custScreen = customerId ? db.prepare("SELECT result FROM customer_screenings WHERE customer_id=?").get(customerId) : null;
-    if (custScreen?.result === 'HIT') {
+    const custResult = customerId ? await getCustomerScreeningResult(customerId) : null;
+    if (custResult === 'HIT') {
       hits.push({ field, value: name, matchedEntry: `${name} — flagged at the customer level (name on this shipment may be outdated)`, program: 'OFAC-SDN', source: 'customer_screenings' });
     }
   }
@@ -4529,6 +4609,7 @@ const ctx = {
   MDM_SERVICE_URL, MDM_SERVICE_SECRET, callMdmService,
   SCREENING_SERVICE_URL, SCREENING_SERVICE_SECRET, callScreeningService,
   KANBAN_SERVICE_URL, KANBAN_SERVICE_SECRET, callKanbanService, resolveAssigneeNames,
+  CUSTOMER_SERVICE_URL, CUSTOMER_SERVICE_SECRET, callCustomerService, getCustomerRow,
   inverseLinkLabel,
   fs, path,
   migrationFailures,

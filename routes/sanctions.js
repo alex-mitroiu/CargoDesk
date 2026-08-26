@@ -144,7 +144,7 @@ module.exports = function sanctionsRoutes(app, ctx) {
         const result = await callScreeningService("POST", "/internal/sanctions/import-csv", { entries });
         await loadSanctionsIndex();
         scheduleNextOfacSync();
-        rescreenActiveShipments();
+        await rescreenActiveShipments();
         return ok(res, result);
       } catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -165,7 +165,7 @@ module.exports = function sanctionsRoutes(app, ctx) {
       db.prepare("INSERT OR REPLACE INTO sanctions_syncs (source, synced_at, entry_count) VALUES ('OFAC-SDN', ?, ?)").run(now, entries.length);
       await loadSanctionsIndex();
       scheduleNextOfacSync();
-      rescreenActiveShipments();
+      await rescreenActiveShipments();
       ok(res, { source: "OFAC-SDN", syncedAt: now, entries: entries.length });
     } catch (e) {
       err(res, e.message, 400);

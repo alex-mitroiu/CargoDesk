@@ -149,6 +149,7 @@ services/contract-management/contracts.db
 services/mdm/mdm.db
 services/screening/screening.db
 services/kanban/kanban.db
+services/customers/customers.db
 *.db-shm
 *.db-wal
 # db/cargodesk.sample.db is the one exception — a committed, pre-seeded copy carrying only

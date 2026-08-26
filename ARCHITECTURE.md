@@ -508,8 +508,10 @@ standalone microservice when a settings toggle says to: `routes/document-distrib
 
 Three pieces of the monolith have been extracted into their own Express processes for reasons
 unrelated to the toggle pattern below (retry/failure isolation, a heavy bursty operation, or
-proving the pattern out); four more followed the pattern itself, one per session, as a deliberate
-three-cut plan (MDM → Screening → Kanban/Testing):
+proving the pattern out); five more followed the pattern itself, one per session, as a deliberate
+five-cut plan (Contract Management → MDM → Screening → Kanban/Testing → Customer/Organization) —
+the last of which (Epic 5, v0.84.0) completes both this extraction plan and the separate 5-epic
+Organization Model roadmap begun at v0.56.0:
 
 | Service | Port | Extracted because | Data ownership |
 |---|---|---|---|
@@ -518,30 +520,36 @@ three-cut plan (MDM → Screening → Kanban/Testing):
 | **Contract Management** (`services/contract-management/`, v0.68.0) | 3004 | First real "toggle between local and remote" extraction — proves the pattern before Epic 5 (Customer/Organization) needs it | Owns its own `.db`, a straight port of `contracts`/`contract_legs`/`contract_rates`/`contract_routings` |
 | **MDM** (`services/mdm/`, v0.80.0) | 3005 | Second "toggle between local and remote" extraction, following the sequencing proposed in `documentation/splitting-mdm-first.html` — the lowest-blast-radius domain (no request-path involvement, no outbound FK from any of its tables into shipments/customers/users) | Owns its own `.db`: `carriers`/`vessels`/`port_locations`/`linked_ports`/`trade_lanes`/`country_trade_lanes`/`regions`/`countries`/`commodities`/`carrier_agents` |
 | **Screening** (`services/screening/`, v0.81.0) | 3006 | Third "toggle between local and remote" extraction — externally-sourced denylist data, zero outbound FK, read via name-match not JOIN (`documentation/splitting-sanctions-next.html`) | Owns its own `.db`: `sanctions_entries`/`sanctions_syncs`, plus a small local `settings` table for its own auto-sync schedule (no admin UI for it yet — see below) |
-| **Kanban/Testing** (`services/kanban/`, v0.82.0) | 3007 | Fourth and final "toggle between local and remote" extraction — a feature the roadmap expects to eventually go away entirely (`documentation/splitting-kanban-out.html`), so keeping its schema fully separable now avoids leftovers later | Owns its own `.db`: `tickets`/`ticket_links`/`test_items`/`test_case_links`/`kb_projects`/`kb_versions`/`kb_columns` |
+| **Kanban/Testing** (`services/kanban/`, v0.82.0) | 3007 | Fourth "toggle between local and remote" extraction — a feature the roadmap expects to eventually go away entirely (`documentation/splitting-kanban-out.html`), so keeping its schema fully separable now avoids leftovers later | Owns its own `.db`: `tickets`/`ticket_links`/`test_items`/`test_case_links`/`kb_projects`/`kb_versions`/`kb_columns` |
+| **Customer/Organization** (`services/customers/`, v0.84.0) | 3008 | Fifth and final "toggle between local and remote" extraction, and the last story of the 5-epic Organization Model roadmap begun at v0.56.0 — deliberately sequenced last, after the data model had fully settled | Owns its own `.db`: `customers`/`customer_identifiers`/`customer_contacts`/`customer_screenings`. `customer_documents` and `customer_roles` are deliberately excluded — see the Customer-specific notes below |
 
-All four of Contract Management, MDM, Screening, and Kanban/Testing share the same shape, and
-unlike the other two extracted services, **the monolith's own local tables are never deleted or
-bypassed** by any of them — `app_settings.contract_source`/`mdm_source`/`screening_source`/
-`kanban_source` (`'local'` default, or `'remote'`) are per-request toggles read via
-`getSettings()`. Every place that touches contract data — `routes/contracts.js`'s own endpoints,
-`routes/allocations.js`'s match logic, `server.js`'s `createRateSnapshot`/`importContractRates`,
-`routes/carrier-invoices.js`'s matching engine — branches on `contract_source`; every place that
-touches MDM data — `routes/mdm.js`'s own endpoints, `server.js`'s
-`rebuildPortLanesMap`/`portCountryMap` in-memory caches (these two MUST stay in-process caches
-regardless of source, since they're read synchronously on every shipment mapped — see below),
-`resolveCarrierAgent`, `routes/contracts.js`'s `linkedPortPairsJson()`, and `lib/ais-listener.js`'s
-vessel-write/port-coords-read paths — branches on `mdm_source`; every place that touches sanctions
-data — `routes/sanctions.js`'s own endpoints, `server.js`'s
+All five of Contract Management, MDM, Screening, Kanban/Testing, and Customer/Organization share
+the same shape, and unlike the other two extracted services, **the monolith's own local tables are
+never deleted or bypassed** by any of them — `app_settings.contract_source`/`mdm_source`/
+`screening_source`/`kanban_source`/`customer_source` (`'local'` default, or `'remote'`) are
+per-request toggles read via `getSettings()`. Every place that touches contract data —
+`routes/contracts.js`'s own endpoints, `routes/allocations.js`'s match logic, `server.js`'s
+`createRateSnapshot`/`importContractRates`, `routes/carrier-invoices.js`'s matching engine —
+branches on `contract_source`; every place that touches MDM data — `routes/mdm.js`'s own
+endpoints, `server.js`'s `rebuildPortLanesMap`/`portCountryMap` in-memory caches (these two MUST
+stay in-process caches regardless of source, since they're read synchronously on every shipment
+mapped — see below), `resolveCarrierAgent`, `routes/contracts.js`'s `linkedPortPairsJson()`, and
+`lib/ais-listener.js`'s vessel-write/port-coords-read paths — branches on `mdm_source`; every place
+that touches sanctions data — `routes/sanctions.js`'s own endpoints, `server.js`'s
 `loadSanctionsIndex`/`syncOfacSdn`/`syncConsolidatedScreeningList`/the two auto-sync schedulers —
 branches on `screening_source`; every place that touches Kanban/Testing data —
 `routes/kanban.js`'s and `routes/testcases.js`'s own endpoints, `server.js`'s
-`ensureOpsTicket`/`runOpsAutomationSweep` — branches on `kanban_source`. Flipping any of the four
-is a one-way cutover lever (§13's design doc covers why this isn't a live bidirectional sync), not
+`ensureOpsTicket`/`runOpsAutomationSweep` — branches on `kanban_source`; every place that touches
+customer data — `routes/customers.js`'s own endpoints, `server.js`'s shared `getCustomerRow`/
+`getCustomerScreeningResult`/`resolveCustomerGroup` helpers (consumed by `routes/shipments.js`,
+`routes/edi.js`, `routes/shipment-ops.js`, `routes/finance.js`, `routes/mdm.js`,
+`routes/reports.js` — see below) — branches on `customer_source`. Flipping any of the five is a
+one-way cutover lever (§13's design doc covers why this isn't a live bidirectional sync), not
 something to flip back and forth casually in production. A CLI migration script per service
 (`scripts/migrate-contracts-to-service.js`, `scripts/migrate-mdm-to-service.js`,
-`scripts/migrate-sanctions-to-service.js`, `scripts/migrate-kanban-to-service.js`) moves existing
-local data across; nothing does this automatically.
+`scripts/migrate-sanctions-to-service.js`, `scripts/migrate-kanban-to-service.js`,
+`scripts/migrate-customers-to-service.js`) moves existing local data across; nothing does this
+automatically.
 
 **Screening-specific notes**: `sanctionsMap` (server.js) is read as a pure in-memory lookup on
 every shipment/customer screen — a hot path — so it MUST stay an in-process cache regardless of
@@ -607,6 +615,95 @@ stays entirely server-side there exactly like it does in the monolith today. The
 `api.tickets.list()` over HTTP through the monolith's own `/api/tickets`, which is now a thin
 proxy in remote mode rather than a direct table read, but the response shape it consumes is
 unchanged.
+
+**Customer/Organization-specific notes**: the largest and riskiest of the five cuts, for two
+reasons that aren't just "more tables." **The screening write/match split** — sanctions
+screening's MATCH decision (`screenCustomer()`, `routes/customers.js`) can never move into the
+Customer Service: it depends on the in-memory `sanctionsMap` cache, itself sourced from the
+already-extracted Screening Service, so a customer's screening is a genuinely split read/write
+domain, not a clean lift. `screenCustomer()` stays in `routes/customers.js`, unchanged position,
+still matching locally against `sanctionsMap` — only the already-decided result's WRITE branches
+on `customer_source` (local keeps the existing `INSERT ... ON CONFLICT DO UPDATE`; remote calls a
+new `PUT /internal/customers/:id/screening`, a write-only upsert). The override route
+(`POST .../screening/override`) has no `sanctionsMap` dependency and runs fully server-side either
+way. The read side — `screenShipmentById`'s own per-party customer-level cross-reference check —
+is backed by a new `getCustomerScreeningResult(id)` helper (local: direct query; remote:
+`GET /internal/customers/:id/screening`). **The `screenShipmentById` async ripple** — becoming
+`async` (a caller can't know `customer_source` in advance) touched every call site across
+`server.js` (`rescreenActiveShipments`), `routes/customers.js` (`rescreenShipmentsForCustomer`,
+`POST`/`PUT /api/customers`, `POST .../screen`), `routes/shipments.js` (`maybeRescreen` and its 3
+`shipment_parties` CRUD call sites, the create/update routes), `routes/quotes.js` (quote
+conversion), `routes/shipment-ops.js` (`POST .../screen`), and `routes/sanctions.js` (the OFAC/CSL
+sync routes' own re-screen sweep) — each converted and directly verified against the real code
+rather than assumed from the plan.
+
+One shared `getCustomerRow(id)` helper (`server.js`) backs every credit-hold/over-limit read site
+across `routes/customers.js` (4 sites), `routes/shipments.js`'s create-time soft warning,
+`routes/edi.js`'s booking-request hard block, and `routes/shipment-ops.js`'s
+`findCreditHold`/`findOverLimitBlock` — one remote shape, not many independently-drifting ones.
+`resolveCustomerGroup` became `async`, with a remote branch calling the service's own
+`GET /internal/customers/:id/group` (does the whole root-then-descendants walk server-side,
+root-first — `routes/finance.js`'s `rootOf()` depends on that exact order). Since `rootOf()` is
+called synchronously inside a `.map()`, `GET /api/margin/summary` pre-warms a cache via one
+`Promise.all` up front rather than trying to make `rootOf()` itself async in place.
+`routes/mdm.js`'s `attachAgentNames()` — a local-only `customers` lookup to attach a Line Agent's
+name, harmless while customers only ever lived in the monolith, a real gap once `customer_source`
+can be remote independently of `mdm_source` — now batches through `callCustomerService`'s own
+`ids=` filter, the one place two extracted services genuinely interact (covered by a dedicated
+combined `mdm_source=remote` + `customer_source=remote` test). `routes/reports.js`'s
+billing-performance and invoice-collections reports both batch every referenced customer's
+`creditTermsDays`/`invoiceDeadlineDays` into one call via a shared `getCustTermsMap()` helper
+instead of the N-per-row query `invoice-collections` was previously doing.
+
+**`customer_documents` stays local-only, deliberately, regardless of `customer_source`** —
+uploaded file bytes live on disk under `UPLOADS_DIR`, outside SQLite, and no cross-service blob
+storage exists anywhere in this codebase (none of the prior four extractions needed one either).
+The one nuance this doesn't fully dodge: the document routes' existence-check guard used to read
+the local `customers` table directly, which would wrongly 404 an upload for a customer created
+*after* a remote cutover — fixed by routing just that one check through `getCustomerRow`; file
+write, the DB row, and download are all untouched. **`customer_roles` is excluded from the toggle
+entirely** — confirmed dead (zero readers, zero writers anywhere in the codebase; role membership
+is fully derived live via `CUSTOMER_ROLE_USAGE_SQL`, a UNION over `shipments`/`shipment_parties`,
+which stay permanently monolith-owned either way and need no toggle branch at all).
+
+**`PRAGMA foreign_keys=ON`** — `customers.parent_customer_id`'s `ON DELETE SET NULL` is a real,
+enforced FK in the monolith (`server.js` sets this pragma globally; `node:sqlite`'s own
+`DatabaseSync` defaults it off). `services/customers/server.js` explicitly sets both
+`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;` in its own schema block, or deleting a parent
+in remote mode would leave dangling pointers instead of nulling them — a correctness hazard for
+both `resolveCustomerGroup`'s walk and the cycle-detection guard on save. (The Kanban Service's own
+schema declares `ON DELETE CASCADE` on two columns but never sets this pragma — a pre-existing gap
+there, not this cut's job to fix, but deliberately not copied here.)
+
+**Two real bugs found and fixed while implementing this cut, neither specific to the toggle
+pattern itself**: `screenCustomer()` was reading the customer row directly from the local table
+even in remote mode — a customer created after cutover would silently never get screened at all,
+the exact blind spot a compliance feature can't afford; fixed by routing that read through
+`getCustomerRow` too, which also closed two gaps Stage 2 had left explicitly open (`POST`/
+`PUT /api/customers`'s remote branches now actually call `screenCustomer` instead of skipping it).
+Separately, `routes/customers.js` used `getCustomerRow` throughout the file but had never actually
+destructured it from `ctx` — a `ReferenceError` that crashed the entire monolith process the
+moment a remote-mode credit-hold-release request exercised that code path, found via a full crash
+reproduction with a captured stack trace before being fixed.
+
+**Named, accepted gap, unchanged by this cut**: `DELETE /api/customers/:id`'s own reference guard
+only ever checked `carrier_agents.agent_customer_id` — and since `carrier_agents` itself moved to
+the MDM Service at v0.80.0, that check already silently does nothing once `mdm_source='remote'`, a
+pre-existing bug predating this extraction. It doesn't check `shipments`/`shipment_parties`/
+`credit_overrides`/`contracts.named_account_id`/other customers' `parent_customer_id` either —
+also pre-existing, also not widened or fixed as a side effect of this pass.
+
+**Also surfaced during this cut's own verification, not caused by its code**: `npm test`'s 53-file
+chain is `&&`-chained (see `package.json`'s `test` script), so the first file with a non-zero exit
+silently stops everything after it — `carrier-booking.test.js`'s 5 PDF-Render-service-dependent
+failures (present long before this session) had been doing exactly that the entire time. Every
+"full backend chain green" claim in this document's own changelog history was, in practice, only
+ever re-confirming the first handful of files in the chain; the real per-stage signal always came
+from directly running the individually relevant test files, which remains sound. Starting the
+three services that happened to be unavailable this session (PDF Render, Document Distribution,
+Contract Management — all work correctly in this environment) let the chain run to completion for
+the first time, confirming this is a real, disclosed gap in the test-runner script itself — logged
+here for a future pass, not fixed as a side effect of this cut.
 
 ### 8.2 Quoting / RFQ (added v0.69.0)
 

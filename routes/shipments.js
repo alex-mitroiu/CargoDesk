@@ -8,7 +8,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
           broadcastMessage, recomputeSpaceBadge, screenShipmentById, resolveCarrierAgent,
           logEvent, logEntityEvent, TRACKED_FIELDS, TRACKED_CTR_FIELDS, FREE_TIME_WARNING_DAYS,
           sanctionsMap, autoCompleteMilestone, ensureBookingCreated, toUsd,
-          validCoord, GPS_LOC_TYPE, getSettings, callContractService } = ctx;
+          validCoord, GPS_LOC_TYPE, getSettings, callContractService, getCustomerRow } = ctx;
 
   // trade_manager and viewer are read-only on all shipment write operations
   const shipmentWrite = requireRole(["admin", "operator", "occ_bk"]);
@@ -55,11 +55,11 @@ module.exports = function shipmentsRoutes(app, ctx) {
   // (shipment_parties) is added/reassigned/removed, since screenShipmentById now covers all 9
   // of those roles too, not just the 4 fixed columns. Honors the same "don't silently overwrite
   // a compliance officer's override" guard the shipment PUT route's own re-screen already uses.
-  const maybeRescreen = shipmentId => {
+  const maybeRescreen = async shipmentId => {
     if (sanctionsMap.size === 0) return;
     const prev = db.prepare("SELECT result, overridden_at FROM shipment_screenings WHERE shipment_id=?").get(shipmentId);
     const isOverridden = prev?.result === 'CLEAR' && prev?.overridden_at;
-    if (!isOverridden) screenShipmentById(shipmentId);
+    if (!isOverridden) await screenShipmentById(shipmentId);
   };
 
   // Carrier Line Agents — resolves the carrier's registered agent at POL/POD (carrier_agents,
@@ -394,7 +394,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
       JSON.stringify({ pol: polU, pod: podU, carrier: carrierCode, status, etd, contractType }));
     await maybeAssignLineAgents(id, carrierCode, polU, podU);
     if (contractType === 'Central' && contractId) await importContractRates(id);
-    const silentScreening = sanctionsMap.size > 0 ? screenShipmentById(id) : null;
+    const silentScreening = sanctionsMap.size > 0 ? await screenShipmentById(id) : null;
 
     // Earlier credit-check trigger point (TKT-Q00WHF, Credit Control Depth) — soft and
     // informational only, same non-blocking shape screening already uses above: whichever
@@ -409,8 +409,8 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const heldParties = [];
     for (const [pid, role] of [[shipperId, 'Shipper'], [consigneeId, 'Consignee'], [principalId, 'Principal']]) {
       if (!pid) continue;
-      const cust = db.prepare("SELECT company_name, credit_hold, credit_hold_reason FROM customers WHERE id=?").get(pid);
-      if (cust?.credit_hold) heldParties.push({ customerId: pid, companyName: cust.company_name, role, reason: cust.credit_hold_reason || '' });
+      const cust = await getCustomerRow(pid);
+      if (cust?.creditHold) heldParties.push({ customerId: pid, companyName: cust.companyName, role, reason: cust.creditHoldReason || '' });
     }
 
     const base = mapShipment(db.prepare("SELECT * FROM shipments WHERE id=?").get(id));
@@ -540,7 +540,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
         || existing.notify_name   !== notifyName
         || existing.pol            !== polU
         || existing.pod            !== podU;
-      if (!isOverridden && partyOrRouteChanged) silentScreening = screenShipmentById(req.params.id);
+      if (!isOverridden && partyOrRouteChanged) silentScreening = await screenShipmentById(req.params.id);
     }
     const body = mapShipment(updated);
     ok(res, { ...body, ...(silentScreening ? { screening: silentScreening } : {}), ...(scheduleDropped ? { scheduleDropped: true } : {}) });
@@ -818,7 +818,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     ok(res, rows.map(mapShipmentParty));
   });
 
-  app.post("/api/shipments/:id/parties", shipmentWrite, (req, res) => {
+  app.post("/api/shipments/:id/parties", shipmentWrite, async (req, res) => {
     const { role, customerId, customerName } = req.body || {};
     if (!role || !ADDITIONAL_PARTY_ROLES.includes(role)) return err(res, "Invalid role");
     if (!customerId || !customerName) return err(res, "customerId and customerName required");
@@ -832,27 +832,27 @@ module.exports = function shipmentsRoutes(app, ctx) {
     } catch (e) {
       return err(res, isUniqueViolation(e) ? "This role is already assigned on this shipment — edit or remove it instead." : e.message);
     }
-    maybeRescreen(req.params.id);
+    await maybeRescreen(req.params.id);
     ok(res, mapShipmentParty(db.prepare("SELECT * FROM shipment_parties WHERE id=?").get(id)), 201);
   });
 
   // Role is immutable once assigned (it's the row's conceptual identity, backed by the
   // UNIQUE constraint) — PUT only ever reassigns which customer fills that role.
-  app.put("/api/shipment-parties/:id", shipmentWrite, (req, res) => {
+  app.put("/api/shipment-parties/:id", shipmentWrite, async (req, res) => {
     const existing = db.prepare("SELECT * FROM shipment_parties WHERE id=?").get(req.params.id);
     if (!existing) return err(res, "Not found", 404);
     const { customerId, customerName } = req.body || {};
     if (!customerId || !customerName) return err(res, "customerId and customerName required");
     db.prepare("UPDATE shipment_parties SET customer_id=?, customer_name=? WHERE id=?").run(customerId, customerName, req.params.id);
-    maybeRescreen(existing.shipment_id);
+    await maybeRescreen(existing.shipment_id);
     ok(res, mapShipmentParty({ ...existing, customer_id: customerId, customer_name: customerName }));
   });
 
-  app.delete("/api/shipment-parties/:id", shipmentWrite, (req, res) => {
+  app.delete("/api/shipment-parties/:id", shipmentWrite, async (req, res) => {
     const existing = db.prepare("SELECT * FROM shipment_parties WHERE id=?").get(req.params.id);
     if (!existing) return err(res, "Not found", 404);
     db.prepare("DELETE FROM shipment_parties WHERE id=?").run(req.params.id);
-    maybeRescreen(existing.shipment_id);
+    await maybeRescreen(existing.shipment_id);
     ok(res, { deleted: req.params.id });
   });
 

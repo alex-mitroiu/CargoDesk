@@ -161,6 +161,16 @@ module.exports = function systemRoutes(app, ctx) {
     ok(res, { kanbanSource: value });
   });
 
+  // Same shape as the four sources above, for the Customer Service — the fifth and final
+  // "toggle" extraction. No cache to rebuild — customers are read fresh per request either way.
+  app.put("/api/settings/customer-source", auth(), requireRole(["admin"]), (req, res) => {
+    const { value } = req.body || {};
+    if (value !== "local" && value !== "remote") return err(res, "value must be 'local' or 'remote'");
+    db.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('customer_source', ?)").run(value);
+    logAdminEvent(req.user, 'SETTINGS_UPDATED', 'settings', 'customer_source', { value });
+    ok(res, { customerSource: value });
+  });
+
   // ─── Schedules ────────────────────────────────────────────────────────────
 
   // Common TSP hubs used in mock data
