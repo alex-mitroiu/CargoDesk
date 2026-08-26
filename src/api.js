@@ -557,6 +557,7 @@ export const api = {
     updateContractSource: (value) => req("PUT", "/settings/contract-source", { value }),
     updateMdmSource: (value) => req("PUT", "/settings/mdm-source", { value }),
     updateScreeningSource: (value) => req("PUT", "/settings/screening-source", { value }),
+    updateKanbanSource: (value) => req("PUT", "/settings/kanban-source", { value }),
   },
   schedules: {
     search:  (p = {})         => req("GET",    `/schedules/search?${new URLSearchParams(p)}`),

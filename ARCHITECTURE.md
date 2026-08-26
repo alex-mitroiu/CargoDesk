@@ -133,23 +133,25 @@ Developer machine
 │  ├─ node services/pdf-render/server.js            → :3003
 │  ├─ node services/contract-management/server.js   → :3004
 │  ├─ node services/mdm/server.js                    → :3005
-│  └─ node services/screening/server.js              → :3006
+│  ├─ node services/screening/server.js              → :3006
+│  └─ node services/kanban/server.js                 → :3007
 │         │
 │         └─ Vite proxies /api and /ws → :3001 (monolith only — the browser never talks
-│            directly to any of the five microservices)
+│            directly to any of the six microservices)
 │
 ├─ cargodesk.db                (monolith's own file, co-located with server.js)
 ├─ services/document-distribution/*.db
 ├─ services/pdf-render/            (stateless — no database)
 ├─ services/contract-management/*.db   (only holds live data when contract_source='remote', §8.1)
 ├─ services/mdm/*.db                   (only holds live data when mdm_source='remote', §8.1)
-└─ services/screening/*.db             (only holds live data when screening_source='remote', §8.1)
+├─ services/screening/*.db             (only holds live data when screening_source='remote', §8.1)
+└─ services/kanban/*.db                (only holds live data when kanban_source='remote', §8.1)
 ```
 
 The monolith calls each microservice over plain HTTP, gated by a shared static secret per
 service (`DISTRIBUTION_SERVICE_SECRET`, `PDF_RENDER_SERVICE_SECRET`, `CONTRACT_SERVICE_SECRET`,
-`MDM_SERVICE_SECRET`, `SCREENING_SERVICE_SECRET`) read via `lib/dockerSecret.js` (env var, or a
-`_FILE`-suffixed path for Docker/Compose secrets).
+`MDM_SERVICE_SECRET`, `SCREENING_SERVICE_SECRET`, `KANBAN_SERVICE_SECRET`) read via
+`lib/dockerSecret.js` (env var, or a `_FILE`-suffixed path for Docker/Compose secrets).
 Every monolith→service call follows the same shape: a short timeout (10s), and a clean `503` back
 to the caller if the service is unreachable — never a hang, a 500, or a crash.
 
@@ -504,8 +506,10 @@ standalone microservice when a settings toggle says to: `routes/document-distrib
 
 ### 8.1 Standalone Microservices
 
-Three pieces of the monolith have been extracted into their own Express processes, each for a
-different reason:
+Three pieces of the monolith have been extracted into their own Express processes for reasons
+unrelated to the toggle pattern below (retry/failure isolation, a heavy bursty operation, or
+proving the pattern out); four more followed the pattern itself, one per session, as a deliberate
+three-cut plan (MDM → Screening → Kanban/Testing):
 
 | Service | Port | Extracted because | Data ownership |
 |---|---|---|---|
@@ -514,26 +518,30 @@ different reason:
 | **Contract Management** (`services/contract-management/`, v0.68.0) | 3004 | First real "toggle between local and remote" extraction — proves the pattern before Epic 5 (Customer/Organization) needs it | Owns its own `.db`, a straight port of `contracts`/`contract_legs`/`contract_rates`/`contract_routings` |
 | **MDM** (`services/mdm/`, v0.80.0) | 3005 | Second "toggle between local and remote" extraction, following the sequencing proposed in `documentation/splitting-mdm-first.html` — the lowest-blast-radius domain (no request-path involvement, no outbound FK from any of its tables into shipments/customers/users) | Owns its own `.db`: `carriers`/`vessels`/`port_locations`/`linked_ports`/`trade_lanes`/`country_trade_lanes`/`regions`/`countries`/`commodities`/`carrier_agents` |
 | **Screening** (`services/screening/`, v0.81.0) | 3006 | Third "toggle between local and remote" extraction — externally-sourced denylist data, zero outbound FK, read via name-match not JOIN (`documentation/splitting-sanctions-next.html`) | Owns its own `.db`: `sanctions_entries`/`sanctions_syncs`, plus a small local `settings` table for its own auto-sync schedule (no admin UI for it yet — see below) |
+| **Kanban/Testing** (`services/kanban/`, v0.82.0) | 3007 | Fourth and final "toggle between local and remote" extraction — a feature the roadmap expects to eventually go away entirely (`documentation/splitting-kanban-out.html`), so keeping its schema fully separable now avoids leftovers later | Owns its own `.db`: `tickets`/`ticket_links`/`test_items`/`test_case_links`/`kb_projects`/`kb_versions`/`kb_columns` |
 
-All three of Contract Management, MDM, and Screening share the same shape, and unlike the other
-two extracted services, **the monolith's own local tables are never deleted or bypassed** by any
-of them — `app_settings.contract_source`/`mdm_source`/`screening_source` (`'local'` default, or
-`'remote'`) are per-request toggles read via `getSettings()`. Every place that touches contract
-data — `routes/contracts.js`'s own endpoints, `routes/allocations.js`'s match logic, `server.js`'s
-`createRateSnapshot`/`importContractRates`, `routes/carrier-invoices.js`'s matching engine —
-branches on `contract_source`; every place that touches MDM data — `routes/mdm.js`'s own
-endpoints, `server.js`'s `rebuildPortLanesMap`/`portCountryMap` in-memory caches (these two MUST
-stay in-process caches regardless of source, since they're read synchronously on every shipment
-mapped — see below), `resolveCarrierAgent`, `routes/contracts.js`'s `linkedPortPairsJson()`, and
-`lib/ais-listener.js`'s vessel-write/port-coords-read paths — branches on `mdm_source`; every
-place that touches sanctions data — `routes/sanctions.js`'s own endpoints, `server.js`'s
+All four of Contract Management, MDM, Screening, and Kanban/Testing share the same shape, and
+unlike the other two extracted services, **the monolith's own local tables are never deleted or
+bypassed** by any of them — `app_settings.contract_source`/`mdm_source`/`screening_source`/
+`kanban_source` (`'local'` default, or `'remote'`) are per-request toggles read via
+`getSettings()`. Every place that touches contract data — `routes/contracts.js`'s own endpoints,
+`routes/allocations.js`'s match logic, `server.js`'s `createRateSnapshot`/`importContractRates`,
+`routes/carrier-invoices.js`'s matching engine — branches on `contract_source`; every place that
+touches MDM data — `routes/mdm.js`'s own endpoints, `server.js`'s
+`rebuildPortLanesMap`/`portCountryMap` in-memory caches (these two MUST stay in-process caches
+regardless of source, since they're read synchronously on every shipment mapped — see below),
+`resolveCarrierAgent`, `routes/contracts.js`'s `linkedPortPairsJson()`, and `lib/ais-listener.js`'s
+vessel-write/port-coords-read paths — branches on `mdm_source`; every place that touches sanctions
+data — `routes/sanctions.js`'s own endpoints, `server.js`'s
 `loadSanctionsIndex`/`syncOfacSdn`/`syncConsolidatedScreeningList`/the two auto-sync schedulers —
-branches on `screening_source`. Flipping any of the three is a one-way cutover lever (§13's design
-doc covers why this isn't a live bidirectional sync), not something to flip back and forth
-casually in production. A CLI migration script per service
+branches on `screening_source`; every place that touches Kanban/Testing data —
+`routes/kanban.js`'s and `routes/testcases.js`'s own endpoints, `server.js`'s
+`ensureOpsTicket`/`runOpsAutomationSweep` — branches on `kanban_source`. Flipping any of the four
+is a one-way cutover lever (§13's design doc covers why this isn't a live bidirectional sync), not
+something to flip back and forth casually in production. A CLI migration script per service
 (`scripts/migrate-contracts-to-service.js`, `scripts/migrate-mdm-to-service.js`,
-`scripts/migrate-sanctions-to-service.js`) moves existing local data across; nothing does this
-automatically.
+`scripts/migrate-sanctions-to-service.js`, `scripts/migrate-kanban-to-service.js`) moves existing
+local data across; nothing does this automatically.
 
 **Screening-specific notes**: `sanctionsMap` (server.js) is read as a pure in-memory lookup on
 every shipment/customer screen — a hot path — so it MUST stay an in-process cache regardless of
@@ -570,6 +578,35 @@ it owns both `carrier_agents` and `linked_ports`) and then does one local
 of `mdm_source` — mostly read-only display JOINs where staleness post-cutover is cosmetic, not
 data loss, but flagged rather than silently chased in this pass. Don't flip `mdm_source=remote` in
 an environment exercising Reports/Export/Command Center/the AIS Simulator until this is closed.
+
+**Kanban/Testing-specific notes**: unlike the caches above, there is nothing to keep warm here —
+tickets/test items are read fresh per request in both modes, so flipping `kanban_source` takes
+effect immediately with no rebuild step (`PUT /api/settings/kanban-source` does nothing but write
+the setting and log the change). The Kanban Service owns no `users` table, so every route that
+used to `LEFT JOIN users` for `assignee_name` (`TICKET_JOIN`/`TEST_ITEM_JOIN`) instead returns a
+raw `assigneeId` in remote mode; a new shared `resolveAssigneeNames(rows)` (`server.js`, exported
+via ctx) batch-resolves the name/initial locally afterward, mirroring `routes/shipments.js`'s own
+`resolveSeaPorts()` batch-`IN` pattern — the response shape is identical to local mode either way,
+so the frontend needed zero changes. `ensureOpsTicket()`'s dedupe-on-`(sourceType, sourceId)`
+check was a plain check-then-insert in the monolith — a narrow race under concurrent sweeps that
+was never worth fixing there (the ops-automation sweep runs on one hourly timer, not genuinely
+concurrent with itself). The Kanban Service's own schema adds a real
+`UNIQUE(source_type, source_id)` constraint on `tickets` that the monolith's table never had,
+backing a new atomic `POST /internal/tickets/ensure` (`INSERT OR IGNORE`) — remote mode closes the
+race outright rather than porting the old behavior; local mode is unchanged. `ensureOpsTicket()`
+and `runOpsAutomationSweep()` both became `async` to support the remote branch, which rippled into
+three call sites: the startup call, the hourly `setInterval` (both now swallow a rejection via
+`.catch()` rather than letting it become an unhandled rejection), and the dev-only
+`POST /api/test/run-ops-automation-sweep` trigger route, whose own before/after ticket-count check
+now branches on `kanban_source` too (counting via `GET /internal/tickets` in remote mode instead
+of a local `SELECT COUNT(*)`). Story↔TestCase links (`test_case_links`) needed no special
+treatment at all — `tickets` and `test_items` move to the same service together, so the live JOIN
+between them (`GET /internal/test-items/:id/story-links`, `GET /internal/tickets/:id/tested-by`)
+stays entirely server-side there exactly like it does in the monolith today. The Command Center's
+`TicketAlertCard` (`CommandCenterView.jsx`) needed no change either — it already calls
+`api.tickets.list()` over HTTP through the monolith's own `/api/tickets`, which is now a thin
+proxy in remote mode rather than a direct table read, but the response shape it consumes is
+unchanged.
 
 ### 8.2 Quoting / RFQ (added v0.69.0)
 
@@ -1331,7 +1368,7 @@ trigger, same idempotent shape (check current state, no-op if already there, act
 | Database tables (monolith) | 77 |
 | Database indexes (monolith) | 25 |
 | Transaction-wrapped write blocks | 16 (6 in `server.js`, 10 across `routes/*.js`) |
-| Standalone microservices | 5 (Document Distribution :3002, PDF Render :3003, Contract Management :3004, MDM :3005, Screening :3006) |
+| Standalone microservices | 6 (Document Distribution :3002, PDF Render :3003, Contract Management :3004, MDM :3005, Screening :3006, Kanban/Testing :3007) |
 | Seed data | 14,269 port locations · 21,201 vessels · 69 carriers (per `GET /api/health`'s live counts) |
 
 Every figure above was read directly from the code or a live `GET /api/health` call on

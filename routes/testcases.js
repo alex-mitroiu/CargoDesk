@@ -1,9 +1,15 @@
 "use strict";
 
 module.exports = function testCasesRoutes(app, ctx) {
-  const { db, ok, err, uid, auth, requireRole, mapTestItem, mapTestCaseLink } = ctx;
+  const { db, ok, err, uid, auth, requireRole, getSettings, callKanbanService, resolveAssigneeNames,
+          mapTestItem, mapTestCaseLink } = ctx;
 
   const write = requireRole(["operator", "admin"]);
+
+  // Same one-way toggle shape as routes/kanban.js's own isRemote() — test_items/test_case_links
+  // move to the same Kanban/Testing Service as tickets, so the Story<->TestCase JOIN below stays
+  // fully server-side there exactly like it does locally.
+  const isRemote = () => (getSettings().kanban_source || "local") === "remote";
 
   const TEST_TYPES = ["Test Folder", "Test Plan", "Test Run", "Test Case"];
 
@@ -34,8 +40,15 @@ module.exports = function testCasesRoutes(app, ctx) {
 
   // ─── Test Items ───────────────────────────────────────────────────────────
 
-  app.get("/api/test-items", auth(), (req, res) => {
+  app.get("/api/test-items", auth(), async (req, res) => {
     const { shipmentId, projectId } = req.query;
+    if (isRemote()) {
+      const qs = new URLSearchParams();
+      if (shipmentId) qs.set("shipmentId", shipmentId);
+      if (projectId)  qs.set("projectId", projectId);
+      try { return ok(res, resolveAssigneeNames(await callKanbanService("GET", `/internal/test-items${qs.toString() ? `?${qs}` : ""}`))); }
+      catch (e) { return err(res, e.message, e.status || 502); }
+    }
     let query  = `${TEST_ITEM_JOIN} WHERE 1=1`;
     const params = [];
     if (shipmentId) { query += " AND t.shipment_id=?"; params.push(shipmentId); }
@@ -44,7 +57,7 @@ module.exports = function testCasesRoutes(app, ctx) {
     ok(res, db.prepare(query).all(...params).map(mapTestItem));
   });
 
-  app.post("/api/test-items", write, (req, res) => {
+  app.post("/api/test-items", write, async (req, res) => {
     const {
       title, type, description = "", priority = "Medium", status = "Ready",
       shipmentId = null, parentId = null, assigneeId = null, dueDate = null, testNotes = null,
@@ -52,6 +65,15 @@ module.exports = function testCasesRoutes(app, ctx) {
     } = req.body || {};
     if (!title) return err(res, "title required");
     if (!TEST_TYPES.includes(type)) return err(res, `type must be one of: ${TEST_TYPES.join(", ")}`);
+    if (isRemote()) {
+      try {
+        const created = await callKanbanService("POST", "/internal/test-items", {
+          title, type, description, priority, status, shipmentId, parentId, assigneeId,
+          dueDate, testNotes, projectId, versionId,
+        });
+        return ok(res, resolveAssigneeNames([created])[0], 201);
+      } catch (e) { return err(res, e.message, e.status || 502); }
+    }
     const id  = `TST-${uid()}`;
     const pos = (db.prepare("SELECT MAX(position) AS m FROM test_items WHERE status=?").get(status)?.m ?? -1) + 1;
     db.prepare(`
@@ -65,7 +87,13 @@ module.exports = function testCasesRoutes(app, ctx) {
     ok(res, mapTestItem(db.prepare(`${TEST_ITEM_JOIN} WHERE t.id=?`).get(id)), 201);
   });
 
-  app.put("/api/test-items/:id", write, (req, res) => {
+  app.put("/api/test-items/:id", write, async (req, res) => {
+    if (isRemote()) {
+      try {
+        const updated = await callKanbanService("PUT", `/internal/test-items/${req.params.id}`, req.body);
+        return ok(res, resolveAssigneeNames([updated])[0]);
+      } catch (e) { return err(res, e.message, e.status || 502); }
+    }
     const existing = db.prepare("SELECT * FROM test_items WHERE id=?").get(req.params.id);
     if (!existing) return err(res, "Not found", 404);
     const {
@@ -96,7 +124,11 @@ module.exports = function testCasesRoutes(app, ctx) {
     ok(res, mapTestItem(db.prepare(`${TEST_ITEM_JOIN} WHERE t.id=?`).get(req.params.id)));
   });
 
-  app.delete("/api/test-items/:id", write, (req, res) => {
+  app.delete("/api/test-items/:id", write, async (req, res) => {
+    if (isRemote()) {
+      try { return ok(res, await callKanbanService("DELETE", `/internal/test-items/${req.params.id}`)); }
+      catch (e) { return err(res, e.message, e.status || 502); }
+    }
     const existing = db.prepare("SELECT id FROM test_items WHERE id=?").get(req.params.id);
     if (!existing) return err(res, "Not found", 404);
     const ids = [req.params.id, ...collectDescendants(req.params.id)];
@@ -113,9 +145,14 @@ module.exports = function testCasesRoutes(app, ctx) {
     ok(res, { deleted: req.params.id, cascaded: ids.length - 1 });
   });
 
-  // ─── Story Links (Test Case ↔ ticket, fixed "Tests" / "Is tested by") ─────
+  // ─── Story Links (Test Case ↔ ticket, fixed "Tests" / "Is tested by") — both tables co-located
+  // in the Kanban Service too, so the live JOIN below stays fully server-side either way. ───────
 
-  app.get("/api/test-items/:id/story-links", auth(), (req, res) => {
+  app.get("/api/test-items/:id/story-links", auth(), async (req, res) => {
+    if (isRemote()) {
+      try { return ok(res, await callKanbanService("GET", `/internal/test-items/${req.params.id}/story-links`)); }
+      catch (e) { return err(res, e.message, e.status || 502); }
+    }
     const rows = db.prepare("SELECT * FROM test_case_links WHERE case_id=?").all(req.params.id);
     ok(res, rows.map(l => {
       const ticket = db.prepare("SELECT id, title, status, type FROM tickets WHERE id=?").get(l.ticket_id);
@@ -124,9 +161,13 @@ module.exports = function testCasesRoutes(app, ctx) {
     }));
   });
 
-  app.post("/api/test-items/:id/story-links", write, (req, res) => {
+  app.post("/api/test-items/:id/story-links", write, async (req, res) => {
     const { ticketId } = req.body || {};
     if (!ticketId) return err(res, "ticketId required");
+    if (isRemote()) {
+      try { return ok(res, await callKanbanService("POST", `/internal/test-items/${req.params.id}/story-links`, { ticketId }), 201); }
+      catch (e) { return err(res, e.message, e.status || 502); }
+    }
     const testCase = db.prepare("SELECT id FROM test_items WHERE id=? AND type='Test Case'").get(req.params.id);
     if (!testCase) return err(res, "Test case not found", 404);
     if (!db.prepare("SELECT id FROM tickets WHERE id=?").get(ticketId)) return err(res, "Ticket not found", 404);
@@ -138,7 +179,11 @@ module.exports = function testCasesRoutes(app, ctx) {
     ok(res, { id, caseId: req.params.id, ticketId }, 201);
   });
 
-  app.delete("/api/test-case-links/:id", write, (req, res) => {
+  app.delete("/api/test-case-links/:id", write, async (req, res) => {
+    if (isRemote()) {
+      try { await callKanbanService("DELETE", `/internal/test-case-links/${req.params.id}`); return ok(res, { deleted: req.params.id }); }
+      catch (e) { return err(res, e.message, e.status || 502); }
+    }
     const info = db.prepare("DELETE FROM test_case_links WHERE id=?").run(req.params.id);
     if (info.changes === 0) return err(res, "Not found", 404);
     ok(res, { deleted: req.params.id });
@@ -146,7 +191,11 @@ module.exports = function testCasesRoutes(app, ctx) {
 
   // ─── Reverse direction: a ticket's "Tested by" test cases ─────────────────
 
-  app.get("/api/tickets/:id/tested-by", auth(), (req, res) => {
+  app.get("/api/tickets/:id/tested-by", auth(), async (req, res) => {
+    if (isRemote()) {
+      try { return ok(res, await callKanbanService("GET", `/internal/tickets/${req.params.id}/tested-by`)); }
+      catch (e) { return err(res, e.message, e.status || 502); }
+    }
     const rows = db.prepare("SELECT * FROM test_case_links WHERE ticket_id=?").all(req.params.id);
     ok(res, rows.map(l => {
       const testCase = db.prepare("SELECT id, title, status, type FROM test_items WHERE id=?").get(l.case_id);

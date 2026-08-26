@@ -140,6 +140,39 @@ async function callScreeningService(method, urlPath, body) {
   return data;
 }
 
+// Kanban/Testing Service (services/kanban/) — tickets/ticket_links/test_items/test_case_links/
+// kb_projects/kb_versions/kb_columns, selected per-request via the app_settings.kanban_source
+// toggle ('local'|'remote'), same shape as contract_source/mdm_source/screening_source. This
+// secret must match KANBAN_SERVICE_SECRET in that service's own env.
+const KANBAN_SERVICE_URL = process.env.KANBAN_SERVICE_URL || "http://localhost:3007";
+const KANBAN_SECRET_DEV_DEFAULT = "cargoDesk-dev-kanban-service-secret-do-not-use-in-prod";
+const KANBAN_SERVICE_SECRET = readSecret("KANBAN_SERVICE_SECRET", KANBAN_SECRET_DEV_DEFAULT);
+if (KANBAN_SERVICE_SECRET === KANBAN_SECRET_DEV_DEFAULT)
+  console.warn("⚠  KANBAN_SERVICE_SECRET not set (checked KANBAN_SERVICE_SECRET_FILE, then KANBAN_SERVICE_SECRET) — using insecure dev default. Set it (matching the kanban service's own env) before deploying.");
+
+async function callKanbanService(method, urlPath, body) {
+  let r;
+  try {
+    r = await fetch(`${KANBAN_SERVICE_URL}${urlPath}`, {
+      method,
+      headers: { Authorization: `Bearer ${KANBAN_SERVICE_SECRET}`, "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch {
+    const e = new Error("Kanban Service is unreachable — try again shortly");
+    e.status = 503;
+    throw e;
+  }
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const e = new Error(data.error || `Kanban service returned HTTP ${r.status}`);
+    e.status = r.status;
+    throw e;
+  }
+  return data;
+}
+
 // Zero-script onboarding: a fresh clone has no cargodesk.db yet. db/cargodesk.sample.db is a
 // committed, pre-seeded copy carrying only static MDM reference data (ports, carriers, vessels,
 // commodities, regions, trade lanes, countries) — never shipments/contracts/customers/users,
@@ -2256,6 +2289,10 @@ const SETTING_DEFAULTS = {
   // Same one-way cutover lever as contract_source/mdm_source above, for the Screening Service
   // (services/screening/) — sanctions_entries/sanctions_syncs.
   screening_source:           'local',
+  // Same one-way cutover lever as the three above, for the Kanban/Testing Service
+  // (services/kanban/) — tickets/ticket_links/test_items/test_case_links/kb_projects/
+  // kb_versions/kb_columns.
+  kanban_source:              'local',
   // Freight Audit & Payment — a carrier invoice line whose |variance| exceeds this percentage of
   // the expected (contracted/accrued) amount is flagged 'variance' instead of auto-'matched'.
   // One flat global tolerance, not per-carrier/per-charge-type rules — the configurable-rule-
@@ -3882,12 +3919,47 @@ const ensureBookingCreated = (shipmentId) => {
 // carrier response past this age is exactly what the notification bell already flags.
 const STALE_BOOKING_HOURS = 48;
 
-// Dedupes on (sourceType, sourceId) via the new tickets.source_type/source_id columns — once a
+// Batch-resolves rows' assigneeId -> assigneeName/assigneeInitial for whatever the Kanban Service
+// returns in remote mode (it owns no `users` table of its own) — same batch-IN pattern
+// routes/shipments.js's own resolveSeaPorts() already established for sea-port names. Mutates and
+// returns the same array; a cheap no-op when nothing has an assignee.
+function resolveAssigneeNames(rows) {
+  const ids = [...new Set(rows.map(r => r.assigneeId).filter(Boolean))];
+  if (!ids.length) return rows;
+  const names = {};
+  db.prepare(`SELECT id, name FROM users WHERE id IN (${ids.map(() => '?').join(',')})`)
+    .all(...ids).forEach(u => { names[u.id] = u.name; });
+  for (const r of rows) {
+    const name = r.assigneeId ? names[r.assigneeId] : null;
+    r.assigneeName = name || null;
+    r.assigneeInitial = name ? name.trim()[0].toUpperCase() : null;
+  }
+  return rows;
+}
+
+// Dedupes on (sourceType, sourceId) via the tickets.source_type/source_id columns — once a
 // ticket exists for a given source it's never recreated, even if a human later closes it and the
 // underlying condition still holds (closing it is treated as "handled", same as this codebase's
 // other one-shot auto-triggers never re-firing once their target is in a settled state). Returns
 // the new ticket id, or null if one already existed.
-const ensureOpsTicket = (sourceType, sourceId, { shipmentId, title, description, priority = 'Medium' }) => {
+//
+// Remote branch (kanban_source='remote') calls the Kanban Service's own atomic
+// POST /internal/tickets/ensure — an INSERT OR IGNORE against a real UNIQUE(source_type,
+// source_id) constraint that table only has in that service's schema. The local path below keeps
+// its original check-then-insert (a narrow, low-probability race under concurrent sweeps,
+// unchanged) rather than retrofitting the same constraint onto the monolith's own long-lived
+// tickets table — the remote path closes the race outright instead of porting it.
+const ensureOpsTicket = async (sourceType, sourceId, { shipmentId, title, description, priority = 'Medium' }) => {
+  if ((getSettings().kanban_source || 'local') === 'remote') {
+    try {
+      const r = await callKanbanService('POST', '/internal/tickets/ensure',
+        { sourceType, sourceId, shipmentId: shipmentId || null, title, description, priority });
+      return r.created ? r.id : null;
+    } catch (e) {
+      console.error('ensureOpsTicket (remote) failed:', e.message);
+      return null;
+    }
+  }
   const existing = db.prepare("SELECT id FROM tickets WHERE source_type=? AND source_id=?").get(sourceType, sourceId);
   if (existing) return null;
   const id = `TKT-${uid()}`;
@@ -3900,7 +3972,7 @@ const ensureOpsTicket = (sourceType, sourceId, { shipmentId, title, description,
   return id;
 };
 
-const runOpsAutomationSweep = () => {
+const runOpsAutomationSweep = async () => {
   const now = Date.now();
   const staleBookings = db.prepare(`
     SELECT id, shipment_id, carrier_code, requested_at FROM carrier_bookings
@@ -3909,7 +3981,7 @@ const runOpsAutomationSweep = () => {
   for (const b of staleBookings) {
     const ageHours = (now - new Date(b.requested_at).getTime()) / 36e5;
     if (ageHours < STALE_BOOKING_HOURS) continue;
-    ensureOpsTicket('carrier_booking_stale', b.id, {
+    await ensureOpsTicket('carrier_booking_stale', b.id, {
       shipmentId: b.shipment_id, priority: 'High',
       title: `Carrier booking stuck — no response in ${Math.floor(ageHours)}h (${b.shipment_id})`,
       description: `Carrier booking ${b.id} on ${b.shipment_id} (${b.carrier_code || 'unknown carrier'}) has had no carrier response for over ${STALE_BOOKING_HOURS}h. Auto-created by the ops automation sweep.`,
@@ -3924,7 +3996,7 @@ const runOpsAutomationSweep = () => {
       AND s.status NOT IN ('Completed', 'Cancelled')
   `).all(today);
   for (const m of overdueMilestones) {
-    ensureOpsTicket('milestone_overdue', m.id, {
+    await ensureOpsTicket('milestone_overdue', m.id, {
       shipmentId: m.shipment_id, priority: 'Medium',
       title: `Overdue milestone: ${m.label} (${m.shipment_id})`,
       description: `Milestone "${m.label}" on ${m.shipment_id} was estimated for ${m.estimated_date} and is still incomplete. Auto-created by the ops automation sweep.`,
@@ -3944,15 +4016,16 @@ const runOpsAutomationSweep = () => {
     // re-screen of an already-ticketed shipment create a fresh duplicate Critical ticket —
     // confirmed live (SHP-0YZJJ8 and SHP-W6K9NO each had two). carrier_booking_stale (above)
     // doesn't have this bug since carrier_bookings.id is genuinely stable.
-    ensureOpsTicket('compliance_hit', sc.shipment_id, {
+    await ensureOpsTicket('compliance_hit', sc.shipment_id, {
       shipmentId: sc.shipment_id, priority: 'Critical',
       title: `Compliance HIT requires review — ${sc.shipment_id}`,
       description: `Sanctions screening on ${sc.shipment_id} returned a HIT with no override on record. Auto-created by the ops automation sweep.`,
     });
   }
 };
-runOpsAutomationSweep();
-setInterval(runOpsAutomationSweep, 60 * 60 * 1000); // hourly, same cadence as expireStaleContracts
+runOpsAutomationSweep().catch(e => console.error('runOpsAutomationSweep failed:', e.message));
+setInterval(() => runOpsAutomationSweep().catch(e => console.error('runOpsAutomationSweep failed:', e.message)),
+  60 * 60 * 1000); // hourly, same cadence as expireStaleContracts
 
 // ─── Allocation conflict helpers ──────────────────────────────────────────────
 
@@ -4384,6 +4457,7 @@ const ctx = {
   CONTRACT_SERVICE_URL, CONTRACT_SERVICE_SECRET, callContractService,
   MDM_SERVICE_URL, MDM_SERVICE_SECRET, callMdmService,
   SCREENING_SERVICE_URL, SCREENING_SERVICE_SECRET, callScreeningService,
+  KANBAN_SERVICE_URL, KANBAN_SERVICE_SECRET, callKanbanService, resolveAssigneeNames,
   inverseLinkLabel,
   fs, path,
   migrationFailures,

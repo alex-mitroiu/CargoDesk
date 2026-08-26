@@ -4,8 +4,8 @@
 Full-stack freight management app. React 18 + Vite frontend, Express + node:sqlite backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.81.0 "Warden"**
-- Run: `npm run dev` (runs the monolith on :3001 + Vite on :5173 + the Document Distribution Service on :3002 + the PDF Render Service on :3003 + the Contract Management Service on :3004 + the MDM Service on :3005 + the Screening Service on :3006, concurrently) — zero-script onboarding: first boot with no `cargodesk.db` auto-copies the committed `db/cargodesk.sample.db` (MDM reference data only) into place
+- Version: **v0.82.0 "Gantry"**
+- Run: `npm run dev` (runs the monolith on :3001 + Vite on :5173 + the Document Distribution Service on :3002 + the PDF Render Service on :3003 + the Contract Management Service on :3004 + the MDM Service on :3005 + the Screening Service on :3006 + the Kanban Service on :3007, concurrently) — zero-script onboarding: first boot with no `cargodesk.db` auto-copies the committed `db/cargodesk.sample.db` (MDM reference data only) into place
 - Re-seed: `npm run seed` (runs `scripts/import-mdm-data.js`) — only needed to refresh MDM data from `data/*.csv`/`.json`, not for a normal first run
 
 ## Stack
@@ -35,8 +35,11 @@ routes/
   mdm.js             /api/carriers, /api/vessels, /api/port-locations, /api/linked-ports,
                      /api/trade-lanes, /api/country-trade-lanes, /api/regions, /api/countries,
                      /api/unlocodes, /api/commodities
-  kanban.js          /api/tickets/*, /api/ticket-links/*
-  testcases.js       /api/test-items/*, /api/tickets/:id/tested-by (Story↔TestCase links)
+  kanban.js          /api/tickets/*, /api/ticket-links/*, /api/kb/* — every route branches on
+                     app_settings.kanban_source since v0.82.0, proxying to the standalone
+                     Kanban/Testing Service in 'remote' mode (services/kanban/)
+  testcases.js       /api/test-items/*, /api/tickets/:id/tested-by (Story↔TestCase links) —
+                     same kanban_source proxy branch as kanban.js above
   edi.js             /api/shipments/:id/edi-messages, /api/shipments/:id/edi-messages/booking-request
   customs-filing.js  /api/shipments/:id/customs-filings/*, /api/customs-filings — simulated
                      AES/EEI + ISF/AMS filing lifecycle, reuses edi_messages — Epic TKT-XW6TQK
@@ -72,6 +75,12 @@ scripts/
                                    migrate:sanctions-to-service) — chunked at 2,000 rows,
                                    deliberately does NOT carry over sanctions_syncs (sync
                                    history); the service starts that fresh on its own first sync
+  migrate-kanban-to-service.js     Same shape, for the Kanban/Testing Service (npm run
+                                   migrate:kanban-to-service) — migrates all 7 owned tables
+                                   (kb_projects/kb_versions/kb_columns/tickets/ticket_links/
+                                   test_items/test_case_links) in one POST to that service's own
+                                   /internal/kanban/bulk-import route, INSERT OR IGNORE keyed on
+                                   each table's own original id
 exports/
   dashboard-template.xlsx          Base XLSX template with named ranges for chart wiring
 db/
@@ -315,7 +324,7 @@ are fully validated.
 - **bcryptjs**: password hashing uses `bcryptjs` (pure JS, no native deps); `POST /api/users` returns `{ ok: true }`, not the created record — reload the list after create/edit
 - **Kanban ticket nesting**: `parent_id` self-referencing FK on `tickets` — Epic → Story → sub-task; parent picker in TicketModal; breadcrumb chip on TicketCard and TicketPreview; children list with progress bar in TicketPreview; clicking a child navigates the preview panel
 - **Kanban Epic progress ring**: SVG ring on Epic cards showing X% of child tickets done; computed from `allTickets` prop passed down from KanbanPage
-- **Kanban assignee**: `assignee_id` FK → `users.id`; `GET /api/tickets` LEFT JOINs users so `assignee_name` and `assignee_initial` are always in the response; `TICKET_JOIN` SQL fragment defined in routes/kanban.js
+- **Kanban assignee**: `assignee_id` FK → `users.id`; `GET /api/tickets` LEFT JOINs users so `assignee_name` and `assignee_initial` are always in the response in local mode (`TICKET_JOIN` SQL fragment, routes/kanban.js) — in remote mode (`kanban_source='remote'`, v0.82.0+) the Kanban Service returns a raw `assigneeId` with no name attached (it owns no `users` table), and the monolith's new `resolveAssigneeNames()` helper (`server.js`, exported via ctx) batch-resolves the name/initial locally before responding, so the response shape is identical either way
 - **Kanban due date**: `due_date` TEXT (YYYY-MM-DD); `isOverdue(d)` helper; overdue cards show red ⚠ badge
 - **Kanban WIP limits**: per-column limit via ⚙; persisted to `localStorage` under key `cargodesk_wip_limits`; amber at limit, red when exceeded
 - **Export — CSV**: `GET /api/export/shipments.csv` — server-side, 34 columns, joins port names + container counts + cost totals, respects `applyShipmentAccessFilter`; `api.export.shipmentsCSV()` fetches as blob → `<a>.click()` download
@@ -326,6 +335,48 @@ are fully validated.
 - **Document system**: `DOC_TYPES` in App.jsx (~line 56: BL01/MB01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — `MB01` (Master Bill of Lading, v0.71.0) is the vessel-operator-to-NVOCC document, a genuinely separate build from `BL01` (NVOCC-to-shipper House B/L), not a mode flag on it — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). (The earlier client-side-jsPDF `DocumentsMenu` component this note used to distinguish from was removed as dead code — it had zero references anywhere in the app.)
 - **Lifecycle-stage stepper precedent**: no dedicated stepper component exists yet; `MilestonePanel` (ShipmentDetailPage.jsx 1593-~1870) is the closest analog — linear progress bar (1734-1738, `width: ${progress}%`) plus per-step state coloring via `milestoneState()`/`stateColor()` (1666-1676: completed/overdue/current/upcoming) driven by `shipment_milestones` rows (`id, label, estimatedDate, note, completedAt, completedBy`, fixed step keys `booking_confirmed, si_submitted, cargo_gated_in, vessel_departed, bl_issued, vessel_arrived, customs_cleared, cargo_released, delivered`). Any new per-container lifecycle/stage UI should reuse this state-coloring pattern rather than inventing a new visual language
 - **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages, 📡 EDI). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
+
+## Recent changes (v0.82.0 "Gantry")
+- **Kanban/Testing Service extraction** — the third and final planned database-per-domain cut
+  (MDM v0.80.0, Screening v0.81.0), same local/remote toggle pattern. New `services/kanban/`
+  (port 3007) owns `tickets`/`ticket_links`/`test_items`/`test_case_links`/`kb_projects`/
+  `kb_versions`/`kb_columns` — every route from `routes/kanban.js`/`routes/testcases.js` ported
+  to `/internal/*` verbatim, minus `TICKET_JOIN`'s `LEFT JOIN users` (the service owns no `users`
+  table). New `app_settings.kanban_source` toggle (`'local'` default | `'remote'`), same
+  one-way-cutover-lever shape as the three sources before it.
+- **New shared `resolveAssigneeNames(rows)`** (`server.js`, exported via ctx) batch-resolves
+  `assignee_id` → `assigneeName`/`assigneeInitial` after the remote service returns raw ids —
+  same batch-`IN` pattern `routes/shipments.js`'s own `resolveSeaPorts()` already established for
+  sea-port names. Applied on `GET /api/tickets`/`GET /api/test-items`'s remote branches; the
+  frontend's existing assignee-avatar rendering needed zero changes either way.
+- **`ensureOpsTicket()` got a real atomicity fix, remote-mode only.** The ops-automation sweep's
+  dedupe-on-`(sourceType, sourceId)` check was a plain check-then-insert — a narrow race under
+  concurrent sweeps. The Kanban Service's own schema adds a real `UNIQUE(source_type, source_id)`
+  constraint `tickets` never had in the monolith, backing a new atomic
+  `POST /internal/tickets/ensure` (`INSERT OR IGNORE`) that closes the race outright in remote
+  mode; the local path keeps its original behavior, unchanged. `ensureOpsTicket()` and
+  `runOpsAutomationSweep()` both became `async` to support this — rippled into the startup call,
+  the hourly `setInterval`, and the dev-only `/api/test/run-ops-automation-sweep` trigger route.
+- **Two things needed zero special-casing**: Story↔TestCase links (`tickets` and `test_items`
+  move to the same service, so the live cross-table JOIN stays entirely server-side there exactly
+  like it does locally) and the Command Center's `TicketAlertCard` (already calls
+  `api.tickets.list()` over HTTP through the monolith's own `/api/tickets` proxy).
+- **New `scripts/migrate-kanban-to-service.js`** migrates all 7 tables in one POST to a new
+  `/internal/kanban/bulk-import` route (mirrors MDM's own per-table-array bulk-import shape),
+  each table keeping its own original id as an `INSERT OR IGNORE` natural key.
+- 60 new assertions (`services/kanban/tests/{kanban-crud,testcases-crud}.test.js`,
+  `tests/kanban-service-toggle.test.js` — the last covering toggle admin-gating, full
+  local/remote CRUD, assignee-name resolution in remote mode, the story-link JOIN surviving
+  remotely, ops-sweep atomicity across two consecutive runs, and the independent-datastore
+  proof). Full backend chain green in local mode from a fresh restart (same 5 unrelated
+  pre-existing PDF-Render-service-dependent failures as v0.80.0/v0.81.0), clean build. Verified
+  live with all four extracted services plus the monolith running together, and via CDP against
+  the real Settings UI toggle control.
+- **This completes the three-cut database-per-domain extraction plan** (MDM → Screening →
+  Kanban/Testing) proposed this session as three published design docs
+  (`documentation/splitting-mdm-first.html`, `splitting-sanctions-next.html`,
+  `splitting-kanban-out.html`).
+- Full architecture writeup: `ARCHITECTURE.md` §8.1 (extended again, third and final time).
 
 ## Recent changes (v0.81.0 "Warden")
 - **Screening Service extraction** — second of three planned database-per-domain cuts, following

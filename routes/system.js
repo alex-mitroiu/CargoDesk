@@ -150,6 +150,17 @@ module.exports = function systemRoutes(app, ctx) {
     ok(res, { screeningSource: value });
   });
 
+  // Same shape as the three sources above, for the Kanban/Testing Service. No cache to rebuild
+  // here (unlike mdm-source/screening-source) — tickets/test items are read fresh per request in
+  // both modes, there's no in-memory index that needs an immediate refresh on flip.
+  app.put("/api/settings/kanban-source", auth(), requireRole(["admin"]), (req, res) => {
+    const { value } = req.body || {};
+    if (value !== "local" && value !== "remote") return err(res, "value must be 'local' or 'remote'");
+    db.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('kanban_source', ?)").run(value);
+    logAdminEvent(req.user, 'SETTINGS_UPDATED', 'settings', 'kanban_source', { value });
+    ok(res, { kanbanSource: value });
+  });
+
   // ─── Schedules ────────────────────────────────────────────────────────────
 
   // Common TSP hubs used in mock data
