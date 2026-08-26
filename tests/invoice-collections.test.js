@@ -87,6 +87,14 @@ async function confirmDoc(docId, token) {
 }
 
 (async () => {
+  // Populated as fixtures are created below, deleted in the `finally` block regardless of how
+  // the run ends — this file used to leak every customer/shipment/office/user it created (no
+  // cleanup at all), which silently accumulated 20 runs' worth of orphaned "Test Missing Co"-
+  // style fixtures in the dev DB and started polluting count-sensitive assertions in other
+  // report tests that share the same overdue-deadline endpoint. Found and fixed live — the 80
+  // orphaned customers/shipments, 19 orphaned offices, and 40 orphaned scratch users already
+  // accumulated were cleaned up directly against the dev DB as a one-time correction.
+  const cleanup = { shipments: [], customers: [], offices: [], users: [] };
   try {
     console.log("Logging in…");
     const token = await login();
@@ -108,6 +116,7 @@ async function confirmDoc(docId, token) {
     const occEmail = `occ-ic-${rand}@example.com`;
     await request("POST", "/api/users", { email: occEmail, name: "OCC Collections Test", roles: ["occ_bk"], password: "OccFixture!2026Zq" }, token);
     const occLogin = await request("POST", "/api/auth/login", { email: occEmail, password: "OccFixture!2026Zq" });
+    cleanup.users.push(occEmail);
     const asOcc = await request("POST", "/api/invoice-status-reason-codes", { code: "X", label: "X" }, occLogin.body.token);
     assert("occ_bk cannot create a reason code", asOcc.status === 403, JSON.stringify(asOcc.body));
     await request("DELETE", `/api/invoice-status-reason-codes/${newCode.body.id}`, null, token);
@@ -116,6 +125,7 @@ async function confirmDoc(docId, token) {
     const cust = await request("POST", "/api/customers", {
       companyName: "Test Collections Co", billingByDay: 25, paymentSettlementDay: 30, holidayUnlocode: "NLRTM",
     }, token);
+    cleanup.customers.push(cust.body.id);
     assert("billingByDay round-trips", cust.body.billingByDay === 25, JSON.stringify(cust.body));
     assert("paymentSettlementDay round-trips", cust.body.paymentSettlementDay === 30, JSON.stringify(cust.body));
     assert("holidayUnlocode round-trips", cust.body.holidayUnlocode === "NLRTM", JSON.stringify(cust.body));
@@ -133,6 +143,7 @@ async function confirmDoc(docId, token) {
     const countryOriginal = anyCountry.body.results[0];
     const office = await request("POST", "/api/offices", { unlocode: `X${rand.slice(0, 4).toUpperCase()}`, countryCode: countryIso2, department: "SE", name: "Test Collections Office" }, token);
     const officeId = office.body.id;
+    cleanup.offices.push(officeId);
     assert("office resolves the real country we picked", office.body.countryCode === countryIso2, JSON.stringify(office.body));
 
     await request("PUT", `/api/countries/${countryIso2}`, {
@@ -144,6 +155,7 @@ async function confirmDoc(docId, token) {
       principalId: cust.body.id, principalName: "Test Collections Co", emoOfficeId: officeId,
     }, token);
     const shipmentId = ship.body.id;
+    cleanup.shipments.push(shipmentId);
     const line1 = await addSellLine(shipmentId, token, 500, "OFR");
     const doc1 = await generateInvoiceDoc(shipmentId, token, [line1.id]);
     await confirmDoc(doc1.id, token);
@@ -167,6 +179,7 @@ async function confirmDoc(docId, token) {
     console.log("\nStatus Override — Trade Manager, own lane only");
     const tmEmail = `tm-ic-${rand}@example.com`;
     await request("POST", "/api/users", { email: tmEmail, name: "TM Collections Test", roles: ["trade_manager"], password: "TmFixture!2026Zq" }, token);
+    cleanup.users.push(tmEmail);
     const tmLogin = await request("POST", "/api/auth/login", { email: tmEmail, password: "TmFixture!2026Zq" });
 
     const overrideNoScope = await request("POST", `/api/shipments/${shipmentId}/documents/${doc1.id}/status-override`,
@@ -197,10 +210,12 @@ async function confirmDoc(docId, token) {
 
     console.log("\nMissing — a shipment delivered past its invoice deadline with no confirmed invoice");
     const custMissing = await request("POST", "/api/customers", { companyName: "Test Missing Co", invoiceDeadlineDays: 5 }, token);
+    cleanup.customers.push(custMissing.body.id);
     const shipMissing = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
       principalId: custMissing.body.id, principalName: "Test Missing Co",
     }, token);
+    cleanup.shipments.push(shipMissing.body.id);
     await request("POST", `/api/shipments/${shipMissing.body.id}/milestones/init`, {}, token);
     const msMissing = await request("GET", `/api/shipments/${shipMissing.body.id}/milestones`, null, token);
     const deliveredMissing = msMissing.body.find(m => m.milestoneKey === "delivered");
@@ -213,10 +228,12 @@ async function confirmDoc(docId, token) {
 
     console.log("\nPaid — outstanding fully settled");
     const custPaid = await request("POST", "/api/customers", { companyName: "Test Paid Co" }, token);
+    cleanup.customers.push(custPaid.body.id);
     const shipPaid = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
       principalId: custPaid.body.id, principalName: "Test Paid Co",
     }, token);
+    cleanup.shipments.push(shipPaid.body.id);
     const linePaid = await addSellLine(shipPaid.body.id, token, 800, "OFR");
     const docPaid = await generateInvoiceDoc(shipPaid.body.id, token, [linePaid.id]);
     await confirmDoc(docPaid.id, token);
@@ -227,10 +244,12 @@ async function confirmDoc(docId, token) {
 
     console.log("\nCancelled — an invoice reversed via the existing v0.53.0 Debit/Credit Note mechanism");
     const custCancel = await request("POST", "/api/customers", { companyName: "Test Cancelled Co" }, token);
+    cleanup.customers.push(custCancel.body.id);
     const shipCancel = await request("POST", "/api/shipments", {
       pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
       principalId: custCancel.body.id, principalName: "Test Cancelled Co",
     }, token);
+    cleanup.shipments.push(shipCancel.body.id);
     const lineCancel = await addSellLine(shipCancel.body.id, token, 300, "OFR");
     const docCancel = await generateInvoiceDoc(shipCancel.body.id, token, [lineCancel.id]);
     await confirmDoc(docCancel.id, token);
@@ -269,9 +288,28 @@ async function confirmDoc(docId, token) {
 
     console.log("\n" + "─".repeat(50));
     console.log(`Results: ${passed} passed, ${failed} failed`);
-    process.exit(failed > 0 ? 1 : 0);
+    process.exitCode = failed > 0 ? 1 : 0;
   } catch (e) {
     console.error("\nFATAL:", e.message);
-    process.exit(1);
+    process.exitCode = 1;
+  } finally {
+    // Delete shipments before customers (a customer with a referencing shipment can still be
+    // deleted today — no guard exists — but leaving the shipment behind is exactly the orphan
+    // this cleanup exists to prevent) — then offices and scratch users, order-independent among
+    // themselves. Uses a fresh login of its own since the one from the try block may not exist
+    // if login() itself is what failed.
+    const token = await login().catch(() => null);
+    if (token) {
+      for (const id of cleanup.shipments) await request("DELETE", `/api/shipments/${id}`, null, token).catch(() => {});
+      for (const id of cleanup.customers) await request("DELETE", `/api/customers/${id}`, null, token).catch(() => {});
+      for (const id of cleanup.offices) await request("DELETE", `/api/offices/${id}`, null, token).catch(() => {});
+      if (cleanup.users.length) {
+        const allUsers = await request("GET", "/api/users", null, token).catch(() => ({ body: [] }));
+        for (const email of cleanup.users) {
+          const u = (allUsers.body || []).find(u => u.email === email);
+          if (u) await request("DELETE", `/api/users/${u.id}`, null, token).catch(() => {});
+        }
+      }
+    }
   }
 })();

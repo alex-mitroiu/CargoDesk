@@ -739,7 +739,7 @@ Carrier Booking, Customs Filing, History) is a real, independently-routed page u
 `src/pages/shipments/`, with the hash-routing table centralized in `shipmentSections.js` (§4) —
 imported by both files instead of hand-duplicated.
 
-### 8.12 EDI Messaging & Carrier Booking Lifecycle (deepened v0.79.0 — eAdapter, carrier-EDI epic)
+### 8.12 EDI Messaging & Carrier Booking Lifecycle (deepened v0.79.0 — eAdapter; office-scoped v0.83.0)
 
 Substantially more complete than the last review's "v1, demoable" framing. `carrier_bookings` /
 `carrier_booking_archive` now model a real state machine: a booking created via
@@ -750,23 +750,43 @@ Pending) and starts a fresh one — a **confirmed** booking is never silently re
 archived-and-superseded before confirmation.
 
 `BOOKABLE_CARRIERS` (`MAEU`/`SAFM`/`MCPU`, the built-in three) is no longer the whole story.
-First story of the carrier-EDI epic, eAdapter, generalizes it into `isEdiBookable(carrierCode)`:
+First story of the carrier-EDI epic, eAdapter, generalizes it into `isEdiBookable(carrierCode,
+officeId)`:
 ```
-function isEdiBookable(carrierCode) {
+function isEdiBookable(carrierCode, officeId) {
   if (getSettings().api_eadapter_enabled === 'false') return false;
   if (BOOKABLE_CARRIERS.has(carrierCode)) return true;
-  const cfg = db.prepare("SELECT is_active FROM carrier_eadapter_configs WHERE carrier_code=?").get(carrierCode);
+  if (!officeId) return false;
+  const cfg = db.prepare("SELECT is_active FROM carrier_eadapter_configs WHERE carrier_code=? AND office_id=?").get(carrierCode, officeId);
   return !!cfg?.is_active;
 }
 ```
-New `carrier_eadapter_configs` table (one row per carrier: `transport_type` REST API/AS2/SFTP,
-`endpoint_url`, `auth_header_name`, `credential`) is modeled directly on `office_mail_settings`'
-shape and secret-hygiene convention — `mapEadapterConfig` (`lib/mappers.js`) never returns the
-raw `credential`, only a `hasCredential` boolean, same as that table's own `smtp_password`. New
-`routes/eadapter.js`: CRUD on `/api/eadapter/configs` (admin/operator write-gated), plus a public
-`GET /api/eadapter/bookable-carriers` (`{enabled, carriers}`) that both Carrier Booking pages now
-poll instead of importing the static `BOOKABLE_CARRIERS` Set directly — the live effective set,
-not a compile-time constant.
+`carrier_eadapter_configs` (one row per **(carrier, office)** as of v0.83.0, not one row per
+carrier — a real carrier EDI relationship is negotiated per country/branch, not once globally; a
+low-volume office is exactly the one a carrier is least inclined to bother configuring EDI for.
+`office_id` is the real scope key (`UNIQUE(carrier_code, office_id)`); `country_iso2` is
+denormalized from that office at write time — always re-derived server-side from `office_id`,
+never trusted from the request body, so it can never drift from the office actually picked. The
+built-in three are deliberately **not** office-scoped — a separate, pre-existing, always-
+simulated concept this pass didn't revisit. `officeId` at the call site is the shipment's own
+`emo_office_id` (Export Managing Office — the same field `resolveInvoiceThresholds`/
+`sendViaOffice` already key off as "the office actually handling this shipment"); a shipment with
+no EMO office assigned can never match a scoped config. A pre-existing `carrier_code`-only row
+predates this and has no real office to attribute itself to — the one-time rebuild migration
+(`server.js`, guarded by checking for the `office_id` column) deactivates any such row with an
+explanatory note rather than guessing an office, same non-destructive posture the `shipment_
+schedules.shipment_id` nullable rebuild (§14) already established for this class of migration.
+Transport columns (`transport_type` REST API/AS2/SFTP, `endpoint_url`, `auth_header_name`,
+`credential`) are modeled directly on `office_mail_settings`' shape and secret-hygiene convention
+— `mapEadapterConfig` (`lib/mappers.js`) never returns the raw `credential`, only a
+`hasCredential` boolean, same as that table's own `smtp_password`; `offices.js`'s own office
+delete-guard (already blocking a delete referenced by a shipment) gained the same check for a
+referencing eAdapter config. New `routes/eadapter.js`: CRUD on `/api/eadapter/configs` (admin/
+operator write-gated, `officeId` required on create), plus a public `GET /api/eadapter/bookable-
+carriers?officeId=` (`{enabled, carriers}`, office-aware — no `officeId` param returns only the
+built-in three) that both Carrier Booking pages now poll (with the shipment's own `emoOfficeId`)
+instead of importing the static `BOOKABLE_CARRIERS` Set directly — the live, office-scoped
+effective set, not a compile-time constant.
 
 The master toggle (`app_settings.api_eadapter_enabled`, default `'true'`) is deliberately a
 single switch over the **entire** EDI-carrier-communication surface, built-in three included —
@@ -783,9 +803,15 @@ v0.72.1, generalized) is a clean, separately-scoped follow-up story once this sc
 Frontend: a new `EadapterCard` (Settings → API Controls → External APIs, ahead of the generic
 `EXTERNAL_APIS` list — it needs N per-carrier sub-configs, not one scalar key, so it isn't built
 through that generic component) pairs the master toggle with a gear-icon button opening
-`EadapterConfigModal` — a hand-rolled tab bar (one tab per configured carrier, `+ Add Carrier
-Config` in the header, same tab-bar-inside-a-`Modal` pattern `MdmCustomersPage.jsx`'s
-`CustomerDetailModal` already established, since `Modal.jsx` has no built-in tab support).
+`EadapterConfigModal` — a hand-rolled tab bar (one tab per **(carrier, office)** row since v0.83.0,
+labeled `{carrierCode} · {officeCode}`, `+ Add Carrier Config` in the header, same tab-bar-inside-
+a-`Modal` pattern `MdmCustomersPage.jsx`'s `CustomerDetailModal` already established, since
+`Modal.jsx` has no built-in tab support). The draft form's Country select narrows a dependent
+Office select (both required, both disabled once a row is saved — same "immutable after create,
+delete and re-add to change scope" rule `carrierCode` already had); `Sel` (`components/
+primitives/Form.jsx`) gained a `disabled` prop to support this, a gap in the same class as the
+pre-existing `hint`-forwarding fix (v0.39.1) — every other `Sel` consumer app-wide is unaffected
+since the prop defaults to `false`.
 
 ### 8.13 AI Agent (added v0.68.0–v0.69.0)
 

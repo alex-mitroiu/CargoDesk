@@ -2,11 +2,17 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.82.0";
+export const VERSION   = "0.83.0";
 export const BUILD     = "2026-08-26";
-export const CODENAME  = "Gantry";
+export const CODENAME  = "Berth";
 
 export const CHANGELOG = [
+  {
+    version:  "0.83.0",
+    date:     "2026-08-26",
+    codename: "Berth",
+    summary:  "eAdapter is now scoped per office, not just per carrier -- direct follow-up: a real carrier EDI relationship is negotiated per country/branch, not once globally, and a low-volume office is exactly the one a carrier is least inclined to bother giving EDI access to. carrier_eadapter_configs moves from a bare carrier_code UNIQUE key to UNIQUE(carrier_code, office_id) -- a carrier can now hold several configs, one per office it's actually set up for. country_iso2 is always derived server-side from whichever office is picked (never trusted from the request body), so the two can never drift apart -- the config-list's own country column is a display convenience, not a second source of truth.\n\nisEdiBookable(carrierCode, officeId) (server.js) now requires both -- a shipment with no Export Managing Office assigned can never match a scoped config, same \"incomplete data means no, not yes\" posture used elsewhere in this codebase. GET /api/eadapter/bookable-carriers gained an officeId query param (no param returns only the built-in 3); both Carrier Booking pages now pass the shipment's own emoOfficeId instead of asking a carrier-wide question that no longer has one right answer. offices.js's own delete-guard (already blocking a delete referenced by a shipment) gained the same check for a referencing eAdapter config.\n\nA guarded, one-time table rebuild (server.js, same create-copy-swap shape the shipment_schedules.shipment_id nullable migration already established) re-scopes the table -- SQLite can't drop a UNIQUE constraint via ALTER TABLE. Any pre-existing carrier-only row predates per-office scoping and has no real office to attribute itself to, so each is deactivated with an explanatory note rather than guessing one.\n\nEadapterConfigModal gained Country and Office selects (Country narrows Office, both required, both immutable once saved -- delete and re-add to change scope, same rule carrierCode already had) -- found along the way that the shared Sel primitive (components/primitives/Form.jsx) never supported a disabled prop at all, a gap in the same class as the pre-existing hint-forwarding bug fixed at v0.39.1; fixed there so every Sel consumer benefits, not just this one.\n\nWhile chasing this through the full regression suite, found and fixed two real, unrelated, long-standing test-hygiene bugs: tests/invoice-collections.test.js and tests/billing-performance.test.js had both been silently leaking their own scratch customers/shipments/offices/users on every run (no cleanup at all, or an incomplete one) -- 20-29 runs' worth (198 rows total: 155 customers/shipments, 19 offices, 63 users) had quietly accumulated in the dev DB and started polluting other reports' count-sensitive assertions once enough had built up. Both fixed (the former now wrapped in a proper try/finally); the existing backlog was removed as a one-time correction.\n\n47 new/updated assertions (tests/eadapter.test.js, fully rewritten around the office-scoped shape). Full backend chain green from a fresh restart (same 5 unrelated pre-existing PDF-Render-service-dependent failures as the last several releases), clean build. Verified live via CDP end-to-end: opened the real Settings modal, added a draft config, picked a real country and confirmed the Office select populated with exactly that country's real active offices.",
+  },
   {
     version:  "0.82.0",
     date:     "2026-08-26",

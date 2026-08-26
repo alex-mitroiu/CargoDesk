@@ -36,11 +36,11 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
 
   useEffect(() => {
     let cancelled = false;
-    api.eadapter.bookableCarriers()
+    api.eadapter.bookableCarriers(shipment.emoOfficeId)
       .then(r => !cancelled && setBookableCarriers(r.carriers))
       .catch(() => !cancelled && setBookableCarriers([]));
     return () => { cancelled = true; };
-  }, []);
+  }, [shipment.emoOfficeId]);
 
   // Freight Terms already exists on the shipment (set on the Shipment Form) but wasn't
   // editable from the one place it's operationally most relevant — here, while actually
@@ -369,7 +369,9 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
       {!bookable && (
         <div style={{ fontFamily: T.body, fontSize: 12.5, color: T.textMuted, marginBottom: 16,
           background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 14px" }}>
-          Booking requests aren't supported for carrier {shipment.carrierCode || "—"} yet.
+          {!shipment.emoOfficeId
+            ? "Booking requests aren't supported yet — this shipment has no Export Managing Office assigned, and eAdapter configs are scoped per office."
+            : `Booking requests aren't supported for carrier ${shipment.carrierCode || "—"} at ${shipment.emoOfficeCode || "this office"} yet.`}
         </div>
       )}
       {status === "Pending" && (

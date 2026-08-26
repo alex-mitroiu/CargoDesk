@@ -363,7 +363,7 @@ export const api = {
       update: (id, d) => req("PUT",    `/eadapter/configs/${id}`, d),
       remove: (id)    => req("DELETE", `/eadapter/configs/${id}`),
     },
-    bookableCarriers: () => req("GET", "/eadapter/bookable-carriers"),
+    bookableCarriers: (officeId = "") => req("GET", `/eadapter/bookable-carriers${officeId ? `?officeId=${officeId}` : ""}`),
   },
   containerTypes: {
     list:   ()      => req("GET",    "/container-type-definitions"),

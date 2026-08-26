@@ -4,7 +4,7 @@
 Full-stack freight management app. React 18 + Vite frontend, Express + node:sqlite backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.82.0 "Gantry"**
+- Version: **v0.83.0 "Berth"**
 - Run: `npm run dev` (runs the monolith on :3001 + Vite on :5173 + the Document Distribution Service on :3002 + the PDF Render Service on :3003 + the Contract Management Service on :3004 + the MDM Service on :3005 + the Screening Service on :3006 + the Kanban Service on :3007, concurrently) — zero-script onboarding: first boot with no `cargodesk.db` auto-copies the committed `db/cargodesk.sample.db` (MDM reference data only) into place
 - Re-seed: `npm run seed` (runs `scripts/import-mdm-data.js`) — only needed to refresh MDM data from `data/*.csv`/`.json`, not for a normal first run
 
@@ -335,6 +335,39 @@ are fully validated.
 - **Document system**: `DOC_TYPES` in App.jsx (~line 56: BL01/MB01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — `MB01` (Master Bill of Lading, v0.71.0) is the vessel-operator-to-NVOCC document, a genuinely separate build from `BL01` (NVOCC-to-shipper House B/L), not a mode flag on it — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). (The earlier client-side-jsPDF `DocumentsMenu` component this note used to distinguish from was removed as dead code — it had zero references anywhere in the app.)
 - **Lifecycle-stage stepper precedent**: no dedicated stepper component exists yet; `MilestonePanel` (ShipmentDetailPage.jsx 1593-~1870) is the closest analog — linear progress bar (1734-1738, `width: ${progress}%`) plus per-step state coloring via `milestoneState()`/`stateColor()` (1666-1676: completed/overdue/current/upcoming) driven by `shipment_milestones` rows (`id, label, estimatedDate, note, completedAt, completedBy`, fixed step keys `booking_confirmed, si_submitted, cargo_gated_in, vessel_departed, bl_issued, vessel_arrived, customs_cleared, cargo_released, delivered`). Any new per-container lifecycle/stage UI should reuse this state-coloring pattern rather than inventing a new visual language
 - **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages, 📡 EDI). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
+
+## Recent changes (v0.83.0 "Berth")
+- **eAdapter is now scoped per office, not just per carrier** — direct follow-up: a real carrier
+  EDI relationship is negotiated per country/branch, not once globally, and a low-volume office
+  is exactly the one a carrier is least inclined to bother giving EDI access to.
+  `carrier_eadapter_configs` moves from a bare `carrier_code UNIQUE` key to
+  `UNIQUE(carrier_code, office_id)` — a carrier can now hold several configs, one per office it's
+  actually set up for. `country_iso2` is always derived server-side from whichever office is
+  picked (never trusted from the request body), so the two can never drift apart.
+- **`isEdiBookable(carrierCode, officeId)`** (`server.js`) now requires both — a shipment with no
+  Export Managing Office assigned can never match a scoped config. `GET /api/eadapter/bookable-
+  carriers` gained an `officeId` query param (no param = built-in 3 only); both Carrier Booking
+  pages pass the shipment's own `emoOfficeId`. `offices.js`'s delete-guard gained a matching
+  check for a referencing eAdapter config. A guarded, one-time table rebuild (same create-copy-
+  swap shape as the `shipment_schedules.shipment_id` nullable migration) re-scopes the table;
+  any pre-existing carrier-only row is deactivated with an explanatory note rather than guessing
+  an office.
+- **`EadapterConfigModal`** gained Country/Office selects (Country narrows Office, both required,
+  both immutable once saved). Found along the way: the shared `Sel` primitive
+  (`components/primitives/Form.jsx`) never supported a `disabled` prop at all — fixed there (same
+  class of gap as the pre-existing `hint`-forwarding bug from v0.39.1) so every `Sel` consumer
+  benefits.
+- **Two real, unrelated test-hygiene bugs found and fixed** while regression-testing this:
+  `tests/invoice-collections.test.js` and `tests/billing-performance.test.js` had both been
+  silently leaking their own scratch customers/shipments/offices/users on every run — 198 rows
+  had quietly accumulated in the dev DB and started polluting other reports' count-sensitive
+  assertions. Both fixed; the existing backlog was removed as a one-time correction.
+- 47 new/updated assertions (`tests/eadapter.test.js`, fully rewritten around the office-scoped
+  shape). Full backend chain green from a fresh restart (same 5 unrelated pre-existing PDF-
+  Render-service-dependent failures as the last several releases), clean build. Verified live via
+  CDP: opened the real Settings modal, added a draft config, picked a real country, confirmed the
+  Office select populated with exactly that country's real active offices.
+- Full architecture writeup: `ARCHITECTURE.md` §8.12 (extended).
 
 ## Recent changes (v0.82.0 "Gantry")
 - **Kanban/Testing Service extraction** — the third and final planned database-per-domain cut

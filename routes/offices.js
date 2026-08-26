@@ -75,6 +75,8 @@ module.exports = function officesRoutes(app, ctx) {
       "SELECT id FROM shipments WHERE emo_office_id=? OR imo_office_id=? OR controlling_office_id=? LIMIT 1"
     ).get(req.params.id, req.params.id, req.params.id);
     if (inUse) return err(res, "Office is referenced by shipments — deactivate it instead of deleting");
+    const eadapterInUse = db.prepare("SELECT id FROM carrier_eadapter_configs WHERE office_id=? LIMIT 1").get(req.params.id);
+    if (eadapterInUse) return err(res, "Office is referenced by an eAdapter carrier config — remove that config first, or deactivate the office instead of deleting");
     db.prepare("DELETE FROM offices WHERE id=?").run(req.params.id);
     ok(res, { deleted: req.params.id });
   });

@@ -488,6 +488,18 @@ async function confirmDoc(docId, token) {
 
     console.log("\nCleanup");
     await request("DELETE", `/api/users/${(await request("GET", "/api/users", null, token)).body.find(u => u.email === occEmail)?.id}`, null, token).catch(() => {});
+    // custMiss/custInScope/custOutOfScope and the tmEmailBp scratch user were never cleaned up
+    // here — found live via a large accumulated backlog of "Test Billing Missing Co" rows (29,
+    // one per uncleaned prior run) that started polluting other reports' count-sensitive
+    // assertions once enough had built up. Fixed; the pre-existing backlog was removed as a
+    // one-time correction against the dev DB directly.
+    await request("DELETE", `/api/shipments/${shipMiss.body.id}`, null, token).catch(() => {});
+    await request("DELETE", `/api/customers/${custMiss.body.id}`, null, token).catch(() => {});
+    await request("DELETE", `/api/shipments/${shipInScope.body.id}`, null, token).catch(() => {});
+    await request("DELETE", `/api/customers/${custInScope.body.id}`, null, token).catch(() => {});
+    await request("DELETE", `/api/shipments/${shipOutOfScope.body.id}`, null, token).catch(() => {});
+    await request("DELETE", `/api/customers/${custOutOfScope.body.id}`, null, token).catch(() => {});
+    await request("DELETE", `/api/users/${(await request("GET", "/api/users", null, token)).body.find(u => u.email === tmEmailBp)?.id}`, null, token).catch(() => {});
     await request("DELETE", `/api/shipments/${shipmentId}`, null, token);
     await request("DELETE", `/api/customers/${customerId}`, null, token);
     await request("DELETE", `/api/shipments/${shipDlId}`, null, token);

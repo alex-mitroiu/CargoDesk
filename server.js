@@ -1936,14 +1936,22 @@ const migrations = [
   "CREATE INDEX IF NOT EXISTS idx_invoice_status_overrides_doc ON invoice_status_overrides(document_id)",
 
   // eAdapter — per-carrier EDI connectivity configuration, first story of the carrier-EDI epic.
-  // One row per carrier (UNIQUE carrier_code), mirrors office_mail_settings' own shape (typed
-  // transport columns, is_active, timestamps). credential is stored plaintext but — same
-  // precedent as office_mail_settings.smtp_password/org_signing_certs — NO mapper or route ever
-  // returns it raw; only a hasCredential boolean. This pass is configuration + CRUD only, no
-  // live outbound call is attempted yet (see isEdiBookable below).
+  // One row per (carrier, office) as of v0.83.0 — a real carrier relationship is negotiated
+  // per-country/per-branch, not once globally (a low-volume office is exactly the case a carrier
+  // is least likely to bother giving EDI access to), so a carrier can hold several rows, one per
+  // office it's actually configured for. office_id is the real scope key; country_iso2 is
+  // denormalized from that office at write time (never trusted from the request body) purely so
+  // the config list is scannable/groupable by country without a JOIN — see routes/eadapter.js.
+  // Mirrors office_mail_settings' own shape otherwise (typed transport columns, is_active,
+  // timestamps). credential is stored plaintext but — same precedent as
+  // office_mail_settings.smtp_password/org_signing_certs — NO mapper or route ever returns it
+  // raw; only a hasCredential boolean. This pass is configuration + CRUD only, no live outbound
+  // call is attempted yet (see isEdiBookable below).
   `CREATE TABLE IF NOT EXISTS carrier_eadapter_configs (
     id               TEXT PRIMARY KEY,
-    carrier_code     TEXT NOT NULL UNIQUE,
+    carrier_code     TEXT NOT NULL,
+    country_iso2     TEXT NOT NULL DEFAULT '',
+    office_id        TEXT NOT NULL DEFAULT '',
     transport_type   TEXT NOT NULL DEFAULT 'rest_api',
     endpoint_url     TEXT NOT NULL DEFAULT '',
     auth_header_name TEXT NOT NULL DEFAULT '',
@@ -1951,7 +1959,8 @@ const migrations = [
     is_active        INTEGER NOT NULL DEFAULT 1,
     notes            TEXT NOT NULL DEFAULT '',
     created_at       TEXT NOT NULL,
-    updated_at       TEXT NOT NULL
+    updated_at       TEXT NOT NULL,
+    UNIQUE(carrier_code, office_id)
   )`,
   // Defaults ON — the original 3 hardcoded BOOKABLE_CARRIERS (MAEU/SAFM/MCPU) keep working
   // exactly as they do today on every existing install; nothing breaks silently on upgrade.
@@ -2051,6 +2060,56 @@ if (migrationFailures.length) {
     try { db.exec("ROLLBACK"); } catch {}
     console.error("[migration] FAILED shipment_schedules rebuild:", e.message);
     migrationFailures.push({ sql: "rebuildShipmentSchedulesNullableOwner", error: e.message });
+  } finally {
+    try { db.exec("PRAGMA foreign_keys=ON"); } catch {}
+  }
+})();
+
+// One-time table rebuild: carrier_eadapter_configs — carrier_code was a lone UNIQUE key (one row
+// per carrier, no scope); v0.83.0 rescopes it to (carrier_code, office_id) and adds country_iso2.
+// SQLite can't drop a UNIQUE constraint via ALTER TABLE, so this is the same guarded create-copy-
+// swap as the shipment_schedules rebuild above — gated by checking whether office_id already
+// exists, so it only ever runs once per DB. Every pre-existing row predates per-office scoping and
+// has no real office to attribute itself to, so rather than guess one, each is deactivated with an
+// explanatory note appended — an admin re-adds it properly, scoped to the office it actually
+// applies to, via the (now office-aware) config modal.
+;(function rebuildCarrierEadapterConfigsScoped() {
+  try {
+    const cols = db.prepare("PRAGMA table_info(carrier_eadapter_configs)").all();
+    if (cols.some(c => c.name === "office_id")) return; // already migrated (or table missing)
+    db.exec("PRAGMA foreign_keys=OFF");
+    db.exec("BEGIN");
+    db.exec(`CREATE TABLE carrier_eadapter_configs_new (
+      id               TEXT PRIMARY KEY,
+      carrier_code     TEXT NOT NULL,
+      country_iso2     TEXT NOT NULL DEFAULT '',
+      office_id        TEXT NOT NULL DEFAULT '',
+      transport_type   TEXT NOT NULL DEFAULT 'rest_api',
+      endpoint_url     TEXT NOT NULL DEFAULT '',
+      auth_header_name TEXT NOT NULL DEFAULT '',
+      credential       TEXT NOT NULL DEFAULT '',
+      is_active        INTEGER NOT NULL DEFAULT 1,
+      notes            TEXT NOT NULL DEFAULT '',
+      created_at       TEXT NOT NULL,
+      updated_at       TEXT NOT NULL,
+      UNIQUE(carrier_code, office_id)
+    )`);
+    db.prepare(`INSERT INTO carrier_eadapter_configs_new
+      (id, carrier_code, country_iso2, office_id, transport_type, endpoint_url, auth_header_name,
+       credential, is_active, notes, created_at, updated_at)
+      SELECT id, carrier_code, '', '', transport_type, endpoint_url, auth_header_name,
+             credential, 0,
+             TRIM(notes || ' [Deactivated by the office-scoping migration — re-add scoped to a real office.]'),
+             created_at, ?
+      FROM carrier_eadapter_configs`).run(new Date().toISOString());
+    db.exec("DROP TABLE carrier_eadapter_configs");
+    db.exec("ALTER TABLE carrier_eadapter_configs_new RENAME TO carrier_eadapter_configs");
+    db.exec("COMMIT");
+    console.log("  ✔ carrier_eadapter_configs rebuilt: scoped to (carrier_code, office_id); any pre-existing rows deactivated pending re-scoping");
+  } catch (e) {
+    try { db.exec("ROLLBACK"); } catch {}
+    console.error("[migration] FAILED carrier_eadapter_configs rebuild:", e.message);
+    migrationFailures.push({ sql: "rebuildCarrierEadapterConfigsScoped", error: e.message });
   } finally {
     try { db.exec("PRAGMA foreign_keys=ON"); } catch {}
   }
@@ -3412,10 +3471,22 @@ const BOOKABLE_CARRIERS = new Set(["MAEU", "SAFM", "MCPU"]);
 // uniformly, with no special-casing; a carrier that isn't bookable already has a complete
 // fallback lifecycle (manual Confirm with a hand-entered bookingRef, no EDI message ever sent),
 // so "off" just means every carrier uses that same path.
-function isEdiBookable(carrierCode) {
+//
+// v0.83.0 — per-office scoping. A real carrier EDI relationship is negotiated per-country/
+// per-branch, not once globally: a low-volume office is exactly the one a carrier is least
+// inclined to bother configuring EDI for. carrier_eadapter_configs rows are now scoped to a
+// specific office_id (see its own table comment); officeId is the shipment's own emo_office_id
+// (Export Managing Office — the office actually handling the carrier relationship for this
+// shipment, same field resolveInvoiceThresholds/sendViaOffice already key off). A shipment with
+// no EMO office assigned yet can never match a scoped config — same "incomplete data means no,
+// not yes" posture this codebase already takes elsewhere (e.g. a blank contractId never matches
+// a contract). The built-in 3 (BOOKABLE_CARRIERS) are deliberately NOT office-scoped — they're a
+// separate, pre-existing, always-simulated concept this pass didn't revisit.
+function isEdiBookable(carrierCode, officeId) {
   if (getSettings().api_eadapter_enabled === 'false') return false;
   if (BOOKABLE_CARRIERS.has(carrierCode)) return true;
-  const cfg = db.prepare("SELECT is_active FROM carrier_eadapter_configs WHERE carrier_code=?").get(carrierCode);
+  if (!officeId) return false;
+  const cfg = db.prepare("SELECT is_active FROM carrier_eadapter_configs WHERE carrier_code=? AND office_id=?").get(carrierCode, officeId);
   return !!cfg?.is_active;
 }
 // Fixed, curated additional party roles (Epic TKT-5XFCAP) — alongside the 4 hardcoded
@@ -3829,7 +3900,7 @@ const supersedeIfCarrierChanged = (shipment, existing) => {
   if (existing.status !== "Cancelled") {
     // Notify the old carrier only if something was actually transmitted for THIS booking —
     // its own carrier_code (who the request actually went to), not the shipment's new one.
-    if (existing.correlation_id && isEdiBookable(existing.carrier_code)) {
+    if (existing.correlation_id && isEdiBookable(existing.carrier_code, shipment.emo_office_id)) {
       const cancelId = `EDI-${uid()}`;
       db.prepare(`
         INSERT INTO edi_messages (id, shipment_id, carrier_code, direction, message_type, format, raw_payload, status, correlation_id, is_mock, created_at)

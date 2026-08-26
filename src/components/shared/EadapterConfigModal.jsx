@@ -16,17 +16,25 @@ const TRANSPORT_OPTIONS = [
 
 const DRAFT_ID = "__draft__";
 const emptyForm = () => ({
-  carrierCode: "", transportType: "rest_api", endpointUrl: "",
+  carrierCode: "", countryIso2: "", officeId: "", transportType: "rest_api", endpointUrl: "",
   authHeaderName: "", credential: "", isActive: true, notes: "",
 });
 
-// Tabbed carrier config editor behind eAdapter's gear icon — one tab per carrier, "＋ Add Carrier
-// Config" adds an unsaved draft tab. Modeled on the tab-bar-inside-a-Modal shape MdmCustomersPage's
-// CustomerDetailModal already established (hand-rolled tabs as the Modal's first child, no built-in
-// tab support in Modal.jsx itself) plus office-mail.js's own credential-handling UX (blank field on
-// save = keep the existing one, never shown raw once saved).
+// Tabbed carrier config editor behind eAdapter's gear icon — one tab per (carrier, office) row,
+// "＋ Add Carrier Config" adds an unsaved draft tab. A carrier's real EDI relationship is
+// negotiated per office (v0.83.0) — a low-volume branch is exactly the one a carrier is least
+// inclined to bother configuring EDI for — so the same carrier can hold several rows here, one
+// per office it's actually set up for. Country narrows the Office picker; the office itself is
+// the real scope key the server stores against (country is denormalized server-side from
+// whichever office is picked, purely for display — never trusted from this form). Modeled on the
+// tab-bar-inside-a-Modal shape MdmCustomersPage's CustomerDetailModal already established
+// (hand-rolled tabs as the Modal's first child, no built-in tab support in Modal.jsx itself) plus
+// office-mail.js's own credential-handling UX (blank field on save = keep the existing one, never
+// shown raw once saved).
 export default function EadapterConfigModal({ onClose }) {
   const [configs, setConfigs]   = useState(null);
+  const [countries, setCountries] = useState(null);
+  const [offices, setOffices]   = useState(null);
   const [activeId, setActiveId] = useState(null);
   const [form, setForm]         = useState(emptyForm());
   const [showCred, setShowCred] = useState(false);
@@ -47,6 +55,10 @@ export default function EadapterConfigModal({ onClose }) {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    api.countries.list().then(r => setCountries(r.results || r)).catch(() => setCountries([]));
+    api.offices.list().then(setOffices).catch(() => setOffices([]));
+  }, []);
 
   // Re-seed the edit buffer whenever the active tab changes — a fresh copy per tab so typing in
   // one tab never leaks into another, and switching away/back doesn't lose in-progress edits
@@ -57,7 +69,8 @@ export default function EadapterConfigModal({ onClose }) {
     if (activeId === DRAFT_ID) { setForm(emptyForm()); return; }
     const row = configs?.find(r => r.id === activeId);
     if (row) setForm({
-      carrierCode: row.carrierCode, transportType: row.transportType, endpointUrl: row.endpointUrl,
+      carrierCode: row.carrierCode, countryIso2: row.countryIso2, officeId: row.officeId,
+      transportType: row.transportType, endpointUrl: row.endpointUrl,
       authHeaderName: row.authHeaderName, credential: "", isActive: row.isActive, notes: row.notes,
     });
   }, [activeId, configs]);
@@ -65,15 +78,18 @@ export default function EadapterConfigModal({ onClose }) {
   const activeRow = configs?.find(r => r.id === activeId) || null;
   const isDraft = activeId === DRAFT_ID;
 
+  const officesForCountry = (offices || []).filter(o => o.isActive && o.countryCode === form.countryIso2);
+
   const addDraft = () => setActiveId(DRAFT_ID);
 
   const save = async () => {
     if (!form.carrierCode.trim()) return toast.error("Pick a carrier first");
+    if (isDraft && !form.officeId) return toast.error("Pick a country and office — eAdapter configs are scoped per office, not carrier-wide");
     setSaving(true);
     try {
       if (isDraft) {
         const created = await api.eadapter.configs.create(form);
-        toast.success(`${created.carrierCode} config created`);
+        toast.success(`${created.carrierCode} config created for ${created.officeCode}`);
         setConfigs(rows => [...(rows || []), created]);
         setActiveId(created.id);
       } else {
@@ -119,7 +135,7 @@ export default function EadapterConfigModal({ onClose }) {
                     background: "transparent", border: "none",
                     borderBottom: `2px solid ${activeId === r.id ? T.accent : "transparent"}`,
                     cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
-                  {r.carrierCode}
+                  {r.carrierCode} · {r.officeCode || "—"}
                   {!r.isActive && <span style={{ width: 6, height: 6, borderRadius: "50%", background: T.textMuted }} />}
                 </button>
               ))}
@@ -147,9 +163,22 @@ export default function EadapterConfigModal({ onClose }) {
                 onChange={v => setForm(f => ({ ...f, carrierCode: v }))}
                 required
               />
+              <Sel label="Country" value={form.countryIso2} disabled={!isDraft || countries === null}
+                options={[{ value: "", label: "Select a country…" },
+                  ...(countries || []).slice().sort((a, b) => a.name.localeCompare(b.name))
+                    .map(c => ({ value: c.iso2, label: c.name }))]}
+                onChange={v => setForm(f => ({ ...f, countryIso2: v, officeId: "" }))}
+                hint="Narrows which offices show below — a carrier's EDI relationship is set up per office, not once for the whole account."
+                required />
+              <Sel label="Office" value={form.officeId} disabled={!isDraft || !form.countryIso2 || offices === null}
+                options={[{ value: "", label: form.countryIso2 ? "Select an office…" : "Pick a country first" },
+                  ...officesForCountry.map(o => ({ value: o.id, label: `${o.code} — ${o.name}` }))]}
+                onChange={v => setForm(f => ({ ...f, officeId: v }))}
+                hint={form.countryIso2 && officesForCountry.length === 0 ? "No active offices in this country yet." : undefined}
+                required />
               {!isDraft && (
                 <p style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, margin: "-8px 0 0" }}>
-                  Carrier can't be changed on a saved config — delete and re-add to pick a different one.
+                  Carrier and office can't be changed on a saved config — delete and re-add to pick different ones.
                 </p>
               )}
               <Sel label="Transport Type" value={form.transportType} options={TRANSPORT_OPTIONS}
@@ -207,13 +236,16 @@ export default function EadapterConfigModal({ onClose }) {
         </>
       )}
 
-      {confirmDeleteId && (
-        <ConfirmModal
-          message={`Remove the ${configs.find(r => r.id === confirmDeleteId)?.carrierCode || ""} EDI config? This carrier will only stay bookable if it's one of the 3 built-in carriers.`}
-          onConfirm={doDelete}
-          onCancel={() => setConfirmDeleteId(null)}
-        />
-      )}
+      {confirmDeleteId && (() => {
+        const target = configs.find(r => r.id === confirmDeleteId);
+        return (
+          <ConfirmModal
+            message={`Remove the ${target?.carrierCode || ""} EDI config at ${target?.officeCode || "this office"}? Shipments through that office will only stay bookable for ${target?.carrierCode || "this carrier"} if it's one of the 3 built-in carriers.`}
+            onConfirm={doDelete}
+            onCancel={() => setConfirmDeleteId(null)}
+          />
+        );
+      })()}
     </Modal>
   );
 }

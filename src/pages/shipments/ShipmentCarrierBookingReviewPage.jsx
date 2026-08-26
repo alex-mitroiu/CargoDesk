@@ -33,11 +33,11 @@ const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
 
   useEffect(() => {
     let cancelled = false;
-    api.eadapter.bookableCarriers()
+    api.eadapter.bookableCarriers(shipment.emoOfficeId)
       .then(r => !cancelled && setBookableCarriers(r.carriers))
       .catch(() => !cancelled && setBookableCarriers([]));
     return () => { cancelled = true; };
-  }, []);
+  }, [shipment.emoOfficeId]);
 
   const load = useCallback(() => {
     setLoading(true);

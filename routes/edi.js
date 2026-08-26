@@ -150,8 +150,8 @@ module.exports = function ediRoutes(app, ctx) {
   app.post("/api/shipments/:id/edi-messages/booking-request", write, (req, res) => {
     const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
     if (!shipment) return err(res, "Shipment not found", 404);
-    if (!isEdiBookable(shipment.carrier_code))
-      return err(res, `Booking requests are not supported for carrier ${shipment.carrier_code}`, 400);
+    if (!isEdiBookable(shipment.carrier_code, shipment.emo_office_id))
+      return err(res, `Booking requests are not supported for carrier ${shipment.carrier_code} at this shipment's office`, 400);
 
     const existingBooking = db.prepare("SELECT * FROM carrier_bookings WHERE shipment_id=?").get(shipment.id);
     if (existingBooking && existingBooking.status === "Pending")
@@ -391,7 +391,7 @@ module.exports = function ediRoutes(app, ctx) {
     const cancelledBy = req.user?.name || req.user?.email || "";
 
     // Notify the carrier only if something was actually transmitted for this booking.
-    if (existing?.correlation_id && isEdiBookable(shipment.carrier_code)) {
+    if (existing?.correlation_id && isEdiBookable(shipment.carrier_code, shipment.emo_office_id)) {
       const cancelId = `EDI-${uid()}`;
       db.prepare(`
         INSERT INTO edi_messages (id, shipment_id, carrier_code, direction, message_type, format, raw_payload, status, correlation_id, is_mock, created_at)
