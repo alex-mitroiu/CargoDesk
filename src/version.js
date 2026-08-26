@@ -2,11 +2,17 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.80.0";
+export const VERSION   = "0.81.0";
 export const BUILD     = "2026-08-26";
-export const CODENAME  = "Atlas";
+export const CODENAME  = "Warden";
 
 export const CHANGELOG = [
+  {
+    version:  "0.81.0",
+    date:     "2026-08-26",
+    codename: "Warden",
+    summary:  "Screening Service extraction -- the second of three planned database-per-domain cuts, following MDM (v0.80.0) with the same local/remote toggle pattern. New services/screening/ (port 3006) owns sanctions_entries/sanctions_syncs plus both sync jobs (OFAC SDN, the US Consolidated Screening List) and their self-scheduling auto-sync timers, ported wholesale into its own tiny settings table (no admin UI for its schedule knobs yet -- config + CRUD only this pass, matching this codebase's own established scoping precedent). The 5 /api/sanctions/* routes -- which, unlike MDM, had never had a dedicated route file of their own -- were extracted out of routes/customers.js into new routes/sanctions.js as the first step, gaining an app_settings.screening_source toggle branch; screenCustomer()/rescreenShipmentsForCustomer() stayed in customers.js, unchanged, since they only ever read the shared sanctionsMap cache.\n\nA real, previously-undiscovered bug was found and fixed while auditing this: loadSanctionsIndex() used to do `sanctionsMap = new Map()` -- a REASSIGNMENT of the module-level variable, not an in-place mutation. ctx.sanctionsMap is captured once, by value, when the ctx object is built; routes/customers.js destructures it once at module-load time. Any reload after boot (a manual sync, a CSL sync, a CSV import, either scheduled timer) silently never reached that already-captured reference -- screenShipmentById (defined in server.js, closes over the variable directly) always saw the fresh map; screenCustomer()/GET /api/customers/:id's screeningResult field did not, staying frozen on whatever synced before the process last booted. Fixed to sanctionsMap.clear() + refill in place, verified with a dedicated regression test that syncs twice and confirms both paths see the second sync.\n\nsyncOfacSdn()/syncConsolidatedScreeningList() (server.js) gained a remote-mode branch that POSTs to the service then locally reloads the cache and re-screens active shipments -- so the manual Sync Now button gives the same immediate feedback either way. The two auto-sync schedulers retask themselves in remote mode: instead of the elaborate \"is a sync due\" math (irrelevant once the service owns that decision), they become a plain 15-minute cache-refresh poll, decoupled from the service's own weekly sync cadence.\n\nNew committed migration script (scripts/migrate-sanctions-to-service.js, chunked at 2,000 rows -- a real synced dataset ran 25,865 entries in this dev environment, migrated in 13 batches) -- deliberately does NOT carry over sync history, since a service that's never independently verified a sync against the live government feeds shouldn't claim a copied timestamp that says otherwise.\n\n25 new assertions across services/screening/tests/sanctions-sync.test.js and tests/screening-service-toggle.test.js (the latter proving local/remote are genuinely independent datastores, same as MDM's own toggle test, plus the reassignment-bug regression). Full 53-file backend chain green in local mode from a fresh restart (same 5 unrelated pre-existing PDF-Render-service-dependent failures as v0.80.0), clean build. Verified live with all three extracted services plus the monolith running together: 73 assertions across every new toggle/service-scoped test file, all green.",
+  },
   {
     version:  "0.80.0",
     date:     "2026-08-26",

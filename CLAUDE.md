@@ -4,8 +4,8 @@
 Full-stack freight management app. React 18 + Vite frontend, Express + node:sqlite backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.80.0 "Atlas"**
-- Run: `npm run dev` (runs the monolith on :3001 + Vite on :5173 + the Document Distribution Service on :3002 + the PDF Render Service on :3003 + the Contract Management Service on :3004 + the MDM Service on :3005, concurrently) — zero-script onboarding: first boot with no `cargodesk.db` auto-copies the committed `db/cargodesk.sample.db` (MDM reference data only) into place
+- Version: **v0.81.0 "Warden"**
+- Run: `npm run dev` (runs the monolith on :3001 + Vite on :5173 + the Document Distribution Service on :3002 + the PDF Render Service on :3003 + the Contract Management Service on :3004 + the MDM Service on :3005 + the Screening Service on :3006, concurrently) — zero-script onboarding: first boot with no `cargodesk.db` auto-copies the committed `db/cargodesk.sample.db` (MDM reference data only) into place
 - Re-seed: `npm run seed` (runs `scripts/import-mdm-data.js`) — only needed to refresh MDM data from `data/*.csv`/`.json`, not for a normal first run
 
 ## Stack
@@ -40,7 +40,9 @@ routes/
   edi.js             /api/shipments/:id/edi-messages, /api/shipments/:id/edi-messages/booking-request
   customs-filing.js  /api/shipments/:id/customs-filings/*, /api/customs-filings — simulated
                      AES/EEI + ISF/AMS filing lifecycle, reuses edi_messages — Epic TKT-XW6TQK
-  customers.js       /api/customers/*, /api/sanctions/*, /api/fx/*
+  customers.js       /api/customers/*, /api/fx/*
+  sanctions.js       /api/sanctions/* — extracted out of customers.js at v0.81.0 as the first
+                     step of the Screening Service extraction (services/screening/)
   contracts.js       /api/contracts/*, /api/entity-events/*
   carrier-invoices.js /api/carrier-invoices/*, /api/carrier-invoice-lines/:id/(approve|dispute) —
                      Freight Audit & Payment (v0.69.0)
@@ -66,6 +68,10 @@ scripts/
                                    migrate:mdm-to-service) — chunked (port_locations alone is
                                    14,000+ rows), idempotent via INSERT OR IGNORE against each
                                    table's own natural-key primary key
+  migrate-sanctions-to-service.js  Same shape, for the Screening Service (npm run
+                                   migrate:sanctions-to-service) — chunked at 2,000 rows,
+                                   deliberately does NOT carry over sanctions_syncs (sync
+                                   history); the service starts that fresh on its own first sync
 exports/
   dashboard-template.xlsx          Base XLSX template with named ranges for chart wiring
 db/
@@ -320,6 +326,46 @@ are fully validated.
 - **Document system**: `DOC_TYPES` in App.jsx (~line 56: BL01/MB01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — `MB01` (Master Bill of Lading, v0.71.0) is the vessel-operator-to-NVOCC document, a genuinely separate build from `BL01` (NVOCC-to-shipper House B/L), not a mode flag on it — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). (The earlier client-side-jsPDF `DocumentsMenu` component this note used to distinguish from was removed as dead code — it had zero references anywhere in the app.)
 - **Lifecycle-stage stepper precedent**: no dedicated stepper component exists yet; `MilestonePanel` (ShipmentDetailPage.jsx 1593-~1870) is the closest analog — linear progress bar (1734-1738, `width: ${progress}%`) plus per-step state coloring via `milestoneState()`/`stateColor()` (1666-1676: completed/overdue/current/upcoming) driven by `shipment_milestones` rows (`id, label, estimatedDate, note, completedAt, completedBy`, fixed step keys `booking_confirmed, si_submitted, cargo_gated_in, vessel_departed, bl_issued, vessel_arrived, customs_cleared, cargo_released, delivered`). Any new per-container lifecycle/stage UI should reuse this state-coloring pattern rather than inventing a new visual language
 - **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages, 📡 EDI). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
+
+## Recent changes (v0.81.0 "Warden")
+- **Screening Service extraction** — second of three planned database-per-domain cuts, following
+  MDM (v0.80.0) with the same local/remote toggle pattern. New `services/screening/` (port 3006)
+  owns `sanctions_entries`/`sanctions_syncs` plus both sync jobs (OFAC SDN, the US Consolidated
+  Screening List) and their self-scheduling auto-sync timers, ported wholesale into its own tiny
+  settings table — no admin UI for its schedule knobs yet, config + CRUD only this pass, same
+  scoping precedent every other extraction has used. A new `app_settings.screening_source`
+  toggle (`'local'` default | `'remote'`) selects per-request, same one-way-cutover-lever shape
+  as `contract_source`/`mdm_source`.
+- **New `routes/sanctions.js`** — the 5 `/api/sanctions/*` routes, which unlike MDM had never had
+  a dedicated route file of their own (they'd lived inside `routes/customers.js` since day one),
+  were extracted out as the first step, gaining an `isRemote()` branch. `screenCustomer()`/
+  `rescreenShipmentsForCustomer()` stayed in `customers.js`, unchanged — they only ever read the
+  shared `sanctionsMap` cache, never `sanctions_entries` directly.
+- **Real pre-existing bug found and fixed**: `loadSanctionsIndex()` used to do
+  `sanctionsMap = new Map()` — a *reassignment* of the module `let`, not an in-place mutation.
+  `routes/customers.js` destructures `sanctionsMap` from `ctx` once at module-load time, so its
+  captured reference silently never saw a reload after boot (a manual sync, a CSL sync, a CSV
+  import, either scheduled timer) — `screenShipmentById` (closes over the variable directly)
+  always saw the fresh map; `screenCustomer()`/`GET /api/customers/:id`'s `screeningResult` did
+  not. Fixed to `sanctionsMap.clear()` + refill in place, verified with a dedicated regression
+  test (sync twice, confirm both paths see the second sync).
+- **`syncOfacSdn()`/`syncConsolidatedScreeningList()`** gained a remote-mode branch (POST to the
+  service, then locally reload the cache + re-screen active shipments) — the manual "Sync Now"
+  button gives the same immediate feedback either way. The two auto-sync schedulers retask
+  themselves in remote mode: instead of the elaborate "is a sync due" math (irrelevant once the
+  service owns that decision), they become a plain 15-minute cache-refresh poll.
+- **New `scripts/migrate-sanctions-to-service.js`** (chunked at 2,000 rows — 25,865 real entries
+  migrated in 13 batches in this dev environment) deliberately does **not** carry over
+  `sanctions_syncs` — a service that's never independently verified a sync shouldn't claim a
+  copied timestamp saying otherwise.
+- 25 new assertions (`services/screening/tests/sanctions-sync.test.js`,
+  `tests/screening-service-toggle.test.js` — the latter proving local/remote are genuinely
+  independent datastores, same as MDM's own toggle test, plus the reassignment-bug regression).
+  Full 53-file backend chain green in local mode from a fresh restart (same 5 unrelated
+  pre-existing PDF-Render-service-dependent failures as v0.80.0), clean build. Verified live with
+  all three extracted services plus the monolith running together: 73 assertions across every
+  new toggle/service-scoped test file, all green.
+- Full architecture writeup: `ARCHITECTURE.md` §8.1 (extended again).
 
 ## Recent changes (v0.80.0 "Atlas")
 - **MDM Service extraction** — the first of three planned database-per-domain cuts (proposed as

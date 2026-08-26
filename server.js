@@ -107,6 +107,39 @@ async function callMdmService(method, urlPath, body) {
   return data;
 }
 
+// Screening Service (services/screening/) — sanctions_entries/sanctions_syncs, selected
+// per-request via the app_settings.screening_source toggle ('local'|'remote'), same shape as
+// contract_source/mdm_source. This secret must match SCREENING_SERVICE_SECRET in that service's
+// own env.
+const SCREENING_SERVICE_URL = process.env.SCREENING_SERVICE_URL || "http://localhost:3006";
+const SCREENING_SECRET_DEV_DEFAULT = "cargoDesk-dev-screening-service-secret-do-not-use-in-prod";
+const SCREENING_SERVICE_SECRET = readSecret("SCREENING_SERVICE_SECRET", SCREENING_SECRET_DEV_DEFAULT);
+if (SCREENING_SERVICE_SECRET === SCREENING_SECRET_DEV_DEFAULT)
+  console.warn("⚠  SCREENING_SERVICE_SECRET not set (checked SCREENING_SERVICE_SECRET_FILE, then SCREENING_SERVICE_SECRET) — using insecure dev default. Set it (matching the screening service's own env) before deploying.");
+
+async function callScreeningService(method, urlPath, body) {
+  let r;
+  try {
+    r = await fetch(`${SCREENING_SERVICE_URL}${urlPath}`, {
+      method,
+      headers: { Authorization: `Bearer ${SCREENING_SERVICE_SECRET}`, "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch {
+    const e = new Error("Screening Service is unreachable — try again shortly");
+    e.status = 503;
+    throw e;
+  }
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const e = new Error(data.error || `Screening service returned HTTP ${r.status}`);
+    e.status = r.status;
+    throw e;
+  }
+  return data;
+}
+
 // Zero-script onboarding: a fresh clone has no cargodesk.db yet. db/cargodesk.sample.db is a
 // committed, pre-seeded copy carrying only static MDM reference data (ports, carriers, vessels,
 // commodities, regions, trade lanes, countries) — never shipments/contracts/customers/users,
@@ -2220,6 +2253,9 @@ const SETTING_DEFAULTS = {
   // tables, exactly as today. 'remote' = the standalone MDM Service (services/mdm/, see
   // MDM_SERVICE_URL above). Same one-way-cutover-lever shape as contract_source.
   mdm_source:                 'local',
+  // Same one-way cutover lever as contract_source/mdm_source above, for the Screening Service
+  // (services/screening/) — sanctions_entries/sanctions_syncs.
+  screening_source:           'local',
   // Freight Audit & Payment — a carrier invoice line whose |variance| exceeds this percentage of
   // the expected (contracted/accrued) amount is flagged 'variance' instead of auto-'matched'.
   // One flat global tolerance, not per-carrier/per-charge-type rules — the configurable-rule-
@@ -2269,13 +2305,30 @@ const normSanctionName = s =>
   (s || '').toLowerCase().replace(/[^a-z0-9]/g, ' ').replace(/\s+/g, ' ').trim();
 
 // In-memory index: normalized name/alias → entry metadata
-let sanctionsMap = new Map();
+const sanctionsMap = new Map();
 
-function loadSanctionsIndex() {
-  sanctionsMap = new Map();
-  const rows = db.prepare(
-    "SELECT source, entity_name, entity_type, program, aliases_norm FROM sanctions_entries"
-  ).all();
+// Bug fix (found auditing this for the Screening Service extraction): this used to do
+// `sanctionsMap = new Map()` — a REASSIGNMENT of the module-level variable, not an in-place
+// mutation. ctx.sanctionsMap is captured once, by value, when the ctx object literal is built;
+// routes/customers.js destructures it once at route-registration time. Any reload after boot (a
+// manual sync, a CSL sync, a CSV import, either scheduled timer) reassigned this variable to a
+// brand-new Map — screenShipmentById (defined here, closes over the variable directly) always
+// saw the fresh one, but routes/customers.js's own captured reference stayed frozen at whatever
+// the map was at ctx-build time forever, silently never seeing a later reload. screenCustomer()/
+// GET /api/customers/:id/sanctions-check were affected; screenShipmentById was not. Fixed by
+// mutating the existing Map in place (.clear() + refill) so every already-captured reference,
+// however it was obtained, stays valid across every future reload — a prerequisite for the new
+// remote-mode poll-refresh below, which would otherwise "work" for screenShipmentById and
+// silently never reach screenCustomer, worse than today's already-rare bug.
+async function loadSanctionsIndex() {
+  let rows;
+  if ((getSettings().screening_source || 'local') === 'remote') {
+    try { rows = await callScreeningService("GET", "/internal/sanctions/entries/export"); }
+    catch (e) { console.warn("  ⚠ Sanctions index reload from Screening Service failed:", e.message); return; }
+  } else {
+    rows = db.prepare("SELECT source, entity_name, entity_type, program, aliases_norm FROM sanctions_entries").all();
+  }
+  sanctionsMap.clear();
   for (const r of rows) {
     const meta = { entityName: r.entity_name, entityType: r.entity_type, program: r.program, source: r.source };
     sanctionsMap.set(normSanctionName(r.entity_name), meta);
@@ -2286,7 +2339,7 @@ function loadSanctionsIndex() {
     } catch {}
   }
 }
-try { loadSanctionsIndex(); } catch {}
+loadSanctionsIndex().catch(() => {}); // async now (remote mode) — internal try/catch already logs, this just guards the unhandled-rejection case
 
 // ─── OFAC SDN sync (extracted so route and scheduler both call it) ─────────────
 
@@ -2309,6 +2362,12 @@ function httpsGetFollowRedirects(url, depth = 0, reqHeaders = {}) {
 }
 
 async function syncOfacSdn() {
+  if ((getSettings().screening_source || 'local') === 'remote') {
+    const r = await callScreeningService("POST", "/internal/sanctions/sync");
+    await loadSanctionsIndex();
+    rescreenActiveShipments();
+    return r;
+  }
   const resp = await httpsGetFollowRedirects("https://www.treasury.gov/ofac/downloads/sdn.xml");
   const xml = await new Promise((resolve, reject) => {
     const bufs = [];
@@ -2352,7 +2411,7 @@ async function syncOfacSdn() {
 
   const now = new Date().toISOString();
   db.prepare("INSERT OR REPLACE INTO sanctions_syncs (source,synced_at,entry_count) VALUES ('OFAC-SDN',?,?)").run(now, entries.length);
-  loadSanctionsIndex();
+  await loadSanctionsIndex();
   rescreenActiveShipments();
   return { source: "OFAC-SDN", syncedAt: now, entries: entries.length };
 }
@@ -2374,6 +2433,12 @@ async function syncOfacSdn() {
 // can safely scope to "every row this sync owns" without having to enumerate the list names
 // themselves, which the government feed could rename or add to over time.
 async function syncConsolidatedScreeningList() {
+  if ((getSettings().screening_source || 'local') === 'remote') {
+    const result = await callScreeningService("POST", "/internal/sanctions/sync-csl");
+    await loadSanctionsIndex();
+    rescreenActiveShipments();
+    return result;
+  }
   const r = await fetch("https://data.trade.gov/downloadable_consolidated_screening_list/v1/consolidated.json");
   if (!r.ok) throw new Error(`Consolidated Screening List returned HTTP ${r.status}`);
   const data = await r.json();
@@ -2396,7 +2461,7 @@ async function syncConsolidatedScreeningList() {
 
   const now = new Date().toISOString();
   db.prepare("INSERT OR REPLACE INTO sanctions_syncs (source,synced_at,entry_count) VALUES ('CSL',?,?)").run(now, entries.length);
-  loadSanctionsIndex();
+  await loadSanctionsIndex();
   rescreenActiveShipments();
   return { source: "CSL", syncedAt: now, entries: entries.length };
 }
@@ -2453,8 +2518,22 @@ let ofacAutoSyncTimer = null;
 // setTimeout is backed by a 32-bit int; anything above ~24.8 days wraps to 1ms.
 const MAX_TIMER_MS = 2_000_000_000; // ~23.1 days — safe upper bound
 
+// How often the screening_source='remote' cache-refresh poll below fires — decoupled from the
+// actual sync cadence (the Screening Service now owns firing the sync on ITS OWN schedule);
+// this just keeps the monolith's own sanctionsMap from lagging too far behind whatever the
+// service last synced. Cheap (one bulk GET), so a short interval is fine.
+const SCREENING_POLL_MS = 15 * 60 * 1000;
+
 function scheduleNextOfacSync(retryDelayMs = null) {
   clearTimeout(ofacAutoSyncTimer);
+  // 'remote' mode: the Screening Service owns the actual sync schedule now — this timer's only
+  // job is to keep the local sanctionsMap cache from drifting, via a plain fixed-interval poll
+  // instead of the elaborate "is a sync due" math below, which only makes sense for deciding
+  // when to FIRE a sync (a decision this side no longer makes).
+  if ((getSettings().screening_source || 'local') === 'remote') {
+    ofacAutoSyncTimer = setTimeout(() => { loadSanctionsIndex().catch(() => {}); scheduleNextOfacSync(); }, SCREENING_POLL_MS);
+    return;
+  }
   try {
     const s = getSettings();
     if (s.api_ofac_enabled !== 'true') return;
@@ -2509,6 +2588,12 @@ let cslAutoSyncTimer = null;
 
 function scheduleNextCslSync(retryDelayMs = null) {
   clearTimeout(cslAutoSyncTimer);
+  // 'remote' mode: same reasoning as scheduleNextOfacSync's own remote branch above — the
+  // Screening Service owns the actual sync schedule, this is just a cache-refresh poll.
+  if ((getSettings().screening_source || 'local') === 'remote') {
+    cslAutoSyncTimer = setTimeout(() => { loadSanctionsIndex().catch(() => {}); scheduleNextCslSync(); }, SCREENING_POLL_MS);
+    return;
+  }
   try {
     const s = getSettings();
     if (s.api_csl_enabled !== 'true') return;
@@ -4298,6 +4383,7 @@ const ctx = {
   DISTRIBUTION_SERVICE_URL, DISTRIBUTION_SERVICE_SECRET,
   CONTRACT_SERVICE_URL, CONTRACT_SERVICE_SECRET, callContractService,
   MDM_SERVICE_URL, MDM_SERVICE_SECRET, callMdmService,
+  SCREENING_SERVICE_URL, SCREENING_SERVICE_SECRET, callScreeningService,
   inverseLinkLabel,
   fs, path,
   migrationFailures,
@@ -4308,6 +4394,7 @@ require('./routes/auth')(app, ctx);
 require('./routes/shipments')(app, ctx);
 require('./routes/allocations')(app, ctx);
 require('./routes/mdm')(app, ctx);
+require('./routes/sanctions')(app, ctx);
 require('./routes/kanban')(app, ctx);
 require('./routes/testcases')(app, ctx);
 require('./routes/edi')(app, ctx);

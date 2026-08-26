@@ -1,0 +1,14 @@
+{
+  "name": "screening-service",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CargoDesk Sanctions/Screening Service — sanctions_entries (OFAC SDN + the US Consolidated Screening List) and sanctions_syncs, plus the two sync jobs and their self-scheduling auto-sync timers. Called only by the monolith over an internal, secret-gated HTTP API (see server.js's own /internal gate) — never exposed to the browser. Resolved dependencies (express) are hoisted from the repo root's node_modules — no separate install step.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node tests/sanctions-sync.test.js"
+  },
+  "dependencies": {
+    "express": "^4.18.3"
+  }
+}

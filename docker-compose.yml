@@ -19,21 +19,24 @@
 #      openssl rand -hex 32 > docker-secrets/pdf_render_service_secret
 #      openssl rand -hex 32 > docker-secrets/contract_service_secret
 #      openssl rand -hex 32 > docker-secrets/mdm_service_secret
+#      openssl rand -hex 32 > docker-secrets/screening_service_secret
 #      (docker-secrets/ is gitignored — see .gitignore. These files are the actual secrets;
 #      treat them the same as you would a committed .env, i.e. never commit them for real.)
 #   2. cp .env.example .env — fills in LOGIN_RATE_MAX and anything else non-secret
-#   3. mkdir -p docker-data && touch docker-data/cargodesk.db docker-data/distribution.db docker-data/contracts.db docker-data/mdm.db
+#   3. mkdir -p docker-data && touch docker-data/cargodesk.db docker-data/distribution.db docker-data/contracts.db docker-data/mdm.db docker-data/screening.db
 #      (REQUIRED — Docker bind-mounts a host path that doesn't exist yet as a DIRECTORY, not a
 #      file, which would break `new DatabaseSync('/app/cargodesk.db')` since it expects a real
 #      file path. Creating empty files first sidesteps this well-known bind-mount gotcha.)
 #   4. mkdir -p docker-data/uploads
 #   5. docker compose up -d --build
 #
-# The contract-management and mdm services run ALONGSIDE the monolith's own local tables, not in
-# place of them (app_settings.contract_source/mdm_source, both default 'local') — this compose
-# file starts them either way (cheap, stateless-to-add), same as document-distribution/pdf-render;
-# nothing reads from either until an admin flips the relevant toggle in Application Settings and,
-# before doing so, runs the matching `npm run migrate:*-to-service` script.
+# The contract-management/mdm/screening services run ALONGSIDE the monolith's own local tables,
+# not in place of them (app_settings.contract_source/mdm_source/screening_source, all default
+# 'local') — this compose file starts them either way (cheap, stateless-to-add), same as
+# document-distribution/pdf-render; nothing reads from any of them until an admin flips the
+# relevant toggle in Application Settings and, before doing so, runs the matching
+# `npm run migrate:*-to-service` script (screening's own migration deliberately does not carry
+# over sync history — see that script's own header).
 
 secrets:
   jwt_secret:
@@ -46,6 +49,8 @@ secrets:
     file: ./docker-secrets/contract_service_secret
   mdm_service_secret:
     file: ./docker-secrets/mdm_service_secret
+  screening_service_secret:
+    file: ./docker-secrets/screening_service_secret
 
 services:
   monolith:
@@ -65,6 +70,8 @@ services:
       CONTRACT_SERVICE_SECRET_FILE: /run/secrets/contract_service_secret
       MDM_SERVICE_URL: http://mdm:3005
       MDM_SERVICE_SECRET_FILE: /run/secrets/mdm_service_secret
+      SCREENING_SERVICE_URL: http://screening:3006
+      SCREENING_SERVICE_SECRET_FILE: /run/secrets/screening_service_secret
       LOGIN_RATE_MAX: ${LOGIN_RATE_MAX:-20}
     secrets:
       - jwt_secret
@@ -72,6 +79,7 @@ services:
       - pdf_render_service_secret
       - contract_service_secret
       - mdm_service_secret
+      - screening_service_secret
     volumes:
       # Bind-mounted to specific host paths deliberately, NOT a named volume mounted over the
       # whole /app directory — that would hide the image's own application code (server.js,
@@ -86,6 +94,7 @@ services:
       - pdf-render
       - contract-management
       - mdm
+      - screening
     restart: unless-stopped
 
   document-distribution:
@@ -144,4 +153,19 @@ services:
       - mdm_service_secret
     volumes:
       - ./docker-data/mdm.db:/app/services/mdm/mdm.db
+    restart: unless-stopped
+
+  screening:
+    build:
+      context: .
+      dockerfile: services/screening/Dockerfile
+    ports:
+      - "3006:3006"
+    environment:
+      NODE_ENV: production
+      SCREENING_SERVICE_SECRET_FILE: /run/secrets/screening_service_secret
+    secrets:
+      - screening_service_secret
+    volumes:
+      - ./docker-data/screening.db:/app/services/screening/screening.db
     restart: unless-stopped

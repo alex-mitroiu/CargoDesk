@@ -2,7 +2,7 @@
 
 module.exports = function systemRoutes(app, ctx) {
   const { db, ok, err, auth, requireRole,
-          mapSystemMessage, getSettings, scheduleNextOfacSync, fxCache,
+          mapSystemMessage, getSettings, scheduleNextOfacSync, scheduleNextCslSync, loadSanctionsIndex, fxCache,
           logAdminEvent, migrationFailures, restartAisListener, rebuildPortLanesMap } = ctx;
 
   // ─── Health ───────────────────────────────────────────────────────────────
@@ -133,6 +133,21 @@ module.exports = function systemRoutes(app, ctx) {
     logAdminEvent(req.user, 'SETTINGS_UPDATED', 'settings', 'mdm_source', { value });
     await rebuildPortLanesMap();
     ok(res, { mdmSource: value });
+  });
+
+  // Same shape as contract-source/mdm-source above, for the Screening Service. Also immediately
+  // refreshes the local sanctionsMap cache and reschedules both auto-sync timers (which switch
+  // job — sync-firing vs. cache-poll — based on this same toggle, see scheduleNextOfacSync/
+  // scheduleNextCslSync's own remote branches) so the effect is instant, not a 15-minute wait.
+  app.put("/api/settings/screening-source", auth(), requireRole(["admin"]), async (req, res) => {
+    const { value } = req.body || {};
+    if (value !== "local" && value !== "remote") return err(res, "value must be 'local' or 'remote'");
+    db.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('screening_source', ?)").run(value);
+    logAdminEvent(req.user, 'SETTINGS_UPDATED', 'settings', 'screening_source', { value });
+    await loadSanctionsIndex();
+    scheduleNextOfacSync();
+    scheduleNextCslSync();
+    ok(res, { screeningSource: value });
   });
 
   // ─── Schedules ────────────────────────────────────────────────────────────
