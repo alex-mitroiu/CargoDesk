@@ -3,7 +3,7 @@
 module.exports = function systemRoutes(app, ctx) {
   const { db, ok, err, auth, requireRole,
           mapSystemMessage, getSettings, scheduleNextOfacSync, fxCache,
-          logAdminEvent, migrationFailures, restartAisListener } = ctx;
+          logAdminEvent, migrationFailures, restartAisListener, rebuildPortLanesMap } = ctx;
 
   // ─── Health ───────────────────────────────────────────────────────────────
 
@@ -120,6 +120,19 @@ module.exports = function systemRoutes(app, ctx) {
     db.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('contract_source', ?)").run(value);
     logAdminEvent(req.user, 'SETTINGS_UPDATED', 'settings', 'contract_source', { value });
     ok(res, { contractSource: value });
+  });
+
+  // Same admin-only cutover-lever shape as contract-source above, for the MDM Service
+  // (services/mdm/). Flipping this also rebuilds the monolith's own portLanesMap/portCountryMap
+  // caches from the new source immediately (see rebuildPortLanesMap's own mdm_source branch) —
+  // no restart needed either direction.
+  app.put("/api/settings/mdm-source", auth(), requireRole(["admin"]), async (req, res) => {
+    const { value } = req.body || {};
+    if (value !== "local" && value !== "remote") return err(res, "value must be 'local' or 'remote'");
+    db.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('mdm_source', ?)").run(value);
+    logAdminEvent(req.user, 'SETTINGS_UPDATED', 'settings', 'mdm_source', { value });
+    await rebuildPortLanesMap();
+    ok(res, { mdmSource: value });
   });
 
   // ─── Schedules ────────────────────────────────────────────────────────────

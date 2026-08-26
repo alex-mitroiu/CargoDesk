@@ -70,9 +70,9 @@ module.exports = function shipmentsRoutes(app, ctx) {
   // that's already there, whether CargoDesk set it earlier or a person did. No transaction: the
   // two sides are independent single-row writes on two different role strings, so one resolving
   // and the other not (no agent registered for that port yet) is a normal, non-corrupting result.
-  const maybeAssignLineAgents = (shipmentId, carrierCode, pol, pod) => {
+  const maybeAssignLineAgents = async (shipmentId, carrierCode, pol, pod) => {
     for (const [port, role] of [[pol, "Line Agent (Export)"], [pod, "Line Agent (Import)"]]) {
-      const match = resolveCarrierAgent(carrierCode, port);
+      const match = await resolveCarrierAgent(carrierCode, port);
       if (!match) continue;
       try {
         db.prepare(`INSERT INTO shipment_parties (id, shipment_id, role, customer_id, customer_name, created_at)
@@ -392,7 +392,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
       .run(id, polU, podU, carrierCode, contractType, contractNotes, status, createdAt, etd, eta, bookingRef, blNumber, blReleaseType, masterBlNumber, masterBlReleaseType, vessel, voyage, incoterm, vesselImo, contractId, contractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, allocationId, spaceSkipReason, spaceOverageReason, freightTerms, movementType, serviceType, placeOfReceipt, placeOfDelivery, cargoReadyDate || null, notifyId, notifyName, (declaredValue !== null && declaredValue !== undefined && String(declaredValue).trim() !== '') ? Number(declaredValue) : null, declaredValueCurrency || "USD", emoOfficeId || null, imoOfficeId || null, controllingOfficeId || null, contractRoutingId || "");
     logEvent(id, 'SHIPMENT_CREATED', null, null, null,
       JSON.stringify({ pol: polU, pod: podU, carrier: carrierCode, status, etd, contractType }));
-    maybeAssignLineAgents(id, carrierCode, polU, podU);
+    await maybeAssignLineAgents(id, carrierCode, polU, podU);
     if (contractType === 'Central' && contractId) await importContractRates(id);
     const silentScreening = sanctionsMap.size > 0 ? screenShipmentById(id) : null;
 
@@ -420,7 +420,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     ok(res, { ...base, ...extra }, 201);
   });
 
-  app.put("/api/shipments/:id", shipmentWrite, (req, res) => {
+  app.put("/api/shipments/:id", shipmentWrite, async (req, res) => {
     const { pol, pod, carrierCode, contractType, contractNotes = "", status: statusIn,
             etd = "", eta = "", bookingRef = "", blNumber = "", blReleaseType = "", masterBlNumber = "", masterBlReleaseType = "", vessel = "", voyage = "",
             incoterm = "", vesselImo = "", contractId = "", contractRef = "", commodityCode = "",
@@ -487,7 +487,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     // partyOrRouteChanged flag (further below) doesn't check carrier_code, so this needs its
     // own condition rather than reusing that one.
     if (carrierCode !== existing.carrier_code || polU !== existing.pol || podU !== existing.pod)
-      maybeAssignLineAgents(req.params.id, carrierCode, polU, podU);
+      await maybeAssignLineAgents(req.params.id, carrierCode, polU, podU);
     // Contract assignment is one of the two triggers for auto-creating a carrier booking
     // (the other is a schedule save/link, in routes/shipment-ops.js) — only worth checking
     // when the contract fields actually changed, since ensureBookingCreated no-ops otherwise.

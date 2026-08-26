@@ -74,6 +74,39 @@ async function callContractService(method, urlPath, body) {
   return data;
 }
 
+// MDM Service (services/mdm/) — carriers/vessels/port_locations/linked_ports/trade_lanes/
+// country_trade_lanes/regions/countries/commodities/carrier_agents, selected per-request via the
+// app_settings.mdm_source toggle, same shape as Contract Management. This secret must match
+// MDM_SERVICE_SECRET in that service's own env.
+const MDM_SERVICE_URL = process.env.MDM_SERVICE_URL || "http://localhost:3005";
+const MDM_SECRET_DEV_DEFAULT = "cargoDesk-dev-mdm-service-secret-do-not-use-in-prod";
+const MDM_SERVICE_SECRET = readSecret("MDM_SERVICE_SECRET", MDM_SECRET_DEV_DEFAULT);
+if (MDM_SERVICE_SECRET === MDM_SECRET_DEV_DEFAULT)
+  console.warn("⚠  MDM_SERVICE_SECRET not set (checked MDM_SERVICE_SECRET_FILE, then MDM_SERVICE_SECRET) — using insecure dev default. Set it (matching the MDM service's own env) before deploying.");
+
+async function callMdmService(method, urlPath, body) {
+  let r;
+  try {
+    r = await fetch(`${MDM_SERVICE_URL}${urlPath}`, {
+      method,
+      headers: { Authorization: `Bearer ${MDM_SERVICE_SECRET}`, "Content-Type": "application/json" },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch {
+    const e = new Error("MDM Service is unreachable — try again shortly");
+    e.status = 503;
+    throw e;
+  }
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const e = new Error(data.error || `MDM service returned HTTP ${r.status}`);
+    e.status = r.status;
+    throw e;
+  }
+  return data;
+}
+
 // Zero-script onboarding: a fresh clone has no cargodesk.db yet. db/cargodesk.sample.db is a
 // committed, pre-seeded copy carrying only static MDM reference data (ports, carriers, vessels,
 // commodities, regions, trade lanes, countries) — never shipments/contracts/customers/users,
@@ -2010,6 +2043,10 @@ const UPLOADS_DIR = path.join(__dirname, "uploads", "documents");
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
 // ─── Port → trade lane index (for access-scope filtering + tradeLane display) ─
+// Read synchronously on every shipment mapped (mapShipment, matchesScopeItem) — this MUST stay
+// an in-memory cache, never a live per-call fetch, in either mdm_source mode. 'remote' mode
+// rebuilds it from the MDM Service's one bulk GET /internal/port-lanes-index instead of the local
+// 4-table JOIN; the trigger points (after a country_trade_lanes-mutating route) are unchanged.
 const portLanesMap = {};
 const PORT_LANES_SQL = `
   SELECT DISTINCT pl.unlocode, tl.code AS lane_code
@@ -2018,9 +2055,11 @@ const PORT_LANES_SQL = `
   JOIN country_trade_lanes ctl ON ctl.iso2 = c.iso2
   JOIN trade_lanes tl ON tl.code = ctl.lane_code
 `;
-function rebuildPortLanesMap() {
+async function rebuildPortLanesMap() {
   try {
-    const plRows = db.prepare(PORT_LANES_SQL).all();
+    const plRows = (getSettings().mdm_source || "local") === "remote"
+      ? await callMdmService("GET", "/internal/port-lanes-index")
+      : db.prepare(PORT_LANES_SQL).all();
     for (const key of Object.keys(portLanesMap)) delete portLanesMap[key];
     for (const r of plRows) {
       if (!portLanesMap[r.unlocode]) portLanesMap[r.unlocode] = new Set();
@@ -2034,16 +2073,22 @@ function rebuildPortLanesMap() {
 rebuildPortLanesMap();
 
 // ─── Port → country index (for country-code access filtering) ─────────────────
+// Deliberately built ONCE at boot and never refreshed thereafter, in both modes — a pre-existing
+// staleness characteristic (a port's country_code changing via PUT doesn't reach this map until
+// restart) that this cut preserves rather than fixes. 'remote' mode does one bulk GET
+// /internal/port-country-map instead of the local read.
 const portCountryMap = {};
-try {
-  const pcRows = db.prepare(
-    "SELECT unlocode, country_code FROM port_locations WHERE country_code IS NOT NULL AND country_code != ''"
-  ).all();
-  for (const r of pcRows) portCountryMap[r.unlocode] = r.country_code;
-  console.log(`  ✔ Port→country map built for ${Object.keys(portCountryMap).length} ports`);
-} catch (e) {
-  console.warn("  ⚠ Port→country map failed:", e.message);
-}
+(async () => {
+  try {
+    const pcRows = (getSettings().mdm_source || "local") === "remote"
+      ? await callMdmService("GET", "/internal/port-country-map")
+      : db.prepare("SELECT unlocode, country_code FROM port_locations WHERE country_code IS NOT NULL AND country_code != ''").all();
+    for (const r of pcRows) portCountryMap[r.unlocode] = r.country_code;
+    console.log(`  ✔ Port→country map built for ${Object.keys(portCountryMap).length} ports`);
+  } catch (e) {
+    console.warn("  ⚠ Port→country map failed:", e.message);
+  }
+})();
 
 // Pre-declared here so broadcastMessage / recomputeSpaceBadge (defined below) can close over it;
 // the WebSocket handler in this same file populates it after the server starts.
@@ -2170,6 +2215,11 @@ const SETTING_DEFAULTS = {
   // Service (services/contract-management/, see CONTRACT_SERVICE_URL above). A one-way cutover
   // lever, not a live bidirectional sync — see routes/contracts.js's callContractService callers.
   contract_source:            'local',
+  // 'local' (default) = the monolith's own in-process carriers/vessels/port_locations/
+  // linked_ports/trade_lanes/country_trade_lanes/regions/countries/commodities/carrier_agents
+  // tables, exactly as today. 'remote' = the standalone MDM Service (services/mdm/, see
+  // MDM_SERVICE_URL above). Same one-way-cutover-lever shape as contract_source.
+  mdm_source:                 'local',
   // Freight Audit & Payment — a carrier invoice line whose |variance| exceeds this percentage of
   // the expected (contracted/accrued) amount is flagged 'variance' instead of auto-'matched'.
   // One flat global tolerance, not per-carrier/per-charge-type rules — the configurable-rule-
@@ -3848,7 +3898,24 @@ const linkedPortCodes = code => db.prepare(`
 // uses below) so a carrier_agents row registered against a seaport still matches a shipment
 // routed via a linked inland ICD. Returns the matched row (with a live-joined agent name) or
 // null if nothing's registered for this carrier at this port (or any of its linked ports).
-function resolveCarrierAgent(carrierCode, portUnlocode) {
+// 'remote' mode calls the MDM Service's own /internal/carrier-agents/resolve, which does its own
+// linked-port fallback server-side (it owns both tables) — this function then does the one local
+// `customers` lookup the service can't do itself, so the returned shape (agent_customer_name
+// included) matches the local path exactly. NOTE (named, accepted gap): the LOCAL path's own
+// linked-port fallback (linkedPortCodes, below) always reads the local linked_ports table even
+// when mdm_source=remote — only affects the narrow case of contract_source=local combined with
+// mdm_source=remote; see ARCHITECTURE.md.
+async function resolveCarrierAgent(carrierCode, portUnlocode) {
+  if ((getSettings().mdm_source || "local") === "remote") {
+    let row;
+    try { row = await callMdmService("GET", `/internal/carrier-agents/resolve?carrierCode=${encodeURIComponent(carrierCode)}&port=${encodeURIComponent(portUnlocode)}`); }
+    catch { return null; }
+    if (!row) return null;
+    const cust = db.prepare("SELECT company_name FROM customers WHERE id=?").get(row.agentCustomerId);
+    return { id: row.id, carrier_code: row.carrierCode, port_unlocode: row.portUnlocode,
+      agent_customer_id: row.agentCustomerId, agent_customer_name: cust?.company_name || '',
+      note: row.note, created_at: row.createdAt };
+  }
   const tryPort = p => db.prepare(`
     SELECT ca.*, c.company_name AS agent_customer_name
     FROM carrier_agents ca JOIN customers c ON c.id = ca.agent_customer_id
@@ -4174,7 +4241,7 @@ app.use("/api", (req, res, next) =>
 // ─── Shared context passed to every route module ───────────────────────────────
 
 const aisListener = createAisListener({
-  db, getSettings, broadcastMessage, logEntityEvent, uid, syncShipmentFromLegs,
+  db, getSettings, broadcastMessage, logEntityEvent, uid, syncShipmentFromLegs, callMdmService,
 });
 
 const ctx = {
@@ -4230,6 +4297,7 @@ const ctx = {
   bcrypt, jwt, JWT_SECRET,
   DISTRIBUTION_SERVICE_URL, DISTRIBUTION_SERVICE_SECRET,
   CONTRACT_SERVICE_URL, CONTRACT_SERVICE_SECRET, callContractService,
+  MDM_SERVICE_URL, MDM_SERVICE_SECRET, callMdmService,
   inverseLinkLabel,
   fs, path,
   migrationFailures,

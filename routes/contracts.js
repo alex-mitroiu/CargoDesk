@@ -2,7 +2,7 @@
 
 module.exports = function contractsRoutes(app, ctx) {
   const { db, ok, err, uid, requireRole, mapContract, mapLeg, mapRate, mapContractRouting, logEntityEvent, toUsd, findMatchingContractLegs,
-          getSettings, callContractService } = ctx;
+          getSettings, callContractService, callMdmService } = ctx;
 
   // Contracts are full-CRUD for trade_manager alongside admin/operator — previously these
   // write routes had no role gate at all (any authenticated user, including viewer, could write).
@@ -21,7 +21,15 @@ module.exports = function contractsRoutes(app, ctx) {
   // needs it keyed by each LEG's own pol/pod (not the query's), so the whole small table is resolved
   // here and handed to the service as explicit pairs on every match call. Confirmed live: this table
   // has only a couple of rows in practice, so shipping it whole per-request is cheap.
-  function linkedPortPairsJson() {
+  // Branches on mdm_source independently of contract_source — a shipment can be in the middle of
+  // a "local contracts, remote MDM" transition, and the local linked_ports table stops being
+  // fresh the moment mdm_source flips to remote (it's frozen, not deleted — see the plan's own
+  // note on this narrow combination).
+  async function linkedPortPairsJson() {
+    if ((getSettings().mdm_source || "local") === "remote") {
+      try { return JSON.stringify(await callMdmService("GET", "/internal/linked-ports/all")); }
+      catch { return "[]"; } // an unreachable MDM service degrades match to exact-port-only, not a hard failure
+    }
     const pairs = db.prepare("SELECT primary_unlocode, linked_unlocode FROM linked_ports").all()
       .map(r => [r.primary_unlocode, r.linked_unlocode]);
     return JSON.stringify(pairs);
@@ -316,7 +324,7 @@ module.exports = function contractsRoutes(app, ctx) {
   app.get("/api/contracts/match", async (req, res) => {
     if (isRemote()) {
       const params = new URLSearchParams(req.query);
-      params.set("linkedPorts", linkedPortPairsJson());
+      params.set("linkedPorts", await linkedPortPairsJson());
       try { return ok(res, await callContractService("GET", `/internal/contracts/match?${params.toString()}`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }

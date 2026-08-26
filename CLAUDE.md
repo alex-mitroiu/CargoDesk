@@ -4,8 +4,8 @@
 Full-stack freight management app. React 18 + Vite frontend, Express + node:sqlite backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.79.0 "Keel"**
-- Run: `npm run dev` (runs the monolith on :3001 + Vite on :5173 + the Document Distribution Service on :3002 + the PDF Render Service on :3003 + the Contract Management Service on :3004, concurrently) — zero-script onboarding: first boot with no `cargodesk.db` auto-copies the committed `db/cargodesk.sample.db` (MDM reference data only) into place
+- Version: **v0.80.0 "Atlas"**
+- Run: `npm run dev` (runs the monolith on :3001 + Vite on :5173 + the Document Distribution Service on :3002 + the PDF Render Service on :3003 + the Contract Management Service on :3004 + the MDM Service on :3005, concurrently) — zero-script onboarding: first boot with no `cargodesk.db` auto-copies the committed `db/cargodesk.sample.db` (MDM reference data only) into place
 - Re-seed: `npm run seed` (runs `scripts/import-mdm-data.js`) — only needed to refresh MDM data from `data/*.csv`/`.json`, not for a normal first run
 
 ## Stack
@@ -62,6 +62,10 @@ scripts/
                                    standalone Contract Management Service (npm run
                                    migrate:contracts-to-service) — never automatic, doesn't
                                    flip app_settings.contract_source itself
+  migrate-mdm-to-service.js        Same shape, for the MDM Service (npm run
+                                   migrate:mdm-to-service) — chunked (port_locations alone is
+                                   14,000+ rows), idempotent via INSERT OR IGNORE against each
+                                   table's own natural-key primary key
 exports/
   dashboard-template.xlsx          Base XLSX template with named ranges for chart wiring
 db/
@@ -316,6 +320,54 @@ are fully validated.
 - **Document system**: `DOC_TYPES` in App.jsx (~line 56: BL01/MB01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — `MB01` (Master Bill of Lading, v0.71.0) is the vessel-operator-to-NVOCC document, a genuinely separate build from `BL01` (NVOCC-to-shipper House B/L), not a mode flag on it — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). (The earlier client-side-jsPDF `DocumentsMenu` component this note used to distinguish from was removed as dead code — it had zero references anywhere in the app.)
 - **Lifecycle-stage stepper precedent**: no dedicated stepper component exists yet; `MilestonePanel` (ShipmentDetailPage.jsx 1593-~1870) is the closest analog — linear progress bar (1734-1738, `width: ${progress}%`) plus per-step state coloring via `milestoneState()`/`stateColor()` (1666-1676: completed/overdue/current/upcoming) driven by `shipment_milestones` rows (`id, label, estimatedDate, note, completedAt, completedBy`, fixed step keys `booking_confirmed, si_submitted, cargo_gated_in, vessel_departed, bl_issued, vessel_arrived, customs_cleared, cargo_released, delivered`). Any new per-container lifecycle/stage UI should reuse this state-coloring pattern rather than inventing a new visual language
 - **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages, 📡 EDI). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
+
+## Recent changes (v0.80.0 "Atlas")
+- **MDM Service extraction** — the first of three planned database-per-domain cuts (proposed as
+  design docs this same session: `documentation/splitting-mdm-first.html`,
+  `splitting-sanctions-next.html`, `splitting-kanban-out.html`) to actually get built, following
+  the exact pattern `services/contract-management/` proved at v0.68.0: a new standalone process
+  (`services/mdm/`, port 3005) owns its own SQLite file and a straight port of
+  `carriers`/`vessels`/`port_locations`/`linked_ports`/`trade_lanes`/`country_trade_lanes`/
+  `regions`/`countries`/`commodities`/`carrier_agents`, reached via a new `callMdmService()`
+  helper and a new `app_settings.mdm_source` toggle (`'local'` default | `'remote'`) — same
+  one-way-cutover-lever shape as `contract_source`. Every one of `routes/mdm.js`'s ~48 routes
+  gained an `isRemote()` branch; the local path is untouched.
+- **Two real cross-cutting risks, both resolved rather than glossed over.** `portLanesMap`/
+  `portCountryMap` (`server.js`) are read synchronously on every shipment mapped — these stay
+  in-memory caches in either mode, rebuilt from one bulk `GET /internal/port-lanes-index`/
+  `-country-map` call in remote mode, never a live per-request fetch. `lib/ais-listener.js`'s
+  persistent AIS connection writes `vessels` and reads `port_locations` inside its hot per-frame
+  `PositionReport` loop — in remote mode, vessel writes fire-and-forget a
+  `POST /internal/vessels/upsert` (never awaited, matching this module's own "never block on
+  network I/O" rule), and a port-coords cache miss returns `null` for just that one frame while a
+  background bulk fetch repopulates the cache.
+- **`resolveCarrierAgent` became async** — its remote branch calls the MDM Service's own new
+  `GET /internal/carrier-agents/resolve` (does its own linked-port fallback server-side, since it
+  owns both `carrier_agents` and `linked_ports`), then the monolith attaches the agent's name via
+  one local `customers` lookup (the service owns no `customers` table). Rippled into
+  `maybeAssignLineAgents` (`routes/shipments.js`, `routes/quotes.js`) and one previously
+  non-async `PUT /api/shipments/:id` handler, all now properly `await`ed.
+- **New `services/mdm/mdm.sample.db`** (committed, additive — `db/cargodesk.sample.db` is
+  untouched), seeded via `scripts/import-mdm-data.js`'s new `--db=<path>` flag plus the
+  monolith's own full 208-country/182-country-trade-lane lists, deliberately excluding
+  `carrier_agents` (every row points at a `customers` record a fresh install doesn't have yet).
+  Auto-copied to `mdm.db` on first boot with no database yet, same zero-script pattern as the
+  monolith's own onboarding.
+- **Named, accepted gap**: 11 secondary read sites (`routes/reports.js`, `allocations.js`'s own
+  linked-port matching, `shipment-ops.js`, `command-center.js`, `customers.js`, `export.js`,
+  `organization.js`, `system.js`, `ais.js`'s Simulator, `scripts/checkdb.js`) still read MDM
+  tables directly from the monolith's local schema regardless of `mdm_source` — mostly read-only
+  display JOINs, staleness post-cutover is cosmetic not data-loss, flagged in `ARCHITECTURE.md`
+  §8.1 rather than chased in this pass. Don't flip `mdm_source=remote` in an environment
+  exercising those surfaces until it's closed.
+- 44 new assertions (`services/mdm/tests/mdm-crud.test.js`, `mdm-resolvers.test.js`,
+  `tests/mdm-service-toggle.test.js` — the last proving local/remote are genuinely independent
+  datastores, not a live sync). Full 53-file backend chain green in local mode from a fresh
+  restart (5 unrelated pre-existing failures in `carrier-booking.test.js`, fully explained by the
+  PDF Render service not running in this pass), clean build. Verified live end-to-end via direct
+  HTTP: toggle admin-gating/validation, full CRUD in both modes, the `portLanesMap` cache
+  resolving correctly through remote-backed data, and the independent-datastore proof.
+- Full architecture writeup: `ARCHITECTURE.md` §8.1 (extended).
 
 ## Recent changes (v0.79.0 "Keel")
 - **eAdapter** — first story of the carrier-communication-via-EDI epic, direct request: "a

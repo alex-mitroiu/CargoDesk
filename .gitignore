@@ -146,6 +146,7 @@ dist/
 cargodesk.db
 services/document-distribution/distribution.db
 services/contract-management/contracts.db
+services/mdm/mdm.db
 *.db-shm
 *.db-wal
 # db/cargodesk.sample.db is the one exception — a committed, pre-seeded copy carrying only
@@ -153,6 +154,11 @@ services/contract-management/contracts.db
 # never shipments/contracts/customers/users. server.js copies it to cargodesk.db automatically
 # on first boot if no database exists yet, so a fresh clone runs with zero setup scripts.
 !db/cargodesk.sample.db
+# services/mdm/mdm.sample.db is the MDM Service's own equivalent — same content (a copy of the
+# above, plus the full countries/country_trade_lanes lists), for a fresh clone that starts the
+# service with mdm_source=remote. services/mdm/server.js copies it to mdm.db automatically on
+# first boot if no database exists yet, same zero-script pattern as db/cargodesk.sample.db.
+!services/mdm/mdm.sample.db
 .env
 
 # Real Docker Compose secret files (docker-compose.yml's own secrets: block reads from here) —

@@ -1427,6 +1427,7 @@ export default function AppSettingsPage() {
   const [sanctionsInfo,  setSanctionsInfo]  = useState(null);
   const [syncing,        setSyncing]        = useState(false);
   const [contractSourceSaving, setContractSourceSaving] = useState(false);
+  const [mdmSourceSaving, setMdmSourceSaving] = useState(false);
   const fileInputRef = useRef(null);
   const saveTimers   = useRef({});
   const [previewOpen, setPreviewOpen] = useState({});
@@ -2025,6 +2026,45 @@ export default function AppSettingsPage() {
                     Management Service, or this app's own local tables (today's behavior, and the
                     default). This is a one-way cutover lever, not a live sync: switching back does
                     not pull remote changes back, and existing local contracts are never copied
+                    automatically — run the migration script first if switching to Remote.
+                  </p>
+                </div>
+              )}
+              {settings && isAdmin && (
+                <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
+                  padding: "14px 16px" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+                    <div style={{ fontFamily: T.body, fontSize: 13, color: T.text, fontWeight: 600 }}>
+                      MDM data source
+                    </div>
+                    <select
+                      value={settings.mdm_source || 'local'}
+                      disabled={mdmSourceSaving}
+                      onChange={e => {
+                        const v = e.target.value;
+                        const prev = settings.mdm_source || 'local';
+                        if (v === prev) return;
+                        setMdmSourceSaving(true);
+                        api.settings.updateMdmSource(v)
+                          .then(() => {
+                            setSettings(s => ({ ...s, mdm_source: v }));
+                            toast.success(`MDM data source switched to ${v === 'remote' ? 'MDM Service' : 'Local (this app)'}`);
+                          })
+                          .catch(() => toast.error("Failed to switch MDM data source"))
+                          .finally(() => setMdmSourceSaving(false));
+                      }}
+                      style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${T.border}`,
+                        background: T.bg, color: T.text, fontFamily: T.mono, fontSize: 12, cursor: mdmSourceSaving ? "wait" : "pointer" }}>
+                      <option value="local">Local (this app)</option>
+                      <option value="remote">Remote (MDM Service)</option>
+                    </select>
+                  </div>
+                  <p style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted, margin: "8px 0 0 0", lineHeight: 1.5 }}>
+                    Where carriers/vessels/ports/linked ports/trade lanes/regions/countries/
+                    commodities/carrier agents are read from and written to — the standalone MDM
+                    Service, or this app's own local tables (today's behavior, and the default).
+                    Same one-way cutover lever as Contract data source above: switching back does
+                    not pull remote changes back, and existing local MDM data is never copied
                     automatically — run the migration script first if switching to Remote.
                   </p>
                 </div>

@@ -555,6 +555,7 @@ export const api = {
     update: (data)   => req("PUT", "/settings", data),
     updateSidebarOrder: (order) => req("PUT", "/settings/shipment-sidebar-order", { order }),
     updateContractSource: (value) => req("PUT", "/settings/contract-source", { value }),
+    updateMdmSource: (value) => req("PUT", "/settings/mdm-source", { value }),
   },
   schedules: {
     search:  (p = {})         => req("GET",    `/schedules/search?${new URLSearchParams(p)}`),

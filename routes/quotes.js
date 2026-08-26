@@ -44,9 +44,9 @@ module.exports = function quotesRoutes(app, ctx) {
   // Carrier Line Agents — duplicated from routes/shipments.js's own maybeAssignLineAgents (small,
   // pure, self-contained) so a quote-converted shipment gets the exact same auto-assignment a
   // directly-created one would, without new cross-file ctx plumbing for a 10-line helper.
-  function maybeAssignLineAgents(shipmentId, carrierCode, pol, pod) {
+  async function maybeAssignLineAgents(shipmentId, carrierCode, pol, pod) {
     for (const [port, role] of [[pol, "Line Agent (Export)"], [pod, "Line Agent (Import)"]]) {
-      const match = resolveCarrierAgent(carrierCode, port);
+      const match = await resolveCarrierAgent(carrierCode, port);
       if (!match) continue;
       try {
         db.prepare(`INSERT INTO shipment_parties (id, shipment_id, role, customer_id, customer_name, created_at)
@@ -235,7 +235,7 @@ module.exports = function quotesRoutes(app, ctx) {
            q.movement_type, q.service_type, q.incoterm, q.cargo_ready_date);
     logEvent(id, 'SHIPMENT_CREATED', null, null, null,
       JSON.stringify({ pol: q.pol, pod: q.pod, carrier: q.carrier_code, status: 'Active', contractType, source: 'quote', quoteId: req.params.id }));
-    maybeAssignLineAgents(id, q.carrier_code, q.pol, q.pod);
+    await maybeAssignLineAgents(id, q.carrier_code, q.pol, q.pod);
     if (contractType === 'Central' && q.contract_id) await importContractRates(id);
 
     for (const l of lines) {

@@ -131,20 +131,23 @@ Developer machine
 │  ├─ vite                                         → :5173  (React dev server + HMR)
 │  ├─ node services/document-distribution/server.js → :3002
 │  ├─ node services/pdf-render/server.js            → :3003
-│  └─ node services/contract-management/server.js   → :3004
+│  ├─ node services/contract-management/server.js   → :3004
+│  └─ node services/mdm/server.js                    → :3005
 │         │
 │         └─ Vite proxies /api and /ws → :3001 (monolith only — the browser never talks
-│            directly to any of the three microservices)
+│            directly to any of the four microservices)
 │
 ├─ cargodesk.db                (monolith's own file, co-located with server.js)
 ├─ services/document-distribution/*.db
 ├─ services/pdf-render/            (stateless — no database)
-└─ services/contract-management/*.db   (only holds live data when contract_source='remote', §8.1)
+├─ services/contract-management/*.db   (only holds live data when contract_source='remote', §8.1)
+└─ services/mdm/*.db                   (only holds live data when mdm_source='remote', §8.1)
 ```
 
 The monolith calls each microservice over plain HTTP, gated by a shared static secret per
-service (`DISTRIBUTION_SERVICE_SECRET`, `PDF_RENDER_SERVICE_SECRET`, `CONTRACT_SERVICE_SECRET`)
-read via `lib/dockerSecret.js` (env var, or a `_FILE`-suffixed path for Docker/Compose secrets).
+service (`DISTRIBUTION_SERVICE_SECRET`, `PDF_RENDER_SERVICE_SECRET`, `CONTRACT_SERVICE_SECRET`,
+`MDM_SERVICE_SECRET`) read via `lib/dockerSecret.js` (env var, or a `_FILE`-suffixed path for
+Docker/Compose secrets).
 Every monolith→service call follows the same shape: a short timeout (10s), and a clean `503` back
 to the caller if the service is unreachable — never a hang, a 500, or a crash.
 
@@ -507,17 +510,44 @@ different reason:
 | **Document Distribution** (`services/document-distribution/`, v0.64.0) | 3002 | Outbound document delivery (email/webhook) has its own retry/failure profile, distinct from request/response HTTP | Owns its own `.db` — webhook configs, delivery attempts |
 | **PDF Render** (`services/pdf-render/`, v0.65.1) | 3003 | The heaviest, most bursty thing the monolith did per-request (a full headless-Chromium launch) — see §12 for the full reasoning | Stateless — no database at all |
 | **Contract Management** (`services/contract-management/`, v0.68.0) | 3004 | First real "toggle between local and remote" extraction — proves the pattern before Epic 5 (Customer/Organization) needs it | Owns its own `.db`, a straight port of `contracts`/`contract_legs`/`contract_rates`/`contract_routings` |
+| **MDM** (`services/mdm/`, v0.80.0) | 3005 | Second "toggle between local and remote" extraction, following the sequencing proposed in `documentation/splitting-mdm-first.html` — the lowest-blast-radius domain (no request-path involvement, no outbound FK from any of its tables into shipments/customers/users) | Owns its own `.db`: `carriers`/`vessels`/`port_locations`/`linked_ports`/`trade_lanes`/`country_trade_lanes`/`regions`/`countries`/`commodities`/`carrier_agents` |
 
-The Contract Management extraction is the most architecturally interesting of the three because,
-unlike the other two, **the monolith's own local tables are never deleted or bypassed** —
-`app_settings.contract_source` (`'local'` default, or `'remote'`) is a per-request toggle read via
-`getSettings()`. Every place that touches contract data — `routes/contracts.js`'s own endpoints,
-`routes/allocations.js`'s match logic, `server.js`'s `createRateSnapshot`/`importContractRates`,
-`routes/carrier-invoices.js`'s matching engine — branches on this same toggle. Flipping it is a
-one-way cutover lever (§13's design doc covers why this isn't a live bidirectional sync), not
-something to flip back and forth casually in production. A CLI migration script
-(`scripts/migrate-contracts-to-service.js`) moves existing local data across; nothing does this
-automatically.
+Both Contract Management and MDM share the same shape, and unlike the other two extracted
+services, **the monolith's own local tables are never deleted or bypassed** by either —
+`app_settings.contract_source`/`mdm_source` (`'local'` default, or `'remote'`) are per-request
+toggles read via `getSettings()`. Every place that touches contract data — `routes/contracts.js`'s
+own endpoints, `routes/allocations.js`'s match logic, `server.js`'s
+`createRateSnapshot`/`importContractRates`, `routes/carrier-invoices.js`'s matching engine —
+branches on `contract_source`; every place that touches MDM data — `routes/mdm.js`'s own
+endpoints, `server.js`'s `rebuildPortLanesMap`/`portCountryMap` in-memory caches (these two MUST
+stay in-process caches regardless of source, since they're read synchronously on every shipment
+mapped — see below), `resolveCarrierAgent`, `routes/contracts.js`'s `linkedPortPairsJson()`, and
+`lib/ais-listener.js`'s vessel-write/port-coords-read paths — branches on `mdm_source`. Flipping
+either is a one-way cutover lever (§13's design doc covers why this isn't a live bidirectional
+sync), not something to flip back and forth casually in production. A CLI migration script per
+service (`scripts/migrate-contracts-to-service.js`, `scripts/migrate-mdm-to-service.js`) moves
+existing local data across; nothing does this automatically.
+
+**MDM-specific notes**: `portLanesMap`/`portCountryMap` are read on the hot shipment-mapping path
+(`mapShipment`, `matchesScopeItem`), so in `remote` mode they're rebuilt from one bulk
+`GET /internal/port-lanes-index`/`/internal/port-country-map` call at boot and at the same
+mutation-trigger points as today — never a live per-request fetch. `lib/ais-listener.js`'s
+`handleShipStaticData` (vessel upsert on every `ShipStaticData` frame) fire-and-forgets a
+`POST /internal/vessels/upsert` in remote mode rather than awaiting it, matching this module's own
+"never block on network I/O, never throw past its boundary" rule; `getPortCoords` (read inside the
+hot per-frame `PositionReport` loop) returns `null` on a remote-mode cache miss for that one frame
+while a background bulk fetch repopulates the cache, rather than ever blocking the socket.
+`resolveCarrierAgent`'s remote branch calls the MDM Service's own
+`GET /internal/carrier-agents/resolve` (which does its own linked-port fallback server-side, since
+it owns both `carrier_agents` and `linked_ports`) and then does one local
+`SELECT company_name FROM customers` to attach the name — the service owns no `customers` table.
+**Named, accepted gap**: 11 secondary read sites beyond these (`routes/reports.js`,
+`allocations.js`'s own linked-port matching, `shipment-ops.js`, `command-center.js`,
+`customers.js`, `export.js`, `organization.js`, `system.js`, `ais.js` (Simulator), plus
+`scripts/checkdb.js`) still read MDM tables directly from the monolith's local schema regardless
+of `mdm_source` — mostly read-only display JOINs where staleness post-cutover is cosmetic, not
+data loss, but flagged rather than silently chased in this pass. Don't flip `mdm_source=remote` in
+an environment exercising Reports/Export/Command Center/the AIS Simulator until this is closed.
 
 ### 8.2 Quoting / RFQ (added v0.69.0)
 
@@ -1279,7 +1309,7 @@ trigger, same idempotent shape (check current state, no-op if already there, act
 | Database tables (monolith) | 77 |
 | Database indexes (monolith) | 25 |
 | Transaction-wrapped write blocks | 16 (6 in `server.js`, 10 across `routes/*.js`) |
-| Standalone microservices | 3 (Document Distribution :3002, PDF Render :3003, Contract Management :3004) |
+| Standalone microservices | 4 (Document Distribution :3002, PDF Render :3003, Contract Management :3004, MDM :3005) |
 | Seed data | 14,269 port locations · 21,201 vessels · 69 carriers (per `GET /api/health`'s live counts) |
 
 Every figure above was read directly from the code or a live `GET /api/health` call on

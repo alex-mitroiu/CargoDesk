@@ -4,6 +4,12 @@
  *
  * Run once (safe to re-run; uses INSERT OR IGNORE so duplicates are skipped):
  *   node scripts/import-mdm-data.js   (or: npm run seed)
+ *
+ * --db=<path> targets a different SQLite file instead of the monolith's own cargodesk.db — same
+ * schema, same tables, just a different file. Used to seed services/mdm/mdm.sample.db (the MDM
+ * Service's own committed onboarding seed, additive alongside db/cargodesk.sample.db, which stays
+ * untouched — see the MDM Service extraction plan) without needing a second copy of this script:
+ *   node scripts/import-mdm-data.js --db=services/mdm/mdm.sample.db
  */
 
 const path = require("path");
@@ -17,12 +23,17 @@ try {
   process.exit(1);
 }
 
-const DB_PATH     = path.join(__dirname, "..", "cargodesk.db");
+const dbArg = process.argv.find(a => a.startsWith("--db="));
+const DB_PATH     = dbArg ? path.resolve(process.cwd(), dbArg.slice("--db=".length)) : path.join(__dirname, "..", "cargodesk.db");
 const PORTS_CSV   = path.join(__dirname, "..", "data", "seaports.csv");
 const CARRIERS_CSV= path.join(__dirname, "..", "data", "carriers.csv");
 
 if (!fs.existsSync(DB_PATH)) {
-  console.error("✗ cargodesk.db not found. Start the server at least once first (node server.js)");
+  if (dbArg) {
+    console.error(`✗ ${DB_PATH} not found. Start that service at least once first so its schema exists (or create the file and let its own server.js's schema.exec() run once).`);
+  } else {
+    console.error("✗ cargodesk.db not found. Start the server at least once first (node server.js)");
+  }
   process.exit(1);
 }
 
