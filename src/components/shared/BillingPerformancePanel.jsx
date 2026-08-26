@@ -268,7 +268,7 @@ const BillingPerformancePanel = () => {
   const STAT_CARDS = [
     { label: "Invoiced", value: fmtUsd(stats.invoicedUsd), color: T.text },
     { label: "Outstanding", value: fmtUsd(stats.outstandingUsd), color: stats.outstandingUsd > 0 ? T.warning : T.text },
-    { label: "Overdue", value: `${stats.overdueCount} · ${fmtUsd(stats.overdueUsd)}`, color: stats.overdueCount > 0 ? T.danger : T.text },
+    { label: "Overdue", value: `${stats.overdueCount}`, caption: fmtUsd(stats.overdueUsd), color: stats.overdueCount > 0 ? T.danger : T.text },
     { label: "Missing", value: `${stats.missingCount}`, color: stats.missingCount > 0 ? T.danger : T.text },
     { label: "Sent", value: stats.sentPct != null ? `${stats.sentPct}%` : "—", color: T.text },
     { label: "Paid", value: stats.paidPct != null ? `${stats.paidPct}%` : "—", color: T.text },
@@ -283,6 +283,7 @@ const BillingPerformancePanel = () => {
           <div key={c.label} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: "12px 14px" }}>
             <div style={{ fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".06em" }}>{c.label}</div>
             <div style={{ fontFamily: T.mono, fontSize: 18, fontWeight: 700, color: c.color, marginTop: 4 }}>{c.value}</div>
+            {c.caption && <div style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 600, color: T.textMuted, marginTop: 2 }}>{c.caption}</div>}
           </div>
         ))}
       </div>
