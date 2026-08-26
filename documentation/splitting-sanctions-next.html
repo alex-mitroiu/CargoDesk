@@ -1,0 +1,527 @@
+<!doctype html><html><head><!-- frame-runtime --><base href="/_f/1787742094-59bf/"><script>window.__FRAME_PREAMBLE={"v":1,"capabilities":{"artifact":"artifact.oqIe8shs.js","assets":"assets.DBUJcvq_.js","comments":"comments.GLuHR3zP.js","db":"db.CRhVHzSt.js","downloads":"downloads.C3GSvEDP.js","embed":"embed.CxGAyc-v.js","mcp":"mcp.Bvma3qD7.js","network":"network.B5UA9Su4.js","permissions":"permissions.BNySkLV5.js","room":"room.DE7EMui-.js","sample":"sample.BW2Uysoh.js","self":"artifact.oqIe8shs.js","user":"user.BpKav-Rf.js"},"transforms":"_transforms.CQm3TZ9K.js","comments":"_comments.PBVy184F.js","translate":"_translate.5HCW4BJh.js"}</script><script>(function(){"use strict";var Z=["light","dark","system"],J=/^[A-Za-z0-9_-]{1,64}$/,z=/^[a-zA-Z_:][a-zA-Z0-9_:.-]{0,127}$/,Q=new Set(["class","hidden","value","checked"]);function ee(e){const t=e.toLowerCase();return t.startsWith("data-")||t.startsWith("aria-")||Q.has(t)}var Me="http://www.w3.org/1999/xhtml",te="http://www.w3.org/2000/svg",re=new Set(["script","style","iframe","noscript","noframes","noembed","xmp","plaintext","template","title","textarea","object","embed"]),ne=new Set(["script","style"]);function oe(e){const t=e.localName.toLowerCase();return e.namespaceURI==="http://www.w3.org/1999/xhtml"?!re.has(t):e.namespaceURI===te?!ne.has(t):!1}var se=new Set(["html","head","body","frameset"]);function ae(e){return e.namespaceURI==="http://www.w3.org/1999/xhtml"&&se.has(e.localName)}function ie(e){if(e===null||typeof e!="object")return!1;const t=e;if(typeof t.target!="string"||!J.test(t.target)||t.text!==void 0&&typeof t.text!="string")return!1;if(t.attrsSet!==void 0){if(t.attrsSet===null||typeof t.attrsSet!="object")return!1;for(const[r,n]of Object.entries(t.attrsSet))if(!z.test(r)||typeof n!="string")return!1}if(t.attrsRemoved!==void 0){if(!Array.isArray(t.attrsRemoved))return!1;for(const r of t.attrsRemoved)if(typeof r!="string"||!z.test(r))return!1}return!0}function ce(e,t){if(e===null||typeof e!="object")return!1;const{seq:r,elements:n}=e;if(typeof r!="number"||!Number.isSafeInteger(r)||!Array.isArray(n)||n.length===0||n.length>64)return!1;for(let s=0;s<n.length;s++)if(!t(n[s]))return!1;return!0}function le(e){return e===null||typeof e!="object"?!1:ce(e.__frame_patch,ie)}function ue(e){if(e===null||typeof e!="object")return!1;const t=e.__frame_init;return t!==null&&typeof t=="object"}function fe(e){return e!==null&&typeof e=="object"&&e.__frame_size_poke===!0}function pe(e){if(e===null||typeof e!="object")return!1;const t=e.__frame_theme;if(t===null||typeof t!="object")return!1;const r=t.theme;return typeof r=="string"&&Z.includes(r)}var g=/^[\w.-]+\.js$/;function de(e,t,r){return r?"inert":typeof t=="string"&&g.test(t)?e?[t]:"inert":e?"inert":"framed"}function me(){return{post(e,t){parent.postMessage(e,t)},on(e){const t=r=>{r.source===parent&&e(r.data,r.origin)};return addEventListener("message",t),()=>removeEventListener("message",t)}}}function he(){return{post:()=>{},on:()=>()=>{}}}var O="__frame_scroll",_e=150,ve=310,ye=160,we=3e4;function be(){let e=0,t=!1,r=!1,n=!1,s=0,a=null;const u=i=>{try{sessionStorage.setItem(O,JSON.stringify({y:i}))}catch{}},f=()=>{if(clearTimeout(e),a===null)return;const i=a;a=null,u(i)},R=()=>{if(t){t=!1;return}r=!0,a=scrollY,clearTimeout(e),e=setTimeout(f,_e)};try{addEventListener("scroll",R,{passive:!0}),addEventListener("pagehide",f)}catch{}const v=()=>{let i;try{i=sessionStorage.getItem(O)}catch{return null}if(i===null)return null;let m;try{m=JSON.parse(i)}catch{m=null}const l=m?.y;if(!(typeof l=="number"&&Number.isFinite(l)&&l>=0)){try{sessionStorage.removeItem(O)}catch{}return null}return l};let S=!1;const h=i=>{try{const m=scrollY;scrollTo({top:i,left:0,behavior:"instant"}),s=i,n=!0,clearTimeout(e),a=null,u(i);const l=scrollY;l!==m&&(t=!0),l!==i&&!S&&(S=!0,addEventListener("load",()=>{try{if(scrollY===l){const k=v();h(k!==null?k:s)}}catch{}},{once:!0}))}catch{}},y=()=>{try{return!!location.hash}catch{return!0}};let o=!1;const p=()=>{try{if(o||innerWidth>ve||innerHeight>ye)return;o=!0;const i=Date.now(),m=()=>{try{removeEventListener("resize",m)}catch{}if(Date.now()-i>we||r||y())return;const l=v();h(l!==null?l:s)};addEventListener("resize",m)}catch{}};let _=!1,w=!1;return{restore(){if(_||(_=!0,y()))return;const i=v();i!==null&&(h(i),p())},promoted(){if(w||(w=!0,y()))return;const i=v();i!==null?(h(i),p()):n&&h(s)}}}function Ee(e,t,r){let n=null;try{n=window.trustedTypes?.createPolicy("frame-runtime",{createScriptURL:f=>f})??null}catch{}const s=window.Worker,a=s?.prototype,u=Object.freeze({Worker:s,workerOn:a?.addEventListener,workerPost:a?.postMessage,workerTerminate:a?.terminate,fetch:window.fetch.bind(window),preventDefault:Event.prototype.preventDefault,policy:n});t(e).then(f=>f?.bootTopLevel?f.bootTopLevel(u,{settle:r}):r()).catch(r)}var Oe="modulepreload",Ce=function(e){return"/"+e},je={},ge=function(t,r,n){let s=Promise.resolve();function a(u){const f=new Event("vite:preloadError",{cancelable:!0});if(f.payload=u,window.dispatchEvent(f),!f.defaultPrevented)throw u}return s.then(u=>{for(const f of u||[])f.status==="rejected"&&a(f.reason);return t().catch(a)})},Ae=window===top,H=Object.getOwnPropertyDescriptor(window,"claude"),T=de(Ae,window.__FRAME_PREAMBLE?.topLevel,H?.writable===!1),C=typeof T=="object"&&T[0],d=C?he():me();(function(){const e=Object.defineProperty,t=globalThis,r=["RTCPeerConnection","webkitRTCPeerConnection","RTCDataChannel","RTCIceCandidate","RTCSessionDescription","RTCRtpSender","RTCRtpReceiver"];let n=0;for(let s=0;s<r.length;s++){const a=r[s];try{e(t,a,{value:void 0,writable:!1,configurable:!1})}catch{try{delete t[a]}catch{}try{e(t,a,{value:void 0,writable:!1,configurable:!0})}catch{}}typeof t[a]=="function"&&n++}if(n&&T==="framed")try{d.post({__frame_rtc_lockdown_failed:n},"*")}catch{}})();var Re=1e4,Se=Object.freeze([...window.__FRAME_PREAMBLE?.origins??["https://claude.ai","https://preview.claude.ai"]]);function q(e){for(const t of Se)if(t.endsWith(":*"))try{const r=new URL(e);if(`${r.protocol}//${r.hostname}:*`===t)return!0}catch{}else if(e===t)return!0;return!1}var L=Object.freeze({...window.__FRAME_PREAMBLE?.capabilities}),j=window.__FRAME_PREAMBLE?.transforms,N=window.__FRAME_PREAMBLE?.comments,I=window.__FRAME_PREAMBLE?.translate;function A(e){return ge(()=>import("/_runtime/"+e),void 0)}function W(e,t){return{contract:e.contract,changes:new Set(e.changes??[]),flags:new Set(e.flags??[]),capabilities:e.capabilities??{},capBudgets:e.capBudgets??{},transforms:new Map,shellOrigin:t,mount:G,pipe:()=>({wrap:(r,n)=>(...s)=>{try{return n(...s)}catch(a){return Promise.reject(a)}}})}}var P=null,b=null;function $(e,t,r){try{Object.defineProperty(e,t,{value:r,writable:!1,configurable:!1,enumerable:!0})}catch{try{Object.defineProperty(e,t,{value:r,writable:!1,configurable:!0,enumerable:!0})}catch{}}}var B=!1;function ke(e,t){const r=[];for(const n of e.elements){const s=document.querySelector(`[data-id="${n.target}"]`);if(!s){d.post({__frame_patch_miss:{seq:e.seq}},t);return}if([...Object.keys(n.attrsSet??{}),...n.attrsRemoved??[]].some(a=>!ee(a))){d.post({__frame_patch_miss:{seq:e.seq}},t);return}if(n.text!==void 0&&(!oe(s)||ae(s))){d.post({__frame_patch_miss:{seq:e.seq}},t);return}for(const[a,u]of Object.entries(n.attrsSet??{}))if(!Y(s,a)){try{s.setAttribute(a,u)}catch{}K(s,a,u)}for(const a of n.attrsRemoved??[])Y(s,a)||(s.removeAttribute(a),K(s,a,null));typeof n.text=="string"&&(s.textContent=n.text),r.push(n.target)}try{document.dispatchEvent(new CustomEvent("claude:edit",{detail:{seq:e.seq,targets:r}}))}catch{}}function K(e,t,r){if(!(e instanceof HTMLInputElement))return;const n=t.toLowerCase();n==="checked"?e.checked=r!==null:n==="value"&&e.type!=="file"&&(e.value=r??"")}function Y(e,t){const r=t.toLowerCase(),n=e;return r==="data-id"||(r==="value"||r==="checked")&&(n.__artifactSecret===!0||/^(password|hidden|file)$/.test(n.type??"")||/(^|\s)(cc-|one-time-code|current-password|new-password)/i.test(`${e.getAttribute("autocomplete")??""} ${n.autocomplete??""}`))}function X(e){const t=document.documentElement;e==="light"||e==="dark"?(t.dataset.theme=e,t.style.colorScheme=e,B=!0):B&&(delete t.dataset.theme,t.style.colorScheme="",B=!1)}var M=new Map;function Te(){let e;const t={u:new Promise(r=>{e=r}),r:r=>{t.done=!0,e(r)},done:!1,nulled:!1};return t}function U(){for(const e of M.values())e.done||(e.nulled=!0,e.r(null))}var Le=Object.freeze(Object.assign(Object.create(null),{call:Function.prototype.call,apply:Function.prototype.apply,bind:Function.prototype.bind})),G=(e,t)=>{const r=M.get(e);if(!r||r.done){r?.nulled&&b&&d.post({__frame_cap_telemetry:{kind:"cap-load-error",cap:e}},b);return}const n=typeof t=="function"?Object.setPrototypeOf(t,Le):Object.assign(Object.create(null),t);typeof n.then=="function"&&delete n.then,r.r(Object.freeze(n))};function V(){const e=H?.value??{};$(window,"claude",e);for(const t of Object.keys(L)){if(e[t]!==void 0){$(e,t,e[t]);continue}M.set(t,Te())}if(e.use===void 0){const t=r=>{if(typeof r!="string"||!Object.hasOwn(L,r))return Promise.resolve(null);const n=M.get(r);return n?n.u:Promise.resolve(e[r]??null)};try{Object.defineProperty(e,"use",{value:t,writable:!0,configurable:!0,enumerable:!1})}catch{}}}if(T==="framed"){const e=j&&g.test(j)?A(j).catch(()=>{}):Promise.resolve(void 0),t=o=>{if(o.type==="auxclick"&&o.button!==1)return;const p=o.target,_=p&&p.closest?p.closest("a[href],area[href]"):null;if(!_)return;const w=_.getAttribute("href");if(!w)return;let i;try{i=new URL(w,document.baseURI)}catch{return}if((i.protocol==="http:"||i.protocol==="https:")&&i.origin!==location.origin){o.preventDefault();const m=(_.getAttribute("target")??"").toLowerCase(),l=o.type==="auxclick"||o.metaKey||o.ctrlKey||o.shiftKey||o.altKey||!["","_self","_top","_parent"].includes(m);d.post({__frame_nav:!0,url:i.href,newTab:l},"*")}};addEventListener("click",t,!0),addEventListener("auxclick",t,!0);const r={},n=o=>{o.isTrusted&&(r.pointer=!0)},s=o=>{o.isTrusted&&(r.click=!0)};addEventListener("pointermove",n,{capture:!0,passive:!0}),addEventListener("click",s,{capture:!0,passive:!0}),e.then(o=>{o?.wireNav&&(o.wireNav(),removeEventListener("click",t,!0),removeEventListener("auxclick",t,!0),removeEventListener("pointermove",n,!0),removeEventListener("click",s,!0),o.wireEngagement?.(r))});let a=null;try{a=be()}catch{}V();let u=null,f=null,R=0;const v=d.on((o,p)=>{q(p)&&ue(o)&&(u=o.__frame_init,b=p,v(),clearTimeout(R),f?.())});d.post({__frame_connect:!0},"*");const S=new Promise(o=>{f=o,R=setTimeout(()=>{v(),o()},Re)}),h=document.readyState==="loading"?new Promise(o=>document.addEventListener("DOMContentLoaded",()=>o(),{once:!0})):Promise.resolve();h.then(()=>{try{a?.restore()}catch{}});const y={cb:null};d.on((o,p)=>{if(q(p)&&fe(o)){try{a?.promoted()}catch{}y.cb?.()}}),S.then(async()=>{if(!u||!b){U();return}X(u.theme);const o=b;let p=!1,_=!1;d.on((c,D)=>{if(D!==o)return;pe(c)&&X(c.__frame_theme.theme),le(c)&&ke(c.__frame_patch,o);const E=c?.__fc_mode;E&&typeof E=="object"&&!p&&N&&g.test(N)&&(p=!0,A(N).then(F=>F.install?.(o,E.on===!0)).catch(()=>{}));const x=c?.__ft_cmd;x&&typeof x=="object"&&!_&&I&&g.test(I)&&(_=!0,A(I).then(F=>F.install?.(o,x)).catch(()=>{}))});const w=Object.keys(u.capabilities??{}).filter(c=>Object.hasOwn(L,c)).map(c=>[c,L[c]]).filter(c=>typeof c[1]=="string"&&g.test(c[1])),i=await Promise.allSettled(w.map(([,c])=>A(c))),m=await e,l=b;if(m?.buildBoot||d.post({__frame_cap_telemetry:{kind:"cap-load-error",cap:"_transforms"}},l),m?.buildBoot)try{P=m.buildBoot(u,m.TRANSFORMS??{},{shellOrigin:l,mount:G},c=>d.post({__frame_cap_telemetry:c},l))}catch{d.post({__frame_cap_telemetry:{kind:"cap-load-error",cap:"_transforms"}},l),P=W(u,l)}else P=W(u,l);const k=c=>d.post({__frame_cap_telemetry:{kind:"cap-load-error",cap:c}},l),Pe=P;i.forEach((c,D)=>{const E=w[D][0];if(c.status!=="fulfilled"){k(E);return}try{c.value?.install?.(Pe)}catch{k(E)}}),U(),await h,d.post({__frame_ready:!0},b),e.then(c=>c?.installSizeReporter?.(l,y))})}else C&&(V(),Ee(C,A,U))})();</script><!-- /frame-runtime --><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}</style></head><body>
+<title>Splitting Sanctions Next</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+  :root {
+    --bg: #F5F5F7;
+    --surface: #FFFFFF;
+    --surface-2: #F0F0F4;
+    --border: #D2D2D7;
+    --border-mid: #AEAEB2;
+    --text: #1D1D1F;
+    --text-muted: #6E6E73;
+    --accent: #0071E3;
+    --accent-bg: rgba(0,113,227,0.07);
+    --success: #28CD41;
+    --success-bg: rgba(40,205,65,0.08);
+    --danger: #FF3B30;
+    --danger-bg: rgba(255,59,48,0.08);
+    --mono: 'IBM Plex Mono', 'SF Mono', monospace;
+    --head: 'Syne', 'Helvetica Neue', sans-serif;
+    --body: 'DM Sans', 'Helvetica Neue', sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #080f1a;
+      --surface: #0e1c2f;
+      --surface-2: #0a1626;
+      --border: #1a3354;
+      --border-mid: #213f65;
+      --text: #dde8f5;
+      --text-muted: #587a9b;
+      --accent: #e8a217;
+      --accent-bg: rgba(232,162,23,0.12);
+      --success: #2dcc8f;
+      --success-bg: rgba(45,204,143,0.10);
+      --danger: #ef5050;
+      --danger-bg: rgba(239,80,80,0.10);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #080f1a;
+    --surface: #0e1c2f;
+    --surface-2: #0a1626;
+    --border: #1a3354;
+    --border-mid: #213f65;
+    --text: #dde8f5;
+    --text-muted: #587a9b;
+    --accent: #e8a217;
+    --accent-bg: rgba(232,162,23,0.12);
+    --success: #2dcc8f;
+    --success-bg: rgba(45,204,143,0.10);
+    --danger: #ef5050;
+    --danger-bg: rgba(239,80,80,0.10);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--body);
+    -webkit-font-smoothing: antialiased;
+  }
+  .page {
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 64px 24px 100px;
+    display: flex;
+    flex-direction: column;
+    gap: 56px;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 14px;
+  }
+  h1 {
+    font-family: var(--head);
+    font-weight: 800;
+    font-size: clamp(32px, 5vw, 46px);
+    line-height: 1.08;
+    letter-spacing: -.01em;
+    margin: 0 0 18px;
+    text-wrap: balance;
+  }
+  .dek {
+    font-size: 17px;
+    line-height: 1.65;
+    color: var(--text-muted);
+    max-width: 660px;
+    margin: 0;
+  }
+  .dek strong { color: var(--text); font-weight: 600; }
+
+  h2 {
+    font-family: var(--head);
+    font-weight: 700;
+    font-size: 24px;
+    letter-spacing: -.005em;
+    margin: 0 0 6px;
+    text-wrap: balance;
+  }
+  .section-note {
+    font-size: 14.5px;
+    color: var(--text-muted);
+    line-height: 1.6;
+    max-width: 640px;
+    margin: 0 0 28px;
+  }
+  section { display: flex; flex-direction: column; }
+
+  p { line-height: 1.7; font-size: 15.5px; }
+
+  figure {
+    margin: 0;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 28px 28px 22px;
+  }
+  figure svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    overflow: visible;
+  }
+  figcaption {
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    font-size: 13.5px;
+    line-height: 1.65;
+    color: var(--text-muted);
+  }
+  figcaption code, .callout code, td code {
+    font-family: var(--mono);
+    font-size: 12px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1.5px 5px;
+    color: var(--text);
+  }
+
+  svg text { font-family: var(--body); fill: var(--text); }
+  svg .mono { font-family: var(--mono); }
+  svg .muted { fill: var(--text-muted); }
+  svg .accent-fill { fill: var(--accent); }
+  svg .box { fill: var(--surface-2); stroke: var(--border-mid); stroke-width: 1.25; }
+  svg .box-accent { fill: var(--accent-bg); stroke: var(--accent); stroke-width: 1.5; }
+  svg .box-danger { fill: var(--danger-bg); stroke: var(--danger); stroke-width: 1.25; }
+  svg .box-success { fill: var(--success-bg); stroke: var(--success); stroke-width: 1.25; }
+  svg .box-muted { fill: var(--surface-2); stroke: var(--border); stroke-width: 1; stroke-dasharray: 3 3; }
+  svg .arrow { stroke: var(--text-muted); stroke-width: 1.4; fill: none; }
+  svg .arrow-dashed { stroke: var(--text-muted); stroke-width: 1.4; fill: none; stroke-dasharray: 5 4; }
+  svg .arrow-accent { stroke: var(--accent); stroke-width: 1.6; fill: none; }
+  svg .arrow-danger { stroke: var(--danger); stroke-width: 1.4; fill: none; }
+  /* Defined last so it wins over .arrow/.arrow-dashed when combined on one element
+     (equal specificity — source order decides) without needing a bespoke combo class. */
+  svg .accent-stroke { stroke: var(--accent); }
+  svg .danger-stroke { stroke: var(--danger); }
+
+  .callout {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 10px;
+    padding: 22px 26px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .callout h3 {
+    font-family: var(--head);
+    font-size: 15px;
+    font-weight: 700;
+    margin: 0;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+  th, td {
+    text-align: left;
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  th {
+    font-family: var(--mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--text-muted);
+    font-weight: 500;
+  }
+  td.fold { color: var(--text); font-weight: 600; }
+  td.next { color: var(--accent); font-weight: 600; }
+  td.stay { color: var(--danger); font-weight: 600; }
+  .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+  .table-wrap table { min-width: 560px; }
+  .table-wrap tr:last-child td { border-bottom: none; }
+
+  .verdict-pill {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: .03em;
+    padding: 2px 8px;
+    border-radius: 20px;
+    white-space: nowrap;
+  }
+  .verdict-pill.fold { background: var(--surface-2); border: 1px solid var(--border-mid); color: var(--text); }
+  .verdict-pill.next { background: var(--accent-bg); border: 1px solid var(--accent); color: var(--accent); }
+  .verdict-pill.stay { background: var(--danger-bg); border: 1px solid var(--danger); color: var(--danger); }
+
+  footer {
+    border-top: 1px solid var(--border);
+    padding-top: 24px;
+    font-size: 13px;
+    color: var(--text-muted);
+    font-family: var(--mono);
+  }
+</style>
+
+<div class="page">
+
+  <header>
+    <p class="eyebrow">Architecture proposal · draft for discussion · sequel to "Splitting MDM First"</p>
+    <h1>Splitting Sanctions Next</h1>
+    <p class="dek">
+      A full pass over all ~90 tables to answer one question directly: after MDM, what's the next
+      clean cut? Kanban isn't it — its <code>tickets</code> table reaches into shipments, users,
+      and itself. <strong>Sanctions/screening is</strong> — a denylist synced from two external
+      feeds, read by name-match, with zero outbound foreign key anywhere.
+    </p>
+  </header>
+
+  <section>
+    <h2>How screening works today</h2>
+    <p class="section-note">
+      Two external lists feed one table. Nothing about how it's read touches SQL on the request
+      path at all — screening never queries <code>sanctions_entries</code> directly, it matches
+      against an in-memory index built once at boot and rebuilt after every sync.
+    </p>
+    <figure>
+      <svg viewBox="0 0 960 400" role="img" aria-label="Two external denylists (OFAC SDN and the Consolidated Screening List) are pulled in by sync jobs into the sanctions_entries and sanctions_syncs tables. loadSanctionsIndex builds an in-memory map from those tables, which screenShipmentById and screenCustomer then match names against directly — no SQL query on the request path.">
+        <defs>
+          <marker id="arrow1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor" class="muted"/>
+          </marker>
+        </defs>
+
+        <rect class="box" x="30" y="55" width="200" height="52" rx="8"/>
+        <text x="130" y="76" text-anchor="middle" font-size="13" font-weight="600">OFAC SDN list</text>
+        <text x="130" y="94" text-anchor="middle" font-size="10.5" class="muted mono">treasury.gov, CSV</text>
+
+        <rect class="box" x="30" y="127" width="200" height="52" rx="8"/>
+        <text x="130" y="148" text-anchor="middle" font-size="13" font-weight="600">Consolidated Screening List</text>
+        <text x="130" y="166" text-anchor="middle" font-size="10.5" class="muted mono">11 more lists, one feed</text>
+
+        <rect class="box" x="285" y="80" width="185" height="80" rx="8"/>
+        <text x="377" y="106" text-anchor="middle" font-size="12.5" font-weight="600" class="mono">syncOfacSdn()</text>
+        <text x="377" y="126" text-anchor="middle" font-size="12.5" font-weight="600" class="mono">syncConsolidated...()</text>
+        <text x="377" y="148" text-anchor="middle" font-size="10.5" class="muted">server.js, scheduled + manual</text>
+
+        <rect class="box-accent" x="525" y="70" width="200" height="100" rx="9"/>
+        <text x="625" y="100" text-anchor="middle" font-size="14" font-weight="700" font-family="var(--head)">sanctions_entries</text>
+        <text x="625" y="120" text-anchor="middle" font-size="14" font-weight="700" font-family="var(--head)">sanctions_syncs</text>
+        <text x="625" y="145" text-anchor="middle" font-size="10.5" class="mono accent-fill">zero outbound FK</text>
+
+        <rect class="box" x="780" y="70" width="150" height="100" rx="9"/>
+        <text x="855" y="100" text-anchor="middle" font-size="13" font-weight="600">sanctionsMap</text>
+        <text x="855" y="118" text-anchor="middle" font-size="10.5" class="muted mono">in-memory Map</text>
+        <text x="855" y="140" text-anchor="middle" font-size="10" class="muted">loadSanctionsIndex()</text>
+        <text x="855" y="154" text-anchor="middle" font-size="10" class="muted">boot + after each sync</text>
+
+        <line x1="230" y1="81" x2="283" y2="105" class="arrow" marker-end="url(#arrow1)"/>
+        <line x1="230" y1="153" x2="283" y2="130" class="arrow" marker-end="url(#arrow1)"/>
+        <line x1="470" y1="120" x2="523" y2="120" class="arrow" marker-end="url(#arrow1)"/>
+        <text x="497" y="112" text-anchor="middle" font-size="10" class="muted mono">writes</text>
+        <line x1="725" y1="120" x2="778" y2="120" class="arrow" marker-end="url(#arrow1)"/>
+        <text x="752" y="112" text-anchor="middle" font-size="10" class="muted mono">reads</text>
+
+        <line x1="855" y1="170" x2="855" y2="216" class="arrow-dashed" marker-end="url(#arrow1)"/>
+
+        <rect class="box" x="330" y="235" width="220" height="52" rx="8"/>
+        <text x="440" y="257" text-anchor="middle" font-size="12.5" font-weight="600" class="mono">screenShipmentById</text>
+        <text x="440" y="275" text-anchor="middle" font-size="10" class="muted">server.js — 13 party-role slots</text>
+
+        <rect class="box" x="590" y="235" width="220" height="52" rx="8"/>
+        <text x="700" y="257" text-anchor="middle" font-size="12.5" font-weight="600" class="mono">screenCustomer</text>
+        <text x="700" y="275" text-anchor="middle" font-size="10" class="muted">routes/customers.js</text>
+
+        <line x1="855" y1="220" x2="560" y2="255" class="arrow-dashed" marker-end="url(#arrow1)"/>
+        <line x1="855" y1="220" x2="700" y2="233" class="arrow-dashed" marker-end="url(#arrow1)"/>
+        <text x="720" y="212" text-anchor="middle" font-size="10.5" class="muted mono">name-match — no SQL here</text>
+
+        <line x1="70" y1="330" x2="890" y2="330" stroke="var(--border)" stroke-width="1"/>
+        <text x="480" y="352" text-anchor="middle" font-size="11" class="muted mono">/api/sanctions/entries · /status · /sync · /sync-csl · /import-csv</text>
+        <text x="480" y="370" text-anchor="middle" font-size="11" class="muted">all five routes live inside <tspan class="mono" fill="var(--text)">routes/customers.js</tspan> — no dedicated route file yet</text>
+      </svg>
+      <figcaption>
+        The read path never touches SQL — <code>screenShipmentById</code>/<code>screenCustomer</code>
+        match a normalized name straight against <code>sanctionsMap</code>. The one real gap versus
+        MDM: MDM already had its own <code>routes/mdm.js</code> before any split was proposed;
+        sanctions has never had its own route file — its five endpoints have lived inside
+        <code>routes/customers.js</code> since day one. A split would need to peel that file apart
+        first, a small, low-risk step of its own.
+      </figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>The full audit</h2>
+    <p class="section-note">
+      Every table sorted by the same test MDM passed: does it point <em>out</em> at shipments,
+      customers, or users — the tables with the highest blast radius — or only get pointed <em>at</em>?
+    </p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Verdict</th><th>Tables</th><th>Why</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="verdict-pill fold">fold into MDM</span></td>
+            <td class="fold"><code>pack_type_definitions</code>, <code>container_type_definitions</code>,<br><code>charge_code_definitions</code>, <code>milestone_templates</code></td>
+            <td>Same shape as <code>carriers</code>/<code>commodities</code> — admin-maintained, zero outbound FK — just added after the MDM proposal was drawn and never folded in.</td>
+          </tr>
+          <tr>
+            <td><span class="verdict-pill next">next clean cut</span></td>
+            <td class="next"><code>sanctions_entries</code>, <code>sanctions_syncs</code></td>
+            <td>Externally sourced, zero outbound FK, read via name-match not JOIN. This proposal.</td>
+          </tr>
+          <tr>
+            <td><span class="verdict-pill stay">stay put</span></td>
+            <td class="stay">Kanban + Testing: <code>tickets</code>, <code>ticket_links</code>,<br><code>test_items</code>, <code>test_case_links</code>, <code>kb_projects/versions/columns</code></td>
+            <td><code>shipment_id</code>, self-ref <code>parent_id</code>, <code>assignee_id</code> → users — plus tickets get auto-created by unrelated domain logic on every server start.</td>
+          </tr>
+          <tr>
+            <td><span class="verdict-pill stay">stay put</span></td>
+            <td class="stay"><code>customers</code> + 5 satellite tables</td>
+            <td>Highest fan-in of any table audited: <code>shipments</code>' 4 fixed columns, <code>contracts.named_account_id</code>, <code>shipment_parties</code>, <code>carrier_agents</code>, <code>credit_overrides</code>. Epic 5, deliberately last.</td>
+          </tr>
+          <tr>
+            <td><span class="verdict-pill stay">stay put</span></td>
+            <td class="stay"><code>contracts</code> + legs/rates/routings</td>
+            <td>Already extracted once (v0.68.0) — needed a full proxy/guard layer across 6+ files precisely because of this entanglement. The hard way to learn this lesson, already paid for.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>Sanctions vs. Kanban — why one clears the bar</h2>
+    <p class="section-note">
+      Same question the MDM-vs-Users diagram asked, aimed at the two live candidates from this
+      thread. Sanctions points at nothing; Kanban points at three different domains, one of which
+      writes back into it unprompted.
+    </p>
+    <figure>
+      <svg viewBox="0 0 940 380" role="img" aria-label="Side-by-side comparison: sanctions_entries has zero outbound foreign keys and is read only by two name-matching functions, while the Kanban tickets table has three real outbound references — to shipments, to users, and to itself for epic-story nesting — plus an unrelated ops-automation sweep that writes new tickets into it on every server start.">
+        <defs>
+          <marker id="arrow2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor" class="muted"/>
+          </marker>
+        </defs>
+
+        <line x1="470" y1="30" x2="470" y2="355" stroke="var(--border)" stroke-width="1"/>
+
+        <text x="235" y="50" text-anchor="middle" font-size="17" font-weight="700" font-family="var(--head)" class="accent-fill">Sanctions</text>
+        <text x="235" y="72" text-anchor="middle" font-size="12" class="muted">zero outbound FK · read-only from anywhere else</text>
+
+        <rect class="box-accent" x="145" y="105" width="180" height="80" rx="9"/>
+        <text x="235" y="140" text-anchor="middle" font-size="14" font-weight="600">sanctions_entries</text>
+        <text x="235" y="158" text-anchor="middle" font-size="10.5" class="muted mono">sanctions_syncs</text>
+
+        <g font-size="11.5">
+          <rect class="box" x="60" y="230" width="180" height="34" rx="7"/>
+          <text x="150" y="251" text-anchor="middle" class="mono">screenShipmentById</text>
+          <rect class="box" x="270" y="230" width="180" height="34" rx="7"/>
+          <text x="360" y="251" text-anchor="middle" class="mono">screenCustomer</text>
+        </g>
+        <line x1="180" y1="228" x2="220" y2="187" class="arrow" marker-end="url(#arrow2)"/>
+        <line x1="330" y1="228" x2="260" y2="187" class="arrow" marker-end="url(#arrow2)"/>
+        <text x="235" y="205" text-anchor="middle" font-size="10.5" class="muted mono">read</text>
+
+        <text x="705" y="50" text-anchor="middle" font-size="17" font-weight="700" font-family="var(--head)" class="accent-fill">Kanban</text>
+        <text x="705" y="72" text-anchor="middle" font-size="12" class="muted">3 real outbound FKs, plus one inbound write from elsewhere</text>
+
+        <rect class="box-danger" x="615" y="105" width="180" height="70" rx="9"/>
+        <text x="705" y="135" text-anchor="middle" font-size="14" font-weight="600">tickets</text>
+        <text x="705" y="153" text-anchor="middle" font-size="10" class="muted mono">shipment_id · assignee_id · parent_id</text>
+
+        <g font-size="11">
+          <rect class="box" x="500" y="230" width="130" height="32" rx="7"/>
+          <text x="565" y="250" text-anchor="middle">shipments</text>
+          <rect class="box" x="645" y="230" width="130" height="32" rx="7"/>
+          <text x="710" y="250" text-anchor="middle">users</text>
+          <rect class="box" x="790" y="230" width="120" height="32" rx="7"/>
+          <text x="850" y="250" text-anchor="middle">tickets (self)</text>
+        </g>
+        <line x1="655" y1="175" x2="580" y2="228" class="arrow-danger" marker-end="url(#arrow2)"/>
+        <line x1="705" y1="175" x2="708" y2="228" class="arrow-danger" marker-end="url(#arrow2)"/>
+        <line x1="755" y1="175" x2="840" y2="228" class="arrow-danger" marker-end="url(#arrow2)"/>
+        <text x="705" y="210" text-anchor="middle" font-size="10" class="danger-stroke mono" fill="var(--danger)">shipment_id · assignee_id · parent_id</text>
+
+        <rect class="box-muted" x="605" y="300" width="200" height="46" rx="8"/>
+        <text x="705" y="320" text-anchor="middle" font-size="11" class="mono">ops-automation sweep</text>
+        <text x="705" y="335" text-anchor="middle" font-size="10" class="muted">auto-creates tickets on server start</text>
+        <line x1="705" y1="298" x2="705" y2="177" class="arrow-dashed" marker-end="url(#arrow2)"/>
+      </svg>
+      <figcaption>
+        Left: two resolver functions read sanctions data; nothing writes to it except its own two
+        sync jobs. Right: <code>tickets</code> reaches into three different domains by real foreign
+        key, and gets written into from a fourth direction entirely — a workflow-automation sweep
+        that has nothing to do with the Kanban board itself, discovered while auditing v0.79.0's
+        workflow fixes. Splitting this would mean either a proxy layer per outbound FK or loosening
+        every one of them into a denormalized, driftable copy.
+      </figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>The proposed cut</h2>
+    <p class="section-note">
+      Same shape as MDM's own proposal, one more time: the monolith keeps a local fallback, a new
+      Screening Service owns the real data and the two sync jobs, and a
+      <code>screening_source</code> toggle switches between them without a deploy.
+    </p>
+    <figure>
+      <svg viewBox="0 0 940 400" role="img" aria-label="Proposed state: the monolith keeps sanctions_entries and sanctions_syncs locally as a fallback, while a new Screening Service owns the same tables plus the two sync jobs in its own database, reached through a callScreeningService helper gated by a screening_source toggle.">
+        <defs>
+          <marker id="arrow3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor" class="accent-fill"/>
+          </marker>
+        </defs>
+
+        <rect class="box" x="40" y="120" width="280" height="180" rx="10"/>
+        <text x="180" y="158" text-anchor="middle" font-size="16" font-weight="700" font-family="var(--head)">CargoDesk Monolith</text>
+        <text x="180" y="180" text-anchor="middle" font-size="11" class="muted">shipments · customers · kanban</text>
+        <text x="180" y="196" text-anchor="middle" font-size="11" class="muted">EMBARGOED_COUNTRIES (unrelated to DB, stays)</text>
+        <line x1="66" y1="220" x2="294" y2="220" stroke="var(--border)" stroke-width="1"/>
+        <text x="180" y="245" text-anchor="middle" font-size="10.5" class="muted mono">sanctions_entries kept locally</text>
+        <text x="180" y="260" text-anchor="middle" font-size="10.5" class="muted mono">— fallback when screening_source=local</text>
+
+        <rect class="box-accent" x="620" y="120" width="280" height="180" rx="10"/>
+        <g transform="translate(650,133)">
+          <line x1="0" y1="6" x2="0" y2="32" class="accent-stroke" stroke-width="1.25"/>
+          <line x1="36" y1="6" x2="36" y2="32" class="accent-stroke" stroke-width="1.25"/>
+          <path d="M0,32 A18,6 0 0,0 36,32" fill="none" class="accent-stroke" stroke-width="1.25"/>
+          <ellipse cx="18" cy="6" rx="18" ry="6" fill="var(--surface)" class="accent-stroke" stroke-width="1.25"/>
+        </g>
+        <text x="760" y="158" text-anchor="middle" font-size="16" font-weight="700" font-family="var(--head)">Screening Service</text>
+        <text x="760" y="180" text-anchor="middle" font-size="11" class="muted">sanctions_entries · sanctions_syncs</text>
+        <text x="760" y="196" text-anchor="middle" font-size="11" class="muted">owns the OFAC + CSL sync jobs</text>
+        <text x="760" y="220" text-anchor="middle" font-size="11" class="mono accent-fill">(new) · own SQLite</text>
+
+        <line x1="320" y1="200" x2="618" y2="200" class="arrow-accent" marker-end="url(#arrow3)" stroke-dasharray="6 4"/>
+        <line x1="618" y1="200" x2="320" y2="200" class="arrow-accent" marker-end="url(#arrow3)" stroke-dasharray="6 4"/>
+        <text x="470" y="185" text-anchor="middle" font-size="12" class="mono accent-fill">callScreeningService()</text>
+
+        <rect x="360" y="212" width="220" height="26" rx="13" fill="none" class="accent-stroke" stroke-width="1.25"/>
+        <text x="470" y="229" text-anchor="middle" font-size="10" class="mono accent-fill">screening_source: local ⇄ remote</text>
+
+        <text x="470" y="270" text-anchor="middle" font-size="11" class="muted">resolves: match(name) for screenShipmentById</text>
+        <text x="470" y="286" text-anchor="middle" font-size="11" class="muted">and screenCustomer, both call sites unchanged</text>
+        <text x="470" y="302" text-anchor="middle" font-size="11" class="muted">in shape — only the source of the answer moves</text>
+      </svg>
+      <figcaption>
+        <code>screenShipmentById</code>/<code>screenCustomer</code> keep their exact call shape —
+        a name in, a hit/no-hit answer out — the same way <code>importContractRates</code> never
+        changed shape for <code>contract_source</code>. The Screening Service owns the sync
+        schedule and the match index; the monolith's local copy stays as the reversible fallback,
+        so flipping the toggle back is a config change, not a rollback.
+      </figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>Sequencing</h2>
+    <p class="section-note">
+      MDM and Sanctions are both low-risk, both still just proposals — they can ship back to back,
+      ahead of the two domains that actually need more runway.
+    </p>
+    <figure>
+      <svg viewBox="0 0 900 150" role="img" aria-label="A four-stop roadmap: MDM first, Sanctions and Screening second as this proposal, Customer and Organization third as the already-logged Epic 5, and Shipments last given its highest blast radius.">
+        <line x1="55" y1="75" x2="845" y2="75" stroke="var(--border-mid)" stroke-width="1.5"/>
+
+        <circle cx="120" cy="75" r="9" fill="var(--surface)" stroke="var(--border-mid)" stroke-width="1.5"/>
+        <text x="120" y="42" text-anchor="middle" font-size="13" font-weight="700" font-family="var(--head)">① MDM</text>
+        <text x="120" y="105" text-anchor="middle" font-size="10.5" class="muted mono">proposed — not built</text>
+
+        <circle cx="330" cy="75" r="10" class="accent-fill"/>
+        <text x="330" y="42" text-anchor="middle" font-size="13" font-weight="700" font-family="var(--head)">② Sanctions</text>
+        <text x="330" y="105" text-anchor="middle" font-size="10.5" class="mono accent-fill">this proposal</text>
+
+        <circle cx="560" cy="75" r="9" fill="var(--surface)" stroke="var(--border-mid)" stroke-width="1.5"/>
+        <text x="560" y="42" text-anchor="middle" font-size="13" font-weight="700" font-family="var(--head)">③ Customer / Org</text>
+        <text x="560" y="105" text-anchor="middle" font-size="10.5" class="muted mono">Epic 5 — logged, not started</text>
+
+        <circle cx="790" cy="75" r="9" fill="var(--surface)" stroke="var(--border)" stroke-width="1.5"/>
+        <text x="790" y="42" text-anchor="middle" font-size="13" font-weight="700" font-family="var(--head)" class="muted">④ Shipments</text>
+        <text x="790" y="105" text-anchor="middle" font-size="10.5" class="muted mono">last — highest blast radius</text>
+      </svg>
+    </figure>
+  </section>
+
+  <footer>
+    Draft for discussion — nothing here is built yet. Based on a full audit of CargoDesk v0.79.0's
+    ~90-table schema, cross-checked against the same test "Splitting MDM First" used.
+  </footer>
+
+</div>
+
+</body></html>

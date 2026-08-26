@@ -34,6 +34,8 @@ than a rewrite since their whole purpose is documenting a past design proposal, 
 | `customer-roles-before-after.html` | Customer Roles — Before / After | https://claude.ai/code/artifact/584f5902-0303-40d5-be43-76342e92d8ea |
 | `cargodesk-data-hub-migration-plan.html` | CargoDesk — Data Hub Migration Plan | https://claude.ai/code/artifact/f26d2a9f-c9c0-4a07-992d-ccb71e603dc1 |
 | `splitting-mdm-first.html` | Splitting MDM First | https://claude.ai/code/artifact/8b08d7a0-bb32-4ae7-bcaa-198bba0412c1 |
+| `splitting-sanctions-next.html` | Splitting Sanctions Next | https://claude.ai/code/artifact/a96ff2e9-f667-4592-b9dc-f33ff2f5d593 |
+| `splitting-kanban-out.html` | Splitting Kanban Out | https://claude.ai/code/artifact/fa0a1811-9e36-4c20-ad40-e20adbd957cc |
 
 ## Removed (2026-08-25 pass)
 

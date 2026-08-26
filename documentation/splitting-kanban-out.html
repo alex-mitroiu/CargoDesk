@@ -1,0 +1,353 @@
+<!doctype html><html><head><!-- frame-runtime --><base href="/_f/1787744090-e724/"><script>window.__FRAME_PREAMBLE={"v":1,"capabilities":{"artifact":"artifact.oqIe8shs.js","assets":"assets.DBUJcvq_.js","comments":"comments.GLuHR3zP.js","db":"db.CRhVHzSt.js","downloads":"downloads.C3GSvEDP.js","embed":"embed.CxGAyc-v.js","mcp":"mcp.Bvma3qD7.js","network":"network.B5UA9Su4.js","permissions":"permissions.BNySkLV5.js","room":"room.DE7EMui-.js","sample":"sample.BW2Uysoh.js","self":"artifact.oqIe8shs.js","user":"user.BpKav-Rf.js"},"transforms":"_transforms.CQm3TZ9K.js","comments":"_comments.PBVy184F.js","translate":"_translate.5HCW4BJh.js"}</script><script>(function(){"use strict";var Z=["light","dark","system"],J=/^[A-Za-z0-9_-]{1,64}$/,z=/^[a-zA-Z_:][a-zA-Z0-9_:.-]{0,127}$/,Q=new Set(["class","hidden","value","checked"]);function ee(e){const t=e.toLowerCase();return t.startsWith("data-")||t.startsWith("aria-")||Q.has(t)}var Me="http://www.w3.org/1999/xhtml",te="http://www.w3.org/2000/svg",re=new Set(["script","style","iframe","noscript","noframes","noembed","xmp","plaintext","template","title","textarea","object","embed"]),ne=new Set(["script","style"]);function oe(e){const t=e.localName.toLowerCase();return e.namespaceURI==="http://www.w3.org/1999/xhtml"?!re.has(t):e.namespaceURI===te?!ne.has(t):!1}var se=new Set(["html","head","body","frameset"]);function ae(e){return e.namespaceURI==="http://www.w3.org/1999/xhtml"&&se.has(e.localName)}function ie(e){if(e===null||typeof e!="object")return!1;const t=e;if(typeof t.target!="string"||!J.test(t.target)||t.text!==void 0&&typeof t.text!="string")return!1;if(t.attrsSet!==void 0){if(t.attrsSet===null||typeof t.attrsSet!="object")return!1;for(const[r,n]of Object.entries(t.attrsSet))if(!z.test(r)||typeof n!="string")return!1}if(t.attrsRemoved!==void 0){if(!Array.isArray(t.attrsRemoved))return!1;for(const r of t.attrsRemoved)if(typeof r!="string"||!z.test(r))return!1}return!0}function ce(e,t){if(e===null||typeof e!="object")return!1;const{seq:r,elements:n}=e;if(typeof r!="number"||!Number.isSafeInteger(r)||!Array.isArray(n)||n.length===0||n.length>64)return!1;for(let s=0;s<n.length;s++)if(!t(n[s]))return!1;return!0}function le(e){return e===null||typeof e!="object"?!1:ce(e.__frame_patch,ie)}function ue(e){if(e===null||typeof e!="object")return!1;const t=e.__frame_init;return t!==null&&typeof t=="object"}function fe(e){return e!==null&&typeof e=="object"&&e.__frame_size_poke===!0}function pe(e){if(e===null||typeof e!="object")return!1;const t=e.__frame_theme;if(t===null||typeof t!="object")return!1;const r=t.theme;return typeof r=="string"&&Z.includes(r)}var g=/^[\w.-]+\.js$/;function de(e,t,r){return r?"inert":typeof t=="string"&&g.test(t)?e?[t]:"inert":e?"inert":"framed"}function me(){return{post(e,t){parent.postMessage(e,t)},on(e){const t=r=>{r.source===parent&&e(r.data,r.origin)};return addEventListener("message",t),()=>removeEventListener("message",t)}}}function he(){return{post:()=>{},on:()=>()=>{}}}var O="__frame_scroll",_e=150,ve=310,ye=160,we=3e4;function be(){let e=0,t=!1,r=!1,n=!1,s=0,a=null;const u=i=>{try{sessionStorage.setItem(O,JSON.stringify({y:i}))}catch{}},f=()=>{if(clearTimeout(e),a===null)return;const i=a;a=null,u(i)},R=()=>{if(t){t=!1;return}r=!0,a=scrollY,clearTimeout(e),e=setTimeout(f,_e)};try{addEventListener("scroll",R,{passive:!0}),addEventListener("pagehide",f)}catch{}const v=()=>{let i;try{i=sessionStorage.getItem(O)}catch{return null}if(i===null)return null;let m;try{m=JSON.parse(i)}catch{m=null}const l=m?.y;if(!(typeof l=="number"&&Number.isFinite(l)&&l>=0)){try{sessionStorage.removeItem(O)}catch{}return null}return l};let S=!1;const h=i=>{try{const m=scrollY;scrollTo({top:i,left:0,behavior:"instant"}),s=i,n=!0,clearTimeout(e),a=null,u(i);const l=scrollY;l!==m&&(t=!0),l!==i&&!S&&(S=!0,addEventListener("load",()=>{try{if(scrollY===l){const k=v();h(k!==null?k:s)}}catch{}},{once:!0}))}catch{}},y=()=>{try{return!!location.hash}catch{return!0}};let o=!1;const p=()=>{try{if(o||innerWidth>ve||innerHeight>ye)return;o=!0;const i=Date.now(),m=()=>{try{removeEventListener("resize",m)}catch{}if(Date.now()-i>we||r||y())return;const l=v();h(l!==null?l:s)};addEventListener("resize",m)}catch{}};let _=!1,w=!1;return{restore(){if(_||(_=!0,y()))return;const i=v();i!==null&&(h(i),p())},promoted(){if(w||(w=!0,y()))return;const i=v();i!==null?(h(i),p()):n&&h(s)}}}function Ee(e,t,r){let n=null;try{n=window.trustedTypes?.createPolicy("frame-runtime",{createScriptURL:f=>f})??null}catch{}const s=window.Worker,a=s?.prototype,u=Object.freeze({Worker:s,workerOn:a?.addEventListener,workerPost:a?.postMessage,workerTerminate:a?.terminate,fetch:window.fetch.bind(window),preventDefault:Event.prototype.preventDefault,policy:n});t(e).then(f=>f?.bootTopLevel?f.bootTopLevel(u,{settle:r}):r()).catch(r)}var Oe="modulepreload",Ce=function(e){return"/"+e},je={},ge=function(t,r,n){let s=Promise.resolve();function a(u){const f=new Event("vite:preloadError",{cancelable:!0});if(f.payload=u,window.dispatchEvent(f),!f.defaultPrevented)throw u}return s.then(u=>{for(const f of u||[])f.status==="rejected"&&a(f.reason);return t().catch(a)})},Ae=window===top,H=Object.getOwnPropertyDescriptor(window,"claude"),T=de(Ae,window.__FRAME_PREAMBLE?.topLevel,H?.writable===!1),C=typeof T=="object"&&T[0],d=C?he():me();(function(){const e=Object.defineProperty,t=globalThis,r=["RTCPeerConnection","webkitRTCPeerConnection","RTCDataChannel","RTCIceCandidate","RTCSessionDescription","RTCRtpSender","RTCRtpReceiver"];let n=0;for(let s=0;s<r.length;s++){const a=r[s];try{e(t,a,{value:void 0,writable:!1,configurable:!1})}catch{try{delete t[a]}catch{}try{e(t,a,{value:void 0,writable:!1,configurable:!0})}catch{}}typeof t[a]=="function"&&n++}if(n&&T==="framed")try{d.post({__frame_rtc_lockdown_failed:n},"*")}catch{}})();var Re=1e4,Se=Object.freeze([...window.__FRAME_PREAMBLE?.origins??["https://claude.ai","https://preview.claude.ai"]]);function q(e){for(const t of Se)if(t.endsWith(":*"))try{const r=new URL(e);if(`${r.protocol}//${r.hostname}:*`===t)return!0}catch{}else if(e===t)return!0;return!1}var L=Object.freeze({...window.__FRAME_PREAMBLE?.capabilities}),j=window.__FRAME_PREAMBLE?.transforms,N=window.__FRAME_PREAMBLE?.comments,I=window.__FRAME_PREAMBLE?.translate;function A(e){return ge(()=>import("/_runtime/"+e),void 0)}function W(e,t){return{contract:e.contract,changes:new Set(e.changes??[]),flags:new Set(e.flags??[]),capabilities:e.capabilities??{},capBudgets:e.capBudgets??{},transforms:new Map,shellOrigin:t,mount:G,pipe:()=>({wrap:(r,n)=>(...s)=>{try{return n(...s)}catch(a){return Promise.reject(a)}}})}}var P=null,b=null;function $(e,t,r){try{Object.defineProperty(e,t,{value:r,writable:!1,configurable:!1,enumerable:!0})}catch{try{Object.defineProperty(e,t,{value:r,writable:!1,configurable:!0,enumerable:!0})}catch{}}}var B=!1;function ke(e,t){const r=[];for(const n of e.elements){const s=document.querySelector(`[data-id="${n.target}"]`);if(!s){d.post({__frame_patch_miss:{seq:e.seq}},t);return}if([...Object.keys(n.attrsSet??{}),...n.attrsRemoved??[]].some(a=>!ee(a))){d.post({__frame_patch_miss:{seq:e.seq}},t);return}if(n.text!==void 0&&(!oe(s)||ae(s))){d.post({__frame_patch_miss:{seq:e.seq}},t);return}for(const[a,u]of Object.entries(n.attrsSet??{}))if(!Y(s,a)){try{s.setAttribute(a,u)}catch{}K(s,a,u)}for(const a of n.attrsRemoved??[])Y(s,a)||(s.removeAttribute(a),K(s,a,null));typeof n.text=="string"&&(s.textContent=n.text),r.push(n.target)}try{document.dispatchEvent(new CustomEvent("claude:edit",{detail:{seq:e.seq,targets:r}}))}catch{}}function K(e,t,r){if(!(e instanceof HTMLInputElement))return;const n=t.toLowerCase();n==="checked"?e.checked=r!==null:n==="value"&&e.type!=="file"&&(e.value=r??"")}function Y(e,t){const r=t.toLowerCase(),n=e;return r==="data-id"||(r==="value"||r==="checked")&&(n.__artifactSecret===!0||/^(password|hidden|file)$/.test(n.type??"")||/(^|\s)(cc-|one-time-code|current-password|new-password)/i.test(`${e.getAttribute("autocomplete")??""} ${n.autocomplete??""}`))}function X(e){const t=document.documentElement;e==="light"||e==="dark"?(t.dataset.theme=e,t.style.colorScheme=e,B=!0):B&&(delete t.dataset.theme,t.style.colorScheme="",B=!1)}var M=new Map;function Te(){let e;const t={u:new Promise(r=>{e=r}),r:r=>{t.done=!0,e(r)},done:!1,nulled:!1};return t}function U(){for(const e of M.values())e.done||(e.nulled=!0,e.r(null))}var Le=Object.freeze(Object.assign(Object.create(null),{call:Function.prototype.call,apply:Function.prototype.apply,bind:Function.prototype.bind})),G=(e,t)=>{const r=M.get(e);if(!r||r.done){r?.nulled&&b&&d.post({__frame_cap_telemetry:{kind:"cap-load-error",cap:e}},b);return}const n=typeof t=="function"?Object.setPrototypeOf(t,Le):Object.assign(Object.create(null),t);typeof n.then=="function"&&delete n.then,r.r(Object.freeze(n))};function V(){const e=H?.value??{};$(window,"claude",e);for(const t of Object.keys(L)){if(e[t]!==void 0){$(e,t,e[t]);continue}M.set(t,Te())}if(e.use===void 0){const t=r=>{if(typeof r!="string"||!Object.hasOwn(L,r))return Promise.resolve(null);const n=M.get(r);return n?n.u:Promise.resolve(e[r]??null)};try{Object.defineProperty(e,"use",{value:t,writable:!0,configurable:!0,enumerable:!1})}catch{}}}if(T==="framed"){const e=j&&g.test(j)?A(j).catch(()=>{}):Promise.resolve(void 0),t=o=>{if(o.type==="auxclick"&&o.button!==1)return;const p=o.target,_=p&&p.closest?p.closest("a[href],area[href]"):null;if(!_)return;const w=_.getAttribute("href");if(!w)return;let i;try{i=new URL(w,document.baseURI)}catch{return}if((i.protocol==="http:"||i.protocol==="https:")&&i.origin!==location.origin){o.preventDefault();const m=(_.getAttribute("target")??"").toLowerCase(),l=o.type==="auxclick"||o.metaKey||o.ctrlKey||o.shiftKey||o.altKey||!["","_self","_top","_parent"].includes(m);d.post({__frame_nav:!0,url:i.href,newTab:l},"*")}};addEventListener("click",t,!0),addEventListener("auxclick",t,!0);const r={},n=o=>{o.isTrusted&&(r.pointer=!0)},s=o=>{o.isTrusted&&(r.click=!0)};addEventListener("pointermove",n,{capture:!0,passive:!0}),addEventListener("click",s,{capture:!0,passive:!0}),e.then(o=>{o?.wireNav&&(o.wireNav(),removeEventListener("click",t,!0),removeEventListener("auxclick",t,!0),removeEventListener("pointermove",n,!0),removeEventListener("click",s,!0),o.wireEngagement?.(r))});let a=null;try{a=be()}catch{}V();let u=null,f=null,R=0;const v=d.on((o,p)=>{q(p)&&ue(o)&&(u=o.__frame_init,b=p,v(),clearTimeout(R),f?.())});d.post({__frame_connect:!0},"*");const S=new Promise(o=>{f=o,R=setTimeout(()=>{v(),o()},Re)}),h=document.readyState==="loading"?new Promise(o=>document.addEventListener("DOMContentLoaded",()=>o(),{once:!0})):Promise.resolve();h.then(()=>{try{a?.restore()}catch{}});const y={cb:null};d.on((o,p)=>{if(q(p)&&fe(o)){try{a?.promoted()}catch{}y.cb?.()}}),S.then(async()=>{if(!u||!b){U();return}X(u.theme);const o=b;let p=!1,_=!1;d.on((c,D)=>{if(D!==o)return;pe(c)&&X(c.__frame_theme.theme),le(c)&&ke(c.__frame_patch,o);const E=c?.__fc_mode;E&&typeof E=="object"&&!p&&N&&g.test(N)&&(p=!0,A(N).then(F=>F.install?.(o,E.on===!0)).catch(()=>{}));const x=c?.__ft_cmd;x&&typeof x=="object"&&!_&&I&&g.test(I)&&(_=!0,A(I).then(F=>F.install?.(o,x)).catch(()=>{}))});const w=Object.keys(u.capabilities??{}).filter(c=>Object.hasOwn(L,c)).map(c=>[c,L[c]]).filter(c=>typeof c[1]=="string"&&g.test(c[1])),i=await Promise.allSettled(w.map(([,c])=>A(c))),m=await e,l=b;if(m?.buildBoot||d.post({__frame_cap_telemetry:{kind:"cap-load-error",cap:"_transforms"}},l),m?.buildBoot)try{P=m.buildBoot(u,m.TRANSFORMS??{},{shellOrigin:l,mount:G},c=>d.post({__frame_cap_telemetry:c},l))}catch{d.post({__frame_cap_telemetry:{kind:"cap-load-error",cap:"_transforms"}},l),P=W(u,l)}else P=W(u,l);const k=c=>d.post({__frame_cap_telemetry:{kind:"cap-load-error",cap:c}},l),Pe=P;i.forEach((c,D)=>{const E=w[D][0];if(c.status!=="fulfilled"){k(E);return}try{c.value?.install?.(Pe)}catch{k(E)}}),U(),await h,d.post({__frame_ready:!0},b),e.then(c=>c?.installSizeReporter?.(l,y))})}else C&&(V(),Ee(C,A,U))})();</script><!-- /frame-runtime --><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1"><style>:root{color-scheme:light}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#faf9f5;color:#141413}img{max-width:100%}</style></head><body>
+<title>Splitting Kanban Out</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=DM+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+  :root {
+    --bg: #F5F5F7;
+    --surface: #FFFFFF;
+    --surface-2: #F0F0F4;
+    --border: #D2D2D7;
+    --border-mid: #AEAEB2;
+    --text: #1D1D1F;
+    --text-muted: #6E6E73;
+    --accent: #0071E3;
+    --accent-bg: rgba(0,113,227,0.07);
+    --success: #28CD41;
+    --success-bg: rgba(40,205,65,0.08);
+    --danger: #FF3B30;
+    --danger-bg: rgba(255,59,48,0.08);
+    --mono: 'IBM Plex Mono', 'SF Mono', monospace;
+    --head: 'Syne', 'Helvetica Neue', sans-serif;
+    --body: 'DM Sans', 'Helvetica Neue', sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #080f1a;
+      --surface: #0e1c2f;
+      --surface-2: #0a1626;
+      --border: #1a3354;
+      --border-mid: #213f65;
+      --text: #dde8f5;
+      --text-muted: #587a9b;
+      --accent: #e8a217;
+      --accent-bg: rgba(232,162,23,0.12);
+      --success: #2dcc8f;
+      --success-bg: rgba(45,204,143,0.10);
+      --danger: #ef5050;
+      --danger-bg: rgba(239,80,80,0.10);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #080f1a;
+    --surface: #0e1c2f;
+    --surface-2: #0a1626;
+    --border: #1a3354;
+    --border-mid: #213f65;
+    --text: #dde8f5;
+    --text-muted: #587a9b;
+    --accent: #e8a217;
+    --accent-bg: rgba(232,162,23,0.12);
+    --success: #2dcc8f;
+    --success-bg: rgba(45,204,143,0.10);
+    --danger: #ef5050;
+    --danger-bg: rgba(239,80,80,0.10);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--body);
+    -webkit-font-smoothing: antialiased;
+  }
+  .page {
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 64px 24px 100px;
+    display: flex;
+    flex-direction: column;
+    gap: 56px;
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 12px;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin: 0 0 14px;
+  }
+  h1 {
+    font-family: var(--head);
+    font-weight: 800;
+    font-size: clamp(32px, 5vw, 46px);
+    line-height: 1.08;
+    letter-spacing: -.01em;
+    margin: 0 0 18px;
+    text-wrap: balance;
+  }
+  .dek {
+    font-size: 17px;
+    line-height: 1.65;
+    color: var(--text-muted);
+    max-width: 660px;
+    margin: 0;
+  }
+  .dek strong { color: var(--text); font-weight: 600; }
+
+  h2 {
+    font-family: var(--head);
+    font-weight: 700;
+    font-size: 24px;
+    letter-spacing: -.005em;
+    margin: 0 0 6px;
+    text-wrap: balance;
+  }
+  .section-note {
+    font-size: 14.5px;
+    color: var(--text-muted);
+    line-height: 1.6;
+    max-width: 640px;
+    margin: 0 0 28px;
+  }
+  section { display: flex; flex-direction: column; }
+
+  p { line-height: 1.7; font-size: 15.5px; }
+
+  figure {
+    margin: 0;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 28px 28px 22px;
+  }
+  figure svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    overflow: visible;
+  }
+  figcaption {
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    font-size: 13.5px;
+    line-height: 1.65;
+    color: var(--text-muted);
+  }
+  figcaption code, .callout code, li code {
+    font-family: var(--mono);
+    font-size: 12px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1.5px 5px;
+    color: var(--text);
+  }
+
+  svg text { font-family: var(--body); fill: var(--text); }
+  svg .mono { font-family: var(--mono); }
+  svg .muted { fill: var(--text-muted); }
+  svg .accent-fill { fill: var(--accent); }
+  svg .box { fill: var(--surface-2); stroke: var(--border-mid); stroke-width: 1.25; }
+  svg .box-accent { fill: var(--accent-bg); stroke: var(--accent); stroke-width: 1.5; }
+  svg .box-danger { fill: var(--danger-bg); stroke: var(--danger); stroke-width: 1.25; }
+  svg .box-success { fill: var(--success-bg); stroke: var(--success); stroke-width: 1.25; }
+  svg .box-muted { fill: var(--surface-2); stroke: var(--border); stroke-width: 1; stroke-dasharray: 3 3; }
+  svg .arrow { stroke: var(--text-muted); stroke-width: 1.4; fill: none; }
+  svg .arrow-dashed { stroke: var(--text-muted); stroke-width: 1.4; fill: none; stroke-dasharray: 5 4; }
+  svg .arrow-accent { stroke: var(--accent); stroke-width: 1.6; fill: none; }
+  svg .arrow-danger { stroke: var(--danger); stroke-width: 1.4; fill: none; }
+  /* Defined last so it wins over .arrow/.arrow-dashed when combined on one element
+     (equal specificity — source order decides) without needing a bespoke combo class. */
+  svg .accent-stroke { stroke: var(--accent); }
+  svg .danger-stroke { stroke: var(--danger); }
+  svg .success-stroke { stroke: var(--success); }
+
+  .callout {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 10px;
+    padding: 22px 26px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .callout h3 {
+    font-family: var(--head);
+    font-size: 15px;
+    font-weight: 700;
+    margin: 0;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+  }
+  .callout ul { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 10px; }
+  .callout li { font-size: 14.5px; line-height: 1.6; }
+  .callout li b { color: var(--text); }
+
+  footer {
+    border-top: 1px solid var(--border);
+    padding-top: 24px;
+    font-size: 13px;
+    color: var(--text-muted);
+    font-family: var(--mono);
+  }
+</style>
+
+<div class="page">
+
+  <header>
+    <p class="eyebrow">Architecture proposal · draft for discussion · third in the DB-split series</p>
+    <h1>Splitting Kanban Out</h1>
+    <p class="dek">
+      MDM and Sanctions were both picked because they're clean <strong>today</strong>. Kanban isn't
+      — it reaches into shipments and users. This proposal is about a different question:
+      <strong>Kanban is a feature expected to go away eventually</strong>, and the day that
+      happens should mean deleting one folder, not performing surgery on a shared, live database.
+    </p>
+  </header>
+
+  <section>
+    <h2>A different test than MDM or Sanctions passed</h2>
+    <p class="section-note">
+      <code>tickets</code> looks entangled by name — <code>shipment_id</code>,
+      <code>assignee_id</code>, a self-referencing <code>parent_id</code>. But look at what's
+      actually in the schema, not the comments describing it, and a real difference shows up.
+    </p>
+    <figure>
+      <svg viewBox="0 0 940 300" role="img" aria-label="Comparison of two kinds of reference in the schema: containers.shipment_id is a real, enforced foreign key with cascade delete, drawn as a solid line — while tickets.shipment_id, assignee_id, and parent_id are documented as foreign keys in code comments but carry no REFERENCES clause at all, drawn as dashed lines, identical in kind to shipment_parties.customer_id, which the codebase already documents as deliberately un-enforced.">
+        <defs>
+          <marker id="arrow1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor" class="muted"/>
+          </marker>
+        </defs>
+
+        <rect class="box-danger" x="40" y="40" width="230" height="60" rx="8"/>
+        <text x="155" y="65" text-anchor="middle" font-size="13" font-weight="600" class="mono">containers.shipment_id</text>
+        <text x="155" y="83" text-anchor="middle" font-size="10.5" class="danger-stroke mono" fill="var(--danger)">REFERENCES shipments(id)</text>
+
+        <rect class="box" x="670" y="40" width="230" height="60" rx="8"/>
+        <text x="785" y="65" text-anchor="middle" font-size="13" font-weight="600">shipments</text>
+        <text x="785" y="83" text-anchor="middle" font-size="10" class="muted">ON DELETE CASCADE — real, enforced</text>
+
+        <line x1="270" y1="70" x2="668" y2="70" class="arrow-danger" marker-end="url(#arrow1)"/>
+
+        <rect class="box" x="40" y="150" width="230" height="90" rx="8"/>
+        <text x="155" y="174" text-anchor="middle" font-size="13" font-weight="600" class="mono">tickets.shipment_id</text>
+        <text x="155" y="192" text-anchor="middle" font-size="13" font-weight="600" class="mono">.assignee_id · .parent_id</text>
+        <text x="155" y="212" text-anchor="middle" font-size="10.5" class="muted">// commented "FK" — no REFERENCES</text>
+        <text x="155" y="228" text-anchor="middle" font-size="10.5" class="muted">clause anywhere in the schema</text>
+
+        <rect class="box-muted" x="670" y="150" width="230" height="90" rx="8"/>
+        <text x="785" y="180" text-anchor="middle" font-size="13" font-weight="600">shipments · users</text>
+        <text x="785" y="198" text-anchor="middle" font-size="13" font-weight="600">tickets (self)</text>
+        <text x="785" y="222" text-anchor="middle" font-size="10" class="muted">plain text, nothing enforced</text>
+
+        <line x1="270" y1="195" x2="668" y2="195" class="arrow-dashed" marker-end="url(#arrow1)"/>
+        <text x="470" y="187" text-anchor="middle" font-size="10.5" class="muted mono">loose id, resolved at read time</text>
+      </svg>
+      <figcaption>
+        This isn't a new pattern being invented for the occasion — <code>shipment_parties.customer_id</code>
+        already carries the identical comment, word for word: "no FK to customers, matching
+        shipments.shipper_id/shipper_name's own existing convention." A split moves
+        <code>tickets</code> to its own database exactly the way <code>carrier_agents.carrier_code</code>
+        already crosses a conceptual boundary today — as an opaque id the other side resolves, not
+        a constraint that has to be broken.
+      </figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>What removal looks like, either way</h2>
+    <p class="section-note">
+      This is the actual argument. Not "is Kanban slower to query today" — it isn't — but "what
+      does the day we retire Integration Board actually involve."
+    </p>
+    <figure>
+      <svg viewBox="0 0 940 330" role="img" aria-label="Two futures for the day Kanban is retired. If it stays in the monolith, removal means locating and stripping seven tables, their joins, and every call site out of a live shared database while everything else keeps running. If it is already split into its own service, removal means stopping one process and deleting one folder, plus a small number of already-isolated call sites in the monolith.">
+        <line x1="470" y1="20" x2="470" y2="310" stroke="var(--border)" stroke-width="1"/>
+
+        <text x="235" y="42" text-anchor="middle" font-size="16" font-weight="700" font-family="var(--head)" class="danger-stroke" fill="var(--danger)">If it stays in the monolith</text>
+
+        <rect class="box-danger" x="60" y="65" width="350" height="150" rx="10"/>
+        <text x="235" y="90" text-anchor="middle" font-size="11.5" class="mono">7 tables to locate and strip:</text>
+        <text x="235" y="110" text-anchor="middle" font-size="10.5" class="muted">tickets · ticket_links · test_items</text>
+        <text x="235" y="126" text-anchor="middle" font-size="10.5" class="muted">test_case_links · kb_projects</text>
+        <text x="235" y="142" text-anchor="middle" font-size="10.5" class="muted">kb_versions · kb_columns</text>
+        <line x1="90" y1="155" x2="380" y2="155" stroke="var(--danger)" stroke-width="0.75" stroke-dasharray="2 3"/>
+        <text x="235" y="176" text-anchor="middle" font-size="10.5" class="muted">+ every join, every route,</text>
+        <text x="235" y="192" text-anchor="middle" font-size="10.5" class="muted">the notification bell, the ops sweep —</text>
+        <text x="235" y="206" text-anchor="middle" font-size="10" class="danger-stroke mono" fill="var(--danger)">on a live production database</text>
+
+        <text x="235" y="248" text-anchor="middle" font-size="12" font-weight="600">= a scoped migration project</text>
+
+        <text x="705" y="42" text-anchor="middle" font-size="16" font-weight="700" font-family="var(--head)" class="success-stroke" fill="var(--success)">If it's already split</text>
+
+        <rect class="box-success" x="620" y="90" width="170" height="80" rx="9"/>
+        <text x="705" y="122" text-anchor="middle" font-size="13" font-weight="600">Kanban Service</text>
+        <text x="705" y="142" text-anchor="middle" font-size="10.5" class="muted mono">own process, own .db</text>
+        <text x="705" y="158" text-anchor="middle" font-size="9.5" class="success-stroke mono" fill="var(--success)">stop it. delete the folder.</text>
+
+        <rect class="box" x="565" y="205" width="280" height="30" rx="15"/>
+        <text x="705" y="225" text-anchor="middle" font-size="10.5" class="mono">remove a handful of call sites in the monolith</text>
+
+        <text x="705" y="270" text-anchor="middle" font-size="12" font-weight="600" class="success-stroke" fill="var(--success)">= an afternoon</text>
+      </svg>
+      <figcaption>
+        The split doesn't make Kanban better software today. It moves the cost of removing it from
+        "later, under pressure, against live data" to "now, deliberately, while nothing depends on
+        the outcome" — the whole point of doing this ahead of the decision to retire the feature,
+        not after.
+      </figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>What actually has to change</h2>
+    <p class="section-note">
+      Real scope, named plainly — this isn't free, it's just cheap now and expensive later.
+    </p>
+    <div class="callout">
+      <h3>The move</h3>
+      <ul>
+        <li><b>Tables</b> — <code>tickets</code>, <code>ticket_links</code>, <code>test_items</code>,
+          <code>test_case_links</code>, <code>kb_projects</code>, <code>kb_versions</code>,
+          <code>kb_columns</code> move to a new Kanban Service, own SQLite, same shape Contract
+          Management already proved (v0.68.0).</li>
+        <li><b><code>routes/kanban.js</code> / <code>routes/testcases.js</code></b> become thin
+          proxies over <code>callKanbanService()</code>, mirroring <code>callContractService()</code>
+          exactly.</li>
+        <li><b><code>TICKET_JOIN</code></b> (the <code>LEFT JOIN users</code> that resolves
+          <code>assignee_name</code>/<code>assignee_initial</code>) can't join across a service
+          boundary — becomes an explicit batch name-resolve the monolith does before responding,
+          the same pattern already used for <code>carrier_agents</code>' agent-name lookups.</li>
+        <li><b>Two call sites that write from outside Kanban</b> — the ops-automation sweep
+          (auto-creates tickets on server start) and the notification bell's ticket-alert card
+          (reads overdue/due-soon tickets) — switch from a local query to an API call. The one
+          real new plumbing this split adds; everything else is a lift-and-shift.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <h2>Timing</h2>
+    <p class="section-note">
+      Unlike MDM and Sanctions, this one isn't ordered by risk — it's ordered by how soon
+      Integration Board is actually expected to be retired. If that's not imminent, there's no
+      urgency; the point is having the exit built <em>before</em> it's needed, not rushing it
+      alongside the other two.
+    </p>
+  </section>
+
+  <footer>
+    Draft for discussion — nothing here is built yet. Companion to "Splitting MDM First" and
+    "Splitting Sanctions Next," reasoned from a different goal: painless removal of a feature
+    expected to be temporary, not today's domain boundaries.
+  </footer>
+
+</div>
+
+</body></html>
