@@ -1,5 +1,5 @@
 # CargoDesk — Architecture Reference
-**Version:** 0.79.0 "Keel" · **Date:** 2026-08-25
+**Version:** 0.85.0 "Approach" · **Date:** 2026-08-28
 **Audience:** Software architects, senior engineers, technical reviewers
 
 > This document was fully refreshed from a direct pass against the live codebase on 2026-08-13
@@ -8,26 +8,34 @@
 > shipped since the 2026-08-13 pass. The 2026-08-22 pass was also incremental — it added
 > §8.16 (Credit Control), a feature that had shipped as far back as v0.57.0 but was never
 > documented here at all; the section covers the whole feature end-to-end, not just the
-> v0.73.0–v0.73.1 work that prompted writing it. This latest pass (2026-08-25) adds §8.19
-> (Zero-Script Onboarding) and deepens §8.12 (EDI Messaging & Carrier Booking Lifecycle) with the
-> eAdapter per-carrier configuration layer — also **corrects this banner itself**, which had
-> drifted to a stale "0.74.0" even while §8.17–8.18 below it already documented v0.77.0/v0.78.0
-> work; the version line and the section content had quietly gone out of sync with each other.
-> Appendix A's line-count/table-count figures are still dated to 2026-08-13 and were **not**
-> re-measured this pass — the additions since then are a handful of new columns/routes/tables,
-> not a scale change big enough to move those figures meaningfully. See `CLAUDE.md`'s own
+> v0.73.0–v0.73.1 work that prompted writing it. The 2026-08-25 pass added §8.19
+> (Zero-Script Onboarding) and deepened §8.12 (EDI Messaging & Carrier Booking Lifecycle) with the
+> eAdapter per-carrier configuration layer, and corrected the banner itself, which had drifted
+> stale. This latest pass (2026-08-28, v0.85.0 "Approach" — a single bundled release covering
+> four pieces of work built in one continuous session, not four separate versions) adds new
+> **§8.20 (Opportunities / CRM Pre-Sales Pipeline)**, rewrites **§8.6 (Space Configurations & TEU
+> Accounting)** from its previous "unchanged" placeholder to describe the real Confirmed/Pending/
+> Rejected consumption split, extends **§8.12** again with the new "Confirmed with Changes" EDI
+> outcome and the Sent-vs-Received comparison table, and extends **§8.9 (Authentication & RBAC)**
+> with the multi-tab-aware idle-timeout auto-logout mechanism. This pass is still **incremental,
+> not a full re-audit** — every other section between v0.79.0 and this one (the four remaining
+> microservice extractions, eAdapter's office-scoping, several credit-control/billing passes) is
+> **not** re-verified here; those are already covered by `CLAUDE.md`'s own per-release "Recent
+> changes" entries but never folded into this document's own numbered sections, a known,
+> pre-existing gap this pass does not attempt to close. Appendix A's line-count/table-count
+> figures are still dated to 2026-08-13 and were **not** re-measured. See `CLAUDE.md`'s own
 > "Recent changes" sections for a release-by-release changelog this document doesn't restate —
 > treat that file as the day-to-day source of truth and this one as the standing structural
 > reference.
 >
 > A companion visual diagram, `dev/architecture.html`, is dated v0.20.0 (2026-07-03) and remains
-> **not** refreshed — it's now well over 50 releases behind and should be treated as a
+> **not** refreshed — it's now well over 65 releases behind and should be treated as a
 > historical snapshot, not a current reference, until someone rebuilds it.
 
 ---
 
 ## Table of Contents
-_(§8.19 and the version-banner fix added 2026-08-25; §8.12 deepened 2026-08-25; §8.17–8.18 and the §5 routes/ table added 2026-08-24; §8.16 added 2026-08-22; §8.14–8.15 added 2026-08-19; everything else reflects the 2026-08-13 pass)_
+_(§8.20, and the §8.6/§8.9/§8.12 extensions, added 2026-08-28 (v0.85.0); §8.19 and the version-banner fix added 2026-08-25; §8.12 deepened 2026-08-25; §8.17–8.18 and the §5 routes/ table added 2026-08-24; §8.16 added 2026-08-22; §8.14–8.15 added 2026-08-19; everything else reflects the 2026-08-13 pass)_
 1. [System Overview](#1-system-overview)
 2. [Tech Stack](#2-tech-stack)
 3. [Process & Deployment Topology](#3-process--deployment-topology)
@@ -389,8 +397,9 @@ and 25 indexes now exist beyond primary keys (§11 — this resolves the old "no
 
 ## 6. Data Model
 
-**77 tables** in the monolith's own `cargodesk.db` (up from the 35–54 this doc previously and
-inconsistently claimed), plus the Contract Management service's own 4-table copy
+**78 tables** in the monolith's own `cargodesk.db` (77 as of the 2026-08-25 pass, +1 for
+`opportunities`, §8.20 — up from the 35–54 this doc previously and inconsistently claimed), plus
+the Contract Management service's own 4-table copy
 (`contracts`/`contract_legs`/`contract_rates`/`contract_routings`) when `contract_source='remote'`
 (§8.1) — never both populated as the live source at once.
 
@@ -399,6 +408,8 @@ inconsistently claimed), plus the Contract Management service's own 4-table copy
 ```
 PRE-BOOKING
 ───────────
+opportunities                              (New→Qualified→Converted/Lost, §8.20 — precedes and
+    └── converted_quote_id → quotes         converts into a Quote, no line-item child table)
 quotes ──── quote_lines                    (Draft→Sent→Accepted/Declined/Expired→Converted)
     └── converted_shipment_id → shipments  (set only once, on conversion)
 
@@ -476,7 +487,7 @@ admin_events
 
 Unchanged convention — `uid()` generates 6 upper-hex characters, prefixed by entity type
 (`SHP-`, `CTR-`, `CL-`, `QT-`/`QTL-`, `CINV-`/`CINL-`, `CUS-`, `TKT-`, `EDI-`, `CEV-`, …). New
-prefixes since the last review: `QT-`/`QTL-` (quotes), `CINV-`/`CINL-` (carrier invoices).
+prefix this pass: `OPP-` (opportunities, §8.20).
 
 ---
 
@@ -778,9 +789,56 @@ last review: `'quote'` (§8.2) and `'carrier_invoice'` (§8.3). New states beyon
 posted line is locked; corrections are new adjusting lines, never rewrites) with a computed
 variance (`actual - accrued`) once a line is actualized.
 
-### 8.6 Space Configurations & TEU Accounting
+### 8.6 Space Configurations & TEU Accounting (deepened v0.85.0 — Space Consumption Split)
 
-Unchanged from the last review.
+An `allocations` row's TEU consumption is now split three ways, not one flat number. Before this
+pass, `loadConsumedTeuMap()` (`routes/allocations.js`) summed every linked shipment's TEU with
+zero regard for the state of its carrier booking — a `Created` (not-yet-sent) booking, one still
+`Pending` a carrier reply, and a genuinely `Confirmed` one all counted identically.
+
+```
+loadTeuBuckets()  (routes/allocations.js, renamed from loadConsumedTeuMap)
+  LEFT JOIN carrier_bookings cb ON cb.shipment_id = s.id
+  GROUP BY s.allocation_id, cb.status
+  →  Map<allocationId, { confirmedTEU, pendingTEU, rejectedTEU }>
+
+Bucket rule:
+  Confirmed                              → confirmedTEU   (deducts: remainingTEU = allocated − confirmed)
+  Created | Pending | no booking row yet → pendingTEU     (informational only)
+  Rejected                               → rejectedTEU    (own visible segment, informational only)
+  Cancelled                              → excluded entirely (no live demand left)
+```
+
+The deducting bucket is keyed on `carrier_bookings.status` specifically — the **operator's own
+explicit Confirm click** (`PATCH .../carrier-booking/confirm`) — not `last_response_status`, the
+carrier's raw EDI reply. This split predates the deduction question by design (v0.35.0): a
+confirmed EDI response has never auto-finalized a booking, only the operator's own action does.
+All four call sites that used to spread `consumedTEU`/`remainingTEU` (`GET`/`POST`/
+`PUT /api/allocations`, `GET /api/allocations/match`) now spread the three buckets plus the
+recomputed `remainingTEU`. Zero schema migration — every column involved was already a plain
+TEXT field with no CHECK constraint.
+
+New shared `src/components/shared/ConsumptionBar.jsx` (a 3-segment stacked div, not a chart
+library) renders this everywhere the split needs to appear —
+`SpaceConfigurationsPage.jsx`'s table row and its Linked Shipments modal,
+`ShipmentSchedulesPage.jsx`'s Space Configuration panel, `ShipmentFormPage.jsx`'s Contract Picker
+card, and (client-side bucketed the same way, since that page never reads the allocation's own
+fields) `DashboardPage.jsx`'s Overview KPIs/chart and Contract Consumption tab. When demand
+exceeds capacity the three segments compress proportionally rather than overflowing past 100%,
+with a small "+N over" caption naming the real gap instead of hiding it.
+
+`DashboardPage.jsx` — the page literally titled "Consumption Dashboard" — is a deliberately
+**separate** client-side computation from `loadTeuBuckets()`, not a consumer of it: it re-derives
+TEU totals from `rangeShipments`+`containers`, matched to allocations via its own carrier/
+route/contract heuristic (`allocContractMatch`), scoped to a selectable date range — a genuinely
+different question ("how much moved in this window") from the allocation's own live, unscoped
+state. Both now apply the identical Confirmed/Pending/Rejected bucket rule (keyed off
+`shipment.bookingStatus`, already present on every shipment row via the existing
+`LEFT JOIN carrier_bookings` in `GET /api/shipments`) independently, so the two pages agree on
+what each color means even though their underlying scoping intentionally differs. A third,
+still-independent figure — `DashboardPage.jsx`'s Carrier Volumes tab — is explicitly **not**
+bucketed this way: it's a raw all-status freight-volume metric by design, unrelated to allocated
+space, and was confirmed out of scope for this pass.
 
 ### 8.7 WebSocket — per-shipment subscription, not blanket broadcast
 
@@ -812,7 +870,7 @@ simplification `fap_variance_tolerance_pct` already made), and more) — no long
 short table the way the last review did it. `isEnabled(module)` in `App.jsx` still reads from
 `appSettings` state the same way.
 
-### 8.9 Authentication & RBAC
+### 8.9 Authentication & RBAC (extended v0.85.0 — idle-timeout auto-logout)
 
 The role hierarchy has grown from 3 roles to 5: `VALID_ROLES = ["admin", "operator", "occ_bk",
 "trade_manager", "viewer"]` (`server.js`). `occ_bk` and `trade_manager` are newer, narrower roles
@@ -821,6 +879,43 @@ The role hierarchy has grown from 3 roles to 5: `VALID_ROLES = ["admin", "operat
 check. A user can hold multiple roles (`users.roles`, JSON array); `primaryRoleSV()` picks the
 highest-ranked one where a single role is needed. JWT mechanics (8-hour token, `cargodesk_token`
 in `localStorage`, `auth()` middleware) are unchanged.
+
+**Idle-timeout auto-logout, multi-tab aware.** After a hardcoded 30 minutes of no user activity
+anywhere, every open tab is logged out and redirected to login. The threshold is deliberately
+static, not an `app_settings` row — it lives in a new `config/app-settings.yaml`, read once at
+boot by new `lib/staticConfig.js` (via `js-yaml`, falling back to the same default with a warning
+if the file is missing/malformed) and merged into `GET /api/settings` as `idleTimeoutMinutes`, so
+the frontend needed no new endpoint.
+
+```
+src/hooks/useIdleLogout.js
+  Activity (mousemove/mousedown/keydown/scroll/touchstart, throttled ~5s)
+    → localStorage["cargodesk_last_activity"] = Date.now()     (shared across every tab)
+  setInterval(~15s): if now − last_activity ≥ threshold → onIdle()
+    → clears localStorage["cargodesk_token"]  (same mechanism api.js's own 401 handler uses)
+    → localStorage["cargodesk_logout_reason"] = "inactivity"   (idle-specific — see below)
+
+  storage event listener (always attached, independent of login state):
+    e.key === TOKEN_KEY && !e.newValue && reason === "inactivity" → this tab logs itself out too
+```
+
+Because every tab writes the *same* shared activity timestamp, idle is correctly a property of
+the whole session, not of one forgotten tab — activity in a shipment opened in a second tab keeps
+the entire session alive. Cross-tab cleanup needs no custom sync channel: clearing
+`localStorage["cargodesk_token"]` fires a native browser `storage` event in every *other* open
+tab automatically (never in the tab that made the change) — the same signal the API layer's own
+forced-logout-on-401 already relies on, just triggered by a different cause. A real gap was
+caught before shipping: a plain manual "Log out" and a 401 also clear that same token, which
+would otherwise make other tabs wrongly display the inactivity banner for an unrelated logout —
+resolved with the separate `cargodesk_logout_reason` key, set only by the idle path and cleared
+on every successful login, so a stale flag from an earlier idle event can never survive to
+mislabel a later, unrelated logout.
+
+Each tab remembers its own last screen independently via `sessionStorage` (per-tab, unlike
+`localStorage`) — captured the instant that tab logs itself out (directly or via the cross-tab
+broadcast) and restored right after that same tab's next successful login. This is deliberately
+scoped to the idle path only: a deliberate manual logout still lands on the default home screen
+rather than silently reopening whatever was on screen before.
 
 ### 8.10 Multimodal Legs & Routing Term Engine
 
@@ -836,7 +931,30 @@ Carrier Booking, Customs Filing, History) is a real, independently-routed page u
 `src/pages/shipments/`, with the hash-routing table centralized in `shipmentSections.js` (§4) —
 imported by both files instead of hand-duplicated.
 
-### 8.12 EDI Messaging & Carrier Booking Lifecycle (deepened v0.79.0 — eAdapter; office-scoped v0.83.0)
+### 8.12 EDI Messaging & Carrier Booking Lifecycle (deepened v0.79.0 — eAdapter; office-scoped v0.83.0; third outcome v0.85.0)
+
+**A genuine third simulated carrier-response outcome, "Confirmed with Changes" (v0.85.0).** Until
+this pass, a simulated reply (Test Tools → Message Simulator) was strictly binary — `confirmed`
+or `rejected`. A real carrier routinely confirms a booking with a different vessel/voyage/ETD
+than what was actually requested; that state didn't exist anywhere. `routes/edi.js`'s three
+response builders (`simulatedConfirmedResponse`/`simulatedConfirmedWithChangesResponse`/
+`simulatedRejectedResponse`) now all start from a new `getLastOutboundPayload()` — the full
+outbound `booking_request` payload, not each builder's own thin ~6-field subset as before — so
+the inbound message's `raw_payload` always carries the complete field set to compare against; the
+new outcome overrides only the fields the carrier actually changed. `applyBookingResponse`'s
+`inType` ternary was inverted (`rejected → booking_reject`, everything else →
+`booking_confirmation`) to stay 3-way-safe; its status ternary needed **no** change, since it
+already special-cased only `"rejected"` — a confirmed-with-changes response correctly leaves
+`carrier_bookings.status` at `Pending` until the operator's own Confirm action, exactly like a
+plain `confirmed` reply already does. Confirming afterward still does not auto-rewrite the
+shipment's own schedule/legs with the carrier's proposed values — the deliberate
+`carrier_bookings`/`shipment_schedules` decoupling from v0.35.0 is unchanged and unreopened.
+
+New **Sent vs. Received comparison table** on the Carrier Booking Review tab
+(`ShipmentCarrierBookingReviewPage.jsx`) — one row per outbound payload field, column headers,
+differing rows highlighted with a colored left border and bold Received value. Built entirely
+client-side from data the page already fetches (the newest outbound and inbound `edi_messages`
+rows via `api.ediMessages.list`), no new endpoint.
 
 Substantially more complete than the last review's "v1, demoable" framing. `carrier_bookings` /
 `carrier_booking_archive` now model a real state machine: a booking created via
@@ -1300,6 +1418,52 @@ public repo's source and was already-stale against what README.md documented as 
 falling back to that documented generic default — same disclosed-insecure-default tradeoff as
 JWT_SECRET, logged loudly on creation so it's never mistaken for a real credential.
 ```
+
+### 8.20 Opportunities / CRM Pre-Sales Pipeline (added v0.85.0)
+
+```
+opportunities (New → Qualified → Converted (to Quote, Qualified only) | Lost (New or Qualified))
+  — no line-item child table: an opportunity is pre-pricing, real line-item detail belongs on
+  the Quote it converts into. Only `title` is required; customer is captured via the existing
+  CustomerCombobox in its already-supported unresolved (name-only, no real `customers` row)
+  state — no new "prospect" customer concept anywhere in the schema.
+
+No separate "Won" status. Converted IS the win condition — whether the resulting quote then
+actually closes is that quote's own already-shipped Draft→Sent→Accepted→…→Converted(to
+shipment) lifecycle to own from there, not re-derived on the opportunity.
+
+Conversion (POST /api/opportunities/:id/convert, Qualified only):
+  1. INSERT quotes — copies only the fields an opportunity actually has: customerId/
+     customerName/pol/pod/carrierCode/commodityCode/movementType/currency/notes. contractId/
+     contractRef/incoterm/serviceType/cargoReadyDate have no opportunity equivalent and are
+     left at the quote's own table-level defaults.
+  2. Deliberate guard: estimatedCloseDate is never written into the new quote's
+     cargoReadyDate — "when we expect to close this deal" and "when cargo is ready to ship"
+     are unrelated concepts that happen to both be dates near a quote's creation; conflating
+     them would silently corrupt the new quote.
+  3. Stamps converted_quote_id/converted_at on the opportunity, flips it to Converted.
+  4. logEntityEvent on both entities, shaped identically to POST /api/quotes' own CREATED log
+     so a converted quote's audit trail reads the same regardless of origin.
+  5. Response returns { opportunity, quoteId, quote } — the full mapped quote inline, same
+     "the SPA's local array needs the real record before navigating to a page it doesn't
+     otherwise know about yet" reason §8.2's own quote→shipment conversion already documents.
+```
+
+Built entirely as a structural mirror of §8.2 (Quoting/RFQ), verified directly against the real
+code rather than assumed: `routes/opportunities.js` mirrors `routes/quotes.js`'s route-factory
+shape and lifecycle-transition-route pattern; `OpportunitiesPage.jsx` mirrors `QuotesPage.jsx`'s
+list-page/detail-modal frontend shape; `tests/opportunities.test.js` mirrors
+`tests/quoting-rfq.test.js`'s scaffolding, including chaining a full happy-path conversion
+straight into the resulting quote's own already-shipped Send/Accept/Convert-to-shipment
+lifecycle — proving the two features compose, not just that the conversion response shape looks
+right. Sidebar places Opportunities directly above Quotes (`App.jsx`'s `NavBtn` order), matching
+the real funnel: Opportunity → Quote → Shipment.
+
+**Flat table + modal, not a kanban-style pipeline board** — explicitly chosen after confirming no
+reusable stage/column component exists anywhere in the codebase (`KanbanPage.jsx`'s own board is
+a single ~4,300-line file, hardcoded ticket-workflow columns, native HTML5 drag-and-drop, zero
+reusable pieces). A genuine drag-and-drop pipeline board remains real, valuable, explicitly-named
+future work — not silently deferred by this choice.
 
 ---
 

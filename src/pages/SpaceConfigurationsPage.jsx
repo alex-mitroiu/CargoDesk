@@ -17,6 +17,7 @@ import DatePicker from "../components/primitives/DatePicker";
 import { useResizableColumns, ColResizer } from "../components/primitives/useResizableColumns.jsx";
 import ActionMenu from "../components/primitives/ActionMenu";
 import EntityHistoryModal from "../components/shared/EntityHistoryModal";
+import ConsumptionBar from "../components/shared/ConsumptionBar";
 import { IconCheck, IconClose, IconPencil, IconWarning, IconForbid, IconLink,
   IconClipboard, IconArchive, IconSettings, IconSearch } from "../components/primitives/Icon";
 
@@ -602,7 +603,7 @@ const SpaceConfigurationsPage = ({
 
   const { template: allocTemplate, startResize: allocStartResize } =
     useResizableColumns("space-configs", [150, 200, 160, 100, 150, 110, 100, 56]);
-  const allocHeaders = ["Carrier", "Name / Route", "Contract", "TEU", "Effective Period", "Consumed", "Status", "Actions"];
+  const allocHeaders = ["Carrier", "Name / Route", "Contract", "TEU", "Effective Period", "Confirmed", "Status", "Actions"];
 
   const today = new Date().toISOString().slice(0, 10);
 
@@ -635,18 +636,19 @@ const SpaceConfigurationsPage = ({
     }
   }, [pendingRenew]);
 
-  // Per-allocation consumed TEU is now read directly off each allocation's own consumedTEU field
-  // (server-computed, scoped strictly to shipments explicitly linked via shipment.allocationId —
-  // routes/allocations.js's loadConsumedTeuMap()). This used to be recomputed here client-side
-  // with a broader carrier+contract+route heuristic (contractMatch/allocationRouteMatch below)
-  // that could — and did — disagree with the server's own /api/allocations/match number and with
-  // the Dashboard's Contract Consumption tab's own third definition, showing three different
-  // "Consumed" figures for the same allocation depending which screen you were on. One
-  // authoritative source now, reused everywhere.
+  // Per-allocation TEU is now read directly off each allocation's own confirmedTEU/pendingTEU/
+  // rejectedTEU fields (server-computed, scoped strictly to shipments explicitly linked via
+  // shipment.allocationId, bucketed by carrier_bookings.status — routes/allocations.js's
+  // loadTeuBuckets()). This used to be recomputed here client-side with a broader
+  // carrier+contract+route heuristic (contractMatch/allocationRouteMatch below) that could — and
+  // did — disagree with the server's own /api/allocations/match number and with the Dashboard's
+  // Contract Consumption tab's own third definition, showing three different "Consumed" figures
+  // for the same allocation depending which screen you were on. One authoritative source now,
+  // reused everywhere.
 
   // Still used by the Linked Shipments modal below to render the linked-port badge on a properly
   // linked shipment's row (matchedLegFor), and to resolve a shipment's contract for display —
-  // NOT used anymore to decide which shipments count toward Consumed.
+  // NOT used anymore to decide which shipments count toward Confirmed/Pending/Rejected.
   const contractMatch = (s, a) => {
     if (a.contractId)     return s.contractId === a.contractId;
     if (a.contractNumber) return s.contractRef === a.contractNumber;
@@ -721,9 +723,11 @@ const SpaceConfigurationsPage = ({
             No active configurations. Use "+ Add Configuration" to set up carrier space allocations.
           </div>
         ) : pageAllocs.map(a => {
-          const consumed  = a.consumedTEU ?? 0;
-          const remaining = a.remainingTEU ?? Math.max(0, a.allocatedTEU - consumed);
-          const pct       = a.allocatedTEU > 0 ? (consumed / a.allocatedTEU) * 100 : 0;
+          const confirmed = a.confirmedTEU ?? 0;
+          const pending   = a.pendingTEU ?? 0;
+          const rejected  = a.rejectedTEU ?? 0;
+          const remaining = a.remainingTEU ?? Math.max(0, a.allocatedTEU - confirmed);
+          const pct       = a.allocatedTEU > 0 ? (confirmed / a.allocatedTEU) * 100 : 0;
           const carrier   = carriers.find(c => c.code === a.carrierCode);
           const thresh    = a.alertThreshold ?? 80;
           const barColour = pct >= 100 ? T.danger : pct >= thresh ? (thresh >= 90 ? T.danger : T.warning) : T.success;
@@ -743,7 +747,7 @@ const SpaceConfigurationsPage = ({
           // under commitment on day 2 of a 90-day period is normal, being under it on day 85
           // isn't — same "how much runway is left" framing the free-time/demurrage badges
           // elsewhere in this app already use.
-          const belowMinimum = a.minimumTEU != null && consumed < a.minimumTEU;
+          const belowMinimum = a.minimumTEU != null && confirmed < a.minimumTEU;
           const periodTotalDays = Math.max(1, diffDays(a.effectiveDate, a.endDate) + 1);
           const periodElapsedPct = Math.min(100, Math.max(0, (diffDays(a.effectiveDate, today) / periodTotalDays) * 100));
           const mqcUrgent = belowMinimum && periodElapsedPct >= 70;
@@ -789,9 +793,7 @@ const SpaceConfigurationsPage = ({
               {/* TEU */}
               <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
                 <span style={{ fontFamily: T.mono, fontSize: 13, color: T.text, fontWeight: 700 }}>{a.allocatedTEU} TEU</span>
-                <div style={{ background: T.border, borderRadius: 4, height: 4, width: 72, overflow: "hidden" }}>
-                  <div style={{ height: "100%", width: `${Math.min(100, pct)}%`, background: barColour, transition: "width .4s" }} />
-                </div>
+                <ConsumptionBar allocated={a.allocatedTEU} confirmed={confirmed} pending={pending} rejected={rejected} height={4} width={72} />
                 <span style={{ fontFamily: T.mono, fontSize: 9.5, color: barColour }}>
                   {pct.toFixed(0)}% <span style={{ color: T.border }}>/ {thresh}%</span>
                 </span>
@@ -803,17 +805,24 @@ const SpaceConfigurationsPage = ({
                 <span style={{ fontFamily: T.mono, fontSize: 10.5, color: T.textMuted }}>{a.endDate ? `→ ${a.endDate}` : ""}</span>
               </div>
 
-              {/* Consumed */}
+              {/* Confirmed */}
               <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                <span style={{ fontFamily: T.mono, fontSize: 13, color: consumed > 0 ? T.success : T.textMuted, fontWeight: 600 }}>
-                  {consumed} TEU
+                <span style={{ fontFamily: T.mono, fontSize: 13, color: confirmed > 0 ? T.success : T.textMuted, fontWeight: 600 }}>
+                  {confirmed} TEU
                 </span>
                 <Sparkline data={spark} color={sparkColor} />
+                {(pending > 0 || rejected > 0) && (
+                  <span style={{ fontFamily: T.mono, fontSize: 9.5, color: T.textMuted }}>
+                    {pending > 0 && <span style={{ color: T.warning }}>+{pending} pending</span>}
+                    {pending > 0 && rejected > 0 && " · "}
+                    {rejected > 0 && <span style={{ color: T.danger }}>+{rejected} rejected</span>}
+                  </span>
+                )}
                 {belowMinimum && (
-                  <span title={`Committed to ${a.minimumTEU} TEU by ${a.endDate} — ${consumed} booked so far`}
+                  <span title={`Committed to ${a.minimumTEU} TEU by ${a.endDate} — ${confirmed} confirmed so far`}
                     style={{ fontFamily: T.mono, fontSize: 9.5, fontWeight: 700,
                       color: mqcUrgent ? T.danger : T.info }}>
-                    ⚠ MQC {consumed}/{a.minimumTEU}
+                    ⚠ MQC {confirmed}/{a.minimumTEU}
                   </span>
                 )}
               </div>
@@ -878,8 +887,8 @@ const SpaceConfigurationsPage = ({
         const a = linkedAlloc;
         const contract = a.contractId ? contractsById[a.contractId] : null;
         // Explicitly linked via shipment.allocationId — the same authoritative relationship
-        // routes/allocations.js's consumedTEU is scoped to, so this list's own total always
-        // agrees with the header row's Consumed figure above (see the comment on contractMatch).
+        // routes/allocations.js's TEU buckets are scoped to, so this list's own total always
+        // agrees with the header row's Confirmed figure above (see the comment on contractMatch).
         const linked = shipments.filter(s => s.allocationId === a.id).map(s => {
           const leg = contract ? matchedLegFor(contract, linkedPortIdx, s.pol, s.pod) : null;
           return {
@@ -904,9 +913,19 @@ const SpaceConfigurationsPage = ({
           ...s, teu: containers.filter(c => c.shipmentId === s.id).reduce((acc, c) => acc + teuOf(c.size), 0),
         })).filter(s => s.teu > 0);
 
-        const totalTEU    = linked.reduce((acc, s) => acc + s.teu, 0);
+        // Same bucket rule as loadTeuBuckets (routes/allocations.js) — bookingStatus is already
+        // on every shipment (mapShipment's own LEFT JOIN carrier_bookings), so this needs no
+        // new fetch. Only Confirmed actively deducts; Cancelled is excluded from the total.
+        const bucketOf = s => s.bookingStatus === "Confirmed" ? "confirmed"
+          : s.bookingStatus === "Rejected" ? "rejected"
+          : s.bookingStatus === "Cancelled" ? "excluded"
+          : "pending";
+        const confirmedTEU = linked.filter(s => bucketOf(s) === "confirmed").reduce((acc, s) => acc + s.teu, 0);
+        const pendingTEU   = linked.filter(s => bucketOf(s) === "pending").reduce((acc, s) => acc + s.teu, 0);
+        const rejectedTEU  = linked.filter(s => bucketOf(s) === "rejected").reduce((acc, s) => acc + s.teu, 0);
+        const totalTEU    = confirmedTEU + pendingTEU + rejectedTEU;
         const allocated   = a.allocatedTEU;
-        const pct         = allocated > 0 ? Math.round((totalTEU / allocated) * 100) : 0;
+        const pct         = allocated > 0 ? Math.round((confirmedTEU / allocated) * 100) : 0;
         const barColor    = pct >= 100 ? T.danger : pct >= (a.alertThreshold ?? 80) ? T.warning : T.success;
         const SHP_COLS    = ["Shipment ID", "POL → POD", "ETD", "Contract", "TEU", "Status"];
         const SHP_TMPL    = "140px 130px 90px 150px 52px 90px";
@@ -930,13 +949,10 @@ const SpaceConfigurationsPage = ({
               </div>
               <div style={{ marginLeft: "auto", textAlign: "right" }}>
                 <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, marginBottom: 3 }}>
-                  <span style={{ color: barColor, fontWeight: 700 }}>{totalTEU}</span>
-                  {" / "}{allocated} TEU consumed ({pct}%)
+                  <span style={{ color: barColor, fontWeight: 700 }}>{confirmedTEU}</span>
+                  {" / "}{allocated} TEU confirmed ({pct}%)
                 </div>
-                <div style={{ background: T.border + "44", borderRadius: 4, height: 6, width: 140, overflow: "hidden" }}>
-                  <div style={{ height: "100%", width: `${Math.min(100, pct)}%`,
-                    background: barColor, borderRadius: 4, transition: "width .4s" }} />
-                </div>
+                <ConsumptionBar allocated={allocated} confirmed={confirmedTEU} pending={pendingTEU} rejected={rejectedTEU} height={6} width={140} />
               </div>
             </div>
 

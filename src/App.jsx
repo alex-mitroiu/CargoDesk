@@ -6,6 +6,7 @@ import GlobalSavingOverlay from "./components/primitives/GlobalSavingOverlay";
 import Spinner, { FullPageSpinner } from "./components/primitives/Spinner";
 import { api, TOKEN_KEY, ACTIVE_ROLE_KEY, ACTIVE_OFFICE_KEY } from "./api";
 import { AuthContext, useAuth } from "./AuthContext";
+import useIdleLogout from "./hooks/useIdleLogout";
 import {
   SHIPMENT_SECTIONS, SHIPMENT_SECTIONS_AFTER_ACCOUNTING, SHIPMENT_PROMOTED_ROUTES,
   SHIPMENT_SUBPAGES as SHARED_SHIPMENT_SUBPAGES, SHIPMENT_SUBPAGE_HASHES as SHARED_SHIPMENT_SUBPAGE_HASHES,
@@ -103,6 +104,7 @@ import CountryPage             from "./pages/org/CountryPage";
 import SpaceConfigurationsPage from "./pages/SpaceConfigurationsPage";
 import FreightAuditPage from "./pages/FreightAuditPage";
 import QuotesPage from "./pages/QuotesPage";
+import OpportunitiesPage from "./pages/OpportunitiesPage";
 import CreditOverridesPage from "./pages/CreditOverridesPage";
 import LicensePage             from "./pages/LicensePage";
 import SchedulesPage           from "./pages/SchedulesPage";
@@ -2445,6 +2447,7 @@ function App() {
   // Map from page key → settings key that gates it
   const PAGE_SETTING_MAP = {
     quotes:            "api_shipments_enabled",
+    opportunities:     "api_shipments_enabled",
     shipments:         "api_shipments_enabled",
     detail:            "api_shipments_enabled",
     kanban:            "api_shipments_enabled",
@@ -2591,6 +2594,7 @@ function App() {
   const [authLoading,  setAuthLoading]  = useState(true);
   const [changePwOpen,   setChangePwOpen]   = useState(false);
   const [changePwForced, setChangePwForced] = useState(false);
+  const [logoutNotice, setLogoutNotice] = useState(null);
 
   // Verify stored token on mount — a still-valid JWT restores the session silently,
   // bypassing the login form entirely, so the password-expiry check has to be
@@ -2701,9 +2705,31 @@ function App() {
     }
     setUser(userData);
     setActiveRole(null);
+    setLogoutNotice(null);
+    // Clear a stale "inactivity" flag now, not just after the next idle-logout — otherwise a
+    // later, unrelated manual logout would clear TOKEN_KEY again and other tabs' storage
+    // listener would still see the OLD reason and wrongly show the inactivity banner.
+    localStorage.removeItem("cargodesk_logout_reason");
     if (passwordExpired) { setChangePwForced(true); setChangePwOpen(true); }
+    // Return this tab to wherever IT was showing when an idle-timeout logged it out — a plain
+    // manual logout never sets this key, so a deliberate sign-out still lands on the default
+    // home screen rather than silently reopening whatever was on screen before.
+    const returnHash = sessionStorage.getItem("cargodesk_return_hash");
+    if (returnHash) {
+      sessionStorage.removeItem("cargodesk_return_hash");
+      window.location.hash = returnHash;
+    }
   };
-  const handleLogout = () => {
+  const handleLogout = ({ reason } = {}) => {
+    if (reason === "inactivity") {
+      // Captured BEFORE clearing anything — sessionStorage is per-tab (unlike localStorage), so
+      // each open tab remembers its own screen independently. cargodesk_logout_reason is the
+      // one shared (localStorage) signal every OTHER tab's `storage` listener reacts to, so all
+      // of them show the same accurate banner too, not just the tab that actually noticed.
+      sessionStorage.setItem("cargodesk_return_hash", window.location.hash);
+      localStorage.setItem("cargodesk_logout_reason", "inactivity");
+      setLogoutNotice("Logged out due to inactivity");
+    }
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(ACTIVE_ROLE_KEY);
     localStorage.removeItem(ACTIVE_OFFICE_KEY);
@@ -2715,6 +2741,28 @@ function App() {
     setActiveOfficeState(null);
     setPickerOffices([]);
   };
+
+  // Idle-timeout auto-logout — multi-tab aware (see src/hooks/useIdleLogout.js). Activity in
+  // ANY open tab keeps the whole session alive; when the shared idle threshold is actually
+  // crossed, every tab (the one that noticed, and every other one reacting to the resulting
+  // `storage` event) logs itself out and remembers its own screen to return to.
+  useIdleLogout({
+    enabled: !!user,
+    timeoutMinutes: Number(appSettings.idleTimeoutMinutes) || 30,
+    onIdle: useCallback(({ broadcastOnly } = {}) => {
+      if (broadcastOnly) {
+        // Another tab already cleared the token and set the reason — this tab just needs to
+        // capture its own screen and drop its own session state, not repeat the localStorage work.
+        sessionStorage.setItem("cargodesk_return_hash", window.location.hash);
+        setLogoutNotice("Logged out due to inactivity");
+        setUser(null);
+        setActiveRole(null);
+        setActiveOfficeState(null);
+      } else {
+        handleLogout({ reason: "inactivity" });
+      }
+    }, []), // eslint-disable-line react-hooks/exhaustive-deps
+  });
 
   // Load all data + settings — only after user is authenticated
   useEffect(() => {
@@ -2844,7 +2892,7 @@ function App() {
   if (page === "reset-password")  return <ResetPasswordPage token={selectedId} />;
 
   if (authLoading) return <FullPageSpinner />;
-  if (!user)       return <LoginPage onLogin={handleLogin} />;
+  if (!user)       return <LoginPage onLogin={handleLogin} notice={logoutNotice} />;
 
   if (apiError) return (
     <div style={{ display: "flex", minHeight: "100vh", background: T.bg, alignItems: "center", justifyContent: "center" }}>
@@ -2897,6 +2945,7 @@ function App() {
   const PAGE_TITLES = {
     home:               "Home",
     quotes:             "Quotes",
+    opportunities:      "Opportunities",
     shipments:          "Shipments",
     "shipment-detail":  "Shipment Detail",
     "shipment-new":     "New Shipment",
@@ -3789,6 +3838,7 @@ function App() {
           <nav data-testid="main-nav" style={{ padding: "14px 12px", flex: 1, overflowY: "auto" }}>
 
             {/* Top-level items */}
+            <NavBtn pageKey="opportunities" icon={IconFlag} label="Opportunities" />
             <NavBtn pageKey="quotes" icon={IconReceipt} label="Quotes" />
             <NavBtn pageKey="shipments" icon={IconSailboat} label="Shipments" />
 
@@ -4289,6 +4339,8 @@ function App() {
         {page === "freight-audit" && (
           <FreightAuditPage shipments={shipments} navigate={navigate} />
         )}
+
+        {page === "opportunities" && <OpportunitiesPage navigate={navigate} />}
 
         {page === "quotes" && (
           <QuotesPage navigate={navigate}

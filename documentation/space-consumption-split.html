@@ -1,0 +1,570 @@
+<title>Space Consumption Split</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap">
+<style>
+  :root {
+    --bg: #f2f6f6;
+    --surface: #ffffff;
+    --surface-2: #eaf1f0;
+    --border: #d7e2e1;
+    --text: #12262b;
+    --text-muted: #5b7278;
+    --accent: #0f7a6c;
+    --accent-soft: #e0f2ee;
+    --confirmed: #1f8f52;
+    --confirmed-soft: #e3f5e9;
+    --pending: #b9791a;
+    --pending-soft: #faf0da;
+    --rejected: #c73f3f;
+    --rejected-soft: #fae6e6;
+    --excluded: #7c8b90;
+    --excluded-soft: #edf1f1;
+    --shadow: 0 1px 2px rgba(18,38,43,0.06), 0 8px 24px -12px rgba(18,38,43,0.12);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0b1517;
+      --surface: #101c1f;
+      --surface-2: #152426;
+      --border: #24373b;
+      --text: #e7f2f1;
+      --text-muted: #93a9ac;
+      --accent: #3fc4ac;
+      --accent-soft: #123430;
+      --confirmed: #3fcb7b;
+      --confirmed-soft: #11331f;
+      --pending: #eab04a;
+      --pending-soft: #382a11;
+      --rejected: #e8696a;
+      --rejected-soft: #3a1a1a;
+      --excluded: #8b989c;
+      --excluded-soft: #1a2628;
+      --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px -12px rgba(0,0,0,0.5);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0b1517;
+    --surface: #101c1f;
+    --surface-2: #152426;
+    --border: #24373b;
+    --text: #e7f2f1;
+    --text-muted: #93a9ac;
+    --accent: #3fc4ac;
+    --accent-soft: #123430;
+    --confirmed: #3fcb7b;
+    --confirmed-soft: #11331f;
+    --pending: #eab04a;
+    --pending-soft: #382a11;
+    --rejected: #e8696a;
+    --rejected-soft: #3a1a1a;
+    --excluded: #8b989c;
+    --excluded-soft: #1a2628;
+    --shadow: 0 1px 2px rgba(0,0,0,0.3), 0 8px 24px -12px rgba(0,0,0,0.5);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "IBM Plex Sans", system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.6;
+  }
+  ::selection { background: var(--accent-soft); }
+
+  .wrap {
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 56px 28px 96px;
+  }
+
+  .mono { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+
+  header.hero {
+    margin-bottom: 48px;
+  }
+  .eyebrow {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+  .eyebrow::before {
+    content: "";
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--accent);
+    display: inline-block;
+  }
+  h1 {
+    font-size: 34px;
+    font-weight: 700;
+    letter-spacing: -0.015em;
+    text-wrap: balance;
+    margin: 0 0 12px;
+  }
+  .subtitle {
+    color: var(--text-muted);
+    font-size: 17px;
+    max-width: 62ch;
+    margin: 0;
+  }
+
+  section { margin-bottom: 52px; }
+  h2 {
+    font-size: 21px;
+    font-weight: 700;
+    margin: 0 0 6px;
+    letter-spacing: -0.01em;
+  }
+  .section-kicker {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin: 0 0 6px;
+  }
+  h3 {
+    font-size: 15.5px;
+    font-weight: 700;
+    margin: 28px 0 10px;
+  }
+  p { margin: 0 0 14px; max-width: 68ch; }
+  .lede { font-size: 16px; max-width: 66ch; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+    padding: 24px 26px;
+  }
+
+  .callout {
+    border-left: 3px solid var(--accent);
+    background: var(--accent-soft);
+    border-radius: 0 8px 8px 0;
+    padding: 14px 18px;
+    font-size: 14px;
+    color: var(--text);
+    margin: 18px 0;
+  }
+  .callout strong { color: var(--accent); }
+
+  code, .pill-code {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.88em;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 6px;
+  }
+
+  table.spec {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13.5px;
+    margin: 16px 0 8px;
+  }
+  table.spec th {
+    text-align: left;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 10.5px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    padding: 0 12px 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  table.spec td {
+    padding: 11px 12px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  table.spec tr:last-child td { border-bottom: none; }
+  table.spec td:first-child, table.spec th:first-child { padding-left: 0; }
+
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11.5px;
+    font-weight: 600;
+    padding: 3px 9px 3px 7px;
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+  .pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; }
+  .pill.confirmed { background: var(--confirmed-soft); color: var(--confirmed); }
+  .pill.confirmed::before { background: var(--confirmed); }
+  .pill.pending { background: var(--pending-soft); color: var(--pending); }
+  .pill.pending::before { background: var(--pending); }
+  .pill.rejected { background: var(--rejected-soft); color: var(--rejected); }
+  .pill.rejected::before { background: var(--rejected); }
+  .pill.excluded { background: var(--excluded-soft); color: var(--excluded); }
+  .pill.excluded::before { background: var(--excluded); }
+
+  figure { margin: 20px 0 8px; }
+  figure svg { width: 100%; height: auto; display: block; }
+  figcaption {
+    font-size: 12.5px;
+    color: var(--text-muted);
+    margin-top: 10px;
+    max-width: 62ch;
+  }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 14px; }
+  .legend-item { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--text-muted); }
+  .legend-swatch { width: 11px; height: 11px; border-radius: 3px; flex-shrink: 0; }
+
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+  }
+  @media (max-width: 680px) { .grid-2 { grid-template-columns: 1fr; } }
+
+  .mock-table {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+  }
+  .mock-row {
+    display: grid;
+    grid-template-columns: 120px 1fr 1fr;
+    border-bottom: 1px solid var(--border);
+  }
+  .mock-row:last-child { border-bottom: none; }
+  .mock-row.head {
+    background: var(--surface-2);
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+  .mock-row > div { padding: 9px 12px; }
+  .mock-row.diff { background: var(--pending-soft); }
+  .mock-row.diff > div:first-child { border-left: 3px solid var(--pending); padding-left: 9px; }
+  .mock-row:not(.head) > div:nth-child(2) { color: var(--text-muted); }
+  .mock-row.diff > div:nth-child(3) { color: var(--pending); font-weight: 600; }
+
+  .btn-mock {
+    font-family: "IBM Plex Sans", sans-serif;
+    font-size: 12.5px;
+    font-weight: 600;
+    padding: 7px 13px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text);
+    display: inline-block;
+  }
+  .btn-mock.new {
+    border-color: var(--pending);
+    background: var(--pending-soft);
+    color: var(--pending);
+    box-shadow: 0 0 0 1px var(--pending) inset;
+  }
+  .btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 14px 0; }
+
+  .field-mock {
+    display: flex; flex-direction: column; gap: 3px;
+    font-size: 11px; color: var(--text-muted);
+  }
+  .field-mock input {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px;
+    padding: 6px 8px;
+    border-radius: 5px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+  }
+  .field-row { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+
+  ol.steps { counter-reset: step; list-style: none; margin: 0; padding: 0; }
+  ol.steps li {
+    counter-increment: step;
+    position: relative;
+    padding: 0 0 22px 40px;
+    border-left: 2px solid var(--border);
+    margin-left: 13px;
+  }
+  ol.steps li:last-child { border-left-color: transparent; padding-bottom: 0; }
+  ol.steps li::before {
+    content: counter(step);
+    position: absolute;
+    left: -13px; top: -1px;
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    background: var(--surface);
+    border: 2px solid var(--accent);
+    color: var(--accent);
+    font-family: "IBM Plex Mono", monospace;
+    font-weight: 700;
+    font-size: 12px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  ol.steps h4 { margin: 0 0 4px; font-size: 14.5px; font-weight: 700; }
+  ol.steps p { margin: 0; font-size: 13.5px; color: var(--text-muted); }
+  ol.steps .file-tag {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 11px;
+    color: var(--accent);
+    background: var(--accent-soft);
+    padding: 1px 7px;
+    border-radius: 4px;
+    margin-right: 6px;
+    white-space: nowrap;
+  }
+
+  .scope-box {
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    padding: 14px 18px;
+    background: var(--surface-2);
+    font-size: 13.5px;
+    color: var(--text-muted);
+    margin-top: 18px;
+  }
+  .scope-box strong { color: var(--text); }
+
+  footer {
+    margin-top: 64px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--text-muted);
+    font-family: "IBM Plex Mono", monospace;
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="hero">
+    <div class="eyebrow">Design note · Space Configuration</div>
+    <h1>Space Consumption Split</h1>
+    <p class="subtitle">Today one number — <code>consumedTEU</code> — answers "how much space is used?" regardless of whether a carrier ever actually confirmed it. This plan splits it into Confirmed / Pending / Rejected, so the bar shows what's real.</p>
+  </header>
+
+  <section>
+    <div class="section-kicker">01 — The gap</div>
+    <h2>One bar, three different truths</h2>
+    <p class="lede">A shipment counts toward an allocation's consumed TEU the instant it's linked — whether its carrier booking was just auto-<code>Created</code>, sent and awaiting reply, confirmed with different details than requested, flatly rejected, or genuinely confirmed. <code>loadConsumedTeuMap()</code> sums TEU across every linked shipment with zero regard for <code>carrier_bookings.status</code>.</p>
+    <p>That means a space configuration can show "82% consumed" when most of that is still a carrier maybe saying yes — and a rejected booking keeps occupying space on the bar forever, with nothing to tell an operator it needs re-booking.</p>
+  </section>
+
+  <section>
+    <div class="section-kicker">02 — New model</div>
+    <h2>Three buckets, one rule each</h2>
+    <p class="lede">Bucket assignment is driven entirely by the existing <code>carrier_bookings.status</code> field — the <em>operator's</em> own action, not the carrier's raw EDI reply. Only Confirmed actively deducts.</p>
+
+    <table class="spec">
+      <tr>
+        <th style="width:38%">Booking state</th>
+        <th style="width:20%">Bucket</th>
+        <th>Deducts from available space?</th>
+      </tr>
+      <tr>
+        <td>Operator clicked <strong>Confirm</strong> — <code>status = 'Confirmed'</code></td>
+        <td><span class="pill confirmed">Confirmed</span></td>
+        <td>Yes — this is the only thing that reduces <code>remainingTEU</code>.</td>
+      </tr>
+      <tr>
+        <td>Auto-created, not yet transmitted — <code>status = 'Created'</code></td>
+        <td><span class="pill pending">Pending</span></td>
+        <td>No. Still counted as demand — an existing booking record claims space whether or not it's been sent yet.</td>
+      </tr>
+      <tr>
+        <td>Sent to carrier, awaiting reply — <code>status = 'Pending'</code></td>
+        <td><span class="pill pending">Pending</span></td>
+        <td>No.</td>
+      </tr>
+      <tr>
+        <td>Carrier confirmed with <em>different</em> details — new outcome, operator hasn't reviewed yet</td>
+        <td><span class="pill pending">Pending</span></td>
+        <td>No — stays Pending until the operator reviews the diff and clicks Confirm themselves.</td>
+      </tr>
+      <tr>
+        <td>Carrier rejected — <code>status = 'Rejected'</code></td>
+        <td><span class="pill rejected">Rejected</span></td>
+        <td>No — but shown as its own visible segment, not folded into Pending.</td>
+      </tr>
+      <tr>
+        <td>Booking cancelled — <code>status = 'Cancelled'</code></td>
+        <td><span class="pill excluded">Excluded</span></td>
+        <td>No — dropped from the bar entirely, no live demand left.</td>
+      </tr>
+      <tr>
+        <td>Shipment linked to allocation, no <code>carrier_bookings</code> row yet</td>
+        <td><span class="pill pending">Pending</span></td>
+        <td>No — same reasoning as <code>Created</code>: the shipment already claims the space.</td>
+      </tr>
+    </table>
+
+    <div class="callout"><strong>Escalation on Rejected is explicitly out of scope.</strong> The user's own framing: a rejected booking needs a real re-booking/escalation workflow that "we need to map out and integrate" — separately. This pass only makes Rejected <em>visible as its own segment</em>; it does not build any escalation mechanics.</div>
+  </section>
+
+  <section>
+    <figure>
+      <svg viewBox="0 0 660 300" role="img" aria-label="Before: one consumed bar mixing every booking state together. After: the same allocation split into a green Confirmed segment that ends the deductible boundary, an amber Pending segment, and a small red Rejected segment, with unused capacity remaining.">
+        <defs>
+          <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+          </marker>
+        </defs>
+
+        <text x="30" y="28" font-family="IBM Plex Mono, monospace" font-size="11" font-weight="700" letter-spacing="0.08em" fill="var(--text-muted)">BEFORE — ONE NUMBER, FOUR MEANINGS</text>
+        <rect x="30" y="42" width="600" height="30" rx="6" fill="var(--surface-2)" stroke="var(--border)"/>
+        <rect x="30" y="42" width="372" height="30" rx="6" fill="var(--excluded)" opacity="0.55"/>
+        <text x="46" y="61" font-family="IBM Plex Mono, monospace" font-size="11" font-weight="600" fill="var(--surface)">62% "consumed" — Created + Pending + Rejected + Confirmed, indistinguishable</text>
+
+        <line x1="30" y1="96" x2="630" y2="96" stroke="var(--border)" stroke-dasharray="2 4"/>
+
+        <text x="30" y="128" font-family="IBM Plex Mono, monospace" font-size="11" font-weight="700" letter-spacing="0.08em" fill="var(--text-muted)">AFTER — CONFIRMED ALONE DEDUCTS</text>
+        <rect x="30" y="142" width="600" height="30" rx="6" fill="var(--surface-2)" stroke="var(--border)"/>
+        <rect x="30" y="142" width="216" height="30" fill="var(--confirmed)"/>
+        <rect x="246" y="142" width="156" height="30" fill="var(--pending)"/>
+        <rect x="402" y="142" width="48" height="30" fill="var(--rejected)"/>
+        <path d="M 30 142 L 246 142" stroke="var(--confirmed)" stroke-width="0" />
+        <rect x="30" y="142" width="216" height="30" fill="none" stroke="var(--surface)" stroke-width="0"/>
+        <!-- rounded outer clip re-applied as border -->
+        <rect x="30" y="142" width="600" height="30" rx="6" fill="none" stroke="var(--border)"/>
+
+        <line x1="246" y1="128" x2="246" y2="182" stroke="var(--text)" stroke-dasharray="3 3"/>
+        <text x="252" y="122" font-family="IBM Plex Sans, sans-serif" font-size="11" fill="var(--text)">remainingTEU = allocated − confirmed</text>
+        <line x1="380" y1="200" x2="252" y2="182" stroke="var(--text-muted)" marker-end="url(#arrow)" fill="none"/>
+
+        <text x="30" y="216" font-family="IBM Plex Sans, sans-serif" font-size="11.5" fill="var(--text-muted)">Pending and Rejected stay on the bar as visible demand — they just don't shrink what's still sellable.</text>
+
+        <g transform="translate(30,244)">
+          <rect width="11" height="11" rx="2" fill="var(--confirmed)"/>
+          <text x="17" y="10" font-family="IBM Plex Sans, sans-serif" font-size="12" fill="var(--text)">Confirmed — deducts</text>
+        </g>
+        <g transform="translate(210,244)">
+          <rect width="11" height="11" rx="2" fill="var(--pending)"/>
+          <text x="17" y="10" font-family="IBM Plex Sans, sans-serif" font-size="12" fill="var(--text)">Pending — informational</text>
+        </g>
+        <g transform="translate(410,244)">
+          <rect width="11" height="11" rx="2" fill="var(--rejected)"/>
+          <text x="17" y="10" font-family="IBM Plex Sans, sans-serif" font-size="12" fill="var(--text)">Rejected — own segment</text>
+        </g>
+        <g transform="translate(30,270)">
+          <rect width="11" height="11" rx="2" fill="var(--surface-2)" stroke="var(--border)"/>
+          <text x="17" y="10" font-family="IBM Plex Sans, sans-serif" font-size="12" fill="var(--text)">Unused / Cancelled — excluded</text>
+        </g>
+      </svg>
+      <figcaption>Same allocation, two readings. Today's single fill can't tell a genuine confirmation from a booking still waiting on a reply. The split bar keeps all three visible, but only Confirmed moves the "remaining" number.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <div class="section-kicker">03 — New EDI outcome</div>
+    <h2>"Confirmed with Changes"</h2>
+    <p class="lede">Today a simulated carrier reply is binary: <code>confirmed</code> or <code>rejected</code>. Real carriers routinely confirm a booking with a different vessel, voyage, or ETD than what was requested — that state doesn't exist anywhere in the schema yet. This adds it as a genuine third outcome, not a flag folded into Pending.</p>
+
+    <h3>Test Tools — EDI Message Simulator</h3>
+    <div class="card">
+      <div class="btn-row">
+        <span class="btn-mock">Simulate Confirmed</span>
+        <span class="btn-mock new">Simulate Confirmed (Changes)</span>
+        <span class="btn-mock">Simulate Rejected</span>
+      </div>
+      <div class="field-row">
+        <div class="field-mock">Proposed Vessel<input value="MSC ANNA / 442W" disabled></div>
+        <div class="field-mock">Proposed Voyage<input value="442W" disabled></div>
+        <div class="field-mock">Proposed ETD<input value="2026-09-14" disabled></div>
+      </div>
+      <p style="margin-top:12px;font-size:12.5px;color:var(--text-muted)">A third button, shown next to today's two. Selecting it reveals override fields for the values a carrier would realistically actually change — everything else in the request is echoed back unchanged.</p>
+    </div>
+
+    <h3>Review tab — Sent vs. Received</h3>
+    <p>New comparison table on <code>ShipmentCarrierBookingReviewPage.jsx</code>, built entirely from data already fetched on that page: the outbound <code>edi_messages</code> row's <code>raw_payload</code> (Sent) against the newest inbound row's (Received). No new table needed — every field either side ever carries already lives in that JSON.</p>
+    <div class="mock-table">
+      <div class="mock-row head"><div>Field</div><div>Sent</div><div>Received</div></div>
+      <div class="mock-row"><div>Carrier</div><div>MSCU</div><div>MSCU</div></div>
+      <div class="mock-row"><div>POL → POD</div><div>NLRTM → USNYC</div><div>NLRTM → USNYC</div></div>
+      <div class="mock-row diff"><div>Vessel</div><div>MSC ANNA</div><div>MSC BIANCA</div></div>
+      <div class="mock-row diff"><div>Voyage</div><div>441W</div><div>442W</div></div>
+      <div class="mock-row diff"><div>ETD</div><div>2026-09-10</div><div>2026-09-14</div></div>
+      <div class="mock-row"><div>Container Count</div><div>3</div><div>3</div></div>
+    </div>
+    <p style="font-size:13px;color:var(--text-muted);margin-top:10px">Every field the booking request sends gets a row — column headers, one row per field, as specified. Rows that actually differ are highlighted; everything else reads as confirmation the rest of the request went through untouched.</p>
+
+    <div class="scope-box">Confirming a "Confirmed with Changes" booking still only flips <code>carrier_bookings.status</code> to <code>Confirmed</code> — it does <strong>not</strong> auto-rewrite the shipment's own schedule/legs with the carrier's proposed vessel/voyage. That decoupling is a standing decision in this codebase (v0.35.0) and this feature doesn't reopen it; the operator sees the diff and updates the schedule by hand if they choose to.</div>
+  </section>
+
+  <section>
+    <div class="section-kicker">04 — Where the bar lives</div>
+    <h2>Four surfaces get the split, one is explicitly deferred</h2>
+    <table class="spec">
+      <tr><th style="width:46%">Surface</th><th>Treatment</th></tr>
+      <tr><td><code>SpaceConfigurationsPage.jsx</code> — table row bar</td><td>3-segment stacked fill, same track styling as today</td></tr>
+      <tr><td><code>SpaceConfigurationsPage.jsx</code> — Linked Shipments modal header bar</td><td>Same split, wider bar</td></tr>
+      <tr><td><code>ShipmentSchedulesPage.jsx</code> — Space Configuration panel</td><td>Same split — already calls <code>/api/allocations/match</code>, no new fetch needed</td></tr>
+      <tr><td><code>ShipmentFormPage.jsx</code> — Contract Picker card</td><td>Same split; overage gate keys off the new confirmed-only <code>remainingTEU</code></td></tr>
+      <tr><td>Dashboard → <strong>Contract Consumption</strong> tab</td><td><span class="pill excluded">Deferred</span> — computes its own independent, date-ranged number straight from <code>containers</code>, never touches <code>consumedTEU</code>/<code>remainingTEU</code> at all. Already a documented second source of truth; left untouched this pass, flagged as a candidate follow-up.</td></tr>
+    </table>
+  </section>
+
+  <section>
+    <div class="section-kicker">05 — Answered questions</div>
+    <h2>Clarifications from this round</h2>
+    <table class="spec">
+      <tr><th style="width:40%">Question</th><th>Decision</th></tr>
+      <tr><td>What triggers the Confirmed deduction?</td><td>The operator's own <strong>Confirm</strong> click — not the carrier's raw EDI reply alone.</td></tr>
+      <tr><td>Does "confirmed with different details" need real modeling?</td><td>Yes — a genuine third outcome, own state, not folded into Pending.</td></tr>
+      <tr><td>What does the Review tab need?</td><td>A new Sent-vs-Received table, one row per field, with column headers.</td></tr>
+      <tr><td>Does a not-yet-sent (<code>Created</code>) booking count as demand?</td><td>Yes — any existing booking record counts as Pending, sent or not.</td></tr>
+      <tr><td>How should Rejected display?</td><td>Its own visible segment, separate from Pending. Escalation workflow is future work.</td></tr>
+    </table>
+  </section>
+
+  <section>
+    <div class="section-kicker">06 — Build sequence</div>
+    <h2>Zero schema migrations</h2>
+    <p class="lede">Every new concept fits inside columns that already exist — <code>carrier_bookings.status</code>/<code>last_response_status</code> are plain TEXT with no CHECK constraint, and the differing booking details live entirely inside <code>edi_messages.raw_payload</code>, already stored today. Nothing to migrate.</p>
+
+    <ol class="steps">
+      <li>
+        <h4><span class="file-tag">routes/edi.js</span>Third outcome, end to end</h4>
+        <p>New <code>simulatedConfirmedWithChangesResponse()</code> helper; extend <code>applyBookingResponse</code>'s ternaries to a 3-way switch; extend <code>simulate-response</code>'s outcome validation; booking <code>status</code> stays unchanged (still requires the operator's own Confirm) for both confirm variants, same as today's plain "confirmed" reply.</p>
+      </li>
+      <li>
+        <h4><span class="file-tag">TestToolsPage.jsx</span>Simulator UI</h4>
+        <p>Third button + conditional Vessel/Voyage/ETD override fields, shown only for the new outcome.</p>
+      </li>
+      <li>
+        <h4><span class="file-tag">ShipmentCarrierBookingReviewPage.jsx</span>Sent vs. Received table</h4>
+        <p>New component built client-side from data already fetched (outbound vs. latest inbound payload), styled on the existing Equipment-table grid pattern; diff rows highlighted.</p>
+      </li>
+      <li>
+        <h4><span class="file-tag">routes/allocations.js</span>Split <code>loadConsumedTeuMap()</code></h4>
+        <p>One query, LEFT JOIN <code>carrier_bookings</code>, bucket by status per the rule table above. Update all three call sites (<code>GET /allocations</code>, <code>PUT /allocations/:id</code>, <code>GET /allocations/match</code>) to return <code>confirmedTEU</code> / <code>pendingTEU</code> / <code>rejectedTEU</code>, and recompute <code>remainingTEU = allocated − confirmed</code>.</p>
+      </li>
+      <li>
+        <h4><span class="file-tag">4 frontend surfaces</span>Stacked bar + overflow indicator</h4>
+        <p>Replace each single-fill bar with 3 sibling segments; when Confirmed + Pending + Rejected exceeds <code>allocatedTEU</code>, show a small "over-committed" badge rather than rendering past 100% width.</p>
+      </li>
+      <li>
+        <h4><span class="file-tag">tests</span>Coverage</h4>
+        <p>Extend <code>carrier-booking.test.js</code> for the new outcome and the confirm-only-deducts rule; extend <code>allocations-crud.test.js</code> for the 3-way split, the <code>Created</code>-counts-as-pending rule, <code>Cancelled</code> exclusion, and the overflow case.</p>
+      </li>
+    </ol>
+  </section>
+
+  <footer>TKT — Space Configuration · shipped v0.85.0 "Approach" · CargoDesk</footer>
+</div>

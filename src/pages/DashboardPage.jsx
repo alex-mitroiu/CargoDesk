@@ -18,6 +18,15 @@ import DatePicker from "../components/primitives/DatePicker";
 import { useResizableColumns, ColResizer } from "../components/primitives/useResizableColumns.jsx";
 import { IconClose, IconWarning, IconPencil, IconCheck, IconRefresh, IconLock, IconUnlock,
   IconEye, IconArrowDown, IconForbid, IconSearch } from "../components/primitives/Icon";
+import ConsumptionBar from "../components/shared/ConsumptionBar";
+
+// Booking-status badge — Confirmed is the only bucket that actively deducts from allocated
+// space (v0.86.0); shown next to a shipment's own lifecycle Status wherever this dashboard
+// already correlates a shipment to a space configuration, so the totals above are traceable
+// back to individual rows.
+const BOOKING_STATUS_VARIANT = {
+  Confirmed: "success", Pending: "info", Created: "default", Rejected: "danger", Cancelled: "default",
+};
 
 const CHART_COLORS = [
   "#6366f1","#22c55e","#f59e0b","#3b82f6",
@@ -634,8 +643,8 @@ const MatchedShipmentsTable = ({ shipments, containers, carriers, activeAllocati
   useEffect(() => { setOffset(0); }, [rows]);
   const pageRows = rows.slice(offset, offset + limit);
 
-  const HDR = ["Shipment ID", "POL → POD", "Carrier", "Contract", "Space Config", "TEU", "Status"];
-  const { template: COL, startResize } = useResizableColumns("dashboard-matched-shipments", [130, 120, 120, 110, 140, 48, 90]);
+  const HDR = ["Shipment ID", "POL → POD", "Carrier", "Contract", "Space Config", "TEU", "Status", "Booking"];
+  const { template: COL, startResize } = useResizableColumns("dashboard-matched-shipments", [130, 120, 120, 110, 140, 48, 90, 90]);
 
   return (
     <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden" }}>
@@ -689,6 +698,9 @@ const MatchedShipmentsTable = ({ shipments, containers, carriers, activeAllocati
               )}
               <span style={{ fontFamily: T.mono, fontSize: 14, fontWeight: 700, color: T.text }}>{s.teu}</span>
               <Badge variant={statusVariant(s.status)}>{s.status}</Badge>
+              {s.bookingStatus
+                ? <Badge variant={BOOKING_STATUS_VARIANT[s.bookingStatus] || "default"}>{s.bookingStatus}</Badge>
+                : <span style={{ fontFamily: T.body, fontSize: 10, color: T.border }}>—</span>}
             </div>
           ))}
           <div style={{ padding: "10px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
@@ -734,15 +746,25 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocat
     return m;
   }, [allocations]);
 
-  // Consumed TEU per contract from shipments
+  // TEU per contract from shipments, bucketed by booking status — same rule as loadTeuBuckets()
+  // (routes/allocations.js): only a Confirmed booking counts as real consumption; Pending covers
+  // Created/Pending/no-booking-row-yet; Rejected is its own bucket; Cancelled is excluded
+  // entirely. Keyed by contract here (this view's own scope) rather than allocationId, matching
+  // the carrier/route heuristic this page has always used for date-ranged rollups.
   const consumedByContract = useMemo(() => {
     const m = {};
     centralShipments.forEach(s => {
       const teu = containers.filter(c => c.shipmentId === s.id).reduce((acc, c) => acc + teuOf(c.size), 0);
-      m[s.contractId] = (m[s.contractId] || 0) + teu;
+      const bucket = m[s.contractId] || (m[s.contractId] = { confirmed: 0, pending: 0, rejected: 0 });
+      if (s.bookingStatus === "Confirmed") bucket.confirmed += teu;
+      else if (s.bookingStatus === "Rejected") bucket.rejected += teu;
+      else if (s.bookingStatus === "Cancelled") { /* excluded — no live demand left */ }
+      else bucket.pending += teu; // Created, Pending, or no carrier_bookings row yet
     });
     return m;
   }, [centralShipments, containers]);
+
+  const emptyBucket = { confirmed: 0, pending: 0, rejected: 0 };
 
   // Chart rows — union of contracts from allocations + shipments, sorted by utilisation desc
   const chartRows = useMemo(() => {
@@ -755,17 +777,13 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocat
       const group    = groups.find(g => g.contractId === id);
       const contract = contractMap[id] || null; // populated async by the useEffect below
       const allocated = allocByContract[id] || 0;
-      const consumed  = consumedByContract[id] || 0;
-      const pct       = allocated > 0 ? Math.round((consumed / allocated) * 100) : null;
-      const barColor  = pct === null ? T.info
-                      : pct >= 100  ? T.danger
-                      : pct >= 80   ? T.warning
-                      : T.success;
+      const b         = consumedByContract[id] || emptyBucket;
+      const pct       = allocated > 0 ? Math.round((b.confirmed / allocated) * 100) : null;
       return {
         contractId:     id,
         contractNumber: contract?.contractNumber || alloc?.contractNumber || group?.contractRef || id,
         carrierCode:    contract?.carrierCode    || alloc?.carrierCode    || group?.carrierCode || "",
-        allocated, consumed, pct, barColor,
+        allocated, confirmed: b.confirmed, pending: b.pending, rejected: b.rejected, pct,
       };
     }).sort((a, b) => (b.pct ?? -1) - (a.pct ?? -1));
   }, [allocByContract, consumedByContract, allocations, groups, contractMap]);
@@ -792,8 +810,8 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocat
 
   const teuFor = s => containers.filter(c => c.shipmentId === s.id).reduce((acc, c) => acc + teuOf(c.size), 0);
 
-  const SHP_COL = "140px 130px 90px 48px 90px";
-  const SHP_HDR = ["Shipment ID", "POL → POD", "ETD", "TEU", "Status"];
+  const SHP_COL = "140px 130px 90px 48px 90px 90px";
+  const SHP_HDR = ["Shipment ID", "POL → POD", "ETD", "TEU", "Status", "Booking"];
 
   if (centralShipments.length === 0) {
     return (
@@ -838,14 +856,15 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocat
               padding: "18px 20px" }}>
               <div style={{ marginBottom: 14 }}>
                 <h2 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: "0 0 3px" }}>
-                  Allocated vs Consumed TEU
+                  Allocated vs Confirmed TEU
                 </h2>
                 <p style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, margin: 0 }}>
                   Contract-level rollup for the selected date range — sums every Central shipment
                   against this contract (any allocation) in range, not one specific space config's
-                  own real-time figure. Can differ from that config's own Consumed number on the
-                  Space Configurations page, which is scoped to explicitly-linked shipments only,
-                  with no date-range filter.
+                  own real-time figure. Can differ from that config's own figures on the Space
+                  Configurations page, which is scoped to explicitly-linked shipments only, with
+                  no date-range filter. Only a Confirmed booking counts as consumed; Pending and
+                  Rejected are shown alongside, not folded in.
                 </p>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 10,
@@ -864,30 +883,19 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocat
                         </div>
                       )}
                     </div>
-                    <div style={{ position: "relative", height: 16, borderRadius: 3,
-                      background: T.border + "44", overflow: "hidden" }}>
-                      {row.allocated > 0 && (
-                        <div style={{ position: "absolute", left: 0, top: 0, bottom: 0,
-                          width: `${Math.min(100, (row.consumed / row.allocated) * 100)}%`,
-                          background: row.barColor, borderRadius: 3, transition: "width .4s ease",
-                          minWidth: row.consumed > 0 ? 4 : 0 }} />
-                      )}
-                      {row.allocated === 0 && row.consumed > 0 && (
-                        <div style={{ position: "absolute", left: 0, top: 0, bottom: 0,
-                          width: "100%", background: T.info + "55", borderRadius: 3 }} />
-                      )}
-                    </div>
+                    <ConsumptionBar allocated={row.allocated} confirmed={row.confirmed}
+                      pending={row.pending} rejected={row.rejected} height={16} width="100%" />
                     <div style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                      <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: row.barColor }}>
-                        {row.consumed}
+                      <span style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, color: T.text }}>
+                        {row.confirmed}
                       </span>
                       <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted }}>
                         {" / "}{row.allocated > 0 ? row.allocated : "—"} TEU
                       </span>
                       {row.pct !== null && (
-                        <span style={{ fontFamily: T.mono, fontSize: 10, color: row.barColor,
-                          marginLeft: 5, background: row.barColor + "18",
-                          border: `1px solid ${row.barColor}44`,
+                        <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted,
+                          marginLeft: 5, background: T.border + "22",
+                          border: `1px solid ${T.border}`,
                           borderRadius: 3, padding: "0 4px" }}>
                           {row.pct}%
                         </span>
@@ -899,10 +907,9 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocat
               <div style={{ display: "flex", gap: 12, marginTop: 14, paddingTop: 12,
                 borderTop: `1px solid ${T.border}22`, flexWrap: "wrap" }}>
                 {[
-                  { color: T.success, label: "< 80%" },
-                  { color: T.warning, label: "80–99%" },
-                  { color: T.danger,  label: "≥ 100%" },
-                  { color: T.info,    label: "No config" },
+                  { color: T.success, label: "Confirmed" },
+                  { color: T.warning, label: "Pending" },
+                  { color: T.danger,  label: "Rejected" },
                 ].map(({ color, label }) => (
                   <div key={label} style={{ display: "flex", alignItems: "center", gap: 5 }}>
                     <div style={{ width: 8, height: 8, borderRadius: 2, background: color, flexShrink: 0 }} />
@@ -922,7 +929,7 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocat
                   6-Week TEU Trend
                 </h2>
                 <p style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, margin: 0 }}>
-                  Weekly consumption per contract — last 6 weeks
+                  Weekly Confirmed consumption per contract — last 6 weeks
                 </p>
               </div>
               <ResponsiveContainer width="100%" height={240}>
@@ -956,7 +963,14 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocat
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         {groups.map(g => {
           const contract = contractMap[g.contractId];
-          const groupTEU = g.shipments.reduce((acc, s) => acc + teuFor(s), 0);
+          const groupBuckets = g.shipments.reduce((acc, s) => {
+            const teu = teuFor(s);
+            if (s.bookingStatus === "Confirmed") acc.confirmed += teu;
+            else if (s.bookingStatus === "Rejected") acc.rejected += teu;
+            else if (s.bookingStatus === "Cancelled") { /* excluded */ }
+            else acc.pending += teu;
+            return acc;
+          }, { confirmed: 0, pending: 0, rejected: 0 });
           const carrier  = carriers.find(c => c.code === g.carrierCode);
 
           return (
@@ -994,9 +1008,16 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocat
 
                 <div style={{ marginLeft: "auto", textAlign: "right" }}>
                   <div style={{ display: "flex", alignItems: "baseline", gap: 6, justifyContent: "flex-end" }}>
-                    <span style={{ fontFamily: T.mono, fontSize: 26, fontWeight: 700, color: T.success }}>{groupTEU}</span>
-                    <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>TEU</span>
+                    <span style={{ fontFamily: T.mono, fontSize: 26, fontWeight: 700, color: T.success }}>{groupBuckets.confirmed}</span>
+                    <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>TEU confirmed</span>
                   </div>
+                  {(groupBuckets.pending > 0 || groupBuckets.rejected > 0) && (
+                    <div style={{ fontFamily: T.mono, fontSize: 10.5 }}>
+                      {groupBuckets.pending > 0 && <span style={{ color: T.warning }}>+{groupBuckets.pending} pending</span>}
+                      {groupBuckets.pending > 0 && groupBuckets.rejected > 0 && <span style={{ color: T.textMuted }}> · </span>}
+                      {groupBuckets.rejected > 0 && <span style={{ color: T.danger }}>+{groupBuckets.rejected} rejected</span>}
+                    </div>
+                  )}
                   <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
                     {g.shipments.length} shipment{g.shipments.length !== 1 ? "s" : ""}
                   </span>
@@ -1023,6 +1044,9 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocat
                   <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>{s.etd || "—"}</span>
                   <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: T.text }}>{teuFor(s)}</span>
                   <Badge variant={statusVariant(s.status)}>{s.status}</Badge>
+                  {s.bookingStatus
+                    ? <Badge variant={BOOKING_STATUS_VARIANT[s.bookingStatus] || "default"}>{s.bookingStatus}</Badge>
+                    : <span style={{ fontFamily: T.body, fontSize: 10, color: T.border }}>—</span>}
                 </div>
               ))}
             </div>
@@ -1684,7 +1708,10 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, financeEn
     return s.contractType === "Central";
   };
 
-  // TEU consumed per carrier — filtered by contract + pol/pod to avoid overcounting
+  // TEU per carrier — filtered by contract + pol/pod to avoid overcounting, bucketed by booking
+  // status (only Confirmed actively counts as consumed space, matching loadTeuBuckets() in
+  // routes/allocations.js) — Pending covers Created/Pending/no-booking-row-yet, Rejected is its
+  // own bucket, Cancelled is excluded entirely.
   const consumedMap = useMemo(() => {
     const m = {};
     rangeShipments.forEach(s => {
@@ -1696,13 +1723,19 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, financeEn
       );
       if (!matched) return;
       const teu = containers.filter(c => c.shipmentId === s.id).reduce((acc, c) => acc + teuOf(c.size), 0);
-      m[s.carrierCode] = (m[s.carrierCode] || 0) + teu;
+      const bucket = m[s.carrierCode] || (m[s.carrierCode] = { confirmed: 0, pending: 0, rejected: 0 });
+      if (s.bookingStatus === "Confirmed") bucket.confirmed += teu;
+      else if (s.bookingStatus === "Rejected") bucket.rejected += teu;
+      else if (s.bookingStatus === "Cancelled") { /* excluded */ }
+      else bucket.pending += teu;
     });
     return m;
   }, [rangeShipments, containers, activeAllocations]);
 
 
-  // Trend data: delta vs previous equivalent period + 6-week sparkline
+  // Trend data: delta vs previous equivalent period + 6-week sparkline — Confirmed only, matching
+  // what "consumption" means everywhere else post-v0.86.0 (raw all-status volume trend is still
+  // available, unchanged, on the Carrier Volumes tab).
   const carrierTrends = useMemo(() => {
     const periodDays = diffDays(rangeStart, rangeEnd) + 1;
     const prevEnd    = addDays(rangeStart, -1);
@@ -1714,14 +1747,14 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, financeEn
     allCodes.forEach(code => {
       // Current TEU — sum directly from range shipments for this carrier
       const currentTEU = rangeShipments
-        .filter(s => s.carrierCode === code)
+        .filter(s => s.carrierCode === code && s.bookingStatus === "Confirmed")
         .reduce((acc, s) =>
           acc + containers.filter(c => c.shipmentId === s.id)
                           .reduce((a2, c) => a2 + teuOf(c.size), 0), 0);
 
       // Previous period TEU
       const prevTEU = shipments
-        .filter(s => s.carrierCode === code && s.etd >= prevStart && s.etd <= prevEnd)
+        .filter(s => s.carrierCode === code && s.bookingStatus === "Confirmed" && s.etd >= prevStart && s.etd <= prevEnd)
         .reduce((acc, s) =>
           acc + containers.filter(c => c.shipmentId === s.id)
                           .reduce((a2, c) => a2 + teuOf(c.size), 0), 0);
@@ -1736,7 +1769,7 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, financeEn
         const wStart = addDays(rangeStart, -(5 - i) * 7);
         const wEnd   = addDays(wStart, 6);
         return shipments
-          .filter(s => s.carrierCode === code && s.etd >= wStart && s.etd <= wEnd)
+          .filter(s => s.carrierCode === code && s.bookingStatus === "Confirmed" && s.etd >= wStart && s.etd <= wEnd)
           .reduce((acc, s) =>
             acc + containers.filter(c => c.shipmentId === s.id)
                             .reduce((a2, c) => a2 + teuOf(c.size), 0), 0);
@@ -1752,15 +1785,17 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, financeEn
   const chartData = useMemo(() => {
     const byCarrier = {};
     activeAllocations.forEach(a => {
-      if (!byCarrier[a.carrierCode]) byCarrier[a.carrierCode] = { allocated: 0, consumed: 0 };
+      if (!byCarrier[a.carrierCode]) byCarrier[a.carrierCode] = { allocated: 0 };
       byCarrier[a.carrierCode].allocated += a.allocatedTEU;
-      byCarrier[a.carrierCode].consumed   = consumedMap[a.carrierCode] || 0;
+      byCarrier[a.carrierCode].bucket = consumedMap[a.carrierCode] || { confirmed: 0, pending: 0, rejected: 0 };
     });
     return Object.entries(byCarrier).map(([code, d]) => ({
       carrier: code,
       name: carriers.find(c => c.code === code)?.name || code,
-      consumed: d.consumed,
-      remaining: Math.max(0, d.allocated - d.consumed),
+      confirmed: d.bucket.confirmed,
+      pending: d.bucket.pending,
+      rejected: d.bucket.rejected,
+      remaining: Math.max(0, d.allocated - d.bucket.confirmed),
       total: d.allocated,
     }));
   }, [activeAllocations, consumedMap, carriers]);
@@ -1797,8 +1832,10 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, financeEn
       const label  = parseIso(wEnd).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
       const pt     = { week: label };
       contractIds.forEach(id => {
+        // Confirmed only — matches what "consumption" means everywhere else post-v0.86.0;
+        // raw all-status volume is still available, unchanged, on the Carrier Volumes tab.
         pt[id] = centralSh
-          .filter(s => s.contractId === id && s.etd >= wStart && s.etd <= wEnd)
+          .filter(s => s.contractId === id && s.bookingStatus === "Confirmed" && s.etd >= wStart && s.etd <= wEnd)
           .reduce((acc, s) =>
             acc + containers.filter(c => c.shipmentId === s.id).reduce((a2, c) => a2 + teuOf(c.size), 0), 0);
       });
@@ -1807,8 +1844,10 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, financeEn
     return { weeks, contractIds, refMap };
   }, [shipments, containers, rangeStart]);
 
-  const totalConsumed = chartData.reduce((s, d) => s + d.consumed, 0);
-  const totalRemain   = Math.max(0, totalAlloc - totalConsumed);
+  const totalConfirmed = chartData.reduce((s, d) => s + d.confirmed, 0);
+  const totalPending   = chartData.reduce((s, d) => s + d.pending, 0);
+  const totalRejected  = chartData.reduce((s, d) => s + d.rejected, 0);
+  const totalRemain    = Math.max(0, totalAlloc - totalConfirmed);
 
   const TooltipContent = ({ active, payload, label }) => {
     if (!active || !payload?.length) return null;
@@ -1816,7 +1855,9 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, financeEn
     return (
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, padding: "12px 16px" }}>
         <div style={{ fontFamily: T.mono, fontWeight: 700, color: T.accent, marginBottom: 8, fontSize: 13 }}>{label} · {d?.name}</div>
-        <div style={{ fontFamily: T.body, fontSize: 13, color: T.success }}>Active: {d?.consumed} TEU</div>
+        <div style={{ fontFamily: T.body, fontSize: 13, color: T.success }}>Confirmed: {d?.confirmed} TEU</div>
+        {d?.pending > 0 && <div style={{ fontFamily: T.body, fontSize: 13, color: T.warning }}>Pending: {d.pending} TEU</div>}
+        {d?.rejected > 0 && <div style={{ fontFamily: T.body, fontSize: 13, color: T.danger }}>Rejected: {d.rejected} TEU</div>}
         <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted }}>Remaining: {d?.remaining} TEU</div>
         <div style={{ fontFamily: T.body, fontSize: 13, fontWeight: 700, color: T.text,
           borderTop: `1px solid ${T.border}`, marginTop: 8, paddingTop: 8 }}>Total: {d?.total} TEU</div>
@@ -1909,9 +1950,10 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, financeEn
           {/* KPIs */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginBottom: 26 }}>
             {[
-              { label: "Total Allocated",    value: totalAlloc,    color: T.text,    sub: `${activeAllocations.length} configuration${activeAllocations.length !== 1 ? "s" : ""}` },
-              { label: "Active Consumption", value: totalConsumed, color: T.success, sub: `${totalAlloc > 0 ? ((totalConsumed / totalAlloc) * 100).toFixed(1) : 0}% of total utilized` },
-              { label: "Remaining Capacity", value: totalRemain,   color: T.accent,  sub: "available to book" },
+              { label: "Total Allocated",       value: totalAlloc,     color: T.text,    sub: `${activeAllocations.length} configuration${activeAllocations.length !== 1 ? "s" : ""}` },
+              { label: "Confirmed Consumption",  value: totalConfirmed, color: T.success, sub: `${totalAlloc > 0 ? ((totalConfirmed / totalAlloc) * 100).toFixed(1) : 0}% of total utilized`,
+                breakdown: (totalPending > 0 || totalRejected > 0) ? { pending: totalPending, rejected: totalRejected } : null },
+              { label: "Remaining Capacity",     value: totalRemain,    color: T.accent,  sub: "available to book" },
             ].map((k, i) => (
               <div key={i} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "20px 24px" }}>
                 <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".08em" }}>{k.label}</div>
@@ -1920,6 +1962,13 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, financeEn
                   <span style={{ fontFamily: T.mono, fontSize: 14, color: T.textMuted }}>TEU</span>
                 </div>
                 <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>{k.sub}</div>
+                {k.breakdown && (
+                  <div style={{ fontFamily: T.mono, fontSize: 11, marginTop: 4 }}>
+                    {k.breakdown.pending > 0 && <span style={{ color: T.warning }}>+{k.breakdown.pending} pending</span>}
+                    {k.breakdown.pending > 0 && k.breakdown.rejected > 0 && <span style={{ color: T.textMuted }}> · </span>}
+                    {k.breakdown.rejected > 0 && <span style={{ color: T.danger }}>+{k.breakdown.rejected} rejected</span>}
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -1973,7 +2022,7 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, financeEn
               <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "20px 20px 14px" }}>
                 <div style={{ marginBottom: 16 }}>
                   <h2 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: "0 0 3px" }}>TEU by Carrier</h2>
-                  <p style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, margin: 0 }}>Awarded vs consumed for the selected period</p>
+                  <p style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, margin: 0 }}>Awarded vs Confirmed/Pending/Rejected for the selected period</p>
                 </div>
                 <ResponsiveContainer width="100%" height={240}>
                   <BarChart data={chartData} margin={{ top: 4, right: 8, left: -8, bottom: 4 }}>
@@ -1982,7 +2031,9 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, financeEn
                     <YAxis tick={{ fontFamily: T.body, fontSize: 10, fill: T.textMuted }} axisLine={false} tickLine={false} />
                     <Tooltip content={<TooltipContent />} cursor={{ fill: T.border + "44" }} />
                     <Legend wrapperStyle={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, paddingTop: 10 }} />
-                    <Bar dataKey="consumed"  name="Consumed"  stackId="s" fill={T.success} />
+                    <Bar dataKey="confirmed" name="Confirmed" stackId="s" fill={T.success} />
+                    <Bar dataKey="pending"   name="Pending"   stackId="s" fill={T.warning} />
+                    <Bar dataKey="rejected"  name="Rejected"  stackId="s" fill={T.danger} />
                     <Bar dataKey="remaining" name="Remaining" stackId="s" fill={T.borderMid} radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
@@ -1990,7 +2041,7 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, financeEn
               <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "20px 20px 14px" }}>
                 <div style={{ marginBottom: 16 }}>
                   <h2 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: "0 0 3px" }}>6-Week TEU Trend</h2>
-                  <p style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, margin: 0 }}>Weekly shipment consumption per carrier — last 6 weeks</p>
+                  <p style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, margin: 0 }}>Weekly Confirmed consumption per carrier — last 6 weeks</p>
                 </div>
                 <ResponsiveContainer width="100%" height={240}>
                   <LineChart data={trendChartData} margin={{ top: 4, right: 8, left: -8, bottom: 4 }}>

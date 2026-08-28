@@ -154,6 +154,52 @@ async function testRejectedPath(token) {
   await request("DELETE", `/api/shipments/${shipmentId}`, null, token);
 }
 
+// ─── Confirmed with Changes path: a third genuine outcome, not folded into Pending ─────
+
+async function testConfirmedWithChangesPath(token) {
+  console.log("\nCarrier Booking — confirmed-with-changes path (Send → simulate confirmed_with_changes → Confirm)");
+  const shipmentId = await scratchShipment(token, "MAEU");
+  if (!shipmentId) { assert("scratch shipment created", false, "aborting"); return; }
+  assert("scratch shipment created", true);
+
+  const send = await request("POST", `/api/shipments/${shipmentId}/edi-messages/booking-request`, {}, token);
+  assert("booking-request returns 201", send.status === 201);
+  const sentPayload = send.body?.sent ? JSON.parse(send.body.sent.rawPayload) : null;
+
+  const badOutcome = await request("POST", `/api/shipments/${shipmentId}/edi-messages/simulate-response`,
+    { outcome: "bogus" }, token);
+  assert("an invalid outcome is rejected", badOutcome.status >= 400);
+
+  const sim = await request("POST", `/api/shipments/${shipmentId}/edi-messages/simulate-response`,
+    { outcome: "confirmed_with_changes", vessel: "MSC BIANCA", voyage: "442W", etd: "2026-09-14" }, token);
+  assert("simulate-response(confirmed_with_changes) returns 201", sim.status === 201);
+  assert("received message status is confirmed_with_changes", sim.body?.received?.status === "confirmed_with_changes");
+
+  const afterSim = await request("GET", `/api/shipments/${shipmentId}/carrier-booking`, null, token);
+  assert("status stays Pending — an operator's own Confirm is still required, same as a plain confirmed reply",
+    afterSim.body?.status === "Pending", `got ${afterSim.body?.status}`);
+  assert("lastResponseStatus is confirmed_with_changes", afterSim.body?.lastResponseStatus === "confirmed_with_changes");
+
+  const messages = await request("GET", `/api/shipments/${shipmentId}/edi-messages`, null, token);
+  const inbound = messages.body.find(m => m.direction === "in");
+  assert("inbound message type is booking_confirmation, not booking_reject", inbound?.messageType === "booking_confirmation");
+  const received = JSON.parse(inbound.rawPayload);
+  assert("received payload overrides only the fields the carrier actually changed",
+    received.vessel === "MSC BIANCA" && received.voyage === "442W" && received.etd === "2026-09-14");
+  assert("received payload still carries the rest of the original outbound field set (full comparison, not a thin subset)",
+    received.pol === sentPayload?.pol && received.pod === sentPayload?.pod && received.carrierCode === sentPayload?.carrierCode);
+
+  const confirm = await request("PATCH", `/api/shipments/${shipmentId}/carrier-booking/confirm`, {}, token);
+  assert("confirming after confirmed-with-changes still works via the normal Confirm action", confirm.status === 200);
+  assert("status is Confirmed", confirm.body?.status === "Confirmed");
+
+  const shipAfter = await request("GET", `/api/shipments/${shipmentId}`, null, token);
+  assert("confirming does not auto-rewrite the shipment's own vessel with the carrier's proposed one — the existing carrier_bookings/shipment_schedules decoupling (v0.35.0) is preserved",
+    shipAfter.body?.vessel !== "MSC BIANCA");
+
+  await request("DELETE", `/api/shipments/${shipmentId}`, null, token);
+}
+
 // ─── Manual path: non-bookable carrier, no EDI involved at all ────────────────
 
 async function testManualPath(token) {
@@ -764,6 +810,7 @@ async function testBookingsList(token) {
 
     await testConfirmedPath(token);
     await testRejectedPath(token);
+    await testConfirmedWithChangesPath(token);
     await testManualPath(token);
     await testAutoCreate(token);
     await testEquipmentSummary(token);

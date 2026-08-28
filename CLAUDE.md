@@ -4,7 +4,7 @@
 Full-stack freight management app. React 18 + Vite frontend, Express + node:sqlite backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.84.0 "Capstone"**
+- Version: **v0.85.0 "Approach"**
 - Run: `npm run dev` (runs the monolith on :3001 + Vite on :5173 + the Document Distribution Service on :3002 + the PDF Render Service on :3003 + the Contract Management Service on :3004 + the MDM Service on :3005 + the Screening Service on :3006 + the Kanban Service on :3007 + the Customer Service on :3008, concurrently) — zero-script onboarding: first boot with no `cargodesk.db` auto-copies the committed `db/cargodesk.sample.db` (MDM reference data only) into place
 - Re-seed: `npm run seed` (runs `scripts/import-mdm-data.js`) — only needed to refresh MDM data from `data/*.csv`/`.json`, not for a normal first run
 
@@ -44,6 +44,8 @@ routes/
   customs-filing.js  /api/shipments/:id/customs-filings/*, /api/customs-filings — simulated
                      AES/EEI + ISF/AMS filing lifecycle, reuses edi_messages — Epic TKT-XW6TQK
   customers.js       /api/customers/*, /api/fx/*
+  quotes.js          /api/quotes/* — Quoting/RFQ pre-booking stage (v0.70.0), converts into a shipment
+  opportunities.js   /api/opportunities/* — CRM pre-sales pipeline (v0.85.0), converts into a quote
   sanctions.js       /api/sanctions/* — extracted out of customers.js at v0.81.0 as the first
                      step of the Screening Service extraction (services/screening/)
   contracts.js       /api/contracts/*, /api/entity-events/*
@@ -166,6 +168,12 @@ src/
                                    modal (customer/route/carrier, "Find Matching Contracts" as a
                                    pricing reference, line items) + lifecycle detail modal
                                    (Send/Accept/Decline/Convert to Shipment)
+    OpportunitiesPage.jsx          CRM pre-sales pipeline (v0.85.0) — top-level nav item, above
+                                   Quotes in the sidebar (real funnel order). List + New
+                                   Opportunity modal (title required, everything else optional —
+                                   customer via CustomerCombobox in its unresolved/name-only
+                                   state) + lifecycle detail modal (Qualify/Mark Lost/Convert to
+                                   Quote). Flat table, not a kanban board — see Recent Changes
     DashboardArchivePage.jsx       Expired allocations + renew flow
     KanbanPage.jsx                 Integration board with drag-to-reorder
     AppSettingsPage.jsx            API Controls + Finance + Users (admin only) tabs
@@ -188,6 +196,10 @@ src/
       PageSizeSelect.jsx           50/75/100 dropdown paired with Pagination.jsx — one shared
                                    `cargodesk_page_size` localStorage preference app-wide (v0.78.0)
     shared/
+      ConsumptionBar.jsx           3-segment stacked TEU bar (Confirmed/Pending/Rejected,
+                                   v0.85.0) — shared across SpaceConfigurationsPage's row + Linked
+                                   Shipments modal, ShipmentSchedulesPage's Space Configuration
+                                   panel, ShipmentFormPage's Contract Picker card
       PortCombobox.jsx             position:fixed dropdown (escapes modal overflow)
       CommodityCombobox.jsx        Typeahead with GradePill + CommodityPickerModal
       VesselCombobox.jsx           {VesselCombobox, VesselField} named exports
@@ -270,6 +282,7 @@ are fully validated.
 | carrier_invoice_lines | Per-invoice charge lines (v0.69.0) — amount vs. an independently-resolved `expected_amount` (from an accrued `shipment_cost_lines` row, a live `contract_rates` row, or a Detention/Demurrage pre-audit computed from `containers`' free-time fields + `container_events`), variance, and pending/matched/variance/approved/disputed status. Approving posts into the existing cost-line accrual/actualized lifecycle |
 | quotes | Quoting/RFQ pre-booking stage (v0.70.0) — precedes and converts into a real shipment. Lifecycle Draft (editable) -> Sent (locked, needs `valid_until` + 1+ lines) -> Accepted \| Declined \| Expired (hourly `expireStaleQuotes()` sweep, mirrors `expireStaleContracts`) -> Converted (Accepted only). `contract_id`/`contract_ref` optional — set when a matched contract was used as a pricing reference, not a hard link |
 | quote_lines | The quote's own customer-facing SELL price per line — kept independent of the referenced contract's live rate (a quote commonly already has margin added). On conversion, each becomes a new `shipment_cost_lines` SELL row, `source='quote'`, while the BUY side still comes from `importContractRates()` unchanged if a contract was referenced |
+| opportunities | CRM pre-sales pipeline (v0.85.0) — precedes and converts into a real quote. Lifecycle New (editable) -> Qualified (editable) -> Converted (to Quote, Qualified only) \| Lost (from New or Qualified). No line-item child table — pre-pricing, real line-item detail belongs on the Quote it converts into. Only `title` is required; `customer_id` is optional (the same unresolved-customer pattern `quotes.customer_id` already established) |
 | shipment_milestones | Per-shipment milestone steps (estimated date, completion, note) |
 | shipment_schedules | Saved sailings: carrier, vessel (name + IMO), voyage, ETD/ATD, ETA/ATA, transit days, isMock, source (search/generated), savedBy. `shipment_id` is nullable (v0.54.0) — NULL means an ownerless Schedule Generator "template"; set means a real shipment's own copy, whose `template_id` (self-referential, ON DELETE SET NULL) records which template it was copied from, if any |
 | schedule_legs | Per-leg detail (pol/pod/etd/eta/vessel/voyage/service, `leg_order`) for a genuine multi-leg/TSP `shipment_schedules` row — 2+ rows makes it TSP; 0-1 rows means direct, same convention the sailing-search `legs[]` shape already used (v0.54.0) |
@@ -343,6 +356,137 @@ are fully validated.
 - **Document system**: `DOC_TYPES` in App.jsx (~line 56: BL01/MB01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — `MB01` (Master Bill of Lading, v0.71.0) is the vessel-operator-to-NVOCC document, a genuinely separate build from `BL01` (NVOCC-to-shipper House B/L), not a mode flag on it — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). (The earlier client-side-jsPDF `DocumentsMenu` component this note used to distinguish from was removed as dead code — it had zero references anywhere in the app.)
 - **Lifecycle-stage stepper precedent**: no dedicated stepper component exists yet; `MilestonePanel` (ShipmentDetailPage.jsx 1593-~1870) is the closest analog — linear progress bar (1734-1738, `width: ${progress}%`) plus per-step state coloring via `milestoneState()`/`stateColor()` (1666-1676: completed/overdue/current/upcoming) driven by `shipment_milestones` rows (`id, label, estimatedDate, note, completedAt, completedBy`, fixed step keys `booking_confirmed, si_submitted, cargo_gated_in, vessel_departed, bl_issued, vessel_arrived, customs_cleared, cargo_released, delivered`). Any new per-container lifecycle/stage UI should reuse this state-coloring pattern rather than inventing a new visual language
 - **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages, 📡 EDI). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
+
+## Recent changes (v0.85.0 "Approach")
+Four pieces of work, bundled into one unified release rather than four incremental version bumps
+for what was really one continuous working session's output.
+- **Idle-timeout auto-logout, multi-tab aware** — direct request: after 30 minutes of no activity
+  anywhere, log the operator out, redirect to login with a clear reason, and return them to their
+  own last screen on the next sign-in. Multi-tab awareness was explicit in the ask, since
+  shipments already open in new tabs — activity in any tab keeps the whole session alive, and an
+  idle timeout in one tab cleans up every other open tab too.
+- **New `config/app-settings.yaml`** + **`lib/staticConfig.js`** — the 30-minute threshold is
+  deliberately hardcoded, not exposed through the in-app Settings UI (unlike `app_settings`, the
+  DB-backed runtime-editable table); read once at boot (new `js-yaml` dependency), falls back to
+  the same default with a warning if the file is missing/malformed. Merged into the existing
+  `GET /api/settings` response (`server.js`'s `getSettings()`) as `idleTimeoutMinutes` — the
+  frontend already fetches that response after login, so no new endpoint was needed.
+- **New `src/hooks/useIdleLogout.js`** — every tab writes one shared `localStorage` activity
+  timestamp; when one tab's timer crosses the threshold it clears the shared auth token exactly
+  like a 401 already does (`src/api.js`'s existing forced-logout precedent), which fires a native
+  `storage` event in every *other* open tab automatically — the browser's own cross-tab signal,
+  no polling or custom channel. A real gap caught before shipping: a plain manual "Log out" and a
+  401 also clear that same token, which would otherwise mislabel other tabs' banners — fixed with
+  a second shared key only the idle path sets, cleared on every login so a stale flag can never
+  survive to mislabel a later, unrelated logout.
+- Each tab remembers its own last screen via `sessionStorage` (per-tab, unlike `localStorage`),
+  captured the instant it logs itself out and restored after that same tab's next login —
+  deliberately scoped to the idle path only, so a deliberate manual logout still lands on the
+  default home screen. New amber/info banner on `LoginPage.jsx`, distinct from its existing red
+  wrong-password banner.
+- No backend route changes beyond the one-line settings merge. Full frontend Vitest suite
+  re-run green, clean build. Verified live via CDP with two real tabs on the same session against
+  a temporarily-lowered threshold: both logged out together with the correct banner, and logging
+  back in on one tab returned only that tab to its own last screen.
+
+- **Consumption Dashboard follow-up** — direct audit request after the Space Consumption Split
+  (below): `DashboardPage.jsx` (the page literally titled "Consumption Dashboard") never read an
+  allocation's `confirmedTEU`/`pendingTEU`/`rejectedTEU` at all — it re-derives its own TEU totals
+  entirely client-side from shipments+containers, matched to allocations by its own carrier/route
+  heuristic, with zero regard for `carrier_bookings.status`. Six surfaces (Overview's KPI tiles,
+  "TEU by Carrier" chart, and 6-week trend; Contract Consumption's bars, per-contract header, and
+  its own 6-week trend) still lumped every booking status into one green "Consumed" number; the
+  Carrier Volumes tab was confirmed **not** a gap — it's explicitly an all-status raw-volume
+  metric, untouched. Gap analysis published as an artifact before planning:
+  https://claude.ai/code/artifact/338f5c10-2464-430a-bdfd-87703ea414e6
+- **"Consumption" on this dashboard now means Confirmed**, matching `remainingTEU = allocated −
+  confirmed` shipped everywhere else — Pending/Rejected surface as inline "+N pending · +N
+  rejected" captions under every headline figure, never folded back in. Zero new fetches, zero
+  schema changes — `shipment.bookingStatus` and the allocation's own bucket fields were already on
+  props this page receives.
+- Contract Consumption's hand-rolled single-fill bar was replaced with the shared
+  `ConsumptionBar` component (new below) — the two pages now render pixel-identical bar semantics
+  instead of two implementations quietly disagreeing on what red/amber/green mean. Both
+  shipment-row tables gained a small Booking Status badge next to the existing shipment-status
+  badge.
+- No backend changes. Clean build. Verified live via CDP with a 3-shipment mixed-status fixture
+  (Confirmed/Pending/Rejected under one allocation): both tabs showed the correct 2/1/1/8 TEU
+  split, matching the Space Configurations page's own visual language exactly.
+
+- **Space Consumption Split** — direct report of a real calculation gap: an allocation's
+  `consumedTEU` lumped every linked shipment together regardless of `carrier_bookings.status`, so
+  a `Created`-but-unsent booking, one still awaiting a carrier reply, and a genuinely `Confirmed`
+  one all counted identically. `routes/allocations.js`'s `loadConsumedTeuMap()` became
+  `loadTeuBuckets()` — one `LEFT JOIN carrier_bookings`, grouped by allocation + status, reduced
+  into `confirmedTEU`/`pendingTEU`/`rejectedTEU` per this rule: `Confirmed` (the **operator's own
+  Confirm click**, not the carrier's raw `last_response_status`) is the only bucket that deducts
+  from `remainingTEU`; `Created`/`Pending`/no-booking-row-yet fold into Pending; `Rejected` is its
+  own visible segment; `Cancelled` is excluded entirely. All four response sites
+  (`GET`/`POST`/`PUT /api/allocations`, `GET /api/allocations/match`) updated. **Zero schema
+  migrations** — every field involved was already a plain TEXT column with no CHECK constraint.
+- New shared `ConsumptionBar.jsx` (3-segment stacked bar, proportionally compresses + shows a
+  "+N over" caption when demand exceeds capacity) replaces the old single-fill bar at all four
+  places it appears (see `src/components/` table above). Dashboard's Contract Consumption tab
+  computes its own independent, date-ranged figure and never touched these fields — confirmed via
+  its own pre-existing code comment — left untouched, a candidate follow-up if ever reconciled.
+- **New third EDI outcome: "Confirmed with Changes"** — a real carrier routinely confirms with a
+  different vessel/voyage/ETD than requested; this didn't exist as a concept before. The three
+  simulated-response builders (`routes/edi.js`) now all start from the last outbound
+  booking-request payload (new `getLastOutboundPayload()`) instead of each synthesizing their own
+  thin ~6-field subset, so the inbound message's `raw_payload` always carries the full field set
+  — the new outcome overrides only what the carrier actually changed. Confirming afterward still
+  only flips `carrier_bookings.status` — it does **not** auto-rewrite the shipment's schedule with
+  the carrier's proposed vessel/voyage, preserving the deliberate `carrier_bookings`/
+  `shipment_schedules` decoupling from v0.35.0. New Sent-vs-Received comparison table on the
+  Carrier Booking Review tab (`ShipmentCarrierBookingReviewPage.jsx`), one row per payload field
+  with column headers, styled on the existing Equipment-table grid pattern — built entirely
+  client-side from data the page already fetches, no new endpoint. Test Tools' EDI Message
+  Simulator gained a third "Simulate Confirmed (Changes)" button with Proposed Vessel/Voyage/ETD
+  override fields.
+- 48 new assertions (`tests/carrier-booking.test.js`, `tests/allocations-crud.test.js`, a two-line
+  rename in `tests/contract-improvements.test.js`). Full backend chain re-verified standalone per
+  file, zero regressions, clean build. Verified live via CDP end-to-end: a Confirmed-with-Changes
+  simulation with a real vessel/voyage/ETD override rendered the comparison table's diff
+  correctly; a 3-shipment mixed-status allocation rendered the exact green/amber/red split with
+  correct percentages on the real Space Configurations page.
+
+- **CRM / pre-sales pipeline** (`TKT-WW8THL`, Epic `TKT-GTGM6R` Competitive Gap Analysis) — every
+  named competitor (CargoWise Opportunity Manager, Magaya CRM, Descartes' forwarder-CRM) bundles
+  a lead/opportunity-tracking layer ahead of the shipment lifecycle; CargoDesk's `customers` table
+  was a trading-partner record, not a pipeline. New `opportunities` entity precedes and converts
+  into a Quote, the same way a Quote already precedes and converts into a Shipment — closes a
+  dependency the ticket itself named back when Quoting/RFQ (v0.70.0) hadn't shipped yet.
+- **Lifecycle**: New (editable) → Qualified (editable) → Converted (to Quote, Qualified only) |
+  Lost (from New or Qualified). No separate "Won" status — Converted **is** the win condition;
+  whether the resulting quote then actually closes is that quote's own already-shipped lifecycle
+  to own from there, not re-derived on the opportunity. Deliberately no line-item child table —
+  an opportunity is pre-pricing, real line-item detail belongs on the Quote it converts into.
+  Only `title` is required; customer is captured via the existing `CustomerCombobox` in its
+  already-supported unresolved (name-only, no real `customers` row) state, exactly as Quotes
+  already does — no new "prospect" customer concept anywhere in the schema.
+- **Built entirely from the Quoting/RFQ feature as a structural template** — new
+  `routes/opportunities.js` mirrors `routes/quotes.js`'s route-factory shape and lifecycle-
+  transition pattern; `POST /api/opportunities/:id/convert` mirrors quote→shipment conversion
+  (creates a real Draft quote copying only the fields the opportunity actually has —
+  `contractId`/`contractRef`/`incoterm`/`serviceType`/`cargoReadyDate` have no opportunity
+  equivalent and are left at the quote's own defaults). One deliberate guard worth naming:
+  `estimatedCloseDate` is never written into the new quote's `cargoReadyDate` — "when we expect
+  to close this deal" and "when cargo is ready to ship" are unrelated concepts that happen to
+  both be dates near a quote's creation, and conflating them would silently corrupt the new quote.
+- New `OpportunitiesPage.jsx` mirrors `QuotesPage.jsx` — sidebar places Opportunities directly
+  above Quotes, matching the real funnel order. **Flat table + modal, not a kanban-style pipeline
+  board** — explicitly chosen after confirming no reusable stage/column component exists anywhere
+  in the codebase (`KanbanPage.jsx`'s own board is a single 4358-line file, zero reusable pieces,
+  hardcoded ticket-workflow columns, native HTML5 drag-and-drop) — a genuine drag-and-drop board
+  remains real, valuable, explicitly-scoped future work, not silently deferred.
+- 36 new assertions (`tests/opportunities.test.js`, mirrors `tests/quoting-rfq.test.js`'s shape),
+  covering the full lifecycle including both delete guards (blocked only once Converted, same as
+  Quotes), both Lost-from-New and Lost-from-Qualified paths, and — the most important case — the
+  full opportunity→quote→shipment chain proving the two features compose cleanly rather than just
+  asserting the conversion response shape. `tests/quoting-rfq.test.js` re-confirmed unaffected.
+  Clean build. Verified live end-to-end via CDP in a real browser: created an opportunity with
+  just a title and an unresolved customer name, qualified it, converted it, confirmed the
+  resulting quote opened correctly on the Quotes page.
 
 ## Recent changes (v0.84.0 "Capstone")
 - **Customer/Organization Service extraction (Epic 5)** — the fifth and final planned

@@ -4,7 +4,7 @@ import { api, TOKEN_KEY } from "../api";
 import { VERSION } from "../version";
 import { IconAnchor } from "../components/primitives/Icon";
 
-const LoginPage = ({ onLogin }) => {
+const LoginPage = ({ onLogin, notice }) => {
   const [email,       setEmail]       = useState("");
   const [password,    setPassword]    = useState("");
   const [loading,     setLoading]     = useState(false);
@@ -97,6 +97,16 @@ const LoginPage = ({ onLogin }) => {
             color: T.text, margin: "0 0 24px" }}>
             Sign in
           </h2>
+
+          {notice && (
+            <div style={{
+              padding: "10px 14px", borderRadius: 8, marginBottom: 16,
+              background: T.info + "18", border: `1px solid ${T.info}44`,
+              fontFamily: T.body, fontSize: 13, color: T.info,
+            }}>
+              {notice}
+            </div>
+          )}
 
           {ssoEnabled && (
             <>

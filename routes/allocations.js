@@ -20,30 +20,46 @@ module.exports = function allocationsRoutes(app, ctx) {
   // previously these write routes had no role gate at all.
   const write = requireRole(["admin", "operator", "trade_manager"]);
 
-  // Consumed TEU is the same authoritative, allocationId-scoped definition everywhere it's
-  // shown (this list, /match below, and SpaceConfigurationsPage's own consumption bar/Linked
-  // Shipments modal, which now reads these fields off this response instead of recomputing its
-  // own broader contractId/route-based estimate client-side — those two used to disagree on the
-  // exact same allocation). One batched query rather than one subquery per allocation.
-  function loadConsumedTeuMap() {
+  // Space consumption is split three ways, driven entirely by carrier_bookings.status — the
+  // OPERATOR's own action, not the carrier's raw EDI reply (last_response_status). Only a
+  // Confirmed booking (the operator's explicit Confirm click) actively deducts from available
+  // space; Pending (Created/Pending/no booking row yet) and Rejected are informational buckets,
+  // shown but never subtracted. Cancelled is excluded outright — no live demand left. Same
+  // authoritative, allocationId-scoped definition everywhere it's shown (this list, /match
+  // below, SpaceConfigurationsPage's consumption bar/Linked Shipments modal, ShipmentSchedulesPage's
+  // Space Configuration panel, ShipmentFormPage's Contract Picker card). One batched query
+  // rather than one subquery per allocation.
+  function loadTeuBuckets() {
     const rows = db.prepare(`
-      SELECT s.allocation_id AS allocation_id,
-             COALESCE(SUM(CASE WHEN c.size=20 THEN 1 WHEN c.size IN (40,45) THEN 2 ELSE 0 END), 0) AS consumed_teu
+      SELECT s.allocation_id AS allocation_id, cb.status AS booking_status,
+             COALESCE(SUM(CASE WHEN c.size=20 THEN 1 WHEN c.size IN (40,45) THEN 2 ELSE 0 END), 0) AS teu
       FROM containers c
       JOIN shipments s ON s.id = c.shipment_id
+      LEFT JOIN carrier_bookings cb ON cb.shipment_id = s.id
       WHERE s.allocation_id IS NOT NULL AND s.allocation_id != ''
-      GROUP BY s.allocation_id
+      GROUP BY s.allocation_id, cb.status
     `).all();
-    return new Map(rows.map(r => [r.allocation_id, r.consumed_teu]));
+    const map = new Map();
+    for (const r of rows) {
+      const bucket = map.get(r.allocation_id) || { confirmedTEU: 0, pendingTEU: 0, rejectedTEU: 0 };
+      if (r.booking_status === "Confirmed") bucket.confirmedTEU += r.teu;
+      else if (r.booking_status === "Rejected") bucket.rejectedTEU += r.teu;
+      else if (r.booking_status === "Cancelled") { /* excluded — no live demand left */ }
+      else bucket.pendingTEU += r.teu; // Created, Pending, or no carrier_bookings row yet
+      map.set(r.allocation_id, bucket);
+    }
+    return map;
   }
+  const emptyBuckets = { confirmedTEU: 0, pendingTEU: 0, rejectedTEU: 0 };
 
   app.get("/api/allocations", (req, res) => {
     const rows = db.prepare("SELECT * FROM allocations ORDER BY effective_date DESC").all();
-    const consumedMap = loadConsumedTeuMap();
+    const buckets = loadTeuBuckets();
     ok(res, rows.map(r => {
       const base = mapAllocation(r);
-      const consumedTEU = consumedMap.get(r.id) || 0;
-      return { ...base, consumedTEU, remainingTEU: Math.max(0, base.allocatedTEU - consumedTEU) };
+      const b = buckets.get(r.id) || emptyBuckets;
+      return { ...base, confirmedTEU: b.confirmedTEU, pendingTEU: b.pendingTEU, rejectedTEU: b.rejectedTEU,
+               remainingTEU: Math.max(0, base.allocatedTEU - b.confirmedTEU) };
     }));
   });
 
@@ -65,9 +81,9 @@ module.exports = function allocationsRoutes(app, ctx) {
       .run(id, carrierCode, allocatedTEU, effectiveDate, endDate, tradeLane, notes, alertThreshold, pol.toUpperCase(), pod.toUpperCase(), originLane, destLane, coverageScope, contractId, contractNumber, minTeuVal);
     logEntityEvent('allocation', id, 'CREATED', null, null, null,
       JSON.stringify({ carrierCode, pol: pol.toUpperCase(), pod: pod.toUpperCase(), allocatedTEU, effectiveDate, endDate, contractNumber, minimumTEU: minTeuVal }));
-    // A brand-new allocation always starts at 0 consumed (no shipment could reference this id
-    // yet) — included explicitly so the response shape matches GET's, not left undefined.
-    ok(res, { ...mapAllocation({ id, carrier_code: carrierCode, allocated_teu: allocatedTEU, effective_date: effectiveDate, end_date: endDate, trade_lane: tradeLane, notes, alert_threshold: alertThreshold, pol: pol.toUpperCase(), pod: pod.toUpperCase(), origin_lane: originLane, dest_lane: destLane, coverage_scope: coverageScope, contract_id: contractId, contract_number: contractNumber, minimum_teu: minTeuVal }), consumedTEU: 0, remainingTEU: allocatedTEU }, 201);
+    // A brand-new allocation always starts at 0 in every bucket (no shipment could reference
+    // this id yet) — included explicitly so the response shape matches GET's, not left undefined.
+    ok(res, { ...mapAllocation({ id, carrier_code: carrierCode, allocated_teu: allocatedTEU, effective_date: effectiveDate, end_date: endDate, trade_lane: tradeLane, notes, alert_threshold: alertThreshold, pol: pol.toUpperCase(), pod: pod.toUpperCase(), origin_lane: originLane, dest_lane: destLane, coverage_scope: coverageScope, contract_id: contractId, contract_number: contractNumber, minimum_teu: minTeuVal }), confirmedTEU: 0, pendingTEU: 0, rejectedTEU: 0, remainingTEU: allocatedTEU }, 201);
   });
 
   app.put("/api/allocations/:id", write, (req, res) => {
@@ -88,10 +104,10 @@ module.exports = function allocationsRoutes(app, ctx) {
     logEntityEvent('allocation', req.params.id, 'UPDATED', null, null, null,
       JSON.stringify({ carrierCode, pol: pol.toUpperCase(), pod: pod.toUpperCase(), allocatedTEU, effectiveDate, endDate, contractNumber, minimumTEU: minTeuVal }));
     // Editing an allocation's own fields never changes which shipments reference it — carry the
-    // real current consumedTEU through so the response shape matches GET's (an edit no longer
-    // makes the header row briefly show 0 consumed until the next full reload).
-    const consumedTEU = loadConsumedTeuMap().get(req.params.id) || 0;
-    ok(res, { ...mapAllocation({ id: req.params.id, carrier_code: carrierCode, allocated_teu: allocatedTEU, effective_date: effectiveDate, end_date: endDate, trade_lane: tradeLane, notes, alert_threshold: alertThreshold, pol: pol.toUpperCase(), pod: pod.toUpperCase(), origin_lane: originLane, dest_lane: destLane, contract_id: contractId, contract_number: contractNumber, minimum_teu: minTeuVal }), consumedTEU, remainingTEU: Math.max(0, allocatedTEU - consumedTEU) });
+    // real current buckets through so the response shape matches GET's (an edit no longer makes
+    // the header row briefly show 0 consumed until the next full reload).
+    const b = loadTeuBuckets().get(req.params.id) || emptyBuckets;
+    ok(res, { ...mapAllocation({ id: req.params.id, carrier_code: carrierCode, allocated_teu: allocatedTEU, effective_date: effectiveDate, end_date: endDate, trade_lane: tradeLane, notes, alert_threshold: alertThreshold, pol: pol.toUpperCase(), pod: pod.toUpperCase(), origin_lane: originLane, dest_lane: destLane, contract_id: contractId, contract_number: contractNumber, minimum_teu: minTeuVal }), confirmedTEU: b.confirmedTEU, pendingTEU: b.pendingTEU, rejectedTEU: b.rejectedTEU, remainingTEU: Math.max(0, allocatedTEU - b.confirmedTEU) });
   });
 
   app.delete("/api/allocations/:id", write, (req, res) => {
@@ -126,7 +142,7 @@ module.exports = function allocationsRoutes(app, ctx) {
       AND effective_date <= ? AND end_date >= ?
       ORDER BY effective_date DESC
     `).all(...polAll, ...podAll, etd, etd);
-    const consumedMap = loadConsumedTeuMap();
+    const buckets = loadTeuBuckets();
     const remote = isRemoteContractSource();
     const legsCache = new Map(); // contractId -> legs (row-shaped), fetched at most once per request
     async function contractLegsFor(contractId) {
@@ -150,10 +166,11 @@ module.exports = function allocationsRoutes(app, ctx) {
     }
     const results = passed
       .map(a => {
-        const consumed_teu = consumedMap.get(a.id) || 0;
+        const b = buckets.get(a.id) || emptyBuckets;
         const base      = mapAllocation(a);
         const matchKind = (a.pol === polU && a.pod === podU) ? "exact" : "linked";
-        return { ...base, consumedTEU: consumed_teu, remainingTEU: Math.max(0, base.allocatedTEU - consumed_teu),
+        return { ...base, confirmedTEU: b.confirmedTEU, pendingTEU: b.pendingTEU, rejectedTEU: b.rejectedTEU,
+                 remainingTEU: Math.max(0, base.allocatedTEU - b.confirmedTEU),
                  matchKind, linkedPolVia: a.pol !== polU ? a.pol : null, linkedPodVia: a.pod !== podU ? a.pod : null };
       });
     ok(res, results);

@@ -15,6 +15,7 @@ import { LegsTable } from "./ShipmentFormPage";
 import { IconWarning, IconPackage, IconAnchor } from "../../components/primitives/Icon";
 import { applySailingToLegs as applySailingToLegsShared } from "../../utils/applySailingToLegs";
 import useContractMismatch from "../../hooks/useContractMismatch";
+import ConsumptionBar from "../../components/shared/ConsumptionBar";
 
 // ─── Shipment Schedules Page ──────────────────────────────────────────────
 // Dedicated sub-page for carrier schedule/booking management, promoted out
@@ -210,9 +211,10 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
     return () => { live = false; };
   }, [shipment.id, shipment.contractType, shipment.contractRef]);
 
-  // Linked space configuration — /api/allocations/match already computes consumedTEU/
-  // remainingTEU server-side (same query SpaceConfigurationsPage uses for its consumption
-  // bars), so this just picks the one entry matching shipment.allocationId out of that
+  // Linked space configuration — /api/allocations/match already computes confirmedTEU/
+  // pendingTEU/rejectedTEU/remainingTEU server-side (same query SpaceConfigurationsPage uses
+  // for its consumption bars), so this just picks the one entry matching shipment.allocationId
+  // out of that
   // route/date-scoped result set rather than re-deriving consumption client-side.
   const [linkedAlloc, setLinkedAlloc] = useState(null);
   useEffect(() => {
@@ -332,14 +334,12 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
                 <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted, marginBottom: 8 }}>
                   Valid {linkedAlloc.effectiveDate} → {linkedAlloc.endDate}
                 </div>
-                <div style={{ height: 6, borderRadius: 3, background: T.border, overflow: "hidden", marginBottom: 4 }}>
-                  <div style={{ height: "100%",
-                    width: `${Math.min(100, (linkedAlloc.consumedTEU / linkedAlloc.allocatedTEU) * 100)}%`,
-                    background: (linkedAlloc.consumedTEU / linkedAlloc.allocatedTEU) * 100 >= (linkedAlloc.alertThreshold ?? 80)
-                      ? T.danger : T.accent }} />
-                </div>
-                <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
-                  {linkedAlloc.consumedTEU} / {linkedAlloc.allocatedTEU} TEU consumed ({linkedAlloc.remainingTEU} remaining)
+                <ConsumptionBar allocated={linkedAlloc.allocatedTEU} confirmed={linkedAlloc.confirmedTEU}
+                  pending={linkedAlloc.pendingTEU} rejected={linkedAlloc.rejectedTEU} height={6} width="100%" />
+                <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, marginTop: 4 }}>
+                  {linkedAlloc.confirmedTEU} / {linkedAlloc.allocatedTEU} TEU confirmed ({linkedAlloc.remainingTEU} remaining)
+                  {linkedAlloc.pendingTEU > 0 && <span style={{ color: T.warning }}> · +{linkedAlloc.pendingTEU} pending</span>}
+                  {linkedAlloc.rejectedTEU > 0 && <span style={{ color: T.danger }}> · +{linkedAlloc.rejectedTEU} rejected</span>}
                 </div>
               </div>
             ) : (

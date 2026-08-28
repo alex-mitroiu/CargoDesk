@@ -17,23 +17,58 @@ module.exports = function ediRoutes(app, ctx) {
     for (const ws of subs) { if (ws.readyState === ws.OPEN) ws.send(json); }
   }
 
+  // The full outbound booking-request payload — same source the Review tab's Sent-vs-Received
+  // comparison table diffs against on the "received" side, so every simulated response below
+  // starts from it rather than synthesizing its own thin subset of fields.
+  function getLastOutboundPayload(shipmentId) {
+    const row = db.prepare(
+      "SELECT raw_payload FROM edi_messages WHERE shipment_id=? AND direction='out' ORDER BY created_at DESC LIMIT 1"
+    ).get(shipmentId);
+    if (!row) return {};
+    try { return JSON.parse(row.raw_payload) || {}; } catch { return {}; }
+  }
+
   // Synthetic responses used ONLY by the Test Tools Message Simulator (routes below) —
   // booking-request itself never auto-fabricates a response (this was always simulated;
   // the live Maersk Booking API integration this used to attempt first has been removed,
-  // v0.72.0 — Maersk's developer-tools portal it depended on is obsolete). Deliberately
-  // still two separate outcomes here, not one: the old always-"confirmed" fallback this
-  // replaced meant a rejection could never be tested at all.
+  // v0.72.0 — Maersk's developer-tools portal it depended on is obsolete). Deliberately three
+  // separate outcomes here, not one: the old always-"confirmed" fallback this replaced meant a
+  // rejection could never be tested at all, and a real carrier routinely confirms with a
+  // different vessel/voyage/ETD than what was actually requested — a third genuine outcome,
+  // not something to fold into a plain confirmation or into Pending.
   function simulatedConfirmedResponse(shipment, bookingRefOverride) {
     const ref = bookingRefOverride || `MAEU${uid()}`;
     return {
       status: "confirmed",
       bookingRef: ref,
       raw: {
+        ...getLastOutboundPayload(shipment.id),
         bookingStatus: "CONFIRMED",
         carrierBookingReference: ref,
-        pol: shipment.pol, pod: shipment.pod,
-        vessel: shipment.vessel || null, voyage: shipment.voyage || null,
         note: "Simulated via Test Tools → Message Simulator.",
+      },
+    };
+  }
+  // Carries whatever the carrier actually changed — falls back to the originally requested
+  // value for anything not explicitly overridden, so the Review tab's comparison table only
+  // highlights fields that genuinely differ.
+  function simulatedConfirmedWithChangesResponse(shipment, bookingRefOverride, overrides = {}) {
+    const ref = bookingRefOverride || `MAEU${uid()}`;
+    const sent = getLastOutboundPayload(shipment.id);
+    const changed = {};
+    for (const key of ["vessel", "voyage", "etd", "vesselImo"]) {
+      const v = overrides[key];
+      if (v != null && String(v).trim() !== "") changed[key] = v;
+    }
+    return {
+      status: "confirmed_with_changes",
+      bookingRef: ref,
+      raw: {
+        ...sent,
+        ...changed,
+        bookingStatus: "CONFIRMED_WITH_CHANGES",
+        carrierBookingReference: ref,
+        note: "Simulated via Test Tools → Message Simulator — carrier confirmed with different details.",
       },
     };
   }
@@ -42,8 +77,8 @@ module.exports = function ediRoutes(app, ctx) {
       status: "rejected",
       bookingRef: null,
       raw: {
+        ...getLastOutboundPayload(shipment.id),
         bookingStatus: "REJECTED",
-        pol: shipment.pol, pod: shipment.pod,
         reason: reason || "No space available on requested sailing.",
         note: "Simulated via Test Tools → Message Simulator.",
       },
@@ -57,7 +92,7 @@ module.exports = function ediRoutes(app, ctx) {
   // (server.js) for why. A rejected response has nothing to lock in, so it does.
   function applyBookingResponse(shipment, booking, response, isMock) {
     const inId = `EDI-${uid()}`;
-    const inType = response.status === "confirmed" ? "booking_confirmation" : "booking_reject";
+    const inType = response.status === "rejected" ? "booking_reject" : "booking_confirmation";
     const processedAt = new Date().toISOString();
     db.prepare(`
       INSERT INTO edi_messages
@@ -314,9 +349,9 @@ module.exports = function ediRoutes(app, ctx) {
   app.post("/api/shipments/:id/edi-messages/simulate-response", write, (req, res) => {
     const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
     if (!shipment) return err(res, "Shipment not found", 404);
-    const { outcome, bookingRef, reason } = req.body || {};
-    if (outcome !== "confirmed" && outcome !== "rejected")
-      return err(res, 'outcome must be "confirmed" or "rejected"');
+    const { outcome, bookingRef, reason, vessel, voyage, etd, vesselImo } = req.body || {};
+    if (!["confirmed", "rejected", "confirmed_with_changes"].includes(outcome))
+      return err(res, 'outcome must be "confirmed", "rejected", or "confirmed_with_changes"');
 
     const booking = db.prepare("SELECT * FROM carrier_bookings WHERE shipment_id=?").get(shipment.id);
     if (!booking || booking.status !== "Pending")
@@ -324,6 +359,8 @@ module.exports = function ediRoutes(app, ctx) {
 
     const response = outcome === "confirmed"
       ? simulatedConfirmedResponse(shipment, bookingRef)
+      : outcome === "confirmed_with_changes"
+      ? simulatedConfirmedWithChangesResponse(shipment, bookingRef, { vessel, voyage, etd, vesselImo })
       : simulatedRejectedResponse(shipment, reason);
 
     const { message, booking: updatedBooking } = applyBookingResponse(shipment, booking, response, true);

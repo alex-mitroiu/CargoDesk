@@ -115,7 +115,8 @@ async function login() {
     }, token);
     assert("update returns 200", update.status === 200);
     assert("allocatedTEU updated", update.body.allocatedTEU === 75);
-    assert("consumedTEU/remainingTEU shape carried through", "consumedTEU" in update.body && update.body.remainingTEU === 75);
+    assert("confirmedTEU/pendingTEU/rejectedTEU/remainingTEU shape carried through",
+      "confirmedTEU" in update.body && "pendingTEU" in update.body && "rejectedTEU" in update.body && update.body.remainingTEU === 75);
 
     const updateSelfNoOverlap = await request("PUT", `/api/allocations/${allocId}`, {
       carrierCode: "MAEU", allocatedTEU: 75, effectiveDate: "2026-01-01", endDate: "2026-07-01",
@@ -170,6 +171,81 @@ async function login() {
 
     const matchNoParams = await request("GET", "/api/allocations/match", null, token);
     assert("match with no pol/pod/etd returns an empty array, not an error", matchNoParams.status === 200 && matchNoParams.body.length === 0);
+
+    console.log("\nConfirmed/Pending/Rejected TEU split — only a Confirmed booking deducts");
+    // Each scratch shipment gets one 20' container (1 TEU) and is linked to allocId via
+    // allocationId — loadTeuBuckets groups purely by allocation_id + carrier_bookings.status,
+    // with no pol/pod matching required, so a bare carrierCode is enough here.
+    async function bucketShipment(status) {
+      const s = await request("POST", "/api/shipments", {
+        pol: portA, pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+        etd: "2026-02-01", allocationId: allocId,
+      }, token);
+      const shipmentId = s.body.id;
+      await request("POST", "/api/containers", { shipmentId, size: "20", type: "GP" }, token);
+      if (status === "Confirmed") {
+        await request("PATCH", `/api/shipments/${shipmentId}/carrier-booking/confirm`, { bookingRef: "MAEU-BUCKET-TEST" }, token);
+      } else if (status === "Pending") {
+        await request("POST", `/api/shipments/${shipmentId}/edi-messages/booking-request`, {}, token);
+      } else if (status === "Rejected") {
+        await request("POST", `/api/shipments/${shipmentId}/edi-messages/booking-request`, {}, token);
+        await request("POST", `/api/shipments/${shipmentId}/edi-messages/simulate-response`, { outcome: "rejected" }, token);
+      } else if (status === "Cancelled") {
+        await request("PATCH", `/api/shipments/${shipmentId}/carrier-booking/cancel`, {}, token);
+      }
+      // status === "none" — no booking action at all, so no carrier_bookings row exists.
+      return shipmentId;
+    }
+    const shpConfirmed = await bucketShipment("Confirmed");
+    const shpPending   = await bucketShipment("Pending");
+    const shpRejected  = await bucketShipment("Rejected");
+    const shpCancelled = await bucketShipment("Cancelled");
+    const shpNoBooking = await bucketShipment("none");
+
+    const buckets = await request("GET", "/api/allocations", null, token);
+    const bucketAlloc = buckets.body.find(a => a.id === allocId);
+    assert("confirmedTEU counts only the Confirmed booking's 1 TEU", bucketAlloc?.confirmedTEU === 1, JSON.stringify(bucketAlloc));
+    assert("pendingTEU counts Pending + no-booking-row (2 TEU) — a Created/unsent booking still counts as demand",
+      bucketAlloc?.pendingTEU === 2, JSON.stringify(bucketAlloc));
+    assert("rejectedTEU is its own segment (1 TEU), not folded into pending", bucketAlloc?.rejectedTEU === 1, JSON.stringify(bucketAlloc));
+    assert("Cancelled contributes nothing — excluded entirely, not even to pending",
+      bucketAlloc?.confirmedTEU + bucketAlloc?.pendingTEU + bucketAlloc?.rejectedTEU === 4);
+    assert("remainingTEU deducts only the Confirmed booking (75 - 1 = 74)", bucketAlloc?.remainingTEU === 74, JSON.stringify(bucketAlloc));
+
+    const bucketMatch = await request("GET", `/api/allocations/match?pol=${portA}&pod=USNYC&etd=2026-02-15`, null, token);
+    const bucketMatchAlloc = bucketMatch.body.find(a => a.id === allocId);
+    assert("GET /api/allocations/match reports the identical bucket split", bucketMatchAlloc?.confirmedTEU === 1 &&
+      bucketMatchAlloc?.pendingTEU === 2 && bucketMatchAlloc?.rejectedTEU === 1);
+
+    console.log("\nOverflow — Pending demand can exceed allocated capacity, uncapped, no crash");
+    const overflowAlloc = await request("POST", "/api/allocations", {
+      carrierCode: "MAEU", allocatedTEU: 1, effectiveDate: "2026-01-01", endDate: "2026-06-01",
+      pol: portB, pod: "USNYC", contractId,
+    }, token);
+    const overflowAllocId = overflowAlloc.body.id;
+    async function overflowShipment() {
+      const s = await request("POST", "/api/shipments", {
+        pol: portB, pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+        etd: "2026-02-01", allocationId: overflowAllocId,
+      }, token);
+      await request("POST", "/api/containers", { shipmentId: s.body.id, size: "20", type: "GP" }, token);
+      await request("POST", `/api/shipments/${s.body.id}/edi-messages/booking-request`, {}, token);
+      return s.body.id;
+    }
+    const shpOverflow1 = await overflowShipment();
+    const shpOverflow2 = await overflowShipment();
+    const overflowCheck = await request("GET", "/api/allocations", null, token);
+    const overflowResult = overflowCheck.body.find(a => a.id === overflowAllocId);
+    assert("pendingTEU reports the true uncapped sum (2) even though it exceeds allocatedTEU (1)",
+      overflowResult?.pendingTEU === 2, JSON.stringify(overflowResult));
+    assert("remainingTEU still floors at a sane value (no negative) — only confirmed (0) is deducted",
+      overflowResult?.remainingTEU === 1, JSON.stringify(overflowResult));
+
+    console.log("\nBucket-test cleanup");
+    for (const id of [shpConfirmed, shpPending, shpRejected, shpCancelled, shpNoBooking, shpOverflow1, shpOverflow2]) {
+      await request("DELETE", `/api/shipments/${id}`, null, token);
+    }
+    await request("DELETE", `/api/allocations/${overflowAllocId}`, null, token);
 
     console.log("\nDelete — 404 on second attempt");
     const del = await request("DELETE", `/api/allocations/${allocId}`, null, token);

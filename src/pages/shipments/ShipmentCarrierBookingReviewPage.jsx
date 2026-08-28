@@ -10,6 +10,73 @@ import EdiMessageList, { EDI_STATUS_COLOR } from "../../components/shared/EdiMes
 import CarrierBookingsTable from "../../components/shared/CarrierBookingsTable";
 import { IconCheck, IconClose, IconAnchor, IconFile } from "../../components/primitives/Icon";
 
+// Sent vs. Received comparison — same ordered field list the booking-request payload itself
+// is built from (routes/edi.js), so every field the operator actually sent has a row here,
+// not just the handful a carrier response happens to touch.
+const BOOKING_COMPARISON_FIELDS = [
+  ["pol", "POL"], ["pod", "POD"], ["carrierCode", "Carrier"], ["etd", "ETD"],
+  ["vessel", "Vessel"], ["voyage", "Voyage"], ["vesselImo", "Vessel IMO"],
+  ["contractType", "Contract Type"], ["contractRef", "Contract Ref"],
+  ["cargoReadyDate", "Cargo Ready Date"], ["placeOfReceipt", "Place of Receipt"],
+  ["placeOfDelivery", "Place of Delivery"], ["shipperName", "Shipper"],
+  ["consigneeName", "Consignee"], ["notifyName", "Notify Party"],
+  ["commodityCode", "Commodity Code"], ["containerCount", "Container Count"],
+];
+
+const fmtCompareVal = v => (v == null || v === "" ? "—" : String(v));
+
+// Diffs the outbound booking-request payload against the newest inbound carrier response —
+// both already fetched on this page (api.ediMessages.list), so this needs no new endpoint.
+// Falls back gracefully to nothing when either side's raw_payload isn't valid JSON (e.g. an
+// EDI message saved before this feature shipped).
+function buildComparisonRows(outboundMessage, inboundMessage) {
+  if (!outboundMessage || !inboundMessage) return [];
+  let sent, received;
+  try { sent = JSON.parse(outboundMessage.rawPayload || "{}"); } catch { sent = {}; }
+  try { received = JSON.parse(inboundMessage.rawPayload || "{}"); } catch { received = {}; }
+  return BOOKING_COMPARISON_FIELDS.map(([key, label]) => {
+    const sentVal = sent[key];
+    const receivedVal = key in received ? received[key] : sentVal;
+    return { key, label, sentVal, receivedVal, differs: fmtCompareVal(sentVal) !== fmtCompareVal(receivedVal) };
+  });
+}
+
+// Row-by-row Sent/Received comparison table, styled on the Equipment-table grid pattern
+// (ShipmentCarrierBookingDetailsPage.jsx) — mono uppercase header row + repeated grid data
+// rows sharing the same column template.
+const BookingComparisonTable = ({ outboundMessage, inboundMessage }) => {
+  const rows = buildComparisonRows(outboundMessage, inboundMessage);
+  if (rows.length === 0) return null;
+  const tmpl = "160px 1fr 1fr";
+  return (
+    <div style={{ marginBottom: 24 }}>
+      <h3 style={{ fontFamily: T.head, fontSize: 14, fontWeight: 700, color: T.text, marginBottom: 12 }}>
+        Sent vs. Received
+      </h3>
+      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, overflow: "hidden" }}>
+        <div style={{ display: "grid", gridTemplateColumns: tmpl, padding: "8px 16px",
+          borderBottom: `1px solid ${T.border}`, background: T.bg }}>
+          {["Field", "Sent", "Received"].map(h => (
+            <div key={h} style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: T.textMuted,
+              textTransform: "uppercase", letterSpacing: ".06em" }}>{h}</div>
+          ))}
+        </div>
+        {rows.map(r => (
+          <div key={r.key} style={{ display: "grid", gridTemplateColumns: tmpl, padding: "9px 16px",
+            borderBottom: `1px solid ${T.border}22`, alignItems: "center",
+            borderLeft: r.differs ? `3px solid ${T.warning}` : "3px solid transparent",
+            background: r.differs ? T.warning + "0c" : "transparent" }}>
+            <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>{r.label}</div>
+            <div style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>{fmtCompareVal(r.sentVal)}</div>
+            <div style={{ fontFamily: T.mono, fontSize: 12, color: r.differs ? T.warning : T.text,
+              fontWeight: r.differs ? 700 : 400 }}>{fmtCompareVal(r.receivedVal)}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
 // ─── Carrier Booking — Review ─────────────────────────────────────────────────
 // The inbound half: the carrier's response (real or Test-Tools-simulated) plus the
 // full bidirectional message thread, and the Confirm/Cancel actions. A confirmed
@@ -79,6 +146,8 @@ const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
   const canCancel  = canEdit && status !== "Cancelled";
   const willNotifyCarrier = (bookableCarriers || []).includes(shipment.carrierCode) && !!booking?.correlationId;
   const latestInbound = messages.filter(m => m.direction === "in")
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] || null;
+  const outboundMessage = messages.filter(m => m.direction === "out")
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] || null;
 
   const openConfirm = () => setConfirmModal({ bookingRef: booking?.bookingRef || "", note: "" });
@@ -190,6 +259,8 @@ const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
           </div>
         )}
       </div>
+
+      <BookingComparisonTable outboundMessage={outboundMessage} inboundMessage={latestInbound} />
 
       <h3 style={{ fontFamily: T.head, fontSize: 14, fontWeight: 700, color: T.text, marginBottom: 12 }}>
         Message Thread

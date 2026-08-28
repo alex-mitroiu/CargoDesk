@@ -20,6 +20,7 @@ import { ContainerTypeField } from "../../components/shared/ContainerTypePickerM
 import SailingPickerModal from "../../components/shared/SailingPickerModal";
 import { IconClose, IconWarning, IconPackage, IconPencil, IconCheck, IconRefresh, IconLock, IconAnchor, IconShip } from "../../components/primitives/Icon";
 import { GPS_LOC_TYPE, formatLegPoint } from "../../utils/legLocation";
+import ConsumptionBar from "../../components/shared/ConsumptionBar";
 
 // ─── Draft Container Manager ──────────────────────────────────────────────────
 
@@ -145,7 +146,6 @@ export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0
   const fmtUsd   = v => `$${Math.round(v).toLocaleString("en-US")}`;
 
   const renderAllocCard = alloc => {
-    const pct     = alloc.allocatedTEU > 0 ? Math.round((alloc.consumedTEU / alloc.allocatedTEU) * 100) : 0;
     const overage = shipmentTEU > 0 && shipmentTEU > alloc.remainingTEU;
     const reason  = overageReasons[alloc.id] || "";
     const canSelect = !overage || !!reason;
@@ -164,13 +164,13 @@ export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0
         <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
           <div style={{ display: "flex", gap: 14, fontFamily: T.mono, fontSize: 11, flexWrap: "wrap" }}>
             <span style={{ color: T.text, fontWeight: 600 }}>{alloc.allocatedTEU} TEU allocated</span>
-            <span style={{ color: T.textMuted }}>{alloc.consumedTEU} consumed</span>
+            <span style={{ color: T.textMuted }}>{alloc.confirmedTEU} confirmed</span>
+            {alloc.pendingTEU > 0 && <span style={{ color: T.warning }}>{alloc.pendingTEU} pending</span>}
+            {alloc.rejectedTEU > 0 && <span style={{ color: T.danger }}>{alloc.rejectedTEU} rejected</span>}
             <span style={{ color: alloc.remainingTEU > 0 ? T.success : T.danger, fontWeight: 700 }}>{alloc.remainingTEU} remaining</span>
           </div>
-          <div style={{ height: 6, borderRadius: 3, background: T.border + "88", overflow: "hidden" }}>
-            <div style={{ height: "100%", borderRadius: 3, width: `${Math.min(100, pct)}%`,
-              background: pct >= 100 ? T.danger : pct >= alloc.alertThreshold ? T.warning : T.success }} />
-          </div>
+          <ConsumptionBar allocated={alloc.allocatedTEU} confirmed={alloc.confirmedTEU}
+            pending={alloc.pendingTEU} rejected={alloc.rejectedTEU} height={6} width="100%" />
         </div>
         {overage && (
           <div style={{ background: T.warning + "15", border: `1px solid ${T.warning}55`, borderRadius: 6, padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8 }}>

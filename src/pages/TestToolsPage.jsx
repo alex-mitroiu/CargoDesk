@@ -62,6 +62,9 @@ const TestToolsPage = ({ navigate }) => {
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [bookingRefInput, setBookingRefInput] = useState("");
   const [reasonInput,     setReasonInput]     = useState("");
+  const [changeVesselInput, setChangeVesselInput] = useState("");
+  const [changeVoyageInput, setChangeVoyageInput] = useState("");
+  const [changeEtdInput,    setChangeEtdInput]    = useState("");
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(() => {
@@ -82,6 +85,9 @@ const TestToolsPage = ({ navigate }) => {
     setSelected(row);
     setBookingRefInput("");
     setReasonInput("");
+    setChangeVesselInput("");
+    setChangeVoyageInput("");
+    setChangeEtdInput("");
     loadThread(row.shipmentId);
   };
 
@@ -93,6 +99,9 @@ const TestToolsPage = ({ navigate }) => {
         outcome,
         bookingRef: outcome === "confirmed" ? (bookingRefInput.trim() || undefined) : undefined,
         reason:     outcome === "rejected"  ? (reasonInput.trim()     || undefined) : undefined,
+        vessel:     outcome === "confirmed_with_changes" ? (changeVesselInput.trim() || undefined) : undefined,
+        voyage:     outcome === "confirmed_with_changes" ? (changeVoyageInput.trim() || undefined) : undefined,
+        etd:        outcome === "confirmed_with_changes" ? (changeEtdInput.trim()    || undefined) : undefined,
       });
       toast.success(`Simulated ${outcome} response`);
       const [freshBooking] = await Promise.all([
@@ -503,6 +512,22 @@ const TestToolsPage = ({ navigate }) => {
                           style={{ ...inputStyle, fontFamily: T.mono, marginBottom: 8 }} />
                         <Btn size="sm" onClick={() => simulate("confirmed")} disabled={busy}>
                           <IconCheck size={12} /> Simulate Confirmed
+                        </Btn>
+                      </div>
+                      <div style={{ flex: 1, minWidth: 220 }}>
+                        <label style={label}>
+                          Proposed Vessel / Voyage / ETD (optional — carrier confirms with different details)
+                        </label>
+                        <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+                          <input value={changeVesselInput} onChange={e => setChangeVesselInput(e.target.value)}
+                            placeholder="Vessel" style={{ ...inputStyle, fontFamily: T.mono }} />
+                          <input value={changeVoyageInput} onChange={e => setChangeVoyageInput(e.target.value)}
+                            placeholder="Voyage" style={{ ...inputStyle, fontFamily: T.mono }} />
+                          <input value={changeEtdInput} onChange={e => setChangeEtdInput(e.target.value)}
+                            placeholder="ETD" style={{ ...inputStyle, fontFamily: T.mono }} />
+                        </div>
+                        <Btn size="sm" variant="secondary" onClick={() => simulate("confirmed_with_changes")} disabled={busy}>
+                          <IconCheck size={12} /> Simulate Confirmed (Changes)
                         </Btn>
                       </div>
                       <div style={{ flex: 1, minWidth: 220 }}>

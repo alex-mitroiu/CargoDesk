@@ -1,0 +1,8 @@
+# Static values read once at server boot (lib/staticConfig.js) — deliberately NOT exposed
+# through the in-app Settings UI, unlike app_settings (the DB-backed, runtime-editable table).
+# Changing a value here requires a code deploy + server restart, not just a Settings save.
+
+session:
+  # Minutes of no user activity, across every open tab, before the operator is auto-logged-out
+  # and redirected to the login screen. See src/hooks/useIdleLogout.js.
+  idleTimeoutMinutes: 30

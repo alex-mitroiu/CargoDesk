@@ -217,12 +217,14 @@ async function login() {
       }, token);
       assert("valid minimumTEU accepted", good.status === 201, JSON.stringify(good.body));
       assert("minimumTEU round-trips", good.body.minimumTEU === 20);
-      assert("a brand-new allocation reports 0 consumed (shape matches GET)", good.body.consumedTEU === 0);
+      assert("a brand-new allocation reports 0 in every bucket (shape matches GET)",
+        good.body.confirmedTEU === 0 && good.body.pendingTEU === 0 && good.body.rejectedTEU === 0);
       allocationId = good.body.id;
 
       const list = await request("GET", "/api/allocations", null, token);
       const listed = list.body.find(a => a.id === allocationId);
-      assert("GET /api/allocations includes the same consumedTEU/remainingTEU shape", listed && listed.consumedTEU === 0 && listed.remainingTEU === 50);
+      assert("GET /api/allocations includes the same confirmedTEU/pendingTEU/rejectedTEU/remainingTEU shape",
+        listed && listed.confirmedTEU === 0 && listed.remainingTEU === 50);
     }
 
     console.log("\nCleanup");

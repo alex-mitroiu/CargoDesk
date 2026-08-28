@@ -649,6 +649,16 @@ export const api = {
     decline: (id, data)  => req("POST",   `/quotes/${id}/decline`, data),
     convert: (id)        => req("POST",   `/quotes/${id}/convert`),
   },
+  opportunities: {
+    list:    (p = {})    => req("GET",    `/opportunities?${new URLSearchParams(p)}`),
+    get:     (id)        => req("GET",    `/opportunities/${id}`),
+    create:  (data)      => req("POST",   "/opportunities", data),
+    update:  (id, data)  => req("PUT",    `/opportunities/${id}`, data),
+    remove:  (id)        => req("DELETE", `/opportunities/${id}`),
+    qualify: (id)        => req("POST",   `/opportunities/${id}/qualify`),
+    lose:    (id, data)  => req("POST",   `/opportunities/${id}/lose`, data),
+    convert: (id)        => req("POST",   `/opportunities/${id}/convert`),
+  },
   offices: {
     list:           ()               => req("GET",    "/offices"),
     create:         (data)           => req("POST",   "/offices", data),

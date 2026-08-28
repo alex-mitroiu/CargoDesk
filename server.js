@@ -21,6 +21,7 @@ const { createMappers } = require("./lib/mappers");
 const { readSecret } = require("./lib/dockerSecret");
 const { createRateLimiter } = require("./lib/rateLimit");
 const { addBusinessDays, businessDaysBetween } = require("./lib/business-days");
+const staticConfig = require("./lib/staticConfig");
 
 const JWT_DEV_DEFAULT = "cargoDesk-dev-secret-do-not-use-in-prod";
 const JWT_SECRET = readSecret("JWT_SECRET", JWT_DEV_DEFAULT);
@@ -1663,6 +1664,41 @@ const migrations = [
   )`,
   "CREATE INDEX IF NOT EXISTS idx_carrier_invoices_shipment ON carrier_invoices(shipment_id)",
   "CREATE INDEX IF NOT EXISTS idx_carrier_invoice_lines_invoice ON carrier_invoice_lines(invoice_id)",
+  // CRM / pre-sales pipeline (TKT-WW8THL, Epic TKT-GTGM6R) — precedes and converts into a quote,
+  // the same way a quote precedes and converts into a shipment. Lifecycle: New -> Qualified ->
+  // Converted (to Quote, Qualified only) | Lost (from New or Qualified). Deliberately no line-item
+  // child table — an opportunity is pre-pricing; real line-item detail belongs on the Quote it
+  // converts into. estimated_value_usd is resolved once via toUsd() at write time, same idiom as
+  // quote_lines.amount_usd/contract_rates.amount_usd.
+  `CREATE TABLE IF NOT EXISTS opportunities (
+    id TEXT PRIMARY KEY,
+    status TEXT NOT NULL DEFAULT 'New',
+    title TEXT DEFAULT '',
+    customer_id TEXT DEFAULT '',
+    customer_name TEXT DEFAULT '',
+    pol TEXT DEFAULT '',
+    pod TEXT DEFAULT '',
+    carrier_code TEXT DEFAULT '',
+    commodity_code TEXT DEFAULT '',
+    movement_type TEXT DEFAULT 'FCL',
+    estimated_value REAL DEFAULT 0,
+    currency TEXT DEFAULT 'USD',
+    estimated_value_usd REAL DEFAULT 0,
+    estimated_close_date TEXT DEFAULT '',
+    lead_source TEXT DEFAULT '',
+    assignee_id TEXT DEFAULT '',
+    notes TEXT DEFAULT '',
+    qualified_at TEXT DEFAULT '',
+    lost_at TEXT DEFAULT '',
+    lost_reason TEXT DEFAULT '',
+    converted_quote_id TEXT DEFAULT '',
+    converted_at TEXT DEFAULT '',
+    created_at TEXT NOT NULL,
+    created_by TEXT DEFAULT ''
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_opportunities_status ON opportunities(status)",
+  "CREATE INDEX IF NOT EXISTS idx_opportunities_customer ON opportunities(customer_id)",
+  "CREATE INDEX IF NOT EXISTS idx_opportunities_assignee ON opportunities(assignee_id)",
   // Quoting / RFQ pre-booking stage — every competitor platform researched (CargoWise, Magaya,
   // Descartes, Flexport, Freightos) treats a quote as a distinct object that precedes and
   // converts into a booking; CargoDesk previously had none (POST /api/shipments created a live
@@ -2332,9 +2368,13 @@ const shipmentSubs = new Map();
 // ─── App Settings ─────────────────────────────────────────────────────────────
 
 function getSettings() {
+  // idleTimeoutMinutes comes from config/app-settings.yaml (lib/staticConfig.js), not the
+  // app_settings table — deliberately static/code-deploy config, not a runtime Settings toggle.
+  // Merged into the same flat response so the frontend needs no second fetch for it.
   try {
-    return Object.fromEntries(db.prepare("SELECT key, value FROM app_settings").all().map(r => [r.key, r.value]));
-  } catch { return {}; }
+    const dbSettings = Object.fromEntries(db.prepare("SELECT key, value FROM app_settings").all().map(r => [r.key, r.value]));
+    return { ...dbSettings, idleTimeoutMinutes: String(staticConfig.session.idleTimeoutMinutes) };
+  } catch { return { idleTimeoutMinutes: String(staticConfig.session.idleTimeoutMinutes) }; }
 }
 
 // Seed defaults (INSERT OR IGNORE — never overwrite saved user choices)
@@ -3666,7 +3706,7 @@ const {
   mapKbColumn, mapCustomer, mapCustomerIdentifier, mapCustomerScreening, mapCustomerDoc,
   mapCustomerContact, mapCommodity, mapSystemMessage, mapMilestone, mapMilestoneTemplate,
   mapContract, mapLeg, mapRate, mapContractRouting, mapCarrierInvoice, mapCarrierInvoiceLine,
-  mapQuote, mapQuoteLine,
+  mapQuote, mapQuoteLine, mapOpportunity,
   mapInvoiceReasonCode, mapInvoiceStatusOverride,
   mapEadapterConfig,
 } = createMappers({ portLanesMap, CUTOFF_WARNING_DAYS });
@@ -4584,7 +4624,7 @@ const ctx = {
   mapCustomer, mapCustomerIdentifier, mapCustomerScreening, mapCustomerDoc, mapCustomerContact,
   mapCommodity, mapSystemMessage, mapMilestone, mapMilestoneTemplate,
   mapContract, mapLeg, mapRate, mapContractRouting, mapCarrierInvoice, mapCarrierInvoiceLine,
-  mapQuote, mapQuoteLine,
+  mapQuote, mapQuoteLine, mapOpportunity,
   mapInvoiceReasonCode, mapInvoiceStatusOverride,
   resolveInvoiceThresholds, runInvoiceCollectionsSweep, addBusinessDays, businessDaysBetween,
   logEvent, logEntityEvent, logAdminEvent, TRACKED_FIELDS, TRACKED_CTR_FIELDS,
@@ -4630,6 +4670,7 @@ require('./routes/contracts')(app, ctx);
 require('./routes/shipment-ops')(app, ctx);
 require('./routes/carrier-invoices')(app, ctx);
 require('./routes/quotes')(app, ctx);
+require('./routes/opportunities')(app, ctx);
 require('./routes/finance')(app, ctx);
 require('./routes/reports')(app, ctx);
 require('./routes/command-center')(app, ctx);
