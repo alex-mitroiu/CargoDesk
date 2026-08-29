@@ -5,9 +5,12 @@
 [![CI](https://github.com/alex-mitroiu/CargoDesk/actions/workflows/ci.yml/badge.svg)](https://github.com/alex-mitroiu/CargoDesk/actions/workflows/ci.yml)
 [![Version](https://img.shields.io/badge/version-0.86.0-blue)](.)
 ![Node](https://img.shields.io/badge/node-22.5%2B-green)
-![License](https://img.shields.io/badge/license-proprietary-lightgrey)
+![License](https://img.shields.io/badge/license-custom-lightgrey)
 
-All rights reserved. This software is proprietary; see [LICENSE](LICENSE) for terms.
+Free for personal and internal non-commercial use. Commercial use — including
+offering it as a service or reselling it — requires a separate written
+license from the copyright holder. See [LICENSE](LICENSE) and the in-app
+End-User License Agreement for full terms.
 
 ---
 

@@ -1,18 +1,37 @@
-Copyright (c) 2026 Alex Mitroiu. All rights reserved.
+Copyright (c) 2026 CargoDesk. All rights reserved.
 
-This software and associated documentation files (the "Software") are the
-proprietary property of the copyright holder. No license, express or implied,
-to use, copy, modify, merge, publish, distribute, sublicense, sell, or
-otherwise exploit copies of the Software, in whole or in part, is granted
-except by prior written agreement with the copyright holder.
+CargoDesk is licensed, not sold. This file is a summary of the governing
+terms; the complete, authoritative agreement is the End-User License
+Agreement ("EULA") presented within the application itself (the in-app
+"License & Terms" page, src/pages/LicensePage.jsx) and accepted by every
+user on first use. If this file and the in-app EULA ever conflict, the
+in-app EULA controls.
 
-Unauthorized copying, modification, distribution, or use of this Software,
-via any medium, is strictly prohibited.
+SUMMARY OF TERMS (see the in-app EULA for the full agreement, including
+definitions, warranty disclaimer, liability limits, and termination terms):
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+  1. Non-Commercial Use is free. This includes personal projects, academic
+     research, internal evaluation, and open-source contributions.
+
+  2. Commercial Use requires a separate written license obtained in advance
+     from the copyright holder. Commercial Use includes, without limitation,
+     deployment within a for-profit organization's own operations, offering
+     the Software as a service (SaaS) or managed service, embedding it in a
+     commercial product, or using it to support billable client work.
+
+  3. Without a written commercial license, you may not: sell, sublicense,
+     rent, lease, or otherwise transfer the Software or any rights in it to
+     a third party; represent the Software as your own product or creation;
+     remove or obscure any proprietary notices; or deploy the Software as
+     part of a managed service offering.
+
+  4. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+     OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+     MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND
+     NONINFRINGEMENT. IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR
+     ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM, OUT OF, OR IN
+     CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+     SOFTWARE.
+
+To inquire about commercial licensing, contact the copyright holder via the
+project's repository.
