@@ -2,6 +2,7 @@
   "name": "contract-management-service",
   "version": "0.1.0",
   "private": true,
+  "license": "UNLICENSED",
   "description": "CargoDesk's third extracted microservice — owns contracts/contract_legs/contract_rates/contract_routings as a standalone alternative to the monolith's own in-process implementation, selected at runtime via the app_settings.contract_source toggle (local|remote). Called only by the monolith (routes/contracts.js's remote branch), never by the browser directly. Resolved dependencies (express) are hoisted from the repo root's node_modules — no separate install step.",
   "main": "server.js",
   "scripts": {

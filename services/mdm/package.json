@@ -2,6 +2,7 @@
   "name": "mdm-service",
   "version": "0.1.0",
   "private": true,
+  "license": "UNLICENSED",
   "description": "CargoDesk MDM (Master Data Management) Service — carriers, vessels, ports, linked ports, trade lanes, country-lane assignments, regions, countries, commodities, and carrier line agents. Called only by the monolith over an internal, secret-gated HTTP API (see server.js's own /internal gate) — never exposed to the browser. Resolved dependencies (express) are hoisted from the repo root's node_modules — no separate install step.",
   "main": "server.js",
   "scripts": {

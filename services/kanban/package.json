@@ -2,6 +2,7 @@
   "name": "kanban-service",
   "version": "0.1.0",
   "private": true,
+  "license": "UNLICENSED",
   "description": "CargoDesk Kanban/Testing Service — tickets, ticket_links, test_items, test_case_links, kb_projects, kb_versions, kb_columns. Called only by the monolith over an internal, secret-gated HTTP API (see server.js's own /internal gate) — never exposed to the browser. Resolved dependencies (express) are hoisted from the repo root's node_modules — no separate install step.",
   "main": "server.js",
   "scripts": {

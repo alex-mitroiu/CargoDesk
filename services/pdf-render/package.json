@@ -2,6 +2,7 @@
   "name": "pdf-render-service",
   "version": "0.1.0",
   "private": true,
+  "license": "UNLICENSED",
   "description": "CargoDesk's second extracted microservice — renders self-contained HTML into a raw PDF buffer via a real installed browser (Puppeteer). Stateless, no database. Called only by the monolith (lib/pdf-signing.js), which still owns cert lookup + signing itself — the signing key never leaves the monolith. Resolved dependencies (express, puppeteer-core) are hoisted from the repo root's node_modules — no separate install step, matching services/document-distribution's own convention.",
   "main": "server.js",
   "scripts": {

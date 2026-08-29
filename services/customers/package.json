@@ -2,6 +2,7 @@
   "name": "customers-service",
   "version": "0.1.0",
   "private": true,
+  "license": "UNLICENSED",
   "description": "CargoDesk Customer/Organization Service — customers, customer_identifiers, customer_screenings, customer_contacts (customer_documents and customer_roles are deliberately NOT owned by this service — see its server.js header). Called only by the monolith over an internal, secret-gated HTTP API (see server.js's own /internal gate) — never exposed to the browser. Resolved dependencies (express) are hoisted from the repo root's node_modules — no separate install step.",
   "main": "server.js",
   "scripts": {
