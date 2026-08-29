@@ -15,7 +15,8 @@ import CarrierCombobox from "../components/shared/CarrierCombobox";
 import CustomerCombobox from "../components/shared/CustomerCombobox";
 import PortField from "../components/shared/PortField";
 import { CommodityCombobox } from "../components/shared/CommodityCombobox";
-import { IconFlag } from "../components/primitives/Icon";
+import { IconFlag, IconEye, IconClose } from "../components/primitives/Icon";
+import ActionMenu from "../components/primitives/ActionMenu";
 
 // ─── CRM / pre-sales pipeline ────────────────────────────────────────────────
 // An opportunity is a lead-tracking record that precedes and converts into a Quote — New (freely
@@ -300,8 +301,11 @@ const OpportunitiesPage = ({ navigate }) => {
                   <td onClick={() => setDetailId(o.id)} style={{ padding: "10px 8px", cursor: "pointer" }}>{o.estimatedCloseDate || "—"}</td>
                   <td onClick={() => setDetailId(o.id)} style={{ padding: "10px 8px", cursor: "pointer" }}>{o.assigneeName || "—"}</td>
                   <td onClick={() => setDetailId(o.id)} style={{ padding: "10px 8px", cursor: "pointer" }}><Badge variant={STATUS_VARIANT[o.status] || "default"}>{o.status}</Badge></td>
-                  <td style={{ padding: "10px 8px", textAlign: "right" }}>
-                    <Btn size="sm" variant="ghost" onClick={() => setConfirmDeleteId(o.id)}>Delete</Btn>
+                  <td style={{ padding: "10px 8px", textAlign: "right" }} onClick={e => e.stopPropagation()}>
+                    <ActionMenu items={[
+                      { icon: IconEye,   label: "Open",   onClick: () => setDetailId(o.id) },
+                      { icon: IconClose, label: "Delete", variant: "danger", onClick: () => setConfirmDeleteId(o.id) },
+                    ]} />
                   </td>
                 </tr>
               ))}

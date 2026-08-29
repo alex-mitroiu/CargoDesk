@@ -7,6 +7,7 @@ import Btn from "../../components/primitives/Btn";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
 import { Inp, Textarea } from "../../components/primitives/Form";
 import ActionMenu from "../../components/primitives/ActionMenu";
+import { IconPencil, IconClose } from "../../components/primitives/Icon";
 import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns.jsx";
 
 // ─── MDM Locations: Regions Page ──────────────────────────────────────────────
@@ -95,8 +96,8 @@ const MdmRegionsPage = () => {
             <span style={{ fontFamily: T.mono, fontSize: 13, color: T.text, fontWeight: 600 }}>{r.portCount.toLocaleString()}</span>
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <ActionMenu items={[
-                ...(canManageMdm ? [{ icon: "✎", label: "Edit",   onClick: () => setModal(r) }] : []),
-                ...(canManageMdm ? [{ icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(r.code) }] : []),
+                ...(canManageMdm ? [{ icon: IconPencil, label: "Edit",   onClick: () => setModal(r) }] : []),
+                ...(canManageMdm ? [{ icon: IconClose, label: "Delete", variant: "danger", onClick: () => setConfirm(r.code) }] : []),
               ]} />
             </div>
           </div>

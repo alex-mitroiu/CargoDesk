@@ -10,6 +10,7 @@ import { Modal, ConfirmModal } from "../../components/primitives/Modal";
 import Pagination from "../../components/primitives/Pagination";
 import PageSizeSelect, { getStoredPageSize } from "../../components/primitives/PageSizeSelect";
 import ActionMenu from "../../components/primitives/ActionMenu";
+import { IconPencil, IconClose } from "../../components/primitives/Icon";
 import { inputBase, Inp, Sel, Field } from "../../components/primitives/Form";
 import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns.jsx";
 
@@ -150,8 +151,8 @@ const MdmPortLocationsPage = () => {
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <ActionMenu items={[
                 ...(p.latitude && p.longitude ? [{ icon: "📍", label: "Open Map", onClick: () => window.open(`https://www.google.com/maps/search/?api=1&query=${p.latitude}%2C${p.longitude}`, "_blank") }] : []),
-                ...(canManageMdm ? [{ icon: "✎", label: "Edit",   onClick: () => setModal(p) }] : []),
-                ...(canManageMdm ? [{ icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(p.unlocode) }] : []),
+                ...(canManageMdm ? [{ icon: IconPencil, label: "Edit",   onClick: () => setModal(p) }] : []),
+                ...(canManageMdm ? [{ icon: IconClose, label: "Delete", variant: "danger", onClick: () => setConfirm(p.unlocode) }] : []),
               ]} />
             </div>
           </div>
@@ -161,7 +162,7 @@ const MdmPortLocationsPage = () => {
       {/* Pagination — was rendered twice here before this pass (a pre-existing duplicate, since
           Pagination silently no-ops when not needed rather than visibly erroring); collapsed to
           one, paired with the new page-size dropdown. */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+      <div style={{ marginTop: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
         <PageSizeSelect value={limit} onChange={changeLimit} />
         <div style={{ flex: 1 }}><Pagination total={total} offset={offset} limit={limit} onPage={goPage} /></div>
       </div>

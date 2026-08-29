@@ -8,6 +8,7 @@ import Badge from "../../components/primitives/Badge";
 import { Inp, Field, Textarea } from "../../components/primitives/Form";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
 import ActionMenu from "../../components/primitives/ActionMenu";
+import { IconPencil, IconClose } from "../../components/primitives/Icon";
 
 // ─── Container Types registry (Equipment) ────────────────────────────────────
 // Admin-maintained reference list of equipment (20ft Dry, 40ft High Cube, ...) — same
@@ -134,8 +135,8 @@ const MdmContainerTypesPage = () => {
             <span style={{ fontFamily: T.mono, fontSize: 13, color: T.textMuted }}>{d.sortOrder}</span>
             <Badge variant={d.isActive ? "success" : "default"}>{d.isActive ? "Active" : "Inactive"}</Badge>
             <ActionMenu items={[
-              ...(canManageConfigs ? [{ icon: "✎", label: "Edit", onClick: () => setModal(d) }] : []),
-              ...(canManageConfigs ? [{ icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(d) }] : []),
+              ...(canManageConfigs ? [{ icon: IconPencil, label: "Edit", onClick: () => setModal(d) }] : []),
+              ...(canManageConfigs ? [{ icon: IconClose, label: "Delete", variant: "danger", onClick: () => setConfirm(d) }] : []),
             ]} />
           </div>
         ))}

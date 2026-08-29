@@ -8,6 +8,7 @@ import { inputBase,BtnToggle, Field, Inp} from "../../components/primitives/Form
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
 import CountryCombobox from "../../components/shared/CountryCombobox";
 import ActionMenu from "../../components/primitives/ActionMenu";
+import { IconPencil, IconClose } from "../../components/primitives/Icon";
 import Pagination from "../../components/primitives/Pagination";
 import PageSizeSelect, { getStoredPageSize } from "../../components/primitives/PageSizeSelect";
 import CountryLocationsModal from "../../components/shared/CountryLocationsModal";
@@ -203,8 +204,8 @@ const MdmCountriesPage = () => {
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <ActionMenu items={[
                 ...((c.portCount ?? 0) > 0 ? [{ icon: "📍", label: "View Locations", onClick: () => setViewLocations(c) }] : []),
-                ...(canManageMdm ? [{ icon: "✎", label: "Edit",   onClick: () => setModal(c) }] : []),
-                ...(canManageMdm ? [{ icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(c.iso2) }] : []),
+                ...(canManageMdm ? [{ icon: IconPencil, label: "Edit",   onClick: () => setModal(c) }] : []),
+                ...(canManageMdm ? [{ icon: IconClose, label: "Delete", variant: "danger", onClick: () => setConfirm(c.iso2) }] : []),
               ]} />
             </div>
           </div>

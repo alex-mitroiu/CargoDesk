@@ -8,6 +8,7 @@ import Badge from "../primitives/Badge";
 import { Inp, Sel } from "../primitives/Form";
 import { Modal, ConfirmModal } from "../primitives/Modal";
 import ActionMenu from "../primitives/ActionMenu";
+import { IconPencil, IconClose } from "../primitives/Icon";
 
 // Scheduled / emailed reports (TKT-IXAR9G, Competitive Gap Analysis epic TKT-GTGM6R) — reporting
 // was manual-trigger only before this; a schedule here is generated and emailed automatically on
@@ -122,8 +123,8 @@ const ScheduledReportsPanel = () => {
               <div style={{ fontFamily: T.body, fontSize: 12.5, color: T.textMuted }}>{r.officeName || "—"}</div>
               <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>{fmtDate(r.lastRunAt)}</div>
               <ActionMenu items={[
-                { icon: "✎", label: "Edit", onClick: () => setModal(r) },
-                { icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(r) },
+                { icon: IconPencil, label: "Edit", onClick: () => setModal(r) },
+                { icon: IconClose, label: "Delete", variant: "danger", onClick: () => setConfirm(r) },
               ]} />
             </div>
           ))}

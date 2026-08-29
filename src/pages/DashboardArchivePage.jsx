@@ -1,11 +1,11 @@
 import { useState, useEffect } from "react";
 import { T, LANE_BADGE_VARIANT, diffDays, todayIso } from "../tokens";
-import Btn from "../components/primitives/Btn";
 import Badge from "../components/primitives/Badge";
 import Pagination from "../components/primitives/Pagination";
 import PageSizeSelect, { getStoredPageSize } from "../components/primitives/PageSizeSelect";
 import { useAuth } from "../AuthContext";
 import { IconRefresh, IconClose } from "../components/primitives/Icon";
+import ActionMenu from "../components/primitives/ActionMenu";
 
 // ─── Lane pair (local — mirrors DashboardPage) ────────────────────────────────
 const LanePair = ({ origin, dest }) => (
@@ -112,9 +112,11 @@ const DashboardArchive = ({ allocations = [], carriers = [], onRenew, onDelete, 
               </span>
             </div>
             {canEdit && (
-              <div style={{ display: "flex", gap: 6 }}>
-                <Btn size="sm" variant="secondary" onClick={() => onRenew(a)}><IconRefresh size={11} />Renew</Btn>
-                <Btn size="sm" variant="danger"    onClick={() => onDelete(a.id)}><IconClose size={11} /></Btn>
+              <div>
+                <ActionMenu items={[
+                  { icon: IconRefresh, label: "Renew",  onClick: () => onRenew(a) },
+                  { icon: IconClose,   label: "Delete", variant: "danger", onClick: () => onDelete(a.id) },
+                ]} />
               </div>
             )}
           </div>
@@ -229,9 +231,11 @@ const DashboardArchive = ({ allocations = [], carriers = [], onRenew, onDelete, 
                 </div>
 
                 {/* Actions */}
-                <div style={{ display: "flex", gap: 6 }}>
-                  <Btn size="sm" variant="secondary" onClick={() => onRenew(a)}><IconRefresh size={11} />Renew</Btn>
-                  <Btn size="sm" variant="danger"    onClick={() => onDelete(a.id)}><IconClose size={11} /></Btn>
+                <div>
+                  <ActionMenu items={[
+                    { icon: IconRefresh, label: "Renew",  onClick: () => onRenew(a) },
+                    { icon: IconClose,   label: "Delete", variant: "danger", onClick: () => onDelete(a.id) },
+                  ]} />
                 </div>
               </div>
             );

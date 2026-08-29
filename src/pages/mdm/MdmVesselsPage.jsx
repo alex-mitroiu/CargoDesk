@@ -10,6 +10,7 @@ import { Modal, ConfirmModal } from "../../components/primitives/Modal";
 import Pagination from "../../components/primitives/Pagination";
 import PageSizeSelect, { getStoredPageSize } from "../../components/primitives/PageSizeSelect";
 import ActionMenu from "../../components/primitives/ActionMenu";
+import { IconPencil, IconClose } from "../../components/primitives/Icon";
 import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns.jsx";
 
 // ─── MDM: Vessels Page ────────────────────────────────────────────────────────
@@ -144,8 +145,10 @@ const MdmVesselsPage = () => {
             onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
             onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
             <span style={{ fontFamily: T.mono, fontSize: 11, color: T.accent, fontWeight: 700 }}>{v.imo}</span>
-            <span style={{ fontFamily: T.body, fontSize: 13, color: T.text, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
-              {v.name}
+            <span style={{ fontFamily: T.body, fontSize: 13, color: v.name ? T.text : T.textMuted,
+              fontWeight: v.name ? 600 : 400, fontStyle: v.name ? "normal" : "italic",
+              display: "flex", alignItems: "center", gap: 6 }}>
+              {v.name || "Name pending — awaiting a clean AIS report"}
               {v.aisVerifiedAt && (
                 <span title={`Resolved/confirmed live via AIS — last seen ${new Date(v.aisVerifiedAt).toLocaleString()}`}
                   style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 700, color: T.accent,
@@ -173,15 +176,15 @@ const MdmVesselsPage = () => {
             <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>{v.grossTonnage ? v.grossTonnage.toLocaleString() : "—"}</span>
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <ActionMenu items={[
-                ...(canManageMdm ? [{ icon: "✎", label: "Edit",   onClick: () => setModal(v) }] : []),
-                ...(canManageMdm ? [{ icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(v.imo) }] : []),
+                ...(canManageMdm ? [{ icon: IconPencil, label: "Edit",   onClick: () => setModal(v) }] : []),
+                ...(canManageMdm ? [{ icon: IconClose, label: "Delete", variant: "danger", onClick: () => setConfirm(v.imo) }] : []),
               ]} />
             </div>
           </div>
         ))}
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+      <div style={{ marginTop: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
         <PageSizeSelect value={limit} onChange={changeLimit} />
         <div style={{ flex: 1 }}><Pagination total={total} offset={offset} limit={limit} onPage={goPage} /></div>
       </div>

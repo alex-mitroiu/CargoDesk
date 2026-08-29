@@ -7,6 +7,7 @@ import Badge from "../../components/primitives/Badge";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
 import CountryCombobox from "../../components/shared/CountryCombobox";
 import ActionMenu from "../../components/primitives/ActionMenu";
+import { IconPencil, IconClose } from "../../components/primitives/Icon";
 import { Inp, Field, Textarea } from "../../components/primitives/Form";
 import { PageSpinner } from "../../components/primitives/Spinner";
 import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns.jsx";
@@ -198,8 +199,8 @@ const MdmTradeLanesPage = () => {
             </span>
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <ActionMenu items={[
-                ...(canManageMdm ? [{ icon: "✎", label: "Edit",   onClick: () => setModal(l) }] : []),
-                ...(canManageMdm ? [{ icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(l.code) }] : []),
+                ...(canManageMdm ? [{ icon: IconPencil, label: "Edit",   onClick: () => setModal(l) }] : []),
+                ...(canManageMdm ? [{ icon: IconClose, label: "Delete", variant: "danger", onClick: () => setConfirm(l.code) }] : []),
               ]} />
             </div>
           </div>

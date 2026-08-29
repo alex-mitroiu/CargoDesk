@@ -15,7 +15,8 @@ import CarrierCombobox from "../components/shared/CarrierCombobox";
 import CustomerCombobox from "../components/shared/CustomerCombobox";
 import PortField from "../components/shared/PortField";
 import { CommodityCombobox } from "../components/shared/CommodityCombobox";
-import { IconReceipt, IconClose } from "../components/primitives/Icon";
+import { IconReceipt, IconClose, IconEye } from "../components/primitives/Icon";
+import ActionMenu from "../components/primitives/ActionMenu";
 
 // ─── Quoting / RFQ pre-booking stage ────────────────────────────────────────
 // A quote is a distinct object that precedes and converts into a shipment — Draft (freely
@@ -457,8 +458,11 @@ const QuotesPage = ({ navigate, onShipmentCreated }) => {
                   <td onClick={() => setDetailId(q.id)} style={{ padding: "10px 8px", cursor: "pointer" }}>{q.validUntil || "—"}</td>
                   <td onClick={() => setDetailId(q.id)} style={{ padding: "10px 8px", fontFamily: T.mono, cursor: "pointer", textAlign: "right" }}>{fmtUsd(q.totalAmountUsd)}</td>
                   <td onClick={() => setDetailId(q.id)} style={{ padding: "10px 8px", cursor: "pointer" }}><Badge variant={STATUS_VARIANT[q.status] || "default"}>{q.status}</Badge></td>
-                  <td style={{ padding: "10px 8px", textAlign: "right" }}>
-                    <Btn size="sm" variant="ghost" onClick={() => setConfirmDeleteId(q.id)}>Delete</Btn>
+                  <td style={{ padding: "10px 8px", textAlign: "right" }} onClick={e => e.stopPropagation()}>
+                    <ActionMenu items={[
+                      { icon: IconEye,   label: "Open",   onClick: () => setDetailId(q.id) },
+                      { icon: IconClose, label: "Delete", variant: "danger", onClick: () => setConfirmDeleteId(q.id) },
+                    ]} />
                   </td>
                 </tr>
               ))}

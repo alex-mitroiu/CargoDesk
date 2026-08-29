@@ -11,7 +11,7 @@ import ActionMenu from "../components/primitives/ActionMenu";
 import TestCaseStoryLinksPanel from "../components/shared/TestCaseStoryLinksPanel";
 import { Inp, Sel, Textarea } from "../components/primitives/Form";
 import { toast } from "../toast";
-import { IconSettings, IconSearch } from "../components/primitives/Icon";
+import { IconSettings, IconSearch, IconPencil, IconClose, IconArrowDown, IconChartBar, IconMap } from "../components/primitives/Icon";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -1544,16 +1544,16 @@ const TicketCard = ({ ticket, onEdit, onDelete, onMove, onPreview, onDiagram, on
             <div onClick={e => e.stopPropagation()} style={{ flexShrink: 0 }}>
               <ActionMenu items={[
                 ...(!["Done", "Ready to Deploy", "Released", "Backlog"].includes(ticket.status)
-                  ? [{ icon: "↓", label: "Send to Backlog", onClick: () => onMove(ticket, "Backlog") }]
+                  ? [{ icon: IconArrowDown, label: "Send to Backlog", onClick: () => onMove(ticket, "Backlog") }]
                   : []),
-                { icon: "✎", label: "Edit", onClick: () => onEdit(ticket) },
+                { icon: IconPencil, label: "Edit", onClick: () => onEdit(ticket) },
                 ...(ticket.type === "Epic"
                   ? [
-                      { icon: "📊", label: "Coverage", onClick: () => onCoverage && onCoverage(ticket) },
-                      { icon: "🗺", label: "Diagram",  onClick: () => onDiagram  && onDiagram(ticket)  },
+                      { icon: IconChartBar, label: "Coverage", onClick: () => onCoverage && onCoverage(ticket) },
+                      { icon: IconMap, label: "Diagram",  onClick: () => onDiagram  && onDiagram(ticket)  },
                     ]
                   : []),
-                { icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(true) },
+                { icon: IconClose, label: "Delete", variant: "danger", onClick: () => setConfirm(true) },
               ]} />
             </div>
           )}
@@ -2187,12 +2187,12 @@ const TicketPreview = ({ ticket, colIndex, shipments, tickets, testItems = [], u
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
           {canEdit && (
             <ActionMenu items={[
-              { icon: "✎", label: "Edit", onClick: onEdit },
+              { icon: IconPencil, label: "Edit", onClick: onEdit },
               ...(ticket.type === "Epic" ? [
-                { icon: "📊", label: "Coverage", onClick: () => onCoverage?.(ticket) },
-                { icon: "🗺", label: "Diagram",  onClick: () => onDiagram?.(ticket)  },
+                { icon: IconChartBar, label: "Coverage", onClick: () => onCoverage?.(ticket) },
+                { icon: IconMap, label: "Diagram",  onClick: () => onDiagram?.(ticket)  },
               ] : []),
-              { icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(true) },
+              { icon: IconClose, label: "Delete", variant: "danger", onClick: () => setConfirm(true) },
             ]} />
           )}
           <button onClick={onClose}
@@ -3214,8 +3214,8 @@ const TestItemPreview = ({ item, testItems, tickets, onClose, onEdit, onDelete, 
       {/* Footer */}
       <div style={{ padding: "10px 14px", borderTop: `1px solid ${T.border}`, display: "flex", gap: 6, flexShrink: 0 }}>
         <ActionMenu items={[
-          { icon: "✎", label: "Edit", onClick: () => onEdit(item) },
-          { icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(true) },
+          { icon: IconPencil, label: "Edit", onClick: () => onEdit(item) },
+          { icon: IconClose, label: "Delete", variant: "danger", onClick: () => setConfirm(true) },
         ]} />
       </div>
 

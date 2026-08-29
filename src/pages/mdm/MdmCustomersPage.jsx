@@ -10,6 +10,7 @@ import { Modal, ConfirmModal } from "../../components/primitives/Modal";
 import Pagination from "../../components/primitives/Pagination";
 import PageSizeSelect, { getStoredPageSize } from "../../components/primitives/PageSizeSelect";
 import ActionMenu from "../../components/primitives/ActionMenu";
+import { IconPencil, IconClose, IconEye } from "../../components/primitives/Icon";
 import { inputBase, Inp, Sel, Textarea } from "../../components/primitives/Form";
 import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns.jsx";
 import CustomerCombobox from "../../components/shared/CustomerCombobox";
@@ -397,8 +398,8 @@ const IdentifiersTab = ({ customerId, canEdit }) => {
               {canEdit && (
                 <div style={{ marginLeft: "auto" }}>
                   <ActionMenu items={[
-                    { icon: "✎", label: "Edit",   onClick: () => setEditing(item) },
-                    { icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(item.id) },
+                    { icon: IconPencil, label: "Edit",   onClick: () => setEditing(item) },
+                    { icon: IconClose, label: "Delete", variant: "danger", onClick: () => setConfirm(item.id) },
                   ]} />
                 </div>
               )}
@@ -541,8 +542,8 @@ const ContactsTab = ({ customerId, canEdit }) => {
               {canEdit && (
                 <div style={{ marginLeft: "auto" }}>
                   <ActionMenu items={[
-                    { icon: "✎", label: "Edit",   onClick: () => setEditing(item) },
-                    { icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(item.id) },
+                    { icon: IconPencil, label: "Edit",   onClick: () => setEditing(item) },
+                    { icon: IconClose, label: "Delete", variant: "danger", onClick: () => setConfirm(item.id) },
                   ]} />
                 </div>
               )}
@@ -1092,8 +1093,8 @@ const MdmCustomersPage = () => {
             {/* Actions */}
             <div style={{ display: "flex", justifyContent: "flex-end" }} onClick={e => e.stopPropagation()}>
               <ActionMenu items={[
-                { icon: "✎", label: "Open", onClick: () => setModal(c) },
-                ...(canEdit ? [{ icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(c.id) }] : []),
+                { icon: IconEye, label: "Open", onClick: () => setModal(c) },
+                ...(canEdit ? [{ icon: IconClose, label: "Delete", variant: "danger", onClick: () => setConfirm(c.id) }] : []),
               ]} />
             </div>
           </div>

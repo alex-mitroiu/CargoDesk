@@ -10,6 +10,7 @@ import CarrierCombobox from "../../components/shared/CarrierCombobox";
 import { ContainerTypeField } from "../../components/shared/ContainerTypePickerModal";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
 import ActionMenu from "../../components/primitives/ActionMenu";
+import { IconPencil, IconClose, IconClipboard } from "../../components/primitives/Icon";
 import EntityHistoryModal from "../../components/shared/EntityHistoryModal";
 import DatePicker from "../../components/primitives/DatePicker";
 import PortField from "../../components/shared/PortField";
@@ -352,9 +353,9 @@ const CarriersPage = ({ carriers, onAdd, onEdit, onDelete }) => {
               )}
             </div>
             <ActionMenu items={[
-              ...(canManageMdm ? [{ icon: "✎", label: "Edit", onClick: () => setModal(c) }] : []),
-              { icon: "📋", label: "History", onClick: () => setHistoryCarrier(c) },
-              ...(canManageMdm ? [{ icon: "✕", label: "Remove", variant: "danger", onClick: () => setConfirm(c.code) }] : []),
+              ...(canManageMdm ? [{ icon: IconPencil, label: "Edit", onClick: () => setModal(c) }] : []),
+              { icon: IconClipboard, label: "History", onClick: () => setHistoryCarrier(c) },
+              ...(canManageMdm ? [{ icon: IconClose, label: "Remove", variant: "danger", onClick: () => setConfirm(c.code) }] : []),
             ]} />
           </div>
         ))}

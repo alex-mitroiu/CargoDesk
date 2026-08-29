@@ -8,6 +8,7 @@ import Badge from "../../components/primitives/Badge";
 import { Inp, Sel, Field } from "../../components/primitives/Form";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
 import ActionMenu from "../../components/primitives/ActionMenu";
+import { IconPencil, IconClose } from "../../components/primitives/Icon";
 
 // ─── Automated Charge Codes registry (TKT-OK5H34) ──────────────────────────────
 // Admin-maintained definitions that auto-inject as SELL cost lines when their trigger
@@ -132,8 +133,8 @@ const MdmChargeCodesPage = () => {
             <span style={{ fontFamily: T.mono, fontSize: 13, color: T.text }}>{d.currency} {d.amount.toFixed(2)}</span>
             <Badge variant={d.isActive ? "success" : "default"}>{d.isActive ? "Active" : "Inactive"}</Badge>
             <ActionMenu items={[
-              ...(canManageConfigs ? [{ icon: "✎", label: "Edit", onClick: () => setModal(d) }] : []),
-              ...(canManageConfigs ? [{ icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(d) }] : []),
+              ...(canManageConfigs ? [{ icon: IconPencil, label: "Edit", onClick: () => setModal(d) }] : []),
+              ...(canManageConfigs ? [{ icon: IconClose, label: "Delete", variant: "danger", onClick: () => setConfirm(d) }] : []),
             ]} />
           </div>
         ))}

@@ -16,6 +16,7 @@ import { api } from "../../api";
 import Btn from "../../components/primitives/Btn";
 import Badge from "../../components/primitives/Badge";
 import ActionMenu from "../../components/primitives/ActionMenu";
+import { IconPencil, IconClose } from "../../components/primitives/Icon";
 import Pagination from "../../components/primitives/Pagination";
 import { PageSpinner } from "../../components/primitives/Spinner";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
@@ -203,9 +204,9 @@ const MdmYourEntityPage = () => { // TODO: rename component
             {/* Actions — keep last, always justify flex-end */}
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <ActionMenu items={[
-                { icon: "✎", label: "Edit",   onClick: () => setModal(row) },
-                // { icon: "📋", label: "History", onClick: () => {} }, // optional
-                { icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(row.id) },
+                { icon: IconPencil, label: "Edit",   onClick: () => setModal(row) },
+                // { icon: IconClipboard, label: "History", onClick: () => {} }, // optional
+                { icon: IconClose, label: "Delete", variant: "danger", onClick: () => setConfirm(row.id) },
               ]} />
             </div>
           </div>

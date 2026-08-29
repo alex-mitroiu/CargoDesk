@@ -6,6 +6,8 @@ import { Modal } from "./primitives/Modal";
 import Btn from "./primitives/Btn";
 import Pagination from "./primitives/Pagination";
 import PageSizeSelect, { getStoredPageSize } from "./primitives/PageSizeSelect";
+import ActionMenu from "./primitives/ActionMenu";
+import { IconPencil, IconUnlock, IconLock, IconClose } from "./primitives/Icon";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -1103,37 +1105,15 @@ export default function UserManagementPanel() {
                         : <span style={{ color: T.border }}>Never</span>}
                     </td>
                     <td style={{ padding: "10px 14px" }} onClick={e => e.stopPropagation()}>
-                      <div style={{ display: "flex", gap: 5, flexWrap: "wrap" }}>
-                        <button data-testid={`edit-user-${u.id}`}
-                          onClick={() => setEditTarget(u)} title="Edit profile"
-                          style={{ padding: "3px 9px", borderRadius: 6, border: `1px solid ${T.border}`,
-                            background: T.bg, color: T.textMuted, fontFamily: T.body, fontSize: 12,
-                            cursor: "pointer" }}>
-                          Edit
-                        </button>
-                        {u.lockedUntil && u.lockedUntil > new Date().toISOString() && (
-                          <button onClick={() => handleUnlock(u)} title="Unlock account"
-                            style={{ padding: "3px 9px", borderRadius: 6, border: `1px solid ${T.warning}44`,
-                              background: T.warning + "10", color: T.warning, fontFamily: T.body, fontSize: 12,
-                              cursor: "pointer" }}>
-                            Unlock
-                          </button>
-                        )}
-                        <button onClick={() => handleRevoke(u)} title="Invalidate all sessions"
-                          style={{ padding: "3px 9px", borderRadius: 6, border: `1px solid ${T.accent}44`,
-                            background: T.accent + "10", color: T.accent, fontFamily: T.body, fontSize: 12,
-                            cursor: "pointer" }}>
-                          Revoke
-                        </button>
-                        <button data-testid={`delete-user-${u.id}`}
-                          onClick={() => { setDeleteTarget(u); if (selectedUser?.id === u.id) setSelectedUser(null); }}
-                          title="Delete user"
-                          style={{ padding: "3px 9px", borderRadius: 6, border: `1px solid ${T.danger}44`,
-                            background: T.danger + "10", color: T.danger, fontFamily: T.body, fontSize: 12,
-                            cursor: "pointer" }}>
-                          ✕
-                        </button>
-                      </div>
+                      <ActionMenu items={[
+                        { icon: IconPencil, label: "Edit Profile", onClick: () => setEditTarget(u) },
+                        ...(u.lockedUntil && u.lockedUntil > new Date().toISOString()
+                          ? [{ icon: IconUnlock, label: "Unlock Account", onClick: () => handleUnlock(u) }]
+                          : []),
+                        { icon: IconLock, label: "Revoke Sessions", onClick: () => handleRevoke(u) },
+                        { icon: IconClose, label: "Delete", variant: "danger",
+                          onClick: () => { setDeleteTarget(u); if (selectedUser?.id === u.id) setSelectedUser(null); } },
+                      ]} />
                     </td>
                   </tr>
                 );

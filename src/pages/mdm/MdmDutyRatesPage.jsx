@@ -7,6 +7,7 @@ import Btn from "../../components/primitives/Btn";
 import { Inp } from "../../components/primitives/Form";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
 import ActionMenu from "../../components/primitives/ActionMenu";
+import { IconPencil, IconClose } from "../../components/primitives/Icon";
 
 // ─── Duty Rate Chapters registry ────────────────────────────────────────────
 // Admin-maintained flat-rate-by-HS-chapter table backing the Cargo page's Landed-Cost
@@ -109,8 +110,8 @@ const MdmDutyRatesPage = () => {
             <span style={{ fontFamily: T.body, fontSize: 14, color: T.text }}>{d.label}</span>
             <span style={{ fontFamily: T.mono, fontSize: 13, color: T.textMuted }}>{d.ratePct}%</span>
             <ActionMenu items={[
-              ...(canManageConfigs ? [{ icon: "✎", label: "Edit", onClick: () => setModal(d) }] : []),
-              ...(canManageConfigs ? [{ icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(d) }] : []),
+              ...(canManageConfigs ? [{ icon: IconPencil, label: "Edit", onClick: () => setModal(d) }] : []),
+              ...(canManageConfigs ? [{ icon: IconClose, label: "Delete", variant: "danger", onClick: () => setConfirm(d) }] : []),
             ]} />
           </div>
         ))}

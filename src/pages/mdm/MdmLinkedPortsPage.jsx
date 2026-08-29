@@ -8,6 +8,7 @@ import { Inp } from "../../components/primitives/Form";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
 import PortField from "../../components/shared/PortField";
 import ActionMenu from "../../components/primitives/ActionMenu";
+import { IconPencil, IconClose } from "../../components/primitives/Icon";
 import Pagination from "../../components/primitives/Pagination";
 import PageSizeSelect, { getStoredPageSize } from "../../components/primitives/PageSizeSelect";
 import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns.jsx";
@@ -147,8 +148,8 @@ const MdmLinkedPortsPage = () => {
             </span>
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <ActionMenu items={[
-                ...(canManageMdm ? [{ icon: "✎", label: "Edit Note", onClick: () => setModal(l) }] : []),
-                ...(canManageMdm ? [{ icon: "✕", label: "Delete",    variant: "danger", onClick: () => setConfirm(l.id) }] : []),
+                ...(canManageMdm ? [{ icon: IconPencil, label: "Edit Note", onClick: () => setModal(l) }] : []),
+                ...(canManageMdm ? [{ icon: IconClose, label: "Delete",    variant: "danger", onClick: () => setConfirm(l.id) }] : []),
               ]} />
             </div>
           </div>

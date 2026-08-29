@@ -12,7 +12,8 @@ import Spinner from "../components/primitives/Spinner";
 import Pagination from "../components/primitives/Pagination";
 import PageSizeSelect, { getStoredPageSize } from "../components/primitives/PageSizeSelect";
 import CarrierCombobox from "../components/shared/CarrierCombobox";
-import { IconFileCertificate, IconSearch, IconClose, IconUpload } from "../components/primitives/Icon";
+import { IconFileCertificate, IconSearch, IconClose, IconUpload, IconEye } from "../components/primitives/Icon";
+import ActionMenu from "../components/primitives/ActionMenu";
 
 // ─── Freight Audit & Payment ────────────────────────────────────────────────
 // Reconciles a carrier's own submitted invoice against what was actually contracted (or already
@@ -469,8 +470,11 @@ const FreightAuditPage = ({ shipments, navigate }) => {
                       <td onClick={() => setDetailId(inv.id)} style={{ padding: "10px 8px", cursor: "pointer" }}>{inv.carrierCode || "—"}</td>
                       <td onClick={() => setDetailId(inv.id)} style={{ padding: "10px 8px", cursor: "pointer" }}>{inv.invoiceDate || "—"}</td>
                       <td onClick={() => setDetailId(inv.id)} style={{ padding: "10px 8px", cursor: "pointer" }}><Badge variant={STATUS_VARIANT[inv.status] || "default"}>{inv.status}</Badge></td>
-                      <td style={{ padding: "10px 8px", textAlign: "right" }}>
-                        <Btn size="sm" variant="ghost" onClick={() => setConfirmDeleteId(inv.id)}>Delete</Btn>
+                      <td style={{ padding: "10px 8px", textAlign: "right" }} onClick={e => e.stopPropagation()}>
+                        <ActionMenu items={[
+                          { icon: IconEye,   label: "Open",   onClick: () => setDetailId(inv.id) },
+                          { icon: IconClose, label: "Delete", variant: "danger", onClick: () => setConfirmDeleteId(inv.id) },
+                        ]} />
                       </td>
                     </tr>
                   ))}

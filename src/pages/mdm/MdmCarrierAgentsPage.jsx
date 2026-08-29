@@ -9,6 +9,7 @@ import CarrierCombobox from "../../components/shared/CarrierCombobox";
 import PortField from "../../components/shared/PortField";
 import CustomerCombobox from "../../components/shared/CustomerCombobox";
 import ActionMenu from "../../components/primitives/ActionMenu";
+import { IconPencil, IconClose } from "../../components/primitives/Icon";
 import Pagination from "../../components/primitives/Pagination";
 import PageSizeSelect, { getStoredPageSize } from "../../components/primitives/PageSizeSelect";
 import { PageSpinner } from "../../components/primitives/Spinner";
@@ -143,8 +144,8 @@ const MdmCarrierAgentsPage = () => {
             </span>
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <ActionMenu items={[
-                ...(canManageMdm ? [{ icon: "✎", label: "Edit", onClick: () => setModal(a) }] : []),
-                ...(canManageMdm ? [{ icon: "✕", label: "Delete", variant: "danger", onClick: () => setConfirm(a.id) }] : []),
+                ...(canManageMdm ? [{ icon: IconPencil, label: "Edit", onClick: () => setModal(a) }] : []),
+                ...(canManageMdm ? [{ icon: IconClose, label: "Delete", variant: "danger", onClick: () => setConfirm(a.id) }] : []),
               ]} />
             </div>
           </div>

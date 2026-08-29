@@ -14,6 +14,7 @@ import { inputBase, Field } from "../../components/primitives/Form";
 import DatePicker from "../../components/primitives/DatePicker";
 import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns.jsx";
 import ActionMenu from "../../components/primitives/ActionMenu";
+import { IconPencil, IconClose, IconArrowUp, IconArrowDown, IconCalendar, IconClipboard } from "../../components/primitives/Icon";
 import EntityHistoryModal from "../../components/shared/EntityHistoryModal";
 import PortCombobox from "../../components/shared/PortCombobox";
 import CustomerCombobox from "../../components/shared/CustomerCombobox";
@@ -1326,13 +1327,13 @@ const MdmContractsPage = () => {
               {/* Actions */}
               <div style={{ display: "flex", justifyContent: "flex-end" }}>
                 <ActionMenu items={[
-                  ...(canManageConfigs ? [{ icon: "✎",  label: "Edit",      onClick: () => setModal(c) }] : []),
-                  ...(canManageConfigs && c.status === "Draft"  ? [{ icon: "▲", label: "Publish",  onClick: () => handlePublish(c.id) }] : []),
-                  ...(canManageConfigs && c.status === "Active" ? [{ icon: "▽", label: "Withdraw to Draft", onClick: () => handleWithdraw(c.id) }] : []),
+                  ...(canManageConfigs ? [{ icon: IconPencil,  label: "Edit",      onClick: () => setModal(c) }] : []),
+                  ...(canManageConfigs && c.status === "Draft"  ? [{ icon: IconArrowUp, label: "Publish",  onClick: () => handlePublish(c.id) }] : []),
+                  ...(canManageConfigs && c.status === "Active" ? [{ icon: IconArrowDown, label: "Withdraw to Draft", onClick: () => handleWithdraw(c.id) }] : []),
                   ...(canManageConfigs ? [{ icon: "⧉",  label: "Duplicate", onClick: () => handleDuplicate(c) }] : []),
-                  { icon: "🗓", label: "Schedules",  onClick: () => setSchedulesContract(c) },
-                  { icon: "📋", label: "History",   onClick: () => setHistoryContract(c) },
-                  ...(canManageConfigs ? [{ icon: "✕",  label: "Delete",    variant: "danger", onClick: () => handleDelete(c.id) }] : []),
+                  { icon: IconCalendar, label: "Schedules",  onClick: () => setSchedulesContract(c) },
+                  { icon: IconClipboard, label: "History",   onClick: () => setHistoryContract(c) },
+                  ...(canManageConfigs ? [{ icon: IconClose,  label: "Delete",    variant: "danger", onClick: () => handleDelete(c.id) }] : []),
                 ]} />
               </div>
             </div>
