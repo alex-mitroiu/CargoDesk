@@ -1,7 +1,7 @@
 import { T } from "../tokens";
 import Badge from "../components/primitives/Badge";
 import React from "react";
-import { VERSION, BUILD, CODENAME, CHANGELOG, COPYRIGHT_YEAR, COPYRIGHT_OWNER } from "../version";
+import { VERSION, BUILD, BUILD_FINGERPRINT, CODENAME, CHANGELOG, COPYRIGHT_YEAR, COPYRIGHT_OWNER } from "../version";
 import { IconSettings, IconAnchor, IconBaseStation, AnyIcon } from "../components/primitives/Icon";
 
 // ─── About Page ───────────────────────────────────────────────────────────────
@@ -883,6 +883,7 @@ const AboutPage = () => {
         {[
           ["Version",   `v${VERSION}`],
           ["Build",     BUILD],
+          ["Build ID",  BUILD_FINGERPRINT],
           ["Codename",  CODENAME],
           ["Copyright", `© ${COPYRIGHT_YEAR} ${COPYRIGHT_OWNER}`],
         ].map(([label, value]) => (

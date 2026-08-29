@@ -3139,5 +3139,14 @@
     "flagIso2": "NO",
     "buildYear": 2010,
     "grossTonnage": 1517
+  },
+  {
+    "imo": "9199219",
+    "name": "NORTHERN LATCH",
+    "assetType": "General Cargo Ship",
+    "flagName": "Malta",
+    "flagIso2": "MT",
+    "buildYear": 2011,
+    "grossTonnage": 41287
   }
 ]
