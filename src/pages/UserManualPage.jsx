@@ -2,6 +2,24 @@ import { useState } from "react";
 import { T, IMDG_CLASSES, IMDG_CLASS_VARIANT } from "../tokens";
 import Badge from "../components/primitives/Badge";
 import IncotermsModal from "../components/shared/IncotermsModal";
+import imgQuotes from "../assets/manual/manual-quotes.png";
+import imgShipmentOverview from "../assets/manual/manual-shipment-overview.png";
+import imgCargoList from "../assets/manual/manual-cargo-list.png";
+import imgBulkImportReview from "../assets/manual/manual-bulk-import-review.png";
+import imgSchedule from "../assets/manual/manual-schedule.png";
+import imgBooking from "../assets/manual/manual-booking.png";
+import imgPartiesOffices from "../assets/manual/manual-parties-offices.png";
+import imgReassignOffice from "../assets/manual/manual-reassign-office.png";
+import imgInactiveOffices from "../assets/manual/manual-inactive-offices.png";
+import imgCustoms from "../assets/manual/manual-customs.png";
+import imgDocuments from "../assets/manual/manual-documents.png";
+import imgMilestones from "../assets/manual/manual-milestones.png";
+import imgGpOverview from "../assets/manual/manual-gp-overview.png";
+import imgMultiEntityGp from "../assets/manual/manual-multi-entity-gp.png";
+import imgDashboard from "../assets/manual/manual-dashboard.png";
+import imgCommandCenter from "../assets/manual/manual-command-center.png";
+import imgIntegrationBoard from "../assets/manual/manual-integration-board.png";
+import imgMdmVessels from "../assets/manual/manual-mdm-vessels.png";
 
 // ─── User Manual Page ─────────────────────────────────────────────────────────
 // Two complementary halves, matching how the CargoDesk Field Guide itself frames the split
@@ -87,6 +105,22 @@ const UserManualPage = () => {
   const StepBody = ({ children }) => (
     <div style={{ marginLeft: 32 }}>{children}</div>
   );
+  // A real, current screenshot of the exact screen being described — every screenshot in this
+  // guide is taken live against a running example shipment, not a mockup, so what's pictured is
+  // exactly what appears on screen, in the same place, with the same labels.
+  const Screenshot = ({ src, alt, caption }) => (
+    <figure style={{ margin: "10px 0 22px 32px", maxWidth: 760 }}>
+      <img src={src} alt={alt} style={{
+        width: "100%", display: "block", borderRadius: 10,
+        border: `1px solid ${T.border}`, boxShadow: "0 10px 28px rgba(0,0,0,.4)",
+      }} />
+      {caption && (
+        <figcaption style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, marginTop: 8, lineHeight: 1.5 }}>
+          {caption}
+        </figcaption>
+      )}
+    </figure>
+  );
   const Callout = ({ type = "note", children }) => {
     const v = {
       tip:  { bg: T.accentBg,  border: T.accent + "55",  color: T.accent,     icon: "💡" },
@@ -142,6 +176,7 @@ const UserManualPage = () => {
           straight to Chapter 2. But if a customer has asked "how much to ship 2 containers to New
           York," a <strong>Quote</strong> is where you answer that without committing to a real,
           numbered shipment yet.</Dek>
+        <Screenshot src={imgQuotes} alt="The Quotes list page" caption="The Quotes list — every quote you've priced, with its route, carrier, valid-until date, and status at a glance. '+ New Quote' is top right." />
         <Step n={1}>Open Quotes and start a new one</Step>
         <StepBody>
           <P>Click <Tag>Quotes</Tag> in the sidebar, then <Tag>+ New Quote</Tag>. Fill in the customer,
@@ -204,14 +239,16 @@ const UserManualPage = () => {
           <Tag>Contracts & Schedules</Tag>, <Tag>Carrier Booking</Tag>, <Tag>Parties & Offices</Tag>,{" "}
           <Tag>Documents</Tag>, and more all live there. The rest of this guide walks through them in
           the order that actually unblocks each other.</Callout>
+        <Screenshot src={imgShipmentOverview} alt="A shipment's Overview page" caption="A shipment's Overview page. The header bar at the top — route, ETD/ETA, vessel, shipper/consignee — stays visible on every page you navigate to for this shipment, so you never lose that context." />
       </div>
     ),
     cargo: (
       <div>
         <H2>3. Add Your Cargo</H2>
         <Dek>Before you can book a carrier or price anything properly, CargoDesk needs to know what's
-          actually moving.</Dek>
-        <Step n={1}>Add a container</Step>
+          actually moving. If you only have one or two containers, type them in by hand. If you have
+          a whole spreadsheet of them already, skip straight to Step 3 and import it instead.</Dek>
+        <Step n={1}>Add a container by hand</Step>
         <StepBody>
           <P>Open <Tag>Cargo</Tag> in the shipment's sidebar and click <Tag>+ Add Container</Tag>.
             Give it a container number, size (20ft = 1 TEU, 40ft = 2 TEU), and equipment type
@@ -222,10 +259,32 @@ const UserManualPage = () => {
           <P>Click into a container and add the cargo itself — pallets, boxes, or crates, each with
             a description, quantity, and (once you know it) a declared value. This is also where
             you flag a container as Dangerous Goods and set its IMDG class if it needs one.</P>
+          <Screenshot src={imgCargoList} alt="The Cargo page showing a container tree" caption="The Cargo page — every container on the shipment on the left, its own cargo breakdown underneath it. Both '+ Add Container' and '⬆ Import Containers' sit right above the list." />
+        </StepBody>
+        <Step n={3}>Or import a whole spreadsheet at once</Step>
+        <StepBody>
+          <P>Got 20 containers already sitting in a spreadsheet? Don't type them in one at a time —
+            click <Tag>⬆ Import Containers</Tag> instead, right next to <Tag>+ Add Container</Tag>.</P>
+          <P>The very first time, click <Tag>Download Template</Tag>. It's a real Excel file with
+            dropdown lists built in for the fields that need to match CargoDesk exactly (container
+            type, Yes/No for Dangerous Goods, IMDG class) — so most typos get caught by Excel itself,
+            before you ever upload anything.</P>
+          <P>Fill in one row per container, save the file, and upload it back in the same window.
+            CargoDesk reads every row and shows you a review screen before anything is actually
+            created — nothing is added to the shipment until you say so.</P>
+          <Screenshot src={imgBulkImportReview} alt="The bulk import review screen showing one valid row and one flagged error" caption="The review screen after uploading a file. Row 3 is clean and ready (green check). Row 4 has a typo in its container type code — CargoDesk caught it, explains exactly what's wrong, and lets you fix it right there without re-uploading the whole file." />
+        </StepBody>
+        <Step n={4}>Fix anything flagged, then import</Step>
+        <StepBody>
+          <P>Any row with a problem is called out in plain language — a container type code that
+            doesn't exist, a weight that isn't a number, a Dangerous Goods row missing its IMDG
+            class. Correct it directly in the review screen (no need to touch the spreadsheet again)
+            and click <Tag>Re-check</Tag>. Once every row is clean, <Tag>Import N Containers</Tag>
+            creates them all in one go.</P>
         </StepBody>
         <Callout type="note"><strong>TEU is calculated for you.</strong> A 20-foot container counts
           as 1 TEU, a 40-foot as 2 — the total rolls up automatically to the shipment header and the
-          Dashboard the moment you save a container.</Callout>
+          Dashboard the moment a container is saved, whether you typed it in or imported it.</Callout>
       </div>
     ),
     schedule: (
@@ -247,6 +306,7 @@ const UserManualPage = () => {
         <Callout type="warn"><strong>This is a hard gate, not a suggestion.</strong> If you jump
           straight to Carrier Booking without a contract and a schedule both in place, CargoDesk
           blocks you outright and sends you back here to finish first.</Callout>
+        <Screenshot src={imgSchedule} alt="The Contracts & Schedules page showing a Route Leg" caption="Contracts & Schedules — a Route Leg with a real sailing applied (port, date, vessel filled in), and the contract card underneath it." />
       </div>
     ),
     booking: (
@@ -277,14 +337,17 @@ const UserManualPage = () => {
         <Callout type="note">If you change the carrier on a leg after a booking already exists,
           CargoDesk doesn't edit the old booking in place — it archives it as history and starts a
           fresh one under the new carrier, so you can always see what actually happened.</Callout>
+        <Screenshot src={imgBooking} alt="The Carrier Booking Details page showing a confirmed booking" caption="Carrier Booking — Details, once confirmed. 'Bookings on this Shipment' at the top always shows the current one, plus any earlier attempts, so nothing about the booking history is ever lost." />
       </div>
     ),
     parties: (
       <div>
         <H2>6. Add Parties & Offices</H2>
-        <Dek>A shipment involves more people than just you and the carrier. This chapter is about
-          making sure everyone who needs to see it can.</Dek>
-        <Step n={1}>The core four</Step>
+        <Dek>A shipment involves more people than just you and the carrier — the companies moving
+          the cargo, and the CargoDesk offices actually handling it on each side. This chapter is
+          about making sure everyone who needs to see it can, and that the right office keeps the
+          shipment moving even if something goes wrong.</Dek>
+        <Step n={1}>The core four parties</Step>
         <StepBody>
           <P>Open <Tag>Parties & Offices</Tag> and click <Tag>Edit</Tag>. Every shipment has four
             fixed roles worth setting as early as possible: Shipper, Consignee, Notify Party, and
@@ -296,6 +359,50 @@ const UserManualPage = () => {
             and import are separate roles, since they're often different companies), truckers, banks,
             insurance providers, and agents — add only the ones this specific shipment actually
             needs.</P>
+          <Screenshot src={imgPartiesOffices} alt="The Parties & Offices page showing Export and Import office groups" caption="Parties & Offices. Below the four core parties, Export and Import each get their own card listing the offices handling that side of the shipment — the small pencil icon on each one is how you reassign it." />
+        </StepBody>
+        <Step n={3}>Involved Offices — who's actually running this shipment</Step>
+        <StepBody>
+          <P>Underneath Parties, <Tag>Involved Offices</Tag> shows which CargoDesk office is
+            responsible for each side: the <strong>Export Managing Office (EMO)</strong>, the{" "}
+            <strong>Import Managing Office (IMO)</strong>, and — if your organization uses one — a{" "}
+            <strong>Controlling Office</strong> that oversees the whole shipment regardless of side.
+            An export-side user can only ever change the Export office and its services; the same
+            wall applies to import.</P>
+        </StepBody>
+        <Step n={4}>Reassign an office — for example, if one location goes down</Step>
+        <StepBody>
+          <P>Click the small pencil icon next to any office. Search for the replacement by name,
+            code, or country, pick it, and — this part is required, not optional — type a short
+            reason. "Regional outage, moving bookings to a standby office" is exactly the kind of
+            thing that belongs here; it gets logged permanently on the shipment's History as its own
+            event, separate from a routine edit, so anyone looking back later can see exactly what
+            happened and why.</P>
+          <Screenshot src={imgReassignOffice} alt="The Reassign Office modal with a new office selected and a reason typed in" caption="Reassigning the Export Managing Office. The reason field is required — CargoDesk won't let the reassignment go through without one." />
+        </StepBody>
+        <Step n={5}>What happens to the old office</Step>
+        <StepBody>
+          <P>Once you confirm, if you're an admin and the office you just replaced is still marked
+            active elsewhere, CargoDesk asks one more question: <strong>keep it active</strong>{" "}
+            (it's still a real, working office — just not on this shipment anymore), or{" "}
+            <strong>mark it inactive</strong> across all of CargoDesk (use this for a real
+            closure — a flooded office, a permanent shutdown — not a one-off reassignment). Either
+            way, any service on this shipment still pointed at the old office moves to the new one
+            automatically, so nothing is left quietly stuck behind.</P>
+        </StepBody>
+        <Step n={6}>Finding an office you marked inactive earlier</Step>
+        <StepBody>
+          <P>Inactive offices don't just disappear. Scroll to the bottom of Involved Offices and open{" "}
+            <Tag>Inactive Offices</Tag> — it's collapsed by default so it stays out of the way, but
+            every office you've deactivated, on either side, is listed there with a one-click{" "}
+            <Tag>Reactivate</Tag> button.</P>
+          <Screenshot src={imgInactiveOffices} alt="The Inactive Offices panel expanded, showing one deactivated office with a Reactivate button" caption="Inactive Offices, expanded. This one office was deliberately marked inactive earlier — Reactivate brings it straight back into use." />
+        </StepBody>
+        <Step n={7}>Adding an extra office on the same side</Step>
+        <StepBody>
+          <P>Sometimes one office isn't enough — a second office needs visibility on the same side
+            without taking over the main EMO/IMO role. Use <Tag>+ Add Export Office</Tag> (or Import)
+            underneath the main office card for that.</P>
         </StepBody>
         <Callout type="tip"><strong>Line agents fill themselves in.</strong> If the carrier has a
           registered local agent at your port, CargoDesk assigns it automatically — you'll only ever
@@ -327,6 +434,7 @@ const UserManualPage = () => {
         <StepBody>
           <P>A submitted filing sits as <Tag>Filed</Tag> until a response comes back — Accepted with
             a confirmation number, or Rejected with a reason you can act on and resubmit.</P>
+          <Screenshot src={imgCustoms} alt="The Customs Filing page showing an AES/EEI filing already filed and an ISF/AMS filing still blocked" caption="Customs Filing — AES/EEI (left) is already Filed with a confirmation reference. ISF/AMS (right) is still blocked because its own broker hasn't been assigned yet." />
         </StepBody>
       </div>
     ),
@@ -347,6 +455,7 @@ const UserManualPage = () => {
             still missing (a party, a container, a charge line), it tells you exactly what before
             generating anything half-finished. Review the draft, then <Tag>Confirm</Tag> it once
             it's right.</P>
+          <Screenshot src={imgDocuments} alt="The Documents page showing a readiness bar and a list of documents, most still missing" caption="Documents — the bar at top tallies Confirmed / Draft / Missing across every document type this shipment could need. Each row gets its own Generate button once its prerequisites are met." />
         </StepBody>
       </div>
     ),
@@ -369,6 +478,7 @@ const UserManualPage = () => {
             steps complete themselves automatically as you do the real work elsewhere (confirming a
             booking, logging a Gate In on every container) — you only need to touch the ones that
             don't have an obvious trigger.</P>
+          <Screenshot src={imgMilestones} alt="The Milestones & Events page showing a stepper with two of nine steps complete" caption="Milestones & Events — a straightforward progress stepper. Completed steps show who finished them and when; the current step is highlighted." />
         </StepBody>
         <Callout type="note"><strong>Completing things out of order won't block you.</strong> Real
           operations don't always happen in a neat sequence — the milestone stepper is a record of
@@ -388,17 +498,26 @@ const UserManualPage = () => {
         <Step n={2}>GP Overview — your margin, live</Step>
         <StepBody>
           <P><Tag>Accounting → GP Overview</Tag> puts buy and sell side by side and does the
-            subtraction for you — no spreadsheet required.</P>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, margin: "12px 0 14px", maxWidth: 460 }}>
-            {[["Est. Buy", "$1,370.00"], ["Est. Sell", "$1,630.00"], ["Margin", "$260 · 16%"]].map(([k, v]) => (
-              <div key={k} style={{ border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px", background: T.surface }}>
-                <div style={{ fontFamily: T.mono, fontSize: 9.5, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 4 }}>{k}</div>
-                <div style={{ fontFamily: T.body, fontSize: 13, color: T.text, fontWeight: 600 }}>{v}</div>
-              </div>
-            ))}
-          </div>
+            subtraction for you — no spreadsheet required. "Estimated" is what you've accrued so
+            far; "Actual" fills in with the real number the moment a line is actualized or posted,
+            so the two only ever disagree when something genuinely changed.</P>
+          <Screenshot src={imgGpOverview} alt="The GP Overview page showing estimated and actual figures matching, both at $260 gross profit" caption="GP Overview for one shipment — Estimated and Actual currently agree, since nothing's been revised since booking." />
         </StepBody>
-        <Step n={3}>Freight Audit & Payment — trust, but verify</Step>
+        <Step n={3}>Multiple entities? See profit broken out by branch</Step>
+        <StepBody>
+          <P>Running more than one legal entity or branch through CargoDesk — say, a Rotterdam
+            office invoicing in EUR and a New York office invoicing in USD? Open{" "}
+            <Tag>Dashboard → Margin</Tag> and scroll to <Tag>By Entity</Tag>. Every branch shows its
+            own buy/sell in its own local currency <em>and</em> converted to a common USD figure, so
+            you can compare entities side by side without losing what each one actually billed in
+            its own currency.</P>
+          <Screenshot src={imgMultiEntityGp} alt="The By Entity table on the Dashboard Margin tab, showing three branches in different currencies" caption="By Entity, on the Dashboard's Margin tab. Rotterdam Branch bills in USD, Verify Entity Branch A bills in EUR — both roll up to the same USD comparison column." />
+          <P>Which branch a shipment counts against is decided automatically, from its Export
+            Managing Office (falling back to the Import Managing Office if Export isn't set) — the
+            same office you assign back in Chapter 6. There's nothing extra to configure per
+            shipment.</P>
+        </StepBody>
+        <Step n={4}>Freight Audit & Payment — trust, but verify</Step>
         <StepBody>
           <P>When the carrier's actual invoice arrives, don't just pay what it says. Open{" "}
             <Tag>Dashboard → Freight Audit</Tag> and enter it — CargoDesk matches every line against
@@ -457,6 +576,7 @@ const UserManualPage = () => {
         <P><strong>Total Allocated</strong> — the sum of all configured space across all carriers and contract types. <strong>Active Consumption</strong> — TEU booked in the selected week. <strong>Remaining</strong> — how much space is still available.</P>
         <H3>Space Configurations</H3>
         <P>Click <strong>＋ Add Configuration</strong> to set the awarded TEU for a specific carrier and contract type combination — e.g. MAEU / Customer Own = 80 TEU. Edit or remove configurations at any time. The utilisation bar turns amber above 70% and red above 90%.</P>
+        <Screenshot src={imgDashboard} alt="The Consumption Dashboard Overview tab" caption="The Consumption Dashboard's Overview tab — allocated/confirmed/remaining TEU, an on-time health bar, and the shipments falling inside the selected week." />
       </div>
     ),
     "command-center": (
@@ -475,6 +595,7 @@ const UserManualPage = () => {
         <P>The right-hand panel (below the Shipment Preview) hosts the AI Agent chat. Type a question or command and press <Tag>Enter</Tag> to send (<Tag>Shift+Enter</Tag> for a newline). The agent can look up individual shipments, list shipments matching criteria, and retrieve contract and allocation details. The AI Agent must be enabled in <strong>App Settings → API Controls → AI Agent</strong>, and requires a valid API key configured there.</P>
         <H3>Carrier and Route Summary</H3>
         <P>Below the KPI cards, two panels summarise the active portfolio by carrier (shipment count and TEU) and by trade lane. These update live as new data arrives via WebSocket.</P>
+        <Screenshot src={imgCommandCenter} alt="The Command Center full-screen view" caption="The Command Center — KPI cards, status breakdown, carrier consumption, top routes, and the AI Assistant panel, all in one full-screen view." />
       </div>
     ),
     "integration-board": (
@@ -487,6 +608,7 @@ const UserManualPage = () => {
         <P>Tickets can be linked to each other from the Links tab in the ticket preview: <Tag>Blocks</Tag>, <Tag>Is blocked by</Tag>, <Tag>Duplicates</Tag>, <Tag>Implements</Tag>.</P>
         <H3>Test Cases</H3>
         <P>Test Plans, Test Runs, and Test Cases live in their own dedicated pages, kept separate from the Integration Board so QA work doesn't clutter the dev ticket board. A Test Case can be linked to a Story via the <Tag>Tests</Tag> / <Tag>Is tested by</Tag> relationship, editable from either side — this gives lightweight requirement-to-test traceability without a full requirements-management module.</P>
+        <Screenshot src={imgIntegrationBoard} alt="The Integration Board Kanban view" caption="The Integration Board — tickets grouped into status columns, with type/priority tags and progress rings on Epics." />
       </div>
     ),
     "ai-agent": (
@@ -598,6 +720,11 @@ const UserManualPage = () => {
         <P>MDM is the reference layer for all operational data. Changes here propagate automatically to shipment forms and the dashboard.</P>
         <H3>Carriers</H3>
         <P>Add, edit, or remove ocean carriers. Each carrier requires a SCAC code (e.g. <Tag>MAEU</Tag>) and a full name. Carriers listed here appear in the shipment carrier dropdown.</P>
+        <H3>Vessels</H3>
+        <P>The IMO vessel registry — tens of thousands of real ships, each with its own IMO number, flag, build year, and tonnage. Search by name, IMO, or type. A vessel with no confirmed name yet shows <em>"Name pending — awaiting a clean AIS report"</em> rather than garbled data; it fills in automatically once a real position report comes through.</P>
+        <Screenshot src={imgMdmVessels} alt="The Master Data Vessels list" caption="Master Data → Vessels — a searchable index of the IMO registry." />
+        <H3>Commodities</H3>
+        <P>The freight commodity code list used when describing what a shipment is carrying, each with its own grade classification. Add a custom code if the one you need isn't already there.</P>
         <H3>Port Locations</H3>
         <P>The port database contains 14,000+ UN/LOCODE records with coordinates. Use the search bar to filter by code or name. Every row with coordinates includes a <strong>📍 Map</strong> link that opens Google Maps at that location. You can add custom ports or edit existing ones.</P>
         <H3>Linked Ports</H3>
