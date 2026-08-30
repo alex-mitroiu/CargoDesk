@@ -19,15 +19,14 @@
 //   node scripts/migrate-sanctions-to-service.js
 //
 // Prerequisites:
-//   - cargodesk.db exists in the project root (the monolith's own local database — this script
-//     reads it directly, the same way checkdb.js does; the monolith process itself does NOT need
-//     to be running)
+//   - The monolith's own database is reachable via lib/db.js (same DATABASE_URL/embedded-pglite
+//     resolution the monolith itself uses) — this script reads it directly, the same way
+//     checkdb.js does; the monolith process itself does NOT need to be running.
 //   - Screening Service running (npm run screening-service)
 //   - SCREENING_SERVICE_SECRET (or SCREENING_SERVICE_SECRET_FILE) set to match that service's own
 //     env, unless both are still on the insecure dev default
 
-const path = require("path");
-const { DatabaseSync } = require("node:sqlite");
+const { query } = require("../lib/db.js");
 const { readSecret } = require("../lib/dockerSecret");
 
 const SCREENING_SERVICE_URL = process.env.SCREENING_SERVICE_URL || "http://localhost:3006";
@@ -35,8 +34,6 @@ const SCREENING_SERVICE_SECRET = readSecret("SCREENING_SERVICE_SECRET", "cargoDe
 // A synced OFAC+CSL dataset can run 25,000+ rows — chunked to stay well under the service's
 // 10mb JSON body limit.
 const CHUNK_SIZE = 2000;
-
-const db = new DatabaseSync(path.join(__dirname, "..", "cargodesk.db"));
 
 function chunk(arr, size) {
   const out = [];
@@ -56,7 +53,7 @@ async function postChunk(entries) {
 }
 
 async function migrate() {
-  const rows = db.prepare("SELECT id, source, ref_id, entity_name, aliases_norm FROM sanctions_entries").all();
+  const rows = await query("SELECT id, source, ref_id, entity_name, aliases_norm FROM sanctions_entries");
   if (!rows.length) { console.log("No local sanctions entries found — nothing to migrate."); return; }
   const entries = rows.map(r => ({ id: r.id, source: r.source, refId: r.ref_id || "", entityName: r.entity_name, entityType: "", program: "", aliasesNorm: r.aliases_norm || "[]" }));
   console.log(`Found ${entries.length} local sanctions entries. Migrating to ${SCREENING_SERVICE_URL} in batches of ${CHUNK_SIZE}…\n`);

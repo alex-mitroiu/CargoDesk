@@ -17,15 +17,14 @@
 //   node scripts/migrate-mdm-to-service.js
 //
 // Prerequisites:
-//   - cargodesk.db exists in the project root (the monolith's own local database — this script
-//     reads it directly, the same way checkdb.js does; the monolith process itself does NOT need
-//     to be running)
+//   - The monolith's own database is reachable via lib/db.js (same DATABASE_URL/embedded-pglite
+//     resolution the monolith itself uses) — this script reads it directly, the same way
+//     checkdb.js does; the monolith process itself does NOT need to be running.
 //   - MDM Service running (npm run mdm-service)
 //   - MDM_SERVICE_SECRET (or MDM_SERVICE_SECRET_FILE) set to match that service's own env, unless
 //     both are still on the insecure dev default
 
-const path = require("path");
-const { DatabaseSync } = require("node:sqlite");
+const { query } = require("../lib/db.js");
 const { readSecret } = require("../lib/dockerSecret");
 
 const MDM_SERVICE_URL = process.env.MDM_SERVICE_URL || "http://localhost:3005";
@@ -33,8 +32,6 @@ const MDM_SERVICE_SECRET = readSecret("MDM_SERVICE_SECRET", "cargoDesk-dev-mdm-s
 // port_locations alone can be 14,000+ rows — chunked per table (not one giant request) to stay
 // well under the service's 5mb JSON body limit.
 const CHUNK_SIZE = 1000;
-
-const db = new DatabaseSync(path.join(__dirname, "..", "cargodesk.db"));
 
 const TABLES = [
   { key: "carriers", label: "Carriers", sql: "SELECT code, name, short_name FROM carriers" },
@@ -73,7 +70,7 @@ async function migrate() {
   console.log(`Migrating local MDM data to ${MDM_SERVICE_URL} in chunks of ${CHUNK_SIZE}…\n`);
   let totalInserted = 0, anyFailed = false;
   for (const t of TABLES) {
-    const rows = db.prepare(t.sql).all();
+    const rows = await query(t.sql);
     if (!rows.length) { console.log(`${t.label}: 0 local rows, skipped`); continue; }
     let inserted = 0;
     try {

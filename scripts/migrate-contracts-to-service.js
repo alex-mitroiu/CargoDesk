@@ -16,40 +16,38 @@
 //   node scripts/migrate-contracts-to-service.js
 //
 // Prerequisites:
-//   - cargodesk.db exists in the project root (the monolith's own local database — this script
-//     reads it directly, the same way checkdb.js does; the monolith process itself does NOT need
-//     to be running)
+//   - The monolith's own database is reachable via lib/db.js (same DATABASE_URL/embedded-pglite
+//     resolution the monolith itself uses) — this script reads it directly, the same way
+//     checkdb.js does; the monolith process itself does NOT need to be running.
 //   - Contract Management Service running (npm run contract-service)
 //   - CONTRACT_SERVICE_SECRET (or CONTRACT_SERVICE_SECRET_FILE) set to match that service's own
 //     env, unless both are still on the insecure dev default
 
-const path = require("path");
-const { DatabaseSync } = require("node:sqlite");
+const { query } = require("../lib/db.js");
 const { readSecret } = require("../lib/dockerSecret");
 
 const CONTRACT_SERVICE_URL = process.env.CONTRACT_SERVICE_URL || "http://localhost:3004";
 const CONTRACT_SERVICE_SECRET = readSecret("CONTRACT_SERVICE_SECRET", "cargoDesk-dev-contract-service-secret-do-not-use-in-prod");
 const BATCH_SIZE = 25;
 
-const db = new DatabaseSync(path.join(__dirname, "..", "cargodesk.db"));
-
-function loadContracts() {
-  const contracts = db.prepare("SELECT * FROM contracts ORDER BY created_at ASC").all();
-  return contracts.map(c => {
-    const routingRows = db.prepare("SELECT * FROM contract_routings WHERE contract_id=? ORDER BY sort_order").all(c.id);
-    const legRows      = db.prepare("SELECT * FROM contract_legs   WHERE contract_id=? ORDER BY leg_order").all(c.id);
-    const rateRows      = db.prepare("SELECT * FROM contract_rates  WHERE contract_id=? ORDER BY sort_order").all(c.id);
+async function loadContracts() {
+  const contracts = await query("SELECT * FROM contracts ORDER BY created_at ASC");
+  const out = [];
+  for (const c of contracts) {
+    const routingRows = await query("SELECT * FROM contract_routings WHERE contract_id=$1 ORDER BY sort_order", [c.id]);
+    const legRows      = await query("SELECT * FROM contract_legs   WHERE contract_id=$1 ORDER BY leg_order", [c.id]);
+    const rateRows      = await query("SELECT * FROM contract_rates  WHERE contract_id=$1 ORDER BY sort_order", [c.id]);
     // container_types/imdg_classes columns are frozen (TKT-5YYLNT) — read from the junction
     // tables instead, which are the real write path now.
-    const containerTypeRows = db.prepare("SELECT container_type FROM contract_container_types WHERE contract_id=?").all(c.id);
-    const imdgClassRows      = db.prepare("SELECT imdg_class FROM contract_imdg_classes WHERE contract_id=?").all(c.id);
+    const containerTypeRows = await query("SELECT container_type FROM contract_container_types WHERE contract_id=$1", [c.id]);
+    const imdgClassRows      = await query("SELECT imdg_class FROM contract_imdg_classes WHERE contract_id=$1", [c.id]);
     // routing_id never survives a save on the service side either (see routes/contracts.js's own
     // resolveRoutingId) — the only identity that does is a leg/rate's position (routingIndex) in
     // THIS payload's own routings[] array, so every routing_id gets resolved to an index here.
     const indexByRoutingId = Object.fromEntries(routingRows.map((r, i) => [r.id, i]));
     const routingIndexOf = routingId => (routingId && indexByRoutingId[routingId] != null) ? indexByRoutingId[routingId] : undefined;
 
-    return {
+    out.push({
       id: c.id, // sourceId — carried through in bulk-import's own response for correlation only
       contractNumber: c.contract_number, contractRef: c.contract_ref || "", carrierCode: c.carrier_code,
       namedAccountId: c.named_account_id || "", namedAccount: c.named_account || "",
@@ -77,8 +75,9 @@ function loadContracts() {
         validFrom: r.valid_from || "", validTo: r.valid_to || "",
         routingIndex: routingIndexOf(r.routing_id),
       })),
-    };
-  });
+    });
+  }
+  return out;
 }
 
 async function postBatch(batch) {
@@ -93,7 +92,7 @@ async function postBatch(batch) {
 }
 
 async function migrate() {
-  const contracts = loadContracts();
+  const contracts = await loadContracts();
   if (!contracts.length) { console.log("No local contracts found — nothing to migrate."); return; }
   console.log(`Found ${contracts.length} local contract(s). Migrating to ${CONTRACT_SERVICE_URL} in batches of ${BATCH_SIZE}…\n`);
 

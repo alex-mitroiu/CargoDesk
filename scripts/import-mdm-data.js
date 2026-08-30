@@ -2,44 +2,22 @@
  * CargoDesk — MDM Data Import
  * Reads data/carriers.csv and data/seaports.csv and bulk-loads into the DB.
  *
- * Run once (safe to re-run; uses INSERT OR IGNORE so duplicates are skipped):
+ * Run once (safe to re-run; uses ON CONFLICT DO NOTHING so duplicates are skipped):
  *   node scripts/import-mdm-data.js   (or: npm run seed)
  *
- * --db=<path> targets a different SQLite file instead of the monolith's own cargodesk.db — same
- * schema, same tables, just a different file. Used to seed services/mdm/mdm.sample.db (the MDM
- * Service's own committed onboarding seed, additive alongside db/cargodesk.sample.db, which stays
- * untouched — see the MDM Service extraction plan) without needing a second copy of this script:
- *   node scripts/import-mdm-data.js --db=services/mdm/mdm.sample.db
+ * Postgres migration note: the old --db=<path> flag (pointed this script at a second SQLite
+ * file to seed services/mdm/mdm.sample.db without a second copy of this script) no longer
+ * applies — that service is Postgres-backed via its own lib/db.js now, not a raw file path this
+ * script could open directly. This script only seeds the monolith's own database, via the
+ * standard DATABASE_URL env var lib/db.js already reads (or the embedded pglite fallback).
  */
 
 const path = require("path");
 const fs   = require("fs");
+const { query, transaction } = require("../lib/db.js");
 
-let DatabaseSync;
-try {
-  ({ DatabaseSync } = require("node:sqlite"));
-} catch (e) {
-  console.error("✗ node:sqlite not available. Requires Node.js 22.5+");
-  process.exit(1);
-}
-
-const dbArg = process.argv.find(a => a.startsWith("--db="));
-const DB_PATH     = dbArg ? path.resolve(process.cwd(), dbArg.slice("--db=".length)) : path.join(__dirname, "..", "cargodesk.db");
-const PORTS_CSV   = path.join(__dirname, "..", "data", "seaports.csv");
-const CARRIERS_CSV= path.join(__dirname, "..", "data", "carriers.csv");
-
-if (!fs.existsSync(DB_PATH)) {
-  if (dbArg) {
-    console.error(`✗ ${DB_PATH} not found. Start that service at least once first so its schema exists (or create the file and let its own server.js's schema.exec() run once).`);
-  } else {
-    console.error("✗ cargodesk.db not found. Start the server at least once first (node server.js)");
-  }
-  process.exit(1);
-}
-
-const db = new DatabaseSync(DB_PATH);
-db.exec("PRAGMA journal_mode = WAL");
-db.exec("PRAGMA foreign_keys = OFF"); // speed during bulk import
+const PORTS_CSV    = path.join(__dirname, "..", "data", "seaports.csv");
+const CARRIERS_CSV = path.join(__dirname, "..", "data", "carriers.csv");
 
 // ─── Import Seaports ───────────────────────────────────────────────────────────
 
@@ -104,26 +82,20 @@ const COUNTRY_TZ = {
   SB:"Pacific/Guadalcanal",TO:"Pacific/Tongatapu",WS:"Pacific/Apia",
 };
 
-function importPorts() {
+async function importPorts() {
   if (!fs.existsSync(PORTS_CSV)) {
     console.warn(`⚠ ${PORTS_CSV} not found — skipping port import`);
-    return 0;
+    return { inserted: 0, skipped: 0 };
   }
 
   const lines = fs.readFileSync(PORTS_CSV, "utf8").split(/\r?\n/).filter(Boolean);
   // Strip header
   const dataLines = lines.slice(1);
 
-  const stmt = db.prepare(`
-    INSERT OR IGNORE INTO port_locations (unlocode, name, latitude, longitude, country_code, zone_code, timezone, last_synced_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-
   let inserted = 0;
   let skipped  = 0;
 
-  db.exec("BEGIN");
-  try {
+  await transaction(async (tx) => {
     for (const line of dataLines) {
       // Format: code;name;latitude;longitude;country_code;zone_code,,
       const parts = line.split(";");
@@ -141,27 +113,29 @@ function importPorts() {
 
       if (!code || code.length !== 5 || !name) { skipped++; continue; }
 
-      const info = stmt.run(code, name, lat, lon, country, zone, tz, now);
-      if (info.changes > 0) { inserted++; continue; }
+      const rows = await tx.query(`
+        INSERT INTO port_locations (unlocode, name, latitude, longitude, country_code, zone_code, timezone, last_synced_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        ON CONFLICT (unlocode) DO NOTHING
+        RETURNING unlocode
+      `, [code, name, lat, lon, country, zone, tz, now]);
+      if (rows.length > 0) { inserted++; continue; }
       // Delta-sync: update if name/coords changed, or country_code was empty
-      db.prepare(
-        "UPDATE port_locations SET name=?, latitude=?, longitude=?, country_code=?, last_synced_at=? " +
-        "WHERE unlocode=? AND (name!=? OR latitude!=? OR longitude!=? OR country_code='' OR country_code IS NULL)"
-      ).run(name, lat, lon, country, now, code, name, lat, lon);
+      await tx.query(
+        "UPDATE port_locations SET name=$1, latitude=$2, longitude=$3, country_code=$4, last_synced_at=$5 " +
+        "WHERE unlocode=$6 AND (name!=$7 OR latitude!=$8 OR longitude!=$9 OR country_code='' OR country_code IS NULL)",
+        [name, lat, lon, country, now, code, name, lat, lon]
+      );
       skipped++;
     }
-    db.exec("COMMIT");
-  } catch (e) {
-    db.exec("ROLLBACK");
-    throw e;
-  }
+  });
 
   return { inserted, skipped };
 }
 
 // ─── Import Carriers ───────────────────────────────────────────────────────────
 
-function importCarriers() {
+async function importCarriers() {
   if (!fs.existsSync(CARRIERS_CSV)) {
     console.warn(`⚠ ${CARRIERS_CSV} not found — skipping carrier import`);
     return { inserted: 0, skipped: 0 };
@@ -171,18 +145,12 @@ function importCarriers() {
   // Strip header
   const dataLines = lines.slice(1);
 
-  const stmt = db.prepare(`
-    INSERT OR IGNORE INTO carriers (code, name, short_name)
-    VALUES (?, ?, ?)
-  `);
-
   let inserted = 0;
   let skipped  = 0;
 
   // CSV format: each line is a quoted row → "AbbrvName,Full Name,SCAC"
   // Strip outer quotes then split on comma
-  db.exec("BEGIN");
-  try {
+  await transaction(async (tx) => {
     for (const rawLine of dataLines) {
       // Remove wrapping quotes if present
       const line = rawLine.trim().replace(/^"|"$/g, "");
@@ -198,118 +166,89 @@ function importCarriers() {
 
       if (!scac || scac.length < 2 || !cleanName) { skipped++; continue; }
 
-      const info = stmt.run(scac, cleanName, shortName);
-      if (info.changes > 0) inserted++;
+      const rows = await tx.query(
+        "INSERT INTO carriers (code, name, short_name) VALUES ($1, $2, $3) ON CONFLICT (code) DO NOTHING RETURNING code",
+        [scac, cleanName, shortName]
+      );
+      if (rows.length > 0) inserted++;
       else skipped++;
     }
-    db.exec("COMMIT");
-  } catch (e) {
-    db.exec("ROLLBACK");
-    throw e;
-  }
+  });
 
   return { inserted, skipped };
 }
 
-// ─── Run ───────────────────────────────────────────────────────────────────────
-
-console.log("\n⚓  CargoDesk MDM Data Import\n");
-
-console.log("Importing port locations...");
-const portResult = importPorts();
-console.log(`  ✔ Ports: ${portResult.inserted} inserted, ${portResult.skipped} skipped`);
-
-
 // ─── Derive and import Regions from zone_codes ─────────────────────────────
 
-function importRegions() {
+async function importRegions() {
   // Pull distinct zone codes from already-imported port_locations
-  const zones = db.prepare("SELECT DISTINCT zone_code FROM port_locations WHERE zone_code IS NOT NULL AND zone_code != ''").all();
+  const zones = await query("SELECT DISTINCT zone_code FROM port_locations WHERE zone_code IS NOT NULL AND zone_code != ''");
   if (!zones.length) {
     console.warn("  ⚠ No zone codes found — import ports first");
     return { inserted: 0, skipped: 0 };
   }
 
-  const ins = db.prepare("INSERT OR IGNORE INTO regions (code, name, description) VALUES (?,?,?)");
   let inserted = 0, skipped = 0;
-  db.exec("BEGIN");
-  try {
+  await transaction(async (tx) => {
     for (const { zone_code } of zones) {
-      const info = ins.run(zone_code, zone_code, "Auto-derived from port data — update name as needed");
-      if (info.changes > 0) inserted++;
+      const rows = await tx.query(
+        "INSERT INTO regions (code, name, description) VALUES ($1,$2,$3) ON CONFLICT (code) DO NOTHING RETURNING code",
+        [zone_code, zone_code, "Auto-derived from port data — update name as needed"]
+      );
+      if (rows.length > 0) inserted++;
       else skipped++;
     }
-    db.exec("COMMIT");
-  } catch(e) { db.exec("ROLLBACK"); throw e; }
+  });
   return { inserted, skipped };
 }
 
-
 // ─── Import Vessels ────────────────────────────────────────────────────────────
 
-function importVessels() {
+async function importVessels() {
   const jsonPath = path.join(__dirname, "..", "data", "vessels.json");
   if (!fs.existsSync(jsonPath)) {
     console.warn(`  ⚠ data/vessels.json not found — skipping vessel import`);
     return { inserted: 0, skipped: 0 };
   }
   const vessels = JSON.parse(fs.readFileSync(jsonPath, "utf8"));
-  const stmt = db.prepare(`
-    INSERT OR IGNORE INTO vessels
-      (imo, name, asset_type, flag_iso2, flag_name, build_year, gross_tonnage)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `);
   let inserted = 0, skipped = 0;
-  db.exec("BEGIN");
-  try {
+  await transaction(async (tx) => {
     for (const v of vessels) {
-      const info = stmt.run(v.imo, v.name, v.assetType || null, v.flagIso2 || null,
-                            v.flagName || null, v.buildYear || null, v.grossTonnage || null);
-      if (info.changes > 0) inserted++; else skipped++;
+      const rows = await tx.query(`
+        INSERT INTO vessels
+          (imo, name, asset_type, flag_iso2, flag_name, build_year, gross_tonnage)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        ON CONFLICT (imo) DO NOTHING
+        RETURNING imo
+      `, [v.imo, v.name, v.assetType || null, v.flagIso2 || null,
+          v.flagName || null, v.buildYear || null, v.grossTonnage || null]);
+      if (rows.length > 0) inserted++; else skipped++;
     }
-    db.exec("COMMIT");
-  } catch(e) { db.exec("ROLLBACK"); throw e; }
+  });
   return { inserted, skipped };
 }
 
-
 // ─── Import Commodities ────────────────────────────────────────────────────────
 
-function importCommodities() {
+async function importCommodities() {
   const jsonPath = path.join(__dirname, "..", "data", "commodities.json");
   if (!fs.existsSync(jsonPath)) {
     console.warn("  ⚠ data/commodities.json not found — skipping");
     return { inserted: 0, skipped: 0 };
   }
   const items = JSON.parse(fs.readFileSync(jsonPath, "utf8"));
-  const stmt  = db.prepare("INSERT OR IGNORE INTO commodities (code,description,grade_code,grade_name) VALUES (?,?,?,?)");
   let inserted = 0, skipped = 0;
-  db.exec("BEGIN");
-  try {
+  await transaction(async (tx) => {
     for (const c of items) {
-      const info = stmt.run(c.code, c.description, c.gradeCode, c.gradeName);
-      if (info.changes > 0) inserted++; else skipped++;
+      const rows = await tx.query(
+        "INSERT INTO commodities (code,description,grade_code,grade_name) VALUES ($1,$2,$3,$4) ON CONFLICT (code) DO NOTHING RETURNING code",
+        [c.code, c.description, c.gradeCode, c.gradeName]
+      );
+      if (rows.length > 0) inserted++; else skipped++;
     }
-    db.exec("COMMIT");
-  } catch(e) { db.exec("ROLLBACK"); throw e; }
+  });
   return { inserted, skipped };
 }
-
-console.log("Importing commodities...");
-const commResult = importCommodities();
-console.log(`  ✔ Commodities: ${commResult.inserted} inserted, ${commResult.skipped} skipped`);
-
-console.log("Importing vessels...");
-const vesselResult = importVessels();
-console.log(`  ✔ Vessels:  ${vesselResult.inserted} inserted, ${vesselResult.skipped} skipped`);
-
-console.log("Importing carriers...");
-const carrierResult = importCarriers();
-console.log(`  ✔ Carriers: ${carrierResult.inserted} inserted, ${carrierResult.skipped} skipped`);
-
-console.log('Importing regions...');
-const regionResult = importRegions();
-console.log(`  ✔ Regions:  ${regionResult.inserted} inserted, ${regionResult.skipped} skipped`);
 
 // ─── Seed trade lanes + their default transit days ─────────────────────────────
 // The 14 FIATA-style trade lanes this app has always used (routing_term display,
@@ -317,8 +256,8 @@ console.log(`  ✔ Regions:  ${regionResult.inserted} inserted, ${regionResult.s
 // script on a genuinely fresh database (v0.71.0's CI fix pass) — trade_lanes had always been
 // populated some other way on every long-lived dev database this codebase was ever built
 // against, so the gap was invisible until a truly clean install/CI run was actually tested.
-// Industry-standard average FCL sea transit times (days); safe to re-run (INSERT OR IGNORE for
-// the row itself, UPDATE only if transit_days is still unset/0, so a manually-edited value is
+// Industry-standard average FCL sea transit times (days); safe to re-run (ON CONFLICT DO NOTHING
+// for the row itself, UPDATE only if transit_days is still unset/0, so a manually-edited value is
 // never clobbered).
 const TRANSIT_DEFAULTS = [
   ["CAR", "Caribbean & Central America", 20],
@@ -336,16 +275,19 @@ const TRANSIT_DEFAULTS = [
   ["SEA", "Southeast Asia", 22],
   ["WAF", "West Africa", 18],
 ];
-const insertTl = db.prepare("INSERT OR IGNORE INTO trade_lanes (code, name) VALUES (?, ?)");
-const updateTl = db.prepare("UPDATE trade_lanes SET transit_days=? WHERE code=? AND (transit_days IS NULL OR transit_days=0)");
-let tlInserted = 0, tlUpdated = 0;
-for (const [code, name, days] of TRANSIT_DEFAULTS) {
-  const info = insertTl.run(code, name);
-  if (info.changes > 0) tlInserted++;
-  const upd = updateTl.run(days, code);
-  if (upd.changes > 0) tlUpdated++;
+
+async function importTradeLanes() {
+  let tlInserted = 0, tlUpdated = 0;
+  await transaction(async (tx) => {
+    for (const [code, name, days] of TRANSIT_DEFAULTS) {
+      const insRows = await tx.query("INSERT INTO trade_lanes (code, name) VALUES ($1, $2) ON CONFLICT (code) DO NOTHING RETURNING code", [code, name]);
+      if (insRows.length > 0) tlInserted++;
+      const updRows = await tx.query("UPDATE trade_lanes SET transit_days=$1 WHERE code=$2 AND (transit_days IS NULL OR transit_days=0) RETURNING code", [days, code]);
+      if (updRows.length > 0) tlUpdated++;
+    }
+  });
+  return { tlInserted, tlUpdated };
 }
-console.log(`  ✔ Trade lanes: ${tlInserted} inserted, ${tlUpdated} transit-days updated`);
 
 // ─── Seed a minimal country → trade-lane assignment set ────────────────────────
 // country_trade_lanes (which countries fall in which lane, used by longestLane()/
@@ -374,20 +316,66 @@ const COUNTRY_LANE_DEFAULTS = [
   ["NL", "Netherlands",   "EU-N"],
   ["US", "United States", "NAM"],
 ];
-const insertCountry = db.prepare("INSERT OR IGNORE INTO countries (iso2, name) VALUES (?, ?)");
-const insertCtl = db.prepare("INSERT OR IGNORE INTO country_trade_lanes (iso2, lane_code) VALUES (?, ?)");
-let countryInserted = 0, ctlInserted = 0;
-for (const [iso2, name, laneCode] of COUNTRY_LANE_DEFAULTS) {
-  if (insertCountry.run(iso2, name).changes > 0) countryInserted++;
-  if (insertCtl.run(iso2, laneCode).changes > 0) ctlInserted++;
+
+async function importCountryLaneDefaults() {
+  let countryInserted = 0, ctlInserted = 0;
+  await transaction(async (tx) => {
+    for (const [iso2, name, laneCode] of COUNTRY_LANE_DEFAULTS) {
+      const cRows = await tx.query("INSERT INTO countries (iso2, name) VALUES ($1, $2) ON CONFLICT (iso2) DO NOTHING RETURNING iso2", [iso2, name]);
+      if (cRows.length > 0) countryInserted++;
+      const lRows = await tx.query("INSERT INTO country_trade_lanes (iso2, lane_code) VALUES ($1, $2) ON CONFLICT (iso2, lane_code) DO NOTHING RETURNING iso2", [iso2, laneCode]);
+      if (lRows.length > 0) ctlInserted++;
+    }
+  });
+  return { countryInserted, ctlInserted };
 }
-console.log(`  ✔ Countries: ${countryInserted} inserted, Country trade-lane assignments: ${ctlInserted} inserted`);
 
-const { n: totalPorts }    = db.prepare("SELECT COUNT(*) AS n FROM port_locations").get();
-const { n: totalCarriers } = db.prepare("SELECT COUNT(*) AS n FROM carriers").get();
-const { n: totalRegions }  = db.prepare("SELECT COUNT(*) AS n FROM regions").get();
+// ─── Run ───────────────────────────────────────────────────────────────────────
 
-const { n: totalVessels } = db.prepare("SELECT COUNT(*) AS n FROM vessels").get();
-const { n: totalCommodities } = db.prepare("SELECT COUNT(*) AS n FROM commodities").get();
-console.log(`\n  DB now has ${totalPorts.toLocaleString()} ports, ${totalCarriers} carriers, ${totalRegions} regions, ${totalVessels} vessels, and ${totalCommodities} commodities.`);
-console.log("\nDone. You can restart the server now.\n");
+async function main() {
+  console.log("\n⚓  CargoDesk MDM Data Import\n");
+
+  const [{ n: schemaReady }] = await query(
+    "SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_name = 'carriers'"
+  );
+  if (Number(schemaReady) === 0) {
+    console.error("✗ Schema not found (no 'carriers' table). Start the server at least once first (node server.js) so its schema is created.");
+    process.exit(1);
+  }
+
+  console.log("Importing port locations...");
+  const portResult = await importPorts();
+  console.log(`  ✔ Ports: ${portResult.inserted} inserted, ${portResult.skipped} skipped`);
+
+  console.log("Importing commodities...");
+  const commResult = await importCommodities();
+  console.log(`  ✔ Commodities: ${commResult.inserted} inserted, ${commResult.skipped} skipped`);
+
+  console.log("Importing vessels...");
+  const vesselResult = await importVessels();
+  console.log(`  ✔ Vessels:  ${vesselResult.inserted} inserted, ${vesselResult.skipped} skipped`);
+
+  console.log("Importing carriers...");
+  const carrierResult = await importCarriers();
+  console.log(`  ✔ Carriers: ${carrierResult.inserted} inserted, ${carrierResult.skipped} skipped`);
+
+  console.log('Importing regions...');
+  const regionResult = await importRegions();
+  console.log(`  ✔ Regions:  ${regionResult.inserted} inserted, ${regionResult.skipped} skipped`);
+
+  const { tlInserted, tlUpdated } = await importTradeLanes();
+  console.log(`  ✔ Trade lanes: ${tlInserted} inserted, ${tlUpdated} transit-days updated`);
+
+  const { countryInserted, ctlInserted } = await importCountryLaneDefaults();
+  console.log(`  ✔ Countries: ${countryInserted} inserted, Country trade-lane assignments: ${ctlInserted} inserted`);
+
+  const [{ n: totalPorts }]      = await query("SELECT COUNT(*) AS n FROM port_locations");
+  const [{ n: totalCarriers }]   = await query("SELECT COUNT(*) AS n FROM carriers");
+  const [{ n: totalRegions }]    = await query("SELECT COUNT(*) AS n FROM regions");
+  const [{ n: totalVessels }]    = await query("SELECT COUNT(*) AS n FROM vessels");
+  const [{ n: totalCommodities }]= await query("SELECT COUNT(*) AS n FROM commodities");
+  console.log(`\n  DB now has ${Number(totalPorts).toLocaleString()} ports, ${Number(totalCarriers)} carriers, ${Number(totalRegions)} regions, ${Number(totalVessels)} vessels, and ${Number(totalCommodities)} commodities.`);
+  console.log("\nDone. You can restart the server now.\n");
+}
+
+main().catch(e => { console.error(e); process.exit(1); });

@@ -15,21 +15,18 @@
 //   node scripts/migrate-kanban-to-service.js
 //
 // Prerequisites:
-//   - cargodesk.db exists in the project root (the monolith's own local database — this script
-//     reads it directly, the same way checkdb.js does; the monolith process itself does NOT need
-//     to be running)
+//   - The monolith's own database is reachable via lib/db.js (same DATABASE_URL/embedded-pglite
+//     resolution the monolith itself uses) — this script reads it directly, the same way
+//     checkdb.js does; the monolith process itself does NOT need to be running.
 //   - Kanban Service running (npm run kanban-service)
 //   - KANBAN_SERVICE_SECRET (or KANBAN_SERVICE_SECRET_FILE) set to match that service's own env,
 //     unless both are still on the insecure dev default
 
-const path = require("path");
-const { DatabaseSync } = require("node:sqlite");
+const { query } = require("../lib/db.js");
 const { readSecret } = require("../lib/dockerSecret");
 
 const KANBAN_SERVICE_URL = process.env.KANBAN_SERVICE_URL || "http://localhost:3007";
 const KANBAN_SERVICE_SECRET = readSecret("KANBAN_SERVICE_SECRET", "cargoDesk-dev-kanban-service-secret-do-not-use-in-prod");
-
-const db = new DatabaseSync(path.join(__dirname, "..", "cargodesk.db"));
 
 async function postBulk(payload) {
   const res = await fetch(`${KANBAN_SERVICE_URL}/internal/kanban/bulk-import`, {
@@ -46,13 +43,13 @@ async function migrate() {
   // Order matters for the response summary only (the service's own route inserts kb_projects
   // before kb_versions/kb_columns regardless of payload key order, since those two carry a real
   // FK to kb_projects) — reading order here just mirrors that for readability.
-  const kbProjects    = db.prepare("SELECT * FROM kb_projects").all();
-  const kbVersions    = db.prepare("SELECT * FROM kb_versions").all();
-  const kbColumns     = db.prepare("SELECT * FROM kb_columns").all();
-  const tickets       = db.prepare("SELECT * FROM tickets").all();
-  const ticketLinks   = db.prepare("SELECT * FROM ticket_links").all();
-  const testItems     = db.prepare("SELECT * FROM test_items").all();
-  const testCaseLinks = db.prepare("SELECT * FROM test_case_links").all();
+  const kbProjects    = await query("SELECT * FROM kb_projects");
+  const kbVersions    = await query("SELECT * FROM kb_versions");
+  const kbColumns     = await query("SELECT * FROM kb_columns");
+  const tickets       = await query("SELECT * FROM tickets");
+  const ticketLinks   = await query("SELECT * FROM ticket_links");
+  const testItems     = await query("SELECT * FROM test_items");
+  const testCaseLinks = await query("SELECT * FROM test_case_links");
 
   const totalRows = kbProjects.length + kbVersions.length + kbColumns.length + tickets.length
     + ticketLinks.length + testItems.length + testCaseLinks.length;

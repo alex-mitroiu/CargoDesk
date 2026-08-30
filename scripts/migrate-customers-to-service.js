@@ -20,21 +20,18 @@
 //   node scripts/migrate-customers-to-service.js
 //
 // Prerequisites:
-//   - cargodesk.db exists in the project root (the monolith's own local database — this script
-//     reads it directly, the same way checkdb.js does; the monolith process itself does NOT need
-//     to be running)
+//   - The monolith's own database is reachable via lib/db.js (same DATABASE_URL/embedded-pglite
+//     resolution the monolith itself uses) — this script reads it directly, the same way
+//     checkdb.js does; the monolith process itself does NOT need to be running.
 //   - Customer Service running (npm run customer-service)
 //   - CUSTOMER_SERVICE_SECRET (or CUSTOMER_SERVICE_SECRET_FILE) set to match that service's own
 //     env, unless both are still on the insecure dev default
 
-const path = require("path");
-const { DatabaseSync } = require("node:sqlite");
+const { query } = require("../lib/db.js");
 const { readSecret } = require("../lib/dockerSecret");
 
 const CUSTOMER_SERVICE_URL = process.env.CUSTOMER_SERVICE_URL || "http://localhost:3008";
 const CUSTOMER_SERVICE_SECRET = readSecret("CUSTOMER_SERVICE_SECRET", "cargoDesk-dev-customers-service-secret-do-not-use-in-prod");
-
-const db = new DatabaseSync(path.join(__dirname, "..", "cargodesk.db"));
 
 async function postBulk(payload) {
   const res = await fetch(`${CUSTOMER_SERVICE_URL}/internal/customers/bulk-import`, {
@@ -51,10 +48,10 @@ async function migrate() {
   // Order matters for the response summary only (the service's own route always inserts
   // customers before identifiers/contacts/screenings regardless of payload key order, since those
   // three carry a real FK to customers) — reading order here just mirrors that for readability.
-  const customers          = db.prepare("SELECT * FROM customers").all();
-  const customerIdentifiers = db.prepare("SELECT * FROM customer_identifiers").all();
-  const customerContacts    = db.prepare("SELECT * FROM customer_contacts").all();
-  const customerScreenings  = db.prepare("SELECT * FROM customer_screenings").all();
+  const customers          = await query("SELECT * FROM customers");
+  const customerIdentifiers = await query("SELECT * FROM customer_identifiers");
+  const customerContacts    = await query("SELECT * FROM customer_contacts");
+  const customerScreenings  = await query("SELECT * FROM customer_screenings");
 
   const totalRows = customers.length + customerIdentifiers.length + customerContacts.length + customerScreenings.length;
   if (!totalRows) { console.log("No local customer data found — nothing to migrate."); return; }
