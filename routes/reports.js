@@ -23,7 +23,7 @@
 // blank in this data) while country_trade_lanes has real, complete coverage — using the dormant
 // one would make "By Region" permanently empty.
 module.exports = function reportsRoutes(app, ctx) {
-  const { db, ok, err, auth, requireRole, mapCostLine, mapShipment, roundCents, portCountryMap, getSettings, callCustomerService,
+  const { query, ok, err, auth, requireRole, mapCostLine, mapShipment, roundCents, portCountryMap, getSettings, callCustomerService,
           docAmountUsd, runDunningSweep, applyShipmentAccessFilter,
           resolveInvoiceThresholds, runInvoiceCollectionsSweep, businessDaysBetween, mapInvoiceStatusOverride } = ctx;
 
@@ -36,7 +36,7 @@ module.exports = function reportsRoutes(app, ctx) {
       const customers = await callCustomerService("GET", "/internal/customers");
       (customers || []).forEach(c => { custById[c.id] = { credit_terms_days: c.creditTermsDays, invoice_deadline_days: c.invoiceDeadlineDays }; });
     } else {
-      db.prepare("SELECT id, credit_terms_days, invoice_deadline_days FROM customers").all().forEach(c => { custById[c.id] = c; });
+      (await query("SELECT id, credit_terms_days, invoice_deadline_days FROM customers")).forEach(c => { custById[c.id] = c; });
     }
     return custById;
   }
@@ -63,7 +63,7 @@ module.exports = function reportsRoutes(app, ctx) {
     const u = req.user;
     const roles = Array.isArray(u.roles) ? u.roles : [u.role || 'viewer'];
     if (roles.includes('admin') || u.canViewFinance) return null;
-    const all = db.prepare("SELECT * FROM shipments").all().map(mapShipment);
+    const all = (await query("SELECT * FROM shipments")).map(mapShipment);
     const allowed = await applyShipmentAccessFilter(all, u, req);
     return new Set(allowed.map(s => s.id));
   };
@@ -94,11 +94,11 @@ module.exports = function reportsRoutes(app, ctx) {
     const format = req.query.format === 'csv' ? 'csv' : 'json';
 
     const scopeIds = await scopedShipmentIds(req);
-    let allRows = db.prepare(`
+    let allRows = await query(`
       SELECT cl.*, s.pol, s.carrier_code, s.etd, s.created_at AS shp_created_at
       FROM shipment_cost_lines cl
       JOIN shipments s ON s.id = cl.shipment_id
-    `).all();
+    `);
     if (scopeIds) allRows = allRows.filter(r => scopeIds.has(r.shipment_id));
     let rows = allRows;
 
@@ -115,14 +115,14 @@ module.exports = function reportsRoutes(app, ctx) {
     }
 
     const countryNames = {};
-    db.prepare("SELECT iso2, name FROM countries").all().forEach(c => { countryNames[c.iso2] = c.name; });
+    (await query("SELECT iso2, name FROM countries")).forEach(c => { countryNames[c.iso2] = c.name; });
     const countryLane = {};
-    db.prepare("SELECT iso2, lane_code FROM country_trade_lanes").all()
+    (await query("SELECT iso2, lane_code FROM country_trade_lanes"))
       .forEach(r => { if (!(r.iso2 in countryLane)) countryLane[r.iso2] = r.lane_code; });
     const laneNames = {};
-    db.prepare("SELECT code, name FROM trade_lanes").all().forEach(l => { laneNames[l.code] = l.name; });
+    (await query("SELECT code, name FROM trade_lanes")).forEach(l => { laneNames[l.code] = l.name; });
     const carrierNames = {};
-    db.prepare("SELECT code, name FROM carriers").all().forEach(c => { carrierNames[c.code] = c.name; });
+    (await query("SELECT code, name FROM carriers")).forEach(c => { carrierNames[c.code] = c.name; });
 
     const keyOf = row => {
       if (groupBy === 'carrier') return row.carrier_code || '';
@@ -247,31 +247,31 @@ module.exports = function reportsRoutes(app, ctx) {
     // company-wide, not just this caller's own scope, or an out-of-scope invoice would make an
     // in-scope Missing candidate look uninvoiced. The actual scoping happens once, at the very
     // end, over the combined real-invoice + Missing result set.
-    const rows = db.prepare(`
+    const rows = await query(`
       SELECT d.*, s.carrier_code, s.pol, s.pod, s.emo_office_id,
              s.principal_id, s.principal_name, s.consignee_id, s.consignee_name
       FROM shipment_documents d
       JOIN shipments s ON s.id = d.shipment_id
       WHERE d.doc_type IN ('FR01','FR02')
       ORDER BY d.created_at DESC
-    `).all();
+    `);
 
     const officeNames = {};
-    db.prepare("SELECT id, code, name FROM offices").all().forEach(o => { officeNames[o.id] = `${o.code} — ${o.name}`; });
+    (await query("SELECT id, code, name FROM offices")).forEach(o => { officeNames[o.id] = `${o.code} — ${o.name}`; });
     const carrierNames = {};
-    db.prepare("SELECT code, name FROM carriers").all().forEach(c => { carrierNames[c.code] = c.name; });
+    (await query("SELECT code, name FROM carriers")).forEach(c => { carrierNames[c.code] = c.name; });
     const countryLane = {};
-    db.prepare("SELECT iso2, lane_code FROM country_trade_lanes").all()
+    (await query("SELECT iso2, lane_code FROM country_trade_lanes"))
       .forEach(r => { if (!(r.iso2 in countryLane)) countryLane[r.iso2] = r.lane_code; });
     const laneNames = {};
-    db.prepare("SELECT code, name FROM trade_lanes").all().forEach(l => { laneNames[l.code] = l.name; });
+    (await query("SELECT code, name FROM trade_lanes")).forEach(l => { laneNames[l.code] = l.name; });
     const custById = await getCustTermsMap();
 
     const todayMs = Date.now();
-    const results = rows.map(r => {
+    const results = await Promise.all(rows.map(async r => {
       const respId   = r.principal_id || r.consignee_id || null;
       const respName = r.principal_id ? r.principal_name : r.consignee_name;
-      const amountUsd = docAmountUsd(r);
+      const amountUsd = await docAmountUsd(r);
       const isLive = r.status === 'confirmed'; // draft/voided never carry a real payment status
       const outstandingUsd = isLive ? Math.max(0, roundCents(amountUsd - (r.paid_amount || 0))) : null;
       const paymentStatus = !isLive ? null : outstandingUsd <= 0 ? 'paid' : (r.paid_amount || 0) > 0 ? 'partial' : 'unpaid';
@@ -306,7 +306,7 @@ module.exports = function reportsRoutes(app, ctx) {
         laneCode: laneCode || null, laneName: laneCode ? (laneNames[laneCode] || laneCode) : null,
         pol: r.pol || null, pod: r.pod || null,
       };
-    });
+    }));
 
     // Missing — a shipment that's earned the right to be invoiced (delivered, past its
     // responsible party's own invoice_deadline_days) but has NO FR01/FR02 at all, so it can
@@ -316,14 +316,14 @@ module.exports = function reportsRoutes(app, ctx) {
     // what "missing" means. Direct bug report: these shipments were invisible to Billing
     // Performance entirely, which defeats the report's own purpose of surfacing collection risk.
     const invoicedShipmentIds = new Set(rows.map(r => r.shipment_id));
-    const deliveredRows = db.prepare(`
+    const deliveredRows = await query(`
       SELECT s.id AS shipment_id, s.carrier_code, s.pol, s.pod, s.emo_office_id,
              s.principal_id, s.principal_name, s.consignee_id, s.consignee_name,
              m.completed_at AS delivered_at
       FROM shipments s
       JOIN shipment_milestones m ON m.shipment_id = s.id AND m.milestone_key = 'delivered' AND m.completed_at != ''
       WHERE s.status != 'Cancelled'
-    `).all();
+    `);
     for (const r of deliveredRows) {
       if (invoicedShipmentIds.has(r.shipment_id)) continue;
       const respId   = r.principal_id || r.consignee_id || null;
@@ -384,25 +384,25 @@ module.exports = function reportsRoutes(app, ctx) {
     if (!reportsGate(req, res)) return;
     const scopeIds = await scopedShipmentIds(req);
 
-    const latestDocRows = db.prepare(`
+    const latestDocRows = await query(`
       SELECT d.* FROM shipment_documents d
       INNER JOIN (
         SELECT shipment_id, MAX(created_at) AS max_created
         FROM shipment_documents WHERE doc_type IN ('FR01','FR02') GROUP BY shipment_id
       ) latest ON latest.shipment_id = d.shipment_id AND latest.max_created = d.created_at
       WHERE d.doc_type IN ('FR01','FR02')
-    `).all();
+    `);
     const latestDocByShipment = {};
     for (const r of latestDocRows) latestDocByShipment[r.shipment_id] = r;
 
     const shipmentIds = new Set(Object.keys(latestDocByShipment));
-    const missingRows = db.prepare(`
+    const missingRows = await query(`
       SELECT s.id AS shipment_id, s.principal_id, s.principal_name, s.emo_office_id,
              m.completed_at AS delivered_at
       FROM shipments s
       JOIN shipment_milestones m ON m.shipment_id = s.id AND m.milestone_key = 'delivered' AND m.completed_at != ''
       WHERE s.status != 'Cancelled'
-    `).all();
+    `);
     const todayIso = new Date().toISOString();
     const todayMs = Date.now();
     const custById = await getCustTermsMap();
@@ -418,17 +418,17 @@ module.exports = function reportsRoutes(app, ctx) {
     }
 
     const userNames = {};
-    db.prepare("SELECT id, name, email FROM users").all().forEach(u => { userNames[u.id] = u.name || u.email; });
+    (await query("SELECT id, name, email FROM users")).forEach(u => { userNames[u.id] = u.name || u.email; });
     const overrideByDoc = {};
-    db.prepare(`
+    (await query(`
       SELECT o.* FROM invoice_status_overrides o
       INNER JOIN (SELECT document_id, MAX(overridden_at) AS max_at FROM invoice_status_overrides GROUP BY document_id) latest
         ON latest.document_id = o.document_id AND latest.max_at = o.overridden_at
-    `).all().forEach(o => { overrideByDoc[o.document_id] = o; });
+    `)).forEach(o => { overrideByDoc[o.document_id] = o; });
 
     const results = [];
     for (const [shipmentId, doc] of Object.entries(latestDocByShipment)) {
-      const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(shipmentId);
+      const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [shipmentId]);
       if (!shipment) continue;
       const override = overrideByDoc[doc.id] || null;
 
@@ -438,11 +438,11 @@ module.exports = function reportsRoutes(app, ctx) {
       } else if (doc.status !== "confirmed") {
         continue; // draft — nothing to report yet
       } else {
-        const amountUsd = docAmountUsd(doc);
+        const amountUsd = await docAmountUsd(doc);
         const outstandingUsd = Math.max(0, roundCents(amountUsd - (doc.paid_amount || 0)));
         const refDate = doc.confirmed_at || doc.created_at;
         daysElapsed = businessDaysBetween(refDate, todayIso);
-        const thresholds = resolveInvoiceThresholds(shipment.emo_office_id);
+        const thresholds = await resolveInvoiceThresholds(shipment.emo_office_id);
         alertBusinessDays = thresholds.alertBusinessDays;
         if (override) status = "overridden";
         else if (outstandingUsd <= 0) status = "paid";
@@ -461,7 +461,7 @@ module.exports = function reportsRoutes(app, ctx) {
       });
     }
     for (const shipmentId of missingShipmentIds) {
-      const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(shipmentId);
+      const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [shipmentId]);
       if (!shipment) continue;
       results.push({
         shipmentId, docId: null, docType: null, filename: null,
