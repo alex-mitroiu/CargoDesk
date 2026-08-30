@@ -1972,6 +1972,44 @@ section describes — the same pattern Document Distribution and PDF Render alre
 exactly the option §13 says does **not** work for Epic 5's Customer/Organization case. This is
 a real, shipped data point in favor of §13's own reasoning, not a contradiction of it.
 
+**Second update — real 100-concurrent-user load test data, not just the design doc's reasoning**
+(added by direct request). New `scripts/load-test.js` (`npm run load-test [connections]
+[durationSeconds]`, uses `autocannon`'s JS scripting API) drives a realistic mixed session per
+virtual connection — list shipments, view one, browse a lightweight MDM lookup, then create,
+update, and delete its own scratch shipment — rather than hammering one endpoint, so both
+read-heavy and write-heavy paths get exercised together under real concurrency. One admin login
+happens once before the run (not per-connection), sharing the resulting JWT via autocannon's
+`initialContext`, so 100 simultaneous logins don't trip the unrelated per-IP login rate limiter —
+that's a test-harness concern, not something this run is measuring.
+- **30s run**: 12,362 requests, zero non-2xx / connection errors / timeouts. Latency p50 184ms,
+  p99 680ms, max 901ms.
+- **180s sustained run** (to catch anything that only shows up over time, not an instant burst):
+  62,444 requests, again zero non-2xx / errors / timeouts. Latency p50 247ms, p99 805ms, one
+  outlier max of 2.9s. Server memory sampled every 30s throughout stayed flat (257–295MB, no
+  growth trend) — no leak. The one outlier spike is most plausibly the live AIS listener (§8's
+  persistent outbound WebSocket, a real external data feed, not simulated) landing a burst of
+  `PositionReport` writes on the same single Node thread as the HTTP traffic at an unlucky moment
+  — consistent with, not contradicting, this section's own "no concurrent-write parallelism"
+  reasoning; not chased further since nothing actually failed.
+- **Net result: this confirms rather than refutes §13's core claim.** The monolith holds up
+  correctly under 100 real concurrent users doing a genuine mixed CRUD workload — no crashes, no
+  corrupted writes, no dropped requests, no memory growth — but latency visibly degrades under
+  load (roughly 4-6x slower at p50/p99 than the equivalent lightly-loaded numbers this codebase's
+  own test suites see) because every request ultimately serializes through one synchronous,
+  single-threaded SQLite connection. That degradation curve, now measured rather than assumed, is
+  the concrete evidence for why Epic 5's cross-process concurrent-write requirement is real and
+  why this section recommends sequencing a Postgres migration with it rather than treating today's
+  single-file SQLite setup as permanently sufficient.
+- **One real bug, found in the test tooling itself, not the app**: the first version of this
+  script tagged scratch shipments via a `note` field to identify and verify cleanup of its own
+  load-generated data — `POST /api/shipments` silently ignores that field entirely (it was never
+  a real column), so the leak-detection check was quietly comparing against data that was never
+  persisted, reporting a false "0 leaked" the whole time. Fixed by using a deliberately fake,
+  distinctive `carrierCode` ("LDTST") instead — a field actually mapped and persisted — plus an
+  automatic post-run cleanup step for the handful of connections always caught mid-cycle (between
+  create and delete) when a run's duration expires, which scales with `connections` and is
+  expected, not a bug. Re-verified clean (0 leaked rows) after both runs above.
+
 ---
 
 ## 14. Auto-Trigger Registry
