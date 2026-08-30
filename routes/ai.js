@@ -119,7 +119,7 @@ module.exports = function aiRoutes(app, ctx) {
         return { shipments: db.prepare(q).all(...params), count: db.prepare(q.replace("SELECT s.*", "SELECT COUNT(*) AS n")).get(...params)?.n };
       }
       if (name === "get_contract") {
-        if ((getSettings().contract_source || "local") === "remote") {
+        if (((await getSettings()).contract_source || "local") === "remote") {
           try { return await callContractService("GET", `/internal/contracts/${args.id}`); }
           catch { return { error: `Contract ${args.id} not found` }; }
         }
@@ -195,7 +195,7 @@ module.exports = function aiRoutes(app, ctx) {
   // ─── POST /api/ai/chat ──────────────────────────────────────────────────────
 
   app.post("/api/ai/chat", auth(), aiChatRateLimit, async (req, res) => {
-    const settings = getSettings();
+    const settings = await getSettings();
     if (settings.ai_agent_enabled !== '1') {
       return err(res, "AI agent is disabled. Enable it in Application Settings → AI Agent.", 403);
     }
@@ -279,7 +279,7 @@ module.exports = function aiRoutes(app, ctx) {
     "use null for its value.";
 
   app.post("/api/ai/extract-document", auth(), aiExtractRateLimit, async (req, res) => {
-    const settings = getSettings();
+    const settings = await getSettings();
     if (settings.ai_agent_enabled !== '1') {
       return err(res, "AI agent is disabled. Enable it in Application Settings → AI Agent.", 403);
     }
@@ -363,8 +363,8 @@ module.exports = function aiRoutes(app, ctx) {
 
   // ─── GET /api/ai/settings — safe (non-secret) config for frontend ───────────
 
-  app.get("/api/ai/settings", auth(), (req, res) => {
-    const settings = getSettings();
+  app.get("/api/ai/settings", auth(), async (req, res) => {
+    const settings = await getSettings();
     ok(res, {
       enabled:  settings.ai_agent_enabled === '1',
       endpoint: settings.ai_endpoint || '',

@@ -84,7 +84,7 @@ module.exports = function exportRoutes(app, ctx) {
     return bySeaShipment;
   }
 
-  function queryShipmentRows(user, req) {
+  async function queryShipmentRows(user, req) {
     const rows = db.prepare(`
       SELECT s.*,
              p1.name AS pol_name, p2.name AS pod_name,
@@ -113,7 +113,7 @@ module.exports = function exportRoutes(app, ctx) {
       ORDER BY s.created_at DESC
     `).all();
     const seaPorts = resolveSeaPorts(rows.map(r => r.id));
-    return applyShipmentAccessFilter(rows.map(r => ({
+    return await applyShipmentAccessFilter(rows.map(r => ({
       ...mapShipment(r),
       totalTeu:       r.total_teu,
       containerCount: r.container_count,
@@ -259,8 +259,8 @@ module.exports = function exportRoutes(app, ctx) {
   // Extracted so the scheduled-report sweep (TKT-IXAR9G, server.js) can build the exact same
   // export with no live HTTP request behind it — same full-field, no-filter shape as a caller
   // who never opens the field-picker modal (the route below's own "no ?fields=" default).
-  function buildShipmentsCsvReport() {
-    const rows = queryShipmentRows({ roles: ["admin"] }, {});
+  async function buildShipmentsCsvReport() {
+    const rows = await queryShipmentRows({ roles: ["admin"] }, {});
     const cols = CSV_FIELDS;
     const header = cols.map(([, label]) => escCSV(label)).join(",");
     const body   = rows.map(r => cols.map(([, , , fn]) => escCSV(fn(r))).join(",")).join("\n");
@@ -273,8 +273,8 @@ module.exports = function exportRoutes(app, ctx) {
   // the sweep's own daily timer or any manual trigger could ever fire.
   ctx.buildShipmentsCsvReport = buildShipmentsCsvReport;
 
-  app.get("/api/export/shipments.csv", auth(), exportRateLimit, (req, res) => {
-    const rows = queryShipmentRows(req.user, req);
+  app.get("/api/export/shipments.csv", auth(), exportRateLimit, async (req, res) => {
+    const rows = await queryShipmentRows(req.user, req);
     // No ?fields= (or an empty one) means "export everything" — preserves the old one-click
     // behavior for any caller that doesn't go through the field-picker modal. When fields ARE
     // specified, mandatory keys are force-included here regardless of what was actually sent —
@@ -562,8 +562,8 @@ module.exports = function exportRoutes(app, ctx) {
 
   // ─── Approach A: Fully programmatic ExcelJS ───────────────────────────────
 
-  app.get("/api/export/dashboard/xlsx", auth(), exportRateLimit, (req, res) => {
-    const shipments   = queryShipmentRows(req.user, req);
+  app.get("/api/export/dashboard/xlsx", auth(), exportRateLimit, async (req, res) => {
+    const shipments   = await queryShipmentRows(req.user, req);
     const summary     = buildMarginSummary(shipments);
     const exportedAt  = new Date().toLocaleString("en-GB");
 
@@ -592,7 +592,7 @@ module.exports = function exportRoutes(app, ctx) {
       return res.status(404).json({ error: "Template not found. Run: node scripts/create-export-template.js" });
     }
 
-    const shipments  = queryShipmentRows(req.user, req);
+    const shipments  = await queryShipmentRows(req.user, req);
     const summary    = buildMarginSummary(shipments);
     const exportedAt = new Date().toLocaleString("en-GB");
 

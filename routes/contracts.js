@@ -15,7 +15,7 @@ module.exports = function contractsRoutes(app, ctx) {
   // the 'local' code path underneath is untouched byte-for-byte. See ARCHITECTURE/plan notes: this
   // is a one-way cutover lever, not a live sync — flipping back to 'local' does not pull remote
   // changes back.
-  const isRemote = () => (getSettings().contract_source || "local") === "remote";
+  const isRemote = async () => ((await getSettings()).contract_source || "local") === "remote";
 
   // The service owns no linked_ports data of its own (that's monolith MDM) — findMatchingContractLegs
   // needs it keyed by each LEG's own pol/pod (not the query's), so the whole small table is resolved
@@ -26,7 +26,7 @@ module.exports = function contractsRoutes(app, ctx) {
   // fresh the moment mdm_source flips to remote (it's frozen, not deleted — see the plan's own
   // note on this narrow combination).
   async function linkedPortPairsJson() {
-    if ((getSettings().mdm_source || "local") === "remote") {
+    if (((await getSettings()).mdm_source || "local") === "remote") {
       try { return JSON.stringify(await callMdmService("GET", "/internal/linked-ports/all")); }
       catch { return "[]"; } // an unreachable MDM service degrades match to exact-port-only, not a hard failure
     }
@@ -70,22 +70,22 @@ module.exports = function contractsRoutes(app, ctx) {
   // oldContainerTypes/oldImdgClasses are pre-resolved by the caller from the junction tables
   // BEFORE saveContractArray below deletes and re-inserts them — container_types/imdg_classes no
   // longer live on oldRow itself (TKT-5YYLNT: those columns are frozen, no longer written to).
-  function logContractFieldDiffs(id, oldRow, newVals, oldContainerTypes, oldImdgClasses) {
+  async function logContractFieldDiffs(id, oldRow, newVals, oldContainerTypes, oldImdgClasses) {
     for (const [col, key] of CONTRACT_DIFF_FIELDS) {
       const oldVal = oldRow[col] ?? "";
       const newVal = newVals[key] ?? "";
-      if (String(oldVal) !== String(newVal)) logEntityEvent('contract', id, 'UPDATED', key, oldVal, newVal, null);
+      if (String(oldVal) !== String(newVal)) await logEntityEvent('contract', id, 'UPDATED', key, oldVal, newVal, null);
     }
     // Array fields — compare by sorted content, not raw string, so reordering the same set
     // doesn't spuriously log a change.
     const oldTypes = JSON.stringify([...(oldContainerTypes || [])].sort());
     const newTypes = JSON.stringify([...(newVals.containerTypes || [])].sort());
-    if (oldTypes !== newTypes) logEntityEvent('contract', id, 'UPDATED', 'containerTypes', JSON.stringify(oldContainerTypes || []), JSON.stringify(newVals.containerTypes || []), null);
+    if (oldTypes !== newTypes) await logEntityEvent('contract', id, 'UPDATED', 'containerTypes', JSON.stringify(oldContainerTypes || []), JSON.stringify(newVals.containerTypes || []), null);
     const oldClasses = JSON.stringify([...(oldImdgClasses || [])].sort());
     const newClasses = JSON.stringify([...(newVals.imdgClasses || [])].sort());
-    if (oldClasses !== newClasses) logEntityEvent('contract', id, 'UPDATED', 'imdgClasses', JSON.stringify(oldImdgClasses || []), JSON.stringify(newVals.imdgClasses || []), null);
+    if (oldClasses !== newClasses) await logEntityEvent('contract', id, 'UPDATED', 'imdgClasses', JSON.stringify(oldImdgClasses || []), JSON.stringify(newVals.imdgClasses || []), null);
     const oldDg = !!oldRow.dg_allowed, newDg = !!newVals.dgAllowed;
-    if (oldDg !== newDg) logEntityEvent('contract', id, 'UPDATED', 'dgAllowed', String(oldDg), String(newDg), null);
+    if (oldDg !== newDg) await logEntityEvent('contract', id, 'UPDATED', 'dgAllowed', String(oldDg), String(newDg), null);
   }
 
   // ─── container_types / imdg_classes (TKT-5YYLNT — normalized off the legacy JSON columns) ──
@@ -139,23 +139,23 @@ module.exports = function contractsRoutes(app, ctx) {
   // must pre-resolve each rate's routingName onto the object before calling this (see saveLegs/
   // saveRates callers in POST/PUT below) since a bare routing_id/routingIndex on its own isn't
   // comparable across the old (DB) and new (request body) shapes.
-  function logRateDiffs(id, oldRates, newRates) {
+  async function logRateDiffs(id, oldRates, newRates) {
     const rateKey = r => `${r.service_code || r.serviceCode || ""}|${r.container_type || r.containerType || ""}|${r.unit || "per_container"}|${r.routingName || ""}`;
     const oldByKey = new Map(oldRates.map(r => [rateKey(r), r]));
     const newByKey = new Map(newRates.map(r => [rateKey(r), r]));
     for (const [k, oldR] of oldByKey) {
-      if (!newByKey.has(k)) logEntityEvent('contract', id, 'UPDATED', 'rate_removed',
+      if (!newByKey.has(k)) await logEntityEvent('contract', id, 'UPDATED', 'rate_removed',
         `${oldR.amount} ${oldR.currency}`, null,
         JSON.stringify({ serviceCode: oldR.service_code, containerType: oldR.container_type || 'all' }));
     }
     for (const [k, newR] of newByKey) {
       const oldR = oldByKey.get(k);
       if (!oldR) {
-        logEntityEvent('contract', id, 'UPDATED', 'rate_added', null,
+        await logEntityEvent('contract', id, 'UPDATED', 'rate_added', null,
           `${newR.amount || 0} ${newR.currency || 'USD'}`,
           JSON.stringify({ serviceCode: newR.serviceCode, containerType: newR.containerType || 'all' }));
       } else if (Number(oldR.amount) !== Number(newR.amount || 0) || (oldR.currency || 'USD') !== (newR.currency || 'USD')) {
-        logEntityEvent('contract', id, 'UPDATED', `rate:${newR.serviceCode || oldR.service_code}`,
+        await logEntityEvent('contract', id, 'UPDATED', `rate:${newR.serviceCode || oldR.service_code}`,
           `${oldR.amount} ${oldR.currency}`, `${newR.amount || 0} ${newR.currency || 'USD'}`,
           JSON.stringify({ containerType: newR.containerType || oldR.container_type || 'all' }));
       }
@@ -254,14 +254,14 @@ module.exports = function contractsRoutes(app, ctx) {
   // else) and the Header notification bell below, which needs a real signal to alert on. Runs
   // once at startup (covers a contract that expired while the server was down) and then on a
   // periodic sweep — contract expiry is date-only, so hourly is more than frequent enough.
-  function expireStaleContracts() {
+  async function expireStaleContracts() {
     const today = new Date().toISOString().slice(0, 10);
     const stale = db.prepare("SELECT id, contract_number, carrier_code FROM contracts WHERE status='Active' AND valid_to != '' AND valid_to < ?").all(today);
     if (stale.length === 0) return;
     const update = db.prepare("UPDATE contracts SET status='Expired' WHERE id=?");
     for (const c of stale) {
       update.run(c.id);
-      logEntityEvent('contract', c.id, 'UPDATED', 'status', 'Active', 'Expired',
+      await logEntityEvent('contract', c.id, 'UPDATED', 'status', 'Active', 'Expired',
         JSON.stringify({ contractNumber: c.contract_number, carrierCode: c.carrier_code, reason: 'valid_to passed' }));
     }
   }
@@ -274,7 +274,7 @@ module.exports = function contractsRoutes(app, ctx) {
   // so a contract still mid-sweep-window (up to an hour stale) is caught immediately rather than
   // waiting for expireStaleContracts' own next tick.
   app.get("/api/contracts/expiring", async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callContractService("GET", `/internal/contracts/expiring?days=${encodeURIComponent(req.query.days || "")}`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -294,7 +294,7 @@ module.exports = function contractsRoutes(app, ctx) {
 
   // Contract typeahead — MUST be before /api/contracts/:id
   app.get("/api/contracts/search", async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callContractService("GET", `/internal/contracts/search?${new URLSearchParams(req.query).toString()}`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -322,7 +322,7 @@ module.exports = function contractsRoutes(app, ctx) {
   // candidate. A legacy contract with no named routings still produces at most one result,
   // identical to this endpoint's pre-routing behavior.
   app.get("/api/contracts/match", async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       const params = new URLSearchParams(req.query);
       params.set("linkedPorts", await linkedPortPairsJson());
       try { return ok(res, await callContractService("GET", `/internal/contracts/match?${params.toString()}`)); }
@@ -391,7 +391,7 @@ module.exports = function contractsRoutes(app, ctx) {
   });
 
   app.get("/api/contracts", async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callContractService("GET", `/internal/contracts?${new URLSearchParams(req.query).toString()}`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -453,7 +453,7 @@ module.exports = function contractsRoutes(app, ctx) {
 
   // Pending-contract revalidation — MUST be before /api/contracts/:id
   app.get("/api/contracts/revalidate", async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callContractService("GET", `/internal/contracts/revalidate?ref=${encodeURIComponent(req.query.ref || "")}`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -471,7 +471,7 @@ module.exports = function contractsRoutes(app, ctx) {
   // transition — additive, not a replacement: the raw dropdown still works for every other
   // status change (e.g. Active -> On Hold) or as a manual override.
   app.post("/api/contracts/:id/publish", write, async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callContractService("POST", `/internal/contracts/${req.params.id}/publish`, {})); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -494,13 +494,13 @@ module.exports = function contractsRoutes(app, ctx) {
     const today = new Date().toISOString().slice(0, 10);
     if (c.valid_to < today) return err(res, "Valid To is already in the past — update the validity window before publishing");
     db.prepare("UPDATE contracts SET status='Active' WHERE id=?").run(req.params.id);
-    logEntityEvent('contract', req.params.id, 'PUBLISHED', 'status', 'Draft', 'Active',
+    await logEntityEvent('contract', req.params.id, 'PUBLISHED', 'status', 'Draft', 'Active',
       JSON.stringify({ contractNumber: c.contract_number, carrierCode: c.carrier_code, rateCount, legCount }));
     ok(res, withContractArrays(mapContract({ ...c, status: 'Active' })));
   });
 
   app.post("/api/contracts/:id/withdraw", write, async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       // This service owns no shipments/allocations data — replicate the reference guard locally
       // (against the monolith's own tables) before ever calling the remote withdraw route.
       const reason = referencedByShipmentOrAllocation(req.params.id);
@@ -516,13 +516,13 @@ module.exports = function contractsRoutes(app, ctx) {
     const allocInUse = db.prepare("SELECT id FROM allocations WHERE contract_id=? LIMIT 1").get(req.params.id);
     if (allocInUse) return err(res, "This contract has a linked space configuration — use On Hold instead of withdrawing it to Draft");
     db.prepare("UPDATE contracts SET status='Draft' WHERE id=?").run(req.params.id);
-    logEntityEvent('contract', req.params.id, 'WITHDRAWN', 'status', 'Active', 'Draft',
+    await logEntityEvent('contract', req.params.id, 'WITHDRAWN', 'status', 'Active', 'Draft',
       JSON.stringify({ contractNumber: c.contract_number, carrierCode: c.carrier_code }));
     ok(res, withContractArrays(mapContract({ ...c, status: 'Draft' })));
   });
 
   app.get("/api/contracts/:id", async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callContractService("GET", `/internal/contracts/${req.params.id}`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -535,7 +535,7 @@ module.exports = function contractsRoutes(app, ctx) {
   });
 
   app.post("/api/contracts", write, async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callContractService("POST", "/internal/contracts", req.body), 201); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -564,13 +564,13 @@ module.exports = function contractsRoutes(app, ctx) {
     const lgs  = db.prepare("SELECT * FROM contract_legs  WHERE contract_id=? ORDER BY leg_order").all(id);
     const rts  = db.prepare("SELECT * FROM contract_rates WHERE contract_id=? ORDER BY sort_order").all(id);
     const rtgs = db.prepare("SELECT * FROM contract_routings WHERE contract_id=? ORDER BY sort_order").all(id);
-    logEntityEvent('contract', id, 'CREATED', null, null, null,
+    await logEntityEvent('contract', id, 'CREATED', null, null, null,
       JSON.stringify({ contractNumber, contractRef, carrierCode, validFrom, validTo, status }));
     ok(res, withContractArrays({ ...mapContract(c), legs: lgs.map(mapLeg), rates: rts.map(mapRate), routings: rtgs.map(mapContractRouting) }), 201);
   });
 
   app.put("/api/contracts/:id", write, async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callContractService("PUT", `/internal/contracts/${req.params.id}`, req.body)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -623,18 +623,18 @@ module.exports = function contractsRoutes(app, ctx) {
     const lgs  = db.prepare("SELECT * FROM contract_legs  WHERE contract_id=? ORDER BY leg_order").all(req.params.id);
     const rts  = db.prepare("SELECT * FROM contract_rates WHERE contract_id=? ORDER BY sort_order").all(req.params.id);
     const rtgs = db.prepare("SELECT * FROM contract_routings WHERE contract_id=? ORDER BY sort_order").all(req.params.id);
-    logContractFieldDiffs(req.params.id, oldRow, { contractNumber, contractRef, carrierCode, namedAccountId, namedAccount, movementType, containerTypes, dgAllowed, imdgClasses, validFrom, validTo, currency, status: effStatus, notes }, oldContainerTypes, oldImdgClasses);
+    await logContractFieldDiffs(req.params.id, oldRow, { contractNumber, contractRef, carrierCode, namedAccountId, namedAccount, movementType, containerTypes, dgAllowed, imdgClasses, validFrom, validTo, currency, status: effStatus, notes }, oldContainerTypes, oldImdgClasses);
     const oldRatesWithRoutingName = oldRates.map(r => ({ ...r, routingName: oldRoutingsById[r.routing_id] || '' }));
     const newRatesWithRoutingName = rates.map(r => ({
       ...r,
       routingName: (Number.isInteger(r.routingIndex) && routings[r.routingIndex]) ? (routings[r.routingIndex].name || '') : '',
     }));
-    logRateDiffs(req.params.id, oldRatesWithRoutingName, newRatesWithRoutingName);
+    await logRateDiffs(req.params.id, oldRatesWithRoutingName, newRatesWithRoutingName);
     ok(res, withContractArrays({ ...mapContract(c), legs: lgs.map(mapLeg), rates: rts.map(mapRate), routings: rtgs.map(mapContractRouting) }));
   });
 
   app.delete("/api/contracts/:id", write, async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       const reason = referencedByShipmentOrAllocation(req.params.id);
       if (reason) return err(res, `${reason} — set its status to Expired/On Hold instead of deleting`);
       try { return ok(res, await callContractService("DELETE", `/internal/contracts/${req.params.id}`)); }
@@ -653,7 +653,7 @@ module.exports = function contractsRoutes(app, ctx) {
     const allocInUse = db.prepare("SELECT id FROM allocations WHERE contract_id=? LIMIT 1").get(req.params.id);
     if (allocInUse) return err(res, "This contract has a linked space configuration — remove or reassign that configuration first");
     db.prepare("DELETE FROM contracts WHERE id=?").run(req.params.id);
-    logEntityEvent('contract', req.params.id, 'DELETED', null, null, null,
+    await logEntityEvent('contract', req.params.id, 'DELETED', null, null, null,
       JSON.stringify({ contractNumber: existing.contract_number, carrierCode: existing.carrier_code }));
     ok(res, { deleted: req.params.id });
   });

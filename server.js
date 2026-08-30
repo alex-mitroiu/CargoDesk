@@ -2507,7 +2507,7 @@ const PORT_LANES_SQL = `
 `;
 async function rebuildPortLanesMap() {
   try {
-    const plRows = (getSettings().mdm_source || "local") === "remote"
+    const plRows = ((await getSettings()).mdm_source || "local") === "remote"
       ? await callMdmService("GET", "/internal/port-lanes-index")
       : db.prepare(PORT_LANES_SQL).all();
     for (const key of Object.keys(portLanesMap)) delete portLanesMap[key];
@@ -2530,7 +2530,7 @@ rebuildPortLanesMap();
 const portCountryMap = {};
 (async () => {
   try {
-    const pcRows = (getSettings().mdm_source || "local") === "remote"
+    const pcRows = ((await getSettings()).mdm_source || "local") === "remote"
       ? await callMdmService("GET", "/internal/port-country-map")
       : db.prepare("SELECT unlocode, country_code FROM port_locations WHERE country_code IS NOT NULL AND country_code != ''").all();
     for (const r of pcRows) portCountryMap[r.unlocode] = r.country_code;
@@ -2628,7 +2628,11 @@ seedSigningCert();
 
 // ─── App Settings ─────────────────────────────────────────────────────────────
 
-function getSettings() {
+// Async-ified ahead of the eventual Postgres driver swap (ARCHITECTURE.md §13) — same standalone
+// prerequisite as logEntityEvent above. Every one of its 58 real call sites (excluding
+// services/screening/server.js's own unrelated, already-async, same-named local function) was
+// converted to `await` it and its enclosing function made `async`.
+async function getSettings() {
   // idleTimeoutMinutes comes from config/app-settings.yaml (lib/staticConfig.js), not the
   // app_settings table — deliberately static/code-deploy config, not a runtime Settings toggle.
   // Merged into the same flat response so the frontend needs no second fetch for it.
@@ -2758,7 +2762,7 @@ const sanctionsMap = new Map();
 // silently never reach screenCustomer, worse than today's already-rare bug.
 async function loadSanctionsIndex() {
   let rows;
-  if ((getSettings().screening_source || 'local') === 'remote') {
+  if (((await getSettings()).screening_source || 'local') === 'remote') {
     try { rows = await callScreeningService("GET", "/internal/sanctions/entries/export"); }
     catch (e) { console.warn("  ⚠ Sanctions index reload from Screening Service failed:", e.message); return; }
   } else {
@@ -2798,7 +2802,7 @@ function httpsGetFollowRedirects(url, depth = 0, reqHeaders = {}) {
 }
 
 async function syncOfacSdn() {
-  if ((getSettings().screening_source || 'local') === 'remote') {
+  if (((await getSettings()).screening_source || 'local') === 'remote') {
     const r = await callScreeningService("POST", "/internal/sanctions/sync");
     await loadSanctionsIndex();
     await rescreenActiveShipments();
@@ -2869,7 +2873,7 @@ async function syncOfacSdn() {
 // can safely scope to "every row this sync owns" without having to enumerate the list names
 // themselves, which the government feed could rename or add to over time.
 async function syncConsolidatedScreeningList() {
-  if ((getSettings().screening_source || 'local') === 'remote') {
+  if (((await getSettings()).screening_source || 'local') === 'remote') {
     const result = await callScreeningService("POST", "/internal/sanctions/sync-csl");
     await loadSanctionsIndex();
     await rescreenActiveShipments();
@@ -2932,7 +2936,7 @@ async function rescreenActiveShipments() {
 // GET /internal/customers/:id/group (mirrors Kanban's co-located-table-JOIN precedent) — both
 // branches return the same root-first array; routes/finance.js's rootOf() depends on that order.
 async function resolveCustomerGroup(customerId) {
-  if ((getSettings().customer_source || "local") === "remote") {
+  if (((await getSettings()).customer_source || "local") === "remote") {
     try {
       const { ids } = await callCustomerService("GET", `/internal/customers/${customerId}/group`);
       return ids;
@@ -2967,7 +2971,7 @@ async function resolveCustomerGroup(customerId) {
 // invoked from a request handler, long after the whole module has finished loading.
 async function getCustomerRow(id) {
   if (!id) return null;
-  if ((getSettings().customer_source || "local") === "remote") {
+  if (((await getSettings()).customer_source || "local") === "remote") {
     try { return await callCustomerService("GET", `/internal/customers/${id}`); }
     catch { return null; }
   }
@@ -2981,7 +2985,7 @@ async function getCustomerRow(id) {
 // of it can. Local: direct query, unchanged. Remote: the service's own write-only screening record.
 async function getCustomerScreeningResult(id) {
   if (!id) return null;
-  if ((getSettings().customer_source || "local") === "remote") {
+  if (((await getSettings()).customer_source || "local") === "remote") {
     try { return (await callCustomerService("GET", `/internal/customers/${id}/screening`))?.result || null; }
     catch { return null; }
   }
@@ -3001,18 +3005,18 @@ const MAX_TIMER_MS = 2_000_000_000; // ~23.1 days — safe upper bound
 // service last synced. Cheap (one bulk GET), so a short interval is fine.
 const SCREENING_POLL_MS = 15 * 60 * 1000;
 
-function scheduleNextOfacSync(retryDelayMs = null) {
+async function scheduleNextOfacSync(retryDelayMs = null) {
   clearTimeout(ofacAutoSyncTimer);
   // 'remote' mode: the Screening Service owns the actual sync schedule now — this timer's only
   // job is to keep the local sanctionsMap cache from drifting, via a plain fixed-interval poll
   // instead of the elaborate "is a sync due" math below, which only makes sense for deciding
   // when to FIRE a sync (a decision this side no longer makes).
-  if ((getSettings().screening_source || 'local') === 'remote') {
+  if (((await getSettings()).screening_source || 'local') === 'remote') {
     ofacAutoSyncTimer = setTimeout(() => { loadSanctionsIndex().catch(() => {}); scheduleNextOfacSync(); }, SCREENING_POLL_MS);
     return;
   }
   try {
-    const s = getSettings();
+    const s = await getSettings();
     if (s.api_ofac_enabled !== 'true') return;
     const lastSync = db.prepare("SELECT synced_at FROM sanctions_syncs WHERE source='OFAC-SDN'").get();
     if (!lastSync) return; // Never synced — user must trigger the first one manually
@@ -3034,8 +3038,9 @@ function scheduleNextOfacSync(retryDelayMs = null) {
     ofacAutoSyncTimer = setTimeout(async () => {
       // Re-check whether the sync is actually due (handles the >24-day cap case)
       const ls = db.prepare("SELECT synced_at FROM sanctions_syncs WHERE source='OFAC-SDN'").get();
-      const sv        = Math.max(1, parseInt(getSettings().api_ofac_interval_value) || 1);
-      const su        = getSettings().api_ofac_interval_unit || 'weeks';
+      const freshSettings = await getSettings();
+      const sv        = Math.max(1, parseInt(freshSettings.api_ofac_interval_value) || 1);
+      const su        = freshSettings.api_ofac_interval_unit || 'weeks';
       const msMap     = { days: 86400000, weeks: 7 * 86400000, months: 30 * 86400000 };
       const due       = ls ? new Date(ls.synced_at).getTime() + sv * (msMap[su] || msMap.weeks) : 0;
       if (Date.now() < due) { scheduleNextOfacSync(); return; } // not due yet, reschedule
@@ -3063,16 +3068,16 @@ try { scheduleNextOfacSync(); } catch {}
 // precedent this codebase already applies elsewhere (dockerSecret.js, per-service mappers, etc.).
 let cslAutoSyncTimer = null;
 
-function scheduleNextCslSync(retryDelayMs = null) {
+async function scheduleNextCslSync(retryDelayMs = null) {
   clearTimeout(cslAutoSyncTimer);
   // 'remote' mode: same reasoning as scheduleNextOfacSync's own remote branch above — the
   // Screening Service owns the actual sync schedule, this is just a cache-refresh poll.
-  if ((getSettings().screening_source || 'local') === 'remote') {
+  if (((await getSettings()).screening_source || 'local') === 'remote') {
     cslAutoSyncTimer = setTimeout(() => { loadSanctionsIndex().catch(() => {}); scheduleNextCslSync(); }, SCREENING_POLL_MS);
     return;
   }
   try {
-    const s = getSettings();
+    const s = await getSettings();
     if (s.api_csl_enabled !== 'true') return;
     const lastSync = db.prepare("SELECT synced_at FROM sanctions_syncs WHERE source='CSL'").get();
     if (!lastSync) return; // Never synced — user must trigger the first one manually
@@ -3091,8 +3096,9 @@ function scheduleNextCslSync(retryDelayMs = null) {
 
     cslAutoSyncTimer = setTimeout(async () => {
       const ls  = db.prepare("SELECT synced_at FROM sanctions_syncs WHERE source='CSL'").get();
-      const sv  = Math.max(1, parseInt(getSettings().api_csl_interval_value) || 1);
-      const su  = getSettings().api_csl_interval_unit || 'weeks';
+      const freshSettings = await getSettings();
+      const sv  = Math.max(1, parseInt(freshSettings.api_csl_interval_value) || 1);
+      const su  = freshSettings.api_csl_interval_unit || 'weeks';
       const msMap = { days: 86400000, weeks: 7 * 86400000, months: 30 * 86400000 };
       const due = ls ? new Date(ls.synced_at).getTime() + sv * (msMap[su] || msMap.weeks) : 0;
       if (Date.now() < due) { scheduleNextCslSync(); return; }
@@ -3200,7 +3206,7 @@ async function screenShipmentById(shipmentId) {
 // ─── FX Rate Cache (frankfurter.app, ECB rates, refreshed every 24 h) ─────────
 let fxCache = { rates: {}, ts: 0 };
 async function getFxRates() {
-  const s        = getSettings();
+  const s        = await getSettings();
   const val      = Math.max(1, parseInt(s.api_fx_interval_value) || 1);
   const unit     = s.api_fx_interval_unit || 'days';
   const msMap    = { days: 86400000, weeks: 7 * 86400000, months: 30 * 86400000 };
@@ -3359,7 +3365,7 @@ async function runDunningSweep() {
       });
       await sendViaOffice(db, r.emo_office_id, mailOptions);
       db.prepare("UPDATE shipment_documents SET last_reminder_sent_at=? WHERE id=?").run(new Date().toISOString(), r.id);
-      logEntityEvent('document', r.id, 'REMINDER_SENT', null, null, null,
+      await logEntityEvent('document', r.id, 'REMINDER_SENT', null, null, null,
         JSON.stringify({ shipmentId: r.shipment_id, customerId: cust.id, to, daysOverdue, outstandingUsd }));
       sent.push({ docId: r.id, shipmentId: r.shipment_id, customerId: cust.id, companyName: cust.company_name, daysOverdue, outstandingUsd });
     } catch (e) {
@@ -3393,7 +3399,7 @@ async function runScheduledReportsSweep() {
     if (!mailSettings) continue;
 
     let report;
-    if (r.report_type === 'shipments-csv') report = ctx.buildShipmentsCsvReport();
+    if (r.report_type === 'shipments-csv') report = await ctx.buildShipmentsCsvReport();
     else { console.warn(`Unknown scheduled report type: ${r.report_type}`); continue; }
 
     try {
@@ -3406,7 +3412,7 @@ async function runScheduledReportsSweep() {
       });
       await sendViaOffice(db, r.office_id, mailOptions);
       db.prepare("UPDATE scheduled_reports SET last_run_at=? WHERE id=?").run(new Date().toISOString(), r.id);
-      logEntityEvent('scheduled_report', r.id, 'REPORT_SENT', null, null, null,
+      await logEntityEvent('scheduled_report', r.id, 'REPORT_SENT', null, null, null,
         JSON.stringify({ reportType: r.report_type, recipients, frequency: r.frequency }));
       sent.push({ id: r.id, reportType: r.report_type, recipients, filename: report.filename });
     } catch (e) {
@@ -3885,8 +3891,8 @@ const BOOKABLE_CARRIERS = new Set(["MAEU", "SAFM", "MCPU"]);
 // not yes" posture this codebase already takes elsewhere (e.g. a blank contractId never matches
 // a contract). The built-in 3 (BOOKABLE_CARRIERS) are deliberately NOT office-scoped — they're a
 // separate, pre-existing, always-simulated concept this pass didn't revisit.
-function isEdiBookable(carrierCode, officeId) {
-  if (getSettings().api_eadapter_enabled === 'false') return false;
+async function isEdiBookable(carrierCode, officeId) {
+  if ((await getSettings()).api_eadapter_enabled === 'false') return false;
   if (BOOKABLE_CARRIERS.has(carrierCode)) return true;
   if (!officeId) return false;
   const cfg = db.prepare("SELECT is_active FROM carrier_eadapter_configs WHERE carrier_code=? AND office_id=?").get(carrierCode, officeId);
@@ -4087,7 +4093,7 @@ function canEditOfficeSide(req, side) {
   return !!office && office.department === dept;
 }
 
-function applyShipmentAccessFilter(shipments, user, req) {
+async function applyShipmentAccessFilter(shipments, user, req) {
   if (!user) return shipments;
 
   // Derive the highest-ranked role from the JWT roles array (works with both
@@ -4109,7 +4115,7 @@ function applyShipmentAccessFilter(shipments, user, req) {
 
   // Office-based data segregation: filter by active office when the user is not global.
   // Org-wide "offices_allow_all" setting bypasses this for all users.
-  const orgAllowAll = getSettings().offices_allow_all === "1";
+  const orgAllowAll = (await getSettings()).offices_allow_all === "1";
   if (!user.allOffices && !orgAllowAll) {
     const activeOfficeId = req?.headers?.['x-office-id'] || null;
     if (activeOfficeId) {
@@ -4160,7 +4166,13 @@ function applyShipmentAccessFilter(shipments, user, req) {
 const INVERSE_LINK_LABEL = { "Blocks": "Is blocked by", "Duplicates": "Is duplicated by", "Implements": "Is implemented by", "Relates to": "Relates to" };
 const inverseLinkLabel = t => INVERSE_LINK_LABEL[t] || t;
 // ─── Entity event logger (generic: allocations, contracts, carriers) ─────────
-const logEntityEvent = (entityType, entityId, eventType, field = null, oldVal = null, newVal = null, meta = null) => {
+// Async-ified ahead of the eventual Postgres driver swap (ARCHITECTURE.md §13) — a standalone,
+// zero-behavior-change prerequisite while still on node:sqlite (awaiting an already-synchronous
+// call is a no-op). Every one of its 106 call sites was converted to `await` it, not left
+// fire-and-forget — this logger's write must still complete before the caller's response is
+// sent, exactly as it does today, since some callers (audit/history reads) depend on that
+// ordering within the same request.
+const logEntityEvent = async (entityType, entityId, eventType, field = null, oldVal = null, newVal = null, meta = null) => {
   try {
     db.prepare(
       "INSERT INTO entity_events (id,entity_type,entity_id,event_type,field,old_value,new_value,meta,created_at) VALUES (?,?,?,?,?,?,?,?,?)"
@@ -4290,7 +4302,7 @@ const autoCompleteMilestone = (shipmentId, milestoneKey, note) => {
 // Copies a booking row into carrier_booking_archive AS-IS (keeps its own BKG- id — the
 // surrogate key it already had) then deletes it from the live table. Called only from
 // ensureBookingCreated's supersede branch below.
-const archiveBooking = (booking, reason) => {
+const archiveBooking = async (booking, reason) => {
   const now = new Date().toISOString();
   db.prepare(`INSERT INTO carrier_booking_archive
     (id, shipment_id, carrier_code, status, last_response_status, booking_ref, correlation_id,
@@ -4303,7 +4315,7 @@ const archiveBooking = (booking, reason) => {
          booking.confirmed_at, booking.confirmed_by, booking.cancelled_at, booking.cancelled_by,
          booking.cancel_reason, booking.created_at, booking.updated_at, now, reason || '');
   db.prepare("DELETE FROM carrier_bookings WHERE id=?").run(booking.id);
-  logEntityEvent('carrier_booking', booking.id, 'ARCHIVED', null, null, null,
+  await logEntityEvent('carrier_booking', booking.id, 'ARCHIVED', null, null, null,
     JSON.stringify({ shipmentId: booking.shipment_id, reason: reason || '' }));
 };
 
@@ -4332,14 +4344,14 @@ const archiveBooking = (booking, reason) => {
 // different carrier's attempt the moment Send or Confirm was clicked again — the actual
 // still-reproducible shape of the original SHP-Y9E98X bug, since neither of those call sites
 // went through ensureBookingCreated at all.
-const supersedeIfCarrierChanged = (shipment, existing) => {
+const supersedeIfCarrierChanged = async (shipment, existing) => {
   if (!existing || existing.status === "Confirmed" || shipment.carrier_code === existing.carrier_code) return existing;
   const now = new Date().toISOString();
   const reason = `Carrier changed to ${shipment.carrier_code || '(none)'}`;
   if (existing.status !== "Cancelled") {
     // Notify the old carrier only if something was actually transmitted for THIS booking —
     // its own carrier_code (who the request actually went to), not the shipment's new one.
-    if (existing.correlation_id && isEdiBookable(existing.carrier_code, shipment.emo_office_id)) {
+    if (existing.correlation_id && await isEdiBookable(existing.carrier_code, shipment.emo_office_id)) {
       const cancelId = `EDI-${uid()}`;
       db.prepare(`
         INSERT INTO edi_messages (id, shipment_id, carrier_code, direction, message_type, format, raw_payload, status, correlation_id, is_mock, created_at)
@@ -4358,11 +4370,11 @@ const supersedeIfCarrierChanged = (shipment, existing) => {
       .run(now, 'System (Auto)', reason, now, existing.id);
     existing = db.prepare("SELECT * FROM carrier_bookings WHERE id=?").get(existing.id);
   }
-  archiveBooking(existing, `Superseded — ${reason}`);
+  await archiveBooking(existing, `Superseded — ${reason}`);
   return null;
 };
 
-const ensureBookingCreated = (shipmentId) => {
+const ensureBookingCreated = async (shipmentId) => {
   const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(shipmentId);
   if (!shipment) return;
   if (!(shipment.contract_id || shipment.contract_ref)) return;
@@ -4373,13 +4385,13 @@ const ensureBookingCreated = (shipmentId) => {
   `).get(shipmentId, shipmentId);
   if (!hasSchedule) return;
   let existing = db.prepare("SELECT * FROM carrier_bookings WHERE shipment_id=?").get(shipmentId);
-  existing = supersedeIfCarrierChanged(shipment, existing);
+  existing = await supersedeIfCarrierChanged(shipment, existing);
   if (existing) return;
   const now = new Date().toISOString();
   const id = `BKG-${uid()}`;
   db.prepare(`INSERT INTO carrier_bookings (id, shipment_id, carrier_code, status, created_at, updated_at)
     VALUES (?,?,?,'Created',?,?)`).run(id, shipmentId, shipment.carrier_code || '', now, now);
-  logEntityEvent('carrier_booking', id, 'CREATED', null, null, null,
+  await logEntityEvent('carrier_booking', id, 'CREATED', null, null, null,
     JSON.stringify({ shipmentId, actor: 'System (Auto)' }));
   // Live-push the new booking — matters much more now than when this was write-only-at-
   // creation: a booking can be auto-superseded (and its own id swapped) at any time a not-yet-
@@ -4400,7 +4412,7 @@ const ensureBookingCreated = (shipmentId) => {
 // feature existed (or via a code path that doesn't call it, like SHP-VSB0Z2's hand-entered
 // legs) need a one-time sweep. Safe to re-run on every startup: ensureBookingCreated
 // itself no-ops for anything that already has a booking or doesn't qualify.
-(function backfillCarrierBookings() {
+(async function backfillCarrierBookings() {
   const candidates = db.prepare(`
     SELECT id FROM shipments
     WHERE (contract_id IS NOT NULL AND contract_id != '') OR (contract_ref IS NOT NULL AND contract_ref != '')
@@ -4408,7 +4420,7 @@ const ensureBookingCreated = (shipmentId) => {
   let created = 0;
   for (const { id } of candidates) {
     const before = db.prepare("SELECT id FROM carrier_bookings WHERE shipment_id=?").get(id);
-    ensureBookingCreated(id);
+    await ensureBookingCreated(id);
     if (!before && db.prepare("SELECT id FROM carrier_bookings WHERE shipment_id=?").get(id)) created++;
   }
   if (created > 0) console.log(`  ✔ Backfilled ${created} carrier booking(s) for already-qualifying shipments`);
@@ -4460,7 +4472,7 @@ function resolveAssigneeNames(rows) {
 // unchanged) rather than retrofitting the same constraint onto the monolith's own long-lived
 // tickets table — the remote path closes the race outright instead of porting it.
 const ensureOpsTicket = async (sourceType, sourceId, { shipmentId, title, description, priority = 'Medium' }) => {
-  if ((getSettings().kanban_source || 'local') === 'remote') {
+  if (((await getSettings()).kanban_source || 'local') === 'remote') {
     try {
       const r = await callKanbanService('POST', '/internal/tickets/ensure',
         { sourceType, sourceId, shipmentId: shipmentId || null, title, description, priority });
@@ -4585,7 +4597,7 @@ const linkedPortCodes = code => db.prepare(`
 // each candidate is plausible. resolveCarrierAgent (below) is the old single-result contract, kept
 // for its two existing callers that only ever want "the" match when unambiguous.
 async function resolveCarrierAgentCandidates(carrierCode, portUnlocode) {
-  if ((getSettings().mdm_source || "local") === "remote") {
+  if (((await getSettings()).mdm_source || "local") === "remote") {
     let rows;
     try { rows = await callMdmService("GET", `/internal/carrier-agents/resolve?carrierCode=${encodeURIComponent(carrierCode)}&port=${encodeURIComponent(portUnlocode)}&all=1`); }
     catch { return []; }
@@ -4827,7 +4839,7 @@ async function createRateSnapshot(shipmentId, contractId, reason, generatedBy = 
   // already lapsed, is excluded from a freshly-generated snapshot. Already-frozen snapshots on
   // other shipments are unaffected — this only ever gates what goes INTO a new one.
   let allRates;
-  if ((getSettings().contract_source || 'local') === 'remote') {
+  if (((await getSettings()).contract_source || 'local') === 'remote') {
     try { allRates = (await callContractService("GET", `/internal/contracts/${contractId}`)).rates.map(rateToRow); }
     catch { allRates = []; } // an unreachable/vanished remote contract yields no rates to snapshot, not a hard failure
   } else {
@@ -4848,7 +4860,7 @@ async function createRateSnapshot(shipmentId, contractId, reason, generatedBy = 
       .run(`RSL-${uid()}`, snapshotId, r.service_code || '', r.description || '', r.amount,
            r.currency || 'USD', r.amount_usd, r.unit || 'per_container', r.container_type || '', r.notes || '');
   }
-  logEntityEvent('rate_snapshot', snapshotId, 'GENERATED', null, null, null,
+  await logEntityEvent('rate_snapshot', snapshotId, 'GENERATED', null, null, null,
     JSON.stringify({ shipmentId, contractId, reason, lineCount: rates.length }));
   return snapshotId;
 }
@@ -4856,7 +4868,7 @@ async function createRateSnapshot(shipmentId, contractId, reason, generatedBy = 
 // Generates shipment_cost_lines from a frozen rate snapshot (not live contract_rates). Same
 // line-generation logic importContractRates always used — container matching, per-container
 // split, SERVICE_CODE_MAP lookup — just sourced from shipment_rate_snapshot_lines.
-function generateCostLinesFromSnapshot(shipmentId, snapshotId, { splitPerContainer = false, includeSell = false } = {}) {
+async function generateCostLinesFromSnapshot(shipmentId, snapshotId, { splitPerContainer = false, includeSell = false } = {}) {
   const lines = db.prepare("SELECT * FROM shipment_rate_snapshot_lines WHERE snapshot_id=?").all(snapshotId);
   if (!lines.length) return 0;
   const ctrs = db.prepare("SELECT id, container_number, size, type FROM containers WHERE shipment_id=?").all(shipmentId);
@@ -4870,11 +4882,11 @@ function generateCostLinesFromSnapshot(shipmentId, snapshotId, { splitPerContain
       ? ctrs.filter(c => `${c.size || ''}${c.type || ''}`.toUpperCase() === r.container_type.toUpperCase())
       : ctrs;
     if (r.unit === 'per_container' && r.container_type && applicableCtrs.length === 0) continue;
-    const insertLine = (type, amount, notes, containerId) => {
+    const insertLine = async (type, amount, notes, containerId) => {
       const lineId = `CL-${uid()}`;
       db.prepare("INSERT INTO shipment_cost_lines (id,shipment_id,type,charge_code,currency,amount,exchange_rate,notes,container_id,created_at,source,rate_snapshot_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
         .run(lineId, shipmentId, type, chargeCode, r.currency || 'USD', amount, exchangeRate, notes, containerId, now, 'contract', snapshotId);
-      logEntityEvent('cost_line', lineId, 'IMPORTED', null, null, null,
+      await logEntityEvent('cost_line', lineId, 'IMPORTED', null, null, null,
         JSON.stringify({ shipmentId, chargeCode, currency: r.currency || 'USD', amount, exchangeRate, containerId, snapshotId }));
       created++;
     };
@@ -4884,14 +4896,14 @@ function generateCostLinesFromSnapshot(shipmentId, snapshotId, { splitPerContain
           ? `${c.container_number}${c.size || c.type ? ` (${c.size}${c.type})` : ''}`
           : `(${c.size || ''}${c.type || ''})`;
         const notes = [cLabel, baseNotes].filter(Boolean).join(' — ');
-        insertLine('BUY', r.amount, notes, c.id);
-        if (includeSell) insertLine('SELL', r.amount, notes, c.id);
+        await insertLine('BUY', r.amount, notes, c.id);
+        if (includeSell) await insertLine('SELL', r.amount, notes, c.id);
       }
     } else {
       const containerCount = r.unit === 'per_container' ? (applicableCtrs.length || 1) : 1;
       const amount = r.unit === 'per_container' ? r.amount * containerCount : r.amount;
-      insertLine('BUY', amount, baseNotes, '');
-      if (includeSell) insertLine('SELL', amount, baseNotes, '');
+      await insertLine('BUY', amount, baseNotes, '');
+      if (includeSell) await insertLine('SELL', amount, baseNotes, '');
     }
   }
   return created;
@@ -4909,7 +4921,7 @@ async function importContractRates(shipmentId, opts = {}) {
   const existing = db.prepare("SELECT id FROM shipment_rate_snapshots WHERE shipment_id=? ORDER BY generated_at DESC LIMIT 1").get(shipmentId);
   const snapshotId = existing ? existing.id : await createRateSnapshot(shipmentId, shipment.contract_id, 'initial');
   if (!snapshotId) return 0;
-  return generateCostLinesFromSnapshot(shipmentId, snapshotId, opts);
+  return await generateCostLinesFromSnapshot(shipmentId, snapshotId, opts);
 }
 
 // ─── Auth middleware ──────────────────────────────────────────────────────────

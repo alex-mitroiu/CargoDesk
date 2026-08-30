@@ -73,7 +73,7 @@ module.exports = function documentDistributionRoutes(app, ctx) {
     // history — previously a failure here (including the monolith crashing mid-call) left nothing
     // behind at all. Deliberately just a visible marker, not a retry/queue — this app has neither,
     // by design (see services/document-distribution's own scope notes).
-    logEntityEvent('document', doc.id, 'EDI_SEND_ATTEMPTED', null, null, null,
+    await logEntityEvent('document', doc.id, 'EDI_SEND_ATTEMPTED', null, null, null,
       JSON.stringify({ shipmentId: req.params.id, recipientCode, recipientLabel: recipientLabel || "" }));
     try {
       const result = await callDistributionService("POST", "/internal/distribute/edi", {
@@ -83,14 +83,14 @@ module.exports = function documentDistributionRoutes(app, ctx) {
       // Local shadow-copy of the audit event — the monolith's entity_events stays the single place
       // the existing generic EntityHistoryModal reads from; the full transmittal record (payload,
       // checksum) is the distribution service's own, as the owning source of truth.
-      logEntityEvent('document', doc.id, 'EDI_SENT', null, null, null,
+      await logEntityEvent('document', doc.id, 'EDI_SENT', null, null, null,
         JSON.stringify({ shipmentId: req.params.id, recipientCode, recipientLabel: recipientLabel || "", transmittalId: result.transmittalId }));
       // TKT-PLAVEK — see routes/shipment-ops.js's send-email route for why: a fast, denormalized
       // "was this ever sent" signal for the Billing Performance report, first channel wins.
       if (!doc.first_sent_at) db.prepare("UPDATE shipment_documents SET first_sent_at=? WHERE id=?").run(new Date().toISOString(), doc.id);
       ok(res, { sent: true, transmittalId: result.transmittalId }, 201);
     } catch (e) {
-      logEntityEvent('document', doc.id, 'EDI_SEND_FAILED', null, null, null,
+      await logEntityEvent('document', doc.id, 'EDI_SEND_FAILED', null, null, null,
         JSON.stringify({ shipmentId: req.params.id, recipientCode, error: e.message }));
       err(res, e.message, e.status || 502);
     }
@@ -109,19 +109,19 @@ module.exports = function documentDistributionRoutes(app, ctx) {
     const token = signToken({ shipmentId: req.params.id, docId: doc.id, exp: Date.now() + DOC_SHARE_TTL_MS }, JWT_SECRET);
     const downloadUrl = `${req.protocol}://${req.get("host")}/api/share/document/${token}`;
     // Same "attempted" marker written before the call as send-edi above — see its comment.
-    logEntityEvent('document', doc.id, 'WEBHOOK_SEND_ATTEMPTED', null, null, null,
+    await logEntityEvent('document', doc.id, 'WEBHOOK_SEND_ATTEMPTED', null, null, null,
       JSON.stringify({ shipmentId: req.params.id, officeId: shipment.emo_office_id }));
     try {
       const result = await callDistributionService("POST", "/internal/distribute/webhook", {
         shipmentId: req.params.id, documentId: doc.id, docType: doc.doc_type, filename: doc.filename,
         scopeId: shipment.emo_office_id, downloadUrl,
       });
-      logEntityEvent('document', doc.id, 'WEBHOOK_SENT', null, null, null,
+      await logEntityEvent('document', doc.id, 'WEBHOOK_SENT', null, null, null,
         JSON.stringify({ shipmentId: req.params.id, officeId: shipment.emo_office_id, deliveryId: result.deliveryId }));
       if (!doc.first_sent_at) db.prepare("UPDATE shipment_documents SET first_sent_at=? WHERE id=?").run(new Date().toISOString(), doc.id);
       ok(res, { sent: true, deliveryId: result.deliveryId }, 201);
     } catch (e) {
-      logEntityEvent('document', doc.id, 'WEBHOOK_SEND_FAILED', null, null, null,
+      await logEntityEvent('document', doc.id, 'WEBHOOK_SEND_FAILED', null, null, null,
         JSON.stringify({ shipmentId: req.params.id, officeId: shipment.emo_office_id, error: e.message }));
       err(res, e.message, e.status || 502);
     }

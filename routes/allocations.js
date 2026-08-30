@@ -3,7 +3,7 @@
 module.exports = function allocationsRoutes(app, ctx) {
   const { db, ok, err, uid, requireRole, mapAllocation, checkOverlap, logEntityEvent, linkedPortCodes, findMatchingContractLegs,
           getSettings, callContractService } = ctx;
-  const isRemoteContractSource = () => (getSettings().contract_source || "local") === "remote";
+  const isRemoteContractSource = async () => ((await getSettings()).contract_source || "local") === "remote";
 
   // findMatchingContractLegs (server.js) expects raw contract_legs DB rows (snake_case) — the
   // Contract Management Service returns legs through its own mapLeg (camelCase, same field names
@@ -63,7 +63,7 @@ module.exports = function allocationsRoutes(app, ctx) {
     }));
   });
 
-  app.post("/api/allocations", write, (req, res) => {
+  app.post("/api/allocations", write, async (req, res) => {
     const { carrierCode, allocatedTEU, effectiveDate, endDate, tradeLane = '', notes = '',
             alertThreshold = 80, pol = '', pod = '', originLane = '', destLane = '', coverageScope = 'STRICT',
             contractId = '', contractNumber = '', minimumTEU = null } = req.body;
@@ -79,14 +79,14 @@ module.exports = function allocationsRoutes(app, ctx) {
     const minTeuVal = minimumTEU != null && String(minimumTEU).trim() !== '' ? Number(minimumTEU) : null;
     db.prepare("INSERT INTO allocations (id,carrier_code,allocated_teu,effective_date,end_date,trade_lane,notes,alert_threshold,pol,pod,origin_lane,dest_lane,coverage_scope,contract_id,contract_number,minimum_teu) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
       .run(id, carrierCode, allocatedTEU, effectiveDate, endDate, tradeLane, notes, alertThreshold, pol.toUpperCase(), pod.toUpperCase(), originLane, destLane, coverageScope, contractId, contractNumber, minTeuVal);
-    logEntityEvent('allocation', id, 'CREATED', null, null, null,
+    await logEntityEvent('allocation', id, 'CREATED', null, null, null,
       JSON.stringify({ carrierCode, pol: pol.toUpperCase(), pod: pod.toUpperCase(), allocatedTEU, effectiveDate, endDate, contractNumber, minimumTEU: minTeuVal }));
     // A brand-new allocation always starts at 0 in every bucket (no shipment could reference
     // this id yet) — included explicitly so the response shape matches GET's, not left undefined.
     ok(res, { ...mapAllocation({ id, carrier_code: carrierCode, allocated_teu: allocatedTEU, effective_date: effectiveDate, end_date: endDate, trade_lane: tradeLane, notes, alert_threshold: alertThreshold, pol: pol.toUpperCase(), pod: pod.toUpperCase(), origin_lane: originLane, dest_lane: destLane, coverage_scope: coverageScope, contract_id: contractId, contract_number: contractNumber, minimum_teu: minTeuVal }), confirmedTEU: 0, pendingTEU: 0, rejectedTEU: 0, remainingTEU: allocatedTEU }, 201);
   });
 
-  app.put("/api/allocations/:id", write, (req, res) => {
+  app.put("/api/allocations/:id", write, async (req, res) => {
     const { carrierCode, allocatedTEU, effectiveDate, endDate, tradeLane = '', notes = '',
             alertThreshold = 80, pol = '', pod = '', originLane = '', destLane = '',
             contractId = '', contractNumber = '', minimumTEU = null } = req.body;
@@ -102,7 +102,7 @@ module.exports = function allocationsRoutes(app, ctx) {
     const info = db.prepare("UPDATE allocations SET carrier_code=?, allocated_teu=?, effective_date=?, end_date=?, trade_lane=?, notes=?, alert_threshold=?, pol=?, pod=?, origin_lane=?, dest_lane=?, contract_id=?, contract_number=?, minimum_teu=? WHERE id=?")
       .run(carrierCode, allocatedTEU, effectiveDate, endDate, tradeLane, notes, alertThreshold, pol.toUpperCase(), pod.toUpperCase(), originLane, destLane, contractId, contractNumber, minTeuVal, req.params.id);
     if (info.changes === 0) return err(res, "Not found", 404);
-    logEntityEvent('allocation', req.params.id, 'UPDATED', null, null, null,
+    await logEntityEvent('allocation', req.params.id, 'UPDATED', null, null, null,
       JSON.stringify({ carrierCode, pol: pol.toUpperCase(), pod: pod.toUpperCase(), allocatedTEU, effectiveDate, endDate, contractNumber, minimumTEU: minTeuVal }));
     // Editing an allocation's own fields never changes which shipments reference it — carry the
     // real current buckets through so the response shape matches GET's (an edit no longer makes
@@ -111,11 +111,11 @@ module.exports = function allocationsRoutes(app, ctx) {
     ok(res, { ...mapAllocation({ id: req.params.id, carrier_code: carrierCode, allocated_teu: allocatedTEU, effective_date: effectiveDate, end_date: endDate, trade_lane: tradeLane, notes, alert_threshold: alertThreshold, pol: pol.toUpperCase(), pod: pod.toUpperCase(), origin_lane: originLane, dest_lane: destLane, contract_id: contractId, contract_number: contractNumber, minimum_teu: minTeuVal }), confirmedTEU: b.confirmedTEU, pendingTEU: b.pendingTEU, rejectedTEU: b.rejectedTEU, remainingTEU: Math.max(0, allocatedTEU - b.confirmedTEU) });
   });
 
-  app.delete("/api/allocations/:id", write, (req, res) => {
+  app.delete("/api/allocations/:id", write, async (req, res) => {
     const existing = db.prepare("SELECT * FROM allocations WHERE id=?").get(req.params.id);
     const info = db.prepare("DELETE FROM allocations WHERE id=?").run(req.params.id);
     if (info.changes === 0) return err(res, "Not found", 404);
-    if (existing) logEntityEvent('allocation', req.params.id, 'DELETED', null, null, null,
+    if (existing) await logEntityEvent('allocation', req.params.id, 'DELETED', null, null, null,
       JSON.stringify({ carrierCode: existing.carrier_code, pol: existing.pol, pod: existing.pod }));
     ok(res, { deleted: req.params.id });
   });
@@ -144,7 +144,7 @@ module.exports = function allocationsRoutes(app, ctx) {
       ORDER BY effective_date DESC
     `).all(...polAll, ...podAll, etd, etd);
     const buckets = loadTeuBuckets();
-    const remote = isRemoteContractSource();
+    const remote = await isRemoteContractSource();
     const legsCache = new Map(); // contractId -> legs (row-shaped), fetched at most once per request
     async function contractLegsFor(contractId) {
       if (legsCache.has(contractId)) return legsCache.get(contractId);

@@ -19,19 +19,19 @@ module.exports = function mdmRoutes(app, ctx) {
   // still logs the same local entity_events row the local path would (this service has no audit
   // log of its own, matching Contract Management's own precedent), so History stays intact
   // either way.
-  const isRemote = () => (getSettings().mdm_source || "local") === "remote";
+  const isRemote = async () => ((await getSettings()).mdm_source || "local") === "remote";
 
   // ─── Carriers ─────────────────────────────────────────────────────────────
 
   app.get("/api/carriers", async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callMdmService("GET", "/internal/carriers")); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
     ok(res, db.prepare("SELECT * FROM carriers ORDER BY name").all().map(mapCarrier));
   });
   app.get("/api/carriers/:code", async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callMdmService("GET", `/internal/carriers/${req.params.code}`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -40,50 +40,50 @@ module.exports = function mdmRoutes(app, ctx) {
   app.post("/api/carriers", write, async (req, res) => {
     const { code, name, shortName = '' } = req.body;
     if (!code || !name) return err(res, "code and name required");
-    if (isRemote()) {
+    if (await isRemote()) {
       try {
         const created = await callMdmService("POST", "/internal/carriers", { code, name, shortName });
-        logEntityEvent('carrier', created.code, 'CREATED', null, null, null, JSON.stringify({ name: name.trim() }));
+        await logEntityEvent('carrier', created.code, 'CREATED', null, null, null, JSON.stringify({ name: name.trim() }));
         return ok(res, created, 201);
       } catch (e) { return err(res, e.message, e.status || 502); }
     }
     try {
       const codeU = code.toUpperCase().trim();
       db.prepare("INSERT INTO carriers (code,name,short_name) VALUES (?,?,?)").run(codeU, name.trim(), shortName.trim());
-      logEntityEvent('carrier', codeU, 'CREATED', null, null, null, JSON.stringify({ name: name.trim() }));
+      await logEntityEvent('carrier', codeU, 'CREATED', null, null, null, JSON.stringify({ name: name.trim() }));
       ok(res, mapCarrier({ code: codeU, name: name.trim(), short_name: shortName.trim() }), 201);
     } catch(e) { err(res, isUniqueViolation(e) ? `Carrier ${code} already exists` : e.message); }
   });
   app.put("/api/carriers/:code", write, async (req, res) => {
     const { name, shortName = '' } = req.body;
     if (!name) return err(res, "name required");
-    if (isRemote()) {
+    if (await isRemote()) {
       try {
         const before = await callMdmService("GET", `/internal/carriers/${req.params.code}`).catch(() => null);
         const updated = await callMdmService("PUT", `/internal/carriers/${req.params.code}`, { name, shortName });
-        if (before && before.name !== name) logEntityEvent('carrier', req.params.code, 'UPDATED', 'name', before.name, name);
+        if (before && before.name !== name) await logEntityEvent('carrier', req.params.code, 'UPDATED', 'name', before.name, name);
         return ok(res, updated);
       } catch (e) { return err(res, e.message, e.status || 502); }
     }
     const existing = db.prepare("SELECT * FROM carriers WHERE code=?").get(req.params.code);
     const info = db.prepare("UPDATE carriers SET name=?, short_name=? WHERE code=?").run(name, shortName, req.params.code);
     if (info.changes === 0) return err(res, "Not found", 404);
-    if (existing && existing.name !== name) logEntityEvent('carrier', req.params.code, 'UPDATED', 'name', existing.name, name);
+    if (existing && existing.name !== name) await logEntityEvent('carrier', req.params.code, 'UPDATED', 'name', existing.name, name);
     ok(res, mapCarrier({ code: req.params.code, name, short_name: shortName }));
   });
   app.delete("/api/carriers/:code", write, async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try {
         const existing = await callMdmService("GET", `/internal/carriers/${req.params.code}`).catch(() => null);
         await callMdmService("DELETE", `/internal/carriers/${req.params.code}`);
-        if (existing) logEntityEvent('carrier', req.params.code, 'DELETED', null, null, null, JSON.stringify({ name: existing.name }));
+        if (existing) await logEntityEvent('carrier', req.params.code, 'DELETED', null, null, null, JSON.stringify({ name: existing.name }));
         return ok(res, { deleted: req.params.code });
       } catch (e) { return err(res, e.message, e.status || 502); }
     }
     const existing = db.prepare("SELECT * FROM carriers WHERE code=?").get(req.params.code);
     const info = db.prepare("DELETE FROM carriers WHERE code=?").run(req.params.code);
     if (info.changes===0) return err(res,"Not found",404);
-    if (existing) logEntityEvent('carrier', req.params.code, 'DELETED', null, null, null, JSON.stringify({ name: existing.name }));
+    if (existing) await logEntityEvent('carrier', req.params.code, 'DELETED', null, null, null, JSON.stringify({ name: existing.name }));
     ok(res,{deleted:req.params.code});
   });
 
@@ -91,7 +91,7 @@ module.exports = function mdmRoutes(app, ctx) {
 
   app.get("/api/vessels", async (req, res) => {
     const { search = '', limit = '50', offset = '0' } = req.query;
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callMdmService("GET", `/internal/vessels?search=${encodeURIComponent(search)}&limit=${limit}&offset=${offset}`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -105,14 +105,14 @@ module.exports = function mdmRoutes(app, ctx) {
   app.get("/api/vessels/search", async (req, res) => {
     const q = (req.query.q || '').trim();
     if (!q) return ok(res, []);
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callMdmService("GET", `/internal/vessels/search?q=${encodeURIComponent(q)}`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
     ok(res, db.prepare("SELECT * FROM vessels WHERE name LIKE ? OR imo LIKE ? LIMIT 12").all(`%${q}%`, `%${q}%`).map(mapVessel));
   });
   app.get("/api/vessels/:imo", async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callMdmService("GET", `/internal/vessels/${req.params.imo}`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -121,7 +121,7 @@ module.exports = function mdmRoutes(app, ctx) {
   app.post("/api/vessels", write, async (req, res) => {
     const { imo, name, assetType='', flagIso2='', flagName='', buildYear=null, grossTonnage=null } = req.body;
     if (!imo || !name) return err(res, "imo and name required");
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callMdmService("POST", "/internal/vessels", { imo, name, assetType, flagIso2, flagName, buildYear, grossTonnage }), 201); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -131,7 +131,7 @@ module.exports = function mdmRoutes(app, ctx) {
   app.put("/api/vessels/:imo", write, async (req, res) => {
     const { name, assetType='', flagIso2='', flagName='', buildYear=null, grossTonnage=null } = req.body;
     if (!name) return err(res, "name required");
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callMdmService("PUT", `/internal/vessels/${req.params.imo}`, { name, assetType, flagIso2, flagName, buildYear, grossTonnage })); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -140,7 +140,7 @@ module.exports = function mdmRoutes(app, ctx) {
     ok(res, mapVessel({ imo: req.params.imo, name, asset_type: assetType, flag_iso2: flagIso2, flag_name: flagName, build_year: buildYear, gross_tonnage: grossTonnage }));
   });
   app.delete("/api/vessels/:imo", write, async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { await callMdmService("DELETE", `/internal/vessels/${req.params.imo}`); return ok(res, { deleted: req.params.imo }); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -151,7 +151,7 @@ module.exports = function mdmRoutes(app, ctx) {
 
   app.get("/api/port-locations", async (req, res) => {
     const { search='', country='', limit='50', offset='0' } = req.query;
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callMdmService("GET", `/internal/port-locations?search=${encodeURIComponent(search)}&country=${encodeURIComponent(country)}&limit=${limit}&offset=${offset}`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -166,7 +166,7 @@ module.exports = function mdmRoutes(app, ctx) {
   });
   app.get("/api/port-locations/:code/links", async (req, res) => {
     const code = req.params.code.toUpperCase();
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callMdmService("GET", `/internal/port-locations/${code}/links`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -175,7 +175,7 @@ module.exports = function mdmRoutes(app, ctx) {
   });
   app.get("/api/port-locations/:code/lanes", async (req, res) => {
     const code = req.params.code.toUpperCase();
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callMdmService("GET", `/internal/port-locations/${code}/lanes`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -185,7 +185,7 @@ module.exports = function mdmRoutes(app, ctx) {
     ok(res, { lanes, primary: lanes[0]?.code || null });
   });
   app.get("/api/port-locations/:unlocode", async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callMdmService("GET", `/internal/port-locations/${req.params.unlocode.toUpperCase()}`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -194,7 +194,7 @@ module.exports = function mdmRoutes(app, ctx) {
   app.post("/api/port-locations", write, async (req, res) => {
     const { unlocode, name, latitude=0, longitude=0, countryCode='', zoneCode='' } = req.body;
     if (!unlocode || !name) return err(res, "unlocode and name required");
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callMdmService("POST", "/internal/port-locations", { unlocode, name, latitude, longitude, countryCode, zoneCode }), 201); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -208,7 +208,7 @@ module.exports = function mdmRoutes(app, ctx) {
   app.put("/api/port-locations/:unlocode", write, async (req, res) => {
     const { name, latitude=0, longitude=0, countryCode='', zoneCode='' } = req.body;
     if (!name) return err(res, "name required");
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callMdmService("PUT", `/internal/port-locations/${req.params.unlocode.toUpperCase()}`, { name, latitude, longitude, countryCode, zoneCode })); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -218,7 +218,7 @@ module.exports = function mdmRoutes(app, ctx) {
     ok(res, mapPortLocation({ unlocode: req.params.unlocode.toUpperCase(), name, latitude, longitude, country_code: countryCode.toUpperCase(), zone_code: zoneCode }));
   });
   app.delete("/api/port-locations/:unlocode", write, async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { await callMdmService("DELETE", `/internal/port-locations/${req.params.unlocode.toUpperCase()}`); return ok(res, { deleted: req.params.unlocode }); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -228,7 +228,7 @@ module.exports = function mdmRoutes(app, ctx) {
   // ─── Linked Ports ─────────────────────────────────────────────────────────
 
   app.get("/api/linked-ports", async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       const qs = new URLSearchParams(req.query).toString();
       try { return ok(res, await callMdmService("GET", `/internal/linked-ports${qs ? `?${qs}` : ""}`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
@@ -252,7 +252,7 @@ module.exports = function mdmRoutes(app, ctx) {
     const { primaryUnlocode, linkedUnlocode, note='' } = req.body;
     if (!primaryUnlocode || !linkedUnlocode) return err(res, "primaryUnlocode and linkedUnlocode required");
     if (primaryUnlocode.toUpperCase() === linkedUnlocode.toUpperCase()) return err(res, "A port cannot be linked to itself");
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callMdmService("POST", "/internal/linked-ports", { primaryUnlocode, linkedUnlocode, note }), 201); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -262,7 +262,7 @@ module.exports = function mdmRoutes(app, ctx) {
   });
   app.put("/api/linked-ports/:id", write, async (req, res) => {
     const { note='' } = req.body;
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callMdmService("PUT", `/internal/linked-ports/${req.params.id}`, { note })); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -272,7 +272,7 @@ module.exports = function mdmRoutes(app, ctx) {
     ok(res, mapLinkedPort(r));
   });
   app.delete("/api/linked-ports/:id", write, async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { await callMdmService("DELETE", `/internal/linked-ports/${req.params.id}`); return ok(res, { deleted: req.params.id }); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -340,7 +340,7 @@ module.exports = function mdmRoutes(app, ctx) {
     const ids = [...new Set((list || []).map(a => a.agentCustomerId).filter(Boolean))];
     if (ids.length === 0) return mapped;
     const names = {};
-    if ((getSettings().customer_source || "local") === "remote") {
+    if (((await getSettings()).customer_source || "local") === "remote") {
       const customers = await callCustomerService("GET", `/internal/customers?ids=${ids.join(",")}`);
       (customers || []).forEach(c => { names[c.id] = c.companyName; });
     } else {
@@ -413,7 +413,7 @@ module.exports = function mdmRoutes(app, ctx) {
   // Runs only after a country-level location is successfully saved: any UNLOCODE already
   // configured under the SAME header whose own country now matches is obsolete — remove it and
   // log the discard as a real historical record (entity_events), never a silent delete.
-  function discardRedundantUnlocodes(headerId, carrierCode, countryIso2) {
+  async function discardRedundantUnlocodes(headerId, carrierCode, countryIso2) {
     const redundant = db.prepare(`
       SELECT cal.* FROM carrier_agent_locations cal
       JOIN port_locations pl ON pl.unlocode = cal.unlocode
@@ -421,25 +421,25 @@ module.exports = function mdmRoutes(app, ctx) {
     `).all(headerId, countryIso2);
     for (const loc of redundant) {
       db.prepare("DELETE FROM carrier_agent_locations WHERE id=?").run(loc.id);
-      logEntityEvent('carrier_agent_location', loc.id, 'DISCARDED_REDUNDANT', 'unlocode', loc.unlocode, null,
+      await logEntityEvent('carrier_agent_location', loc.id, 'DISCARDED_REDUNDANT', 'unlocode', loc.unlocode, null,
         JSON.stringify({ carrierAgentId: headerId, carrierCode, discardedUnlocode: loc.unlocode, madeObsoleteByCountry: countryIso2 }));
     }
     return redundant.map(l => l.unlocode);
   }
 
-  function insertLocation(headerId, carrierCode, locationType, unlocode, countryIso2) {
+  async function insertLocation(headerId, carrierCode, locationType, unlocode, countryIso2) {
     const id = `CAL-${uid()}`;
     const now = new Date().toISOString();
     db.prepare(`INSERT INTO carrier_agent_locations (id,carrier_agent_id,carrier_code,location_type,unlocode,country_iso2,created_at)
       VALUES (?,?,?,?,?,?,?)`).run(id, headerId, carrierCode, locationType,
         locationType === "unlocode" ? unlocode : null, locationType === "country" ? countryIso2 : null, now);
-    logEntityEvent('carrier_agent_location', id, 'CREATED', null, null, null,
+    await logEntityEvent('carrier_agent_location', id, 'CREATED', null, null, null,
       JSON.stringify({ carrierAgentId: headerId, carrierCode, locationType, unlocode, countryIso2 }));
     return id;
   }
 
   app.get("/api/carrier-agents", async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       const qs = new URLSearchParams(req.query).toString();
       try { return ok(res, await attachAgentNames(await callMdmService("GET", `/internal/carrier-agents${qs ? `?${qs}` : ""}`))); }
       catch (e) { return err(res, e.message, e.status || 502); }
@@ -468,7 +468,7 @@ module.exports = function mdmRoutes(app, ctx) {
     if (locationType === "country" && !countryIso2) return err(res, "countryIso2 required");
     if (!Array.isArray(capabilities) || capabilities.some(c => !AGENT_CAPABILITY_CODES.includes(c)))
       return err(res, "capabilities must be an array of known capability codes");
-    if (isRemote()) {
+    if (await isRemote()) {
       try {
         const created = await callMdmService("POST", "/internal/carrier-agents", { carrierCode, agentCustomerId, note, locationType, unlocode, countryIso2, capabilities });
         await attachAgentNames([created]);
@@ -486,7 +486,7 @@ module.exports = function mdmRoutes(app, ctx) {
     try {
       db.prepare("INSERT INTO carrier_agents (id,carrier_code,agent_customer_id,note,capabilities,created_at) VALUES (?,?,?,?,?,?)")
         .run(id, code, agentCustomerId, note.trim(), JSON.stringify(capabilities), now);
-      insertLocation(id, code, locationType, unlocode?.toUpperCase().trim(), countryIso2?.toUpperCase().trim());
+      await insertLocation(id, code, locationType, unlocode?.toUpperCase().trim(), countryIso2?.toUpperCase().trim());
       db.exec("COMMIT");
     } catch (e) {
       db.exec("ROLLBACK");
@@ -496,7 +496,7 @@ module.exports = function mdmRoutes(app, ctx) {
     ok(res, mapHeadersWithLocations([r])[0], 201);
   });
   app.put("/api/carrier-agents/:id", write, async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try {
         const updated = await callMdmService("PUT", `/internal/carrier-agents/${req.params.id}`, req.body);
         await attachAgentNames([updated]);
@@ -516,7 +516,7 @@ module.exports = function mdmRoutes(app, ctx) {
     ok(res, mapHeadersWithLocations([r])[0]);
   });
   app.delete("/api/carrier-agents/:id", write, async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { await callMdmService("DELETE", `/internal/carrier-agents/${req.params.id}`); return ok(res, { deleted: req.params.id }); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -535,7 +535,7 @@ module.exports = function mdmRoutes(app, ctx) {
     if (locationType !== "unlocode" && locationType !== "country") return err(res, "locationType must be 'unlocode' or 'country'");
     if (locationType === "unlocode" && !unlocode) return err(res, "unlocode required");
     if (locationType === "country" && !countryIso2) return err(res, "countryIso2 required");
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callMdmService("POST", `/internal/carrier-agents/${req.params.id}/locations`, req.body), 201); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -545,14 +545,14 @@ module.exports = function mdmRoutes(app, ctx) {
     const cc = countryIso2?.toUpperCase().trim();
     const conflict = checkLocationConflict({ carrierCode: header.carrier_code, headerId: header.id, locationType, unlocode: uc, countryIso2: cc });
     if (conflict.error) return err(res, conflict.error);
-    insertLocation(header.id, header.carrier_code, locationType, uc, cc);
-    const discarded = locationType === "country" ? discardRedundantUnlocodes(header.id, header.carrier_code, cc) : [];
+    await insertLocation(header.id, header.carrier_code, locationType, uc, cc);
+    const discarded = locationType === "country" ? await discardRedundantUnlocodes(header.id, header.carrier_code, cc) : [];
     const r = db.prepare(`${CARRIER_AGENT_JOIN} WHERE ca.id=?`).get(header.id);
     const mapped = mapHeadersWithLocations([r])[0];
     ok(res, { ...mapped, discarded }, 201);
   });
   app.delete("/api/carrier-agent-locations/:id", write, async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { await callMdmService("DELETE", `/internal/carrier-agent-locations/${req.params.id}`); return ok(res, { deleted: req.params.id }); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -584,7 +584,7 @@ module.exports = function mdmRoutes(app, ctx) {
   }
 
   app.get("/api/carrier-agents/:id/schedule", async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callMdmService("GET", `/internal/carrier-agents/${req.params.id}/schedule`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -595,7 +595,7 @@ module.exports = function mdmRoutes(app, ctx) {
     const { rows = [] } = req.body;
     const invalid = validateScheduleRows(rows);
     if (invalid) return err(res, invalid);
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callMdmService("PUT", `/internal/carrier-agents/${req.params.id}/schedule`, { rows })); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -620,7 +620,7 @@ module.exports = function mdmRoutes(app, ctx) {
   // ─── Trade Lanes ──────────────────────────────────────────────────────────
 
   app.get("/api/trade-lanes", async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callMdmService("GET", "/internal/trade-lanes")); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -634,7 +634,7 @@ module.exports = function mdmRoutes(app, ctx) {
   });
 
   app.get("/api/trade-lanes/:code/countries", async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callMdmService("GET", `/internal/trade-lanes/${req.params.code.toUpperCase()}/countries`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -651,7 +651,7 @@ module.exports = function mdmRoutes(app, ctx) {
   app.put("/api/trade-lanes/:code/countries", write, async (req, res) => {
     const code  = req.params.code.toUpperCase();
     const iso2s = Array.isArray(req.body.iso2s) ? req.body.iso2s : [];
-    if (isRemote()) {
+    if (await isRemote()) {
       try {
         const result = await callMdmService("PUT", `/internal/trade-lanes/${code}/countries`, { iso2s });
         await rebuildPortLanesMap();
@@ -672,7 +672,7 @@ module.exports = function mdmRoutes(app, ctx) {
   app.post("/api/trade-lanes", write, async (req, res) => {
     const { code, name, description='', transitDays=0 } = req.body;
     if (!code || !name) return err(res, "code and name required");
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callMdmService("POST", "/internal/trade-lanes", { code, name, description, transitDays }), 201); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -685,7 +685,7 @@ module.exports = function mdmRoutes(app, ctx) {
   app.put("/api/trade-lanes/:code", write, async (req, res) => {
     const { name, description='', transitDays=0 } = req.body;
     if (!name) return err(res, "name required");
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callMdmService("PUT", `/internal/trade-lanes/${req.params.code}`, { name, description, transitDays })); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -702,7 +702,7 @@ module.exports = function mdmRoutes(app, ctx) {
     const polLane = longestLane(pol.toUpperCase());
     const podLane = longestLane(pod.toUpperCase());
     if (!polLane || !podLane || polLane !== podLane) return ok(res, { days: null, lane: polLane && podLane ? `${polLane} → ${podLane}` : null });
-    if (isRemote()) {
+    if (await isRemote()) {
       try {
         const { days } = await callMdmService("GET", `/internal/trade-lanes/transit-suggestion?polLane=${polLane}&podLane=${podLane}`);
         return ok(res, { days, lane: polLane });
@@ -712,7 +712,7 @@ module.exports = function mdmRoutes(app, ctx) {
     ok(res, { days: row?.transit_days || null, lane: polLane });
   });
   app.delete("/api/trade-lanes/:code", write, async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { await callMdmService("DELETE", `/internal/trade-lanes/${req.params.code}`); return ok(res, { deleted: req.params.code }); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -720,7 +720,7 @@ module.exports = function mdmRoutes(app, ctx) {
   });
 
   app.get("/api/country-trade-lanes", async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callMdmService("GET", "/internal/country-trade-lanes")); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -729,7 +729,7 @@ module.exports = function mdmRoutes(app, ctx) {
   app.post("/api/country-trade-lanes", write, async (req, res) => {
     const { iso2, laneCode } = req.body;
     if (!iso2 || !laneCode) return err(res, "iso2 and laneCode required");
-    if (isRemote()) {
+    if (await isRemote()) {
       try {
         const result = await callMdmService("POST", "/internal/country-trade-lanes", { iso2, laneCode });
         await rebuildPortLanesMap();
@@ -742,7 +742,7 @@ module.exports = function mdmRoutes(app, ctx) {
   app.put("/api/countries/:iso2/trade-lanes", write, async (req, res) => {
     const iso2  = req.params.iso2.toUpperCase();
     const lanes = Array.isArray(req.body.lanes) ? req.body.lanes : [];
-    if (isRemote()) {
+    if (await isRemote()) {
       try {
         const result = await callMdmService("PUT", `/internal/countries/${iso2}/trade-lanes`, { lanes });
         await rebuildPortLanesMap();
@@ -760,7 +760,7 @@ module.exports = function mdmRoutes(app, ctx) {
     } catch(e) { db.exec("ROLLBACK"); err(res, e.message); }
   });
   app.delete("/api/country-trade-lanes/:iso2/:laneCode", write, async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try {
         await callMdmService("DELETE", `/internal/country-trade-lanes/${req.params.iso2}/${req.params.laneCode}`);
         await rebuildPortLanesMap();
@@ -773,7 +773,7 @@ module.exports = function mdmRoutes(app, ctx) {
   // ─── Regions ──────────────────────────────────────────────────────────────
 
   app.get("/api/regions", async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callMdmService("GET", "/internal/regions")); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -782,7 +782,7 @@ module.exports = function mdmRoutes(app, ctx) {
   app.post("/api/regions", write, async (req, res) => {
     const { code, name, description='' } = req.body;
     if (!code || !name) return err(res, "code and name required");
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callMdmService("POST", "/internal/regions", { code, name, description }), 201); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -792,7 +792,7 @@ module.exports = function mdmRoutes(app, ctx) {
   app.put("/api/regions/:code", write, async (req, res) => {
     const { name, description='' } = req.body;
     if (!name) return err(res, "name required");
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callMdmService("PUT", `/internal/regions/${req.params.code}`, { name, description })); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -801,7 +801,7 @@ module.exports = function mdmRoutes(app, ctx) {
     ok(res, { code: req.params.code, name, description });
   });
   app.delete("/api/regions/:code", write, async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { await callMdmService("DELETE", `/internal/regions/${req.params.code}`); return ok(res, { deleted: req.params.code }); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -812,7 +812,7 @@ module.exports = function mdmRoutes(app, ctx) {
 
   app.get("/api/countries", async (req, res) => {
     const { search='', limit='50', offset='0' } = req.query;
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callMdmService("GET", `/internal/countries?search=${encodeURIComponent(search)}&limit=${limit}&offset=${offset}`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -834,7 +834,7 @@ module.exports = function mdmRoutes(app, ctx) {
   app.post("/api/countries", write, async (req, res) => {
     const { iso2, name, unMember=1, regionCode='' } = req.body;
     if (!iso2 || !name) return err(res, "iso2 and name required");
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callMdmService("POST", "/internal/countries", { iso2, name, unMember, regionCode }), 201); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -843,7 +843,7 @@ module.exports = function mdmRoutes(app, ctx) {
   });
   app.put("/api/countries/:iso2", write, async (req, res) => {
     const iso2 = req.params.iso2.toUpperCase();
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callMdmService("PUT", `/internal/countries/${iso2}`, req.body)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -874,7 +874,7 @@ module.exports = function mdmRoutes(app, ctx) {
       invoice_alert_business_days: alertDays, invoice_escalation_business_days: escalationDays }));
   });
   app.delete("/api/countries/:iso2", write, async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { await callMdmService("DELETE", `/internal/countries/${req.params.iso2.toUpperCase()}`); return ok(res, { deleted: req.params.iso2 }); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -885,7 +885,7 @@ module.exports = function mdmRoutes(app, ctx) {
     const search = (req.query.search || "").trim();
     const lim    = Math.min(parseInt(req.query.limit  || "50",  10), 200);
     const off    = parseInt(req.query.offset || "0", 10);
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callMdmService("GET", `/internal/countries/${iso2}/locations?search=${encodeURIComponent(search)}&limit=${lim}&offset=${off}`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -900,7 +900,7 @@ module.exports = function mdmRoutes(app, ctx) {
 
   app.get("/api/unlocodes", async (req, res) => {
     const { search='', limit='50', offset='0' } = req.query;
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callMdmService("GET", `/internal/unlocodes?search=${encodeURIComponent(search)}&limit=${limit}&offset=${offset}`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -916,7 +916,7 @@ module.exports = function mdmRoutes(app, ctx) {
 
   app.get("/api/commodities", async (req, res) => {
     const { search='', grade='', limit='50', offset='0' } = req.query;
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callMdmService("GET", `/internal/commodities?search=${encodeURIComponent(search)}&grade=${encodeURIComponent(grade)}&limit=${limit}&offset=${offset}`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -933,14 +933,14 @@ module.exports = function mdmRoutes(app, ctx) {
   app.get("/api/commodities/search", async (req, res) => {
     const q = (req.query.q || '').trim();
     if (!q) return ok(res, []);
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callMdmService("GET", `/internal/commodities/search?q=${encodeURIComponent(q)}`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
     ok(res, db.prepare("SELECT * FROM commodities WHERE code LIKE ? OR description LIKE ? ORDER BY code LIMIT 12").all(`%${q}%`, `%${q}%`).map(mapCommodity));
   });
   app.get("/api/commodities/:code", async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callMdmService("GET", `/internal/commodities/${req.params.code}`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -949,7 +949,7 @@ module.exports = function mdmRoutes(app, ctx) {
   app.post("/api/commodities", write, async (req, res) => {
     const { code, description, gradeCode='E', gradeName='General Cargo' } = req.body;
     if (!code || !description) return err(res, "code and description required");
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callMdmService("POST", "/internal/commodities", { code, description, gradeCode, gradeName }), 201); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -959,7 +959,7 @@ module.exports = function mdmRoutes(app, ctx) {
   app.put("/api/commodities/:code", write, async (req, res) => {
     const { description, gradeCode='E', gradeName='General Cargo' } = req.body;
     if (!description) return err(res, "description required");
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callMdmService("PUT", `/internal/commodities/${req.params.code}`, { description, gradeCode, gradeName })); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -968,7 +968,7 @@ module.exports = function mdmRoutes(app, ctx) {
     ok(res, mapCommodity({ code: req.params.code, description, grade_code: gradeCode, grade_name: gradeName }));
   });
   app.delete("/api/commodities/:code", write, async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { await callMdmService("DELETE", `/internal/commodities/${req.params.code}`); return ok(res, { deleted: req.params.code }); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }

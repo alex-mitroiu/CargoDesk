@@ -2231,12 +2231,63 @@ gotcha. New `services/mdm/lib/db.js`, same shape as Phases 0-4.
 services (`document-distribution`, `screening`, `customers`, `kanban`, `contract-management`,
 `mdm`) are now Postgres-backed; only `pdf-render` (stateless, no database) and the monolith
 itself remain on their original stack. The monolith is tackled last of all, and needs its own
-internal sub-phasing: convert `logEntityEvent`
-and `getSettings` to `async` first as a standalone, zero-behavior-change prerequisite (still on
-`node:sqlite` — awaiting an already-synchronous call is a no-op, so this is safe to do before any
-driver swap), then convert route files smallest-to-largest (`finance.js`, `export.js`,
-`charge-codes.js`, ... up through `shipment-ops.js`, `shipments.js`, `mdm.js`, and `server.js`'s
-own core last).
+internal sub-phasing: convert `logEntityEvent` and `getSettings` to `async` first as a
+standalone, zero-behavior-change prerequisite (still on `node:sqlite` — awaiting an
+already-synchronous call is a no-op, so this is safe to do before any driver swap), then convert
+route files smallest-to-largest, and `server.js`'s own core last.
+
+**Monolith sub-phase 1 (shipped): the async-ification prerequisite.** Both `logEntityEvent` and
+`getSettings` converted to `async function`, and every real call site across the entire
+monolith — 106 for `logEntityEvent`, 58 for `getSettings` (excluding `services/screening/`'s own
+unrelated, already-async, same-named local function) — converted to `await` them, spanning 23
+files (`server.js` plus 22 route/lib files) and ~950 lines changed. Zero Postgres/SQL changes in
+this pass — every `db.prepare(...)` call is untouched; this is purely "make the call graph
+async-shaped" so the eventual driver swap only has to change *what* a function awaits, not
+*whether* it does.
+- **The two functions themselves were trivial** (a single `db.prepare(...).run(...)` each,
+  wrapped in a try/catch that already never threw) — the real work was the ripple: converting
+  every caller's enclosing function to `async`, all the way up to the nearest Express route
+  handler (always a safe endpoint, since every route is already wrapped by `wrapAsyncHandler`).
+  Several call sites were buried 2-4 layers deep in helper functions with no `async` anywhere in
+  the chain — `isEdiBookable` → `supersedeIfCarrierChanged` → `ensureBookingCreated` (plus a
+  module-load-time backfill IIFE whose own correctness depended on `ensureBookingCreated`
+  completing before its next line ran) is the deepest chain converted.
+- **`applyShipmentAccessFilter`** (the shipment-list scope filter used by 9 call sites across 7
+  files) also needed converting, since its office-scoping branch reads `getSettings()` — not one
+  of the two headline functions, but pulled in by the same ripple.
+- **One genuine design conflict, resolved with a local cache, not a compromise**:
+  `lib/ais-listener.js`'s `getPortCoords`/`handleShipStaticData` run in the AIS feed's hot
+  per-frame path (up to hundreds of messages/sec) and the module's own governing rule (stated in
+  its file header before this pass ever started) is that path must never await anything. Fixed by
+  introducing `cachedSettings`, refreshed synchronously inside `applySettings()` (already called
+  at boot and on every settings save) — every hot-path read now hits the cache instead of calling
+  the now-async `getSettings()` directly. `getStatus()` was kept synchronous the same way,
+  avoiding an unnecessary async ripple into its own two route callers.
+- **A real, would-have-shipped-silently correctness question, checked rather than assumed**:
+  `logEntityEvent`'s DB write is still synchronous today (node:sqlite), so awaiting it changes
+  nothing yet — but the two call sites *not* awaited (`lib/ais-listener.js`'s three background
+  message-processing sites, deliberately left fire-and-forget) were a conscious choice, not an
+  oversight: unlike an HTTP route handler — where a client might immediately re-fetch history
+  data expecting to see a just-logged event before the response even returns — nothing in the
+  AIS listener's background pipeline waits on this write's completion, and the function's own
+  internal try/catch means it can never reject either way.
+- **Caught mid-conversion, before it could ship**: `isEdiBookable`'s `getSettings()` call was
+  originally missed in the first `routes/auth.js` pass (a naming coincidence — `sso/callback`'s
+  own copy at a different line number) and briefly left the master eAdapter toggle
+  (`api_eadapter_enabled`) silently unable to block bookings once `getSettings()` returned a
+  Promise instead of a plain object — caught by the existing `tests/eadapter.test.js` suite
+  before this phase was considered done, not discovered later.
+- Verified via the full 68-file test suite, run standalone per file (not the `&&`-chained
+  `npm test`, which stops at the first non-zero exit) with every microservice running —
+  everything green except one already-diagnosed, pre-existing test-data collision in
+  `billing-performance.test.js` (a hardcoded detection value coincidentally matching an unrelated
+  real shipment already in the long-lived dev DB — confirmed unrelated to this change by tracing
+  the actual scoping logic directly).
+- **Not yet started**: converting the monolith's actual `db.prepare`/`db.exec` call sites
+  (1,273 of them) to the real dual-backend `query`/`transaction` driver, route file by route
+  file, smallest to largest, `server.js`'s own core last. This prerequisite pass makes that work
+  additive from here — every function in the call graph already awaits correctly, so each
+  following phase only has to swap the SQL layer underneath.
 
 ---
 

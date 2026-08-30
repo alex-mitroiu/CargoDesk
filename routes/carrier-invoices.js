@@ -29,7 +29,7 @@ module.exports = function carrierInvoicesRoutes(app, ctx) {
   // createRateSnapshot (server.js) does — 'remote' mode fetches from the standalone Contract
   // Management Service instead of the local contract_rates table.
   async function loadContractRates(contractId) {
-    if ((getSettings().contract_source || "local") === "remote") {
+    if (((await getSettings()).contract_source || "local") === "remote") {
       try { return (await callContractService("GET", `/internal/contracts/${contractId}`)).rates.map(r => ({
         service_code: r.serviceCode || "", amount: r.amount, currency: r.currency || "USD",
         amount_usd: r.amountUsd, unit: r.unit || "per_container", container_type: r.containerType || "",
@@ -149,7 +149,7 @@ module.exports = function carrierInvoicesRoutes(app, ctx) {
     } else if (match.expectedAmountUsd != null) {
       varianceUsd = amountUsd - match.expectedAmountUsd;
       variancePct = match.expectedAmountUsd !== 0 ? (varianceUsd / match.expectedAmountUsd) * 100 : (varianceUsd === 0 ? 0 : null);
-      const tolerancePct = Math.abs(Number(getSettings().fap_variance_tolerance_pct) || 2);
+      const tolerancePct = Math.abs(Number((await getSettings()).fap_variance_tolerance_pct) || 2);
       status = (variancePct != null && Math.abs(variancePct) <= tolerancePct) ? "matched" : "variance";
     }
     return { ...match, amountUsd, varianceUsd, variancePct, status };
@@ -236,20 +236,20 @@ module.exports = function carrierInvoicesRoutes(app, ctx) {
       insertLine(id, i, lines[i], computed);
     }
     const status = recomputeInvoiceStatus(id);
-    logEntityEvent("carrier_invoice", id, "CREATED", null, null, null,
+    await logEntityEvent("carrier_invoice", id, "CREATED", null, null, null,
       JSON.stringify({ shipmentId, carrierCode, invoiceNumber, lineCount: lines.length }));
     const inv = db.prepare("SELECT * FROM carrier_invoices WHERE id=?").get(id);
     const savedLines = db.prepare("SELECT * FROM carrier_invoice_lines WHERE invoice_id=? ORDER BY rowid").all(id);
     ok(res, { ...mapCarrierInvoice({ ...inv, status }), lines: savedLines.map(mapCarrierInvoiceLine) }, 201);
   });
 
-  app.delete("/api/carrier-invoices/:id", invoiceWrite, (req, res) => {
+  app.delete("/api/carrier-invoices/:id", invoiceWrite, async (req, res) => {
     const inv = db.prepare("SELECT * FROM carrier_invoices WHERE id=?").get(req.params.id);
     if (!inv) return err(res, "Not found", 404);
     const approvedCount = db.prepare("SELECT COUNT(*) AS n FROM carrier_invoice_lines WHERE invoice_id=? AND status='approved'").get(req.params.id).n;
     if (approvedCount > 0) return err(res, "This invoice has approved line(s) already posted to cost lines — dispute or leave it as a record instead of deleting");
     db.prepare("DELETE FROM carrier_invoices WHERE id=?").run(req.params.id);
-    logEntityEvent("carrier_invoice", req.params.id, "DELETED", null, null, null,
+    await logEntityEvent("carrier_invoice", req.params.id, "DELETED", null, null, null,
       JSON.stringify({ shipmentId: inv.shipment_id, carrierCode: inv.carrier_code, invoiceNumber: inv.invoice_number }));
     ok(res, { deleted: req.params.id });
   });
@@ -281,7 +281,7 @@ module.exports = function carrierInvoicesRoutes(app, ctx) {
 
   // ─── Line resolution ────────────────────────────────────────────────────────
 
-  app.post("/api/carrier-invoice-lines/:id/approve", approveGate, (req, res) => {
+  app.post("/api/carrier-invoice-lines/:id/approve", approveGate, async (req, res) => {
     const line = db.prepare("SELECT * FROM carrier_invoice_lines WHERE id=?").get(req.params.id);
     if (!line) return err(res, "Not found", 404);
     if (line.status === "approved" || line.status === "disputed") return err(res, `Line already ${line.status}`, 409);
@@ -295,7 +295,7 @@ module.exports = function carrierInvoicesRoutes(app, ctx) {
       if (costLine && costLine.status !== "posted") {
         db.prepare(`UPDATE shipment_cost_lines SET status='actualized', actual_amount=?, actual_exchange_rate=?, actualized_at=?, actualized_by=? WHERE id=?`)
           .run(line.amount, exchangeRate, now, actor, costLine.id);
-        logEntityEvent("cost_line", costLine.id, "ACTUALIZED", "status", costLine.status, "actualized",
+        await logEntityEvent("cost_line", costLine.id, "ACTUALIZED", "status", costLine.status, "actualized",
           JSON.stringify({ shipmentId: costLine.shipment_id, chargeCode: costLine.charge_code, source: "carrier_invoice", carrierInvoiceLineId: line.id }));
       }
     } else {
@@ -308,19 +308,19 @@ module.exports = function carrierInvoicesRoutes(app, ctx) {
         .run(costLineId, inv.shipment_id, "BUY", chargeCode, line.currency, accrualAmount, exchangeRate,
              line.description || "", now, line.container_id || "", "carrier_invoice", "actualized",
              line.amount, exchangeRate, now, actor);
-      logEntityEvent("cost_line", costLineId, "IMPORTED", null, null, null,
+      await logEntityEvent("cost_line", costLineId, "IMPORTED", null, null, null,
         JSON.stringify({ shipmentId: inv.shipment_id, chargeCode, source: "carrier_invoice", carrierInvoiceLineId: line.id }));
       db.prepare("UPDATE carrier_invoice_lines SET matched_cost_line_id=? WHERE id=?").run(costLineId, line.id);
     }
 
     db.prepare("UPDATE carrier_invoice_lines SET status='approved', resolved_at=?, resolved_by=? WHERE id=?").run(now, actor, line.id);
-    logEntityEvent("carrier_invoice_line", line.id, "APPROVED", "status", line.status, "approved",
+    await logEntityEvent("carrier_invoice_line", line.id, "APPROVED", "status", line.status, "approved",
       JSON.stringify({ invoiceId: line.invoice_id, serviceCode: line.service_code, amount: line.amount, expectedAmount: line.expected_amount }));
     recomputeInvoiceStatus(line.invoice_id);
     ok(res, mapCarrierInvoiceLine(db.prepare("SELECT * FROM carrier_invoice_lines WHERE id=?").get(line.id)));
   });
 
-  app.post("/api/carrier-invoice-lines/:id/dispute", invoiceWrite, (req, res) => {
+  app.post("/api/carrier-invoice-lines/:id/dispute", invoiceWrite, async (req, res) => {
     const { reason = "" } = req.body || {};
     const line = db.prepare("SELECT * FROM carrier_invoice_lines WHERE id=?").get(req.params.id);
     if (!line) return err(res, "Not found", 404);
@@ -329,7 +329,7 @@ module.exports = function carrierInvoicesRoutes(app, ctx) {
     const actor = req.user?.name || req.user?.email || "";
     db.prepare("UPDATE carrier_invoice_lines SET status='disputed', resolved_at=?, resolved_by=?, resolution_notes=? WHERE id=?")
       .run(now, actor, reason, req.params.id);
-    logEntityEvent("carrier_invoice_line", req.params.id, "DISPUTED", "status", line.status, "disputed",
+    await logEntityEvent("carrier_invoice_line", req.params.id, "DISPUTED", "status", line.status, "disputed",
       JSON.stringify({ invoiceId: line.invoice_id, serviceCode: line.service_code, reason }));
     recomputeInvoiceStatus(line.invoice_id);
     ok(res, mapCarrierInvoiceLine(db.prepare("SELECT * FROM carrier_invoice_lines WHERE id=?").get(req.params.id)));

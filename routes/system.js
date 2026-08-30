@@ -106,11 +106,11 @@ module.exports = function systemRoutes(app, ctx) {
 
   // ─── Settings ─────────────────────────────────────────────────────────────
 
-  app.get("/api/settings", (req, res) => ok(res, getSettings()));
+  app.get("/api/settings", async (req, res) => ok(res, await getSettings()));
 
   // Excludes trade_manager/viewer specifically, without changing behavior for admin/operator/
   // occ_bk who already have unrestricted settings access today.
-  app.put("/api/settings", auth(), requireRole(["admin", "operator", "occ_bk"]), (req, res) => {
+  app.put("/api/settings", auth(), requireRole(["admin", "operator", "occ_bk"]), async (req, res) => {
     const updates = req.body;
     if (!updates || typeof updates !== "object" || Array.isArray(updates))
       return err(res, "Expected JSON object of { key: value } pairs");
@@ -120,14 +120,14 @@ module.exports = function systemRoutes(app, ctx) {
       for (const [k, v] of Object.entries(updates)) stmt.run(String(k), String(v));
       db.exec("COMMIT");
     } catch (e) { db.exec("ROLLBACK"); return err(res, e.message); }
-    scheduleNextOfacSync();
-    restartAisListener();
+    await scheduleNextOfacSync();
+    await restartAisListener();
     // Log settings changes — skip secrets
     const safeKeys = Object.fromEntries(
       Object.entries(updates).filter(([k]) => !k.includes('secret') && !k.includes('password'))
     );
     if (Object.keys(safeKeys).length) logAdminEvent(req.user, 'SETTINGS_UPDATED', 'settings', '', safeKeys);
-    ok(res, getSettings());
+    ok(res, await getSettings());
   });
 
   // Admin-only: the Shipment Explorer sidebar's top-level nav order (ShipmentDetailSidebar,
@@ -182,8 +182,8 @@ module.exports = function systemRoutes(app, ctx) {
     db.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('screening_source', ?)").run(value);
     logAdminEvent(req.user, 'SETTINGS_UPDATED', 'settings', 'screening_source', { value });
     await loadSanctionsIndex();
-    scheduleNextOfacSync();
-    scheduleNextCslSync();
+    await scheduleNextOfacSync();
+    await scheduleNextCslSync();
     ok(res, { screeningSource: value });
   });
 
@@ -294,7 +294,7 @@ module.exports = function systemRoutes(app, ctx) {
     });
   };
 
-  app.get("/api/schedules/search", auth(), (req, res) => {
+  app.get("/api/schedules/search", auth(), async (req, res) => {
     const { pol, pod, carrierCode, weeks: w = "4" } = req.query;
     if (!pol || !pod) return res.status(400).json({ error: "pol and pod are required" });
     const weeks = Math.min(Math.max(parseInt(w) || 4, 1), 12);
@@ -302,7 +302,7 @@ module.exports = function systemRoutes(app, ctx) {
     const catalog = catalogSailings(pol, pod, weeks);
 
     let sailings = [...catalog];
-    const demoEnabled = getSettings().demo_schedules_enabled !== 'false'; // default on
+    const demoEnabled = (await getSettings()).demo_schedules_enabled !== 'false'; // default on
     let usedDemo = false;
     if (sailings.length === 0 && demoEnabled) {
       sailings = mockSailings(pol, pod, carrierCode, weeks).map(s => ({ ...s, source: "mock" }));

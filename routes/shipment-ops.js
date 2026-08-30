@@ -133,7 +133,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
 
   // ─── Screening ────────────────────────────────────────────────────────────
 
-  app.get("/api/shipments/:id/screening", (req, res) => {
+  app.get("/api/shipments/:id/screening", async (req, res) => {
     const row = db.prepare("SELECT * FROM shipment_screenings WHERE shipment_id=?").get(req.params.id);
     if (!row) return ok(res, null);
     ok(res, { id: row.id, shipmentId: row.shipment_id, screenedAt: row.screened_at,
@@ -151,7 +151,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   // flip a sanctions HIT to CLEAR via a direct API call (the frontend's own ComplianceModal
   // doesn't hide the button by role either, so this was reachable through the real UI too, not
   // just a theoretical direct-API gap). Same tier as every other shipment-write action.
-  app.post("/api/shipments/:id/screening/override", shipmentWrite, (req, res) => {
+  app.post("/api/shipments/:id/screening/override", shipmentWrite, async (req, res) => {
     const { reason = "" } = req.body;
     if (!reason.trim()) return err(res, "Override reason is required");
     const row = db.prepare("SELECT id FROM shipment_screenings WHERE shipment_id=?").get(req.params.id);
@@ -189,7 +189,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
         includeSell = existingSell.length > 0;
         for (const row of [...existingBuy, ...existingSell]) db.prepare("DELETE FROM shipment_cost_lines WHERE id=?").run(row.id);
       }
-      const count = snapshotId ? generateCostLinesFromSnapshot(req.params.id, snapshotId, { splitPerContainer, includeSell }) : 0;
+      const count = snapshotId ? await generateCostLinesFromSnapshot(req.params.id, snapshotId, { splitPerContainer, includeSell }) : 0;
       db.exec("COMMIT");
       ok(res, { imported: count });
     } catch (e) { db.exec("ROLLBACK"); err(res, e.message, 500); }
@@ -197,7 +197,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
 
   // Replays the shipment's existing frozen rate snapshot — does NOT read live contract_rates,
   // so a reset never silently changes what was already committed to the client.
-  app.post("/api/shipments/:id/cost-lines/reset-to-contract", shipmentWrite, (req, res) => {
+  app.post("/api/shipments/:id/cost-lines/reset-to-contract", shipmentWrite, async (req, res) => {
     const { splitPerContainer = false } = req.body || {};
     const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
     if (!shipment) return err(res, "Shipment not found", 404);
@@ -209,7 +209,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     const includeSell = existingSell.length > 0;
     for (const row of db.prepare("SELECT id FROM shipment_cost_lines WHERE shipment_id=? AND source='contract'").all(req.params.id))
       db.prepare("DELETE FROM shipment_cost_lines WHERE id=?").run(row.id);
-    const count = generateCostLinesFromSnapshot(req.params.id, snapshot.id, { splitPerContainer, includeSell });
+    const count = await generateCostLinesFromSnapshot(req.params.id, snapshot.id, { splitPerContainer, includeSell });
     ok(res, { imported: count, snapshotId: snapshot.id });
   });
 
@@ -228,16 +228,16 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     const includeSell = existingSell.length > 0;
     for (const row of db.prepare("SELECT id FROM shipment_cost_lines WHERE shipment_id=? AND source='contract'").all(req.params.id))
       db.prepare("DELETE FROM shipment_cost_lines WHERE id=?").run(row.id);
-    const count = generateCostLinesFromSnapshot(req.params.id, snapshotId, { splitPerContainer, includeSell });
+    const count = await generateCostLinesFromSnapshot(req.params.id, snapshotId, { splitPerContainer, includeSell });
     ok(res, { imported: count, snapshotId });
   });
 
-  app.get("/api/shipments/:id/rate-snapshots", costLineRead, (req, res) => {
+  app.get("/api/shipments/:id/rate-snapshots", costLineRead, async (req, res) => {
     const rows = db.prepare("SELECT * FROM shipment_rate_snapshots WHERE shipment_id=? ORDER BY generated_at DESC").all(req.params.id);
     ok(res, rows.map(mapRateSnapshot));
   });
 
-  app.get("/api/shipments/:id/cost-lines", costLineRead, (req, res) => {
+  app.get("/api/shipments/:id/cost-lines", costLineRead, async (req, res) => {
     const { limit, offset } = req.query;
     // Pagination is opt-in (TKT-UAJGR3) — every existing consumer (CostLineRow lists, GP Overview,
     // Freight Audit matching) wants the whole shipment's cost lines at once and omits these params,
@@ -252,7 +252,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     ok(res, { results: rows.map(mapCostLine), total, limit: lim, offset: off });
   });
 
-  app.post("/api/shipments/:id/cost-lines", shipmentWrite, (req, res) => {
+  app.post("/api/shipments/:id/cost-lines", shipmentWrite, async (req, res) => {
     const { type, chargeCode, currency = 'USD', amount, exchangeRate = 1, vatRate = 0, notes = '', containerId = '', source: rawSource, paymentIndicator: rawPI } = req.body;
     if (!type || !chargeCode || amount == null) return err(res, "type, chargeCode, amount required");
     if (!['BUY','SELL'].includes(type)) return err(res, "type must be BUY or SELL");
@@ -263,12 +263,12 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     const now = new Date().toISOString();
     db.prepare("INSERT INTO shipment_cost_lines (id,shipment_id,type,charge_code,currency,amount,exchange_rate,vat_rate,notes,container_id,created_at,source,payment_indicator) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)")
       .run(id, req.params.id, type, chargeCode, currency.toUpperCase(), Number(amount), Number(exchangeRate), vat, notes, containerId, now, source, paymentIndicator);
-    logEntityEvent('cost_line', id, 'CREATED', null, null, null,
+    await logEntityEvent('cost_line', id, 'CREATED', null, null, null,
       JSON.stringify({ shipmentId: req.params.id, type, chargeCode, currency: currency.toUpperCase(), amount: Number(amount), exchangeRate: Number(exchangeRate), vatRate: vat }));
     ok(res, mapCostLine({ id, shipment_id: req.params.id, type, charge_code: chargeCode, currency: currency.toUpperCase(), amount: Number(amount), exchange_rate: Number(exchangeRate), vat_rate: vat, notes, container_id: containerId, source, payment_indicator: paymentIndicator, modified_at: null, created_at: now }), 201);
   });
 
-  app.put("/api/shipments/:shipmentId/cost-lines/:id", shipmentWrite, (req, res) => {
+  app.put("/api/shipments/:shipmentId/cost-lines/:id", shipmentWrite, async (req, res) => {
     const { type, chargeCode, currency = 'USD', amount, exchangeRate = 1, vatRate = 0, notes = '', containerId = '', paymentIndicator: rawPI } = req.body;
     if (!type || !chargeCode || amount == null) return err(res, "type, chargeCode, amount required");
     if (!['BUY','SELL'].includes(type)) return err(res, "type must be BUY or SELL");
@@ -292,7 +292,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       ['payment_indicator', existing.payment_indicator || 'Prepaid', paymentIndicator],
     ]) {
       if (String(oldV) !== String(newV))
-        logEntityEvent('cost_line', req.params.id, 'UPDATED', field, oldV, newV,
+        await logEntityEvent('cost_line', req.params.id, 'UPDATED', field, oldV, newV,
           JSON.stringify({ shipmentId: existing.shipment_id, chargeCode, type }));
     }
     ok(res, mapCostLine({ id: req.params.id, shipment_id: existing.shipment_id, type, charge_code: chargeCode, currency: currency.toUpperCase(), amount: Number(amount), exchange_rate: Number(exchangeRate), vat_rate: vat, notes, container_id: containerId, source: existing.source || 'manual', payment_indicator: paymentIndicator, modified_at: now, created_at: existing.created_at }));
@@ -301,7 +301,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   // ─── Accrual / posting state machine (TKT-83O41G) ──────────────────────────
   const postGate = requireRole(["admin", "operator"]);
 
-  app.patch("/api/shipments/:shipmentId/cost-lines/:id/actualize", shipmentWrite, (req, res) => {
+  app.patch("/api/shipments/:shipmentId/cost-lines/:id/actualize", shipmentWrite, async (req, res) => {
     const existing = db.prepare("SELECT * FROM shipment_cost_lines WHERE id=? AND shipment_id=?").get(req.params.id, req.params.shipmentId);
     if (!existing) return err(res, "Not found", 404);
     if (existing.status === 'posted') return err(res, "This line is posted and locked", 409);
@@ -313,14 +313,14 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       SET status='actualized', actual_amount=?, actual_exchange_rate=?, actualized_at=?, actualized_by=?
       WHERE id=?`)
       .run(Number(actualAmount), Number(actualExchangeRate), now, actor, req.params.id);
-    logEntityEvent('cost_line', req.params.id, 'ACTUALIZED', 'status', existing.status, 'actualized',
+    await logEntityEvent('cost_line', req.params.id, 'ACTUALIZED', 'status', existing.status, 'actualized',
       JSON.stringify({ shipmentId: existing.shipment_id, chargeCode: existing.charge_code, type: existing.type,
         accruedAmount: existing.amount, actualAmount: Number(actualAmount) }));
     const row = db.prepare("SELECT * FROM shipment_cost_lines WHERE id=?").get(req.params.id);
     ok(res, mapCostLine(row));
   });
 
-  app.patch("/api/shipments/:shipmentId/cost-lines/:id/post", postGate, (req, res) => {
+  app.patch("/api/shipments/:shipmentId/cost-lines/:id/post", postGate, async (req, res) => {
     const existing = db.prepare("SELECT * FROM shipment_cost_lines WHERE id=? AND shipment_id=?").get(req.params.id, req.params.shipmentId);
     if (!existing) return err(res, "Not found", 404);
     if (existing.status === 'posted') return err(res, "Already posted", 409);
@@ -328,7 +328,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     const actor = req.user?.name || req.user?.email || "";
     db.prepare("UPDATE shipment_cost_lines SET status='posted', posted_at=?, posted_by=? WHERE id=?")
       .run(now, actor, req.params.id);
-    logEntityEvent('cost_line', req.params.id, 'POSTED', 'status', existing.status, 'posted',
+    await logEntityEvent('cost_line', req.params.id, 'POSTED', 'status', existing.status, 'posted',
       JSON.stringify({ shipmentId: existing.shipment_id, chargeCode: existing.charge_code, type: existing.type }));
     const row = db.prepare("SELECT * FROM shipment_cost_lines WHERE id=?").get(req.params.id);
     ok(res, mapCostLine(row));
@@ -336,7 +336,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
 
   // Batch post — same lock/role semantics as the single-line Post above, one entity
   // event per line so the audit trail still reads as individual postings.
-  app.post("/api/shipments/:shipmentId/cost-lines/post-batch", postGate, (req, res) => {
+  app.post("/api/shipments/:shipmentId/cost-lines/post-batch", postGate, async (req, res) => {
     const { ids = [] } = req.body || {};
     if (!Array.isArray(ids) || ids.length === 0) return err(res, "ids required");
     const now = new Date().toISOString();
@@ -346,7 +346,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       const existing = db.prepare("SELECT * FROM shipment_cost_lines WHERE id=? AND shipment_id=?").get(id, req.params.shipmentId);
       if (!existing || existing.status === 'posted') continue;
       db.prepare("UPDATE shipment_cost_lines SET status='posted', posted_at=?, posted_by=? WHERE id=?").run(now, actor, id);
-      logEntityEvent('cost_line', id, 'POSTED', 'status', existing.status, 'posted',
+      await logEntityEvent('cost_line', id, 'POSTED', 'status', existing.status, 'posted',
         JSON.stringify({ shipmentId: existing.shipment_id, chargeCode: existing.charge_code, type: existing.type }));
       posted.push(id);
     }
@@ -356,12 +356,12 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     ok(res, rows.map(mapCostLine));
   });
 
-  app.delete("/api/shipments/:shipmentId/cost-lines/:id", shipmentWrite, (req, res) => {
+  app.delete("/api/shipments/:shipmentId/cost-lines/:id", shipmentWrite, async (req, res) => {
     const existing = db.prepare("SELECT * FROM shipment_cost_lines WHERE id=? AND shipment_id=?").get(req.params.id, req.params.shipmentId);
     if (!existing) return err(res, "Not found", 404);
     if (existing.status === 'posted') return err(res, "This line is posted and locked — add a new adjusting line instead of deleting it", 409);
     db.prepare("DELETE FROM shipment_cost_lines WHERE id=?").run(req.params.id);
-    logEntityEvent('cost_line', req.params.id, 'DELETED', null, null, null,
+    await logEntityEvent('cost_line', req.params.id, 'DELETED', null, null, null,
       JSON.stringify({ shipmentId: existing.shipment_id, type: existing.type, chargeCode: existing.charge_code, amount: existing.amount, currency: existing.currency, source: existing.source || 'manual' }));
 
     // If this was the last SELL line for its scope, any still-draft invoice generated for
@@ -387,7 +387,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
         for (const doc of orphaned) {
           try { fs.unlinkSync(path.join(UPLOADS_DIR, doc.stored_name)); } catch {}
           db.prepare("DELETE FROM shipment_documents WHERE id=?").run(doc.id);
-          logEntityEvent('document', doc.id, 'AUTO_REMOVED', null, null, null,
+          await logEntityEvent('document', doc.id, 'AUTO_REMOVED', null, null, null,
             JSON.stringify({ shipmentId: req.params.shipmentId, docType: doc.doc_type, filename: doc.filename,
               containerId: doc.container_id || '', reason: 'No remaining charge lines for this scope' }));
         }
@@ -399,7 +399,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   // Despite the route name (kept for backward compatibility with existing frontend calls),
   // this also returns 'document' entity_events — the Accounting History modal covers both
   // cost/invoice lines AND generated invoice documents (generated/confirmed/deleted).
-  app.get("/api/shipments/:id/cost-line-events", costLineRead, (req, res) => {
+  app.get("/api/shipments/:id/cost-line-events", costLineRead, async (req, res) => {
     const rows = db.prepare(`
       SELECT * FROM entity_events
       WHERE entity_type IN ('cost_line', 'document')
@@ -423,13 +423,13 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     LEFT JOIN offices o ON o.id = ss.office_id
   `;
 
-  app.get("/api/shipments/:id/services", auth(), (req, res) => {
+  app.get("/api/shipments/:id/services", auth(), async (req, res) => {
     const rows = db.prepare(`${SERVICE_SELECT} WHERE ss.shipment_id=? ORDER BY ss.side, ss.created_at ASC`)
       .all(req.params.id);
     ok(res, rows.map(mapService));
   });
 
-  app.post("/api/shipments/:id/services", shipmentWrite, (req, res) => {
+  app.post("/api/shipments/:id/services", shipmentWrite, async (req, res) => {
     const { side, serviceType, vendorId = '', vendorName = '', officeId = '',
             requestedDate = '', notes = '' } = req.body;
     if (!side || !serviceType) return err(res, "side, serviceType required");
@@ -443,13 +443,13 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
       .run(id, req.params.id, side, serviceType, 'Requested', vendorId, vendorName, officeId,
            requestedDate, notes, now, createdBy);
-    logEntityEvent('service', id, 'REQUESTED', null, null, null,
+    await logEntityEvent('service', id, 'REQUESTED', null, null, null,
       JSON.stringify({ shipmentId: req.params.id, side, serviceType, vendorName }));
     const row = db.prepare(`${SERVICE_SELECT} WHERE ss.id=?`).get(id);
     ok(res, mapService(row), 201);
   });
 
-  app.patch("/api/shipments/:shipmentId/services/:id", shipmentWrite, (req, res) => {
+  app.patch("/api/shipments/:shipmentId/services/:id", shipmentWrite, async (req, res) => {
     const existing = db.prepare("SELECT * FROM shipment_services WHERE id=? AND shipment_id=?")
       .get(req.params.id, req.params.shipmentId);
     if (!existing) return err(res, "Not found", 404);
@@ -499,7 +499,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       ['notes',        existing.notes || '',    notes || ''],
     ]) {
       if (String(oldV || '') !== String(newV || ''))
-        logEntityEvent('service', req.params.id, 'UPDATED', field, oldV, newV,
+        await logEntityEvent('service', req.params.id, 'UPDATED', field, oldV, newV,
           JSON.stringify({ shipmentId: existing.shipment_id, side, serviceType }));
     }
 
@@ -507,12 +507,12 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     ok(res, mapService(row));
   });
 
-  app.delete("/api/shipments/:shipmentId/services/:id", shipmentWrite, (req, res) => {
+  app.delete("/api/shipments/:shipmentId/services/:id", shipmentWrite, async (req, res) => {
     const existing = db.prepare("SELECT * FROM shipment_services WHERE id=? AND shipment_id=?")
       .get(req.params.id, req.params.shipmentId);
     if (!existing) return err(res, "Not found", 404);
     db.prepare("DELETE FROM shipment_services WHERE id=?").run(req.params.id);
-    logEntityEvent('service', req.params.id, 'DELETED', null, null, null,
+    await logEntityEvent('service', req.params.id, 'DELETED', null, null, null,
       JSON.stringify({ shipmentId: existing.shipment_id, side: existing.side, serviceType: existing.service_type }));
     ok(res, { deleted: req.params.id });
   });
@@ -541,7 +541,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     WHERE c.shipment_id = ?
   `;
 
-  app.get("/api/shipments/:shipmentId/services/:serviceId/loading-plan", auth(), (req, res) => {
+  app.get("/api/shipments/:shipmentId/services/:serviceId/loading-plan", auth(), async (req, res) => {
     const service = db.prepare("SELECT * FROM shipment_services WHERE id=? AND shipment_id=?")
       .get(req.params.serviceId, req.params.shipmentId);
     if (!service) return err(res, "Service not found", 404);
@@ -551,7 +551,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     ok(res, rows.map(mapLoadingPlanLine));
   });
 
-  app.put("/api/shipments/:shipmentId/services/:serviceId/loading-plan/:containerId", shipmentWrite, (req, res) => {
+  app.put("/api/shipments/:shipmentId/services/:serviceId/loading-plan/:containerId", shipmentWrite, async (req, res) => {
     const service = db.prepare("SELECT * FROM shipment_services WHERE id=? AND shipment_id=?")
       .get(req.params.serviceId, req.params.shipmentId);
     if (!service) return err(res, "Service not found", 404);
@@ -578,7 +578,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
         VALUES (?,?,?,?,?,?,?)`)
         .run(req.params.serviceId, req.params.containerId, plannedDate, sequenceOrder, notes, now, now);
     }
-    logEntityEvent('loading_plan_line', `${req.params.serviceId}:${req.params.containerId}`, 'UPDATED', null, null, null,
+    await logEntityEvent('loading_plan_line', `${req.params.serviceId}:${req.params.containerId}`, 'UPDATED', null, null, null,
       JSON.stringify({ shipmentId: req.params.shipmentId, serviceId: req.params.serviceId,
         containerId: req.params.containerId, plannedDate }));
 
@@ -641,7 +641,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     return db.prepare("SELECT * FROM shipment_haulage_records WHERE id=?").get(id);
   };
 
-  app.get("/api/shipments/:shipmentId/services/:serviceId/haulage", auth(), (req, res) => {
+  app.get("/api/shipments/:shipmentId/services/:serviceId/haulage", auth(), async (req, res) => {
     const service = db.prepare("SELECT * FROM shipment_services WHERE id=? AND shipment_id=?")
       .get(req.params.serviceId, req.params.shipmentId);
     if (!service) return err(res, "Service not found", 404);
@@ -650,7 +650,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     ok(res, rows.map(mapHaulageRecord));
   });
 
-  app.put("/api/shipments/:shipmentId/services/:serviceId/haulage/:containerId", shipmentWrite, (req, res) => {
+  app.put("/api/shipments/:shipmentId/services/:serviceId/haulage/:containerId", shipmentWrite, async (req, res) => {
     const service = db.prepare("SELECT * FROM shipment_services WHERE id=? AND shipment_id=?")
       .get(req.params.serviceId, req.params.shipmentId);
     if (!service) return err(res, "Service not found", 404);
@@ -665,7 +665,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       SET gate_in_at=?, gate_out_at=?, driver_name=?, driver_id_number=?, instructions=?, updated_at=?
       WHERE id=?`)
       .run(gateInAt, gateOutAt, driverName, driverIdNumber, instructions, now, record.id);
-    logEntityEvent('haulage_record', record.id, 'UPDATED', null, null, null,
+    await logEntityEvent('haulage_record', record.id, 'UPDATED', null, null, null,
       JSON.stringify({ shipmentId: req.params.shipmentId, serviceId: req.params.serviceId, containerId: req.params.containerId }));
 
     const row = db.prepare(`${HAULAGE_RECORD_SELECT.replace("WHERE c.shipment_id = ?", "WHERE c.id = ?")}`)
@@ -680,7 +680,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   // 'contract'/'mirror'/'automated' — anything else silently falls back to 'manual') via a direct
   // INSERT, the same precedent the quote-conversion/carrier-invoice-matching/reversal routes
   // already establish for their own distinct source tags.
-  app.patch("/api/shipments/:shipmentId/services/:serviceId/haulage/:containerId/cost", shipmentWrite, (req, res) => {
+  app.patch("/api/shipments/:shipmentId/services/:serviceId/haulage/:containerId/cost", shipmentWrite, async (req, res) => {
     const service = db.prepare("SELECT * FROM shipment_services WHERE id=? AND shipment_id=?")
       .get(req.params.serviceId, req.params.shipmentId);
     if (!service) return err(res, "Service not found", 404);
@@ -703,7 +703,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       if (clearing) {
         if (existingLine) {
           db.prepare("DELETE FROM shipment_cost_lines WHERE id=?").run(existingLine.id);
-          logEntityEvent('cost_line', existingLine.id, 'DELETED', null, null, null,
+          await logEntityEvent('cost_line', existingLine.id, 'DELETED', null, null, null,
             JSON.stringify({ shipmentId: req.params.shipmentId, reason: "Merchant's Haulage cost cleared" }));
         }
         db.prepare(`UPDATE shipment_haulage_records
@@ -712,7 +712,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       } else if (existingLine) {
         db.prepare("UPDATE shipment_cost_lines SET amount=?, currency=?, exchange_rate=?, modified_at=? WHERE id=?")
           .run(Number(amount), currency.toUpperCase(), Number(exchangeRate), now, existingLine.id);
-        logEntityEvent('cost_line', existingLine.id, 'UPDATED', 'amount', String(existingLine.amount), String(Number(amount)),
+        await logEntityEvent('cost_line', existingLine.id, 'UPDATED', 'amount', String(existingLine.amount), String(Number(amount)),
           JSON.stringify({ shipmentId: req.params.shipmentId, chargeCode: 'Haulage', type: 'BUY' }));
         db.prepare(`UPDATE shipment_haulage_records
           SET cost_amount=?, cost_currency=?, cost_exchange_rate=?, updated_at=? WHERE id=?`)
@@ -725,7 +725,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
           .run(clId, req.params.shipmentId, 'BUY', 'Haulage', currency.toUpperCase(), Number(amount), Number(exchangeRate),
             `Merchant's Haulage — ${container.container_number || req.params.containerId}`,
             req.params.containerId, now, 'merchant_haulage', 'Prepaid');
-        logEntityEvent('cost_line', clId, 'CREATED', null, null, null,
+        await logEntityEvent('cost_line', clId, 'CREATED', null, null, null,
           JSON.stringify({ shipmentId: req.params.shipmentId, type: 'BUY', chargeCode: 'Haulage', amount: Number(amount), source: 'merchant_haulage' }));
         db.prepare(`UPDATE shipment_haulage_records
           SET cost_amount=?, cost_currency=?, cost_exchange_rate=?, cost_line_id=?, updated_at=? WHERE id=?`)
@@ -742,7 +742,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     ok(res, mapHaulageRecord(row));
   });
 
-  app.get("/api/shipments/:shipmentId/services/:serviceId/haulage/:containerId/waypoints", auth(), (req, res) => {
+  app.get("/api/shipments/:shipmentId/services/:serviceId/haulage/:containerId/waypoints", auth(), async (req, res) => {
     const service = db.prepare("SELECT * FROM shipment_services WHERE id=? AND shipment_id=?")
       .get(req.params.serviceId, req.params.shipmentId);
     if (!service) return err(res, "Service not found", 404);
@@ -754,7 +754,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     ok(res, rows.map(mapHaulageWaypoint));
   });
 
-  app.post("/api/shipments/:shipmentId/services/:serviceId/haulage/:containerId/waypoints", shipmentWrite, (req, res) => {
+  app.post("/api/shipments/:shipmentId/services/:serviceId/haulage/:containerId/waypoints", shipmentWrite, async (req, res) => {
     const service = db.prepare("SELECT * FROM shipment_services WHERE id=? AND shipment_id=?")
       .get(req.params.serviceId, req.params.shipmentId);
     if (!service) return err(res, "Service not found", 404);
@@ -781,13 +781,13 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
         isGps && latitude != null && latitude !== '' ? Number(latitude) : null,
         isGps && longitude != null && longitude !== '' ? Number(longitude) : null,
         notes, now);
-    logEntityEvent('haulage_waypoint', id, 'CREATED', null, null, null,
+    await logEntityEvent('haulage_waypoint', id, 'CREATED', null, null, null,
       JSON.stringify({ shipmentId: req.params.shipmentId, serviceId: req.params.serviceId, containerId: req.params.containerId, locType }));
     const row = db.prepare("SELECT * FROM shipment_haulage_waypoints WHERE id=?").get(id);
     ok(res, mapHaulageWaypoint(row), 201);
   });
 
-  app.put("/api/haulage-waypoints/:id", shipmentWrite, (req, res) => {
+  app.put("/api/haulage-waypoints/:id", shipmentWrite, async (req, res) => {
     const existing = db.prepare("SELECT * FROM shipment_haulage_waypoints WHERE id=?").get(req.params.id);
     if (!existing) return err(res, "Not found", 404);
     const { locType = 'Door', location = '', latitude = null, longitude = null, notes = '', sequenceOrder = 1 } = req.body || {};
@@ -803,27 +803,27 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
         isGps && latitude != null && latitude !== '' ? Number(latitude) : null,
         isGps && longitude != null && longitude !== '' ? Number(longitude) : null,
         notes, req.params.id);
-    logEntityEvent('haulage_waypoint', req.params.id, 'UPDATED', null, null, null, JSON.stringify({ locType }));
+    await logEntityEvent('haulage_waypoint', req.params.id, 'UPDATED', null, null, null, JSON.stringify({ locType }));
     const row = db.prepare("SELECT * FROM shipment_haulage_waypoints WHERE id=?").get(req.params.id);
     ok(res, mapHaulageWaypoint(row));
   });
 
-  app.delete("/api/haulage-waypoints/:id", shipmentWrite, (req, res) => {
+  app.delete("/api/haulage-waypoints/:id", shipmentWrite, async (req, res) => {
     const existing = db.prepare("SELECT * FROM shipment_haulage_waypoints WHERE id=?").get(req.params.id);
     if (!existing) return err(res, "Not found", 404);
     db.prepare("DELETE FROM shipment_haulage_waypoints WHERE id=?").run(req.params.id);
-    logEntityEvent('haulage_waypoint', req.params.id, 'DELETED', null, null, null, null);
+    await logEntityEvent('haulage_waypoint', req.params.id, 'DELETED', null, null, null, null);
     ok(res, { deleted: req.params.id });
   });
 
   // ─── Milestones ───────────────────────────────────────────────────────────
 
-  app.get("/api/shipments/:id/milestones", (req, res) => {
+  app.get("/api/shipments/:id/milestones", async (req, res) => {
     const rows = db.prepare("SELECT * FROM shipment_milestones WHERE shipment_id=? ORDER BY sequence_order ASC").all(req.params.id);
     ok(res, rows.map(mapMilestone));
   });
 
-  app.post("/api/shipments/:id/milestones/init", shipmentWrite, (req, res) => {
+  app.post("/api/shipments/:id/milestones/init", shipmentWrite, async (req, res) => {
     const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
     if (!shipment) return err(res, "Shipment not found", 404);
     const carrierCode = req.body?.carrierCode || shipment.carrier_code || '';
@@ -872,7 +872,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     ok(res, created, 201);
   });
 
-  app.put("/api/milestones/:id", shipmentWrite, (req, res) => {
+  app.put("/api/milestones/:id", shipmentWrite, async (req, res) => {
     const { estimatedDate = '', completedAt = '', completedBy = '', note = '' } = req.body || {};
     const existing = db.prepare("SELECT * FROM shipment_milestones WHERE id=?").get(req.params.id);
     if (!existing) return err(res, "Not found", 404);
@@ -889,7 +889,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       ).get(existing.shipment_id, existing.sequence_order);
       if (earlierIncomplete) {
         outOfOrder = true;
-        logEntityEvent('milestone', req.params.id, 'COMPLETED_OUT_OF_ORDER', null, null, null,
+        await logEntityEvent('milestone', req.params.id, 'COMPLETED_OUT_OF_ORDER', null, null, null,
           JSON.stringify({ shipmentId: existing.shipment_id, milestoneKey: existing.milestone_key,
             label: existing.label, blockedBy: earlierIncomplete.label }));
       }
@@ -900,7 +900,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     ok(res, outOfOrder ? { ...updated, outOfOrder: true } : updated);
   });
 
-  app.delete("/api/milestones/:id", shipmentWrite, (req, res) => {
+  app.delete("/api/milestones/:id", shipmentWrite, async (req, res) => {
     const existing = db.prepare("SELECT * FROM shipment_milestones WHERE id=?").get(req.params.id);
     if (!existing) return err(res, "Not found", 404);
     db.prepare("DELETE FROM shipment_milestones WHERE id=?").run(req.params.id);
@@ -909,12 +909,12 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
 
   // ─── Documents ────────────────────────────────────────────────────────────
 
-  app.get("/api/shipments/:id/documents", auth(), (req, res) => {
+  app.get("/api/shipments/:id/documents", auth(), async (req, res) => {
     const rows = db.prepare("SELECT * FROM shipment_documents WHERE shipment_id = ? ORDER BY created_at DESC").all(req.params.id);
     ok(res, rows.map(r => mapDoc(r, req.params.id)));
   });
 
-  app.post("/api/shipments/:id/documents", shipmentWrite, (req, res) => {
+  app.post("/api/shipments/:id/documents", shipmentWrite, async (req, res) => {
     const { filename, mimeType, docType, data, containerId = '', responsibleParty = '', containerEventId = '' } = req.body;
     if (!filename || !data) return err(res, "filename and data are required");
     try {
@@ -929,7 +929,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
         (id, shipment_id, filename, stored_name, mime_type, size_bytes, doc_type, uploaded_by, created_at, status, container_id, responsible_party, container_event_id)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?)`)
         .run(id, req.params.id, filename, storedName, mimeType || "", buf.length, docType || "OT", uploader, now, containerId, responsibleParty, containerEventId);
-      logEntityEvent('document', id, 'GENERATED', null, null, null,
+      await logEntityEvent('document', id, 'GENERATED', null, null, null,
         JSON.stringify({ shipmentId: req.params.id, docType: docType || "OT", filename, containerId }));
       const row = db.prepare("SELECT * FROM shipment_documents WHERE id = ?").get(id);
       ok(res, mapDoc(row, req.params.id), 201);
@@ -951,7 +951,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     const candidateIds = [shipment.shipper_id, shipment.consignee_id, shipment.principal_id].filter(Boolean);
     if (shipment.contract_id) {
       let namedAccountId = null;
-      if ((getSettings().contract_source || "local") === "remote") {
+      if (((await getSettings()).contract_source || "local") === "remote") {
         try { namedAccountId = (await callContractService("GET", `/internal/contracts/${shipment.contract_id}`)).namedAccountId; }
         catch { /* an unreachable/vanished remote contract just means no Named Account to check — the shipper/consignee/principal check below still runs */ }
       } else {
@@ -1050,7 +1050,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
         VALUES (?, ?, ?, ?, 'application/pdf', ?, ?, ?, ?, 'draft', ?, ?, ?, ?)`)
         .run(id, req.params.id, pdfFilename, storedName, signedPdf.length, docType || "OT", uploader, now, containerId, responsibleParty,
              Array.isArray(sourceCostLineIds) ? JSON.stringify(sourceCostLineIds) : null, relatedDocId);
-      logEntityEvent('document', id, 'GENERATED', null, null, null,
+      await logEntityEvent('document', id, 'GENERATED', null, null, null,
         JSON.stringify({ shipmentId: req.params.id, docType: docType || "OT", filename: pdfFilename, containerId, signed: true, certFingerprint: cert.fingerprint_sha256 }));
       if (consumeOverrideId) {
         db.prepare("UPDATE credit_overrides SET consumed_at=? WHERE id=?").run(now, consumeOverrideId);
@@ -1085,7 +1085,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
         attachmentPath: path.join(UPLOADS_DIR, doc.stored_name), attachmentFilename: doc.filename,
       });
       await sendViaOffice(db, shipment.emo_office_id, mailOptions);
-      logEntityEvent('document', doc.id, 'EMAILED', null, null, null,
+      await logEntityEvent('document', doc.id, 'EMAILED', null, null, null,
         JSON.stringify({ shipmentId: req.params.id, to, subject: subject || doc.filename }));
       // TKT-PLAVEK — a fast, denormalized "was this ever sent" signal for the Billing
       // Performance report; the full multi-channel history stays in entity_events exactly as
@@ -1096,7 +1096,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     } catch (e) { err(res, e.message, 502); }
   });
 
-  app.patch("/api/documents/:docId", shipmentWrite, (req, res) => {
+  app.patch("/api/documents/:docId", shipmentWrite, async (req, res) => {
     const doc = db.prepare("SELECT * FROM shipment_documents WHERE id = ?").get(req.params.docId);
     if (!doc) return err(res, "Not found", 404);
     const { status, relatedDocId } = req.body;
@@ -1118,11 +1118,11 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
         db.prepare("UPDATE shipment_documents SET status=? WHERE id=?").run(status, req.params.docId);
       }
       if (status === "confirmed" && doc.status !== "confirmed") {
-        logEntityEvent('document', req.params.docId, 'CONFIRMED', null, null, null,
+        await logEntityEvent('document', req.params.docId, 'CONFIRMED', null, null, null,
           JSON.stringify({ shipmentId: doc.shipment_id, docType: doc.doc_type, filename: doc.filename, containerId: doc.container_id || '' }));
       }
       if (status === "voided" && doc.status !== "voided") {
-        logEntityEvent('document', req.params.docId, 'VOIDED', null, null, null,
+        await logEntityEvent('document', req.params.docId, 'VOIDED', null, null, null,
           JSON.stringify({ shipmentId: doc.shipment_id, docType: doc.doc_type, filename: doc.filename, containerId: doc.container_id || '' }));
       }
     }
@@ -1141,7 +1141,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   // uploaded by the client afterward (same client-builds-HTML/server-signs split every other
   // generated document already follows), which is also why this route doesn't touch
   // related_doc_id — that's set once the CN01 doc actually exists (see PATCH above).
-  app.post("/api/shipments/:shipmentId/documents/:docId/reverse", postGate, (req, res) => {
+  app.post("/api/shipments/:shipmentId/documents/:docId/reverse", postGate, async (req, res) => {
     const doc = db.prepare("SELECT * FROM shipment_documents WHERE id=? AND shipment_id=?").get(req.params.docId, req.params.shipmentId);
     if (!doc) return err(res, "Not found", 404);
     if (doc.doc_type !== "FR01" && doc.doc_type !== "FR02") return err(res, "Only a generated invoice can be reversed", 400);
@@ -1172,13 +1172,13 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
           .run(id, req.params.shipmentId, line.type, line.charge_code, line.currency, -line.amount, line.exchange_rate,
                line.vat_rate || 0, notes, line.container_id || '', now, 'reversal', line.payment_indicator || 'Prepaid', 'posted', now, actor);
-        logEntityEvent('cost_line', id, 'CREATED', null, null, null,
+        await logEntityEvent('cost_line', id, 'CREATED', null, null, null,
           JSON.stringify({ shipmentId: req.params.shipmentId, type: line.type, chargeCode: line.charge_code, currency: line.currency, amount: -line.amount, reversalOf: doc.id }));
         reversalLines.push(mapCostLine(db.prepare("SELECT * FROM shipment_cost_lines WHERE id=?").get(id)));
       }
 
       db.prepare("UPDATE shipment_documents SET status='voided' WHERE id=?").run(doc.id);
-      logEntityEvent('document', doc.id, 'VOIDED', null, null, null,
+      await logEntityEvent('document', doc.id, 'VOIDED', null, null, null,
         JSON.stringify({ shipmentId: doc.shipment_id, docType: doc.doc_type, filename: doc.filename, containerId: doc.container_id || '' }));
 
       db.exec("COMMIT");
@@ -1198,7 +1198,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   // reference, wire confirmation) — never validated or acted on. Same postGate (admin/operator)
   // as Confirm/Reverse above — this is the same class of financial-state-changing action on the
   // same document, not a new gate tier.
-  app.post("/api/shipments/:shipmentId/documents/:docId/mark-paid", postGate, (req, res) => {
+  app.post("/api/shipments/:shipmentId/documents/:docId/mark-paid", postGate, async (req, res) => {
     const doc = db.prepare("SELECT * FROM shipment_documents WHERE id=? AND shipment_id=?").get(req.params.docId, req.params.shipmentId);
     if (!doc) return err(res, "Not found", 404);
     if (doc.doc_type !== "FR01" && doc.doc_type !== "FR02") return err(res, "Only a generated invoice can be marked paid", 400);
@@ -1211,7 +1211,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
 
     db.prepare("UPDATE shipment_documents SET paid_at=?, paid_amount=?, transaction_id=? WHERE id=?")
       .run(paidAt, Number(paidAmount), transactionId.trim(), doc.id);
-    logEntityEvent('document', doc.id, 'MARKED_PAID', null, null, null,
+    await logEntityEvent('document', doc.id, 'MARKED_PAID', null, null, null,
       JSON.stringify({ shipmentId: doc.shipment_id, docType: doc.doc_type, filename: doc.filename, paidAt, paidAmount: Number(paidAmount), transactionId: transactionId.trim() || undefined }));
 
     const updated = mapDoc(db.prepare("SELECT * FROM shipment_documents WHERE id=?").get(doc.id), doc.shipment_id);
@@ -1224,7 +1224,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   // Control Depth's own established precedent (v0.74.0) — never admin, operator, or an
   // out-of-lane trade_manager. An active override suppresses the collections sweep's alert AND
   // escalation for this document entirely, re-checked on every sweep run.
-  app.post("/api/shipments/:shipmentId/documents/:docId/status-override", auth(), (req, res) => {
+  app.post("/api/shipments/:shipmentId/documents/:docId/status-override", auth(), async (req, res) => {
     const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.shipmentId);
     if (!shipment) return err(res, "Shipment not found", 404);
     if (!userOwnsLaneForShipment(req.user, shipment))
@@ -1244,13 +1244,13 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     db.prepare(`INSERT INTO invoice_status_overrides (id, document_id, reason_code, description, overridden_status, overridden_by, overridden_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)`)
       .run(id, doc.id, reasonCode, description.trim(), overriddenStatus, req.user.email || req.user.id, now);
-    logEntityEvent('document', doc.id, 'COLLECTIONS_STATUS_OVERRIDDEN', null, null, null,
+    await logEntityEvent('document', doc.id, 'COLLECTIONS_STATUS_OVERRIDDEN', null, null, null,
       JSON.stringify({ shipmentId: doc.shipment_id, reasonCode, overriddenStatus, overriddenBy: req.user.email || req.user.id }));
 
     ok(res, mapInvoiceStatusOverride({ id, document_id: doc.id, reason_code: reasonCode, description: description.trim(), overridden_status: overriddenStatus, overridden_by: req.user.email || req.user.id, overridden_at: now }), 201);
   });
 
-  app.get("/api/shipments/:shipmentId/documents/:docId/status-overrides", auth(), (req, res) => {
+  app.get("/api/shipments/:shipmentId/documents/:docId/status-overrides", auth(), async (req, res) => {
     const rows = db.prepare("SELECT * FROM invoice_status_overrides WHERE document_id=? ORDER BY overridden_at DESC").all(req.params.docId);
     ok(res, rows.map(mapInvoiceStatusOverride));
   });
@@ -1258,7 +1258,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   // Reassigns "user responsible" for a generated invoice — defaults to whoever confirmed it
   // (see the documents/generate route), but admin/operator/the shipment's own lane trade_manager
   // can hand it off afterward (e.g. an account manager change).
-  app.patch("/api/shipments/:shipmentId/documents/:docId/invoice-owner", auth(), (req, res) => {
+  app.patch("/api/shipments/:shipmentId/documents/:docId/invoice-owner", auth(), async (req, res) => {
     const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.shipmentId);
     if (!shipment) return err(res, "Shipment not found", 404);
     const roles = req.user.roles || [req.user.role];
@@ -1276,7 +1276,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     ok(res, mapDoc(db.prepare("SELECT * FROM shipment_documents WHERE id=?").get(doc.id), doc.shipment_id));
   });
 
-  app.get("/api/documents/:docId/download", auth(), (req, res) => {
+  app.get("/api/documents/:docId/download", auth(), async (req, res) => {
     const doc = db.prepare("SELECT * FROM shipment_documents WHERE id = ?").get(req.params.docId);
     if (!doc) return err(res, "Not found", 404);
     const filePath = path.join(UPLOADS_DIR, doc.stored_name);
@@ -1287,24 +1287,24 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     fs.createReadStream(filePath).pipe(res);
   });
 
-  app.delete("/api/documents/:docId", shipmentWrite, (req, res) => {
+  app.delete("/api/documents/:docId", shipmentWrite, async (req, res) => {
     const doc = db.prepare("SELECT * FROM shipment_documents WHERE id = ?").get(req.params.docId);
     if (!doc) return err(res, "Not found", 404);
     try { fs.unlinkSync(path.join(UPLOADS_DIR, doc.stored_name)); } catch {}
     db.prepare("DELETE FROM shipment_documents WHERE id = ?").run(req.params.docId);
-    logEntityEvent('document', req.params.docId, 'DELETED', null, null, null,
+    await logEntityEvent('document', req.params.docId, 'DELETED', null, null, null,
       JSON.stringify({ shipmentId: doc.shipment_id, docType: doc.doc_type, filename: doc.filename, containerId: doc.container_id || '' }));
     ok(res, { ok: true });
   });
 
   // ─── Milestone Templates ──────────────────────────────────────────────────
 
-  app.get("/api/milestone-templates", (req, res) => {
+  app.get("/api/milestone-templates", async (req, res) => {
     const rows = db.prepare("SELECT * FROM milestone_templates ORDER BY template_key, carrier_code, sequence_order").all();
     ok(res, rows.map(mapMilestoneTemplate));
   });
 
-  app.post("/api/milestone-templates", shipmentWrite, (req, res) => {
+  app.post("/api/milestone-templates", shipmentWrite, async (req, res) => {
     const { templateKey = 'FCL', carrierCode = '', tradeLane = '', milestoneKey, label, sequenceOrder = 0 } = req.body || {};
     if (!milestoneKey || !label) return err(res, "milestoneKey and label required");
     const id = `MT-${uid()}`;
@@ -1314,7 +1314,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     ok(res, mapMilestoneTemplate({ id, template_key: templateKey, carrier_code: carrierCode, trade_lane: tradeLane, milestone_key: milestoneKey, label, sequence_order: Number(sequenceOrder), created_at: now }), 201);
   });
 
-  app.put("/api/milestone-templates/:id", shipmentWrite, (req, res) => {
+  app.put("/api/milestone-templates/:id", shipmentWrite, async (req, res) => {
     const { templateKey, carrierCode = '', tradeLane = '', milestoneKey, label, sequenceOrder } = req.body || {};
     const existing = db.prepare("SELECT * FROM milestone_templates WHERE id=?").get(req.params.id);
     if (!existing) return err(res, "Not found", 404);
@@ -1327,7 +1327,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     ok(res, mapMilestoneTemplate({ id: req.params.id, template_key: tKey, carrier_code: carrierCode, trade_lane: tradeLane, milestone_key: mKey, label: lbl, sequence_order: seq, created_at: existing.created_at }));
   });
 
-  app.delete("/api/milestone-templates/:id", shipmentWrite, (req, res) => {
+  app.delete("/api/milestone-templates/:id", shipmentWrite, async (req, res) => {
     const existing = db.prepare("SELECT * FROM milestone_templates WHERE id=?").get(req.params.id);
     if (!existing) return err(res, "Not found", 404);
     db.prepare("DELETE FROM milestone_templates WHERE id=?").run(req.params.id);
@@ -1353,7 +1353,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   // carrier feed, a re-run generator, a future EDI sync) — diff old vs new on the fields that can
   // actually change and log one entity_events('sailing_leg', ...) row per changed field, the same
   // field-level diff-and-log idiom the schedule PUT route below already uses for its own updates.
-  const upsertLeg = leg => {
+  const upsertLeg = async leg => {
     const legKey = computeLegKey(leg);
     const now = new Date().toISOString();
     const existing = db.prepare("SELECT * FROM sailing_legs WHERE leg_key=?").get(legKey);
@@ -1373,7 +1373,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       db.prepare("UPDATE sailing_legs SET eta=?, vessel_name=?, service=?, updated_at=? WHERE leg_key=?")
         .run(leg.eta || "", leg.vesselName || "", leg.service || "", now, legKey);
       for (const [field, oldV, newV] of diffs) {
-        logEntityEvent("sailing_leg", legKey, "UPDATED", field, oldV, newV,
+        await logEntityEvent("sailing_leg", legKey, "UPDATED", field, oldV, newV,
           JSON.stringify({ carrier: existing.carrier, pol: existing.pol, pod: existing.pod }));
       }
     }
@@ -1405,10 +1405,11 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   // Every schedule now has 1+ schedule_leg_refs rows (a "direct" sailing is simply one ref) —
   // upserts each leg into the canonical catalog and records the ordered reference list, returning
   // the composed schedule_key (ordered leg_keys) for the caller to store on shipment_schedules.
-  const saveScheduleLegs = (scheduleId, legs) => {
+  const saveScheduleLegs = async (scheduleId, legs) => {
     db.prepare("DELETE FROM schedule_leg_refs WHERE schedule_id=?").run(scheduleId);
     const insertRef = db.prepare("INSERT INTO schedule_leg_refs (schedule_id, leg_key, leg_order) VALUES (?,?,?)");
-    const legKeys = legs.map(leg => upsertLeg(leg));
+    const legKeys = [];
+    for (const leg of legs) legKeys.push(await upsertLeg(leg));
     legKeys.forEach((legKey, i) => insertRef.run(scheduleId, legKey, i));
     return legKeys.join("→");
   };
@@ -1461,13 +1462,13 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     status: s.status, teu: teuForShipment(s.id),
   });
 
-  app.get("/api/shipments/:id/schedules", auth(), (req, res) => {
+  app.get("/api/shipments/:id/schedules", auth(), async (req, res) => {
     const rows = db.prepare("SELECT * FROM shipment_schedules WHERE shipment_id=? ORDER BY saved_at DESC")
       .all(req.params.id);
     ok(res, rows.map(mapSchedule));
   });
 
-  app.post("/api/shipments/:id/schedules", shipmentWrite, (req, res) => {
+  app.post("/api/shipments/:id/schedules", shipmentWrite, async (req, res) => {
     if (!db.prepare("SELECT id FROM shipments WHERE id=?").get(req.params.id))
       return err(res, "Shipment not found", 404);
     const { carrier = "", vesselName = "", vesselImo = "", voyageNumber = "", service = "",
@@ -1490,12 +1491,12 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     // shipment picking a TSP sailing silently lost the transshipment-leg detail on save (legs came
     // back null on its own row even though the match it was copied from had 2+ legs).
     const legsToSave = buildLegsToSave(legs, { carrier, pol, pod, etd, eta, vesselName, vesselImo, voyageNumber, service });
-    const scheduleKey = saveScheduleLegs(id, legsToSave);
+    const scheduleKey = await saveScheduleLegs(id, legsToSave);
     db.prepare("UPDATE shipment_schedules SET schedule_key=? WHERE id=?").run(scheduleKey, id);
-    logEntityEvent('schedule', id, 'SAVED', null, null, null,
+    await logEntityEvent('schedule', id, 'SAVED', null, null, null,
       JSON.stringify({ shipmentId: req.params.id, carrier, vesselName, vesselImo, voyageNumber, service, pol, pod, etd, eta,
         transitDays: Number(transitDays), actor: savedBy }));
-    ensureBookingCreated(req.params.id);
+    await ensureBookingCreated(req.params.id);
     ok(res, mapSchedule({ id, shipment_id: req.params.id, carrier, vessel_name: vesselName, vessel_imo: vesselImo,
       voyage_number: voyageNumber, service, pol, pod, etd, eta,
       transit_days: Number(transitDays), is_mock: isMock ? 1 : 0, saved_at: savedAt, saved_by: savedBy,
@@ -1508,7 +1509,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   // schedule, unlock everything, and force a full re-search). Logs one field-level 'UPDATED'
   // entity event per changed value, mirroring the cost-line history pattern, so ScheduleHistory
   // shows a real old→new diff rather than the schedule record silently going stale.
-  app.put("/api/shipments/:id/schedules/:scheduleId", shipmentWrite, (req, res) => {
+  app.put("/api/shipments/:id/schedules/:scheduleId", shipmentWrite, async (req, res) => {
     const existing = db.prepare("SELECT * FROM shipment_schedules WHERE id=? AND shipment_id=?")
       .get(req.params.scheduleId, req.params.id);
     if (!existing) return err(res, "Not found", 404);
@@ -1528,7 +1529,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       .run(vesselName, voyageNumber, etd, eta, carrier, req.params.scheduleId);
 
     for (const [field, oldVal, newVal] of changes) {
-      logEntityEvent('schedule', req.params.scheduleId, 'UPDATED', field, oldVal, newVal,
+      await logEntityEvent('schedule', req.params.scheduleId, 'UPDATED', field, oldVal, newVal,
         JSON.stringify({ shipmentId: req.params.id, actor }));
     }
 
@@ -1553,7 +1554,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       ...(i === 0 ? { carrier, vesselName, voyageNumber, etd } : {}),
       ...(i === lastIdx ? { eta } : {}),
     }));
-    const scheduleKey = saveScheduleLegs(req.params.scheduleId, correctedLegs);
+    const scheduleKey = await saveScheduleLegs(req.params.scheduleId, correctedLegs);
     db.prepare("UPDATE shipment_schedules SET schedule_key=? WHERE id=?").run(scheduleKey, req.params.scheduleId);
 
     // Keep the SEA leg(s) backing this schedule in lockstep — first leg carries
@@ -1572,12 +1573,12 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     ok(res, mapSchedule(db.prepare("SELECT * FROM shipment_schedules WHERE id=?").get(req.params.scheduleId)));
   });
 
-  app.delete("/api/shipments/:id/schedules/:scheduleId", shipmentWrite, (req, res) => {
+  app.delete("/api/shipments/:id/schedules/:scheduleId", shipmentWrite, async (req, res) => {
     const existing = db.prepare("SELECT * FROM shipment_schedules WHERE id=? AND shipment_id=?")
       .get(req.params.scheduleId, req.params.id);
     if (!existing) return err(res, "Not found", 404);
     db.prepare("DELETE FROM shipment_schedules WHERE id=?").run(req.params.scheduleId);
-    logEntityEvent('schedule', req.params.scheduleId, 'REMOVED', null, null, null,
+    await logEntityEvent('schedule', req.params.scheduleId, 'REMOVED', null, null, null,
       JSON.stringify({ shipmentId: req.params.id, carrier: existing.carrier, vesselName: existing.vessel_name,
         vesselImo: existing.vessel_imo, voyageNumber: existing.voyage_number, service: existing.service,
         pol: existing.pol, pod: existing.pod, etd: existing.etd, eta: existing.eta, transitDays: existing.transit_days,
@@ -1592,7 +1593,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   // template_id back to this row for provenance). Nothing here writes to a shipment directly —
   // there's no shipment to sync a SEA leg onto until a real shipment actually picks it via search.
 
-  app.post("/api/schedules", shipmentWrite, (req, res) => {
+  app.post("/api/schedules", shipmentWrite, async (req, res) => {
     const { carrier = "", vesselImo = "", vesselName = "", voyageNumber = "", service = "",
             pol = "", pod = "", etd = "", atd = "", eta = "", ata = "",
             legs = null } = req.body;
@@ -1649,10 +1650,10 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     const legsToSave = buildLegsToSave(legs, { carrier: finalCarrier, pol: finalPol, pod: finalPod,
       etd: finalEtd, eta: finalEta, vesselName: finalVesselName, vesselImo: finalVesselImo,
       voyageNumber: finalVoyageNumber, service: finalService });
-    const scheduleKey = saveScheduleLegs(id, legsToSave);
+    const scheduleKey = await saveScheduleLegs(id, legsToSave);
     db.prepare("UPDATE shipment_schedules SET schedule_key=? WHERE id=?").run(scheduleKey, id);
 
-    logEntityEvent('schedule', id, 'SAVED', null, null, null,
+    await logEntityEvent('schedule', id, 'SAVED', null, null, null,
       JSON.stringify({ carrier: finalCarrier, vesselName: finalVesselName, vesselImo: finalVesselImo, voyageNumber: finalVoyageNumber,
         service: finalService, pol: finalPol, pod: finalPod, etd: finalEtd, eta: finalEta, transitDays: finalTransitDays,
         actor: savedBy, source: 'generated', legCount: isTSP ? legs.length : 1 }));
@@ -1661,7 +1662,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     ok(res, mapSchedule(row), 201);
   });
 
-  app.get("/api/schedules", auth(), (req, res) => {
+  app.get("/api/schedules", auth(), async (req, res) => {
     const { source } = req.query;
     const rows = source
       ? db.prepare("SELECT * FROM shipment_schedules WHERE source=? ORDER BY saved_at DESC LIMIT 100").all(source)
@@ -1677,7 +1678,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   // copied from this template (via POST /api/shipments/:id/schedules' templateId passthrough).
   // Replaces the old linked-shipments/link/unlink trio now that assignment happens exclusively
   // through search-and-copy, not manual linking.
-  app.get("/api/schedules/:id/usage", auth(), (req, res) => {
+  app.get("/api/schedules/:id/usage", auth(), async (req, res) => {
     const sched = db.prepare("SELECT * FROM shipment_schedules WHERE id=?").get(req.params.id);
     if (!sched) return err(res, "Not found", 404);
     const usedByRows = db.prepare(`
@@ -1693,18 +1694,18 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   // any shipment-owned row that copied this template (template_id) keeps its own data, only its
   // template_id reference is cleared (ON DELETE SET NULL) — deleting a template never touches a
   // shipment's own already-applied sailing.
-  app.delete("/api/schedules/:id", shipmentWrite, (req, res) => {
+  app.delete("/api/schedules/:id", shipmentWrite, async (req, res) => {
     const sched = db.prepare("SELECT * FROM shipment_schedules WHERE id=?").get(req.params.id);
     if (!sched) return err(res, "Not found", 404);
     db.prepare("DELETE FROM shipment_schedules WHERE id=?").run(req.params.id);
-    logEntityEvent('schedule', req.params.id, 'REMOVED', null, null, null,
+    await logEntityEvent('schedule', req.params.id, 'REMOVED', null, null, null,
       JSON.stringify({ carrier: sched.carrier, vesselName: sched.vessel_name, vesselImo: sched.vessel_imo,
         voyageNumber: sched.voyage_number, pol: sched.pol, pod: sched.pod, etd: sched.etd, eta: sched.eta,
         transitDays: sched.transit_days, actor: req.user?.name || req.user?.email || "", source: 'generated' }));
     ok(res, { deleted: req.params.id });
   });
 
-  app.get("/api/shipments/:id/schedule-events", (req, res) => {
+  app.get("/api/shipments/:id/schedule-events", async (req, res) => {
     // A sailing_leg's own UPDATED events (upsertLeg, above) have no shipmentId in their meta —
     // a leg is shared/canonical, not owned by one shipment — so they're scoped here via a join
     // instead: any leg that actually backs one of THIS shipment's own schedules.

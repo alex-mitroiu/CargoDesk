@@ -9,7 +9,7 @@ module.exports = function testCasesRoutes(app, ctx) {
   // Same one-way toggle shape as routes/kanban.js's own isRemote() — test_items/test_case_links
   // move to the same Kanban/Testing Service as tickets, so the Story<->TestCase JOIN below stays
   // fully server-side there exactly like it does locally.
-  const isRemote = () => (getSettings().kanban_source || "local") === "remote";
+  const isRemote = async () => ((await getSettings()).kanban_source || "local") === "remote";
 
   const TEST_TYPES = ["Test Folder", "Test Plan", "Test Run", "Test Case"];
 
@@ -42,7 +42,7 @@ module.exports = function testCasesRoutes(app, ctx) {
 
   app.get("/api/test-items", auth(), async (req, res) => {
     const { shipmentId, projectId } = req.query;
-    if (isRemote()) {
+    if (await isRemote()) {
       const qs = new URLSearchParams();
       if (shipmentId) qs.set("shipmentId", shipmentId);
       if (projectId)  qs.set("projectId", projectId);
@@ -65,7 +65,7 @@ module.exports = function testCasesRoutes(app, ctx) {
     } = req.body || {};
     if (!title) return err(res, "title required");
     if (!TEST_TYPES.includes(type)) return err(res, `type must be one of: ${TEST_TYPES.join(", ")}`);
-    if (isRemote()) {
+    if (await isRemote()) {
       try {
         const created = await callKanbanService("POST", "/internal/test-items", {
           title, type, description, priority, status, shipmentId, parentId, assigneeId,
@@ -88,7 +88,7 @@ module.exports = function testCasesRoutes(app, ctx) {
   });
 
   app.put("/api/test-items/:id", write, async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try {
         const updated = await callKanbanService("PUT", `/internal/test-items/${req.params.id}`, req.body);
         return ok(res, resolveAssigneeNames([updated])[0]);
@@ -125,7 +125,7 @@ module.exports = function testCasesRoutes(app, ctx) {
   });
 
   app.delete("/api/test-items/:id", write, async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callKanbanService("DELETE", `/internal/test-items/${req.params.id}`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -149,7 +149,7 @@ module.exports = function testCasesRoutes(app, ctx) {
   // in the Kanban Service too, so the live JOIN below stays fully server-side either way. ───────
 
   app.get("/api/test-items/:id/story-links", auth(), async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callKanbanService("GET", `/internal/test-items/${req.params.id}/story-links`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -164,7 +164,7 @@ module.exports = function testCasesRoutes(app, ctx) {
   app.post("/api/test-items/:id/story-links", write, async (req, res) => {
     const { ticketId } = req.body || {};
     if (!ticketId) return err(res, "ticketId required");
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callKanbanService("POST", `/internal/test-items/${req.params.id}/story-links`, { ticketId }), 201); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -180,7 +180,7 @@ module.exports = function testCasesRoutes(app, ctx) {
   });
 
   app.delete("/api/test-case-links/:id", write, async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { await callKanbanService("DELETE", `/internal/test-case-links/${req.params.id}`); return ok(res, { deleted: req.params.id }); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -192,7 +192,7 @@ module.exports = function testCasesRoutes(app, ctx) {
   // ─── Reverse direction: a ticket's "Tested by" test cases ─────────────────
 
   app.get("/api/tickets/:id/tested-by", auth(), async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callKanbanService("GET", `/internal/tickets/${req.params.id}/tested-by`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }

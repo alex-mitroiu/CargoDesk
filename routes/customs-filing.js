@@ -79,7 +79,7 @@ module.exports = function customsFilingRoutes(app, ctx) {
   });
 
   // Cross-shipment list for the Test Tools Filing Simulator picker — mirrors GET /api/carrier-bookings.
-  app.get("/api/customs-filings", auth(), (req, res) => {
+  app.get("/api/customs-filings", auth(), async (req, res) => {
     const { status } = req.query;
     const rows = status
       ? db.prepare("SELECT * FROM customs_filings WHERE status=? ORDER BY updated_at DESC").all(status)
@@ -88,13 +88,13 @@ module.exports = function customsFilingRoutes(app, ctx) {
     const shipmentIds = [...new Set(rows.map(r => r.shipment_id))];
     const ph = shipmentIds.map(() => "?").join(",");
     const shipmentRows = db.prepare(`SELECT * FROM shipments WHERE id IN (${ph})`).all(...shipmentIds);
-    const allowedShipments = applyShipmentAccessFilter(shipmentRows.map(mapShipment), req.user, req);
+    const allowedShipments = await applyShipmentAccessFilter(shipmentRows.map(mapShipment), req.user, req);
     const shipmentById = new Map(allowedShipments.map(s => [s.id, s]));
     ok(res, rows.filter(r => shipmentById.has(r.shipment_id))
       .map(r => ({ ...mapCustomsFiling(r), shipment: shipmentById.get(r.shipment_id) })));
   });
 
-  app.post("/api/shipments/:id/customs-filings", write, (req, res) => {
+  app.post("/api/shipments/:id/customs-filings", write, async (req, res) => {
     const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
     if (!shipment) return err(res, "Shipment not found", 404);
     const { filingType } = req.body || {};
@@ -122,11 +122,11 @@ module.exports = function customsFilingRoutes(app, ctx) {
       if (isUniqueViolation(e)) return err(res, `A ${FILING_TYPE_LABEL[filingType]} filing already exists for this shipment`, 409);
       throw e;
     }
-    logEntityEvent('customs_filing', id, 'CREATED', null, null, null, JSON.stringify({ filingType }));
+    await logEntityEvent('customs_filing', id, 'CREATED', null, null, null, JSON.stringify({ filingType }));
     ok(res, mapCustomsFiling(db.prepare("SELECT * FROM customs_filings WHERE id=?").get(id)), 201);
   });
 
-  app.post("/api/shipments/:id/customs-filings/:filingId/submit", write, (req, res) => {
+  app.post("/api/shipments/:id/customs-filings/:filingId/submit", write, async (req, res) => {
     const filing = db.prepare("SELECT * FROM customs_filings WHERE id=? AND shipment_id=?").get(req.params.filingId, req.params.id);
     if (!filing) return err(res, "Filing not found", 404);
     if (filing.status !== "Draft") return err(res, `Filing is already ${filing.status.toLowerCase()}`, 409);
@@ -149,11 +149,11 @@ module.exports = function customsFilingRoutes(app, ctx) {
       exportDate: shipment.etd || null, cargoLineCount: cargoSnapshot.length,
       note: "Submitted for simulated regulatory review (Epic TKT-XW6TQK — no live government EDI integration).",
     }, false);
-    logEntityEvent('customs_filing', filing.id, 'SUBMITTED', null, 'Draft', 'Filed', JSON.stringify({ filingReference: filingRef }));
+    await logEntityEvent('customs_filing', filing.id, 'SUBMITTED', null, 'Draft', 'Filed', JSON.stringify({ filingReference: filingRef }));
     ok(res, { sent, filing: mapWithStaleness(db.prepare("SELECT * FROM customs_filings WHERE id=?").get(filing.id), shipment) }, 201);
   });
 
-  app.post("/api/shipments/:id/customs-filings/:filingId/simulate-response", write, (req, res) => {
+  app.post("/api/shipments/:id/customs-filings/:filingId/simulate-response", write, async (req, res) => {
     const filing = db.prepare("SELECT * FROM customs_filings WHERE id=? AND shipment_id=?").get(req.params.filingId, req.params.id);
     if (!filing) return err(res, "Filing not found", 404);
     const { outcome, confirmationNumber, reason } = req.body || {};
@@ -167,7 +167,7 @@ module.exports = function customsFilingRoutes(app, ctx) {
         .run(confNum, now, now, filing.id);
       insertMessage(shipment.id, filing.id, "in", "customs_filing_acceptance", "accepted",
         { confirmationNumber: confNum, note: "Simulated via Test Tools → Filing Simulator." }, true);
-      logEntityEvent('customs_filing', filing.id, 'ACCEPTED', null, 'Filed', 'Accepted', JSON.stringify({ confirmationNumber: confNum }));
+      await logEntityEvent('customs_filing', filing.id, 'ACCEPTED', null, 'Filed', 'Accepted', JSON.stringify({ confirmationNumber: confNum }));
       // customs_cleared sits AFTER vessel_arrived in the FCL milestone sequence (seq 7, right
       // before cargo_released) — that's destination/import clearance, so only an accepted
       // ISF/AMS (import) filing completes it. AES/EEI is export-side and pre-departure; there's
@@ -181,14 +181,14 @@ module.exports = function customsFilingRoutes(app, ctx) {
         .run(rejReason, now, now, filing.id);
       insertMessage(shipment.id, filing.id, "in", "customs_filing_rejection", "rejected",
         { reason: rejReason, note: "Simulated via Test Tools → Filing Simulator." }, true);
-      logEntityEvent('customs_filing', filing.id, 'REJECTED', null, 'Filed', 'Rejected', JSON.stringify({ reason: rejReason }));
+      await logEntityEvent('customs_filing', filing.id, 'REJECTED', null, 'Filed', 'Rejected', JSON.stringify({ reason: rejReason }));
     }
     ok(res, { filing: mapWithStaleness(db.prepare("SELECT * FROM customs_filings WHERE id=?").get(filing.id), shipment) }, 201);
   });
 
   // Allows resubmission after a rejection — the next Submit generates a genuinely new
   // filing_reference rather than reusing the rejected one.
-  app.patch("/api/shipments/:id/customs-filings/:filingId/reset", write, (req, res) => {
+  app.patch("/api/shipments/:id/customs-filings/:filingId/reset", write, async (req, res) => {
     const filing = db.prepare("SELECT * FROM customs_filings WHERE id=? AND shipment_id=?").get(req.params.filingId, req.params.id);
     if (!filing) return err(res, "Filing not found", 404);
     if (filing.status !== "Rejected") return err(res, "Only a Rejected filing can be reset to Draft", 409);
@@ -197,7 +197,7 @@ module.exports = function customsFilingRoutes(app, ctx) {
       filed_at=NULL, filed_by='', responded_at=NULL,
       carrier_code='', vessel_name='', voyage_number='', export_date='', cargo_snapshot='[]',
       updated_at=? WHERE id=?`).run(now, filing.id);
-    logEntityEvent('customs_filing', filing.id, 'RESET_TO_DRAFT', null, 'Rejected', 'Draft');
+    await logEntityEvent('customs_filing', filing.id, 'RESET_TO_DRAFT', null, 'Rejected', 'Draft');
     ok(res, mapCustomsFiling(db.prepare("SELECT * FROM customs_filings WHERE id=?").get(filing.id)));
   });
 };

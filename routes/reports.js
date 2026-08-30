@@ -32,7 +32,7 @@ module.exports = function reportsRoutes(app, ctx) {
   // call either way (never one remote call per row), keyed the same regardless of customer_source.
   async function getCustTermsMap() {
     const custById = {};
-    if ((getSettings().customer_source || "local") === "remote") {
+    if (((await getSettings()).customer_source || "local") === "remote") {
       const customers = await callCustomerService("GET", "/internal/customers");
       (customers || []).forEach(c => { custById[c.id] = { credit_terms_days: c.creditTermsDays, invoice_deadline_days: c.invoiceDeadlineDays }; });
     } else {
@@ -59,12 +59,12 @@ module.exports = function reportsRoutes(app, ctx) {
 
   // null = unrestricted (admin/canViewFinance sees the whole company); a Set = exactly the
   // shipment ids this trade_manager's own office/scope-item configuration already grants them.
-  const scopedShipmentIds = req => {
+  const scopedShipmentIds = async req => {
     const u = req.user;
     const roles = Array.isArray(u.roles) ? u.roles : [u.role || 'viewer'];
     if (roles.includes('admin') || u.canViewFinance) return null;
     const all = db.prepare("SELECT * FROM shipments").all().map(mapShipment);
-    const allowed = applyShipmentAccessFilter(all, u, req);
+    const allowed = await applyShipmentAccessFilter(all, u, req);
     return new Set(allowed.map(s => s.id));
   };
 
@@ -85,7 +85,7 @@ module.exports = function reportsRoutes(app, ctx) {
 
   const GROUP_LABEL = { region: "Region", country: "Country", carrier: "Carrier" };
 
-  app.get("/api/reports/gp-by-geo", auth(), (req, res) => {
+  app.get("/api/reports/gp-by-geo", auth(), async (req, res) => {
     if (!reportsGate(req, res)) return;
     const groupBy = ['region', 'country', 'carrier'].includes(req.query.groupBy) ? req.query.groupBy : 'country';
     const value = (req.query.value || '').trim();
@@ -93,7 +93,7 @@ module.exports = function reportsRoutes(app, ctx) {
     const dateTo   = (req.query.to || '').trim();
     const format = req.query.format === 'csv' ? 'csv' : 'json';
 
-    const scopeIds = scopedShipmentIds(req);
+    const scopeIds = await scopedShipmentIds(req);
     let allRows = db.prepare(`
       SELECT cl.*, s.pol, s.carrier_code, s.etd, s.created_at AS shp_created_at
       FROM shipment_cost_lines cl
@@ -189,7 +189,7 @@ module.exports = function reportsRoutes(app, ctx) {
       // "Reports - GP Target") — that's the whole point of the setting, surfacing the problem
       // rows without a manual scan. No target set -> falls back to the original sell-volume-
       // desc ordering, since there's nothing to rank against.
-      const targetPct = parseFloat((getSettings() || {}).gp_target_pct);
+      const targetPct = parseFloat((await getSettings() || {}).gp_target_pct);
       const hasTarget = !isNaN(targetPct);
       results.sort(hasTarget
         ? (a, b) => (a.grossMarginPct ?? Infinity) - (b.grossMarginPct ?? Infinity)
@@ -240,7 +240,7 @@ module.exports = function reportsRoutes(app, ctx) {
   app.get("/api/reports/billing-performance", auth(), async (req, res) => {
     if (!reportsGate(req, res)) return;
     const format = req.query.format === 'csv' ? 'csv' : 'json';
-    const scopeIds = scopedShipmentIds(req);
+    const scopeIds = await scopedShipmentIds(req);
 
     // Deliberately fetched unscoped — invoicedShipmentIds below (used purely to exclude an
     // already-invoiced shipment from ever being synthesized as "Missing") must reflect reality
@@ -382,7 +382,7 @@ module.exports = function reportsRoutes(app, ctx) {
   // "overdue" means for a given shipment.
   app.get("/api/reports/invoice-collections", auth(), async (req, res) => {
     if (!reportsGate(req, res)) return;
-    const scopeIds = scopedShipmentIds(req);
+    const scopeIds = await scopedShipmentIds(req);
 
     const latestDocRows = db.prepare(`
       SELECT d.* FROM shipment_documents d

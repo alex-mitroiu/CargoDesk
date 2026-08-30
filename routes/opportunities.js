@@ -59,7 +59,7 @@ module.exports = function opportunitiesRoutes(app, ctx) {
       .run(id, title.trim(), customerId, customerName, (pol || "").toUpperCase(), (pod || "").toUpperCase(),
            (carrierCode || "").toUpperCase(), commodityCode, movementType, Number(estimatedValue) || 0,
            cur, estimatedValueUsd, estimatedCloseDate, leadSource, assigneeId || "", notes, now, actor);
-    logEntityEvent("opportunity", id, "CREATED", null, null, null,
+    await logEntityEvent("opportunity", id, "CREATED", null, null, null,
       JSON.stringify({ title: title.trim(), customerName, estimatedValue: Number(estimatedValue) || 0, currency: cur }));
     const o = db.prepare("SELECT * FROM opportunities WHERE id=?").get(id);
     ok(res, resolveAssigneeNames([mapOpportunity(o)])[0], 201);
@@ -82,35 +82,35 @@ module.exports = function opportunitiesRoutes(app, ctx) {
       .run(title.trim(), customerId, customerName, (pol || "").toUpperCase(), (pod || "").toUpperCase(),
            (carrierCode || "").toUpperCase(), commodityCode, movementType, Number(estimatedValue) || 0,
            cur, estimatedValueUsd, estimatedCloseDate, leadSource, assigneeId || "", notes, req.params.id);
-    logEntityEvent("opportunity", req.params.id, "UPDATED", null, null, null,
+    await logEntityEvent("opportunity", req.params.id, "UPDATED", null, null, null,
       JSON.stringify({ title: title.trim(), customerName, estimatedValue: Number(estimatedValue) || 0, currency: cur }));
     const o = db.prepare("SELECT * FROM opportunities WHERE id=?").get(req.params.id);
     ok(res, resolveAssigneeNames([mapOpportunity(o)])[0]);
   });
 
-  app.delete("/api/opportunities/:id", opportunityWrite, (req, res) => {
+  app.delete("/api/opportunities/:id", opportunityWrite, async (req, res) => {
     const o = db.prepare("SELECT * FROM opportunities WHERE id=?").get(req.params.id);
     if (!o) return err(res, "Not found", 404);
     if (o.status === "Converted") return err(res, "This opportunity has already converted to a quote — it stays as a historical record instead of being deleted");
     db.prepare("DELETE FROM opportunities WHERE id=?").run(req.params.id);
-    logEntityEvent("opportunity", req.params.id, "DELETED", null, null, null,
+    await logEntityEvent("opportunity", req.params.id, "DELETED", null, null, null,
       JSON.stringify({ title: o.title, status: o.status }));
     ok(res, { deleted: req.params.id });
   });
 
   // ─── Lifecycle transitions ──────────────────────────────────────────────────
 
-  app.post("/api/opportunities/:id/qualify", opportunityWrite, (req, res) => {
+  app.post("/api/opportunities/:id/qualify", opportunityWrite, async (req, res) => {
     const o = db.prepare("SELECT * FROM opportunities WHERE id=?").get(req.params.id);
     if (!o) return err(res, "Not found", 404);
     if (o.status !== "New") return err(res, `Only a New opportunity can be qualified (current status: ${o.status})`, 409);
     const now = new Date().toISOString();
     db.prepare("UPDATE opportunities SET status='Qualified', qualified_at=? WHERE id=?").run(now, req.params.id);
-    logEntityEvent("opportunity", req.params.id, "UPDATED", "status", "New", "Qualified", JSON.stringify({ title: o.title }));
+    await logEntityEvent("opportunity", req.params.id, "UPDATED", "status", "New", "Qualified", JSON.stringify({ title: o.title }));
     ok(res, resolveAssigneeNames([mapOpportunity(db.prepare("SELECT * FROM opportunities WHERE id=?").get(req.params.id))])[0]);
   });
 
-  app.post("/api/opportunities/:id/lose", opportunityWrite, (req, res) => {
+  app.post("/api/opportunities/:id/lose", opportunityWrite, async (req, res) => {
     const { reason = "" } = req.body || {};
     const o = db.prepare("SELECT * FROM opportunities WHERE id=?").get(req.params.id);
     if (!o) return err(res, "Not found", 404);
@@ -118,7 +118,7 @@ module.exports = function opportunitiesRoutes(app, ctx) {
       return err(res, `Only a New or Qualified opportunity can be marked Lost (current status: ${o.status})`, 409);
     const now = new Date().toISOString();
     db.prepare("UPDATE opportunities SET status='Lost', lost_at=?, lost_reason=? WHERE id=?").run(now, reason, req.params.id);
-    logEntityEvent("opportunity", req.params.id, "UPDATED", "status", o.status, "Lost", JSON.stringify({ title: o.title, reason }));
+    await logEntityEvent("opportunity", req.params.id, "UPDATED", "status", o.status, "Lost", JSON.stringify({ title: o.title, reason }));
     ok(res, resolveAssigneeNames([mapOpportunity(db.prepare("SELECT * FROM opportunities WHERE id=?").get(req.params.id))])[0]);
   });
 
@@ -143,12 +143,12 @@ module.exports = function opportunitiesRoutes(app, ctx) {
       VALUES (?,'Draft',?,?,?,?,?,?,?,?,?,?,?)`)
       .run(quoteId, o.customer_id, o.customer_name, o.pol, o.pod, o.carrier_code, o.commodity_code,
            o.movement_type, o.notes, o.currency, now, actor);
-    logEntityEvent("quote", quoteId, "CREATED", null, null, null,
+    await logEntityEvent("quote", quoteId, "CREATED", null, null, null,
       JSON.stringify({ customerName: o.customer_name, pol: o.pol, pod: o.pod, source: "opportunity", opportunityId: req.params.id }));
 
     db.prepare("UPDATE opportunities SET status='Converted', converted_quote_id=?, converted_at=? WHERE id=?")
       .run(quoteId, now, req.params.id);
-    logEntityEvent("opportunity", req.params.id, "UPDATED", "status", "Qualified", "Converted",
+    await logEntityEvent("opportunity", req.params.id, "UPDATED", "status", "Qualified", "Converted",
       JSON.stringify({ title: o.title, quoteId }));
 
     const quote = db.prepare("SELECT * FROM quotes WHERE id=?").get(quoteId);

@@ -14,7 +14,7 @@ module.exports = function kanbanRoutes(app, ctx) {
   // already established. The remote service owns no `users` table, so every route returning
   // assignee data runs its response through resolveAssigneeNames() (ctx, server.js) before
   // responding — same batch-IN pattern routes/shipments.js's own resolveSeaPorts() already uses.
-  const isRemote = () => (getSettings().kanban_source || "local") === "remote";
+  const isRemote = async () => ((await getSettings()).kanban_source || "local") === "remote";
 
   // Dev-only manual trigger for the ops-automation sweep (server.js — normally runs at startup
   // and hourly) — same "expose the real trigger, not a parallel simulated code path" precedent
@@ -22,7 +22,7 @@ module.exports = function kanbanRoutes(app, ctx) {
   // Used by the automated test suite so it doesn't have to wait up to an hour for the real timer.
   app.post("/api/test/run-ops-automation-sweep", requireRole(["admin"]), async (req, res) => {
     const countSourced = async () => {
-      if (isRemote()) {
+      if (await isRemote()) {
         const rows = await callKanbanService("GET", "/internal/tickets");
         return rows.filter(t => t.sourceType).length;
       }
@@ -48,7 +48,7 @@ module.exports = function kanbanRoutes(app, ctx) {
 
   app.get("/api/tickets", auth(), async (req, res) => {
     const { shipmentId, projectId, limit, offset } = req.query;
-    if (isRemote()) {
+    if (await isRemote()) {
       const qs = new URLSearchParams();
       if (shipmentId) qs.set("shipmentId", shipmentId);
       if (projectId)  qs.set("projectId", projectId);
@@ -88,7 +88,7 @@ module.exports = function kanbanRoutes(app, ctx) {
       projectId = null, versionId = null,
     } = req.body;
     if (!title) return err(res, "title required");
-    if (isRemote()) {
+    if (await isRemote()) {
       try {
         const created = await callKanbanService("POST", "/internal/tickets", {
           title, section, description, priority, status, shipmentId, type, version,
@@ -112,7 +112,7 @@ module.exports = function kanbanRoutes(app, ctx) {
   });
 
   app.put("/api/tickets/:id", shipmentWrite, async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try {
         const updated = await callKanbanService("PUT", `/internal/tickets/${req.params.id}`, req.body);
         return ok(res, resolveAssigneeNames([updated])[0]);
@@ -141,7 +141,7 @@ module.exports = function kanbanRoutes(app, ctx) {
   });
 
   app.delete("/api/tickets/:id", shipmentWrite, async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { await callKanbanService("DELETE", `/internal/tickets/${req.params.id}`); return ok(res, { deleted: req.params.id }); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -153,7 +153,7 @@ module.exports = function kanbanRoutes(app, ctx) {
   // ─── Ticket Links ─────────────────────────────────────────────────────────
 
   app.get("/api/tickets/:id/links", auth(), async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callKanbanService("GET", `/internal/tickets/${req.params.id}/links`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -172,7 +172,7 @@ module.exports = function kanbanRoutes(app, ctx) {
   app.post("/api/tickets/:id/links", shipmentWrite, async (req, res) => {
     const { toId, linkType } = req.body || {};
     if (!toId || !linkType) return err(res, "toId and linkType required");
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callKanbanService("POST", `/internal/tickets/${req.params.id}/links`, { toId, linkType }), 201); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -185,7 +185,7 @@ module.exports = function kanbanRoutes(app, ctx) {
   });
 
   app.delete("/api/ticket-links/:id", shipmentWrite, async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { await callKanbanService("DELETE", `/internal/ticket-links/${req.params.id}`); return ok(res, { deleted: req.params.id }); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -197,7 +197,7 @@ module.exports = function kanbanRoutes(app, ctx) {
   // ─── Projects ─────────────────────────────────────────────────────────────
 
   app.get("/api/kb/projects", auth(), async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callKanbanService("GET", "/internal/kb/projects")); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -207,7 +207,7 @@ module.exports = function kanbanRoutes(app, ctx) {
   app.post("/api/kb/projects", shipmentWrite, async (req, res) => {
     const { name, key = '', color = '#6366f1', description = '' } = req.body || {};
     if (!name) return err(res, "name required");
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callKanbanService("POST", "/internal/kb/projects", { name, key, color, description }), 201); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -231,7 +231,7 @@ module.exports = function kanbanRoutes(app, ctx) {
   });
 
   app.put("/api/kb/projects/:id", shipmentWrite, async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callKanbanService("PUT", `/internal/kb/projects/${req.params.id}`, req.body)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -244,7 +244,7 @@ module.exports = function kanbanRoutes(app, ctx) {
   });
 
   app.delete("/api/kb/projects/:id", shipmentWrite, async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { await callKanbanService("DELETE", `/internal/kb/projects/${req.params.id}`); return ok(res, { deleted: req.params.id }); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -257,7 +257,7 @@ module.exports = function kanbanRoutes(app, ctx) {
   // ─── Versions ─────────────────────────────────────────────────────────────
 
   app.get("/api/kb/projects/:id/versions", auth(), async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callKanbanService("GET", `/internal/kb/projects/${req.params.id}/versions`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -267,7 +267,7 @@ module.exports = function kanbanRoutes(app, ctx) {
   app.post("/api/kb/projects/:id/versions", shipmentWrite, async (req, res) => {
     const { name, description = '', status = 'Planning', releaseDate = null } = req.body || {};
     if (!name) return err(res, "name required");
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callKanbanService("POST", `/internal/kb/projects/${req.params.id}/versions`, { name, description, status, releaseDate }), 201); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -280,7 +280,7 @@ module.exports = function kanbanRoutes(app, ctx) {
   });
 
   app.put("/api/kb/versions/:id", shipmentWrite, async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callKanbanService("PUT", `/internal/kb/versions/${req.params.id}`, req.body)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -293,7 +293,7 @@ module.exports = function kanbanRoutes(app, ctx) {
   });
 
   app.delete("/api/kb/versions/:id", shipmentWrite, async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { await callKanbanService("DELETE", `/internal/kb/versions/${req.params.id}`); return ok(res, { deleted: req.params.id }); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -306,7 +306,7 @@ module.exports = function kanbanRoutes(app, ctx) {
   // ─── Columns ─────────────────────────────────────────────────────────────
 
   app.get("/api/kb/projects/:id/columns", auth(), async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callKanbanService("GET", `/internal/kb/projects/${req.params.id}/columns`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -316,7 +316,7 @@ module.exports = function kanbanRoutes(app, ctx) {
   app.post("/api/kb/projects/:id/columns", shipmentWrite, async (req, res) => {
     const { name, color = '#6366f1', wipLimit = null } = req.body || {};
     if (!name) return err(res, "name required");
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callKanbanService("POST", `/internal/kb/projects/${req.params.id}/columns`, { name, color, wipLimit }), 201); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -329,7 +329,7 @@ module.exports = function kanbanRoutes(app, ctx) {
   });
 
   app.put("/api/kb/columns/:id", shipmentWrite, async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callKanbanService("PUT", `/internal/kb/columns/${req.params.id}`, req.body)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -343,7 +343,7 @@ module.exports = function kanbanRoutes(app, ctx) {
 
   // Bulk reorder: PATCH /api/kb/projects/:id/columns with body { order: ["COL-x", "COL-y", ...] }
   app.patch("/api/kb/projects/:id/columns", shipmentWrite, async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callKanbanService("PATCH", `/internal/kb/projects/${req.params.id}/columns`, req.body)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -355,7 +355,7 @@ module.exports = function kanbanRoutes(app, ctx) {
   });
 
   app.delete("/api/kb/columns/:id", shipmentWrite, async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { await callKanbanService("DELETE", `/internal/kb/columns/${req.params.id}`); return ok(res, { deleted: req.params.id }); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }

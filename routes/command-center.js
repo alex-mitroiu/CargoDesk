@@ -12,13 +12,13 @@ module.exports = function commandCenterRoutes(app, ctx) {
   // CommandCenterView's own overdueShipments definition, which excludes Completed/Cancelled; the
   // scorecard/trend routes intentionally do NOT reuse this — past performance on Completed
   // shipments is exactly the signal a scorecard/trend needs, so they scope from the full set).
-  function scopedActiveShipments(req) {
+  async function scopedActiveShipments(req) {
     const rows = db.prepare("SELECT * FROM shipments WHERE status NOT IN ('Completed','Cancelled')").all();
-    return applyShipmentAccessFilter(rows.map(mapShipment), req.user, req);
+    return await applyShipmentAccessFilter(rows.map(mapShipment), req.user, req);
   }
-  function scopedAllShipments(req) {
+  async function scopedAllShipments(req) {
     const rows = db.prepare("SELECT * FROM shipments").all();
-    return applyShipmentAccessFilter(rows.map(mapShipment), req.user, req);
+    return await applyShipmentAccessFilter(rows.map(mapShipment), req.user, req);
   }
   const placeholdersFor = ids => ids.map(() => "?").join(",");
 
@@ -26,9 +26,9 @@ module.exports = function commandCenterRoutes(app, ctx) {
   // milestoneState()'s own "overdue" definition (ShipmentDetailPage.jsx's MilestonePanel):
   // !completedAt && estimatedDate && estimatedDate < today — just aggregated across the whole
   // scoped book instead of one shipment at a time. Also backs TKT-Q09G0T's bell/alert feed.
-  app.get("/api/milestones/overdue-summary", auth(), (req, res) => {
+  app.get("/api/milestones/overdue-summary", auth(), async (req, res) => {
     const today = new Date().toISOString().slice(0, 10);
-    const shipments = scopedActiveShipments(req);
+    const shipments = await scopedActiveShipments(req);
     const idSet = new Set(shipments.map(s => s.id));
     if (idSet.size === 0) {
       return ok(res, { totalActiveShipments: 0, shipmentsWithBreach: 0, onTimePct: 100, byMilestoneKey: [], items: [] });
@@ -69,9 +69,9 @@ module.exports = function commandCenterRoutes(app, ctx) {
   //   unconfirmedBooking  — ETD has passed but the carrier_bookings row never left Pending/Created
   //   stalledMilestone    — the shipment's current (first-incomplete) milestone's own
   //                          estimatedDate has passed, independent of ETD
-  app.get("/api/exceptions/queue", auth(), (req, res) => {
+  app.get("/api/exceptions/queue", auth(), async (req, res) => {
     const today = new Date().toISOString().slice(0, 10);
-    const shipments = scopedActiveShipments(req);
+    const shipments = await scopedActiveShipments(req);
     const idSet = new Set(shipments.map(s => s.id));
     if (idSet.size === 0) return ok(res, { scheduleSlip: [], unconfirmedBooking: [], stalledMilestone: [] });
     const ids = [...idSet];
@@ -152,9 +152,9 @@ module.exports = function commandCenterRoutes(app, ctx) {
   // registers GET /api/carriers/:code ahead of this file in server.js's require order, so
   // /api/carriers/on-time-scorecard would be swallowed by that :code route (Express first-match)
   // and 404 as an unknown carrier code. Confirmed live before settling on this path.
-  app.get("/api/command-center/carrier-scorecard", auth(), (req, res) => {
+  app.get("/api/command-center/carrier-scorecard", auth(), async (req, res) => {
     const tolerance = Math.max(0, parseInt(req.query.toleranceDays, 10) || 1);
-    const shipments = scopedAllShipments(req);
+    const shipments = await scopedAllShipments(req);
     const shipmentById = new Map(shipments.map(s => [s.id, s]));
     const ids = shipments.map(s => s.id);
     if (!ids.length) return ok(res, []);
@@ -202,8 +202,8 @@ module.exports = function commandCenterRoutes(app, ctx) {
   // shipment's SEA legs to max confirmed ETA, so a TSP's transshipment dwell time is correctly
   // folded into the whole-journey span rather than summed leg-by-leg). Bucketed by the
   // shipment's own tradeLane (mapShipment) x the month its journey departed.
-  app.get("/api/command-center/transit-time-trend", auth(), (req, res) => {
-    const shipments = scopedAllShipments(req);
+  app.get("/api/command-center/transit-time-trend", auth(), async (req, res) => {
+    const shipments = await scopedAllShipments(req);
     const shipmentById = new Map(shipments.map(s => [s.id, s]));
     const ids = shipments.map(s => s.id);
     if (!ids.length) return ok(res, []);

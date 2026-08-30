@@ -17,7 +17,7 @@ module.exports = function customersRoutes(app, ctx) {
   // sanctions.js/kanban.js already established. customer_documents and customer_roles are
   // deliberately NOT part of this toggle (see ARCHITECTURE.md §8.1) — their routes stay local
   // unconditionally, regardless of customer_source.
-  const isRemote = () => (getSettings().customer_source || "local") === "remote";
+  const isRemote = async () => ((await getSettings()).customer_source || "local") === "remote";
 
   // Country -> currency default (TKT-O5I4NK) — deliberately scoped to only the currencies this
   // app's own credit/billing currency picker already offers (CURRENCIES, MdmCustomersPage.jsx),
@@ -81,7 +81,7 @@ module.exports = function customersRoutes(app, ctx) {
     const hits   = match ? [{ entityName: match.entityName, program: match.program, source: match.source }] : [];
     const now    = new Date().toISOString();
     let screening;
-    if (isRemote()) {
+    if (await isRemote()) {
       screening = await callCustomerService("PUT", `/internal/customers/${customerId}/screening`, { result, hits, screenedAt: now });
     } else {
       const id = `CSC-${uid()}`;
@@ -127,7 +127,7 @@ module.exports = function customersRoutes(app, ctx) {
     // hard block enforced server-side beyond the query itself.
     const roleList = role.split(',').map(r => r.trim()).filter(Boolean);
 
-    if (isRemote()) {
+    if (await isRemote()) {
       // Role-eligibility resolution never needs a toggle branch of its own — it's a UNION over
       // shipments/shipment_parties, both permanently monolith-owned regardless of customer_source
       // — resolved locally, then passed to the service as a plain ids= filter.
@@ -186,8 +186,8 @@ module.exports = function customersRoutes(app, ctx) {
     });
   });
 
-  app.get("/api/customers/sanctions-check", (req, res) => {
-    const s = getSettings();
+  app.get("/api/customers/sanctions-check", async (req, res) => {
+    const s = await getSettings();
     if (s.api_customers_enabled !== 'true' || s.api_ofac_enabled !== 'true')
       return ok(res, { enabled: false, hits: [] });
     if (sanctionsMap.size === 0) return ok(res, { enabled: true, hits: [] });
@@ -201,7 +201,7 @@ module.exports = function customersRoutes(app, ctx) {
   });
 
   app.get("/api/customers/:id", async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callCustomerService("GET", `/internal/customers/${req.params.id}`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -270,13 +270,13 @@ module.exports = function customersRoutes(app, ctx) {
       return err(res, "That shipment doesn't involve this customer");
     if (!userOwnsLaneForShipment(req.user, shipment))
       return err(res, "Only the trade manager responsible for this shipment's own trade lane may release a credit hold", 403);
-    if (isRemote()) {
+    if (await isRemote()) {
       try { await callCustomerService("PUT", `/internal/customers/${c.id}`, { ...c, creditHold: false, creditHoldReason: '' }); }
       catch (e) { return err(res, e.message, e.status || 502); }
     } else {
       db.prepare("UPDATE customers SET credit_hold=0, credit_hold_reason='' WHERE id=?").run(c.id);
     }
-    logEntityEvent('customer', c.id, 'CREDIT_HOLD_RELEASED', 'creditHold', 'true', 'false',
+    await logEntityEvent('customer', c.id, 'CREDIT_HOLD_RELEASED', 'creditHold', 'true', 'false',
       JSON.stringify({ reason: reason.trim(), shipmentId, releasedBy: req.user.email || req.user.id }));
     const row = await getCustomerRow(c.id);
     ok(res, row);
@@ -342,7 +342,7 @@ module.exports = function customersRoutes(app, ctx) {
     // Both bulk scans normalize to the same camelCase shape either way — local rows go through
     // mapCustomer, remote rows already arrive mapped — so the loop bodies below never branch.
     let heldCustomers, limitedCustomers;
-    if (isRemote()) {
+    if (await isRemote()) {
       try {
         heldCustomers = await callCustomerService("GET", "/internal/customers?creditHold=1");
         limitedCustomers = await callCustomerService("GET", "/internal/customers?creditHold=0&hasCreditLimit=1");
@@ -409,7 +409,7 @@ module.exports = function customersRoutes(app, ctx) {
     // reports use. Local mode is untouched: still one cheap per-row SQLite lookup, exactly as
     // before this cut.
     let deadlineDaysById = null;
-    if (isRemote()) {
+    if (await isRemote()) {
       const respIds = [...new Set(rows.map(r => r.principal_id || r.consignee_id).filter(Boolean))];
       deadlineDaysById = {};
       if (respIds.length) {
@@ -461,7 +461,7 @@ module.exports = function customersRoutes(app, ctx) {
   }
 
   app.post("/api/customers", auth(), async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try {
         const created = await callCustomerService("POST", "/internal/customers", req.body);
         if (sanctionsMap.size > 0) {
@@ -513,7 +513,7 @@ module.exports = function customersRoutes(app, ctx) {
   });
 
   app.put("/api/customers/:id", auth(), async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       const { creditHold = false } = req.body;
       try {
         // Same exclusivity check as local mode, just fetched remotely first — releasing an
@@ -593,7 +593,7 @@ module.exports = function customersRoutes(app, ctx) {
     const inUse = db.prepare("SELECT id FROM carrier_agents WHERE agent_customer_id=? LIMIT 1").get(req.params.id);
     if (inUse) return err(res, "Customer is assigned as a carrier line agent — remove that assignment first");
 
-    if (isRemote()) {
+    if (await isRemote()) {
       try { await callCustomerService("DELETE", `/internal/customers/${req.params.id}`); }
       catch (e) { return err(res, e.message, e.status || 502); }
     } else {
@@ -617,7 +617,7 @@ module.exports = function customersRoutes(app, ctx) {
   // ─── Customer Identifiers ─────────────────────────────────────────────────
 
   app.get("/api/customers/:id/identifiers", auth(), async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callCustomerService("GET", `/internal/customers/${req.params.id}/identifiers`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -626,7 +626,7 @@ module.exports = function customersRoutes(app, ctx) {
   });
 
   app.post("/api/customers/:id/identifiers", auth(), async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callCustomerService("POST", `/internal/customers/${req.params.id}/identifiers`, req.body), 201); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -645,7 +645,7 @@ module.exports = function customersRoutes(app, ctx) {
   });
 
   app.put("/api/customers/:id/identifiers/:iid", auth(), async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callCustomerService("PUT", `/internal/customers/${req.params.id}/identifiers/${req.params.iid}`, req.body)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -663,7 +663,7 @@ module.exports = function customersRoutes(app, ctx) {
   });
 
   app.delete("/api/customers/:id/identifiers/:iid", auth(), async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callCustomerService("DELETE", `/internal/customers/${req.params.id}/identifiers/${req.params.iid}`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -677,7 +677,7 @@ module.exports = function customersRoutes(app, ctx) {
   // "cram it into the notes field" workaround. Mirrors the identifiers CRUD shape exactly.
 
   app.get("/api/customers/:id/contacts", auth(), async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callCustomerService("GET", `/internal/customers/${req.params.id}/contacts`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -686,7 +686,7 @@ module.exports = function customersRoutes(app, ctx) {
   });
 
   app.post("/api/customers/:id/contacts", auth(), async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callCustomerService("POST", `/internal/customers/${req.params.id}/contacts`, req.body), 201); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -705,7 +705,7 @@ module.exports = function customersRoutes(app, ctx) {
   });
 
   app.put("/api/customers/:id/contacts/:cid", auth(), async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callCustomerService("PUT", `/internal/customers/${req.params.id}/contacts/${req.params.cid}`, req.body)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -723,7 +723,7 @@ module.exports = function customersRoutes(app, ctx) {
   });
 
   app.delete("/api/customers/:id/contacts/:cid", auth(), async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callCustomerService("DELETE", `/internal/customers/${req.params.id}/contacts/${req.params.cid}`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -745,7 +745,7 @@ module.exports = function customersRoutes(app, ctx) {
   // ─── Customer Screening ───────────────────────────────────────────────────
 
   app.get("/api/customers/:id/screening", auth(), async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callCustomerService("GET", `/internal/customers/${req.params.id}/screening`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -768,7 +768,7 @@ module.exports = function customersRoutes(app, ctx) {
   app.post("/api/customers/:id/screening/override", auth(), customerWrite, async (req, res) => {
     const { reason = "" } = req.body;
     if (!reason.trim()) return err(res, "Override reason is required");
-    if (isRemote()) {
+    if (await isRemote()) {
       try { return ok(res, await callCustomerService("POST", `/internal/customers/${req.params.id}/screening/override`, { reason })); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }

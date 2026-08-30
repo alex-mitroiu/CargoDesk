@@ -16,7 +16,7 @@ module.exports = function sanctionsRoutes(app, ctx) {
           syncOfacSdn, syncConsolidatedScreeningList, scheduleNextOfacSync, scheduleNextCslSync,
           rescreenActiveShipments, createRateLimiter } = ctx;
 
-  const isRemote = () => (getSettings().screening_source || "local") === "remote";
+  const isRemote = async () => ((await getSettings()).screening_source || "local") === "remote";
 
   // Both sync-triggering routes below are heavy (a live external OFAC/CSL fetch + full re-index,
   // or a full delete-and-bulk-reimport of sanctions_entries followed by a shipment-wide
@@ -76,7 +76,7 @@ module.exports = function sanctionsRoutes(app, ctx) {
   // ─── Routes ─────────────────────────────────────────────────────────────────────────────────
 
   app.get("/api/sanctions/entries", async (req, res) => {
-    if (isRemote()) {
+    if (await isRemote()) {
       const qs = new URLSearchParams(req.query).toString();
       try { return ok(res, await callScreeningService("GET", `/internal/sanctions/entries${qs ? `?${qs}` : ""}`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
@@ -96,7 +96,7 @@ module.exports = function sanctionsRoutes(app, ctx) {
     // `indexed` (the monolith's own in-memory sanctionsMap size) is meaningful in either mode —
     // it's what screening actually reads against, so it's attached locally regardless of where
     // the underlying rows live.
-    if (isRemote()) {
+    if (await isRemote()) {
       try {
         const remote = await callScreeningService("GET", "/internal/sanctions/status");
         return ok(res, { ...remote, indexed: sanctionsMap.size });
@@ -139,7 +139,7 @@ module.exports = function sanctionsRoutes(app, ctx) {
     if (!csv || typeof csv !== "string") return err(res, "csv string required");
     const entries = parseOfacCsv(csv);
     if (entries.length === 0) return err(res, "No valid entries found — check the file format");
-    if (isRemote()) {
+    if (await isRemote()) {
       try {
         const result = await callScreeningService("POST", "/internal/sanctions/import-csv", { entries });
         await loadSanctionsIndex();

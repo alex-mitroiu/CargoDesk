@@ -117,7 +117,7 @@ module.exports = function ediRoutes(app, ctx) {
     return { message, booking: updatedBooking };
   }
 
-  function upsertPendingBooking(shipment, correlationId, requestedBy) {
+  async function upsertPendingBooking(shipment, correlationId, requestedBy) {
     const now = new Date().toISOString();
     let existing = db.prepare("SELECT * FROM carrier_bookings WHERE shipment_id=?").get(shipment.id);
     // Any not-yet-Confirmed booking under a since-changed carrier — including one still
@@ -125,7 +125,7 @@ module.exports = function ediRoutes(app, ctx) {
     // reused here. This used to be the actual still-visible shape of the SHP-Y9E98X bug:
     // clicking Send again just overwrote the same row's carrier in place, discarding what
     // carrier the earlier attempt was really for.
-    existing = supersedeIfCarrierChanged(shipment, existing);
+    existing = await supersedeIfCarrierChanged(shipment, existing);
     if (existing) {
       db.prepare(`
         UPDATE carrier_bookings SET status='Pending', last_response_status='', correlation_id=?,
@@ -165,7 +165,7 @@ module.exports = function ediRoutes(app, ctx) {
   // file that needs office-access scoping, since it lets a user browse shipments they
   // haven't specifically navigated to (the single-shipment routes above don't bother,
   // matching this file's existing precedent).
-  app.get("/api/carrier-bookings", auth(), (req, res) => {
+  app.get("/api/carrier-bookings", auth(), async (req, res) => {
     const { status } = req.query;
     const rows = status
       ? db.prepare("SELECT * FROM carrier_bookings WHERE status=? ORDER BY updated_at DESC").all(status)
@@ -175,7 +175,7 @@ module.exports = function ediRoutes(app, ctx) {
     const shipmentIds = [...new Set(rows.map(r => r.shipment_id))];
     const ph = shipmentIds.map(() => "?").join(",");
     const shipmentRows = db.prepare(`SELECT * FROM shipments WHERE id IN (${ph})`).all(...shipmentIds);
-    const allowedShipments = applyShipmentAccessFilter(shipmentRows.map(mapShipment), req.user, req);
+    const allowedShipments = await applyShipmentAccessFilter(shipmentRows.map(mapShipment), req.user, req);
     const shipmentById = new Map(allowedShipments.map(s => [s.id, s]));
 
     ok(res, rows
@@ -186,7 +186,7 @@ module.exports = function ediRoutes(app, ctx) {
   app.post("/api/shipments/:id/edi-messages/booking-request", write, async (req, res) => {
     const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
     if (!shipment) return err(res, "Shipment not found", 404);
-    if (!isEdiBookable(shipment.carrier_code, shipment.emo_office_id))
+    if (!(await isEdiBookable(shipment.carrier_code, shipment.emo_office_id)))
       return err(res, `Booking requests are not supported for carrier ${shipment.carrier_code} at this shipment's office`, 400);
 
     const existingBooking = db.prepare("SELECT * FROM carrier_bookings WHERE shipment_id=?").get(shipment.id);
@@ -334,7 +334,7 @@ module.exports = function ediRoutes(app, ctx) {
     broadcast(shipment.id, { type: "new_edi_message", message: sentMsg });
 
     const requestedBy = req.user?.name || req.user?.email || "";
-    const booking = upsertPendingBooking(shipment, correlationId, requestedBy);
+    const booking = await upsertPendingBooking(shipment, correlationId, requestedBy);
     broadcast(shipment.id, { type: "booking_status_changed", booking: mapCarrierBooking(booking) });
 
     // Always pending — the real carrier response is simulated only, via Test Tools →
@@ -367,7 +367,7 @@ module.exports = function ediRoutes(app, ctx) {
     ok(res, { received: message, booking: updatedBooking }, 201);
   });
 
-  app.patch("/api/shipments/:id/carrier-booking/confirm", write, (req, res) => {
+  app.patch("/api/shipments/:id/carrier-booking/confirm", write, async (req, res) => {
     const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
     if (!shipment) return err(res, "Shipment not found", 404);
     const { bookingRef, note } = req.body || {};
@@ -376,7 +376,7 @@ module.exports = function ediRoutes(app, ctx) {
     // Same supersede rule as Send (upsertPendingBooking above) — any not-yet-Confirmed booking
     // under a since-changed carrier is auto-cancelled and archived rather than resurrected as
     // "Confirmed" under a carrier it was never actually requested/rejected/cancelled for.
-    existing = supersedeIfCarrierChanged(shipment, existing);
+    existing = await supersedeIfCarrierChanged(shipment, existing);
     if (existing && (existing.status === "Confirmed" || existing.status === "Cancelled"))
       return err(res, `Booking is already ${existing.status.toLowerCase()}`, 409);
 
@@ -409,7 +409,7 @@ module.exports = function ediRoutes(app, ctx) {
     db.prepare("UPDATE shipments SET booking_ref=? WHERE id=?").run(ref, shipment.id);
     autoCompleteMilestone(shipment.id, 'booking_confirmed',
       note || `Confirmed by ${confirmedBy || 'operator'} (ref ${ref})`);
-    logEntityEvent('carrier_booking', booking.id, 'CONFIRMED', null, null, null,
+    await logEntityEvent('carrier_booking', booking.id, 'CONFIRMED', null, null, null,
       JSON.stringify({ bookingRef: ref, confirmedBy }));
 
     const mapped = mapCarrierBooking(booking);
@@ -417,7 +417,7 @@ module.exports = function ediRoutes(app, ctx) {
     ok(res, mapped);
   });
 
-  app.patch("/api/shipments/:id/carrier-booking/cancel", write, (req, res) => {
+  app.patch("/api/shipments/:id/carrier-booking/cancel", write, async (req, res) => {
     const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
     if (!shipment) return err(res, "Shipment not found", 404);
     const { reason } = req.body || {};
@@ -429,7 +429,7 @@ module.exports = function ediRoutes(app, ctx) {
     const cancelledBy = req.user?.name || req.user?.email || "";
 
     // Notify the carrier only if something was actually transmitted for this booking.
-    if (existing?.correlation_id && isEdiBookable(shipment.carrier_code, shipment.emo_office_id)) {
+    if (existing?.correlation_id && await isEdiBookable(shipment.carrier_code, shipment.emo_office_id)) {
       const cancelId = `EDI-${uid()}`;
       db.prepare(`
         INSERT INTO edi_messages (id, shipment_id, carrier_code, direction, message_type, format, raw_payload, status, correlation_id, is_mock, created_at)
@@ -459,7 +459,7 @@ module.exports = function ediRoutes(app, ctx) {
 
     // Deliberately does not clear shipments.booking_ref or un-complete the milestone —
     // matches autoCompleteMilestone's own "never silently overwritten" philosophy.
-    logEntityEvent('carrier_booking', booking.id, 'CANCELLED', null, null, null,
+    await logEntityEvent('carrier_booking', booking.id, 'CANCELLED', null, null, null,
       JSON.stringify({ reason: reason || "", cancelledBy }));
 
     const mapped = mapCarrierBooking(booking);
@@ -471,7 +471,7 @@ module.exports = function ediRoutes(app, ctx) {
   // carrier_bookings row (shipment_id is UNIQUE on that table) — an archived/superseded
   // row is read-only history, same convention CarrierBookingsTable.jsx already enforces
   // in its own UI. documentId: null clears the link.
-  app.patch("/api/shipments/:id/carrier-booking/link-bl-document", write, (req, res) => {
+  app.patch("/api/shipments/:id/carrier-booking/link-bl-document", write, async (req, res) => {
     const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
     if (!shipment) return err(res, "Shipment not found", 404);
     const { documentId = null } = req.body || {};
@@ -489,7 +489,7 @@ module.exports = function ediRoutes(app, ctx) {
     db.prepare("UPDATE carrier_bookings SET bl_document_id=?, updated_at=? WHERE id=?")
       .run(documentId, now, booking.id);
     const updated = db.prepare("SELECT * FROM carrier_bookings WHERE id=?").get(booking.id);
-    logEntityEvent('carrier_booking', booking.id, documentId ? 'BL_LINKED' : 'BL_UNLINKED', null, null, null,
+    await logEntityEvent('carrier_booking', booking.id, documentId ? 'BL_LINKED' : 'BL_UNLINKED', null, null, null,
       JSON.stringify({ documentId }));
 
     const mapped = mapCarrierBooking(updated);

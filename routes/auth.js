@@ -22,8 +22,8 @@ module.exports = function authRoutes(app, ctx) {
 
   // ─── Helpers ───────────────────────────────────────────────────────────────
 
-  const getSecuritySettings = () => {
-    const s = getSettings();
+  const getSecuritySettings = async () => {
+    const s = await getSettings();
     return {
       maxAttempts:      parseInt(s.login_max_attempts   || "5",  10),
       lockoutMinutes:   parseInt(s.login_lockout_minutes || "30", 10),
@@ -85,7 +85,7 @@ module.exports = function authRoutes(app, ctx) {
 
   // ─── Login ─────────────────────────────────────────────────────────────────
 
-  app.post("/api/auth/login", loginRateLimit, (req, res) => {
+  app.post("/api/auth/login", loginRateLimit, async (req, res) => {
     const { email, password } = req.body || {};
     if (!email || !password) return err(res, "Email and password required");
 
@@ -103,7 +103,7 @@ module.exports = function authRoutes(app, ctx) {
     }
 
     if (!bcrypt.compareSync(password, user.password_hash)) {
-      const { maxAttempts, lockoutMinutes } = getSecuritySettings();
+      const { maxAttempts, lockoutMinutes } = await getSecuritySettings();
       const attempts = (user.failed_attempts || 0) + 1;
       if (attempts >= maxAttempts) {
         const lockedUntil = new Date(Date.now() + lockoutMinutes * 60_000).toISOString();
@@ -121,7 +121,7 @@ module.exports = function authRoutes(app, ctx) {
     db.prepare("UPDATE users SET failed_attempts=0, locked_until='', last_login=datetime('now') WHERE id=?")
       .run(user.id);
 
-    const { jwtHours, passwordExpiryDays } = getSecuritySettings();
+    const { jwtHours, passwordExpiryDays } = await getSecuritySettings();
     const roles = JSON.parse(user.roles || JSON.stringify([user.role || 'viewer']));
     const allOffices = !!user.all_offices;
     const passwordExpired = isPasswordExpired(user, passwordExpiryDays);
@@ -148,7 +148,7 @@ module.exports = function authRoutes(app, ctx) {
       canViewFinance: !!user.can_view_finance, allOffices, offices } });
   });
 
-  app.get("/api/auth/me", auth(), (req, res) => {
+  app.get("/api/auth/me", auth(), async (req, res) => {
     const user = db.prepare(
       "SELECT id, email, name, role, roles, is_active, created_at, password_changed_at, all_offices FROM users WHERE id = ?"
     ).get(req.user.id);
@@ -156,7 +156,7 @@ module.exports = function authRoutes(app, ctx) {
     // Silent token-restore-on-mount (a still-valid JWT from a prior session) bypasses
     // the login endpoint entirely — without this, a user who never re-enters credentials
     // could stay on an expired password indefinitely. Same check as login's.
-    const { passwordExpiryDays } = getSecuritySettings();
+    const { passwordExpiryDays } = await getSecuritySettings();
     // Real bug fix: allOffices/offices were never returned here at all (only login's own
     // response carried them) — a silent restore (any page reload with an already-valid token,
     // the common case, not the fresh-login one) left an office-scoped user's activeOffice stuck
@@ -187,7 +187,7 @@ module.exports = function authRoutes(app, ctx) {
   // Self-service password change — any authenticated user, own account only.
   // Requires the current password (not just an admin-issued reset) so a hijacked
   // session alone can't silently take over the account's long-term credential.
-  app.post("/api/auth/change-password", auth(), (req, res) => {
+  app.post("/api/auth/change-password", auth(), async (req, res) => {
     const { currentPassword, newPassword } = req.body || {};
     if (!currentPassword || !newPassword) return err(res, "Current and new password are required");
 
@@ -211,7 +211,7 @@ module.exports = function authRoutes(app, ctx) {
 
     // token_version just bumped, invalidating the token this very request came in on —
     // issue a fresh one so the user isn't logged out by their own password change.
-    const { jwtHours } = getSecuritySettings();
+    const { jwtHours } = await getSecuritySettings();
     const roles = parseUserRoles(user);
     const token = jwt.sign(
       { id: user.id, email: user.email, name: user.name, role: user.role, roles,
@@ -414,8 +414,8 @@ module.exports = function authRoutes(app, ctx) {
     message: "Too many SSO attempts from this address — try again later",
   });
 
-  app.get("/api/auth/sso/config", (req, res) => {
-    const s = getSettings();
+  app.get("/api/auth/sso/config", async (req, res) => {
+    const s = await getSettings();
     ok(res, {
       enabled:  s.sso_enabled === '1',
       tenantId: s.sso_tenant_id || '',
@@ -423,8 +423,8 @@ module.exports = function authRoutes(app, ctx) {
     });
   });
 
-  app.get("/api/auth/sso/init", ssoRateLimit, (req, res) => {
-    const s = getSettings();
+  app.get("/api/auth/sso/init", ssoRateLimit, async (req, res) => {
+    const s = await getSettings();
     if (s.sso_enabled !== '1') return err(res, "SSO not enabled", 404);
     const { sso_tenant_id: tenantId, sso_client_id: clientId, sso_redirect_uri: redirectUri } = s;
     if (!tenantId || !clientId || !redirectUri)
@@ -445,7 +445,7 @@ module.exports = function authRoutes(app, ctx) {
   });
 
   app.get("/api/auth/sso/callback", ssoRateLimit, async (req, res) => {
-    const s = getSettings();
+    const s = await getSettings();
     if (s.sso_enabled !== '1') return err(res, "SSO not enabled", 404);
 
     const { code, state, error: oauthError } = req.query;
@@ -506,7 +506,7 @@ module.exports = function authRoutes(app, ctx) {
 
       db.prepare("UPDATE users SET last_login=datetime('now') WHERE id=?").run(user.id);
 
-      const { jwtHours } = getSecuritySettings();
+      const { jwtHours } = await getSecuritySettings();
       const roles = parseUserRoles(user);
       const token = jwt.sign(
         { id: user.id, email: user.email, name: user.name, role: user.role, roles,

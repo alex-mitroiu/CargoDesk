@@ -25,7 +25,7 @@ module.exports = function quotesRoutes(app, ctx) {
   // Mirrors routes/contracts.js's own expireStaleContracts exactly — a Sent quote whose
   // valid_until has passed without an Accept/Decline is stale and should stop looking actionable.
   // Runs once at startup (covers a quote that expired while the server was down) and then hourly.
-  function expireStaleQuotes() {
+  async function expireStaleQuotes() {
     const today = new Date().toISOString().slice(0, 10);
     const stale = db.prepare("SELECT id, customer_name FROM quotes WHERE status='Sent' AND valid_until != '' AND valid_until < ?").all(today);
     if (stale.length === 0) return;
@@ -33,7 +33,7 @@ module.exports = function quotesRoutes(app, ctx) {
     const update = db.prepare("UPDATE quotes SET status='Expired', expired_at=? WHERE id=?");
     for (const q of stale) {
       update.run(now, q.id);
-      logEntityEvent('quote', q.id, 'UPDATED', 'status', 'Sent', 'Expired',
+      await logEntityEvent('quote', q.id, 'UPDATED', 'status', 'Sent', 'Expired',
         JSON.stringify({ customerName: q.customer_name, reason: 'valid_until passed' }));
     }
   }
@@ -126,7 +126,7 @@ module.exports = function quotesRoutes(app, ctx) {
            validUntil, notes, currency.toUpperCase(), now, actor);
     await insertLines(id, lines);
     recomputeQuoteTotal(id);
-    logEntityEvent("quote", id, "CREATED", null, null, null,
+    await logEntityEvent("quote", id, "CREATED", null, null, null,
       JSON.stringify({ customerName, pol: pol.toUpperCase(), pod: pod.toUpperCase(), carrierCode, lineCount: lines.length }));
     const q = db.prepare("SELECT * FROM quotes WHERE id=?").get(id);
     const savedLines = db.prepare("SELECT * FROM quote_lines WHERE quote_id=? ORDER BY sort_order").all(id);
@@ -152,26 +152,26 @@ module.exports = function quotesRoutes(app, ctx) {
     db.prepare("DELETE FROM quote_lines WHERE quote_id=?").run(req.params.id);
     await insertLines(req.params.id, lines);
     recomputeQuoteTotal(req.params.id);
-    logEntityEvent("quote", req.params.id, "UPDATED", null, null, null,
+    await logEntityEvent("quote", req.params.id, "UPDATED", null, null, null,
       JSON.stringify({ customerName, pol: pol.toUpperCase(), pod: pod.toUpperCase(), lineCount: lines.length }));
     const q = db.prepare("SELECT * FROM quotes WHERE id=?").get(req.params.id);
     const savedLines = db.prepare("SELECT * FROM quote_lines WHERE quote_id=? ORDER BY sort_order").all(req.params.id);
     ok(res, { ...mapQuote(q), lines: savedLines.map(mapQuoteLine) });
   });
 
-  app.delete("/api/quotes/:id", quoteWrite, (req, res) => {
+  app.delete("/api/quotes/:id", quoteWrite, async (req, res) => {
     const q = db.prepare("SELECT * FROM quotes WHERE id=?").get(req.params.id);
     if (!q) return err(res, "Not found", 404);
     if (q.status === "Converted") return err(res, "This quote has already converted to a shipment — it stays as a historical record instead of being deleted");
     db.prepare("DELETE FROM quotes WHERE id=?").run(req.params.id);
-    logEntityEvent("quote", req.params.id, "DELETED", null, null, null,
+    await logEntityEvent("quote", req.params.id, "DELETED", null, null, null,
       JSON.stringify({ customerName: q.customer_name, status: q.status }));
     ok(res, { deleted: req.params.id });
   });
 
   // ─── Lifecycle transitions ──────────────────────────────────────────────────
 
-  app.post("/api/quotes/:id/send", quoteWrite, (req, res) => {
+  app.post("/api/quotes/:id/send", quoteWrite, async (req, res) => {
     const q = db.prepare("SELECT * FROM quotes WHERE id=?").get(req.params.id);
     if (!q) return err(res, "Not found", 404);
     if (q.status !== "Draft") return err(res, `Only a Draft quote can be sent (current status: ${q.status})`, 409);
@@ -182,11 +182,11 @@ module.exports = function quotesRoutes(app, ctx) {
     if (q.valid_until < today) return err(res, "valid_until is already in the past — update it before sending");
     const now = new Date().toISOString();
     db.prepare("UPDATE quotes SET status='Sent', sent_at=? WHERE id=?").run(now, req.params.id);
-    logEntityEvent("quote", req.params.id, "UPDATED", "status", "Draft", "Sent", JSON.stringify({ customerName: q.customer_name }));
+    await logEntityEvent("quote", req.params.id, "UPDATED", "status", "Draft", "Sent", JSON.stringify({ customerName: q.customer_name }));
     ok(res, mapQuote(db.prepare("SELECT * FROM quotes WHERE id=?").get(req.params.id)));
   });
 
-  app.post("/api/quotes/:id/accept", quoteWrite, (req, res) => {
+  app.post("/api/quotes/:id/accept", quoteWrite, async (req, res) => {
     const q = db.prepare("SELECT * FROM quotes WHERE id=?").get(req.params.id);
     if (!q) return err(res, "Not found", 404);
     if (q.status !== "Sent") return err(res, `Only a Sent quote can be accepted (current status: ${q.status})`, 409);
@@ -194,18 +194,18 @@ module.exports = function quotesRoutes(app, ctx) {
     if (q.valid_until && q.valid_until < today) return err(res, "This quote has expired — update and re-send it instead of accepting the stale version", 409);
     const now = new Date().toISOString();
     db.prepare("UPDATE quotes SET status='Accepted', accepted_at=? WHERE id=?").run(now, req.params.id);
-    logEntityEvent("quote", req.params.id, "UPDATED", "status", "Sent", "Accepted", JSON.stringify({ customerName: q.customer_name }));
+    await logEntityEvent("quote", req.params.id, "UPDATED", "status", "Sent", "Accepted", JSON.stringify({ customerName: q.customer_name }));
     ok(res, mapQuote(db.prepare("SELECT * FROM quotes WHERE id=?").get(req.params.id)));
   });
 
-  app.post("/api/quotes/:id/decline", quoteWrite, (req, res) => {
+  app.post("/api/quotes/:id/decline", quoteWrite, async (req, res) => {
     const { reason = "" } = req.body || {};
     const q = db.prepare("SELECT * FROM quotes WHERE id=?").get(req.params.id);
     if (!q) return err(res, "Not found", 404);
     if (q.status !== "Sent") return err(res, `Only a Sent quote can be declined (current status: ${q.status})`, 409);
     const now = new Date().toISOString();
     db.prepare("UPDATE quotes SET status='Declined', declined_at=?, decline_reason=? WHERE id=?").run(now, reason, req.params.id);
-    logEntityEvent("quote", req.params.id, "UPDATED", "status", "Sent", "Declined", JSON.stringify({ customerName: q.customer_name, reason }));
+    await logEntityEvent("quote", req.params.id, "UPDATED", "status", "Sent", "Declined", JSON.stringify({ customerName: q.customer_name, reason }));
     ok(res, mapQuote(db.prepare("SELECT * FROM quotes WHERE id=?").get(req.params.id)));
   });
 
@@ -248,13 +248,13 @@ module.exports = function quotesRoutes(app, ctx) {
       const lineId = `CL-${uid()}`;
       db.prepare(`INSERT INTO shipment_cost_lines (id,shipment_id,type,charge_code,currency,amount,exchange_rate,notes,created_at,source) VALUES (?,?,?,?,?,?,?,?,?,?)`)
         .run(lineId, id, 'SELL', chargeCode, l.currency || 'USD', amount, exchangeRate, l.description || '', now, 'quote');
-      logEntityEvent('cost_line', lineId, 'IMPORTED', null, null, null,
+      await logEntityEvent('cost_line', lineId, 'IMPORTED', null, null, null,
         JSON.stringify({ shipmentId: id, chargeCode, source: 'quote', quoteId: req.params.id }));
     }
 
     const silentScreening = await screenShipmentById(id);
     db.prepare("UPDATE quotes SET status='Converted', converted_shipment_id=?, converted_at=? WHERE id=?").run(id, now, req.params.id);
-    logEntityEvent("quote", req.params.id, "UPDATED", "status", "Accepted", "Converted",
+    await logEntityEvent("quote", req.params.id, "UPDATED", "status", "Accepted", "Converted",
       JSON.stringify({ customerName: q.customer_name, shipmentId: id }));
 
     // The full mapped shipment (not just its id) so the frontend can drop it straight into its

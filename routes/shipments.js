@@ -92,7 +92,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const shipment = db.prepare("SELECT contract_id, contract_ref FROM shipments WHERE id=?").get(shipmentId);
     if (!shipment?.contract_id) return null;
     let contract;
-    if ((getSettings().contract_source || "local") === "remote") {
+    if (((await getSettings()).contract_source || "local") === "remote") {
       try {
         const c = await callContractService("GET", `/internal/contracts/${shipment.contract_id}`);
         contract = { dg_allowed: c.dgAllowed ? 1 : 0, imdg_classes: JSON.stringify(c.imdgClasses || []), contract_number: c.contractNumber };
@@ -200,7 +200,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     return bySeaShipment;
   };
 
-  app.get("/api/shipments", (req, res) => {
+  app.get("/api/shipments", async (req, res) => {
     const rows = db.prepare(`
       SELECT s.*,
              p1.name AS pol_name,
@@ -239,7 +239,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     `).all();
     const seaPorts = resolveSeaPorts(rows.map(r => r.id));
     const mapped = rows.map(r => ({ ...mapShipment(r), ...(seaPorts[r.id] || { seaPol: r.pol, seaPod: r.pod, seaPolName: r.pol_name || '', seaPodName: r.pod_name || '' }) }));
-    let filtered = applyShipmentAccessFilter(mapped, req.user, req);
+    let filtered = await applyShipmentAccessFilter(mapped, req.user, req);
     // Pagination is opt-in (TKT-UAJGR3) — every existing caller (App.jsx's own load-everything-
     // once-into-state model, Command Center, Dashboard, AI Assistant tools) omits limit/offset and
     // keeps getting today's exact bare-array response, so nothing breaks. Only a caller that
@@ -303,7 +303,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     })));
   });
 
-  app.get("/api/shipments/:id", (req, res) => {
+  app.get("/api/shipments/:id", async (req, res) => {
     const row = db.prepare(`
       SELECT s.*, p1.name AS pol_name, p2.name AS pod_name,
              emo.code AS emo_office_code, emo.name AS emo_office_name,
@@ -319,7 +319,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     `).get(req.params.id);
     if (!row) return err(res, "Not found", 404);
     const s = mapShipment(row);
-    if (!applyShipmentAccessFilter([s], req.user, req).length) return err(res, "Not found", 404);
+    if (!(await applyShipmentAccessFilter([s], req.user, req)).length) return err(res, "Not found", 404);
     ok(res, s);
   });
 
@@ -477,7 +477,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
       const actor = req.user?.name || req.user?.email || "";
       for (const s of existingSchedules) {
         db.prepare("DELETE FROM shipment_schedules WHERE id=?").run(s.id);
-        logEntityEvent('schedule', s.id, 'REMOVED', null, null, null,
+        await logEntityEvent('schedule', s.id, 'REMOVED', null, null, null,
           JSON.stringify({ shipmentId: req.params.id, carrier: s.carrier, vesselName: s.vessel_name, vesselImo: s.vessel_imo,
             voyageNumber: s.voyage_number, service: s.service, pol: s.pol, pod: s.pod, etd: s.etd, eta: s.eta,
             transitDays: s.transit_days, actor, reason: 'CRD updated past ETD' }));
@@ -505,7 +505,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     // (the other is a schedule save/link, in routes/shipment-ops.js) — only worth checking
     // when the contract fields actually changed, since ensureBookingCreated no-ops otherwise.
     if (effContractId !== existing.contract_id || effContractRef !== existing.contract_ref)
-      ensureBookingCreated(req.params.id);
+      await ensureBookingCreated(req.params.id);
     const newVals = { pol: polU, pod: podU, status: effStatus, etd, eta, carrier_code: carrierCode,
       vessel, vessel_imo: vesselImo, voyage, incoterm, commodity_code: commodityCode,
       booking_ref: bookingRef, bl_number: blNumber, bl_release_type: blReleaseType, master_bl_number: masterBlNumber, master_bl_release_type: masterBlReleaseType, coload_tariff_reference: coloadTariffReference, contract_type: contractType,
@@ -1245,7 +1245,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
   // Reassigning EMO/IMO/Controlling is a takeover, not a typo fix — always requires a reason and
   // always logs its own OFFICE_REASSIGNED event (the generic shipment PUT's TRACKED_FIELDS diff
   // log doesn't cover these 3 columns at all today), independent of the routine field-diff log.
-  app.post("/api/shipments/:id/reassign-office", shipmentWrite, (req, res) => {
+  app.post("/api/shipments/:id/reassign-office", shipmentWrite, async (req, res) => {
     const { field, officeId, reason } = req.body || {};
     const meta = REASSIGN_FIELD_META[field];
     if (!meta) return err(res, "field must be one of: " + Object.keys(REASSIGN_FIELD_META).join(", "));
@@ -1280,7 +1280,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
       ).all(req.params.id, oldOffice.id);
       for (const svc of lingering) {
         db.prepare("UPDATE shipment_services SET office_id=? WHERE id=?").run(officeId || '', svc.id);
-        logEntityEvent('service', svc.id, 'UPDATED', 'office_id', oldOffice.id, officeId || '',
+        await logEntityEvent('service', svc.id, 'UPDATED', 'office_id', oldOffice.id, officeId || '',
           JSON.stringify({ shipmentId: req.params.id, side: svc.side, serviceType: svc.service_type, reason: 'office_reassignment' }));
       }
       migratedServiceCount = lingering.length;
@@ -1339,7 +1339,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     ok(res, rows.map(ctx.mapShipmentLeg));
   });
 
-  app.post("/api/shipments/:id/legs", shipmentWrite, (req, res) => {
+  app.post("/api/shipments/:id/legs", shipmentWrite, async (req, res) => {
     const { legType='SEA', movementType='SEA', movementBy='',
             mot: rawMot, pol='', pod='', etd=null, eta=null, carrierCode='',
             polLocType='Terminal', podLocType='Terminal',
@@ -1371,11 +1371,11 @@ module.exports = function shipmentsRoutes(app, ctx) {
     syncShipmentFromLegs(req.params.id);
     // A hand-entered SEA leg with a real ETD counts as "has a schedule" for booking
     // auto-creation purposes too — see ensureBookingCreated's comment in server.js.
-    ensureBookingCreated(req.params.id);
+    await ensureBookingCreated(req.params.id);
     ok(res, ctx.mapShipmentLeg(db.prepare("SELECT * FROM shipment_legs WHERE id=?").get(id)), 201);
   });
 
-  app.put("/api/shipments/:id/legs/:legId", shipmentWrite, (req, res) => {
+  app.put("/api/shipments/:id/legs/:legId", shipmentWrite, async (req, res) => {
     const { legType='SEA', movementType='SEA', movementBy='',
             mot: rawMot, pol='', pod='', etd=null, eta=null, carrierCode='',
             polLocType='Terminal', podLocType='Terminal',
@@ -1408,7 +1408,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
            contractType, contractRef, legOrder ?? existing.leg_order,
            etdSource, etaSource, req.params.legId);
     syncShipmentFromLegs(req.params.id);
-    ensureBookingCreated(req.params.id);
+    await ensureBookingCreated(req.params.id);
     ok(res, ctx.mapShipmentLeg(db.prepare("SELECT * FROM shipment_legs WHERE id=?").get(req.params.legId)));
   });
 

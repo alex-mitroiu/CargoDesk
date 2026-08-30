@@ -89,9 +89,9 @@ module.exports = function eadapterRoutes(app, ctx) {
   // static BOOKABLE_CARRIERS Set. officeId is optional (a caller with no shipment/office context
   // gets only the built-in 3, since a scoped config can never apply without one) — mirrors
   // isEdiBookable()'s exact logic (server.js) so the two never drift apart.
-  app.get("/api/eadapter/bookable-carriers", (req, res) => {
+  app.get("/api/eadapter/bookable-carriers", async (req, res) => {
     const { officeId = "" } = req.query;
-    const enabled = getSettings().api_eadapter_enabled !== "false";
+    const enabled = (await getSettings()).api_eadapter_enabled !== "false";
     const active = enabled && officeId
       ? db.prepare("SELECT carrier_code FROM carrier_eadapter_configs WHERE is_active=1 AND office_id=?").all(officeId).map(r => r.carrier_code)
       : [];
