@@ -14,5 +14,10 @@ RUN npm ci --omit=dev
 COPY services/customers ./services/customers
 
 ENV NODE_ENV=production
+# Set DATABASE_URL (a real Postgres connection string) in the running container's environment —
+# see ARCHITECTURE.md §13 (Postgres migration, Phase 2). Without it, this service falls back to
+# an embedded @electric-sql/pglite instance persisted to services/customers/pgdata/ inside the
+# container — functionally correct but not durable across container recreation unless that path
+# is also given its own volume, and not the intended production setup either way.
 EXPOSE 3008
 CMD ["node", "services/customers/server.js"]

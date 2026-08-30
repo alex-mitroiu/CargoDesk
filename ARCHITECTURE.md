@@ -548,7 +548,7 @@ Organization Model roadmap begun at v0.56.0:
 | **MDM** (`services/mdm/`, v0.80.0) | 3005 | Second "toggle between local and remote" extraction, following the sequencing proposed in `documentation/splitting-mdm-first.html` — the lowest-blast-radius domain (no request-path involvement, no outbound FK from any of its tables into shipments/customers/users) | Owns its own `.db`: `carriers`/`vessels`/`port_locations`/`linked_ports`/`trade_lanes`/`country_trade_lanes`/`regions`/`countries`/`commodities`/`carrier_agents`/`carrier_agent_locations`/`carrier_agent_schedule_rows` |
 | **Screening** (`services/screening/`, v0.81.0) | 3006 | Third "toggle between local and remote" extraction — externally-sourced denylist data, zero outbound FK, read via name-match not JOIN (`documentation/splitting-sanctions-next.html`) | Postgres (Phase 1 of the Postgres migration, §13 — `pg` when `DATABASE_URL` is set, embedded `@electric-sql/pglite` otherwise; was SQLite before this): `sanctions_entries`/`sanctions_syncs`, plus a small local `settings` table for its own auto-sync schedule (no admin UI for it yet — see below) |
 | **Kanban/Testing** (`services/kanban/`, v0.82.0) | 3007 | Fourth "toggle between local and remote" extraction — a feature the roadmap expects to eventually go away entirely (`documentation/splitting-kanban-out.html`), so keeping its schema fully separable now avoids leftovers later | Owns its own `.db`: `tickets`/`ticket_links`/`test_items`/`test_case_links`/`kb_projects`/`kb_versions`/`kb_columns` |
-| **Customer/Organization** (`services/customers/`, v0.84.0) | 3008 | Fifth and final "toggle between local and remote" extraction, and the last story of the 5-epic Organization Model roadmap begun at v0.56.0 — deliberately sequenced last, after the data model had fully settled | Owns its own `.db`: `customers`/`customer_identifiers`/`customer_contacts`/`customer_screenings`. `customer_documents` and `customer_roles` are deliberately excluded — see the Customer-specific notes below |
+| **Customer/Organization** (`services/customers/`, v0.84.0) | 3008 | Fifth and final "toggle between local and remote" extraction, and the last story of the 5-epic Organization Model roadmap begun at v0.56.0 — deliberately sequenced last, after the data model had fully settled | Postgres (Phase 2 of the Postgres migration, §13 — `pg` when `DATABASE_URL` is set, embedded `@electric-sql/pglite` otherwise; was SQLite before this): `customers`/`customer_identifiers`/`customer_contacts`/`customer_screenings`. `customer_documents` and `customer_roles` are deliberately excluded — see the Customer-specific notes below |
 
 All five of Contract Management, MDM, Screening, Kanban/Testing, and Customer/Organization share
 the same shape, and unlike the other two extracted services, **the monolith's own local tables are
@@ -2010,7 +2010,7 @@ that's a test-harness concern, not something this run is measuring.
   create and delete) when a run's duration expires, which scales with `connections` and is
   expected, not a bug. Re-verified clean (0 leaked rows) after both runs above.
 
-**Third update — the migration itself is underway, Phases 0 and 1 shipped.** Direct decision, after
+**Third update — the migration itself is underway, Phases 0, 1, and 2 shipped.** Direct decision, after
 seeing the load-test numbers above: commit to the long-term Postgres migration rather than a
 short-term mitigation (a worker-thread pool was considered and explicitly rejected — "short term
 fixes will just have us run into the same problem sooner or later").
@@ -2084,10 +2084,34 @@ exercises the full local↔remote toggle, a live import through the remote-mode 
 shipment screening confirming the monolith's in-memory `sanctionsMap` cache actually reloads from
 the now-Postgres-backed service — both pass identically to the SQLite-backed results.
 
-**Remaining roadmap, explicitly phased, not attempted in one sitting**: Phase 2+ migrates the
-other 4 database-backed services **in this safety-ranked order** (each independently, no
-cross-service coupling to worry about): `customers` (4
-tables, one self-referential FK, 50 call sites) → `kanban` (7 tables, real relational structure,
+**Phase 2 (shipped): `customers`** — the largest and most structurally complex service migrated
+so far: 4 tables (`customers` at 31 columns, `customer_identifiers`, `customer_contacts`,
+`customer_screenings`), a self-referential FK (`parent_customer_id`, `ON DELETE SET NULL` —
+Postgres enforces it natively, no `PRAGMA foreign_keys=ON` needed at all), 5 boolean columns
+across 2 tables (`credit_hold`/`classified_location`/`is_nvocc` on `customers`, `is_primary` on
+both child tables — all converted from `INTEGER 0/1` to real `BOOLEAN`, every `? 1 : 0`/`!!row.col`
+conversion removed), two graph-walk routes (`wouldCreateCycle`'s parent-chain walk, `/group`'s
+walk-to-root-then-BFS-down), and a generic 4-table `bulk-import` route backing
+`scripts/migrate-customers-to-service.js`. New `services/customers/lib/db.js`, same shape as
+Phases 0-1. Translation notes specific to this phase: `INSERT OR IGNORE` (used throughout
+`bulk-import`'s per-row helper) became `INSERT ... ON CONFLICT (id) DO NOTHING RETURNING id`,
+counting `result.length` (0 or 1) per row in place of SQLite's `info.changes` — verified against
+this route's own test fixture, which deliberately passes raw `0`/`1` integers (not JS booleans)
+for every boolean column, matching exactly what a real migration payload sourced from the
+monolith's SQLite rows would send; Postgres's boolean input parser accepts `'0'`/`'1'` as valid
+text literals, so these bind correctly with no explicit coercion needed, confirmed by the test
+passing unmodified. Every `LIKE` in the dynamic multi-filter `GET /internal/customers` list route
+became `ILIKE`; every `UPDATE`/`DELETE` route needing "was a row actually affected" (previously
+`info.changes === 0`) gained a `RETURNING id` clause checked via `rows.length === 0`. 33 new
+assertions (`customers-crud.test.js`) plus 16 (`customers-screening.test.js`) — 49 total — plus
+the monolith's 42-assertion `customer-service-toggle` suite (the most thorough of the three
+toggle suites so far, exercising credit-hold, margin group-rollup, and the screening
+write/cross-reference split all through the remote branch), all passing identically to the
+SQLite-backed results.
+
+**Remaining roadmap, explicitly phased, not attempted in one sitting**: Phase 3+ migrates the
+other 3 database-backed services **in this safety-ranked order** (each independently, no
+cross-service coupling to worry about): `kanban` (7 tables, real relational structure,
 79 call sites) → `contract-management` (6 tables with `ON DELETE CASCADE` chains, 68 call sites)
 → `mdm` (12 tables, 133 call sites, and the one already-known guarded-rebuild-migration gotcha —
 the most valuable lesson-learned target but the riskiest first attempt, hence last). The monolith
