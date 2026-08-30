@@ -11,7 +11,7 @@
 // so calling them here is identical either way. Only /entries, /status, and /import-csv (which
 // writes sanctions_entries directly in local mode) need an explicit branch here.
 module.exports = function sanctionsRoutes(app, ctx) {
-  const { db, ok, err, getSettings, callScreeningService,
+  const { query, transaction, ok, err, getSettings, callScreeningService,
           sanctionsMap, normSanctionName, loadSanctionsIndex,
           syncOfacSdn, syncConsolidatedScreeningList, scheduleNextOfacSync, scheduleNextCslSync,
           rescreenActiveShipments, createRateLimiter } = ctx;
@@ -84,12 +84,13 @@ module.exports = function sanctionsRoutes(app, ctx) {
     const { search = '', limit = '50', offset = '0', source = '' } = req.query;
     const lim = Math.min(parseInt(limit) || 50, 200), off = parseInt(offset) || 0;
     const conditions = [], params = [];
-    if (search.trim()) { conditions.push("(entity_name LIKE ? OR program LIKE ?)"); params.push(`%${search.trim()}%`, `%${search.trim()}%`); }
-    if (source.trim()) { conditions.push("source = ?"); params.push(source.trim()); }
+    const p = v => { params.push(v); return `$${params.length}`; };
+    if (search.trim()) { conditions.push(`(entity_name ILIKE ${p(`%${search.trim()}%`)} OR program ILIKE ${p(`%${search.trim()}%`)})`); }
+    if (source.trim()) { conditions.push(`source = ${p(source.trim())}`); }
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-    const total = db.prepare(`SELECT COUNT(*) AS n FROM sanctions_entries ${where}`).get(...params).n;
-    const rows  = db.prepare(`SELECT id, source, ref_id, entity_name, entity_type, program FROM sanctions_entries ${where} ORDER BY entity_name LIMIT ? OFFSET ?`).all(...params, lim, off);
-    ok(res, { results: rows, total, limit: lim, offset: off });
+    const [{ n: total }] = await query(`SELECT COUNT(*) AS n FROM sanctions_entries ${where}`, params);
+    const rows  = await query(`SELECT id, source, ref_id, entity_name, entity_type, program FROM sanctions_entries ${where} ORDER BY entity_name LIMIT ${p(lim)} OFFSET ${p(off)}`, params);
+    ok(res, { results: rows, total: Number(total), limit: lim, offset: off });
   });
 
   app.get("/api/sanctions/status", async (req, res) => {
@@ -102,11 +103,11 @@ module.exports = function sanctionsRoutes(app, ctx) {
         return ok(res, { ...remote, indexed: sanctionsMap.size });
       } catch (e) { return err(res, e.message, e.status || 502); }
     }
-    const syncs = db.prepare("SELECT * FROM sanctions_syncs ORDER BY synced_at DESC").all();
-    const count = db.prepare("SELECT COUNT(*) AS n FROM sanctions_entries").get().n;
-    const ofacCount = db.prepare("SELECT COUNT(*) AS n FROM sanctions_entries WHERE source='OFAC-SDN'").get().n;
-    const cslCount = db.prepare("SELECT COUNT(*) AS n FROM sanctions_entries WHERE id LIKE 'CSL-%'").get().n;
-    ok(res, { syncs, entryCount: count, ofacEntryCount: ofacCount, cslEntryCount: cslCount, indexed: sanctionsMap.size });
+    const syncs = await query("SELECT * FROM sanctions_syncs ORDER BY synced_at DESC");
+    const [{ n: count }] = await query("SELECT COUNT(*) AS n FROM sanctions_entries");
+    const [{ n: ofacCount }] = await query("SELECT COUNT(*) AS n FROM sanctions_entries WHERE source='OFAC-SDN'");
+    const [{ n: cslCount }] = await query("SELECT COUNT(*) AS n FROM sanctions_entries WHERE id LIKE 'CSL-%'");
+    ok(res, { syncs, entryCount: Number(count), ofacEntryCount: Number(ofacCount), cslEntryCount: Number(cslCount), indexed: sanctionsMap.size });
   });
 
   // No isRemote() branch needed — syncOfacSdn() already branches internally (server.js) and
@@ -149,20 +150,21 @@ module.exports = function sanctionsRoutes(app, ctx) {
       } catch (e) { return err(res, e.message, e.status || 502); }
     }
     try {
-      db.prepare("DELETE FROM sanctions_entries WHERE source='OFAC-SDN'").run();
-      const ins = db.prepare(
-        `INSERT OR REPLACE INTO sanctions_entries
-           (id, source, ref_id, entity_name, entity_name_norm, entity_type, program, aliases_norm)
-         VALUES (?, 'OFAC-SDN', ?, ?, ?, ?, ?, '[]')`
-      );
-      db.exec("BEGIN");
-      try {
+      await transaction(async (tx) => {
+        await tx.query("DELETE FROM sanctions_entries WHERE source='OFAC-SDN'");
         for (const e of entries)
-          ins.run(`OFAC-${e.refId}`, e.refId, e.name, normSanctionName(e.name), e.sdnType, e.program);
-        db.exec("COMMIT");
-      } catch (e2) { db.exec("ROLLBACK"); throw e2; }
+          await tx.query(
+            `INSERT INTO sanctions_entries
+               (id, source, ref_id, entity_name, entity_name_norm, entity_type, program, aliases_norm)
+             VALUES ($1, 'OFAC-SDN', $2, $3, $4, $5, $6, '[]')
+             ON CONFLICT (id) DO UPDATE SET source='OFAC-SDN', ref_id=$2, entity_name=$3, entity_name_norm=$4, entity_type=$5, program=$6, aliases_norm='[]'`,
+            [`OFAC-${e.refId}`, e.refId, e.name, normSanctionName(e.name), e.sdnType, e.program]);
+      });
       const now = new Date().toISOString();
-      db.prepare("INSERT OR REPLACE INTO sanctions_syncs (source, synced_at, entry_count) VALUES ('OFAC-SDN', ?, ?)").run(now, entries.length);
+      await query(
+        `INSERT INTO sanctions_syncs (source, synced_at, entry_count) VALUES ('OFAC-SDN', $1, $2)
+         ON CONFLICT (source) DO UPDATE SET synced_at=$1, entry_count=$2`,
+        [now, entries.length]);
       await loadSanctionsIndex();
       scheduleNextOfacSync();
       await rescreenActiveShipments();

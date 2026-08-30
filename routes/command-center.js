@@ -6,21 +6,27 @@
 // established (routes/customers.js): plain auth(), no reportsGate (Command Center itself has no
 // role gate at all — every authenticated role sees it on the Home page), scoped per-caller.
 module.exports = function commandCenterRoutes(app, ctx) {
-  const { db, ok, auth, applyShipmentAccessFilter, mapShipment } = ctx;
+  const { query, ok, auth, applyShipmentAccessFilter, mapShipment } = ctx;
 
   // Shared by all four routes below — every not-Cancelled shipment this caller can see (mirrors
   // CommandCenterView's own overdueShipments definition, which excludes Completed/Cancelled; the
   // scorecard/trend routes intentionally do NOT reuse this — past performance on Completed
   // shipments is exactly the signal a scorecard/trend needs, so they scope from the full set).
   async function scopedActiveShipments(req) {
-    const rows = db.prepare("SELECT * FROM shipments WHERE status NOT IN ('Completed','Cancelled')").all();
+    const rows = await query("SELECT * FROM shipments WHERE status NOT IN ('Completed','Cancelled')");
     return await applyShipmentAccessFilter(rows.map(mapShipment), req.user, req);
   }
   async function scopedAllShipments(req) {
-    const rows = db.prepare("SELECT * FROM shipments").all();
+    const rows = await query("SELECT * FROM shipments");
     return await applyShipmentAccessFilter(rows.map(mapShipment), req.user, req);
   }
-  const placeholdersFor = ids => ids.map(() => "?").join(",");
+  // Builds a "$N,$N+1,..." placeholder list for `ids`, continuing from after however many
+  // params already precede it (e.g. a leading `today` value) — callers pass the full params
+  // array (already containing those leading values) and get both the clause and updated array.
+  const idsClause = (ids, leadingParams = []) => ({
+    sql: ids.map((_, i) => `$${leadingParams.length + i + 1}`).join(","),
+    params: [...leadingParams, ...ids],
+  });
 
   // TKT-550J25 — fleet-wide milestone on-time KPI + per-milestone-key breakdown. Reuses
   // milestoneState()'s own "overdue" definition (ShipmentDetailPage.jsx's MilestonePanel):
@@ -34,12 +40,13 @@ module.exports = function commandCenterRoutes(app, ctx) {
       return ok(res, { totalActiveShipments: 0, shipmentsWithBreach: 0, onTimePct: 100, byMilestoneKey: [], items: [] });
     }
     const ids = [...idSet];
-    const rows = db.prepare(`
+    const { sql: ph, params } = idsClause(ids, [today]);
+    const rows = await query(`
       SELECT shipment_id, milestone_key, label, estimated_date
       FROM shipment_milestones
-      WHERE completed_at = '' AND estimated_date != '' AND estimated_date < ?
-        AND shipment_id IN (${placeholdersFor(ids)})
-    `).all(today, ...ids);
+      WHERE completed_at = '' AND estimated_date != '' AND estimated_date < $1
+        AND shipment_id IN (${ph})
+    `, params);
 
     const byKey = {};
     const breached = new Set();
@@ -75,22 +82,22 @@ module.exports = function commandCenterRoutes(app, ctx) {
     const idSet = new Set(shipments.map(s => s.id));
     if (idSet.size === 0) return ok(res, { scheduleSlip: [], unconfirmedBooking: [], stalledMilestone: [] });
     const ids = [...idSet];
-    const ph = placeholdersFor(ids);
+    const { sql: ph, params: idsParams } = idsClause(ids);
     const shipmentById = new Map(shipments.map(s => [s.id, s]));
 
     // scheduleSlip
-    const legs = db.prepare(`
+    const legs = await query(`
       SELECT shipment_id, id AS leg_id, pol, pod, etd, eta, etd_source, eta_source
       FROM shipment_legs
       WHERE (mot='SEA' OR leg_type='SEA') AND (etd_source='ais' OR eta_source='ais')
         AND shipment_id IN (${ph})
-    `).all(...ids);
+    `, idsParams);
     const msByShipment = {};
     if (legs.length) {
-      db.prepare(`
+      (await query(`
         SELECT shipment_id, milestone_key, estimated_date FROM shipment_milestones
         WHERE milestone_key IN ('vessel_departed','vessel_arrived') AND shipment_id IN (${ph})
-      `).all(...ids).forEach(m => { (msByShipment[m.shipment_id] ??= {})[m.milestone_key] = m.estimated_date; });
+      `, idsParams)).forEach(m => { (msByShipment[m.shipment_id] ??= {})[m.milestone_key] = m.estimated_date; });
     }
     const scheduleSlip = [];
     for (const l of legs) {
@@ -109,10 +116,10 @@ module.exports = function commandCenterRoutes(app, ctx) {
     scheduleSlip.sort((a, b) => b.daysSlipped - a.daysSlipped);
 
     // unconfirmedBooking
-    const bookings = db.prepare(`
+    const bookings = await query(`
       SELECT shipment_id, carrier_code, status, requested_at
       FROM carrier_bookings WHERE status IN ('Pending','Created') AND shipment_id IN (${ph})
-    `).all(...ids);
+    `, idsParams);
     const unconfirmedBooking = [];
     for (const b of bookings) {
       const s = shipmentById.get(b.shipment_id);
@@ -124,16 +131,17 @@ module.exports = function commandCenterRoutes(app, ctx) {
     unconfirmedBooking.sort((a, b) => b.daysPastEtd - a.daysPastEtd);
 
     // stalledMilestone
-    const stalledRows = db.prepare(`
+    const { sql: phWithToday, params: stalledParams } = idsClause(ids, [today]);
+    const stalledRows = await query(`
       SELECT shipment_id, milestone_key, label, estimated_date
       FROM shipment_milestones m
-      WHERE completed_at = '' AND estimated_date != '' AND estimated_date < ?
+      WHERE completed_at = '' AND estimated_date != '' AND estimated_date < $1
         AND sequence_order = (
           SELECT MIN(sequence_order) FROM shipment_milestones m2
           WHERE m2.shipment_id = m.shipment_id AND m2.completed_at = ''
         )
-        AND shipment_id IN (${ph})
-    `).all(today, ...ids);
+        AND shipment_id IN (${phWithToday})
+    `, stalledParams);
     const stalledMilestone = stalledRows.map(m => ({
       shipmentId: m.shipment_id, milestoneKey: m.milestone_key, label: m.label,
       estimatedDate: m.estimated_date,
@@ -158,19 +166,19 @@ module.exports = function commandCenterRoutes(app, ctx) {
     const shipmentById = new Map(shipments.map(s => [s.id, s]));
     const ids = shipments.map(s => s.id);
     if (!ids.length) return ok(res, []);
-    const ph = placeholdersFor(ids);
-    const legs = db.prepare(`
+    const { sql: ph, params: idsParams } = idsClause(ids);
+    const legs = await query(`
       SELECT shipment_id, carrier_code, etd, eta, etd_source, eta_source
       FROM shipment_legs
       WHERE (mot='SEA' OR leg_type='SEA') AND (etd_source='ais' OR eta_source='ais')
         AND shipment_id IN (${ph})
-    `).all(...ids);
+    `, idsParams);
     if (!legs.length) return ok(res, []);
     const msByShipment = {};
-    db.prepare(`
+    (await query(`
       SELECT shipment_id, milestone_key, estimated_date FROM shipment_milestones
       WHERE milestone_key IN ('vessel_departed','vessel_arrived') AND shipment_id IN (${ph})
-    `).all(...ids).forEach(m => { (msByShipment[m.shipment_id] ??= {})[m.milestone_key] = m.estimated_date; });
+    `, idsParams)).forEach(m => { (msByShipment[m.shipment_id] ??= {})[m.milestone_key] = m.estimated_date; });
 
     const dayDiff = (a, b) => Math.abs(Math.round((new Date(a) - new Date(b)) / 86400000));
     const stats = {};
@@ -187,7 +195,7 @@ module.exports = function commandCenterRoutes(app, ctx) {
       stats[code] ??= { carrierCode: code, onTime: 0, total: 0 };
       for (const onTime of samples) { stats[code].total++; if (onTime) stats[code].onTime++; }
     }
-    const carrierNames = Object.fromEntries(db.prepare("SELECT code, name FROM carriers").all().map(c => [c.code, c.name]));
+    const carrierNames = Object.fromEntries((await query("SELECT code, name FROM carriers")).map(c => [c.code, c.name]));
     const results = Object.values(stats).map(c => ({
       carrierCode: c.carrierCode, carrierName: carrierNames[c.carrierCode] || c.carrierCode,
       sampleSize: c.total, onTimeCount: c.onTime,
@@ -207,13 +215,13 @@ module.exports = function commandCenterRoutes(app, ctx) {
     const shipmentById = new Map(shipments.map(s => [s.id, s]));
     const ids = shipments.map(s => s.id);
     if (!ids.length) return ok(res, []);
-    const ph = placeholdersFor(ids);
+    const { sql: ph, params: idsParams } = idsClause(ids);
 
-    const legs = db.prepare(`
+    const legs = await query(`
       SELECT shipment_id, etd, eta FROM shipment_legs
       WHERE (mot='SEA' OR leg_type='SEA') AND etd_source='ais' AND eta_source='ais'
         AND shipment_id IN (${ph})
-    `).all(...ids);
+    `, idsParams);
     const actualByShipment = {};
     for (const l of legs) {
       if (!l.etd || !l.eta || l.eta < l.etd) continue;
@@ -226,10 +234,10 @@ module.exports = function commandCenterRoutes(app, ctx) {
     }
     if (!Object.keys(actualByShipment).length) return ok(res, []);
 
-    const schedules = db.prepare(`
+    const schedules = await query(`
       SELECT shipment_id, transit_days, saved_at FROM shipment_schedules
       WHERE shipment_id IN (${ph}) AND transit_days > 0
-    `).all(...ids);
+    `, idsParams);
     const plannedByShipment = {};
     for (const sc of schedules) {
       const cur = plannedByShipment[sc.shipment_id];
