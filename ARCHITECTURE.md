@@ -464,12 +464,14 @@ MASTER DATA
 carriers · vessels · port_locations ── linked_ports
 regions ── countries ── country_trade_lanes · trade_lanes ── allocations
 commodities · charge_code_definitions · pack_type_definitions
-carrier_agents ──── carrier_agent_locations       (header = carrier x agent customer; each
-                                                    location row is EITHER a specific UN/LOCODE
-                                                    OR a whole country — restructured from an
-                                                    earlier one-row-per-port shape so one Line
-                                                    Agent can cover several locations at once,
-                                                    see §8.1's Carrier Agents subsection)
+carrier_agents ──┬── carrier_agent_locations       (header = carrier x agent customer; each
+                  │                                 location row is EITHER a specific UN/LOCODE
+                  │                                 OR a whole country — restructured from an
+                  │                                 earlier one-row-per-port shape so one Line
+                  │                                 Agent can cover several locations at once)
+                  └── carrier_agent_schedule_rows   (working-hours rows, day-grouped)
+carrier_agents.capabilities                          (JSON array of service capability codes —
+                                                       see §8.1's Carrier Agents subsection)
 
 CUSTOMERS / ORGANIZATION
 ────────────────────────
@@ -541,7 +543,7 @@ Organization Model roadmap begun at v0.56.0:
 | **Document Distribution** (`services/document-distribution/`, v0.64.0) | 3002 | Outbound document delivery (email/webhook) has its own retry/failure profile, distinct from request/response HTTP | Owns its own `.db` — webhook configs, delivery attempts |
 | **PDF Render** (`services/pdf-render/`, v0.65.1) | 3003 | The heaviest, most bursty thing the monolith did per-request (a full headless-Chromium launch) — see §12 for the full reasoning | Stateless — no database at all |
 | **Contract Management** (`services/contract-management/`, v0.68.0) | 3004 | First real "toggle between local and remote" extraction — proves the pattern before Epic 5 (Customer/Organization) needs it | Owns its own `.db`, a straight port of `contracts`/`contract_legs`/`contract_rates`/`contract_routings` |
-| **MDM** (`services/mdm/`, v0.80.0) | 3005 | Second "toggle between local and remote" extraction, following the sequencing proposed in `documentation/splitting-mdm-first.html` — the lowest-blast-radius domain (no request-path involvement, no outbound FK from any of its tables into shipments/customers/users) | Owns its own `.db`: `carriers`/`vessels`/`port_locations`/`linked_ports`/`trade_lanes`/`country_trade_lanes`/`regions`/`countries`/`commodities`/`carrier_agents`/`carrier_agent_locations` |
+| **MDM** (`services/mdm/`, v0.80.0) | 3005 | Second "toggle between local and remote" extraction, following the sequencing proposed in `documentation/splitting-mdm-first.html` — the lowest-blast-radius domain (no request-path involvement, no outbound FK from any of its tables into shipments/customers/users) | Owns its own `.db`: `carriers`/`vessels`/`port_locations`/`linked_ports`/`trade_lanes`/`country_trade_lanes`/`regions`/`countries`/`commodities`/`carrier_agents`/`carrier_agent_locations`/`carrier_agent_schedule_rows` |
 | **Screening** (`services/screening/`, v0.81.0) | 3006 | Third "toggle between local and remote" extraction — externally-sourced denylist data, zero outbound FK, read via name-match not JOIN (`documentation/splitting-sanctions-next.html`) | Owns its own `.db`: `sanctions_entries`/`sanctions_syncs`, plus a small local `settings` table for its own auto-sync schedule (no admin UI for it yet — see below) |
 | **Kanban/Testing** (`services/kanban/`, v0.82.0) | 3007 | Fourth "toggle between local and remote" extraction — a feature the roadmap expects to eventually go away entirely (`documentation/splitting-kanban-out.html`), so keeping its schema fully separable now avoids leftovers later | Owns its own `.db`: `tickets`/`ticket_links`/`test_items`/`test_case_links`/`kb_projects`/`kb_versions`/`kb_columns` |
 | **Customer/Organization** (`services/customers/`, v0.84.0) | 3008 | Fifth and final "toggle between local and remote" extraction, and the last story of the 5-epic Organization Model roadmap begun at v0.56.0 — deliberately sequenced last, after the data model had fully settled | Owns its own `.db`: `customers`/`customer_identifiers`/`customer_contacts`/`customer_screenings`. `customer_documents` and `customer_roles` are deliberately excluded — see the Customer-specific notes below |
@@ -642,6 +644,40 @@ location insert failed, caught live during verification and fixed.
 of `mdm_source` — mostly read-only display JOINs where staleness post-cutover is cosmetic, not
 data loss, but flagged rather than silently chased in this pass. Don't flip `mdm_source=remote` in
 an environment exercising Reports/Export/Command Center/the AIS Simulator until this is closed.
+
+**Carrier Agents — Working Schedule and Capabilities added on top of the header+locations
+restructure above** (same session, direct follow-up feedback): a new child
+`carrier_agent_schedule_rows` table (`carrier_agent_id`, `days` JSON array, `start_time`,
+`end_time`, `sort_order`) records a header's working hours as however many day-grouped rows an
+operator configures (e.g. "Mon–Tue 09:00–18:00" / "Wed, Fri 09:00–13:00" / "Thu 09:00–19:00") —
+mirrored identically in both the monolith and the MDM Service, same as every other Carrier Agents
+table. A day can only belong to one row at a time; the frontend enforces this by clearing a
+clicked day from every other row in the same table the instant it's toggled on a new one, rather
+than validating after the fact. New `carrier_agents.capabilities` column (`TEXT DEFAULT '[]'`,
+same JSON-array-on-a-flat-column idiom `contract.imdg_classes` already established) holds a
+checklist of service capabilities (road/rail/barge haulage, warehousing, CY storage, customs
+clearance, documentation, port agency, fumigation, empty equipment) — not yet cross-checked
+against anything; it exists so a future pass can validate an assigned Line Agent actually
+supports the carrier's haulage arrangement on a given leg before a booking is sent, catching a
+carrier rejection or forced rebooking before it happens rather than after.
+**UI consolidation, per explicit design-pattern correction**: this MDM page's own Add/Edit modal
+was pushed through three shapes before landing — inline per-row page controls, then a split
+across several modals — before direct feedback settled on one rule this codebase's other MDM
+pages already followed and this one had briefly deviated from: a search/maintenance page's own
+Edit modal touches only the entity's direct fields, with row-by-row sub-resource configuration
+(locations, schedule, capabilities) living inside that single modal as tabs, never on the page
+itself or spread across separate dialogs. The final shape is one Add modal and one Edit modal,
+each with four tabs — Coverage (Locations sub-tab + the new Working Schedule sub-tab),
+Capabilities, Notes, and a read-only Address & Contact tab that live-reads the linked customer's
+`GET /internal/customers/:id`/contacts rather than duplicating that data onto `carrier_agents`.
+`carrier_agent_schedule_rows` was added straight into the flat migrations array (a plain
+`CREATE TABLE IF NOT EXISTS`, no guarded rebuild needed) and was never at risk from the RENAME
+gotcha above — that only bites a table whose FK exists *before* `rebuildCarrierAgentsLocations`
+runs its one-time rename, and that guard had already fired (and won't fire again) on any database
+that already carries the post-restructure header+locations shape. Worth remembering for any
+*future* child table added onto `carrier_agents` on a database that still predates the original
+restructure, though — the same drop-and-recreate-after-the-rename fix `carrier_agent_locations`
+needed would apply again.
 
 **Kanban/Testing-specific notes**: unlike the caches above, there is nothing to keep warm here —
 tickets/test items are read fresh per request in both modes, so flipping `kanban_source` takes
