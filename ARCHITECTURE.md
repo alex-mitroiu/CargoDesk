@@ -1,5 +1,5 @@
 # CargoDesk — Architecture Reference
-**Version:** 0.85.0 "Approach" · **Date:** 2026-08-28
+**Version:** 0.87.0 "Consortium" · **Date:** 2026-08-29
 **Audience:** Software architects, senior engineers, technical reviewers
 
 > This document was fully refreshed from a direct pass against the live codebase on 2026-08-13
@@ -17,7 +17,13 @@
 > Accounting)** from its previous "unchanged" placeholder to describe the real Confirmed/Pending/
 > Rejected consumption split, extends **§8.12** again with the new "Confirmed with Changes" EDI
 > outcome and the Sent-vs-Received comparison table, and extends **§8.9 (Authentication & RBAC)**
-> with the multi-tab-aware idle-timeout auto-logout mechanism. This pass is still **incremental,
+> with the multi-tab-aware idle-timeout auto-logout mechanism. The 2026-08-29 pass (v0.86.0
+> "Slate") added new **§8.21 (Admin "Reset Demo Data" Panel)**, the in-place-reset sibling of
+> §8.19's Zero-Script Onboarding. The same-day v0.87.0 "Consortium" pass extended **§8.15 (NVOCC
+> Support)** with the co-loading/cross-tariff-reference story (TKT-UR1X17) and the two earlier
+> logged-backlog stories (TKT-9O2B3T, TKT-IB5IEX) — closing Epic TKT-Q52B38 in full; also a
+> housekeeping pass across the Kanban board's stale statuses (no new sections). This pass is
+> still **incremental,
 > not a full re-audit** — every other section between v0.79.0 and this one (the four remaining
 > microservice extractions, eAdapter's office-scoping, several credit-control/billing passes) is
 > **not** re-verified here; those are already covered by `CLAUDE.md`'s own per-release "Recent
@@ -35,7 +41,7 @@
 ---
 
 ## Table of Contents
-_(§8.20, and the §8.6/§8.9/§8.12 extensions, added 2026-08-28 (v0.85.0); §8.19 and the version-banner fix added 2026-08-25; §8.12 deepened 2026-08-25; §8.17–8.18 and the §5 routes/ table added 2026-08-24; §8.16 added 2026-08-22; §8.14–8.15 added 2026-08-19; everything else reflects the 2026-08-13 pass)_
+_(§8.15 extended 2026-08-29 (v0.87.0); §8.21 added 2026-08-29 (v0.86.0); §8.20, and the §8.6/§8.9/§8.12 extensions, added 2026-08-28 (v0.85.0); §8.19 and the version-banner fix added 2026-08-25; §8.12 deepened 2026-08-25; §8.17–8.18 and the §5 routes/ table added 2026-08-24; §8.16 added 2026-08-22; §8.14–8.15 added 2026-08-19; everything else reflects the 2026-08-13 pass)_
 1. [System Overview](#1-system-overview)
 2. [Tech Stack](#2-tech-stack)
 3. [Process & Deployment Topology](#3-process--deployment-topology)
@@ -455,9 +461,15 @@ sanctions_entries ──── sanctions_syncs        (OFAC SDN + 11 more Consol
 
 MASTER DATA
 ───────────
-carriers · carrier_agents · vessels · port_locations ── linked_ports
+carriers · vessels · port_locations ── linked_ports
 regions ── countries ── country_trade_lanes · trade_lanes ── allocations
 commodities · charge_code_definitions · pack_type_definitions
+carrier_agents ──── carrier_agent_locations       (header = carrier x agent customer; each
+                                                    location row is EITHER a specific UN/LOCODE
+                                                    OR a whole country — restructured from an
+                                                    earlier one-row-per-port shape so one Line
+                                                    Agent can cover several locations at once,
+                                                    see §8.1's Carrier Agents subsection)
 
 CUSTOMERS / ORGANIZATION
 ────────────────────────
@@ -529,7 +541,7 @@ Organization Model roadmap begun at v0.56.0:
 | **Document Distribution** (`services/document-distribution/`, v0.64.0) | 3002 | Outbound document delivery (email/webhook) has its own retry/failure profile, distinct from request/response HTTP | Owns its own `.db` — webhook configs, delivery attempts |
 | **PDF Render** (`services/pdf-render/`, v0.65.1) | 3003 | The heaviest, most bursty thing the monolith did per-request (a full headless-Chromium launch) — see §12 for the full reasoning | Stateless — no database at all |
 | **Contract Management** (`services/contract-management/`, v0.68.0) | 3004 | First real "toggle between local and remote" extraction — proves the pattern before Epic 5 (Customer/Organization) needs it | Owns its own `.db`, a straight port of `contracts`/`contract_legs`/`contract_rates`/`contract_routings` |
-| **MDM** (`services/mdm/`, v0.80.0) | 3005 | Second "toggle between local and remote" extraction, following the sequencing proposed in `documentation/splitting-mdm-first.html` — the lowest-blast-radius domain (no request-path involvement, no outbound FK from any of its tables into shipments/customers/users) | Owns its own `.db`: `carriers`/`vessels`/`port_locations`/`linked_ports`/`trade_lanes`/`country_trade_lanes`/`regions`/`countries`/`commodities`/`carrier_agents` |
+| **MDM** (`services/mdm/`, v0.80.0) | 3005 | Second "toggle between local and remote" extraction, following the sequencing proposed in `documentation/splitting-mdm-first.html` — the lowest-blast-radius domain (no request-path involvement, no outbound FK from any of its tables into shipments/customers/users) | Owns its own `.db`: `carriers`/`vessels`/`port_locations`/`linked_ports`/`trade_lanes`/`country_trade_lanes`/`regions`/`countries`/`commodities`/`carrier_agents`/`carrier_agent_locations` |
 | **Screening** (`services/screening/`, v0.81.0) | 3006 | Third "toggle between local and remote" extraction — externally-sourced denylist data, zero outbound FK, read via name-match not JOIN (`documentation/splitting-sanctions-next.html`) | Owns its own `.db`: `sanctions_entries`/`sanctions_syncs`, plus a small local `settings` table for its own auto-sync schedule (no admin UI for it yet — see below) |
 | **Kanban/Testing** (`services/kanban/`, v0.82.0) | 3007 | Fourth "toggle between local and remote" extraction — a feature the roadmap expects to eventually go away entirely (`documentation/splitting-kanban-out.html`), so keeping its schema fully separable now avoids leftovers later | Owns its own `.db`: `tickets`/`ticket_links`/`test_items`/`test_case_links`/`kb_projects`/`kb_versions`/`kb_columns` |
 | **Customer/Organization** (`services/customers/`, v0.84.0) | 3008 | Fifth and final "toggle between local and remote" extraction, and the last story of the 5-epic Organization Model roadmap begun at v0.56.0 — deliberately sequenced last, after the data model had fully settled | Owns its own `.db`: `customers`/`customer_identifiers`/`customer_contacts`/`customer_screenings`. `customer_documents` and `customer_roles` are deliberately excluded — see the Customer-specific notes below |
@@ -590,6 +602,39 @@ while a background bulk fetch repopulates the cache, rather than ever blocking t
 `GET /internal/carrier-agents/resolve` (which does its own linked-port fallback server-side, since
 it owns both `carrier_agents` and `linked_ports`) and then does one local
 `SELECT company_name FROM customers` to attach the name — the service owns no `customers` table.
+
+**Carrier Agents restructured (header + locations, not one-row-per-port)**: `carrier_agents` was
+originally `UNIQUE(carrier_code, port_unlocode)` — exactly one port per row, so covering several
+locations with the same agent meant several independent rows with no shared identity. It's now a
+pure header (`carrier_code` x `agent_customer_id`, `UNIQUE(carrier_code, agent_customer_id)`) with
+a new child `carrier_agent_locations` table — each row is EITHER a specific UN/LOCODE OR a whole
+country (`location_type` CHECK constraint), so one Line Agent config can cover several ports and/or
+entire countries at once ("a Line Agent in Spain can also handle the shipment in Andorra" is one
+header with an ES row and an AD row). A guarded, one-time create-copy-swap migration
+(`rebuildCarrierAgentsLocations`, mirrored identically in both the monolith and the MDM Service,
+since both own an independent copy of this schema) groups every pre-existing row by
+`(carrier_code, agent_customer_id)` into one header with one location each — lossless for
+carrier/agent/location, with only a differing note across grouped rows unable to all survive (the
+header keeps the first). **A real gotcha hit during this migration**: SQLite's `ALTER TABLE ...
+RENAME TO` silently rewrites any OTHER table's foreign-key reference that points at the renamed
+table — since `carrier_agent_locations` is created (with an FK to `carrier_agents(id)`) by the flat
+migrations array *before* this guarded rebuild runs, renaming `carrier_agents` to a scratch name
+mid-rebuild left `carrier_agent_locations`'s FK dangling at the about-to-be-dropped scratch table.
+Fixed by dropping and recreating `carrier_agent_locations` fresh inside the same guarded rebuild,
+after the real `carrier_agents` table exists again.
+`resolveCarrierAgent`/the MDM Service's `/internal/carrier-agents/resolve` both now try a direct
+UN/LOCODE match first, then fall back to the port's own country before finally trying linked
+ports — so a shipment can resolve its Line Agent through a country-level config even when no
+UN/LOCODE was ever configured directly for that port. Redundancy is enforced both ways: adding a
+UN/LOCODE already covered by an existing country-level row on the same header is rejected outright
+(nothing to discard, since it was never saved); adding a country that makes existing UN/LOCODE
+rows on the same header redundant auto-discards them and logs each discard to `entity_events`
+(`entity_type='carrier_agent_location'`, `event_type='DISCARDED_REDUNDANT'`) — never a silent
+removal. A separate check rejects any location (UN/LOCODE or country) already claimed by a
+*different* header for the same carrier, so at most one Line Agent ever owns a given location per
+carrier. The header-create route wraps the header insert and its first location insert in one
+transaction — an earlier version left an orphaned, location-less header behind whenever the
+location insert failed, caught live during verification and fixed.
 **Named, accepted gap**: 11 secondary read sites beyond these (`routes/reports.js`,
 `allocations.js`'s own linked-port matching, `shipment-ops.js`, `command-center.js`,
 `customers.js`, `export.js`, `organization.js`, `system.js`, `ais.js` (Simulator), plus
@@ -715,6 +760,23 @@ three services that happened to be unavailable this session (PDF Render, Documen
 Contract Management — all work correctly in this environment) let the chain run to completion for
 the first time, confirming this is a real, disclosed gap in the test-runner script itself — logged
 here for a future pass, not fixed as a side effect of this cut.
+
+**System Health now actually reflects a microservice architecture.** `HealthModal.jsx`'s checks
+predated most of the extractions above and only ever probed the monolith itself plus two external
+APIs (FX, Weather) — none of the 7 standalone services (Document Distribution, PDF Render,
+Contract Management, MDM, Screening, Kanban/Testing, Customer) appeared anywhere in it, despite
+each being a real, independently-deployable process this app depends on. `GET /api/health`
+(`routes/system.js`) now server-side-probes every service's own unauthenticated `GET /health` in
+parallel (2.5s timeout each, `Promise.all`) and folds the results into a new `services` field on
+its response, plus a new `ais` field sourced from `getAisListenerStatus()` (a free, in-memory read
+— `lib/ais-listener.js`'s persistent outbound WebSocket has no request/response health endpoint of
+its own to probe). Both are server-aggregated rather than fetched directly by the browser because
+this app runs no CORS middleware — a page origin on :5173 can't reach a service on :3002-:3008
+directly. `HealthModal.jsx` reads both new fields off the same `/api/health` call its own "API
+Server" row already made, rendering a new "Microservices" category (one row per service) and an
+AIS row under "External" — no second round trip. Also widened the Internal category to cover a
+few more real feature APIs that had no row at all (Quotes, Opportunities, Integration Board,
+Sanctions Screening).
 
 ### 8.2 Quoting / RFQ (added v0.69.0)
 
@@ -1089,21 +1151,22 @@ already computed per line (mapCostLine's vatAmountUsd) and shown in a stat card,
 drawn in the diagram itself.
 ```
 
-### 8.15 NVOCC Support (added v0.71.0, Epic TKT-Q52B38)
+### 8.15 NVOCC Support (added v0.71.0, extended v0.87.0, Epic TKT-Q52B38 — now fully closed)
 
 ```
 An NVOCC (Non-Vessel Operating Common Carrier) is legally both a carrier (to its own customer,
 on a House B/L) and a shipper (to the real vessel operator, on a Master B/L) for one physical
 movement — audited against a detailed mechanics brief rather than assumed. Published as a
-7-finding artifact; 4 closed this pass, 3 logged as scoped backlog (a full structural
-dual-carrier/principal field split beyond the additive fields below, a two-stage destination
-release workflow, NVOCC co-loading/cross-tariff reference). Deliberately NOT the same gap as
-LCL/consolidation, which stays deferred under the standing FCL-first roadmap — the House/Master
-split is real even for a single-shipper FCL container with zero consolidation involved.
+7-finding artifact against the original v0.71.0 pass; 4 closed immediately, 3 logged as scoped
+backlog (a full structural dual-carrier/principal field split, a two-stage destination release
+workflow, NVOCC co-loading/cross-tariff reference). All 3 have since closed — the last,
+co-loading, at v0.87.0. Deliberately NOT the same gap as LCL/consolidation, which stays deferred
+under the standing FCL-first roadmap — the House/Master split is real even for a single-shipper
+FCL container with zero consolidation involved.
 
-Closed this pass, all additive (no existing behavior changes when no NVOCC is involved):
-  - "NVOCC" party role — 12th entry in ADDITIONAL_PARTY_ROLES (§6), resolves via the existing
-    shipment_parties mechanism, zero new party infrastructure.
+Closed at v0.71.0, all additive (no existing behavior changes when no NVOCC is involved):
+  - "NVOCC" party role — resolves via the existing shipment_parties mechanism, zero new party
+    infrastructure.
   - customers.is_nvocc / fmc_number — licensing fields, gated the same way
     classified_location/latitude/longitude already are (only persist while the flag is set).
   - Booking-request payload (routes/edi.js, §8.12's carrier_bookings flow) prefers an assigned
@@ -1116,10 +1179,41 @@ Closed this pass, all additive (no existing behavior changes when no NVOCC is in
     on the HBL). Each document cross-references the other's B/L number. Gated in
     getMissingDocRequirements same as every other doc type in the shared Generate Document modal.
 
-shipments.master_bl_number/bl_release_type already existed before this pass (an earlier
-migration's own comment already referenced NVOCC) but were only a caption field on BL01 — the
-gap this epic closed was that nothing else in the system (party model, licensing, the booking
-payload, a second document) knew an NVOCC could exist.
+Closed later, resolved via the same party-role mechanism rather than a new field pair (TKT-9O2B3T
+had explicitly left that choice open — "needs a scoping pass on whether this is a new field pair
+or a party-role-based resolution"):
+  - Structural dual carrier/shipper split (TKT-9O2B3T) — shipments.carrier_code always means "the
+    real vessel-operating carrier," unchanged everywhere internal (booking, schedule, EDI, Master
+    B/L). The assigned NVOCC party already carries the customer-facing carrier-of-record identity
+    end to end (House B/L caption, Master B/L Shipper); the one gap was the public tracking page
+    (GET /api/share/:token) not surfacing it — fixed by adding nvoccName to that response.
+  - Destination deconsolidation / two-stage release (TKT-IB5IEX) — shipments.master_bl_release_type
+    is a genuinely separate column from bl_release_type: the vessel operator's release to the
+    NVOCC's own destination agent (Master B/L side) vs. the NVOCC's later release to the actual
+    consignee (House B/L / Delivery Order side). Both independently editable
+    (ShipmentFormPage.jsx), both displayed (ShipmentConditionsPage.jsx), both rendered with
+    correct semantics on the Master B/L. Narrower than "model the NVOCC's own destination agent
+    as a real party" (still not done) — this closes the release-event tracking gap specifically.
+
+Closed at v0.87.0 — NVOCC co-loading / cross-tariff reference (TKT-UR1X17, lower priority, "cover
+ALL gaps" completeness item): one NVOCC occasionally has no direct contract with the vessel
+operator for a lane and tenders cargo through ANOTHER NVOCC's own tariff instead. New
+"Co-Loading NVOCC" party role (13th entry in ADDITIONAL_PARTY_ROLES) plus a free-text
+shipments.coload_tariff_reference column (mirrors contract_ref's own nature — there's no real
+registry of another NVOCC's tariff in this system). buildMasterBillOfLadingHtml resolves the
+Co-Loading NVOCC (when assigned) as the real Shipper instead of the primary NVOCC — it's the one
+that actually holds the direct Master B/L relationship with the vessel operator — with two
+additive detail rows ("Co-Loaded Via," the underlying NVOCC's name, and the tariff reference
+itself) shown only when a co-loading party exists; byte-identical to the direct case otherwise.
+Verified live via CDP end-to-end: assigned both an NVOCC and a Co-Loading NVOCC party on a real
+scratch shipment, generated the actual Master B/L through the real UI, and confirmed the
+intercepted client-built HTML (before it reaches the server's signing step) correctly named the
+Co-Loading NVOCC as Shipper and carried both new detail rows with the right data.
+
+shipments.master_bl_number/bl_release_type already existed before v0.71.0 (an earlier migration's
+own comment already referenced NVOCC) but were only a caption field on BL01 — the gap this epic
+closed, across all its passes, was that nothing else in the system (party model, licensing, the
+booking payload, a second document, the two-stage release, co-loading) knew an NVOCC could exist.
 ```
 
 ### 8.16 Credit Control (added v0.57.0, deepened v0.73.0–v0.74.0, Epic TKT-6XFJQM)
@@ -1465,6 +1559,107 @@ a single ~4,300-line file, hardcoded ticket-workflow columns, native HTML5 drag-
 reusable pieces). A genuine drag-and-drop pipeline board remains real, valuable, explicitly-named
 future work — not silently deferred by this choice.
 
+### 8.21 Admin "Reset Demo Data" Panel (added v0.86.0)
+
+```
+Direct request: a way for an admin to wipe all demo/business data back to a clean slate while
+keeping MDM reference data (and a few adjacent things, below) intact — so the .db file could
+eventually be committed and a fresh clone (or a repeat demo run) starts from a known-good
+baseline instead of needing `npm run seed` or manual cleanup. Explicitly not wanting the acting
+admin's own real user account exposed in that baseline.
+
+The in-place-reset sibling of §8.19's Zero-Script Onboarding — that mechanism only fires on first
+boot when no cargodesk.db exists yet; this adds an admin-triggered, in-place reset of an
+already-running database, no restart needed. Scoped to local-mode data only — the five extracted
+microservices each keep their own DB file when *_source='remote'; this reset can only reach the
+monolith's own local tables, by design.
+```
+
+**`PRESERVE_TABLES` is the single source of truth** (`routes/admin-reset.js`) — reset is computed
+dynamically as `(live schema via sqlite_master) − PRESERVE_TABLES`, never a hand-maintained mirror
+of what gets deleted:
+
+| Group | Tables |
+|---|---|
+| MDM core | `carriers`, `vessels`, `port_locations`, `linked_ports`, `regions`, `countries`, `country_trade_lanes`, `trade_lanes`, `commodities` |
+| Admin-maintained registries | `charge_code_definitions`, `pack_type_definitions`, `container_type_definitions`, `duty_rate_chapters`, `milestone_templates`, `invoice_status_reason_codes` |
+| Compliance reference data | `sanctions_entries`, `sanctions_syncs` |
+| App-level infra config | `app_settings`, `system_email_settings` |
+
+19 tables total, preserved because they're reference/registry data or infra config, not tied to
+any specific demo scenario or person. Every other table — 66 as of this release, `users` and
+`org_signing_certs` included — is wiped. Deriving the reset list from the live schema rather than
+enumerating it is deliberate: a **new** table added in a future release defaults to being wiped
+unless someone explicitly adds it to `PRESERVE_TABLES` — the safer failure direction for a
+"clean slate" feature (leftover demo data after a reset is a much smaller problem than silently
+nuking a future reference table nobody remembered to exempt).
+
+**`users`/`org_signing_certs` are wiped then immediately re-seeded, not preserved as-is** — the
+direct resolution to "I do not want to expose my user account": keeping the acting admin's real
+account in a shareable baseline would defeat the whole point of the feature, and leaving `users`
+empty afterward would lock everyone out of the freshly-reset instance. `server.js` already had
+exactly the right idempotent bootstrap for this, just as three previously-anonymous boot-time
+IIFEs — `seedAdmin()` (generic `admin@cargodesk.com`/`admin123`, or `ADMIN_EMAIL`/`ADMIN_PASSWORD`
+if set), `seedTestFixtureAdmin()` (`claudeagent@localhost`), `seedSigningCert()`. These were
+refactored into named, reusable function declarations (identical bodies, still called once at
+boot exactly as before) and exposed via `ctx` so the new reset route can call all three again
+immediately after the delete sweep — the database ends up in exactly the state a genuinely fresh
+boot would produce, not a bespoke new one.
+
+```js
+// routes/admin-reset.js
+app.post("/api/admin/reset-demo-data", auth(), requireRole(["admin"]), (req, res) => {
+  if (req.body?.confirm !== "RESET") return err(res, 'Type RESET to confirm this irreversible action');
+  const allTables = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+  ).all().map(r => r.name);
+  const toReset = allTables.filter(t => !PRESERVE_TABLES.has(t));
+
+  db.exec("PRAGMA foreign_keys=OFF");   // same bracketing idiom this codebase's own
+  db.exec("BEGIN");                     // table-rebuild migrations already use
+  try {
+    for (const t of toReset) db.exec(`DELETE FROM ${t}`);
+    db.exec("COMMIT");
+  } catch (e) { db.exec("ROLLBACK"); db.exec("PRAGMA foreign_keys=ON"); return err(res, e.message, 500); }
+  db.exec("PRAGMA foreign_keys=ON");
+
+  seedAdmin(); seedTestFixtureAdmin(); seedSigningCert();  // re-bootstrap, same as a fresh boot
+  logAdminEvent(req.user, "RESET_DEMO_DATA", "system", "", { tablesCleared: toReset.length });
+  ok(res, { reset: true, tablesCleared: toReset.length });
+});
+```
+
+Table names in the `DELETE FROM` loop come exclusively from `sqlite_master` filtered against a
+fixed internal `Set` — never from request input — so there's no injection surface despite the
+string interpolation. `GET /api/admin/reset-demo-data/preview` (same file) returns the live
+preserve/reset arrays unauthenticated-to-content (still `admin`-gated) so the frontend never has
+to hardcode the table list either.
+
+**Frontend** — new admin-only **"Danger Zone"** tab (`AppSettingsPage.jsx`, `DangerZonePanel`): a
+red-tinted warning card naming exactly what's preserved vs. reset in plain language (explicitly
+including "your own account"), two live scrollable chip lists sourced from the preview endpoint,
+a text input that must exactly match `RESET` before the button enables, and — on success — a
+forced modal showing the fresh generic login credentials before calling the exact same
+`localStorage.removeItem(TOKEN_KEY); window.dispatchEvent(new Event("cargodesk:logout"))`
+sequence `src/api.js` already uses on any 401, so the now-invalid session is torn down through
+the one existing mechanism rather than a second bespoke logout path.
+
+**Deliberately not exercised end-to-end in the automated suite** — the same class of decision
+this codebase already made for `POST /api/sanctions/sync|sync-csl|import-csv` (v0.72.2's own
+changelog: "destructively replaces the live synced dataset other tests depend on"). Running the
+real wipe path inside `npm test`'s shared-process suite would destroy this dev database's own
+accumulated history on every CI run. `tests/admin-reset.test.js` (13 assertions) covers only the
+fully safe guardrails — preview shape/content, the confirmation-string gate (missing/wrong/
+lowercase all rejected), and the admin-only role gate on both endpoints. The real destructive
+path was instead verified directly, once, against the actual dev database, backed up first: the
+server was stopped, `cargodesk.db`/`-shm`/`-wal` copied aside, restarted, baseline counts recorded
+(71 carriers / 16 users / 160 shipments), a scratch shipment created, the real
+`POST /api/admin/reset-demo-data` call made with `confirm: "RESET"`, and the response and
+resulting state confirmed exactly as designed — 68 tables cleared, carriers still 71, `users`
+collapsed to just the two generic seeded accounts, shipments at 0, `app_settings` (including the
+idle-timeout config from v0.85.0) fully intact — before the original database was restored from
+the backup and every original count (71/16/160) confirmed back exactly.
+
 ---
 
 ## 9. Data Flow Diagrams
@@ -1655,7 +1850,7 @@ trigger, same idempotent shape (check current state, no-op if already there, act
 | Database tables (monolith) | 77 |
 | Database indexes (monolith) | 25 |
 | Transaction-wrapped write blocks | 16 (6 in `server.js`, 10 across `routes/*.js`) |
-| Standalone microservices | 6 (Document Distribution :3002, PDF Render :3003, Contract Management :3004, MDM :3005, Screening :3006, Kanban/Testing :3007) |
+| Standalone microservices | 7 (Document Distribution :3002, PDF Render :3003, Contract Management :3004, MDM :3005, Screening :3006, Kanban/Testing :3007, Customer :3008) — stale count as of v0.69.0, corrected here; the rest of this table's figures still predate several later releases and were not remeasured in this pass |
 | Seed data | 14,269 port locations · 21,201 vessels · 69 carriers (per `GET /api/health`'s live counts) |
 
 Every figure above was read directly from the code or a live `GET /api/health` call on

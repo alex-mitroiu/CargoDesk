@@ -13,6 +13,7 @@ import UserManagementPanel from "../components/UserManagementPanel";
 import { AiOrb, ORB_STYLES } from "../components/shared/AiOrb";
 import { IconSettings } from "../components/primitives/Icon";
 import EadapterConfigModal from "../components/shared/EadapterConfigModal";
+import { Modal } from "../components/primitives/Modal";
 
 // ─── External API definitions ─────────────────────────────────────────────────
 
@@ -731,6 +732,7 @@ const ACTION_LABELS = {
   SYSMSG_CREATED:   { label: "System message posted",color: "info"    },
   SYSMSG_DELETED:   { label: "System message deleted",color:"danger"  },
   SETTINGS_UPDATED: { label: "Settings changed",     color: "info"    },
+  RESET_DEMO_DATA:  { label: "Demo data reset",      color: "danger"  },
 };
 
 function AdminActivityLog() {
@@ -841,6 +843,145 @@ function AdminActivityLog() {
         <PageSizeSelect value={limit} onChange={changeLimit} />
         <div style={{ flex: 1 }}><Pagination total={total} limit={limit} offset={offset} onPage={goPage} /></div>
       </div>
+    </div>
+  );
+}
+
+// ─── Danger Zone — Reset Demo Data ─────────────────────────────────────────────
+// The natural sibling of Zero-Script Onboarding (db/cargodesk.sample.db, v0.79.0): that one
+// seeds a clean database on first boot when none exists yet; this resets an already-running one
+// in place, on demand — for testing from the beginning, or eventually committing a known-good
+// .db baseline, without exposing whoever's real account happened to trigger it. Scoped to
+// local-mode data only (the extracted microservices each keep their own DB file in remote mode).
+
+function DangerZonePanel() {
+  const [preview,     setPreview]     = useState(null); // { preserve: [], reset: [] }
+  const [loading,     setLoading]     = useState(true);
+  const [confirmText, setConfirmText] = useState("");
+  const [resetting,   setResetting]   = useState(false);
+  const [result,      setResult]      = useState(null); // { tablesCleared } once done
+
+  useEffect(() => {
+    api.admin.resetDemoDataPreview()
+      .then(setPreview)
+      .catch(() => toast.error("Failed to load the table preview"))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const canReset = confirmText.trim() === "RESET" && !resetting;
+
+  const doReset = async () => {
+    setResetting(true);
+    try {
+      const r = await api.admin.resetDemoData("RESET");
+      setResult(r);
+    } catch (e) {
+      toast.error(e.message || "Reset failed");
+    } finally {
+      setResetting(false);
+    }
+  };
+
+  // Same clear-token-then-broadcast sequence api.js's own 401 handler already uses — the
+  // acting admin's account no longer exists post-reset, so their current session is genuinely
+  // dead, not just stale.
+  const finishAndLogout = () => {
+    localStorage.removeItem(TOKEN_KEY);
+    window.dispatchEvent(new Event("cargodesk:logout"));
+  };
+
+  const listBox = {
+    flex: 1, minWidth: 220, background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8,
+    padding: "10px 12px", maxHeight: 180, overflowY: "auto",
+  };
+  const chip = (color) => ({
+    display: "inline-block", fontFamily: T.mono, fontSize: 10.5, color,
+    background: color + "14", border: `1px solid ${color}44`, borderRadius: 4,
+    padding: "1px 6px", margin: "0 4px 4px 0",
+  });
+
+  return (
+    <div>
+      <h3 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, marginBottom: 16 }}>
+        Danger Zone
+      </h3>
+
+      <div style={{ background: T.danger + "0d", border: `1px solid ${T.danger}44`, borderRadius: 10,
+        padding: "18px 20px" }}>
+        <div style={{ fontFamily: T.body, fontSize: 13, fontWeight: 700, color: T.danger, marginBottom: 8 }}>
+          ⚠ Reset Demo Data
+        </div>
+        <p style={{ fontFamily: T.body, fontSize: 12.5, color: T.text, lineHeight: 1.6, margin: "0 0 14px" }}>
+          Permanently deletes every shipment, quote, opportunity, contract, customer, ticket, and
+          user in this database — <strong>including your own account</strong>. MDM reference data
+          (ports, carriers, vessels, commodities, regions, trade lanes, …), sanctions data, and app
+          configuration are preserved. Scoped to this monolith's own local tables only — a
+          microservice currently running in remote mode keeps its own separate data untouched.
+          <strong> This cannot be undone.</strong>
+        </p>
+
+        {loading ? (
+          <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, marginBottom: 14 }}>Loading table preview…</div>
+        ) : preview && (
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
+            <div style={listBox}>
+              <div style={{ fontFamily: T.body, fontSize: 10.5, fontWeight: 700, color: T.success,
+                textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>
+                Preserved ({preview.preserve.length})
+              </div>
+              {preview.preserve.map(t => <span key={t} style={chip(T.success)}>{t}</span>)}
+            </div>
+            <div style={listBox}>
+              <div style={{ fontFamily: T.body, fontSize: 10.5, fontWeight: 700, color: T.danger,
+                textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>
+                Reset ({preview.reset.length})
+              </div>
+              {preview.reset.map(t => <span key={t} style={chip(T.danger)}>{t}</span>)}
+            </div>
+          </div>
+        )}
+
+        <label style={{ display: "block", fontFamily: T.body, fontSize: 11, fontWeight: 600,
+          color: T.textMuted, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>
+          Type RESET to confirm
+        </label>
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          <input value={confirmText} onChange={e => setConfirmText(e.target.value)}
+            placeholder="RESET" style={{ ...inp(), width: 160 }} />
+          <button onClick={doReset} disabled={!canReset}
+            style={{ fontFamily: T.body, fontSize: 12, fontWeight: 600, padding: "7px 16px",
+              borderRadius: 6, border: "none", color: "#fff",
+              background: canReset ? T.danger : T.border,
+              cursor: canReset ? "pointer" : "default" }}>
+            {resetting ? "Resetting…" : "Reset Demo Data"}
+          </button>
+        </div>
+      </div>
+
+      {result && (
+        <Modal title="Demo Data Reset" onClose={finishAndLogout} hideClose width={420}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <p style={{ fontFamily: T.body, fontSize: 13, color: T.text, margin: 0 }}>
+              ✓ {result.tablesCleared} table{result.tablesCleared === 1 ? "" : "s"} cleared. MDM,
+              sanctions, and app settings were preserved.
+            </p>
+            <p style={{ fontFamily: T.body, fontSize: 13, color: T.text, margin: 0 }}>
+              Your account no longer exists — you've been signed out. Sign back in with the generic
+              default:
+            </p>
+            <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8,
+              padding: "10px 14px", fontFamily: T.mono, fontSize: 12.5, color: T.text }}>
+              <div>Email: admin@cargodesk.com</div>
+              <div>Password: admin123</div>
+            </div>
+            <button onClick={finishAndLogout}
+              style={{ fontFamily: T.body, fontSize: 13, fontWeight: 600, padding: "9px 16px",
+                borderRadius: 7, border: "none", color: "#fff", background: T.accent, cursor: "pointer" }}>
+              Continue to Login
+            </button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
@@ -1418,7 +1559,7 @@ function OfficesPanel() {
 
 export default function AppSettingsPage() {
   const { isAdmin } = useAuth();
-  const tabs = isAdmin ? [...TABS_BASE, "Milestones", "Users", "Offices", "Activity Log"] : TABS_BASE;
+  const tabs = isAdmin ? [...TABS_BASE, "Milestones", "Users", "Offices", "Activity Log", "Danger Zone"] : TABS_BASE;
   const [activeTab,      setActiveTab]      = useState("API Controls");
   const [activeApiSub,   setActiveApiSub]   = useState("External APIs");
   const [settings,       setSettings]       = useState(null);
@@ -2422,6 +2563,10 @@ export default function AppSettingsPage() {
 
       {activeTab === "Activity Log" && isAdmin && (
         <AdminActivityLog />
+      )}
+
+      {activeTab === "Danger Zone" && isAdmin && (
+        <DangerZonePanel />
       )}
     </div>
   );

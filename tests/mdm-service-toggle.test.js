@@ -126,7 +126,7 @@ async function setSource(token, value) {
     console.log("\nCarrier agent resolve — direct + linked-port fallback, name attached locally");
     const link = await request("POST", "/api/linked-ports", { primaryUnlocode: port1, linkedUnlocode: port2 }, token);
     assert("linked-ports create 201 in remote mode", link.status === 201, JSON.stringify(link.body));
-    const agentCreate = await request("POST", "/api/carrier-agents", { carrierCode: remoteCarrier, portUnlocode: port1, agentCustomerId: "CUST-TOGGLE-FAKE" }, token);
+    const agentCreate = await request("POST", "/api/carrier-agents", { carrierCode: remoteCarrier, agentCustomerId: "CUST-TOGGLE-FAKE", locationType: "unlocode", unlocode: port1 }, token);
     assert("carrier agent create 201 in remote mode", agentCreate.status === 201, JSON.stringify(agentCreate.body));
     const agentsList = await request("GET", "/api/carrier-agents", null, token);
     const found = (agentsList.body.results || agentsList.body).find(a => a.carrierCode === remoteCarrier);
@@ -137,7 +137,7 @@ async function setSource(token, value) {
     assert("customer_source also flips to remote", flipCustRemote.status === 200 && flipCustRemote.body.customerSource === "remote", JSON.stringify(flipCustRemote.body));
     const remoteCust = await request("POST", "/api/customers", { companyName: `Toggle MDM+Customer Agent Co ${stamp}` }, token);
     assert("real remote customer created", remoteCust.status === 201, JSON.stringify(remoteCust.body));
-    const agentCreate2 = await request("POST", "/api/carrier-agents", { carrierCode: remoteCarrier, portUnlocode: port2, agentCustomerId: remoteCust.body.id }, token);
+    const agentCreate2 = await request("POST", "/api/carrier-agents", { carrierCode: remoteCarrier, agentCustomerId: remoteCust.body.id, locationType: "unlocode", unlocode: port2 }, token);
     assert("carrier agent create 201 with a real remote customer id", agentCreate2.status === 201, JSON.stringify(agentCreate2.body));
     assert("attachAgentNames resolves the name through the remote Customer Service (create response)",
       agentCreate2.body.agentCustomerName === remoteCust.body.companyName, JSON.stringify(agentCreate2.body));

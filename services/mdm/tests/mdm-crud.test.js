@@ -118,11 +118,11 @@ function assert(label, condition, detail = "") {
     assert("commodity create returns 201", commCreate.status === 201, JSON.stringify(commCreate.body));
 
     console.log("\nCarrier agents (agent_customer_id is a loose id here — no customers table owned)");
-    const agentCreate = await request("POST", "/internal/carrier-agents", { carrierCode, portUnlocode: port1, agentCustomerId: "CUST-FAKE-001", note: "test agent" });
+    const agentCreate = await request("POST", "/internal/carrier-agents", { carrierCode, agentCustomerId: "CUST-FAKE-001", note: "test agent", locationType: "unlocode", unlocode: port1 });
     assert("carrier agent create returns 201", agentCreate.status === 201, JSON.stringify(agentCreate.body));
     assert("carrier agent response has no agentCustomerName field", !("agentCustomerName" in agentCreate.body));
-    const agentDup = await request("POST", "/internal/carrier-agents", { carrierCode, portUnlocode: port1, agentCustomerId: "CUST-FAKE-002" });
-    assert("duplicate carrier+port agent rejected", agentDup.status === 400);
+    const agentDup = await request("POST", "/internal/carrier-agents", { carrierCode, agentCustomerId: "CUST-FAKE-002", locationType: "unlocode", unlocode: port1 });
+    assert("same port already assigned to a different agent for this carrier is rejected", agentDup.status === 400);
 
     console.log("\nCleanup");
     await request("DELETE", `/internal/carrier-agents/${agentCreate.body.id}`);

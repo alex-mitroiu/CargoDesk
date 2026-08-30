@@ -115,7 +115,7 @@ function assert(label, condition, detail = "") {
     const custId = custRes.body.id;
     const caBare = await request("GET", "/api/carrier-agents", null, token);
     assert("no limit/offset -> still a bare array", Array.isArray(caBare.body));
-    const caCreate = await request("POST", "/api/carrier-agents", { carrierCode: "MAEU", portUnlocode: "NLRTM", agentCustomerId: custId, note: `pagtest-${rand}` }, token);
+    const caCreate = await request("POST", "/api/carrier-agents", { carrierCode: "MAEU", agentCustomerId: custId, note: `pagtest-${rand}`, locationType: "unlocode", unlocode: "NLRTM" }, token);
     assert("scratch carrier agent created", caCreate.status === 201, JSON.stringify(caCreate.body));
     const caId = caCreate.body.id;
     const caPaged = await request("GET", "/api/carrier-agents?limit=5&offset=0", null, token);

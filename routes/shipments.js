@@ -1,9 +1,10 @@
 "use strict";
+const ExcelJS = require("exceljs");
 
 module.exports = function shipmentsRoutes(app, ctx) {
   const { db, ok, err, uid, auth, requireRole, isUniqueViolation,
           mapShipment, mapShipmentLeg, mapContainer, mapContainerEvent, mapContainerPackage, mapAllocation,
-          mapShipmentParty, ADDITIONAL_PARTY_ROLES,
+          mapShipmentParty, ADDITIONAL_PARTY_ROLES, mapSideOffice, canEditOfficeSide,
           applyShipmentAccessFilter, syncShipmentFromLegs, importContractRates,
           broadcastMessage, recomputeSpaceBadge, screenShipmentById, resolveCarrierAgent,
           logEvent, logEntityEvent, TRACKED_FIELDS, TRACKED_CTR_FIELDS, FREE_TIME_WARNING_DAYS,
@@ -369,7 +370,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
 
   app.post("/api/shipments", shipmentWrite, async (req, res) => {
     const { pol, pod, carrierCode, contractType, contractNotes = "", status = "Active",
-            etd = "", eta = "", bookingRef = "", blNumber = "", blReleaseType = "", masterBlNumber = "", masterBlReleaseType = "", vessel = "", voyage = "",
+            etd = "", eta = "", bookingRef = "", blNumber = "", blReleaseType = "", masterBlNumber = "", masterBlReleaseType = "", coloadTariffReference = "", vessel = "", voyage = "",
             incoterm = "", vesselImo = "", contractId = "", contractRef = "", commodityCode = "",
             shipperId = "", shipperName = "", consigneeId = "", consigneeName = "",
             principalId = "", principalName = "",
@@ -388,8 +389,8 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const id = `SHP-${uid()}`;
     const polU = pol.toUpperCase(), podU = pod.toUpperCase();
     const createdAt = new Date().toISOString();
-    db.prepare("INSERT INTO shipments (id,pol,pod,carrier_code,contract_type,contract_notes,status,created_at,etd,eta,booking_ref,bl_number,bl_release_type,master_bl_number,master_bl_release_type,vessel,voyage,incoterm,vessel_imo,contract_id,contract_ref,commodity_code,shipper_id,shipper_name,consignee_id,consignee_name,principal_id,principal_name,allocation_id,space_skip_reason,space_overage_reason,freight_terms,movement_type,service_type,place_of_receipt,place_of_delivery,cargo_ready_date,notify_id,notify_name,declared_value,declared_value_currency,emo_office_id,imo_office_id,controlling_office_id,contract_routing_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-      .run(id, polU, podU, carrierCode, contractType, contractNotes, status, createdAt, etd, eta, bookingRef, blNumber, blReleaseType, masterBlNumber, masterBlReleaseType, vessel, voyage, incoterm, vesselImo, contractId, contractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, allocationId, spaceSkipReason, spaceOverageReason, freightTerms, movementType, serviceType, placeOfReceipt, placeOfDelivery, cargoReadyDate || null, notifyId, notifyName, (declaredValue !== null && declaredValue !== undefined && String(declaredValue).trim() !== '') ? Number(declaredValue) : null, declaredValueCurrency || "USD", emoOfficeId || null, imoOfficeId || null, controllingOfficeId || null, contractRoutingId || "");
+    db.prepare("INSERT INTO shipments (id,pol,pod,carrier_code,contract_type,contract_notes,status,created_at,etd,eta,booking_ref,bl_number,bl_release_type,master_bl_number,master_bl_release_type,coload_tariff_reference,vessel,voyage,incoterm,vessel_imo,contract_id,contract_ref,commodity_code,shipper_id,shipper_name,consignee_id,consignee_name,principal_id,principal_name,allocation_id,space_skip_reason,space_overage_reason,freight_terms,movement_type,service_type,place_of_receipt,place_of_delivery,cargo_ready_date,notify_id,notify_name,declared_value,declared_value_currency,emo_office_id,imo_office_id,controlling_office_id,contract_routing_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+      .run(id, polU, podU, carrierCode, contractType, contractNotes, status, createdAt, etd, eta, bookingRef, blNumber, blReleaseType, masterBlNumber, masterBlReleaseType, coloadTariffReference, vessel, voyage, incoterm, vesselImo, contractId, contractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, allocationId, spaceSkipReason, spaceOverageReason, freightTerms, movementType, serviceType, placeOfReceipt, placeOfDelivery, cargoReadyDate || null, notifyId, notifyName, (declaredValue !== null && declaredValue !== undefined && String(declaredValue).trim() !== '') ? Number(declaredValue) : null, declaredValueCurrency || "USD", emoOfficeId || null, imoOfficeId || null, controllingOfficeId || null, contractRoutingId || "");
     logEvent(id, 'SHIPMENT_CREATED', null, null, null,
       JSON.stringify({ pol: polU, pod: podU, carrier: carrierCode, status, etd, contractType }));
     await maybeAssignLineAgents(id, carrierCode, polU, podU);
@@ -421,8 +422,9 @@ module.exports = function shipmentsRoutes(app, ctx) {
   });
 
   app.put("/api/shipments/:id", shipmentWrite, async (req, res) => {
-    const { pol, pod, carrierCode, contractType, contractNotes = "", status: statusIn,
-            etd = "", eta = "", bookingRef = "", blNumber = "", blReleaseType = "", masterBlNumber = "", masterBlReleaseType = "", vessel = "", voyage = "",
+    const { pol: polIn, pod: podIn, carrierCode: carrierCodeIn, contractType: contractTypeIn,
+            contractNotes = "", status: statusIn,
+            etd = "", eta = "", bookingRef = "", blNumber = "", blReleaseType = "", masterBlNumber = "", masterBlReleaseType = "", coloadTariffReference = "", vessel = "", voyage = "",
             incoterm = "", vesselImo = "", contractId = "", contractRef = "", commodityCode = "",
             shipperId = "", shipperName = "", consigneeId = "", consigneeName = "",
             principalId = "", principalName = "",
@@ -433,13 +435,20 @@ module.exports = function shipmentsRoutes(app, ctx) {
             declaredValue = null, declaredValueCurrency = "USD",
             emoOfficeId = null, imoOfficeId = null, controllingOfficeId = null,
             contractValidFrom = "", contractValidTo = "", contractRoutingId = "" } = req.body;
-    const polU = pol.toUpperCase(), podU = pod.toUpperCase();
     const existing = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
     if (!existing) return err(res, "Not found", 404);
-    // status has no destructuring default (unlike every sibling field above) because the
-    // fallback needs the existing row — omitting it from the request must preserve the
-    // shipment's current status, not silently bind `undefined` into the UPDATE below.
+    // pol/pod/carrierCode/contractType/status have no destructuring default (unlike every sibling
+    // field above) because their fallback needs the existing row — omitting one from a partial
+    // update must preserve its current value, not silently bind `undefined` into the UPDATE below
+    // (which node:sqlite rejects with a raw TypeError, previously crashing the whole process
+    // instead of just failing the one request — see the crash-safety-net comments in server.js).
     const status = statusIn !== undefined ? statusIn : existing.status;
+    const pol = polIn !== undefined ? polIn : existing.pol;
+    const pod = podIn !== undefined ? podIn : existing.pod;
+    const carrierCode = carrierCodeIn !== undefined ? carrierCodeIn : existing.carrier_code;
+    const contractType = contractTypeIn !== undefined ? contractTypeIn : existing.contract_type;
+    if (!pol || !pod) return err(res, "pol and pod are required");
+    const polU = pol.toUpperCase(), podU = pod.toUpperCase();
     if (contractType && !CONTRACT_TYPES.includes(contractType)) return err(res, `contractType must be one of: ${CONTRACT_TYPES.join(", ")}`);
     if (status && !SHIPMENT_STATUSES.includes(status)) return err(res, `status must be one of: ${SHIPMENT_STATUSES.join(", ")}`);
     if (blReleaseType && !BL_RELEASE_TYPES.includes(blReleaseType)) return err(res, `blReleaseType must be one of: ${BL_RELEASE_TYPES.join(", ")}`);
@@ -473,7 +482,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
 
     const info = db.prepare(`
       UPDATE shipments SET pol=?, pod=?, carrier_code=?, contract_type=?, contract_notes=?, status=?,
-      etd=?, eta=?, booking_ref=?, bl_number=?, bl_release_type=?, master_bl_number=?, master_bl_release_type=?, vessel=?, voyage=?, incoterm=?, vessel_imo=?, contract_id=?, contract_ref=?, commodity_code=?,
+      etd=?, eta=?, booking_ref=?, bl_number=?, bl_release_type=?, master_bl_number=?, master_bl_release_type=?, coload_tariff_reference=?, vessel=?, voyage=?, incoterm=?, vessel_imo=?, contract_id=?, contract_ref=?, commodity_code=?,
       shipper_id=?, shipper_name=?, consignee_id=?, consignee_name=?, principal_id=?, principal_name=?,
       allocation_id=?, space_skip_reason=?, space_overage_reason=?,
       freight_terms=?, movement_type=?, service_type=?, place_of_receipt=?, place_of_delivery=?,
@@ -481,7 +490,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
       declared_value=?, declared_value_currency=?,
       emo_office_id=?, imo_office_id=?, controlling_office_id=?,
       contract_valid_from=?, contract_valid_to=?, contract_routing_id=? WHERE id=?
-    `).run(polU, podU, carrierCode, contractType, contractNotes, effStatus, etd, eta, bookingRef, blNumber, blReleaseType, masterBlNumber, masterBlReleaseType, vessel, voyage, incoterm, vesselImo, effContractId, effContractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, effAllocationId, spaceSkipReason, spaceOverageReason, freightTerms, movementType, serviceType, placeOfReceipt, placeOfDelivery, cargoReadyDate || null, notifyId, notifyName, (declaredValue !== null && declaredValue !== undefined && String(declaredValue).trim() !== '') ? Number(declaredValue) : null, declaredValueCurrency || "USD", emoOfficeId || null, imoOfficeId || null, controllingOfficeId || null, contractValidFrom || null, contractValidTo || null, effContractRoutingId || "", req.params.id);
+    `).run(polU, podU, carrierCode, contractType, contractNotes, effStatus, etd, eta, bookingRef, blNumber, blReleaseType, masterBlNumber, masterBlReleaseType, coloadTariffReference, vessel, voyage, incoterm, vesselImo, effContractId, effContractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, effAllocationId, spaceSkipReason, spaceOverageReason, freightTerms, movementType, serviceType, placeOfReceipt, placeOfDelivery, cargoReadyDate || null, notifyId, notifyName, (declaredValue !== null && declaredValue !== undefined && String(declaredValue).trim() !== '') ? Number(declaredValue) : null, declaredValueCurrency || "USD", emoOfficeId || null, imoOfficeId || null, controllingOfficeId || null, contractValidFrom || null, contractValidTo || null, effContractRoutingId || "", req.params.id);
     if (info.changes === 0) return err(res, "Not found", 404);
     // Only re-attempt Line Agent resolution when carrier/route actually changed — the existing
     // partyOrRouteChanged flag (further below) doesn't check carrier_code, so this needs its
@@ -495,7 +504,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
       ensureBookingCreated(req.params.id);
     const newVals = { pol: polU, pod: podU, status: effStatus, etd, eta, carrier_code: carrierCode,
       vessel, vessel_imo: vesselImo, voyage, incoterm, commodity_code: commodityCode,
-      booking_ref: bookingRef, bl_number: blNumber, bl_release_type: blReleaseType, master_bl_number: masterBlNumber, master_bl_release_type: masterBlReleaseType, contract_type: contractType,
+      booking_ref: bookingRef, bl_number: blNumber, bl_release_type: blReleaseType, master_bl_number: masterBlNumber, master_bl_release_type: masterBlReleaseType, coload_tariff_reference: coloadTariffReference, contract_type: contractType,
       contract_id: effContractId, contract_ref: effContractRef, allocation_id: effAllocationId };
     for (const [col] of Object.entries(TRACKED_FIELDS)) {
       const o = String(existing[col] || ''), n = String(newVals[col] || '');
@@ -570,6 +579,8 @@ module.exports = function shipmentsRoutes(app, ctx) {
     }));
   });
 
+  const CONTAINER_SIZES = ["20", "40"]; // matches the DB-level CHECK(size IN ('20','40')) on containers.size
+
   app.post("/api/containers", shipmentWrite, async (req, res) => {
     const { shipmentId, containerNumber = "", sealNumber = "", size, type,
             hsCode = "", cargoDescription = "", marksAndNumbers = "", grossWeightKg = null, volumeCbm = null, isDg = false, dgClass = "",
@@ -578,6 +589,10 @@ module.exports = function shipmentsRoutes(app, ctx) {
             originDetentionFreeDays = null, destDetentionFreeDays = null,
             setTemperatureC = null } = req.body;
     if (!shipmentId || !size || !type) return err(res, "shipmentId, size, type required");
+    if (!CONTAINER_SIZES.includes(size)) return err(res, `size must be one of: ${CONTAINER_SIZES.join(", ")}`);
+    if (!db.prepare("SELECT 1 FROM shipments WHERE id=?").get(shipmentId)) return err(res, "Shipment not found", 404);
+    if (grossWeightKg !== null && grossWeightKg !== undefined && Number(grossWeightKg) < 0) return err(res, "grossWeightKg cannot be negative");
+    if (volumeCbm !== null && volumeCbm !== undefined && Number(volumeCbm) < 0) return err(res, "volumeCbm cannot be negative");
     const dgErr = await checkDgPolicy(shipmentId, isDg, dgClass);
     if (dgErr) return err(res, dgErr, 422);
     const id  = `CTR-${uid()}`;
@@ -609,6 +624,10 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const cnU    = containerNumber.toUpperCase();
     const oldCtr = db.prepare("SELECT * FROM containers WHERE id=?").get(req.params.id);
     if (!oldCtr) return err(res, "Not found", 404);
+    if (!size || !type) return err(res, "size, type required");
+    if (!CONTAINER_SIZES.includes(size)) return err(res, `size must be one of: ${CONTAINER_SIZES.join(", ")}`);
+    if (grossWeightKg !== null && grossWeightKg !== undefined && Number(grossWeightKg) < 0) return err(res, "grossWeightKg cannot be negative");
+    if (volumeCbm !== null && volumeCbm !== undefined && Number(volumeCbm) < 0) return err(res, "volumeCbm cannot be negative");
     const dgErr = await checkDgPolicy(oldCtr.shipment_id, isDg, dgClass);
     if (dgErr) return err(res, dgErr, 422);
     const info = db.prepare(`UPDATE containers SET container_number=?, seal_number=?, size=?, type=?, hs_code=?, cargo_description=?, marks_and_numbers=?, gross_weight_kg=?, volume_cbm=?, is_dg=?, dg_class=?,
@@ -657,6 +676,232 @@ module.exports = function shipmentsRoutes(app, ctx) {
       JSON.stringify({ size: ctr.size, type: ctr.type }));
     recomputeSpaceBadge(ctr.shipment_id);
     ok(res, { deleted: req.params.id });
+  });
+
+  // ─── Bulk Container Import (direct request) ────────────────────────────────
+  // Download a template, fill it, upload it back — a review-before-commit screen sits between
+  // upload and actually creating anything. Columns mirror ContainerForm's own "Cargo Details"
+  // section, deliberately excluding VGM/CY-cutoff/free-time fields — those are operational state
+  // set later via the existing container UI as the shipment progresses, not bulk-imported cargo
+  // data. The review screen's row shape ({rowNumber, data, errors}) is intentionally generic —
+  // a later AI document-parsing wizard (extracting cargo data from a B/L) can feed the exact same
+  // review step with AI-extracted rows instead of parsed spreadsheet rows, with no rework here.
+
+  // Same duplication precedent as ADDITIONAL_PARTY_ROLES/BOOKABLE_CARRIERS/CONTRACT_PRESETS
+  // elsewhere in this codebase — src/tokens.js's IMDG_CLASSES is frontend-only (ES module), so
+  // the backend keeps its own copy of just the codes (not the full descriptions) to validate against.
+  const IMDG_CLASS_CODES = ["1.1","1.2","1.3","1.4","1.5","1.6","2.1","2.2","2.3","3",
+    "4.1","4.2","4.3","5.1","5.2","6.1","6.2","7","8","9"];
+
+  const IMPORT_TEMPLATE_COLUMNS = [
+    { header: "Container Number",      key: "containerNumber",  width: 18 },
+    { header: "Seal Number",           key: "sealNumber",       width: 16 },
+    { header: "Container Type Code*",  key: "typeCode",         width: 20 },
+    { header: "HS Code",               key: "hsCode",           width: 14 },
+    { header: "Cargo Description",     key: "cargoDescription", width: 32 },
+    { header: "Marks & Numbers",       key: "marksAndNumbers",  width: 20 },
+    { header: "Gross Weight (kg)",     key: "grossWeightKg",    width: 16 },
+    { header: "Volume (CBM)",          key: "volumeCbm",        width: 14 },
+    { header: "Is DG? (Y/N)",          key: "isDg",             width: 12 },
+    { header: "DG Class",              key: "dgClass",          width: 12 },
+    { header: "Reefer Set Temp (°C)",  key: "setTemperatureC",  width: 18 },
+  ];
+
+  // Shared between preview (informational) and commit (authoritative, re-run from scratch —
+  // never trusts whatever the client hands back from its own already-shown preview pass).
+  const parseImportRow = async (raw, shipmentId, typeDefsByCode) => {
+    const errors = [];
+    const str = v => (v === null || v === undefined ? "" : String(v)).trim();
+    const containerNumber  = str(raw.containerNumber).toUpperCase();
+    const sealNumber       = str(raw.sealNumber);
+    const typeCode         = str(raw.typeCode).toUpperCase();
+    const hsCode           = str(raw.hsCode);
+    const cargoDescription = str(raw.cargoDescription);
+    const marksAndNumbers  = str(raw.marksAndNumbers);
+    const isDgRaw          = str(raw.isDg).toUpperCase();
+    const isDg             = isDgRaw === "Y" || isDgRaw === "YES" || isDgRaw === "TRUE";
+    const dgClass          = str(raw.dgClass);
+
+    const typeDef = typeDefsByCode.get(typeCode);
+    if (!typeCode) errors.push("Container Type Code is required");
+    else if (!typeDef) errors.push(`"${typeCode}" is not a recognized active container type code`);
+
+    const parseNum = (val, label) => {
+      const s = str(val);
+      if (!s) return null;
+      const n = Number(s);
+      if (Number.isNaN(n)) { errors.push(`${label} must be a number`); return null; }
+      return n;
+    };
+    const grossWeightKg   = parseNum(raw.grossWeightKg, "Gross Weight (kg)");
+    const volumeCbm       = parseNum(raw.volumeCbm, "Volume (CBM)");
+    const setTemperatureC = parseNum(raw.setTemperatureC, "Reefer Set Temp (°C)");
+    // Reefer set temp is deliberately not checked here — a frozen container's set point is
+    // routinely negative (e.g. -18°C) — only weight/volume have no legitimate negative value.
+    if (grossWeightKg !== null && grossWeightKg < 0) errors.push("Gross Weight (kg) cannot be negative");
+    if (volumeCbm !== null && volumeCbm < 0) errors.push("Volume (CBM) cannot be negative");
+
+    if (isDg && !dgClass) errors.push("DG Class is required when Is DG is Y");
+    else if (isDg && !IMDG_CLASS_CODES.includes(dgClass)) errors.push(`"${dgClass}" is not a recognized IMDG class`);
+
+    if (isDg && dgClass && IMDG_CLASS_CODES.includes(dgClass)) {
+      const dgErr = await checkDgPolicy(shipmentId, isDg, dgClass);
+      if (dgErr) errors.push(dgErr);
+    }
+
+    return {
+      data: { containerNumber, sealNumber, typeCode, size: typeDef?.size || "", type: typeDef?.type || "",
+        hsCode, cargoDescription, marksAndNumbers, grossWeightKg, volumeCbm, isDg, dgClass, setTemperatureC },
+      errors,
+    };
+  };
+
+  // parseImportRow only ever sees one row at a time, so a Container Number repeated across
+  // several rows of the SAME batch — each individually valid — sailed through undetected and
+  // committed as separate containers sharing an identical real-world number. Flags every row
+  // whose (non-blank) Container Number appears more than once in this batch; blank numbers are
+  // untouched since a real container number is optional on this template.
+  const flagDuplicateContainerNumbers = (rows) => {
+    const counts = new Map();
+    for (const { data } of rows) {
+      if (!data.containerNumber) continue;
+      counts.set(data.containerNumber, (counts.get(data.containerNumber) || 0) + 1);
+    }
+    for (const { data, errors } of rows) {
+      if (data.containerNumber && counts.get(data.containerNumber) > 1) {
+        errors.push(`Container Number "${data.containerNumber}" is used by more than one row in this import batch`);
+      }
+    }
+  };
+
+  app.get("/api/containers/import-template", auth(), async (req, res) => {
+    const typeRows = db.prepare(
+      "SELECT code FROM container_type_definitions WHERE is_active=1 ORDER BY sort_order, label"
+    ).all();
+    if (typeRows.length === 0) return err(res, "No active container type definitions configured — set some up in Master Data first");
+
+    const wb = new ExcelJS.Workbook();
+    // very-hidden reference sheet backs the Excel dropdown lists — never meant to be seen or
+    // edited, just referenced by the visible sheet's own data-validation formulae.
+    const ref = wb.addWorksheet("Reference", { state: "veryHidden" });
+    typeRows.forEach((r, i) => { ref.getCell(i + 1, 1).value = r.code; });
+    ref.getCell(1, 2).value = "Y"; ref.getCell(2, 2).value = "N";
+    IMDG_CLASS_CODES.forEach((c, i) => { ref.getCell(i + 1, 3).value = c; });
+
+    const sheet = wb.addWorksheet("Containers");
+    sheet.columns = IMPORT_TEMPLATE_COLUMNS;
+    sheet.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
+    sheet.getRow(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1A2E4A" } };
+
+    sheet.addRow({ containerNumber: "EXAMPLE1234567", sealNumber: "SEAL0001", typeCode: typeRows[0].code,
+      hsCode: "8471.30", cargoDescription: "General cargo — EXAMPLE, delete this row before importing",
+      marksAndNumbers: "", grossWeightKg: 18000, volumeCbm: 58, isDg: "N", dgClass: "", setTemperatureC: "" });
+    sheet.getRow(2).font = { italic: true, color: { argb: "FF888888" } };
+
+    // Data-validation dropdowns on 300 data rows of headroom (rows 3..302) — most bad input is
+    // caught in Excel itself, before the file is ever uploaded.
+    for (let r = 3; r <= 302; r++) {
+      sheet.getCell(`C${r}`).dataValidation = { type: "list", allowBlank: true, formulae: [`Reference!$A$1:$A$${typeRows.length}`] };
+      sheet.getCell(`I${r}`).dataValidation = { type: "list", allowBlank: true, formulae: ["Reference!$B$1:$B$2"] };
+      sheet.getCell(`J${r}`).dataValidation = { type: "list", allowBlank: true, formulae: [`Reference!$C$1:$C$${IMDG_CLASS_CODES.length}`] };
+    }
+
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", 'attachment; filename="cargodesk-container-import-template.xlsx"');
+    wb.xlsx.write(res).then(() => res.end()).catch(() => res.status(500).end());
+  });
+
+  app.post("/api/shipments/:id/containers/import/preview", shipmentWrite, async (req, res) => {
+    const { data } = req.body || {};
+    if (!data) return err(res, "data (base64 file contents) is required");
+    const shipment = db.prepare("SELECT id FROM shipments WHERE id=?").get(req.params.id);
+    if (!shipment) return err(res, "Shipment not found", 404);
+
+    const typeDefsByCode = new Map(
+      db.prepare("SELECT * FROM container_type_definitions WHERE is_active=1").all().map(t => [t.code.toUpperCase(), t])
+    );
+
+    const wb = new ExcelJS.Workbook();
+    try { await wb.xlsx.load(Buffer.from(data, "base64")); }
+    catch { return err(res, "Could not read the uploaded file — make sure it's a valid .xlsx file"); }
+    // Real bug caught live: the generated template's hidden "Reference" sheet (backs the Excel
+    // dropdown lists) is added BEFORE "Containers", so it's worksheets[0] — reading data rows
+    // from it produced 18 nonsense "rows" out of the IMDG class reference list. Select the real
+    // data sheet by name, falling back to the first sheet only for a caller-built file that
+    // doesn't use the template's own sheet name at all.
+    const sheet = wb.getWorksheet("Containers") || wb.worksheets[0];
+    if (!sheet) return err(res, "The uploaded file has no worksheets");
+
+    const rawRows = [];
+    sheet.eachRow((row, rowNumber) => {
+      if (rowNumber < 3) return; // row 1 = header, row 2 = the generated example row
+      const v = col => { const cell = row.getCell(col).value; return (cell && typeof cell === "object" && "result" in cell) ? cell.result : cell; };
+      const raw = {
+        containerNumber: v(1), sealNumber: v(2), typeCode: v(3), hsCode: v(4), cargoDescription: v(5),
+        marksAndNumbers: v(6), grossWeightKg: v(7), volumeCbm: v(8), isDg: v(9), dgClass: v(10), setTemperatureC: v(11),
+      };
+      if (Object.values(raw).every(x => x === null || x === undefined || String(x).trim() === "")) return;
+      rawRows.push({ rowNumber, raw });
+    });
+
+    const rows = [];
+    for (const { rowNumber, raw } of rawRows) {
+      const { data: rowData, errors } = await parseImportRow(raw, req.params.id, typeDefsByCode);
+      rows.push({ rowNumber, data: rowData, errors });
+    }
+    flagDuplicateContainerNumbers(rows);
+    ok(res, { rows });
+  });
+
+  app.post("/api/shipments/:id/containers/import/commit", shipmentWrite, async (req, res) => {
+    const { rows } = req.body || {};
+    if (!Array.isArray(rows) || rows.length === 0) return err(res, "rows array is required");
+    const shipment = db.prepare("SELECT id FROM shipments WHERE id=?").get(req.params.id);
+    if (!shipment) return err(res, "Shipment not found", 404);
+
+    const typeDefsByCode = new Map(
+      db.prepare("SELECT * FROM container_type_definitions WHERE is_active=1").all().map(t => [t.code.toUpperCase(), t])
+    );
+
+    const revalidated = [];
+    for (const row of rows || []) {
+      const raw = { ...(row.data || {}), isDg: row.data?.isDg ? "Y" : "N" };
+      const { data, errors } = await parseImportRow(raw, req.params.id, typeDefsByCode);
+      revalidated.push({ rowNumber: row.rowNumber, data, errors });
+    }
+    flagDuplicateContainerNumbers(revalidated);
+    const stillFailing = revalidated.filter(r => r.errors.length > 0);
+    if (stillFailing.length > 0) {
+      return err(res, `${stillFailing.length} row(s) still have errors — nothing was imported`, 422);
+    }
+
+    const created = [];
+    db.exec("BEGIN");
+    try {
+      for (const { data } of revalidated) {
+        const id = `CTR-${uid()}`;
+        db.prepare(`INSERT INTO containers (id,shipment_id,container_number,seal_number,size,type,hs_code,cargo_description,marks_and_numbers,gross_weight_kg,volume_cbm,is_dg,dg_class,
+                    vgm_weight_kg,vgm_status,vgm_cutoff,cy_cutoff,origin_free_time_days,dest_free_time_days,origin_detention_free_days,dest_detention_free_days,set_temperature_c) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+          .run(id, req.params.id, data.containerNumber, data.sealNumber, data.size, data.type, data.hsCode, data.cargoDescription, data.marksAndNumbers,
+               data.grossWeightKg, data.volumeCbm, data.isDg ? 1 : 0, data.dgClass,
+               null, "Pending", null, null, null, null, null, null, data.setTemperatureC);
+        const ctrRow = { id, shipment_id: req.params.id, container_number: data.containerNumber, seal_number: data.sealNumber,
+          size: data.size, type: data.type, hs_code: data.hsCode, cargo_description: data.cargoDescription, marks_and_numbers: data.marksAndNumbers,
+          gross_weight_kg: data.grossWeightKg, volume_cbm: data.volumeCbm, is_dg: data.isDg ? 1 : 0, dg_class: data.dgClass,
+          vgm_weight_kg: null, vgm_status: "Pending", vgm_cutoff: null, cy_cutoff: null,
+          origin_free_time_days: null, dest_free_time_days: null, origin_detention_free_days: null, dest_detention_free_days: null,
+          set_temperature_c: data.setTemperatureC };
+        created.push({ ...mapContainer(ctrRow), ...deriveFreeTime(ctrRow, {}, null) });
+        logEvent(req.params.id, 'CONTAINER_ADDED', null, null, data.containerNumber,
+          JSON.stringify({ size: data.size, type: data.type, hsCode: data.hsCode, cargoDescription: data.cargoDescription, source: 'bulk_import' }));
+      }
+      db.exec("COMMIT");
+    } catch (e) {
+      db.exec("ROLLBACK");
+      return err(res, e.message, 500);
+    }
+    recomputeSpaceBadge(req.params.id);
+    ok(res, { created }, 201);
   });
 
   // ─── Container Events (FCL lifecycle: Empty Pickup → Gate In → Loaded → Sailed →
@@ -854,6 +1099,130 @@ module.exports = function shipmentsRoutes(app, ctx) {
     db.prepare("DELETE FROM shipment_parties WHERE id=?").run(req.params.id);
     await maybeRescreen(existing.shipment_id);
     ok(res, { deleted: req.params.id });
+  });
+
+  // ─── Involved Offices: additional (backup) offices + disaster-recovery reassignment ────────
+  // Direct follow-up to the Nested Office Groups redesign. Additional offices let more than one
+  // office hold Export (or Import) work at once — side-tagged so an added office renders as its
+  // own home-style group in that column immediately (see OfficeColumn, ShipmentDetailPage.jsx).
+  // Reassignment of the actual EMO/IMO/Controlling column is a SEPARATE, dedicated action (not
+  // folded into the generic shipment PUT) so a takeover always carries a required reason and its
+  // own distinct audit-log entry — a routine multi-field shipment edit shouldn't need either.
+  const SIDE_OFFICE_DEPT = { Export: "SE", Import: "SI" };
+  const REASSIGN_FIELD_META = {
+    emoOfficeId:         { column: "emo_office_id",         side: "Export",      dept: "SE", label: "Export Managing Office" },
+    imoOfficeId:         { column: "imo_office_id",         side: "Import",      dept: "SI", label: "Import Managing Office" },
+    controllingOfficeId: { column: "controlling_office_id", side: "Controlling", dept: null, label: "Controlling Office" },
+  };
+
+  const officeLabel = office => office ? `${office.code} — ${office.name}` : "(none)";
+
+  app.get("/api/shipments/:id/side-offices", auth(), (req, res) => {
+    const rows = db.prepare(
+      `SELECT so.*, o.code AS office_code, o.name AS office_name FROM shipment_side_offices so
+       JOIN offices o ON o.id = so.office_id WHERE so.shipment_id=? ORDER BY so.added_at ASC`
+    ).all(req.params.id);
+    ok(res, rows.map(mapSideOffice));
+  });
+
+  app.post("/api/shipments/:id/side-offices", shipmentWrite, (req, res) => {
+    const { side, officeId } = req.body || {};
+    if (!SIDE_OFFICE_DEPT[side]) return err(res, "side must be 'Export' or 'Import'");
+    if (!officeId) return err(res, "officeId required");
+    if (!canEditOfficeSide(req, side)) return err(res, `You don't have permission to add a ${side} office`, 403);
+    const sh = db.prepare("SELECT id FROM shipments WHERE id=?").get(req.params.id);
+    if (!sh) return err(res, "Shipment not found", 404);
+    const office = db.prepare("SELECT * FROM offices WHERE id=? AND is_active=1").get(officeId);
+    if (!office) return err(res, "Office not found or inactive");
+    if (office.department !== SIDE_OFFICE_DEPT[side]) return err(res, `Office must be a ${SIDE_OFFICE_DEPT[side]} department office for ${side}`);
+    const id = `SOF-${uid()}`;
+    const now = new Date().toISOString();
+    try {
+      db.prepare(`INSERT INTO shipment_side_offices (id, shipment_id, side, office_id, added_at, added_by)
+        VALUES (?,?,?,?,?,?)`).run(id, req.params.id, side, officeId, now, req.user?.name || req.user?.email || "");
+    } catch (e) {
+      return err(res, isUniqueViolation(e) ? "This office is already added to this side." : e.message);
+    }
+    const row = db.prepare(
+      `SELECT so.*, o.code AS office_code, o.name AS office_name FROM shipment_side_offices so
+       JOIN offices o ON o.id = so.office_id WHERE so.id=?`
+    ).get(id);
+    ok(res, mapSideOffice(row), 201);
+  });
+
+  app.delete("/api/shipment-side-offices/:id", shipmentWrite, (req, res) => {
+    const existing = db.prepare("SELECT * FROM shipment_side_offices WHERE id=?").get(req.params.id);
+    if (!existing) return err(res, "Not found", 404);
+    if (!canEditOfficeSide(req, existing.side)) return err(res, `You don't have permission to remove a ${existing.side} office`, 403);
+    db.prepare("DELETE FROM shipment_side_offices WHERE id=?").run(req.params.id);
+    ok(res, { deleted: req.params.id });
+  });
+
+  // Reassigning EMO/IMO/Controlling is a takeover, not a typo fix — always requires a reason and
+  // always logs its own OFFICE_REASSIGNED event (the generic shipment PUT's TRACKED_FIELDS diff
+  // log doesn't cover these 3 columns at all today), independent of the routine field-diff log.
+  app.post("/api/shipments/:id/reassign-office", shipmentWrite, (req, res) => {
+    const { field, officeId, reason } = req.body || {};
+    const meta = REASSIGN_FIELD_META[field];
+    if (!meta) return err(res, "field must be one of: " + Object.keys(REASSIGN_FIELD_META).join(", "));
+    if (!reason || !reason.trim()) return err(res, "A reason for reassignment is required");
+    if (!canEditOfficeSide(req, meta.side)) return err(res, `You don't have permission to reassign the ${meta.label}`, 403);
+    const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
+    if (!shipment) return err(res, "Shipment not found", 404);
+    let newOffice = null;
+    if (officeId) {
+      newOffice = db.prepare("SELECT * FROM offices WHERE id=? AND is_active=1").get(officeId);
+      if (!newOffice) return err(res, "Office not found or inactive");
+      if (meta.dept && newOffice.department !== meta.dept) return err(res, `Office must be a ${meta.dept} department office for ${meta.label}`);
+    } else if (meta.dept) {
+      return err(res, `${meta.label} is required and cannot be cleared`);
+    }
+    const oldOffice = shipment[meta.column] ? db.prepare("SELECT * FROM offices WHERE id=?").get(shipment[meta.column]) : null;
+    db.prepare(`UPDATE shipments SET ${meta.column}=? WHERE id=?`).run(officeId || null, req.params.id);
+    logEvent(req.params.id, "OFFICE_REASSIGNED", field, officeLabel(oldOffice), officeLabel(newOffice), reason.trim());
+
+    // A replaced office shouldn't keep quietly handling services on THIS shipment just because
+    // nothing else pointed them elsewhere — direct bug report: reassigning EMO/IMO/Controlling
+    // left any service still individually assigned to the OLD office exactly where it was,
+    // so the "replaced" office kept showing up as a live nested group on the Involved Offices
+    // tab regardless of whether it was also marked inactive. Every lingering service on this
+    // shipment now moves to the NEW office automatically, as part of the same reassignment —
+    // gated by the same canEditOfficeSide check already passed above, independent of whatever
+    // the caller later decides about the old office's global active/inactive status.
+    let migratedServiceCount = 0;
+    if (oldOffice && oldOffice.id !== (officeId || null)) {
+      const lingering = db.prepare(
+        "SELECT id, side, service_type FROM shipment_services WHERE shipment_id=? AND office_id=?"
+      ).all(req.params.id, oldOffice.id);
+      for (const svc of lingering) {
+        db.prepare("UPDATE shipment_services SET office_id=? WHERE id=?").run(officeId || '', svc.id);
+        logEntityEvent('service', svc.id, 'UPDATED', 'office_id', oldOffice.id, officeId || '',
+          JSON.stringify({ shipmentId: req.params.id, side: svc.side, serviceType: svc.service_type, reason: 'office_reassignment' }));
+      }
+      migratedServiceCount = lingering.length;
+    }
+
+    // mapShipment reads emoOfficeName/imoOfficeName/controllingOfficeName (and polName/podName)
+    // off whatever the row carries — none of those are columns on `shipments` itself, only
+    // resolved via a live JOIN (same query the main PUT route already uses). A bare SELECT *
+    // here would leave them all blank while the reassigned column itself is correct — and since
+    // the frontend merges this response straight over its cached shipment object
+    // ({...s, ...updated}), that blank would silently clobber the already-correct pol/pod names
+    // everywhere else the shipment is shown, not just misrender the office that was reassigned.
+    const updated = db.prepare(`
+      SELECT s.*, p1.name AS pol_name, p2.name AS pod_name,
+             emo.code AS emo_office_code, emo.name AS emo_office_name,
+             imo.code AS imo_office_code, imo.name AS imo_office_name,
+             ctrl.code AS controlling_office_code, ctrl.name AS controlling_office_name
+      FROM shipments s
+      LEFT JOIN port_locations p1 ON p1.unlocode = s.pol
+      LEFT JOIN port_locations p2 ON p2.unlocode = s.pod
+      LEFT JOIN offices emo  ON emo.id  = s.emo_office_id
+      LEFT JOIN offices imo  ON imo.id  = s.imo_office_id
+      LEFT JOIN offices ctrl ON ctrl.id = s.controlling_office_id
+      WHERE s.id = ?
+    `).get(req.params.id);
+    ok(res, { ...mapShipment(updated), migratedServiceCount, oldOfficeId: oldOffice?.id || null });
   });
 
   // ─── Shipment Messages ────────────────────────────────────────────────────

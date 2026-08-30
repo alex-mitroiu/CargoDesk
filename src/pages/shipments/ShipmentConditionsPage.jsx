@@ -68,6 +68,17 @@ const ShipmentConditionsPage = ({ shipment }) => (
         </span>
       } />
 
+      {shipment.coloadTariffReference && (
+        <div id="shpcond-coload-tariff" style={{ padding: "16px 20px", borderTop: `1px solid ${T.border}` }}>
+          <div style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted, fontWeight: 600,
+            textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 4 }}>Co-Load Tariff Reference</div>
+          <span style={{ fontFamily: T.mono, fontSize: 13, color: T.textCode }}>{shipment.coloadTariffReference}</span>
+          <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted, marginTop: 4 }}>
+            Cargo moves under the assigned Co-Loading NVOCC's own tariff with the vessel operator
+          </div>
+        </div>
+      )}
+
       {shipment.commodityCode && (
         <div id="shpcond-commodity" style={{ padding: "16px 20px", borderTop: `1px solid ${T.border}` }}>
           <div style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted, fontWeight: 600,

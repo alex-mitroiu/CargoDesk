@@ -18,7 +18,7 @@ export const ADDITIONAL_PARTY_ROLES = [
   "Forwarder", "Customs Broker (Export)", "Customs Broker (Import)",
   "Trucker (Pre-carriage)", "Trucker (On-carriage)",
   "Also Notify Party", "Bank", "Insurance Provider", "Agent",
-  "Line Agent (Export)", "Line Agent (Import)", "NVOCC",
+  "Line Agent (Export)", "Line Agent (Import)", "NVOCC", "Co-Loading NVOCC",
 ];
 // Organization Model Enhancement Epic 1 — the 4 hardcoded shipment roles plus
 // ADDITIONAL_PARTY_ROLES, combined into one vocabulary for customer role-tagging
@@ -33,7 +33,7 @@ export const CUSTOMER_ROLE_CATEGORIES = {
   "Service Providers": [
     "Forwarder", "Customs Broker (Export)", "Customs Broker (Import)",
     "Trucker (Pre-carriage)", "Trucker (On-carriage)", "Bank", "Insurance Provider", "Agent",
-    "Line Agent (Export)", "Line Agent (Import)", "NVOCC",
+    "Line Agent (Export)", "Line Agent (Import)", "NVOCC", "Co-Loading NVOCC",
   ],
 };
 export const CONTACT_DEPARTMENTS  = ["Sales", "Operations", "Accounts", "Other"];

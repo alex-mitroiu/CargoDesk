@@ -1,18 +1,54 @@
 "use strict";
 
 module.exports = function financeRoutes(app, ctx) {
-  const { db, ok, err, auth, resolveCustomerGroup, roundCents } = ctx;
+  const { db, ok, err, auth, resolveCustomerGroup, roundCents, getFxRates } = ctx;
+
+  // Multi-Entity Accounting (TKT-EEV4I9) — mirrors canEditOfficeSide's (server.js) admin/
+  // operator/allOffices bypass exactly, applied to READ visibility of the byEntity breakdown
+  // instead of write permission: a branch-scoped user should see their own entity's P&L, not the
+  // whole company's, unless they're global. Returns null for "unrestricted" or a Set of branch
+  // ids the caller may see (possibly empty, if they have no active office set).
+  const callerEntityScope = req => {
+    const user = req.user;
+    const jwtRoles = Array.isArray(user.roles) ? user.roles : (user.role ? [user.role] : ['viewer']);
+    if (jwtRoles.includes('admin') || jwtRoles.includes('operator')) return null;
+    if (user.allOffices) return null;
+    const activeOfficeId = req.headers?.['x-office-id'];
+    if (!activeOfficeId) return new Set();
+    const office = db.prepare("SELECT branch_id FROM offices WHERE id=?").get(activeOfficeId);
+    return new Set(office?.branch_id ? [office.branch_id] : []);
+  };
+
+  // Converts a USD figure into `currency` using the same FX table toUsd() already uses, just
+  // inverted — no new FX infrastructure, this is the one direction that table didn't need yet.
+  const fromUsd = async (amountUsd, currency) => {
+    if (!currency || currency === "USD") return roundCents(amountUsd);
+    const rates = await getFxRates();
+    const rate = rates[currency];
+    return rate ? roundCents(amountUsd * rate) : roundCents(amountUsd);
+  };
 
   app.get("/api/margin/summary", auth(), async (req, res) => {
     const u = req.user;
     const roles = Array.isArray(u.roles) ? u.roles : [u.role || 'viewer'];
     if (!roles.includes('admin') && !u.canViewFinance)
       return err(res, "Finance access not enabled for your account", 403);
+    // entity/entityName/entityCurrency resolve a shipment's owning legal entity (Multi-Entity
+    // Accounting, TKT-EEV4I9) as its EMO office's branch, falling back to the IMO office's branch
+    // when EMO is unset — no new column on shipments/shipment_cost_lines, a branch already IS
+    // CargoDesk's legal-entity boundary (see the branches.currency migration in server.js).
     const lines = db.prepare(`
       SELECT cl.*, s.carrier_code, s.pol, s.pod, s.etd, s.created_at AS shp_created_at,
-             s.principal_id, s.principal_name, s.consignee_id, s.consignee_name
+             s.principal_id, s.principal_name, s.consignee_id, s.consignee_name,
+             COALESCE(emo_branch.id, imo_branch.id) AS entity_id,
+             COALESCE(emo_branch.name, imo_branch.name) AS entity_name,
+             COALESCE(emo_branch.currency, imo_branch.currency) AS entity_currency
       FROM shipment_cost_lines cl
       JOIN shipments s ON s.id = cl.shipment_id
+      LEFT JOIN offices  emo_office ON emo_office.id = s.emo_office_id
+      LEFT JOIN branches emo_branch ON emo_branch.id = emo_office.branch_id
+      LEFT JOIN offices  imo_office ON imo_office.id = s.imo_office_id
+      LEFT JOIN branches imo_branch ON imo_branch.id = imo_office.branch_id
     `).all();
 
     const todayStr = new Date().toISOString().slice(0, 10);
@@ -85,6 +121,30 @@ module.exports = function financeRoutes(app, ctx) {
       return { customerId: rootId, customerName: custName(nameRow), ...aggregate(rows), weeks: weeklyBreakdown(rows) };
     }).sort((a, b) => (b.totalSellUsd || 0) - (a.totalSellUsd || 0));
 
-    ok(res, { ...overall, byCarrier, byLane, byCustomer });
+    // Multi-Entity Accounting (TKT-EEV4I9) — same aggregate()/weeklyBreakdown() reuse as
+    // byCarrier/byLane/byCustomer above, just grouped by resolved entity (branch) instead.
+    // Scoped to the caller's own branch unless global (callerEntityScope) — deliberately NOT
+    // applied to byCarrier/byLane/byCustomer, which stay company-wide exactly as today; entity
+    // is the one dimension that maps onto a real legal/branch boundary worth restricting.
+    const entityScope = callerEntityScope(req);
+    const entityRows  = lines.filter(r => r.entity_id);
+    const entityIds   = [...new Set(entityRows.map(r => r.entity_id))]
+      .filter(id => entityScope === null || entityScope.has(id));
+    const byEntity = await Promise.all(entityIds.map(async entityId => {
+      const rows = entityRows.filter(r => r.entity_id === entityId);
+      const nameRow = rows[0];
+      const currency = nameRow.entity_currency || 'USD';
+      const agg = aggregate(rows);
+      const localBuy  = await fromUsd(agg.totalBuyUsd,  currency);
+      const localSell = await fromUsd(agg.totalSellUsd, currency);
+      return {
+        entityId, entityName: nameRow.entity_name || entityId, currency,
+        localBuy, localSell, localGp: roundCents(localSell - localBuy),
+        ...agg, weeks: weeklyBreakdown(rows),
+      };
+    }));
+    byEntity.sort((a, b) => (b.totalSellUsd || 0) - (a.totalSellUsd || 0));
+
+    ok(res, { ...overall, byCarrier, byLane, byCustomer, byEntity });
   });
 };

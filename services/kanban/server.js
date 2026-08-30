@@ -17,6 +17,28 @@ const DB_PATH = path.join(__dirname, "kanban.db");
 
 const app = express();
 const db = new DatabaseSync(DB_PATH);
+
+// Crash-safety net — same fix applied to the monolith's server.js after a live stress-test found
+// an unhandled route error (a bad enum value, `undefined` bound into a node:sqlite statement)
+// kills this entire process, same as any other plain Express 4 app with no error handling. Every
+// app.get/post/put/patch/delete handler registered from here on is wrapped so a thrown/rejected
+// error reaches next(err) — and the error middleware near app.listen below — instead of crashing.
+function wrapAsyncHandler(fn) {
+  if (typeof fn !== "function") return fn;
+  return (req, res, next) => {
+    try {
+      const result = fn(req, res, next);
+      if (result && typeof result.catch === "function") result.catch(next);
+    } catch (e) { next(e); }
+  };
+}
+for (const method of ["get", "post", "put", "patch", "delete"]) {
+  const original = app[method].bind(app);
+  app[method] = (routePath, ...handlers) => original(routePath, ...handlers.map(wrapAsyncHandler));
+}
+process.on("unhandledRejection", (reason) => console.error("⚠ Unhandled promise rejection (process kept alive):", reason));
+process.on("uncaughtException", (e) => console.error("⚠ Uncaught exception (process kept alive):", e));
+
 app.use(express.json({ limit: "5mb" }));
 
 const uid = () => Math.random().toString(36).slice(2, 8).toUpperCase();
@@ -572,6 +594,19 @@ app.post("/internal/kanban/bulk-import", (req, res) => {
     db.exec("COMMIT");
   } catch (e) { db.exec("ROLLBACK"); return err(res, e.message, 500); }
   ok(res, { inserted: counts }, 201);
+});
+
+// Error-handling middleware — must be registered after every route above. Malformed JSON bodies
+// get a clean 400 instead of body-parser's raw HTML/stack-trace page; anything else forwarded via
+// wrapAsyncHandler is logged in full server-side and answered with a generic 500 (never the raw
+// error/stack to the caller).
+app.use((error, req, res, next) => {
+  if (res.headersSent) return next(error);
+  if (error?.type === "entity.parse.failed" || error instanceof SyntaxError) {
+    return res.status(400).json({ error: "Malformed request body — expected valid JSON" });
+  }
+  console.error(`Unhandled error on ${req.method} ${req.originalUrl}:`, error);
+  res.status(error?.status || 500).json({ error: "Internal server error" });
 });
 
 if (require.main === module) {

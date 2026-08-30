@@ -2,7 +2,7 @@
 
 module.exports = function mdmRoutes(app, ctx) {
   const { db, ok, err, uid, isUniqueViolation, requireRole, getSettings, callMdmService, callCustomerService,
-          mapCarrier, mapVessel, mapPortLocation, mapLinkedPort, mapTradeLane, mapCarrierAgent,
+          mapCarrier, mapVessel, mapPortLocation, mapLinkedPort, mapTradeLane, mapCarrierAgent, mapCarrierAgentLocation,
           mapCountry, mapRegion, mapCommodity,
           logEntityEvent, rebuildPortLanesMap, longestLane } = ctx;
 
@@ -55,6 +55,7 @@ module.exports = function mdmRoutes(app, ctx) {
   });
   app.put("/api/carriers/:code", write, async (req, res) => {
     const { name, shortName = '' } = req.body;
+    if (!name) return err(res, "name required");
     if (isRemote()) {
       try {
         const before = await callMdmService("GET", `/internal/carriers/${req.params.code}`).catch(() => null);
@@ -128,6 +129,7 @@ module.exports = function mdmRoutes(app, ctx) {
   });
   app.put("/api/vessels/:imo", write, async (req, res) => {
     const { name, assetType='', flagIso2='', flagName='', buildYear=null, grossTonnage=null } = req.body;
+    if (!name) return err(res, "name required");
     if (isRemote()) {
       try { return ok(res, await callMdmService("PUT", `/internal/vessels/${req.params.imo}`, { name, assetType, flagIso2, flagName, buildYear, grossTonnage })); }
       catch (e) { return err(res, e.message, e.status || 502); }
@@ -204,6 +206,7 @@ module.exports = function mdmRoutes(app, ctx) {
   });
   app.put("/api/port-locations/:unlocode", write, async (req, res) => {
     const { name, latitude=0, longitude=0, countryCode='', zoneCode='' } = req.body;
+    if (!name) return err(res, "name required");
     if (isRemote()) {
       try { return ok(res, await callMdmService("PUT", `/internal/port-locations/${req.params.unlocode.toUpperCase()}`, { name, latitude, longitude, countryCode, zoneCode })); }
       catch (e) { return err(res, e.message, e.status || 502); }
@@ -289,11 +292,32 @@ module.exports = function mdmRoutes(app, ctx) {
   // mirroring the batch-resolve idiom this codebase already uses for resolveSeaPorts.
 
   const CARRIER_AGENT_JOIN = `
-    SELECT ca.*, pl.name AS port_name, c.company_name AS agent_customer_name
+    SELECT ca.*, c.company_name AS agent_customer_name
     FROM carrier_agents ca
-    LEFT JOIN port_locations pl ON pl.unlocode = ca.port_unlocode
     LEFT JOIN customers c ON c.id = ca.agent_customer_id
   `;
+  const LOCATION_JOIN = `
+    SELECT cal.*, pl.name AS port_name, co.name AS country_name
+    FROM carrier_agent_locations cal
+    LEFT JOIN port_locations pl ON pl.unlocode = cal.unlocode
+    LEFT JOIN countries co ON co.iso2 = cal.country_iso2
+  `;
+
+  // Batch-fetch every location for a set of header ids in ONE query (never one query per header
+  // — same no-N+1 idiom as resolveSeaPorts/attachAgentNames), group by carrier_agent_id, then map
+  // each header with its own location list attached.
+  function mapHeadersWithLocations(headerRows) {
+    if (headerRows.length === 0) return [];
+    const ph = headerRows.map(() => "?").join(",");
+    const locRows = db.prepare(`${LOCATION_JOIN} WHERE cal.carrier_agent_id IN (${ph}) ORDER BY cal.created_at`)
+      .all(...headerRows.map(r => r.id));
+    const byHeader = new Map();
+    for (const l of locRows) {
+      if (!byHeader.has(l.carrier_agent_id)) byHeader.set(l.carrier_agent_id, []);
+      byHeader.get(l.carrier_agent_id).push(l);
+    }
+    return headerRows.map(r => mapCarrierAgent(r, byHeader.get(r.id) || []));
+  }
 
   // customer_source is independent of this file's own mdm_source toggle — a batch lookup either
   // way (never one call per agent), matching resolveSeaPorts'/resolveAssigneeNames' own idiom.
@@ -314,47 +338,146 @@ module.exports = function mdmRoutes(app, ctx) {
     return mapped;
   }
 
+  // Resolves what conflicts/redundancies a new location would create — called before writing,
+  // from both header-creation (first location) and the add-location sub-route. Two distinct
+  // outcomes on purpose: adding a MORE SPECIFIC location (a UNLOCODE) that's already covered by
+  // an existing BROADER one (a country, on the same header) is simply rejected — nothing was
+  // ever saved, so there's nothing to discard. Adding a NEW BROADER location (a country) that
+  // makes existing SPECIFIC ones redundant is allowed, and the caller auto-discards the
+  // redundant ones afterward via discardRedundantUnlocodes — that direction removes something
+  // that already existed, which is what "log it in the historical records" implies.
+  function checkLocationConflict({ carrierCode, headerId, locationType, unlocode, countryIso2 }) {
+    if (locationType === "unlocode") {
+      const portRow = db.prepare("SELECT country_code FROM port_locations WHERE unlocode=?").get(unlocode);
+      if (!portRow) return { error: `Unknown UN/LOCODE: ${unlocode}` };
+      const portCountry = portRow.country_code || '';
+      if (portCountry) {
+        const coveringCountry = db.prepare(`
+          SELECT 1 FROM carrier_agent_locations WHERE carrier_agent_id=? AND location_type='country' AND country_iso2=?
+        `).get(headerId, portCountry);
+        if (coveringCountry) return { error: `This location is already covered by this Line Agent's existing ${portCountry} country configuration.` };
+      }
+      const existingDirect = db.prepare(`
+        SELECT carrier_agent_id FROM carrier_agent_locations WHERE carrier_code=? AND location_type='unlocode' AND unlocode=?
+      `).get(carrierCode, unlocode);
+      if (existingDirect) {
+        return existingDirect.carrier_agent_id === headerId
+          ? { error: "This location is already configured for this Line Agent." }
+          : { error: "This location is already assigned to a different Line Agent for this carrier." };
+      }
+      if (portCountry) {
+        const existingViaCountry = db.prepare(`
+          SELECT carrier_agent_id FROM carrier_agent_locations WHERE carrier_code=? AND location_type='country' AND country_iso2=?
+        `).get(carrierCode, portCountry);
+        if (existingViaCountry && existingViaCountry.carrier_agent_id !== headerId)
+          return { error: `This location's country (${portCountry}) is already assigned to a different Line Agent for this carrier.` };
+      }
+      return { ok: true };
+    }
+    // locationType === "country"
+    const countryRow = db.prepare("SELECT 1 FROM countries WHERE iso2=?").get(countryIso2);
+    if (!countryRow) return { error: `Unknown country code: ${countryIso2}` };
+    const existingCountry = db.prepare(`
+      SELECT carrier_agent_id FROM carrier_agent_locations WHERE carrier_code=? AND location_type='country' AND country_iso2=?
+    `).get(carrierCode, countryIso2);
+    if (existingCountry) {
+      return existingCountry.carrier_agent_id === headerId
+        ? { error: "This country is already configured for this Line Agent." }
+        : { error: "This country is already assigned to a different Line Agent for this carrier." };
+    }
+    const conflictingUnlocode = db.prepare(`
+      SELECT cal.unlocode FROM carrier_agent_locations cal
+      JOIN port_locations pl ON pl.unlocode = cal.unlocode
+      WHERE cal.carrier_code=? AND cal.location_type='unlocode' AND pl.country_code=? AND cal.carrier_agent_id != ?
+    `).get(carrierCode, countryIso2, headerId);
+    if (conflictingUnlocode) {
+      return { error: `${conflictingUnlocode.unlocode} in this country is already assigned to a different Line Agent for this carrier — remove it from that agent first.` };
+    }
+    return { ok: true };
+  }
+
+  // Runs only after a country-level location is successfully saved: any UNLOCODE already
+  // configured under the SAME header whose own country now matches is obsolete — remove it and
+  // log the discard as a real historical record (entity_events), never a silent delete.
+  function discardRedundantUnlocodes(headerId, carrierCode, countryIso2) {
+    const redundant = db.prepare(`
+      SELECT cal.* FROM carrier_agent_locations cal
+      JOIN port_locations pl ON pl.unlocode = cal.unlocode
+      WHERE cal.carrier_agent_id=? AND cal.location_type='unlocode' AND pl.country_code=?
+    `).all(headerId, countryIso2);
+    for (const loc of redundant) {
+      db.prepare("DELETE FROM carrier_agent_locations WHERE id=?").run(loc.id);
+      logEntityEvent('carrier_agent_location', loc.id, 'DISCARDED_REDUNDANT', 'unlocode', loc.unlocode, null,
+        JSON.stringify({ carrierAgentId: headerId, carrierCode, discardedUnlocode: loc.unlocode, madeObsoleteByCountry: countryIso2 }));
+    }
+    return redundant.map(l => l.unlocode);
+  }
+
+  function insertLocation(headerId, carrierCode, locationType, unlocode, countryIso2) {
+    const id = `CAL-${uid()}`;
+    const now = new Date().toISOString();
+    db.prepare(`INSERT INTO carrier_agent_locations (id,carrier_agent_id,carrier_code,location_type,unlocode,country_iso2,created_at)
+      VALUES (?,?,?,?,?,?,?)`).run(id, headerId, carrierCode, locationType,
+        locationType === "unlocode" ? unlocode : null, locationType === "country" ? countryIso2 : null, now);
+    logEntityEvent('carrier_agent_location', id, 'CREATED', null, null, null,
+      JSON.stringify({ carrierAgentId: headerId, carrierCode, locationType, unlocode, countryIso2 }));
+    return id;
+  }
+
   app.get("/api/carrier-agents", async (req, res) => {
     if (isRemote()) {
       const qs = new URLSearchParams(req.query).toString();
       try { return ok(res, await attachAgentNames(await callMdmService("GET", `/internal/carrier-agents${qs ? `?${qs}` : ""}`))); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
-    const rows = db.prepare(`${CARRIER_AGENT_JOIN} ORDER BY ca.carrier_code, ca.port_unlocode`).all();
-    let mapped = rows.map(mapCarrierAgent);
+    const headerRows = db.prepare(`${CARRIER_AGENT_JOIN} ORDER BY ca.carrier_code, ca.agent_customer_id`).all();
+    let mapped = mapHeadersWithLocations(headerRows);
     // Pagination is opt-in (same shape as GET /api/shipments) — every existing caller that
     // omits limit/offset keeps getting today's exact bare-array response.
     if (req.query.limit === undefined && req.query.offset === undefined) return ok(res, mapped);
     if (req.query.search) {
       const q = req.query.search.toLowerCase();
       mapped = mapped.filter(a =>
-        a.carrierCode.toLowerCase().includes(q) || a.portUnlocode.toLowerCase().includes(q)
-        || (a.portName || '').toLowerCase().includes(q) || (a.agentCustomerName || '').toLowerCase().includes(q)
-        || (a.note || '').toLowerCase().includes(q));
+        a.carrierCode.toLowerCase().includes(q) || (a.agentCustomerName || '').toLowerCase().includes(q)
+        || (a.note || '').toLowerCase().includes(q)
+        || a.locations.some(l => l.unlocode.toLowerCase().includes(q) || l.portName.toLowerCase().includes(q)
+          || l.countryIso2.toLowerCase().includes(q) || l.countryName.toLowerCase().includes(q)));
     }
     const lim = Math.min(parseInt(req.query.limit) || 50, 500), off = parseInt(req.query.offset) || 0;
     ok(res, { results: mapped.slice(off, off + lim), total: mapped.length, limit: lim, offset: off });
   });
   app.post("/api/carrier-agents", write, async (req, res) => {
-    const { carrierCode, portUnlocode, agentCustomerId, note = '' } = req.body;
-    if (!carrierCode || !portUnlocode || !agentCustomerId) return err(res, "carrierCode, portUnlocode and agentCustomerId required");
+    const { carrierCode, agentCustomerId, note = '', locationType, unlocode, countryIso2 } = req.body;
+    if (!carrierCode || !agentCustomerId) return err(res, "carrierCode and agentCustomerId required");
+    if (locationType !== "unlocode" && locationType !== "country") return err(res, "locationType must be 'unlocode' or 'country'");
+    if (locationType === "unlocode" && !unlocode) return err(res, "unlocode required");
+    if (locationType === "country" && !countryIso2) return err(res, "countryIso2 required");
     if (isRemote()) {
       try {
-        const created = await callMdmService("POST", "/internal/carrier-agents", { carrierCode, portUnlocode, agentCustomerId, note });
+        const created = await callMdmService("POST", "/internal/carrier-agents", { carrierCode, agentCustomerId, note, locationType, unlocode, countryIso2 });
         await attachAgentNames([created]);
         return ok(res, created, 201);
       } catch (e) { return err(res, e.message, e.status || 502); }
     }
+    const code = carrierCode.toUpperCase().trim();
+    const conflict = checkLocationConflict({ carrierCode: code, headerId: '__new__', locationType, unlocode: unlocode?.toUpperCase().trim(), countryIso2: countryIso2?.toUpperCase().trim() });
+    if (conflict.error) return err(res, conflict.error);
     const id = `CAG-${uid()}`;
     const now = new Date().toISOString();
+    // Header + first location as one atomic unit — a header with zero locations is meaningless,
+    // so a failure inserting the location must not leave an orphaned header behind.
+    db.exec("BEGIN");
     try {
-      db.prepare("INSERT INTO carrier_agents (id,carrier_code,port_unlocode,agent_customer_id,note,created_at) VALUES (?,?,?,?,?,?)")
-        .run(id, carrierCode.toUpperCase().trim(), portUnlocode.toUpperCase().trim(), agentCustomerId, note.trim(), now);
+      db.prepare("INSERT INTO carrier_agents (id,carrier_code,agent_customer_id,note,created_at) VALUES (?,?,?,?,?)")
+        .run(id, code, agentCustomerId, note.trim(), now);
+      insertLocation(id, code, locationType, unlocode?.toUpperCase().trim(), countryIso2?.toUpperCase().trim());
+      db.exec("COMMIT");
     } catch (e) {
-      return err(res, isUniqueViolation(e) ? "This carrier already has an agent registered at this port" : e.message);
+      db.exec("ROLLBACK");
+      return err(res, isUniqueViolation(e) ? "This carrier already has a Line Agent header for this customer — add a location to it instead" : e.message);
     }
     const r = db.prepare(`${CARRIER_AGENT_JOIN} WHERE ca.id=?`).get(id);
-    ok(res, mapCarrierAgent(r), 201);
+    ok(res, mapHeadersWithLocations([r])[0], 201);
   });
   app.put("/api/carrier-agents/:id", write, async (req, res) => {
     if (isRemote()) {
@@ -370,7 +493,7 @@ module.exports = function mdmRoutes(app, ctx) {
     if (!agentCustomerId) return err(res, "agentCustomerId required");
     db.prepare("UPDATE carrier_agents SET agent_customer_id=?, note=? WHERE id=?").run(agentCustomerId, note.trim(), req.params.id);
     const r = db.prepare(`${CARRIER_AGENT_JOIN} WHERE ca.id=?`).get(req.params.id);
-    ok(res, mapCarrierAgent(r));
+    ok(res, mapHeadersWithLocations([r])[0]);
   });
   app.delete("/api/carrier-agents/:id", write, async (req, res) => {
     if (isRemote()) {
@@ -378,6 +501,42 @@ module.exports = function mdmRoutes(app, ctx) {
       catch (e) { return err(res, e.message, e.status || 502); }
     }
     const info = db.prepare("DELETE FROM carrier_agents WHERE id=?").run(req.params.id);
+    if (info.changes === 0) return err(res, "Not found", 404);
+    ok(res, { deleted: req.params.id });
+  });
+
+  // ─── Carrier Agent Locations (add/remove a coverage entry on an existing header) ────────────
+  // POST validates the new location against every other header for the same carrier (see
+  // checkLocationConflict) before writing, then — only for a country-type add — auto-discards
+  // any now-redundant UNLOCODE rows under the SAME header and reports them back as `discarded`
+  // so the frontend can show the informational "these were made obsolete" notice.
+  app.post("/api/carrier-agents/:id/locations", write, async (req, res) => {
+    const { locationType, unlocode, countryIso2 } = req.body;
+    if (locationType !== "unlocode" && locationType !== "country") return err(res, "locationType must be 'unlocode' or 'country'");
+    if (locationType === "unlocode" && !unlocode) return err(res, "unlocode required");
+    if (locationType === "country" && !countryIso2) return err(res, "countryIso2 required");
+    if (isRemote()) {
+      try { return ok(res, await callMdmService("POST", `/internal/carrier-agents/${req.params.id}/locations`, req.body), 201); }
+      catch (e) { return err(res, e.message, e.status || 502); }
+    }
+    const header = db.prepare("SELECT * FROM carrier_agents WHERE id=?").get(req.params.id);
+    if (!header) return err(res, "Not found", 404);
+    const uc = unlocode?.toUpperCase().trim();
+    const cc = countryIso2?.toUpperCase().trim();
+    const conflict = checkLocationConflict({ carrierCode: header.carrier_code, headerId: header.id, locationType, unlocode: uc, countryIso2: cc });
+    if (conflict.error) return err(res, conflict.error);
+    insertLocation(header.id, header.carrier_code, locationType, uc, cc);
+    const discarded = locationType === "country" ? discardRedundantUnlocodes(header.id, header.carrier_code, cc) : [];
+    const r = db.prepare(`${CARRIER_AGENT_JOIN} WHERE ca.id=?`).get(header.id);
+    const mapped = mapHeadersWithLocations([r])[0];
+    ok(res, { ...mapped, discarded }, 201);
+  });
+  app.delete("/api/carrier-agent-locations/:id", write, async (req, res) => {
+    if (isRemote()) {
+      try { await callMdmService("DELETE", `/internal/carrier-agent-locations/${req.params.id}`); return ok(res, { deleted: req.params.id }); }
+      catch (e) { return err(res, e.message, e.status || 502); }
+    }
+    const info = db.prepare("DELETE FROM carrier_agent_locations WHERE id=?").run(req.params.id);
     if (info.changes === 0) return err(res, "Not found", 404);
     ok(res, { deleted: req.params.id });
   });
@@ -449,6 +608,7 @@ module.exports = function mdmRoutes(app, ctx) {
   });
   app.put("/api/trade-lanes/:code", write, async (req, res) => {
     const { name, description='', transitDays=0 } = req.body;
+    if (!name) return err(res, "name required");
     if (isRemote()) {
       try { return ok(res, await callMdmService("PUT", `/internal/trade-lanes/${req.params.code}`, { name, description, transitDays })); }
       catch (e) { return err(res, e.message, e.status || 502); }
@@ -555,6 +715,7 @@ module.exports = function mdmRoutes(app, ctx) {
   });
   app.put("/api/regions/:code", write, async (req, res) => {
     const { name, description='' } = req.body;
+    if (!name) return err(res, "name required");
     if (isRemote()) {
       try { return ok(res, await callMdmService("PUT", `/internal/regions/${req.params.code}`, { name, description })); }
       catch (e) { return err(res, e.message, e.status || 502); }
@@ -612,7 +773,11 @@ module.exports = function mdmRoutes(app, ctx) {
     }
     const existing = db.prepare("SELECT * FROM countries WHERE iso2=?").get(iso2);
     if (!existing) return err(res, "Not found", 404);
-    const { name, unMember=1, regionCode='', invoiceAlertBusinessDays, invoiceEscalationBusinessDays } = req.body;
+    const { name: nameIn, unMember=1, regionCode='', invoiceAlertBusinessDays, invoiceEscalationBusinessDays } = req.body;
+    // Falls back to the existing row like the two invoice-day fields just below already do —
+    // omitting `name` from a partial update must preserve it, not bind `undefined` into the
+    // UPDATE (which node:sqlite rejects, crashing the request).
+    const name = nameIn !== undefined ? nameIn : existing.name;
     // Invoice Collections thresholds (Epic TKT-G11AHW) — country-level, admin-only for this pass:
     // no "country manager" role exists in this app's role model, a deliberate scoping decision
     // rather than an oversight (see the epic's own story description).
@@ -717,6 +882,7 @@ module.exports = function mdmRoutes(app, ctx) {
   });
   app.put("/api/commodities/:code", write, async (req, res) => {
     const { description, gradeCode='E', gradeName='General Cargo' } = req.body;
+    if (!description) return err(res, "description required");
     if (isRemote()) {
       try { return ok(res, await callMdmService("PUT", `/internal/commodities/${req.params.code}`, { description, gradeCode, gradeName })); }
       catch (e) { return err(res, e.message, e.status || 502); }

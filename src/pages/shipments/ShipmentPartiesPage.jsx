@@ -5,10 +5,10 @@ import AdditionalPartiesPanel from "../../components/shared/AdditionalPartiesPan
 // Dedicated sub-page for party/office details, promoted out of the
 // anchor-scroll Overview page (see ARCHITECTURE.md §8.11).
 
-const ShipmentPartiesPage = ({ shipment, onBack, onUpdate }) => {
+const ShipmentPartiesPage = ({ shipment, onBack, onUpdate, onShipmentPatched }) => {
   return (
     <div id="shpparties-page" style={{ maxWidth: 1100, margin: "0 auto" }}>
-      <PartiesOfficesPanel shipment={shipment} onUpdate={onUpdate} />
+      <PartiesOfficesPanel shipment={shipment} onUpdate={onUpdate} onShipmentPatched={onShipmentPatched} />
       <div style={{ marginTop: 28 }}>
         <AdditionalPartiesPanel shipmentId={shipment.id} />
       </div>

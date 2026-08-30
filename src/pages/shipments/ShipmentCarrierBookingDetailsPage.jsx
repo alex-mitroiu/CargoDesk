@@ -6,6 +6,7 @@ import { toast } from "../../toast";
 import EdiMessageList from "../../components/shared/EdiMessageList";
 import CarrierBookingsTable from "../../components/shared/CarrierBookingsTable";
 import CreditHoldModal from "../../components/shared/CreditHoldModal";
+import GenerateDocumentModal from "../../components/shared/GenerateDocumentModal";
 import Spinner from "../../components/primitives/Spinner";
 import { CommodityDisplay } from "./ShipmentDetailPage";
 import { IconSendPlane, IconAnchor, IconWarning } from "../../components/primitives/Icon";
@@ -33,6 +34,7 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
   const [savingFreightTerms, setSavingFreightTerms] = useState(false);
   const [creditHoldModal, setCreditHoldModal] = useState(null); // { holds } — Credit Control Depth / TKT-Q00WHF
   const [bookableCarriers, setBookableCarriers] = useState(null); // eAdapter — live effective bookable set, replaces the static BOOKABLE_CARRIERS Set
+  const [genDocOpen, setGenDocOpen] = useState(false); // Generate Booking Request Document — the manual/no-EDI path
 
   useEffect(() => {
     let cancelled = false;
@@ -368,11 +370,28 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
 
       {!bookable && (
         <div style={{ fontFamily: T.body, fontSize: 12.5, color: T.textMuted, marginBottom: 16,
-          background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 14px" }}>
-          {!shipment.emoOfficeId
-            ? "Booking requests aren't supported yet — this shipment has no Export Managing Office assigned, and eAdapter configs are scoped per office."
-            : `Booking requests aren't supported for carrier ${shipment.carrierCode || "—"} at ${shipment.emoOfficeCode || "this office"} yet.`}
+          background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 14px",
+          display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <span>
+            {!shipment.emoOfficeId
+              ? "Booking requests aren't supported yet — this shipment has no Export Managing Office assigned, and eAdapter configs are scoped per office."
+              : `Booking requests aren't supported for carrier ${shipment.carrierCode || "—"} at ${shipment.emoOfficeCode || "this office"} yet.`}
+            {" "}Generate a booking request document to send the carrier manually instead.
+          </span>
+          {canEdit && (
+            <button onClick={() => setGenDocOpen(true)}
+              style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 6,
+                color: T.text, cursor: "pointer", padding: "6px 12px", fontFamily: T.body,
+                fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>
+              Generate Booking Request Document
+            </button>
+          )}
         </div>
+      )}
+      {genDocOpen && (
+        <GenerateDocumentModal shipment={shipment} defaultCode="BR01"
+          onClose={() => setGenDocOpen(false)}
+          onSaved={() => setGenDocOpen(false)} />
       )}
       {status === "Pending" && (
         <div style={{ fontFamily: T.body, fontSize: 12.5, color: T.text, marginBottom: 16,

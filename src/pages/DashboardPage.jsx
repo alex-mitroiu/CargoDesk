@@ -1061,6 +1061,10 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocat
 
 const fmtUsd = v => v == null ? "—" : `$${Number(v).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
 const marginColor = pct => pct == null ? T.textMuted : pct >= 20 ? T.success : pct >= 10 ? T.warning : T.danger;
+// Multi-Entity Accounting (TKT-EEV4I9) — a per-entity figure is in that entity's own reporting
+// currency, not always USD, so it needs its own symbol-less formatter (fmtUsd's literal "$"
+// would misrepresent a EUR/GBP/etc. entity total).
+const fmtCcy = (v, ccy) => v == null ? "—" : `${Number(v).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })} ${ccy}`;
 
 const MarginView = ({ financeEnabled }) => {
   const [data,      setData]      = useState(null);
@@ -1322,6 +1326,52 @@ const MarginView = ({ financeEnabled }) => {
                 <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: cc,
                   background: `${cc}18`, borderRadius: 6, padding: "2px 8px", border: `1px solid ${cc}33` }}>
                   {cpct != null ? `${cpct}%` : "—"}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Entity breakdown table (Multi-Entity Accounting, TKT-EEV4I9) — a branch doubles as
+          CargoDesk's legal-entity boundary; this is the one breakdown that also shows figures in
+          the entity's own reporting currency alongside the USD figures every other breakdown
+          uses, since that's the number a multi-entity user actually wants and the USD-only views
+          don't give them. Only rendered when the shipment data actually resolves to an entity
+          (every branch needs a country + an EMO/IMO office pointing at it) — a single-entity/
+          single-branch deployment simply never sees this table, no configuration needed. */}
+      {data.byEntity?.length > 0 && (
+        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden", marginBottom: 16 }}>
+          <div style={{ padding: "13px 20px", borderBottom: `1px solid ${T.border}` }}>
+            <h3 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: 0 }}>By Entity</h3>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr 1fr 80px",
+            padding: "8px 20px", borderBottom: `1px solid ${T.border}` }}>
+            {["Entity","Buy (Local)","Sell (Local)","Buy (USD)","GP (USD)","Margin"].map((h, i) => (
+              <div key={i} style={{ fontFamily: T.body, fontSize: 10, fontWeight: 600, color: T.textMuted,
+                textTransform: "uppercase", letterSpacing: ".07em" }}>{h}</div>
+            ))}
+          </div>
+          {data.byEntity.map(e => {
+            const epct = e.grossMarginPct; const ec = marginColor(epct);
+            return (
+              <div key={e.entityId}
+                style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr 1fr 80px",
+                  padding: "11px 20px", borderBottom: `1px solid ${T.border}22`, alignItems: "center",
+                  transition: "background .1s" }}
+                onMouseEnter={ev => ev.currentTarget.style.background = T.surfaceHover}
+                onMouseLeave={ev => ev.currentTarget.style.background = "transparent"}>
+                <span style={{ fontFamily: T.body, fontSize: 13, fontWeight: 600, color: T.text,
+                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.entityName || "—"}</span>
+                <span style={{ fontFamily: T.mono, fontSize: 12, color: T.warning }}>{financeEnabled ? fmtCcy(e.localBuy, e.currency) : "••••"}</span>
+                <span style={{ fontFamily: T.mono, fontSize: 12, color: T.success }}>{financeEnabled ? fmtCcy(e.localSell, e.currency) : "••••"}</span>
+                <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>{financeEnabled ? fmtUsd(e.totalBuyUsd) : "••••"}</span>
+                <span style={{ fontFamily: T.mono, fontSize: 12, color: e.grossProfitUsd >= 0 ? T.success : T.danger }}>
+                  {financeEnabled ? `${e.grossProfitUsd >= 0 ? "+" : ""}${fmtUsd(e.grossProfitUsd)}` : "••••"}
+                </span>
+                <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: ec,
+                  background: `${ec}18`, borderRadius: 6, padding: "2px 8px", border: `1px solid ${ec}33` }}>
+                  {epct != null ? `${epct}%` : "—"}
                 </span>
               </div>
             );

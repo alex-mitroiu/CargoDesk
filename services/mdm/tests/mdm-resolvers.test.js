@@ -67,7 +67,7 @@ function assert(label, condition, detail = "") {
     await request("POST", "/internal/trade-lanes", { code: laneCode, name: "Resolver Lane" });
     await request("POST", "/internal/country-trade-lanes", { iso2, laneCode });
     await request("POST", "/internal/carriers", { code: carrierCode, name: "Resolver Carrier" });
-    const agent = await request("POST", "/internal/carrier-agents", { carrierCode, portUnlocode: port1, agentCustomerId: "CUST-RESOLVER-1" });
+    const agent = await request("POST", "/internal/carrier-agents", { carrierCode, agentCustomerId: "CUST-RESOLVER-1", locationType: "unlocode", unlocode: port1 });
     agentId = agent.body.id;
 
     console.log("\nGET /internal/port-lanes-index");

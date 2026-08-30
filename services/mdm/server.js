@@ -25,6 +25,28 @@ if (!fs.existsSync(DB_PATH) && fs.existsSync(SAMPLE_DB_PATH)) {
 
 const app = express();
 const db = new DatabaseSync(DB_PATH);
+
+// Crash-safety net — same fix applied to the monolith's server.js after a live stress-test found
+// an unhandled route error (a bad enum value, `undefined` bound into a node:sqlite statement)
+// kills this entire process, same as any other plain Express 4 app with no error handling. Every
+// app.get/post/put/patch/delete handler registered from here on is wrapped so a thrown/rejected
+// error reaches next(err) — and the error middleware near app.listen below — instead of crashing.
+function wrapAsyncHandler(fn) {
+  if (typeof fn !== "function") return fn;
+  return (req, res, next) => {
+    try {
+      const result = fn(req, res, next);
+      if (result && typeof result.catch === "function") result.catch(next);
+    } catch (e) { next(e); }
+  };
+}
+for (const method of ["get", "post", "put", "patch", "delete"]) {
+  const original = app[method].bind(app);
+  app[method] = (routePath, ...handlers) => original(routePath, ...handlers.map(wrapAsyncHandler));
+}
+process.on("unhandledRejection", (reason) => console.error("⚠ Unhandled promise rejection (process kept alive):", reason));
+process.on("uncaughtException", (e) => console.error("⚠ Uncaught exception (process kept alive):", e));
+
 app.use(express.json({ limit: "5mb" }));
 
 const uid = () => Math.random().toString(36).slice(2, 8).toUpperCase();
@@ -118,14 +140,85 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS carrier_agents (
     id                 TEXT PRIMARY KEY,
     carrier_code       TEXT NOT NULL,
-    port_unlocode      TEXT NOT NULL REFERENCES port_locations(unlocode),
     agent_customer_id  TEXT NOT NULL,
     note               TEXT DEFAULT '',
     created_at         TEXT NOT NULL,
-    UNIQUE(carrier_code, port_unlocode)
+    UNIQUE(carrier_code, agent_customer_id)
   );
   CREATE INDEX IF NOT EXISTS idx_carrier_agents_customer ON carrier_agents(agent_customer_id);
+
+  CREATE TABLE IF NOT EXISTS carrier_agent_locations (
+    id                TEXT PRIMARY KEY,
+    carrier_agent_id  TEXT NOT NULL REFERENCES carrier_agents(id) ON DELETE CASCADE,
+    carrier_code      TEXT NOT NULL,
+    location_type     TEXT NOT NULL CHECK(location_type IN ('unlocode','country')),
+    unlocode          TEXT REFERENCES port_locations(unlocode),
+    country_iso2      TEXT REFERENCES countries(iso2),
+    created_at        TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_cal_agent ON carrier_agent_locations(carrier_agent_id);
+  CREATE INDEX IF NOT EXISTS idx_cal_carrier_unlocode ON carrier_agent_locations(carrier_code, unlocode);
+  CREATE INDEX IF NOT EXISTS idx_cal_carrier_country ON carrier_agent_locations(carrier_code, country_iso2);
 `);
+
+// One-time restructure, same shape and rationale as the monolith's own rebuildCarrierAgentsLocations
+// (server.js) — this service owns an independent copy of carrier_agents, so it needs the identical
+// guarded create-copy-swap. See that function's comment for the full explanation.
+;(function rebuildCarrierAgentsLocations() {
+  try {
+    const cols = db.prepare("PRAGMA table_info(carrier_agents)").all();
+    if (!cols.some(c => c.name === "port_unlocode")) return;
+    const oldRows = db.prepare("SELECT * FROM carrier_agents ORDER BY created_at").all();
+    db.exec("PRAGMA foreign_keys=OFF");
+    db.exec("BEGIN");
+    db.exec("ALTER TABLE carrier_agents RENAME TO carrier_agents_old_v1");
+    // Same dangling-FK gotcha as the monolith's own copy of this migration: renaming
+    // carrier_agents silently repoints carrier_agent_locations' FK at carrier_agents_old_v1
+    // (about to be dropped) — drop and recreate it fresh after the real table exists again.
+    db.exec("DROP TABLE IF EXISTS carrier_agent_locations");
+    db.exec(`CREATE TABLE carrier_agents (
+      id                 TEXT PRIMARY KEY,
+      carrier_code       TEXT NOT NULL,
+      agent_customer_id  TEXT NOT NULL,
+      note               TEXT DEFAULT '',
+      created_at         TEXT NOT NULL,
+      UNIQUE(carrier_code, agent_customer_id)
+    )`);
+    db.exec(`CREATE TABLE carrier_agent_locations (
+      id                TEXT PRIMARY KEY,
+      carrier_agent_id  TEXT NOT NULL REFERENCES carrier_agents(id) ON DELETE CASCADE,
+      carrier_code      TEXT NOT NULL,
+      location_type     TEXT NOT NULL CHECK(location_type IN ('unlocode','country')),
+      unlocode          TEXT REFERENCES port_locations(unlocode),
+      country_iso2      TEXT REFERENCES countries(iso2),
+      created_at        TEXT NOT NULL
+    )`);
+    db.exec("CREATE INDEX IF NOT EXISTS idx_cal_agent ON carrier_agent_locations(carrier_agent_id)");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_cal_carrier_unlocode ON carrier_agent_locations(carrier_code, unlocode)");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_cal_carrier_country ON carrier_agent_locations(carrier_code, country_iso2)");
+    const headerMap = new Map();
+    const insHeader = db.prepare("INSERT INTO carrier_agents (id,carrier_code,agent_customer_id,note,created_at) VALUES (?,?,?,?,?)");
+    const insLoc    = db.prepare("INSERT INTO carrier_agent_locations (id,carrier_agent_id,carrier_code,location_type,unlocode,created_at) VALUES (?,?,?,'unlocode',?,?)");
+    for (const r of oldRows) {
+      const key = `${r.carrier_code}|${r.agent_customer_id}`;
+      let headerId = headerMap.get(key);
+      if (!headerId) {
+        headerId = `CAG-${uid()}`;
+        insHeader.run(headerId, r.carrier_code, r.agent_customer_id, r.note || '', r.created_at);
+        headerMap.set(key, headerId);
+      }
+      insLoc.run(`CAL-${uid()}`, headerId, r.carrier_code, r.port_unlocode, r.created_at);
+    }
+    db.exec("DROP TABLE carrier_agents_old_v1");
+    db.exec("COMMIT");
+    console.log(`  ✔ carrier_agents restructured: ${oldRows.length} row(s) -> ${headerMap.size} header(s) + locations`);
+  } catch (e) {
+    try { db.exec("ROLLBACK"); } catch {}
+    console.error("[migration] FAILED carrier_agents restructure:", e.message);
+  } finally {
+    try { db.exec("PRAGMA foreign_keys=ON"); } catch {}
+  }
+})();
 
 // ─── Mappers (duplicated from lib/mappers.js — no shared module between processes) ─────────────
 // agentCustomerName is deliberately absent here (unlike the monolith's own mapCarrierAgent) —
@@ -135,7 +228,8 @@ const mapCarrier      = r => ({ code: r.code, name: r.name, shortName: r.short_n
 const mapVessel       = r => ({ imo: r.imo, name: r.name, assetType: r.asset_type || '', flagIso2: r.flag_iso2 || '', flagName: r.flag_name || '', buildYear: r.build_year, grossTonnage: r.gross_tonnage, mmsi: r.mmsi || '', aisVerifiedAt: r.ais_verified_at || '' });
 const mapPortLocation = r => ({ unlocode: r.unlocode, name: r.name, latitude: r.latitude, longitude: r.longitude, countryCode: r.country_code, zoneCode: r.zone_code, timezone: r.timezone || null, lastSyncedAt: r.last_synced_at || null });
 const mapLinkedPort   = r => ({ id: r.id, primaryUnlocode: r.primary_unlocode, primaryName: r.primary_name || '', linkedUnlocode: r.linked_unlocode, linkedName: r.linked_name || '', note: r.note || '' });
-const mapCarrierAgent = r => ({ id: r.id, carrierCode: r.carrier_code, portUnlocode: r.port_unlocode, portName: r.port_name || '', agentCustomerId: r.agent_customer_id, note: r.note || '', createdAt: r.created_at });
+const mapCarrierAgentLocation = l => ({ id: l.id, type: l.location_type, unlocode: l.unlocode || '', portName: l.port_name || '', countryIso2: l.country_iso2 || '', countryName: l.country_name || '' });
+const mapCarrierAgent = (r, locations = []) => ({ id: r.id, carrierCode: r.carrier_code, agentCustomerId: r.agent_customer_id, note: r.note || '', createdAt: r.created_at, locations: locations.map(mapCarrierAgentLocation) });
 const mapTradeLane    = r => ({ code: r.code, name: r.name, description: r.description || '', countryCount: r.country_count ?? 0, transitDays: r.transit_days ?? 0 });
 const mapRegion       = r => ({ code: r.code, name: r.name, description: r.description || '' });
 const mapCountry      = r => ({ iso2: r.iso2, name: r.name, unMember: r.un_member === 1, regionCode: r.region_code || '', portCount: r.port_count ?? 0, invoiceAlertBusinessDays: r.invoice_alert_business_days ?? null, invoiceEscalationBusinessDays: r.invoice_escalation_business_days ?? null });
@@ -169,6 +263,7 @@ app.post("/internal/carriers", (req, res) => {
 });
 app.put("/internal/carriers/:code", (req, res) => {
   const { name, shortName = '' } = req.body;
+  if (!name) return err(res, "name required");
   const info = db.prepare("UPDATE carriers SET name=?, short_name=? WHERE code=?").run(name, shortName, req.params.code);
   if (info.changes === 0) return err(res, "Not found", 404);
   ok(res, mapCarrier({ code: req.params.code, name, short_name: shortName }));
@@ -200,6 +295,7 @@ app.post("/internal/vessels", (req, res) => {
 });
 app.put("/internal/vessels/:imo", (req, res) => {
   const { name, assetType = '', flagIso2 = '', flagName = '', buildYear = null, grossTonnage = null } = req.body;
+  if (!name) return err(res, "name required");
   const info = db.prepare("UPDATE vessels SET name=?, asset_type=?, flag_iso2=?, flag_name=?, build_year=?, gross_tonnage=? WHERE imo=?").run(name, assetType, flagIso2, flagName, buildYear, grossTonnage, req.params.imo);
   if (info.changes === 0) return err(res, "Not found", 404);
   ok(res, mapVessel({ imo: req.params.imo, name, asset_type: assetType, flag_iso2: flagIso2, flag_name: flagName, build_year: buildYear, gross_tonnage: grossTonnage }));
@@ -269,6 +365,7 @@ app.post("/internal/port-locations", (req, res) => {
 });
 app.put("/internal/port-locations/:unlocode", (req, res) => {
   const { name, latitude = 0, longitude = 0, countryCode = '', zoneCode = '' } = req.body;
+  if (!name) return err(res, "name required");
   const cc = countryCode.toUpperCase() || req.params.unlocode.slice(0, 2).toUpperCase();
   const info = db.prepare("UPDATE port_locations SET name=?, latitude=?, longitude=?, country_code=?, zone_code=?, last_synced_at=? WHERE unlocode=?").run(name, latitude, longitude, cc, zoneCode, new Date().toISOString(), req.params.unlocode.toUpperCase());
   if (info.changes === 0) return err(res, "Not found", 404);
@@ -332,38 +429,135 @@ app.get("/internal/linked-ports/all", (req, res) => {
 // (...)` after calling this service, mirroring the same batch-resolve idiom used for
 // resolveSeaPorts/resolveAssigneeNames elsewhere in this codebase.
 
-const CARRIER_AGENT_JOIN = `
-  SELECT ca.*, pl.name AS port_name
-  FROM carrier_agents ca
-  LEFT JOIN port_locations pl ON pl.unlocode = ca.port_unlocode
+const CARRIER_AGENT_JOIN = `SELECT ca.* FROM carrier_agents ca`;
+const LOCATION_JOIN = `
+  SELECT cal.*, pl.name AS port_name, co.name AS country_name
+  FROM carrier_agent_locations cal
+  LEFT JOIN port_locations pl ON pl.unlocode = cal.unlocode
+  LEFT JOIN countries co ON co.iso2 = cal.country_iso2
 `;
 
+function mapHeadersWithLocations(headerRows) {
+  if (headerRows.length === 0) return [];
+  const ph = headerRows.map(() => "?").join(",");
+  const locRows = db.prepare(`${LOCATION_JOIN} WHERE cal.carrier_agent_id IN (${ph}) ORDER BY cal.created_at`)
+    .all(...headerRows.map(r => r.id));
+  const byHeader = new Map();
+  for (const l of locRows) {
+    if (!byHeader.has(l.carrier_agent_id)) byHeader.set(l.carrier_agent_id, []);
+    byHeader.get(l.carrier_agent_id).push(l);
+  }
+  return headerRows.map(r => mapCarrierAgent(r, byHeader.get(r.id) || []));
+}
+
+// Same conflict/redundancy rules as the monolith's own routes/mdm.js copy — see that file's
+// comment for the full rationale. Duplicated rather than shared since these are separate
+// processes with independent databases.
+function checkLocationConflict({ carrierCode, headerId, locationType, unlocode, countryIso2 }) {
+  if (locationType === "unlocode") {
+    const portRow = db.prepare("SELECT country_code FROM port_locations WHERE unlocode=?").get(unlocode);
+    if (!portRow) return { error: `Unknown UN/LOCODE: ${unlocode}` };
+    const portCountry = portRow.country_code || '';
+    if (portCountry) {
+      const coveringCountry = db.prepare(`
+        SELECT 1 FROM carrier_agent_locations WHERE carrier_agent_id=? AND location_type='country' AND country_iso2=?
+      `).get(headerId, portCountry);
+      if (coveringCountry) return { error: `This location is already covered by this Line Agent's existing ${portCountry} country configuration.` };
+    }
+    const existingDirect = db.prepare(`
+      SELECT carrier_agent_id FROM carrier_agent_locations WHERE carrier_code=? AND location_type='unlocode' AND unlocode=?
+    `).get(carrierCode, unlocode);
+    if (existingDirect) {
+      return existingDirect.carrier_agent_id === headerId
+        ? { error: "This location is already configured for this Line Agent." }
+        : { error: "This location is already assigned to a different Line Agent for this carrier." };
+    }
+    if (portCountry) {
+      const existingViaCountry = db.prepare(`
+        SELECT carrier_agent_id FROM carrier_agent_locations WHERE carrier_code=? AND location_type='country' AND country_iso2=?
+      `).get(carrierCode, portCountry);
+      if (existingViaCountry && existingViaCountry.carrier_agent_id !== headerId)
+        return { error: `This location's country (${portCountry}) is already assigned to a different Line Agent for this carrier.` };
+    }
+    return { ok: true };
+  }
+  const countryRow = db.prepare("SELECT 1 FROM countries WHERE iso2=?").get(countryIso2);
+  if (!countryRow) return { error: `Unknown country code: ${countryIso2}` };
+  const existingCountry = db.prepare(`
+    SELECT carrier_agent_id FROM carrier_agent_locations WHERE carrier_code=? AND location_type='country' AND country_iso2=?
+  `).get(carrierCode, countryIso2);
+  if (existingCountry) {
+    return existingCountry.carrier_agent_id === headerId
+      ? { error: "This country is already configured for this Line Agent." }
+      : { error: "This country is already assigned to a different Line Agent for this carrier." };
+  }
+  const conflictingUnlocode = db.prepare(`
+    SELECT cal.unlocode FROM carrier_agent_locations cal
+    JOIN port_locations pl ON pl.unlocode = cal.unlocode
+    WHERE cal.carrier_code=? AND cal.location_type='unlocode' AND pl.country_code=? AND cal.carrier_agent_id != ?
+  `).get(carrierCode, countryIso2, headerId);
+  if (conflictingUnlocode) {
+    return { error: `${conflictingUnlocode.unlocode} in this country is already assigned to a different Line Agent for this carrier — remove it from that agent first.` };
+  }
+  return { ok: true };
+}
+
+function discardRedundantUnlocodes(headerId, carrierCode, countryIso2) {
+  const redundant = db.prepare(`
+    SELECT cal.* FROM carrier_agent_locations cal
+    JOIN port_locations pl ON pl.unlocode = cal.unlocode
+    WHERE cal.carrier_agent_id=? AND cal.location_type='unlocode' AND pl.country_code=?
+  `).all(headerId, countryIso2);
+  for (const loc of redundant) db.prepare("DELETE FROM carrier_agent_locations WHERE id=?").run(loc.id);
+  return redundant.map(l => l.unlocode);
+}
+
+function insertLocation(headerId, carrierCode, locationType, unlocode, countryIso2) {
+  const id = `CAL-${uid()}`;
+  db.prepare(`INSERT INTO carrier_agent_locations (id,carrier_agent_id,carrier_code,location_type,unlocode,country_iso2,created_at)
+    VALUES (?,?,?,?,?,?,?)`).run(id, headerId, carrierCode, locationType,
+      locationType === "unlocode" ? unlocode : null, locationType === "country" ? countryIso2 : null, new Date().toISOString());
+  return id;
+}
+
 app.get("/internal/carrier-agents", (req, res) => {
-  const rows = db.prepare(`${CARRIER_AGENT_JOIN} ORDER BY ca.carrier_code, ca.port_unlocode`).all();
-  let mapped = rows.map(mapCarrierAgent);
+  const headerRows = db.prepare(`${CARRIER_AGENT_JOIN} ORDER BY ca.carrier_code, ca.agent_customer_id`).all();
+  let mapped = mapHeadersWithLocations(headerRows);
   if (req.query.limit === undefined && req.query.offset === undefined) return ok(res, mapped);
   if (req.query.search) {
     const q = req.query.search.toLowerCase();
     mapped = mapped.filter(a =>
-      a.carrierCode.toLowerCase().includes(q) || a.portUnlocode.toLowerCase().includes(q)
-      || (a.portName || '').toLowerCase().includes(q) || (a.note || '').toLowerCase().includes(q));
+      a.carrierCode.toLowerCase().includes(q) || (a.note || '').toLowerCase().includes(q)
+      || a.locations.some(l => l.unlocode.toLowerCase().includes(q) || l.portName.toLowerCase().includes(q)
+        || l.countryIso2.toLowerCase().includes(q) || l.countryName.toLowerCase().includes(q)));
   }
   const lim = Math.min(parseInt(req.query.limit) || 50, 500), off = parseInt(req.query.offset) || 0;
   ok(res, { results: mapped.slice(off, off + lim), total: mapped.length, limit: lim, offset: off });
 });
 app.post("/internal/carrier-agents", (req, res) => {
-  const { carrierCode, portUnlocode, agentCustomerId, note = '' } = req.body;
-  if (!carrierCode || !portUnlocode || !agentCustomerId) return err(res, "carrierCode, portUnlocode and agentCustomerId required");
+  const { carrierCode, agentCustomerId, note = '', locationType, unlocode, countryIso2 } = req.body;
+  if (!carrierCode || !agentCustomerId) return err(res, "carrierCode and agentCustomerId required");
+  if (locationType !== "unlocode" && locationType !== "country") return err(res, "locationType must be 'unlocode' or 'country'");
+  const code = carrierCode.toUpperCase().trim();
+  const uc = unlocode?.toUpperCase().trim(), cc = countryIso2?.toUpperCase().trim();
+  const conflict = checkLocationConflict({ carrierCode: code, headerId: '__new__', locationType, unlocode: uc, countryIso2: cc });
+  if (conflict.error) return err(res, conflict.error);
   const id = `CAG-${uid()}`;
   const now = new Date().toISOString();
+  // Header + first location as one atomic unit — see the monolith's own routes/mdm.js copy of
+  // this route for the full rationale (a header with zero locations is meaningless).
+  db.exec("BEGIN");
   try {
-    db.prepare("INSERT INTO carrier_agents (id,carrier_code,port_unlocode,agent_customer_id,note,created_at) VALUES (?,?,?,?,?,?)")
-      .run(id, carrierCode.toUpperCase().trim(), portUnlocode.toUpperCase().trim(), agentCustomerId, note.trim(), now);
+    db.prepare("INSERT INTO carrier_agents (id,carrier_code,agent_customer_id,note,created_at) VALUES (?,?,?,?,?)")
+      .run(id, code, agentCustomerId, note.trim(), now);
+    insertLocation(id, code, locationType, uc, cc);
+    db.exec("COMMIT");
   } catch (e) {
-    return err(res, isUniqueViolation(e) ? "This carrier already has an agent registered at this port" : e.message);
+    db.exec("ROLLBACK");
+    return err(res, isUniqueViolation(e) ? "This carrier already has a Line Agent header for this customer — add a location to it instead" : e.message);
   }
   const r = db.prepare(`${CARRIER_AGENT_JOIN} WHERE ca.id=?`).get(id);
-  ok(res, mapCarrierAgent(r), 201);
+  ok(res, mapHeadersWithLocations([r])[0], 201);
 });
 app.put("/internal/carrier-agents/:id", (req, res) => {
   const existing = db.prepare("SELECT * FROM carrier_agents WHERE id=?").get(req.params.id);
@@ -372,21 +566,54 @@ app.put("/internal/carrier-agents/:id", (req, res) => {
   if (!agentCustomerId) return err(res, "agentCustomerId required");
   db.prepare("UPDATE carrier_agents SET agent_customer_id=?, note=? WHERE id=?").run(agentCustomerId, note.trim(), req.params.id);
   const r = db.prepare(`${CARRIER_AGENT_JOIN} WHERE ca.id=?`).get(req.params.id);
-  ok(res, mapCarrierAgent(r));
+  ok(res, mapHeadersWithLocations([r])[0]);
 });
 app.delete("/internal/carrier-agents/:id", (req, res) => {
   const info = db.prepare("DELETE FROM carrier_agents WHERE id=?").run(req.params.id);
   if (info.changes === 0) return err(res, "Not found", 404);
   ok(res, { deleted: req.params.id });
 });
+app.post("/internal/carrier-agents/:id/locations", (req, res) => {
+  const { locationType, unlocode, countryIso2 } = req.body;
+  if (locationType !== "unlocode" && locationType !== "country") return err(res, "locationType must be 'unlocode' or 'country'");
+  const header = db.prepare("SELECT * FROM carrier_agents WHERE id=?").get(req.params.id);
+  if (!header) return err(res, "Not found", 404);
+  const uc = unlocode?.toUpperCase().trim(), cc = countryIso2?.toUpperCase().trim();
+  const conflict = checkLocationConflict({ carrierCode: header.carrier_code, headerId: header.id, locationType, unlocode: uc, countryIso2: cc });
+  if (conflict.error) return err(res, conflict.error);
+  insertLocation(header.id, header.carrier_code, locationType, uc, cc);
+  const discarded = locationType === "country" ? discardRedundantUnlocodes(header.id, header.carrier_code, cc) : [];
+  const r = db.prepare(`${CARRIER_AGENT_JOIN} WHERE ca.id=?`).get(header.id);
+  ok(res, { ...mapHeadersWithLocations([r])[0], discarded }, 201);
+});
+app.delete("/internal/carrier-agent-locations/:id", (req, res) => {
+  const info = db.prepare("DELETE FROM carrier_agent_locations WHERE id=?").run(req.params.id);
+  if (info.changes === 0) return err(res, "Not found", 404);
+  ok(res, { deleted: req.params.id });
+});
 
-// New: server-side resolveCarrierAgent, including the linked-port fallback — this service owns
-// both carrier_agents and linked_ports, so the fallback walk stays entirely local instead of the
-// caller doing two round trips. Returns the raw row (no customer name) or null.
+// Server-side resolveCarrierAgent, including the linked-port fallback — this service owns both
+// carrier_agents and linked_ports, so the fallback walk stays entirely local. A location can
+// match either a direct UNLOCODE row or a country-level row (the port's own country). Returns
+// the raw row + locations (no customer name) or null.
 app.get("/internal/carrier-agents/resolve", (req, res) => {
   const { carrierCode = '', port = '' } = req.query;
   if (!carrierCode || !port) return ok(res, null);
-  const tryPort = p => db.prepare(`${CARRIER_AGENT_JOIN} WHERE ca.carrier_code=? AND ca.port_unlocode=?`).get(carrierCode, p);
+  const tryPort = p => {
+    const direct = db.prepare(`
+      SELECT ca.* FROM carrier_agents ca
+      JOIN carrier_agent_locations cal ON cal.carrier_agent_id = ca.id
+      WHERE ca.carrier_code=? AND cal.location_type='unlocode' AND cal.unlocode=?
+    `).get(carrierCode, p);
+    if (direct) return direct;
+    const portRow = db.prepare("SELECT country_code FROM port_locations WHERE unlocode=?").get(p);
+    if (!portRow?.country_code) return null;
+    return db.prepare(`
+      SELECT ca.* FROM carrier_agents ca
+      JOIN carrier_agent_locations cal ON cal.carrier_agent_id = ca.id
+      WHERE ca.carrier_code=? AND cal.location_type='country' AND cal.country_iso2=?
+    `).get(carrierCode, portRow.country_code);
+  };
   const direct = tryPort(port);
   if (direct) return ok(res, mapCarrierAgent(direct));
   const linked = db.prepare(`
@@ -442,6 +669,7 @@ app.post("/internal/trade-lanes", (req, res) => {
 });
 app.put("/internal/trade-lanes/:code", (req, res) => {
   const { name, description = '', transitDays = 0 } = req.body;
+  if (!name) return err(res, "name required");
   const info = db.prepare("UPDATE trade_lanes SET name=?, description=?, transit_days=? WHERE code=?").run(name, description, Number(transitDays) || 0, req.params.code);
   if (info.changes === 0) return err(res, "Not found", 404);
   ok(res, { code: req.params.code, name, description, transitDays: Number(transitDays) || 0 });
@@ -509,6 +737,7 @@ app.post("/internal/regions", (req, res) => {
 });
 app.put("/internal/regions/:code", (req, res) => {
   const { name, description = '' } = req.body;
+  if (!name) return err(res, "name required");
   const info = db.prepare("UPDATE regions SET name=?, description=? WHERE code=?").run(name, description, req.params.code);
   if (info.changes === 0) return err(res, "Not found", 404);
   ok(res, { code: req.params.code, name, description });
@@ -544,7 +773,10 @@ app.put("/internal/countries/:iso2", (req, res) => {
   const iso2 = req.params.iso2.toUpperCase();
   const existing = db.prepare("SELECT * FROM countries WHERE iso2=?").get(iso2);
   if (!existing) return err(res, "Not found", 404);
-  const { name, unMember = 1, regionCode = '', invoiceAlertBusinessDays, invoiceEscalationBusinessDays } = req.body;
+  const { name: nameIn, unMember = 1, regionCode = '', invoiceAlertBusinessDays, invoiceEscalationBusinessDays } = req.body;
+  // Falls back to the existing row like the two invoice-day fields just below already do —
+  // omitting `name` from a partial update must preserve it, not bind `undefined`.
+  const name = nameIn !== undefined ? nameIn : existing.name;
   const alertDays = invoiceAlertBusinessDays !== undefined
     ? (invoiceAlertBusinessDays === null || invoiceAlertBusinessDays === '' ? null : parseInt(invoiceAlertBusinessDays, 10))
     : existing.invoice_alert_business_days;
@@ -614,6 +846,7 @@ app.post("/internal/commodities", (req, res) => {
 });
 app.put("/internal/commodities/:code", (req, res) => {
   const { description, gradeCode = 'E', gradeName = 'General Cargo' } = req.body;
+  if (!description) return err(res, "description required");
   const info = db.prepare("UPDATE commodities SET description=?, grade_code=?, grade_name=? WHERE code=?").run(description, gradeCode, gradeName, req.params.code);
   if (info.changes === 0) return err(res, "Not found", 404);
   ok(res, mapCommodity({ code: req.params.code, description, grade_code: gradeCode, grade_name: gradeName }));
@@ -628,7 +861,8 @@ app.delete("/internal/commodities/:code", (req, res) => { const info = db.prepar
 // here, not a source of silent duplication the way a surrogate-key table would be).
 app.post("/internal/mdm/bulk-import", (req, res) => {
   const { carriers = [], vessels = [], portLocations = [], linkedPorts = [], tradeLanes = [],
-          countryTradeLanes = [], regions = [], countries = [], commodities = [], carrierAgents = [] } = req.body || {};
+          countryTradeLanes = [], regions = [], countries = [], commodities = [],
+          carrierAgents = [], carrierAgentLocations = [] } = req.body || {};
   const counts = {};
   const run = (label, table, cols, rows) => {
     const ins = db.prepare(`INSERT OR IGNORE INTO ${table} (${cols.join(",")}) VALUES (${cols.map(() => "?").join(",")})`);
@@ -650,10 +884,24 @@ app.post("/internal/mdm/bulk-import", (req, res) => {
     run("regions", "regions", ["code", "name", "description"], regions);
     run("countries", "countries", ["iso2", "name", "un_member", "region_code", "invoice_alert_business_days", "invoice_escalation_business_days"], countries);
     run("commodities", "commodities", ["code", "description", "grade_code", "grade_name"], commodities);
-    run("carrierAgents", "carrier_agents", ["id", "carrier_code", "port_unlocode", "agent_customer_id", "note", "created_at"], carrierAgents);
+    run("carrierAgents", "carrier_agents", ["id", "carrier_code", "agent_customer_id", "note", "created_at"], carrierAgents);
+    run("carrierAgentLocations", "carrier_agent_locations", ["id", "carrier_agent_id", "carrier_code", "location_type", "unlocode", "country_iso2", "created_at"], carrierAgentLocations);
     db.exec("COMMIT");
   } catch (e) { db.exec("ROLLBACK"); return err(res, e.message, 500); }
   ok(res, counts, 201);
+});
+
+// Error-handling middleware — must be registered after every route above. Malformed JSON bodies
+// get a clean 400 instead of body-parser's raw HTML/stack-trace page; anything else forwarded via
+// wrapAsyncHandler is logged in full server-side and answered with a generic 500 (never the raw
+// error/stack to the caller).
+app.use((error, req, res, next) => {
+  if (res.headersSent) return next(error);
+  if (error?.type === "entity.parse.failed" || error instanceof SyntaxError) {
+    return res.status(400).json({ error: "Malformed request body — expected valid JSON" });
+  }
+  console.error(`Unhandled error on ${req.method} ${req.originalUrl}:`, error);
+  res.status(error?.status || 500).json({ error: "Internal server error" });
 });
 
 if (require.main === module) {

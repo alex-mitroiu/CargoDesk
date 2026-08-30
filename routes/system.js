@@ -3,11 +3,44 @@
 module.exports = function systemRoutes(app, ctx) {
   const { db, ok, err, auth, requireRole,
           mapSystemMessage, getSettings, scheduleNextOfacSync, scheduleNextCslSync, loadSanctionsIndex, fxCache,
-          logAdminEvent, migrationFailures, restartAisListener, rebuildPortLanesMap } = ctx;
+          logAdminEvent, migrationFailures, restartAisListener, rebuildPortLanesMap,
+          getAisListenerStatus,
+          DISTRIBUTION_SERVICE_URL, PDF_RENDER_SERVICE_URL, CONTRACT_SERVICE_URL, MDM_SERVICE_URL,
+          SCREENING_SERVICE_URL, KANBAN_SERVICE_URL, CUSTOMER_SERVICE_URL } = ctx;
 
   // ─── Health ───────────────────────────────────────────────────────────────
 
-  app.get("/api/health", (req, res) => {
+  // Every extracted microservice exposes an unauthenticated GET /health (see each service's own
+  // server.js) — probed server-to-server here so the browser never has to make a cross-origin
+  // request to ports 3002-3008 (this app runs no CORS middleware, see ARCHITECTURE.md).
+  const MICROSERVICES = [
+    { id: "distribution", label: "Document Distribution", url: DISTRIBUTION_SERVICE_URL },
+    { id: "pdfRender",    label: "PDF Render",             url: PDF_RENDER_SERVICE_URL },
+    { id: "contracts",    label: "Contract Management",    url: CONTRACT_SERVICE_URL },
+    { id: "mdm",          label: "MDM",                    url: MDM_SERVICE_URL },
+    { id: "screening",    label: "Screening",               url: SCREENING_SERVICE_URL },
+    { id: "kanban",       label: "Kanban / Testing",        url: KANBAN_SERVICE_URL },
+    { id: "customers",    label: "Customer",                url: CUSTOMER_SERVICE_URL },
+  ];
+
+  async function probeMicroservices() {
+    const results = {};
+    await Promise.all(MICROSERVICES.map(async ({ id, label, url }) => {
+      const t0 = Date.now();
+      try {
+        const ctrl  = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 2500);
+        const r = await fetch(`${url}/health`, { signal: ctrl.signal });
+        clearTimeout(timer);
+        results[id] = { label, ok: r.ok, status: r.status, latency: Date.now() - t0 };
+      } catch (e) {
+        results[id] = { label, ok: false, error: e.name === "AbortError" ? "Timeout" : "Unreachable", latency: Date.now() - t0 };
+      }
+    }));
+    return results;
+  }
+
+  app.get("/api/health", async (req, res) => {
     const t = Date.now();
     try {
       const counts = {
@@ -16,6 +49,8 @@ module.exports = function systemRoutes(app, ctx) {
         ports:     db.prepare("SELECT COUNT(*) AS n FROM port_locations").get().n,
         vessels:   db.prepare("SELECT COUNT(*) AS n FROM vessels").get().n,
       };
+      const services = await probeMicroservices();
+      const ais = getAisListenerStatus ? getAisListenerStatus() : null;
       ok(res, {
         status:        "ok",
         version:       require('../package.json').version,
@@ -24,6 +59,8 @@ module.exports = function systemRoutes(app, ctx) {
         fxCurrencies:  Object.keys(fxCache.rates).length,
         fxCacheAgeMin: fxCache.ts ? Math.round((Date.now() - fxCache.ts) / 60000) : null,
         counts,
+        services,
+        ais,
         migrations:    { failed: migrationFailures.length, details: migrationFailures },
         latency:       Date.now() - t,
         ts:            new Date().toISOString(),

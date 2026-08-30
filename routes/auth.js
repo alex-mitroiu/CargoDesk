@@ -150,20 +150,36 @@ module.exports = function authRoutes(app, ctx) {
 
   app.get("/api/auth/me", auth(), (req, res) => {
     const user = db.prepare(
-      "SELECT id, email, name, role, roles, is_active, created_at, password_changed_at FROM users WHERE id = ?"
+      "SELECT id, email, name, role, roles, is_active, created_at, password_changed_at, all_offices FROM users WHERE id = ?"
     ).get(req.user.id);
     if (!user || !user.is_active) return err(res, "User not found or inactive", 404);
     // Silent token-restore-on-mount (a still-valid JWT from a prior session) bypasses
     // the login endpoint entirely — without this, a user who never re-enters credentials
     // could stay on an expired password indefinitely. Same check as login's.
     const { passwordExpiryDays } = getSecuritySettings();
+    // Real bug fix: allOffices/offices were never returned here at all (only login's own
+    // response carried them) — a silent restore (any page reload with an already-valid token,
+    // the common case, not the fresh-login one) left an office-scoped user's activeOffice stuck
+    // null forever, since App.jsx's office-picker auto-select effect keys off user.offices.
+    // Every office-department permission check downstream of activeOffice (canEditOfficeSide's
+    // client-side mirror, ShipmentFormPage's EMO/IMO auto-default) silently stopped working
+    // the moment the page was reloaded instead of freshly logged into. Mirrors login's own query.
+    const allOffices = !!user.all_offices;
+    const userOfficesRows = db.prepare(
+      `SELECT o.*, uo.is_default FROM offices o
+       JOIN user_offices uo ON uo.office_id = o.id
+       WHERE uo.user_id = ? AND o.is_active = 1
+       ORDER BY uo.is_default DESC, o.code`
+    ).all(user.id);
+    const offices = userOfficesRows.map(r => ({ ...ctx.mapOffice(r), isDefault: !!r.is_default }));
     // Real bug fix: this returned user.roles as the raw JSON-text DB column (e.g. the literal
     // string '["admin","occ_bk"]'), never parsed like every other roles-emitting route already
     // does via parseUserRoles. App.jsx's own Array.isArray(user.roles) check then silently fell
     // back to the single legacy `role` column — a multi-role account lost every role but its
     // primary one on any silent session restore (a page reload with an already-valid token),
     // which is the common case, not the fresh-login one.
-    ok(res, { ...user, roles: parseUserRoles(user), passwordExpired: isPasswordExpired(user, passwordExpiryDays) });
+    ok(res, { ...user, roles: parseUserRoles(user), allOffices, offices,
+      passwordExpired: isPasswordExpired(user, passwordExpiryDays) });
   });
 
   app.post("/api/auth/logout", (req, res) => ok(res, { ok: true }));

@@ -4,7 +4,7 @@
 Full-stack freight management app. React 18 + Vite frontend, Express + node:sqlite backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.85.0 "Approach"**
+- Version: **v0.87.0 "Consortium"**
 - Run: `npm run dev` (runs the monolith on :3001 + Vite on :5173 + the Document Distribution Service on :3002 + the PDF Render Service on :3003 + the Contract Management Service on :3004 + the MDM Service on :3005 + the Screening Service on :3006 + the Kanban Service on :3007 + the Customer Service on :3008, concurrently) — zero-script onboarding: first boot with no `cargodesk.db` auto-copies the committed `db/cargodesk.sample.db` (MDM reference data only) into place
 - Re-seed: `npm run seed` (runs `scripts/import-mdm-data.js`) — only needed to refresh MDM data from `data/*.csv`/`.json`, not for a normal first run
 
@@ -55,7 +55,9 @@ routes/
                      /api/command-center/carrier-scorecard, /api/command-center/transit-time-trend
                      — Command Center Quality & Exception Management (v0.77.0, Epic TKT-IBHB0K)
   shipment-ops.js    /api/shipments/:id/screening, cost-lines, milestones, documents,
-                     services, services/:serviceId/loading-plan
+                     services, services/:serviceId/loading-plan, services/:serviceId/haulage
+                     (Merchant's Haulage — gate in/out, driver, instructions, cost-line
+                     auto-creation, /haulage/:containerId/waypoints), /haulage-waypoints/:id
   finance.js         /api/margin/summary
   system.js          /api/health, /api/system-messages, /api/settings, /api/schedules/*
   export.js          /api/export/shipments.csv, /api/export/dashboard/xlsx,
@@ -99,10 +101,10 @@ db/
                                    customers, or users). server.js copies it to cargodesk.db
                                    automatically on first boot if none exists yet.
 src/
-  App.jsx                          Root: routing, nav, state, theme toggle, auth guards, role switcher;
-                                   also hosts ShipmentDetailSidebar (~1385-1530, anchor-scroll section
-                                   nav for ShipmentDetailPage — see Key patterns) and the DOC_TYPES
-                                   document-tracking system (~line 56, "⚡ Generate Document" modal)
+  App.jsx                          Root: routing, nav, state, theme toggle, auth guards, role switcher
+                                   (2357 lines as of v0.87.0, down from 4678 — the document-action
+                                   modals and shell components below were split out into their own
+                                   files, TKT-MRFL3O)
   api.js                           All fetch wrappers (api.shipments, api.export, api.auth, api.users…)
   tokens.js                        T object, theme colours, route-matching helpers
   toast.js                         Pub-sub toast emitter
@@ -221,7 +223,30 @@ src/
                                    map and any new promoted page picks the header up automatically.
       ServicesPanel.jsx            Dedicated Services Export/Import dashboard, embedded on Overview
                                    (see Recent changes)
+      GenerateDocumentModal.jsx    "⚡ Generate Document" modal — doc type picker, calls
+                                   dispatchDocBuilder (utils/documentBuilders.js), saves via
+                                   api.documents.generate. Extracted from App.jsx, v0.87.0 (TKT-X14K0P)
+      SendDocumentEmailModal.jsx   Send a generated document by email, always from the shipment's EMO
+      SendDocumentEdiModal.jsx     Send as a formal EDI transmittal (metadata + checksum, no attachment)
+      SendDocumentWebhookModal.jsx Send via the shipment's EMO office's configured webhook
+      DocumentsModal.jsx           Documents readiness list + the 4 send modals above +
+                                   TrackedDocPreviewModal/EntityHistoryModal — standalone=true
+                                   renders this as the "Documents" promoted sub-page's own body
+      HealthModal.jsx              System Health check panel (HEALTH_CHECKS list, internal + external)
+      ShipmentFormSidebar.jsx      New/Edit Shipment form's left sidebar (status, back nav)
+      ShipmentDetailSidebar.jsx    Explorer sidebar for an existing shipment — the full promoted
+                                   sub-page nav tree, admin-only drag-to-reorder
+                                   (DEFAULT_SIDEBAR_ORDER/reconcileSidebarOrder, local to this file)
+      HaulageDetailsPanel.jsx      Merchant's Haulage details (gate in/out, driver, instructions,
+                                   cost → auto BUY cost line, ordered waypoints incl. GPS mode) —
+                                   opened from LoadingServicePage.jsx's per-container row, only
+                                   when the covering leg is Merchant's Haulage
 ```
+`src/utils/documentBuilders.js` — the 11 `buildXHtml` document template functions (BL01/MB01/CI01/
+CI02/PL01/CO01/CD01/IC01/DG01/AN01/DO01) + `DOC_TYPES`/`docTypeLabel`/`dispatchDocBuilder`/
+`getMissingDocRequirements`, extracted from App.jsx alongside the modals above (v0.87.0) — the same
+kind of pure HTML-string builder `src/utils/invoiceGenerator.js` already houses for FR01/FR02/
+LP01-family documents (which `dispatchDocBuilder` calls into for those codes).
 
 ## Route factory pattern
 All route files use `module.exports = function domainRoutes(app, ctx) { ... }`.
@@ -356,6 +381,79 @@ are fully validated.
 - **Document system**: `DOC_TYPES` in App.jsx (~line 56: BL01/MB01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — `MB01` (Master Bill of Lading, v0.71.0) is the vessel-operator-to-NVOCC document, a genuinely separate build from `BL01` (NVOCC-to-shipper House B/L), not a mode flag on it — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). (The earlier client-side-jsPDF `DocumentsMenu` component this note used to distinguish from was removed as dead code — it had zero references anywhere in the app.)
 - **Lifecycle-stage stepper precedent**: no dedicated stepper component exists yet; `MilestonePanel` (ShipmentDetailPage.jsx 1593-~1870) is the closest analog — linear progress bar (1734-1738, `width: ${progress}%`) plus per-step state coloring via `milestoneState()`/`stateColor()` (1666-1676: completed/overdue/current/upcoming) driven by `shipment_milestones` rows (`id, label, estimatedDate, note, completedAt, completedBy`, fixed step keys `booking_confirmed, si_submitted, cargo_gated_in, vessel_departed, bl_issued, vessel_arrived, customs_cleared, cargo_released, delivered`). Any new per-container lifecycle/stage UI should reuse this state-coloring pattern rather than inventing a new visual language
 - **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages, 📡 EDI). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
+
+## Recent changes (v0.87.0 "Consortium")
+- **Kanban board cleanup** — a fresh audit of what's still open, cross-checked against real code
+  rather than trusted at face value. Found two tickets genuinely shipped long ago but left at "In
+  Testing": Scheduled/emailed reports (TKT-IXAR9G — full route file, table, UI, 25/25 tests
+  re-confirmed passing) and Document distribution channels (TKT-SLIRP9 — its own standalone
+  microservice since v0.64.0). Also found the NVOCC epic's two remaining "logged backlog"
+  children were themselves already resolved by earlier work, just never closed out: the
+  structural dual-carrier/shipper split (TKT-9O2B3T, via the existing NVOCC party-role
+  mechanism) and the two-stage destination release (TKT-IB5IEX, via the already-shipped
+  independent `masterBlReleaseType` field). All four flipped to Done after verifying each claim
+  against real code.
+- **NVOCC co-loading / cross-tariff reference (TKT-UR1X17)** — the epic's one remaining
+  genuinely-unbuilt item, closing Epic TKT-Q52B38 in full. Real-world gap: one NVOCC occasionally
+  has no direct contract with the vessel operator for a given lane and instead tenders cargo
+  through ANOTHER NVOCC's own tariff. New "Co-Loading NVOCC" party role (resolves via the
+  existing extensible `shipment_parties` mechanism, zero new party infrastructure) plus a
+  free-text `coloadTariffReference` column on shipments (mirrors `contractRef`'s own nature —
+  there's no real registry of another NVOCC's tariff in this system).
+- `buildMasterBillOfLadingHtml` now resolves the Co-Loading NVOCC, when assigned, as the real
+  Shipper on the Master B/L instead of the primary NVOCC — it's the one that actually holds the
+  direct Master B/L relationship with the vessel operator. Two additive detail rows ("Co-Loaded
+  Via," naming the underlying NVOCC, and the tariff reference itself) appear only when a
+  Co-Loading NVOCC party exists; byte-identical to today's direct case otherwise. New field
+  editable on `ShipmentFormPage.jsx`, displayed on `ShipmentConditionsPage.jsx`, tracked in the
+  existing field-diff audit log.
+- 21 new assertions in `tests/nvocc-carrier-identity.test.js`. Since the Master B/L logic is
+  client-side JS, verified live via a full CDP pass: assigned both an NVOCC and a Co-Loading
+  NVOCC party on a real scratch shipment, drove the actual Generate Document UI end-to-end, and
+  inspected the client-built HTML (intercepted before it reaches the server's signing step) to
+  confirm the Shipper swap and both new detail rows render with the correct data. Clean build.
+
+## Recent changes (v0.86.0 "Slate")
+- **Admin "Reset Demo Data" panel** — direct ask: a way to wipe all demo/business data back to a
+  clean slate while keeping MDM reference data intact, so the `.db` file could eventually be
+  committed and a fresh clone (or a repeat demo run) starts from a known-good baseline instead of
+  needing `npm run seed` or manual cleanup. The natural in-place sibling of Zero-Script Onboarding
+  (`db/cargodesk.sample.db`, v0.79.0) — that one seeds a clean database only on first boot when
+  none exists yet; this resets an already-running one on demand, no restart needed.
+- **19 tables preserved, the rest wiped** — computed dynamically as `(live schema) −
+  PRESERVE_TABLES` (`routes/admin-reset.js`), not a hand-maintained mirror of the reset list, so a
+  future new table defaults to being wiped unless explicitly added to the preserve set. Preserved:
+  MDM core (carriers/vessels/ports/linked-ports/regions/countries/country-trade-lanes/trade-lanes/
+  commodities), admin-maintained registries (charge codes, pack/container type definitions, duty
+  rate chapters, milestone templates, invoice status reason codes), compliance reference data
+  (sanctions entries + sync history), and app-level config (`app_settings`, `system_email_settings`).
+  Everything else — all 66 remaining tables, `users`/`org_signing_certs` included — is deleted.
+- **`users` is wiped then immediately reseeded, not preserved as-is** — direct answer to "I do not
+  want to expose my user account": keeping the acting admin's real account in a shareable baseline
+  would defeat the point; leaving `users` empty would lock everyone out. `seedAdmin()`/
+  `seedTestFixtureAdmin()`/`seedSigningCert()` (`server.js`) were refactored from three anonymous
+  boot-time IIFEs into named, reusable functions — called once at boot exactly as before, and
+  again by the new reset route right after the wipe, landing the database in exactly the state a
+  fresh boot would produce.
+- New `GET /api/admin/reset-demo-data/preview` (admin-only) returns the live preserve/reset table
+  lists; `POST /api/admin/reset-demo-data` requires `{confirm: "RESET"}` (exact, case-sensitive)
+  as a misclick guard, wraps the delete sweep in `PRAGMA foreign_keys=OFF`/`BEGIN...COMMIT`/
+  `PRAGMA foreign_keys=ON` (same bracketing idiom this codebase's own table-rebuild migrations
+  already use), then re-seeds and logs one `RESET_DEMO_DATA` row via the existing `logAdminEvent`.
+- New admin-only **"Danger Zone"** tab (`AppSettingsPage.jsx`) — a red-tinted warning card naming
+  exactly what's preserved vs. reset (including "your own account"), two live scrollable preview
+  lists from the preview endpoint, a "type RESET to confirm" gate, and a success modal showing the
+  fresh generic credentials before forcing a logout via the existing `cargodesk:logout` mechanism.
+- **Deliberately not exercised end-to-end in the automated suite** — same class of decision this
+  codebase already made for `POST /api/sanctions/sync*` (v0.72.2: "destructively replaces the live
+  synced dataset other tests depend on"). `tests/admin-reset.test.js` (13 assertions) covers only
+  the safe guardrails; the real wipe-and-reseed path was instead verified directly against the
+  real dev database — backed up first (`cargodesk.db`/`-shm`/`-wal` copied aside), baselines
+  recorded (71 carriers / 16 users / 160 shipments), a real reset triggered and confirmed correct
+  (carriers still 71, users collapsed to the two generic seeded accounts, shipments at 0,
+  `app_settings` intact), then the original database restored and every original count confirmed
+  back exactly (71/16/160).
+- Clean build, 13/13 guardrail assertions green from a fresh restart.
 
 ## Recent changes (v0.85.0 "Approach")
 Four pieces of work, bundled into one unified release rather than four incremental version bumps

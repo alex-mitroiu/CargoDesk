@@ -178,7 +178,7 @@ const ShipmentHistoryPage = ({ shipment }) => {
         })}
       </div>
 
-      <div id="shphist-pagination" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+      <div id="shphist-pagination" style={{ marginTop: 16, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
         <PageSizeSelect value={limit} onChange={changeLimit} />
         <div style={{ flex: 1 }}><Pagination total={total} limit={limit} offset={offset} onPage={load} /></div>
       </div>

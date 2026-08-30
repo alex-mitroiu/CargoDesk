@@ -19,7 +19,7 @@ import InfoHint from "../../components/primitives/InfoHint";
 import { ContainerTypeField } from "../../components/shared/ContainerTypePickerModal";
 import SailingPickerModal from "../../components/shared/SailingPickerModal";
 import { IconClose, IconWarning, IconPackage, IconPencil, IconCheck, IconRefresh, IconLock, IconAnchor, IconShip } from "../../components/primitives/Icon";
-import { GPS_LOC_TYPE, formatLegPoint } from "../../utils/legLocation";
+import { GPS_LOC_TYPE, formatLegPoint, LOC_TYPE_OPTIONS } from "../../utils/legLocation";
 import ConsumptionBar from "../../components/shared/ConsumptionBar";
 
 // ─── Draft Container Manager ──────────────────────────────────────────────────
@@ -508,7 +508,6 @@ export const ContractField = ({ value, onChange, pol, pod, etd, crd, needsPolHau
 
 const LEG_TYPE_OPTIONS      = ["Pick-up", "SEA", "Delivery"];
 const MOVEMENT_TYPE_OPTIONS = ["Carrier's Haulage", "Merchant's Haulage", "Customer Arranged"];
-const LOC_TYPE_OPTIONS      = ["Door", "Terminal", "Container Yard", "CFS"];
 // GPS Coordinates is offered only for Pick-up/Delivery legs — a SEA leg always needs a real port.
 const legLocTypeOptions     = legType => legType === "SEA" ? LOC_TYPE_OPTIONS : [...LOC_TYPE_OPTIONS, GPS_LOC_TYPE];
 // Pick-up/Delivery-only (SEA legs always show "—" here) — inland/short-haul movement modes.
@@ -1185,6 +1184,7 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
     blReleaseType:      init.blReleaseType      || "",
     masterBlNumber:     init.masterBlNumber     || "",
     masterBlReleaseType: init.masterBlReleaseType || "",
+    coloadTariffReference: init.coloadTariffReference || "",
     vessel:             init.vessel             || "",
     vesselImo:          init.vesselImo          || "",
     voyage:             init.voyage             || "",
@@ -1648,6 +1648,13 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
             hint="A separate release event: the vessel operator to the NVOCC's own agent — distinct from B/L Release Type above, which governs the NVOCC's release to the actual consignee"
             options={[{ value: "", label: "— Not yet decided —" },
               ...BL_RELEASE_TYPES.map(t => ({ value: t, label: t }))]} />
+        </div>
+      )}
+      {init.id && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 12 }}>
+          <Inp label="Co-Load Tariff Reference" value={f.coloadTariffReference} onChange={set("coloadTariffReference")}
+            placeholder="e.g. the co-loading NVOCC's own tariff/contract number"
+            hint="Only when this shipment's own NVOCC has no direct contract with the vessel operator and tenders cargo through another NVOCC's own tariff — assign that NVOCC as a 'Co-Loading NVOCC' party on Parties & Offices; leave blank for the direct NVOCC-to-vessel-operator case" />
         </div>
       )}
       <LegsTable

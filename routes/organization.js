@@ -14,6 +14,11 @@ module.exports = function organizationRoutes(app, ctx) {
     timezone:    r.timezone    || null,
     phone:       r.phone       || null,
     email:       r.email       || null,
+    // Multi-Entity Accounting (TKT-EEV4I9) — a branch's own reporting/functional currency, since
+    // it doubles as CargoDesk's legal-entity boundary for GP-by-entity reporting (routes/finance.js).
+    // Defaults from org_countries.default_currency at creation time (below) but stays independently
+    // editable — a branch reporting in a currency other than its own country's default is a real case.
+    currency:    r.currency    || null,
     isActive:    !!r.is_active,
     createdAt:   r.created_at,
   });
@@ -69,16 +74,24 @@ module.exports = function organizationRoutes(app, ctx) {
   });
 
   app.post("/api/branches", requireRole(["admin"]), (req, res) => {
-    const { code, name, countryCode, locode, city, address, timezone, phone, email } = req.body || {};
+    const { code, name, countryCode, locode, city, address, timezone, phone, email, currency } = req.body || {};
     if (!code || !name || !countryCode) return err(res, "code, name, countryCode required");
     const id = `BRN-${uid()}`;
     const loc = locode ? locode.toUpperCase().trim() : null;
+    const cc = countryCode.toUpperCase().trim();
+    // Multi-Entity Accounting (TKT-EEV4I9) — default a new branch's reporting currency from its
+    // operating country's own default (same "sensible default, still overridable" idiom this
+    // route's own frontend already uses for timezone-from-LOCODE) rather than leaving it blank —
+    // the common case (one branch, one country, one currency) needs zero manual entry.
+    const resolvedCurrency = currency || db.prepare(
+      "SELECT default_currency FROM org_countries WHERE country_code=?"
+    ).get(cc)?.default_currency || null;
     try {
       db.prepare(
-        `INSERT INTO branches (id, code, name, country_code, locode, city, address, timezone, phone, email)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run(id, code.toUpperCase().trim(), name.trim(), countryCode.toUpperCase().trim(),
-             loc, city || null, address || null, timezone || null, phone || null, email || null);
+        `INSERT INTO branches (id, code, name, country_code, locode, city, address, timezone, phone, email, currency)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(id, code.toUpperCase().trim(), name.trim(), cc,
+             loc, city || null, address || null, timezone || null, phone || null, email || null, resolvedCurrency);
       ok(res, mapBranch(db.prepare("SELECT * FROM branches WHERE id=?").get(id)));
     } catch (e) {
       err(res, e.message?.includes("UNIQUE") ? `Branch code ${code.toUpperCase()} already exists` : e.message);
@@ -88,14 +101,15 @@ module.exports = function organizationRoutes(app, ctx) {
   app.put("/api/branches/:id", requireRole(["admin"]), (req, res) => {
     const existing = db.prepare("SELECT * FROM branches WHERE id=?").get(req.params.id);
     if (!existing) return err(res, "Not found", 404);
-    const { name, locode, city, address, timezone, phone, email, isActive } = req.body || {};
+    const { name, locode, city, address, timezone, phone, email, currency, isActive } = req.body || {};
     const loc = locode !== undefined ? (locode ? locode.toUpperCase().trim() : null) : existing.locode;
     db.prepare(
-      `UPDATE branches SET name=?, locode=?, city=?, address=?, timezone=?, phone=?, email=?, is_active=? WHERE id=?`
+      `UPDATE branches SET name=?, locode=?, city=?, address=?, timezone=?, phone=?, email=?, currency=?, is_active=? WHERE id=?`
     ).run(
       name    ?? existing.name,    loc,             city    ?? existing.city,
       address ?? existing.address, timezone ?? existing.timezone,
       phone   ?? existing.phone,   email   ?? existing.email,
+      currency !== undefined ? (currency || null) : existing.currency,
       isActive !== undefined ? (isActive ? 1 : 0) : existing.is_active,
       req.params.id
     );

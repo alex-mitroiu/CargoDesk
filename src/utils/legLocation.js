@@ -6,6 +6,11 @@
 
 export const GPS_LOC_TYPE = "GPS Coordinates";
 
+// Hoisted out of ShipmentFormPage.jsx, which had two ad hoc copies of this exact list (its leg
+// editor's loc-type dropdown) with no shared constant anywhere — a third ad hoc copy for the new
+// Merchant's Haulage waypoints picker would have made it a real, more widely-duplicated one.
+export const LOC_TYPE_OPTIONS = ["Door", "Terminal", "Container Yard", "CFS"];
+
 export const isGpsLeg = (leg, side) => leg?.[`${side}LocType`] === GPS_LOC_TYPE;
 
 export const formatLegPoint = (leg, side) => {

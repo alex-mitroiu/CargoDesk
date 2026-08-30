@@ -1,7 +1,7 @@
 "use strict";
 
 module.exports = function shipmentOpsRoutes(app, ctx) {
-  const { db, ok, err, uid, auth, requireRole,
+  const { db, ok, err, uid, auth, requireRole, validCoord, GPS_LOC_TYPE,
           mapCostLine, mapService, mapMilestone, mapMilestoneTemplate,
           sanctionsMap, screenShipmentById,
           logEvent, logEntityEvent, importContractRates, createRateSnapshot, generateCostLinesFromSnapshot,
@@ -11,7 +11,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
           buildMailOptions, sendViaOffice,
           createRateLimiter, getSettings, callContractService, getCustomerRow,
           computeArExposure, toUsd, roundCents, OVERRIDE_GRACE_MS,
-          userOwnsLaneForShipment, mapInvoiceStatusOverride, docAmountUsd } = ctx;
+          userOwnsLaneForShipment, mapInvoiceStatusOverride, docAmountUsd, canEditOfficeSide } = ctx;
 
   const shipmentWrite = requireRole(["admin", "operator", "occ_bk"]);
 
@@ -457,6 +457,17 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     if (req.body.status && !SERVICE_STATUSES.includes(req.body.status))
       return err(res, `status must be one of ${SERVICE_STATUSES.join(", ")}`);
 
+    // Involved Offices per-side edit permission — which office actually handles a service is
+    // exactly the fact an export-only or import-only office user must not be able to move onto
+    // (or off of) their own office without belonging to the right department, regardless of
+    // which UI surface (Involved Offices tab, Overview's Request Service form) the change comes
+    // from. Gated on the service's own current side, not the shipment's EMO/IMO, since a service
+    // can be assigned to any of the shipment's involved offices (see shipmentOfficeIds).
+    if (req.body.officeId !== undefined && req.body.officeId !== existing.office_id
+        && !canEditOfficeSide(req, existing.side)) {
+      return err(res, `You don't have permission to change the office on a ${existing.side} service`, 403);
+    }
+
     // req.body is camelCase (API convention); existing is a raw snake_case DB row —
     // map each field explicitly rather than spreading the two together, which would
     // silently leave e.g. `officeId` sitting unused next to the untouched `office_id`.
@@ -574,6 +585,235 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     const row = db.prepare(`${LOADING_PLAN_SELECT.replace("WHERE c.shipment_id = ?", "WHERE c.id = ?")}`)
       .get(req.params.serviceId, req.params.containerId);
     ok(res, mapLoadingPlanLine(row));
+  });
+
+  // ─── Merchant's Haulage details (per-container, Pickup/Delivery, Merchant's Haulage only) ──
+  // Same "one row per CURRENT container via LEFT JOIN" idiom as the Loading Plan above. Gating
+  // on Merchant's Haulage (vs. Carrier's Haulage/Customer Arranged) is a frontend-only concern —
+  // these routes don't re-check movement_type themselves, matching how the loading-plan routes
+  // above don't re-check serviceType either.
+
+  const mapHaulageRecord = r => ({
+    containerId:      r.container_id,
+    containerNumber:  r.container_number || '',
+    size: r.size, type: r.type,
+    id:               r.hr_id || null,
+    gateInAt:         r.gate_in_at || '',
+    gateOutAt:        r.gate_out_at || '',
+    driverName:       r.driver_name || '',
+    driverIdNumber:   r.driver_id_number || '',
+    instructions:     r.instructions || '',
+    costAmount:       r.cost_amount ?? null,
+    costCurrency:     r.cost_currency || 'USD',
+    costExchangeRate: r.cost_exchange_rate ?? 1,
+    costLineId:       r.cost_line_id || '',
+    updatedAt:        r.updated_at || null,
+  });
+
+  const mapHaulageWaypoint = r => ({
+    id: r.id, haulageRecordId: r.haulage_record_id, sequenceOrder: r.sequence_order ?? 1,
+    locType: r.loc_type || 'Door', location: r.location || '',
+    latitude: r.latitude ?? null, longitude: r.longitude ?? null,
+    notes: r.notes || '', createdAt: r.created_at,
+  });
+
+  const HAULAGE_RECORD_SELECT = `
+    SELECT c.id AS container_id, c.container_number, c.size, c.type,
+           hr.id AS hr_id, hr.gate_in_at, hr.gate_out_at, hr.driver_name, hr.driver_id_number,
+           hr.instructions, hr.cost_amount, hr.cost_currency, hr.cost_exchange_rate, hr.cost_line_id,
+           hr.updated_at
+    FROM containers c
+    LEFT JOIN shipment_haulage_records hr ON hr.container_id = c.id AND hr.service_id = ?
+    WHERE c.shipment_id = ?
+  `;
+
+  // Idempotent get-or-create — lets an operator add a waypoint or set the cost before ever
+  // touching the plain fields, same as ensureBookingCreated's own "no artificial ordering
+  // requirement" shape elsewhere in this codebase.
+  const ensureHaulageRecord = (serviceId, containerId) => {
+    const existing = db.prepare("SELECT * FROM shipment_haulage_records WHERE service_id=? AND container_id=?")
+      .get(serviceId, containerId);
+    if (existing) return existing;
+    const id = `HR-${uid()}`;
+    const now = new Date().toISOString();
+    db.prepare(`INSERT INTO shipment_haulage_records (id, service_id, container_id, created_at, updated_at)
+      VALUES (?,?,?,?,?)`).run(id, serviceId, containerId, now, now);
+    return db.prepare("SELECT * FROM shipment_haulage_records WHERE id=?").get(id);
+  };
+
+  app.get("/api/shipments/:shipmentId/services/:serviceId/haulage", auth(), (req, res) => {
+    const service = db.prepare("SELECT * FROM shipment_services WHERE id=? AND shipment_id=?")
+      .get(req.params.serviceId, req.params.shipmentId);
+    if (!service) return err(res, "Service not found", 404);
+    const rows = db.prepare(`${HAULAGE_RECORD_SELECT} ORDER BY c.container_number ASC`)
+      .all(req.params.serviceId, req.params.shipmentId);
+    ok(res, rows.map(mapHaulageRecord));
+  });
+
+  app.put("/api/shipments/:shipmentId/services/:serviceId/haulage/:containerId", shipmentWrite, (req, res) => {
+    const service = db.prepare("SELECT * FROM shipment_services WHERE id=? AND shipment_id=?")
+      .get(req.params.serviceId, req.params.shipmentId);
+    if (!service) return err(res, "Service not found", 404);
+    const container = db.prepare("SELECT * FROM containers WHERE id=? AND shipment_id=?")
+      .get(req.params.containerId, req.params.shipmentId);
+    if (!container) return err(res, "Container not found", 404);
+
+    const { gateInAt = '', gateOutAt = '', driverName = '', driverIdNumber = '', instructions = '' } = req.body || {};
+    const record = ensureHaulageRecord(req.params.serviceId, req.params.containerId);
+    const now = new Date().toISOString();
+    db.prepare(`UPDATE shipment_haulage_records
+      SET gate_in_at=?, gate_out_at=?, driver_name=?, driver_id_number=?, instructions=?, updated_at=?
+      WHERE id=?`)
+      .run(gateInAt, gateOutAt, driverName, driverIdNumber, instructions, now, record.id);
+    logEntityEvent('haulage_record', record.id, 'UPDATED', null, null, null,
+      JSON.stringify({ shipmentId: req.params.shipmentId, serviceId: req.params.serviceId, containerId: req.params.containerId }));
+
+    const row = db.prepare(`${HAULAGE_RECORD_SELECT.replace("WHERE c.shipment_id = ?", "WHERE c.id = ?")}`)
+      .get(req.params.serviceId, req.params.containerId);
+    ok(res, mapHaulageRecord(row));
+  });
+
+  // Kept separate from the plain PUT above — same "edit the row" vs. "trigger a state-changing
+  // side effect on shipment_cost_lines" split this file already uses for cost lines themselves
+  // (PUT .../cost-lines/:id vs. the dedicated .../actualize and .../post routes below). Bypasses
+  // the generic POST /cost-lines route entirely (its own source allow-list only accepts
+  // 'contract'/'mirror'/'automated' — anything else silently falls back to 'manual') via a direct
+  // INSERT, the same precedent the quote-conversion/carrier-invoice-matching/reversal routes
+  // already establish for their own distinct source tags.
+  app.patch("/api/shipments/:shipmentId/services/:serviceId/haulage/:containerId/cost", shipmentWrite, (req, res) => {
+    const service = db.prepare("SELECT * FROM shipment_services WHERE id=? AND shipment_id=?")
+      .get(req.params.serviceId, req.params.shipmentId);
+    if (!service) return err(res, "Service not found", 404);
+    const container = db.prepare("SELECT * FROM containers WHERE id=? AND shipment_id=?")
+      .get(req.params.containerId, req.params.shipmentId);
+    if (!container) return err(res, "Container not found", 404);
+
+    const { amount, currency = 'USD', exchangeRate = 1 } = req.body || {};
+    const record = ensureHaulageRecord(req.params.serviceId, req.params.containerId);
+    const now = new Date().toISOString();
+    const existingLine = record.cost_line_id
+      ? db.prepare("SELECT * FROM shipment_cost_lines WHERE id=?").get(record.cost_line_id)
+      : null;
+    if (existingLine && existingLine.status === 'posted')
+      return err(res, "This line is posted and locked — add a new adjusting line instead of editing it", 409);
+
+    const clearing = amount == null || String(amount).trim() === '';
+    db.exec("BEGIN");
+    try {
+      if (clearing) {
+        if (existingLine) {
+          db.prepare("DELETE FROM shipment_cost_lines WHERE id=?").run(existingLine.id);
+          logEntityEvent('cost_line', existingLine.id, 'DELETED', null, null, null,
+            JSON.stringify({ shipmentId: req.params.shipmentId, reason: "Merchant's Haulage cost cleared" }));
+        }
+        db.prepare(`UPDATE shipment_haulage_records
+          SET cost_amount=NULL, cost_currency=?, cost_exchange_rate=?, cost_line_id='', updated_at=? WHERE id=?`)
+          .run(currency.toUpperCase(), Number(exchangeRate), now, record.id);
+      } else if (existingLine) {
+        db.prepare("UPDATE shipment_cost_lines SET amount=?, currency=?, exchange_rate=?, modified_at=? WHERE id=?")
+          .run(Number(amount), currency.toUpperCase(), Number(exchangeRate), now, existingLine.id);
+        logEntityEvent('cost_line', existingLine.id, 'UPDATED', 'amount', String(existingLine.amount), String(Number(amount)),
+          JSON.stringify({ shipmentId: req.params.shipmentId, chargeCode: 'Haulage', type: 'BUY' }));
+        db.prepare(`UPDATE shipment_haulage_records
+          SET cost_amount=?, cost_currency=?, cost_exchange_rate=?, updated_at=? WHERE id=?`)
+          .run(Number(amount), currency.toUpperCase(), Number(exchangeRate), now, record.id);
+      } else {
+        const clId = `CL-${uid()}`;
+        db.prepare(`INSERT INTO shipment_cost_lines
+          (id,shipment_id,type,charge_code,currency,amount,exchange_rate,vat_rate,notes,container_id,created_at,source,payment_indicator)
+          VALUES (?,?,?,?,?,?,?,0,?,?,?,?,?)`)
+          .run(clId, req.params.shipmentId, 'BUY', 'Haulage', currency.toUpperCase(), Number(amount), Number(exchangeRate),
+            `Merchant's Haulage — ${container.container_number || req.params.containerId}`,
+            req.params.containerId, now, 'merchant_haulage', 'Prepaid');
+        logEntityEvent('cost_line', clId, 'CREATED', null, null, null,
+          JSON.stringify({ shipmentId: req.params.shipmentId, type: 'BUY', chargeCode: 'Haulage', amount: Number(amount), source: 'merchant_haulage' }));
+        db.prepare(`UPDATE shipment_haulage_records
+          SET cost_amount=?, cost_currency=?, cost_exchange_rate=?, cost_line_id=?, updated_at=? WHERE id=?`)
+          .run(Number(amount), currency.toUpperCase(), Number(exchangeRate), clId, now, record.id);
+      }
+      db.exec("COMMIT");
+    } catch (e) {
+      db.exec("ROLLBACK");
+      return err(res, e.message, 500);
+    }
+
+    const row = db.prepare(`${HAULAGE_RECORD_SELECT.replace("WHERE c.shipment_id = ?", "WHERE c.id = ?")}`)
+      .get(req.params.serviceId, req.params.containerId);
+    ok(res, mapHaulageRecord(row));
+  });
+
+  app.get("/api/shipments/:shipmentId/services/:serviceId/haulage/:containerId/waypoints", auth(), (req, res) => {
+    const service = db.prepare("SELECT * FROM shipment_services WHERE id=? AND shipment_id=?")
+      .get(req.params.serviceId, req.params.shipmentId);
+    if (!service) return err(res, "Service not found", 404);
+    const record = db.prepare("SELECT id FROM shipment_haulage_records WHERE service_id=? AND container_id=?")
+      .get(req.params.serviceId, req.params.containerId);
+    if (!record) return ok(res, []);
+    const rows = db.prepare("SELECT * FROM shipment_haulage_waypoints WHERE haulage_record_id=? ORDER BY sequence_order ASC")
+      .all(record.id);
+    ok(res, rows.map(mapHaulageWaypoint));
+  });
+
+  app.post("/api/shipments/:shipmentId/services/:serviceId/haulage/:containerId/waypoints", shipmentWrite, (req, res) => {
+    const service = db.prepare("SELECT * FROM shipment_services WHERE id=? AND shipment_id=?")
+      .get(req.params.serviceId, req.params.shipmentId);
+    if (!service) return err(res, "Service not found", 404);
+    const container = db.prepare("SELECT * FROM containers WHERE id=? AND shipment_id=?")
+      .get(req.params.containerId, req.params.shipmentId);
+    if (!container) return err(res, "Container not found", 404);
+
+    const { locType = 'Door', location = '', latitude = null, longitude = null, notes = '', sequenceOrder } = req.body || {};
+    const isGps = locType === GPS_LOC_TYPE;
+    if (isGps) {
+      if (!validCoord(latitude, -90, 90)) return err(res, "latitude must be between -90 and 90");
+      if (!validCoord(longitude, -180, 180)) return err(res, "longitude must be between -180 and 180");
+    }
+    const record = ensureHaulageRecord(req.params.serviceId, req.params.containerId);
+    const seq = sequenceOrder != null
+      ? Math.max(1, parseInt(sequenceOrder, 10) || 1)
+      : (db.prepare("SELECT COALESCE(MAX(sequence_order),0)+1 AS n FROM shipment_haulage_waypoints WHERE haulage_record_id=?").get(record.id).n);
+    const id = `HWP-${uid()}`;
+    const now = new Date().toISOString();
+    db.prepare(`INSERT INTO shipment_haulage_waypoints
+      (id, haulage_record_id, sequence_order, loc_type, location, latitude, longitude, notes, created_at)
+      VALUES (?,?,?,?,?,?,?,?,?)`)
+      .run(id, record.id, seq, locType, isGps ? '' : location,
+        isGps && latitude != null && latitude !== '' ? Number(latitude) : null,
+        isGps && longitude != null && longitude !== '' ? Number(longitude) : null,
+        notes, now);
+    logEntityEvent('haulage_waypoint', id, 'CREATED', null, null, null,
+      JSON.stringify({ shipmentId: req.params.shipmentId, serviceId: req.params.serviceId, containerId: req.params.containerId, locType }));
+    const row = db.prepare("SELECT * FROM shipment_haulage_waypoints WHERE id=?").get(id);
+    ok(res, mapHaulageWaypoint(row), 201);
+  });
+
+  app.put("/api/haulage-waypoints/:id", shipmentWrite, (req, res) => {
+    const existing = db.prepare("SELECT * FROM shipment_haulage_waypoints WHERE id=?").get(req.params.id);
+    if (!existing) return err(res, "Not found", 404);
+    const { locType = 'Door', location = '', latitude = null, longitude = null, notes = '', sequenceOrder = 1 } = req.body || {};
+    const isGps = locType === GPS_LOC_TYPE;
+    if (isGps) {
+      if (!validCoord(latitude, -90, 90)) return err(res, "latitude must be between -90 and 90");
+      if (!validCoord(longitude, -180, 180)) return err(res, "longitude must be between -180 and 180");
+    }
+    const seq = Math.max(1, parseInt(sequenceOrder, 10) || 1);
+    db.prepare(`UPDATE shipment_haulage_waypoints
+      SET sequence_order=?, loc_type=?, location=?, latitude=?, longitude=?, notes=? WHERE id=?`)
+      .run(seq, locType, isGps ? '' : location,
+        isGps && latitude != null && latitude !== '' ? Number(latitude) : null,
+        isGps && longitude != null && longitude !== '' ? Number(longitude) : null,
+        notes, req.params.id);
+    logEntityEvent('haulage_waypoint', req.params.id, 'UPDATED', null, null, null, JSON.stringify({ locType }));
+    const row = db.prepare("SELECT * FROM shipment_haulage_waypoints WHERE id=?").get(req.params.id);
+    ok(res, mapHaulageWaypoint(row));
+  });
+
+  app.delete("/api/haulage-waypoints/:id", shipmentWrite, (req, res) => {
+    const existing = db.prepare("SELECT * FROM shipment_haulage_waypoints WHERE id=?").get(req.params.id);
+    if (!existing) return err(res, "Not found", 404);
+    db.prepare("DELETE FROM shipment_haulage_waypoints WHERE id=?").run(req.params.id);
+    logEntityEvent('haulage_waypoint', req.params.id, 'DELETED', null, null, null, null);
+    ok(res, { deleted: req.params.id });
   });
 
   // ─── Milestones ───────────────────────────────────────────────────────────

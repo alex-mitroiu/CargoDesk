@@ -113,6 +113,7 @@ export const api = {
     remove: (id)      => req("DELETE", `/shipments/${id}`),
     shareToken: (id)  => req("POST",   `/shipments/${id}/share-token`),
     landedCostEstimate: (id) => req("GET", `/shipments/${id}/landed-cost-estimate`),
+    reassignOffice: (id, data) => req("POST", `/shipments/${id}/reassign-office`, data),
     creditOverride: {
       get:     (id)       => req("GET",  `/shipments/${id}/credit-override`),
       approve: (id, data) => req("POST", `/shipments/${id}/credit-override/approve`, data),
@@ -172,6 +173,8 @@ export const api = {
     create: (data)       => req("POST",   "/carrier-agents", data),
     update: (id, data)   => req("PUT",    `/carrier-agents/${id}`, data),
     remove: (id)         => req("DELETE", `/carrier-agents/${id}`),
+    addLocation:    (id, data) => req("POST",   `/carrier-agents/${id}/locations`, data),
+    removeLocation: (id)       => req("DELETE", `/carrier-agent-locations/${id}`),
   },
   regions: {
     list:   ()           => req("GET",    "/regions"),
@@ -344,6 +347,11 @@ export const api = {
     update: (id, d)          => req("PUT",    `/shipment-parties/${id}`, d),
     remove: (id)             => req("DELETE", `/shipment-parties/${id}`),
   },
+  sideOffices: {
+    list:   (shipmentId)     => req("GET",    `/shipments/${shipmentId}/side-offices`),
+    create: (shipmentId, d) => req("POST",   `/shipments/${shipmentId}/side-offices`, d),
+    remove: (id)             => req("DELETE", `/shipment-side-offices/${id}`),
+  },
   chargeCodes: {
     list:   ()      => req("GET",    "/charge-code-definitions"),
     create: (d)     => req("POST",   "/charge-code-definitions", d),
@@ -400,6 +408,21 @@ export const api = {
     list:   (shipmentId, serviceId)      => req("GET", `/shipments/${shipmentId}/services/${serviceId}/loading-plan`),
     update: (shipmentId, serviceId, containerId, d) =>
       req("PUT", `/shipments/${shipmentId}/services/${serviceId}/loading-plan/${containerId}`, d),
+  },
+  haulage: {
+    list:   (shipmentId, serviceId)      => req("GET", `/shipments/${shipmentId}/services/${serviceId}/haulage`),
+    update: (shipmentId, serviceId, containerId, d) =>
+      req("PUT", `/shipments/${shipmentId}/services/${serviceId}/haulage/${containerId}`, d),
+    saveCost: (shipmentId, serviceId, containerId, d) =>
+      req("PATCH", `/shipments/${shipmentId}/services/${serviceId}/haulage/${containerId}/cost`, d),
+    waypoints: {
+      list:   (shipmentId, serviceId, containerId) =>
+        req("GET",    `/shipments/${shipmentId}/services/${serviceId}/haulage/${containerId}/waypoints`),
+      create: (shipmentId, serviceId, containerId, d) =>
+        req("POST",   `/shipments/${shipmentId}/services/${serviceId}/haulage/${containerId}/waypoints`, d),
+      update: (id, d) => req("PUT",    `/haulage-waypoints/${id}`, d),
+      remove: (id)    => req("DELETE", `/haulage-waypoints/${id}`),
+    },
   },
   milestones: {
     list:   (shipmentId)       => req("GET",    `/shipments/${shipmentId}/milestones`),
@@ -632,6 +655,26 @@ export const api = {
       URL.revokeObjectURL(url);
     },
   },
+  containerImport: {
+    template: async () => {
+      const token = localStorage.getItem("cargodesk_token");
+      const activeRole = localStorage.getItem("cargodesk_active_role");
+      const headers = { Authorization: `Bearer ${token}` };
+      if (activeRole) headers["X-Active-Role"] = activeRole;
+      const res = await fetch("/api/containers/import-template", { headers });
+      if (!res.ok) {
+        const e = await res.json().catch(() => ({}));
+        throw new Error(e.error || "Template download failed");
+      }
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement("a");
+      a.href = url; a.download = "cargodesk-container-import-template.xlsx"; a.click();
+      URL.revokeObjectURL(url);
+    },
+    preview: (shipmentId, data) => req("POST", `/shipments/${shipmentId}/containers/import/preview`, { data }),
+    commit:  (shipmentId, rows) => req("POST", `/shipments/${shipmentId}/containers/import/commit`, { rows }),
+  },
   ai: {
     settings: () => req("GET", "/ai/settings"),
     chat:     (messages, context = {}) => req("POST", "/ai/chat", { messages, context }),
@@ -658,6 +701,10 @@ export const api = {
     qualify: (id)        => req("POST",   `/opportunities/${id}/qualify`),
     lose:    (id, data)  => req("POST",   `/opportunities/${id}/lose`, data),
     convert: (id)        => req("POST",   `/opportunities/${id}/convert`),
+  },
+  admin: {
+    resetDemoDataPreview: () => req("GET",  "/admin/reset-demo-data/preview"),
+    resetDemoData: (confirm) => req("POST", "/admin/reset-demo-data", { confirm }),
   },
   offices: {
     list:           ()               => req("GET",    "/offices"),

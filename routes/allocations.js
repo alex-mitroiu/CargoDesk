@@ -91,6 +91,7 @@ module.exports = function allocationsRoutes(app, ctx) {
             alertThreshold = 80, pol = '', pod = '', originLane = '', destLane = '',
             contractId = '', contractNumber = '', minimumTEU = null } = req.body;
     if (!effectiveDate || !endDate || !pol || !pod) return err(res, "effectiveDate, endDate, pol, pod required");
+    if (!carrierCode || allocatedTEU === undefined) return err(res, "carrierCode, allocatedTEU required");
     if (!contractId) return err(res, "contractId required");
     if (endDate < effectiveDate) return err(res, "end date must be on or after effective date");
     if (minimumTEU != null && Number(minimumTEU) > Number(allocatedTEU))

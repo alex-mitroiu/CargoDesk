@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { api } from "../../api";
-import { T, TIMEZONES } from "../../tokens";
+import { T, TIMEZONES, CURRENCIES } from "../../tokens";
 import { toast } from "../../toast";
 import PortCombobox from "../../components/shared/PortCombobox";
 
@@ -29,6 +29,7 @@ function BranchForm({ branch, onSave, onCancel }) {
     timezone:    branch?.timezone    || "",
     phone:       branch?.phone       || "",
     email:       branch?.email       || "",
+    currency:    branch?.currency    || "",
   });
   const [saving, setSaving] = useState(false);
 
@@ -137,7 +138,7 @@ function BranchForm({ branch, onSave, onCancel }) {
       </div>
 
       {/* Row 4: Phone | Email */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 16 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
         <div>
           <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 4 }}>Phone</div>
           <input value={form.phone} onChange={e => setForm(p => ({ ...p, phone: e.target.value }))}
@@ -148,6 +149,22 @@ function BranchForm({ branch, onSave, onCancel }) {
           <input value={form.email} onChange={e => setForm(p => ({ ...p, email: e.target.value }))}
             placeholder="amsterdam@example.com" style={inp} />
         </div>
+      </div>
+
+      {/* Row 5: Reporting Currency — Multi-Entity Accounting (TKT-EEV4I9). A branch doubles as
+          CargoDesk's legal-entity boundary for GP-by-entity reporting; this is the currency that
+          entity reports in. Defaults from the branch's own operating country on create (server-
+          side) but stays independently editable, since a branch reporting in a currency other
+          than its country's own default is a real case (e.g. group-wide USD reporting). */}
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 4 }}>
+          Reporting Currency
+        </div>
+        <select value={form.currency} onChange={e => setForm(p => ({ ...p, currency: e.target.value }))}
+          style={{ ...inp, cursor: "pointer", maxWidth: 160 }}>
+          <option value="">Default from country</option>
+          {CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
       </div>
 
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
@@ -203,7 +220,8 @@ function BranchDetail({ branch, onClose, onEdit }) {
         {/* Info */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 20 }}>
           {[["Country", branch.countryCode], ["LOCODE", branch.locode], ["City", branch.city],
-            ["Timezone", branch.timezone], ["Phone", branch.phone], ["Email", branch.email]].map(([label, val]) => val ? (
+            ["Timezone", branch.timezone], ["Phone", branch.phone], ["Email", branch.email],
+            ["Reporting Currency", branch.currency]].map(([label, val]) => val ? (
             <div key={label}>
               <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{label}</div>
               <div style={{ fontFamily: T.body, fontSize: 13, color: T.text }}>{val}</div>

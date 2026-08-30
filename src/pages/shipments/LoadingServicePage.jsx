@@ -4,10 +4,12 @@ import { api } from "../../api";
 import { toast } from "../../toast";
 import Btn from "../../components/primitives/Btn";
 import DatePicker from "../../components/primitives/DatePicker";
+import { Modal } from "../../components/primitives/Modal";
 import { inputBase } from "../../components/primitives/Form";
 import { buildLoadingPlanHtml } from "../../utils/invoiceGenerator";
 import { IconCheck, IconFlash, IconFolder, IconWarning, IconMapPin } from "../../components/primitives/Icon";
 import { findRoutingLeg } from "../../utils/carrierBooking";
+import HaulageDetailsPanel from "../../components/shared/HaulageDetailsPanel";
 
 // ─── Loading / Unloading Service page (Epic TKT-TBS7QD, Stories TKT-TR6OBR /
 //     TKT-X3SA2E / follow-up Unloading reuse) ──────────────────────────────
@@ -73,7 +75,7 @@ const RoutingCard = ({ serviceType, leg }) => {
   );
 };
 
-const LoadingPlanRow = ({ line, canEdit, saving, onSave }) => {
+const LoadingPlanRow = ({ line, canEdit, saving, onSave, isMerchantHaulage, onOpenHaulage }) => {
   const [seq,   setSeq]   = useState(line.sequenceOrder ?? 1);
   const [notes, setNotes] = useState(line.notes || "");
 
@@ -129,6 +131,16 @@ const LoadingPlanRow = ({ line, canEdit, saving, onSave }) => {
           onBlur={() => onSave({ notes })}
           style={{ ...inputBase, fontFamily: T.body, fontSize: 12, width: "100%" }} />
       </td>
+      {isMerchantHaulage && (
+        <td style={{ padding: "8px 10px", width: 100 }}>
+          <button type="button" onClick={() => onOpenHaulage(line)}
+            style={{ fontFamily: T.body, fontSize: 11.5, color: T.accent, background: `${T.accent}15`,
+              border: `1px solid ${T.accent}44`, borderRadius: 5, padding: "4px 9px", cursor: "pointer",
+              whiteSpace: "nowrap" }}>
+            🚛 Haulage
+          </button>
+        </td>
+      )}
       {saving && (
         <td style={{ padding: "8px 4px", width: 20 }}>
           <span style={{ fontSize: 10, color: T.textMuted }}>⏳</span>
@@ -152,7 +164,14 @@ const LoadingServicePage = ({ shipment, containers = [], side, serviceType = "Lo
   const [file,       setFile]       = useState(null);
   const [uploading,  setUploading]  = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [haulageRecords, setHaulageRecords] = useState([]);
+  const [haulageLine, setHaulageLine] = useState(null); // the line currently open in the Haulage modal
   const fileRef = useRef(null);
+
+  // Direct request: improve Merchant's Haulage tracking on Pickup/Delivery specifically — a
+  // Carrier's Haulage or Customer Arranged leg means the carrier/customer already handles this
+  // movement, so none of the new gate/waypoints/driver/cost tracking is relevant there.
+  const isMerchantHaulage = isHaulageType && routingLeg?.movementType === "Merchant's Haulage";
 
   const shipmentContainers = containers.filter(c => c.shipmentId === shipment.id);
 
@@ -188,6 +207,13 @@ const LoadingServicePage = ({ shipment, containers = [], side, serviceType = "Lo
   useEffect(() => {
     if (service) { loadLines(service.id); loadLatestDoc(); }
   }, [service?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const loadHaulageRecords = (serviceId) =>
+    api.haulage.list(shipment.id, serviceId).then(setHaulageRecords).catch(() => setHaulageRecords([]));
+
+  useEffect(() => {
+    if (service && isMerchantHaulage) loadHaulageRecords(service.id);
+  }, [service?.id, isMerchantHaulage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSaveLine = async (containerId, patch) => {
     if (!service) return;
@@ -309,7 +335,10 @@ const LoadingServicePage = ({ shipment, containers = [], side, serviceType = "Lo
             <table id="svcplan-table" style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr style={{ borderBottom: `1px solid ${T.border}` }}>
-                  {["Container #", "Type", `Planned ${serviceType} Date & Time`, "Seq.", "Notes"].map(h => (
+                  {[
+                    "Container #", "Type", `Planned ${serviceType} Date & Time`, "Seq.", "Notes",
+                    ...(isMerchantHaulage ? ["Haulage"] : []),
+                  ].map(h => (
                     <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontFamily: T.body,
                       fontSize: 10.5, fontWeight: 700, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".05em" }}>
                       {h}
@@ -321,7 +350,9 @@ const LoadingServicePage = ({ shipment, containers = [], side, serviceType = "Lo
                 {lines.map(line => (
                   <LoadingPlanRow key={line.containerId} line={line} canEdit={canEdit}
                     saving={savingId === line.containerId}
-                    onSave={patch => handleSaveLine(line.containerId, patch)} />
+                    onSave={patch => handleSaveLine(line.containerId, patch)}
+                    isMerchantHaulage={isMerchantHaulage}
+                    onOpenHaulage={setHaulageLine} />
                 ))}
               </tbody>
             </table>
@@ -375,6 +406,23 @@ const LoadingServicePage = ({ shipment, containers = [], side, serviceType = "Lo
           </div>
         )}
       </div>
+
+      {haulageLine && (
+        <Modal title={`Merchant's Haulage — ${haulageLine.containerNumber || haulageLine.containerId}`}
+          onClose={() => setHaulageLine(null)} width={560}>
+          <HaulageDetailsPanel
+            shipmentId={shipment.id}
+            serviceId={service.id}
+            canEdit={canEdit}
+            record={{
+              ...(haulageRecords.find(r => r.containerId === haulageLine.containerId) || { containerId: haulageLine.containerId }),
+              vendorName: service.vendorName,
+            }}
+            onRecordUpdated={updated => setHaulageRecords(list =>
+              list.map(r => r.containerId === updated.containerId ? updated : r))}
+          />
+        </Modal>
+      )}
     </div>
   );
 };

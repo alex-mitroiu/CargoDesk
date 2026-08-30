@@ -14,6 +14,14 @@
  * destination agent — independent from the pre-existing blReleaseType (the NVOCC's later
  * release to the actual consignee, on the House B/L / Delivery Order).
  *
+ * Also covers TKT-UR1X17 (NVOCC co-loading / cross-tariff reference): when this shipment's own
+ * NVOCC has no direct contract with the vessel operator for a lane, it tenders cargo through
+ * ANOTHER NVOCC's own tariff instead. New "Co-Loading NVOCC" party role (resolves via the same
+ * extensible shipment_parties mechanism the primary NVOCC role already uses) plus a free-text
+ * coloadTariffReference column on shipments. The Master B/L builder (client-side, not covered by
+ * this HTTP-level suite) resolves the co-loading NVOCC as the real Shipper once assigned, since
+ * it's the one who actually holds the direct Master B/L relationship with the vessel operator.
+ *
  * Usage:
  *   node tests/nvocc-carrier-identity.test.js
  *
@@ -118,11 +126,53 @@ async function login() {
     assert("masterBlReleaseType updates independently", updateRelease.body?.masterBlReleaseType === "Surrendered", JSON.stringify(updateRelease.body));
     assert("blReleaseType (House-side) can independently be set to a DIFFERENT value — two real release events, not one", updateRelease.body?.blReleaseType === "Original", JSON.stringify(updateRelease.body));
 
+    console.log("\nCo-Loading NVOCC party role — resolves via the existing shipment_parties mechanism, zero new party infrastructure");
+    const coloadCust = await request("POST", "/api/customers", { companyName: "Test Co-Load NVOCC Partner", isNvocc: true, fmcNumber: "FMC-888888" }, token);
+    const shipCoload = await request("POST", "/api/shipments", {
+      pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+    }, token);
+    const coloadPartyRes = await request("POST", `/api/shipments/${shipCoload.body.id}/parties`,
+      { role: "Co-Loading NVOCC", customerId: coloadCust.body.id, customerName: coloadCust.body.companyName }, token);
+    assert("Co-Loading NVOCC party accepted (valid role)", coloadPartyRes.status === 201, JSON.stringify(coloadPartyRes.body));
+    const invalidRoleRes = await request("POST", `/api/shipments/${shipCoload.body.id}/parties`,
+      { role: "Not A Real Role", customerId: coloadCust.body.id, customerName: coloadCust.body.companyName }, token);
+    assert("a bogus role is still rejected (not accidentally opened up)", invalidRoleRes.status >= 400, JSON.stringify(invalidRoleRes.body));
+    // Both an NVOCC and a Co-Loading NVOCC party can coexist on one shipment — the whole point
+    // is representing the underlying NVOCC (House B/L side) and the co-loading NVOCC (the one
+    // that actually holds the Master B/L relationship) at once, as two distinct role slots.
+    const primaryNvoccOnCoload = await request("POST", `/api/shipments/${shipCoload.body.id}/parties`,
+      { role: "NVOCC", customerId: coloadCust.body.id, customerName: "Underlying NVOCC Co" }, token);
+    assert("primary NVOCC role can coexist alongside Co-Loading NVOCC on the same shipment", primaryNvoccOnCoload.status === 201, JSON.stringify(primaryNvoccOnCoload.body));
+
+    console.log("\nCo-Load Tariff Reference — free-text field, round-trips independently of the primary contract");
+    const shipTariff = await request("POST", "/api/shipments", {
+      pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+      coloadTariffReference: "COLOAD-TARIFF-00123",
+    }, token);
+    assert("create returns 201", shipTariff.status === 201, JSON.stringify(shipTariff.body));
+    assert("coloadTariffReference round-trips on create", shipTariff.body?.coloadTariffReference === "COLOAD-TARIFF-00123", JSON.stringify(shipTariff.body));
+
+    const shipTariffBlank = await request("POST", "/api/shipments", {
+      pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT",
+    }, token);
+    assert("blank by default — the direct NVOCC-to-vessel-operator case needs no tariff reference", shipTariffBlank.body?.coloadTariffReference === "", JSON.stringify(shipTariffBlank.body));
+
+    const updateTariff = await request("PUT", `/api/shipments/${shipTariff.body.id}`, {
+      pol: "NLRTM", pod: "USNYC", carrierCode: "MAEU", contractType: "SPOT",
+      coloadTariffReference: "COLOAD-TARIFF-REVISED",
+    }, token);
+    assert("update returns 200", updateTariff.status === 200, JSON.stringify(updateTariff.body));
+    assert("coloadTariffReference updates independently of contractRef/contractId", updateTariff.body?.coloadTariffReference === "COLOAD-TARIFF-REVISED", JSON.stringify(updateTariff.body));
+
     console.log("\nCleanup");
     await request("DELETE", `/api/shipments/${shipPlain.body.id}`, null, token);
     await request("DELETE", `/api/shipments/${shipNvocc.body.id}`, null, token);
     await request("DELETE", `/api/customers/${nvoccCust.body.id}`, null, token);
     await request("DELETE", `/api/shipments/${shipRelease.body.id}`, null, token);
+    await request("DELETE", `/api/shipments/${shipCoload.body.id}`, null, token);
+    await request("DELETE", `/api/customers/${coloadCust.body.id}`, null, token);
+    await request("DELETE", `/api/shipments/${shipTariff.body.id}`, null, token);
+    await request("DELETE", `/api/shipments/${shipTariffBlank.body.id}`, null, token);
 
     console.log("\n" + "─".repeat(50));
     console.log(`Results: ${passed} passed, ${failed} failed`);

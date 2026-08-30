@@ -5,6 +5,7 @@ import Btn from "../../components/primitives/Btn";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
 import { ContainerForm } from "./ShipmentDetailPage";
 import ContainerEventsPanel from "../../components/shared/ContainerEventsPanel";
+import ImportContainersModal from "../../components/shared/ImportContainersModal";
 import { NavRow, PackageDetailForm } from "../../components/shared/ContainerPackagesPanel";
 import { fmtCurr } from "../../utils/invoiceGenerator";
 import { emitCargoValueChanged } from "../../cargoValueBus";
@@ -113,7 +114,7 @@ const LandedCostEstimateModal = ({ shipmentId, onClose }) => {
   );
 };
 
-const ShipmentContainersPage = ({ shipment, containers, onBack, onAddContainer, onEditContainer, onDeleteContainer }) => {
+const ShipmentContainersPage = ({ shipment, containers, onBack, onAddContainer, onEditContainer, onDeleteContainer, onImportContainers }) => {
   const { canEditShipments: canEdit } = useAuth();
   const ctrs     = containers.filter(c => c.shipmentId === shipment.id);
   const totalTEU = ctrs.reduce((sum, c) => sum + teuOf(c.size), 0);
@@ -128,6 +129,7 @@ const ShipmentContainersPage = ({ shipment, containers, onBack, onAddContainer, 
   const [confirmCtr,     setConfirmCtr]    = useState(null);
   const [dgPolicy,       setDgPolicy]      = useState(null);
   const [landedCostOpen, setLandedCostOpen] = useState(false);
+  const [importOpen,     setImportOpen]     = useState(false);
   const ctrFormRef = useRef(null);
 
   const loadPackages = useCallback(() => {
@@ -325,13 +327,25 @@ const ShipmentContainersPage = ({ shipment, containers, onBack, onAddContainer, 
               })}
             </div>
             {canEdit && (
-              <button id="shpctr-add-btn" type="button" onClick={() => setSelection({ kind: "new-container" })}
-                style={{ margin: 8, padding: "7px 12px", background: "none", border: `1px dashed ${T.accent}55`,
-                  borderRadius: 6, cursor: "pointer", fontFamily: T.body, fontSize: 12, color: T.accent }}>
-                ＋ Add Container
-              </button>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, margin: 8 }}>
+                <button id="shpctr-add-btn" type="button" onClick={() => setSelection({ kind: "new-container" })}
+                  style={{ padding: "7px 12px", background: "none", border: `1px dashed ${T.accent}55`,
+                    borderRadius: 6, cursor: "pointer", fontFamily: T.body, fontSize: 12, color: T.accent }}>
+                  ＋ Add Container
+                </button>
+                <button id="shpctr-import-btn" type="button" onClick={() => setImportOpen(true)}
+                  style={{ padding: "7px 12px", background: "none", border: `1px dashed ${T.border}`,
+                    borderRadius: 6, cursor: "pointer", fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
+                  ⬆ Import Containers
+                </button>
+              </div>
             )}
           </div>
+
+          {importOpen && (
+            <ImportContainersModal shipment={shipment} onClose={() => setImportOpen(false)}
+              onImported={created => { onImportContainers(created); setImportOpen(false); }} />
+          )}
 
           {/* Right: detail — no internal scroll; flows naturally in the page so its own
               action buttons (ContainerForm's Save/Cancel, Add Package) are always reachable

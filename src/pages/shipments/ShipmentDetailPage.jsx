@@ -8,6 +8,8 @@ import { ContainerTypeField } from "../../components/shared/ContainerTypePickerM
 import { CommodityCombobox, GradePill } from "../../components/shared/CommodityCombobox";
 import CustomerCombobox from "../../components/shared/CustomerCombobox";
 import ServicesPanel from "../../components/shared/ServicesPanel";
+import OfficeCombobox from "../../components/shared/OfficeCombobox";
+import { SERVICE_TYPE_ICON } from "../../shipmentServicePages";
 import { api } from "../../api";
 import { toast } from "../../toast";
 import { formatLegPoint } from "../../utils/legLocation";
@@ -1357,51 +1359,532 @@ const PartiesEditForm = ({ shipment, onSave, onCancel }) => {
 // Offices — inline select, no modal (TKT-PNFO5O). Commits immediately on change
 // (same "changing it IS the save" idiom as ServicesPanel's status-advance buttons)
 // rather than needing a separate dirty-state/Save affordance for a single dropdown.
+// `role` backs the Nested Office Groups redesign below — the short badge label shown
+// next to an office's name wherever it shows up (its own home group, or nested inside
+// a column when a service was cross-assigned to it).
 const OFFICE_FIELDS = [
-  { key: "emoOfficeId",         nameKey: "emoOfficeName",         codeKey: "emoOfficeCode",         label: "Export Managing Office (EMO)", required: true,  dept: "SE" },
-  { key: "imoOfficeId",         nameKey: "imoOfficeName",         codeKey: "imoOfficeCode",         label: "Import Managing Office (IMO)", required: true,  dept: "SI" },
-  { key: "controllingOfficeId", nameKey: "controllingOfficeName", codeKey: "controllingOfficeCode", label: "Controlling Office",           required: false, dept: null },
+  { key: "emoOfficeId",         nameKey: "emoOfficeName",         codeKey: "emoOfficeCode",         label: "Export Managing Office (EMO)", role: "EMO",         required: true,  dept: "SE" },
+  { key: "imoOfficeId",         nameKey: "imoOfficeName",         codeKey: "imoOfficeCode",         label: "Import Managing Office (IMO)", role: "IMO",         required: true,  dept: "SI" },
+  { key: "controllingOfficeId", nameKey: "controllingOfficeName", codeKey: "controllingOfficeCode", label: "Controlling Office",           role: "Controlling", required: false, dept: null },
 ];
 
-const OfficeInlineSelect = ({ id, field, shipment, offices, canEdit, onUpdate }) => {
+// Export offices are department SE, Import SI — mirrors OFFICE_FIELDS' own dept constraint,
+// used both for the "+ Add Office" candidate filter and the client-side edit-permission mirror
+// of the server's canEditOfficeSide (routes/shipments.js).
+const SIDE_DEPT = { Export: "SE", Import: "SI" };
+
+// Which OFFICE_FIELDS role (if any) a given office id currently holds on this shipment —
+// used to badge an office wherever it's nested (e.g. the Controlling Office nested inside
+// the Export column once an Export service is actually assigned to it).
+const officeRoleLabel = (shipment, officeId) => {
+  if (!officeId) return null;
+  const field = OFFICE_FIELDS.find(f => shipment[f.key] === officeId);
+  return field ? field.role : null;
+};
+
+// Disaster-recovery reassignment — a dedicated action, not a routine field edit: picking a new
+// EMO/IMO/Controlling office always requires a stated reason and logs its own OFFICE_REASSIGNED
+// event via POST .../reassign-office, independent of the generic shipment PUT (which doesn't
+// track these 3 columns at all). Server-side permission is department-scoped (canEditOfficeSide),
+// not tied to whichever office already holds the slot — the whole point is that a DIFFERENT
+// office can step in.
+//
+// Direct follow-up: once a replaced office is genuinely out of action (the whole reason a
+// disaster-recovery reassignment exists), the operator should be asked whether to mark it
+// inactive org-wide too — otherwise it keeps showing up as a pickable candidate on every OTHER
+// shipment. This is a second, distinct step after a successful reassignment (not folded into the
+// same confirm click) since it's a materially bigger, global action — deactivating an office
+// hides it from every shipment in CargoDesk, not just this one — and PUT /api/offices/:id is
+// itself admin-only, so the prompt only ever appears for an admin; a department-scoped operator
+// can still reassign, they just never see a deactivation offer they couldn't act on anyway.
+const ReassignOfficeModal = ({ field, shipment, offices, onClose, onReassigned }) => {
+  const { isAdmin } = useAuth();
+  const [officeId, setOfficeId] = useState(shipment[field.key] || "");
+  const [reason, setReason] = useState("");
   const [saving, setSaving] = useState(false);
+  // Set once the reassignment itself has succeeded — { updated, oldOffice } — switches the modal
+  // into its second step (the deactivate-old-office choice) instead of closing immediately.
+  const [deactivateStep, setDeactivateStep] = useState(null);
+  const [deactivating, setDeactivating] = useState(false);
   const candidates = field.dept ? offices.filter(o => o.department === field.dept && o.isActive) : offices.filter(o => o.isActive);
-  const value = shipment[field.key] || "";
+
+  const handleConfirm = async () => {
+    if (field.required && !officeId) { toast.error(`${field.label} is required`); return; }
+    if (!reason.trim()) { toast.error("A reason for reassignment is required"); return; }
+    setSaving(true);
+    try {
+      const oldOfficeId = shipment[field.key] || "";
+      const updated = await api.shipments.reassignOffice(shipment.id, { field: field.key, officeId, reason: reason.trim() });
+      // Server-side, the replaced office's own lingering services (any still individually
+      // assigned to it on this shipment) were already moved to the new office as part of the
+      // same reassignment — direct bug report: the old office kept quietly handling services
+      // here regardless of whatever was chosen below. Purely informational; nothing left to do.
+      if (updated.migratedServiceCount > 0) {
+        toast.success(`${updated.migratedServiceCount} service${updated.migratedServiceCount === 1 ? "" : "s"} on this shipment moved to the new office`);
+      }
+      const oldOffice = oldOfficeId && oldOfficeId !== officeId ? offices.find(o => o.id === oldOfficeId) : null;
+      if (isAdmin && oldOffice?.isActive) { setDeactivateStep({ updated, oldOffice }); return; }
+      onReassigned(updated);
+    } catch (ex) { toast.error(ex.message); }
+    finally { setSaving(false); }
+  };
+
+  const handleDeactivateChoice = async keepActive => {
+    if (!keepActive) {
+      setDeactivating(true);
+      try {
+        await api.offices.update(deactivateStep.oldOffice.id, { isActive: false });
+        toast.success(`${deactivateStep.oldOffice.code} marked inactive`);
+      } catch (ex) { toast.error(ex.message); }
+      setDeactivating(false);
+    }
+    onReassigned(deactivateStep.updated);
+  };
+
+  if (deactivateStep) {
+    const { oldOffice } = deactivateStep;
+    return (
+      <Modal title="Deactivate replaced office?" onClose={() => handleDeactivateChoice(true)} width={440}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <p style={{ fontFamily: T.body, fontSize: 13.5, color: T.text, lineHeight: 1.6, margin: 0 }}>
+            <b>{oldOffice.name}</b> ({oldOffice.code}) was just replaced as the {field.label} on this
+            shipment. Mark it inactive across CargoDesk too? It will no longer be selectable on any
+            shipment until reactivated — this doesn't affect any shipment it's already on.
+          </p>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", borderTop: `1px solid ${T.border}`, paddingTop: 14 }}>
+            <Btn variant="secondary" onClick={() => handleDeactivateChoice(true)} disabled={deactivating}>Keep Active</Btn>
+            <Btn variant="danger" onClick={() => handleDeactivateChoice(false)} disabled={deactivating}>
+              {deactivating ? "Deactivating…" : "Mark Inactive"}
+            </Btn>
+          </div>
+        </div>
+      </Modal>
+    );
+  }
+
+  return (
+    <Modal title={`Reassign ${field.label}`} onClose={onClose} width={440}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <div>
+          <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 6 }}>New Office</div>
+          <OfficeCombobox offices={candidates} value={officeId} onChange={setOfficeId}
+            allowClear={!field.required}
+            placeholder="Search office by name, code, or country…" />
+        </div>
+        <div>
+          <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginBottom: 6 }}>
+            Reason for reassignment <span style={{ color: T.danger }}>*</span>
+          </div>
+          <textarea value={reason} onChange={e => setReason(e.target.value)} rows={3}
+            placeholder="e.g. Rotterdam office affected by a regional outage — reassigning to keep the booking moving."
+            style={{ width: "100%", fontFamily: T.body, fontSize: 13, background: T.surface, color: T.text,
+              border: `1px solid ${T.border}`, borderRadius: 6, padding: "8px 10px", resize: "vertical", boxSizing: "border-box" }} />
+        </div>
+        <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
+          Logged as its own event on the shipment's History, separate from a routine edit.
+        </div>
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", borderTop: `1px solid ${T.border}`, paddingTop: 14 }}>
+          <Btn variant="secondary" onClick={onClose} disabled={saving}>Cancel</Btn>
+          <Btn onClick={handleConfirm} disabled={saving}>{saving ? "Reassigning…" : "Reassign"}</Btn>
+        </div>
+      </div>
+    </Modal>
+  );
+};
+
+// Display for a home office (EMO/IMO/Controlling) with a "Reassign" button that opens the
+// dedicated modal above — used by the Controlling Office banner and each column's home
+// (EMO/IMO) office-group header. `canEdit` here is already the caller's resolved per-side
+// permission (see PartiesOfficesPanel's canEditExport/canEditImport/canEditControlling).
+const InlineOfficeEdit = ({ id, field, shipment, offices, canEdit, onReassigned, textStyle, pills }) => {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div id={id} style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ ...textStyle, display: "flex", alignItems: "center", gap: 7,
+          color: shipment[field.nameKey] ? textStyle.color : T.border }}>
+          {shipment[field.nameKey] || (field.required ? "Not assigned" : "No Controlling Office")}
+          {shipment[field.nameKey] && pills}
+        </div>
+        {shipment[field.nameKey] && (
+          <div style={{ fontFamily: T.mono, fontSize: 10.5, color: T.textMuted, marginTop: 1 }}>
+            {shipment[field.codeKey]}
+          </div>
+        )}
+      </div>
+      {canEdit && (
+        <button onClick={() => setOpen(true)} title={`Reassign ${field.label}`}
+          style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 6, border: `1px solid ${T.border}`,
+            background: T.bg, color: T.textMuted, display: "flex", alignItems: "center", justifyContent: "center",
+            cursor: "pointer", marginLeft: "auto" }}>
+          <IconPencil size={11} />
+        </button>
+      )}
+      {open && (
+        <ReassignOfficeModal field={field} shipment={shipment} offices={offices}
+          onClose={() => setOpen(false)}
+          onReassigned={updated => { onReassigned(updated); setOpen(false); }} />
+      )}
+    </div>
+  );
+};
+
+// Per-service office assignment — direct follow-up: the Controlling Office can order ancillary
+// services (Fumigation, Haulage, ...) that don't have to be handled by the same office as the
+// core EMO/IMO-managed movement, but until now the only place to see or change which office is
+// actually assigned to a given service was the Request Service form on Overview. Same click-to-
+// edit language as InlineOfficeEdit above, but a genuinely different save path — a service's
+// office lives on its own shipment_services row (api.services.update), not a shipment-level field.
+//
+// Candidates are deliberately scoped to the offices already INVOLVED with this shipment (its own
+// EMO/IMO/Controlling, whichever are set) — not a department-wide company directory lookup. This
+// panel is titled "Involved Offices" for a reason: a Fumigation service on this shipment should
+// be handled by an office that already has a real relationship to it, not any active SE/SI office
+// anywhere in the company. Same candidate set for both Export and Import services, per direct
+// request — the Controlling Office in particular should be pickable for either side.
+//
+// Rendered as a nested branch under whichever office it's actually assigned to (Nested Office
+// Groups redesign) — a service ordered under Export but assigned to the Controlling Office nests
+// under that Controlling Office group instead of under EMO, since that's who's really handling it.
+const ServiceBranch = ({ service, offices, shipmentOfficeIds, canEdit, onUpdated }) => {
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const candidates = offices.filter(o => shipmentOfficeIds.has(o.id));
 
   const handleChange = async e => {
     const next = e.target.value;
     setSaving(true);
-    try { await onUpdate(shipment.id, { ...shipment, [field.key]: next }); }
+    try {
+      const updated = await api.services.update(service.shipmentId, service.id, { officeId: next });
+      onUpdated(updated);
+    } catch (ex) { toast.error(ex.message); }
+    finally { setSaving(false); setEditing(false); }
+  };
+
+  return (
+    <div style={{ position: "relative" }}>
+      <div style={{ position: "absolute", left: -20, top: 13, width: 14, height: 2, background: T.border }} />
+      <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+        <span style={{ fontSize: 13, flexShrink: 0 }}>{SERVICE_TYPE_ICON[service.serviceType] || "•"}</span>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div style={{ fontFamily: T.body, fontSize: 12.5, fontWeight: 600, color: T.text }}>{service.serviceType}</div>
+          <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginTop: 1 }}>
+            {service.vendorName || "No vendor set"} · {service.status}
+          </div>
+        </div>
+        {canEdit && (editing ? (
+          <select autoFocus value={service.officeId} disabled={saving} onChange={handleChange} onBlur={() => setEditing(false)}
+            style={{ flexShrink: 0, fontFamily: T.mono, fontSize: 11, color: T.text, border: `1px solid ${T.border}`,
+              background: T.surface, borderRadius: 6, padding: "4px 7px", outline: "none",
+              cursor: saving ? "wait" : "pointer", maxWidth: 190 }}>
+            <option value="">No office set</option>
+            {candidates.map(o => <option key={o.id} value={o.id}>{o.code} — {o.name}</option>)}
+          </select>
+        ) : (
+          <button onClick={() => setEditing(true)} title="Change office"
+            style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 6, border: `1px solid ${T.border}`,
+              background: T.bg, color: T.textMuted, display: "flex", alignItems: "center", justifyContent: "center",
+              cursor: "pointer" }}>
+            <IconPencil size={10} />
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+// One office-group card: an office's identity (icon/name/code/role pill), editable inline only
+// when `field` is passed (the column's own home EMO/IMO office), plus its nested service
+// branches — or an italic placeholder when it's the home office with nothing assigned yet.
+// `onRemove` (only ever passed for an additional/side-tagged office, never the home field or a
+// cross-assigned office like Controlling) renders a × next to the header, no confirmation step —
+// same immediate-remove precedent AdditionalPartiesPanel already uses.
+const OfficeGroupCard = ({ icon, field, officeName, officeCode, pills, services, offices,
+  shipmentOfficeIds, canEditOffice, canEditService, onReassigned, shipment, onUpdatedService, emptyLabel, onRemove }) => (
+  <div style={{ marginBottom: 14 }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+      <div style={{ width: 32, height: 32, borderRadius: 9, background: T.bg, border: `1px solid ${T.border}`,
+        display: "flex", alignItems: "center", justifyContent: "center", fontSize: 15, flexShrink: 0 }}>
+        {icon}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        {field ? (
+          <InlineOfficeEdit field={field} shipment={shipment} offices={offices} canEdit={canEditOffice}
+            onReassigned={onReassigned} pills={pills}
+            textStyle={{ fontFamily: T.body, fontSize: 13.5, fontWeight: 700, color: T.text }} />
+        ) : (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ fontFamily: T.body, fontSize: 13.5, fontWeight: 700, color: T.text,
+                display: "flex", alignItems: "center", gap: 7 }}>
+                {officeName}{pills}
+              </div>
+              <div style={{ fontFamily: T.mono, fontSize: 10.5, color: T.textMuted, marginTop: 1 }}>{officeCode}</div>
+            </div>
+            {onRemove && canEditOffice && (
+              <button onClick={onRemove} title="Remove this office"
+                style={{ flexShrink: 0, width: 22, height: 22, borderRadius: 6, border: `1px solid ${T.border}`,
+                  background: T.bg, color: T.textMuted, display: "flex", alignItems: "center", justifyContent: "center",
+                  cursor: "pointer", fontSize: 14, lineHeight: 1 }}>
+                ×
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+    {services.length > 0 ? (
+      <div style={{ marginLeft: 16, paddingLeft: 20, borderLeft: `2px solid ${T.border}`, marginTop: 8,
+        display: "flex", flexDirection: "column", gap: 8 }}>
+        {services.map(s => (
+          <ServiceBranch key={s.id} service={s} offices={offices} shipmentOfficeIds={shipmentOfficeIds}
+            canEdit={canEditService} onUpdated={onUpdatedService} />
+        ))}
+      </div>
+    ) : emptyLabel ? (
+      <div style={{ marginLeft: 16, paddingLeft: 20, borderLeft: `2px dashed ${T.border}`, marginTop: 8,
+        fontSize: 11.5, color: T.textMuted, fontStyle: "italic", paddingBottom: 2 }}>
+        {emptyLabel}
+      </div>
+    ) : null}
+  </div>
+);
+
+// The "+ Add Office" affordance for one column — dashed button reveals a department-filtered
+// select (SE offices for Export, SI for Import), mirroring AdditionalPartiesPanel's own
+// add-affordance pattern. Only offered when there's an eligible office left to add.
+const AddSideOfficeControl = ({ side, dept, offices, excludeIds, onAdd }) => {
+  const [adding, setAdding] = useState(false);
+  const [officeId, setOfficeId] = useState("");
+  const [saving, setSaving] = useState(false);
+  const candidates = offices.filter(o => o.isActive && o.department === dept && !excludeIds.has(o.id));
+
+  if (!adding) {
+    return candidates.length > 0 ? (
+      <button onClick={() => setAdding(true)}
+        style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted, background: "none",
+          border: `1px dashed ${T.border}`, borderRadius: 6, padding: "7px 10px", cursor: "pointer", width: "100%" }}>
+        ＋ Add {side} Office
+      </button>
+    ) : null;
+  }
+
+  const handleAdd = async () => {
+    if (!officeId) return;
+    setSaving(true);
+    try { await onAdd(officeId); setAdding(false); setOfficeId(""); }
     finally { setSaving(false); }
   };
 
   return (
-    <div id={id}>
-      <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
-        textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 5 }}>
-        {field.label}{field.required && <span style={{ color: T.danger, marginLeft: 2 }}>*</span>}
+    <div style={{ display: "flex", gap: 8, padding: 8, borderRadius: 8, border: `1px dashed ${T.border}`, background: T.bg }}>
+      <select autoFocus value={officeId} onChange={e => setOfficeId(e.target.value)}
+        style={{ flex: 1, fontFamily: T.mono, fontSize: 11.5, color: T.text, border: `1px solid ${T.border}`,
+          background: T.surface, borderRadius: 6, padding: "6px 8px", outline: "none", cursor: "pointer" }}>
+        <option value="">Select office…</option>
+        {candidates.map(o => <option key={o.id} value={o.id}>{o.code} — {o.name}</option>)}
+      </select>
+      <Btn size="sm" variant="secondary" onClick={() => setAdding(false)} disabled={saving}>Cancel</Btn>
+      <Btn size="sm" onClick={handleAdd} disabled={saving || !officeId}>{saving ? "Adding…" : "Add"}</Btn>
+    </div>
+  );
+};
+
+// One Export or Import column — always shows its own home office (EMO for Export, IMO for
+// Import) so the office-level assignment stays editable even with zero services ordered yet;
+// any additional (backup) office added to this side (sideOfficeEntries) gets the same always-
+// shown home-style treatment, so a newly-added disaster-recovery office is visible immediately.
+// Any service assigned to a DIFFERENT office not otherwise covered above (most commonly the
+// Controlling Office) gets its own nested group underneath, in the order it's discovered. A
+// service with no office set at all falls into a final "No Office Assigned" group rather than
+// silently vanishing.
+const OfficeColumn = ({ side, shipment, offices, services, shipmentOfficeIds, sideOfficeEntries,
+  canEditOffice, canEditService, onReassigned, onUpdatedService, onAddOffice, onRemoveOffice }) => {
+  const homeField = side === "Export" ? OFFICE_FIELDS[0] : OFFICE_FIELDS[1];
+  const homeOfficeId = shipment[homeField.key];
+  const accent = side === "Export" ? T.accent : T.info;
+  const dept = SIDE_DEPT[side];
+
+  const byOffice = new Map();
+  const unassigned = [];
+  services.forEach(s => {
+    if (!s.officeId) { unassigned.push(s); return; }
+    if (!byOffice.has(s.officeId)) byOffice.set(s.officeId, []);
+    byOffice.get(s.officeId).push(s);
+  });
+  const sideOfficeIds = new Set(sideOfficeEntries.map(so => so.officeId));
+  const otherOfficeIds = [...byOffice.keys()].filter(id => id !== homeOfficeId && !sideOfficeIds.has(id));
+
+  const pillFor = role => {
+    const kind = role === homeField.role ? "primary" : role === "Controlling" ? "controlling" : "plain";
+    const bg = kind === "primary" ? accent : kind === "controlling" ? T.accent : T.textMuted;
+    return (
+      <span key={role} style={{ fontFamily: T.mono, fontSize: 8.5, fontWeight: 700, padding: "2px 6px",
+        borderRadius: 4, textTransform: "uppercase", letterSpacing: ".03em", background: bg, color: T.bg }}>
+        {role}
+      </span>
+    );
+  };
+
+  return (
+    <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 18px",
+        borderBottom: `1px solid ${T.border}`, background: accent + "14" }}>
+        <span style={{ width: 8, height: 8, borderRadius: "50%", background: accent, flexShrink: 0 }} />
+        <span style={{ fontFamily: T.head, fontSize: 13, fontWeight: 800, textTransform: "uppercase",
+          letterSpacing: ".06em", color: T.text }}>{side}</span>
+        {!canEditOffice && (
+          <span style={{ marginLeft: "auto", fontFamily: T.body, fontSize: 10, color: T.textMuted,
+            display: "flex", alignItems: "center", gap: 4 }}>
+            <IconLock size={10} /> Read only
+          </span>
+        )}
       </div>
-      {canEdit ? (
-        <select value={value} disabled={saving} onChange={handleChange}
-          style={{ width: "100%", maxWidth: 420, padding: "7px 10px", borderRadius: 7, fontFamily: T.mono, fontSize: 12,
-            color: value ? T.text : T.textMuted, border: `1px solid ${T.border}`,
-            background: T.bg, outline: "none", cursor: saving ? "wait" : "pointer", boxSizing: "border-box" }}>
-          <option value="">{field.required ? "Select office…" : "None (optional)"}</option>
-          {candidates.map(o => <option key={o.id} value={o.id}>{o.code} — {o.name}</option>)}
-        </select>
-      ) : (
-        <div style={{ fontFamily: T.body, fontSize: 16, fontWeight: 700,
-          color: shipment[field.nameKey] ? T.text : T.border }}>
-          {shipment[field.nameKey] ? `${shipment[field.nameKey]}${shipment[field.codeKey] ? ` (${shipment[field.codeKey]})` : ""}` : "—"}
+      <div style={{ padding: "14px 18px 18px" }}>
+        <OfficeGroupCard
+          icon={side === "Export" ? "🚢" : "🏗"} field={homeField}
+          pills={[pillFor(homeField.role)]}
+          services={byOffice.get(homeOfficeId) || []}
+          offices={offices} shipmentOfficeIds={shipmentOfficeIds}
+          canEditOffice={canEditOffice} canEditService={canEditService}
+          onReassigned={onReassigned} onUpdatedService={onUpdatedService} shipment={shipment}
+          emptyLabel={homeOfficeId ? "No services assigned to this office yet" : null} />
+        {sideOfficeEntries.map(so => (
+          <OfficeGroupCard key={so.id}
+            icon="🏢" field={null}
+            officeName={so.officeName} officeCode={so.officeCode}
+            pills={[]}
+            services={byOffice.get(so.officeId) || []}
+            offices={offices} shipmentOfficeIds={shipmentOfficeIds}
+            canEditOffice={canEditOffice} canEditService={canEditService}
+            onReassigned={onReassigned} onUpdatedService={onUpdatedService} shipment={shipment}
+            emptyLabel="No services assigned to this office yet"
+            onRemove={() => onRemoveOffice(so.id)} />
+        ))}
+        {otherOfficeIds.map(officeId => {
+          const office = offices.find(o => o.id === officeId);
+          if (!office) return null;
+          const role = officeRoleLabel(shipment, officeId);
+          return (
+            <OfficeGroupCard key={officeId}
+              icon={role === "Controlling" ? "⭐" : "🏢"} field={null}
+              officeName={office.name} officeCode={office.code}
+              pills={role ? [pillFor(role)] : []}
+              services={byOffice.get(officeId)}
+              offices={offices} shipmentOfficeIds={shipmentOfficeIds}
+              canEditOffice={canEditOffice} canEditService={canEditService}
+              onReassigned={onReassigned} onUpdatedService={onUpdatedService} shipment={shipment}
+              emptyLabel={null} />
+          );
+        })}
+        {unassigned.length > 0 && (
+          <OfficeGroupCard
+            icon="❔" field={null} officeName="No Office Assigned" officeCode="" pills={[]}
+            services={unassigned}
+            offices={offices} shipmentOfficeIds={shipmentOfficeIds}
+            canEditOffice={canEditOffice} canEditService={canEditService}
+            onReassigned={onReassigned} onUpdatedService={onUpdatedService} shipment={shipment}
+            emptyLabel={null} />
+        )}
+        {canEditOffice && (
+          <AddSideOfficeControl side={side} dept={dept} offices={offices}
+            excludeIds={new Set([homeOfficeId, ...sideOfficeIds].filter(Boolean))}
+            onAdd={onAddOffice} />
+        )}
+      </div>
+    </div>
+  );
+};
+
+// Direct follow-up to the disaster-recovery reassignment feature: once an office can be marked
+// inactive from this panel, there needs to be a way to actually SEE what's been deactivated
+// (and undo it) without leaving the shipment to go hunting through Master Data → Offices.
+// Minimized by default (per direct request) since most shipments will have nothing to show here
+// — it renders nothing at all once expanded-and-empty state would just be noise, but the header
+// itself always shows so the count is visible without opening it.
+const InactiveOfficesSection = ({ offices, isAdmin, onReactivate }) => {
+  const [open, setOpen] = useState(false);
+  const inactiveExport = offices.filter(o => !o.isActive && o.department === "SE");
+  const inactiveImport = offices.filter(o => !o.isActive && o.department === "SI");
+  const total = inactiveExport.length + inactiveImport.length;
+  if (total === 0) return null;
+
+  const renderList = list => list.length === 0 ? (
+    <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, fontStyle: "italic" }}>None</div>
+  ) : (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      {list.map(o => (
+        <div key={o.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+          gap: 8, background: T.bg, border: `1px solid ${T.border}`, borderRadius: 7, padding: "7px 10px" }}>
+          <div style={{ minWidth: 0 }}>
+            <span style={{ fontFamily: T.mono, fontSize: 11.5, color: T.textMuted, fontWeight: 700, marginRight: 7 }}>{o.code}</span>
+            <span style={{ fontFamily: T.body, fontSize: 12.5, color: T.text }}>{o.name}</span>
+          </div>
+          {isAdmin && (
+            <Btn size="sm" variant="secondary" onClick={() => onReactivate(o.id)}>Reactivate</Btn>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+
+  return (
+    <div style={{ marginTop: 18, border: `1px solid ${T.border}`, borderRadius: 10, overflow: "hidden" }}>
+      <button type="button" onClick={() => setOpen(o => !o)}
+        style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, padding: "10px 16px",
+          background: T.bg, border: "none", cursor: "pointer", textAlign: "left" }}>
+        <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, transform: open ? "rotate(90deg)" : "none",
+          transition: "transform .1s", display: "inline-block" }}>▸</span>
+        <span style={{ fontFamily: T.body, fontSize: 11.5, fontWeight: 700, color: T.textMuted,
+          textTransform: "uppercase", letterSpacing: ".07em" }}>
+          Inactive Offices ({total})
+        </span>
+      </button>
+      {open && (
+        <div style={{ padding: "14px 16px", borderTop: `1px solid ${T.border}`,
+          display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
+          <div>
+            <div style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted, fontWeight: 600,
+              textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>Export</div>
+            {renderList(inactiveExport)}
+          </div>
+          <div>
+            <div style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted, fontWeight: 600,
+              textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 6 }}>Import</div>
+            {renderList(inactiveImport)}
+          </div>
         </div>
       )}
     </div>
   );
 };
 
-export const PartiesOfficesPanel = ({ shipment, onUpdate }) => {
-  const { canEditShipments: canEdit } = useAuth();
+export const PartiesOfficesPanel = ({ shipment, onUpdate, onShipmentPatched }) => {
+  const { canEditShipments: canEdit, activeOffice, allOffices, isAdmin, activeRoles } = useAuth();
   const [editing, setEditing] = useState(false);
+  const [services, setServices] = useState(null);
+  useEffect(() => { api.services.list(shipment.id).then(setServices).catch(() => setServices([])); }, [shipment.id]);
+  // Active only (Requested/Confirmed) — matches Overview's own ServicesPanel convention;
+  // a Completed/Cancelled service's office assignment is no longer actionable here.
+  const activeServices = (services || []).filter(s => s.status === "Requested" || s.status === "Confirmed");
+  const exportServices = activeServices.filter(s => s.side === "Export");
+  const importServices = activeServices.filter(s => s.side === "Import");
+  const updateServiceInList = updated => setServices(list => list.map(s => s.id === updated.id ? updated : s));
+
+  // Additional (backup) offices per side — the disaster-recovery follow-up: a shipment can now
+  // hold more than one Export or Import office at once, not just the single fixed EMO/IMO.
+  const [sideOfficesList, setSideOfficesList] = useState(null);
+  const loadSideOffices = () => api.sideOffices.list(shipment.id).then(setSideOfficesList).catch(() => setSideOfficesList([]));
+  useEffect(() => { loadSideOffices(); }, [shipment.id]);
+  const exportSideOffices = (sideOfficesList || []).filter(so => so.side === "Export");
+  const importSideOffices = (sideOfficesList || []).filter(so => so.side === "Import");
+
+  const shipmentOfficeIds = new Set([
+    shipment.emoOfficeId, shipment.imoOfficeId, shipment.controllingOfficeId,
+    ...(sideOfficesList || []).map(so => so.officeId),
+  ].filter(Boolean));
+
   // null (not []) while the offices fetch is in flight — same "empty [] is indistinguishable
   // from a real zero-office result" gap already fixed for ServicesPanel/the sidebar Export-
   // Import group. It mattered more here than usual: a slow-loading offices fetch left every
@@ -1411,7 +1894,41 @@ export const PartiesOfficesPanel = ({ shipment, onUpdate }) => {
   const [offices, setOffices] = useState(null);
   useEffect(() => { api.offices.list().then(setOffices).catch(() => setOffices([])); }, []);
 
-  if (offices === null) {
+  // Client-side mirror of the server's canEditOfficeSide (routes/shipments.js) — the server is
+  // the real enforcement boundary (every write route re-checks this), this only decides what to
+  // render. admin/operator and any user with allOffices (the existing office-based-visibility
+  // opt-out) always pass; otherwise it comes down to the user's own active office's department —
+  // the same field ShipmentFormPage.jsx already reads to auto-default a NEW shipment's EMO/IMO.
+  const roleBypass = isAdmin || (activeRoles || []).includes("operator");
+  const canEditSideDept = dept => canEdit && !!onUpdate && (roleBypass || allOffices || activeOffice?.department === dept);
+  const canEditExport = canEditSideDept("SE");
+  const canEditImport = canEditSideDept("SI");
+  const canEditControlling = canEditExport || canEditImport;
+
+  const handleReassigned = updated => { onShipmentPatched?.(updated); toast.success("Office reassigned"); };
+
+  const handleAddSideOffice = async (side, officeId) => {
+    try {
+      await api.sideOffices.create(shipment.id, { side, officeId });
+      await loadSideOffices();
+      toast.success(`${side} office added`);
+    } catch (ex) { toast.error(ex.message); }
+  };
+  const handleRemoveSideOffice = async id => {
+    try {
+      await api.sideOffices.remove(id);
+      setSideOfficesList(list => list.filter(so => so.id !== id));
+    } catch (ex) { toast.error(ex.message); }
+  };
+  const handleReactivateOffice = async officeId => {
+    try {
+      const updated = await api.offices.update(officeId, { isActive: true });
+      setOffices(list => list.map(o => o.id === officeId ? updated : o));
+      toast.success(`${updated.code} reactivated`);
+    } catch (ex) { toast.error(ex.message); }
+  };
+
+  if (offices === null || sideOfficesList === null) {
     return (
       <div id="shpparties-panel" style={{ display: "flex", alignItems: "center", gap: 8,
         color: T.textMuted, fontFamily: T.body, fontSize: 13, padding: "30px 0", justifyContent: "center" }}>
@@ -1433,21 +1950,47 @@ export const PartiesOfficesPanel = ({ shipment, onUpdate }) => {
           </Btn>
         )}
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 18 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 22 }}>
         <PartiesOfficesCard id="shpparties-shipper"   label="Shipper"      value={shipment.shipperName} />
         <PartiesOfficesCard id="shpparties-consignee" label="Consignee"    value={shipment.consigneeName} />
         <PartiesOfficesCard id="shpparties-notify"    label="Notify Party" value={shipment.notifyName} />
         <PartiesOfficesCard id="shpparties-principal" label="Principal"    value={shipment.principalName} />
       </div>
+
       <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 700,
         textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 8 }}>
-        Offices — split by Export / Import
+        Involved Offices
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        {OFFICE_FIELDS.map(field => (
-          <OfficeInlineSelect key={field.key} id={`shpparties-${field.key}`} field={field}
-            shipment={shipment} offices={offices} canEdit={canEdit && !!onUpdate} onUpdate={onUpdate} />
-        ))}
+      <div id="shpparties-office-groups">
+        {(shipment.controllingOfficeId || canEditControlling) && (
+          <div id="shpparties-controllingOfficeId-banner" style={{ display: "flex", alignItems: "flex-start", gap: 12,
+            background: T.accent + "14", border: `1px solid ${T.accent}55`, borderRadius: 12,
+            padding: "12px 18px", marginBottom: 16 }}>
+            <span style={{ fontSize: 18, lineHeight: "22px" }}>⭐</span>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontFamily: T.mono, fontSize: 9.5, fontWeight: 700, textTransform: "uppercase",
+                letterSpacing: ".08em", color: T.accent, marginBottom: 2 }}>Controlling Office</div>
+              <InlineOfficeEdit field={OFFICE_FIELDS[2]} shipment={shipment} offices={offices}
+                canEdit={canEditControlling} onReassigned={handleReassigned}
+                textStyle={{ fontFamily: T.body, fontSize: 13.5, fontWeight: 700, color: T.text }} />
+            </div>
+          </div>
+        )}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 18 }}>
+          <OfficeColumn side="Export" shipment={shipment} offices={offices} services={exportServices}
+            shipmentOfficeIds={shipmentOfficeIds} sideOfficeEntries={exportSideOffices}
+            canEditOffice={canEditExport} canEditService={canEditExport}
+            onReassigned={handleReassigned} onUpdatedService={updateServiceInList}
+            onAddOffice={officeId => handleAddSideOffice("Export", officeId)}
+            onRemoveOffice={handleRemoveSideOffice} />
+          <OfficeColumn side="Import" shipment={shipment} offices={offices} services={importServices}
+            shipmentOfficeIds={shipmentOfficeIds} sideOfficeEntries={importSideOffices}
+            canEditOffice={canEditImport} canEditService={canEditImport}
+            onReassigned={handleReassigned} onUpdatedService={updateServiceInList}
+            onAddOffice={officeId => handleAddSideOffice("Import", officeId)}
+            onRemoveOffice={handleRemoveSideOffice} />
+        </div>
+        <InactiveOfficesSection offices={offices} isAdmin={isAdmin} onReactivate={handleReactivateOffice} />
       </div>
 
       {editing && (
@@ -1837,7 +2380,7 @@ export const ContainerEventsSteppers = ({ shipment, containers }) => {
 
 // ─── Operational Accounting ───────────────────────────────────────────────────
 
-const CHARGE_CODES = ["Ocean Freight", "Origin THC", "Destination THC", "B/L Fee", "Customs", "Inland", "Other"];
+const CHARGE_CODES = ["Ocean Freight", "Origin THC", "Destination THC", "B/L Fee", "Customs", "Inland", "Haulage", "Other"];
 const CURRENCIES   = ["USD", "EUR", "GBP", "CNY", "SGD", "JPY", "AED", "CHF"];
 
 const marginColor  = pct => pct == null ? T.textMuted : pct >= 20 ? T.success : pct >= 10 ? T.warning : T.danger;
@@ -2192,6 +2735,7 @@ export const CostLineRow = ({ line: l, containers = [], showActions = false, onE
     : l.source === "mirror" ? { label: l.type === "SELL" ? "Mirrored ← Cost Entry" : "Mirrored ← Invoice Entry", color: T.accent }
     : l.source === "automated" ? { label: "Automated", color: T.success }
     : l.source === "reversal" ? { label: "Reversal", color: T.danger }
+    : l.source === "merchant_haulage" ? { label: "Merchant's Haulage", color: T.accent }
     : { label: "Manual", color: T.textMuted };
   return (
     <div key={l.id} id={`costline-${l.id}-row`}

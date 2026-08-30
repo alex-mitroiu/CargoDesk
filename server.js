@@ -31,6 +31,11 @@ if (JWT_SECRET === JWT_DEV_DEFAULT)
 // Document Distribution Service (services/document-distribution/) — CargoDesk's first extracted
 // microservice. This secret must match DISTRIBUTION_SERVICE_SECRET in that service's own env.
 const DISTRIBUTION_SERVICE_URL = process.env.DISTRIBUTION_SERVICE_URL || "http://localhost:3002";
+
+// PDF Render Service (services/pdf-render/) — stateless, no secret needed here: this constant is
+// only used for the System Health check's own GET /health probe, not for calling its protected
+// /internal/render route (that call lives in lib/pdf-signing.js with its own copy of this URL).
+const PDF_RENDER_SERVICE_URL = process.env.PDF_RENDER_SERVICE_URL || "http://localhost:3003";
 const DISTRIBUTION_SECRET_DEV_DEFAULT = "cargoDesk-dev-distribution-secret-do-not-use-in-prod";
 const DISTRIBUTION_SERVICE_SECRET = readSecret("DISTRIBUTION_SERVICE_SECRET", DISTRIBUTION_SECRET_DEV_DEFAULT);
 if (DISTRIBUTION_SERVICE_SECRET === DISTRIBUTION_SECRET_DEV_DEFAULT)
@@ -222,6 +227,45 @@ if (!fs.existsSync(DB_PATH) && fs.existsSync(SAMPLE_DB_PATH)) {
 
 const app = express();
 const db  = new DatabaseSync(DB_PATH);
+
+// Crash-safety net, part 1: every route file in this codebase registers handlers as plain
+// `app.get/post/put/patch/delete(path, ...middleware, async (req,res) => {...})` with no
+// try/catch — a thrown error (a bad enum value hitting a CHECK constraint, `undefined` bound
+// into a node:sqlite statement, a null-property access) becomes a rejected promise Express 4
+// never catches, which by default terminates the whole process (confirmed live: a single
+// malformed request killed the entire API for every user). Rather than touch ~40 route files,
+// patch the registration methods once, here, before any route is registered — every handler
+// passed to app.get/post/put/patch/delete from this point on is wrapped so a thrown/rejected
+// error is forwarded to next(err) instead of crashing the process. Route files are completely
+// unaware this exists and need no changes.
+function wrapAsyncHandler(fn) {
+  if (typeof fn !== "function") return fn;
+  return (req, res, next) => {
+    try {
+      const result = fn(req, res, next);
+      if (result && typeof result.catch === "function") result.catch(next);
+    } catch (e) { next(e); }
+  };
+}
+for (const method of ["get", "post", "put", "patch", "delete"]) {
+  const original = app[method].bind(app);
+  app[method] = (routePath, ...handlers) => original(routePath, ...handlers.map(wrapAsyncHandler));
+}
+
+// Crash-safety net, part 2: a final backstop for errors thrown OUTSIDE an HTTP request entirely
+// (the hourly ops-automation sweep, the AIS listener's message handlers, WS frame handlers,
+// scheduled OFAC/CSL syncs) — wrapAsyncHandler above only covers Express route handlers. Node's
+// own default for either event is to crash the process; logging and continuing trades a small
+// risk of running past a corrupted in-memory state for the much larger, already-demonstrated risk
+// of one bad event taking the whole API down for every user. Route-level errors should already be
+// caught by wrapAsyncHandler + the error middleware below and never reach here.
+process.on("unhandledRejection", (reason) => {
+  console.error("⚠ Unhandled promise rejection (process kept alive):", reason);
+});
+process.on("uncaughtException", (e) => {
+  console.error("⚠ Uncaught exception (process kept alive):", e);
+});
+
 app.use(express.json({ limit: "25mb" }));
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -1109,6 +1153,46 @@ const migrations = [
   // install/CI run ever since this table was introduced. Harmless in practice (nothing to
   // backfill on a fresh database anyway), but a real, now-fixed correctness gap.
   "UPDATE shipment_loading_plan_lines SET sequence_order = 1 WHERE sequence_order <= 0",
+  // Merchant's Haulage details (Pickup/Delivery, Merchant's Haulage only) — one record per
+  // container per service, mirroring shipment_loading_plan_lines' own per-container shape but
+  // with a synthetic id (not a literal composite PK) since this table needs a clean single-
+  // column FK target for waypoints below, and a clean value to store back as the reverse
+  // pointer to whichever shipment_cost_lines row its own cost value creates.
+  `CREATE TABLE IF NOT EXISTS shipment_haulage_records (
+    id                 TEXT PRIMARY KEY,
+    service_id         TEXT NOT NULL,
+    container_id       TEXT NOT NULL,
+    gate_in_at         TEXT DEFAULT '',
+    gate_out_at        TEXT DEFAULT '',
+    driver_name        TEXT DEFAULT '',
+    driver_id_number   TEXT DEFAULT '',
+    instructions       TEXT DEFAULT '',
+    cost_amount        REAL DEFAULT NULL,
+    cost_currency      TEXT DEFAULT 'USD',
+    cost_exchange_rate REAL DEFAULT 1,
+    cost_line_id       TEXT DEFAULT '',
+    created_at         TEXT NOT NULL,
+    updated_at         TEXT,
+    UNIQUE(service_id, container_id)
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_haulage_records_service ON shipment_haulage_records(service_id)",
+  // Variable-length ordered waypoint list per haulage record — a real parent FK with cascade
+  // delete (unlike shipment_loading_plan_lines.container_id, a waypoint has no meaning without
+  // its parent record, exactly like contract_legs -> contracts). loc_type reuses the same
+  // Door/Terminal/Container Yard/CFS/GPS Coordinates vocabulary shipment_legs' own endpoints
+  // already use; latitude/longitude are only populated in GPS mode, same either/or rule.
+  `CREATE TABLE IF NOT EXISTS shipment_haulage_waypoints (
+    id                TEXT PRIMARY KEY,
+    haulage_record_id TEXT NOT NULL REFERENCES shipment_haulage_records(id) ON DELETE CASCADE,
+    sequence_order    INTEGER NOT NULL DEFAULT 1,
+    loc_type          TEXT NOT NULL DEFAULT 'Door',
+    location          TEXT DEFAULT '',
+    latitude          REAL DEFAULT NULL,
+    longitude         REAL DEFAULT NULL,
+    notes             TEXT DEFAULT '',
+    created_at        TEXT NOT NULL
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_haulage_waypoints_record ON shipment_haulage_waypoints(haulage_record_id)",
   // Automated charge-code registry (TKT-OK5H34) — admin-maintained definitions that get
   // auto-injected as SELL cost lines when their trigger fires. Only trigger today is
   // 'per_container_split' (fired from generateInvoices() when splitting an invoice per
@@ -1348,6 +1432,24 @@ const migrations = [
     UNIQUE(shipment_id, role)
   )`,
 
+  // Additional (backup) offices per side, Involved Offices redesign follow-up — direct request:
+  // a shipment's EMO/IMO are exactly-one fixed columns, but a real disaster-recovery scenario
+  // needs MORE than one office able to hold Export (or Import) work at once. Side-tagged (not
+  // pooled like Controlling) so an added office shows as its own home-style group in that
+  // column immediately, even before anything is assigned to it — see OfficeColumn in
+  // ShipmentDetailPage.jsx. office_id is intentionally NOT constrained to the EMO/IMO
+  // department at the schema level (enforced in routes/shipments.js instead, same
+  // enforce-in-route-not-in-schema precedent shipment_parties' role list already uses).
+  `CREATE TABLE IF NOT EXISTS shipment_side_offices (
+    id          TEXT PRIMARY KEY,
+    shipment_id TEXT NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
+    side        TEXT NOT NULL,
+    office_id   TEXT NOT NULL,
+    added_at    TEXT NOT NULL,
+    added_by    TEXT NOT NULL DEFAULT '',
+    UNIQUE(shipment_id, side, office_id)
+  )`,
+
   // Structured Cargo / Commodity Line Items (Epic TKT-P3ASH1, Story TKT-PV5P5L) — extends
   // container_packages with a real per-item declared value, replacing the container-level
   // hs_code/cargo_description as the sole source for Commercial Invoice / Packing List line
@@ -1387,27 +1489,52 @@ const migrations = [
   "CREATE INDEX IF NOT EXISTS idx_customs_filings_status ON customs_filings(status)",
 
   // Carrier Line Agents (CargoWise-baseline gap: a carrier's LOCAL representative differs by
-  // port — Maersk's Rotterdam agent isn't its New York agent — distinct from a Forwarder's own
-  // overseas correspondent network, which this doesn't model). carrier_code stays loose text,
-  // matching shipments/contracts/allocations' own carrier_code convention everywhere else (never
-  // FK'd to `carriers`). port_unlocode DOES get a real FK, matching linked_ports' own style.
-  // agent_customer_id is a real FK to customers(id) with NO ON DELETE clause (neither CASCADE —
-  // which would let a customer delete silently destroy master data — nor SET NULL, which would
-  // leave a meaningless NOT NULL-in-spirit row with nothing left to point at); customer delete
-  // is instead blocked by an app-level guard, mirroring offices.js's own "referenced by
-  // shipments — deactivate it instead" pattern. No denormalized agent_customer_name column —
-  // this is live master data, not a shipment-time snapshot, so reads always join to customers
-  // for the current name (same idiom CUST_JOIN already uses for parent_customer_name).
+  // location — Maersk's Rotterdam agent isn't its New York agent — distinct from a Forwarder's
+  // own overseas correspondent network, which this doesn't model). carrier_code stays loose
+  // text, matching shipments/contracts/allocations' own carrier_code convention everywhere else
+  // (never FK'd to `carriers`). agent_customer_id is a real FK to customers(id) with NO ON
+  // DELETE clause (neither CASCADE — which would let a customer delete silently destroy master
+  // data — nor SET NULL, which would leave a meaningless NOT NULL-in-spirit row with nothing
+  // left to point at); customer delete is instead blocked by an app-level guard, mirroring
+  // offices.js's own "referenced by shipments — deactivate it instead" pattern. No denormalized
+  // agent_customer_name column — this is live master data, not a shipment-time snapshot, so
+  // reads always join to customers for the current name (same idiom CUST_JOIN already uses for
+  // parent_customer_name).
+  //
+  // Header + child-locations shape (restructured from an earlier one-row-per-port design, see
+  // the guarded rebuildCarrierAgentsLocations migration below): one (carrier, agent) pairing is
+  // a single header row here, which can then cover any number of specific UN/LOCODEs and/or
+  // whole countries via carrier_agent_locations — "a Line Agent in Spain can also handle the
+  // shipment in Andorra" is one header with two country-level location rows, not two headers.
   `CREATE TABLE IF NOT EXISTS carrier_agents (
     id                 TEXT PRIMARY KEY,
     carrier_code       TEXT NOT NULL,
-    port_unlocode      TEXT NOT NULL REFERENCES port_locations(unlocode),
     agent_customer_id  TEXT NOT NULL REFERENCES customers(id),
     note               TEXT DEFAULT '',
     created_at         TEXT NOT NULL,
-    UNIQUE(carrier_code, port_unlocode)
+    UNIQUE(carrier_code, agent_customer_id)
   )`,
   "CREATE INDEX IF NOT EXISTS idx_carrier_agents_customer ON carrier_agents(agent_customer_id)",
+
+  // One row per covered location under a carrier_agents header — either a specific UN/LOCODE or
+  // a whole country, never both on the same row (enforced by the CHECK + app-level validation).
+  // carrier_code is denormalized from the header on purpose: the "this location is already
+  // claimed for this carrier" uniqueness rule (enforced in routes/mdm.js, not a DB constraint,
+  // since it must look ACROSS every header for the same carrier, not just within one) needs to
+  // query by carrier_code without an extra join, mirroring TRACKED_FIELDS-style denormalization
+  // used elsewhere in this codebase purely for query convenience.
+  `CREATE TABLE IF NOT EXISTS carrier_agent_locations (
+    id                TEXT PRIMARY KEY,
+    carrier_agent_id  TEXT NOT NULL REFERENCES carrier_agents(id) ON DELETE CASCADE,
+    carrier_code      TEXT NOT NULL,
+    location_type     TEXT NOT NULL CHECK(location_type IN ('unlocode','country')),
+    unlocode          TEXT REFERENCES port_locations(unlocode),
+    country_iso2      TEXT REFERENCES countries(iso2),
+    created_at        TEXT NOT NULL
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_cal_agent ON carrier_agent_locations(carrier_agent_id)",
+  "CREATE INDEX IF NOT EXISTS idx_cal_carrier_unlocode ON carrier_agent_locations(carrier_code, unlocode)",
+  "CREATE INDEX IF NOT EXISTS idx_cal_carrier_country ON carrier_agent_locations(carrier_code, country_iso2)",
 
   // Signed PDF Document Generation (Epic TKT-YOFYFZ) — deliberately its own table rather
   // than an app_settings row: GET /api/settings already returns the whole app_settings
@@ -1916,6 +2043,12 @@ const migrations = [
   // (this new column), separate from the NVOCC's own release to the actual consignee
   // (bl_release_type, unchanged, still governs the existing Delivery Order document).
   "ALTER TABLE shipments ADD COLUMN master_bl_release_type TEXT DEFAULT ''",
+  // NVOCC co-loading (TKT-UR1X17): the reference/tariff number under which this shipment's own
+  // NVOCC tenders cargo through ANOTHER NVOCC's own contract with the vessel operator, when it
+  // has none of its own for this lane. Free text, mirrors contract_ref's own nature — there's no
+  // real registry of another NVOCC's tariff in this system, same reasoning contract_ref already
+  // uses for SPOT/Pending/Customer Own contract types.
+  "ALTER TABLE shipments ADD COLUMN coload_tariff_reference TEXT DEFAULT ''",
   // Scheduled / emailed reports (TKT-IXAR9G, Competitive Gap Analysis epic TKT-GTGM6R) —
   // reporting today is manual-trigger only (fixed dashboard tabs, one-click CSV/XLSX export).
   // Reuses office_mail_settings/sendViaOffice (already built for the invoice-email flow) —
@@ -2037,6 +2170,14 @@ const migrations = [
   // Turning this off collapses ALL carriers (built-in or eAdapter-configured) to manual mode
   // uniformly — see isEdiBookable.
   "INSERT OR IGNORE INTO app_settings (key, value) VALUES ('api_eadapter_enabled', 'true')",
+
+  // Multi-Entity / Multi-Branch Accounting (TKT-EEV4I9) — a `branches` row already groups
+  // offices by country/location, the same "Enterprise Unit ≈ legal entity" concept CargoWise's
+  // own multi-entity model uses; this is the one piece it was missing to also serve as a real
+  // accounting boundary. Kept 1:1 with `branches` deliberately — no new `entities` table — see
+  // routes/finance.js's byEntity breakdown for how a shipment's owning entity is resolved
+  // (EMO office's branch, falling back to IMO's) with zero new columns on shipments/cost lines.
+  "ALTER TABLE branches ADD COLUMN currency TEXT DEFAULT NULL",
 ];
 
 // "duplicate column name" is the expected, harmless result of re-running an ADD COLUMN
@@ -2130,6 +2271,79 @@ if (migrationFailures.length) {
     try { db.exec("ROLLBACK"); } catch {}
     console.error("[migration] FAILED shipment_schedules rebuild:", e.message);
     migrationFailures.push({ sql: "rebuildShipmentSchedulesNullableOwner", error: e.message });
+  } finally {
+    try { db.exec("PRAGMA foreign_keys=ON"); } catch {}
+  }
+})();
+
+// One-time restructure: carrier_agents moves from one-row-per-port to a header (carrier_code +
+// agent_customer_id) + child carrier_agent_locations table, so a single Line Agent can cover
+// several UN/LOCODEs and/or whole countries instead of exactly one port. SQLite can't drop the
+// old UNIQUE(carrier_code, port_unlocode)/NOT NULL port_unlocode via ALTER TABLE, so this is the
+// same guarded create-copy-swap shape as the shipment_schedules/carrier_eadapter_configs rebuilds
+// above — gated on the presence of the old port_unlocode column, so it only ever runs once per
+// DB. Every pre-existing row becomes one location under a header grouped by (carrier_code,
+// agent_customer_id) — the only way to represent "one agent, several ports" before this existed
+// was already several separate rows sharing that same pair, so grouping them is lossless for
+// carrier/agent/location; only a differing note across grouped rows can't all survive (the
+// header keeps the first non-blank one, matching this codebase's own precedent of a disclosed,
+// reasonable simplification during a structural migration rather than blocking on it).
+;(function rebuildCarrierAgentsLocations() {
+  try {
+    const cols = db.prepare("PRAGMA table_info(carrier_agents)").all();
+    if (!cols.some(c => c.name === "port_unlocode")) return; // already migrated (or table missing)
+    const oldRows = db.prepare("SELECT * FROM carrier_agents ORDER BY created_at").all();
+    db.exec("PRAGMA foreign_keys=OFF");
+    db.exec("BEGIN");
+    db.exec("ALTER TABLE carrier_agents RENAME TO carrier_agents_old_v1");
+    // SQLite's ALTER TABLE RENAME silently rewrites any OTHER table's foreign-key reference that
+    // points at the renamed table — carrier_agent_locations (already created moments earlier by
+    // the flat migrations array above, on a fresh boot) has its FK repointed at
+    // carrier_agents_old_v1, which is about to be dropped, leaving a dangling reference. Drop and
+    // recreate it fresh here, after the real carrier_agents table exists again, so its FK binds
+    // correctly. Harmless no-op on an already-migrated DB (never has the old shape to trigger this
+    // branch at all) and on a schema where the array hasn't run yet (DROP TABLE IF EXISTS).
+    db.exec("DROP TABLE IF EXISTS carrier_agent_locations");
+    db.exec(`CREATE TABLE carrier_agents (
+      id                 TEXT PRIMARY KEY,
+      carrier_code       TEXT NOT NULL,
+      agent_customer_id  TEXT NOT NULL REFERENCES customers(id),
+      note               TEXT DEFAULT '',
+      created_at         TEXT NOT NULL,
+      UNIQUE(carrier_code, agent_customer_id)
+    )`);
+    db.exec(`CREATE TABLE carrier_agent_locations (
+      id                TEXT PRIMARY KEY,
+      carrier_agent_id  TEXT NOT NULL REFERENCES carrier_agents(id) ON DELETE CASCADE,
+      carrier_code      TEXT NOT NULL,
+      location_type     TEXT NOT NULL CHECK(location_type IN ('unlocode','country')),
+      unlocode          TEXT REFERENCES port_locations(unlocode),
+      country_iso2      TEXT REFERENCES countries(iso2),
+      created_at        TEXT NOT NULL
+    )`);
+    db.exec("CREATE INDEX IF NOT EXISTS idx_cal_agent ON carrier_agent_locations(carrier_agent_id)");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_cal_carrier_unlocode ON carrier_agent_locations(carrier_code, unlocode)");
+    db.exec("CREATE INDEX IF NOT EXISTS idx_cal_carrier_country ON carrier_agent_locations(carrier_code, country_iso2)");
+    const headerMap  = new Map(); // "carrierCode|agentCustomerId" -> new header id
+    const insHeader  = db.prepare("INSERT INTO carrier_agents (id,carrier_code,agent_customer_id,note,created_at) VALUES (?,?,?,?,?)");
+    const insLoc     = db.prepare("INSERT INTO carrier_agent_locations (id,carrier_agent_id,carrier_code,location_type,unlocode,created_at) VALUES (?,?,?,'unlocode',?,?)");
+    for (const r of oldRows) {
+      const key = `${r.carrier_code}|${r.agent_customer_id}`;
+      let headerId = headerMap.get(key);
+      if (!headerId) {
+        headerId = `CAG-${uid()}`;
+        insHeader.run(headerId, r.carrier_code, r.agent_customer_id, r.note || '', r.created_at);
+        headerMap.set(key, headerId);
+      }
+      insLoc.run(`CAL-${uid()}`, headerId, r.carrier_code, r.port_unlocode, r.created_at);
+    }
+    db.exec("DROP TABLE carrier_agents_old_v1");
+    db.exec("COMMIT");
+    console.log(`  ✔ carrier_agents restructured: ${oldRows.length} row(s) -> ${headerMap.size} header(s) + locations`);
+  } catch (e) {
+    try { db.exec("ROLLBACK"); } catch {}
+    console.error("[migration] FAILED carrier_agents restructure:", e.message);
+    migrationFailures.push({ sql: "rebuildCarrierAgentsLocations", error: e.message });
   } finally {
     try { db.exec("PRAGMA foreign_keys=ON"); } catch {}
   }
@@ -2309,7 +2523,10 @@ const shipmentSubs = new Map();
 // documented as "the" default. Now reads ADMIN_EMAIL/ADMIN_PASSWORD if set (e.g. in .env),
 // falling back to the generic default the docs describe — same disclosed-insecure-default
 // tradeoff as JWT_SECRET etc., logged loudly so it's never mistaken for a real credential.
-;(function seedAdmin() {
+// Named (not an anonymous IIFE) so the admin "Reset Demo Data" panel can re-invoke this exact
+// same bootstrap after wiping the users table — the database ends up in exactly the state a
+// truly fresh boot would produce, not a bespoke new one.
+function seedAdmin() {
   const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "admin@cargodesk.com";
   const TEMP_PW    = process.env.ADMIN_PASSWORD || "admin123";
   const exists = db.prepare("SELECT id FROM users WHERE email = ?").get(ADMIN_EMAIL);
@@ -2321,7 +2538,8 @@ const shipmentSubs = new Map();
     console.log(`   Temporary password : ${TEMP_PW}`);
     console.log(`   Change it via the User Management panel.\n`);
   }
-})();
+}
+seedAdmin();
 
 // Test-fixture admin — every one of the ~30 backend test files, both Cypress suites, and this
 // session's own CDP verification scripts all hardcode this exact account as a documented
@@ -2334,7 +2552,7 @@ const shipmentSubs = new Map();
 // `Fatal: Login failed (401)` on the very first test file. Idempotent and unconditional, same
 // as seedAdmin() above — same disclosed-insecure-default tradeoff, since it's a fixed, publicly
 // documented password purely for automated verification, never meant to gate anything real.
-;(function seedTestFixtureAdmin() {
+function seedTestFixtureAdmin() {
   const EMAIL = "claudeagent@localhost";
   const PW    = "TestFixture!2026Zq";
   const exists = db.prepare("SELECT id FROM users WHERE email = ?").get(EMAIL);
@@ -2344,14 +2562,15 @@ const shipmentSubs = new Map();
     ).run(`USR-${uid()}`, EMAIL, "Test Fixture Admin", bcrypt.hashSync(PW, 10));
     console.log(`⚓  Test-fixture admin created: ${EMAIL} (used by the automated test suite)`);
   }
-})();
+}
+seedTestFixtureAdmin();
 
 // ─── Seed document-signing certificate ────────────────────────────────────────
 // Pure JS (node-forge) — safe to run unconditionally every boot, unlike the browser this
 // cert will eventually be used alongside for rendering, which only needs to resolve lazily
 // at render time so a machine with no browser installed yet still starts up fine.
 
-;(function seedSigningCert() {
+function seedSigningCert() {
   try {
     const exists = db.prepare("SELECT id FROM org_signing_certs WHERE status = 'active'").get();
     if (exists) return;
@@ -2363,7 +2582,8 @@ const shipmentSubs = new Map();
         cert.fingerprintSha256, cert.subject, cert.notBefore, cert.notAfter);
     console.log(`  ✔ Document-signing certificate generated (fingerprint ${cert.fingerprintSha256.slice(0, 16)}...)`);
   } catch (e) { console.warn("  ⚠ Document-signing cert bootstrap:", e.message); }
-})();
+}
+seedSigningCert();
 
 // ─── App Settings ─────────────────────────────────────────────────────────────
 
@@ -3277,6 +3497,28 @@ setInterval(() => { runInvoiceCollectionsSweep().catch(e => console.error("Invoi
     console.log(`  ✔ Backfilled transit_days on ${info.changes.toLocaleString()} schedule row(s)`);
 })();
 
+// ─── Backfill garbled AIS-sourced vessel names ─────────────────────────────────
+// Direct bug report: real vessels (confirmed against a third-party AIS tracker) showing garbled
+// names like "#!C?7($GA@A7S%I@SCP," instead of their real name (e.g. "DE VERWONDERING") — see
+// lib/ais-listener.js's PLAUSIBLE_VESSEL_NAME for why this is a Name-field-only decode issue
+// upstream, not a bad IMO/MMSI (those stay untouched here). One-time cleanup for rows already
+// corrupted before that fix landed — clears the name back to blank rather than guessing a
+// replacement, so AIS's own next clean ShipStaticData message for that vessel repopulates it
+// naturally (now filtered through the same plausibility check). Safe to re-run on every startup
+// — a no-op once every already-corrupted row has been cleared.
+(function backfillGarbledVesselNames() {
+  const PLAUSIBLE_VESSEL_NAME = /^[A-Z0-9 .\-']{1,30}$/;
+  const rows = db.prepare("SELECT imo, name FROM vessels WHERE name IS NOT NULL AND name != ''").all();
+  let cleared = 0;
+  for (const v of rows) {
+    if (!PLAUSIBLE_VESSEL_NAME.test(String(v.name).toUpperCase())) {
+      db.prepare("UPDATE vessels SET name='' WHERE imo=?").run(v.imo);
+      cleared++;
+    }
+  }
+  if (cleared > 0) console.log(`  ✔ Cleared ${cleared.toLocaleString()} garbled AIS vessel name(s)`);
+})();
+
 // ─── Backfill port country_code from unlocode ─────────────────────────────────
 // Derives country from first 2 chars of UN/LOCODE (e.g. NLRTM → NL).
 // Safe to run on every startup — only touches rows where country_code is missing.
@@ -3623,7 +3865,7 @@ const ADDITIONAL_PARTY_ROLES = [
   "Forwarder", "Customs Broker (Export)", "Customs Broker (Import)",
   "Trucker (Pre-carriage)", "Trucker (On-carriage)",
   "Also Notify Party", "Bank", "Insurance Provider", "Agent",
-  "Line Agent (Export)", "Line Agent (Import)", "NVOCC",
+  "Line Agent (Export)", "Line Agent (Import)", "NVOCC", "Co-Loading NVOCC",
 ];
 // Customs & Regulatory Filing (Epic TKT-XW6TQK) — the two filing types a shipment can
 // independently need, AES/EEI (export) and ISF/AMS (import). Simulated/mock only.
@@ -3697,7 +3939,7 @@ const CUTOFF_WARNING_DAYS = 3;
 const {
   SVC_ABBR, longestLane, cutoffState, roundCents,
   mapShipment, mapShipmentLeg, mapCostLine, mapService, mapRateSnapshot, mapRateSnapshotLine,
-  mapChargeCodeDefinition, mapContainer, mapContainerEvent, mapContainerPackage, mapShipmentParty,
+  mapChargeCodeDefinition, mapContainer, mapContainerEvent, mapContainerPackage, mapShipmentParty, mapSideOffice,
   mapPackTypeDefinition, mapDutyRateChapter, mapScheduledReport, mapContainerTypeDefinition, mapAllocation, mapCarrier, mapVessel, mapPortLocation, mapLinkedPort,
   mapCarrierAgent, mapTradeLane, mapScopeItem, mapAccessConfig, mapOffice, mapOfficeMailSettings,
   mapSystemEmailSettings,
@@ -3777,6 +4019,33 @@ function userOwnsLaneForCustomer(user, customerId) {
   return shipments.some(s => scopeItems.some(item => matchesScopeItem(s, item)));
 }
 
+// Involved Offices — per-side edit permission (Nested Office Groups follow-up, disaster-recovery
+// reassignment). Who's allowed to CHANGE a shipment's Export or Import office assignment is a
+// company-wide department fact, not tied to whichever specific office happens to hold it today —
+// an Export-department (SE) office user can reassign ANY visible shipment's Export side to their
+// own office, which is the whole point of the disaster-recovery scenario (a DIFFERENT office
+// steps in, not just the one already assigned). admin/operator and any user with `allOffices`
+// (the existing office-based-visibility opt-out, `users.all_offices`) bypass entirely — this only
+// bites a user an admin has deliberately scoped to specific offices. `side` is 'Export'/'Import'/
+// 'Controlling' — Controlling isn't tied to a department, so either side's own office user (or
+// the same bypasses) may reassign it. Mirrors applyShipmentAccessFilter's own admin/operator
+// bypass and the X-Office-Id "active office" header ShipmentFormPage.jsx already reads department
+// off of for its own EMO/IMO auto-default.
+function canEditOfficeSide(req, side) {
+  const user = req?.user;
+  if (!user) return false;
+  const jwtRoles = Array.isArray(user.roles) ? user.roles : (user.role ? [user.role] : ['viewer']);
+  if (jwtRoles.includes('admin') || jwtRoles.includes('operator')) return true;
+  if (user.allOffices) return true;
+  if (side === 'Controlling') return canEditOfficeSide(req, 'Export') || canEditOfficeSide(req, 'Import');
+  const dept = side === 'Export' ? 'SE' : side === 'Import' ? 'SI' : null;
+  if (!dept) return false;
+  const activeOfficeId = req.headers?.['x-office-id'];
+  if (!activeOfficeId) return false;
+  const office = db.prepare("SELECT department FROM offices WHERE id=?").get(activeOfficeId);
+  return !!office && office.department === dept;
+}
+
 function applyShipmentAccessFilter(shipments, user, req) {
   if (!user) return shipments;
 
@@ -3808,10 +4077,18 @@ function applyShipmentAccessFilter(shipments, user, req) {
         "SELECT id FROM user_offices WHERE user_id=? AND office_id=?"
       ).get(user.id, activeOfficeId);
       if (!validOffice) return [];
+      // Additional (backup) offices — a shipment a disaster-recovery office was added to via
+      // shipment_side_offices should be visible to that office's staff too, not just the
+      // shipment's original EMO/IMO/Controlling.
+      const sideOfficeShipmentIds = new Set(
+        db.prepare("SELECT shipment_id FROM shipment_side_offices WHERE office_id=?")
+          .all(activeOfficeId).map(r => r.shipment_id)
+      );
       shipments = shipments.filter(s =>
         s.emoOfficeId === activeOfficeId ||
         s.imoOfficeId === activeOfficeId ||
-        s.controllingOfficeId === activeOfficeId
+        s.controllingOfficeId === activeOfficeId ||
+        sideOfficeShipmentIds.has(s.id)
       );
     }
   }
@@ -3898,6 +4175,7 @@ const TRACKED_FIELDS = {
   master_bl_number: 'Master B/L Number',
   bl_release_type: 'B/L Release Type',
   master_bl_release_type: 'Master B/L Release Type',
+  coload_tariff_reference: 'Co-Load Tariff Reference',
   contract_type:  'Contract Type',
   contract_id:    'Contract ID',
   contract_ref:   'Contract Reference',
@@ -4254,6 +4532,9 @@ const linkedPortCodes = code => db.prepare(`
 // linked-port fallback (linkedPortCodes, below) always reads the local linked_ports table even
 // when mdm_source=remote — only affects the narrow case of contract_source=local combined with
 // mdm_source=remote; see ARCHITECTURE.md.
+// Resolves the Line Agent covering a given carrier+port — a location can match either as a
+// direct UNLOCODE row or via a country-level row (the port's own country), and if neither
+// matches directly, falls back through linked ports exactly as before this restructure.
 async function resolveCarrierAgent(carrierCode, portUnlocode) {
   if ((getSettings().mdm_source || "local") === "remote") {
     let row;
@@ -4261,15 +4542,29 @@ async function resolveCarrierAgent(carrierCode, portUnlocode) {
     catch { return null; }
     if (!row) return null;
     const cust = db.prepare("SELECT company_name FROM customers WHERE id=?").get(row.agentCustomerId);
-    return { id: row.id, carrier_code: row.carrierCode, port_unlocode: row.portUnlocode,
+    return { id: row.id, carrier_code: row.carrierCode,
       agent_customer_id: row.agentCustomerId, agent_customer_name: cust?.company_name || '',
       note: row.note, created_at: row.createdAt };
   }
-  const tryPort = p => db.prepare(`
-    SELECT ca.*, c.company_name AS agent_customer_name
-    FROM carrier_agents ca JOIN customers c ON c.id = ca.agent_customer_id
-    WHERE ca.carrier_code=? AND ca.port_unlocode=?
-  `).get(carrierCode, p);
+  const tryPort = p => {
+    const direct = db.prepare(`
+      SELECT ca.*, c.company_name AS agent_customer_name
+      FROM carrier_agents ca
+      JOIN carrier_agent_locations cal ON cal.carrier_agent_id = ca.id
+      JOIN customers c ON c.id = ca.agent_customer_id
+      WHERE ca.carrier_code=? AND cal.location_type='unlocode' AND cal.unlocode=?
+    `).get(carrierCode, p);
+    if (direct) return direct;
+    const port = db.prepare("SELECT country_code FROM port_locations WHERE unlocode=?").get(p);
+    if (!port?.country_code) return null;
+    return db.prepare(`
+      SELECT ca.*, c.company_name AS agent_customer_name
+      FROM carrier_agents ca
+      JOIN carrier_agent_locations cal ON cal.carrier_agent_id = ca.id
+      JOIN customers c ON c.id = ca.agent_customer_id
+      WHERE ca.carrier_code=? AND cal.location_type='country' AND cal.country_iso2=?
+    `).get(carrierCode, port.country_code);
+  };
   return tryPort(portUnlocode) || linkedPortCodes(portUnlocode).map(tryPort).find(Boolean) || null;
 }
 
@@ -4612,7 +4907,7 @@ const ctx = {
   VALID_ROLES, ROLE_RANK_SV, primaryRoleSV, parseUserRoles,
   SERVICE_CODE_MAP, importContractRates, createRateSnapshot, generateCostLinesFromSnapshot,
   mapShipment, mapShipmentLeg, mapCostLine, mapService, mapContainer, mapContainerEvent, mapContainerPackage, mapAllocation,
-  mapShipmentParty, ADDITIONAL_PARTY_ROLES,
+  mapShipmentParty, ADDITIONAL_PARTY_ROLES, mapSideOffice,
   mapRateSnapshot, mapRateSnapshotLine, mapChargeCodeDefinition, mapPackTypeDefinition, mapDutyRateChapter, mapScheduledReport, mapContainerTypeDefinition,
   mapCarrier, mapVessel, mapPortLocation, mapLinkedPort, mapTradeLane, mapCarrierAgent,
   mapScopeItem, mapAccessConfig, mapOffice, mapBranch, mapOrgCountry, mapRegion, mapCountry, mapTicketLink, mapTicket,
@@ -4628,6 +4923,7 @@ const ctx = {
   mapInvoiceReasonCode, mapInvoiceStatusOverride,
   resolveInvoiceThresholds, runInvoiceCollectionsSweep, addBusinessDays, businessDaysBetween,
   logEvent, logEntityEvent, logAdminEvent, TRACKED_FIELDS, TRACKED_CTR_FIELDS,
+  seedAdmin, seedTestFixtureAdmin, seedSigningCert,
   CUTOFF_WARNING_DAYS, FREE_TIME_WARNING_DAYS,
   ssoNonces,
   syncShipmentFromLegs,
@@ -4642,9 +4938,11 @@ const ctx = {
   linkedPortCodes, findMatchingContractLegs, resolveCarrierAgent,
   screenShipmentById, rescreenActiveShipments, resolveCustomerGroup,
   computeArExposure, docAmountUsd, runDunningSweep, runScheduledReportsSweep, matchesScopeItem, userOwnsLaneForShipment, userOwnsLaneForCustomer,
+  canEditOfficeSide,
   OVERRIDE_GRACE_MS,
   bcrypt, jwt, JWT_SECRET,
   DISTRIBUTION_SERVICE_URL, DISTRIBUTION_SERVICE_SECRET,
+  PDF_RENDER_SERVICE_URL,
   CONTRACT_SERVICE_URL, CONTRACT_SERVICE_SECRET, callContractService,
   MDM_SERVICE_URL, MDM_SERVICE_SECRET, callMdmService,
   SCREENING_SERVICE_URL, SCREENING_SERVICE_SECRET, callScreeningService,
@@ -4671,6 +4969,7 @@ require('./routes/shipment-ops')(app, ctx);
 require('./routes/carrier-invoices')(app, ctx);
 require('./routes/quotes')(app, ctx);
 require('./routes/opportunities')(app, ctx);
+require('./routes/admin-reset')(app, ctx);
 require('./routes/finance')(app, ctx);
 require('./routes/reports')(app, ctx);
 require('./routes/command-center')(app, ctx);
@@ -4705,6 +5004,25 @@ if (process.env.NODE_ENV === "production") {
   // routing takes it from there. Must be registered last.
   app.get(/^(?!\/api|\/ws).*/, (req, res) => res.sendFile(path.join(distDir, "index.html")));
 }
+
+// Crash-safety net, part 3: the actual Express error-handling middleware (4-arg signature is
+// what tells Express this is one) — must be registered after every other app.use/get/post/etc.
+// call to catch errors from all of them. Two cases:
+//  - A malformed JSON body (e.g. a literal `null`, or truncated JSON) previously reached the
+//    client as body-parser's raw HTML stack trace — full internal file paths, before auth was
+//    even checked, on any route. Now a clean, consistent JSON 400.
+//  - Anything forwarded here via wrapAsyncHandler (part 1) or a background job (part 2 handles
+//    those instead) — an unexpected error the specific route didn't already turn into a clean
+//    `err(res, ...)` response itself. Logged in full server-side; the client gets a generic
+//    message, never the raw error/stack (which could leak internal file paths or query detail).
+app.use((error, req, res, next) => {
+  if (res.headersSent) return next(error);
+  if (error?.type === "entity.parse.failed" || error instanceof SyntaxError) {
+    return res.status(400).json({ error: "Malformed request body — expected valid JSON" });
+  }
+  console.error(`Unhandled error on ${req.method} ${req.originalUrl}:`, error);
+  res.status(error?.status || 500).json({ error: "Internal server error" });
+});
 
 // ─── WebSocket server ─────────────────────────────────────────────────────────
 

@@ -183,7 +183,7 @@ async function login() {
     console.log("\nDelete — blocked while assigned as a carrier line agent, and cleans up a lingering document's file on disk");
     const agentRand = Math.random().toString(36).slice(2, 5).toUpperCase();
     const agentPort = await request("POST", "/api/port-locations", { unlocode: `Z${agentRand}A`, name: "Zed Agent Port", countryCode: "NL" }, token);
-    const agent = await request("POST", "/api/carrier-agents", { carrierCode: "MAEU", portUnlocode: `Z${agentRand}A`, agentCustomerId: customerId }, token);
+    const agent = await request("POST", "/api/carrier-agents", { carrierCode: "MAEU", agentCustomerId: customerId, locationType: "unlocode", unlocode: `Z${agentRand}A` }, token);
     assert("scratch carrier-agent assignment created", agent.status === 201, JSON.stringify(agent.body));
     const deleteBlocked = await request("DELETE", `/api/customers/${customerId}`, null, token);
     assert("delete blocked while assigned as a carrier line agent", deleteBlocked.status >= 400 && /carrier line agent/i.test(deleteBlocked.body.error || ""));
