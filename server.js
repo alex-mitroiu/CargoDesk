@@ -1562,6 +1562,21 @@ const migrations = [
   )`,
   "CREATE INDEX IF NOT EXISTS idx_casr_agent ON carrier_agent_schedule_rows(carrier_agent_id)",
 
+  // Shipment edit-locking (first-come-first-served, whole-shipment) — direct request: two
+  // edit-capable users on the same shipment at the same time can produce conflicting writes,
+  // and this app has no field-level merge/conflict resolution anywhere. One row per currently-
+  // locked shipment; a heartbeat (POST .../edit-lock, called on open and renewed periodically
+  // while the shipment stays open) keeps expires_at rolling forward, so a crashed tab/lost
+  // connection self-clears the lock rather than needing a manual override.
+  `CREATE TABLE IF NOT EXISTS shipment_edit_locks (
+    shipment_id       TEXT PRIMARY KEY REFERENCES shipments(id) ON DELETE CASCADE,
+    locked_by_id      TEXT NOT NULL,
+    locked_by_name    TEXT NOT NULL,
+    locked_at         TEXT NOT NULL,
+    last_heartbeat_at TEXT NOT NULL,
+    expires_at        TEXT NOT NULL
+  )`,
+
   // Signed PDF Document Generation (Epic TKT-YOFYFZ) — deliberately its own table rather
   // than an app_settings row: GET /api/settings already returns the whole app_settings
   // table in plaintext to any authenticated user (it's how ai_api_key leaks today), and the
@@ -4688,6 +4703,15 @@ const broadcastMessage = (shipmentId, payload) => {
   }
 };
 
+const broadcastEditLockChange = (shipmentId, payload) => {
+  const subs = shipmentSubs.get(shipmentId);
+  if (!subs) return;
+  const frame = JSON.stringify({ type: "edit_lock_changed", shipmentId, ...payload });
+  for (const ws of subs) {
+    if (ws.readyState === ws.OPEN) ws.send(frame);
+  }
+};
+
 const recomputeSpaceBadge = shipmentId => {
   try {
     const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(shipmentId);
@@ -4924,7 +4948,7 @@ const ctx = {
   syncConsolidatedScreeningList, scheduleNextCslSync,
   normSanctionName, EMBARGOED_COUNTRIES,
   getSettings,
-  shipmentSubs, broadcastMessage, recomputeSpaceBadge,
+  shipmentSubs, broadcastMessage, broadcastEditLockChange, recomputeSpaceBadge,
   UPLOADS_DIR,
   renderHtmlToPdf, getActiveSigningCert, signPdfBuffer,
   createTransporterFromSettings, getTransporterForOffice, invalidateTransporterCache,

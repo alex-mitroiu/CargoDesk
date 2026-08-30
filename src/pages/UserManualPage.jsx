@@ -55,6 +55,7 @@ const UserManualPage = () => {
     { id: "integration-board", label: "Integration Board" },
     { id: "ai-agent",          label: "AI Agent" },
     { id: "mdm",               label: "Master Data" },
+    { id: "concurrent-editing", label: "Concurrent Editing" },
     { id: "incoterms",         label: "Incoterms" },
     { id: "dg-classes",        label: "DG Classes ⚠" },
   ];
@@ -740,8 +741,34 @@ const UserManualPage = () => {
         <P>Click <strong>+ Add Carrier Agent</strong>, pick the carrier and the agent company, and add at least one place they cover — either one specific port (search by UN/LOCODE) or an entire country. One agent can cover several places at once: for example, an agent based in Spain can also be set to cover Andorra, by adding both as separate rows. If you later add a whole country and some of the ports you'd already added are inside it, CargoDesk removes those specific ports automatically (they're now redundant) and tells you exactly which ones it removed — nothing disappears silently.</P>
         <P>Click the <strong>⚙</strong> button on any row and choose <strong>Edit</strong> to open the full record, which has four tabs:</P>
         <P><strong>Coverage</strong> — the list of places this agent covers (add or remove them here), and a <strong>Working Schedule</strong> — which days of the week they're reachable and during which hours, since an agent isn't necessarily open the same hours every day. Add a row for each group of days that shares the same hours (for example, Monday–Tuesday 9:00–18:00, then a separate row for Wednesday and Friday 9:00–13:00) — click a day to toggle it on or off for that row.</P>
-        <P><strong>Capabilities</strong> — a checklist of what this agent can actually do (road haulage, warehousing, customs clearance, and so on). This is used to flag a mismatch before a booking is sent — for example, if a shipment needs road haulage arranged on export but the assigned agent doesn't offer it — so problems are caught early instead of after the carrier rejects the booking.</P>
+        <P><strong>Capabilities</strong> — a checklist of what this agent can actually do (road haulage, warehousing, customs clearance, and so on). This is recorded so a future check can flag a mismatch before a booking is sent — for example, if a shipment needs road haulage arranged on export but the assigned agent doesn't offer it — but that automatic check doesn't exist yet; today the checklist is just recorded on the agent's own record.</P>
         <P><strong>Notes</strong> and <strong>Address &amp; Contact</strong> — a free-text notes box, and a read-only view of the agent company's own address and contact person (kept in sync with their Customer record — update it there, not here).</P>
+      </div>
+    ),
+    "concurrent-editing": (
+      <div>
+        <H2>Concurrent Editing</H2>
+        <P>CargoDesk doesn't merge two people's edits to the same shipment — whoever gets there
+          first keeps the pen until they leave, and everyone else sees a read-only copy in the
+          meantime, so two people can never accidentally overwrite each other's changes.</P>
+        <H3>How it works</H3>
+        <P>The moment an operator or admin opens a shipment (any of its pages — Overview, Cargo,
+          Parties, Schedules, Accounting, and so on), that shipment is claimed for them. If someone
+          else with edit rights opens the same shipment while it's claimed, they see a{" "}
+          <strong>🔒 Locked by {"{name}"}</strong> badge in the shipment header and a{" "}
+          <strong>View Only</strong> banner on Overview naming who holds it — every Save button and
+          edit control on every page behaves exactly as it does for a Viewer account until the lock
+          is released. Nothing needs to be reloaded to see the change either way: as soon as the
+          first person leaves the shipment, everyone else watching it regains full edit access
+          immediately.</P>
+        <H3>Releasing the lock</H3>
+        <P>Navigating away from the shipment (back to the list, or to a different shipment) releases
+          it right away for the next person. If a tab is closed, crashes, or loses its connection
+          without a chance to release cleanly, the lock clears itself automatically after 30 minutes
+          of inactivity — there's no separate "unlock" button to press, and nobody needs to be
+          reached to free it up.</P>
+        <Callout type="note">A Viewer-role account is unaffected by any of this — it was already
+          read-only regardless of who else has a shipment open.</Callout>
       </div>
     ),
     incoterms: (

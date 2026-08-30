@@ -3443,8 +3443,9 @@ export const TicketsDrawer = ({ shipment, onClose }) => (
 // ──────────────────────────────────────────────────────────────────────────────
 
 const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, onEdit, onRefresh, onAddContainer, onEditContainer, onDeleteContainer, onManageContainers, onManagePartiesOffices, onManageSchedules, onManageMilestones, onManageTickets, onManageAccountingCosts, onManageAccountingInvoices, onManageAccountingGp, detailAction = null, onDetailActionConsumed }) => {
-  const { canEditShipments: canEdit } = useAuth();
+  const { canEditShipments: canEdit, shipmentLock } = useAuth();
   const [statusLog,      setStatusLog]      = useState([]);
+  const lockedByOther = shipmentLock?.locked && !shipmentLock?.ownedByMe;
 
   // Tab title — show shipment ID so multi-tab workflows are easy to navigate
   useEffect(() => {
@@ -3471,7 +3472,9 @@ const ShipmentDetailPage = ({ shipment, containers, carriers, onBack, onUpdate, 
           fontFamily: T.body, fontSize: 12, color: T.info, marginBottom: 16,
         }}>
           <IconEye size={14} />
-          <strong>View Only</strong> — your account has read-only access. Contact an admin to request edit permissions.
+          {lockedByOther
+            ? <><strong>View Only</strong> — {shipmentLock.lockedByName} is currently editing this shipment. Your access returns to normal once they finish (or after 30 minutes of inactivity).</>
+            : <><strong>View Only</strong> — your account has read-only access. Contact an admin to request edit permissions.</>}
         </div>
       )}
 

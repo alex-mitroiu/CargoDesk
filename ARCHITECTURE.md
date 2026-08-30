@@ -435,6 +435,8 @@ shipments ──┬── shipment_legs               (multimodal leg records)
             ├── shipment_events / entity_events   (two-table audit strategy, §10)
             ├── shipment_messages            (threaded notes)
             ├── shipment_screenings          (sanctions-screening results)
+            ├── shipment_edit_locks          (first-come-first-served whole-shipment edit lock,
+            │                                 one row per currently-locked shipment, §8.22)
             └── edi_messages / carrier_bookings / carrier_booking_archive
                                              (booking request/response log + supersede history)
 
@@ -951,6 +953,7 @@ the socket to that shipment's Set. Any route module can push to just that shipme
 
   broadcastMessage(shipmentId, payload)     → { type: "new_message", ... }        (server.js)
   recomputeSpaceBadge(shipmentId)           → { type: "space_badge_update", ... } (server.js)
+  broadcastEditLockChange(shipmentId, ...)  → { type: "edit_lock_changed", ... }  (server.js, §8.22)
   routes/edi.js's own broadcast(id, frame)  → { type: "new_edi_message", ... } /
                                                { type: "booking_status_changed", ... }
 
@@ -1695,6 +1698,86 @@ resulting state confirmed exactly as designed — 68 tables cleared, carriers st
 collapsed to just the two generic seeded accounts, shipments at 0, `app_settings` (including the
 idle-timeout config from v0.85.0) fully intact — before the original database was restored from
 the backup and every original count (71/16/160) confirmed back exactly.
+
+### 8.22 Shipment Edit-Locking (added v0.88.0)
+
+```
+Direct request: two edit-capable users (admin/operator/occ_bk) on the same shipment at the same
+time can produce conflicting writes, and this app has no field-level merge/conflict resolution
+anywhere — not on the shipment record, not on any of its sub-resources (containers, parties,
+schedules, cost lines, ...). Rather than build per-field optimistic concurrency across dozens of
+already-shipped forms, this ships a coarser, first-come-first-served pessimistic lock scoped to
+the whole shipment: whoever opens it first for edit keeps every edit control on every one of its
+pages until they leave; everyone else sees the exact same read-only experience a Viewer role
+already gets, for as long as the lock holds.
+```
+
+**New `shipment_edit_locks` table** — one row per currently-locked shipment (`shipment_id` is the
+primary key, so at most one holder ever exists per shipment): `locked_by_id`/`locked_by_name`,
+`locked_at` (when this hold started — survives a renewal), `last_heartbeat_at`/`expires_at` (moved
+forward by every renewal). No manual force-unlock exists — a stale lock (crashed tab, closed
+browser, lost connection) self-clears once 30 minutes pass with no renewal, the same idle-timeout
+window `useIdleLogout` (§8.9) already uses for the unrelated concept of a genuinely inactive
+session, chosen independently here rather than sharing that setting (a security team shortening
+the idle-logout window for other reasons shouldn't silently also shrink this unrelated grace
+period).
+
+**Two routes on `routes/shipments.js`**, both gated by the same `shipmentWrite` role check
+(`admin`/`operator`/`occ_bk`) every other shipment-write route already uses — a Viewer or
+trade_manager account can't reach either one, since they can't edit shipments regardless of any
+lock:
+- `POST /api/shipments/:id/edit-lock` — acquire-or-renew-or-report. A first-ever or expired lock
+  is claimed outright; the current holder calling again is a renewal (`locked_at` preserved,
+  `expires_at` pushed forward, no broadcast — nothing actually changed for anyone else watching);
+  anyone else gets back `{ownedByMe:false, lockedByName, ...}` with **no error status** — the 200
+  response is the caller's cue to render read-only, not a failure to handle.
+- `DELETE /api/shipments/:id/edit-lock` — explicit release, a safe no-op if the caller isn't the
+  current holder (never lets B accidentally clear A's hold by calling release speculatively).
+
+**No new WebSocket infrastructure** — reuses the existing per-shipment `shipmentSubs` Map (§8.7)
+via a new `broadcastEditLockChange(shipmentId, payload)` helper, sibling to `broadcastMessage`,
+emitting a new `edit_lock_changed` frame (`{locked, lockedById, lockedByName, expiresAt}` or
+`{locked:false}`) only when the holder actually *changes* (acquired, released, or expired-and-
+reclaimed) — a same-holder renewal broadcasts nothing, so a locked-out viewer's UI doesn't flicker
+every heartbeat.
+
+**Frontend wiring is in `App.jsx`, not any one page component** — deliberate, since the lock is
+whole-shipment (every sub-page, plus the full edit form) and `ShipmentHeaderBar` (the one
+component mounted across most sub-pages) is *not* mounted on the edit form itself. A `useEffect`
+keyed on `[selectedId, roleCanEditShipments, user?.id]` acquires on mount, renews every 5 minutes,
+opens its own WS subscription for live push, and releases on cleanup (navigating away, or losing
+edit-capability mid-session, e.g. an admin switching to the viewer role) — but only if this
+specific effect instance's own `owned` flag was true, so a locked-out viewer's cleanup never
+issues a pointless release call. The lock state then **downgrades `canEditShipments` itself**
+(`AuthContext`'s value, computed in `App.jsx`) rather than threading a second prop through the
+~30 files that already check that one flag ad hoc — cheaper than the alternative, and correct
+because the downgrade is guarded on `shipmentLock.shipmentId === selectedId`, so it can never leak
+into an unrelated page that happens to render while some other shipment's lock state is still in
+memory. `ShipmentHeaderBar` surfaces a small `🔒 Locked by {name}` pill (visible on every
+sub-page); the existing role-based View Only banner on Overview (`ShipmentDetailPage.jsx`) grew a
+second branch so a lock-caused read-only state gets accurate wording instead of the pre-existing
+"contact an admin for permissions" copy, which would have been actively wrong for an edit-capable
+user who's simply locked out.
+
+**A real bug found only through live two-browser verification, not the standalone test suite**:
+the first CDP verification pass using two Puppeteer pages in the *same* browser context appeared
+to show the release-on-navigate path silently failing — the lock stayed attributed to the original
+holder no matter what. Root cause was in the verification harness, not the app: two pages sharing
+one browser context share `localStorage` per-origin, so the second simulated user's page load
+silently overwrote the first user's auth token in the one shared store, making the first user's
+own release call authenticate as the second user instead (confirmed via a temporary
+`reqUserId`/`existingLockedBy` server-side log — they didn't match, but not for the reason
+initially assumed). Fixed by using `browser.createBrowserContext()` for genuinely isolated storage
+per simulated user — the real two-context repro then passed cleanly end to end, including the
+live badge appearing/clearing with no page reload.
+
+**Deliberately out of scope**: an admin "force unlock" override (the 30-minute auto-expiry was
+judged short enough on its own) and per-field/per-tab locking (would need instrumenting the same
+~30 files this design specifically avoided touching). `tests/shipment-edit-lock.test.js` (20
+assertions) covers acquire/renew/release/non-holder-release-is-a-no-op/re-acquire-after-release/
+404-on-unknown-shipment via pure HTTP; the 30-minute real-clock expiry itself isn't exercised
+automatically, the same accepted gap this codebase already has for other short-of-an-hour
+time-based rules with no backdating endpoint (§8.16's own AR-aging-boundary note).
 
 ---
 

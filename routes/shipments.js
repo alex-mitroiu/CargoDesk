@@ -6,7 +6,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
           mapShipment, mapShipmentLeg, mapContainer, mapContainerEvent, mapContainerPackage, mapAllocation,
           mapShipmentParty, ADDITIONAL_PARTY_ROLES, mapSideOffice, canEditOfficeSide,
           applyShipmentAccessFilter, syncShipmentFromLegs, importContractRates,
-          broadcastMessage, recomputeSpaceBadge, screenShipmentById, resolveCarrierAgent,
+          broadcastMessage, broadcastEditLockChange, recomputeSpaceBadge, screenShipmentById, resolveCarrierAgent,
           logEvent, logEntityEvent, TRACKED_FIELDS, TRACKED_CTR_FIELDS, FREE_TIME_WARNING_DAYS,
           sanctionsMap, autoCompleteMilestone, ensureBookingCreated, toUsd,
           validCoord, GPS_LOC_TYPE, getSettings, callContractService, getCustomerRow } = ctx;
@@ -559,6 +559,54 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const info = db.prepare("DELETE FROM shipments WHERE id=?").run(req.params.id);
     if (info.changes === 0) return err(res, "Not found", 404);
     ok(res, { deleted: req.params.id });
+  });
+
+  // ─── Edit Lock (first-come-first-served, whole-shipment) ──────────────────
+  // Whole-shipment, not per-field/per-tab, and claimed the moment an edit-capable user opens the
+  // shipment (any of its sub-pages) — see server.js's shipment_edit_locks migration comment for
+  // the full rationale. No manual force-unlock: a stale lock (crashed tab, lost connection) just
+  // self-clears once EDIT_LOCK_TTL_MINUTES passes since the holder's last heartbeat.
+  const EDIT_LOCK_TTL_MINUTES = 30;
+
+  app.post("/api/shipments/:id/edit-lock", shipmentWrite, (req, res) => {
+    const shipmentId = req.params.id;
+    if (!db.prepare("SELECT 1 FROM shipments WHERE id=?").get(shipmentId)) return err(res, "Not found", 404);
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const existing = db.prepare("SELECT * FROM shipment_edit_locks WHERE shipment_id=?").get(shipmentId);
+    const expired = existing && new Date(existing.expires_at) < now;
+    if (existing && !expired && existing.locked_by_id !== req.user.id) {
+      return ok(res, {
+        locked: true, ownedByMe: false,
+        lockedById: existing.locked_by_id, lockedByName: existing.locked_by_name,
+        lockedAt: existing.locked_at, expiresAt: existing.expires_at,
+      });
+    }
+    const lockerName = req.user.name || req.user.email;
+    const lockedAt = (existing && !expired) ? existing.locked_at : nowIso;
+    const expiresAt = new Date(now.getTime() + EDIT_LOCK_TTL_MINUTES * 60000).toISOString();
+    const isNewHold = !existing || expired || existing.locked_by_id !== req.user.id;
+    if (existing) {
+      db.prepare(`UPDATE shipment_edit_locks SET locked_by_id=?, locked_by_name=?, locked_at=?, last_heartbeat_at=?, expires_at=? WHERE shipment_id=?`)
+        .run(req.user.id, lockerName, lockedAt, nowIso, expiresAt, shipmentId);
+    } else {
+      db.prepare(`INSERT INTO shipment_edit_locks (shipment_id, locked_by_id, locked_by_name, locked_at, last_heartbeat_at, expires_at) VALUES (?,?,?,?,?,?)`)
+        .run(shipmentId, req.user.id, lockerName, lockedAt, nowIso, expiresAt);
+    }
+    if (isNewHold) {
+      broadcastEditLockChange(shipmentId, { locked: true, lockedById: req.user.id, lockedByName: lockerName, expiresAt });
+    }
+    ok(res, { locked: true, ownedByMe: true, lockedById: req.user.id, lockedByName: lockerName, lockedAt, expiresAt });
+  });
+
+  app.delete("/api/shipments/:id/edit-lock", shipmentWrite, (req, res) => {
+    const shipmentId = req.params.id;
+    const existing = db.prepare("SELECT * FROM shipment_edit_locks WHERE shipment_id=?").get(shipmentId);
+    if (existing && existing.locked_by_id === req.user.id) {
+      db.prepare("DELETE FROM shipment_edit_locks WHERE shipment_id=?").run(shipmentId);
+      broadcastEditLockChange(shipmentId, { locked: false });
+    }
+    ok(res, { locked: false });
   });
 
   // ─── Containers ────────────────────────────────────────────────────────────

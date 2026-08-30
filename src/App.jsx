@@ -388,6 +388,9 @@ function App() {
     [...new Set(roles || [])].sort((a, b) => (ROLE_RANK[b] ?? -1) - (ROLE_RANK[a] ?? -1));
   const userRoles       = Array.isArray(user?.roles) ? user.roles : (user?.role ? [user.role] : ['viewer']);
   const userPrimaryRole = primaryRole(userRoles);
+  const effectiveRoles  = activeRole ? [activeRole] : userRoles;
+  const effectiveRole   = activeRole || userPrimaryRole;
+  const roleCanEditShipments = effectiveRoles.some(r => ['admin', 'operator', 'occ_bk'].includes(r));
 
   const handleLogin  = (token, userData, passwordExpired) => {
     localStorage.setItem(TOKEN_KEY, token);
@@ -480,6 +483,61 @@ function App() {
   }, [user?.id]);
 
   const selectedShipment = shipments.find(s => s.id === selectedId);
+
+  // Shipment edit-locking (first-come-first-served, whole-shipment) — direct request: two
+  // edit-capable users on the same shipment at the same time can produce conflicting writes,
+  // and this app has no field-level merge/conflict resolution anywhere. The lock is claimed the
+  // instant an edit-capable user opens a shipment (any of its sub-pages, not just Overview —
+  // this fires off selectedId directly rather than a specific page component, since some of
+  // those pages, like the full edit form, don't mount ShipmentHeaderBar) and released the moment
+  // they navigate to a different shipment or stop being edit-capable (e.g. an admin switching to
+  // the viewer role mid-session). A viewer/trade_manager never attempts to acquire — they can't
+  // edit shipments regardless of the lock, so there's nothing for them to claim. No manual
+  // force-unlock: a crashed tab or lost connection just self-clears via the server's own
+  // heartbeat expiry (EDIT_LOCK_TTL_MINUTES) once this effect stops renewing it.
+  const [shipmentLock, setShipmentLock] = useState(null);
+  useEffect(() => {
+    if (!selectedId || !roleCanEditShipments) { setShipmentLock(null); return; }
+    let live = true;
+    let owned = false;
+    const applyResult = (r) => {
+      if (!live) return;
+      owned = !!r.ownedByMe;
+      setShipmentLock({ shipmentId: selectedId, ...r });
+    };
+    api.shipments.editLock.acquire(selectedId).then(applyResult).catch(() => {});
+    const heartbeat = setInterval(() => {
+      api.shipments.editLock.acquire(selectedId).then(applyResult).catch(() => {});
+    }, 5 * 60 * 1000);
+
+    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const wsHost = import.meta.env.DEV ? "localhost:3001" : window.location.host;
+    const ws = new WebSocket(`${proto}//${wsHost}/ws`);
+    ws.onopen = () => ws.send(JSON.stringify({ type: "subscribe", shipmentId: selectedId }));
+    ws.onmessage = e => {
+      try {
+        const frame = JSON.parse(e.data);
+        if (frame.type !== "edit_lock_changed" || frame.shipmentId !== selectedId) return;
+        if (frame.locked) {
+          owned = frame.lockedById === user?.id;
+          setShipmentLock({
+            shipmentId: selectedId, locked: true, ownedByMe: owned,
+            lockedById: frame.lockedById, lockedByName: frame.lockedByName, expiresAt: frame.expiresAt,
+          });
+        } else {
+          owned = false;
+          setShipmentLock({ shipmentId: selectedId, locked: false, ownedByMe: false });
+        }
+      } catch { /* ignore */ }
+    };
+
+    return () => {
+      live = false;
+      clearInterval(heartbeat);
+      ws.close();
+      if (owned) api.shipments.editLock.release(selectedId).catch(() => {});
+    };
+  }, [selectedId, roleCanEditShipments, user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Shared by ShipmentDetailPage and its promoted sub-pages (e.g. ShipmentPartiesPage) — same shipment PUT, multiple entry points.
   const handleUpdateShipment = async (id, form) => {
@@ -1475,14 +1533,16 @@ function App() {
     );
   };
 
-  const effectiveRoles = activeRole ? [activeRole] : userRoles;
-  const effectiveRole  = activeRole || userPrimaryRole;
   const authCtxValue = {
     user,
     activeRole:         effectiveRole,
     activeRoles:        effectiveRoles,
     canEdit:            effectiveRoles.some(r => r !== 'viewer'),
-    canEditShipments:   effectiveRoles.some(r => ['admin', 'operator', 'occ_bk'].includes(r)),
+    // Downgraded to read-only whenever another edit-capable user currently holds the open
+    // shipment's edit lock — see the shipmentLock effect below. Guarded on shipmentId matching
+    // selectedId so a brief render between navigating away and the lock effect's own cleanup
+    // never misattributes a stale lock to the newly-selected shipment.
+    canEditShipments:   roleCanEditShipments && !(shipmentLock?.locked && !shipmentLock?.ownedByMe && shipmentLock?.shipmentId === selectedId),
     canManageConfigs:   effectiveRoles.some(r => ['admin', 'operator', 'trade_manager'].includes(r)),
     // MDM reference data (carriers/vessels/ports/lanes/countries/regions/commodities/linked
     // ports) is read-only for trade_manager — they manage Contracts/Allocations (above), not
@@ -1493,6 +1553,7 @@ function App() {
     isViewer:           effectiveRoles.every(r => r === 'viewer'),
     isOccBk:            effectiveRoles.includes('occ_bk'),
     isTradeManager:     effectiveRoles.includes('trade_manager'),
+    shipmentLock:       shipmentLock?.shipmentId === selectedId ? shipmentLock : null,
     activeOffice,
     userOffices,
     allOffices:         userAllOffices,

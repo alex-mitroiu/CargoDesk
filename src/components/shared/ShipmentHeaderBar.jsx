@@ -10,7 +10,7 @@ import { deriveHaulageNeeds } from "../../pages/shipments/ShipmentFormPage";
 import useContractMismatch from "../../hooks/useContractMismatch";
 import ContractMismatchModal from "./ContractMismatchModal";
 import { AnyIcon, IconClipboard, IconLink, IconRefresh, IconPencil, IconWarning, IconCheck,
-  IconMail, IconMailUnread } from "../primitives/Icon";
+  IconMail, IconMailUnread, IconLock } from "../primitives/Icon";
 import { fmtCurr } from "../../utils/invoiceGenerator";
 import { onCargoValueChanged } from "../../cargoValueBus";
 
@@ -100,7 +100,7 @@ const IconTile = ({ items }) => {
 };
 
 const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, onUpdate, onRefresh, onEdit }) => {
-  const { canEditShipments: canEdit } = useAuth();
+  const { canEditShipments: canEdit, shipmentLock } = useAuth();
   const [schedules, setSchedules] = useState([]);
   const [screening, setScreening] = useState(null);
   const [complianceOpen, setComplianceOpen] = useState(false);
@@ -392,6 +392,16 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
               display: "inline-flex", alignItems: "center", gap: 4 }}>
             <IconRefresh size={11} />Contract Match Found
           </button>
+        )}
+
+        {shipmentLock?.locked && !shipmentLock?.ownedByMe && (
+          <span id="shphdr-lock-badge" title={`${shipmentLock.lockedByName} is currently editing this shipment — you have read-only access until they finish (releases automatically after 30 minutes of inactivity)`}
+            style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, letterSpacing: "0.03em",
+            padding: "3px 9px", borderRadius: 5, background: T.info + "22", color: T.info,
+            border: `1px solid ${T.info}66`, whiteSpace: "nowrap",
+            display: "inline-flex", alignItems: "center", gap: 4 }}>
+            <IconLock size={11} />Locked by {shipmentLock.lockedByName}
+          </span>
         )}
 
         {isDg && (

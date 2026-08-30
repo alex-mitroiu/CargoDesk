@@ -4,7 +4,7 @@
 Full-stack freight management app. React 18 + Vite frontend, Express + node:sqlite backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.87.0 "Consortium"**
+- Version: **v0.88.0 "Custody"**
 - Run: `npm run dev` (runs the monolith on :3001 + Vite on :5173 + the Document Distribution Service on :3002 + the PDF Render Service on :3003 + the Contract Management Service on :3004 + the MDM Service on :3005 + the Screening Service on :3006 + the Kanban Service on :3007 + the Customer Service on :3008, concurrently) — zero-script onboarding: first boot with no `cargodesk.db` auto-copies the committed `db/cargodesk.sample.db` (MDM reference data only) into place
 - Re-seed: `npm run seed` (runs `scripts/import-mdm-data.js`) — only needed to refresh MDM data from `data/*.csv`/`.json`, not for a normal first run
 
@@ -381,6 +381,57 @@ are fully validated.
 - **Document system**: `DOC_TYPES` in App.jsx (~line 56: BL01/MB01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — `MB01` (Master Bill of Lading, v0.71.0) is the vessel-operator-to-NVOCC document, a genuinely separate build from `BL01` (NVOCC-to-shipper House B/L), not a mode flag on it — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). (The earlier client-side-jsPDF `DocumentsMenu` component this note used to distinguish from was removed as dead code — it had zero references anywhere in the app.)
 - **Lifecycle-stage stepper precedent**: no dedicated stepper component exists yet; `MilestonePanel` (ShipmentDetailPage.jsx 1593-~1870) is the closest analog — linear progress bar (1734-1738, `width: ${progress}%`) plus per-step state coloring via `milestoneState()`/`stateColor()` (1666-1676: completed/overdue/current/upcoming) driven by `shipment_milestones` rows (`id, label, estimatedDate, note, completedAt, completedBy`, fixed step keys `booking_confirmed, si_submitted, cargo_gated_in, vessel_departed, bl_issued, vessel_arrived, customs_cleared, cargo_released, delivered`). Any new per-container lifecycle/stage UI should reuse this state-coloring pattern rather than inventing a new visual language
 - **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages, 📡 EDI). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
+
+## Recent changes (v0.88.0 "Custody")
+- **Shipment edit-locking** — direct request: two edit-capable users on the same shipment at the
+  same time can produce conflicting writes, and this app has no field-level merge/conflict
+  resolution anywhere. A coarser, first-come-first-served pessimistic lock scoped to the **whole**
+  shipment: whoever opens it first for edit keeps every Save button and edit control on every one
+  of its pages (including the full edit form) until they leave; everyone else sees the same
+  read-only experience a Viewer role already gets, for as long as the lock holds.
+- New `shipment_edit_locks` table (one row per currently-locked shipment). Two new routes,
+  `POST`/`DELETE /api/shipments/:id/edit-lock` (`routes/shipments.js`), gated by the same role
+  check every other shipment-write route already uses. POST is acquire-or-renew-or-report: the
+  current holder calling again is a silent renewal (no broadcast, `lockedAt` unchanged); anyone
+  else gets `{ownedByMe:false, lockedByName, ...}` back with **no error status** — a normal 200 the
+  caller renders as read-only, not a rejection to handle. DELETE is a safe no-op for a non-holder.
+  **No manual force-unlock** — a stale lock (crashed tab, lost connection) self-clears after 30
+  minutes with no renewal, a deliberate, discussed decision (not tied to `idleTimeoutMinutes`,
+  v0.85.0's unrelated idle-logout setting, even though they happen to share the same 30-minute
+  figure today).
+- **Reuses the existing per-shipment WebSocket subscription** (`shipmentSubs`) via a new
+  `broadcastEditLockChange` helper, sibling to `broadcastMessage` — a locked-out viewer's badge
+  clears live the instant the holder leaves, no reload needed, no new WS infrastructure.
+- **Frontend wiring lives in `App.jsx`**, not any one page component — the lock is whole-shipment
+  (every sub-page plus the full edit form, and `ShipmentHeaderBar` isn't mounted on the edit form)
+  so it's keyed off `selectedId` directly. Acquires on open, renews every 5 minutes, releases on
+  cleanup (navigating away, or losing edit-capability mid-session). **Downgrades
+  `canEditShipments` itself** (the `AuthContext` value) rather than threading a second prop through
+  the ~30 files that already check that one flag ad hoc — guarded on `shipmentLock.shipmentId ===
+  selectedId` so it can never leak into an unrelated page. New `ShipmentHeaderBar` lock pill
+  ("🔒 Locked by {name}"); the existing role-based View Only banner on Overview
+  (`ShipmentDetailPage.jsx`) grew a second branch so a lock-caused read-only state gets accurate
+  wording instead of the pre-existing "contact an admin for permissions" copy, which would have
+  been actively wrong for an edit-capable user who's simply locked out.
+- **A real bug found only through live two-browser CDP verification, not the standalone HTTP test
+  suite**: the first pass, using two Puppeteer pages in the same browser context, appeared to show
+  the release-on-navigate path silently failing — a lock stayed attributed to the original holder
+  no matter what. Root cause was in the verification harness, not the app: two pages sharing one
+  browser context share `localStorage` per-origin, so the second simulated user's page load
+  silently overwrote the first user's auth token in the one shared store, making the first user's
+  own release call authenticate as the second user instead. Fixed by using
+  `browser.createBrowserContext()` for genuinely isolated storage per simulated user — the real
+  two-context repro then passed cleanly end to end, including the live badge appearing/clearing
+  with no page reload.
+- New `tests/shipment-edit-lock.test.js` (20 assertions: acquire/renew/release, non-holder-release
+  is a no-op, re-acquire after release, 404 on an unknown shipment). Full build clean. Verified
+  live via CDP with two isolated browser sessions. The 30-minute real-clock expiry itself isn't
+  exercised automatically — the same accepted gap this codebase already has for other short-of-
+  an-hour time-based rules with no backdating endpoint.
+- ARCHITECTURE.md §8.22 (new) and the User Manual's new "Concurrent Editing" reference topic both
+  document the feature. In passing, corrected a stale User Manual claim (from the same session's
+  earlier Carrier Agents work) that the Capabilities checklist already gates bookings against a
+  mismatch — it doesn't yet; only the data exists today.
 
 ## Recent changes (v0.87.0 "Consortium")
 - **Kanban board cleanup** — a fresh audit of what's still open, cross-checked against real code

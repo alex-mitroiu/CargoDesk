@@ -118,6 +118,10 @@ export const api = {
       get:     (id)       => req("GET",  `/shipments/${id}/credit-override`),
       approve: (id, data) => req("POST", `/shipments/${id}/credit-override/approve`, data),
     },
+    editLock: {
+      acquire: (id) => req("POST",   `/shipments/${id}/edit-lock`),
+      release: (id) => req("DELETE", `/shipments/${id}/edit-lock`),
+    },
   },
   creditOverridesQueue: () => req("GET", "/credit-overrides/queue"),
   invoiceDeadlinesOverdue: () => req("GET", "/invoice-deadlines/overdue"),

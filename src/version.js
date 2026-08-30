@@ -2,12 +2,18 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.87.0";
-export const BUILD     = "2026-08-29";
-export const CODENAME  = "Consortium";
+export const VERSION   = "0.88.0";
+export const BUILD     = "2026-08-30";
+export const CODENAME  = "Custody";
 export const BUILD_FINGERPRINT = "a3f9c21e";
 
 export const CHANGELOG = [
+  {
+    version:  "0.88.0",
+    date:     "2026-08-30",
+    codename: "Custody",
+    summary:  "Shipment edit-locking -- direct request: two edit-capable users on the same shipment at the same time can produce conflicting writes, and this app has no field-level merge/conflict resolution anywhere. Ships a coarser, first-come-first-served pessimistic lock scoped to the whole shipment instead: whoever opens it first for edit keeps every Save button and edit control on every one of its pages until they leave; everyone else sees the same read-only experience a Viewer role already gets, for as long as the lock holds.\n\nNew `shipment_edit_locks` table, one row per currently-locked shipment. Two routes on `routes/shipments.js` (`POST`/`DELETE /api/shipments/:id/edit-lock`), gated by the same role check every other shipment-write route already uses -- acquire-or-renew-or-report on POST (a non-holder gets `ownedByMe:false` back with no error status, never blocked with a rejection), a safe no-op release on DELETE if the caller isn't the current holder. No manual force-unlock exists by direct decision -- a stale lock (crashed tab, lost connection) self-clears automatically after 30 minutes with no renewal.\n\nReuses the existing per-shipment WebSocket subscription (`shipmentSubs`) via a new `broadcastEditLockChange` helper -- a locked-out viewer's badge clears live the instant the holder leaves, no reload needed. Frontend wiring lives in `App.jsx` (not any one page component, since the lock is whole-shipment and the persistent header isn't mounted on the full edit form) -- acquires on open, renews every 5 minutes, and downgrades `canEditShipments` itself rather than threading a second prop through the ~30 files that already check that one flag ad hoc. New `ShipmentHeaderBar` lock pill (\"Locked by {name}\"); the existing role-based View Only banner on Overview grew a second branch so a lock-caused read-only state gets accurate wording instead of the pre-existing \"contact an admin for permissions\" copy, which would have been wrong for an edit-capable user who's simply locked out.\n\nA real bug surfaced only through live two-browser verification, not the standalone test suite: the first CDP pass appeared to show the release-on-navigate path silently failing. Root cause was in the verification harness, not the app -- two Puppeteer pages in the same browser context share `localStorage` per-origin, so the second simulated user's page load silently overwrote the first user's auth token in the shared store. Fixed by using isolated `BrowserContext`s per simulated user; the real repro then passed cleanly end to end.\n\n20 new assertions (`tests/shipment-edit-lock.test.js`), full build clean, verified live via CDP with two isolated browser sessions: badge/banner appear correctly for the locked-out user, clear live on release with no reload, and the freed lock is claimable by the next opener. ARCHITECTURE.md (Section 8.22) and the User Manual's new \"Concurrent Editing\" reference topic both updated; a stale User Manual claim that Carrier Agents' Capabilities checklist already gates bookings (it doesn't yet -- only the data exists) was corrected in passing.",
+  },
   {
     version:  "0.87.0",
     date:     "2026-08-29",
