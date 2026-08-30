@@ -5,7 +5,7 @@
  */
 
 module.exports = function aiRoutes(app, ctx) {
-  const { db, ok, err, auth, getSettings, createRateLimiter, callContractService } = ctx;
+  const { query, ok, err, auth, getSettings, createRateLimiter, callContractService } = ctx;
 
   // Every chat call proxies to a real, externally-billed LLM API and can loop up to 3 tool-use
   // iterations internally (so up to 4 outbound fetches per single request) — keyed by user, not
@@ -96,46 +96,51 @@ module.exports = function aiRoutes(app, ctx) {
   async function executeTool(name, args) {
     try {
       if (name === "get_shipment") {
-        const row = db.prepare(
+        const [row] = await query(
           `SELECT s.*, p1.name AS pol_name, p2.name AS pod_name FROM shipments s
            LEFT JOIN port_locations p1 ON p1.unlocode = s.pol
            LEFT JOIN port_locations p2 ON p2.unlocode = s.pod
-           WHERE s.id=?`
-        ).get(args.id);
+           WHERE s.id=$1`, [args.id]
+        );
         if (!row) return { error: `Shipment ${args.id} not found` };
-        const ctrs = db.prepare("SELECT COUNT(*) AS n FROM containers WHERE shipment_id=?").get(args.id);
-        return { ...row, containerCount: ctrs?.n ?? 0 };
+        const [ctrs] = await query("SELECT COUNT(*) AS n FROM containers WHERE shipment_id=$1", [args.id]);
+        return { ...row, containerCount: ctrs ? Number(ctrs.n) : 0 };
       }
       if (name === "list_shipments") {
         let q = `SELECT s.*, p1.name AS pol_name, p2.name AS pod_name FROM shipments s
                  LEFT JOIN port_locations p1 ON p1.unlocode = s.pol
                  LEFT JOIN port_locations p2 ON p2.unlocode = s.pod WHERE 1=1`;
         const params = [];
-        if (args.status)      { q += " AND s.status=?";       params.push(args.status); }
-        if (args.carrierCode) { q += " AND s.carrier_code=?"; params.push(args.carrierCode); }
-        if (args.pol)         { q += " AND s.pol=?";          params.push(args.pol.toUpperCase()); }
-        if (args.pod)         { q += " AND s.pod=?";          params.push(args.pod.toUpperCase()); }
+        const p = v => { params.push(v); return `$${params.length}`; };
+        if (args.status)      q += ` AND s.status=${p(args.status)}`;
+        if (args.carrierCode) q += ` AND s.carrier_code=${p(args.carrierCode)}`;
+        if (args.pol)         q += ` AND s.pol=${p(args.pol.toUpperCase())}`;
+        if (args.pod)         q += ` AND s.pod=${p(args.pod.toUpperCase())}`;
         q += " ORDER BY s.created_at DESC LIMIT 50";
-        return { shipments: db.prepare(q).all(...params), count: db.prepare(q.replace("SELECT s.*", "SELECT COUNT(*) AS n")).get(...params)?.n };
+        const [shipments, [countRow]] = await Promise.all([
+          query(q, params),
+          query(q.replace("SELECT s.*", "SELECT COUNT(*) AS n"), params),
+        ]);
+        return { shipments, count: countRow ? Number(countRow.n) : 0 };
       }
       if (name === "get_contract") {
         if (((await getSettings()).contract_source || "local") === "remote") {
           try { return await callContractService("GET", `/internal/contracts/${args.id}`); }
           catch { return { error: `Contract ${args.id} not found` }; }
         }
-        const row = db.prepare("SELECT * FROM contracts WHERE id=?").get(args.id);
+        const [row] = await query("SELECT * FROM contracts WHERE id=$1", [args.id]);
         if (!row) return { error: `Contract ${args.id} not found` };
-        const legs  = db.prepare("SELECT * FROM contract_legs  WHERE contract_id=? ORDER BY leg_order").all(args.id);
-        const rates = db.prepare("SELECT * FROM contract_rates WHERE contract_id=? ORDER BY sort_order").all(args.id);
+        const legs  = await query("SELECT * FROM contract_legs  WHERE contract_id=$1 ORDER BY leg_order", [args.id]);
+        const rates = await query("SELECT * FROM contract_rates WHERE contract_id=$1 ORDER BY sort_order", [args.id]);
         // container_types/imdg_classes columns are frozen (TKT-5YYLNT) — real data lives in the
         // junction tables now, attached fresh here instead of the raw (stale) row columns.
         const { container_types, imdg_classes, ...rowRest } = row;
-        const containerTypes = db.prepare("SELECT container_type FROM contract_container_types WHERE contract_id=?").all(args.id).map(r => r.container_type);
-        const imdgClasses = db.prepare("SELECT imdg_class FROM contract_imdg_classes WHERE contract_id=?").all(args.id).map(r => r.imdg_class);
+        const containerTypes = (await query("SELECT container_type FROM contract_container_types WHERE contract_id=$1", [args.id])).map(r => r.container_type);
+        const imdgClasses = (await query("SELECT imdg_class FROM contract_imdg_classes WHERE contract_id=$1", [args.id])).map(r => r.imdg_class);
         return { ...rowRest, containerTypes, imdgClasses, legs, rates };
       }
       if (name === "get_allocation") {
-        const row = db.prepare("SELECT * FROM allocations WHERE id=?").get(args.id);
+        const [row] = await query("SELECT * FROM allocations WHERE id=$1", [args.id]);
         if (!row) return { error: `Allocation ${args.id} not found` };
         return row;
       }

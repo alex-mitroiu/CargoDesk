@@ -9,7 +9,7 @@
 const TRANSPORT_TYPES = ["rest_api", "as2", "sftp"];
 
 module.exports = function eadapterRoutes(app, ctx) {
-  const { db, ok, err, uid, requireRole, isUniqueViolation, mapEadapterConfig,
+  const { query, ok, err, uid, requireRole, isUniqueViolation, mapEadapterConfig,
           getSettings, BOOKABLE_CARRIERS } = ctx;
   const write = requireRole(["admin", "operator"]);
 
@@ -19,12 +19,12 @@ module.exports = function eadapterRoutes(app, ctx) {
     LEFT   JOIN offices o ON o.id = c.office_id
   `;
 
-  app.get("/api/eadapter/configs", write, (req, res) => {
-    const rows = db.prepare(`${CONFIG_JOIN} ORDER BY c.carrier_code, o.code`).all();
+  app.get("/api/eadapter/configs", write, async (req, res) => {
+    const rows = await query(`${CONFIG_JOIN} ORDER BY c.carrier_code, o.code`);
     ok(res, rows.map(mapEadapterConfig));
   });
 
-  app.post("/api/eadapter/configs", write, (req, res) => {
+  app.post("/api/eadapter/configs", write, async (req, res) => {
     const { carrierCode, officeId, transportType = "rest_api", endpointUrl = "", authHeaderName = "",
             credential = "", isActive = true, notes = "" } = req.body || {};
     if (!carrierCode || !carrierCode.trim()) return err(res, "Carrier code is required");
@@ -35,7 +35,7 @@ module.exports = function eadapterRoutes(app, ctx) {
     // never taken from the request body — a client-supplied country could otherwise drift from
     // the office actually picked, which would silently break the (carrier, office) uniqueness
     // guarantee this table now depends on.
-    const office = db.prepare("SELECT id, code, country_code, is_active FROM offices WHERE id=?").get(officeId);
+    const [office] = await query("SELECT id, code, country_code, is_active FROM offices WHERE id=$1", [officeId]);
     if (!office) return err(res, "Office not found", 404);
     if (!office.is_active) return err(res, "That office is inactive — pick an active one");
 
@@ -43,11 +43,11 @@ module.exports = function eadapterRoutes(app, ctx) {
     const code = carrierCode.trim().toUpperCase();
     const now = new Date().toISOString();
     try {
-      db.prepare(`INSERT INTO carrier_eadapter_configs
+      await query(`INSERT INTO carrier_eadapter_configs
         (id, carrier_code, country_iso2, office_id, transport_type, endpoint_url, auth_header_name, credential, is_active, notes, created_at, updated_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
-        .run(id, code, office.country_code || '', office.id, transportType, endpointUrl.trim(), authHeaderName.trim(), credential, isActive ? 1 : 0, notes, now, now);
-      const row = db.prepare(`${CONFIG_JOIN} WHERE c.id=?`).get(id);
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        [id, code, office.country_code || '', office.id, transportType, endpointUrl.trim(), authHeaderName.trim(), credential, !!isActive, notes, now, now]);
+      const [row] = await query(`${CONFIG_JOIN} WHERE c.id=$1`, [id]);
       ok(res, mapEadapterConfig(row), 201);
     } catch (e) {
       if (isUniqueViolation(e)) return err(res, `A config already exists for carrier ${code} at ${office.code}`, 409);
@@ -55,8 +55,8 @@ module.exports = function eadapterRoutes(app, ctx) {
     }
   });
 
-  app.put("/api/eadapter/configs/:id", write, (req, res) => {
-    const existing = db.prepare("SELECT * FROM carrier_eadapter_configs WHERE id=?").get(req.params.id);
+  app.put("/api/eadapter/configs/:id", write, async (req, res) => {
+    const [existing] = await query("SELECT * FROM carrier_eadapter_configs WHERE id=$1", [req.params.id]);
     if (!existing) return err(res, "Config not found", 404);
 
     const { transportType = existing.transport_type, endpointUrl = existing.endpoint_url,
@@ -71,16 +71,16 @@ module.exports = function eadapterRoutes(app, ctx) {
     // which shipments this config now governs; delete and re-add instead.
     const cred = credential.trim() ? credential : existing.credential;
     const now = new Date().toISOString();
-    db.prepare(`UPDATE carrier_eadapter_configs SET transport_type=?, endpoint_url=?, auth_header_name=?,
-      credential=?, is_active=?, notes=?, updated_at=? WHERE id=?`)
-      .run(transportType, endpointUrl.trim(), authHeaderName.trim(), cred, isActive ? 1 : 0, notes, now, req.params.id);
+    await query(`UPDATE carrier_eadapter_configs SET transport_type=$1, endpoint_url=$2, auth_header_name=$3,
+      credential=$4, is_active=$5, notes=$6, updated_at=$7 WHERE id=$8`,
+      [transportType, endpointUrl.trim(), authHeaderName.trim(), cred, !!isActive, notes, now, req.params.id]);
 
-    const row = db.prepare(`${CONFIG_JOIN} WHERE c.id=?`).get(req.params.id);
+    const [row] = await query(`${CONFIG_JOIN} WHERE c.id=$1`, [req.params.id]);
     ok(res, mapEadapterConfig(row));
   });
 
-  app.delete("/api/eadapter/configs/:id", write, (req, res) => {
-    db.prepare("DELETE FROM carrier_eadapter_configs WHERE id=?").run(req.params.id);
+  app.delete("/api/eadapter/configs/:id", write, async (req, res) => {
+    await query("DELETE FROM carrier_eadapter_configs WHERE id=$1", [req.params.id]);
     ok(res, { ok: true });
   });
 
@@ -93,7 +93,7 @@ module.exports = function eadapterRoutes(app, ctx) {
     const { officeId = "" } = req.query;
     const enabled = (await getSettings()).api_eadapter_enabled !== "false";
     const active = enabled && officeId
-      ? db.prepare("SELECT carrier_code FROM carrier_eadapter_configs WHERE is_active=1 AND office_id=?").all(officeId).map(r => r.carrier_code)
+      ? (await query("SELECT carrier_code FROM carrier_eadapter_configs WHERE is_active=TRUE AND office_id=$1", [officeId])).map(r => r.carrier_code)
       : [];
     const carriers = enabled ? [...new Set([...BOOKABLE_CARRIERS, ...active])] : [];
     ok(res, { enabled, carriers });

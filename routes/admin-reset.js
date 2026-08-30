@@ -32,53 +32,51 @@ const PRESERVE_TABLES = new Set([
 ]);
 
 module.exports = function adminResetRoutes(app, ctx) {
-  const { db, ok, err, auth, requireRole, logAdminEvent, seedAdmin, seedTestFixtureAdmin, seedSigningCert } = ctx;
+  const { query, transaction, ok, err, auth, requireRole, logAdminEvent, seedAdmin, seedTestFixtureAdmin, seedSigningCert } = ctx;
+
+  const listTables = async () => (await query(
+    "SELECT table_name AS name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE' ORDER BY table_name"
+  )).map(r => r.name);
 
   // GET so the frontend can render the exact live preserve/reset table split without hand-
   // duplicating PRESERVE_TABLES in the UI — always current with the real schema.
-  app.get("/api/admin/reset-demo-data/preview", auth(), requireRole(["admin"]), (req, res) => {
-    const allTables = db.prepare(
-      "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
-    ).all().map(r => r.name);
+  app.get("/api/admin/reset-demo-data/preview", auth(), requireRole(["admin"]), async (req, res) => {
+    const allTables = await listTables();
     const preserve = allTables.filter(t => PRESERVE_TABLES.has(t));
     const reset = allTables.filter(t => !PRESERVE_TABLES.has(t));
     ok(res, { preserve, reset });
   });
 
-  app.post("/api/admin/reset-demo-data", auth(), requireRole(["admin"]), (req, res) => {
+  app.post("/api/admin/reset-demo-data", auth(), requireRole(["admin"]), async (req, res) => {
     if (req.body?.confirm !== "RESET")
       return err(res, 'Type RESET to confirm this irreversible action');
 
-    const allTables = db.prepare(
-      "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-    ).all().map(r => r.name);
+    const allTables = await listTables();
     const toReset = allTables.filter(t => !PRESERVE_TABLES.has(t));
 
-    // Same PRAGMA foreign_keys=OFF/ON bracket server.js's own table-rebuild migrations already
-    // use around a bulk structural operation — table names come from the fixed internal list
-    // above, never request input, so interpolating them into DELETE FROM is safe.
-    db.exec("PRAGMA foreign_keys=OFF");
-    db.exec("BEGIN");
+    // TRUNCATE ... CASCADE is the Postgres equivalent of SQLite's PRAGMA foreign_keys=OFF bracket
+    // around a bulk DELETE sweep — handles every FK dependency between the tables in this list
+    // (and only this list; none of PRESERVE_TABLES sits downstream of a to-be-reset table in the
+    // FK graph) in one statement, regardless of order. Table names come from the fixed internal
+    // list above, never request input, so interpolating them is safe.
     try {
-      for (const t of toReset) db.exec(`DELETE FROM ${t}`);
-      db.exec("COMMIT");
+      await transaction(async (tx) => {
+        if (toReset.length) await tx.query(`TRUNCATE TABLE ${toReset.map(t => `"${t}"`).join(", ")} CASCADE`);
+      });
     } catch (e) {
-      db.exec("ROLLBACK");
-      db.exec("PRAGMA foreign_keys=ON");
       return err(res, e.message, 500);
     }
-    db.exec("PRAGMA foreign_keys=ON");
 
     // Re-bootstrap users/signing-cert exactly as a fresh boot would — the acting admin's own
     // account is gone (just wiped along with everyone else's), replaced by the same generic
     // seeded account a brand-new clone would get. Never preserved as-is: that would leave the
     // real admin's own name/email baked into what's meant to become a shareable baseline.
-    seedAdmin();
-    seedTestFixtureAdmin();
-    seedSigningCert();
+    await seedAdmin();
+    await seedTestFixtureAdmin();
+    await seedSigningCert();
 
     // First row of the now-empty admin_events log — real accountability for who reset it and when.
-    logAdminEvent(req.user, "RESET_DEMO_DATA", "system", "", { tablesCleared: toReset.length });
+    await logAdminEvent(req.user, "RESET_DEMO_DATA", "system", "", { tablesCleared: toReset.length });
 
     ok(res, { reset: true, tablesCleared: toReset.length });
   });
