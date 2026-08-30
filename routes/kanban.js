@@ -1,12 +1,12 @@
 "use strict";
 
 module.exports = function kanbanRoutes(app, ctx) {
-  const { db, ok, err, uid, auth, requireRole, getSettings, callKanbanService, resolveAssigneeNames,
+  const { query, ok, err, uid, auth, requireRole, getSettings, callKanbanService, resolveAssigneeNames,
           mapTicket, mapTicketLink, inverseLinkLabel,
           mapKbProject, mapKbVersion, mapKbColumn,
           runOpsAutomationSweep } = ctx;
 
-  const shipmentWrite = ctx.requireRole ? requireRole(["operator", "admin"]) : auth();
+  const write = requireRole(["operator", "admin"]);
 
   // 'local' (default) = every route below runs against this monolith's own tables, exactly as
   // before this cut. 'remote' = the standalone Kanban/Testing Service (services/kanban/), reached
@@ -26,7 +26,8 @@ module.exports = function kanbanRoutes(app, ctx) {
         const rows = await callKanbanService("GET", "/internal/tickets");
         return rows.filter(t => t.sourceType).length;
       }
-      return db.prepare("SELECT COUNT(*) AS n FROM tickets WHERE source_type IS NOT NULL").get().n;
+      const [{ n }] = await query("SELECT COUNT(*) AS n FROM tickets WHERE source_type IS NOT NULL");
+      return Number(n);
     };
     try {
       const before = await countSourced();
@@ -56,15 +57,16 @@ module.exports = function kanbanRoutes(app, ctx) {
       if (offset !== undefined) qs.set("offset", offset);
       try {
         const data = await callKanbanService("GET", `/internal/tickets${qs.toString() ? `?${qs}` : ""}`);
-        if (Array.isArray(data)) return ok(res, resolveAssigneeNames(data));
-        return ok(res, { ...data, results: resolveAssigneeNames(data.results) });
+        if (Array.isArray(data)) return ok(res, await resolveAssigneeNames(data));
+        return ok(res, { ...data, results: await resolveAssigneeNames(data.results) });
       } catch (e) { return err(res, e.message, e.status || 502); }
     }
     let where = " WHERE 1=1";
     const params = [];
-    if (shipmentId) { where += " AND t.shipment_id=?"; params.push(shipmentId); }
+    const p = v => { params.push(v); return `$${params.length}`; };
+    if (shipmentId) where += ` AND t.shipment_id=${p(shipmentId)}`;
     // Include tickets with no project_id so pre-migration tickets always appear.
-    if (projectId)  { where += " AND (t.project_id=? OR t.project_id IS NULL)"; params.push(projectId); }
+    if (projectId)  where += ` AND (t.project_id=${p(projectId)} OR t.project_id IS NULL)`;
     const order = " ORDER BY t.status, t.position, t.created_at";
     // Pagination is opt-in (TKT-UAJGR3) — the Kanban board (KanbanPage.jsx) always loads every
     // ticket at once for drag-and-drop, WIP limits, and Epic progress rings, none of which work
@@ -72,15 +74,15 @@ module.exports = function kanbanRoutes(app, ctx) {
     // that explicitly wants a bounded page (no JS-side filter sits between here and the response,
     // unlike /api/shipments) gets a real SQL LIMIT/OFFSET and the {results,total,limit,offset} shape.
     if (limit === undefined && offset === undefined) {
-      return ok(res, db.prepare(`${TICKET_JOIN}${where}${order}`).all(...params).map(mapTicket));
+      return ok(res, (await query(`${TICKET_JOIN}${where}${order}`, params)).map(mapTicket));
     }
     const lim = Math.min(parseInt(limit) || 50, 500), off = parseInt(offset) || 0;
-    const total = db.prepare(`SELECT COUNT(*) AS n FROM tickets t${where}`).get(...params).n;
-    const rows = db.prepare(`${TICKET_JOIN}${where}${order} LIMIT ? OFFSET ?`).all(...params, lim, off);
-    ok(res, { results: rows.map(mapTicket), total, limit: lim, offset: off });
+    const [{ n: total }] = await query(`SELECT COUNT(*) AS n FROM tickets t${where}`, params);
+    const rows = await query(`${TICKET_JOIN}${where}${order} LIMIT ${p(lim)} OFFSET ${p(off)}`, params);
+    ok(res, { results: rows.map(mapTicket), total: Number(total), limit: lim, offset: off });
   });
 
-  app.post("/api/tickets", shipmentWrite, async (req, res) => {
+  app.post("/api/tickets", write, async (req, res) => {
     const {
       title, section = '', description = '', priority = 'Medium', status = 'Ready',
       shipmentId = null, type = 'Task', version = '',
@@ -94,31 +96,33 @@ module.exports = function kanbanRoutes(app, ctx) {
           title, section, description, priority, status, shipmentId, type, version,
           parentId, assigneeId, dueDate, testNotes, projectId, versionId,
         });
-        return ok(res, resolveAssigneeNames([created])[0], 201);
+        return ok(res, (await resolveAssigneeNames([created]))[0], 201);
       } catch (e) { return err(res, e.message, e.status || 502); }
     }
     const id  = `TKT-${uid()}`;
-    const pos = (db.prepare("SELECT MAX(position) AS m FROM tickets WHERE status=?").get(status)?.m ?? -1) + 1;
-    db.prepare(`
+    const [maxRow] = await query("SELECT MAX(position) AS m FROM tickets WHERE status=$1", [status]);
+    const pos = (maxRow?.m ?? -1) + 1;
+    await query(`
       INSERT INTO tickets
         (id, title, section, description, priority, status, position, created_at,
          shipment_id, type, version, parent_id, assignee_id, due_date, test_notes,
          project_id, version_id)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-    `).run(id, title, section, description, priority, status, pos, new Date().toISOString(),
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+    `, [id, title, section, description, priority, status, pos, new Date().toISOString(),
            shipmentId || null, type, version, parentId || null, assigneeId || null, dueDate || null,
-           testNotes || null, projectId || null, versionId || null);
-    ok(res, mapTicket(db.prepare(`${TICKET_JOIN} WHERE t.id=?`).get(id)), 201);
+           testNotes || null, projectId || null, versionId || null]);
+    const [created] = await query(`${TICKET_JOIN} WHERE t.id=$1`, [id]);
+    ok(res, mapTicket(created), 201);
   });
 
-  app.put("/api/tickets/:id", shipmentWrite, async (req, res) => {
+  app.put("/api/tickets/:id", write, async (req, res) => {
     if (await isRemote()) {
       try {
         const updated = await callKanbanService("PUT", `/internal/tickets/${req.params.id}`, req.body);
-        return ok(res, resolveAssigneeNames([updated])[0]);
+        return ok(res, (await resolveAssigneeNames([updated]))[0]);
       } catch (e) { return err(res, e.message, e.status || 502); }
     }
-    const existing = db.prepare("SELECT * FROM tickets WHERE id=?").get(req.params.id);
+    const [existing] = await query("SELECT * FROM tickets WHERE id=$1", [req.params.id]);
     if (!existing) return err(res, "Not found", 404);
     const {
       title = existing.title, section = existing.section ?? '', description = existing.description ?? '',
@@ -127,26 +131,27 @@ module.exports = function kanbanRoutes(app, ctx) {
       parentId = existing.parent_id, assigneeId = existing.assignee_id, dueDate = existing.due_date,
       testNotes = existing.test_notes, projectId = existing.project_id, versionId = existing.version_id,
     } = req.body;
-    const info = db.prepare(`
+    const updated = await query(`
       UPDATE tickets
-      SET title=?, section=?, description=?, priority=?, status=?, position=?,
-          shipment_id=?, type=?, version=?, parent_id=?, assignee_id=?, due_date=?, test_notes=?,
-          project_id=?, version_id=?
-      WHERE id=?
-    `).run(title, section, description, priority, status, position,
+      SET title=$1, section=$2, description=$3, priority=$4, status=$5, position=$6,
+          shipment_id=$7, type=$8, version=$9, parent_id=$10, assignee_id=$11, due_date=$12, test_notes=$13,
+          project_id=$14, version_id=$15
+      WHERE id=$16 RETURNING id
+    `, [title, section, description, priority, status, position,
            shipmentId || null, type, version, parentId || null, assigneeId || null, dueDate || null,
-           testNotes || null, projectId || null, versionId || null, req.params.id);
-    if (info.changes === 0) return err(res, "Not found", 404);
-    ok(res, mapTicket(db.prepare(`${TICKET_JOIN} WHERE t.id=?`).get(req.params.id)));
+           testNotes || null, projectId || null, versionId || null, req.params.id]);
+    if (updated.length === 0) return err(res, "Not found", 404);
+    const [fresh] = await query(`${TICKET_JOIN} WHERE t.id=$1`, [req.params.id]);
+    ok(res, mapTicket(fresh));
   });
 
-  app.delete("/api/tickets/:id", shipmentWrite, async (req, res) => {
+  app.delete("/api/tickets/:id", write, async (req, res) => {
     if (await isRemote()) {
       try { await callKanbanService("DELETE", `/internal/tickets/${req.params.id}`); return ok(res, { deleted: req.params.id }); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
-    const info = db.prepare("DELETE FROM tickets WHERE id=?").run(req.params.id);
-    if (info.changes === 0) return err(res, "Not found", 404);
+    const deleted = await query("DELETE FROM tickets WHERE id=$1 RETURNING id", [req.params.id]);
+    if (deleted.length === 0) return err(res, "Not found", 404);
     ok(res, { deleted: req.params.id });
   });
 
@@ -157,40 +162,41 @@ module.exports = function kanbanRoutes(app, ctx) {
       try { return ok(res, await callKanbanService("GET", `/internal/tickets/${req.params.id}/links`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
-    const rows = db.prepare("SELECT * FROM ticket_links WHERE from_id=? OR to_id=?").all(req.params.id, req.params.id);
-    const result = rows.map(l => {
+    const rows = await query("SELECT * FROM ticket_links WHERE from_id=$1 OR to_id=$1", [req.params.id]);
+    const result = await Promise.all(rows.map(async l => {
       const isOut   = l.from_id === req.params.id;
       const otherId = isOut ? l.to_id : l.from_id;
-      const other   = db.prepare("SELECT id, title, status, type FROM tickets WHERE id=?").get(otherId);
+      const [other] = await query("SELECT id, title, status, type FROM tickets WHERE id=$1", [otherId]);
       return { ...mapTicketLink(l), direction: isOut ? "out" : "in",
         displayType: isOut ? l.link_type : inverseLinkLabel(l.link_type),
         otherTicketId: otherId, otherTicket: other || { id: otherId, title: otherId, status: "", type: "" } };
-    });
+    }));
     ok(res, result);
   });
 
-  app.post("/api/tickets/:id/links", shipmentWrite, async (req, res) => {
+  app.post("/api/tickets/:id/links", write, async (req, res) => {
     const { toId, linkType } = req.body || {};
     if (!toId || !linkType) return err(res, "toId and linkType required");
     if (await isRemote()) {
       try { return ok(res, await callKanbanService("POST", `/internal/tickets/${req.params.id}/links`, { toId, linkType }), 201); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
-    if (!db.prepare("SELECT id FROM tickets WHERE id=?").get(toId)) return err(res, "Target ticket not found", 404);
-    if (db.prepare("SELECT id FROM ticket_links WHERE (from_id=? AND to_id=?) OR (from_id=? AND to_id=?)").get(req.params.id, toId, toId, req.params.id))
+    if (!(await query("SELECT id FROM tickets WHERE id=$1", [toId]))[0]) return err(res, "Target ticket not found", 404);
+    if ((await query("SELECT id FROM ticket_links WHERE (from_id=$1 AND to_id=$2) OR (from_id=$2 AND to_id=$1)", [req.params.id, toId]))[0])
       return err(res, "Link already exists");
     const id = `LNK-${uid()}`;
-    db.prepare("INSERT INTO ticket_links (id,from_id,to_id,link_type,created_at) VALUES (?,?,?,?,?)").run(id, req.params.id, toId, linkType, new Date().toISOString());
+    await query("INSERT INTO ticket_links (id,from_id,to_id,link_type,created_at) VALUES ($1,$2,$3,$4,$5)",
+      [id, req.params.id, toId, linkType, new Date().toISOString()]);
     ok(res, { id, fromId: req.params.id, toId, linkType }, 201);
   });
 
-  app.delete("/api/ticket-links/:id", shipmentWrite, async (req, res) => {
+  app.delete("/api/ticket-links/:id", write, async (req, res) => {
     if (await isRemote()) {
       try { await callKanbanService("DELETE", `/internal/ticket-links/${req.params.id}`); return ok(res, { deleted: req.params.id }); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
-    const info = db.prepare("DELETE FROM ticket_links WHERE id=?").run(req.params.id);
-    if (info.changes === 0) return err(res, "Not found", 404);
+    const deleted = await query("DELETE FROM ticket_links WHERE id=$1 RETURNING id", [req.params.id]);
+    if (deleted.length === 0) return err(res, "Not found", 404);
     ok(res, { deleted: req.params.id });
   });
 
@@ -201,10 +207,10 @@ module.exports = function kanbanRoutes(app, ctx) {
       try { return ok(res, await callKanbanService("GET", "/internal/kb/projects")); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
-    ok(res, db.prepare("SELECT * FROM kb_projects ORDER BY created_at ASC").all().map(mapKbProject));
+    ok(res, (await query("SELECT * FROM kb_projects ORDER BY created_at ASC")).map(mapKbProject));
   });
 
-  app.post("/api/kb/projects", shipmentWrite, async (req, res) => {
+  app.post("/api/kb/projects", write, async (req, res) => {
     const { name, key = '', color = '#6366f1', description = '' } = req.body || {};
     if (!name) return err(res, "name required");
     if (await isRemote()) {
@@ -214,8 +220,8 @@ module.exports = function kanbanRoutes(app, ctx) {
     const id  = `PRJ-${uid()}`;
     const now = new Date().toISOString();
     const keyVal = key.trim().toUpperCase() || name.slice(0, 4).toUpperCase();
-    db.prepare("INSERT INTO kb_projects (id,name,key,color,description,created_at) VALUES (?,?,?,?,?,?)")
-      .run(id, name, keyVal, color, description, now);
+    await query("INSERT INTO kb_projects (id,name,key,color,description,created_at) VALUES ($1,$2,$3,$4,$5,$6)",
+      [id, name, keyVal, color, description, now]);
     // Seed default columns for the new project
     const DEFAULT_COLUMNS = [
       { name: 'Ready', color: '#6366f1' }, { name: 'In Progress', color: '#f59e0b' },
@@ -224,33 +230,35 @@ module.exports = function kanbanRoutes(app, ctx) {
       { name: 'Released', color: '#8b5cf6' },
     ];
     for (let i = 0; i < DEFAULT_COLUMNS.length; i++) {
-      db.prepare("INSERT INTO kb_columns (id,project_id,name,position,color,created_at) VALUES (?,?,?,?,?,?)")
-        .run(`COL-${uid()}`, id, DEFAULT_COLUMNS[i].name, i, DEFAULT_COLUMNS[i].color, now);
+      await query("INSERT INTO kb_columns (id,project_id,name,position,color,created_at) VALUES ($1,$2,$3,$4,$5,$6)",
+        [`COL-${uid()}`, id, DEFAULT_COLUMNS[i].name, i, DEFAULT_COLUMNS[i].color, now]);
     }
-    ok(res, mapKbProject(db.prepare("SELECT * FROM kb_projects WHERE id=?").get(id)), 201);
+    const [created] = await query("SELECT * FROM kb_projects WHERE id=$1", [id]);
+    ok(res, mapKbProject(created), 201);
   });
 
-  app.put("/api/kb/projects/:id", shipmentWrite, async (req, res) => {
+  app.put("/api/kb/projects/:id", write, async (req, res) => {
     if (await isRemote()) {
       try { return ok(res, await callKanbanService("PUT", `/internal/kb/projects/${req.params.id}`, req.body)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
-    const existing = db.prepare("SELECT * FROM kb_projects WHERE id=?").get(req.params.id);
+    const [existing] = await query("SELECT * FROM kb_projects WHERE id=$1", [req.params.id]);
     if (!existing) return err(res, "Not found", 404);
     const { name = existing.name, key = existing.key, color = existing.color, description = existing.description } = req.body || {};
-    db.prepare("UPDATE kb_projects SET name=?,key=?,color=?,description=? WHERE id=?")
-      .run(name, key.toUpperCase(), color, description, req.params.id);
-    ok(res, mapKbProject(db.prepare("SELECT * FROM kb_projects WHERE id=?").get(req.params.id)));
+    await query("UPDATE kb_projects SET name=$1,key=$2,color=$3,description=$4 WHERE id=$5",
+      [name, key.toUpperCase(), color, description, req.params.id]);
+    const [fresh] = await query("SELECT * FROM kb_projects WHERE id=$1", [req.params.id]);
+    ok(res, mapKbProject(fresh));
   });
 
-  app.delete("/api/kb/projects/:id", shipmentWrite, async (req, res) => {
+  app.delete("/api/kb/projects/:id", write, async (req, res) => {
     if (await isRemote()) {
       try { await callKanbanService("DELETE", `/internal/kb/projects/${req.params.id}`); return ok(res, { deleted: req.params.id }); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
-    const count = db.prepare("SELECT COUNT(*) AS n FROM kb_projects").get().n;
-    if (count <= 1) return err(res, "Cannot delete the last project");
-    db.prepare("DELETE FROM kb_projects WHERE id=?").run(req.params.id);
+    const [{ n: count }] = await query("SELECT COUNT(*) AS n FROM kb_projects");
+    if (Number(count) <= 1) return err(res, "Cannot delete the last project");
+    await query("DELETE FROM kb_projects WHERE id=$1", [req.params.id]);
     ok(res, { deleted: req.params.id });
   });
 
@@ -261,45 +269,47 @@ module.exports = function kanbanRoutes(app, ctx) {
       try { return ok(res, await callKanbanService("GET", `/internal/kb/projects/${req.params.id}/versions`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
-    ok(res, db.prepare("SELECT * FROM kb_versions WHERE project_id=? ORDER BY created_at ASC").all(req.params.id).map(mapKbVersion));
+    ok(res, (await query("SELECT * FROM kb_versions WHERE project_id=$1 ORDER BY created_at ASC", [req.params.id])).map(mapKbVersion));
   });
 
-  app.post("/api/kb/projects/:id/versions", shipmentWrite, async (req, res) => {
+  app.post("/api/kb/projects/:id/versions", write, async (req, res) => {
     const { name, description = '', status = 'Planning', releaseDate = null } = req.body || {};
     if (!name) return err(res, "name required");
     if (await isRemote()) {
       try { return ok(res, await callKanbanService("POST", `/internal/kb/projects/${req.params.id}/versions`, { name, description, status, releaseDate }), 201); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
-    if (!db.prepare("SELECT id FROM kb_projects WHERE id=?").get(req.params.id)) return err(res, "Project not found", 404);
+    if (!(await query("SELECT id FROM kb_projects WHERE id=$1", [req.params.id]))[0]) return err(res, "Project not found", 404);
     const id  = `VER-${uid()}`;
     const now = new Date().toISOString();
-    db.prepare("INSERT INTO kb_versions (id,project_id,name,description,status,release_date,created_at) VALUES (?,?,?,?,?,?,?)")
-      .run(id, req.params.id, name, description, status, releaseDate || null, now);
-    ok(res, mapKbVersion(db.prepare("SELECT * FROM kb_versions WHERE id=?").get(id)), 201);
+    await query("INSERT INTO kb_versions (id,project_id,name,description,status,release_date,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+      [id, req.params.id, name, description, status, releaseDate || null, now]);
+    const [created] = await query("SELECT * FROM kb_versions WHERE id=$1", [id]);
+    ok(res, mapKbVersion(created), 201);
   });
 
-  app.put("/api/kb/versions/:id", shipmentWrite, async (req, res) => {
+  app.put("/api/kb/versions/:id", write, async (req, res) => {
     if (await isRemote()) {
       try { return ok(res, await callKanbanService("PUT", `/internal/kb/versions/${req.params.id}`, req.body)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
-    const existing = db.prepare("SELECT * FROM kb_versions WHERE id=?").get(req.params.id);
+    const [existing] = await query("SELECT * FROM kb_versions WHERE id=$1", [req.params.id]);
     if (!existing) return err(res, "Not found", 404);
     const { name = existing.name, description = existing.description, status = existing.status, releaseDate = existing.release_date } = req.body || {};
-    db.prepare("UPDATE kb_versions SET name=?,description=?,status=?,release_date=? WHERE id=?")
-      .run(name, description, status, releaseDate || null, req.params.id);
-    ok(res, mapKbVersion(db.prepare("SELECT * FROM kb_versions WHERE id=?").get(req.params.id)));
+    await query("UPDATE kb_versions SET name=$1,description=$2,status=$3,release_date=$4 WHERE id=$5",
+      [name, description, status, releaseDate || null, req.params.id]);
+    const [fresh] = await query("SELECT * FROM kb_versions WHERE id=$1", [req.params.id]);
+    ok(res, mapKbVersion(fresh));
   });
 
-  app.delete("/api/kb/versions/:id", shipmentWrite, async (req, res) => {
+  app.delete("/api/kb/versions/:id", write, async (req, res) => {
     if (await isRemote()) {
       try { await callKanbanService("DELETE", `/internal/kb/versions/${req.params.id}`); return ok(res, { deleted: req.params.id }); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
-    if (!db.prepare("SELECT id FROM kb_versions WHERE id=?").get(req.params.id)) return err(res, "Not found", 404);
-    db.prepare("UPDATE tickets SET version_id=NULL WHERE version_id=?").run(req.params.id);
-    db.prepare("DELETE FROM kb_versions WHERE id=?").run(req.params.id);
+    if (!(await query("SELECT id FROM kb_versions WHERE id=$1", [req.params.id]))[0]) return err(res, "Not found", 404);
+    await query("UPDATE tickets SET version_id=NULL WHERE version_id=$1", [req.params.id]);
+    await query("DELETE FROM kb_versions WHERE id=$1", [req.params.id]);
     ok(res, { deleted: req.params.id });
   });
 
@@ -310,62 +320,65 @@ module.exports = function kanbanRoutes(app, ctx) {
       try { return ok(res, await callKanbanService("GET", `/internal/kb/projects/${req.params.id}/columns`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
-    ok(res, db.prepare("SELECT * FROM kb_columns WHERE project_id=? ORDER BY position ASC").all(req.params.id).map(mapKbColumn));
+    ok(res, (await query("SELECT * FROM kb_columns WHERE project_id=$1 ORDER BY position ASC", [req.params.id])).map(mapKbColumn));
   });
 
-  app.post("/api/kb/projects/:id/columns", shipmentWrite, async (req, res) => {
+  app.post("/api/kb/projects/:id/columns", write, async (req, res) => {
     const { name, color = '#6366f1', wipLimit = null } = req.body || {};
     if (!name) return err(res, "name required");
     if (await isRemote()) {
       try { return ok(res, await callKanbanService("POST", `/internal/kb/projects/${req.params.id}/columns`, { name, color, wipLimit }), 201); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
-    if (!db.prepare("SELECT id FROM kb_projects WHERE id=?").get(req.params.id)) return err(res, "Project not found", 404);
-    const maxPos = db.prepare("SELECT MAX(position) AS m FROM kb_columns WHERE project_id=?").get(req.params.id)?.m ?? -1;
+    if (!(await query("SELECT id FROM kb_projects WHERE id=$1", [req.params.id]))[0]) return err(res, "Project not found", 404);
+    const [maxRow] = await query("SELECT MAX(position) AS m FROM kb_columns WHERE project_id=$1", [req.params.id]);
+    const maxPos = maxRow?.m ?? -1;
     const id  = `COL-${uid()}`;
-    db.prepare("INSERT INTO kb_columns (id,project_id,name,position,color,wip_limit,created_at) VALUES (?,?,?,?,?,?,?)")
-      .run(id, req.params.id, name, maxPos + 1, color, wipLimit, new Date().toISOString());
-    ok(res, mapKbColumn(db.prepare("SELECT * FROM kb_columns WHERE id=?").get(id)), 201);
+    await query("INSERT INTO kb_columns (id,project_id,name,position,color,wip_limit,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+      [id, req.params.id, name, maxPos + 1, color, wipLimit, new Date().toISOString()]);
+    const [created] = await query("SELECT * FROM kb_columns WHERE id=$1", [id]);
+    ok(res, mapKbColumn(created), 201);
   });
 
-  app.put("/api/kb/columns/:id", shipmentWrite, async (req, res) => {
+  app.put("/api/kb/columns/:id", write, async (req, res) => {
     if (await isRemote()) {
       try { return ok(res, await callKanbanService("PUT", `/internal/kb/columns/${req.params.id}`, req.body)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
-    const existing = db.prepare("SELECT * FROM kb_columns WHERE id=?").get(req.params.id);
+    const [existing] = await query("SELECT * FROM kb_columns WHERE id=$1", [req.params.id]);
     if (!existing) return err(res, "Not found", 404);
     const { name = existing.name, color = existing.color, position = existing.position, wipLimit = existing.wip_limit } = req.body || {};
-    db.prepare("UPDATE kb_columns SET name=?,color=?,position=?,wip_limit=? WHERE id=?")
-      .run(name, color, position, wipLimit ?? null, req.params.id);
-    ok(res, mapKbColumn(db.prepare("SELECT * FROM kb_columns WHERE id=?").get(req.params.id)));
+    await query("UPDATE kb_columns SET name=$1,color=$2,position=$3,wip_limit=$4 WHERE id=$5",
+      [name, color, position, wipLimit ?? null, req.params.id]);
+    const [fresh] = await query("SELECT * FROM kb_columns WHERE id=$1", [req.params.id]);
+    ok(res, mapKbColumn(fresh));
   });
 
   // Bulk reorder: PATCH /api/kb/projects/:id/columns with body { order: ["COL-x", "COL-y", ...] }
-  app.patch("/api/kb/projects/:id/columns", shipmentWrite, async (req, res) => {
+  app.patch("/api/kb/projects/:id/columns", write, async (req, res) => {
     if (await isRemote()) {
       try { return ok(res, await callKanbanService("PATCH", `/internal/kb/projects/${req.params.id}/columns`, req.body)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
     const { order = [] } = req.body || {};
     for (let i = 0; i < order.length; i++) {
-      db.prepare("UPDATE kb_columns SET position=? WHERE id=? AND project_id=?").run(i, order[i], req.params.id);
+      await query("UPDATE kb_columns SET position=$1 WHERE id=$2 AND project_id=$3", [i, order[i], req.params.id]);
     }
-    ok(res, db.prepare("SELECT * FROM kb_columns WHERE project_id=? ORDER BY position ASC").all(req.params.id).map(mapKbColumn));
+    ok(res, (await query("SELECT * FROM kb_columns WHERE project_id=$1 ORDER BY position ASC", [req.params.id])).map(mapKbColumn));
   });
 
-  app.delete("/api/kb/columns/:id", shipmentWrite, async (req, res) => {
+  app.delete("/api/kb/columns/:id", write, async (req, res) => {
     if (await isRemote()) {
       try { await callKanbanService("DELETE", `/internal/kb/columns/${req.params.id}`); return ok(res, { deleted: req.params.id }); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
-    const existing = db.prepare("SELECT * FROM kb_columns WHERE id=?").get(req.params.id);
+    const [existing] = await query("SELECT * FROM kb_columns WHERE id=$1", [req.params.id]);
     if (!existing) return err(res, "Not found", 404);
-    const count = db.prepare("SELECT COUNT(*) AS n FROM kb_columns WHERE project_id=?").get(existing.project_id).n;
-    if (count <= 1) return err(res, "Cannot delete the last column");
-    const ticketCount = db.prepare("SELECT COUNT(*) AS n FROM tickets WHERE status=?").get(existing.name).n;
-    if (ticketCount > 0) return err(res, `Column has ${ticketCount} ticket(s) — move them first`);
-    db.prepare("DELETE FROM kb_columns WHERE id=?").run(req.params.id);
+    const [{ n: count }] = await query("SELECT COUNT(*) AS n FROM kb_columns WHERE project_id=$1", [existing.project_id]);
+    if (Number(count) <= 1) return err(res, "Cannot delete the last column");
+    const [{ n: ticketCount }] = await query("SELECT COUNT(*) AS n FROM tickets WHERE status=$1", [existing.name]);
+    if (Number(ticketCount) > 0) return err(res, `Column has ${ticketCount} ticket(s) — move them first`);
+    await query("DELETE FROM kb_columns WHERE id=$1", [req.params.id]);
     ok(res, { deleted: req.params.id });
   });
 };
