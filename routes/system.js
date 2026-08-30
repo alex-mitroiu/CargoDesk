@@ -1,7 +1,7 @@
 "use strict";
 
 module.exports = function systemRoutes(app, ctx) {
-  const { db, ok, err, auth, requireRole,
+  const { query, transaction, ok, err, auth, requireRole,
           mapSystemMessage, getSettings, scheduleNextOfacSync, scheduleNextCslSync, loadSanctionsIndex, fxCache,
           logAdminEvent, migrationFailures, restartAisListener, rebuildPortLanesMap,
           getAisListenerStatus,
@@ -43,12 +43,13 @@ module.exports = function systemRoutes(app, ctx) {
   app.get("/api/health", async (req, res) => {
     const t = Date.now();
     try {
-      const counts = {
-        shipments: db.prepare("SELECT COUNT(*) AS n FROM shipments").get().n,
-        contracts: db.prepare("SELECT COUNT(*) AS n FROM contracts").get().n,
-        ports:     db.prepare("SELECT COUNT(*) AS n FROM port_locations").get().n,
-        vessels:   db.prepare("SELECT COUNT(*) AS n FROM vessels").get().n,
-      };
+      const [[{ n: shipmentsN }], [{ n: contractsN }], [{ n: portsN }], [{ n: vesselsN }]] = await Promise.all([
+        query("SELECT COUNT(*) AS n FROM shipments"),
+        query("SELECT COUNT(*) AS n FROM contracts"),
+        query("SELECT COUNT(*) AS n FROM port_locations"),
+        query("SELECT COUNT(*) AS n FROM vessels"),
+      ]);
+      const counts = { shipments: Number(shipmentsN), contracts: Number(contractsN), ports: Number(portsN), vessels: Number(vesselsN) };
       const services = await probeMicroservices();
       const ais = getAisListenerStatus ? getAisListenerStatus() : null;
       ok(res, {
@@ -72,35 +73,35 @@ module.exports = function systemRoutes(app, ctx) {
 
   // ─── System Messages ──────────────────────────────────────────────────────
 
-  app.get("/api/system-messages", (req, res) => {
+  app.get("/api/system-messages", async (req, res) => {
     const now = new Date().toISOString().slice(0, 16);
-    const rows = db.prepare(`SELECT * FROM system_messages
-      WHERE (active_from = '' OR active_from <= ?)
-        AND (active_to   = '' OR active_to   >= ?)
-      ORDER BY created_at DESC`).all(now, now);
+    const rows = await query(`SELECT * FROM system_messages
+      WHERE (active_from = '' OR active_from <= $1)
+        AND (active_to   = '' OR active_to   >= $1)
+      ORDER BY created_at DESC`, [now]);
     ok(res, rows.map(mapSystemMessage));
   });
 
-  app.get("/api/system-messages/all", (req, res) => {
-    ok(res, db.prepare("SELECT * FROM system_messages ORDER BY created_at DESC").all().map(mapSystemMessage));
+  app.get("/api/system-messages/all", async (req, res) => {
+    ok(res, (await query("SELECT * FROM system_messages ORDER BY created_at DESC")).map(mapSystemMessage));
   });
 
-  app.post("/api/system-messages", auth(), (req, res) => {
+  app.post("/api/system-messages", auth(), async (req, res) => {
     const { title, body = "", severity = "info", activeFrom = "", activeTo = "" } = req.body;
     if (!title?.trim()) return err(res, "title required");
     const id = `MSG-${ctx.uid()}`;
     const createdAt = new Date().toISOString();
-    db.prepare("INSERT INTO system_messages (id,title,body,severity,active_from,active_to,created_at) VALUES (?,?,?,?,?,?,?)")
-      .run(id, title.trim(), body.trim(), severity, activeFrom, activeTo, createdAt);
-    logAdminEvent(req.user, 'SYSMSG_CREATED', 'system_message', id, { title: title.trim(), severity });
+    await query("INSERT INTO system_messages (id,title,body,severity,active_from,active_to,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+      [id, title.trim(), body.trim(), severity, activeFrom, activeTo, createdAt]);
+    await logAdminEvent(req.user, 'SYSMSG_CREATED', 'system_message', id, { title: title.trim(), severity });
     ok(res, mapSystemMessage({ id, title: title.trim(), body: body.trim(), severity, active_from: activeFrom, active_to: activeTo, created_at: createdAt }), 201);
   });
 
-  app.delete("/api/system-messages/:id", auth(), (req, res) => {
-    const existing = db.prepare("SELECT title FROM system_messages WHERE id=?").get(req.params.id);
-    const info = db.prepare("DELETE FROM system_messages WHERE id=?").run(req.params.id);
-    if (info.changes === 0) return err(res, "Not found", 404);
-    logAdminEvent(req.user, 'SYSMSG_DELETED', 'system_message', req.params.id, { title: existing?.title });
+  app.delete("/api/system-messages/:id", auth(), async (req, res) => {
+    const [existing] = await query("SELECT title FROM system_messages WHERE id=$1", [req.params.id]);
+    const deleted = await query("DELETE FROM system_messages WHERE id=$1 RETURNING id", [req.params.id]);
+    if (deleted.length === 0) return err(res, "Not found", 404);
+    await logAdminEvent(req.user, 'SYSMSG_DELETED', 'system_message', req.params.id, { title: existing?.title });
     ok(res, { deleted: req.params.id });
   });
 
@@ -114,19 +115,19 @@ module.exports = function systemRoutes(app, ctx) {
     const updates = req.body;
     if (!updates || typeof updates !== "object" || Array.isArray(updates))
       return err(res, "Expected JSON object of { key: value } pairs");
-    const stmt = db.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)");
-    db.exec("BEGIN");
     try {
-      for (const [k, v] of Object.entries(updates)) stmt.run(String(k), String(v));
-      db.exec("COMMIT");
-    } catch (e) { db.exec("ROLLBACK"); return err(res, e.message); }
+      await transaction(async (tx) => {
+        for (const [k, v] of Object.entries(updates))
+          await tx.query("INSERT INTO app_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value=$2", [String(k), String(v)]);
+      });
+    } catch (e) { return err(res, e.message); }
     await scheduleNextOfacSync();
     await restartAisListener();
     // Log settings changes — skip secrets
     const safeKeys = Object.fromEntries(
       Object.entries(updates).filter(([k]) => !k.includes('secret') && !k.includes('password'))
     );
-    if (Object.keys(safeKeys).length) logAdminEvent(req.user, 'SETTINGS_UPDATED', 'settings', '', safeKeys);
+    if (Object.keys(safeKeys).length) await logAdminEvent(req.user, 'SETTINGS_UPDATED', 'settings', '', safeKeys);
     ok(res, await getSettings());
   });
 
@@ -136,13 +137,13 @@ module.exports = function systemRoutes(app, ctx) {
   // a different class of action than the operational settings that route otherwise handles.
   // Reads still go through the existing GET /api/settings — every user needs the stored order
   // to render their own sidebar, only writing it is restricted.
-  app.put("/api/settings/shipment-sidebar-order", auth(), requireRole(["admin"]), (req, res) => {
+  app.put("/api/settings/shipment-sidebar-order", auth(), requireRole(["admin"]), async (req, res) => {
     const { order } = req.body || {};
     if (!Array.isArray(order) || order.some(id => typeof id !== "string"))
       return err(res, "order must be an array of section id strings");
     const value = JSON.stringify(order);
-    db.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('shipment_sidebar_order', ?)").run(value);
-    logAdminEvent(req.user, 'SETTINGS_UPDATED', 'settings', 'shipment_sidebar_order', { order });
+    await query("INSERT INTO app_settings (key, value) VALUES ('shipment_sidebar_order', $1) ON CONFLICT (key) DO UPDATE SET value=$1", [value]);
+    await logAdminEvent(req.user, 'SETTINGS_UPDATED', 'settings', 'shipment_sidebar_order', { order });
     ok(res, { order });
   });
 
@@ -151,11 +152,11 @@ module.exports = function systemRoutes(app, ctx) {
   // occ_bk) — switching where every contract/rate read and write actually goes (local monolith
   // tables vs. the standalone Contract Management Service) is a genuine data-source cutover, a
   // different class of action than the operational settings that route otherwise handles.
-  app.put("/api/settings/contract-source", auth(), requireRole(["admin"]), (req, res) => {
+  app.put("/api/settings/contract-source", auth(), requireRole(["admin"]), async (req, res) => {
     const { value } = req.body || {};
     if (value !== "local" && value !== "remote") return err(res, "value must be 'local' or 'remote'");
-    db.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('contract_source', ?)").run(value);
-    logAdminEvent(req.user, 'SETTINGS_UPDATED', 'settings', 'contract_source', { value });
+    await query("INSERT INTO app_settings (key, value) VALUES ('contract_source', $1) ON CONFLICT (key) DO UPDATE SET value=$1", [value]);
+    await logAdminEvent(req.user, 'SETTINGS_UPDATED', 'settings', 'contract_source', { value });
     ok(res, { contractSource: value });
   });
 
@@ -166,8 +167,8 @@ module.exports = function systemRoutes(app, ctx) {
   app.put("/api/settings/mdm-source", auth(), requireRole(["admin"]), async (req, res) => {
     const { value } = req.body || {};
     if (value !== "local" && value !== "remote") return err(res, "value must be 'local' or 'remote'");
-    db.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('mdm_source', ?)").run(value);
-    logAdminEvent(req.user, 'SETTINGS_UPDATED', 'settings', 'mdm_source', { value });
+    await query("INSERT INTO app_settings (key, value) VALUES ('mdm_source', $1) ON CONFLICT (key) DO UPDATE SET value=$1", [value]);
+    await logAdminEvent(req.user, 'SETTINGS_UPDATED', 'settings', 'mdm_source', { value });
     await rebuildPortLanesMap();
     ok(res, { mdmSource: value });
   });
@@ -179,8 +180,8 @@ module.exports = function systemRoutes(app, ctx) {
   app.put("/api/settings/screening-source", auth(), requireRole(["admin"]), async (req, res) => {
     const { value } = req.body || {};
     if (value !== "local" && value !== "remote") return err(res, "value must be 'local' or 'remote'");
-    db.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('screening_source', ?)").run(value);
-    logAdminEvent(req.user, 'SETTINGS_UPDATED', 'settings', 'screening_source', { value });
+    await query("INSERT INTO app_settings (key, value) VALUES ('screening_source', $1) ON CONFLICT (key) DO UPDATE SET value=$1", [value]);
+    await logAdminEvent(req.user, 'SETTINGS_UPDATED', 'settings', 'screening_source', { value });
     await loadSanctionsIndex();
     await scheduleNextOfacSync();
     await scheduleNextCslSync();
@@ -190,21 +191,21 @@ module.exports = function systemRoutes(app, ctx) {
   // Same shape as the three sources above, for the Kanban/Testing Service. No cache to rebuild
   // here (unlike mdm-source/screening-source) — tickets/test items are read fresh per request in
   // both modes, there's no in-memory index that needs an immediate refresh on flip.
-  app.put("/api/settings/kanban-source", auth(), requireRole(["admin"]), (req, res) => {
+  app.put("/api/settings/kanban-source", auth(), requireRole(["admin"]), async (req, res) => {
     const { value } = req.body || {};
     if (value !== "local" && value !== "remote") return err(res, "value must be 'local' or 'remote'");
-    db.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('kanban_source', ?)").run(value);
-    logAdminEvent(req.user, 'SETTINGS_UPDATED', 'settings', 'kanban_source', { value });
+    await query("INSERT INTO app_settings (key, value) VALUES ('kanban_source', $1) ON CONFLICT (key) DO UPDATE SET value=$1", [value]);
+    await logAdminEvent(req.user, 'SETTINGS_UPDATED', 'settings', 'kanban_source', { value });
     ok(res, { kanbanSource: value });
   });
 
   // Same shape as the four sources above, for the Customer Service — the fifth and final
   // "toggle" extraction. No cache to rebuild — customers are read fresh per request either way.
-  app.put("/api/settings/customer-source", auth(), requireRole(["admin"]), (req, res) => {
+  app.put("/api/settings/customer-source", auth(), requireRole(["admin"]), async (req, res) => {
     const { value } = req.body || {};
     if (value !== "local" && value !== "remote") return err(res, "value must be 'local' or 'remote'");
-    db.prepare("INSERT OR REPLACE INTO app_settings (key, value) VALUES ('customer_source', ?)").run(value);
-    logAdminEvent(req.user, 'SETTINGS_UPDATED', 'settings', 'customer_source', { value });
+    await query("INSERT INTO app_settings (key, value) VALUES ('customer_source', $1) ON CONFLICT (key) DO UPDATE SET value=$1", [value]);
+    await logAdminEvent(req.user, 'SETTINGS_UPDATED', 'settings', 'customer_source', { value });
     ok(res, { customerSource: value });
   });
 
@@ -261,26 +262,26 @@ module.exports = function systemRoutes(app, ctx) {
   // row, not just Generator-authored ones, to maximize reuse) — checked before live/demo data.
   // ETD is matched as a window (today..today+weeks*7d), mirroring the same weeks semantics the
   // live/mock paths already use, since a stored schedule's ETD is a specific date, not a range.
-  const catalogSailings = (pol, pod, weeks) => {
+  const catalogSailings = async (pol, pod, weeks) => {
     const today = new Date().toISOString().slice(0, 10);
     const windowEnd = new Date(Date.now() + weeks * 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-    // is_mock=0 excludes stale demo/mock data — before catalog search existed, picking ANY
+    // is_mock=FALSE excludes stale demo/mock data — before catalog search existed, picking ANY
     // sailing (mock, live, or catalog) via Add Sailing always inserted a shipment_schedules row
     // (POST /api/shipments/:id/schedules), including whatever synthetic "DEMO ..." sailing a user
     // happened to pick. Without this filter, those old rows resurface here mislabeled as real
     // curated matches — confirmed live (SHP-W942AJ returned 4 "DEMO DULCIMER"/"DEMO CADENZA" rows
     // tagged source:catalog, none of it real data).
-    const rows = db.prepare(`
+    const rows = await query(`
       SELECT * FROM shipment_schedules
-      WHERE pol=? AND pod=? AND etd != '' AND etd >= ? AND etd <= ? AND is_mock=0
-      ORDER BY etd ASC LIMIT 20`).all(pol, pod, today, windowEnd);
-    return rows.map(r => {
+      WHERE pol=$1 AND pod=$2 AND etd != '' AND etd >= $3 AND etd <= $4 AND is_mock=FALSE
+      ORDER BY etd ASC LIMIT 20`, [pol, pod, today, windowEnd]);
+    return Promise.all(rows.map(async r => {
       // Content-Keyed Sailing Legs — leg detail now lives in sailing_legs, referenced (not owned)
       // via schedule_leg_refs; same join getScheduleLegRows (routes/shipment-ops.js) uses.
-      const legRows = db.prepare(`
+      const legRows = await query(`
         SELECT sl.* FROM schedule_leg_refs ref JOIN sailing_legs sl ON sl.leg_key = ref.leg_key
-        WHERE ref.schedule_id=? ORDER BY ref.leg_order ASC
-      `).all(r.id);
+        WHERE ref.schedule_id=$1 ORDER BY ref.leg_order ASC
+      `, [r.id]);
       const legs = legRows.length >= 2 ? legRows.map(l => ({
         pol: l.pol || "", pod: l.pod || "", etd: l.etd || "", eta: l.eta || "",
         vesselName: l.vessel_name || "", vesselImo: l.vessel_imo || "", voyageNumber: l.voyage_number || "", service: l.service || "",
@@ -291,7 +292,7 @@ module.exports = function systemRoutes(app, ctx) {
         service: r.service || "—", pol: r.pol, pod: r.pod, etd: r.etd, eta: r.eta,
         transitDays: r.transit_days || 0, legs, isMock: false, source: "catalog", scheduleId: r.id,
       };
-    });
+    }));
   };
 
   app.get("/api/schedules/search", auth(), async (req, res) => {
@@ -299,7 +300,7 @@ module.exports = function systemRoutes(app, ctx) {
     if (!pol || !pod) return res.status(400).json({ error: "pol and pod are required" });
     const weeks = Math.min(Math.max(parseInt(w) || 4, 1), 12);
 
-    const catalog = catalogSailings(pol, pod, weeks);
+    const catalog = await catalogSailings(pol, pod, weeks);
 
     let sailings = [...catalog];
     const demoEnabled = (await getSettings()).demo_schedules_enabled !== 'false'; // default on
