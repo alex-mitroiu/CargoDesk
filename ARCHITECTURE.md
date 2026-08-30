@@ -542,7 +542,7 @@ Organization Model roadmap begun at v0.56.0:
 
 | Service | Port | Extracted because | Data ownership |
 |---|---|---|---|
-| **Document Distribution** (`services/document-distribution/`, v0.64.0) | 3002 | Outbound document delivery (email/webhook) has its own retry/failure profile, distinct from request/response HTTP | Owns its own `.db` — webhook configs, delivery attempts |
+| **Document Distribution** (`services/document-distribution/`, v0.64.0) | 3002 | Outbound document delivery (email/webhook) has its own retry/failure profile, distinct from request/response HTTP | Postgres (Phase 0 of the Postgres migration, §13 — `pg` when `DATABASE_URL` is set, embedded `@electric-sql/pglite` otherwise; was SQLite before this) — webhook configs, delivery attempts |
 | **PDF Render** (`services/pdf-render/`, v0.65.1) | 3003 | The heaviest, most bursty thing the monolith did per-request (a full headless-Chromium launch) — see §12 for the full reasoning | Stateless — no database at all |
 | **Contract Management** (`services/contract-management/`, v0.68.0) | 3004 | First real "toggle between local and remote" extraction — proves the pattern before Epic 5 (Customer/Organization) needs it | Owns its own `.db`, a straight port of `contracts`/`contract_legs`/`contract_rates`/`contract_routings` |
 | **MDM** (`services/mdm/`, v0.80.0) | 3005 | Second "toggle between local and remote" extraction, following the sequencing proposed in `documentation/splitting-mdm-first.html` — the lowest-blast-radius domain (no request-path involvement, no outbound FK from any of its tables into shipments/customers/users) | Owns its own `.db`: `carriers`/`vessels`/`port_locations`/`linked_ports`/`trade_lanes`/`country_trade_lanes`/`regions`/`countries`/`commodities`/`carrier_agents`/`carrier_agent_locations`/`carrier_agent_schedule_rows` |
@@ -2009,6 +2009,68 @@ that's a test-harness concern, not something this run is measuring.
   automatic post-run cleanup step for the handful of connections always caught mid-cycle (between
   create and delete) when a run's duration expires, which scales with `connections` and is
   expected, not a bug. Re-verified clean (0 leaked rows) after both runs above.
+
+**Third update — the migration itself is underway, Phase 0 shipped.** Direct decision, after
+seeing the load-test numbers above: commit to the long-term Postgres migration rather than a
+short-term mitigation (a worker-thread pool was considered and explicitly rejected — "short term
+fixes will just have us run into the same problem sooner or later").
+
+Scoping found the true scope is large: **1,273** `db.prepare`/`db.exec` call sites in the
+monolith alone (`server.js` 219, `routes/shipment-ops.js` 199, `routes/shipments.js` 104,
+`routes/mdm.js` 101, ...), only ~32% of route handlers already `async`, and two high-fan-in
+synchronous helpers — `logEntityEvent` (106 call sites across 13 files) and `getSettings` (57
+call sites) — that are the real structural risk to converting the monolith itself, more than the
+raw count is. A separate ~300 call sites are spread across 6 of the 7 microservices (`pdf-render`
+has no database at all) — but critically, **no service calls another service's database or code
+directly** (only the monolith holds every `*_SERVICE_URL` and proxies over HTTP), so each of the
+7 is safely migratable in complete isolation, the same way their original extraction from the
+monolith was. This must be phased across many sessions, at the same cadence the original 7
+microservice extractions used (one per release).
+
+**Environment unblock**: this section's own proof-of-concept had been blocked on "no Postgres
+instance to connect to" in this sandboxed environment (confirmed again: no Docker, no native
+install). `@electric-sql/pglite` (npm, confirmed available) is a genuine WASM-compiled build of
+real Postgres — not a compatibility shim — that runs embedded with zero install and no server
+process, exposing the same `await db.query(sql, params) → {rows}` shape as the standard `pg`
+driver. It's explicitly alpha-status and single-connection-only (its own README: "PGlite is
+single user/connection"), so it validates **schema and query correctness**, not the real
+concurrent-connection-pool behavior that's the actual point of this migration — that still needs
+a genuine Postgres server once one is available, at which point `scripts/load-test.js`'s pattern
+should be re-run against it.
+
+**Phase 0 (shipped): `document-distribution`** — chosen as the first target over de-risking the
+monolith's shared helpers first, since it's the smallest, safest, fully self-contained service (3
+tables, ~11 columns max, 9 call sites, no create-copy-swap migration IIFE) and proves the whole
+pattern end-to-end on a real, already-in-production service before committing further sessions to
+anything bigger. New `services/document-distribution/lib/db.js` — self-contained in this
+service's own `lib/` folder (confirmed no service imports cross-directory from another service or
+the monolith's root `lib/`) — exposes `query(sql, params)` and `transaction(fn)`, backed by a real
+`pg.Pool` when `DATABASE_URL` is set, or a local `@electric-sql/pglite` instance (persisted to
+`services/document-distribution/pgdata/`, gitignored) otherwise. Schema translation: dropped
+`PRAGMA journal_mode=WAL` (Postgres's MVCC covers it natively); `id TEXT PRIMARY KEY` unchanged;
+`is_active` became a real `BOOLEAN` instead of the `INTEGER 0/1` idiom (worth doing correctly
+while the blast radius was small); `TEXT` ISO-8601 date columns stayed `TEXT` for this phase (the
+app already treats them as plain strings everywhere — a real `TIMESTAMP` type is a separate,
+later, non-blocking cleanup). All 9 call sites converted to `await query(...)`, `?` placeholders
+to `$1, $2, ...`, route handlers made `async`. Zero test changes needed — both of this service's
+own test files (38 assertions total) and the monolith's own integration test suite
+(`tests/document-distribution.test.js`/`-gaps.test.js`, 18 assertions) pass identically to the
+SQLite-backed results, plus a real end-to-end manual check through the live monolith→service
+proxy (`GET`/`PUT /api/offices/:id/webhook-settings`) confirmed correct round-tripping.
+
+**Remaining roadmap, explicitly phased, not attempted in one sitting**: Phase 1+ migrates the
+other 5 database-backed services **in this safety-ranked order** (each independently, no
+cross-service coupling to worry about): `screening` (3 tables, 36 call sites) → `customers` (4
+tables, one self-referential FK, 50 call sites) → `kanban` (7 tables, real relational structure,
+79 call sites) → `contract-management` (6 tables with `ON DELETE CASCADE` chains, 68 call sites)
+→ `mdm` (12 tables, 133 call sites, and the one already-known guarded-rebuild-migration gotcha —
+the most valuable lesson-learned target but the riskiest first attempt, hence last). The monolith
+itself is tackled last of all, and needs its own internal sub-phasing: convert `logEntityEvent`
+and `getSettings` to `async` first as a standalone, zero-behavior-change prerequisite (still on
+`node:sqlite` — awaiting an already-synchronous call is a no-op, so this is safe to do before any
+driver swap), then convert route files smallest-to-largest (`finance.js`, `export.js`,
+`charge-codes.js`, ... up through `shipment-ops.js`, `shipments.js`, `mdm.js`, and `server.js`'s
+own core last).
 
 ---
 

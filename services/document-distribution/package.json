@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "license": "UNLICENSED",
-  "description": "CargoDesk's first extracted microservice — owns EDI transmittal records and outbound Webhook delivery for shipment documents. Called only by the monolith (routes/document-distribution.js), never by the browser directly. Resolved dependencies (express) are hoisted from the repo root's node_modules — no separate install step.",
+  "description": "CargoDesk's first extracted microservice — owns EDI transmittal records and outbound Webhook delivery for shipment documents. Called only by the monolith (routes/document-distribution.js), never by the browser directly. Also the first service migrated to Postgres (ARCHITECTURE.md §13, Phase 0) — see lib/db.js. Resolved dependencies (express, pg, @electric-sql/pglite) are hoisted from the repo root's node_modules — no separate install step.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

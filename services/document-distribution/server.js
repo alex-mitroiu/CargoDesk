@@ -1,7 +1,9 @@
 "use strict";
 const express = require("express");
-const path = require("path");
-const { DatabaseSync } = require("node:sqlite");
+// This service has no multi-statement write blocks (confirmed — no BEGIN/COMMIT anywhere in the
+// original SQLite version), so only `query` is needed here; `transaction` is exported by
+// lib/db.js for services that do need it.
+const { query } = require("./lib/db");
 const { registerChannel, distribute } = require("./lib/channels");
 const { isUrlSafe, sendWebhook } = require("./lib/webhookSender");
 const { readSecret } = require("./lib/dockerSecret");
@@ -13,7 +15,6 @@ if (SERVICE_SECRET === SERVICE_SECRET_DEV_DEFAULT)
   console.warn("⚠  DISTRIBUTION_SERVICE_SECRET not set (checked DISTRIBUTION_SERVICE_SECRET_FILE, then DISTRIBUTION_SERVICE_SECRET) — using insecure dev default. Set it (and the same value in the monolith's env) before deploying.");
 
 const app = express();
-const db = new DatabaseSync(path.join(__dirname, "distribution.db"));
 
 // Crash-safety net — same fix applied to the monolith's server.js after a live stress-test found
 // an unhandled route error (a bad enum value, `undefined` bound into a node:sqlite statement)
@@ -42,43 +43,54 @@ const uid = () => Math.random().toString(36).slice(2, 8).toUpperCase();
 const ok = (res, data, status = 200) => res.status(status).json(data);
 const err = (res, msg, status = 400) => res.status(status).json({ error: msg });
 
-db.exec(`
-  PRAGMA journal_mode=WAL;
-  CREATE TABLE IF NOT EXISTS webhook_configs (
-    id           TEXT PRIMARY KEY,
-    scope_id     TEXT NOT NULL UNIQUE,
-    webhook_url  TEXT NOT NULL DEFAULT '',
-    secret       TEXT NOT NULL DEFAULT '',
-    is_active    INTEGER NOT NULL DEFAULT 1,
-    created_at   TEXT NOT NULL,
-    updated_at   TEXT NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS edi_transmittals (
-    id              TEXT PRIMARY KEY,
-    shipment_id     TEXT NOT NULL,
-    document_id     TEXT NOT NULL,
-    doc_type        TEXT DEFAULT '',
-    filename        TEXT DEFAULT '',
-    size_bytes      INTEGER DEFAULT 0,
-    checksum        TEXT DEFAULT '',
-    recipient_code  TEXT DEFAULT '',
-    recipient_label TEXT DEFAULT '',
-    status          TEXT NOT NULL DEFAULT 'sent',
-    created_at      TEXT NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS webhook_deliveries (
-    id           TEXT PRIMARY KEY,
-    shipment_id  TEXT NOT NULL,
-    document_id  TEXT NOT NULL,
-    scope_id     TEXT NOT NULL,
-    webhook_url  TEXT NOT NULL,
-    status       TEXT NOT NULL,
-    http_status  INTEGER,
-    error        TEXT DEFAULT '',
-    payload      TEXT NOT NULL,
-    created_at   TEXT NOT NULL
-  );
-`);
+// Postgres DDL (Phase 0 of the CargoDesk Postgres migration) — no PRAGMA needed, Postgres's own
+// MVCC covers what journal_mode=WAL opted into under SQLite. is_active is a real BOOLEAN now
+// instead of the 0/1 idiom SQLite required; every read/write of it below returns/accepts a plain
+// JS boolean, no !!/? 1 : 0 conversion needed anymore. Dates stay TEXT (ISO-8601 strings) for this
+// phase — the app already treats them as plain strings everywhere, and giving them a real
+// TIMESTAMP type is a separate, later, non-blocking cleanup.
+async function initSchema() {
+  await query(`
+    CREATE TABLE IF NOT EXISTS webhook_configs (
+      id           TEXT PRIMARY KEY,
+      scope_id     TEXT NOT NULL UNIQUE,
+      webhook_url  TEXT NOT NULL DEFAULT '',
+      secret       TEXT NOT NULL DEFAULT '',
+      is_active    BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at   TEXT NOT NULL,
+      updated_at   TEXT NOT NULL
+    )
+  `);
+  await query(`
+    CREATE TABLE IF NOT EXISTS edi_transmittals (
+      id              TEXT PRIMARY KEY,
+      shipment_id     TEXT NOT NULL,
+      document_id     TEXT NOT NULL,
+      doc_type        TEXT DEFAULT '',
+      filename        TEXT DEFAULT '',
+      size_bytes      INTEGER DEFAULT 0,
+      checksum        TEXT DEFAULT '',
+      recipient_code  TEXT DEFAULT '',
+      recipient_label TEXT DEFAULT '',
+      status          TEXT NOT NULL DEFAULT 'sent',
+      created_at      TEXT NOT NULL
+    )
+  `);
+  await query(`
+    CREATE TABLE IF NOT EXISTS webhook_deliveries (
+      id           TEXT PRIMARY KEY,
+      shipment_id  TEXT NOT NULL,
+      document_id  TEXT NOT NULL,
+      scope_id     TEXT NOT NULL,
+      webhook_url  TEXT NOT NULL,
+      status       TEXT NOT NULL,
+      http_status  INTEGER,
+      error        TEXT DEFAULT '',
+      payload      TEXT NOT NULL,
+      created_at   TEXT NOT NULL
+    )
+  `);
+}
 
 // Public liveness check — no secret required, mirrors the monolith's own GET /api/health.
 app.get("/health", (req, res) => ok(res, { status: "ok", service: "document-distribution", uptime: process.uptime() }));
@@ -94,32 +106,32 @@ app.use("/internal", (req, res, next) => {
 
 // ─── Webhook config CRUD (per opaque scope id — the monolith's office id, never validated here) ──
 
-app.get("/internal/webhook-configs/:scopeId", (req, res) => {
-  const row = db.prepare("SELECT * FROM webhook_configs WHERE scope_id=?").get(req.params.scopeId);
+app.get("/internal/webhook-configs/:scopeId", async (req, res) => {
+  const [row] = await query("SELECT * FROM webhook_configs WHERE scope_id=$1", [req.params.scopeId]);
   // isActive defaults true for a never-configured scope, matching office_mail_settings'
   // own DEFAULT_SETTINGS convention (routes/office-mail.js) — found live via CDP verification:
   // the frontend form always sends an explicit isActive value seeded from this GET response, so
   // defaulting false here meant a brand-new webhook silently saved as inactive even though the
   // PUT route's own isActive=true default (line below) was never actually reachable in practice.
   if (!row) return ok(res, { scopeId: req.params.scopeId, webhookUrl: "", isActive: true, hasSecret: false });
-  ok(res, { scopeId: row.scope_id, webhookUrl: row.webhook_url, isActive: !!row.is_active, hasSecret: !!row.secret });
+  ok(res, { scopeId: row.scope_id, webhookUrl: row.webhook_url, isActive: row.is_active, hasSecret: !!row.secret });
 });
 
-app.put("/internal/webhook-configs/:scopeId", (req, res) => {
+app.put("/internal/webhook-configs/:scopeId", async (req, res) => {
   const { webhookUrl = "", secret, isActive = true } = req.body || {};
   if (webhookUrl && !isUrlSafe(webhookUrl)) return err(res, "Webhook URL must be https and not point at a private/internal address");
-  const existing = db.prepare("SELECT * FROM webhook_configs WHERE scope_id=?").get(req.params.scopeId);
+  const [existing] = await query("SELECT * FROM webhook_configs WHERE scope_id=$1", [req.params.scopeId]);
   const now = new Date().toISOString();
   const finalSecret = secret != null && secret !== "" ? secret : (existing?.secret || "");
   if (existing) {
-    db.prepare("UPDATE webhook_configs SET webhook_url=?, secret=?, is_active=?, updated_at=? WHERE scope_id=?")
-      .run(webhookUrl, finalSecret, isActive ? 1 : 0, now, req.params.scopeId);
+    await query("UPDATE webhook_configs SET webhook_url=$1, secret=$2, is_active=$3, updated_at=$4 WHERE scope_id=$5",
+      [webhookUrl, finalSecret, isActive, now, req.params.scopeId]);
   } else {
-    db.prepare("INSERT INTO webhook_configs (id, scope_id, webhook_url, secret, is_active, created_at, updated_at) VALUES (?,?,?,?,?,?,?)")
-      .run(`WHC-${uid()}`, req.params.scopeId, webhookUrl, finalSecret, isActive ? 1 : 0, now, now);
+    await query("INSERT INTO webhook_configs (id, scope_id, webhook_url, secret, is_active, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+      [`WHC-${uid()}`, req.params.scopeId, webhookUrl, finalSecret, isActive, now, now]);
   }
-  const row = db.prepare("SELECT * FROM webhook_configs WHERE scope_id=?").get(req.params.scopeId);
-  ok(res, { scopeId: row.scope_id, webhookUrl: row.webhook_url, isActive: !!row.is_active, hasSecret: !!row.secret });
+  const [row] = await query("SELECT * FROM webhook_configs WHERE scope_id=$1", [req.params.scopeId]);
+  ok(res, { scopeId: row.scope_id, webhookUrl: row.webhook_url, isActive: row.is_active, hasSecret: !!row.secret });
 });
 
 app.post("/internal/webhook-configs/:scopeId/test", async (req, res) => {
@@ -138,15 +150,15 @@ app.post("/internal/webhook-configs/:scopeId/test", async (req, res) => {
 registerChannel("edi", async ({ shipmentId, documentId, docType, filename, sizeBytes, checksum, recipientCode, recipientLabel }) => {
   const id = `EDIT-${uid()}`;
   const createdAt = new Date().toISOString();
-  db.prepare(`INSERT INTO edi_transmittals
+  await query(`INSERT INTO edi_transmittals
     (id, shipment_id, document_id, doc_type, filename, size_bytes, checksum, recipient_code, recipient_label, status, created_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
-    .run(id, shipmentId, documentId, docType || "", filename || "", sizeBytes || 0, checksum || "", recipientCode || "", recipientLabel || "", "sent", createdAt);
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+    [id, shipmentId, documentId, docType || "", filename || "", sizeBytes || 0, checksum || "", recipientCode || "", recipientLabel || "", "sent", createdAt]);
   return { transmittalId: id, status: "sent", sentAt: createdAt };
 });
 
 registerChannel("webhook", async ({ shipmentId, documentId, docType, filename, scopeId, downloadUrl }) => {
-  const config = db.prepare("SELECT * FROM webhook_configs WHERE scope_id=? AND is_active=1").get(scopeId);
+  const [config] = await query("SELECT * FROM webhook_configs WHERE scope_id=$1 AND is_active=true", [scopeId]);
   if (!config || !config.webhook_url) {
     const e = new Error("No active webhook configured for this office");
     e.status = 400;
@@ -172,10 +184,10 @@ registerChannel("webhook", async ({ shipmentId, documentId, docType, filename, s
     status = "failed";
     errorMsg = e.message;
   }
-  db.prepare(`INSERT INTO webhook_deliveries
+  await query(`INSERT INTO webhook_deliveries
     (id, shipment_id, document_id, scope_id, webhook_url, status, http_status, error, payload, created_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?)`)
-    .run(id, shipmentId, documentId, scopeId, config.webhook_url, status, httpStatus, errorMsg, JSON.stringify(payload), createdAt);
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+    [id, shipmentId, documentId, scopeId, config.webhook_url, status, httpStatus, errorMsg, JSON.stringify(payload), createdAt]);
 
   if (status === "failed") { const e = new Error(errorMsg || "Webhook delivery failed"); e.status = 502; throw e; }
   return { deliveryId: id, status: "sent", httpStatus };
@@ -214,7 +226,9 @@ app.use((error, req, res, next) => {
 });
 
 if (require.main === module) {
-  app.listen(PORT, () => console.log(`📦  Document Distribution Service running on http://localhost:${PORT}`));
+  initSchema()
+    .then(() => app.listen(PORT, () => console.log(`📦  Document Distribution Service running on http://localhost:${PORT}`)))
+    .catch(e => { console.error("Failed to initialize database schema:", e); process.exit(1); });
 }
 
-module.exports = { app, db };
+module.exports = { app, initSchema };
