@@ -547,7 +547,7 @@ Organization Model roadmap begun at v0.56.0:
 | **Contract Management** (`services/contract-management/`, v0.68.0) | 3004 | First real "toggle between local and remote" extraction — proves the pattern before Epic 5 (Customer/Organization) needs it | Owns its own `.db`, a straight port of `contracts`/`contract_legs`/`contract_rates`/`contract_routings` |
 | **MDM** (`services/mdm/`, v0.80.0) | 3005 | Second "toggle between local and remote" extraction, following the sequencing proposed in `documentation/splitting-mdm-first.html` — the lowest-blast-radius domain (no request-path involvement, no outbound FK from any of its tables into shipments/customers/users) | Owns its own `.db`: `carriers`/`vessels`/`port_locations`/`linked_ports`/`trade_lanes`/`country_trade_lanes`/`regions`/`countries`/`commodities`/`carrier_agents`/`carrier_agent_locations`/`carrier_agent_schedule_rows` |
 | **Screening** (`services/screening/`, v0.81.0) | 3006 | Third "toggle between local and remote" extraction — externally-sourced denylist data, zero outbound FK, read via name-match not JOIN (`documentation/splitting-sanctions-next.html`) | Postgres (Phase 1 of the Postgres migration, §13 — `pg` when `DATABASE_URL` is set, embedded `@electric-sql/pglite` otherwise; was SQLite before this): `sanctions_entries`/`sanctions_syncs`, plus a small local `settings` table for its own auto-sync schedule (no admin UI for it yet — see below) |
-| **Kanban/Testing** (`services/kanban/`, v0.82.0) | 3007 | Fourth "toggle between local and remote" extraction — a feature the roadmap expects to eventually go away entirely (`documentation/splitting-kanban-out.html`), so keeping its schema fully separable now avoids leftovers later | Owns its own `.db`: `tickets`/`ticket_links`/`test_items`/`test_case_links`/`kb_projects`/`kb_versions`/`kb_columns` |
+| **Kanban/Testing** (`services/kanban/`, v0.82.0) | 3007 | Fourth "toggle between local and remote" extraction — a feature the roadmap expects to eventually go away entirely (`documentation/splitting-kanban-out.html`), so keeping its schema fully separable now avoids leftovers later | Postgres (Phase 3 of the Postgres migration, §13 — `pg` when `DATABASE_URL` is set, embedded `@electric-sql/pglite` otherwise; was SQLite before this): `tickets`/`ticket_links`/`test_items`/`test_case_links`/`kb_projects`/`kb_versions`/`kb_columns` |
 | **Customer/Organization** (`services/customers/`, v0.84.0) | 3008 | Fifth and final "toggle between local and remote" extraction, and the last story of the 5-epic Organization Model roadmap begun at v0.56.0 — deliberately sequenced last, after the data model had fully settled | Postgres (Phase 2 of the Postgres migration, §13 — `pg` when `DATABASE_URL` is set, embedded `@electric-sql/pglite` otherwise; was SQLite before this): `customers`/`customer_identifiers`/`customer_contacts`/`customer_screenings`. `customer_documents` and `customer_roles` are deliberately excluded — see the Customer-specific notes below |
 
 All five of Contract Management, MDM, Screening, Kanban/Testing, and Customer/Organization share
@@ -2010,7 +2010,7 @@ that's a test-harness concern, not something this run is measuring.
   create and delete) when a run's duration expires, which scales with `connections` and is
   expected, not a bug. Re-verified clean (0 leaked rows) after both runs above.
 
-**Third update — the migration itself is underway, Phases 0, 1, and 2 shipped.** Direct decision, after
+**Third update — the migration itself is underway, Phases 0 through 3 shipped.** Direct decision, after
 seeing the load-test numbers above: commit to the long-term Postgres migration rather than a
 short-term mitigation (a worker-thread pool was considered and explicitly rejected — "short term
 fixes will just have us run into the same problem sooner or later").
@@ -2109,12 +2109,38 @@ toggle suites so far, exercising credit-hold, margin group-rollup, and the scree
 write/cross-reference split all through the remote branch), all passing identically to the
 SQLite-backed results.
 
-**Remaining roadmap, explicitly phased, not attempted in one sitting**: Phase 3+ migrates the
-other 3 database-backed services **in this safety-ranked order** (each independently, no
-cross-service coupling to worry about): `kanban` (7 tables, real relational structure,
-79 call sites) → `contract-management` (6 tables with `ON DELETE CASCADE` chains, 68 call sites)
-→ `mdm` (12 tables, 133 call sites, and the one already-known guarded-rebuild-migration gotcha —
-the most valuable lesson-learned target but the riskiest first attempt, hence last). The monolith
+**Phase 3 (shipped): `kanban`** — 7 tables (`tickets`, `ticket_links`, `test_items`,
+`test_case_links`, `kb_projects`, `kb_versions`, `kb_columns`), 79 call sites, the first phase
+with real relational structure spanning multiple independent entity families (tickets ↔ their
+own links, test items ↔ their own story-links to tickets, projects ↔ versions/columns via
+`ON DELETE CASCADE` — enforced natively in Postgres, no code needed). New
+`services/kanban/lib/db.js`, same shape as Phases 0-2. No boolean columns anywhere in this
+schema, so — unlike `customers` — this phase needed no `INTEGER 0/1` → `BOOLEAN` conversion at
+all. Translation notes specific to this phase: the atomic "create ticket if this
+(source_type, source_id) pair doesn't already exist" route (`POST /internal/tickets/ensure`,
+backing `ensureOpsTicket`'s remote branch and its own `UNIQUE(source_type, source_id)`
+constraint) converted from `INSERT OR IGNORE` to `INSERT ... ON CONFLICT (source_type,
+source_id) DO NOTHING RETURNING id` — a composite-column conflict target rather than the
+usual bare `id`, since that's the actual constraint being raced against; several N+1-shaped
+per-row sub-queries inside a `.map()` (ticket links' "resolve the other ticket", story-links'
+"resolve the linked ticket/test case") converted to `Promise.all(rows.map(async ...))` rather
+than a plain sequential loop, since a plain `.map()` callback can't itself be awaited. The
+recursive test-item descendant collector (`collectDescendants`, backing cascade delete) and its
+transactional two-table cascade delete (`test_case_links` then `test_items`) both converted
+cleanly using the shared `transaction()` helper — the same "wrap the whole body, roll back on
+throw" pattern already used for `bulk-import` in every prior phase. 27 new assertions
+(`kanban-crud.test.js`) plus 14 (`testcases-crud.test.js`) — 41 total — plus the monolith's
+19-assertion `kanban-service-toggle` suite (covering the assignee-name-resolution ripple, the
+cross-table story-link JOIN surviving remotely, and — the most load-bearing case — two
+consecutive ops-automation sweep runs proving the new `ON CONFLICT`-backed atomicity actually
+holds), all passing identically to the SQLite-backed results.
+
+**Remaining roadmap, explicitly phased, not attempted in one sitting**: Phase 4+ migrates the
+other 2 database-backed services **in this safety-ranked order** (each independently, no
+cross-service coupling to worry about): `contract-management` (6 tables with `ON DELETE CASCADE`
+chains, 68 call sites) → `mdm` (12 tables, 133 call sites, and the one already-known
+guarded-rebuild-migration gotcha — the most valuable lesson-learned target but the riskiest
+first attempt, hence last). The monolith
 itself is tackled last of all, and needs its own internal sub-phasing: convert `logEntityEvent`
 and `getSettings` to `async` first as a standalone, zero-behavior-change prerequisite (still on
 `node:sqlite` — awaiting an already-synchronous call is a no-op, so this is safe to do before any
