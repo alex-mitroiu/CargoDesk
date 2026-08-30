@@ -6,7 +6,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
           mapShipment, mapShipmentLeg, mapContainer, mapContainerEvent, mapContainerPackage, mapAllocation,
           mapShipmentParty, ADDITIONAL_PARTY_ROLES, mapSideOffice, canEditOfficeSide,
           applyShipmentAccessFilter, syncShipmentFromLegs, importContractRates,
-          broadcastMessage, broadcastEditLockChange, recomputeSpaceBadge, screenShipmentById, resolveCarrierAgent,
+          broadcastMessage, broadcastEditLockChange, recomputeSpaceBadge, screenShipmentById, resolveCarrierAgent, resolveCarrierAgentCandidates,
           logEvent, logEntityEvent, TRACKED_FIELDS, TRACKED_CTR_FIELDS, FREE_TIME_WARNING_DAYS,
           sanctionsMap, autoCompleteMilestone, ensureBookingCreated, toUsd,
           validCoord, GPS_LOC_TYPE, getSettings, callContractService, getCustomerRow } = ctx;
@@ -64,17 +64,21 @@ module.exports = function shipmentsRoutes(app, ctx) {
   };
 
   // Carrier Line Agents — resolves the carrier's registered agent at POL/POD (carrier_agents,
-  // via resolveCarrierAgent) and, for each side where one's found, adds it as an ordinary
-  // "Line Agent (Export/Import)" additional party. The UNIQUE(shipment_id, role) constraint on
-  // shipment_parties IS the "only fill an empty slot, never overwrite" mechanism — same idiom
-  // POST /api/shipments/:id/parties below already relies on — so this never clobbers a party
-  // that's already there, whether CargoDesk set it earlier or a person did. No transaction: the
-  // two sides are independent single-row writes on two different role strings, so one resolving
-  // and the other not (no agent registered for that port yet) is a normal, non-corrupting result.
+  // via resolveCarrierAgentCandidates) and, for each side with EXACTLY ONE candidate, adds it as
+  // an ordinary "Line Agent (Export/Import)" additional party. The UNIQUE(shipment_id, role)
+  // constraint on shipment_parties IS the "only fill an empty slot, never overwrite" mechanism —
+  // same idiom POST /api/shipments/:id/parties below already relies on — so this never clobbers a
+  // party that's already there, whether CargoDesk set it earlier or a person did. No transaction:
+  // the two sides are independent single-row writes on two different role strings, so one
+  // resolving and the other not is a normal, non-corrupting result. A side with 2+ candidates
+  // (only possible via the linked-ports fallback — see resolveCarrierAgentCandidates) is
+  // deliberately left unassigned rather than guessing which one — GET .../line-agent-candidates
+  // below surfaces it for the operator to pick instead.
   const maybeAssignLineAgents = async (shipmentId, carrierCode, pol, pod) => {
     for (const [port, role] of [[pol, "Line Agent (Export)"], [pod, "Line Agent (Import)"]]) {
-      const match = await resolveCarrierAgent(carrierCode, port);
-      if (!match) continue;
+      const candidates = await resolveCarrierAgentCandidates(carrierCode, port);
+      if (candidates.length !== 1) continue;
+      const match = candidates[0];
       try {
         db.prepare(`INSERT INTO shipment_parties (id, shipment_id, role, customer_id, customer_name, created_at)
           VALUES (?,?,?,?,?,?)`)
@@ -1109,6 +1113,38 @@ module.exports = function shipmentsRoutes(app, ctx) {
   app.get("/api/shipments/:id/parties", auth(), (req, res) => {
     const rows = db.prepare("SELECT * FROM shipment_parties WHERE shipment_id=? ORDER BY created_at ASC").all(req.params.id);
     ok(res, rows.map(mapShipmentParty));
+  });
+
+  // Read-only: surfaces a Line Agent side that maybeAssignLineAgents (above) deliberately left
+  // unassigned because resolveCarrierAgentCandidates found 2+ equally-valid candidates (only
+  // possible via the linked-ports fallback) rather than guess which one. A side already filled —
+  // whether by that auto-assign, or manually — has nothing to resolve and is omitted entirely, not
+  // just because it'd be redundant: re-showing it would let a "pick" here silently overwrite an
+  // operator's own deliberate manual choice. Picking a candidate is done via the existing
+  // POST /api/shipments/:id/parties — this route only ever reads.
+  app.get("/api/shipments/:id/line-agent-candidates", auth(), async (req, res) => {
+    const shipment = db.prepare("SELECT carrier_code, pol, pod FROM shipments WHERE id=?").get(req.params.id);
+    if (!shipment) return err(res, "Not found", 404);
+    const filled = new Set(
+      db.prepare("SELECT role FROM shipment_parties WHERE shipment_id=? AND role IN (?,?)")
+        .all(req.params.id, "Line Agent (Export)", "Line Agent (Import)")
+        .map(r => r.role)
+    );
+    const result = {};
+    const sides = [
+      ["export", "Line Agent (Export)", shipment.pol],
+      ["import", "Line Agent (Import)", shipment.pod],
+    ];
+    for (const [key, role, port] of sides) {
+      if (filled.has(role) || !shipment.carrier_code || !port) continue;
+      const candidates = await resolveCarrierAgentCandidates(shipment.carrier_code, port);
+      if (candidates.length > 1) {
+        result[key] = candidates.map(c => ({
+          agentCustomerId: c.agent_customer_id, agentCustomerName: c.agent_customer_name, matchedVia: c.matched_via,
+        }));
+      }
+    }
+    ok(res, result);
   });
 
   app.post("/api/shipments/:id/parties", shipmentWrite, async (req, res) => {

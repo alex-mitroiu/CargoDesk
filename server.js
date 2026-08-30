@@ -4573,19 +4573,29 @@ const linkedPortCodes = code => db.prepare(`
 // linked-port fallback (linkedPortCodes, below) always reads the local linked_ports table even
 // when mdm_source=remote — only affects the narrow case of contract_source=local combined with
 // mdm_source=remote; see ARCHITECTURE.md.
-// Resolves the Line Agent covering a given carrier+port — a location can match either as a
-// direct UNLOCODE row or via a country-level row (the port's own country), and if neither
-// matches directly, falls back through linked ports exactly as before this restructure.
-async function resolveCarrierAgent(carrierCode, portUnlocode) {
+// Resolves EVERY Line Agent candidate covering a given carrier+port — a location can match either
+// as a direct UNLOCODE row or via a country-level row (the port's own country), and if neither
+// matches directly, falls back through linked ports. A direct or country-level match is always
+// exclusivity-enforced at write time (only one carrier_agents header can claim a given port or
+// country per carrier), so those two tiers can only ever produce 0 or 1 result — genuine ambiguity
+// (2+ candidates) can only arise from the linked-ports fallback, when a port is linked to several
+// others and more than one of them has its own independent, valid agent for the same carrier.
+// Each returned row carries `matched_via` (the actual port that matched — the query port itself
+// for a direct/country hit, or whichever linked port produced it) so a caller can explain *why*
+// each candidate is plausible. resolveCarrierAgent (below) is the old single-result contract, kept
+// for its two existing callers that only ever want "the" match when unambiguous.
+async function resolveCarrierAgentCandidates(carrierCode, portUnlocode) {
   if ((getSettings().mdm_source || "local") === "remote") {
-    let row;
-    try { row = await callMdmService("GET", `/internal/carrier-agents/resolve?carrierCode=${encodeURIComponent(carrierCode)}&port=${encodeURIComponent(portUnlocode)}`); }
-    catch { return null; }
-    if (!row) return null;
-    const cust = db.prepare("SELECT company_name FROM customers WHERE id=?").get(row.agentCustomerId);
-    return { id: row.id, carrier_code: row.carrierCode,
-      agent_customer_id: row.agentCustomerId, agent_customer_name: cust?.company_name || '',
-      note: row.note, created_at: row.createdAt };
+    let rows;
+    try { rows = await callMdmService("GET", `/internal/carrier-agents/resolve?carrierCode=${encodeURIComponent(carrierCode)}&port=${encodeURIComponent(portUnlocode)}&all=1`); }
+    catch { return []; }
+    rows = Array.isArray(rows) ? rows : (rows ? [rows] : []);
+    return rows.map(row => {
+      const cust = db.prepare("SELECT company_name FROM customers WHERE id=?").get(row.agentCustomerId);
+      return { id: row.id, carrier_code: row.carrierCode,
+        agent_customer_id: row.agentCustomerId, agent_customer_name: cust?.company_name || '',
+        note: row.note, created_at: row.createdAt, matched_via: row.matchedVia || portUnlocode };
+    });
   }
   const tryPort = p => {
     const direct = db.prepare(`
@@ -4606,7 +4616,16 @@ async function resolveCarrierAgent(carrierCode, portUnlocode) {
       WHERE ca.carrier_code=? AND cal.location_type='country' AND cal.country_iso2=?
     `).get(carrierCode, port.country_code);
   };
-  return tryPort(portUnlocode) || linkedPortCodes(portUnlocode).map(tryPort).find(Boolean) || null;
+  const direct = tryPort(portUnlocode);
+  if (direct) return [{ ...direct, matched_via: portUnlocode }];
+  return linkedPortCodes(portUnlocode)
+    .map(p => { const row = tryPort(p); return row ? { ...row, matched_via: p } : null; })
+    .filter(Boolean);
+}
+
+async function resolveCarrierAgent(carrierCode, portUnlocode) {
+  const candidates = await resolveCarrierAgentCandidates(carrierCode, portUnlocode);
+  return candidates[0] || null;
 }
 
 // Finds every distinct run of legs covering pol->pod as one connected journey, one match per
@@ -4985,7 +5004,7 @@ const ctx = {
   autoCompleteMilestone,
   ensureBookingCreated, supersedeIfCarrierChanged,
   runOpsAutomationSweep,
-  linkedPortCodes, findMatchingContractLegs, resolveCarrierAgent,
+  linkedPortCodes, findMatchingContractLegs, resolveCarrierAgent, resolveCarrierAgentCandidates,
   screenShipmentById, rescreenActiveShipments, resolveCustomerGroup,
   computeArExposure, docAmountUsd, runDunningSweep, runScheduledReportsSweep, matchesScopeItem, userOwnsLaneForShipment, userOwnsLaneForCustomer,
   canEditOfficeSide,

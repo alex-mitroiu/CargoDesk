@@ -671,8 +671,8 @@ app.put("/internal/carrier-agents/:id/schedule", (req, res) => {
 // match either a direct UNLOCODE row or a country-level row (the port's own country). Returns
 // the raw row + locations (no customer name) or null.
 app.get("/internal/carrier-agents/resolve", (req, res) => {
-  const { carrierCode = '', port = '' } = req.query;
-  if (!carrierCode || !port) return ok(res, null);
+  const { carrierCode = '', port = '', all } = req.query;
+  if (!carrierCode || !port) return ok(res, all ? [] : null);
   const tryPort = p => {
     const direct = db.prepare(`
       SELECT ca.* FROM carrier_agents ca
@@ -689,11 +689,17 @@ app.get("/internal/carrier-agents/resolve", (req, res) => {
     `).get(carrierCode, portRow.country_code);
   };
   const direct = tryPort(port);
-  if (direct) return ok(res, mapCarrierAgent(direct));
+  if (direct) return ok(res, all ? [{ ...mapCarrierAgent(direct), matchedVia: port }] : mapCarrierAgent(direct));
   const linked = db.prepare(`
     SELECT CASE WHEN primary_unlocode=? THEN linked_unlocode ELSE primary_unlocode END AS code
     FROM linked_ports WHERE primary_unlocode=? OR linked_unlocode=?
   `).all(port, port, port).map(r => r.code);
+  if (all) {
+    const candidates = linked
+      .map(p => { const row = tryPort(p); return row ? { ...mapCarrierAgent(row), matchedVia: p } : null; })
+      .filter(Boolean);
+    return ok(res, candidates);
+  }
   for (const p of linked) { const row = tryPort(p); if (row) return ok(res, mapCarrierAgent(row)); }
   ok(res, null);
 });

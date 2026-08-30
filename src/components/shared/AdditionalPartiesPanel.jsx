@@ -6,7 +6,67 @@ import { useAuth } from "../../AuthContext";
 import { inputBase } from "../primitives/Form";
 import Btn from "../primitives/Btn";
 import Spinner from "../primitives/Spinner";
+import { Modal } from "../primitives/Modal";
 import CustomerCombobox from "./CustomerCombobox";
+
+// ─── Line Agent Candidates Modal ──────────────────────────────────────────────
+// Modeled directly on PendingRevalidationModal (ShipmentDetailPage.jsx) — same visual language
+// (Modal, selectable cards, single-vs-multi wording) for the same class of problem: an
+// auto-resolution step found more than one equally-valid option and needs a human pick instead of
+// guessing. Dismissible, not forced — closing without picking leaves the role exactly as
+// unassigned as it already is; AdditionalPartiesPanel's own manual "+ Add Party" flow is always
+// still there as a fallback. Each side (export/import) resolves independently — picking one
+// doesn't require picking the other in the same sitting.
+const SIDE_LABEL = { export: "Line Agent (Export)", import: "Line Agent (Import)" };
+
+const LineAgentCandidatesModal = ({ candidates, onResolve, onDismiss }) => {
+  const sides = Object.keys(candidates);
+  const [selected, setSelected] = useState({});
+
+  return (
+    <Modal
+      title={sides.length > 1 ? "Multiple Line Agent Picks Needed" : "Multiple Line Agents Found"}
+      onClose={onDismiss}
+      width={560}
+    >
+      <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+        <p style={{ fontFamily: T.body, fontSize: 13, color: T.text, lineHeight: 1.6, margin: 0 }}>
+          More than one registered Line Agent matches this shipment's route via a linked port —
+          pick which one to assign below, or dismiss and assign one manually later.
+        </p>
+        {sides.map(side => (
+          <div key={side}>
+            <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 700,
+              textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 8 }}>
+              {SIDE_LABEL[side]} — {candidates[side].length} candidates
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {candidates[side].map(c => (
+                <button key={c.agentCustomerId} type="button"
+                  onClick={() => setSelected(s => ({ ...s, [side]: c.agentCustomerId }))}
+                  style={{ textAlign: "left", padding: "10px 14px", borderRadius: 8, cursor: "pointer",
+                    border: `1px solid ${selected[side] === c.agentCustomerId ? T.accent : T.border}`,
+                    background: selected[side] === c.agentCustomerId ? T.accentBg : T.bg }}>
+                  <div style={{ fontFamily: T.body, fontSize: 14, fontWeight: 700, color: T.text }}>{c.agentCustomerName}</div>
+                  <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, marginTop: 2 }}>via linked port {c.matchedVia}</div>
+                </button>
+              ))}
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 10 }}>
+              <Btn size="sm" variant="primary" disabled={!selected[side]}
+                onClick={() => onResolve(side, selected[side], candidates[side].find(c => c.agentCustomerId === selected[side])?.agentCustomerName)}>
+                Assign
+              </Btn>
+            </div>
+          </div>
+        ))}
+        <div style={{ display: "flex", justifyContent: "flex-end", paddingTop: 12, borderTop: `1px solid ${T.border}` }}>
+          <Btn variant="ghost" onClick={onDismiss}>Close</Btn>
+        </div>
+      </div>
+    </Modal>
+  );
+};
 
 // ─── Additional Parties Panel (Epic TKT-5XFCAP, Story TKT-J7BLP6) ─────────────
 // Generic, extensible party-role assignment sitting alongside the 4 fixed
@@ -24,9 +84,35 @@ const AdditionalPartiesPanel = ({ shipmentId }) => {
   const [editingId,    setEditingId]    = useState(null);
   const [editCustomer, setEditCustomer] = useState({ id: "", name: "" });
   const [saving,       setSaving]       = useState(false);
+  const [lineAgentCandidates, setLineAgentCandidates] = useState(null);
+  const [candidatesDismissed, setCandidatesDismissed] = useState(false);
 
   const load = () => api.shipmentParties.list(shipmentId).then(setParties).catch(() => setParties([]));
   useEffect(() => { load(); }, [shipmentId]);
+
+  // Independent re-detection, same as AdditionalPartiesPanel's own party list above and the
+  // header's own badge — no shared state between the two, matching the Pending Revalidation
+  // precedent (ShipmentHeaderBar.jsx / ShipmentSchedulesPage.jsx).
+  useEffect(() => {
+    let live = true;
+    api.shipments.lineAgentCandidates(shipmentId)
+      .then(r => { if (live) setLineAgentCandidates((r?.export?.length || r?.import?.length) ? r : null); })
+      .catch(() => { if (live) setLineAgentCandidates(null); });
+    return () => { live = false; };
+  }, [shipmentId]);
+
+  const handleResolveLineAgent = async (side, agentCustomerId, agentCustomerName) => {
+    try {
+      await api.shipmentParties.create(shipmentId, { role: SIDE_LABEL[side], customerId: agentCustomerId, customerName: agentCustomerName });
+      setLineAgentCandidates(prev => {
+        if (!prev) return prev;
+        const next = { ...prev };
+        delete next[side];
+        return Object.keys(next).length ? next : null;
+      });
+      await load();
+    } catch (e) { toast.error(e.message); }
+  };
 
   const assignedRoles  = new Set((parties || []).map(p => p.role));
   const availableRoles = ADDITIONAL_PARTY_ROLES.filter(r => !assignedRoles.has(r));
@@ -154,6 +240,14 @@ const AdditionalPartiesPanel = ({ shipmentId }) => {
           ＋ Add Party
         </button>
       ))}
+
+      {lineAgentCandidates && !candidatesDismissed && (
+        <LineAgentCandidatesModal
+          candidates={lineAgentCandidates}
+          onResolve={handleResolveLineAgent}
+          onDismiss={() => setCandidatesDismissed(true)}
+        />
+      )}
     </div>
   );
 };

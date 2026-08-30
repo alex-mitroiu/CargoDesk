@@ -4,7 +4,7 @@
 Full-stack freight management app. React 18 + Vite frontend, Express + node:sqlite backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.88.0 "Custody"**
+- Version: **v0.89.0 "Arbiter"**
 - Run: `npm run dev` (runs the monolith on :3001 + Vite on :5173 + the Document Distribution Service on :3002 + the PDF Render Service on :3003 + the Contract Management Service on :3004 + the MDM Service on :3005 + the Screening Service on :3006 + the Kanban Service on :3007 + the Customer Service on :3008, concurrently) — zero-script onboarding: first boot with no `cargodesk.db` auto-copies the committed `db/cargodesk.sample.db` (MDM reference data only) into place
 - Re-seed: `npm run seed` (runs `scripts/import-mdm-data.js`) — only needed to refresh MDM data from `data/*.csv`/`.json`, not for a normal first run
 
@@ -381,6 +381,33 @@ are fully validated.
 - **Document system**: `DOC_TYPES` in App.jsx (~line 56: BL01/MB01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — `MB01` (Master Bill of Lading, v0.71.0) is the vessel-operator-to-NVOCC document, a genuinely separate build from `BL01` (NVOCC-to-shipper House B/L), not a mode flag on it — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). (The earlier client-side-jsPDF `DocumentsMenu` component this note used to distinguish from was removed as dead code — it had zero references anywhere in the app.)
 - **Lifecycle-stage stepper precedent**: no dedicated stepper component exists yet; `MilestonePanel` (ShipmentDetailPage.jsx 1593-~1870) is the closest analog — linear progress bar (1734-1738, `width: ${progress}%`) plus per-step state coloring via `milestoneState()`/`stateColor()` (1666-1676: completed/overdue/current/upcoming) driven by `shipment_milestones` rows (`id, label, estimatedDate, note, completedAt, completedBy`, fixed step keys `booking_confirmed, si_submitted, cargo_gated_in, vessel_departed, bl_issued, vessel_arrived, customs_cleared, cargo_released, delivered`). Any new per-container lifecycle/stage UI should reuse this state-coloring pattern rather than inventing a new visual language
 - **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages, 📡 EDI). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
+
+## Recent changes (v0.89.0 "Arbiter")
+- **Line Agent auto-resolve/ambiguity picker** — direct follow-up to this session's Carrier
+  Agents restructure. `resolveCarrierAgent` already auto-assigns a single Line Agent silently,
+  but couldn't distinguish "no match" from "silently picked one of several equally-valid
+  candidates." A direct UN/LOCODE or country-level match is exclusivity-enforced at write time
+  (only one `carrier_agents` header can claim a port/country per carrier), so real ambiguity can
+  only arise from the **linked-ports fallback** — a port linked to 2+ others, each with its own
+  independent agent for the same carrier.
+- New `resolveCarrierAgentCandidates(carrierCode, portUnlocode)` (server.js) returns every tied
+  candidate (tagged `matched_via`) instead of guessing; `resolveCarrierAgent` becomes a one-line
+  `candidates[0] || null` wrapper, so its two existing callers need no change for the common
+  unambiguous case. Both copies of `maybeAssignLineAgents` (`routes/shipments.js`,
+  `routes/quotes.js`'s own duplicate) now only auto-assign on exactly 1 candidate; 2+ is left
+  unassigned rather than guessed. MDM Service's `/internal/carrier-agents/resolve` gained a
+  parallel `all=1` flag, kept in parity with the monolith.
+- **UX mirrors Pending-Contract-Revalidation, not Contract-Mismatch** — an unresolved Line Agent
+  already behaves like one with none registered, so nothing is forced. `ShipmentHeaderBar.jsx`
+  shows a dismissible-elsewhere badge (new read-only `GET /api/shipments/:id/line-agent-candidates`)
+  instead of a blocking modal; the actual picker (`LineAgentCandidatesModal`, new, in
+  `AdditionalPartiesPanel.jsx`) lives on the Parties & Offices page with its own independent
+  re-detection, and resolves a pick through the **already-existing**
+  `POST /api/shipments/:id/parties` — no new write endpoint needed.
+- 18 new assertions (`tests/line-agent-candidates.test.js`). `tests/carrier-agents.test.js` (41),
+  `tests/quoting-rfq.test.js` (39), and the MDM service's own resolver/toggle suites all
+  re-confirmed green. Verified live via CDP end-to-end. ARCHITECTURE.md §8.1 and the Carrier
+  Agents User Manual subsection both updated. Clean build.
 
 ## Recent changes (v0.88.0 "Custody")
 - **Shipment edit-locking** — direct request: two edit-capable users on the same shipment at the

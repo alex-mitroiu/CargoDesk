@@ -2,12 +2,18 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.88.0";
+export const VERSION   = "0.89.0";
 export const BUILD     = "2026-08-30";
-export const CODENAME  = "Custody";
+export const CODENAME  = "Arbiter";
 export const BUILD_FINGERPRINT = "a3f9c21e";
 
 export const CHANGELOG = [
+  {
+    version:  "0.89.0",
+    date:     "2026-08-30",
+    codename: "Arbiter",
+    summary:  "Line Agent auto-resolve/ambiguity picker -- direct follow-up to this session's Carrier Agents restructure: `resolveCarrierAgent(carrierCode, portUnlocode)` already auto-assigns a single Line Agent silently, but couldn't tell the difference between \"no match\" and \"we silently picked one candidate out of several equally-valid ones.\" A direct UN/LOCODE or country-level match is already exclusivity-enforced at write time (only one carrier_agents header can claim a given port or country per carrier), so real ambiguity can only come from the linked-ports fallback -- when a port is linked to two or more others and each has its own independent, valid agent for the same carrier, the old code just returned whichever came first in an unordered SQL scan.\n\nNew `resolveCarrierAgentCandidates(carrierCode, portUnlocode)` returns every tied candidate instead of guessing, each tagged with `matched_via` (the actual port that produced it); `resolveCarrierAgent` becomes a one-line wrapper (`candidates[0] || null`) so its two existing callers needed no signature change for the common, unambiguous case. Both copies of `maybeAssignLineAgents` (`routes/shipments.js`, and `routes/quotes.js`'s own small duplicate for quote-converted shipments) now only auto-assign when exactly one candidate exists; a 2+ side is deliberately left unassigned rather than guessed. The MDM Service's own `/internal/carrier-agents/resolve` gained a parallel `all=1` flag, kept in exact parity with the monolith per this feature's own established mirroring convention.\n\n**Chosen UX deliberately mirrors the existing Pending-Contract-Revalidation pattern, not the Contract-Mismatch one**: an unresolved Line Agent already behaves exactly like a shipment with none registered at all, so there's nothing to force. `ShipmentHeaderBar.jsx` shows only a dismissible-elsewhere badge (new read-only `GET /api/shipments/:id/line-agent-candidates`, only reports a still-unfilled side with 2+ candidates) rather than an inline blocking modal. The actual picker (`LineAgentCandidatesModal`, new, in `AdditionalPartiesPanel.jsx`) lives on the Parties & Offices page with its own independent re-detection (no shared state with the header, same split Pending Revalidation already uses) and resolves a pick through the **already-existing** `POST /api/shipments/:id/parties` -- picking a candidate is exactly the same operation as manually adding that party, so no new write endpoint was needed.\n\n18 new assertions (`tests/line-agent-candidates.test.js`: an unambiguous control case proving auto-assign is unchanged, a real ambiguous fixture with two linked ports each carrying their own agent, correct `matchedVia` reporting, and resolution clearing the pending state). Full `tests/carrier-agents.test.js` (41), `tests/quoting-rfq.test.js` (39), and the MDM service's own resolver/toggle suites re-confirmed green. Verified live via CDP end-to-end: badge appears on a real ambiguous shipment, clicking through to Parties shows both real candidates with correct linked-port attribution, picking one assigns it and the badge/modal both clear on reload. ARCHITECTURE.md (Section 8.1) and the Carrier Agents User Manual subsection both updated. Clean build.",
+  },
   {
     version:  "0.88.0",
     date:     "2026-08-30",

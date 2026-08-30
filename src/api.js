@@ -122,6 +122,7 @@ export const api = {
       acquire: (id) => req("POST",   `/shipments/${id}/edit-lock`),
       release: (id) => req("DELETE", `/shipments/${id}/edit-lock`),
     },
+    lineAgentCandidates: (id) => req("GET", `/shipments/${id}/line-agent-candidates`),
   },
   creditOverridesQueue: () => req("GET", "/credit-overrides/queue"),
   invoiceDeadlinesOverdue: () => req("GET", "/invoice-deadlines/overdue"),

@@ -17,7 +17,7 @@
 module.exports = function quotesRoutes(app, ctx) {
   const { db, ok, err, uid, requireRole, isUniqueViolation, mapQuote, mapQuoteLine, mapShipment,
           logEvent, logEntityEvent, toUsd, SERVICE_CODE_MAP, importContractRates,
-          resolveCarrierAgent, screenShipmentById } = ctx;
+          resolveCarrierAgentCandidates, screenShipmentById } = ctx;
 
   const quoteWrite = requireRole(["admin", "operator", "occ_bk"]);
 
@@ -43,11 +43,14 @@ module.exports = function quotesRoutes(app, ctx) {
 
   // Carrier Line Agents — duplicated from routes/shipments.js's own maybeAssignLineAgents (small,
   // pure, self-contained) so a quote-converted shipment gets the exact same auto-assignment a
-  // directly-created one would, without new cross-file ctx plumbing for a 10-line helper.
+  // directly-created one would, without new cross-file ctx plumbing for a 10-line helper. A side
+  // with 2+ candidates (only possible via the linked-ports fallback) is left unassigned rather
+  // than guessing — same rule as the shipments.js copy, see its own comment for the full rationale.
   async function maybeAssignLineAgents(shipmentId, carrierCode, pol, pod) {
     for (const [port, role] of [[pol, "Line Agent (Export)"], [pod, "Line Agent (Import)"]]) {
-      const match = await resolveCarrierAgent(carrierCode, port);
-      if (!match) continue;
+      const candidates = await resolveCarrierAgentCandidates(carrierCode, port);
+      if (candidates.length !== 1) continue;
+      const match = candidates[0];
       try {
         db.prepare(`INSERT INTO shipment_parties (id, shipment_id, role, customer_id, customer_name, created_at)
           VALUES (?,?,?,?,?,?)`)

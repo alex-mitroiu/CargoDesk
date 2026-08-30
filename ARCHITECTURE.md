@@ -681,6 +681,36 @@ that already carries the post-restructure header+locations shape. Worth remember
 restructure, though — the same drop-and-recreate-after-the-rename fix `carrier_agent_locations`
 needed would apply again.
 
+**Line Agent resolution can now return several candidates, not just guess at one** (added
+v0.89.0, direct follow-up): `resolveCarrierAgent(carrierCode, portUnlocode)` tries a direct
+UN/LOCODE match, then the port's own country, then falls back through every linked port in turn —
+the first two tiers are exclusivity-enforced at write time (only one `carrier_agents` header can
+claim a given port or country per carrier), so they can only ever produce 0 or 1 result. Genuine
+ambiguity can only come from the linked-ports tier: `linked_ports` has no constraint stopping one
+port from being linked to several others, so if two or more of a port's linked ports each have
+their own independent, valid agent for the same carrier, the old code silently returned whichever
+one happened to come first in an unordered SQL scan. New `resolveCarrierAgentCandidates(carrierCode,
+portUnlocode)` returns every tied candidate instead of guessing (each tagged with `matched_via`,
+the actual port that produced it); `resolveCarrierAgent` is now a one-line wrapper —
+`candidates[0] || null` — so its two pre-existing callers (`routes/shipments.js`,
+`routes/quotes.js`'s own small duplicate of `maybeAssignLineAgents`) needed no signature change for
+the common, unambiguous case. Both copies of `maybeAssignLineAgents` now only auto-assign when
+`candidates.length === 1`; a 2+ side is deliberately left unassigned rather than guessed, exactly
+matching this app's existing "no match = leave it unfilled" behavior, just for a different reason.
+The MDM Service's own `/internal/carrier-agents/resolve` gained a parallel `all=1` query flag
+returning an array instead of one row, kept in exact parity with the monolith's local logic per
+this carrier-agent feature's own established convention of mirroring the two implementations.
+**Chosen UX deliberately mirrors the existing Pending-Contract-Revalidation pattern, not the
+Contract-Mismatch one**: `ShipmentHeaderBar.jsx` shows only a dismissible-elsewhere badge (new
+`GET /api/shipments/:id/line-agent-candidates`, read-only, only reports a side that's still
+unfilled AND has 2+ candidates) rather than forcing an inline blocking modal — an unresolved Line
+Agent already behaves exactly like a shipment with none registered at all, so there's nothing to
+force. The actual picker (`LineAgentCandidatesModal`, `AdditionalPartiesPanel.jsx`) lives on the
+Parties & Offices page with its own independent re-detection (no shared state with the header,
+same split Pending Revalidation already established) and resolves a pick through the
+**already-existing** `POST /api/shipments/:id/parties` — picking a candidate is exactly the same
+operation as manually adding that party, so no new write endpoint was needed.
+
 **Kanban/Testing-specific notes**: unlike the caches above, there is nothing to keep warm here —
 tickets/test items are read fresh per request in both modes, so flipping `kanban_source` takes
 effect immediately with no rebuild step (`PUT /api/settings/kanban-source` does nothing but write

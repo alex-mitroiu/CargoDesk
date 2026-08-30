@@ -10,7 +10,7 @@ import { deriveHaulageNeeds } from "../../pages/shipments/ShipmentFormPage";
 import useContractMismatch from "../../hooks/useContractMismatch";
 import ContractMismatchModal from "./ContractMismatchModal";
 import { AnyIcon, IconClipboard, IconLink, IconRefresh, IconPencil, IconWarning, IconCheck,
-  IconMail, IconMailUnread, IconLock } from "../primitives/Icon";
+  IconMail, IconMailUnread, IconLock, IconGroup } from "../primitives/Icon";
 import { fmtCurr } from "../../utils/invoiceGenerator";
 import { onCargoValueChanged } from "../../cargoValueBus";
 
@@ -99,12 +99,13 @@ const IconTile = ({ items }) => {
   );
 };
 
-const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, onUpdate, onRefresh, onEdit }) => {
+const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, onNavigateToParties, onUpdate, onRefresh, onEdit }) => {
   const { canEditShipments: canEdit, shipmentLock } = useAuth();
   const [schedules, setSchedules] = useState([]);
   const [screening, setScreening] = useState(null);
   const [complianceOpen, setComplianceOpen] = useState(false);
   const [pendingMatches, setPendingMatches] = useState(null);
+  const [lineAgentCandidates, setLineAgentCandidates] = useState(null);
   const [legs, setLegs] = useState([]);
 
   // ── Messages ──
@@ -236,6 +237,18 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
       .catch(() => { if (live) setPendingMatches(null); });
     return () => { live = false; };
   }, [shipment.id, shipment.contractType, shipment.contractRef]);
+
+  // Line Agent ambiguity: same badge-now/modal-later split as Pending Revalidation above, for the
+  // same reason (this component remounts on every sub-page nav — a dismissible modal here would
+  // re-interrupt the user right after they dismissed it a page ago). The actual picker lives on
+  // the Parties & Offices page instead, which independently re-checks on its own mount.
+  useEffect(() => {
+    let live = true;
+    api.shipments.lineAgentCandidates(shipment.id)
+      .then(r => { if (live) setLineAgentCandidates((r?.export?.length || r?.import?.length) ? r : null); })
+      .catch(() => { if (live) setLineAgentCandidates(null); });
+    return () => { live = false; };
+  }, [shipment.id]);
 
   const ctrs = containers.filter(c => c.shipmentId === shipment.id);
   const teu = ctrs.reduce((n, c) => n + (c.size === "40" ? 2 : 1), 0);
@@ -393,6 +406,20 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
             <IconRefresh size={11} />Contract Match Found
           </button>
         )}
+
+        {lineAgentCandidates && (() => {
+          const count = (lineAgentCandidates.export?.length || 0) + (lineAgentCandidates.import?.length || 0);
+          return (
+            <button id="shphdr-line-agent-candidates-badge" type="button" onClick={onNavigateToParties}
+              title={`${count} Line Agent candidate${count !== 1 ? "s" : ""} found — click to pick which one to assign`}
+              style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, letterSpacing: "0.03em",
+                padding: "3px 9px", borderRadius: 5, background: T.info + "22", color: T.info,
+                border: `1px solid ${T.info}66`, whiteSpace: "nowrap", cursor: onNavigateToParties ? "pointer" : "default",
+                display: "inline-flex", alignItems: "center", gap: 4 }}>
+              <IconGroup size={11} />Line Agent Picks Needed
+            </button>
+          );
+        })()}
 
         {shipmentLock?.locked && !shipmentLock?.ownedByMe && (
           <span id="shphdr-lock-badge" title={`${shipmentLock.lockedByName} is currently editing this shipment — you have read-only access until they finish (releases automatically after 30 minutes of inactivity)`}

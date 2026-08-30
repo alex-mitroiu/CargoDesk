@@ -1776,6 +1776,7 @@ function App() {
         {(page === "detail" || SHIPMENT_SUBPAGE_LABELS[page]) && selectedShipment && isEnabled(page) && (
           <ShipmentHeaderBar shipment={selectedShipment} containers={containers}
             onNavigateToSchedules={() => navigate("shipment-schedules", selectedShipment.id)}
+            onNavigateToParties={() => navigate("shipment-parties", selectedShipment.id)}
             onUpdate={handleUpdateShipment}
             onEdit={() => navigate("shipment-edit", selectedShipment.id)}
             onRefresh={async () => {
