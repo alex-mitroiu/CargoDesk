@@ -1,7 +1,7 @@
 "use strict";
 
 module.exports = function allocationsRoutes(app, ctx) {
-  const { db, ok, err, uid, requireRole, mapAllocation, checkOverlap, logEntityEvent, linkedPortCodes, findMatchingContractLegs,
+  const { query, ok, err, uid, requireRole, mapAllocation, checkOverlap, logEntityEvent, linkedPortCodes, findMatchingContractLegs,
           getSettings, callContractService } = ctx;
   const isRemoteContractSource = async () => ((await getSettings()).contract_source || "local") === "remote";
 
@@ -11,8 +11,8 @@ module.exports = function allocationsRoutes(app, ctx) {
   // doesn't need two implementations.
   const legToRow = l => ({
     pol: l.pol, pod: l.pod, leg_order: l.legOrder, routing_id: l.routingId || "",
-    pol_linked_allowed: l.polLinkedAllowed ? 1 : 0, pod_linked_allowed: l.podLinkedAllowed ? 1 : 0,
-    pol_carrier_haulage: l.polCarrierHaulage ? 1 : 0, pod_carrier_haulage: l.podCarrierHaulage ? 1 : 0,
+    pol_linked_allowed: !!l.polLinkedAllowed, pod_linked_allowed: !!l.podLinkedAllowed,
+    pol_carrier_haulage: !!l.polCarrierHaulage, pod_carrier_haulage: !!l.podCarrierHaulage,
     pol_haulage_locations: l.polHaulageLocations || "", pod_haulage_locations: l.podHaulageLocations || "",
   });
 
@@ -29,8 +29,8 @@ module.exports = function allocationsRoutes(app, ctx) {
   // below, SpaceConfigurationsPage's consumption bar/Linked Shipments modal, ShipmentSchedulesPage's
   // Space Configuration panel, ShipmentFormPage's Contract Picker card). One batched query
   // rather than one subquery per allocation.
-  function loadTeuBuckets() {
-    const rows = db.prepare(`
+  async function loadTeuBuckets() {
+    const rows = await query(`
       SELECT s.allocation_id AS allocation_id, cb.status AS booking_status,
              COALESCE(SUM(CASE WHEN c.size=20 THEN 1 WHEN c.size IN (40,45) THEN 2 ELSE 0 END), 0) AS teu
       FROM containers c
@@ -38,23 +38,24 @@ module.exports = function allocationsRoutes(app, ctx) {
       LEFT JOIN carrier_bookings cb ON cb.shipment_id = s.id
       WHERE s.allocation_id IS NOT NULL AND s.allocation_id != ''
       GROUP BY s.allocation_id, cb.status
-    `).all();
+    `);
     const map = new Map();
     for (const r of rows) {
+      const teu = Number(r.teu);
       const bucket = map.get(r.allocation_id) || { confirmedTEU: 0, pendingTEU: 0, rejectedTEU: 0 };
-      if (r.booking_status === "Confirmed") bucket.confirmedTEU += r.teu;
-      else if (r.booking_status === "Rejected") bucket.rejectedTEU += r.teu;
+      if (r.booking_status === "Confirmed") bucket.confirmedTEU += teu;
+      else if (r.booking_status === "Rejected") bucket.rejectedTEU += teu;
       else if (r.booking_status === "Cancelled") { /* excluded — no live demand left */ }
-      else bucket.pendingTEU += r.teu; // Created, Pending, or no carrier_bookings row yet
+      else bucket.pendingTEU += teu; // Created, Pending, or no carrier_bookings row yet
       map.set(r.allocation_id, bucket);
     }
     return map;
   }
   const emptyBuckets = { confirmedTEU: 0, pendingTEU: 0, rejectedTEU: 0 };
 
-  app.get("/api/allocations", (req, res) => {
-    const rows = db.prepare("SELECT * FROM allocations ORDER BY effective_date DESC").all();
-    const buckets = loadTeuBuckets();
+  app.get("/api/allocations", async (req, res) => {
+    const rows = await query("SELECT * FROM allocations ORDER BY effective_date DESC");
+    const buckets = await loadTeuBuckets();
     ok(res, rows.map(r => {
       const base = mapAllocation(r);
       const b = buckets.get(r.id) || emptyBuckets;
@@ -73,12 +74,12 @@ module.exports = function allocationsRoutes(app, ctx) {
     if (endDate < effectiveDate) return err(res, "end date must be on or after effective date");
     if (minimumTEU != null && Number(minimumTEU) > Number(allocatedTEU))
       return err(res, "Minimum commitment can't exceed the allocated TEU");
-    if (checkOverlap(carrierCode, effectiveDate, endDate, pol, pod))
+    if (await checkOverlap(carrierCode, effectiveDate, endDate, pol, pod))
       return err(res, `An allocation for ${carrierCode} on route ${pol.toUpperCase()} → ${pod.toUpperCase()} already covers that date range`);
     const id = `ALC-${uid()}`;
     const minTeuVal = minimumTEU != null && String(minimumTEU).trim() !== '' ? Number(minimumTEU) : null;
-    db.prepare("INSERT INTO allocations (id,carrier_code,allocated_teu,effective_date,end_date,trade_lane,notes,alert_threshold,pol,pod,origin_lane,dest_lane,coverage_scope,contract_id,contract_number,minimum_teu) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-      .run(id, carrierCode, allocatedTEU, effectiveDate, endDate, tradeLane, notes, alertThreshold, pol.toUpperCase(), pod.toUpperCase(), originLane, destLane, coverageScope, contractId, contractNumber, minTeuVal);
+    await query("INSERT INTO allocations (id,carrier_code,allocated_teu,effective_date,end_date,trade_lane,notes,alert_threshold,pol,pod,origin_lane,dest_lane,coverage_scope,contract_id,contract_number,minimum_teu) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)",
+      [id, carrierCode, allocatedTEU, effectiveDate, endDate, tradeLane, notes, alertThreshold, pol.toUpperCase(), pod.toUpperCase(), originLane, destLane, coverageScope, contractId, contractNumber, minTeuVal]);
     await logEntityEvent('allocation', id, 'CREATED', null, null, null,
       JSON.stringify({ carrierCode, pol: pol.toUpperCase(), pod: pod.toUpperCase(), allocatedTEU, effectiveDate, endDate, contractNumber, minimumTEU: minTeuVal }));
     // A brand-new allocation always starts at 0 in every bucket (no shipment could reference
@@ -96,25 +97,25 @@ module.exports = function allocationsRoutes(app, ctx) {
     if (endDate < effectiveDate) return err(res, "end date must be on or after effective date");
     if (minimumTEU != null && Number(minimumTEU) > Number(allocatedTEU))
       return err(res, "Minimum commitment can't exceed the allocated TEU");
-    if (checkOverlap(carrierCode, effectiveDate, endDate, pol, pod, req.params.id))
+    if (await checkOverlap(carrierCode, effectiveDate, endDate, pol, pod, req.params.id))
       return err(res, `Another allocation for ${carrierCode} on route ${pol.toUpperCase()} → ${pod.toUpperCase()} already covers that date range`);
     const minTeuVal = minimumTEU != null && String(minimumTEU).trim() !== '' ? Number(minimumTEU) : null;
-    const info = db.prepare("UPDATE allocations SET carrier_code=?, allocated_teu=?, effective_date=?, end_date=?, trade_lane=?, notes=?, alert_threshold=?, pol=?, pod=?, origin_lane=?, dest_lane=?, contract_id=?, contract_number=?, minimum_teu=? WHERE id=?")
-      .run(carrierCode, allocatedTEU, effectiveDate, endDate, tradeLane, notes, alertThreshold, pol.toUpperCase(), pod.toUpperCase(), originLane, destLane, contractId, contractNumber, minTeuVal, req.params.id);
-    if (info.changes === 0) return err(res, "Not found", 404);
+    const updated = await query("UPDATE allocations SET carrier_code=$1, allocated_teu=$2, effective_date=$3, end_date=$4, trade_lane=$5, notes=$6, alert_threshold=$7, pol=$8, pod=$9, origin_lane=$10, dest_lane=$11, contract_id=$12, contract_number=$13, minimum_teu=$14 WHERE id=$15 RETURNING id",
+      [carrierCode, allocatedTEU, effectiveDate, endDate, tradeLane, notes, alertThreshold, pol.toUpperCase(), pod.toUpperCase(), originLane, destLane, contractId, contractNumber, minTeuVal, req.params.id]);
+    if (updated.length === 0) return err(res, "Not found", 404);
     await logEntityEvent('allocation', req.params.id, 'UPDATED', null, null, null,
       JSON.stringify({ carrierCode, pol: pol.toUpperCase(), pod: pod.toUpperCase(), allocatedTEU, effectiveDate, endDate, contractNumber, minimumTEU: minTeuVal }));
     // Editing an allocation's own fields never changes which shipments reference it — carry the
     // real current buckets through so the response shape matches GET's (an edit no longer makes
     // the header row briefly show 0 consumed until the next full reload).
-    const b = loadTeuBuckets().get(req.params.id) || emptyBuckets;
+    const b = (await loadTeuBuckets()).get(req.params.id) || emptyBuckets;
     ok(res, { ...mapAllocation({ id: req.params.id, carrier_code: carrierCode, allocated_teu: allocatedTEU, effective_date: effectiveDate, end_date: endDate, trade_lane: tradeLane, notes, alert_threshold: alertThreshold, pol: pol.toUpperCase(), pod: pod.toUpperCase(), origin_lane: originLane, dest_lane: destLane, contract_id: contractId, contract_number: contractNumber, minimum_teu: minTeuVal }), confirmedTEU: b.confirmedTEU, pendingTEU: b.pendingTEU, rejectedTEU: b.rejectedTEU, remainingTEU: Math.max(0, allocatedTEU - b.confirmedTEU) });
   });
 
   app.delete("/api/allocations/:id", write, async (req, res) => {
-    const existing = db.prepare("SELECT * FROM allocations WHERE id=?").get(req.params.id);
-    const info = db.prepare("DELETE FROM allocations WHERE id=?").run(req.params.id);
-    if (info.changes === 0) return err(res, "Not found", 404);
+    const [existing] = await query("SELECT * FROM allocations WHERE id=$1", [req.params.id]);
+    const deleted = await query("DELETE FROM allocations WHERE id=$1 RETURNING id", [req.params.id]);
+    if (deleted.length === 0) return err(res, "Not found", 404);
     if (existing) await logEntityEvent('allocation', req.params.id, 'DELETED', null, null, null,
       JSON.stringify({ carrierCode: existing.carrier_code, pol: existing.pol, pod: existing.pod }));
     ok(res, { deleted: req.params.id });
@@ -134,16 +135,18 @@ module.exports = function allocationsRoutes(app, ctx) {
     const polU = pol.toUpperCase(), podU = pod.toUpperCase();
     const needsPol = needsPolHaulage === "1" || needsPolHaulage === "true";
     const needsPod = needsPodHaulage === "1" || needsPodHaulage === "true";
-    const polAll = [polU, ...linkedPortCodes(polU)];
-    const podAll = [podU, ...linkedPortCodes(podU)];
-    const ph = arr => arr.map(() => "?").join(",");
-    const allocs = db.prepare(`
+    const polAll = [polU, ...(await linkedPortCodes(polU))];
+    const podAll = [podU, ...(await linkedPortCodes(podU))];
+    const params = [...polAll, ...podAll, etd, etd];
+    const polPh = polAll.map((_, i) => `$${i + 1}`).join(",");
+    const podPh = podAll.map((_, i) => `$${polAll.length + i + 1}`).join(",");
+    const allocs = await query(`
       SELECT * FROM allocations
-      WHERE pol IN (${ph(polAll)}) AND pod IN (${ph(podAll)})
-      AND effective_date <= ? AND end_date >= ?
+      WHERE pol IN (${polPh}) AND pod IN (${podPh})
+      AND effective_date <= $${polAll.length + podAll.length + 1} AND end_date >= $${polAll.length + podAll.length + 2}
       ORDER BY effective_date DESC
-    `).all(...polAll, ...podAll, etd, etd);
-    const buckets = loadTeuBuckets();
+    `, params);
+    const buckets = await loadTeuBuckets();
     const remote = await isRemoteContractSource();
     const legsCache = new Map(); // contractId -> legs (row-shaped), fetched at most once per request
     async function contractLegsFor(contractId) {
@@ -153,7 +156,7 @@ module.exports = function allocationsRoutes(app, ctx) {
         try { legs = (await callContractService("GET", `/internal/contracts/${contractId}`)).legs.map(legToRow); }
         catch { legs = []; } // an unreachable/vanished remote contract can't be verified either way
       } else {
-        legs = db.prepare("SELECT * FROM contract_legs WHERE contract_id=?").all(contractId);
+        legs = await query("SELECT * FROM contract_legs WHERE contract_id=$1", [contractId]);
       }
       legsCache.set(contractId, legs);
       return legs;
@@ -163,7 +166,7 @@ module.exports = function allocationsRoutes(app, ctx) {
       if (!needsPol && !needsPod) { passed.push(a); continue; }
       if (!a.contract_id) { passed.push(a); continue; }
       const legs = await contractLegsFor(a.contract_id);
-      if (findMatchingContractLegs(legs, { pol: a.pol, pod: a.pod, needsPolHaulage: needsPol, needsPodHaulage: needsPod, pkuLocation, delLocation }).length > 0) passed.push(a);
+      if ((await findMatchingContractLegs(legs, { pol: a.pol, pod: a.pod, needsPolHaulage: needsPol, needsPodHaulage: needsPod, pkuLocation, delLocation })).length > 0) passed.push(a);
     }
     const results = passed
       .map(a => {
@@ -178,31 +181,37 @@ module.exports = function allocationsRoutes(app, ctx) {
   });
 
   // Conflict detection
-  app.get("/api/allocations/conflicts", (req, res) => {
+  app.get("/api/allocations/conflicts", async (req, res) => {
     const { carrierCode, pol, pod, effectiveDate, endDate, excludeId = '' } = req.query;
     if (!carrierCode || !pol || !pod || !effectiveDate || !endDate) return ok(res, { exact: [], linked: [] });
     const polU = pol.toUpperCase(), podU = pod.toUpperCase();
-    const isLinked = (a, b) => !!db.prepare("SELECT 1 FROM linked_ports WHERE (primary_unlocode=? AND linked_unlocode=?) OR (linked_unlocode=? AND primary_unlocode=?)").get(a, b, a, b);
-    const exact = db.prepare("SELECT * FROM allocations WHERE carrier_code=? AND pol=? AND pod=? AND effective_date<=? AND end_date>=? AND id!=?")
-      .all(carrierCode, polU, podU, endDate, effectiveDate, excludeId).map(r => {
-        const carrier = db.prepare("SELECT name FROM carriers WHERE code=?").get(r.carrier_code);
-        return { ...mapAllocation(r), carrierName: carrier?.name || '', conflictKind: 'exact', links: [] };
-      });
+    const isLinked = async (a, b) => !!(await query("SELECT 1 FROM linked_ports WHERE (primary_unlocode=$1 AND linked_unlocode=$2) OR (linked_unlocode=$1 AND primary_unlocode=$2)", [a, b]))[0];
+    const exactRows = await query("SELECT * FROM allocations WHERE carrier_code=$1 AND pol=$2 AND pod=$3 AND effective_date<=$4 AND end_date>=$5 AND id!=$6",
+      [carrierCode, polU, podU, endDate, effectiveDate, excludeId]);
+    const exact = await Promise.all(exactRows.map(async r => {
+      const [carrier] = await query("SELECT name FROM carriers WHERE code=$1", [r.carrier_code]);
+      return { ...mapAllocation(r), carrierName: carrier?.name || '', conflictKind: 'exact', links: [] };
+    }));
     const exactIds = exact.map(e => e.id);
-    const linkedCodes = db.prepare("SELECT primary_unlocode AS code FROM linked_ports WHERE linked_unlocode IN (?,?) UNION SELECT linked_unlocode AS code FROM linked_ports WHERE primary_unlocode IN (?,?)")
-      .all(polU, podU, polU, podU).map(r => r.code).filter(c => c !== polU && c !== podU);
+    const linkedCodes = (await query("SELECT primary_unlocode AS code FROM linked_ports WHERE linked_unlocode IN ($1,$2) UNION SELECT linked_unlocode AS code FROM linked_ports WHERE primary_unlocode IN ($1,$2)",
+      [polU, podU])).map(r => r.code).filter(c => c !== polU && c !== podU);
     let linked = [];
     if (linkedCodes.length > 0) {
-      const ph = linkedCodes.map(() => '?').join(',');
-      const excl = exactIds.length ? `AND id NOT IN (${exactIds.map(() => '?').join(',')})` : '';
-      linked = db.prepare(`SELECT * FROM allocations WHERE carrier_code=? AND (pol IN (${ph}) OR pod IN (${ph})) AND effective_date<=? AND end_date>=? AND id!=? ${excl}`)
-        .all(carrierCode, ...linkedCodes, ...linkedCodes, endDate, effectiveDate, excludeId, ...exactIds).map(r => {
-          const a = mapAllocation(r);
-          const carrier = db.prepare("SELECT name FROM carriers WHERE code=?").get(r.carrier_code);
-          const links = [];
-          for (const [np, nl] of [[polU,'POL'],[podU,'POD']]) for (const [tp, tl] of [[a.pol,'POL'],[a.pod,'POD']]) if (tp && isLinked(np, tp)) links.push({ newPort: np, newLabel: nl, theirPort: tp, theirLabel: tl });
-          return { ...a, carrierName: carrier?.name || '', conflictKind: 'linked', links };
-        });
+      const params = [carrierCode, ...linkedCodes, ...linkedCodes, endDate, effectiveDate, excludeId, ...exactIds];
+      const polPh = linkedCodes.map((_, i) => `$${i + 2}`).join(',');
+      const podPh = linkedCodes.map((_, i) => `$${linkedCodes.length + i + 2}`).join(',');
+      const baseIdx = 1 + linkedCodes.length * 2; // index of the last linkedCodes param (carrierCode + polCodes + podCodes)
+      const excl = exactIds.length ? `AND id NOT IN (${exactIds.map((_, i) => `$${baseIdx + 4 + i}`).join(',')})` : '';
+      // params order after linkedCodes: endDate, effectiveDate, excludeId, ...exactIds
+      const linkedRows = await query(`SELECT * FROM allocations WHERE carrier_code=$1 AND (pol IN (${polPh}) OR pod IN (${podPh})) AND effective_date<=$${baseIdx + 1} AND end_date>=$${baseIdx + 2} AND id!=$${baseIdx + 3} ${excl}`,
+        params);
+      linked = await Promise.all(linkedRows.map(async r => {
+        const a = mapAllocation(r);
+        const [carrier] = await query("SELECT name FROM carriers WHERE code=$1", [r.carrier_code]);
+        const links = [];
+        for (const [np, nl] of [[polU,'POL'],[podU,'POD']]) for (const [tp, tl] of [[a.pol,'POL'],[a.pod,'POD']]) if (tp && await isLinked(np, tp)) links.push({ newPort: np, newLabel: nl, theirPort: tp, theirLabel: tl });
+        return { ...a, carrierName: carrier?.name || '', conflictKind: 'linked', links };
+      }));
     }
     ok(res, { exact, linked });
   });
