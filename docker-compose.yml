@@ -25,12 +25,12 @@
 #      (docker-secrets/ is gitignored — see .gitignore. These files are the actual secrets;
 #      treat them the same as you would a committed .env, i.e. never commit them for real.)
 #   2. cp .env.example .env — fills in LOGIN_RATE_MAX and anything else non-secret
-#   3. mkdir -p docker-data && touch docker-data/cargodesk.db docker-data/contracts.db docker-data/mdm.db docker-data/screening.db docker-data/kanban.db docker-data/customers.db
+#   3. mkdir -p docker-data && touch docker-data/cargodesk.db docker-data/contracts.db docker-data/mdm.db docker-data/kanban.db docker-data/customers.db
 #      (REQUIRED — Docker bind-mounts a host path that doesn't exist yet as a DIRECTORY, not a
 #      file, which would break `new DatabaseSync('/app/cargodesk.db')` since it expects a real
 #      file path. Creating empty files first sidesteps this well-known bind-mount gotcha.
-#      document-distribution is NOT in this list anymore — it's migrated to Postgres, see its own
-#      DATABASE_URL environment entry below instead of a SQLite bind mount.)
+#      document-distribution and screening are NOT in this list anymore — both are migrated to
+#      Postgres, see their own DATABASE_URL environment entries below instead of a SQLite bind mount.)
 #   4. mkdir -p docker-data/uploads
 #   5. docker compose up -d --build
 #
@@ -183,10 +183,12 @@ services:
     environment:
       NODE_ENV: production
       SCREENING_SERVICE_SECRET_FILE: /run/secrets/screening_service_secret
+      # Migrated to Postgres (ARCHITECTURE.md §13, Phase 1) — point this at a real Postgres
+      # instance. Left unset, falls back to an embedded @electric-sql/pglite instance with no
+      # volume backing it below, so data would not survive a container recreation.
+      DATABASE_URL: postgres://user:password@your-postgres-host:5432/cargodesk_screening
     secrets:
       - screening_service_secret
-    volumes:
-      - ./docker-data/screening.db:/app/services/screening/screening.db
     restart: unless-stopped
 
   kanban:

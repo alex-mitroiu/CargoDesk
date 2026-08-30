@@ -1,8 +1,7 @@
 "use strict";
 const express = require("express");
-const path = require("path");
 const https = require("https");
-const { DatabaseSync } = require("node:sqlite");
+const { query, transaction } = require("./lib/db");
 const { readSecret } = require("./lib/dockerSecret");
 
 const PORT = process.env.SCREENING_SERVICE_PORT || 3006;
@@ -16,10 +15,8 @@ if (SERVICE_SECRET === SERVICE_SECRET_DEV_DEFAULT)
 // fresh instance starts with zero entries and syncs its own copy on the first manual "Sync Now"
 // (or once its auto-sync timer's own settings are enabled) — shipping a stale committed snapshot
 // of a security-relevant denylist would be actively worse than an honestly-empty start.
-const DB_PATH = path.join(__dirname, "screening.db");
 
 const app = express();
-const db = new DatabaseSync(DB_PATH);
 
 // Crash-safety net — same fix applied to the monolith's server.js after a live stress-test found
 // an unhandled route error (a bad enum value, `undefined` bound into a node:sqlite statement)
@@ -54,43 +51,47 @@ const err = (res, msg, status = 400) => res.status(status).json({ error: msg });
 // app_settings. No admin UI for these yet on this side (config + CRUD only this pass, matching
 // this codebase's own established scoping precedent) — seeded with the exact same defaults the
 // monolith always shipped, so scheduling works with zero configuration either way.
-db.exec(`
-  PRAGMA journal_mode=WAL;
-
-  CREATE TABLE IF NOT EXISTS sanctions_entries (
-    id               TEXT PRIMARY KEY,
-    source           TEXT NOT NULL,
-    ref_id           TEXT DEFAULT '',
-    entity_name      TEXT NOT NULL,
-    entity_name_norm TEXT NOT NULL,
-    entity_type      TEXT DEFAULT '',
-    program          TEXT DEFAULT '',
-    aliases_norm     TEXT DEFAULT '[]'
-  );
-  CREATE INDEX IF NOT EXISTS idx_sanctions_norm ON sanctions_entries(entity_name_norm);
-
-  CREATE TABLE IF NOT EXISTS sanctions_syncs (
-    source      TEXT PRIMARY KEY,
-    synced_at   TEXT NOT NULL,
-    entry_count INTEGER DEFAULT 0
-  );
-
-  CREATE TABLE IF NOT EXISTS settings (
-    key   TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-  );
-`);
-const SETTING_DEFAULTS = {
-  api_ofac_enabled: "true", api_ofac_interval_value: "1", api_ofac_interval_unit: "weeks",
-  api_csl_enabled: "true", api_csl_interval_value: "1", api_csl_interval_unit: "weeks",
-};
-{
-  const insSetting = db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)");
-  for (const [k, v] of Object.entries(SETTING_DEFAULTS)) insSetting.run(k, v);
+async function initSchema() {
+  await query(`
+    CREATE TABLE IF NOT EXISTS sanctions_entries (
+      id               TEXT PRIMARY KEY,
+      source           TEXT NOT NULL,
+      ref_id           TEXT DEFAULT '',
+      entity_name      TEXT NOT NULL,
+      entity_name_norm TEXT NOT NULL,
+      entity_type      TEXT DEFAULT '',
+      program          TEXT DEFAULT '',
+      aliases_norm     TEXT DEFAULT '[]'
+    )
+  `);
+  await query(`CREATE INDEX IF NOT EXISTS idx_sanctions_norm ON sanctions_entries(entity_name_norm)`);
+  await query(`
+    CREATE TABLE IF NOT EXISTS sanctions_syncs (
+      source      TEXT PRIMARY KEY,
+      synced_at   TEXT NOT NULL,
+      entry_count INTEGER DEFAULT 0
+    )
+  `);
+  await query(`
+    CREATE TABLE IF NOT EXISTS settings (
+      key   TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    )
+  `);
+  const SETTING_DEFAULTS = {
+    api_ofac_enabled: "true", api_ofac_interval_value: "1", api_ofac_interval_unit: "weeks",
+    api_csl_enabled: "true", api_csl_interval_value: "1", api_csl_interval_unit: "weeks",
+  };
+  for (const [k, v] of Object.entries(SETTING_DEFAULTS)) {
+    await query("INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING", [k, v]);
+  }
 }
-function getSettings() {
-  try { return Object.fromEntries(db.prepare("SELECT key, value FROM settings").all().map(r => [r.key, r.value])); }
-  catch { return {}; }
+
+async function getSettings() {
+  try {
+    const rows = await query("SELECT key, value FROM settings");
+    return Object.fromEntries(rows.map(r => [r.key, r.value]));
+  } catch { return {}; }
 }
 
 const normSanctionName = s => (s || "").toLowerCase().replace(/[^a-z0-9]/g, " ").replace(/\s+/g, " ").trim();
@@ -143,17 +144,20 @@ async function syncOfacSdn() {
     entries.push({ refId: get("uid"), name, sdnType: get("sdnType"), programs: getAll("program").join("; "), aliasNorms });
   }
 
-  db.prepare("DELETE FROM sanctions_entries WHERE source='OFAC-SDN'").run();
-  const ins = db.prepare(`INSERT OR REPLACE INTO sanctions_entries (id,source,ref_id,entity_name,entity_name_norm,entity_type,program,aliases_norm)
-    VALUES (?,'OFAC-SDN',?,?,?,?,?,?)`);
-  db.exec("BEGIN");
-  try {
-    for (const e of entries) ins.run(`OFAC-${e.refId}`, e.refId, e.name, normSanctionName(e.name), e.sdnType, e.programs, JSON.stringify(e.aliasNorms));
-    db.exec("COMMIT");
-  } catch (e2) { db.exec("ROLLBACK"); throw e2; }
+  await query("DELETE FROM sanctions_entries WHERE source='OFAC-SDN'");
+  await transaction(async ({ query: q }) => {
+    for (const e of entries) {
+      await q(`INSERT INTO sanctions_entries (id,source,ref_id,entity_name,entity_name_norm,entity_type,program,aliases_norm)
+        VALUES ($1,'OFAC-SDN',$2,$3,$4,$5,$6,$7)
+        ON CONFLICT (id) DO UPDATE SET source=EXCLUDED.source, ref_id=EXCLUDED.ref_id, entity_name=EXCLUDED.entity_name,
+          entity_name_norm=EXCLUDED.entity_name_norm, entity_type=EXCLUDED.entity_type, program=EXCLUDED.program, aliases_norm=EXCLUDED.aliases_norm`,
+        [`OFAC-${e.refId}`, e.refId, e.name, normSanctionName(e.name), e.sdnType, e.programs, JSON.stringify(e.aliasNorms)]);
+    }
+  });
 
   const now = new Date().toISOString();
-  db.prepare("INSERT OR REPLACE INTO sanctions_syncs (source,synced_at,entry_count) VALUES ('OFAC-SDN',?,?)").run(now, entries.length);
+  await query(`INSERT INTO sanctions_syncs (source,synced_at,entry_count) VALUES ('OFAC-SDN',$1,$2)
+    ON CONFLICT (source) DO UPDATE SET synced_at=EXCLUDED.synced_at, entry_count=EXCLUDED.entry_count`, [now, entries.length]);
   return { source: "OFAC-SDN", syncedAt: now, entries: entries.length };
 }
 
@@ -165,20 +169,22 @@ async function syncConsolidatedScreeningList() {
   const results = Array.isArray(data.results) ? data.results : [];
   const entries = results.filter(e => e.id && e.name && !/^Specially Designated Nationals/i.test(e.source || ""));
 
-  db.prepare("DELETE FROM sanctions_entries WHERE id LIKE 'CSL-%'").run();
-  const ins = db.prepare(`INSERT OR REPLACE INTO sanctions_entries (id,source,ref_id,entity_name,entity_name_norm,entity_type,program,aliases_norm)
-    VALUES (?,?,?,?,?,?,?,?)`);
-  db.exec("BEGIN");
-  try {
-    for (const e of entries)
-      ins.run(`CSL-${e.id}`, e.source || "Consolidated Screening List", String(e.id), e.name,
-               normSanctionName(e.name), e.type || "", (e.programs || []).join("; "),
-               JSON.stringify((e.alt_names || []).map(normSanctionName)));
-    db.exec("COMMIT");
-  } catch (e2) { db.exec("ROLLBACK"); throw e2; }
+  await query("DELETE FROM sanctions_entries WHERE id LIKE 'CSL-%'");
+  await transaction(async ({ query: q }) => {
+    for (const e of entries) {
+      await q(`INSERT INTO sanctions_entries (id,source,ref_id,entity_name,entity_name_norm,entity_type,program,aliases_norm)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+        ON CONFLICT (id) DO UPDATE SET source=EXCLUDED.source, ref_id=EXCLUDED.ref_id, entity_name=EXCLUDED.entity_name,
+          entity_name_norm=EXCLUDED.entity_name_norm, entity_type=EXCLUDED.entity_type, program=EXCLUDED.program, aliases_norm=EXCLUDED.aliases_norm`,
+        [`CSL-${e.id}`, e.source || "Consolidated Screening List", String(e.id), e.name,
+         normSanctionName(e.name), e.type || "", (e.programs || []).join("; "),
+         JSON.stringify((e.alt_names || []).map(normSanctionName))]);
+    }
+  });
 
   const now = new Date().toISOString();
-  db.prepare("INSERT OR REPLACE INTO sanctions_syncs (source,synced_at,entry_count) VALUES ('CSL',?,?)").run(now, entries.length);
+  await query(`INSERT INTO sanctions_syncs (source,synced_at,entry_count) VALUES ('CSL',$1,$2)
+    ON CONFLICT (source) DO UPDATE SET synced_at=EXCLUDED.synced_at, entry_count=EXCLUDED.entry_count`, [now, entries.length]);
   return { source: "CSL", syncedAt: now, entries: entries.length };
 }
 
@@ -189,12 +195,18 @@ const MAX_TIMER_MS = 2_000_000_000; // ~23.1 days — setTimeout is backed by a 
 let ofacAutoSyncTimer = null;
 let cslAutoSyncTimer = null;
 
-function scheduleNextOfacSync(retryDelayMs = null) {
+// Both schedulers are async now (getSettings/the sanctions_syncs lookup are real queries) but
+// keep the exact same "never rejects, safe to call without awaiting" contract the original
+// synchronous version had — every await is inside the same outer try/catch that used to wrap
+// only synchronous calls, and the recursive re-schedule calls inside the setTimeout callback are
+// still fire-and-forget on purpose (nothing awaits the next cycle; each one just needs to not
+// throw an unhandled rejection, and its own try/catch already guarantees that).
+async function scheduleNextOfacSync(retryDelayMs = null) {
   clearTimeout(ofacAutoSyncTimer);
   try {
-    const s = getSettings();
+    const s = await getSettings();
     if (s.api_ofac_enabled !== "true") return;
-    const lastSync = db.prepare("SELECT synced_at FROM sanctions_syncs WHERE source='OFAC-SDN'").get();
+    const [lastSync] = await query("SELECT synced_at FROM sanctions_syncs WHERE source='OFAC-SDN'");
     if (!lastSync) return; // never synced — an operator must trigger the first one manually
 
     let delay;
@@ -210,9 +222,10 @@ function scheduleNextOfacSync(retryDelayMs = null) {
     }
 
     ofacAutoSyncTimer = setTimeout(async () => {
-      const ls = db.prepare("SELECT synced_at FROM sanctions_syncs WHERE source='OFAC-SDN'").get();
-      const sv = Math.max(1, parseInt(getSettings().api_ofac_interval_value) || 1);
-      const su = getSettings().api_ofac_interval_unit || "weeks";
+      const [ls] = await query("SELECT synced_at FROM sanctions_syncs WHERE source='OFAC-SDN'");
+      const latestSettings = await getSettings();
+      const sv = Math.max(1, parseInt(latestSettings.api_ofac_interval_value) || 1);
+      const su = latestSettings.api_ofac_interval_unit || "weeks";
       const msMap = { days: 86400000, weeks: 7 * 86400000, months: 30 * 86400000 };
       const due = ls ? new Date(ls.synced_at).getTime() + sv * (msMap[su] || msMap.weeks) : 0;
       if (Date.now() < due) { scheduleNextOfacSync(); return; }
@@ -232,12 +245,12 @@ function scheduleNextOfacSync(retryDelayMs = null) {
   } catch {}
 }
 
-function scheduleNextCslSync(retryDelayMs = null) {
+async function scheduleNextCslSync(retryDelayMs = null) {
   clearTimeout(cslAutoSyncTimer);
   try {
-    const s = getSettings();
+    const s = await getSettings();
     if (s.api_csl_enabled !== "true") return;
-    const lastSync = db.prepare("SELECT synced_at FROM sanctions_syncs WHERE source='CSL'").get();
+    const [lastSync] = await query("SELECT synced_at FROM sanctions_syncs WHERE source='CSL'");
     if (!lastSync) return;
 
     let delay;
@@ -253,9 +266,10 @@ function scheduleNextCslSync(retryDelayMs = null) {
     }
 
     cslAutoSyncTimer = setTimeout(async () => {
-      const ls = db.prepare("SELECT synced_at FROM sanctions_syncs WHERE source='CSL'").get();
-      const sv = Math.max(1, parseInt(getSettings().api_csl_interval_value) || 1);
-      const su = getSettings().api_csl_interval_unit || "weeks";
+      const [ls] = await query("SELECT synced_at FROM sanctions_syncs WHERE source='CSL'");
+      const latestSettings = await getSettings();
+      const sv = Math.max(1, parseInt(latestSettings.api_csl_interval_value) || 1);
+      const su = latestSettings.api_csl_interval_unit || "weeks";
       const msMap = { days: 86400000, weeks: 7 * 86400000, months: 30 * 86400000 };
       const due = ls ? new Date(ls.synced_at).getTime() + sv * (msMap[su] || msMap.weeks) : 0;
       if (Date.now() < due) { scheduleNextCslSync(); return; }
@@ -274,9 +288,6 @@ function scheduleNextCslSync(retryDelayMs = null) {
     console.log(`  ⏱ CSL auto-sync scheduled in ${Math.round(delay / 3600000 * 10) / 10}h`);
   } catch {}
 }
-try { scheduleNextOfacSync(); } catch {}
-try { scheduleNextCslSync(); } catch {}
-
 // Public liveness check — no secret required, matches every other service's own GET /health.
 app.get("/health", (req, res) => ok(res, { status: "ok", service: "screening", uptime: process.uptime() }));
 
@@ -289,30 +300,37 @@ app.use("/internal", (req, res, next) => {
 
 // ─── Routes ─────────────────────────────────────────────────────────────────────────────────────
 
-app.get("/internal/sanctions/entries", (req, res) => {
+app.get("/internal/sanctions/entries", async (req, res) => {
   const { search = "", limit = "50", offset = "0", source = "" } = req.query;
   const lim = Math.min(parseInt(limit) || 50, 200), off = parseInt(offset) || 0;
   const conditions = [], params = [];
-  if (search.trim()) { conditions.push("(entity_name LIKE ? OR program LIKE ?)"); params.push(`%${search.trim()}%`, `%${search.trim()}%`); }
-  if (source.trim()) { conditions.push("source = ?"); params.push(source.trim()); }
+  // ILIKE, not LIKE — SQLite's LIKE is case-insensitive by default for ASCII, Postgres's is not;
+  // this keeps the search behaving the same as it did before the migration.
+  if (search.trim()) { params.push(`%${search.trim()}%`, `%${search.trim()}%`); conditions.push(`(entity_name ILIKE $${params.length - 1} OR program ILIKE $${params.length})`); }
+  if (source.trim()) { params.push(source.trim()); conditions.push(`source = $${params.length}`); }
   const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-  const total = db.prepare(`SELECT COUNT(*) AS n FROM sanctions_entries ${where}`).get(...params).n;
-  const rows = db.prepare(`SELECT id, source, ref_id, entity_name, entity_type, program FROM sanctions_entries ${where} ORDER BY entity_name LIMIT ? OFFSET ?`).all(...params, lim, off);
-  ok(res, { results: rows, total, limit: lim, offset: off });
+  // COUNT(*) comes back as a string from both pg and pglite (Postgres bigint, to avoid silent
+  // precision loss past Number.MAX_SAFE_INTEGER) — Number(...) here and at every other COUNT(*)
+  // site below.
+  const [{ n: total }] = await query(`SELECT COUNT(*) AS n FROM sanctions_entries ${where}`, params);
+  const rows = await query(
+    `SELECT id, source, ref_id, entity_name, entity_type, program FROM sanctions_entries ${where} ORDER BY entity_name LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+    [...params, lim, off]);
+  ok(res, { results: rows, total: Number(total), limit: lim, offset: off });
 });
 
 // Bulk, unpaginated — powers the monolith's own sanctionsMap in-memory cache in remote mode
 // (loadSanctionsIndex). Deliberately the columns loadSanctionsIndex actually needs, not SELECT *.
-app.get("/internal/sanctions/entries/export", (req, res) => {
-  ok(res, db.prepare("SELECT source, entity_name, entity_type, program, aliases_norm FROM sanctions_entries").all());
+app.get("/internal/sanctions/entries/export", async (req, res) => {
+  ok(res, await query("SELECT source, entity_name, entity_type, program, aliases_norm FROM sanctions_entries"));
 });
 
-app.get("/internal/sanctions/status", (req, res) => {
-  const syncs = db.prepare("SELECT * FROM sanctions_syncs ORDER BY synced_at DESC").all();
-  const count = db.prepare("SELECT COUNT(*) AS n FROM sanctions_entries").get().n;
-  const ofacCount = db.prepare("SELECT COUNT(*) AS n FROM sanctions_entries WHERE source='OFAC-SDN'").get().n;
-  const cslCount = db.prepare("SELECT COUNT(*) AS n FROM sanctions_entries WHERE id LIKE 'CSL-%'").get().n;
-  ok(res, { syncs, entryCount: count, ofacEntryCount: ofacCount, cslEntryCount: cslCount });
+app.get("/internal/sanctions/status", async (req, res) => {
+  const syncs = await query("SELECT * FROM sanctions_syncs ORDER BY synced_at DESC");
+  const [{ n: count }] = await query("SELECT COUNT(*) AS n FROM sanctions_entries");
+  const [{ n: ofacCount }] = await query("SELECT COUNT(*) AS n FROM sanctions_entries WHERE source='OFAC-SDN'");
+  const [{ n: cslCount }] = await query("SELECT COUNT(*) AS n FROM sanctions_entries WHERE id LIKE 'CSL-%'");
+  ok(res, { syncs, entryCount: Number(count), ofacEntryCount: Number(ofacCount), cslEntryCount: Number(cslCount) });
 });
 
 app.post("/internal/sanctions/sync", async (req, res) => {
@@ -328,42 +346,52 @@ app.post("/internal/sanctions/sync-csl", async (req, res) => {
 // Accepts PRE-PARSED entries ({refId, name, sdnType, program}[]) — CSV text parsing stays on the
 // monolith side (routes/sanctions.js's parseOfacCsv, unchanged either way), since it's pure
 // string processing with no dependency on which side owns the data.
-app.post("/internal/sanctions/import-csv", (req, res) => {
+app.post("/internal/sanctions/import-csv", async (req, res) => {
   const { entries = [] } = req.body || {};
   if (!Array.isArray(entries) || entries.length === 0) return err(res, "entries array required");
   try {
-    db.prepare("DELETE FROM sanctions_entries WHERE source='OFAC-SDN'").run();
-    const ins = db.prepare(`INSERT OR REPLACE INTO sanctions_entries (id,source,ref_id,entity_name,entity_name_norm,entity_type,program,aliases_norm)
-      VALUES (?,'OFAC-SDN',?,?,?,?,?,'[]')`);
-    db.exec("BEGIN");
-    try {
-      for (const e of entries) ins.run(`OFAC-${e.refId}`, e.refId, e.name, normSanctionName(e.name), e.sdnType || "", e.program || "");
-      db.exec("COMMIT");
-    } catch (e2) { db.exec("ROLLBACK"); throw e2; }
+    await query("DELETE FROM sanctions_entries WHERE source='OFAC-SDN'");
+    await transaction(async ({ query: q }) => {
+      for (const e of entries) {
+        // aliases_norm is reset to the literal '[]' on conflict too, matching the original
+        // INSERT OR REPLACE's exact behavior (a full-row replace using whatever's in the VALUES
+        // clause, literals included — not just the parameterized columns).
+        await q(`INSERT INTO sanctions_entries (id,source,ref_id,entity_name,entity_name_norm,entity_type,program,aliases_norm)
+          VALUES ($1,'OFAC-SDN',$2,$3,$4,$5,$6,'[]')
+          ON CONFLICT (id) DO UPDATE SET source=EXCLUDED.source, ref_id=EXCLUDED.ref_id, entity_name=EXCLUDED.entity_name,
+            entity_name_norm=EXCLUDED.entity_name_norm, entity_type=EXCLUDED.entity_type, program=EXCLUDED.program, aliases_norm='[]'`,
+          [`OFAC-${e.refId}`, e.refId, e.name, normSanctionName(e.name), e.sdnType || "", e.program || ""]);
+      }
+    });
     const now = new Date().toISOString();
-    db.prepare("INSERT OR REPLACE INTO sanctions_syncs (source,synced_at,entry_count) VALUES ('OFAC-SDN', ?, ?)").run(now, entries.length);
+    await query(`INSERT INTO sanctions_syncs (source,synced_at,entry_count) VALUES ('OFAC-SDN', $1, $2)
+      ON CONFLICT (source) DO UPDATE SET synced_at=EXCLUDED.synced_at, entry_count=EXCLUDED.entry_count`, [now, entries.length]);
     scheduleNextOfacSync();
     ok(res, { source: "OFAC-SDN", syncedAt: now, entries: entries.length });
   } catch (e) { err(res, e.message, 400); }
 });
 
 // Bulk import for the one-time migration script (scripts/migrate-sanctions-to-service.js).
-// INSERT OR IGNORE — idempotent, safe to re-run (sanctions_entries.id is a natural key: the
-// source-prefixed ref id, e.g. "OFAC-12345" / "CSL-98765").
-app.post("/internal/sanctions/bulk-import", (req, res) => {
+// ON CONFLICT DO NOTHING — idempotent, safe to re-run (sanctions_entries.id is a natural key: the
+// source-prefixed ref id, e.g. "OFAC-12345" / "CSL-98765"). RETURNING id is how a row that was
+// actually inserted (vs. skipped as a conflict) gets counted — Postgres has no direct equivalent
+// of SQLite's per-statement changes count on a batched-per-row loop like this.
+app.post("/internal/sanctions/bulk-import", async (req, res) => {
   const { entries = [] } = req.body || {};
-  const ins = db.prepare(`INSERT OR IGNORE INTO sanctions_entries (id,source,ref_id,entity_name,entity_name_norm,entity_type,program,aliases_norm)
-    VALUES (?,?,?,?,?,?,?,?)`);
-  let inserted = 0;
-  db.exec("BEGIN");
   try {
-    for (const e of entries) {
-      const info = ins.run(e.id, e.source, e.refId || "", e.entityName, normSanctionName(e.entityName), e.entityType || "", e.program || "", e.aliasesNorm || "[]");
-      inserted += info.changes;
-    }
-    db.exec("COMMIT");
-  } catch (e2) { db.exec("ROLLBACK"); return err(res, e2.message, 500); }
-  ok(res, { inserted }, 201);
+    let inserted = 0;
+    await transaction(async ({ query: q }) => {
+      for (const e of entries) {
+        const result = await q(`INSERT INTO sanctions_entries (id,source,ref_id,entity_name,entity_name_norm,entity_type,program,aliases_norm)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+          ON CONFLICT (id) DO NOTHING
+          RETURNING id`,
+          [e.id, e.source, e.refId || "", e.entityName, normSanctionName(e.entityName), e.entityType || "", e.program || "", e.aliasesNorm || "[]"]);
+        inserted += result.length;
+      }
+    });
+    ok(res, { inserted }, 201);
+  } catch (e2) { err(res, e2.message, 500); }
 });
 
 // Error-handling middleware — must be registered after every route above. Malformed JSON bodies
@@ -380,7 +408,13 @@ app.use((error, req, res, next) => {
 });
 
 if (require.main === module) {
-  app.listen(PORT, () => console.log(`🛂  Screening Service running on http://localhost:${PORT}`));
+  initSchema()
+    .then(() => {
+      scheduleNextOfacSync();
+      scheduleNextCslSync();
+      app.listen(PORT, () => console.log(`🛂  Screening Service running on http://localhost:${PORT}`));
+    })
+    .catch(e => { console.error("Failed to initialize database schema:", e); process.exit(1); });
 }
 
-module.exports = { app, db };
+module.exports = { app, initSchema };

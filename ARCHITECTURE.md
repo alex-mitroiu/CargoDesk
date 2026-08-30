@@ -546,7 +546,7 @@ Organization Model roadmap begun at v0.56.0:
 | **PDF Render** (`services/pdf-render/`, v0.65.1) | 3003 | The heaviest, most bursty thing the monolith did per-request (a full headless-Chromium launch) — see §12 for the full reasoning | Stateless — no database at all |
 | **Contract Management** (`services/contract-management/`, v0.68.0) | 3004 | First real "toggle between local and remote" extraction — proves the pattern before Epic 5 (Customer/Organization) needs it | Owns its own `.db`, a straight port of `contracts`/`contract_legs`/`contract_rates`/`contract_routings` |
 | **MDM** (`services/mdm/`, v0.80.0) | 3005 | Second "toggle between local and remote" extraction, following the sequencing proposed in `documentation/splitting-mdm-first.html` — the lowest-blast-radius domain (no request-path involvement, no outbound FK from any of its tables into shipments/customers/users) | Owns its own `.db`: `carriers`/`vessels`/`port_locations`/`linked_ports`/`trade_lanes`/`country_trade_lanes`/`regions`/`countries`/`commodities`/`carrier_agents`/`carrier_agent_locations`/`carrier_agent_schedule_rows` |
-| **Screening** (`services/screening/`, v0.81.0) | 3006 | Third "toggle between local and remote" extraction — externally-sourced denylist data, zero outbound FK, read via name-match not JOIN (`documentation/splitting-sanctions-next.html`) | Owns its own `.db`: `sanctions_entries`/`sanctions_syncs`, plus a small local `settings` table for its own auto-sync schedule (no admin UI for it yet — see below) |
+| **Screening** (`services/screening/`, v0.81.0) | 3006 | Third "toggle between local and remote" extraction — externally-sourced denylist data, zero outbound FK, read via name-match not JOIN (`documentation/splitting-sanctions-next.html`) | Postgres (Phase 1 of the Postgres migration, §13 — `pg` when `DATABASE_URL` is set, embedded `@electric-sql/pglite` otherwise; was SQLite before this): `sanctions_entries`/`sanctions_syncs`, plus a small local `settings` table for its own auto-sync schedule (no admin UI for it yet — see below) |
 | **Kanban/Testing** (`services/kanban/`, v0.82.0) | 3007 | Fourth "toggle between local and remote" extraction — a feature the roadmap expects to eventually go away entirely (`documentation/splitting-kanban-out.html`), so keeping its schema fully separable now avoids leftovers later | Owns its own `.db`: `tickets`/`ticket_links`/`test_items`/`test_case_links`/`kb_projects`/`kb_versions`/`kb_columns` |
 | **Customer/Organization** (`services/customers/`, v0.84.0) | 3008 | Fifth and final "toggle between local and remote" extraction, and the last story of the 5-epic Organization Model roadmap begun at v0.56.0 — deliberately sequenced last, after the data model had fully settled | Owns its own `.db`: `customers`/`customer_identifiers`/`customer_contacts`/`customer_screenings`. `customer_documents` and `customer_roles` are deliberately excluded — see the Customer-specific notes below |
 
@@ -2010,7 +2010,7 @@ that's a test-harness concern, not something this run is measuring.
   create and delete) when a run's duration expires, which scales with `connections` and is
   expected, not a bug. Re-verified clean (0 leaked rows) after both runs above.
 
-**Third update — the migration itself is underway, Phase 0 shipped.** Direct decision, after
+**Third update — the migration itself is underway, Phases 0 and 1 shipped.** Direct decision, after
 seeing the load-test numbers above: commit to the long-term Postgres migration rather than a
 short-term mitigation (a worker-thread pool was considered and explicitly rejected — "short term
 fixes will just have us run into the same problem sooner or later").
@@ -2058,9 +2058,35 @@ own test files (38 assertions total) and the monolith's own integration test sui
 SQLite-backed results, plus a real end-to-end manual check through the live monolith→service
 proxy (`GET`/`PUT /api/offices/:id/webhook-settings`) confirmed correct round-tripping.
 
-**Remaining roadmap, explicitly phased, not attempted in one sitting**: Phase 1+ migrates the
-other 5 database-backed services **in this safety-ranked order** (each independently, no
-cross-service coupling to worry about): `screening` (3 tables, 36 call sites) → `customers` (4
+**Phase 1 (shipped): `screening`** — 3 tables (`sanctions_entries`, `sanctions_syncs`, a small
+local `settings` k/v table), 36 call sites. New `services/screening/lib/db.js`, same shape as
+Phase 0's. Two real behavioral-parity details this migration surfaced that Phase 0's simpler
+schema hadn't: (1) SQLite's `INSERT OR REPLACE` (a full-row replace) has no direct Postgres
+equivalent — translated to `INSERT ... ON CONFLICT (id) DO UPDATE SET col=EXCLUDED.col, ...` for
+every non-key column, and one of the three call sites doing this (`import-csv`) hardcoded a
+literal `'[]'` for `aliases_norm` in its original `VALUES` clause rather than a bound parameter —
+easy to miss that the `ON CONFLICT DO UPDATE` needs that exact same literal, not just the
+parameterized columns, to stay byte-for-byte behaviorally identical; caught before shipping by
+re-diffing every column against the original statement, not just skimming it. (2) `COUNT(*)`
+returns a string from both `pg` and `pglite` (Postgres's `bigint` result type, avoiding silent
+precision loss past `Number.MAX_SAFE_INTEGER`) — every one of this service's 4 `COUNT(*)` sites
+needed an explicit `Number(...)` wrap, a gotcha Phase 0's schema never exercised since it had no
+count queries at all. Also translated: `LIKE` → `ILIKE` in the entries search (SQLite's `LIKE` is
+case-insensitive by default for ASCII; Postgres's is not — silently changing search behavior if
+left as a literal find-replace). The two long-lived `BEGIN`/`COMMIT` sync jobs (`syncOfacSdn`,
+`syncConsolidatedScreeningList`) and the two auto-sync scheduler functions (`getSettings` plus a
+`sanctions_syncs` lookup, now real async queries) all converted cleanly using the same
+`transaction()` helper and the "wrap the whole body in try/catch, never let the returned promise
+reject" contract the original synchronous fire-and-forget schedulers already had. 11 new
+assertions (this service's own test file) plus the monolith's 14-assertion
+`screening-service-toggle` suite — the latter is the more meaningful proof here, since it
+exercises the full local↔remote toggle, a live import through the remote-mode proxy, and a real
+shipment screening confirming the monolith's in-memory `sanctionsMap` cache actually reloads from
+the now-Postgres-backed service — both pass identically to the SQLite-backed results.
+
+**Remaining roadmap, explicitly phased, not attempted in one sitting**: Phase 2+ migrates the
+other 4 database-backed services **in this safety-ranked order** (each independently, no
+cross-service coupling to worry about): `customers` (4
 tables, one self-referential FK, 50 call sites) → `kanban` (7 tables, real relational structure,
 79 call sites) → `contract-management` (6 tables with `ON DELETE CASCADE` chains, 68 call sites)
 → `mdm` (12 tables, 133 call sites, and the one already-known guarded-rebuild-migration gotcha —
