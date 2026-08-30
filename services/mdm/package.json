@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "license": "UNLICENSED",
-  "description": "CargoDesk MDM (Master Data Management) Service — carriers, vessels, ports, linked ports, trade lanes, country-lane assignments, regions, countries, commodities, and carrier line agents. Called only by the monolith over an internal, secret-gated HTTP API (see server.js's own /internal gate) — never exposed to the browser. Resolved dependencies (express) are hoisted from the repo root's node_modules — no separate install step.",
+  "description": "CargoDesk MDM (Master Data Management) Service — carriers, vessels, ports, linked ports, trade lanes, country-lane assignments, regions, countries, commodities, and carrier line agents. Called only by the monolith over an internal, secret-gated HTTP API (see server.js's own /internal gate) — never exposed to the browser. Migrated to Postgres (ARCHITECTURE.md §13, Phase 5, the last microservice phase) — see lib/db.js. Zero-script onboarding now seeds from mdm.sample-data.json (a JSON extraction of the retired mdm.sample.db) instead of copying a SQLite file. Resolved dependencies (express, pg, @electric-sql/pglite) are hoisted from the repo root's node_modules — no separate install step.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",

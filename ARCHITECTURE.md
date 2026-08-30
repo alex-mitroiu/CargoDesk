@@ -545,7 +545,7 @@ Organization Model roadmap begun at v0.56.0:
 | **Document Distribution** (`services/document-distribution/`, v0.64.0) | 3002 | Outbound document delivery (email/webhook) has its own retry/failure profile, distinct from request/response HTTP | Postgres (Phase 0 of the Postgres migration, §13 — `pg` when `DATABASE_URL` is set, embedded `@electric-sql/pglite` otherwise; was SQLite before this) — webhook configs, delivery attempts |
 | **PDF Render** (`services/pdf-render/`, v0.65.1) | 3003 | The heaviest, most bursty thing the monolith did per-request (a full headless-Chromium launch) — see §12 for the full reasoning | Stateless — no database at all |
 | **Contract Management** (`services/contract-management/`, v0.68.0) | 3004 | First real "toggle between local and remote" extraction — proves the pattern before Epic 5 (Customer/Organization) needs it | Postgres (Phase 4 of the Postgres migration, §13 — `pg` when `DATABASE_URL` is set, embedded `@electric-sql/pglite` otherwise; was SQLite before this), a straight port of `contracts`/`contract_legs`/`contract_rates`/`contract_routings` |
-| **MDM** (`services/mdm/`, v0.80.0) | 3005 | Second "toggle between local and remote" extraction, following the sequencing proposed in `documentation/splitting-mdm-first.html` — the lowest-blast-radius domain (no request-path involvement, no outbound FK from any of its tables into shipments/customers/users) | Owns its own `.db`: `carriers`/`vessels`/`port_locations`/`linked_ports`/`trade_lanes`/`country_trade_lanes`/`regions`/`countries`/`commodities`/`carrier_agents`/`carrier_agent_locations`/`carrier_agent_schedule_rows` |
+| **MDM** (`services/mdm/`, v0.80.0) | 3005 | Second "toggle between local and remote" extraction, following the sequencing proposed in `documentation/splitting-mdm-first.html` — the lowest-blast-radius domain (no request-path involvement, no outbound FK from any of its tables into shipments/customers/users) | Postgres (Phase 5 of the Postgres migration, §13 — `pg` when `DATABASE_URL` is set, embedded `@electric-sql/pglite` otherwise; was SQLite before this, the last microservice to migrate): `carriers`/`vessels`/`port_locations`/`linked_ports`/`trade_lanes`/`country_trade_lanes`/`regions`/`countries`/`commodities`/`carrier_agents`/`carrier_agent_locations`/`carrier_agent_schedule_rows` |
 | **Screening** (`services/screening/`, v0.81.0) | 3006 | Third "toggle between local and remote" extraction — externally-sourced denylist data, zero outbound FK, read via name-match not JOIN (`documentation/splitting-sanctions-next.html`) | Postgres (Phase 1 of the Postgres migration, §13 — `pg` when `DATABASE_URL` is set, embedded `@electric-sql/pglite` otherwise; was SQLite before this): `sanctions_entries`/`sanctions_syncs`, plus a small local `settings` table for its own auto-sync schedule (no admin UI for it yet — see below) |
 | **Kanban/Testing** (`services/kanban/`, v0.82.0) | 3007 | Fourth "toggle between local and remote" extraction — a feature the roadmap expects to eventually go away entirely (`documentation/splitting-kanban-out.html`), so keeping its schema fully separable now avoids leftovers later | Postgres (Phase 3 of the Postgres migration, §13 — `pg` when `DATABASE_URL` is set, embedded `@electric-sql/pglite` otherwise; was SQLite before this): `tickets`/`ticket_links`/`test_items`/`test_case_links`/`kb_projects`/`kb_versions`/`kb_columns` |
 | **Customer/Organization** (`services/customers/`, v0.84.0) | 3008 | Fifth and final "toggle between local and remote" extraction, and the last story of the 5-epic Organization Model roadmap begun at v0.56.0 — deliberately sequenced last, after the data model had fully settled | Postgres (Phase 2 of the Postgres migration, §13 — `pg` when `DATABASE_URL` is set, embedded `@electric-sql/pglite` otherwise; was SQLite before this): `customers`/`customer_identifiers`/`customer_contacts`/`customer_screenings`. `customer_documents` and `customer_roles` are deliberately excluded — see the Customer-specific notes below |
@@ -2010,7 +2010,9 @@ that's a test-harness concern, not something this run is measuring.
   create and delete) when a run's duration expires, which scales with `connections` and is
   expected, not a bug. Re-verified clean (0 leaked rows) after both runs above.
 
-**Third update — the migration itself is underway, Phases 0 through 4 shipped.** Direct decision, after
+**Third update — the migration itself is underway, Phases 0 through 5 shipped — every
+independently-deployable microservice is now Postgres-backed, only the monolith itself
+remains.** Direct decision, after
 seeing the load-test numbers above: commit to the long-term Postgres migration rather than a
 short-term mitigation (a worker-thread pool was considered and explicitly rejected — "short term
 fixes will just have us run into the same problem sooner or later").
@@ -2170,11 +2172,66 @@ multi-routing HLCU/Kuehne+Nagel worked example) — 31 total — plus the monoli
 modes and `routes/allocations.js`'s own haulage-gated match resolving a remote contract's legs
 correctly), all passing identically to the SQLite-backed results.
 
-**Remaining roadmap, explicitly phased, not attempted in one sitting**: Phase 5 migrates the
-last database-backed service, `mdm` (12 tables, 133 call sites, and the one already-known
-guarded-rebuild-migration gotcha — the most valuable lesson-learned target but the riskiest
-first attempt, hence saved for last). The monolith
-itself is tackled last of all, and needs its own internal sub-phasing: convert `logEntityEvent`
+**Phase 5 (shipped): `mdm`** — the largest and riskiest microservice migration, deliberately
+saved for last: 12 tables, 133 call sites, and the one already-known guarded-rebuild-migration
+gotcha. New `services/mdm/lib/db.js`, same shape as Phases 0-4.
+- **The guarded rebuild was eliminated, not translated** — `rebuildCarrierAgentsLocations` (a
+  SQLite create-copy-swap restructuring a pre-v0.61 flat `port_unlocode` column into today's
+  header+locations shape) and a small additive `ALTER TABLE ... ADD COLUMN capabilities` both
+  disappeared entirely rather than being ported. Postgres supports every operation these existed
+  to work around natively (dropping/adding columns, renaming tables) with no `PRAGMA
+  foreign_keys=OFF`/create-copy-swap dance needed — and critically, this guard has existed since
+  the MDM service's own v0.80.0 launch, so any real SQLite `mdm.db` old enough to need it has
+  already run it at least once; a table migrated via `scripts/migrate-mdm-to-service.js` is
+  therefore guaranteed to already be in the post-rebuild shape, and a brand-new Postgres table is
+  simply created directly in that shape from day one. This is the first phase to actually
+  exercise the "eliminate, don't translate" guidance §13 laid out from the start of this
+  migration.
+- **`un_member` converted `INTEGER DEFAULT 1` → `BOOLEAN NOT NULL DEFAULT TRUE`** — and this
+  phase caught the exact same bug class Phase 4 (contract-management) did: `mapCountry` read it
+  via `r.un_member === 1`, which silently becomes `false` for every country once the column is a
+  real Postgres boolean. Fixed to `!!r.un_member`, confirmed live (`unMember: true` in a real
+  response) and by the service's own test suite.
+- **Zero-script onboarding needed a real redesign, not a syntax port.** The old mechanism — copy
+  a committed `mdm.sample.db` SQLite *file* into place before the process ever opens a connection
+  — has no equivalent once the live database is Postgres/pglite, neither of which is a single
+  portable file to copy. Replaced with a data-level seed: a one-off extraction script read every
+  reference table out of the retired `mdm.sample.db` (carriers/vessels/port_locations/
+  linked_ports/trade_lanes/country_trade_lanes/regions/countries/commodities — 9 tables, 15,738
+  rows total, largest being 14,269 port_locations) into a new committed `mdm.sample-data.json`
+  (2.8MB). New `seedIfEmpty()` checks whether `carriers` is empty and, if so and the JSON exists,
+  bulk-inserts through the same `bulkImportTables()` helper the `/internal/mdm/bulk-import` route
+  uses (refactored out into a shared function so both call sites stay in sync) — same "only ever
+  seeds a genuinely fresh install, never overwrites a running one" guarantee the file-copy
+  version had, just checked with a row count instead of a file-existence check. `mdm.sample.db`
+  itself is left in the repo as the historical source the JSON was extracted from, not deleted.
+  Verified live: a fresh `pgdata/` boot correctly logged seeding all 9 tables and every row
+  resolved correctly on the first real query.
+- `INSERT OR IGNORE` throughout (`bulkImportTables`, the two lane-assignment replace routes)
+  became `ON CONFLICT DO NOTHING`. One refinement over every prior phase's bulk-import: this
+  service's 11 tables are ALL natural-key primary keys (code/imo/unlocode/composite iso2+lane
+  pairs) — none of them has a generic `id` column — so the "was this row actually inserted"
+  signal uses `RETURNING 1` instead of the `RETURNING id` every previous phase used, since that
+  wouldn't compile against a table with no `id` column at all.
+- `isUniqueViolation` — previously a SQLite-specific `e.message.includes("UNIQUE constraint")`
+  string check, guarding several `INSERT`-then-catch routes (carriers/vessels/ports/linked-ports/
+  trade-lanes/regions/countries/commodities, none of which pre-check for a duplicate via a SELECT
+  first, unlike every other migrated service) — converted to check Postgres's own unique-violation
+  SQLSTATE code (`e.code === "23505"`), confirmed correct by the service's own duplicate-rejection
+  test.
+- 40 new assertions (`mdm-crud.test.js` 25, `mdm-resolvers.test.js` 15 — including the carrier-agent
+  linked-port fallback, which specifically exercises the boolean-shaped location-type routing, and
+  the bulk-import idempotency check) plus the monolith's 25-assertion `mdm-service-toggle` suite —
+  the most cross-cutting toggle suite of any phase, since it's the only one that exercises TWO
+  extracted services' remote modes at once (`mdm_source=remote` AND `customer_source=remote`,
+  proving `attachAgentNames` correctly resolves a real customer name through a second live
+  service) — all passing identically to the SQLite-backed results.
+
+**This completes every planned microservice Postgres migration.** All 6 database-backed
+services (`document-distribution`, `screening`, `customers`, `kanban`, `contract-management`,
+`mdm`) are now Postgres-backed; only `pdf-render` (stateless, no database) and the monolith
+itself remain on their original stack. The monolith is tackled last of all, and needs its own
+internal sub-phasing: convert `logEntityEvent`
 and `getSettings` to `async` first as a standalone, zero-behavior-change prerequisite (still on
 `node:sqlite` — awaiting an already-synchronous call is a no-op, so this is safe to do before any
 driver swap), then convert route files smallest-to-largest (`finance.js`, `export.js`,

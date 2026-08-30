@@ -25,13 +25,14 @@
 #      (docker-secrets/ is gitignored — see .gitignore. These files are the actual secrets;
 #      treat them the same as you would a committed .env, i.e. never commit them for real.)
 #   2. cp .env.example .env — fills in LOGIN_RATE_MAX and anything else non-secret
-#   3. mkdir -p docker-data && touch docker-data/cargodesk.db docker-data/mdm.db
+#   3. mkdir -p docker-data && touch docker-data/cargodesk.db
 #      (REQUIRED — Docker bind-mounts a host path that doesn't exist yet as a DIRECTORY, not a
 #      file, which would break `new DatabaseSync('/app/cargodesk.db')` since it expects a real
-#      file path. Creating empty files first sidesteps this well-known bind-mount gotcha.
-#      document-distribution, screening, customers, kanban, and contract-management are NOT in
-#      this list anymore — all five are migrated to Postgres, see their own DATABASE_URL
-#      environment entries below instead of a SQLite bind mount.)
+#      file path. Creating an empty file first sidesteps this well-known bind-mount gotcha.
+#      document-distribution, screening, customers, kanban, contract-management, and mdm are NOT
+#      in this list anymore — all six are migrated to Postgres (ARCHITECTURE.md §13), see their
+#      own DATABASE_URL environment entries below instead of a SQLite bind mount. The monolith
+#      itself (cargodesk.db above) is the only piece still on node:sqlite.)
 #   4. mkdir -p docker-data/uploads
 #   5. docker compose up -d --build
 #
@@ -171,10 +172,13 @@ services:
     environment:
       NODE_ENV: production
       MDM_SERVICE_SECRET_FILE: /run/secrets/mdm_service_secret
+      # Migrated to Postgres (ARCHITECTURE.md §13, Phase 5, the last microservice phase) — point
+      # this at a real Postgres instance. Left unset, falls back to an embedded
+      # @electric-sql/pglite instance with no volume backing it below, so data would not survive
+      # a container recreation.
+      DATABASE_URL: postgres://user:password@your-postgres-host:5432/cargodesk_mdm
     secrets:
       - mdm_service_secret
-    volumes:
-      - ./docker-data/mdm.db:/app/services/mdm/mdm.db
     restart: unless-stopped
 
   screening:
