@@ -1,7 +1,7 @@
 "use strict";
 
 module.exports = function customersRoutes(app, ctx) {
-  const { db, ok, err, uid, auth, requireRole,
+  const { query, ok, err, uid, auth, requireRole,
           mapCustomer, mapCustomerIdentifier, mapCustomerScreening, mapCustomerDoc, mapCustomerContact,
           screenShipmentById,
           sanctionsMap, normSanctionName,
@@ -56,13 +56,11 @@ module.exports = function customersRoutes(app, ctx) {
   // this lookup never needs a toggle branch of its own — only the screenShipmentById it drives.
   async function rescreenShipmentsForCustomer(customerId) {
     const ids = new Set([
-      ...db.prepare("SELECT id FROM shipments WHERE shipper_id=? OR consignee_id=? OR principal_id=? OR notify_id=?")
-        .all(customerId, customerId, customerId, customerId).map(r => r.id),
-      ...db.prepare("SELECT DISTINCT shipment_id AS id FROM shipment_parties WHERE customer_id=?")
-        .all(customerId).map(r => r.id),
+      ...(await query("SELECT id FROM shipments WHERE shipper_id=$1 OR consignee_id=$1 OR principal_id=$1 OR notify_id=$1", [customerId])).map(r => r.id),
+      ...(await query("SELECT DISTINCT shipment_id AS id FROM shipment_parties WHERE customer_id=$1", [customerId])).map(r => r.id),
     ]);
     for (const shipmentId of ids) {
-      const prev = db.prepare("SELECT result, overridden_at FROM shipment_screenings WHERE shipment_id=?").get(shipmentId);
+      const [prev] = await query("SELECT result, overridden_at FROM shipment_screenings WHERE shipment_id=$1", [shipmentId]);
       const isOverridden = prev?.result === 'CLEAR' && prev?.overridden_at;
       if (!isOverridden) await screenShipmentById(shipmentId);
     }
@@ -85,13 +83,13 @@ module.exports = function customersRoutes(app, ctx) {
       screening = await callCustomerService("PUT", `/internal/customers/${customerId}/screening`, { result, hits, screenedAt: now });
     } else {
       const id = `CSC-${uid()}`;
-      db.prepare(`INSERT INTO customer_screenings (id,customer_id,screened_at,result,hits)
-        VALUES (?,?,?,?,?)
+      await query(`INSERT INTO customer_screenings (id,customer_id,screened_at,result,hits)
+        VALUES ($1,$2,$3,$4,$5)
         ON CONFLICT(customer_id) DO UPDATE SET
           screened_at=excluded.screened_at, result=excluded.result,
-          hits=excluded.hits, overridden_at=NULL, override_reason=NULL`)
-        .run(id, customerId, now, result, JSON.stringify(hits));
-      const row = db.prepare("SELECT * FROM customer_screenings WHERE customer_id=?").get(customerId);
+          hits=excluded.hits, overridden_at=NULL, override_reason=NULL`,
+        [id, customerId, now, result, JSON.stringify(hits)]);
+      const [row] = await query("SELECT * FROM customer_screenings WHERE customer_id=$1", [customerId]);
       screening = mapCustomerScreening(row);
     }
     await rescreenShipmentsForCustomer(customerId);
@@ -133,9 +131,12 @@ module.exports = function customersRoutes(app, ctx) {
       // — resolved locally, then passed to the service as a plain ids= filter.
       let roleEligibleIds = null;
       if (roleList.length) {
-        roleEligibleIds = db.prepare(
-          `SELECT DISTINCT customer_id FROM (${CUSTOMER_ROLE_USAGE_SQL}) WHERE role IN (${roleList.map(() => '?').join(',')})`
-        ).all(...roleList).map(r => r.customer_id);
+        const rParams = [];
+        const rp = v => { rParams.push(v); return `$${rParams.length}`; };
+        roleEligibleIds = (await query(
+          `SELECT DISTINCT customer_id FROM (${CUSTOMER_ROLE_USAGE_SQL}) x WHERE role IN (${roleList.map(v => rp(v)).join(',')})`,
+          rParams
+        )).map(r => r.customer_id);
         if (roleEligibleIds.length === 0) return ok(res, { results: [], total: 0, limit: lim, offset: off });
       }
       try {
@@ -146,9 +147,12 @@ module.exports = function customersRoutes(app, ctx) {
         let rolesByCustomer = {};
         if (data.results.length) {
           const ids = data.results.map(r => r.id);
-          const roleRows = db.prepare(
-            `SELECT customer_id, role FROM (${CUSTOMER_ROLE_USAGE_SQL}) WHERE customer_id IN (${ids.map(() => '?').join(',')})`
-          ).all(...ids);
+          const iParams = [];
+          const ip = v => { iParams.push(v); return `$${iParams.length}`; };
+          const roleRows = await query(
+            `SELECT customer_id, role FROM (${CUSTOMER_ROLE_USAGE_SQL}) x WHERE customer_id IN (${ids.map(v => ip(v)).join(',')})`,
+            iParams
+          );
           for (const r of roleRows) (rolesByCustomer[r.customer_id] ??= []).push(r.role);
         }
         return ok(res, { ...data, results: data.results.map(r => ({ ...r, roles: rolesByCustomer[r.id] || [] })) });
@@ -156,33 +160,36 @@ module.exports = function customersRoutes(app, ctx) {
     }
 
     const conditions = [], params = [];
+    const p = v => { params.push(v); return `$${params.length}`; };
     const s = search.trim();
-    if (s) { conditions.push("(c.company_name LIKE ? OR c.email LIKE ? OR c.phone LIKE ? OR c.id LIKE ?)"); params.push(`%${s}%`, `%${s}%`, `%${s}%`, `%${s}%`); }
+    if (s) { const ph = `%${s}%`; conditions.push(`(c.company_name ILIKE ${p(ph)} OR c.email ILIKE ${p(ph)} OR c.phone ILIKE ${p(ph)} OR c.id ILIKE ${p(ph)})`); }
     const ci = city.trim();
-    if (ci) { conditions.push("c.city LIKE ?"); params.push(`%${ci}%`); }
+    if (ci) conditions.push(`c.city ILIKE ${p(`%${ci}%`)}`);
     const co = country.trim().toUpperCase();
-    if (co) { conditions.push("c.country_iso2 = ?"); params.push(co); }
+    if (co) conditions.push(`c.country_iso2 = ${p(co)}`);
     const cid = customerId.trim();
-    if (cid) { conditions.push("c.id LIKE ?"); params.push(`%${cid}%`); }
+    if (cid) conditions.push(`c.id ILIKE ${p(`%${cid}%`)}`);
     if (roleList.length) {
-      conditions.push(`c.id IN (SELECT customer_id FROM (${CUSTOMER_ROLE_USAGE_SQL}) WHERE role IN (${roleList.map(() => '?').join(',')}))`);
-      params.push(...roleList);
+      conditions.push(`c.id IN (SELECT customer_id FROM (${CUSTOMER_ROLE_USAGE_SQL}) x WHERE role IN (${roleList.map(v => p(v)).join(',')}))`);
     }
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-    const total = db.prepare(`SELECT COUNT(*) AS n FROM customers c ${where}`).get(...params).n;
-    const rows  = db.prepare(`${CUST_JOIN} ${where} ORDER BY c.company_name LIMIT ? OFFSET ?`).all(...params, lim, off);
+    const [{ n: total }] = await query(`SELECT COUNT(*) AS n FROM customers c ${where}`, params);
+    const rows  = await query(`${CUST_JOIN} ${where} ORDER BY c.company_name LIMIT ${p(lim)} OFFSET ${p(off)}`, params);
 
     let rolesByCustomer = {};
     if (rows.length) {
       const ids = rows.map(r => r.id);
-      const roleRows = db.prepare(
-        `SELECT customer_id, role FROM (${CUSTOMER_ROLE_USAGE_SQL}) WHERE customer_id IN (${ids.map(() => '?').join(',')})`
-      ).all(...ids);
+      const iParams = [];
+      const ip = v => { iParams.push(v); return `$${iParams.length}`; };
+      const roleRows = await query(
+        `SELECT customer_id, role FROM (${CUSTOMER_ROLE_USAGE_SQL}) x WHERE customer_id IN (${ids.map(v => ip(v)).join(',')})`,
+        iParams
+      );
       for (const r of roleRows) (rolesByCustomer[r.customer_id] ??= []).push(r.role);
     }
     ok(res, {
       results: rows.map(r => ({ ...mapCustomer(r), roles: rolesByCustomer[r.id] || [] })),
-      total, limit: lim, offset: off,
+      total: Number(total), limit: lim, offset: off,
     });
   });
 
@@ -191,7 +198,7 @@ module.exports = function customersRoutes(app, ctx) {
     if (s.api_customers_enabled !== 'true' || s.api_ofac_enabled !== 'true')
       return ok(res, { enabled: false, hits: [] });
     if (sanctionsMap.size === 0) return ok(res, { enabled: true, hits: [] });
-    const customers = db.prepare("SELECT * FROM customers ORDER BY company_name").all();
+    const customers = await query("SELECT * FROM customers ORDER BY company_name");
     const hits = [];
     for (const c of customers) {
       const match = sanctionsMap.get(normSanctionName(c.company_name || ''));
@@ -205,7 +212,7 @@ module.exports = function customersRoutes(app, ctx) {
       try { return ok(res, await callCustomerService("GET", `/internal/customers/${req.params.id}`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
-    const r = db.prepare(`${CUST_JOIN} WHERE c.id=?`).get(req.params.id);
+    const [r] = await query(`${CUST_JOIN} WHERE c.id=$1`, [req.params.id]);
     if (!r) return err(res, "Not found", 404);
     ok(res, mapCustomer(r));
   });
@@ -218,10 +225,10 @@ module.exports = function customersRoutes(app, ctx) {
   // real dollar total is resolved via source_cost_line_ids when present (the same field the
   // invoice reversal feature, TKT-DUADU3, introduced for exactly this "what was this invoice
   app.get("/api/customers/:id/credit-status", auth(), async (req, res) => {
-    const c = db.prepare("SELECT * FROM customers WHERE id=?").get(req.params.id);
+    const [c] = await query("SELECT * FROM customers WHERE id=$1", [req.params.id]);
     if (!c) return err(res, "Not found", 404);
 
-    const { outstandingAr, committedExposure, aging } = computeArExposure(c.id, c.credit_terms_days);
+    const { outstandingAr, committedExposure, aging } = await computeArExposure(c.id, c.credit_terms_days);
 
     const currency = c.currency || 'USD';
     const creditLimit = c.credit_limit ?? null;
@@ -234,7 +241,7 @@ module.exports = function customersRoutes(app, ctx) {
     const groupIds = (await resolveCustomerGroup(c.id)).filter(gid => gid !== c.id);
     let groupOutstandingAr = outstandingAr;
     for (const gid of groupIds) {
-      groupOutstandingAr += computeArExposure(gid, c.credit_terms_days).outstandingAr;
+      groupOutstandingAr += (await computeArExposure(gid, c.credit_terms_days)).outstandingAr;
     }
     groupOutstandingAr = roundCents(groupOutstandingAr);
 
@@ -264,17 +271,17 @@ module.exports = function customersRoutes(app, ctx) {
     const c = await getCustomerRow(req.params.id);
     if (!c) return err(res, "Customer not found", 404);
     if (!c.creditHold) return err(res, "This customer is not currently on credit hold");
-    const shipment = shipmentId ? db.prepare("SELECT * FROM shipments WHERE id=?").get(shipmentId) : null;
+    const [shipment] = shipmentId ? await query("SELECT * FROM shipments WHERE id=$1", [shipmentId]) : [null];
     if (!shipment) return err(res, "shipmentId must reference a real shipment involving this customer");
     if (shipment.shipper_id !== c.id && shipment.consignee_id !== c.id && shipment.principal_id !== c.id)
       return err(res, "That shipment doesn't involve this customer");
-    if (!userOwnsLaneForShipment(req.user, shipment))
+    if (!(await userOwnsLaneForShipment(req.user, shipment)))
       return err(res, "Only the trade manager responsible for this shipment's own trade lane may release a credit hold", 403);
     if (await isRemote()) {
       try { await callCustomerService("PUT", `/internal/customers/${c.id}`, { ...c, creditHold: false, creditHoldReason: '' }); }
       catch (e) { return err(res, e.message, e.status || 502); }
     } else {
-      db.prepare("UPDATE customers SET credit_hold=0, credit_hold_reason='' WHERE id=?").run(c.id);
+      await query("UPDATE customers SET credit_hold=FALSE, credit_hold_reason='' WHERE id=$1", [c.id]);
     }
     await logEntityEvent('customer', c.id, 'CREDIT_HOLD_RELEASED', 'creditHold', 'true', 'false',
       JSON.stringify({ reason: reason.trim(), shipmentId, releasedBy: req.user.email || req.user.id }));
@@ -292,15 +299,15 @@ module.exports = function customersRoutes(app, ctx) {
     try {
       const { reason = '' } = req.body;
       if (!reason.trim()) return err(res, "A reason is required to approve an over-limit override");
-      const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
+      const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
       if (!shipment) return err(res, "Shipment not found", 404);
-      if (!userOwnsLaneForShipment(req.user, shipment))
+      if (!(await userOwnsLaneForShipment(req.user, shipment)))
         return err(res, "Only the trade manager responsible for this shipment's own trade lane may approve an over-limit override", 403);
       const respId = shipment.principal_id || shipment.consignee_id || null;
       if (!respId) return err(res, "This shipment has no Principal or Consignee to bill");
       const c = await getCustomerRow(respId);
       if (!c || c.creditLimit == null) return err(res, "The responsible party has no credit limit set");
-      const { outstandingAr, committedExposure } = computeArExposure(c.id, c.creditTermsDays);
+      const { outstandingAr, committedExposure } = await computeArExposure(c.id, c.creditTermsDays);
       const limitUsd = await toUsd(c.creditLimit, c.currency || 'USD');
       if (roundCents(outstandingAr + committedExposure) <= limitUsd)
         return err(res, "This shipment's responsible party is not currently over their credit limit");
@@ -310,17 +317,18 @@ module.exports = function customersRoutes(app, ctx) {
       // itself validating that id exists.
       const id = `COV-${uid()}`;
       const now = new Date().toISOString();
-      db.prepare(`INSERT INTO credit_overrides (id,customer_id,shipment_id,override_type,reason,approved_by,approved_by_name,created_at)
-        VALUES (?,?,?,?,?,?,?,?)`)
-        .run(id, c.id, shipment.id, 'over_limit', reason.trim(), req.user.id, req.user.email || '', now);
+      await query(`INSERT INTO credit_overrides (id,customer_id,shipment_id,override_type,reason,approved_by,approved_by_name,created_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [id, c.id, shipment.id, 'over_limit', reason.trim(), req.user.id, req.user.email || '', now]);
       ok(res, { id, customerId: c.id, shipmentId: shipment.id, reason: reason.trim(), approvedBy: req.user.email || '', createdAt: now }, 201);
     } catch (e) { err(res, e.message || "Failed to approve override", 500); }
   });
 
-  app.get("/api/shipments/:id/credit-override", auth(), (req, res) => {
-    const row = db.prepare(
-      "SELECT * FROM credit_overrides WHERE shipment_id=? AND override_type='over_limit' ORDER BY created_at DESC LIMIT 1"
-    ).get(req.params.id);
+  app.get("/api/shipments/:id/credit-override", auth(), async (req, res) => {
+    const [row] = await query(
+      "SELECT * FROM credit_overrides WHERE shipment_id=$1 AND override_type='over_limit' ORDER BY created_at DESC LIMIT 1",
+      [req.params.id]
+    );
     const stillValid = row && (Date.now() - new Date(row.created_at).getTime()) <= OVERRIDE_GRACE_MS;
     ok(res, stillValid ? {
       id: row.id, customerId: row.customer_id, shipmentId: row.shipment_id,
@@ -348,16 +356,17 @@ module.exports = function customersRoutes(app, ctx) {
         limitedCustomers = await callCustomerService("GET", "/internal/customers?creditHold=0&hasCreditLimit=1");
       } catch (e) { return err(res, e.message, e.status || 502); }
     } else {
-      heldCustomers = db.prepare("SELECT * FROM customers WHERE credit_hold=1").all().map(mapCustomer);
-      limitedCustomers = db.prepare("SELECT * FROM customers WHERE credit_hold=0 AND credit_limit IS NOT NULL").all().map(mapCustomer);
+      heldCustomers = (await query("SELECT * FROM customers WHERE credit_hold=TRUE")).map(mapCustomer);
+      limitedCustomers = (await query("SELECT * FROM customers WHERE credit_hold=FALSE AND credit_limit IS NOT NULL")).map(mapCustomer);
     }
 
     for (const c of heldCustomers) {
-      const shipments = db.prepare(
-        `SELECT * FROM shipments WHERE (shipper_id=? OR consignee_id=? OR principal_id=?) AND status NOT IN ('Completed','Cancelled')`
-      ).all(c.id, c.id, c.id);
+      const shipments = await query(
+        `SELECT * FROM shipments WHERE (shipper_id=$1 OR consignee_id=$1 OR principal_id=$1) AND status NOT IN ('Completed','Cancelled')`,
+        [c.id]
+      );
       for (const s of shipments) {
-        const canAct = userOwnsLaneForShipment(req.user, s);
+        const canAct = await userOwnsLaneForShipment(req.user, s);
         if (isTradeManager && !canAct) continue;
         const role = s.shipper_id === c.id ? 'Shipper' : s.consignee_id === c.id ? 'Consignee' : 'Principal';
         rows.push({
@@ -368,14 +377,15 @@ module.exports = function customersRoutes(app, ctx) {
     }
 
     for (const c of limitedCustomers) {
-      const { outstandingAr, committedExposure } = computeArExposure(c.id, c.creditTermsDays);
+      const { outstandingAr, committedExposure } = await computeArExposure(c.id, c.creditTermsDays);
       const limitUsd = await toUsd(c.creditLimit, c.currency || 'USD');
       if (roundCents(outstandingAr + committedExposure) <= limitUsd) continue;
-      const shipments = db.prepare(
-        `SELECT * FROM shipments WHERE (principal_id=? OR consignee_id=?) AND status NOT IN ('Completed','Cancelled')`
-      ).all(c.id, c.id);
+      const shipments = await query(
+        `SELECT * FROM shipments WHERE (principal_id=$1 OR consignee_id=$1) AND status NOT IN ('Completed','Cancelled')`,
+        [c.id]
+      );
       for (const s of shipments) {
-        const canAct = userOwnsLaneForShipment(req.user, s);
+        const canAct = await userOwnsLaneForShipment(req.user, s);
         if (isTradeManager && !canAct) continue;
         const role = s.principal_id === c.id ? 'Principal' : 'Consignee';
         rows.push({
@@ -396,18 +406,17 @@ module.exports = function customersRoutes(app, ctx) {
   // billing-process lag would block the wrong side of the business). Bounded by construction:
   // only shipments with a genuinely completed "delivered" milestone are ever considered.
   app.get("/api/invoice-deadlines/overdue", auth(), async (req, res) => {
-    const rows = db.prepare(`
+    const rows = await query(`
       SELECT s.id AS shipment_id, s.principal_id, s.principal_name, s.consignee_id, s.consignee_name,
              m.completed_at AS delivered_at
       FROM shipments s
       JOIN shipment_milestones m ON m.shipment_id = s.id AND m.milestone_key = 'delivered' AND m.completed_at != ''
       WHERE s.status != 'Cancelled'
-    `).all();
+    `);
 
     // In remote mode, one bulk fetch keyed by every distinct responsible-party id, rather than a
     // remote round trip per shipment — same batching shape reports.js's own two customer-heavy
-    // reports use. Local mode is untouched: still one cheap per-row SQLite lookup, exactly as
-    // before this cut.
+    // reports use. Local mode is untouched: still one cheap lookup, exactly as before this cut.
     let deadlineDaysById = null;
     if (await isRemote()) {
       const respIds = [...new Set(rows.map(r => r.principal_id || r.consignee_id).filter(Boolean))];
@@ -426,16 +435,21 @@ module.exports = function customersRoutes(app, ctx) {
       const respId   = r.principal_id || r.consignee_id || null;
       const respName = r.principal_id ? r.principal_name : r.consignee_name;
       if (!respId) continue;
-      const invoiceDeadlineDays = deadlineDaysById
-        ? deadlineDaysById[respId]
-        : db.prepare("SELECT invoice_deadline_days FROM customers WHERE id=?").get(respId)?.invoice_deadline_days;
+      let invoiceDeadlineDays;
+      if (deadlineDaysById) {
+        invoiceDeadlineDays = deadlineDaysById[respId];
+      } else {
+        const [row] = await query("SELECT invoice_deadline_days FROM customers WHERE id=$1", [respId]);
+        invoiceDeadlineDays = row?.invoice_deadline_days;
+      }
       if (invoiceDeadlineDays == null) continue;
       const daysSinceDelivery = Math.floor((todayMs - new Date(r.delivered_at).getTime()) / 86400000);
       const daysOverdue = daysSinceDelivery - invoiceDeadlineDays;
       if (daysOverdue <= 0) continue;
-      const hasInvoice = db.prepare(
-        "SELECT 1 FROM shipment_documents WHERE shipment_id=? AND doc_type IN ('FR01','FR02') AND status='confirmed' LIMIT 1"
-      ).get(r.shipment_id);
+      const [hasInvoice] = await query(
+        "SELECT 1 FROM shipment_documents WHERE shipment_id=$1 AND doc_type IN ('FR01','FR02') AND status='confirmed' LIMIT 1",
+        [r.shipment_id]
+      );
       if (hasInvoice) continue;
       results.push({
         shipmentId: r.shipment_id, customerId: respId, companyName: respName || '',
@@ -449,13 +463,14 @@ module.exports = function customersRoutes(app, ctx) {
   // Organization Model Enhancement Epic 4 — walks the parent chain to make sure setting
   // newParentId as customerId's parent could never loop back on itself (A -> B -> A), since a
   // rollup read (resolveCustomerGroup below) that walked a cycle would never terminate.
-  function wouldCreateCycle(customerId, newParentId) {
+  async function wouldCreateCycle(customerId, newParentId) {
     let current = newParentId;
     const seen = new Set();
     while (current) {
       if (current === customerId || seen.has(current)) return true;
       seen.add(current);
-      current = db.prepare("SELECT parent_customer_id FROM customers WHERE id=?").get(current)?.parent_customer_id || null;
+      const [row] = await query("SELECT parent_customer_id FROM customers WHERE id=$1", [current]);
+      current = row?.parent_customer_id || null;
     }
     return false;
   }
@@ -480,7 +495,7 @@ module.exports = function customersRoutes(app, ctx) {
             isNvocc=false, fmcNumber='',
             billingByDay=null, paymentSettlementDay=null, holidayUnlocode='' } = req.body;
     if (!companyName?.trim()) return err(res, "companyName required");
-    if (parentCustomerId && !db.prepare("SELECT id FROM customers WHERE id=?").get(parentCustomerId))
+    if (parentCustomerId && !(await query("SELECT id FROM customers WHERE id=$1", [parentCustomerId]))[0])
       return err(res, "Parent customer not found");
     if (!validCoord(latitude, -90, 90)) return err(res, "Latitude must be between -90 and 90");
     if (!validCoord(longitude, -180, 180)) return err(res, "Longitude must be between -180 and 180");
@@ -502,13 +517,13 @@ module.exports = function customersRoutes(app, ctx) {
     const psd = paymentSettlementDay === null || paymentSettlementDay === '' ? null : parseInt(paymentSettlementDay, 10);
     if (bbd != null && (bbd < 1 || bbd > 31)) return err(res, "billingByDay must be between 1 and 31");
     if (psd != null && (psd < 1 || psd > 31)) return err(res, "paymentSettlementDay must be between 1 and 31");
-    db.prepare(`INSERT INTO customers (id,company_name,address1,address2,city,state,postal_code,country_iso2,phone,fax,email,website,notes,created_at,currency,credit_limit,credit_terms_days,invoice_deadline_days,credit_hold,credit_hold_reason,reminder_enabled,reminder_interval_days,parent_customer_id,classified_location,latitude,longitude,is_nvocc,fmc_number,billing_by_day,payment_settlement_day,holiday_unlocode)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-      .run(id, companyName.trim(), address1, address2, city, state, postalCode, ccU, phone, fax, email, website, notes, createdAt, resolvedCurrency,
-           cl, ctd, idd, creditHold ? 1 : 0, creditHold ? creditHoldReason.trim() : '', reminderEnabled ? 1 : 0, rid, parentCustomerId || null,
-           classifiedLocation ? 1 : 0, lat, lng, isNvocc ? 1 : 0, isNvocc ? fmcNumber.trim() : '', bbd, psd, holidayUnlocode.trim().toUpperCase());
+    await query(`INSERT INTO customers (id,company_name,address1,address2,city,state,postal_code,country_iso2,phone,fax,email,website,notes,created_at,currency,credit_limit,credit_terms_days,invoice_deadline_days,credit_hold,credit_hold_reason,reminder_enabled,reminder_interval_days,parent_customer_id,classified_location,latitude,longitude,is_nvocc,fmc_number,billing_by_day,payment_settlement_day,holiday_unlocode)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31)`,
+      [id, companyName.trim(), address1, address2, city, state, postalCode, ccU, phone, fax, email, website, notes, createdAt, resolvedCurrency,
+           cl, ctd, idd, !!creditHold, creditHold ? creditHoldReason.trim() : '', !!reminderEnabled, rid, parentCustomerId || null,
+           !!classifiedLocation, lat, lng, !!isNvocc, isNvocc ? fmcNumber.trim() : '', bbd, psd, holidayUnlocode.trim().toUpperCase()]);
     if (sanctionsMap.size > 0) await screenCustomer(id);
-    const row = db.prepare(`${CUST_JOIN} WHERE c.id=?`).get(id);
+    const [row] = await query(`${CUST_JOIN} WHERE c.id=$1`, [id]);
     ok(res, mapCustomer(row), 201);
   });
 
@@ -519,7 +534,7 @@ module.exports = function customersRoutes(app, ctx) {
         // Same exclusivity check as local mode, just fetched remotely first — releasing an
         // active credit_hold is exclusively the shipment's own lane trade_manager's call.
         const existing = await callCustomerService("GET", `/internal/customers/${req.params.id}`).catch(() => null);
-        if (existing?.creditHold && !creditHold && !userOwnsLaneForCustomer(req.user, req.params.id))
+        if (existing?.creditHold && !creditHold && !(await userOwnsLaneForCustomer(req.user, req.params.id)))
           return err(res, "Only the trade manager responsible for this customer's trade lane may release a credit hold — use the Credit Overrides queue", 403);
         const updated = await callCustomerService("PUT", `/internal/customers/${req.params.id}`, req.body);
         if (sanctionsMap.size > 0) {
@@ -539,9 +554,9 @@ module.exports = function customersRoutes(app, ctx) {
             billingByDay=null, paymentSettlementDay=null, holidayUnlocode='' } = req.body;
     if (!companyName?.trim()) return err(res, "companyName required");
     if (parentCustomerId) {
-      if (!db.prepare("SELECT id FROM customers WHERE id=?").get(parentCustomerId))
+      if (!(await query("SELECT id FROM customers WHERE id=$1", [parentCustomerId]))[0])
         return err(res, "Parent customer not found");
-      if (wouldCreateCycle(req.params.id, parentCustomerId))
+      if (await wouldCreateCycle(req.params.id, parentCustomerId))
         return err(res, "This would create a circular parent chain — pick a different parent");
     }
     if (!validCoord(latitude, -90, 90)) return err(res, "Latitude must be between -90 and 90");
@@ -551,8 +566,8 @@ module.exports = function customersRoutes(app, ctx) {
     // generic PUT is otherwise the normal, unrestricted profile-edit path (SETTING a hold, or
     // editing anything else about this customer, is untouched) — this only closes the one
     // direct-API bypass of the dedicated POST .../credit-hold/release endpoint's own check.
-    const existing = db.prepare("SELECT credit_hold FROM customers WHERE id=?").get(req.params.id);
-    if (existing?.credit_hold && !creditHold && !userOwnsLaneForCustomer(req.user, req.params.id))
+    const [existing] = await query("SELECT credit_hold FROM customers WHERE id=$1", [req.params.id]);
+    if (existing?.credit_hold && !creditHold && !(await userOwnsLaneForCustomer(req.user, req.params.id)))
       return err(res, "Only the trade manager responsible for this customer's trade lane may release a credit hold — use the Credit Overrides queue", 403);
     const ccU = countryIso2.toUpperCase().trim();
     const cl = creditLimit === null || creditLimit === '' ? null : Number(creditLimit);
@@ -567,18 +582,18 @@ module.exports = function customersRoutes(app, ctx) {
     const psd = paymentSettlementDay === null || paymentSettlementDay === '' ? null : parseInt(paymentSettlementDay, 10);
     if (bbd != null && (bbd < 1 || bbd > 31)) return err(res, "billingByDay must be between 1 and 31");
     if (psd != null && (psd < 1 || psd > 31)) return err(res, "paymentSettlementDay must be between 1 and 31");
-    const info = db.prepare(`UPDATE customers SET company_name=?,address1=?,address2=?,city=?,state=?,
-      postal_code=?,country_iso2=?,phone=?,fax=?,email=?,website=?,notes=?,currency=?,
-      credit_limit=?,credit_terms_days=?,invoice_deadline_days=?,credit_hold=?,credit_hold_reason=?,reminder_enabled=?,reminder_interval_days=?,parent_customer_id=?,
-      classified_location=?,latitude=?,longitude=?,is_nvocc=?,fmc_number=?,
-      billing_by_day=?,payment_settlement_day=?,holiday_unlocode=? WHERE id=?`)
-      .run(companyName.trim(), address1, address2, city, state, postalCode, ccU, phone, fax, email, website, notes, (currency || 'USD').toUpperCase().trim(),
-           cl, ctd, idd, creditHold ? 1 : 0, creditHold ? creditHoldReason.trim() : '', reminderEnabled ? 1 : 0, rid, parentCustomerId || null,
-           classifiedLocation ? 1 : 0, lat, lng, isNvocc ? 1 : 0, isNvocc ? fmcNumber.trim() : '',
-           bbd, psd, holidayUnlocode.trim().toUpperCase(), req.params.id);
-    if (info.changes === 0) return err(res, "Not found", 404);
+    const updated = await query(`UPDATE customers SET company_name=$1,address1=$2,address2=$3,city=$4,state=$5,
+      postal_code=$6,country_iso2=$7,phone=$8,fax=$9,email=$10,website=$11,notes=$12,currency=$13,
+      credit_limit=$14,credit_terms_days=$15,invoice_deadline_days=$16,credit_hold=$17,credit_hold_reason=$18,reminder_enabled=$19,reminder_interval_days=$20,parent_customer_id=$21,
+      classified_location=$22,latitude=$23,longitude=$24,is_nvocc=$25,fmc_number=$26,
+      billing_by_day=$27,payment_settlement_day=$28,holiday_unlocode=$29 WHERE id=$30 RETURNING id`,
+      [companyName.trim(), address1, address2, city, state, postalCode, ccU, phone, fax, email, website, notes, (currency || 'USD').toUpperCase().trim(),
+           cl, ctd, idd, !!creditHold, creditHold ? creditHoldReason.trim() : '', !!reminderEnabled, rid, parentCustomerId || null,
+           !!classifiedLocation, lat, lng, !!isNvocc, isNvocc ? fmcNumber.trim() : '',
+           bbd, psd, holidayUnlocode.trim().toUpperCase(), req.params.id]);
+    if (updated.length === 0) return err(res, "Not found", 404);
     if (sanctionsMap.size > 0) await screenCustomer(req.params.id);
-    const row = db.prepare(`${CUST_JOIN} WHERE c.id=?`).get(req.params.id);
+    const [row] = await query(`${CUST_JOIN} WHERE c.id=$1`, [req.params.id]);
     ok(res, mapCustomer(row));
   });
 
@@ -590,27 +605,27 @@ module.exports = function customersRoutes(app, ctx) {
     // Kept unconditional, regardless of customer_source — carrier_agents itself moved to the MDM
     // Service at v0.80.0, so this guard already only reflects reality when mdm_source='local';
     // a named, pre-existing gap (ARCHITECTURE.md §8.1), not this cut's job to widen or fix.
-    const inUse = db.prepare("SELECT id FROM carrier_agents WHERE agent_customer_id=? LIMIT 1").get(req.params.id);
+    const [inUse] = await query("SELECT id FROM carrier_agents WHERE agent_customer_id=$1 LIMIT 1", [req.params.id]);
     if (inUse) return err(res, "Customer is assigned as a carrier line agent — remove that assignment first");
 
     if (await isRemote()) {
       try { await callCustomerService("DELETE", `/internal/customers/${req.params.id}`); }
       catch (e) { return err(res, e.message, e.status || 502); }
     } else {
-      const info = db.prepare("DELETE FROM customers WHERE id=?").run(req.params.id);
-      if (info.changes === 0) return err(res, "Not found", 404);
-      db.prepare("DELETE FROM customer_identifiers WHERE customer_id=?").run(req.params.id);
-      db.prepare("DELETE FROM customer_screenings  WHERE customer_id=?").run(req.params.id);
-      db.prepare("DELETE FROM customer_contacts    WHERE customer_id=?").run(req.params.id);
+      const deleted = await query("DELETE FROM customers WHERE id=$1 RETURNING id", [req.params.id]);
+      if (deleted.length === 0) return err(res, "Not found", 404);
+      await query("DELETE FROM customer_identifiers WHERE customer_id=$1", [req.params.id]);
+      await query("DELETE FROM customer_screenings  WHERE customer_id=$1", [req.params.id]);
+      await query("DELETE FROM customer_contacts    WHERE customer_id=$1", [req.params.id]);
     }
     // customer_documents stays local-only regardless of customer_source (see ARCHITECTURE.md
     // §8.1) — its own cleanup always runs, even when the customer row itself just got deleted
     // remotely.
-    const docs = db.prepare("SELECT stored_name FROM customer_documents WHERE customer_id=?").all(req.params.id);
+    const docs = await query("SELECT stored_name FROM customer_documents WHERE customer_id=$1", [req.params.id]);
     for (const d of docs) {
       try { fs.unlinkSync(path.join(UPLOADS_DIR, d.stored_name)); } catch {}
     }
-    db.prepare("DELETE FROM customer_documents WHERE customer_id=?").run(req.params.id);
+    await query("DELETE FROM customer_documents WHERE customer_id=$1", [req.params.id]);
     ok(res, { deleted: req.params.id });
   });
 
@@ -621,7 +636,7 @@ module.exports = function customersRoutes(app, ctx) {
       try { return ok(res, await callCustomerService("GET", `/internal/customers/${req.params.id}/identifiers`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
-    const rows = db.prepare("SELECT * FROM customer_identifiers WHERE customer_id=? ORDER BY is_primary DESC, created_at ASC").all(req.params.id);
+    const rows = await query("SELECT * FROM customer_identifiers WHERE customer_id=$1 ORDER BY is_primary DESC, created_at ASC", [req.params.id]);
     ok(res, rows.map(mapCustomerIdentifier));
   });
 
@@ -630,17 +645,17 @@ module.exports = function customersRoutes(app, ctx) {
       try { return ok(res, await callCustomerService("POST", `/internal/customers/${req.params.id}/identifiers`, req.body), 201); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
-    if (!db.prepare("SELECT id FROM customers WHERE id=?").get(req.params.id))
+    if (!(await query("SELECT id FROM customers WHERE id=$1", [req.params.id]))[0])
       return err(res, "Customer not found", 404);
     const { idType='VAT', idCode='', countryIso2='', label='', isPrimary=false } = req.body;
     if (!idCode.trim()) return err(res, "idCode required");
     const id  = `CID-${uid()}`;
     const now = new Date().toISOString();
     if (isPrimary)
-      db.prepare("UPDATE customer_identifiers SET is_primary=0 WHERE customer_id=? AND id_type=?").run(req.params.id, idType);
-    db.prepare("INSERT INTO customer_identifiers (id,customer_id,id_type,id_code,country_iso2,label,is_primary,created_at) VALUES (?,?,?,?,?,?,?,?)")
-      .run(id, req.params.id, idType, idCode.trim(), countryIso2.toUpperCase().slice(0,2), label.trim(), isPrimary ? 1 : 0, now);
-    const row = db.prepare("SELECT * FROM customer_identifiers WHERE id=?").get(id);
+      await query("UPDATE customer_identifiers SET is_primary=FALSE WHERE customer_id=$1 AND id_type=$2", [req.params.id, idType]);
+    await query("INSERT INTO customer_identifiers (id,customer_id,id_type,id_code,country_iso2,label,is_primary,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+      [id, req.params.id, idType, idCode.trim(), countryIso2.toUpperCase().slice(0,2), label.trim(), !!isPrimary, now]);
+    const [row] = await query("SELECT * FROM customer_identifiers WHERE id=$1", [id]);
     ok(res, mapCustomerIdentifier(row), 201);
   });
 
@@ -649,16 +664,16 @@ module.exports = function customersRoutes(app, ctx) {
       try { return ok(res, await callCustomerService("PUT", `/internal/customers/${req.params.id}/identifiers/${req.params.iid}`, req.body)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
-    const existing = db.prepare("SELECT * FROM customer_identifiers WHERE id=? AND customer_id=?").get(req.params.iid, req.params.id);
+    const [existing] = await query("SELECT * FROM customer_identifiers WHERE id=$1 AND customer_id=$2", [req.params.iid, req.params.id]);
     if (!existing) return err(res, "Not found", 404);
     const { idType=existing.id_type, idCode=existing.id_code, countryIso2=existing.country_iso2,
             label=existing.label, isPrimary=!!existing.is_primary } = req.body;
     if (!idCode.trim()) return err(res, "idCode required");
     if (isPrimary)
-      db.prepare("UPDATE customer_identifiers SET is_primary=0 WHERE customer_id=? AND id_type=? AND id!=?").run(req.params.id, idType, req.params.iid);
-    db.prepare("UPDATE customer_identifiers SET id_type=?,id_code=?,country_iso2=?,label=?,is_primary=? WHERE id=?")
-      .run(idType, idCode.trim(), countryIso2.toUpperCase().slice(0,2), label.trim(), isPrimary ? 1 : 0, req.params.iid);
-    const row = db.prepare("SELECT * FROM customer_identifiers WHERE id=?").get(req.params.iid);
+      await query("UPDATE customer_identifiers SET is_primary=FALSE WHERE customer_id=$1 AND id_type=$2 AND id!=$3", [req.params.id, idType, req.params.iid]);
+    await query("UPDATE customer_identifiers SET id_type=$1,id_code=$2,country_iso2=$3,label=$4,is_primary=$5 WHERE id=$6",
+      [idType, idCode.trim(), countryIso2.toUpperCase().slice(0,2), label.trim(), !!isPrimary, req.params.iid]);
+    const [row] = await query("SELECT * FROM customer_identifiers WHERE id=$1", [req.params.iid]);
     ok(res, mapCustomerIdentifier(row));
   });
 
@@ -667,8 +682,8 @@ module.exports = function customersRoutes(app, ctx) {
       try { return ok(res, await callCustomerService("DELETE", `/internal/customers/${req.params.id}/identifiers/${req.params.iid}`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
-    const info = db.prepare("DELETE FROM customer_identifiers WHERE id=? AND customer_id=?").run(req.params.iid, req.params.id);
-    if (info.changes === 0) return err(res, "Not found", 404);
+    const deleted = await query("DELETE FROM customer_identifiers WHERE id=$1 AND customer_id=$2 RETURNING id", [req.params.iid, req.params.id]);
+    if (deleted.length === 0) return err(res, "Not found", 404);
     ok(res, { deleted: req.params.iid });
   });
 
@@ -681,7 +696,7 @@ module.exports = function customersRoutes(app, ctx) {
       try { return ok(res, await callCustomerService("GET", `/internal/customers/${req.params.id}/contacts`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
-    const rows = db.prepare("SELECT * FROM customer_contacts WHERE customer_id=? ORDER BY is_primary DESC, created_at ASC").all(req.params.id);
+    const rows = await query("SELECT * FROM customer_contacts WHERE customer_id=$1 ORDER BY is_primary DESC, created_at ASC", [req.params.id]);
     ok(res, rows.map(mapCustomerContact));
   });
 
@@ -690,17 +705,17 @@ module.exports = function customersRoutes(app, ctx) {
       try { return ok(res, await callCustomerService("POST", `/internal/customers/${req.params.id}/contacts`, req.body), 201); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
-    if (!db.prepare("SELECT id FROM customers WHERE id=?").get(req.params.id))
+    if (!(await query("SELECT id FROM customers WHERE id=$1", [req.params.id]))[0])
       return err(res, "Customer not found", 404);
     const { name='', title='', email='', phone='', department='Other', isPrimary=false } = req.body;
     if (!name.trim()) return err(res, "name required");
     const id  = `CCT-${uid()}`;
     const now = new Date().toISOString();
     if (isPrimary)
-      db.prepare("UPDATE customer_contacts SET is_primary=0 WHERE customer_id=?").run(req.params.id);
-    db.prepare("INSERT INTO customer_contacts (id,customer_id,name,title,email,phone,department,is_primary,created_at) VALUES (?,?,?,?,?,?,?,?,?)")
-      .run(id, req.params.id, name.trim(), title.trim(), email.trim(), phone.trim(), department, isPrimary ? 1 : 0, now);
-    const row = db.prepare("SELECT * FROM customer_contacts WHERE id=?").get(id);
+      await query("UPDATE customer_contacts SET is_primary=FALSE WHERE customer_id=$1", [req.params.id]);
+    await query("INSERT INTO customer_contacts (id,customer_id,name,title,email,phone,department,is_primary,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+      [id, req.params.id, name.trim(), title.trim(), email.trim(), phone.trim(), department, !!isPrimary, now]);
+    const [row] = await query("SELECT * FROM customer_contacts WHERE id=$1", [id]);
     ok(res, mapCustomerContact(row), 201);
   });
 
@@ -709,16 +724,16 @@ module.exports = function customersRoutes(app, ctx) {
       try { return ok(res, await callCustomerService("PUT", `/internal/customers/${req.params.id}/contacts/${req.params.cid}`, req.body)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
-    const existing = db.prepare("SELECT * FROM customer_contacts WHERE id=? AND customer_id=?").get(req.params.cid, req.params.id);
+    const [existing] = await query("SELECT * FROM customer_contacts WHERE id=$1 AND customer_id=$2", [req.params.cid, req.params.id]);
     if (!existing) return err(res, "Not found", 404);
     const { name=existing.name, title=existing.title, email=existing.email, phone=existing.phone,
             department=existing.department, isPrimary=!!existing.is_primary } = req.body;
     if (!name.trim()) return err(res, "name required");
     if (isPrimary)
-      db.prepare("UPDATE customer_contacts SET is_primary=0 WHERE customer_id=? AND id!=?").run(req.params.id, req.params.cid);
-    db.prepare("UPDATE customer_contacts SET name=?,title=?,email=?,phone=?,department=?,is_primary=? WHERE id=?")
-      .run(name.trim(), title.trim(), email.trim(), phone.trim(), department, isPrimary ? 1 : 0, req.params.cid);
-    const row = db.prepare("SELECT * FROM customer_contacts WHERE id=?").get(req.params.cid);
+      await query("UPDATE customer_contacts SET is_primary=FALSE WHERE customer_id=$1 AND id!=$2", [req.params.id, req.params.cid]);
+    await query("UPDATE customer_contacts SET name=$1,title=$2,email=$3,phone=$4,department=$5,is_primary=$6 WHERE id=$7",
+      [name.trim(), title.trim(), email.trim(), phone.trim(), department, !!isPrimary, req.params.cid]);
+    const [row] = await query("SELECT * FROM customer_contacts WHERE id=$1", [req.params.cid]);
     ok(res, mapCustomerContact(row));
   });
 
@@ -727,8 +742,8 @@ module.exports = function customersRoutes(app, ctx) {
       try { return ok(res, await callCustomerService("DELETE", `/internal/customers/${req.params.id}/contacts/${req.params.cid}`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
-    const info = db.prepare("DELETE FROM customer_contacts WHERE id=? AND customer_id=?").run(req.params.cid, req.params.id);
-    if (info.changes === 0) return err(res, "Not found", 404);
+    const deleted = await query("DELETE FROM customer_contacts WHERE id=$1 AND customer_id=$2 RETURNING id", [req.params.cid, req.params.id]);
+    if (deleted.length === 0) return err(res, "Not found", 404);
     ok(res, { deleted: req.params.cid });
   });
 
@@ -737,8 +752,8 @@ module.exports = function customersRoutes(app, ctx) {
   // assigned on real shipments. No setter: nothing to save, it self-corrects the moment a new
   // assignment is made elsewhere in the app. See CUSTOMER_ROLE_USAGE_SQL above.
 
-  app.get("/api/customers/:id/roles", auth(), (req, res) => {
-    const rows = db.prepare(`SELECT DISTINCT role FROM (${CUSTOMER_ROLE_USAGE_SQL}) WHERE customer_id=?`).all(req.params.id);
+  app.get("/api/customers/:id/roles", auth(), async (req, res) => {
+    const rows = await query(`SELECT DISTINCT role FROM (${CUSTOMER_ROLE_USAGE_SQL}) x WHERE customer_id=$1`, [req.params.id]);
     ok(res, rows.map(r => r.role));
   });
 
@@ -749,7 +764,7 @@ module.exports = function customersRoutes(app, ctx) {
       try { return ok(res, await callCustomerService("GET", `/internal/customers/${req.params.id}/screening`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
-    const row = db.prepare("SELECT * FROM customer_screenings WHERE customer_id=?").get(req.params.id);
+    const [row] = await query("SELECT * FROM customer_screenings WHERE customer_id=$1", [req.params.id]);
     if (!row) return ok(res, null);
     ok(res, mapCustomerScreening(row));
   });
@@ -772,19 +787,19 @@ module.exports = function customersRoutes(app, ctx) {
       try { return ok(res, await callCustomerService("POST", `/internal/customers/${req.params.id}/screening/override`, { reason })); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
-    const row = db.prepare("SELECT id FROM customer_screenings WHERE customer_id=?").get(req.params.id);
+    const [row] = await query("SELECT id FROM customer_screenings WHERE customer_id=$1", [req.params.id]);
     if (!row) return err(res, "No screening record found for this customer", 404);
     const now = new Date().toISOString();
-    db.prepare("UPDATE customer_screenings SET result='CLEAR', overridden_at=?, override_reason=? WHERE customer_id=?")
-      .run(now, reason.trim(), req.params.id);
-    const updated = db.prepare("SELECT * FROM customer_screenings WHERE customer_id=?").get(req.params.id);
+    await query("UPDATE customer_screenings SET result='CLEAR', overridden_at=$1, override_reason=$2 WHERE customer_id=$3",
+      [now, reason.trim(), req.params.id]);
+    const [updated] = await query("SELECT * FROM customer_screenings WHERE customer_id=$1", [req.params.id]);
     ok(res, mapCustomerScreening(updated));
   });
 
   // ─── Customer Documents ───────────────────────────────────────────────────
 
-  app.get("/api/customers/:id/documents", auth(), (req, res) => {
-    const rows = db.prepare("SELECT * FROM customer_documents WHERE customer_id=? ORDER BY created_at DESC").all(req.params.id);
+  app.get("/api/customers/:id/documents", auth(), async (req, res) => {
+    const rows = await query("SELECT * FROM customer_documents WHERE customer_id=$1 ORDER BY created_at DESC", [req.params.id]);
     ok(res, rows.map(mapCustomerDoc));
   });
 
@@ -804,23 +819,23 @@ module.exports = function customersRoutes(app, ctx) {
       const id       = `CDO-${uid()}`;
       const now      = new Date().toISOString();
       const uploader = req.user?.name || req.user?.email || "";
-      db.prepare("INSERT INTO customer_documents (id,customer_id,filename,stored_name,mime_type,size_bytes,doc_type,uploaded_by,created_at) VALUES (?,?,?,?,?,?,?,?,?)")
-        .run(id, req.params.id, filename, storedName, mimeType || "", buf.length, docType || "Other", uploader, now);
-      const row = db.prepare("SELECT * FROM customer_documents WHERE id=?").get(id);
+      await query("INSERT INTO customer_documents (id,customer_id,filename,stored_name,mime_type,size_bytes,doc_type,uploaded_by,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+        [id, req.params.id, filename, storedName, mimeType || "", buf.length, docType || "Other", uploader, now]);
+      const [row] = await query("SELECT * FROM customer_documents WHERE id=$1", [id]);
       ok(res, mapCustomerDoc(row), 201);
     } catch (e) { err(res, e.message, 500); }
   });
 
-  app.delete("/api/customers/:id/documents/:did", auth(), (req, res) => {
-    const doc = db.prepare("SELECT * FROM customer_documents WHERE id=? AND customer_id=?").get(req.params.did, req.params.id);
+  app.delete("/api/customers/:id/documents/:did", auth(), async (req, res) => {
+    const [doc] = await query("SELECT * FROM customer_documents WHERE id=$1 AND customer_id=$2", [req.params.did, req.params.id]);
     if (!doc) return err(res, "Not found", 404);
     try { fs.unlinkSync(path.join(UPLOADS_DIR, doc.stored_name)); } catch {}
-    db.prepare("DELETE FROM customer_documents WHERE id=?").run(req.params.did);
+    await query("DELETE FROM customer_documents WHERE id=$1", [req.params.did]);
     ok(res, { deleted: req.params.did });
   });
 
-  app.get("/api/customers/:id/documents/:did/download", auth(), (req, res) => {
-    const doc = db.prepare("SELECT * FROM customer_documents WHERE id=? AND customer_id=?").get(req.params.did, req.params.id);
+  app.get("/api/customers/:id/documents/:did/download", auth(), async (req, res) => {
+    const [doc] = await query("SELECT * FROM customer_documents WHERE id=$1 AND customer_id=$2", [req.params.did, req.params.id]);
     if (!doc) return err(res, "Not found", 404);
     const filePath = path.join(UPLOADS_DIR, doc.stored_name);
     if (!fs.existsSync(filePath)) return err(res, "File not found on disk", 404);
