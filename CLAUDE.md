@@ -325,7 +325,7 @@ are fully validated.
 | contracts | Carrier rate contracts with IMDG class filters |
 | contract_legs | POL/POD pairs per contract with linked-port flags + haulage columns + loc types. `routing_id` (v0.68.0, blank = ungrouped) optionally groups a leg into a named `contract_routings` bundle |
 | contract_rates | Rate entries per contract. `routing_id` (v0.68.0) same optional grouping as `contract_legs` |
-| contract_routings | Named, ordered routing bundles for a contract (v0.68.0) — a lane bookable via several distinct physical paths (e.g. 3 different transshipment hubs), each independently priced via its own `contract_rates`/`contract_legs` rows. `contracts`/`contract_legs`/`contract_rates`/`contract_routings` are also fully duplicated (own schema, own db file) in `services/contract-management/` — see that section below |
+| contract_routings | Named, ordered routing bundles for a contract (v0.68.0) — a lane bookable via several distinct physical paths (e.g. 3 different transshipment hubs), each independently priced via its own `contract_rates`/`contract_legs` rows. `contracts`/`contract_legs`/`contract_rates`/`contract_routings` are also fully duplicated (own schema) in `services/contract-management/` — Postgres-backed (ARCHITECTURE.md §13, Phase 4), not a SQLite db file — see that section below |
 | milestone_templates | Reusable milestone step definitions grouped by template key/carrier/lane |
 | system_messages | Operational notices with severity and active date range |
 | sanctions_entries | Denied-party entity records. `source` (already generic pre-v0.69.0, just never populated with anything but `'OFAC-SDN'` until now) also holds 11 more list names from the free US Consolidated Screening List (v0.69.0) — BIS Denied Persons/Entity/Unverified/Military End User Lists, State Dept ITAR Debarred + Nonproliferation Sanctions, 5 more OFAC-family lists. Every CSL-sourced row's `id` is prefixed `CSL-` so its own sync can safely scope a delete-then-reinsert without enumerating list names |
@@ -1417,8 +1417,9 @@ for what was really one continuous working session's output.
   stay contract-level-only by design (space config books lane capacity, not a specific path).
 - **Standalone Contract Management Service** (`services/contract-management/`, port 3004) —
   CargoDesk's third extracted microservice, and its first that runs ALONGSIDE the monolith's own
-  local tables rather than replacing them (own schema, own db file — a faithful port of
-  `routes/contracts.js`'s full route surface as `/internal/*` endpoints). New admin-only
+  local tables rather than replacing them (own schema, Postgres-backed since ARCHITECTURE.md
+  §13 Phase 4 — a faithful port of `routes/contracts.js`'s full route surface as `/internal/*`
+  endpoints). New admin-only
   `app_settings.contract_source` toggle (`'local'` default | `'remote'`, Application Settings →
   API Controls → External APIs) decides per-request which is authoritative. Every local read that
   touches contract data got the same toggle branch: `routes/contracts.js`, `routes/allocations.js`'s

@@ -544,7 +544,7 @@ Organization Model roadmap begun at v0.56.0:
 |---|---|---|---|
 | **Document Distribution** (`services/document-distribution/`, v0.64.0) | 3002 | Outbound document delivery (email/webhook) has its own retry/failure profile, distinct from request/response HTTP | Postgres (Phase 0 of the Postgres migration, §13 — `pg` when `DATABASE_URL` is set, embedded `@electric-sql/pglite` otherwise; was SQLite before this) — webhook configs, delivery attempts |
 | **PDF Render** (`services/pdf-render/`, v0.65.1) | 3003 | The heaviest, most bursty thing the monolith did per-request (a full headless-Chromium launch) — see §12 for the full reasoning | Stateless — no database at all |
-| **Contract Management** (`services/contract-management/`, v0.68.0) | 3004 | First real "toggle between local and remote" extraction — proves the pattern before Epic 5 (Customer/Organization) needs it | Owns its own `.db`, a straight port of `contracts`/`contract_legs`/`contract_rates`/`contract_routings` |
+| **Contract Management** (`services/contract-management/`, v0.68.0) | 3004 | First real "toggle between local and remote" extraction — proves the pattern before Epic 5 (Customer/Organization) needs it | Postgres (Phase 4 of the Postgres migration, §13 — `pg` when `DATABASE_URL` is set, embedded `@electric-sql/pglite` otherwise; was SQLite before this), a straight port of `contracts`/`contract_legs`/`contract_rates`/`contract_routings` |
 | **MDM** (`services/mdm/`, v0.80.0) | 3005 | Second "toggle between local and remote" extraction, following the sequencing proposed in `documentation/splitting-mdm-first.html` — the lowest-blast-radius domain (no request-path involvement, no outbound FK from any of its tables into shipments/customers/users) | Owns its own `.db`: `carriers`/`vessels`/`port_locations`/`linked_ports`/`trade_lanes`/`country_trade_lanes`/`regions`/`countries`/`commodities`/`carrier_agents`/`carrier_agent_locations`/`carrier_agent_schedule_rows` |
 | **Screening** (`services/screening/`, v0.81.0) | 3006 | Third "toggle between local and remote" extraction — externally-sourced denylist data, zero outbound FK, read via name-match not JOIN (`documentation/splitting-sanctions-next.html`) | Postgres (Phase 1 of the Postgres migration, §13 — `pg` when `DATABASE_URL` is set, embedded `@electric-sql/pglite` otherwise; was SQLite before this): `sanctions_entries`/`sanctions_syncs`, plus a small local `settings` table for its own auto-sync schedule (no admin UI for it yet — see below) |
 | **Kanban/Testing** (`services/kanban/`, v0.82.0) | 3007 | Fourth "toggle between local and remote" extraction — a feature the roadmap expects to eventually go away entirely (`documentation/splitting-kanban-out.html`), so keeping its schema fully separable now avoids leftovers later | Postgres (Phase 3 of the Postgres migration, §13 — `pg` when `DATABASE_URL` is set, embedded `@electric-sql/pglite` otherwise; was SQLite before this): `tickets`/`ticket_links`/`test_items`/`test_case_links`/`kb_projects`/`kb_versions`/`kb_columns` |
@@ -2010,7 +2010,7 @@ that's a test-harness concern, not something this run is measuring.
   create and delete) when a run's duration expires, which scales with `connections` and is
   expected, not a bug. Re-verified clean (0 leaked rows) after both runs above.
 
-**Third update — the migration itself is underway, Phases 0 through 3 shipped.** Direct decision, after
+**Third update — the migration itself is underway, Phases 0 through 4 shipped.** Direct decision, after
 seeing the load-test numbers above: commit to the long-term Postgres migration rather than a
 short-term mitigation (a worker-thread pool was considered and explicitly rejected — "short term
 fixes will just have us run into the same problem sooner or later").
@@ -2135,12 +2135,45 @@ cross-table story-link JOIN surviving remotely, and — the most load-bearing ca
 consecutive ops-automation sweep runs proving the new `ON CONFLICT`-backed atomicity actually
 holds), all passing identically to the SQLite-backed results.
 
-**Remaining roadmap, explicitly phased, not attempted in one sitting**: Phase 4+ migrates the
-other 2 database-backed services **in this safety-ranked order** (each independently, no
-cross-service coupling to worry about): `contract-management` (6 tables with `ON DELETE CASCADE`
-chains, 68 call sites) → `mdm` (12 tables, 133 call sites, and the one already-known
+**Phase 4 (shipped): `contract-management`** — 6 tables (`contracts`, `contract_legs`,
+`contract_rates`, `contract_routings`, and 2 legacy-backfill junction tables), 68 call sites, the
+most dynamically-filtered query surface of any phase so far (`GET /internal/contracts` alone
+builds up to 10 optional WHERE clauses). New `services/contract-management/lib/db.js`, same
+shape as Phases 0-3. A small `p(value)` closure (push to `params`, return `$N` for the position
+just pushed) replaced manual placeholder-index tracking for every dynamically-built query in this
+file — cleaner than Phase 2's manual `params.length` arithmetic once a route has this many
+optional filters compounding. 5 boolean columns converted (`dg_allowed` on `contracts`;
+`pol_linked_allowed`/`pod_linked_allowed`/`pol_carrier_haulage`/`pod_carrier_haulage` on
+`contract_legs`) — and this phase caught a **real bug the straight port would otherwise have
+shipped silently**: `mapLeg`'s four boolean fields were read via `r.pol_linked_allowed === 1`
+(a SQLite-integer equality check) — `true === 1` is `false` in JS, so left unconverted, every
+one of these fields would have silently read as `false` after migration regardless of the
+column's real value, breaking linked-port fallback matching and carrier-haulage detection
+outright. Fixed to `!!r.pol_linked_allowed` (and the sibling three); caught by re-deriving every
+boolean read site from the schema rather than trusting the existing code shape, then confirmed
+by the service's own linked-port-expansion test and the monolith's haulage-gated allocation-match
+test, both of which specifically exercise these four fields and both passed. The two other
+synchronous module-load-time pieces this service had that Phases 0-3 didn't — a legacy-JSON-to-
+junction-table backfill IIFE and an hourly contract-auto-expire sweep — both moved from
+unconditional execution at module load into the `require.main` block, run once after
+`initSchema()` resolves, same relocation this series already used for screening's two auto-sync
+schedulers in Phase 1 (a synchronous schema creation could safely be raced against at load time;
+an async one cannot). `INSERT OR IGNORE` in the legacy backfill became a bare
+`ON CONFLICT DO NOTHING` (no explicit target — each junction table has exactly one relevant
+unique constraint, so an unqualified target resolves unambiguously). The bulk-import route was
+confirmed to need no `ON CONFLICT` handling at all — unlike every prior phase's bulk-import, this
+one always mints a fresh id per row rather than reusing the source's original id, so there was
+never a natural-key collision to guard against; a plain `INSERT` port was correct as-is. 24 new
+assertions (`contracts-crud.test.js`) plus 7 (`contracts-match.test.js`, including the
+multi-routing HLCU/Kuehne+Nagel worked example) — 31 total — plus the monolith's 20-assertion
+`contract-service-toggle` suite (covering the full create/publish/match/withdraw cycle in both
+modes and `routes/allocations.js`'s own haulage-gated match resolving a remote contract's legs
+correctly), all passing identically to the SQLite-backed results.
+
+**Remaining roadmap, explicitly phased, not attempted in one sitting**: Phase 5 migrates the
+last database-backed service, `mdm` (12 tables, 133 call sites, and the one already-known
 guarded-rebuild-migration gotcha — the most valuable lesson-learned target but the riskiest
-first attempt, hence last). The monolith
+first attempt, hence saved for last). The monolith
 itself is tackled last of all, and needs its own internal sub-phasing: convert `logEntityEvent`
 and `getSettings` to `async` first as a standalone, zero-behavior-change prerequisite (still on
 `node:sqlite` — awaiting an already-synchronous call is a no-op, so this is safe to do before any

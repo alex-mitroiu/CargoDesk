@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "license": "UNLICENSED",
-  "description": "CargoDesk's third extracted microservice — owns contracts/contract_legs/contract_rates/contract_routings as a standalone alternative to the monolith's own in-process implementation, selected at runtime via the app_settings.contract_source toggle (local|remote). Called only by the monolith (routes/contracts.js's remote branch), never by the browser directly. Resolved dependencies (express) are hoisted from the repo root's node_modules — no separate install step.",
+  "description": "CargoDesk's third extracted microservice — owns contracts/contract_legs/contract_rates/contract_routings as a standalone alternative to the monolith's own in-process implementation, selected at runtime via the app_settings.contract_source toggle (local|remote). Called only by the monolith (routes/contracts.js's remote branch), never by the browser directly. Migrated to Postgres (ARCHITECTURE.md §13, Phase 4) — see lib/db.js. Resolved dependencies (express, pg, @electric-sql/pglite) are hoisted from the repo root's node_modules — no separate install step.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
