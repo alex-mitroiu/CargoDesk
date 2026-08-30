@@ -5,7 +5,7 @@
 // update" code path, same discipline routes/edi.js's simulate-response already follows.
 
 module.exports = function aisRoutes(app, ctx) {
-  const { db, ok, err, auth, requireRole, getAisListenerStatus, ingestAisMessage, forceRefreshAisTrackedLegs } = ctx;
+  const { query, ok, err, auth, requireRole, getAisListenerStatus, ingestAisMessage, forceRefreshAisTrackedLegs, mapVessel, mapShipmentLeg } = ctx;
 
   const write = requireRole(["admin", "operator"]);
 
@@ -17,15 +17,15 @@ module.exports = function aisRoutes(app, ctx) {
   // own tracked-leg cache uses, so what a developer sees here is exactly what's eligible for
   // real matching. "Open" means not yet AIS-confirmed, not blank — etd/eta almost always
   // already hold an estimate.
-  app.get("/api/test-tools/ais/open-legs", auth(), (req, res) => {
-    const rows = db.prepare(`
+  app.get("/api/test-tools/ais/open-legs", auth(), async (req, res) => {
+    const rows = await query(`
       SELECT l.id AS leg_id, l.shipment_id, l.pol, l.pod, l.vessel, l.vessel_imo,
              l.etd, l.eta, l.etd_source, l.eta_source
       FROM shipment_legs l
       JOIN shipments s ON s.id = l.shipment_id
       WHERE l.leg_type='SEA' AND l.vessel_imo != '' AND (l.etd_source != 'ais' OR l.eta_source != 'ais')
       ORDER BY l.created_at DESC LIMIT 50
-    `).all();
+    `);
     ok(res, rows.map(r => ({
       legId: r.leg_id, shipmentId: r.shipment_id, pol: r.pol, pod: r.pod,
       vessel: r.vessel, vesselImo: r.vessel_imo, etd: r.etd || "", eta: r.eta || "",
@@ -33,35 +33,35 @@ module.exports = function aisRoutes(app, ctx) {
     })));
   });
 
-  app.post("/api/test-tools/ais/simulate-static", write, (req, res) => {
+  app.post("/api/test-tools/ais/simulate-static", write, async (req, res) => {
     const { imo, mmsi, name } = req.body;
     if (!imo || !mmsi || !name) return err(res, "imo, mmsi, and name are required");
-    ingestAisMessage({
+    await ingestAisMessage({
       MessageType: "ShipStaticData",
       MetaData: { MMSI: Number(mmsi), ShipName: name, time_utc: new Date().toISOString() },
       Message: { ShipStaticData: { ImoNumber: Number(imo), UserID: Number(mmsi), Name: name } },
     });
-    const row = db.prepare("SELECT * FROM vessels WHERE imo=?").get(String(imo));
-    ok(res, { imo: String(imo), applied: !!row, vessel: row ? ctx.mapVessel(row) : null });
+    const [row] = await query("SELECT * FROM vessels WHERE imo=$1", [String(imo)]);
+    ok(res, { imo: String(imo), applied: !!row, vessel: row ? mapVessel(row) : null });
   });
 
-  app.post("/api/test-tools/ais/simulate-position", write, (req, res) => {
+  app.post("/api/test-tools/ais/simulate-position", write, async (req, res) => {
     const { legId, event } = req.body;
     if (!legId || !["departure", "arrival"].includes(event)) return err(res, "legId and event ('departure'|'arrival') are required");
-    const leg = db.prepare("SELECT * FROM shipment_legs WHERE id=?").get(legId);
+    const [leg] = await query("SELECT * FROM shipment_legs WHERE id=$1", [legId]);
     if (!leg) return err(res, "Leg not found", 404);
     if (!leg.vessel_imo) return err(res, "Leg has no vessel IMO set — nothing to match against");
-    const vessel = db.prepare("SELECT mmsi FROM vessels WHERE imo=?").get(leg.vessel_imo);
+    const [vessel] = await query("SELECT mmsi FROM vessels WHERE imo=$1", [leg.vessel_imo]);
     if (!vessel || !vessel.mmsi) return err(res, "No known MMSI for this vessel yet — simulate a ShipStaticData message for it first");
 
     const targetUnlocode = event === "departure" ? leg.pol : leg.pod;
-    const port = db.prepare("SELECT latitude, longitude FROM port_locations WHERE unlocode=?").get(targetUnlocode);
+    const [port] = await query("SELECT latitude, longitude FROM port_locations WHERE unlocode=$1", [targetUnlocode]);
     if (!port || !port.latitude || !port.longitude) return err(res, `No coordinates on file for ${targetUnlocode}`);
 
     // The live listener only re-pulls its tracked-leg cache every 60s (fine for a real feed
     // pushing up to hundreds of messages/sec — not fine for a leg a developer just created
     // moments ago via this same simulator). Force it fresh before injecting.
-    forceRefreshAisTrackedLegs();
+    await forceRefreshAisTrackedLegs();
 
     // Two-step transition, matching what the listener's detection logic requires (a state
     // *change*, not a single snapshot): departure = stopped (moored/anchor) -> under way;
@@ -72,14 +72,14 @@ module.exports = function aisRoutes(app, ctx) {
       MessageType: "PositionReport",
       MetaData: { MMSI: Number(vessel.mmsi), time_utc: new Date().toISOString() },
     };
-    ingestAisMessage({ ...base, Message: { PositionReport: {
+    await ingestAisMessage({ ...base, Message: { PositionReport: {
       Latitude: port.latitude, Longitude: port.longitude, NavigationalStatus: firstStatus, UserID: Number(vessel.mmsi),
     } } });
-    ingestAisMessage({ ...base, Message: { PositionReport: {
+    await ingestAisMessage({ ...base, Message: { PositionReport: {
       Latitude: port.latitude, Longitude: port.longitude, NavigationalStatus: secondStatus, UserID: Number(vessel.mmsi),
     } } });
 
-    const fresh = db.prepare("SELECT * FROM shipment_legs WHERE id=?").get(legId);
-    ok(res, ctx.mapShipmentLeg(fresh));
+    const [fresh] = await query("SELECT * FROM shipment_legs WHERE id=$1", [legId]);
+    ok(res, mapShipmentLeg(fresh));
   });
 };

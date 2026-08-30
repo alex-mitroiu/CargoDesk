@@ -8,7 +8,7 @@ const { signToken } = require("../lib/shareToken");
 // straight through to it or resolves the small amount of monolith-owned context (the document's
 // file on disk, the shipment's EMO office) the service itself deliberately has no access to.
 module.exports = function documentDistributionRoutes(app, ctx) {
-  const { db, ok, err, requireRole, logEntityEvent, JWT_SECRET,
+  const { query, ok, err, requireRole, logEntityEvent, JWT_SECRET,
           DISTRIBUTION_SERVICE_URL, DISTRIBUTION_SERVICE_SECRET,
           UPLOADS_DIR, fs, path, createRateLimiter } = ctx;
 
@@ -63,7 +63,7 @@ module.exports = function documentDistributionRoutes(app, ctx) {
   app.post("/api/shipments/:id/documents/:docId/send-edi", shipmentWrite, distributionSendRateLimit, async (req, res) => {
     const { recipientCode, recipientLabel } = req.body || {};
     if (!recipientCode) return err(res, "A recipient code is required");
-    const doc = db.prepare("SELECT * FROM shipment_documents WHERE id=? AND shipment_id=?").get(req.params.docId, req.params.id);
+    const [doc] = await query("SELECT * FROM shipment_documents WHERE id=$1 AND shipment_id=$2", [req.params.docId, req.params.id]);
     if (!doc) return err(res, "Document not found", 404);
     const filePath = path.join(UPLOADS_DIR, doc.stored_name);
     if (!fs.existsSync(filePath)) return err(res, "File not found on disk", 404);
@@ -87,7 +87,7 @@ module.exports = function documentDistributionRoutes(app, ctx) {
         JSON.stringify({ shipmentId: req.params.id, recipientCode, recipientLabel: recipientLabel || "", transmittalId: result.transmittalId }));
       // TKT-PLAVEK — see routes/shipment-ops.js's send-email route for why: a fast, denormalized
       // "was this ever sent" signal for the Billing Performance report, first channel wins.
-      if (!doc.first_sent_at) db.prepare("UPDATE shipment_documents SET first_sent_at=? WHERE id=?").run(new Date().toISOString(), doc.id);
+      if (!doc.first_sent_at) await query("UPDATE shipment_documents SET first_sent_at=$1 WHERE id=$2", [new Date().toISOString(), doc.id]);
       ok(res, { sent: true, transmittalId: result.transmittalId }, 201);
     } catch (e) {
       await logEntityEvent('document', doc.id, 'EDI_SEND_FAILED', null, null, null,
@@ -101,10 +101,10 @@ module.exports = function documentDistributionRoutes(app, ctx) {
   // Same EMO-only resolution the existing send-email route uses (routes/shipment-ops.js) — no
   // office picker, no silent IMO fallback.
   app.post("/api/shipments/:id/documents/:docId/send-webhook", shipmentWrite, distributionSendRateLimit, async (req, res) => {
-    const shipment = db.prepare("SELECT emo_office_id FROM shipments WHERE id=?").get(req.params.id);
+    const [shipment] = await query("SELECT emo_office_id FROM shipments WHERE id=$1", [req.params.id]);
     if (!shipment) return err(res, "Shipment not found", 404);
     if (!shipment.emo_office_id) return err(res, "This shipment has no Export Managing Office assigned");
-    const doc = db.prepare("SELECT * FROM shipment_documents WHERE id=? AND shipment_id=?").get(req.params.docId, req.params.id);
+    const [doc] = await query("SELECT * FROM shipment_documents WHERE id=$1 AND shipment_id=$2", [req.params.docId, req.params.id]);
     if (!doc) return err(res, "Document not found", 404);
     const token = signToken({ shipmentId: req.params.id, docId: doc.id, exp: Date.now() + DOC_SHARE_TTL_MS }, JWT_SECRET);
     const downloadUrl = `${req.protocol}://${req.get("host")}/api/share/document/${token}`;
@@ -118,7 +118,7 @@ module.exports = function documentDistributionRoutes(app, ctx) {
       });
       await logEntityEvent('document', doc.id, 'WEBHOOK_SENT', null, null, null,
         JSON.stringify({ shipmentId: req.params.id, officeId: shipment.emo_office_id, deliveryId: result.deliveryId }));
-      if (!doc.first_sent_at) db.prepare("UPDATE shipment_documents SET first_sent_at=? WHERE id=?").run(new Date().toISOString(), doc.id);
+      if (!doc.first_sent_at) await query("UPDATE shipment_documents SET first_sent_at=$1 WHERE id=$2", [new Date().toISOString(), doc.id]);
       ok(res, { sent: true, deliveryId: result.deliveryId }, 201);
     } catch (e) {
       await logEntityEvent('document', doc.id, 'WEBHOOK_SEND_FAILED', null, null, null,
@@ -137,7 +137,7 @@ module.exports = function documentDistributionRoutes(app, ctx) {
   });
 
   app.put("/api/offices/:id/webhook-settings", adminOnly, async (req, res) => {
-    const office = db.prepare("SELECT id FROM offices WHERE id=?").get(req.params.id);
+    const [office] = await query("SELECT id FROM offices WHERE id=$1", [req.params.id]);
     if (!office) return err(res, "Office not found", 404);
     const { webhookUrl = "", secret, isActive = true } = req.body || {};
     if (!webhookUrl.trim()) return err(res, "Webhook URL is required");

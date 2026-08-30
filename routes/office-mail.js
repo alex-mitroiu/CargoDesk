@@ -3,7 +3,7 @@
 const SECURE_MODES = ["none", "starttls", "tls"];
 
 module.exports = function officeMailRoutes(app, ctx) {
-  const { db, ok, err, uid, requireRole, isUniqueViolation,
+  const { query, ok, err, uid, requireRole, isUniqueViolation,
           mapOfficeMailSettings, createTransporterFromSettings, invalidateTransporterCache,
           createRateLimiter } = ctx;
   const adminOnly = requireRole(["admin"]);
@@ -22,13 +22,13 @@ module.exports = function officeMailRoutes(app, ctx) {
     isActive: true, createdAt: null, updatedAt: null,
   });
 
-  app.get("/api/offices/:id/mail-settings", adminOnly, (req, res) => {
-    const row = db.prepare("SELECT * FROM office_mail_settings WHERE office_id = ?").get(req.params.id);
+  app.get("/api/offices/:id/mail-settings", adminOnly, async (req, res) => {
+    const [row] = await query("SELECT * FROM office_mail_settings WHERE office_id = $1", [req.params.id]);
     ok(res, row ? mapOfficeMailSettings(row) : DEFAULT_SETTINGS(req.params.id));
   });
 
-  app.put("/api/offices/:id/mail-settings", adminOnly, (req, res) => {
-    const office = db.prepare("SELECT id FROM offices WHERE id=?").get(req.params.id);
+  app.put("/api/offices/:id/mail-settings", adminOnly, async (req, res) => {
+    const [office] = await query("SELECT id FROM offices WHERE id=$1", [req.params.id]);
     if (!office) return err(res, "Office not found", 404);
 
     const { smtpHost = '', smtpPort = 587, secureMode = 'starttls', smtpUsername = '',
@@ -37,7 +37,7 @@ module.exports = function officeMailRoutes(app, ctx) {
     if (!SECURE_MODES.includes(secureMode)) return err(res, "secureMode must be none, starttls, or tls");
     if (!fromAddress.trim()) return err(res, "From address is required");
 
-    const existing = db.prepare("SELECT * FROM office_mail_settings WHERE office_id = ?").get(req.params.id);
+    const [existing] = await query("SELECT * FROM office_mail_settings WHERE office_id = $1", [req.params.id]);
     // Blank/omitted password means "keep the existing one" — standard password-field UX,
     // never overwrite a stored credential with blank just because the form field is empty.
     const password = smtpPassword.trim() ? smtpPassword : (existing ? existing.smtp_password : '');
@@ -45,21 +45,21 @@ module.exports = function officeMailRoutes(app, ctx) {
 
     try {
       if (existing) {
-        db.prepare(`UPDATE office_mail_settings SET smtp_host=?, smtp_port=?, secure_mode=?,
-          smtp_username=?, smtp_password=?, from_address=?, from_name=?, is_active=?, updated_at=?
-          WHERE office_id=?`)
-          .run(smtpHost, smtpPort, secureMode, smtpUsername, password, fromAddress, fromName,
-            isActive ? 1 : 0, now, req.params.id);
+        await query(`UPDATE office_mail_settings SET smtp_host=$1, smtp_port=$2, secure_mode=$3,
+          smtp_username=$4, smtp_password=$5, from_address=$6, from_name=$7, is_active=$8, updated_at=$9
+          WHERE office_id=$10`,
+          [smtpHost, smtpPort, secureMode, smtpUsername, password, fromAddress, fromName,
+            !!isActive, now, req.params.id]);
       } else {
-        db.prepare(`INSERT INTO office_mail_settings
+        await query(`INSERT INTO office_mail_settings
           (id, office_id, smtp_host, smtp_port, secure_mode, smtp_username, smtp_password,
            from_address, from_name, is_active, created_at, updated_at)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`)
-          .run(`OMS-${uid()}`, req.params.id, smtpHost, smtpPort, secureMode, smtpUsername,
-            password, fromAddress, fromName, isActive ? 1 : 0, now, now);
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+          [`OMS-${uid()}`, req.params.id, smtpHost, smtpPort, secureMode, smtpUsername,
+            password, fromAddress, fromName, !!isActive, now, now]);
       }
       invalidateTransporterCache(req.params.id);
-      const row = db.prepare("SELECT * FROM office_mail_settings WHERE office_id = ?").get(req.params.id);
+      const [row] = await query("SELECT * FROM office_mail_settings WHERE office_id = $1", [req.params.id]);
       ok(res, mapOfficeMailSettings(row));
     } catch (e) {
       if (isUniqueViolation(e)) return err(res, "Mail settings already exist for this office");
@@ -77,7 +77,7 @@ module.exports = function officeMailRoutes(app, ctx) {
     if (!to) return err(res, "A test-recipient address is required");
     if (!smtpHost.trim()) return err(res, "SMTP host is required");
 
-    const existing = db.prepare("SELECT smtp_password FROM office_mail_settings WHERE office_id = ?").get(req.params.id);
+    const [existing] = await query("SELECT smtp_password FROM office_mail_settings WHERE office_id = $1", [req.params.id]);
     const password = smtpPassword.trim() ? smtpPassword : (existing ? existing.smtp_password : '');
 
     try {

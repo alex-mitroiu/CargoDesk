@@ -3,13 +3,13 @@
 const { signToken, verifyToken } = require("../lib/shareToken");
 
 module.exports = function shareRoutes(app, ctx) {
-  const { db, ok, err, auth, JWT_SECRET, mapShipmentLeg, UPLOADS_DIR, fs, path } = ctx;
+  const { query, ok, err, auth, JWT_SECRET, mapShipmentLeg, UPLOADS_DIR, fs, path } = ctx;
 
   const SHARE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
   // Generate a shareable token for a shipment (auth required)
-  app.post("/api/shipments/:id/share-token", auth(), (req, res) => {
-    const shipment = db.prepare("SELECT id, status FROM shipments WHERE id=?").get(req.params.id);
+  app.post("/api/shipments/:id/share-token", auth(), async (req, res) => {
+    const [shipment] = await query("SELECT id, status FROM shipments WHERE id=$1", [req.params.id]);
     if (!shipment) return err(res, "Shipment not found", 404);
     const payload = { shipmentId: shipment.id, exp: Date.now() + SHARE_TTL_MS };
     const token = signToken(payload, JWT_SECRET);
@@ -18,34 +18,34 @@ module.exports = function shareRoutes(app, ctx) {
   });
 
   // Public tracking endpoint — no auth required
-  app.get("/api/share/:token", (req, res) => {
+  app.get("/api/share/:token", async (req, res) => {
     const payload = verifyToken(req.params.token, JWT_SECRET);
     if (!payload) return err(res, "Invalid or tampered link", 400);
     if (Date.now() > payload.exp) return err(res, "This tracking link has expired", 410);
 
-    const ship = db.prepare(`
+    const [ship] = await query(`
       SELECT s.*,
         po.name AS pol_name, pd.name AS pod_name
       FROM shipments s
       LEFT JOIN port_locations po ON po.unlocode = s.pol
       LEFT JOIN port_locations pd ON pd.unlocode = s.pod
-      WHERE s.id = ?
-    `).get(payload.shipmentId);
+      WHERE s.id = $1
+    `, [payload.shipmentId]);
     if (!ship) return err(res, "Shipment not found", 404);
 
-    const legs = db.prepare("SELECT * FROM shipment_legs WHERE shipment_id=? ORDER BY leg_order ASC").all(ship.id);
-    const containers = db.prepare(
-      "SELECT size, type, container_number AS containerNumber, gross_weight_kg AS grossWeightKg FROM containers WHERE shipment_id=?"
-    ).all(ship.id);
-    const milestones = db.prepare(
-      "SELECT milestone_key, label, sequence_order, completed_at, estimated_date FROM shipment_milestones WHERE shipment_id=? ORDER BY sequence_order ASC"
-    ).all(ship.id);
+    const legs = await query("SELECT * FROM shipment_legs WHERE shipment_id=$1 ORDER BY leg_order ASC", [ship.id]);
+    const containers = await query(
+      "SELECT size, type, container_number AS \"containerNumber\", gross_weight_kg AS \"grossWeightKg\" FROM containers WHERE shipment_id=$1", [ship.id]
+    );
+    const milestones = await query(
+      "SELECT milestone_key, label, sequence_order, completed_at, estimated_date FROM shipment_milestones WHERE shipment_id=$1 ORDER BY sequence_order ASC", [ship.id]
+    );
     // Structural dual carrier/shipper identity (TKT-9O2B3T, NVOCC epic TKT-Q52B38) — a customer
     // whose shipment moves through an NVOCC contracted with the NVOCC, not the underlying vessel
     // operator, so the public tracking page's "Carrier" should read as the NVOCC when one is
     // assigned (same identity already used for the House B/L and the booking-request shipper
     // field) — carrierCode is kept alongside, unchanged, as the real operational vessel operator.
-    const nvoccParty = db.prepare("SELECT customer_name FROM shipment_parties WHERE shipment_id=? AND role='NVOCC'").get(ship.id);
+    const [nvoccParty] = await query("SELECT customer_name FROM shipment_parties WHERE shipment_id=$1 AND role='NVOCC'", [ship.id]);
 
     ok(res, {
       id: ship.id,
@@ -84,11 +84,11 @@ module.exports = function shareRoutes(app, ctx) {
   // way the shipment-level tracking link is. The distribution service itself never touches file
   // bytes; this is the one place a partner's webhook receiver can actually fetch the document,
   // using the same signed-token mechanism as the tracking link above.
-  app.get("/api/share/document/:token", (req, res) => {
+  app.get("/api/share/document/:token", async (req, res) => {
     const payload = verifyToken(req.params.token, JWT_SECRET);
     if (!payload || !payload.docId) return err(res, "Invalid or tampered link", 400);
     if (Date.now() > payload.exp) return err(res, "This document link has expired", 410);
-    const doc = db.prepare("SELECT * FROM shipment_documents WHERE id=? AND shipment_id=?").get(payload.docId, payload.shipmentId);
+    const [doc] = await query("SELECT * FROM shipment_documents WHERE id=$1 AND shipment_id=$2", [payload.docId, payload.shipmentId]);
     if (!doc) return err(res, "Document not found", 404);
     const filePath = path.join(UPLOADS_DIR, doc.stored_name);
     if (!fs.existsSync(filePath)) return err(res, "File not found on disk", 404);
