@@ -1,7 +1,7 @@
 "use strict";
 
 module.exports = function ediRoutes(app, ctx) {
-  const { db, ok, err, uid, auth, requireRole, shipmentSubs,
+  const { query, ok, err, uid, auth, requireRole, shipmentSubs,
           mapEdiMessage, mapCarrierBooking, mapShipment, applyShipmentAccessFilter,
           autoCompleteMilestone, logEntityEvent, isEdiBookable, supersedeIfCarrierChanged,
           getCustomerRow } = ctx;
@@ -20,10 +20,10 @@ module.exports = function ediRoutes(app, ctx) {
   // The full outbound booking-request payload — same source the Review tab's Sent-vs-Received
   // comparison table diffs against on the "received" side, so every simulated response below
   // starts from it rather than synthesizing its own thin subset of fields.
-  function getLastOutboundPayload(shipmentId) {
-    const row = db.prepare(
-      "SELECT raw_payload FROM edi_messages WHERE shipment_id=? AND direction='out' ORDER BY created_at DESC LIMIT 1"
-    ).get(shipmentId);
+  async function getLastOutboundPayload(shipmentId) {
+    const [row] = await query(
+      "SELECT raw_payload FROM edi_messages WHERE shipment_id=$1 AND direction='out' ORDER BY created_at DESC LIMIT 1", [shipmentId]
+    );
     if (!row) return {};
     try { return JSON.parse(row.raw_payload) || {}; } catch { return {}; }
   }
@@ -36,13 +36,13 @@ module.exports = function ediRoutes(app, ctx) {
   // rejection could never be tested at all, and a real carrier routinely confirms with a
   // different vessel/voyage/ETD than what was actually requested — a third genuine outcome,
   // not something to fold into a plain confirmation or into Pending.
-  function simulatedConfirmedResponse(shipment, bookingRefOverride) {
+  async function simulatedConfirmedResponse(shipment, bookingRefOverride) {
     const ref = bookingRefOverride || `MAEU${uid()}`;
     return {
       status: "confirmed",
       bookingRef: ref,
       raw: {
-        ...getLastOutboundPayload(shipment.id),
+        ...(await getLastOutboundPayload(shipment.id)),
         bookingStatus: "CONFIRMED",
         carrierBookingReference: ref,
         note: "Simulated via Test Tools → Message Simulator.",
@@ -52,9 +52,9 @@ module.exports = function ediRoutes(app, ctx) {
   // Carries whatever the carrier actually changed — falls back to the originally requested
   // value for anything not explicitly overridden, so the Review tab's comparison table only
   // highlights fields that genuinely differ.
-  function simulatedConfirmedWithChangesResponse(shipment, bookingRefOverride, overrides = {}) {
+  async function simulatedConfirmedWithChangesResponse(shipment, bookingRefOverride, overrides = {}) {
     const ref = bookingRefOverride || `MAEU${uid()}`;
-    const sent = getLastOutboundPayload(shipment.id);
+    const sent = await getLastOutboundPayload(shipment.id);
     const changed = {};
     for (const key of ["vessel", "voyage", "etd", "vesselImo"]) {
       const v = overrides[key];
@@ -72,12 +72,12 @@ module.exports = function ediRoutes(app, ctx) {
       },
     };
   }
-  function simulatedRejectedResponse(shipment, reason) {
+  async function simulatedRejectedResponse(shipment, reason) {
     return {
       status: "rejected",
       bookingRef: null,
       raw: {
-        ...getLastOutboundPayload(shipment.id),
+        ...(await getLastOutboundPayload(shipment.id)),
         bookingStatus: "REJECTED",
         reason: reason || "No space available on requested sailing.",
         note: "Simulated via Test Tools → Message Simulator.",
@@ -90,36 +90,38 @@ module.exports = function ediRoutes(app, ctx) {
   // differs). A confirmed response deliberately does NOT finalize the booking — see the
   // status vs last_response_status split in the carrier_bookings migration comment
   // (server.js) for why. A rejected response has nothing to lock in, so it does.
-  function applyBookingResponse(shipment, booking, response, isMock) {
+  async function applyBookingResponse(shipment, booking, response, isMock) {
     const inId = `EDI-${uid()}`;
     const inType = response.status === "rejected" ? "booking_reject" : "booking_confirmation";
     const processedAt = new Date().toISOString();
-    db.prepare(`
+    await query(`
       INSERT INTO edi_messages
         (id, shipment_id, carrier_code, direction, message_type, format, raw_payload, parsed_payload,
          status, correlation_id, is_mock, created_at, processed_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
-    `).run(inId, shipment.id, shipment.carrier_code, "in", inType, "JSON",
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+    `, [inId, shipment.id, shipment.carrier_code, "in", inType, "JSON",
            JSON.stringify(response.raw), JSON.stringify({ bookingRef: response.bookingRef, status: response.status }),
-           response.status, booking.correlation_id, isMock ? 1 : 0, processedAt, processedAt);
+           response.status, booking.correlation_id, !!isMock, processedAt, processedAt]);
 
     const newStatus = response.status === "rejected" ? "Rejected" : booking.status;
-    db.prepare(`
-      UPDATE carrier_bookings SET last_response_status=?, booking_ref=?, status=?,
-        responded_at=?, is_mock=?, updated_at=? WHERE id=?
-    `).run(response.status, response.bookingRef || booking.booking_ref, newStatus,
-           processedAt, isMock ? 1 : 0, processedAt, booking.id);
+    await query(`
+      UPDATE carrier_bookings SET last_response_status=$1, booking_ref=$2, status=$3,
+        responded_at=$4, is_mock=$5, updated_at=$6 WHERE id=$7
+    `, [response.status, response.bookingRef || booking.booking_ref, newStatus,
+           processedAt, !!isMock, processedAt, booking.id]);
 
-    const message = mapEdiMessage(db.prepare("SELECT * FROM edi_messages WHERE id=?").get(inId));
+    const [msgRow] = await query("SELECT * FROM edi_messages WHERE id=$1", [inId]);
+    const message = mapEdiMessage(msgRow);
     broadcast(shipment.id, { type: "new_edi_message", message });
-    const updatedBooking = mapCarrierBooking(db.prepare("SELECT * FROM carrier_bookings WHERE id=?").get(booking.id));
+    const [bookingRow] = await query("SELECT * FROM carrier_bookings WHERE id=$1", [booking.id]);
+    const updatedBooking = mapCarrierBooking(bookingRow);
     broadcast(shipment.id, { type: "booking_status_changed", booking: updatedBooking });
     return { message, booking: updatedBooking };
   }
 
   async function upsertPendingBooking(shipment, correlationId, requestedBy) {
     const now = new Date().toISOString();
-    let existing = db.prepare("SELECT * FROM carrier_bookings WHERE shipment_id=?").get(shipment.id);
+    let [existing] = await query("SELECT * FROM carrier_bookings WHERE shipment_id=$1", [shipment.id]);
     // Any not-yet-Confirmed booking under a since-changed carrier — including one still
     // Pending — gets auto-cancelled and archived (own BKG- id preserved) rather than silently
     // reused here. This used to be the actual still-visible shape of the SHP-Y9E98X bug:
@@ -127,37 +129,38 @@ module.exports = function ediRoutes(app, ctx) {
     // carrier the earlier attempt was really for.
     existing = await supersedeIfCarrierChanged(shipment, existing);
     if (existing) {
-      db.prepare(`
-        UPDATE carrier_bookings SET status='Pending', last_response_status='', correlation_id=?,
-          carrier_code=?, requested_at=?, requested_by=?, responded_at=NULL,
-          cancelled_at=NULL, cancelled_by='', cancel_reason='', updated_at=? WHERE id=?
-      `).run(correlationId, shipment.carrier_code, now, requestedBy, now, existing.id);
-      return db.prepare("SELECT * FROM carrier_bookings WHERE id=?").get(existing.id);
+      await query(`
+        UPDATE carrier_bookings SET status='Pending', last_response_status='', correlation_id=$1,
+          carrier_code=$2, requested_at=$3, requested_by=$4, responded_at=NULL,
+          cancelled_at=NULL, cancelled_by='', cancel_reason='', updated_at=$5 WHERE id=$6
+      `, [correlationId, shipment.carrier_code, now, requestedBy, now, existing.id]);
+      const [fresh] = await query("SELECT * FROM carrier_bookings WHERE id=$1", [existing.id]);
+      return fresh;
     }
     const bookingId = `BKG-${uid()}`;
-    db.prepare(`
+    await query(`
       INSERT INTO carrier_bookings (id, shipment_id, carrier_code, status, correlation_id, requested_at, requested_by, created_at, updated_at)
-      VALUES (?,?,?,'Pending',?,?,?,?,?)
-    `).run(bookingId, shipment.id, shipment.carrier_code, correlationId, now, requestedBy, now, now);
-    return db.prepare("SELECT * FROM carrier_bookings WHERE id=?").get(bookingId);
+      VALUES ($1,$2,$3,'Pending',$4,$5,$6,$7,$8)
+    `, [bookingId, shipment.id, shipment.carrier_code, correlationId, now, requestedBy, now, now]);
+    const [fresh] = await query("SELECT * FROM carrier_bookings WHERE id=$1", [bookingId]);
+    return fresh;
   }
 
-  app.get("/api/shipments/:id/edi-messages", auth(), (req, res) => {
-    const rows = db.prepare("SELECT * FROM edi_messages WHERE shipment_id=? ORDER BY created_at DESC").all(req.params.id);
+  app.get("/api/shipments/:id/edi-messages", auth(), async (req, res) => {
+    const rows = await query("SELECT * FROM edi_messages WHERE shipment_id=$1 ORDER BY created_at DESC", [req.params.id]);
     ok(res, rows.map(mapEdiMessage));
   });
 
-  app.get("/api/shipments/:id/carrier-booking", auth(), (req, res) => {
-    const row = db.prepare("SELECT * FROM carrier_bookings WHERE shipment_id=?").get(req.params.id);
+  app.get("/api/shipments/:id/carrier-booking", auth(), async (req, res) => {
+    const [row] = await query("SELECT * FROM carrier_bookings WHERE shipment_id=$1", [req.params.id]);
     ok(res, row ? mapCarrierBooking(row) : null);
   });
 
   // Superseded booking attempts — see ensureBookingCreated (server.js) for what actually
   // archives one. Newest-first; each entry keeps its own original BKG- id from when it was
   // the live booking, so "which schedule/carrier this attempt was actually for" stays exact.
-  app.get("/api/shipments/:id/carrier-booking-history", auth(), (req, res) => {
-    const rows = db.prepare("SELECT * FROM carrier_booking_archive WHERE shipment_id=? ORDER BY archived_at DESC")
-      .all(req.params.id);
+  app.get("/api/shipments/:id/carrier-booking-history", auth(), async (req, res) => {
+    const rows = await query("SELECT * FROM carrier_booking_archive WHERE shipment_id=$1 ORDER BY archived_at DESC", [req.params.id]);
     ok(res, rows.map(mapCarrierBooking));
   });
 
@@ -168,13 +171,13 @@ module.exports = function ediRoutes(app, ctx) {
   app.get("/api/carrier-bookings", auth(), async (req, res) => {
     const { status } = req.query;
     const rows = status
-      ? db.prepare("SELECT * FROM carrier_bookings WHERE status=? ORDER BY updated_at DESC").all(status)
-      : db.prepare("SELECT * FROM carrier_bookings ORDER BY updated_at DESC").all();
+      ? await query("SELECT * FROM carrier_bookings WHERE status=$1 ORDER BY updated_at DESC", [status])
+      : await query("SELECT * FROM carrier_bookings ORDER BY updated_at DESC");
     if (rows.length === 0) return ok(res, []);
 
     const shipmentIds = [...new Set(rows.map(r => r.shipment_id))];
-    const ph = shipmentIds.map(() => "?").join(",");
-    const shipmentRows = db.prepare(`SELECT * FROM shipments WHERE id IN (${ph})`).all(...shipmentIds);
+    const ph = shipmentIds.map((_, i) => `$${i + 1}`).join(",");
+    const shipmentRows = await query(`SELECT * FROM shipments WHERE id IN (${ph})`, shipmentIds);
     const allowedShipments = await applyShipmentAccessFilter(shipmentRows.map(mapShipment), req.user, req);
     const shipmentById = new Map(allowedShipments.map(s => [s.id, s]));
 
@@ -184,12 +187,12 @@ module.exports = function ediRoutes(app, ctx) {
   });
 
   app.post("/api/shipments/:id/edi-messages/booking-request", write, async (req, res) => {
-    const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
+    const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
     if (!shipment) return err(res, "Shipment not found", 404);
     if (!(await isEdiBookable(shipment.carrier_code, shipment.emo_office_id)))
       return err(res, `Booking requests are not supported for carrier ${shipment.carrier_code} at this shipment's office`, 400);
 
-    const existingBooking = db.prepare("SELECT * FROM carrier_bookings WHERE shipment_id=?").get(shipment.id);
+    const [existingBooking] = await query("SELECT * FROM carrier_bookings WHERE shipment_id=$1", [shipment.id]);
     if (existingBooking && existingBooking.status === "Pending")
       return err(res, "A booking request is already pending for this shipment", 409);
 
@@ -219,9 +222,9 @@ module.exports = function ediRoutes(app, ctx) {
     // same "40HC"/"20GP" convention used everywhere else in this app) rather than listed
     // per-container — a carrier booking request states quantities per equipment type, not
     // individual container numbers (those aren't assigned until the carrier responds).
-    const containerRows = db.prepare(
-      "SELECT id, size, type, gross_weight_kg, volume_cbm, is_dg, dg_class, set_temperature_c FROM containers WHERE shipment_id=?"
-    ).all(shipment.id);
+    const containerRows = await query(
+      "SELECT id, size, type, gross_weight_kg, volume_cbm, is_dg, dg_class, set_temperature_c FROM containers WHERE shipment_id=$1", [shipment.id]
+    );
     const equipmentByType = {};
     for (const c of containerRows) {
       const key = `${c.size}${c.type}`;
@@ -238,11 +241,11 @@ module.exports = function ediRoutes(app, ctx) {
     // single DG-flagged pallet/carton inside it; declaring only container-level flags meant
     // that cargo sailed with zero DG declaration to the carrier. A container counts as DG if
     // either its own row OR any of its pack items (any depth) is flagged.
-    const dgPackRows = db.prepare(`
+    const dgPackRows = await query(`
       SELECT cp.container_id, cp.dg_class FROM container_packages cp
       JOIN containers c ON c.id = cp.container_id
-      WHERE c.shipment_id=? AND cp.is_dg=1
-    `).all(shipment.id);
+      WHERE c.shipment_id=$1 AND cp.is_dg=TRUE
+    `, [shipment.id]);
     const packDgClassesByContainer = {};
     for (const p of dgPackRows) {
       (packDgClassesByContainer[p.container_id] ||= new Set()).add(p.dg_class || '');
@@ -274,18 +277,18 @@ module.exports = function ediRoutes(app, ctx) {
     // Same lookup importContractRates already uses to find the rate set that priced this
     // shipment (server.js) — reused rather than reinvented. null for SPOT/manual-contract
     // shipments, which never get a snapshot (they were never Central-contract-priced).
-    const rateSnapshot = db.prepare(
-      "SELECT id FROM shipment_rate_snapshots WHERE shipment_id=? ORDER BY generated_at DESC LIMIT 1"
-    ).get(shipment.id);
+    const [rateSnapshot] = await query(
+      "SELECT id FROM shipment_rate_snapshots WHERE shipment_id=$1 ORDER BY generated_at DESC LIMIT 1", [shipment.id]
+    );
 
     // NVOCC support (Epic TKT-Q52B38) — when this shipment is being handled through an NVOCC,
     // THAT party (not the underlying cargo owner) is the real shipper of record on the vessel
     // operator's own booking/Master B/L; shipment.shipper_name is the House B/L shipper, a
     // different, legally distinct party. Falls back to today's exact behavior when no NVOCC
     // party is assigned — byte-identical payload for every shipment booked direct with a carrier.
-    const nvoccParty = db.prepare(
-      "SELECT customer_name FROM shipment_parties WHERE shipment_id=? AND role='NVOCC'"
-    ).get(shipment.id);
+    const [nvoccParty] = await query(
+      "SELECT customer_name FROM shipment_parties WHERE shipment_id=$1 AND role='NVOCC'", [shipment.id]
+    );
 
     // ITN (Internal Transaction Number, TKT-6A7J45 story 1) — an Accepted AES/EEI filing's
     // confirmation_number IS the ITN. A carrier is legally required to have a valid one on
@@ -293,9 +296,9 @@ module.exports = function ediRoutes(app, ctx) {
     // exactly like every other conveyance/compliance field above — previously generated and
     // then never referenced anywhere else in the app. null when no filing exists yet or it
     // hasn't been Accepted, same "nothing to show" convention as rateSnapshotId above.
-    const aesFiling = db.prepare(
-      "SELECT confirmation_number FROM customs_filings WHERE shipment_id=? AND filing_type='AES_EEI' AND status='Accepted'"
-    ).get(shipment.id);
+    const [aesFiling] = await query(
+      "SELECT confirmation_number FROM customs_filings WHERE shipment_id=$1 AND filing_type='AES_EEI' AND status='Accepted'", [shipment.id]
+    );
 
     const requestPayload = {
       pol: shipment.pol, pod: shipment.pod,
@@ -323,14 +326,15 @@ module.exports = function ediRoutes(app, ctx) {
 
     // Outbound message, recorded and broadcast immediately.
     const outId = `EDI-${uid()}`;
-    db.prepare(`
+    await query(`
       INSERT INTO edi_messages
         (id, shipment_id, carrier_code, direction, message_type, format, raw_payload,
          status, correlation_id, is_mock, created_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?)
-    `).run(outId, shipment.id, shipment.carrier_code, "out", "booking_request", "JSON",
-           JSON.stringify(requestPayload), "sent", correlationId, 0, now);
-    const sentMsg = mapEdiMessage(db.prepare("SELECT * FROM edi_messages WHERE id=?").get(outId));
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+    `, [outId, shipment.id, shipment.carrier_code, "out", "booking_request", "JSON",
+           JSON.stringify(requestPayload), "sent", correlationId, false, now]);
+    const [sentMsgRow] = await query("SELECT * FROM edi_messages WHERE id=$1", [outId]);
+    const sentMsg = mapEdiMessage(sentMsgRow);
     broadcast(shipment.id, { type: "new_edi_message", message: sentMsg });
 
     const requestedBy = req.user?.name || req.user?.email || "";
@@ -346,33 +350,33 @@ module.exports = function ediRoutes(app, ctx) {
   // request without a live carrier account. Ties every simulated response to a real
   // outstanding request (409 if none) so the data model can't end up with a response that
   // was never actually requested.
-  app.post("/api/shipments/:id/edi-messages/simulate-response", write, (req, res) => {
-    const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
+  app.post("/api/shipments/:id/edi-messages/simulate-response", write, async (req, res) => {
+    const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
     if (!shipment) return err(res, "Shipment not found", 404);
     const { outcome, bookingRef, reason, vessel, voyage, etd, vesselImo } = req.body || {};
     if (!["confirmed", "rejected", "confirmed_with_changes"].includes(outcome))
       return err(res, 'outcome must be "confirmed", "rejected", or "confirmed_with_changes"');
 
-    const booking = db.prepare("SELECT * FROM carrier_bookings WHERE shipment_id=?").get(shipment.id);
+    const [booking] = await query("SELECT * FROM carrier_bookings WHERE shipment_id=$1", [shipment.id]);
     if (!booking || booking.status !== "Pending")
       return err(res, "This shipment has no pending booking request to respond to", 409);
 
     const response = outcome === "confirmed"
-      ? simulatedConfirmedResponse(shipment, bookingRef)
+      ? await simulatedConfirmedResponse(shipment, bookingRef)
       : outcome === "confirmed_with_changes"
-      ? simulatedConfirmedWithChangesResponse(shipment, bookingRef, { vessel, voyage, etd, vesselImo })
-      : simulatedRejectedResponse(shipment, reason);
+      ? await simulatedConfirmedWithChangesResponse(shipment, bookingRef, { vessel, voyage, etd, vesselImo })
+      : await simulatedRejectedResponse(shipment, reason);
 
-    const { message, booking: updatedBooking } = applyBookingResponse(shipment, booking, response, true);
+    const { message, booking: updatedBooking } = await applyBookingResponse(shipment, booking, response, true);
     ok(res, { received: message, booking: updatedBooking }, 201);
   });
 
   app.patch("/api/shipments/:id/carrier-booking/confirm", write, async (req, res) => {
-    const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
+    const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
     if (!shipment) return err(res, "Shipment not found", 404);
     const { bookingRef, note } = req.body || {};
 
-    let existing = db.prepare("SELECT * FROM carrier_bookings WHERE shipment_id=?").get(shipment.id);
+    let [existing] = await query("SELECT * FROM carrier_bookings WHERE shipment_id=$1", [shipment.id]);
     // Same supersede rule as Send (upsertPendingBooking above) — any not-yet-Confirmed booking
     // under a since-changed carrier is auto-cancelled and archived rather than resurrected as
     // "Confirmed" under a carrier it was never actually requested/rejected/cancelled for.
@@ -387,27 +391,27 @@ module.exports = function ediRoutes(app, ctx) {
     const confirmedBy = req.user?.name || req.user?.email || "";
     let booking;
     if (existing) {
-      db.prepare(`
-        UPDATE carrier_bookings SET status='Confirmed', booking_ref=?, confirmed_at=?,
-          confirmed_by=?, carrier_code=?, updated_at=? WHERE id=?
-      `).run(ref, now, confirmedBy, shipment.carrier_code, now, existing.id);
-      booking = db.prepare("SELECT * FROM carrier_bookings WHERE id=?").get(existing.id);
+      await query(`
+        UPDATE carrier_bookings SET status='Confirmed', booking_ref=$1, confirmed_at=$2,
+          confirmed_by=$3, carrier_code=$4, updated_at=$5 WHERE id=$6
+      `, [ref, now, confirmedBy, shipment.carrier_code, now, existing.id]);
+      [booking] = await query("SELECT * FROM carrier_bookings WHERE id=$1", [existing.id]);
     } else {
       // Manual confirmation with no prior request at all — gives non-EDI-bookable carriers
       // (everything outside MAEU/SAFM/MCPU) a full booking lifecycle too.
       const bookingId = `BKG-${uid()}`;
-      db.prepare(`
+      await query(`
         INSERT INTO carrier_bookings (id, shipment_id, carrier_code, status, booking_ref, confirmed_at, confirmed_by, created_at, updated_at)
-        VALUES (?,?,?,'Confirmed',?,?,?,?,?)
-      `).run(bookingId, shipment.id, shipment.carrier_code, ref, now, confirmedBy, now, now);
-      booking = db.prepare("SELECT * FROM carrier_bookings WHERE id=?").get(bookingId);
+        VALUES ($1,$2,$3,'Confirmed',$4,$5,$6,$7,$8)
+      `, [bookingId, shipment.id, shipment.carrier_code, ref, now, confirmedBy, now, now]);
+      [booking] = await query("SELECT * FROM carrier_bookings WHERE id=$1", [bookingId]);
     }
 
     // This is now the trigger point for booking_ref/milestone completion — moved from
     // firing automatically on any confirmed carrier response (the old behavior) to firing
     // only on this explicit operator action.
-    db.prepare("UPDATE shipments SET booking_ref=? WHERE id=?").run(ref, shipment.id);
-    autoCompleteMilestone(shipment.id, 'booking_confirmed',
+    await query("UPDATE shipments SET booking_ref=$1 WHERE id=$2", [ref, shipment.id]);
+    await autoCompleteMilestone(shipment.id, 'booking_confirmed',
       note || `Confirmed by ${confirmedBy || 'operator'} (ref ${ref})`);
     await logEntityEvent('carrier_booking', booking.id, 'CONFIRMED', null, null, null,
       JSON.stringify({ bookingRef: ref, confirmedBy }));
@@ -418,11 +422,11 @@ module.exports = function ediRoutes(app, ctx) {
   });
 
   app.patch("/api/shipments/:id/carrier-booking/cancel", write, async (req, res) => {
-    const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
+    const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
     if (!shipment) return err(res, "Shipment not found", 404);
     const { reason } = req.body || {};
 
-    const existing = db.prepare("SELECT * FROM carrier_bookings WHERE shipment_id=?").get(shipment.id);
+    const [existing] = await query("SELECT * FROM carrier_bookings WHERE shipment_id=$1", [shipment.id]);
     if (existing && existing.status === "Cancelled") return err(res, "Booking is already cancelled", 409);
 
     const now = new Date().toISOString();
@@ -431,30 +435,31 @@ module.exports = function ediRoutes(app, ctx) {
     // Notify the carrier only if something was actually transmitted for this booking.
     if (existing?.correlation_id && await isEdiBookable(shipment.carrier_code, shipment.emo_office_id)) {
       const cancelId = `EDI-${uid()}`;
-      db.prepare(`
+      await query(`
         INSERT INTO edi_messages (id, shipment_id, carrier_code, direction, message_type, format, raw_payload, status, correlation_id, is_mock, created_at)
-        VALUES (?,?,?,'out','booking_cancellation','JSON',?,'sent',?,0,?)
-      `).run(cancelId, shipment.id, shipment.carrier_code, JSON.stringify({ reason: reason || "" }), existing.correlation_id, now);
+        VALUES ($1,$2,$3,'out','booking_cancellation','JSON',$4,'sent',$5,FALSE,$6)
+      `, [cancelId, shipment.id, shipment.carrier_code, JSON.stringify({ reason: reason || "" }), existing.correlation_id, now]);
+      const [cancelRow] = await query("SELECT * FROM edi_messages WHERE id=$1", [cancelId]);
       broadcast(shipment.id, {
         type: "new_edi_message",
-        message: mapEdiMessage(db.prepare("SELECT * FROM edi_messages WHERE id=?").get(cancelId)),
+        message: mapEdiMessage(cancelRow),
       });
     }
 
     let booking;
     if (existing) {
-      db.prepare(`
-        UPDATE carrier_bookings SET status='Cancelled', cancelled_at=?, cancelled_by=?, cancel_reason=?, updated_at=? WHERE id=?
-      `).run(now, cancelledBy, reason || "", now, existing.id);
-      booking = db.prepare("SELECT * FROM carrier_bookings WHERE id=?").get(existing.id);
+      await query(`
+        UPDATE carrier_bookings SET status='Cancelled', cancelled_at=$1, cancelled_by=$2, cancel_reason=$3, updated_at=$4 WHERE id=$5
+      `, [now, cancelledBy, reason || "", now, existing.id]);
+      [booking] = await query("SELECT * FROM carrier_bookings WHERE id=$1", [existing.id]);
     } else {
       // A pure "we're not booking this" record with no prior request.
       const bookingId = `BKG-${uid()}`;
-      db.prepare(`
+      await query(`
         INSERT INTO carrier_bookings (id, shipment_id, carrier_code, status, cancelled_at, cancelled_by, cancel_reason, created_at, updated_at)
-        VALUES (?,?,?,'Cancelled',?,?,?,?,?)
-      `).run(bookingId, shipment.id, shipment.carrier_code, now, cancelledBy, reason || "", now, now);
-      booking = db.prepare("SELECT * FROM carrier_bookings WHERE id=?").get(bookingId);
+        VALUES ($1,$2,$3,'Cancelled',$4,$5,$6,$7,$8)
+      `, [bookingId, shipment.id, shipment.carrier_code, now, cancelledBy, reason || "", now, now]);
+      [booking] = await query("SELECT * FROM carrier_bookings WHERE id=$1", [bookingId]);
     }
 
     // Deliberately does not clear shipments.booking_ref or un-complete the milestone —
@@ -472,23 +477,23 @@ module.exports = function ediRoutes(app, ctx) {
   // row is read-only history, same convention CarrierBookingsTable.jsx already enforces
   // in its own UI. documentId: null clears the link.
   app.patch("/api/shipments/:id/carrier-booking/link-bl-document", write, async (req, res) => {
-    const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(req.params.id);
+    const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
     if (!shipment) return err(res, "Shipment not found", 404);
     const { documentId = null } = req.body || {};
 
-    const booking = db.prepare("SELECT * FROM carrier_bookings WHERE shipment_id=?").get(shipment.id);
+    const [booking] = await query("SELECT * FROM carrier_bookings WHERE shipment_id=$1", [shipment.id]);
     if (!booking) return err(res, "This shipment has no booking to link a B/L to", 404);
 
     if (documentId) {
-      const doc = db.prepare("SELECT * FROM shipment_documents WHERE id=?").get(documentId);
+      const [doc] = await query("SELECT * FROM shipment_documents WHERE id=$1", [documentId]);
       if (!doc || doc.shipment_id !== shipment.id) return err(res, "Document not found on this shipment", 404);
       if (doc.doc_type !== "BL01") return err(res, "Only a Bill of Lading (BL01) document can be linked", 400);
     }
 
     const now = new Date().toISOString();
-    db.prepare("UPDATE carrier_bookings SET bl_document_id=?, updated_at=? WHERE id=?")
-      .run(documentId, now, booking.id);
-    const updated = db.prepare("SELECT * FROM carrier_bookings WHERE id=?").get(booking.id);
+    await query("UPDATE carrier_bookings SET bl_document_id=$1, updated_at=$2 WHERE id=$3",
+      [documentId, now, booking.id]);
+    const [updated] = await query("SELECT * FROM carrier_bookings WHERE id=$1", [booking.id]);
     await logEntityEvent('carrier_booking', booking.id, documentId ? 'BL_LINKED' : 'BL_UNLINKED', null, null, null,
       JSON.stringify({ documentId }));
 
