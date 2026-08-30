@@ -3,43 +3,43 @@
 // codebase already uses twice (Pack Types, Duty Rate Chapters): sensible defaults seeded via
 // migration, fully editable via Master Data on top. Mirrors routes/pack-types.js's CRUD shape.
 module.exports = function invoiceReasonCodeRoutes(app, ctx) {
-  const { db, ok, err, uid, requireRole, mapInvoiceReasonCode } = ctx;
+  const { query, ok, err, uid, requireRole, mapInvoiceReasonCode, isUniqueViolation } = ctx;
   const genId = () => `IRC-${uid()}`;
   const write = requireRole(["admin"]);
 
-  app.get("/api/invoice-status-reason-codes", (req, res) => {
-    const rows = db.prepare("SELECT * FROM invoice_status_reason_codes ORDER BY label").all();
+  app.get("/api/invoice-status-reason-codes", async (req, res) => {
+    const rows = await query("SELECT * FROM invoice_status_reason_codes ORDER BY label");
     ok(res, rows.map(mapInvoiceReasonCode));
   });
 
-  app.post("/api/invoice-status-reason-codes", write, (req, res) => {
+  app.post("/api/invoice-status-reason-codes", write, async (req, res) => {
     const { code, label, isActive = true } = req.body || {};
     if (!code || !label) return err(res, "Code and label are required");
     const id = genId();
     const now = new Date().toISOString();
     try {
-      db.prepare(`INSERT INTO invoice_status_reason_codes (id, code, label, is_active, created_at)
-        VALUES (?, ?, ?, ?, ?)`)
-        .run(id, code.trim().toUpperCase(), label.trim(), isActive ? 1 : 0, now);
-      ok(res, mapInvoiceReasonCode({ id, code: code.trim().toUpperCase(), label: label.trim(), is_active: isActive ? 1 : 0, created_at: now }), 201);
+      await query(`INSERT INTO invoice_status_reason_codes (id, code, label, is_active, created_at)
+        VALUES ($1, $2, $3, $4, $5)`,
+        [id, code.trim().toUpperCase(), label.trim(), !!isActive, now]);
+      ok(res, mapInvoiceReasonCode({ id, code: code.trim().toUpperCase(), label: label.trim(), is_active: !!isActive, created_at: now }), 201);
     } catch (e) {
-      if (e.message?.includes("UNIQUE")) return err(res, `Code ${code} already exists`);
+      if (isUniqueViolation(e)) return err(res, `Code ${code} already exists`);
       err(res, e.message, 500);
     }
   });
 
-  app.put("/api/invoice-status-reason-codes/:id", write, (req, res) => {
-    const existing = db.prepare("SELECT * FROM invoice_status_reason_codes WHERE id = ?").get(req.params.id);
+  app.put("/api/invoice-status-reason-codes/:id", write, async (req, res) => {
+    const [existing] = await query("SELECT * FROM invoice_status_reason_codes WHERE id = $1", [req.params.id]);
     if (!existing) return err(res, "Reason code not found", 404);
     const { code, label, isActive = true } = req.body || {};
     if (!code || !label) return err(res, "Code and label are required");
-    db.prepare(`UPDATE invoice_status_reason_codes SET code=?, label=?, is_active=? WHERE id=?`)
-      .run(code.trim().toUpperCase(), label.trim(), isActive ? 1 : 0, req.params.id);
-    ok(res, mapInvoiceReasonCode({ ...existing, code: code.trim().toUpperCase(), label: label.trim(), is_active: isActive ? 1 : 0 }));
+    await query(`UPDATE invoice_status_reason_codes SET code=$1, label=$2, is_active=$3 WHERE id=$4`,
+      [code.trim().toUpperCase(), label.trim(), !!isActive, req.params.id]);
+    ok(res, mapInvoiceReasonCode({ ...existing, code: code.trim().toUpperCase(), label: label.trim(), is_active: !!isActive }));
   });
 
-  app.delete("/api/invoice-status-reason-codes/:id", write, (req, res) => {
-    db.prepare("DELETE FROM invoice_status_reason_codes WHERE id = ?").run(req.params.id);
+  app.delete("/api/invoice-status-reason-codes/:id", write, async (req, res) => {
+    await query("DELETE FROM invoice_status_reason_codes WHERE id = $1", [req.params.id]);
     ok(res, { ok: true });
   });
 };

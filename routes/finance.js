@@ -1,21 +1,21 @@
 "use strict";
 
 module.exports = function financeRoutes(app, ctx) {
-  const { db, ok, err, auth, resolveCustomerGroup, roundCents, getFxRates } = ctx;
+  const { query, ok, err, auth, resolveCustomerGroup, roundCents, getFxRates } = ctx;
 
   // Multi-Entity Accounting (TKT-EEV4I9) — mirrors canEditOfficeSide's (server.js) admin/
   // operator/allOffices bypass exactly, applied to READ visibility of the byEntity breakdown
   // instead of write permission: a branch-scoped user should see their own entity's P&L, not the
   // whole company's, unless they're global. Returns null for "unrestricted" or a Set of branch
   // ids the caller may see (possibly empty, if they have no active office set).
-  const callerEntityScope = req => {
+  const callerEntityScope = async req => {
     const user = req.user;
     const jwtRoles = Array.isArray(user.roles) ? user.roles : (user.role ? [user.role] : ['viewer']);
     if (jwtRoles.includes('admin') || jwtRoles.includes('operator')) return null;
     if (user.allOffices) return null;
     const activeOfficeId = req.headers?.['x-office-id'];
     if (!activeOfficeId) return new Set();
-    const office = db.prepare("SELECT branch_id FROM offices WHERE id=?").get(activeOfficeId);
+    const [office] = await query("SELECT branch_id FROM offices WHERE id=$1", [activeOfficeId]);
     return new Set(office?.branch_id ? [office.branch_id] : []);
   };
 
@@ -37,7 +37,7 @@ module.exports = function financeRoutes(app, ctx) {
     // Accounting, TKT-EEV4I9) as its EMO office's branch, falling back to the IMO office's branch
     // when EMO is unset — no new column on shipments/shipment_cost_lines, a branch already IS
     // CargoDesk's legal-entity boundary (see the branches.currency migration in server.js).
-    const lines = db.prepare(`
+    const lines = await query(`
       SELECT cl.*, s.carrier_code, s.pol, s.pod, s.etd, s.created_at AS shp_created_at,
              s.principal_id, s.principal_name, s.consignee_id, s.consignee_name,
              COALESCE(emo_branch.id, imo_branch.id) AS entity_id,
@@ -49,7 +49,7 @@ module.exports = function financeRoutes(app, ctx) {
       LEFT JOIN branches emo_branch ON emo_branch.id = emo_office.branch_id
       LEFT JOIN offices  imo_office ON imo_office.id = s.imo_office_id
       LEFT JOIN branches imo_branch ON imo_branch.id = imo_office.branch_id
-    `).all();
+    `);
 
     const todayStr = new Date().toISOString().slice(0, 10);
     const weekBuckets = Array.from({ length: 6 }, (_, i) => {
@@ -126,7 +126,7 @@ module.exports = function financeRoutes(app, ctx) {
     // Scoped to the caller's own branch unless global (callerEntityScope) — deliberately NOT
     // applied to byCarrier/byLane/byCustomer, which stay company-wide exactly as today; entity
     // is the one dimension that maps onto a real legal/branch boundary worth restricting.
-    const entityScope = callerEntityScope(req);
+    const entityScope = await callerEntityScope(req);
     const entityRows  = lines.filter(r => r.entity_id);
     const entityIds   = [...new Set(entityRows.map(r => r.entity_id))]
       .filter(id => entityScope === null || entityScope.has(id));

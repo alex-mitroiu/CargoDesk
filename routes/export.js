@@ -4,7 +4,7 @@ const path    = require("path");
 const fs      = require("fs");
 
 module.exports = function exportRoutes(app, ctx) {
-  const { db, auth, applyShipmentAccessFilter, mapShipment, roundCents, createRateLimiter } = ctx;
+  const { query, auth, applyShipmentAccessFilter, mapShipment, roundCents, createRateLimiter } = ctx;
 
   // Every route below does a full server-side multi-join build (CSV) or an in-memory ExcelJS
   // workbook build (XLSX) across every shipment the caller can see — cheap for one call, not
@@ -59,13 +59,13 @@ module.exports = function exportRoutes(app, ctx) {
   // routes/shipments.js's resolveSeaPorts, duplicated here (small per-file helper,
   // matching this codebase's existing precedent) so exports show a real sea port under
   // "POL"/"POD" rather than an inland city.
-  function resolveSeaPorts(shipmentIds) {
+  async function resolveSeaPorts(shipmentIds) {
     if (!shipmentIds.length) return {};
-    const legs = db.prepare(`
+    const legs = await query(`
       SELECT shipment_id, pol, pod FROM shipment_legs
-      WHERE leg_type='SEA' AND shipment_id IN (${shipmentIds.map(() => '?').join(',')})
+      WHERE leg_type='SEA' AND shipment_id IN (${shipmentIds.map((_, i) => `$${i + 1}`).join(',')})
       ORDER BY leg_order ASC
-    `).all(...shipmentIds);
+    `, shipmentIds);
     const bySeaShipment = {};
     for (const l of legs) {
       const g = (bySeaShipment[l.shipment_id] ??= { seaPol: l.pol, seaPod: l.pod });
@@ -74,8 +74,8 @@ module.exports = function exportRoutes(app, ctx) {
     const codes = [...new Set(Object.values(bySeaShipment).flatMap(g => [g.seaPol, g.seaPod]).filter(Boolean))];
     const names = {};
     if (codes.length) {
-      db.prepare(`SELECT unlocode, name FROM port_locations WHERE unlocode IN (${codes.map(() => '?').join(',')})`)
-        .all(...codes).forEach(r => { names[r.unlocode] = r.name; });
+      (await query(`SELECT unlocode, name FROM port_locations WHERE unlocode IN (${codes.map((_, i) => `$${i + 1}`).join(',')})`, codes))
+        .forEach(r => { names[r.unlocode] = r.name; });
     }
     for (const g of Object.values(bySeaShipment)) {
       g.seaPolName = names[g.seaPol] || '';
@@ -85,7 +85,7 @@ module.exports = function exportRoutes(app, ctx) {
   }
 
   async function queryShipmentRows(user, req) {
-    const rows = db.prepare(`
+    const rows = await query(`
       SELECT s.*,
              p1.name AS pol_name, p2.name AS pod_name,
              emo.name  AS emo_office_name, imo.name  AS imo_office_name, ctrl.name AS controlling_office_name,
@@ -111,8 +111,8 @@ module.exports = function exportRoutes(app, ctx) {
                  FROM containers GROUP BY shipment_id) ctr
              ON ctr.shipment_id = s.id
       ORDER BY s.created_at DESC
-    `).all();
-    const seaPorts = resolveSeaPorts(rows.map(r => r.id));
+    `);
+    const seaPorts = await resolveSeaPorts(rows.map(r => r.id));
     return await applyShipmentAccessFilter(rows.map(r => ({
       ...mapShipment(r),
       totalTeu:       r.total_teu,
@@ -123,26 +123,26 @@ module.exports = function exportRoutes(app, ctx) {
     })), user, req);
   }
 
-  function queryCostLines() {
-    const rows = db.prepare(`
+  async function queryCostLines() {
+    const rows = await query(`
       SELECT cl.*, s.pol, s.pod, s.carrier_code, s.etd, s.booking_ref
       FROM shipment_cost_lines cl
       JOIN shipments s ON s.id = cl.shipment_id
       ORDER BY cl.shipment_id, cl.type, cl.created_at
-    `).all();
+    `);
     // Same door-to-door-vs-real-sea-port gap as queryShipmentRows above — the "By Lane" margin
     // summary grouped by raw pol/pod, so a shipment with a Door pickup/delivery leg misattributed
     // its margin to an inland city's "lane" instead of the real sea lane. Overlay the resolved
     // sea port here too, falling back to the door-to-door value when there's no SEA leg yet.
-    const seaPorts = resolveSeaPorts([...new Set(rows.map(r => r.shipment_id))]);
+    const seaPorts = await resolveSeaPorts([...new Set(rows.map(r => r.shipment_id))]);
     return rows.map(r => {
       const sp = seaPorts[r.shipment_id];
       return sp ? { ...r, pol: sp.seaPol || r.pol, pod: sp.seaPod || r.pod } : r;
     });
   }
 
-  function buildMarginSummary(shipments) {
-    const lines = queryCostLines();
+  async function buildMarginSummary(shipments) {
+    const lines = await queryCostLines();
 
     const aggregate = (rows) => {
       const buy  = rows.filter(r => r.type === "BUY").reduce((s, r) => s + r.amount * r.exchange_rate, 0);
@@ -564,7 +564,7 @@ module.exports = function exportRoutes(app, ctx) {
 
   app.get("/api/export/dashboard/xlsx", auth(), exportRateLimit, async (req, res) => {
     const shipments   = await queryShipmentRows(req.user, req);
-    const summary     = buildMarginSummary(shipments);
+    const summary     = await buildMarginSummary(shipments);
     const exportedAt  = new Date().toLocaleString("en-GB");
 
     const wb = new ExcelJS.Workbook();
@@ -593,7 +593,7 @@ module.exports = function exportRoutes(app, ctx) {
     }
 
     const shipments  = await queryShipmentRows(req.user, req);
-    const summary    = buildMarginSummary(shipments);
+    const summary    = await buildMarginSummary(shipments);
     const exportedAt = new Date().toLocaleString("en-GB");
 
     const wb = new ExcelJS.Workbook();
