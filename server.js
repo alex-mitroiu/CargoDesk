@@ -5,7 +5,6 @@ const https      = require("https");
 const path       = require("path");
 const fs         = require("fs");
 const { WebSocketServer } = require("ws");
-const { DatabaseSync } = require("node:sqlite");
 const bcrypt = require("bcryptjs");
 const jwt    = require("jsonwebtoken");
 const {
@@ -213,20 +212,17 @@ async function callCustomerService(method, urlPath, body) {
   return data;
 }
 
-// Zero-script onboarding: a fresh clone has no cargodesk.db yet. db/cargodesk.sample.db is a
-// committed, pre-seeded copy carrying only static MDM reference data (ports, carriers, vessels,
-// commodities, regions, trade lanes, countries) — never shipments/contracts/customers/users,
-// which every real install should create for itself. Copied once, in place; never overwrites an
-// already-running install's own database.
-const DB_PATH = path.join(__dirname, "cargodesk.db");
-const SAMPLE_DB_PATH = path.join(__dirname, "db", "cargodesk.sample.db");
-if (!fs.existsSync(DB_PATH) && fs.existsSync(SAMPLE_DB_PATH)) {
-  fs.copyFileSync(SAMPLE_DB_PATH, DB_PATH);
-  console.log("⚓  No cargodesk.db found — copied the bundled MDM reference sample (db/cargodesk.sample.db) to get started.");
-}
+// Postgres migration (ARCHITECTURE.md §13) — same dual-backend driver shape as every extracted
+// microservice's own lib/db.js. Real `pg` when DATABASE_URL is set; an embedded @electric-sql/
+// pglite instance otherwise (local dev/test), persisted to pgdata/ at the repo root. The old
+// zero-script "copy db/cargodesk.sample.db on first boot" mechanism is retired along with
+// node:sqlite — MDM reference-data seeding for a fresh Postgres install goes through the same
+// `npm run seed` path as any subsequent reseed (scripts/import-mdm-data.js), not an automatic
+// file copy that no longer makes sense once the file isn't a SQLite database.
+const { query, transaction } = require("./lib/db");
+const { initSchema } = require("./lib/schema");
 
 const app = express();
-const db  = new DatabaseSync(DB_PATH);
 
 // Crash-safety net, part 1: every route file in this codebase registers handlers as plain
 // `app.get/post/put/patch/delete(path, ...middleware, async (req,res) => {...})` with no
@@ -273,7 +269,7 @@ app.use(express.json({ limit: "25mb" }));
 const uid = () => Math.random().toString(36).slice(2,8).toUpperCase();
 const ok  = (res, data, status = 200) => res.status(status).json(data);
 const err = (res, msg, status = 400) => res.status(status).json({ error: msg });
-const isUniqueViolation = e => e?.message?.includes("UNIQUE constraint");
+const isUniqueViolation = e => e?.code === "23505";
 // First place in the codebase validating a free-typed lat/lng pair — port_locations' own
 // latitude/longitude is trusted/curated import data, never user-typed, so nothing like this
 // existed before. Per-field, not both-or-neither: cell-level onBlur-flush editing can legitimately
@@ -282,2212 +278,22 @@ const validCoord = (v, min, max) => v === null || v === undefined || v === ''
   ? true : Number.isFinite(Number(v)) && Number(v) >= min && Number(v) <= max;
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
+// Full Postgres DDL lives in lib/schema.js's initSchema() (93 tables, translated from the live
+// SQLite database's own sqlite_master as ground truth — see ARCHITECTURE.md §13). The ~1,600
+// lines this used to be (a base CREATE TABLE block + a ~150-statement ADD-COLUMN migrations array
+// + several guarded create-copy-swap rebuilds for constraints SQLite can't ALTER around) are gone
+// entirely: Postgres's initSchema() already creates every table in its final shape directly, and
+// every guarded rebuild (shipment_schedules' nullable owner, the carrier_agents restructure, the
+// carrier_eadapter_configs per-office rescoping) is superseded the same way every prior phase's
+// guarded rebuilds were — the final shape is just the schema now. A handful of one-time DATA
+// backfills (contract_container_types/imdg_classes from contracts' old JSON columns, sailing_legs
+// from schedule_legs) only ever mattered for rows already present in the legacy SQLite database
+// and have nothing to act on in a fresh Postgres install — dropped rather than ported.
+let schemaReadyPromise = initSchema(query).catch(e => {
+  console.error("Failed to initialize database schema:", e);
+  process.exit(1);
+});
 
-db.exec(`
-  PRAGMA journal_mode=WAL;
-  PRAGMA foreign_keys=ON;
-
-  CREATE TABLE IF NOT EXISTS shipments (
-    id              TEXT PRIMARY KEY,
-    pol             TEXT NOT NULL,
-    pod             TEXT NOT NULL,
-    carrier_code    TEXT NOT NULL,
-    contract_type   TEXT NOT NULL DEFAULT 'SPOT',
-    contract_notes  TEXT DEFAULT '',
-    status          TEXT NOT NULL DEFAULT 'Active',
-    created_at      TEXT NOT NULL,
-    etd             TEXT DEFAULT '',
-    eta             TEXT DEFAULT '',
-    booking_ref     TEXT DEFAULT '',
-    bl_number       TEXT DEFAULT '',
-    vessel          TEXT DEFAULT '',
-    voyage          TEXT DEFAULT '',
-    incoterm        TEXT DEFAULT '',
-    vessel_imo      TEXT DEFAULT '',
-    contract_id     TEXT DEFAULT '',
-    commodity_code  TEXT DEFAULT ''
-  );
-
-  CREATE TABLE IF NOT EXISTS containers (
-    id               TEXT PRIMARY KEY,
-    shipment_id      TEXT NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
-    container_number TEXT NOT NULL DEFAULT '',
-    seal_number      TEXT NOT NULL DEFAULT '',
-    size             TEXT NOT NULL CHECK(size IN ('20','40')),
-    type             TEXT NOT NULL,
-    hs_code          TEXT DEFAULT '',
-    cargo_description TEXT DEFAULT '',
-    gross_weight_kg  REAL,
-    volume_cbm       REAL,
-    is_dg            INTEGER DEFAULT 0,
-    dg_class         TEXT DEFAULT ''
-  );
-  -- Every shipment-detail-page load queries "all containers for this shipment" — 9 call sites,
-  -- no index before this (verified via a direct grep of WHERE-clause usage, not assumed).
-  CREATE INDEX IF NOT EXISTS idx_containers_shipment ON containers(shipment_id);
-
-  CREATE TABLE IF NOT EXISTS allocations (
-    id              TEXT PRIMARY KEY,
-    carrier_code    TEXT NOT NULL,
-    pol             TEXT DEFAULT '',
-    pod             TEXT DEFAULT '',
-    origin_lane     TEXT DEFAULT '',
-    dest_lane       TEXT DEFAULT '',
-    trade_lane      TEXT DEFAULT '',
-    allocated_teu   INTEGER NOT NULL,
-    effective_date  TEXT NOT NULL,
-    end_date        TEXT NOT NULL,
-    alert_threshold INTEGER DEFAULT 80,
-    notes           TEXT DEFAULT '',
-    coverage_scope  TEXT DEFAULT 'STRICT'
-  );
-
-  CREATE TABLE IF NOT EXISTS carriers (
-    code       TEXT PRIMARY KEY,
-    name       TEXT NOT NULL,
-    short_name TEXT DEFAULT ''
-  );
-
-  CREATE TABLE IF NOT EXISTS vessels (
-    imo           TEXT PRIMARY KEY,
-    name          TEXT NOT NULL,
-    asset_type    TEXT DEFAULT '',
-    flag_iso2     TEXT DEFAULT '',
-    flag_name     TEXT DEFAULT '',
-    build_year    INTEGER,
-    gross_tonnage INTEGER
-  );
-
-  CREATE TABLE IF NOT EXISTS port_locations (
-    unlocode       TEXT PRIMARY KEY,
-    name           TEXT NOT NULL,
-    latitude       REAL DEFAULT 0,
-    longitude      REAL DEFAULT 0,
-    country_code   TEXT DEFAULT '',
-    zone_code      TEXT DEFAULT '',
-    last_synced_at TEXT DEFAULT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS linked_ports (
-    id               TEXT PRIMARY KEY,
-    primary_unlocode TEXT NOT NULL REFERENCES port_locations(unlocode),
-    linked_unlocode  TEXT NOT NULL REFERENCES port_locations(unlocode),
-    note             TEXT DEFAULT '',
-    UNIQUE(primary_unlocode, linked_unlocode)
-  );
-
-  CREATE TABLE IF NOT EXISTS trade_lanes (
-    code        TEXT PRIMARY KEY,
-    name        TEXT NOT NULL,
-    description TEXT DEFAULT ''
-  );
-
-  CREATE TABLE IF NOT EXISTS country_trade_lanes (
-    iso2      TEXT NOT NULL,
-    lane_code TEXT NOT NULL REFERENCES trade_lanes(code),
-    PRIMARY KEY (iso2, lane_code)
-  );
-
-  CREATE TABLE IF NOT EXISTS regions (
-    code        TEXT PRIMARY KEY,
-    name        TEXT NOT NULL,
-    description TEXT DEFAULT ''
-  );
-
-  CREATE TABLE IF NOT EXISTS countries (
-    iso2        TEXT PRIMARY KEY,
-    name        TEXT NOT NULL,
-    un_member   INTEGER DEFAULT 1,
-    region_code TEXT DEFAULT ''
-  );
-
-  CREATE TABLE IF NOT EXISTS tickets (
-    id          TEXT PRIMARY KEY,
-    title       TEXT NOT NULL,
-    section     TEXT DEFAULT '',
-    description TEXT DEFAULT '',
-    priority    TEXT DEFAULT 'Medium',
-    status      TEXT DEFAULT 'Ready',
-    position    INTEGER DEFAULT 0,
-    created_at  TEXT NOT NULL
-  );
-
-  -- ── Shipment event log (all changes) ──
-  CREATE TABLE IF NOT EXISTS shipment_events (
-    id          TEXT PRIMARY KEY,
-    shipment_id TEXT NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
-    event_type  TEXT NOT NULL,
-    field       TEXT DEFAULT NULL,
-    old_value   TEXT DEFAULT NULL,
-    new_value   TEXT DEFAULT NULL,
-    actor       TEXT NOT NULL DEFAULT 'user',
-    occurred_at TEXT NOT NULL,
-    meta        TEXT DEFAULT ''
-  );
-  CREATE INDEX IF NOT EXISTS idx_shp_events ON shipment_events(shipment_id, occurred_at);
-
-  -- ── Shipment status audit log ──
-  CREATE TABLE IF NOT EXISTS status_log (
-    id           TEXT PRIMARY KEY,
-    shipment_id  TEXT NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
-    from_status  TEXT NOT NULL,
-    to_status    TEXT NOT NULL,
-    changed_at   TEXT NOT NULL,
-    changed_by   TEXT NOT NULL DEFAULT 'system'
-  );
-  CREATE INDEX IF NOT EXISTS idx_status_log_shipment ON status_log(shipment_id, changed_at);
-
-  -- ── Customers ──
-  CREATE TABLE IF NOT EXISTS customers (
-    id           TEXT PRIMARY KEY,
-    company_name TEXT NOT NULL,
-    address1     TEXT DEFAULT '',
-    address2     TEXT DEFAULT '',
-    city         TEXT DEFAULT '',
-    state        TEXT DEFAULT '',
-    postal_code  TEXT DEFAULT '',
-    country_iso2 TEXT DEFAULT '',
-    phone        TEXT DEFAULT '',
-    fax          TEXT DEFAULT '',
-    email        TEXT DEFAULT '',
-    website      TEXT DEFAULT '',
-    notes        TEXT DEFAULT '',
-    created_at   TEXT NOT NULL
-  );
-
-  -- ── Commodities (Maersk freight type registry) ──
-  CREATE TABLE IF NOT EXISTS commodities (
-    code        TEXT PRIMARY KEY,
-    description TEXT NOT NULL,
-    grade_code  TEXT NOT NULL DEFAULT 'E',
-    grade_name  TEXT NOT NULL DEFAULT 'General Cargo'
-  );
-  CREATE INDEX IF NOT EXISTS idx_commodities_desc ON commodities(description);
-
-  -- ── Shipment Messages ──
-  CREATE TABLE IF NOT EXISTS shipment_messages (
-    id          TEXT PRIMARY KEY,
-    shipment_id TEXT NOT NULL,
-    body        TEXT NOT NULL,
-    author      TEXT NOT NULL,
-    role        TEXT DEFAULT '',
-    created_at  TEXT NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS idx_shp_msgs ON shipment_messages(shipment_id, created_at);
-
-  -- ── Shipment Legs ──
-  CREATE TABLE IF NOT EXISTS shipment_legs (
-    id            TEXT PRIMARY KEY,
-    shipment_id   TEXT NOT NULL,
-    leg_order     INTEGER NOT NULL DEFAULT 0,
-    mot           TEXT NOT NULL DEFAULT 'SEA',
-    pol           TEXT NOT NULL DEFAULT '',
-    pod           TEXT NOT NULL DEFAULT '',
-    etd           TEXT DEFAULT NULL,
-    eta           TEXT DEFAULT NULL,
-    carrier_code  TEXT DEFAULT '',
-    vessel        TEXT DEFAULT '',
-    vessel_imo    TEXT DEFAULT '',
-    voyage        TEXT DEFAULT '',
-    contract_type TEXT DEFAULT '',
-    contract_ref  TEXT DEFAULT '',
-    created_at    TEXT NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS idx_shp_legs ON shipment_legs(shipment_id, leg_order);
-
-  -- ── System Messages ──
-  CREATE TABLE IF NOT EXISTS system_messages (
-    id          TEXT PRIMARY KEY,
-    title       TEXT NOT NULL,
-    body        TEXT DEFAULT '',
-    severity    TEXT DEFAULT 'info',
-    active_from TEXT DEFAULT '',
-    active_to   TEXT DEFAULT '',
-    created_at  TEXT NOT NULL
-  );
-
-  -- ── Contracts ──
-  CREATE TABLE IF NOT EXISTS contracts (
-    id                TEXT PRIMARY KEY,
-    contract_number   TEXT DEFAULT '',
-    carrier_code      TEXT DEFAULT '',
-    named_account_id  TEXT DEFAULT '',
-    named_account     TEXT DEFAULT '',
-    movement_type     TEXT DEFAULT 'FCL',
-    container_types   TEXT DEFAULT '[]',
-    dg_allowed        INTEGER DEFAULT 0,
-    imdg_classes      TEXT DEFAULT '[]',
-    valid_from        TEXT DEFAULT '',
-    valid_to          TEXT DEFAULT '',
-    currency          TEXT DEFAULT 'USD',
-    status            TEXT DEFAULT 'Active',
-    notes             TEXT DEFAULT '',
-    created_at        TEXT NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS contract_legs (
-    id             TEXT PRIMARY KEY,
-    contract_id    TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
-    leg_order      INTEGER DEFAULT 0,
-    pol            TEXT DEFAULT '',
-    pol_name       TEXT DEFAULT '',
-    pod            TEXT DEFAULT '',
-    pod_name       TEXT DEFAULT '',
-    transit_days   INTEGER DEFAULT 0,
-    vessel_service TEXT DEFAULT ''
-  );
-
-  CREATE TABLE IF NOT EXISTS contract_rates (
-    id             TEXT PRIMARY KEY,
-    contract_id    TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
-    service_code   TEXT DEFAULT '',
-    description    TEXT DEFAULT '',
-    amount         REAL DEFAULT 0,
-    currency       TEXT DEFAULT 'USD',
-    amount_usd     REAL DEFAULT 0,
-    unit           TEXT DEFAULT 'per_container',
-    container_type TEXT DEFAULT '',
-    sort_order     INTEGER DEFAULT 0,
-    notes          TEXT DEFAULT ''
-  );
-
-  CREATE TABLE IF NOT EXISTS entity_events (
-    id          TEXT PRIMARY KEY,
-    entity_type TEXT NOT NULL,
-    entity_id   TEXT NOT NULL,
-    event_type  TEXT NOT NULL,
-    field       TEXT,
-    old_value   TEXT,
-    new_value   TEXT,
-    meta        TEXT,
-    created_at  TEXT NOT NULL
-  );
-  -- Backs every "🕐 History" modal across the app (documents, allocations, contracts, carriers,
-  -- ...) — always queried as entity_type=? AND entity_id=?, no index before this.
-  CREATE INDEX IF NOT EXISTS idx_entity_events_lookup ON entity_events(entity_type, entity_id);
-
-  CREATE TABLE IF NOT EXISTS sanctions_entries (
-    id               TEXT PRIMARY KEY,
-    source           TEXT NOT NULL,
-    ref_id           TEXT DEFAULT '',
-    entity_name      TEXT NOT NULL,
-    entity_name_norm TEXT NOT NULL,
-    entity_type      TEXT DEFAULT '',
-    program          TEXT DEFAULT '',
-    aliases_norm     TEXT DEFAULT '[]'
-  );
-  CREATE INDEX IF NOT EXISTS idx_sanctions_norm ON sanctions_entries(entity_name_norm);
-
-  CREATE TABLE IF NOT EXISTS sanctions_syncs (
-    source       TEXT PRIMARY KEY,
-    synced_at    TEXT NOT NULL,
-    entry_count  INTEGER DEFAULT 0
-  );
-
-  CREATE TABLE IF NOT EXISTS shipment_screenings (
-    id              TEXT PRIMARY KEY,
-    shipment_id     TEXT NOT NULL,
-    screened_at     TEXT NOT NULL,
-    result          TEXT NOT NULL,
-    hits            TEXT DEFAULT '[]',
-    overridden_at   TEXT,
-    override_reason TEXT,
-    UNIQUE(shipment_id)
-  );
-
-  CREATE TABLE IF NOT EXISTS app_settings (
-    key   TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-  );
-
-  -- ── Users ──
-  CREATE TABLE IF NOT EXISTS users (
-    id            TEXT PRIMARY KEY,
-    email         TEXT UNIQUE NOT NULL,
-    name          TEXT NOT NULL DEFAULT '',
-    password_hash TEXT NOT NULL,
-    role          TEXT NOT NULL DEFAULT 'viewer',
-    is_active     INTEGER NOT NULL DEFAULT 1,
-    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
-    last_login    TEXT
-  );
-`);
-
-// ─── Safe migrations ──────────────────────────────────────────────────────────
-
-const migrations = [
-  "ALTER TABLE shipments ADD COLUMN contract_id     TEXT DEFAULT ''",
-  "ALTER TABLE shipments ADD COLUMN commodity_code TEXT DEFAULT ''",
-  "ALTER TABLE allocations ADD COLUMN trade_lane      TEXT    DEFAULT ''",
-  "ALTER TABLE allocations ADD COLUMN notes           TEXT    DEFAULT ''",
-  "ALTER TABLE allocations ADD COLUMN alert_threshold INTEGER DEFAULT 80",
-  "ALTER TABLE allocations ADD COLUMN pol              TEXT    DEFAULT ''",
-  "ALTER TABLE allocations ADD COLUMN pod              TEXT    DEFAULT ''",
-  "ALTER TABLE allocations ADD COLUMN origin_lane      TEXT    DEFAULT ''",
-  "ALTER TABLE allocations ADD COLUMN dest_lane        TEXT    DEFAULT ''",
-  "ALTER TABLE allocations ADD COLUMN coverage_scope   TEXT    DEFAULT 'STRICT'",
-  "ALTER TABLE containers  ADD COLUMN seal_number     TEXT    DEFAULT ''",
-  "ALTER TABLE containers  ADD COLUMN commodity       TEXT    DEFAULT ''",
-  "ALTER TABLE containers  ADD COLUMN gross_weight_kg REAL    DEFAULT NULL",
-  "ALTER TABLE containers  ADD COLUMN volume_cbm      REAL    DEFAULT NULL",
-  "ALTER TABLE containers  ADD COLUMN is_dg           INTEGER DEFAULT 0",
-  "ALTER TABLE containers  ADD COLUMN dg_class        TEXT    DEFAULT ''",
-  "ALTER TABLE containers  ADD COLUMN cargo_description TEXT    DEFAULT ''",
-  "ALTER TABLE containers  ADD COLUMN vgm_weight_kg        REAL    DEFAULT NULL",
-  "ALTER TABLE containers  ADD COLUMN vgm_status            TEXT    DEFAULT 'Pending'",
-  "ALTER TABLE containers  ADD COLUMN vgm_cutoff            TEXT    DEFAULT NULL",
-  "ALTER TABLE containers  ADD COLUMN cy_cutoff             TEXT    DEFAULT NULL",
-  "ALTER TABLE containers  ADD COLUMN origin_free_time_days INTEGER DEFAULT NULL",
-  "ALTER TABLE containers  ADD COLUMN dest_free_time_days   INTEGER DEFAULT NULL",
-  // Demurrage (terminal dwell, Gate In->Sailed / Discharged->Gate Out, the two columns above)
-  // and Detention (carrier EQUIPMENT held outside the terminal, Empty Pickup->Gate In /
-  // Gate Out->Empty Return) are two commercially distinct charge types with separate carrier
-  // tariffs and separate free-time allowances — the original v0.30.0 free-time model only ever
-  // captured demurrage under a generic "free time" name, despite container_events already
-  // logging every event needed to compute detention too. These two new columns are Detention's
-  // own free-time allowance, independent of the (now explicitly demurrage-only) pair above.
-  "ALTER TABLE containers  ADD COLUMN origin_detention_free_days INTEGER DEFAULT NULL",
-  "ALTER TABLE containers  ADD COLUMN dest_detention_free_days   INTEGER DEFAULT NULL",
-  // Reefer (20RF/40RF) has been a registered container type since v0.46.0's Pack Types work,
-  // but nothing on `containers` ever recorded the carrier's required set-point temperature —
-  // essential operational data for a cold-chain booking (food/pharma), and something the
-  // carrier's own booking confirmation and the Bill of Lading both need to state. Nullable,
-  // Celsius (the ocean-freight reefer convention) — only meaningful when type='RF', but not
-  // DB-constrained to that (mirrors this app's existing convention of not enforcing
-  // conditionally-relevant fields at the schema level, e.g. dg_class only means something
-  // when is_dg=1).
-  "ALTER TABLE containers  ADD COLUMN set_temperature_c REAL DEFAULT NULL",
-  // What actually releases cargo at destination — 'Original' (must be physically surrendered,
-  // or a Letter of Indemnity issued), 'Telex Release'/'Surrendered' (shipper already gave up
-  // the original at origin, destination releases on a copy), 'Seaway Bill' (no document
-  // presentation at all, ID verification only). '' means not yet recorded — shipments.bl_number
-  // is free text with zero concept of how it's actually released, which the Import-side ops
-  // team needs to know before they can tell a consignee whether cargo can move without the
-  // physical document in hand.
-  "ALTER TABLE shipments   ADD COLUMN bl_release_type TEXT DEFAULT ''",
-  // Master B/L (carrier <-> forwarder) vs House B/L (forwarder <-> actual shipper) — a real,
-  // independent-of-LCL distinction: any shipment booked through an NVOCC/forwarder gets both,
-  // even a single-shipper FCL container with zero consolidation involved. bl_number stays the
-  // House B/L (every existing reader — BL01, carrier-booking link, etc. — is unaffected);
-  // master_bl_number is additive and blank for shipments booked direct with the carrier.
-  "ALTER TABLE shipments   ADD COLUMN master_bl_number TEXT DEFAULT ''",
-  "ALTER TABLE port_locations ADD COLUMN last_synced_at TEXT DEFAULT NULL",
-  "ALTER TABLE carriers    ADD COLUMN short_name      TEXT    DEFAULT ''",
-  "ALTER TABLE tickets     ADD COLUMN shipment_id     TEXT    DEFAULT NULL",
-  "ALTER TABLE tickets     ADD COLUMN type            TEXT    DEFAULT 'Task'",
-  "ALTER TABLE tickets     ADD COLUMN version         TEXT    DEFAULT ''",
-  "ALTER TABLE shipments   ADD COLUMN shipper_id      TEXT    DEFAULT ''",
-  "ALTER TABLE shipments   ADD COLUMN shipper_name    TEXT    DEFAULT ''",
-  "ALTER TABLE shipments   ADD COLUMN consignee_id    TEXT    DEFAULT ''",
-  "ALTER TABLE shipments   ADD COLUMN consignee_name  TEXT    DEFAULT ''",
-  "ALTER TABLE shipments   ADD COLUMN principal_id    TEXT    DEFAULT ''",
-  "ALTER TABLE shipments   ADD COLUMN principal_name  TEXT    DEFAULT ''",
-  "ALTER TABLE shipments   ADD COLUMN contract_ref    TEXT    DEFAULT ''",
-  "ALTER TABLE contract_legs ADD COLUMN pol_linked_allowed   INTEGER DEFAULT 0",
-  "ALTER TABLE contract_legs ADD COLUMN pod_linked_allowed   INTEGER DEFAULT 0",
-  "ALTER TABLE contract_legs ADD COLUMN pol_carrier_haulage  INTEGER DEFAULT 0",
-  "ALTER TABLE contract_legs ADD COLUMN pod_carrier_haulage  INTEGER DEFAULT 0",
-  "ALTER TABLE contract_legs ADD COLUMN pol_haulage_locations TEXT   DEFAULT ''",
-  "ALTER TABLE contract_legs ADD COLUMN pod_haulage_locations TEXT   DEFAULT ''",
-  "ALTER TABLE contract_legs ADD COLUMN pol_loc_type          TEXT   DEFAULT 'Terminal'",
-  "ALTER TABLE contract_legs ADD COLUMN pod_loc_type          TEXT   DEFAULT 'Terminal'",
-  "UPDATE contract_legs SET pol_loc_type='Door' WHERE pol_carrier_haulage=1 AND pol_loc_type='Terminal'",
-  "UPDATE contract_legs SET pod_loc_type='Door' WHERE pod_carrier_haulage=1 AND pod_loc_type='Terminal'",
-  "ALTER TABLE allocations ADD COLUMN contract_id     TEXT DEFAULT ''",
-  "ALTER TABLE allocations ADD COLUMN contract_number TEXT DEFAULT ''",
-  "UPDATE shipments SET contract_type = 'Central' WHERE contract_type = 'Central Contract'",
-  `CREATE TABLE IF NOT EXISTS shipment_cost_lines (
-    id            TEXT PRIMARY KEY,
-    shipment_id   TEXT NOT NULL,
-    type          TEXT NOT NULL,
-    charge_code   TEXT NOT NULL,
-    currency      TEXT NOT NULL DEFAULT 'USD',
-    amount        REAL NOT NULL DEFAULT 0,
-    exchange_rate REAL NOT NULL DEFAULT 1,
-    notes         TEXT DEFAULT '',
-    created_at    TEXT NOT NULL
-  )`,
-  // Every shipment-detail-page load queries "all cost lines for this shipment" — 11 call
-  // sites (highest of any table checked), no index before this.
-  "CREATE INDEX IF NOT EXISTS idx_cost_lines_shipment ON shipment_cost_lines(shipment_id)",
-  "ALTER TABLE shipment_cost_lines ADD COLUMN container_id TEXT DEFAULT ''",
-  "ALTER TABLE shipment_cost_lines ADD COLUMN source TEXT DEFAULT 'manual'",
-  "ALTER TABLE shipment_cost_lines ADD COLUMN modified_at TEXT",
-  // Accrual/posting state machine + GP variance (TKT-83O41G, TKT-6QT30S phase 2).
-  // accrued (default) = the estimate, recognized before any real invoice exists.
-  // actualized = the real AP/AR invoice has come in — actual_amount/actual_exchange_rate
-  // are kept SEPARATE from amount/exchange_rate (the original accrual) so variance =
-  // actual - accrued stays computable rather than overwriting the estimate silently.
-  // posted = pushed to GL via an explicit admin/operator-only action; a posted line is
-  // locked (PUT/DELETE reject it) — any correction is a new adjusting line, never a rewrite.
-  "ALTER TABLE shipment_cost_lines ADD COLUMN status TEXT DEFAULT 'accrued'",
-  "ALTER TABLE shipment_cost_lines ADD COLUMN actual_amount REAL DEFAULT NULL",
-  "ALTER TABLE shipment_cost_lines ADD COLUMN actual_exchange_rate REAL DEFAULT NULL",
-  "ALTER TABLE shipment_cost_lines ADD COLUMN actualized_at TEXT DEFAULT NULL",
-  "ALTER TABLE shipment_cost_lines ADD COLUMN actualized_by TEXT DEFAULT ''",
-  "ALTER TABLE shipment_cost_lines ADD COLUMN posted_at TEXT DEFAULT NULL",
-  "ALTER TABLE shipment_cost_lines ADD COLUMN posted_by TEXT DEFAULT ''",
-  `CREATE TABLE IF NOT EXISTS shipment_services (
-    id             TEXT PRIMARY KEY,
-    shipment_id    TEXT NOT NULL,
-    side           TEXT NOT NULL,
-    service_type   TEXT NOT NULL,
-    status         TEXT NOT NULL DEFAULT 'Requested',
-    vendor_id      TEXT DEFAULT '',
-    vendor_name    TEXT DEFAULT '',
-    office_id      TEXT DEFAULT '',
-    requested_date TEXT DEFAULT '',
-    confirmed_date TEXT DEFAULT '',
-    completed_date TEXT DEFAULT '',
-    notes          TEXT DEFAULT '',
-    created_at     TEXT NOT NULL,
-    created_by     TEXT DEFAULT ''
-  )`,
-  `CREATE TABLE IF NOT EXISTS ticket_links (
-    id         TEXT PRIMARY KEY,
-    from_id    TEXT NOT NULL,
-    to_id      TEXT NOT NULL,
-    link_type  TEXT NOT NULL,
-    created_at TEXT NOT NULL
-  )`,
-  `CREATE TABLE IF NOT EXISTS milestone_templates (
-    id             TEXT PRIMARY KEY,
-    template_key   TEXT NOT NULL DEFAULT 'FCL',
-    carrier_code   TEXT NOT NULL DEFAULT '',
-    trade_lane     TEXT NOT NULL DEFAULT '',
-    milestone_key  TEXT NOT NULL,
-    label          TEXT NOT NULL,
-    sequence_order INTEGER NOT NULL DEFAULT 0,
-    created_at     TEXT NOT NULL
-  )`,
-  `CREATE TABLE IF NOT EXISTS shipment_milestones (
-    id             TEXT PRIMARY KEY,
-    shipment_id    TEXT NOT NULL,
-    milestone_key  TEXT NOT NULL,
-    label          TEXT NOT NULL,
-    sequence_order INTEGER NOT NULL DEFAULT 0,
-    estimated_date TEXT NOT NULL DEFAULT '',
-    completed_at   TEXT NOT NULL DEFAULT '',
-    completed_by   TEXT NOT NULL DEFAULT '',
-    note           TEXT NOT NULL DEFAULT '',
-    created_at     TEXT NOT NULL
-  )`,
-  "ALTER TABLE contracts ADD COLUMN contract_ref TEXT DEFAULT ''",
-  "ALTER TABLE shipments ADD COLUMN allocation_id        TEXT DEFAULT ''",
-  "ALTER TABLE shipments ADD COLUMN space_skip_reason    TEXT DEFAULT ''",
-  "ALTER TABLE shipments ADD COLUMN space_overage_reason TEXT DEFAULT ''",
-  "ALTER TABLE shipments ADD COLUMN space_badge          TEXT DEFAULT ''",
-  // v0.20.0 — Kanban board enhancements
-  "ALTER TABLE tickets ADD COLUMN parent_id   TEXT DEFAULT NULL", // self-ref FK: epic › story › sub-task nesting
-  "ALTER TABLE tickets ADD COLUMN assignee_id TEXT DEFAULT NULL", // FK → users.id
-  "ALTER TABLE tickets ADD COLUMN due_date    TEXT DEFAULT NULL", // ISO date string YYYY-MM-DD
-  "ALTER TABLE tickets ADD COLUMN test_notes  TEXT DEFAULT NULL", // captured in TestOutcomeModal when leaving In Testing
-  // v0.20.0 — shipment form Phase 1: missing operational fields
-  "ALTER TABLE shipments ADD COLUMN freight_terms     TEXT DEFAULT 'Prepaid'",
-  "ALTER TABLE shipments ADD COLUMN movement_type     TEXT DEFAULT 'FCL'",
-  "ALTER TABLE shipments ADD COLUMN service_type      TEXT DEFAULT 'Port-to-Port'",
-  "ALTER TABLE shipments ADD COLUMN place_of_receipt  TEXT DEFAULT ''",
-  "ALTER TABLE shipments ADD COLUMN place_of_delivery TEXT DEFAULT ''",
-  "ALTER TABLE shipments ADD COLUMN cargo_ready_date  TEXT DEFAULT NULL",
-  "ALTER TABLE shipments ADD COLUMN notify_id              TEXT    DEFAULT ''",
-  "ALTER TABLE shipments ADD COLUMN notify_name            TEXT    DEFAULT ''",
-  "ALTER TABLE shipments ADD COLUMN declared_value         REAL    DEFAULT NULL",
-  "ALTER TABLE shipments ADD COLUMN declared_value_currency TEXT   DEFAULT 'USD'",
-  "ALTER TABLE shipments ADD COLUMN routing_term           TEXT    DEFAULT NULL",
-  "ALTER TABLE shipment_legs ADD COLUMN leg_type      TEXT DEFAULT 'SEA'",
-  "ALTER TABLE shipment_legs ADD COLUMN movement_type TEXT DEFAULT 'SEA'",
-  "ALTER TABLE shipment_legs ADD COLUMN pol_loc_type  TEXT DEFAULT 'Terminal'",
-  "ALTER TABLE shipment_legs ADD COLUMN pod_loc_type  TEXT DEFAULT 'Terminal'",
-  "ALTER TABLE shipment_legs ADD COLUMN movement_by   TEXT DEFAULT ''",
-  // v0.21.0 — multi-role per user + data access scoping
-  "ALTER TABLE users ADD COLUMN roles TEXT DEFAULT NULL",
-  `CREATE TABLE IF NOT EXISTS user_scope_items (
-    id         TEXT PRIMARY KEY,
-    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    role       TEXT NOT NULL DEFAULT '',
-    item_type  TEXT NOT NULL,
-    value      TEXT NOT NULL,
-    label      TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-  )`,
-  `CREATE TABLE IF NOT EXISTS user_access_configs (
-    id             TEXT PRIMARY KEY,
-    user_id        TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    label          TEXT NOT NULL DEFAULT '',
-    origin_lane    TEXT,
-    dest_lane      TEXT,
-    pol_codes      TEXT,
-    pod_codes      TEXT,
-    carrier_codes  TEXT,
-    created_at     TEXT NOT NULL DEFAULT (datetime('now'))
-  )`,
-  `CREATE TABLE IF NOT EXISTS shipment_documents (
-    id           TEXT PRIMARY KEY,
-    shipment_id  TEXT NOT NULL,
-    filename     TEXT NOT NULL,
-    stored_name  TEXT NOT NULL,
-    mime_type    TEXT NOT NULL DEFAULT '',
-    size_bytes   INTEGER NOT NULL DEFAULT 0,
-    doc_type     TEXT NOT NULL DEFAULT 'Other',
-    uploaded_by  TEXT NOT NULL DEFAULT '',
-    created_at   TEXT NOT NULL
-  )`,
-  "CREATE INDEX IF NOT EXISTS idx_shipment_documents_shipment ON shipment_documents(shipment_id)",
-  "ALTER TABLE shipment_documents ADD COLUMN status        TEXT DEFAULT 'draft'",
-  "ALTER TABLE shipment_documents ADD COLUMN confirmed_at  TEXT DEFAULT NULL",
-  "ALTER TABLE shipment_documents ADD COLUMN confirmed_by  TEXT DEFAULT ''",
-  "ALTER TABLE trade_lanes ADD COLUMN transit_days INTEGER DEFAULT 0",
-  // v0.24.0 — admin security hardening
-  "ALTER TABLE users ADD COLUMN failed_attempts INTEGER NOT NULL DEFAULT 0",
-  "ALTER TABLE users ADD COLUMN locked_until    TEXT    NOT NULL DEFAULT ''",
-  "ALTER TABLE users ADD COLUMN token_version   INTEGER NOT NULL DEFAULT 0",
-  `CREATE TABLE IF NOT EXISTS admin_events (
-    id          TEXT PRIMARY KEY,
-    actor_id    TEXT NOT NULL DEFAULT '',
-    actor_email TEXT NOT NULL DEFAULT '',
-    action      TEXT NOT NULL,
-    target_type TEXT NOT NULL DEFAULT '',
-    target_id   TEXT NOT NULL DEFAULT '',
-    details     TEXT NOT NULL DEFAULT '{}',
-    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
-  )`,
-  // v0.25.0 — customer profiles enhancement
-  `CREATE TABLE IF NOT EXISTS customer_identifiers (
-    id           TEXT PRIMARY KEY,
-    customer_id  TEXT NOT NULL,
-    id_type      TEXT NOT NULL DEFAULT 'VAT',
-    id_code      TEXT NOT NULL DEFAULT '',
-    country_iso2 TEXT NOT NULL DEFAULT '',
-    label        TEXT NOT NULL DEFAULT '',
-    is_primary   INTEGER NOT NULL DEFAULT 0,
-    created_at   TEXT NOT NULL
-  )`,
-  `CREATE TABLE IF NOT EXISTS customer_screenings (
-    id              TEXT PRIMARY KEY,
-    customer_id     TEXT NOT NULL,
-    screened_at     TEXT NOT NULL,
-    result          TEXT NOT NULL,
-    hits            TEXT DEFAULT '[]',
-    overridden_at   TEXT,
-    override_reason TEXT,
-    UNIQUE(customer_id)
-  )`,
-  `CREATE TABLE IF NOT EXISTS customer_documents (
-    id           TEXT PRIMARY KEY,
-    customer_id  TEXT NOT NULL,
-    filename     TEXT NOT NULL,
-    stored_name  TEXT NOT NULL,
-    mime_type    TEXT NOT NULL DEFAULT '',
-    size_bytes   INTEGER NOT NULL DEFAULT 0,
-    doc_type     TEXT NOT NULL DEFAULT 'Other',
-    uploaded_by  TEXT NOT NULL DEFAULT '',
-    created_at   TEXT NOT NULL
-  )`,
-  // Organization Model Enhancement Epic 1 (contacts + role-eligible pickers) — multiple named
-  // people per customer, replacing the old "cram it into the notes field" workaround.
-  `CREATE TABLE IF NOT EXISTS customer_contacts (
-    id           TEXT PRIMARY KEY,
-    customer_id  TEXT NOT NULL,
-    name         TEXT NOT NULL,
-    title        TEXT NOT NULL DEFAULT '',
-    email        TEXT NOT NULL DEFAULT '',
-    phone        TEXT NOT NULL DEFAULT '',
-    department   TEXT NOT NULL DEFAULT 'Other',
-    is_primary   INTEGER NOT NULL DEFAULT 0,
-    created_at   TEXT NOT NULL
-  )`,
-  // Which of ALL_CUSTOMER_ROLES (below) this customer is eligible for — lets CustomerCombobox
-  // filter pickers (e.g. only Bank-flagged customers when assigning the "Bank" shipment_parties
-  // role) instead of every picker offering every customer regardless of fitness for the slot.
-  `CREATE TABLE IF NOT EXISTS customer_roles (
-    id           TEXT PRIMARY KEY,
-    customer_id  TEXT NOT NULL,
-    role         TEXT NOT NULL,
-    created_at   TEXT NOT NULL,
-    UNIQUE(customer_id, role)
-  )`,
-  // seed security defaults (INSERT OR IGNORE so they only apply once)
-  "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('login_max_attempts','5')",
-  "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('login_lockout_minutes','30')",
-  "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('jwt_lifetime_hours','8')",
-  "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('password_expiry_days','90')",
-  "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('sso_enabled','0')",
-  "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('sso_tenant_id','')",
-  "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('sso_client_id','')",
-  "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('sso_client_secret','')",
-  "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('sso_redirect_uri','')",
-  "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('sso_default_role','operator')",
-  "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('sso_frontend_url','http://localhost:5173')",
-  // v0.43.0 — admin-defined Shipment Explorer sidebar order (see PUT /api/settings/shipment-sidebar-order,
-  // routes/system.js). Empty array means "no override, use the built-in default order" — reconciled
-  // client-side (ShipmentDetailSidebar, App.jsx) against whatever top-level nav ids actually exist today,
-  // so a future new section added in code just appends itself rather than silently vanishing.
-  "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('shipment_sidebar_order','[]')",
-  // v0.25.0 — VAT on cost lines
-  "ALTER TABLE shipment_cost_lines ADD COLUMN vat_rate REAL NOT NULL DEFAULT 0",
-  // v0.26.0 — per-user finance access flag
-  "ALTER TABLE users ADD COLUMN can_view_finance INTEGER NOT NULL DEFAULT 0",
-  // v0.25.0 — Shipment-level schedule bookings
-  `CREATE TABLE IF NOT EXISTS shipment_schedules (
-    id            TEXT PRIMARY KEY,
-    shipment_id   TEXT NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
-    carrier       TEXT DEFAULT '',
-    vessel_name   TEXT DEFAULT '',
-    voyage_number TEXT DEFAULT '',
-    service       TEXT DEFAULT '',
-    pol           TEXT DEFAULT '',
-    pod           TEXT DEFAULT '',
-    etd           TEXT DEFAULT '',
-    eta           TEXT DEFAULT '',
-    transit_days  INTEGER DEFAULT 0,
-    is_mock       INTEGER DEFAULT 0,
-    saved_at      TEXT NOT NULL,
-    saved_by      TEXT NOT NULL DEFAULT ''
-  )`,
-  // v0.27.0 — Office-based login locations
-  `CREATE TABLE IF NOT EXISTS offices (
-    id           TEXT PRIMARY KEY,
-    code         TEXT UNIQUE NOT NULL,
-    country_code TEXT NOT NULL DEFAULT '',
-    unlocode     TEXT NOT NULL DEFAULT '',
-    department   TEXT NOT NULL DEFAULT 'SE',
-    name         TEXT NOT NULL DEFAULT '',
-    is_active    INTEGER DEFAULT 1,
-    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
-  )`,
-  `CREATE TABLE IF NOT EXISTS user_offices (
-    id        TEXT PRIMARY KEY,
-    user_id   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    office_id TEXT NOT NULL REFERENCES offices(id) ON DELETE CASCADE,
-    is_default INTEGER DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(user_id, office_id)
-  )`,
-  // DEFAULT 1 so all rows that exist at migration time get global access (preserves current behaviour)
-  "ALTER TABLE users     ADD COLUMN all_offices         INTEGER NOT NULL DEFAULT 1",
-  "ALTER TABLE shipments ADD COLUMN emo_office_id        TEXT DEFAULT NULL",
-  "ALTER TABLE shipments ADD COLUMN imo_office_id        TEXT DEFAULT NULL",
-  "ALTER TABLE shipments ADD COLUMN controlling_office_id TEXT DEFAULT NULL",
-  // Organisation hierarchy
-  `CREATE TABLE IF NOT EXISTS branches (
-    id          TEXT PRIMARY KEY,
-    code        TEXT NOT NULL UNIQUE,
-    name        TEXT NOT NULL,
-    country_code TEXT NOT NULL,
-    city        TEXT,
-    address     TEXT,
-    timezone    TEXT,
-    phone       TEXT,
-    email       TEXT,
-    is_active   INTEGER NOT NULL DEFAULT 1,
-    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
-  )`,
-  `CREATE TABLE IF NOT EXISTS org_countries (
-    country_code      TEXT PRIMARY KEY,
-    default_currency  TEXT,
-    timezone          TEXT,
-    branch_id         TEXT REFERENCES branches(id),
-    compliance_notes  TEXT,
-    is_active         INTEGER NOT NULL DEFAULT 1,
-    added_at          TEXT NOT NULL DEFAULT (datetime('now'))
-  )`,
-  "ALTER TABLE offices ADD COLUMN branch_id TEXT REFERENCES branches(id)",
-  "ALTER TABLE branches ADD COLUMN locode TEXT",
-  "ALTER TABLE port_locations ADD COLUMN timezone TEXT",
-  // v0.28.0 — Project Board: multi-project support + structured versions
-  `CREATE TABLE IF NOT EXISTS kb_projects (
-    id          TEXT PRIMARY KEY,
-    name        TEXT NOT NULL,
-    key         TEXT NOT NULL,
-    color       TEXT DEFAULT '#6366f1',
-    description TEXT DEFAULT '',
-    created_at  TEXT NOT NULL
-  )`,
-  `CREATE TABLE IF NOT EXISTS kb_versions (
-    id           TEXT PRIMARY KEY,
-    project_id   TEXT NOT NULL REFERENCES kb_projects(id) ON DELETE CASCADE,
-    name         TEXT NOT NULL,
-    description  TEXT DEFAULT '',
-    status       TEXT DEFAULT 'Planning',
-    release_date TEXT DEFAULT NULL,
-    created_at   TEXT NOT NULL
-  )`,
-  `CREATE TABLE IF NOT EXISTS kb_columns (
-    id         TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL REFERENCES kb_projects(id) ON DELETE CASCADE,
-    name       TEXT NOT NULL,
-    position   INTEGER NOT NULL DEFAULT 0,
-    color      TEXT DEFAULT '#6366f1',
-    wip_limit  INTEGER DEFAULT NULL,
-    created_at TEXT NOT NULL
-  )`,
-  "ALTER TABLE tickets ADD COLUMN project_id TEXT DEFAULT NULL",
-  "ALTER TABLE tickets ADD COLUMN version_id TEXT DEFAULT NULL",
-  // vNext — test-case repository separation: Test Folder/Plan/Run/Case move out of
-  // the shared tickets table into their own store (see backfillTestItems() below).
-  `CREATE TABLE IF NOT EXISTS test_items (
-    id           TEXT PRIMARY KEY,
-    type         TEXT NOT NULL,
-    title        TEXT NOT NULL,
-    description  TEXT DEFAULT '',
-    priority     TEXT DEFAULT 'Medium',
-    status       TEXT DEFAULT 'Ready',
-    position     INTEGER DEFAULT 0,
-    created_at   TEXT NOT NULL,
-    shipment_id  TEXT DEFAULT NULL,
-    parent_id    TEXT DEFAULT NULL,
-    assignee_id  TEXT DEFAULT NULL,
-    due_date     TEXT DEFAULT NULL,
-    test_notes   TEXT DEFAULT NULL,
-    project_id   TEXT DEFAULT NULL,
-    version_id   TEXT DEFAULT NULL
-  )`,
-  `CREATE TABLE IF NOT EXISTS test_case_links (
-    id         TEXT PRIMARY KEY,
-    case_id    TEXT NOT NULL,
-    ticket_id  TEXT NOT NULL,
-    created_at TEXT NOT NULL
-  )`,
-  // vNext — EDI messaging: carrier booking requests/responses, stored per shipment.
-  `CREATE TABLE IF NOT EXISTS edi_messages (
-    id             TEXT PRIMARY KEY,
-    shipment_id    TEXT NOT NULL,
-    carrier_code   TEXT NOT NULL,
-    direction      TEXT NOT NULL,
-    message_type   TEXT NOT NULL,
-    format         TEXT NOT NULL DEFAULT 'JSON',
-    raw_payload    TEXT DEFAULT '',
-    parsed_payload TEXT DEFAULT '',
-    status         TEXT NOT NULL DEFAULT 'pending',
-    correlation_id TEXT DEFAULT '',
-    is_mock        INTEGER DEFAULT 0,
-    created_at     TEXT NOT NULL,
-    processed_at   TEXT DEFAULT NULL
-  )`,
-  // vNext — FCL container-level lifecycle events (Empty Pickup, Gate In, Loaded, Sailed,
-  // Discharged, Gate Out, Empty Return). Foundation for demurrage/detention tracking.
-  `CREATE TABLE IF NOT EXISTS container_events (
-    id           TEXT PRIMARY KEY,
-    container_id TEXT NOT NULL,
-    shipment_id  TEXT NOT NULL,
-    event_type   TEXT NOT NULL,
-    location     TEXT DEFAULT '',
-    occurred_at  TEXT NOT NULL,
-    recorded_by  TEXT DEFAULT '',
-    notes        TEXT DEFAULT '',
-    created_at   TEXT NOT NULL
-  )`,
-  // Rate snapshots — frozen copies of contract_rates at the point they're committed to a
-  // shipment, so a later "Reset to Contract" replays what was actually quoted rather than
-  // silently picking up live carrier rate changes. See TKT-6QT30S.
-  `CREATE TABLE IF NOT EXISTS shipment_rate_snapshots (
-    id            TEXT PRIMARY KEY,
-    shipment_id   TEXT NOT NULL,
-    contract_id   TEXT NOT NULL,
-    generated_at  TEXT NOT NULL,
-    generated_by  TEXT DEFAULT '',
-    reason        TEXT NOT NULL
-  )`,
-  `CREATE TABLE IF NOT EXISTS shipment_rate_snapshot_lines (
-    id             TEXT PRIMARY KEY,
-    snapshot_id    TEXT NOT NULL,
-    service_code   TEXT DEFAULT '',
-    description    TEXT DEFAULT '',
-    amount         REAL DEFAULT 0,
-    currency       TEXT DEFAULT 'USD',
-    amount_usd     REAL DEFAULT 0,
-    unit           TEXT DEFAULT 'per_container',
-    container_type TEXT DEFAULT '',
-    notes          TEXT DEFAULT ''
-  )`,
-  "ALTER TABLE shipment_cost_lines ADD COLUMN rate_snapshot_id TEXT DEFAULT ''",
-  // Per-container invoice support — a generated FR01/FR02 document can now be scoped to a
-  // single container (container_id set) instead of the whole shipment (container_id empty).
-  // responsible_party is a frozen snapshot of the shipment's Principal at generation time.
-  "ALTER TABLE shipment_documents ADD COLUMN container_id      TEXT DEFAULT ''",
-  "ALTER TABLE shipment_documents ADD COLUMN responsible_party TEXT DEFAULT ''",
-  // Customer's main currency — used to resolve a single grand total on a generated invoice
-  // when its charge lines span multiple currencies, instead of showing several totals.
-  "ALTER TABLE customers ADD COLUMN currency TEXT DEFAULT 'USD'",
-  // Organization Model Enhancement Epic 2 (Credit Control) — credit_limit/credit_terms_days
-  // are nullable (null = no limit set, not "$0 limit"); credit_hold is a hard gate on
-  // generating a NEW invoice for this customer (existing lines/documents stay fully visible
-  // and editable — only the Generate action is blocked), independent of credit_limit.
-  "ALTER TABLE customers ADD COLUMN credit_limit REAL DEFAULT NULL",
-  "ALTER TABLE customers ADD COLUMN credit_terms_days INTEGER DEFAULT NULL",
-  "ALTER TABLE customers ADD COLUMN credit_hold INTEGER NOT NULL DEFAULT 0",
-  "ALTER TABLE customers ADD COLUMN credit_hold_reason TEXT DEFAULT ''",
-  // Organization Model Enhancement Epic 4 (Customer Hierarchy) — self-referential, nullable
-  // (no parent = a standalone customer, the default/common case). Unlike the shipment_schedules
-  // rebuild elsewhere in this file, this doesn't need a table rebuild: it's a brand new nullable
-  // column, not an existing NOT NULL one being loosened, so a plain ADD COLUMN with its own
-  // REFERENCES clause is sufficient — foreign_keys=ON is set globally (top of this file), so
-  // ON DELETE SET NULL is actually enforced, not just documentation.
-  "ALTER TABLE customers ADD COLUMN parent_customer_id TEXT REFERENCES customers(id) ON DELETE SET NULL",
-  // Manual contract types (SPOT/Pending/Customer Own) — validity window, TKT-UONN72
-  "ALTER TABLE shipments ADD COLUMN contract_valid_from TEXT DEFAULT NULL",
-  "ALTER TABLE shipments ADD COLUMN contract_valid_to   TEXT DEFAULT NULL",
-  // Loading Service dedicated page (Epic TKT-TBS7QD, Story TKT-TR6OBR) — one row per
-  // container per service, the carrier's planned loading date reduced to structured
-  // data. Keyed by (service_id, container_id) rather than a synthetic id since a
-  // container only ever has one plan line per service.
-  `CREATE TABLE IF NOT EXISTS shipment_loading_plan_lines (
-    service_id     TEXT NOT NULL,
-    container_id   TEXT NOT NULL,
-    planned_date   TEXT DEFAULT '',
-    sequence_order INTEGER DEFAULT 0,
-    notes          TEXT DEFAULT '',
-    created_at     TEXT NOT NULL,
-    updated_at     TEXT,
-    PRIMARY KEY (service_id, container_id)
-  )`,
-  // Sequence has no "0th"/negative position in a physical Loading/Unloading/Pickup/Delivery
-  // plan — 1 is the floor, enforced going forward in the PUT loading-plan route (routes/
-  // shipment-ops.js). One-time backfill for the handful of rows already saved as 0 before
-  // this rule existed — idempotent, a re-run after all rows are already >=1 is a no-op. Moved
-  // here, right after this table's own CREATE TABLE, from its original spot much earlier in
-  // this array (found via a genuinely fresh-database boot, v0.71.0's CI fix pass) — the
-  // migrations array runs top-to-bottom in one pass, so on a brand-new database the original
-  // position ran this UPDATE before the table existed at all ("no such table"), silently
-  // logged as a startup migration failure (GET /api/health's migrations.failed) on every fresh
-  // install/CI run ever since this table was introduced. Harmless in practice (nothing to
-  // backfill on a fresh database anyway), but a real, now-fixed correctness gap.
-  "UPDATE shipment_loading_plan_lines SET sequence_order = 1 WHERE sequence_order <= 0",
-  // Merchant's Haulage details (Pickup/Delivery, Merchant's Haulage only) — one record per
-  // container per service, mirroring shipment_loading_plan_lines' own per-container shape but
-  // with a synthetic id (not a literal composite PK) since this table needs a clean single-
-  // column FK target for waypoints below, and a clean value to store back as the reverse
-  // pointer to whichever shipment_cost_lines row its own cost value creates.
-  `CREATE TABLE IF NOT EXISTS shipment_haulage_records (
-    id                 TEXT PRIMARY KEY,
-    service_id         TEXT NOT NULL,
-    container_id       TEXT NOT NULL,
-    gate_in_at         TEXT DEFAULT '',
-    gate_out_at        TEXT DEFAULT '',
-    driver_name        TEXT DEFAULT '',
-    driver_id_number   TEXT DEFAULT '',
-    instructions       TEXT DEFAULT '',
-    cost_amount        REAL DEFAULT NULL,
-    cost_currency      TEXT DEFAULT 'USD',
-    cost_exchange_rate REAL DEFAULT 1,
-    cost_line_id       TEXT DEFAULT '',
-    created_at         TEXT NOT NULL,
-    updated_at         TEXT,
-    UNIQUE(service_id, container_id)
-  )`,
-  "CREATE INDEX IF NOT EXISTS idx_haulage_records_service ON shipment_haulage_records(service_id)",
-  // Variable-length ordered waypoint list per haulage record — a real parent FK with cascade
-  // delete (unlike shipment_loading_plan_lines.container_id, a waypoint has no meaning without
-  // its parent record, exactly like contract_legs -> contracts). loc_type reuses the same
-  // Door/Terminal/Container Yard/CFS/GPS Coordinates vocabulary shipment_legs' own endpoints
-  // already use; latitude/longitude are only populated in GPS mode, same either/or rule.
-  `CREATE TABLE IF NOT EXISTS shipment_haulage_waypoints (
-    id                TEXT PRIMARY KEY,
-    haulage_record_id TEXT NOT NULL REFERENCES shipment_haulage_records(id) ON DELETE CASCADE,
-    sequence_order    INTEGER NOT NULL DEFAULT 1,
-    loc_type          TEXT NOT NULL DEFAULT 'Door',
-    location          TEXT DEFAULT '',
-    latitude          REAL DEFAULT NULL,
-    longitude         REAL DEFAULT NULL,
-    notes             TEXT DEFAULT '',
-    created_at        TEXT NOT NULL
-  )`,
-  "CREATE INDEX IF NOT EXISTS idx_haulage_waypoints_record ON shipment_haulage_waypoints(haulage_record_id)",
-  // Automated charge-code registry (TKT-OK5H34) — admin-maintained definitions that get
-  // auto-injected as SELL cost lines when their trigger fires. Only trigger today is
-  // 'per_container_split' (fired from generateInvoices() when splitting an invoice per
-  // container), but the column exists so more triggers can be added later without a
-  // schema change.
-  `CREATE TABLE IF NOT EXISTS charge_code_definitions (
-    id         TEXT PRIMARY KEY,
-    code       TEXT NOT NULL,
-    label      TEXT NOT NULL,
-    trigger    TEXT NOT NULL DEFAULT 'per_container_split',
-    amount     REAL NOT NULL DEFAULT 0,
-    currency   TEXT NOT NULL DEFAULT 'USD',
-    unit       TEXT NOT NULL DEFAULT 'per_container',
-    is_active  INTEGER NOT NULL DEFAULT 1,
-    created_at TEXT NOT NULL
-  )`,
-  // source='automated' — cost lines auto-injected by a charge-code-definition trigger,
-  // distinct from 'manual'/'contract'/'mirror'. Column already exists (TEXT, no enum), this
-  // is just documenting the new value it can hold.
-  // Carrier Payment Indicator (CPI) — per cost-line, not per-shipment, since a shipment
-  // can mix Prepaid and Collect charges (TKT-OZD4V8, decision confirmed with user).
-  "ALTER TABLE shipment_cost_lines ADD COLUMN payment_indicator TEXT DEFAULT 'Prepaid'",
-  // Container cargo manifest: pallet/box sub-level breakdown (TKT-EMFIBR). Self-referencing
-  // so nesting depth is arbitrary (not a fixed Pallet->Box model, per the 2026-07-17 scoping
-  // decision) — container_id is denormalized onto every row (not just roots) so the whole
-  // tree for a container is one flat query; parent_id=NULL marks a top-level package.
-  // Independent of containers.cargo_description/gross_weight_kg/volume_cbm, which remain
-  // the source of truth elsewhere in the app — this is a supplementary detail view only.
-  `CREATE TABLE IF NOT EXISTS container_packages (
-    id           TEXT PRIMARY KEY,
-    container_id TEXT NOT NULL,
-    parent_id    TEXT DEFAULT NULL,
-    description  TEXT NOT NULL,
-    quantity     INTEGER NOT NULL DEFAULT 1,
-    position     INTEGER NOT NULL DEFAULT 0,
-    created_at   TEXT NOT NULL
-  )`,
-  // v0.34.5 — password expiry policy: track when each user's password was last set.
-  // Backfilled to created_at (not "now") for existing rows, since we don't actually
-  // know when an existing account's password was last changed — created_at is the
-  // most recent point we CAN vouch for, so an old-enough account correctly shows as
-  // already due rather than being given a fresh, unearned 90-day grace period.
-  "ALTER TABLE users ADD COLUMN password_changed_at TEXT NOT NULL DEFAULT ''",
-  "UPDATE users SET password_changed_at = created_at WHERE password_changed_at = ''",
-  // Self-service forgot-password. Stores a SHA-256 hash of the reset token, never the raw
-  // token itself — mirrors password_hash's own "never store the recoverable secret" rule. The
-  // raw token only ever exists in the emailed link and the incoming request that redeems it.
-  "ALTER TABLE users ADD COLUMN reset_token_hash    TEXT NOT NULL DEFAULT ''",
-  "ALTER TABLE users ADD COLUMN reset_token_expires TEXT NOT NULL DEFAULT ''",
-  `CREATE TABLE IF NOT EXISTS system_email_settings (
-    id              TEXT PRIMARY KEY,
-    smtp_host       TEXT NOT NULL DEFAULT '',
-    smtp_port       INTEGER NOT NULL DEFAULT 587,
-    secure_mode     TEXT NOT NULL DEFAULT 'starttls',
-    smtp_username   TEXT NOT NULL DEFAULT '',
-    smtp_password   TEXT NOT NULL DEFAULT '',
-    from_address    TEXT NOT NULL DEFAULT '',
-    from_name       TEXT NOT NULL DEFAULT '',
-    is_active       INTEGER NOT NULL DEFAULT 1,
-    created_at      TEXT NOT NULL,
-    updated_at      TEXT NOT NULL
-  )`,
-  // v0.35.0 — Carrier Booking. One row per shipment, not a history table — edi_messages
-  // already IS the full historical ledger of every request/response; this is a derived
-  // "current state" projection over it (same relationship shipments.booking_ref already
-  // has to the same data). status/last_response_status are tracked separately on purpose:
-  // a confirmed carrier response must NOT auto-finalize the booking, so it only sets
-  // last_response_status='confirmed' and leaves status='Pending' until the operator's own
-  // Confirm action moves it to 'Confirmed' — a rejected response has nothing to lock in,
-  // so it DOES auto-advance status straight to 'Rejected'.
-  `CREATE TABLE IF NOT EXISTS carrier_bookings (
-    id                   TEXT PRIMARY KEY,
-    shipment_id          TEXT NOT NULL UNIQUE REFERENCES shipments(id) ON DELETE CASCADE,
-    carrier_code         TEXT NOT NULL DEFAULT '',
-    status               TEXT NOT NULL DEFAULT 'Pending',
-    last_response_status TEXT NOT NULL DEFAULT '',
-    booking_ref          TEXT DEFAULT '',
-    correlation_id       TEXT DEFAULT '',
-    is_mock              INTEGER DEFAULT 0,
-    requested_at         TEXT DEFAULT NULL,
-    requested_by         TEXT DEFAULT '',
-    responded_at         TEXT DEFAULT NULL,
-    confirmed_at         TEXT DEFAULT NULL,
-    confirmed_by         TEXT DEFAULT '',
-    cancelled_at         TEXT DEFAULT NULL,
-    cancelled_by         TEXT DEFAULT '',
-    cancel_reason        TEXT DEFAULT '',
-    created_at           TEXT NOT NULL,
-    updated_at           TEXT NOT NULL
-  )`,
-  "CREATE INDEX IF NOT EXISTS idx_carrier_bookings_status ON carrier_bookings(status)",
-
-  // Booking-to-B/L traceability (TKT-LAK8P4) — nullable, points at a specific generated
-  // document instance rather than the free-text shipments.bl_number: a shipment can have
-  // multiple BL01 document rows (drafts, amendments) with no "current" flag, so a user has
-  // to pick which one; nothing auto-links here.
-  "ALTER TABLE carrier_bookings ADD COLUMN bl_document_id TEXT DEFAULT NULL REFERENCES shipment_documents(id)",
-
-  // Archive for superseded booking attempts (found via a real bug report — SHP-Y9E98X:
-  // carrier_bookings.shipment_id is UNIQUE, so a Cancelled/Rejected booking was the only
-  // record for that shipment, permanently, even once the carrier/schedule genuinely moved
-  // on). Same shape as carrier_bookings minus the uniqueness, plus archived_at/reason — an
-  // archived row keeps its OWN original id (the surrogate key it already had), so a
-  // shipment's full booking history is just carrier_bookings' current row + however many of
-  // these. See ensureBookingCreated below for what actually triggers an archive.
-  `CREATE TABLE IF NOT EXISTS carrier_booking_archive (
-    id                   TEXT PRIMARY KEY,
-    shipment_id          TEXT NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
-    carrier_code         TEXT NOT NULL DEFAULT '',
-    status               TEXT NOT NULL DEFAULT 'Pending',
-    last_response_status TEXT NOT NULL DEFAULT '',
-    booking_ref          TEXT DEFAULT '',
-    correlation_id       TEXT DEFAULT '',
-    is_mock              INTEGER DEFAULT 0,
-    requested_at         TEXT DEFAULT NULL,
-    requested_by         TEXT DEFAULT '',
-    responded_at         TEXT DEFAULT NULL,
-    confirmed_at         TEXT DEFAULT NULL,
-    confirmed_by         TEXT DEFAULT '',
-    cancelled_at         TEXT DEFAULT NULL,
-    cancelled_by         TEXT DEFAULT '',
-    cancel_reason        TEXT DEFAULT '',
-    created_at           TEXT NOT NULL,
-    updated_at           TEXT NOT NULL,
-    archived_at          TEXT NOT NULL,
-    archived_reason      TEXT DEFAULT ''
-  )`,
-  "CREATE INDEX IF NOT EXISTS idx_carrier_booking_archive_shipment ON carrier_booking_archive(shipment_id)",
-
-  // Sea-schedule field completeness (vessel IMO alongside the existing free-text vessel_name;
-  // ATD/ATA actuals alongside the existing ETD/ETA estimates) + the shared-schedule catalog —
-  // 'source' distinguishes a normal per-shipment search-and-save ('search', the default, so
-  // every pre-existing row is unaffected) from one authored by the Test Tools Schedule
-  // Generator ('generated'), which is the only kind additional shipments can link to.
-  "ALTER TABLE shipment_schedules ADD COLUMN vessel_imo TEXT DEFAULT ''",
-  "ALTER TABLE shipment_schedules ADD COLUMN atd        TEXT DEFAULT ''",
-  "ALTER TABLE shipment_schedules ADD COLUMN ata        TEXT DEFAULT ''",
-  "ALTER TABLE shipment_schedules ADD COLUMN source     TEXT DEFAULT 'search'",
-
-  // Additive sharing layer: shipment_schedules.shipment_id keeps meaning "the shipment that
-  // originally saved this row" (unchanged, every existing owned-schedule flow untouched) —
-  // this table lets ADDITIONAL shipments link to that same schedule without duplicating it.
-  `CREATE TABLE IF NOT EXISTS schedule_shipment_links (
-    schedule_id  TEXT NOT NULL REFERENCES shipment_schedules(id) ON DELETE CASCADE,
-    shipment_id  TEXT NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
-    linked_at    TEXT NOT NULL,
-    linked_by    TEXT DEFAULT '',
-    PRIMARY KEY (schedule_id, shipment_id)
-  )`,
-  "CREATE INDEX IF NOT EXISTS idx_schedule_links_shipment ON schedule_shipment_links(shipment_id)",
-
-  // Pack-type registry for the container cargo manifest tree (container_packages) — admin-
-  // maintained, mirrors charge_code_definitions structurally. Nullable FK on the package
-  // itself (below) means existing packages simply have no type/icon yet, not an error.
-  `CREATE TABLE IF NOT EXISTS pack_type_definitions (
-    id         TEXT PRIMARY KEY,
-    code       TEXT NOT NULL,
-    label      TEXT NOT NULL,
-    icon       TEXT NOT NULL DEFAULT '📦',
-    sort_order INTEGER NOT NULL DEFAULT 0,
-    is_active  INTEGER NOT NULL DEFAULT 1,
-    created_at TEXT NOT NULL
-  )`,
-  "INSERT OR IGNORE INTO pack_type_definitions (id,code,label,icon,sort_order,is_active,created_at) VALUES ('ptd-pallet','PALLET','Pallet','🟫',10,1,datetime('now'))",
-  "INSERT OR IGNORE INTO pack_type_definitions (id,code,label,icon,sort_order,is_active,created_at) VALUES ('ptd-carton','CARTON','Carton','📦',20,1,datetime('now'))",
-  "INSERT OR IGNORE INTO pack_type_definitions (id,code,label,icon,sort_order,is_active,created_at) VALUES ('ptd-case','CASE','Case','🗄️',30,1,datetime('now'))",
-  "INSERT OR IGNORE INTO pack_type_definitions (id,code,label,icon,sort_order,is_active,created_at) VALUES ('ptd-crate','CRATE','Crate','🪵',40,1,datetime('now'))",
-  "INSERT OR IGNORE INTO pack_type_definitions (id,code,label,icon,sort_order,is_active,created_at) VALUES ('ptd-drum','DRUM','Drum','🛢️',50,1,datetime('now'))",
-  "INSERT OR IGNORE INTO pack_type_definitions (id,code,label,icon,sort_order,is_active,created_at) VALUES ('ptd-box','BOX','Box','📦',60,1,datetime('now'))",
-  "INSERT OR IGNORE INTO pack_type_definitions (id,code,label,icon,sort_order,is_active,created_at) VALUES ('ptd-bag','BAG','Bag','🛍️',70,1,datetime('now'))",
-  "INSERT OR IGNORE INTO pack_type_definitions (id,code,label,icon,sort_order,is_active,created_at) VALUES ('ptd-bundle','BUNDLE','Bundle','🎋',80,1,datetime('now'))",
-  "INSERT OR IGNORE INTO pack_type_definitions (id,code,label,icon,sort_order,is_active,created_at) VALUES ('ptd-other','OTHER','Other','📄',90,1,datetime('now'))",
-  "ALTER TABLE container_packages ADD COLUMN pack_type_id TEXT DEFAULT NULL",
-
-  // Container-type registry (Equipment section) — admin-maintained, same shape/role
-  // pack_type_definitions has for pack types. Seeded from the app's own long-standing hardcoded
-  // CONTAINER_OPTIONS list (src/tokens.js) so nothing currently reading that list changes
-  // behavior; this table is purely additive reference data for now, not yet the live source
-  // any existing container-type dropdown reads from.
-  `CREATE TABLE IF NOT EXISTS container_type_definitions (
-    id          TEXT PRIMARY KEY,
-    code        TEXT NOT NULL,
-    size        TEXT NOT NULL,
-    type        TEXT NOT NULL,
-    teu         INTEGER NOT NULL DEFAULT 1,
-    label       TEXT NOT NULL,
-    description TEXT NOT NULL DEFAULT '',
-    sort_order  INTEGER NOT NULL DEFAULT 0,
-    is_active   INTEGER NOT NULL DEFAULT 1,
-    created_at  TEXT NOT NULL
-  )`,
-  "INSERT OR IGNORE INTO container_type_definitions (id,code,size,type,teu,label,description,sort_order,is_active,created_at) VALUES ('ctd-20dc','20DC','20','DC',1,'20ft Dry Container','Standard dry cargo — general goods, non-temperature-sensitive',10,1,datetime('now'))",
-  "INSERT OR IGNORE INTO container_type_definitions (id,code,size,type,teu,label,description,sort_order,is_active,created_at) VALUES ('ctd-40dc','40DC','40','DC',2,'40ft Dry Container','Standard dry cargo — general goods, non-temperature-sensitive',20,1,datetime('now'))",
-  "INSERT OR IGNORE INTO container_type_definitions (id,code,size,type,teu,label,description,sort_order,is_active,created_at) VALUES ('ctd-40hc','40HC','40','HC',2,'40ft High Cube','Extra interior height (9''6\") for voluminous or tall cargo',30,1,datetime('now'))",
-  "INSERT OR IGNORE INTO container_type_definitions (id,code,size,type,teu,label,description,sort_order,is_active,created_at) VALUES ('ctd-20rf','20RF','20','RF',1,'20ft Reefer','Temperature-controlled — food, pharma, cold-chain cargo',40,1,datetime('now'))",
-  "INSERT OR IGNORE INTO container_type_definitions (id,code,size,type,teu,label,description,sort_order,is_active,created_at) VALUES ('ctd-40rf','40RF','40','RF',2,'40ft Reefer','Temperature-controlled — food, pharma, cold-chain cargo',50,1,datetime('now'))",
-  "INSERT OR IGNORE INTO container_type_definitions (id,code,size,type,teu,label,description,sort_order,is_active,created_at) VALUES ('ctd-20ot','20OT','20','OT',1,'20ft Open Top','Removable roof — machinery, lumber, crane-loaded cargo',60,1,datetime('now'))",
-  "INSERT OR IGNORE INTO container_type_definitions (id,code,size,type,teu,label,description,sort_order,is_active,created_at) VALUES ('ctd-40ot','40OT','40','OT',2,'40ft Open Top','Removable roof — machinery, lumber, crane-loaded cargo',70,1,datetime('now'))",
-  "INSERT OR IGNORE INTO container_type_definitions (id,code,size,type,teu,label,description,sort_order,is_active,created_at) VALUES ('ctd-20fr','20FR','20','FR',1,'20ft Flat Rack','Collapsible ends — heavy machinery, vehicles, oversized loads',80,1,datetime('now'))",
-  "INSERT OR IGNORE INTO container_type_definitions (id,code,size,type,teu,label,description,sort_order,is_active,created_at) VALUES ('ctd-40fr','40FR','40','FR',2,'40ft Flat Rack','Collapsible ends — heavy machinery, vehicles, oversized loads',90,1,datetime('now'))",
-  "INSERT OR IGNORE INTO container_type_definitions (id,code,size,type,teu,label,description,sort_order,is_active,created_at) VALUES ('ctd-20tk','20TK','20','TK',1,'20ft Tank','Liquid bulk — chemicals, food-grade liquids, petroleum products',100,1,datetime('now'))",
-  "INSERT OR IGNORE INTO container_type_definitions (id,code,size,type,teu,label,description,sort_order,is_active,created_at) VALUES ('ctd-40tk','40TK','40','TK',2,'40ft Tank','Liquid bulk — chemicals, food-grade liquids, petroleum products',110,1,datetime('now'))",
-
-  // Cargo Manifest & Container Details Redesign (TKT-OTKNJN). Marks & Nos. is a real
-  // packing-list/BOL field that never existed on containers — Description of Goods is NOT
-  // a new field, it's the existing container_packages.description shown as a rollup on the
-  // container's own detail view (see ShipmentContainersPage.jsx).
-  "ALTER TABLE containers ADD COLUMN marks_and_numbers TEXT DEFAULT ''",
-  // DG classification extends down from the container level (containers.is_dg/dg_class,
-  // already existed) to the individual pallet/item level (TKT-9VAD6R) — a single DG pallet
-  // inside an otherwise clean container no longer forces the whole container to be flagged.
-  "ALTER TABLE container_packages ADD COLUMN is_dg INTEGER DEFAULT 0",
-  "ALTER TABLE container_packages ADD COLUMN dg_class TEXT DEFAULT ''",
-  // DG Compliance Address (TKT-DPLQTV) — one reusable org-wide emergency-contact/compliance
-  // record (confirmed: FCL means one is enough, no per-office variant), pulled onto the DG01
-  // declaration's emergency-contact line (buildDGDeclHtml, App.jsx) instead of a hand-filled
-  // blank. Plain app_settings keys, same idiom as every other single-record setting.
-  "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('dg_compliance_contact_name','')",
-  "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('dg_compliance_phone','')",
-  "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('dg_compliance_email','')",
-  "INSERT OR IGNORE INTO app_settings (key,value) VALUES ('dg_compliance_address','')",
-
-  // Additional Parties (Epic TKT-5XFCAP, Story TKT-HG10IK) — generic, extensible party-role
-  // mechanism sitting ALONGSIDE the 4 fixed shipper/consignee/notify/principal columns on
-  // shipments (untouched — high blast radius, not broken, not in scope). role is drawn from
-  // a fixed, curated list (ADDITIONAL_PARTY_ROLES below), not free text, so the frontend can
-  // render a clean "roles not yet assigned" picker. customer_id/customer_name are plain
-  // denormalized columns with no FK to customers, matching shipments.shipper_id/shipper_name's
-  // own existing convention. UNIQUE(shipment_id, role): one active party per role per shipment.
-  `CREATE TABLE IF NOT EXISTS shipment_parties (
-    id            TEXT PRIMARY KEY,
-    shipment_id   TEXT NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
-    role          TEXT NOT NULL,
-    customer_id   TEXT NOT NULL,
-    customer_name TEXT NOT NULL,
-    created_at    TEXT NOT NULL,
-    UNIQUE(shipment_id, role)
-  )`,
-
-  // Additional (backup) offices per side, Involved Offices redesign follow-up — direct request:
-  // a shipment's EMO/IMO are exactly-one fixed columns, but a real disaster-recovery scenario
-  // needs MORE than one office able to hold Export (or Import) work at once. Side-tagged (not
-  // pooled like Controlling) so an added office shows as its own home-style group in that
-  // column immediately, even before anything is assigned to it — see OfficeColumn in
-  // ShipmentDetailPage.jsx. office_id is intentionally NOT constrained to the EMO/IMO
-  // department at the schema level (enforced in routes/shipments.js instead, same
-  // enforce-in-route-not-in-schema precedent shipment_parties' role list already uses).
-  `CREATE TABLE IF NOT EXISTS shipment_side_offices (
-    id          TEXT PRIMARY KEY,
-    shipment_id TEXT NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
-    side        TEXT NOT NULL,
-    office_id   TEXT NOT NULL,
-    added_at    TEXT NOT NULL,
-    added_by    TEXT NOT NULL DEFAULT '',
-    UNIQUE(shipment_id, side, office_id)
-  )`,
-
-  // Structured Cargo / Commodity Line Items (Epic TKT-P3ASH1, Story TKT-PV5P5L) — extends
-  // container_packages with a real per-item declared value, replacing the container-level
-  // hs_code/cargo_description as the sole source for Commercial Invoice / Packing List line
-  // items and the cargo value rollup (TKT-NSTDKF). unit_value stays NULL (not 0) when nothing
-  // has been entered — "$0" and "not priced yet" are different facts the rollup/document
-  // fallback must be able to tell apart. hs_code is a per-item OVERRIDE of the container's own
-  // hs_code (untouched) — blank means "inherit the container's code". unit_value_usd is
-  // precomputed at write time (same amount_usd-at-write-time idiom as contract_rates,
-  // saveRates/toUsd) so the rollup and generated documents never need a live FX call.
-  "ALTER TABLE container_packages ADD COLUMN unit_value REAL DEFAULT NULL",
-  "ALTER TABLE container_packages ADD COLUMN currency TEXT DEFAULT ''",
-  "ALTER TABLE container_packages ADD COLUMN hs_code TEXT DEFAULT ''",
-  "ALTER TABLE container_packages ADD COLUMN unit_value_usd REAL DEFAULT NULL",
-
-  // Customs & Regulatory Filing (Epic TKT-XW6TQK, Story TKT-QRNGK9) — mirrors carrier_bookings'
-  // shape closely, minus its archive/supersede machinery (not needed here: a shipment needs at
-  // most one AES/EEI export filing and one ISF/AMS import filing, two independent things that
-  // coexist rather than something a carrier change "supersedes"). UNIQUE(shipment_id,
-  // filing_type), not UNIQUE(shipment_id) alone, is what lets both types coexist as independent
-  // rows. SIMULATED/MOCK ONLY — no real government EDI integration, matching the carrier-booking
-  // Test Tools precedent (direct scope decision, not revisited here).
-  `CREATE TABLE IF NOT EXISTS customs_filings (
-    id                   TEXT PRIMARY KEY,
-    shipment_id          TEXT NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
-    filing_type          TEXT NOT NULL,
-    status               TEXT NOT NULL DEFAULT 'Draft',
-    filing_reference     TEXT DEFAULT '',
-    confirmation_number  TEXT DEFAULT '',
-    rejection_reason     TEXT DEFAULT '',
-    filed_at             TEXT DEFAULT NULL,
-    filed_by             TEXT DEFAULT '',
-    responded_at         TEXT DEFAULT NULL,
-    created_at           TEXT NOT NULL,
-    updated_at           TEXT NOT NULL,
-    UNIQUE(shipment_id, filing_type)
-  )`,
-  "CREATE INDEX IF NOT EXISTS idx_customs_filings_status ON customs_filings(status)",
-
-  // Carrier Line Agents (CargoWise-baseline gap: a carrier's LOCAL representative differs by
-  // location — Maersk's Rotterdam agent isn't its New York agent — distinct from a Forwarder's
-  // own overseas correspondent network, which this doesn't model). carrier_code stays loose
-  // text, matching shipments/contracts/allocations' own carrier_code convention everywhere else
-  // (never FK'd to `carriers`). agent_customer_id is a real FK to customers(id) with NO ON
-  // DELETE clause (neither CASCADE — which would let a customer delete silently destroy master
-  // data — nor SET NULL, which would leave a meaningless NOT NULL-in-spirit row with nothing
-  // left to point at); customer delete is instead blocked by an app-level guard, mirroring
-  // offices.js's own "referenced by shipments — deactivate it instead" pattern. No denormalized
-  // agent_customer_name column — this is live master data, not a shipment-time snapshot, so
-  // reads always join to customers for the current name (same idiom CUST_JOIN already uses for
-  // parent_customer_name).
-  //
-  // Header + child-locations shape (restructured from an earlier one-row-per-port design, see
-  // the guarded rebuildCarrierAgentsLocations migration below): one (carrier, agent) pairing is
-  // a single header row here, which can then cover any number of specific UN/LOCODEs and/or
-  // whole countries via carrier_agent_locations — "a Line Agent in Spain can also handle the
-  // shipment in Andorra" is one header with two country-level location rows, not two headers.
-  `CREATE TABLE IF NOT EXISTS carrier_agents (
-    id                 TEXT PRIMARY KEY,
-    carrier_code       TEXT NOT NULL,
-    agent_customer_id  TEXT NOT NULL REFERENCES customers(id),
-    note               TEXT DEFAULT '',
-    capabilities       TEXT DEFAULT '[]',
-    created_at         TEXT NOT NULL,
-    UNIQUE(carrier_code, agent_customer_id)
-  )`,
-  "CREATE INDEX IF NOT EXISTS idx_carrier_agents_customer ON carrier_agents(agent_customer_id)",
-  // Additive for any DB whose carrier_agents predates this column (every DB that already went
-  // through the header+locations restructure above) — a JSON array of capability codes (e.g.
-  // ["warehousing","road_haulage"]), same "flat flag-set as JSON on the row" idiom contracts.
-  // imdg_classes already uses. Lets a shipment cross-check a Line Agent's own operational
-  // capabilities against what a leg's haulage actually needs before booking, instead of finding
-  // out only after the carrier rejects it or an operator has to rework the booking.
-  "ALTER TABLE carrier_agents ADD COLUMN capabilities TEXT DEFAULT '[]'",
-
-  // One row per covered location under a carrier_agents header — either a specific UN/LOCODE or
-  // a whole country, never both on the same row (enforced by the CHECK + app-level validation).
-  // carrier_code is denormalized from the header on purpose: the "this location is already
-  // claimed for this carrier" uniqueness rule (enforced in routes/mdm.js, not a DB constraint,
-  // since it must look ACROSS every header for the same carrier, not just within one) needs to
-  // query by carrier_code without an extra join, mirroring TRACKED_FIELDS-style denormalization
-  // used elsewhere in this codebase purely for query convenience.
-  `CREATE TABLE IF NOT EXISTS carrier_agent_locations (
-    id                TEXT PRIMARY KEY,
-    carrier_agent_id  TEXT NOT NULL REFERENCES carrier_agents(id) ON DELETE CASCADE,
-    carrier_code      TEXT NOT NULL,
-    location_type     TEXT NOT NULL CHECK(location_type IN ('unlocode','country')),
-    unlocode          TEXT REFERENCES port_locations(unlocode),
-    country_iso2      TEXT REFERENCES countries(iso2),
-    created_at        TEXT NOT NULL
-  )`,
-  "CREATE INDEX IF NOT EXISTS idx_cal_agent ON carrier_agent_locations(carrier_agent_id)",
-  "CREATE INDEX IF NOT EXISTS idx_cal_carrier_unlocode ON carrier_agent_locations(carrier_code, unlocode)",
-  "CREATE INDEX IF NOT EXISTS idx_cal_carrier_country ON carrier_agent_locations(carrier_code, country_iso2)",
-
-  // One row per day-group + hour-range a Line Agent is reachable — e.g. "Mon,Tue 09:00-18:00" is
-  // one row, "Wed,Fri 09:00-13:00" a second, so an agent's real working pattern (different hours
-  // on different days) is captured directly rather than forcing one hour range across every open
-  // day. days is a JSON array of the 3-letter labels (["Mon","Tue"]) — always saved as a full
-  // replace of every row for a header (PUT .../schedule), not incrementally, since the "a day can
-  // only belong to one row" rule is naturally enforced by validating the whole proposed set at
-  // once rather than reconciling against whatever was already saved.
-  `CREATE TABLE IF NOT EXISTS carrier_agent_schedule_rows (
-    id                TEXT PRIMARY KEY,
-    carrier_agent_id  TEXT NOT NULL REFERENCES carrier_agents(id) ON DELETE CASCADE,
-    days              TEXT NOT NULL,
-    start_time        TEXT NOT NULL,
-    end_time          TEXT NOT NULL,
-    sort_order        INTEGER DEFAULT 0,
-    created_at        TEXT NOT NULL
-  )`,
-  "CREATE INDEX IF NOT EXISTS idx_casr_agent ON carrier_agent_schedule_rows(carrier_agent_id)",
-
-  // Shipment edit-locking (first-come-first-served, whole-shipment) — direct request: two
-  // edit-capable users on the same shipment at the same time can produce conflicting writes,
-  // and this app has no field-level merge/conflict resolution anywhere. One row per currently-
-  // locked shipment; a heartbeat (POST .../edit-lock, called on open and renewed periodically
-  // while the shipment stays open) keeps expires_at rolling forward, so a crashed tab/lost
-  // connection self-clears the lock rather than needing a manual override.
-  `CREATE TABLE IF NOT EXISTS shipment_edit_locks (
-    shipment_id       TEXT PRIMARY KEY REFERENCES shipments(id) ON DELETE CASCADE,
-    locked_by_id      TEXT NOT NULL,
-    locked_by_name    TEXT NOT NULL,
-    locked_at         TEXT NOT NULL,
-    last_heartbeat_at TEXT NOT NULL,
-    expires_at        TEXT NOT NULL
-  )`,
-
-  // Signed PDF Document Generation (Epic TKT-YOFYFZ) — deliberately its own table rather
-  // than an app_settings row: GET /api/settings already returns the whole app_settings
-  // table in plaintext to any authenticated user (it's how ai_api_key leaks today), and the
-  // signing private key must never be reachable that way. Only one row is ever 'active' at
-  // a time; rotating in a new cert flips the old row to 'superseded' instead of deleting it,
-  // so documents signed under a retired cert stay independently self-verifying.
-  `CREATE TABLE IF NOT EXISTS org_signing_certs (
-    id                  TEXT PRIMARY KEY,
-    cert_pem            TEXT NOT NULL,
-    private_key_pem     TEXT NOT NULL,
-    p12_base64          TEXT NOT NULL,
-    p12_passphrase      TEXT NOT NULL,
-    fingerprint_sha256  TEXT NOT NULL,
-    subject             TEXT NOT NULL,
-    not_before          TEXT NOT NULL,
-    not_after           TEXT NOT NULL,
-    status              TEXT NOT NULL DEFAULT 'active',
-    created_at          TEXT NOT NULL
-  )`,
-  "CREATE INDEX IF NOT EXISTS idx_org_signing_certs_status ON org_signing_certs(status)",
-
-  // Office-Level Email Distribution (Epic TKT-O4B0IB) — per-office outgoing SMTP config, not
-  // org-wide app_settings: different EMO/IMO offices (e.g. different countries) need separate
-  // mail servers/from-addresses. UNIQUE(office_id) — one config per office, upsert on save.
-  // smtp_password mirrors org_signing_certs' secret-column precedent: stored plaintext, but
-  // NO mapper or route ever returns it — GET /api/settings's existing plaintext app_settings
-  // leak (any authenticated user, no role gate) is exactly the mistake this avoids.
-  `CREATE TABLE IF NOT EXISTS office_mail_settings (
-    id              TEXT PRIMARY KEY,
-    office_id       TEXT NOT NULL UNIQUE REFERENCES offices(id) ON DELETE CASCADE,
-    smtp_host       TEXT NOT NULL DEFAULT '',
-    smtp_port       INTEGER NOT NULL DEFAULT 587,
-    secure_mode     TEXT NOT NULL DEFAULT 'starttls',
-    smtp_username   TEXT NOT NULL DEFAULT '',
-    smtp_password   TEXT NOT NULL DEFAULT '',
-    from_address    TEXT NOT NULL DEFAULT '',
-    from_name       TEXT NOT NULL DEFAULT '',
-    is_active       INTEGER NOT NULL DEFAULT 1,
-    created_at      TEXT NOT NULL,
-    updated_at      TEXT NOT NULL
-  )`,
-
-  // Invoice Reversal / Debit-Credit Note workflow (TKT-DUADU3), SELL-side only — reversing a
-  // confirmed FR01/FR02 invoice creates a new CN01 doc and voids the original; related_doc_id
-  // links the two symmetrically (set on both rows once the CN01 doc exists). source_cost_line_ids
-  // (JSON array) is captured at FR01/FR02 generation time so a later reversal knows exactly which
-  // cost lines to negate rather than re-deriving from whatever SELL lines currently exist — a
-  // doc with no value here (generated before this shipped) falls back to a live container-scoped
-  // filter instead, no backfill needed.
-  "ALTER TABLE shipment_documents ADD COLUMN related_doc_id       TEXT DEFAULT NULL",
-  "ALTER TABLE shipment_documents ADD COLUMN source_cost_line_ids TEXT DEFAULT NULL",
-
-  // Decoupled Schedule Generator / catalog-backed sailing search — Test Tools' Schedule
-  // Generator no longer forces a shipment link at creation time (shipment_schedules.shipment_id
-  // nullability is handled by a one-time table-rebuild migration below, since SQLite can't drop
-  // NOT NULL via ALTER TABLE). A generated schedule can now be a genuine multi-leg/TSP sailing —
-  // schedule_legs mirrors the existing shipment_legs/contract_legs multi-leg pattern (one row =
-  // direct sailing, 2+ rows = TSP), while the parent shipment_schedules row keeps summarizing the
-  // overall journey (first leg's pol/vessel/etd, last leg's pod/eta) so every existing consumer
-  // of mapSchedule() keeps working unchanged.
-  `CREATE TABLE IF NOT EXISTS schedule_legs (
-    id             TEXT PRIMARY KEY,
-    schedule_id    TEXT NOT NULL REFERENCES shipment_schedules(id) ON DELETE CASCADE,
-    leg_order      INTEGER NOT NULL DEFAULT 0,
-    pol            TEXT DEFAULT '',
-    pod            TEXT DEFAULT '',
-    etd            TEXT DEFAULT '',
-    eta            TEXT DEFAULT '',
-    vessel_name    TEXT DEFAULT '',
-    vessel_imo     TEXT DEFAULT '',
-    voyage_number  TEXT DEFAULT '',
-    service        TEXT DEFAULT ''
-  )`,
-  "CREATE INDEX IF NOT EXISTS idx_schedule_legs_schedule ON schedule_legs(schedule_id)",
-  "ALTER TABLE schedule_legs ADD COLUMN carrier TEXT DEFAULT ''",
-
-  // Content-Keyed Sailing Legs — schedule_legs (above) gives every schedule its OWN fresh leg
-  // rows with zero dedup, even when two schedules describe the exact same physical dated sailing
-  // segment (same carrier/vessel/voyage/route/date). sailing_legs is the canonical, deduplicated
-  // catalog instead: one row per distinct leg, keyed by a deterministic content key (computeLegKey,
-  // routes/shipment-ops.js) over carrier+vesselImo+voyageNumber+pol+pod+etd — those 6 fields ARE
-  // the identity, so they never change in place; eta/vesselName/service are descriptive and CAN be
-  // revised later (a live carrier feed, a re-run generator) via upsertLeg's real upsert-with-audit
-  // (diffs old vs new, logs one entity_events('sailing_leg', ...) row per changed field — same
-  // idiom the schedule PUT route already uses). schedule_leg_refs is the ordered composition: which
-  // legs make up a schedule, in what order — every schedule now has 1+ refs (a "direct" sailing is
-  // just a schedule with exactly one ref), removing the old 0-1-rows-means-direct special case.
-  `CREATE TABLE IF NOT EXISTS sailing_legs (
-    leg_key        TEXT PRIMARY KEY,
-    carrier        TEXT DEFAULT '',
-    pol            TEXT DEFAULT '',
-    pod            TEXT DEFAULT '',
-    etd            TEXT DEFAULT '',
-    eta            TEXT DEFAULT '',
-    vessel_name    TEXT DEFAULT '',
-    vessel_imo     TEXT DEFAULT '',
-    voyage_number  TEXT DEFAULT '',
-    service        TEXT DEFAULT '',
-    created_at     TEXT NOT NULL,
-    updated_at     TEXT NOT NULL
-  )`,
-  `CREATE TABLE IF NOT EXISTS schedule_leg_refs (
-    schedule_id  TEXT NOT NULL REFERENCES shipment_schedules(id) ON DELETE CASCADE,
-    leg_key      TEXT NOT NULL REFERENCES sailing_legs(leg_key),
-    leg_order    INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (schedule_id, leg_order)
-  )`,
-  "CREATE INDEX IF NOT EXISTS idx_schedule_leg_refs_leg ON schedule_leg_refs(leg_key)",
-  // schedule_key: the ordered concatenation of this schedule's leg_keys — lets two independently
-  // -created schedule rows be recognized as literally the same sailing via string equality, without
-  // comparing individual leg rows. Written once at create time (Generator + Add Sailing), same
-  // write-time idiom as the existing pol/pod/vessel summary fields below.
-  "ALTER TABLE shipment_schedules ADD COLUMN schedule_key TEXT DEFAULT ''",
-
-  // Gates the synthetic "DEMO ..." mockSailings() fallback in GET /api/schedules/search — default
-  // on, so sailing search/tests keep working with zero setup; an admin turns it off once real
-  // generated schedules exist in the catalog and synthetic fallback data is no longer wanted.
-  "INSERT OR IGNORE INTO app_settings (key, value) VALUES ('demo_schedules_enabled', 'true')",
-  // AIS integration (TKT-ZFO2OM) — mmsi is the structural link a PositionReport (MMSI-only, no
-  // IMO) needs to resolve back to a vessel; ais_verified_at distinguishes an MDM-imported row
-  // from one AIS has actually confirmed live.
-  "ALTER TABLE vessels ADD COLUMN mmsi TEXT DEFAULT ''",
-  "ALTER TABLE vessels ADD COLUMN ais_verified_at TEXT DEFAULT ''",
-  // First design pass tracked actual departure/arrival as separate atd/ata columns alongside
-  // etd/eta — reworked per direct feedback: ETD/ETA should update in place once AIS confirms
-  // a real departure/arrival (an estimate becoming a known fact), not sit next to a second,
-  // always-visible pair of columns. atd/ata/atd_source/ata_source are left in place, unused
-  // going forward — same "no migration, old rows/columns are just inert" precedent used
-  // throughout this codebase — etd_source/eta_source are the ones actually read/written now.
-  "ALTER TABLE shipment_legs ADD COLUMN atd TEXT DEFAULT ''",
-  "ALTER TABLE shipment_legs ADD COLUMN ata TEXT DEFAULT ''",
-  "ALTER TABLE shipment_legs ADD COLUMN atd_source TEXT DEFAULT ''",
-  "ALTER TABLE shipment_legs ADD COLUMN ata_source TEXT DEFAULT ''",
-  "ALTER TABLE shipment_legs ADD COLUMN etd_source TEXT DEFAULT ''",
-  "ALTER TABLE shipment_legs ADD COLUMN eta_source TEXT DEFAULT ''",
-  // Persistent-connection feature, defaults OFF (unlike fx/weather/ofac, which no-op cleanly
-  // with no key) — an unconfigured AIS listener would otherwise try to open a socket on every
-  // boot and fail its auth handshake for nothing. Provider seam exists now; only 'aisstream' is
-  // wired to an actual connection this pass (see lib/ais-listener.js).
-  "INSERT OR IGNORE INTO app_settings (key, value) VALUES ('api_ais_enabled', 'false')",
-  "INSERT OR IGNORE INTO app_settings (key, value) VALUES ('ais_provider', 'aisstream')",
-  "INSERT OR IGNORE INTO app_settings (key, value) VALUES ('ais_api_key', '')",
-  // Classified-location customers — a site (military/government/restricted) that can only ever
-  // be identified by GPS coordinates, never a normal address or port/UN-LOCODE lookup. DEFAULT
-  // NULL (not port_locations' own DEFAULT 0) — 0,0 is a real ocean coordinate, so NULL is the
-  // only way to mean "unset."
-  "ALTER TABLE customers ADD COLUMN classified_location INTEGER NOT NULL DEFAULT 0",
-  "ALTER TABLE customers ADD COLUMN latitude  REAL DEFAULT NULL",
-  "ALTER TABLE customers ADD COLUMN longitude REAL DEFAULT NULL",
-  // A Pick-up/Delivery leg to a classified-location site — pol_loc_type/pod_loc_type gains a
-  // "GPS Coordinates" value (alongside Door/Terminal/Container Yard/CFS) instead of a parallel
-  // mode column, since it's already the "what kind of location is this endpoint" field. When set,
-  // pol/pod (the UN/LOCODE) is blanked and these carry the real location instead — never both.
-  "ALTER TABLE shipment_legs ADD COLUMN pol_latitude  REAL DEFAULT NULL",
-  "ALTER TABLE shipment_legs ADD COLUMN pol_longitude REAL DEFAULT NULL",
-  "ALTER TABLE shipment_legs ADD COLUMN pod_latitude  REAL DEFAULT NULL",
-  "ALTER TABLE shipment_legs ADD COLUMN pod_longitude REAL DEFAULT NULL",
-  // Rate-line-level validity window — previously only the whole contract had valid_from/valid_to,
-  // so a single line (e.g. a GRI or PSS surcharge effective for only part of the contract's own
-  // term) couldn't carry its own effective window. Blank on both ends (the default for every
-  // existing row) means "inherits the parent contract's own window" — a pure additive column,
-  // no backfill needed since blank already means exactly that everywhere it's read.
-  "ALTER TABLE contract_rates ADD COLUMN valid_from TEXT DEFAULT ''",
-  "ALTER TABLE contract_rates ADD COLUMN valid_to   TEXT DEFAULT ''",
-  // Minimum Quantity Commitment — allocations were ceiling-only (alertThreshold warns on going
-  // OVER allocatedTEU); there was no floor/under-commitment signal at all. NULL (not 0) means
-  // "no MQC set" — a real $0 minimum isn't a thing, so NULL/blank stays distinguishable from an
-  // explicit, deliberately-zero commitment.
-  "ALTER TABLE allocations ADD COLUMN minimum_teu INTEGER DEFAULT NULL",
-  // Ops-automation sweep (runOpsAutomationSweep, below) — lets an auto-created ticket record
-  // exactly which stuck-booking/overdue-milestone/compliance-hit row it came from, so the sweep
-  // can check "does a ticket already exist for this exact source" and never create a duplicate
-  // on its next run. NULL/NULL on every ticket created through the normal UI, same as every other
-  // additive nullable column in this codebase.
-  "ALTER TABLE tickets ADD COLUMN source_type TEXT DEFAULT NULL",
-  "ALTER TABLE tickets ADD COLUMN source_id   TEXT DEFAULT NULL",
-  "CREATE INDEX IF NOT EXISTS idx_tickets_source ON tickets(source_type, source_id)",
-  // Multiple routing options per contract (e.g. HLCU/Kuehne+Nagel CNCKG->SEGOT priced
-  // independently via CNSHA->NLRTM, via CNSHA->DEHAM, via CNSHA->Wilhelmshaven) — a routing is a
-  // named, ordered bundle of contract_legs rows with its own optional contract_rates rows.
-  // routing_id='' (the column default, not NULL — matches this codebase's existing
-  // named_account_id/contract_ref "unset means blank string" convention) means "the contract's
-  // single implicit routing" on both contract_legs and contract_rates — every leg/rate on every
-  // contract that predates this feature, unaffected, zero backfill needed. On contract_rates,
-  // '' additionally means "applies regardless of which routing was matched" (e.g. a flat
-  // documentation fee) — coexists freely with routing-specific rate rows on the same contract.
-  `CREATE TABLE IF NOT EXISTS contract_routings (
-    id TEXT PRIMARY KEY,
-    contract_id TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
-    name TEXT DEFAULT '',
-    sort_order INTEGER DEFAULT 0,
-    transit_days INTEGER DEFAULT 0,
-    notes TEXT DEFAULT '',
-    created_at TEXT NOT NULL
-  )`,
-  "ALTER TABLE contract_legs ADD COLUMN routing_id TEXT DEFAULT ''",
-  "ALTER TABLE contract_rates ADD COLUMN routing_id TEXT DEFAULT ''",
-  // Which routing the operator actually picked when assigning this contract to the shipment.
-  // '' means "single implicit routing" (or not yet recorded, for shipments that predate this
-  // feature) — importContractRates/createRateSnapshot fall back to "match every rate on the
-  // contract" in that case, identical to today's behavior.
-  "ALTER TABLE shipments ADD COLUMN contract_routing_id TEXT DEFAULT ''",
-  "CREATE INDEX IF NOT EXISTS idx_contract_routings_contract ON contract_routings(contract_id)",
-  // Freight Audit & Payment — reconciles a carrier's own submitted invoice against what was
-  // actually CONTRACTED (contract_rates) and/or already accrued (shipment_cost_lines), flagging
-  // variance beyond a configurable tolerance rather than trusting the carrier's number at face
-  // value. Deliberately distinct from the existing accrued->actualized->posted state machine on
-  // shipment_cost_lines — that machine tracks CargoDesk's OWN cost estimate maturing into a real
-  // figure over time; this validates an EXTERNAL document against what was agreed. amount_usd/
-  // expected_amount_usd are resolved at write time (same idiom as contract_rates.amount_usd),
-  // not recomputed live, so a later FX-rate change never silently reopens an already-reviewed line.
-  `CREATE TABLE IF NOT EXISTS carrier_invoices (
-    id TEXT PRIMARY KEY,
-    shipment_id TEXT NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
-    carrier_code TEXT DEFAULT '',
-    invoice_number TEXT DEFAULT '',
-    invoice_date TEXT DEFAULT '',
-    currency TEXT DEFAULT 'USD',
-    status TEXT NOT NULL DEFAULT 'Pending',
-    notes TEXT DEFAULT '',
-    created_at TEXT NOT NULL,
-    created_by TEXT DEFAULT ''
-  )`,
-  // free_time_side ('' | 'origin' | 'destination') only applies to a Detention/Demurrage line
-  // (service_code DET/DEM) tied to a specific container — it tells the matching engine which of
-  // the container's two independent free-time windows (containers.origin_free_time_days/
-  // dest_free_time_days, already tracked for the compliance badges on the Cargo page) this charge
-  // is actually for; the carrier's own invoice tells the person entering it which side applies,
-  // so this is operator-supplied, not inferred. expected_source records HOW expected_amount was
-  // resolved ('cost_line' | 'contract_rate' | 'dnd_calc' | '' when no comparison was possible)
-  // so the UI can show its provenance rather than a bare number.
-  `CREATE TABLE IF NOT EXISTS carrier_invoice_lines (
-    id TEXT PRIMARY KEY,
-    invoice_id TEXT NOT NULL REFERENCES carrier_invoices(id) ON DELETE CASCADE,
-    service_code TEXT DEFAULT '',
-    description TEXT DEFAULT '',
-    container_id TEXT DEFAULT '',
-    free_time_side TEXT DEFAULT '',
-    amount REAL NOT NULL DEFAULT 0,
-    currency TEXT DEFAULT 'USD',
-    amount_usd REAL DEFAULT 0,
-    expected_amount REAL DEFAULT NULL,
-    expected_currency TEXT DEFAULT 'USD',
-    expected_amount_usd REAL DEFAULT NULL,
-    expected_source TEXT DEFAULT '',
-    matched_cost_line_id TEXT DEFAULT '',
-    variance_usd REAL DEFAULT NULL,
-    variance_pct REAL DEFAULT NULL,
-    status TEXT NOT NULL DEFAULT 'pending',
-    resolved_at TEXT DEFAULT NULL,
-    resolved_by TEXT DEFAULT '',
-    resolution_notes TEXT DEFAULT ''
-  )`,
-  "CREATE INDEX IF NOT EXISTS idx_carrier_invoices_shipment ON carrier_invoices(shipment_id)",
-  "CREATE INDEX IF NOT EXISTS idx_carrier_invoice_lines_invoice ON carrier_invoice_lines(invoice_id)",
-  // CRM / pre-sales pipeline (TKT-WW8THL, Epic TKT-GTGM6R) — precedes and converts into a quote,
-  // the same way a quote precedes and converts into a shipment. Lifecycle: New -> Qualified ->
-  // Converted (to Quote, Qualified only) | Lost (from New or Qualified). Deliberately no line-item
-  // child table — an opportunity is pre-pricing; real line-item detail belongs on the Quote it
-  // converts into. estimated_value_usd is resolved once via toUsd() at write time, same idiom as
-  // quote_lines.amount_usd/contract_rates.amount_usd.
-  `CREATE TABLE IF NOT EXISTS opportunities (
-    id TEXT PRIMARY KEY,
-    status TEXT NOT NULL DEFAULT 'New',
-    title TEXT DEFAULT '',
-    customer_id TEXT DEFAULT '',
-    customer_name TEXT DEFAULT '',
-    pol TEXT DEFAULT '',
-    pod TEXT DEFAULT '',
-    carrier_code TEXT DEFAULT '',
-    commodity_code TEXT DEFAULT '',
-    movement_type TEXT DEFAULT 'FCL',
-    estimated_value REAL DEFAULT 0,
-    currency TEXT DEFAULT 'USD',
-    estimated_value_usd REAL DEFAULT 0,
-    estimated_close_date TEXT DEFAULT '',
-    lead_source TEXT DEFAULT '',
-    assignee_id TEXT DEFAULT '',
-    notes TEXT DEFAULT '',
-    qualified_at TEXT DEFAULT '',
-    lost_at TEXT DEFAULT '',
-    lost_reason TEXT DEFAULT '',
-    converted_quote_id TEXT DEFAULT '',
-    converted_at TEXT DEFAULT '',
-    created_at TEXT NOT NULL,
-    created_by TEXT DEFAULT ''
-  )`,
-  "CREATE INDEX IF NOT EXISTS idx_opportunities_status ON opportunities(status)",
-  "CREATE INDEX IF NOT EXISTS idx_opportunities_customer ON opportunities(customer_id)",
-  "CREATE INDEX IF NOT EXISTS idx_opportunities_assignee ON opportunities(assignee_id)",
-  // Quoting / RFQ pre-booking stage — every competitor platform researched (CargoWise, Magaya,
-  // Descartes, Flexport, Freightos) treats a quote as a distinct object that precedes and
-  // converts into a booking; CargoDesk previously had none (POST /api/shipments created a live
-  // numbered shipment directly, no prior quote entity). Lifecycle: Draft -> Sent -> Accepted |
-  // Declined | Expired -> Converted. Pricing reuses the existing contract-match/rate
-  // infrastructure (GET /api/contracts/match) as a reference; quote_lines carry the actual
-  // SELL-side price offered to the customer, which on conversion become the new shipment's SELL
-  // cost lines (source 'quote') — the BUY side still comes from the real matched contract via the
-  // existing importContractRates path, unchanged.
-  `CREATE TABLE IF NOT EXISTS quotes (
-    id TEXT PRIMARY KEY,
-    status TEXT NOT NULL DEFAULT 'Draft',
-    customer_id TEXT DEFAULT '',
-    customer_name TEXT DEFAULT '',
-    pol TEXT DEFAULT '',
-    pod TEXT DEFAULT '',
-    carrier_code TEXT DEFAULT '',
-    contract_id TEXT DEFAULT '',
-    contract_ref TEXT DEFAULT '',
-    commodity_code TEXT DEFAULT '',
-    movement_type TEXT DEFAULT 'FCL',
-    service_type TEXT DEFAULT 'Port-to-Port',
-    incoterm TEXT DEFAULT '',
-    cargo_ready_date TEXT DEFAULT '',
-    valid_until TEXT DEFAULT '',
-    notes TEXT DEFAULT '',
-    currency TEXT DEFAULT 'USD',
-    total_amount_usd REAL DEFAULT 0,
-    sent_at TEXT DEFAULT '',
-    accepted_at TEXT DEFAULT '',
-    declined_at TEXT DEFAULT '',
-    decline_reason TEXT DEFAULT '',
-    expired_at TEXT DEFAULT '',
-    converted_shipment_id TEXT DEFAULT '',
-    converted_at TEXT DEFAULT '',
-    created_at TEXT NOT NULL,
-    created_by TEXT DEFAULT ''
-  )`,
-  // quantity*rate = amount in the line's own currency; amount_usd is resolved once via toUsd() at
-  // write time — same idiom as carrier_invoice_lines.amount_usd/contract_rates.amount_usd — not
-  // recomputed live, so a later FX-rate change never silently reopens an already-quoted line.
-  `CREATE TABLE IF NOT EXISTS quote_lines (
-    id TEXT PRIMARY KEY,
-    quote_id TEXT NOT NULL REFERENCES quotes(id) ON DELETE CASCADE,
-    service_code TEXT DEFAULT '',
-    description TEXT DEFAULT '',
-    container_type TEXT DEFAULT '',
-    quantity REAL NOT NULL DEFAULT 1,
-    unit TEXT DEFAULT 'per_container',
-    rate REAL NOT NULL DEFAULT 0,
-    currency TEXT DEFAULT 'USD',
-    amount_usd REAL DEFAULT 0,
-    sort_order INTEGER DEFAULT 0
-  )`,
-  "CREATE INDEX IF NOT EXISTS idx_quotes_status ON quotes(status)",
-  "CREATE INDEX IF NOT EXISTS idx_quotes_customer ON quotes(customer_id)",
-  "CREATE INDEX IF NOT EXISTS idx_quote_lines_quote ON quote_lines(quote_id)",
-  // Reefer set-point temperature at the pricing stage — a quote's own containerType (e.g. "40RF")
-  // already distinguishes a reefer line from a dry one, but nothing recorded what temperature was
-  // actually being quoted. Same Celsius-only-persisted convention as containers.set_temperature_c
-  // (the frontend's own °C/°F toggle converts before it ever reaches here) — kept independent of
-  // that column: a quote's temperature is what's being OFFERED, not yet a real container's setting,
-  // and quote-to-shipment conversion doesn't create containers at all (it only creates SELL cost
-  // lines), so there's nothing to auto-carry it into regardless.
-  "ALTER TABLE quote_lines ADD COLUMN set_temperature_c REAL DEFAULT NULL",
-  // TKT-5YYLNT — contracts.container_types/imdg_classes were JSON-encoded string arrays, not
-  // queryable/indexable (the GET /api/contracts?containerType= filter had to LIKE-match against
-  // the raw JSON text). Junction tables instead — one row per (contract, type/class) pair, same
-  // delete-then-reinsert-per-save shape contract_legs/contract_rates already use. The old columns
-  // are left in place (SQLite can't cheaply drop them, and this codebase's standing precedent is
-  // additive-only) but are no longer written to after this ships — every read/write path moves to
-  // these tables instead (see routes/contracts.js's withContractArrays/saveContractArray).
-  `CREATE TABLE IF NOT EXISTS contract_container_types (
-    id             TEXT PRIMARY KEY,
-    contract_id    TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
-    container_type TEXT NOT NULL
-  )`,
-  `CREATE TABLE IF NOT EXISTS contract_imdg_classes (
-    id             TEXT PRIMARY KEY,
-    contract_id    TEXT NOT NULL REFERENCES contracts(id) ON DELETE CASCADE,
-    imdg_class     TEXT NOT NULL
-  )`,
-  "CREATE UNIQUE INDEX IF NOT EXISTS idx_contract_container_types_uniq ON contract_container_types(contract_id, container_type)",
-  "CREATE UNIQUE INDEX IF NOT EXISTS idx_contract_imdg_classes_uniq ON contract_imdg_classes(contract_id, imdg_class)",
-  // NVOCC support, Epic TKT-Q52B38 — a customer eligible for the new "NVOCC" party role (below)
-  // can carry its own FMC (or equivalent non-US) license/registration number. Mirrors the
-  // classified_location boolean-flag-plus-detail-field pattern (v0.63.0) exactly: is_nvocc
-  // gates whether fmc_number means anything, same as classified_location gates latitude/longitude.
-  "ALTER TABLE customers ADD COLUMN is_nvocc INTEGER NOT NULL DEFAULT 0",
-  "ALTER TABLE customers ADD COLUMN fmc_number TEXT DEFAULT ''",
-  // Export Filing <-> Pickup integration (Epic TKT-6A7J45). A Submitted AES/EEI filing
-  // previously carried no snapshot of what was actually declared beyond its own reference —
-  // these columns are written once, at Submit time, from the shipment's real conveyance/cargo
-  // data (routes/customs-filing.js), so (a) the transmitted payload actually states carrier/
-  // vessel/voyage/export date, not just pol/pod, and (b) a later mismatch against the
-  // shipment's now-current data can be detected and flagged (see the GET route's own
-  // isStale computation) rather than a Filed/Accepted filing silently going stale.
-  "ALTER TABLE customs_filings ADD COLUMN carrier_code   TEXT DEFAULT ''",
-  "ALTER TABLE customs_filings ADD COLUMN vessel_name    TEXT DEFAULT ''",
-  "ALTER TABLE customs_filings ADD COLUMN voyage_number  TEXT DEFAULT ''",
-  "ALTER TABLE customs_filings ADD COLUMN export_date    TEXT DEFAULT ''",
-  "ALTER TABLE customs_filings ADD COLUMN cargo_snapshot TEXT DEFAULT '[]'",
-  // Credit Control Depth, third pass (Epic TKT-6XFJQM, Story TKT-GLWMFP) — a consumable
-  // "permission slip" for the one class of credit block that's a soft warning rather than a
-  // hard gate: generating an invoice while the responsible party is over their credit_limit.
-  // credit_hold's release needs no equivalent table — it's an instant, global action recorded
-  // directly on customers.credit_hold/credit_hold_reason, not a standing grant. An over-limit
-  // approval is scoped to one shipment (the context it was requested from) and consumed the
-  // moment the invoice it was approved for is actually generated — a customer going over limit
-  // again later (a fresh invoice, a lowered limit) needs a fresh approval, never a standing
-  // bypass. consumed_at NULL = still valid/unused.
-  `CREATE TABLE IF NOT EXISTS credit_overrides (
-    id               TEXT PRIMARY KEY,
-    customer_id      TEXT NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
-    shipment_id      TEXT NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
-    override_type    TEXT NOT NULL,
-    reason           TEXT NOT NULL,
-    approved_by      TEXT NOT NULL,
-    approved_by_name TEXT DEFAULT '',
-    created_at       TEXT NOT NULL,
-    consumed_at      TEXT DEFAULT NULL
-  )`,
-  "CREATE INDEX IF NOT EXISTS idx_credit_overrides_shipment ON credit_overrides(shipment_id, override_type, consumed_at)",
-  // Invoicing Discipline & Billing Performance (Epic TKT-KR6ZBT), Story TKT-NQ87D3 — a real
-  // payment-receipt primitive. Before this, "outstanding AR" (computeArExposure) meant purely
-  // "confirmed, non-voided invoice" — there was no concept anywhere of a customer having
-  // actually paid. paid_at is the date the financial controller enters (required at the API
-  // level when marking paid, never defaulted to "now" — a payment recorded a few days after the
-  // fact should still age from when the money actually arrived). paid_amount supports a partial
-  // payment without silently reading as fully settled. transaction_id is optional reference
-  // data only (bank reference, wire confirmation, etc.) — never validated or acted on.
-  "ALTER TABLE shipment_documents ADD COLUMN paid_at        TEXT DEFAULT NULL",
-  "ALTER TABLE shipment_documents ADD COLUMN paid_amount    REAL DEFAULT NULL",
-  "ALTER TABLE shipment_documents ADD COLUMN transaction_id TEXT DEFAULT ''",
-  // Story TKT-PLAVEK — whether a document was ever sent is reconstructed today by joining
-  // entity_events (email, routes/shipment-ops.js's send-email route) and the document-
-  // distribution microservice's own edi_transmittals/webhook_deliveries tables (each keyed by
-  // document_id, never written back here) — fine for an on-demand history modal, too expensive
-  // to join live for every row of a report. Written once by whichever channel succeeds first;
-  // purely a fast read-side signal — the full multi-channel history stays exactly where it
-  // already lives, this column never replaces it.
-  "ALTER TABLE shipment_documents ADD COLUMN first_sent_at  TEXT DEFAULT NULL",
-  // Story TKT-YC7PZP — mirrors credit_terms_days exactly: nullable, per-customer, blank means
-  // no deadline configured (not "0 days"). Days after the shipment's own "delivered" milestone
-  // within which an invoice should be generated and sent — a soft, informational flag only,
-  // never a hard block (matches this Epic's own credit-hold-vs-limit precedent: blocking
-  // shipment progress over a billing-process lag would hold up the wrong side of the business).
-  "ALTER TABLE customers ADD COLUMN invoice_deadline_days INTEGER DEFAULT NULL",
-  // Story TKT-4TEYT1 (Epic TKT-KR6ZBT) — configurable per-customer reminder cadence, direct
-  // follow-up: "some clients may pay the same day, but some clients make the payment at the end
-  // of the month ... notifications need to be configurable". Opt-in (default off) rather than
-  // spammy-by-default — reminder_enabled gates whether this customer gets automated dunning
-  // emails at all. reminder_interval_days controls repeats once overdue: null/0 means send a
-  // single reminder and stop; a real value re-sends every N days for as long as the invoice
-  // stays overdue and unpaid. Deliberately does NOT duplicate credit_terms_days/
-  // invoice_deadline_days — "is this invoice overdue" is already fully answered by the existing
-  // credit_terms_days-anchored due-date math (computeArExposure's aging, the Billing
-  // Performance report's daysOverdue) — a same-day payer's short terms and an end-of-month
-  // consolidator's 30-day terms already produce naturally different "overdue" dates with zero
-  // new fields; these two columns only control the SEPARATE question of whether/how often to
-  // remind once that's true.
-  "ALTER TABLE customers ADD COLUMN reminder_enabled INTEGER NOT NULL DEFAULT 0",
-  "ALTER TABLE customers ADD COLUMN reminder_interval_days INTEGER DEFAULT NULL",
-  // Tracks the sweep's own cadence per invoice — null means never reminded yet.
-  "ALTER TABLE shipment_documents ADD COLUMN last_reminder_sent_at TEXT DEFAULT NULL",
-  // Equipment condition capture at gate in/out (TKT-QSUTQ7, FCL Coverage Audit epic
-  // TKT-6PO7SV) — container_events logged WHEN a container moved but never its CONDITION.
-  // condition_notes is deliberately separate from the pre-existing free-text `notes` column
-  // (general event commentary, e.g. "processed by Agent Jones") — this is specifically a
-  // damage/condition observation, the evidence a disputed detention charge usually comes
-  // down to. damage_flag lets the row be queried/badged without parsing notes text.
-  "ALTER TABLE container_events ADD COLUMN condition_notes TEXT DEFAULT ''",
-  "ALTER TABLE container_events ADD COLUMN damage_flag INTEGER NOT NULL DEFAULT 0",
-  // Chassis / drayage tracking (TKT-V8MIG0) rides directly on the EIR columns above per that
-  // ticket's own scoping — a chassis-provider field on the same gate-event row a condition
-  // photo is already being attached to, rather than a separate subsystem. Per-diem charges
-  // need no new machinery — the existing generic charge-code/cost-line system already accepts
-  // any charge code, chassis per-diem included.
-  "ALTER TABLE container_events ADD COLUMN chassis_provider TEXT DEFAULT ''",
-  // Lets an uploaded document (a condition/damage photo, via the existing generic upload
-  // route) point at the specific gate-movement event it documents, not just the container in
-  // general — a disputed charge needs "this photo proves the state at Gate In on this date,"
-  // not just "some photo of this container exists somewhere."
-  "ALTER TABLE shipment_documents ADD COLUMN container_event_id TEXT DEFAULT ''",
-  // Landed-cost / duty estimate (TKT-U6IZCL, FCL Coverage Audit epic TKT-6PO7SV) — an
-  // explicit ballpark tool, not a customs broker's system of record (a real per-country HS-
-  // tariff feed is the same "needs a data business, not code" gap already named for carrier
-  // networks in the v0.69.0 competitive analysis). Admin-maintained flat-rate-by-HS-chapter
-  // registry, same shape/role pack_type_definitions/charge_code_definitions already have —
-  // any HS chapter not listed here falls back to a constant default rate at compute time.
-  `CREATE TABLE IF NOT EXISTS duty_rate_chapters (
-    hs_chapter TEXT PRIMARY KEY,
-    label      TEXT NOT NULL,
-    rate_pct   REAL NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL
-  )`,
-  "INSERT OR IGNORE INTO duty_rate_chapters (hs_chapter,label,rate_pct,created_at) VALUES ('84','Machinery & mechanical appliances',2.5,datetime('now'))",
-  "INSERT OR IGNORE INTO duty_rate_chapters (hs_chapter,label,rate_pct,created_at) VALUES ('85','Electrical machinery & electronics',2.6,datetime('now'))",
-  "INSERT OR IGNORE INTO duty_rate_chapters (hs_chapter,label,rate_pct,created_at) VALUES ('61','Apparel, knitted or crocheted',16.0,datetime('now'))",
-  "INSERT OR IGNORE INTO duty_rate_chapters (hs_chapter,label,rate_pct,created_at) VALUES ('62','Apparel, not knitted or crocheted',16.0,datetime('now'))",
-  "INSERT OR IGNORE INTO duty_rate_chapters (hs_chapter,label,rate_pct,created_at) VALUES ('64','Footwear',11.0,datetime('now'))",
-  "INSERT OR IGNORE INTO duty_rate_chapters (hs_chapter,label,rate_pct,created_at) VALUES ('94','Furniture & lighting',0.0,datetime('now'))",
-  "INSERT OR IGNORE INTO duty_rate_chapters (hs_chapter,label,rate_pct,created_at) VALUES ('39','Plastics & articles thereof',5.0,datetime('now'))",
-  "INSERT OR IGNORE INTO duty_rate_chapters (hs_chapter,label,rate_pct,created_at) VALUES ('73','Articles of iron or steel',3.0,datetime('now'))",
-  "INSERT OR IGNORE INTO duty_rate_chapters (hs_chapter,label,rate_pct,created_at) VALUES ('87','Vehicles & parts',2.5,datetime('now'))",
-  "INSERT OR IGNORE INTO duty_rate_chapters (hs_chapter,label,rate_pct,created_at) VALUES ('95','Toys, games & sports equipment',0.0,datetime('now'))",
-  "INSERT OR IGNORE INTO duty_rate_chapters (hs_chapter,label,rate_pct,created_at) VALUES ('22','Beverages & spirits',3.0,datetime('now'))",
-  "INSERT OR IGNORE INTO duty_rate_chapters (hs_chapter,label,rate_pct,created_at) VALUES ('09','Coffee, tea, spices',0.0,datetime('now'))",
-  "INSERT OR IGNORE INTO duty_rate_chapters (hs_chapter,label,rate_pct,created_at) VALUES ('42','Leather goods, bags & luggage',8.0,datetime('now'))",
-  // Dual carrier/shipper identity, second half (TKT-9O2B3T, NVOCC epic TKT-Q52B38) — the actual
-  // structural gap wasn't a new carrier_code/principal_id pair (the existing shipment_parties
-  // NVOCC role already carries that identity, see routes/share.js and buildBillOfLadingHtml);
-  // it was that bl_release_type only ever modeled ONE release event, when an NVOCC shipment
-  // genuinely has two: the vessel operator releasing to the NVOCC's own destination agent
-  // (this new column), separate from the NVOCC's own release to the actual consignee
-  // (bl_release_type, unchanged, still governs the existing Delivery Order document).
-  "ALTER TABLE shipments ADD COLUMN master_bl_release_type TEXT DEFAULT ''",
-  // NVOCC co-loading (TKT-UR1X17): the reference/tariff number under which this shipment's own
-  // NVOCC tenders cargo through ANOTHER NVOCC's own contract with the vessel operator, when it
-  // has none of its own for this lane. Free text, mirrors contract_ref's own nature — there's no
-  // real registry of another NVOCC's tariff in this system, same reasoning contract_ref already
-  // uses for SPOT/Pending/Customer Own contract types.
-  "ALTER TABLE shipments ADD COLUMN coload_tariff_reference TEXT DEFAULT ''",
-  // Scheduled / emailed reports (TKT-IXAR9G, Competitive Gap Analysis epic TKT-GTGM6R) —
-  // reporting today is manual-trigger only (fixed dashboard tabs, one-click CSV/XLSX export).
-  // Reuses office_mail_settings/sendViaOffice (already built for the invoice-email flow) —
-  // no new mail infrastructure. report_type is a small, deliberately extensible dispatch key
-  // (see runScheduledReportsSweep) — this first pass ships exactly one ('shipments-csv'),
-  // the ticket's own cheapest, most representative case; adding another report type later is
-  // one more dispatch branch, not a schema change. last_run_at null means never run — due
-  // immediately regardless of frequency, same "never synced yet" convention scheduleNextOfacSync
-  // already uses.
-  `CREATE TABLE IF NOT EXISTS scheduled_reports (
-    id           TEXT PRIMARY KEY,
-    report_type  TEXT NOT NULL DEFAULT 'shipments-csv',
-    frequency    TEXT NOT NULL DEFAULT 'weekly',
-    recipients   TEXT NOT NULL DEFAULT '',
-    office_id    TEXT NOT NULL,
-    is_active    INTEGER NOT NULL DEFAULT 1,
-    last_run_at  TEXT DEFAULT NULL,
-    created_by   TEXT DEFAULT '',
-    created_at   TEXT NOT NULL
-  )`,
-
-  // Invoice Collections Report + Automated Escalation (Epic TKT-G11AHW). "User responsible" and
-  // "local branch manager" are genuinely new concepts — grep confirmed neither existed anywhere
-  // (shipments/shipment_documents had no owner/assignee field, offices had no manager field).
-  // invoice_owner_id defaults to whoever confirmed the invoice (a real, present person) and is
-  // reassignable afterward. collections_alerted_at/collections_escalated_at are sibling columns
-  // to the pre-existing last_reminder_sent_at (same dunning-sweep-timestamp idiom, just for the
-  // new internal-alert sweep instead of the existing customer-facing reminder one).
-  "ALTER TABLE shipment_documents ADD COLUMN invoice_owner_id       TEXT DEFAULT ''",
-  "ALTER TABLE shipment_documents ADD COLUMN collections_alerted_at   TEXT DEFAULT NULL",
-  "ALTER TABLE shipment_documents ADD COLUMN collections_escalated_at TEXT DEFAULT NULL",
-
-  // Per-customer billing cycle (direct follow-up: "the business day helper can be a section of
-  // the customer profile ... billing by date ... payment settlement date"). Both are day-of-month
-  // integers (1-31), recurring — not literal calendar dates — same shape as the existing
-  // invoice_deadline_days, chosen over a DatePicker per direct clarification since a single
-  // stored date wouldn't repeat on its own and the real business case (end-of-month payers) is
-  // inherently a recurring monthly pattern. unlocode is a placeholder for a future public-holiday
-  // lookup — explicitly not wired to any live data source yet ("skip for now, but add a
-  // placeholder... UNLocationCode based").
-  "ALTER TABLE customers ADD COLUMN billing_by_day         INTEGER DEFAULT NULL",
-  "ALTER TABLE customers ADD COLUMN payment_settlement_day INTEGER DEFAULT NULL",
-  "ALTER TABLE customers ADD COLUMN holiday_unlocode       TEXT    DEFAULT ''",
-
-  // Configurable per-office / per-country alert & escalation thresholds (direct follow-up: real
-  // invoicing-deadline law varies by jurisdiction — "For Spain we would get fined if we issue the
-  // invoice too late"). Resolution order, most specific wins: office -> country -> the sweep's own
-  // hardcoded DEFAULT_ALERT_DAYS/DEFAULT_ESCALATION_DAYS fallback. offices.manager_user_id is the
-  // "local branch manager" this epic needs (also absent from the schema before this) — it doubles
-  // as both the escalation recipient AND the authority allowed to edit that office's own
-  // thresholds, since no "branch manager"/"country manager" role exists in this app's role model
-  // (trade_manager is lane-scoped, a different axis entirely) — a deliberate scoping choice, not
-  // an oversight.
-  "ALTER TABLE offices ADD COLUMN manager_user_id                TEXT    DEFAULT ''",
-  "ALTER TABLE offices ADD COLUMN invoice_alert_business_days      INTEGER DEFAULT NULL",
-  "ALTER TABLE offices ADD COLUMN invoice_escalation_business_days INTEGER DEFAULT NULL",
-  "ALTER TABLE countries ADD COLUMN invoice_alert_business_days      INTEGER DEFAULT NULL",
-  "ALTER TABLE countries ADD COLUMN invoice_escalation_business_days INTEGER DEFAULT NULL",
-
-  // Reason codes are admin-configurable (same dual precedent as Pack Types/Duty Rate Chapters —
-  // sensible defaults out of the box, fully editable via Master Data on top), seeded below with
-  // the exact business case described.
-  `CREATE TABLE IF NOT EXISTS invoice_status_reason_codes (
-    id         TEXT PRIMARY KEY,
-    code       TEXT NOT NULL,
-    label      TEXT NOT NULL,
-    is_active  INTEGER NOT NULL DEFAULT 1,
-    created_at TEXT NOT NULL
-  )`,
-  "INSERT OR IGNORE INTO invoice_status_reason_codes (id,code,label,is_active,created_at) VALUES ('IRC-END-OF-MONTH','END_OF_MONTH_TERMS','Customer pays on a fixed end-of-month cycle — expected once their cycle closes, not within standard terms',1,datetime('now'))",
-  "INSERT OR IGNORE INTO invoice_status_reason_codes (id,code,label,is_active,created_at) VALUES ('IRC-DISPUTE','DISPUTE','Customer disputes the invoice amount or line items',1,datetime('now'))",
-  "INSERT OR IGNORE INTO invoice_status_reason_codes (id,code,label,is_active,created_at) VALUES ('IRC-PENDING-DOCS','PENDING_DOCS','Awaiting supporting documentation before the customer will process payment',1,datetime('now'))",
-  "INSERT OR IGNORE INTO invoice_status_reason_codes (id,code,label,is_active,created_at) VALUES ('IRC-INTERNAL-DELAY','INTERNAL_DELAY','Payment confirmed by the customer, not yet reconciled internally',1,datetime('now'))",
-  "INSERT OR IGNORE INTO invoice_status_reason_codes (id,code,label,is_active,created_at) VALUES ('IRC-OTHER','OTHER','Other — see description',1,datetime('now'))",
-
-  // An audit-trail INSERT per override event (never an overwritten single field) — same
-  // convention entity_events/CostLineHistoryModal's diff history already use throughout this
-  // codebase. The most recent row for a document is its active override.
-  `CREATE TABLE IF NOT EXISTS invoice_status_overrides (
-    id                TEXT PRIMARY KEY,
-    document_id       TEXT NOT NULL,
-    reason_code       TEXT NOT NULL,
-    description       TEXT NOT NULL DEFAULT '',
-    overridden_status TEXT NOT NULL,
-    overridden_by     TEXT NOT NULL DEFAULT '',
-    overridden_at     TEXT NOT NULL
-  )`,
-  "CREATE INDEX IF NOT EXISTS idx_invoice_status_overrides_doc ON invoice_status_overrides(document_id)",
-
-  // eAdapter — per-carrier EDI connectivity configuration, first story of the carrier-EDI epic.
-  // One row per (carrier, office) as of v0.83.0 — a real carrier relationship is negotiated
-  // per-country/per-branch, not once globally (a low-volume office is exactly the case a carrier
-  // is least likely to bother giving EDI access to), so a carrier can hold several rows, one per
-  // office it's actually configured for. office_id is the real scope key; country_iso2 is
-  // denormalized from that office at write time (never trusted from the request body) purely so
-  // the config list is scannable/groupable by country without a JOIN — see routes/eadapter.js.
-  // Mirrors office_mail_settings' own shape otherwise (typed transport columns, is_active,
-  // timestamps). credential is stored plaintext but — same precedent as
-  // office_mail_settings.smtp_password/org_signing_certs — NO mapper or route ever returns it
-  // raw; only a hasCredential boolean. This pass is configuration + CRUD only, no live outbound
-  // call is attempted yet (see isEdiBookable below).
-  `CREATE TABLE IF NOT EXISTS carrier_eadapter_configs (
-    id               TEXT PRIMARY KEY,
-    carrier_code     TEXT NOT NULL,
-    country_iso2     TEXT NOT NULL DEFAULT '',
-    office_id        TEXT NOT NULL DEFAULT '',
-    transport_type   TEXT NOT NULL DEFAULT 'rest_api',
-    endpoint_url     TEXT NOT NULL DEFAULT '',
-    auth_header_name TEXT NOT NULL DEFAULT '',
-    credential       TEXT NOT NULL DEFAULT '',
-    is_active        INTEGER NOT NULL DEFAULT 1,
-    notes            TEXT NOT NULL DEFAULT '',
-    created_at       TEXT NOT NULL,
-    updated_at       TEXT NOT NULL,
-    UNIQUE(carrier_code, office_id)
-  )`,
-  // Defaults ON — the original 3 hardcoded BOOKABLE_CARRIERS (MAEU/SAFM/MCPU) keep working
-  // exactly as they do today on every existing install; nothing breaks silently on upgrade.
-  // Turning this off collapses ALL carriers (built-in or eAdapter-configured) to manual mode
-  // uniformly — see isEdiBookable.
-  "INSERT OR IGNORE INTO app_settings (key, value) VALUES ('api_eadapter_enabled', 'true')",
-
-  // Multi-Entity / Multi-Branch Accounting (TKT-EEV4I9) — a `branches` row already groups
-  // offices by country/location, the same "Enterprise Unit ≈ legal entity" concept CargoWise's
-  // own multi-entity model uses; this is the one piece it was missing to also serve as a real
-  // accounting boundary. Kept 1:1 with `branches` deliberately — no new `entities` table — see
-  // routes/finance.js's byEntity breakdown for how a shipment's owning entity is resolved
-  // (EMO office's branch, falling back to IMO's) with zero new columns on shipments/cost lines.
-  "ALTER TABLE branches ADD COLUMN currency TEXT DEFAULT NULL",
-];
-
-// "duplicate column name" is the expected, harmless result of re-running an ADD COLUMN
-// migration against a DB that already has it (SQLite has no ADD COLUMN IF NOT EXISTS) —
-// every one of the ~100 ALTER TABLE lines above hits this on every restart after the first.
-// Anything else (syntax error, wrong type, locked db, disk full, ...) is a genuine failure
-// that used to vanish into this same catch-all with zero trace.
-const migrationFailures = [];
-for (const sql of migrations) {
-  try {
-    db.exec(sql);
-  } catch (e) {
-    if (!/duplicate column name/i.test(e.message)) {
-      migrationFailures.push({ sql: sql.slice(0, 100), error: e.message });
-      console.error(`[migration] FAILED: ${e.message}\n  SQL: ${sql.slice(0, 140)}`);
-    }
-  }
-}
-if (migrationFailures.length) {
-  console.error(`[migration] ${migrationFailures.length} startup migration(s) failed — schema may be incomplete, see above.`);
-}
-
-// One-time backfill (TKT-5YYLNT): populate the new junction tables from every contract's existing
-// container_types/imdg_classes JSON column, now that the migration loop above has actually created
-// them. Idempotent via the unique index on each table — a second run (e.g. after a restart) hits
-// the same "UNIQUE constraint failed" INSERT OR IGNORE already treats as the expected no-op, same
-// as every other backfill in this codebase.
-(function backfillContractArrayFields() {
-  const rows = db.prepare("SELECT id, container_types, imdg_classes FROM contracts").all();
-  const insType = db.prepare("INSERT OR IGNORE INTO contract_container_types (id, contract_id, container_type) VALUES (?,?,?)");
-  const insClass = db.prepare("INSERT OR IGNORE INTO contract_imdg_classes (id, contract_id, imdg_class) VALUES (?,?,?)");
-  for (const r of rows) {
-    let types = [], classes = [];
-    try { types = JSON.parse(r.container_types || "[]"); } catch { /* malformed legacy value, skip */ }
-    try { classes = JSON.parse(r.imdg_classes || "[]"); } catch { /* malformed legacy value, skip */ }
-    for (const t of types) if (t) insType.run(`CCT-${uid()}`, r.id, t);
-    for (const c of classes) if (c) insClass.run(`CIC-${uid()}`, r.id, c);
-  }
-})();
-
-// One-time table rebuild: shipment_schedules.shipment_id NOT NULL -> nullable, plus a new
-// self-referential template_id column. SQLite can't drop a NOT NULL constraint via ALTER TABLE
-// (unlike the ~150 plain ADD COLUMN migrations above), so this is a real create-copy-swap —
-// guarded by checking the column's own notnull flag first, so it only ever runs once per DB.
-// Narrow blast radius: nothing else in this schema joins on shipment_id expecting non-null
-// (mapSchedule/linked-shipment lookups already null-guard), and the everyday "Add Sailing" flow
-// keeps writing shipment-owned rows exactly as before — only the Schedule Generator's new
-// ownerless "template" rows actually exercise the null case.
-;(function rebuildShipmentSchedulesNullableOwner() {
-  try {
-    const cols = db.prepare("PRAGMA table_info(shipment_schedules)").all();
-    const shipmentIdCol = cols.find(c => c.name === "shipment_id");
-    if (!shipmentIdCol || shipmentIdCol.notnull === 0) return; // already migrated (or table missing)
-    // foreign_keys can't be toggled mid-transaction (SQLite silently no-ops it) — must be set
-    // before BEGIN, per SQLite's own documented recipe for this class of rebuild.
-    db.exec("PRAGMA foreign_keys=OFF");
-    db.exec("BEGIN");
-    db.exec(`CREATE TABLE shipment_schedules_new (
-      id            TEXT PRIMARY KEY,
-      shipment_id   TEXT REFERENCES shipments(id) ON DELETE CASCADE,
-      carrier       TEXT DEFAULT '',
-      vessel_name   TEXT DEFAULT '',
-      voyage_number TEXT DEFAULT '',
-      service       TEXT DEFAULT '',
-      pol           TEXT DEFAULT '',
-      pod           TEXT DEFAULT '',
-      etd           TEXT DEFAULT '',
-      eta           TEXT DEFAULT '',
-      transit_days  INTEGER DEFAULT 0,
-      is_mock       INTEGER DEFAULT 0,
-      saved_at      TEXT NOT NULL,
-      saved_by      TEXT NOT NULL DEFAULT '',
-      vessel_imo    TEXT DEFAULT '',
-      atd           TEXT DEFAULT '',
-      ata           TEXT DEFAULT '',
-      source        TEXT DEFAULT 'search',
-      template_id   TEXT REFERENCES shipment_schedules(id) ON DELETE SET NULL,
-      schedule_key  TEXT DEFAULT ''
-    )`);
-    db.exec(`INSERT INTO shipment_schedules_new
-      (id, shipment_id, carrier, vessel_name, voyage_number, service, pol, pod, etd, eta,
-       transit_days, is_mock, saved_at, saved_by, vessel_imo, atd, ata, source, template_id, schedule_key)
-      SELECT id, shipment_id, carrier, vessel_name, voyage_number, service, pol, pod, etd, eta,
-             transit_days, is_mock, saved_at, saved_by, vessel_imo, atd, ata, source, NULL, schedule_key
-      FROM shipment_schedules`);
-    db.exec("DROP TABLE shipment_schedules");
-    db.exec("ALTER TABLE shipment_schedules_new RENAME TO shipment_schedules");
-    db.exec("COMMIT");
-    console.log("  ✔ shipment_schedules rebuilt: shipment_id is now nullable, template_id added");
-  } catch (e) {
-    try { db.exec("ROLLBACK"); } catch {}
-    console.error("[migration] FAILED shipment_schedules rebuild:", e.message);
-    migrationFailures.push({ sql: "rebuildShipmentSchedulesNullableOwner", error: e.message });
-  } finally {
-    try { db.exec("PRAGMA foreign_keys=ON"); } catch {}
-  }
-})();
-
-// One-time restructure: carrier_agents moves from one-row-per-port to a header (carrier_code +
-// agent_customer_id) + child carrier_agent_locations table, so a single Line Agent can cover
-// several UN/LOCODEs and/or whole countries instead of exactly one port. SQLite can't drop the
-// old UNIQUE(carrier_code, port_unlocode)/NOT NULL port_unlocode via ALTER TABLE, so this is the
-// same guarded create-copy-swap shape as the shipment_schedules/carrier_eadapter_configs rebuilds
-// above — gated on the presence of the old port_unlocode column, so it only ever runs once per
-// DB. Every pre-existing row becomes one location under a header grouped by (carrier_code,
-// agent_customer_id) — the only way to represent "one agent, several ports" before this existed
-// was already several separate rows sharing that same pair, so grouping them is lossless for
-// carrier/agent/location; only a differing note across grouped rows can't all survive (the
-// header keeps the first non-blank one, matching this codebase's own precedent of a disclosed,
-// reasonable simplification during a structural migration rather than blocking on it).
-;(function rebuildCarrierAgentsLocations() {
-  try {
-    const cols = db.prepare("PRAGMA table_info(carrier_agents)").all();
-    if (!cols.some(c => c.name === "port_unlocode")) return; // already migrated (or table missing)
-    const oldRows = db.prepare("SELECT * FROM carrier_agents ORDER BY created_at").all();
-    db.exec("PRAGMA foreign_keys=OFF");
-    db.exec("BEGIN");
-    db.exec("ALTER TABLE carrier_agents RENAME TO carrier_agents_old_v1");
-    // SQLite's ALTER TABLE RENAME silently rewrites any OTHER table's foreign-key reference that
-    // points at the renamed table — carrier_agent_locations (already created moments earlier by
-    // the flat migrations array above, on a fresh boot) has its FK repointed at
-    // carrier_agents_old_v1, which is about to be dropped, leaving a dangling reference. Drop and
-    // recreate it fresh here, after the real carrier_agents table exists again, so its FK binds
-    // correctly. Harmless no-op on an already-migrated DB (never has the old shape to trigger this
-    // branch at all) and on a schema where the array hasn't run yet (DROP TABLE IF EXISTS).
-    db.exec("DROP TABLE IF EXISTS carrier_agent_locations");
-    db.exec(`CREATE TABLE carrier_agents (
-      id                 TEXT PRIMARY KEY,
-      carrier_code       TEXT NOT NULL,
-      agent_customer_id  TEXT NOT NULL REFERENCES customers(id),
-      note               TEXT DEFAULT '',
-      created_at         TEXT NOT NULL,
-      UNIQUE(carrier_code, agent_customer_id)
-    )`);
-    db.exec(`CREATE TABLE carrier_agent_locations (
-      id                TEXT PRIMARY KEY,
-      carrier_agent_id  TEXT NOT NULL REFERENCES carrier_agents(id) ON DELETE CASCADE,
-      carrier_code      TEXT NOT NULL,
-      location_type     TEXT NOT NULL CHECK(location_type IN ('unlocode','country')),
-      unlocode          TEXT REFERENCES port_locations(unlocode),
-      country_iso2      TEXT REFERENCES countries(iso2),
-      created_at        TEXT NOT NULL
-    )`);
-    db.exec("CREATE INDEX IF NOT EXISTS idx_cal_agent ON carrier_agent_locations(carrier_agent_id)");
-    db.exec("CREATE INDEX IF NOT EXISTS idx_cal_carrier_unlocode ON carrier_agent_locations(carrier_code, unlocode)");
-    db.exec("CREATE INDEX IF NOT EXISTS idx_cal_carrier_country ON carrier_agent_locations(carrier_code, country_iso2)");
-    const headerMap  = new Map(); // "carrierCode|agentCustomerId" -> new header id
-    const insHeader  = db.prepare("INSERT INTO carrier_agents (id,carrier_code,agent_customer_id,note,created_at) VALUES (?,?,?,?,?)");
-    const insLoc     = db.prepare("INSERT INTO carrier_agent_locations (id,carrier_agent_id,carrier_code,location_type,unlocode,created_at) VALUES (?,?,?,'unlocode',?,?)");
-    for (const r of oldRows) {
-      const key = `${r.carrier_code}|${r.agent_customer_id}`;
-      let headerId = headerMap.get(key);
-      if (!headerId) {
-        headerId = `CAG-${uid()}`;
-        insHeader.run(headerId, r.carrier_code, r.agent_customer_id, r.note || '', r.created_at);
-        headerMap.set(key, headerId);
-      }
-      insLoc.run(`CAL-${uid()}`, headerId, r.carrier_code, r.port_unlocode, r.created_at);
-    }
-    db.exec("DROP TABLE carrier_agents_old_v1");
-    db.exec("COMMIT");
-    console.log(`  ✔ carrier_agents restructured: ${oldRows.length} row(s) -> ${headerMap.size} header(s) + locations`);
-  } catch (e) {
-    try { db.exec("ROLLBACK"); } catch {}
-    console.error("[migration] FAILED carrier_agents restructure:", e.message);
-    migrationFailures.push({ sql: "rebuildCarrierAgentsLocations", error: e.message });
-  } finally {
-    try { db.exec("PRAGMA foreign_keys=ON"); } catch {}
-  }
-})();
-
-// One-time table rebuild: carrier_eadapter_configs — carrier_code was a lone UNIQUE key (one row
-// per carrier, no scope); v0.83.0 rescopes it to (carrier_code, office_id) and adds country_iso2.
-// SQLite can't drop a UNIQUE constraint via ALTER TABLE, so this is the same guarded create-copy-
-// swap as the shipment_schedules rebuild above — gated by checking whether office_id already
-// exists, so it only ever runs once per DB. Every pre-existing row predates per-office scoping and
-// has no real office to attribute itself to, so rather than guess one, each is deactivated with an
-// explanatory note appended — an admin re-adds it properly, scoped to the office it actually
-// applies to, via the (now office-aware) config modal.
-;(function rebuildCarrierEadapterConfigsScoped() {
-  try {
-    const cols = db.prepare("PRAGMA table_info(carrier_eadapter_configs)").all();
-    if (cols.some(c => c.name === "office_id")) return; // already migrated (or table missing)
-    db.exec("PRAGMA foreign_keys=OFF");
-    db.exec("BEGIN");
-    db.exec(`CREATE TABLE carrier_eadapter_configs_new (
-      id               TEXT PRIMARY KEY,
-      carrier_code     TEXT NOT NULL,
-      country_iso2     TEXT NOT NULL DEFAULT '',
-      office_id        TEXT NOT NULL DEFAULT '',
-      transport_type   TEXT NOT NULL DEFAULT 'rest_api',
-      endpoint_url     TEXT NOT NULL DEFAULT '',
-      auth_header_name TEXT NOT NULL DEFAULT '',
-      credential       TEXT NOT NULL DEFAULT '',
-      is_active        INTEGER NOT NULL DEFAULT 1,
-      notes            TEXT NOT NULL DEFAULT '',
-      created_at       TEXT NOT NULL,
-      updated_at       TEXT NOT NULL,
-      UNIQUE(carrier_code, office_id)
-    )`);
-    db.prepare(`INSERT INTO carrier_eadapter_configs_new
-      (id, carrier_code, country_iso2, office_id, transport_type, endpoint_url, auth_header_name,
-       credential, is_active, notes, created_at, updated_at)
-      SELECT id, carrier_code, '', '', transport_type, endpoint_url, auth_header_name,
-             credential, 0,
-             TRIM(notes || ' [Deactivated by the office-scoping migration — re-add scoped to a real office.]'),
-             created_at, ?
-      FROM carrier_eadapter_configs`).run(new Date().toISOString());
-    db.exec("DROP TABLE carrier_eadapter_configs");
-    db.exec("ALTER TABLE carrier_eadapter_configs_new RENAME TO carrier_eadapter_configs");
-    db.exec("COMMIT");
-    console.log("  ✔ carrier_eadapter_configs rebuilt: scoped to (carrier_code, office_id); any pre-existing rows deactivated pending re-scoping");
-  } catch (e) {
-    try { db.exec("ROLLBACK"); } catch {}
-    console.error("[migration] FAILED carrier_eadapter_configs rebuild:", e.message);
-    migrationFailures.push({ sql: "rebuildCarrierEadapterConfigsScoped", error: e.message });
-  } finally {
-    try { db.exec("PRAGMA foreign_keys=ON"); } catch {}
-  }
-})();
-
-// One-time backfill: give every pre-existing shipment_schedules row a uniform leg-backed
-// representation under the new content-keyed model (sailing_legs/schedule_leg_refs above) —
-// idempotent (skips any schedule that already has schedule_leg_refs rows, so re-running on every
-// boot after the first is a no-op). A real TSP row (2+ existing schedule_legs) gets each of its
-// legs upserted into sailing_legs and referenced in order; a direct row (0-1 schedule_legs) gets
-// ONE synthetic leg built from its own top-level carrier/pol/pod/vessel/voyage/etd/eta/service —
-// the same "every schedule has 1+ legs" convention the rewritten write paths use going forward.
-// No entity_events logging here: this is populating sailing_legs for the first time, not revising
-// an existing row, so there's nothing to diff against yet.
-;(function backfillSailingLegs() {
-  const legKeyOf = l => [l.carrier, l.vessel_imo, l.voyage_number, l.pol, l.pod, l.etd]
-    .map(v => (v || '').toString().trim().toUpperCase()).join('|');
-  const upsertBackfillLeg = (l, now) => {
-    const legKey = legKeyOf(l);
-    db.prepare(`INSERT INTO sailing_legs (leg_key, carrier, pol, pod, etd, eta, vessel_name, vessel_imo, voyage_number, service, created_at, updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(leg_key) DO NOTHING`)
-      .run(legKey, l.carrier || '', l.pol || '', l.pod || '', l.etd || '', l.eta || '',
-           l.vessel_name || '', l.vessel_imo || '', l.voyage_number || '', l.service || '', now, now);
-    return legKey;
-  };
-  try {
-    const schedules = db.prepare(`
-      SELECT s.* FROM shipment_schedules s
-      WHERE NOT EXISTS (SELECT 1 FROM schedule_leg_refs r WHERE r.schedule_id = s.id)
-    `).all();
-    if (schedules.length === 0) return;
-    const insertRef = db.prepare("INSERT INTO schedule_leg_refs (schedule_id, leg_key, leg_order) VALUES (?,?,?)");
-    const updateKey = db.prepare("UPDATE shipment_schedules SET schedule_key=? WHERE id=?");
-    const now = new Date().toISOString();
-    db.exec("BEGIN");
-    for (const sched of schedules) {
-      const oldLegs = db.prepare("SELECT * FROM schedule_legs WHERE schedule_id=? ORDER BY leg_order ASC").all(sched.id);
-      const legRows = oldLegs.length >= 2 ? oldLegs : [{
-        carrier: sched.carrier, pol: sched.pol, pod: sched.pod, etd: sched.etd, eta: sched.eta,
-        vessel_name: sched.vessel_name, vessel_imo: sched.vessel_imo, voyage_number: sched.voyage_number, service: sched.service,
-      }];
-      const legKeys = legRows.map(l => upsertBackfillLeg(l, now));
-      legKeys.forEach((legKey, i) => insertRef.run(sched.id, legKey, i));
-      updateKey.run(legKeys.join("→"), sched.id);
-    }
-    db.exec("COMMIT");
-    console.log(`  ✔ Backfilled ${schedules.length} schedule(s) into sailing_legs/schedule_leg_refs`);
-  } catch (e) {
-    try { db.exec("ROLLBACK"); } catch {}
-    console.error("[migration] FAILED backfillSailingLegs:", e.message);
-    migrationFailures.push({ sql: "backfillSailingLegs", error: e.message });
-  }
-})();
 
 const UPLOADS_DIR = path.join(__dirname, "uploads", "documents");
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
@@ -2509,7 +315,7 @@ async function rebuildPortLanesMap() {
   try {
     const plRows = ((await getSettings()).mdm_source || "local") === "remote"
       ? await callMdmService("GET", "/internal/port-lanes-index")
-      : db.prepare(PORT_LANES_SQL).all();
+      : await query(PORT_LANES_SQL);
     for (const key of Object.keys(portLanesMap)) delete portLanesMap[key];
     for (const r of plRows) {
       if (!portLanesMap[r.unlocode]) portLanesMap[r.unlocode] = new Set();
@@ -2520,7 +326,6 @@ async function rebuildPortLanesMap() {
     console.warn("  ⚠ Port→lane index failed:", e.message);
   }
 }
-rebuildPortLanesMap();
 
 // ─── Port → country index (for country-code access filtering) ─────────────────
 // Deliberately built ONCE at boot and never refreshed thereafter, in both modes — a pre-existing
@@ -2528,33 +333,34 @@ rebuildPortLanesMap();
 // restart) that this cut preserves rather than fixes. 'remote' mode does one bulk GET
 // /internal/port-country-map instead of the local read.
 const portCountryMap = {};
-(async () => {
+async function rebuildPortCountryMap() {
   try {
     const pcRows = ((await getSettings()).mdm_source || "local") === "remote"
       ? await callMdmService("GET", "/internal/port-country-map")
-      : db.prepare("SELECT unlocode, country_code FROM port_locations WHERE country_code IS NOT NULL AND country_code != ''").all();
+      : await query("SELECT unlocode, country_code FROM port_locations WHERE country_code IS NOT NULL AND country_code != ''");
     for (const r of pcRows) portCountryMap[r.unlocode] = r.country_code;
     console.log(`  ✔ Port→country map built for ${Object.keys(portCountryMap).length} ports`);
   } catch (e) {
     console.warn("  ⚠ Port→country map failed:", e.message);
   }
-})();
+}
 
 // Pre-declared here so broadcastMessage / recomputeSpaceBadge (defined below) can close over it;
 // the WebSocket handler in this same file populates it after the server starts.
 const shipmentSubs = new Map();
 
 // ─── Backfill user roles array ────────────────────────────────────────────────
-;(function backfillUserRoles() {
+// Not purely historical: seedAdmin/seedTestFixtureAdmin below only ever set the singular `role`
+// column, never `roles` — every freshly-seeded account needs this to run right after, every boot.
+async function backfillUserRoles() {
   try {
-    const toUpdate = db.prepare("SELECT id, role FROM users WHERE roles IS NULL OR roles = ''").all();
+    const toUpdate = await query("SELECT id, role FROM users WHERE roles IS NULL OR roles = ''");
     for (const u of toUpdate) {
-      db.prepare("UPDATE users SET roles = ? WHERE id = ?")
-        .run(JSON.stringify([u.role || 'viewer']), u.id);
+      await query("UPDATE users SET roles = $1 WHERE id = $2", [JSON.stringify([u.role || 'viewer']), u.id]);
     }
     if (toUpdate.length) console.log(`  ✔ Backfilled roles[] for ${toUpdate.length} user(s)`);
   } catch (e) { console.warn("  ⚠ User roles backfill:", e.message); }
-})();
+}
 
 // ─── Seed admin user ──────────────────────────────────────────────────────────
 
@@ -2567,20 +373,20 @@ const shipmentSubs = new Map();
 // Named (not an anonymous IIFE) so the admin "Reset Demo Data" panel can re-invoke this exact
 // same bootstrap after wiping the users table — the database ends up in exactly the state a
 // truly fresh boot would produce, not a bespoke new one.
-function seedAdmin() {
+async function seedAdmin() {
   const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "admin@cargodesk.com";
   const TEMP_PW    = process.env.ADMIN_PASSWORD || "admin123";
-  const exists = db.prepare("SELECT id FROM users WHERE email = ?").get(ADMIN_EMAIL);
+  const [exists] = await query("SELECT id FROM users WHERE email = $1", [ADMIN_EMAIL]);
   if (!exists) {
-    db.prepare(
-      "INSERT INTO users (id, email, name, password_hash, role, is_active, created_at) VALUES (?, ?, ?, ?, 'admin', 1, datetime('now'))"
-    ).run(`USR-${uid()}`, ADMIN_EMAIL, "Admin", bcrypt.hashSync(TEMP_PW, 10));
+    await query(
+      "INSERT INTO users (id, email, name, password_hash, role, is_active, created_at) VALUES ($1, $2, $3, $4, 'admin', TRUE, now()::text)",
+      [`USR-${uid()}`, ADMIN_EMAIL, "Admin", bcrypt.hashSync(TEMP_PW, 10)]
+    );
     console.log(`\n⚓  Admin user created: ${ADMIN_EMAIL}`);
     console.log(`   Temporary password : ${TEMP_PW}`);
     console.log(`   Change it via the User Management panel.\n`);
   }
 }
-seedAdmin();
 
 // Test-fixture admin — every one of the ~30 backend test files, both Cypress suites, and this
 // session's own CDP verification scripts all hardcode this exact account as a documented
@@ -2593,38 +399,51 @@ seedAdmin();
 // `Fatal: Login failed (401)` on the very first test file. Idempotent and unconditional, same
 // as seedAdmin() above — same disclosed-insecure-default tradeoff, since it's a fixed, publicly
 // documented password purely for automated verification, never meant to gate anything real.
-function seedTestFixtureAdmin() {
+async function seedTestFixtureAdmin() {
   const EMAIL = "claudeagent@localhost";
   const PW    = "TestFixture!2026Zq";
-  const exists = db.prepare("SELECT id FROM users WHERE email = ?").get(EMAIL);
+  const [exists] = await query("SELECT id FROM users WHERE email = $1", [EMAIL]);
   if (!exists) {
-    db.prepare(
-      "INSERT INTO users (id, email, name, password_hash, role, is_active, created_at) VALUES (?, ?, ?, ?, 'admin', 1, datetime('now'))"
-    ).run(`USR-${uid()}`, EMAIL, "Test Fixture Admin", bcrypt.hashSync(PW, 10));
+    await query(
+      "INSERT INTO users (id, email, name, password_hash, role, is_active, created_at) VALUES ($1, $2, $3, $4, 'admin', TRUE, now()::text)",
+      [`USR-${uid()}`, EMAIL, "Test Fixture Admin", bcrypt.hashSync(PW, 10)]
+    );
     console.log(`⚓  Test-fixture admin created: ${EMAIL} (used by the automated test suite)`);
   }
 }
-seedTestFixtureAdmin();
 
 // ─── Seed document-signing certificate ────────────────────────────────────────
 // Pure JS (node-forge) — safe to run unconditionally every boot, unlike the browser this
 // cert will eventually be used alongside for rendering, which only needs to resolve lazily
 // at render time so a machine with no browser installed yet still starts up fine.
 
-function seedSigningCert() {
+async function seedSigningCert() {
   try {
-    const exists = db.prepare("SELECT id FROM org_signing_certs WHERE status = 'active'").get();
+    const [exists] = await query("SELECT id FROM org_signing_certs WHERE status = 'active'");
     if (exists) return;
     const cert = generateSelfSignedSigningCert();
-    db.prepare(`INSERT INTO org_signing_certs
+    await query(`INSERT INTO org_signing_certs
       (id, cert_pem, private_key_pem, p12_base64, p12_passphrase, fingerprint_sha256, subject, not_before, not_after, status, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', datetime('now'))`)
-      .run(`CERT-${uid()}`, cert.certPem, cert.privateKeyPem, cert.p12Base64, cert.p12Passphrase,
-        cert.fingerprintSha256, cert.subject, cert.notBefore, cert.notAfter);
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'active', now()::text)`,
+      [`CERT-${uid()}`, cert.certPem, cert.privateKeyPem, cert.p12Base64, cert.p12Passphrase,
+        cert.fingerprintSha256, cert.subject, cert.notBefore, cert.notAfter]);
     console.log(`  ✔ Document-signing certificate generated (fingerprint ${cert.fingerprintSha256.slice(0, 16)}...)`);
   } catch (e) { console.warn("  ⚠ Document-signing cert bootstrap:", e.message); }
 }
-seedSigningCert();
+
+// ─── Boot sequence ──────────────────────────────────────────────────────────
+// Every seed/bootstrap step above needs the schema to exist first, and each other needs to run
+// in this order (roles backfill after the two account seeds create rows that need it); chained
+// onto schemaReadyPromise itself so a later `await schemaReadyPromise` (nothing currently needs
+// to) would see every one of these settle too. rebuildPortLanesMap/rebuildPortCountryMap don't
+// gate anything else, so they're fired off after but not folded into the chain — a failure there
+// already just warns (see their own try/catch), same as before this migration.
+schemaReadyPromise = schemaReadyPromise
+  .then(() => seedAdmin())
+  .then(() => seedTestFixtureAdmin())
+  .then(() => backfillUserRoles())
+  .then(() => seedSigningCert());
+schemaReadyPromise.then(() => { rebuildPortLanesMap(); rebuildPortCountryMap(); }).catch(() => {});
 
 // ─── App Settings ─────────────────────────────────────────────────────────────
 
@@ -2637,7 +456,8 @@ async function getSettings() {
   // app_settings table — deliberately static/code-deploy config, not a runtime Settings toggle.
   // Merged into the same flat response so the frontend needs no second fetch for it.
   try {
-    const dbSettings = Object.fromEntries(db.prepare("SELECT key, value FROM app_settings").all().map(r => [r.key, r.value]));
+    const rows = await query("SELECT key, value FROM app_settings");
+    const dbSettings = Object.fromEntries(rows.map(r => [r.key, r.value]));
     return { ...dbSettings, idleTimeoutMinutes: String(staticConfig.session.idleTimeoutMinutes) };
   } catch { return { idleTimeoutMinutes: String(staticConfig.session.idleTimeoutMinutes) }; }
 }
@@ -2710,14 +530,13 @@ const SETTING_DEFAULTS = {
   // meaningfully bigger feature (needs its own table + management UI), not a v1 default.
   gp_target_pct: '',
 };
-{
-  const ins = db.prepare("INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)");
-  db.exec("BEGIN");
-  try {
-    for (const [k, v] of Object.entries(SETTING_DEFAULTS)) ins.run(k, v);
-    db.exec("COMMIT");
-  } catch (e) { db.exec("ROLLBACK"); }
+async function seedSettingDefaults() {
+  await transaction(async (tx) => {
+    for (const [k, v] of Object.entries(SETTING_DEFAULTS))
+      await tx.query("INSERT INTO app_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING", [k, v]);
+  });
 }
+schemaReadyPromise = schemaReadyPromise.then(() => seedSettingDefaults());
 
 // ─── Sanctions helpers ────────────────────────────────────────────────────────
 
@@ -2766,7 +585,7 @@ async function loadSanctionsIndex() {
     try { rows = await callScreeningService("GET", "/internal/sanctions/entries/export"); }
     catch (e) { console.warn("  ⚠ Sanctions index reload from Screening Service failed:", e.message); return; }
   } else {
-    rows = db.prepare("SELECT source, entity_name, entity_type, program, aliases_norm FROM sanctions_entries").all();
+    rows = await query("SELECT source, entity_name, entity_type, program, aliases_norm FROM sanctions_entries");
   }
   sanctionsMap.clear();
   for (const r of rows) {
@@ -2779,7 +598,7 @@ async function loadSanctionsIndex() {
     } catch {}
   }
 }
-loadSanctionsIndex().catch(() => {}); // async now (remote mode) — internal try/catch already logs, this just guards the unhandled-rejection case
+schemaReadyPromise.then(() => loadSanctionsIndex()).catch(() => {}); // internal try/catch already logs, this just guards the unhandled-rejection case
 
 // ─── OFAC SDN sync (extracted so route and scheduler both call it) ─────────────
 
@@ -2837,20 +656,21 @@ async function syncOfacSdn() {
     entries.push({ refId: get("uid"), name, sdnType: get("sdnType"), programs: getAll("program").join("; "), aliasNorms });
   }
 
-  db.prepare("DELETE FROM sanctions_entries WHERE source='OFAC-SDN'").run();
-  const ins = db.prepare(
-    `INSERT OR REPLACE INTO sanctions_entries (id,source,ref_id,entity_name,entity_name_norm,entity_type,program,aliases_norm)
-     VALUES (?,'OFAC-SDN',?,?,?,?,?,?)`
-  );
-  db.exec("BEGIN");
-  try {
+  await transaction(async (tx) => {
+    await tx.query("DELETE FROM sanctions_entries WHERE source='OFAC-SDN'");
     for (const e of entries)
-      ins.run(`OFAC-${e.refId}`, e.refId, e.name, normSanctionName(e.name), e.sdnType, e.programs, JSON.stringify(e.aliasNorms));
-    db.exec("COMMIT");
-  } catch (e2) { db.exec("ROLLBACK"); throw e2; }
+      await tx.query(
+        `INSERT INTO sanctions_entries (id,source,ref_id,entity_name,entity_name_norm,entity_type,program,aliases_norm)
+         VALUES ($1,'OFAC-SDN',$2,$3,$4,$5,$6,$7)
+         ON CONFLICT (id) DO UPDATE SET source='OFAC-SDN', ref_id=$2, entity_name=$3, entity_name_norm=$4, entity_type=$5, program=$6, aliases_norm=$7`,
+        [`OFAC-${e.refId}`, e.refId, e.name, normSanctionName(e.name), e.sdnType, e.programs, JSON.stringify(e.aliasNorms)]);
+  });
 
   const now = new Date().toISOString();
-  db.prepare("INSERT OR REPLACE INTO sanctions_syncs (source,synced_at,entry_count) VALUES ('OFAC-SDN',?,?)").run(now, entries.length);
+  await query(
+    `INSERT INTO sanctions_syncs (source,synced_at,entry_count) VALUES ('OFAC-SDN',$1,$2)
+     ON CONFLICT (source) DO UPDATE SET synced_at=$1, entry_count=$2`,
+    [now, entries.length]);
   await loadSanctionsIndex();
   await rescreenActiveShipments();
   return { source: "OFAC-SDN", syncedAt: now, entries: entries.length };
@@ -2885,22 +705,23 @@ async function syncConsolidatedScreeningList() {
   const results = Array.isArray(data.results) ? data.results : [];
   const entries = results.filter(e => e.id && e.name && !/^Specially Designated Nationals/i.test(e.source || ""));
 
-  db.prepare("DELETE FROM sanctions_entries WHERE id LIKE 'CSL-%'").run();
-  const ins = db.prepare(
-    `INSERT OR REPLACE INTO sanctions_entries (id,source,ref_id,entity_name,entity_name_norm,entity_type,program,aliases_norm)
-     VALUES (?,?,?,?,?,?,?,?)`
-  );
-  db.exec("BEGIN");
-  try {
+  await transaction(async (tx) => {
+    await tx.query("DELETE FROM sanctions_entries WHERE id LIKE 'CSL-%'");
     for (const e of entries)
-      ins.run(`CSL-${e.id}`, e.source || "Consolidated Screening List", String(e.id), e.name,
-               normSanctionName(e.name), e.type || "", (e.programs || []).join("; "),
-               JSON.stringify((e.alt_names || []).map(normSanctionName)));
-    db.exec("COMMIT");
-  } catch (e2) { db.exec("ROLLBACK"); throw e2; }
+      await tx.query(
+        `INSERT INTO sanctions_entries (id,source,ref_id,entity_name,entity_name_norm,entity_type,program,aliases_norm)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+         ON CONFLICT (id) DO UPDATE SET source=$2, ref_id=$3, entity_name=$4, entity_name_norm=$5, entity_type=$6, program=$7, aliases_norm=$8`,
+        [`CSL-${e.id}`, e.source || "Consolidated Screening List", String(e.id), e.name,
+         normSanctionName(e.name), e.type || "", (e.programs || []).join("; "),
+         JSON.stringify((e.alt_names || []).map(normSanctionName))]);
+  });
 
   const now = new Date().toISOString();
-  db.prepare("INSERT OR REPLACE INTO sanctions_syncs (source,synced_at,entry_count) VALUES ('CSL',?,?)").run(now, entries.length);
+  await query(
+    `INSERT INTO sanctions_syncs (source,synced_at,entry_count) VALUES ('CSL',$1,$2)
+     ON CONFLICT (source) DO UPDATE SET synced_at=$1, entry_count=$2`,
+    [now, entries.length]);
   await loadSanctionsIndex();
   await rescreenActiveShipments();
   return { source: "CSL", syncedAt: now, entries: entries.length };
@@ -2914,9 +735,9 @@ async function syncConsolidatedScreeningList() {
 // shipment ever created, most of which are no longer operationally relevant. Same
 // don't-overwrite-a-compliance-officer's-override guard every other re-screen trigger uses.
 async function rescreenActiveShipments() {
-  const ids = db.prepare("SELECT id FROM shipments WHERE status NOT IN ('Completed','Cancelled')").all().map(r => r.id);
-  for (const shipmentId of ids) {
-    const prev = db.prepare("SELECT result, overridden_at FROM shipment_screenings WHERE shipment_id=?").get(shipmentId);
+  const idRows = await query("SELECT id FROM shipments WHERE status NOT IN ('Completed','Cancelled')");
+  for (const { id: shipmentId } of idRows) {
+    const [prev] = await query("SELECT result, overridden_at FROM shipment_screenings WHERE shipment_id=$1", [shipmentId]);
     const isOverridden = prev?.result === 'CLEAR' && prev?.overridden_at;
     if (!isOverridden) await screenShipmentById(shipmentId);
   }
@@ -2949,13 +770,14 @@ async function resolveCustomerGroup(customerId) {
     if (walked.has(current)) break; // safety net against a pre-existing cycle in old data
     walked.add(current);
     root = current;
-    current = db.prepare("SELECT parent_customer_id FROM customers WHERE id=?").get(current)?.parent_customer_id || null;
+    const [row] = await query("SELECT parent_customer_id FROM customers WHERE id=$1", [current]);
+    current = row?.parent_customer_id || null;
   }
   const group = new Set([root]);
   const queue = [root];
   while (queue.length) {
     const id = queue.shift();
-    for (const child of db.prepare("SELECT id FROM customers WHERE parent_customer_id=?").all(id)) {
+    for (const child of await query("SELECT id FROM customers WHERE parent_customer_id=$1", [id])) {
       if (!group.has(child.id)) { group.add(child.id); queue.push(child.id); }
     }
   }
@@ -2975,7 +797,7 @@ async function getCustomerRow(id) {
     try { return await callCustomerService("GET", `/internal/customers/${id}`); }
     catch { return null; }
   }
-  const r = db.prepare("SELECT * FROM customers WHERE id=?").get(id);
+  const [r] = await query("SELECT * FROM customers WHERE id=$1", [id]);
   return r ? mapCustomer(r) : null;
 }
 
@@ -2989,7 +811,8 @@ async function getCustomerScreeningResult(id) {
     try { return (await callCustomerService("GET", `/internal/customers/${id}/screening`))?.result || null; }
     catch { return null; }
   }
-  return db.prepare("SELECT result FROM customer_screenings WHERE customer_id=?").get(id)?.result || null;
+  const [row] = await query("SELECT result FROM customer_screenings WHERE customer_id=$1", [id]);
+  return row?.result || null;
 }
 
 // ─── OFAC auto-sync scheduler ─────────────────────────────────────────────────
@@ -3018,7 +841,7 @@ async function scheduleNextOfacSync(retryDelayMs = null) {
   try {
     const s = await getSettings();
     if (s.api_ofac_enabled !== 'true') return;
-    const lastSync = db.prepare("SELECT synced_at FROM sanctions_syncs WHERE source='OFAC-SDN'").get();
+    const [lastSync] = await query("SELECT synced_at FROM sanctions_syncs WHERE source='OFAC-SDN'");
     if (!lastSync) return; // Never synced — user must trigger the first one manually
 
     let delay;
@@ -3037,7 +860,7 @@ async function scheduleNextOfacSync(retryDelayMs = null) {
 
     ofacAutoSyncTimer = setTimeout(async () => {
       // Re-check whether the sync is actually due (handles the >24-day cap case)
-      const ls = db.prepare("SELECT synced_at FROM sanctions_syncs WHERE source='OFAC-SDN'").get();
+      const [ls] = await query("SELECT synced_at FROM sanctions_syncs WHERE source='OFAC-SDN'");
       const freshSettings = await getSettings();
       const sv        = Math.max(1, parseInt(freshSettings.api_ofac_interval_value) || 1);
       const su        = freshSettings.api_ofac_interval_unit || 'weeks';
@@ -3059,7 +882,7 @@ async function scheduleNextOfacSync(retryDelayMs = null) {
     console.log(`  ⏱ OFAC auto-sync scheduled in ${Math.round(delay / 3600000 * 10) / 10}h`);
   } catch {}
 }
-try { scheduleNextOfacSync(); } catch {}
+schemaReadyPromise.then(() => { try { scheduleNextOfacSync(); } catch {} }).catch(() => {});
 
 // Structurally identical to scheduleNextOfacSync above, just for the 'CSL' sync source and its
 // own settings keys — kept as an independent copy rather than generalizing the OFAC scheduler
@@ -3079,7 +902,7 @@ async function scheduleNextCslSync(retryDelayMs = null) {
   try {
     const s = await getSettings();
     if (s.api_csl_enabled !== 'true') return;
-    const lastSync = db.prepare("SELECT synced_at FROM sanctions_syncs WHERE source='CSL'").get();
+    const [lastSync] = await query("SELECT synced_at FROM sanctions_syncs WHERE source='CSL'");
     if (!lastSync) return; // Never synced — user must trigger the first one manually
 
     let delay;
@@ -3095,7 +918,7 @@ async function scheduleNextCslSync(retryDelayMs = null) {
     }
 
     cslAutoSyncTimer = setTimeout(async () => {
-      const ls  = db.prepare("SELECT synced_at FROM sanctions_syncs WHERE source='CSL'").get();
+      const [ls] = await query("SELECT synced_at FROM sanctions_syncs WHERE source='CSL'");
       const freshSettings = await getSettings();
       const sv  = Math.max(1, parseInt(freshSettings.api_csl_interval_value) || 1);
       const su  = freshSettings.api_csl_interval_unit || 'weeks';
@@ -3117,7 +940,7 @@ async function scheduleNextCslSync(retryDelayMs = null) {
     console.log(`  ⏱ CSL auto-sync scheduled in ${Math.round(delay / 3600000 * 10) / 10}h`);
   } catch {}
 }
-try { scheduleNextCslSync(); } catch {}
+schemaReadyPromise.then(() => { try { scheduleNextCslSync(); } catch {} }).catch(() => {});
 
 // Dunning sweep (Story TKT-4TEYT1) — deliberately simpler than the OFAC/CSL schedulers above:
 // no "catch up to a due date" logic needed, since runDunningSweep itself already re-evaluates
@@ -3131,7 +954,7 @@ setInterval(() => { runDunningSweep().catch(e => console.error("Dunning sweep fa
 setInterval(() => { runScheduledReportsSweep().catch(e => console.error("Scheduled reports sweep failed:", e.message)); }, 24 * 60 * 60 * 1000);
 
 async function screenShipmentById(shipmentId) {
-  const s = db.prepare("SELECT * FROM shipments WHERE id=?").get(shipmentId);
+  const [s] = await query("SELECT * FROM shipments WHERE id=$1", [shipmentId]);
   if (!s) return null;
 
   const hits = [];
@@ -3158,16 +981,16 @@ async function screenShipmentById(shipmentId) {
     ['Shipper', s.shipper_name, s.shipper_id], ['Consignee', s.consignee_name, s.consignee_id],
     ['Principal', s.principal_name, s.principal_id], ['Notify Party', s.notify_name, s.notify_id],
   ];
-  const additionalParties = db.prepare("SELECT role, customer_name, customer_id FROM shipment_parties WHERE shipment_id=?")
-    .all(shipmentId).map(r => [r.role, r.customer_name, r.customer_id]);
+  const additionalParties = (await query("SELECT role, customer_name, customer_id FROM shipment_parties WHERE shipment_id=$1", [shipmentId]))
+    .map(r => [r.role, r.customer_name, r.customer_id]);
   // Service vendors (truckers, CFS/warehousing operators, ... assigned via "Request Service"
   // on Export/Import Services) were never screened at all — only the 13 party-role slots were.
   // A sanctioned vendor picked as a Loading/Pickup/Delivery/etc. provider was invisible to
   // compliance screening even though it's a real counterparty on the shipment. Cancelled
   // services are excluded (nothing to declare against a withdrawn order).
-  const serviceVendors = db.prepare(
-    "SELECT side, service_type, vendor_name, vendor_id FROM shipment_services WHERE shipment_id=? AND status != 'Cancelled'"
-  ).all(shipmentId).map(r => [`${r.side} ${r.service_type} Vendor`, r.vendor_name, r.vendor_id]);
+  const serviceVendors = (await query(
+    "SELECT side, service_type, vendor_name, vendor_id FROM shipment_services WHERE shipment_id=$1 AND status != 'Cancelled'", [shipmentId]
+  )).map(r => [`${r.side} ${r.service_type} Vendor`, r.vendor_name, r.vendor_id]);
   for (const [field, name, customerId] of [...fixedParties, ...additionalParties, ...serviceVendors]) {
     if (!name || !name.trim()) continue;
     const nameMatch = sanctionsMap.get(normSanctionName(name));
@@ -3188,13 +1011,14 @@ async function screenShipmentById(shipmentId) {
       hits.push({ field, value: code, matchedEntry: `Embargoed country (${cc})`, program: 'Country Embargo', source: 'OFAC' });
   }
 
-  const prevRow = db.prepare("SELECT result FROM shipment_screenings WHERE shipment_id=?").get(shipmentId);
+  const [prevRow] = await query("SELECT result FROM shipment_screenings WHERE shipment_id=$1", [shipmentId]);
   const result  = hits.length > 0 ? 'HIT' : 'CLEAR';
   const id      = `SCR-${uid()}`;
   const now     = new Date().toISOString();
-  db.prepare(
-    `INSERT OR REPLACE INTO shipment_screenings (id, shipment_id, screened_at, result, hits) VALUES (?,?,?,?,?)`
-  ).run(id, shipmentId, now, result, JSON.stringify(hits));
+  await query(
+    `INSERT INTO shipment_screenings (id, shipment_id, screened_at, result, hits) VALUES ($1,$2,$3,$4,$5)
+     ON CONFLICT (shipment_id) DO UPDATE SET id=$1, screened_at=$3, result=$4, hits=$5`,
+    [id, shipmentId, now, result, JSON.stringify(hits)]);
 
   if (result === 'HIT' && prevRow?.result !== 'HIT') {
     logEvent(shipmentId, 'COMPLIANCE_HIT', null, null, null, JSON.stringify({ hits }));
@@ -3232,10 +1056,10 @@ async function toUsd(amount, currency) {
 // queue both already show, rather than a second, drifting computation. outstandingAr/
 // committedExposure are already USD-equivalent (each line's own amount * exchange_rate at
 // posting time), same convention as every other cost-line USD figure in this codebase.
-function computeArExposure(customerId, creditTermsDays) {
-  const shipmentIds = db.prepare(
-    "SELECT id FROM shipments WHERE principal_id=? OR consignee_id=?"
-  ).all(customerId, customerId).map(r => r.id);
+async function computeArExposure(customerId, creditTermsDays) {
+  const shipmentIds = (await query(
+    "SELECT id FROM shipments WHERE principal_id=$1 OR consignee_id=$1", [customerId]
+  )).map(r => r.id);
 
   let outstandingAr = 0;
   const coveredLineIds = new Set();
@@ -3243,15 +1067,15 @@ function computeArExposure(customerId, creditTermsDays) {
   const todayMs = Date.now();
 
   if (shipmentIds.length) {
-    const placeholders = shipmentIds.map(() => '?').join(',');
-    const docs = db.prepare(
-      `SELECT * FROM shipment_documents WHERE shipment_id IN (${placeholders}) AND doc_type IN ('FR01','FR02') AND status='confirmed'`
-    ).all(...shipmentIds);
+    const placeholders = shipmentIds.map((_, i) => `$${i + 1}`).join(',');
+    const docs = await query(
+      `SELECT * FROM shipment_documents WHERE shipment_id IN (${placeholders}) AND doc_type IN ('FR01','FR02') AND status='confirmed'`,
+      shipmentIds);
     for (const doc of docs) {
       const sourceIds = doc.source_cost_line_ids ? JSON.parse(doc.source_cost_line_ids) : null;
       const lines = sourceIds && sourceIds.length
-        ? db.prepare(`SELECT id, amount, exchange_rate FROM shipment_cost_lines WHERE id IN (${sourceIds.map(() => '?').join(',')})`).all(...sourceIds)
-        : db.prepare("SELECT id, amount, exchange_rate FROM shipment_cost_lines WHERE shipment_id=? AND type='SELL' AND container_id=?").all(doc.shipment_id, doc.container_id || '');
+        ? await query(`SELECT id, amount, exchange_rate FROM shipment_cost_lines WHERE id IN (${sourceIds.map((_, i) => `$${i + 1}`).join(',')})`, sourceIds)
+        : await query("SELECT id, amount, exchange_rate FROM shipment_cost_lines WHERE shipment_id=$1 AND type='SELL' AND container_id=$2", [doc.shipment_id, doc.container_id || '']);
       const docTotal = lines.reduce((s, l) => s + l.amount * l.exchange_rate, 0);
       for (const l of lines) coveredLineIds.add(l.id);
       // Mark as Paid (TKT-NQ87D3) — paid_amount is recorded in the same USD-equivalent unit as
@@ -3277,10 +1101,10 @@ function computeArExposure(customerId, creditTermsDays) {
 
   let committedExposure = 0;
   if (shipmentIds.length) {
-    const placeholders = shipmentIds.map(() => '?').join(',');
-    const sellLines = db.prepare(
-      `SELECT id, amount, exchange_rate FROM shipment_cost_lines WHERE shipment_id IN (${placeholders}) AND type='SELL'`
-    ).all(...shipmentIds);
+    const placeholders = shipmentIds.map((_, i) => `$${i + 1}`).join(',');
+    const sellLines = await query(
+      `SELECT id, amount, exchange_rate FROM shipment_cost_lines WHERE shipment_id IN (${placeholders}) AND type='SELL'`,
+      shipmentIds);
     for (const l of sellLines) if (!coveredLineIds.has(l.id)) committedExposure += l.amount * l.exchange_rate;
   }
 
@@ -3295,11 +1119,11 @@ function computeArExposure(customerId, creditTermsDays) {
 // container-scoped-fallback logic computeArExposure above already uses for AR, factored out so
 // both the Billing Performance report (routes/reports.js) and the dunning sweep below share one
 // implementation instead of drifting apart.
-function docAmountUsd(doc) {
+async function docAmountUsd(doc) {
   const sourceIds = doc.source_cost_line_ids ? JSON.parse(doc.source_cost_line_ids) : null;
   const lines = sourceIds && sourceIds.length
-    ? db.prepare(`SELECT amount, exchange_rate FROM shipment_cost_lines WHERE id IN (${sourceIds.map(() => '?').join(',')})`).all(...sourceIds)
-    : db.prepare("SELECT amount, exchange_rate FROM shipment_cost_lines WHERE shipment_id=? AND type='SELL' AND container_id=?").all(doc.shipment_id, doc.container_id || '');
+    ? await query(`SELECT amount, exchange_rate FROM shipment_cost_lines WHERE id IN (${sourceIds.map((_, i) => `$${i + 1}`).join(',')})`, sourceIds)
+    : await query("SELECT amount, exchange_rate FROM shipment_cost_lines WHERE shipment_id=$1 AND type='SELL' AND container_id=$2", [doc.shipment_id, doc.container_id || '']);
   return roundCents(lines.reduce((s, l) => s + l.amount * l.exchange_rate, 0));
 }
 
@@ -3316,21 +1140,21 @@ function docAmountUsd(doc) {
 // aborts the whole sweep.
 async function runDunningSweep() {
   const sent = [];
-  const rows = db.prepare(`
+  const rows = await query(`
     SELECT d.*, s.principal_id, s.principal_name, s.consignee_id, s.consignee_name, s.emo_office_id
     FROM shipment_documents d
     JOIN shipments s ON s.id = d.shipment_id
     WHERE d.doc_type IN ('FR01','FR02') AND d.status='confirmed'
-  `).all();
+  `);
 
   const nowMs = Date.now();
   for (const r of rows) {
     const respId = r.principal_id || r.consignee_id || null;
     if (!respId) continue;
-    const cust = db.prepare("SELECT * FROM customers WHERE id=?").get(respId);
+    const [cust] = await query("SELECT * FROM customers WHERE id=$1", [respId]);
     if (!cust || !cust.reminder_enabled) continue;
 
-    const amountUsd = docAmountUsd(r);
+    const amountUsd = await docAmountUsd(r);
     const outstandingUsd = Math.max(0, roundCents(amountUsd - (r.paid_amount || 0)));
     if (outstandingUsd <= 0) continue;
 
@@ -3346,9 +1170,9 @@ async function runDunningSweep() {
     }
 
     if (!r.emo_office_id) continue; // same EMO-only resolution the manual send-email route uses
-    const mailSettings = db.prepare("SELECT * FROM office_mail_settings WHERE office_id=? AND is_active=1").get(r.emo_office_id);
+    const [mailSettings] = await query("SELECT * FROM office_mail_settings WHERE office_id=$1 AND is_active=TRUE", [r.emo_office_id]);
     if (!mailSettings) continue; // no configured SMTP for this office — skip, don't error the whole sweep
-    const primaryContact = db.prepare("SELECT email FROM customer_contacts WHERE customer_id=? AND is_primary=1").get(cust.id);
+    const [primaryContact] = await query("SELECT email FROM customer_contacts WHERE customer_id=$1 AND is_primary=TRUE", [cust.id]);
     const to = (primaryContact?.email || cust.email || '').trim();
     if (!to) continue;
 
@@ -3363,8 +1187,8 @@ async function runDunningSweep() {
           + `Please arrange payment at your earliest convenience, or contact us if this has already been settled.`,
         ...(fs.existsSync(filePath) ? { attachmentPath: filePath, attachmentFilename: r.filename } : {}),
       });
-      await sendViaOffice(db, r.emo_office_id, mailOptions);
-      db.prepare("UPDATE shipment_documents SET last_reminder_sent_at=? WHERE id=?").run(new Date().toISOString(), r.id);
+      await sendViaOffice(query, r.emo_office_id, mailOptions);
+      await query("UPDATE shipment_documents SET last_reminder_sent_at=$1 WHERE id=$2", [new Date().toISOString(), r.id]);
       await logEntityEvent('document', r.id, 'REMINDER_SENT', null, null, null,
         JSON.stringify({ shipmentId: r.shipment_id, customerId: cust.id, to, daysOverdue, outstandingUsd }));
       sent.push({ docId: r.id, shipmentId: r.shipment_id, customerId: cust.id, companyName: cust.company_name, daysOverdue, outstandingUsd });
@@ -3385,7 +1209,7 @@ async function runDunningSweep() {
 async function runScheduledReportsSweep() {
   const sent = [];
   const DUE_DAYS = { daily: 1, weekly: 7, monthly: 30 };
-  const reports = db.prepare("SELECT * FROM scheduled_reports WHERE is_active=1").all();
+  const reports = await query("SELECT * FROM scheduled_reports WHERE is_active=TRUE");
   const nowMs = Date.now();
 
   for (const r of reports) {
@@ -3395,7 +1219,7 @@ async function runScheduledReportsSweep() {
 
     const recipients = r.recipients.split(",").map(s => s.trim()).filter(Boolean);
     if (recipients.length === 0) continue;
-    const mailSettings = db.prepare("SELECT * FROM office_mail_settings WHERE office_id=? AND is_active=1").get(r.office_id);
+    const [mailSettings] = await query("SELECT * FROM office_mail_settings WHERE office_id=$1 AND is_active=TRUE", [r.office_id]);
     if (!mailSettings) continue;
 
     let report;
@@ -3410,8 +1234,8 @@ async function runScheduledReportsSweep() {
         message: `Attached is your ${r.frequency} scheduled report, generated automatically by CargoDesk.`,
         attachmentContent: report.csv, attachmentFilename: report.filename, attachmentContentType: "text/csv",
       });
-      await sendViaOffice(db, r.office_id, mailOptions);
-      db.prepare("UPDATE scheduled_reports SET last_run_at=? WHERE id=?").run(new Date().toISOString(), r.id);
+      await sendViaOffice(query, r.office_id, mailOptions);
+      await query("UPDATE scheduled_reports SET last_run_at=$1 WHERE id=$2", [new Date().toISOString(), r.id]);
       await logEntityEvent('scheduled_report', r.id, 'REPORT_SENT', null, null, null,
         JSON.stringify({ reportType: r.report_type, recipients, frequency: r.frequency }));
       sent.push({ id: r.id, reportType: r.report_type, recipients, filename: report.filename });
@@ -3432,12 +1256,12 @@ const DEFAULT_ESCALATION_DAYS = 8;
 // EMO office's thresholds, then that office's own country, then the hardcoded default. Both the
 // report and the sweep call this so they can never disagree on what "overdue" means for a given
 // shipment.
-function resolveInvoiceThresholds(emoOfficeId) {
-  const office = emoOfficeId ? db.prepare("SELECT * FROM offices WHERE id=?").get(emoOfficeId) : null;
+async function resolveInvoiceThresholds(emoOfficeId) {
+  const office = emoOfficeId ? (await query("SELECT * FROM offices WHERE id=$1", [emoOfficeId]))[0] : null;
   if (office?.invoice_alert_business_days != null && office?.invoice_escalation_business_days != null) {
     return { alertBusinessDays: office.invoice_alert_business_days, escalationBusinessDays: office.invoice_escalation_business_days };
   }
-  const country = office?.country_code ? db.prepare("SELECT * FROM countries WHERE iso2=?").get(office.country_code) : null;
+  const country = office?.country_code ? (await query("SELECT * FROM countries WHERE iso2=$1", [office.country_code]))[0] : null;
   return {
     alertBusinessDays: office?.invoice_alert_business_days ?? country?.invoice_alert_business_days ?? DEFAULT_ALERT_DAYS,
     escalationBusinessDays: office?.invoice_escalation_business_days ?? country?.invoice_escalation_business_days ?? DEFAULT_ESCALATION_DAYS,
@@ -3452,32 +1276,32 @@ function resolveInvoiceThresholds(emoOfficeId) {
 // exists (an explained end-of-month payment cycle isn't a collections problem to keep escalating).
 async function runInvoiceCollectionsSweep() {
   const sent = [];
-  const rows = db.prepare(`
+  const rows = await query(`
     SELECT d.*, s.emo_office_id
     FROM shipment_documents d
     JOIN shipments s ON s.id = d.shipment_id
     WHERE d.doc_type IN ('FR01','FR02') AND d.status='confirmed'
-  `).all();
+  `);
 
   const todayIso = new Date().toISOString();
   for (const r of rows) {
-    const amountUsd = docAmountUsd(r);
+    const amountUsd = await docAmountUsd(r);
     const outstandingUsd = Math.max(0, roundCents(amountUsd - (r.paid_amount || 0)));
     if (outstandingUsd <= 0) continue;
 
-    const activeOverride = db.prepare(
-      "SELECT * FROM invoice_status_overrides WHERE document_id=? ORDER BY overridden_at DESC LIMIT 1"
-    ).get(r.id);
+    const [activeOverride] = await query(
+      "SELECT * FROM invoice_status_overrides WHERE document_id=$1 ORDER BY overridden_at DESC LIMIT 1", [r.id]
+    );
     if (activeOverride) continue;
 
-    const { alertBusinessDays, escalationBusinessDays } = resolveInvoiceThresholds(r.emo_office_id);
+    const { alertBusinessDays, escalationBusinessDays } = await resolveInvoiceThresholds(r.emo_office_id);
     const refDate = r.confirmed_at || r.created_at;
     const elapsed = businessDaysBetween(refDate, todayIso);
 
     if (elapsed >= alertBusinessDays && !r.collections_alerted_at) {
       const ownerId = r.invoice_owner_id;
-      const owner = ownerId ? db.prepare("SELECT * FROM users WHERE id=?").get(ownerId) : null;
-      const mailSettings = r.emo_office_id ? db.prepare("SELECT * FROM office_mail_settings WHERE office_id=? AND is_active=1").get(r.emo_office_id) : null;
+      const [owner] = ownerId ? await query("SELECT * FROM users WHERE id=$1", [ownerId]) : [null];
+      const [mailSettings] = r.emo_office_id ? await query("SELECT * FROM office_mail_settings WHERE office_id=$1 AND is_active=TRUE", [r.emo_office_id]) : [null];
       if (owner?.email && mailSettings) {
         try {
           const mailOptions = buildMailOptions({
@@ -3486,17 +1310,17 @@ async function runInvoiceCollectionsSweep() {
             subject: `Invoice ${r.filename} is now overdue — Shipment ${r.shipment_id}`,
             message: `This invoice has passed its ${alertBusinessDays}-business-day collections threshold with no payment recorded. Please follow up with the customer or record an override with a reason if there's a known cause (e.g. end-of-month payment terms).`,
           });
-          await sendViaOffice(db, r.emo_office_id, mailOptions);
+          await sendViaOffice(query, r.emo_office_id, mailOptions);
           sent.push({ id: r.id, shipmentId: r.shipment_id, stage: 'alert', to: owner.email });
         } catch (e) { console.warn(`Invoice collections alert ${r.id} failed:`, e.message); }
       }
-      db.prepare("UPDATE shipment_documents SET collections_alerted_at=? WHERE id=?").run(todayIso, r.id);
+      await query("UPDATE shipment_documents SET collections_alerted_at=$1 WHERE id=$2", [todayIso, r.id]);
     }
 
     if (elapsed >= escalationBusinessDays && !r.collections_escalated_at) {
-      const office = r.emo_office_id ? db.prepare("SELECT * FROM offices WHERE id=?").get(r.emo_office_id) : null;
-      const manager = office?.manager_user_id ? db.prepare("SELECT * FROM users WHERE id=?").get(office.manager_user_id) : null;
-      const mailSettings = r.emo_office_id ? db.prepare("SELECT * FROM office_mail_settings WHERE office_id=? AND is_active=1").get(r.emo_office_id) : null;
+      const [office] = r.emo_office_id ? await query("SELECT * FROM offices WHERE id=$1", [r.emo_office_id]) : [null];
+      const [manager] = office?.manager_user_id ? await query("SELECT * FROM users WHERE id=$1", [office.manager_user_id]) : [null];
+      const [mailSettings] = r.emo_office_id ? await query("SELECT * FROM office_mail_settings WHERE office_id=$1 AND is_active=TRUE", [r.emo_office_id]) : [null];
       if (manager?.email && mailSettings) {
         try {
           const mailOptions = buildMailOptions({
@@ -3505,87 +1329,44 @@ async function runInvoiceCollectionsSweep() {
             subject: `Escalation — invoice ${r.filename} still unpaid — Shipment ${r.shipment_id}`,
             message: `This invoice has now passed its ${escalationBusinessDays}-business-day escalation threshold with no payment recorded and no override on file.`,
           });
-          await sendViaOffice(db, r.emo_office_id, mailOptions);
+          await sendViaOffice(query, r.emo_office_id, mailOptions);
           sent.push({ id: r.id, shipmentId: r.shipment_id, stage: 'escalation', to: manager.email });
         } catch (e) { console.warn(`Invoice collections escalation ${r.id} failed:`, e.message); }
       } else {
         console.warn(`Invoice collections escalation ${r.id} skipped — no branch manager configured for office ${r.emo_office_id || '(none)'}`);
       }
-      db.prepare("UPDATE shipment_documents SET collections_escalated_at=? WHERE id=?").run(todayIso, r.id);
+      await query("UPDATE shipment_documents SET collections_escalated_at=$1 WHERE id=$2", [todayIso, r.id]);
     }
   }
   return sent;
 }
 setInterval(() => { runInvoiceCollectionsSweep().catch(e => console.error("Invoice collections sweep failed:", e.message)); }, 24 * 60 * 60 * 1000);
 
-// ─── Backfill transit_days on generated schedules ─────────────────────────────
-// POST /api/schedules (Schedule Generator) unconditionally hardcoded transit_days to 0 at
-// insert time instead of deriving it from etd/eta — every schedule created through the
-// Generator before this fix has a wrong "0d" transit shown wherever it surfaces (the catalog
-// browser, Add Sailing search results). Purely a computed value with no user input involved,
-// so a one-time backfill is safe — only touches rows the bug actually affected (source =
-// 'generated', transit_days still 0, real etd/eta both present with eta after etd).
-// Safe to re-run — already-fixed rows (transit_days > 0) are left untouched.
-(function backfillGeneratedScheduleTransitDays() {
-  // Originally scoped to source='generated' only (the Schedule Generator's own bug — see the
-  // v0.54.3 changelog). Broadened: a shipment committing a catalog-picked sailing (source=
-  // 'search') copies the picked sailing's own fields via a plain object spread on the frontend
-  // (ShipmentSchedulesPage.jsx's commitSailing) — any commit made *before* the generator fix
-  // above landed baked in the same wrong 0 permanently, since a copy is a point-in-time
-  // snapshot, not a live reference back to its template. Same safe condition either way: only
-  // rows that are still exactly 0 with a real, positive etd/eta span are touched.
-  const info = db.prepare(`
-    UPDATE shipment_schedules
-    SET transit_days = CAST(ROUND(julianday(eta) - julianday(etd)) AS INTEGER)
-    WHERE transit_days = 0
-      AND etd != '' AND eta != '' AND julianday(eta) > julianday(etd)
-  `).run();
-  if (info.changes > 0)
-    console.log(`  ✔ Backfilled transit_days on ${info.changes.toLocaleString()} schedule row(s)`);
-})();
-
-// ─── Backfill garbled AIS-sourced vessel names ─────────────────────────────────
-// Direct bug report: real vessels (confirmed against a third-party AIS tracker) showing garbled
-// names like "#!C?7($GA@A7S%I@SCP," instead of their real name (e.g. "DE VERWONDERING") — see
-// lib/ais-listener.js's PLAUSIBLE_VESSEL_NAME for why this is a Name-field-only decode issue
-// upstream, not a bad IMO/MMSI (those stay untouched here). One-time cleanup for rows already
-// corrupted before that fix landed — clears the name back to blank rather than guessing a
-// replacement, so AIS's own next clean ShipStaticData message for that vessel repopulates it
-// naturally (now filtered through the same plausibility check). Safe to re-run on every startup
-// — a no-op once every already-corrupted row has been cleared.
-(function backfillGarbledVesselNames() {
-  const PLAUSIBLE_VESSEL_NAME = /^[A-Z0-9 .\-']{1,30}$/;
-  const rows = db.prepare("SELECT imo, name FROM vessels WHERE name IS NOT NULL AND name != ''").all();
-  let cleared = 0;
-  for (const v of rows) {
-    if (!PLAUSIBLE_VESSEL_NAME.test(String(v.name).toUpperCase())) {
-      db.prepare("UPDATE vessels SET name='' WHERE imo=?").run(v.imo);
-      cleared++;
-    }
-  }
-  if (cleared > 0) console.log(`  ✔ Cleared ${cleared.toLocaleString()} garbled AIS vessel name(s)`);
-})();
-
+// Both backfillGeneratedScheduleTransitDays and backfillGarbledVesselNames (historical
+// cleanups for rows produced by since-patched bugs) are dropped — nothing in a fresh Postgres
+// install can have either legacy shape.
 // ─── Backfill port country_code from unlocode ─────────────────────────────────
 // Derives country from first 2 chars of UN/LOCODE (e.g. NLRTM → NL).
 // Safe to run on every startup — only touches rows where country_code is missing.
-(function backfillPortCountryCodes() {
-  const info = db.prepare(`
+async function backfillPortCountryCodes() {
+  const rows = await query(`
     UPDATE port_locations
     SET country_code = UPPER(SUBSTR(unlocode, 1, 2))
     WHERE country_code IS NULL OR country_code = ''
-  `).run();
-  if (info.changes > 0)
-    console.log(`  ✔ Backfilled country_code on ${info.changes.toLocaleString()} port rows`);
-})();
+    RETURNING unlocode
+  `);
+  if (rows.length > 0)
+    console.log(`  ✔ Backfilled country_code on ${rows.length.toLocaleString()} port rows`);
+}
 
 // ─── Backfill timezone on port_locations ──────────────────────────────────────
 // Single-TZ countries use a direct IANA map; multi-TZ countries (US, CA, AU,
 // RU, BR, MX, ID) use longitude bands. Safe to re-run — only touches NULL rows.
-(function backfillPortTimezones() {
-  const nullCount = db.prepare(
+async function backfillPortTimezones() {
+  const [{ n: nullCountRaw }] = await query(
     "SELECT COUNT(*) AS n FROM port_locations WHERE timezone IS NULL OR timezone=''"
-  ).get().n;
+  );
+  const nullCount = Number(nullCountRaw);
   if (nullCount === 0) return;
 
   const COUNTRY_TZ = {
@@ -3661,41 +1442,41 @@ setInterval(() => { runInvoiceCollectionsSweep().catch(e => console.error("Invoi
   };
 
   for (const [cc, tz] of Object.entries(COUNTRY_TZ)) {
-    db.prepare(
-      "UPDATE port_locations SET timezone=? WHERE SUBSTR(unlocode,1,2)=? AND (timezone IS NULL OR timezone='')"
-    ).run(tz, cc);
+    await query(
+      "UPDATE port_locations SET timezone=$1 WHERE SUBSTR(unlocode,1,2)=$2 AND (timezone IS NULL OR timezone='')",
+      [tz, cc]);
   }
 
   // US – longitude bands (Eastern / Central / Mountain / Pacific / Hawaii)
-  db.prepare(`UPDATE port_locations SET timezone = CASE
+  await query(`UPDATE port_locations SET timezone = CASE
     WHEN longitude <= -140 THEN 'America/Honolulu'
     WHEN longitude <= -120 THEN 'America/Los_Angeles'
     WHEN longitude <= -105 THEN 'America/Denver'
     WHEN longitude <= -90  THEN 'America/Chicago'
     ELSE 'America/New_York' END
-    WHERE SUBSTR(unlocode,1,2)='US' AND (timezone IS NULL OR timezone='') AND longitude IS NOT NULL`).run();
-  db.prepare("UPDATE port_locations SET timezone='America/New_York' WHERE SUBSTR(unlocode,1,2)='US' AND (timezone IS NULL OR timezone='')").run();
+    WHERE SUBSTR(unlocode,1,2)='US' AND (timezone IS NULL OR timezone='') AND longitude IS NOT NULL`);
+  await query("UPDATE port_locations SET timezone='America/New_York' WHERE SUBSTR(unlocode,1,2)='US' AND (timezone IS NULL OR timezone='')");
 
   // Canada
-  db.prepare(`UPDATE port_locations SET timezone = CASE
+  await query(`UPDATE port_locations SET timezone = CASE
     WHEN longitude <= -120 THEN 'America/Vancouver'
     WHEN longitude <= -95  THEN 'America/Winnipeg'
     WHEN longitude <= -73  THEN 'America/Toronto'
     ELSE 'America/Halifax' END
-    WHERE SUBSTR(unlocode,1,2)='CA' AND (timezone IS NULL OR timezone='') AND longitude IS NOT NULL`).run();
-  db.prepare("UPDATE port_locations SET timezone='America/Toronto' WHERE SUBSTR(unlocode,1,2)='CA' AND (timezone IS NULL OR timezone='')").run();
+    WHERE SUBSTR(unlocode,1,2)='CA' AND (timezone IS NULL OR timezone='') AND longitude IS NOT NULL`);
+  await query("UPDATE port_locations SET timezone='America/Toronto' WHERE SUBSTR(unlocode,1,2)='CA' AND (timezone IS NULL OR timezone='')");
 
   // Australia
-  db.prepare(`UPDATE port_locations SET timezone = CASE
+  await query(`UPDATE port_locations SET timezone = CASE
     WHEN longitude < 129 THEN 'Australia/Perth'
     WHEN longitude < 138 THEN 'Australia/Darwin'
     WHEN longitude < 141 THEN 'Australia/Adelaide'
     ELSE 'Australia/Sydney' END
-    WHERE SUBSTR(unlocode,1,2)='AU' AND (timezone IS NULL OR timezone='') AND longitude IS NOT NULL`).run();
-  db.prepare("UPDATE port_locations SET timezone='Australia/Sydney' WHERE SUBSTR(unlocode,1,2)='AU' AND (timezone IS NULL OR timezone='')").run();
+    WHERE SUBSTR(unlocode,1,2)='AU' AND (timezone IS NULL OR timezone='') AND longitude IS NOT NULL`);
+  await query("UPDATE port_locations SET timezone='Australia/Sydney' WHERE SUBSTR(unlocode,1,2)='AU' AND (timezone IS NULL OR timezone='')");
 
   // Russia
-  db.prepare(`UPDATE port_locations SET timezone = CASE
+  await query(`UPDATE port_locations SET timezone = CASE
     WHEN longitude < 60  THEN 'Europe/Moscow'
     WHEN longitude < 73  THEN 'Asia/Yekaterinburg'
     WHEN longitude < 84  THEN 'Asia/Omsk'
@@ -3704,62 +1485,49 @@ setInterval(() => { runInvoiceCollectionsSweep().catch(e => console.error("Invoi
     WHEN longitude < 130 THEN 'Asia/Yakutsk'
     WHEN longitude < 143 THEN 'Asia/Vladivostok'
     ELSE 'Asia/Magadan' END
-    WHERE SUBSTR(unlocode,1,2)='RU' AND (timezone IS NULL OR timezone='') AND longitude IS NOT NULL`).run();
-  db.prepare("UPDATE port_locations SET timezone='Europe/Moscow' WHERE SUBSTR(unlocode,1,2)='RU' AND (timezone IS NULL OR timezone='')").run();
+    WHERE SUBSTR(unlocode,1,2)='RU' AND (timezone IS NULL OR timezone='') AND longitude IS NOT NULL`);
+  await query("UPDATE port_locations SET timezone='Europe/Moscow' WHERE SUBSTR(unlocode,1,2)='RU' AND (timezone IS NULL OR timezone='')");
 
   // Brazil
-  db.prepare(`UPDATE port_locations SET timezone = CASE
+  await query(`UPDATE port_locations SET timezone = CASE
     WHEN longitude < -50 THEN 'America/Manaus'
     ELSE 'America/Sao_Paulo' END
-    WHERE SUBSTR(unlocode,1,2)='BR' AND (timezone IS NULL OR timezone='') AND longitude IS NOT NULL`).run();
-  db.prepare("UPDATE port_locations SET timezone='America/Sao_Paulo' WHERE SUBSTR(unlocode,1,2)='BR' AND (timezone IS NULL OR timezone='')").run();
+    WHERE SUBSTR(unlocode,1,2)='BR' AND (timezone IS NULL OR timezone='') AND longitude IS NOT NULL`);
+  await query("UPDATE port_locations SET timezone='America/Sao_Paulo' WHERE SUBSTR(unlocode,1,2)='BR' AND (timezone IS NULL OR timezone='')");
 
   // Mexico
-  db.prepare(`UPDATE port_locations SET timezone = CASE
+  await query(`UPDATE port_locations SET timezone = CASE
     WHEN longitude < -106 THEN 'America/Tijuana'
     WHEN longitude < -98  THEN 'America/Mazatlan'
     ELSE 'America/Mexico_City' END
-    WHERE SUBSTR(unlocode,1,2)='MX' AND (timezone IS NULL OR timezone='') AND longitude IS NOT NULL`).run();
-  db.prepare("UPDATE port_locations SET timezone='America/Mexico_City' WHERE SUBSTR(unlocode,1,2)='MX' AND (timezone IS NULL OR timezone='')").run();
+    WHERE SUBSTR(unlocode,1,2)='MX' AND (timezone IS NULL OR timezone='') AND longitude IS NOT NULL`);
+  await query("UPDATE port_locations SET timezone='America/Mexico_City' WHERE SUBSTR(unlocode,1,2)='MX' AND (timezone IS NULL OR timezone='')");
 
   // Indonesia
-  db.prepare(`UPDATE port_locations SET timezone = CASE
+  await query(`UPDATE port_locations SET timezone = CASE
     WHEN longitude < 116 THEN 'Asia/Jakarta'
     WHEN longitude < 124 THEN 'Asia/Makassar'
     ELSE 'Asia/Jayapura' END
-    WHERE SUBSTR(unlocode,1,2)='ID' AND (timezone IS NULL OR timezone='') AND longitude IS NOT NULL`).run();
-  db.prepare("UPDATE port_locations SET timezone='Asia/Jakarta' WHERE SUBSTR(unlocode,1,2)='ID' AND (timezone IS NULL OR timezone='')").run();
+    WHERE SUBSTR(unlocode,1,2)='ID' AND (timezone IS NULL OR timezone='') AND longitude IS NOT NULL`);
+  await query("UPDATE port_locations SET timezone='Asia/Jakarta' WHERE SUBSTR(unlocode,1,2)='ID' AND (timezone IS NULL OR timezone='')");
 
-  const filled = nullCount - db.prepare(
+  const [{ n: remainingRaw }] = await query(
     "SELECT COUNT(*) AS n FROM port_locations WHERE timezone IS NULL OR timezone=''"
-  ).get().n;
+  );
+  const filled = nullCount - Number(remainingRaw);
   if (filled > 0)
     console.log(`  ✔ Backfilled timezone on ${filled.toLocaleString()} port rows`);
-})();
-
-// ─── Column rename migrations ─────────────────────────────────────────────────
-
-(function migrateContainersColumns() {
-  const cols = db.prepare("PRAGMA table_info(containers)").all().map(c => c.name);
-  if (cols.includes('number')) {
-    db.exec('ALTER TABLE containers RENAME COLUMN number TO container_number');
-    console.log('  ✔ containers.number renamed to container_number');
-  }
-  if (cols.includes('commodity') && !cols.includes('hs_code')) {
-    db.exec('ALTER TABLE containers RENAME COLUMN commodity TO hs_code');
-    console.log('  ✔ containers.commodity renamed to hs_code');
-  }
-})();
+}
 
 // ─── Startup cleanup ──────────────────────────────────────────────────────────
-
-try { db.exec("UPDATE shipments SET vessel = '', vessel_imo = '' WHERE vessel_imo = ''"); } catch {}
+// migrateContainersColumns (column renames) and the vessel-name cleanup UPDATE are both dropped —
+// schema-shape and legacy-data fixups with nothing to act on in a fresh Postgres install.
 
 // Seeds the default FCL milestone template if none exists.
-(function seedDefaultMilestoneTemplate() {
+async function seedDefaultMilestoneTemplate() {
   try {
-    const existing = db.prepare("SELECT COUNT(*) as n FROM milestone_templates WHERE template_key='FCL' AND carrier_code=''").get();
-    if (existing.n > 0) return;
+    const [existing] = await query("SELECT COUNT(*) as n FROM milestone_templates WHERE template_key='FCL' AND carrier_code=''");
+    if (Number(existing.n) > 0) return;
     const now = new Date().toISOString();
     const defaults = [
       { key: 'booking_confirmed', label: 'Booking Confirmed', seq: 1 },
@@ -3773,21 +1541,21 @@ try { db.exec("UPDATE shipments SET vessel = '', vessel_imo = '' WHERE vessel_im
       { key: 'delivered',         label: 'Delivered',          seq: 9 },
     ];
     for (const d of defaults) {
-      db.prepare("INSERT INTO milestone_templates (id,template_key,carrier_code,trade_lane,milestone_key,label,sequence_order,created_at) VALUES (?,?,?,?,?,?,?,?)")
-        .run(`MT-${uid()}`, 'FCL', '', '', d.key, d.label, d.seq, now);
+      await query("INSERT INTO milestone_templates (id,template_key,carrier_code,trade_lane,milestone_key,label,sequence_order,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+        [`MT-${uid()}`, 'FCL', '', '', d.key, d.label, d.seq, now]);
     }
     console.log('  ✔ Seeded default FCL milestone template (9 steps)');
   } catch (e) { console.warn('  ⚠ Could not seed milestone template:', e.message); }
-})();
+}
 
-(function seedDefaultProject() {
+async function seedDefaultProject() {
   try {
-    const existing = db.prepare("SELECT COUNT(*) as n FROM kb_projects").get();
-    if (existing.n > 0) return;
+    const [existing] = await query("SELECT COUNT(*) as n FROM kb_projects");
+    if (Number(existing.n) > 0) return;
     const projectId = `PRJ-${uid()}`;
     const now = new Date().toISOString();
-    db.prepare("INSERT INTO kb_projects (id,name,key,color,description,created_at) VALUES (?,?,?,?,?,?)")
-      .run(projectId, 'Main Board', 'MAIN', '#6366f1', 'Default project board', now);
+    await query("INSERT INTO kb_projects (id,name,key,color,description,created_at) VALUES ($1,$2,$3,$4,$5,$6)",
+      [projectId, 'Main Board', 'MAIN', '#6366f1', 'Default project board', now]);
     const DEFAULT_COLUMNS = [
       { name: 'Ready',           color: '#6366f1' },
       { name: 'In Progress',     color: '#f59e0b' },
@@ -3798,70 +1566,22 @@ try { db.exec("UPDATE shipments SET vessel = '', vessel_imo = '' WHERE vessel_im
       { name: 'Released',        color: '#8b5cf6' },
     ];
     for (let i = 0; i < DEFAULT_COLUMNS.length; i++) {
-      db.prepare("INSERT INTO kb_columns (id,project_id,name,position,color,created_at) VALUES (?,?,?,?,?,?)")
-        .run(`COL-${uid()}`, projectId, DEFAULT_COLUMNS[i].name, i, DEFAULT_COLUMNS[i].color, now);
+      await query("INSERT INTO kb_columns (id,project_id,name,position,color,created_at) VALUES ($1,$2,$3,$4,$5,$6)",
+        [`COL-${uid()}`, projectId, DEFAULT_COLUMNS[i].name, i, DEFAULT_COLUMNS[i].color, now]);
     }
     console.log('  ✔ Seeded default project board with 7 columns');
   } catch (e) { console.warn('  ⚠ Could not seed default project:', e.message); }
-})();
+}
 
-// Assign any tickets that predate the project column to the first project.
-(function backfillTicketProjects() {
-  try {
-    const firstProject = db.prepare("SELECT id FROM kb_projects ORDER BY created_at ASC LIMIT 1").get();
-    if (!firstProject) return;
-    const info = db.prepare("UPDATE tickets SET project_id=? WHERE project_id IS NULL").run(firstProject.id);
-    if (info.changes > 0) console.log(`  ✔ Backfilled ${info.changes} ticket(s) → project ${firstProject.id}`);
-  } catch (e) { console.warn('  ⚠ Could not backfill ticket projects:', e.message); }
-})();
+schemaReadyPromise = schemaReadyPromise
+  .then(() => backfillPortCountryCodes())
+  .then(() => backfillPortTimezones())
+  .then(() => seedDefaultMilestoneTemplate())
+  .then(() => seedDefaultProject());
 
-(function backfillTestItems() {
-  try {
-    const testTypes = ["Test Folder", "Test Plan", "Test Run", "Test Case"];
-    const placeholders = testTypes.map(() => "?").join(",");
-    const rows = db.prepare(`SELECT * FROM tickets WHERE type IN (${placeholders})`).all(...testTypes);
-    if (rows.length === 0) return;
-
-    const migratedIds = new Set(rows.map(r => r.id));
-    db.exec("BEGIN");
-    try {
-      const insert = db.prepare(`
-        INSERT INTO test_items
-          (id, type, title, description, priority, status, position, created_at,
-           shipment_id, parent_id, assignee_id, due_date, test_notes, project_id, version_id)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-      `);
-      let severedParents = 0;
-      for (const r of rows) {
-        const parentId = r.parent_id && migratedIds.has(r.parent_id) ? r.parent_id : null;
-        if (r.parent_id && !parentId) severedParents++;
-        insert.run(
-          r.id, r.type, r.title, r.description, r.priority, r.status, r.position, r.created_at,
-          r.shipment_id, parentId, r.assignee_id, r.due_date, r.test_notes, r.project_id, r.version_id
-        );
-      }
-
-      const idPlaceholders = rows.map(() => "?").join(",");
-      const linkRows = db.prepare(`
-        SELECT id FROM ticket_links WHERE from_id IN (${idPlaceholders}) OR to_id IN (${idPlaceholders})
-      `).all(...rows.map(r => r.id), ...rows.map(r => r.id));
-      const deleteLink = db.prepare("DELETE FROM ticket_links WHERE id=?");
-      for (const l of linkRows) deleteLink.run(l.id);
-
-      const deleteTicket = db.prepare("DELETE FROM tickets WHERE id=?");
-      for (const r of rows) deleteTicket.run(r.id);
-
-      db.exec("COMMIT");
-      console.log(`  ✔ Migrated ${rows.length} test artifact(s) to test_items` +
-        (severedParents ? `; severed ${severedParents} dangling parent link(s)` : "") +
-        (linkRows.length ? `; dropped ${linkRows.length} stale ticket_link(s)` : ""));
-    } catch (e) {
-      db.exec("ROLLBACK");
-      throw e;
-    }
-  } catch (e) { console.warn('  ⚠ test_items migration failed, rolled back:', e.message); }
-})();
-
+// backfillTicketProjects and backfillTestItems (both historical one-time migrations of
+// pre-existing legacy ticket rows into the newer project/test_items shape) are dropped — nothing
+// in a fresh Postgres install can have either legacy shape.
 // ─── Map functions ────────────────────────────────────────────────────────────
 
 // Carriers a booking request can be sent to. Single source of truth on ctx — routes/edi.js
@@ -3895,7 +1615,7 @@ async function isEdiBookable(carrierCode, officeId) {
   if ((await getSettings()).api_eadapter_enabled === 'false') return false;
   if (BOOKABLE_CARRIERS.has(carrierCode)) return true;
   if (!officeId) return false;
-  const cfg = db.prepare("SELECT is_active FROM carrier_eadapter_configs WHERE carrier_code=? AND office_id=?").get(carrierCode, officeId);
+  const [cfg] = await query("SELECT is_active FROM carrier_eadapter_configs WHERE carrier_code=$1 AND office_id=$2", [carrierCode, officeId]);
   return !!cfg?.is_active;
 }
 // Fixed, curated additional party roles (Epic TKT-5XFCAP) — alongside the 4 hardcoded
@@ -3921,14 +1641,14 @@ const CUSTOMS_FILING_TYPES = ["AES_EEI", "ISF_AMS"];
 const LEG_LOC_ABBR = { 'Door': 'DR', 'Terminal': 'PT', 'Container Yard': 'CY', 'CFS': 'CFS', 'GPS Coordinates': 'GPS' };
 const GPS_LOC_TYPE = 'GPS Coordinates';
 
-const syncShipmentFromLegs = (shipmentId) => {
-  const legs = db.prepare("SELECT * FROM shipment_legs WHERE shipment_id=? ORDER BY leg_order ASC").all(shipmentId);
+const syncShipmentFromLegs = async (shipmentId) => {
+  const legs = await query("SELECT * FROM shipment_legs WHERE shipment_id=$1 ORDER BY leg_order ASC", [shipmentId]);
   if (!legs.length) {
     // Every leg was just removed (e.g. unlinking a schedule) — the schedule-derived fields
     // this function writes are now stale and must be cleared, not left showing the last-known
     // sailing forever. pol/pod/carrier_code are shipment-level fields set independently at
     // creation (not purely leg-derived), so they're left untouched here.
-    db.prepare(`UPDATE shipments SET etd='', eta='', vessel='', vessel_imo='', voyage='', routing_term=NULL WHERE id=?`).run(shipmentId);
+    await query(`UPDATE shipments SET etd='', eta='', vessel='', vessel_imo='', voyage='', routing_term=NULL WHERE id=$1`, [shipmentId]);
     return;
   }
   const first = legs[0], last = legs[legs.length - 1];
@@ -3951,7 +1671,7 @@ const syncShipmentFromLegs = (shipmentId) => {
   // A Central contract's carrier is the authoritative one once a contract is attached — a
   // leg's own carrier should never silently override it. Every other shipment (no Central
   // contract yet, or Central with the SAME carrier) keeps the exact prior roll-up behavior.
-  const shipmentRow = db.prepare("SELECT carrier_code, contract_type, contract_id FROM shipments WHERE id=?").get(shipmentId);
+  const [shipmentRow] = await query("SELECT carrier_code, contract_type, contract_id FROM shipments WHERE id=$1", [shipmentId]);
   const contractLocksCarrier = shipmentRow?.contract_type === 'Central' && !!shipmentRow?.contract_id;
   const legCarrier = seaLeg.carrier_code || '';
   const newCarrierCode = contractLocksCarrier
@@ -3965,15 +1685,15 @@ const syncShipmentFromLegs = (shipmentId) => {
   // listener updates a SEA leg's etd/eta in place after a confirmed departure/arrival, this
   // existing rollup carries it up to the shipment the same way it always has, no separate
   // atd/ata bookend needed.
-  db.prepare(`UPDATE shipments SET pol=?, pod=?, etd=?, eta=?, carrier_code=?, vessel=?, vessel_imo=?, voyage=?, routing_term=? WHERE id=?`)
-    .run(first.pol || seaLeg.pol || '', last.pod || seaLeg.pod || '', first.etd || null, last.eta || null,
-         newCarrierCode, seaLeg.vessel || '', seaLeg.vessel_imo || '',
-         seaLeg.voyage || '', routingTerm, shipmentId);
+  await query(`UPDATE shipments SET pol=$1, pod=$2, etd=$3, eta=$4, carrier_code=$5, vessel=$6, vessel_imo=$7, voyage=$8, routing_term=$9 WHERE id=$10`,
+    [first.pol || seaLeg.pol || '', last.pod || seaLeg.pod || '', first.etd || null, last.eta || null,
+     newCarrierCode, seaLeg.vessel || '', seaLeg.vessel_imo || '',
+     seaLeg.voyage || '', routingTerm, shipmentId]);
   // Closes the "no audit trail" half of the bug above — any future roll-up that actually
   // changes carrier_code (the legitimate blank-carrier/no-contract case) is now traceable the
   // same way a manual edit already is, instead of only ever showing up as an unexplained diff.
   if (shipmentRow && newCarrierCode !== (shipmentRow.carrier_code || '')) {
-    logEvent(shipmentId, 'FIELD_UPDATED', 'carrier_code', shipmentRow.carrier_code || null, newCarrierCode || null,
+    await logEvent(shipmentId, 'FIELD_UPDATED', 'carrier_code', shipmentRow.carrier_code || null, newCarrierCode || null,
       JSON.stringify({ source: 'syncShipmentFromLegs', legCarrier, seaLegId: seaLeg.id }));
   }
 };
@@ -3981,7 +1701,7 @@ const syncShipmentFromLegs = (shipmentId) => {
 // Row-mapper functions (mapShipment, mapContainer, mapCustomer, etc.) live in lib/mappers.js —
 // extracted since they're pure functions of a DB row, needing only portLanesMap (for
 // mapShipment's tradeLane) and CUTOFF_WARNING_DAYS (for mapContainer's cutoff badges) threaded
-// in, matching the createAisListener({ db, ... }) factory pattern already used in this codebase.
+// in, matching the createAisListener({ query, ... }) factory pattern already used in this codebase.
 const CUTOFF_WARNING_DAYS = 3;
 const {
   SVC_ABBR, longestLane, cutoffState, roundCents,
@@ -4042,11 +1762,11 @@ function matchesScopeItem(s, item) {
 // per-container split, and single-use-on-first-call would silently re-block containers 2..N).
 const OVERRIDE_GRACE_MS = 60 * 60 * 1000;
 
-function userOwnsLaneForShipment(user, shipment) {
+async function userOwnsLaneForShipment(user, shipment) {
   if (!user?.roles?.includes('trade_manager') || !shipment) return false;
-  const scopeItems = db.prepare(
-    "SELECT * FROM user_scope_items WHERE user_id=? AND item_type='trade_lane'"
-  ).all(user.id);
+  const scopeItems = await query(
+    "SELECT * FROM user_scope_items WHERE user_id=$1 AND item_type='trade_lane'", [user.id]
+  );
   return scopeItems.some(item => matchesScopeItem(shipment, item));
 }
 
@@ -4054,15 +1774,15 @@ function userOwnsLaneForShipment(user, shipment) {
 // this customer is Shipper/Consignee/Principal falls in one of the user's own trade lanes.
 // Deliberately broader than userOwnsLaneForShipment (credit_hold lives on the customer, not one
 // shipment) but never broader than the user's own actual lane grants.
-function userOwnsLaneForCustomer(user, customerId) {
+async function userOwnsLaneForCustomer(user, customerId) {
   if (!user?.roles?.includes('trade_manager')) return false;
-  const scopeItems = db.prepare(
-    "SELECT * FROM user_scope_items WHERE user_id=? AND item_type='trade_lane'"
-  ).all(user.id);
+  const scopeItems = await query(
+    "SELECT * FROM user_scope_items WHERE user_id=$1 AND item_type='trade_lane'", [user.id]
+  );
   if (!scopeItems.length) return false;
-  const shipments = db.prepare(
-    "SELECT pol, pod FROM shipments WHERE shipper_id=? OR consignee_id=? OR principal_id=?"
-  ).all(customerId, customerId, customerId);
+  const shipments = await query(
+    "SELECT pol, pod FROM shipments WHERE shipper_id=$1 OR consignee_id=$1 OR principal_id=$1", [customerId]
+  );
   return shipments.some(s => scopeItems.some(item => matchesScopeItem(s, item)));
 }
 
@@ -4078,18 +1798,18 @@ function userOwnsLaneForCustomer(user, customerId) {
 // the same bypasses) may reassign it. Mirrors applyShipmentAccessFilter's own admin/operator
 // bypass and the X-Office-Id "active office" header ShipmentFormPage.jsx already reads department
 // off of for its own EMO/IMO auto-default.
-function canEditOfficeSide(req, side) {
+async function canEditOfficeSide(req, side) {
   const user = req?.user;
   if (!user) return false;
   const jwtRoles = Array.isArray(user.roles) ? user.roles : (user.role ? [user.role] : ['viewer']);
   if (jwtRoles.includes('admin') || jwtRoles.includes('operator')) return true;
   if (user.allOffices) return true;
-  if (side === 'Controlling') return canEditOfficeSide(req, 'Export') || canEditOfficeSide(req, 'Import');
+  if (side === 'Controlling') return (await canEditOfficeSide(req, 'Export')) || (await canEditOfficeSide(req, 'Import'));
   const dept = side === 'Export' ? 'SE' : side === 'Import' ? 'SI' : null;
   if (!dept) return false;
   const activeOfficeId = req.headers?.['x-office-id'];
   if (!activeOfficeId) return false;
-  const office = db.prepare("SELECT department FROM offices WHERE id=?").get(activeOfficeId);
+  const [office] = await query("SELECT department FROM offices WHERE id=$1", [activeOfficeId]);
   return !!office && office.department === dept;
 }
 
@@ -4120,16 +1840,16 @@ async function applyShipmentAccessFilter(shipments, user, req) {
     const activeOfficeId = req?.headers?.['x-office-id'] || null;
     if (activeOfficeId) {
       // Validate that this office is actually assigned to the user
-      const validOffice = db.prepare(
-        "SELECT id FROM user_offices WHERE user_id=? AND office_id=?"
-      ).get(user.id, activeOfficeId);
+      const [validOffice] = await query(
+        "SELECT id FROM user_offices WHERE user_id=$1 AND office_id=$2", [user.id, activeOfficeId]
+      );
       if (!validOffice) return [];
       // Additional (backup) offices — a shipment a disaster-recovery office was added to via
       // shipment_side_offices should be visible to that office's staff too, not just the
       // shipment's original EMO/IMO/Controlling.
       const sideOfficeShipmentIds = new Set(
-        db.prepare("SELECT shipment_id FROM shipment_side_offices WHERE office_id=?")
-          .all(activeOfficeId).map(r => r.shipment_id)
+        (await query("SELECT shipment_id FROM shipment_side_offices WHERE office_id=$1", [activeOfficeId]))
+          .map(r => r.shipment_id)
       );
       shipments = shipments.filter(s =>
         s.emoOfficeId === activeOfficeId ||
@@ -4140,9 +1860,8 @@ async function applyShipmentAccessFilter(shipments, user, req) {
     }
   }
 
-  const scopeItems = db.prepare("SELECT * FROM user_scope_items WHERE user_id=?").all(user.id);
-  const legacyCfgs = db.prepare("SELECT * FROM user_access_configs WHERE user_id=?")
-    .all(user.id).map(mapAccessConfig);
+  const scopeItems = await query("SELECT * FROM user_scope_items WHERE user_id=$1", [user.id]);
+  const legacyCfgs = (await query("SELECT * FROM user_access_configs WHERE user_id=$1", [user.id])).map(mapAccessConfig);
 
   if (!scopeItems.length && !legacyCfgs.length) return shipments;
 
@@ -4174,39 +1893,39 @@ const inverseLinkLabel = t => INVERSE_LINK_LABEL[t] || t;
 // ordering within the same request.
 const logEntityEvent = async (entityType, entityId, eventType, field = null, oldVal = null, newVal = null, meta = null) => {
   try {
-    db.prepare(
-      "INSERT INTO entity_events (id,entity_type,entity_id,event_type,field,old_value,new_value,meta,created_at) VALUES (?,?,?,?,?,?,?,?,?)"
-    ).run(`EEV-${uid()}`, entityType, entityId, eventType,
+    await query(
+      "INSERT INTO entity_events (id,entity_type,entity_id,event_type,field,old_value,new_value,meta,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+      [`EEV-${uid()}`, entityType, entityId, eventType,
       field   ?? null,
       oldVal  != null ? String(oldVal) : null,
       newVal  != null ? String(newVal) : null,
       meta    ?? null,
-      new Date().toISOString());
+      new Date().toISOString()]);
   } catch(e) { console.warn('logEntityEvent failed:', e.message); }
 };
 
 // ─── Admin event logger ───────────────────────────────────────────────────────
-const logAdminEvent = (actor, action, targetType = '', targetId = '', details = {}) => {
+const logAdminEvent = async (actor, action, targetType = '', targetId = '', details = {}) => {
   try {
-    db.prepare(
-      "INSERT INTO admin_events (id,actor_id,actor_email,action,target_type,target_id,details,created_at) VALUES (?,?,?,?,?,?,?,?)"
-    ).run(`AEV-${uid()}`,
+    await query(
+      "INSERT INTO admin_events (id,actor_id,actor_email,action,target_type,target_id,details,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+      [`AEV-${uid()}`,
       actor?.id    ?? '', actor?.email ?? '',
       action, targetType, targetId,
-      JSON.stringify(details), new Date().toISOString());
+      JSON.stringify(details), new Date().toISOString()]);
   } catch(e) { console.warn('logAdminEvent failed:', e.message); }
 };
 
 // ─── Shipment event logger ────────────────────────────────────────────────────
-const logEvent = (shipmentId, type, field, oldVal, newVal, meta = '') => {
+const logEvent = async (shipmentId, type, field, oldVal, newVal, meta = '') => {
   try {
-    db.prepare(
-      "INSERT INTO shipment_events (id,shipment_id,event_type,field,old_value,new_value,actor,occurred_at,meta) VALUES (?,?,?,?,?,?,?,?,?)"
-    ).run(`EVT-${uid()}`, shipmentId, type,
+    await query(
+      "INSERT INTO shipment_events (id,shipment_id,event_type,field,old_value,new_value,actor,occurred_at,meta) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+      [`EVT-${uid()}`, shipmentId, type,
       field   ?? null,
       oldVal  != null ? String(oldVal) : null,
       newVal  != null ? String(newVal) : null,
-      'user', new Date().toISOString(), meta);
+      'user', new Date().toISOString(), meta]);
   } catch(e) { console.warn('logEvent failed:', e.message); }
 };
 
@@ -4270,12 +1989,12 @@ const FREE_TIME_WARNING_DAYS = 2;
 // manual completion for things the system already knows happened. No-ops if the
 // milestone row doesn't exist yet (init hasn't run) or is already completed — a manual
 // completion (with its own note/date) is never silently overwritten by an auto one.
-const autoCompleteMilestone = (shipmentId, milestoneKey, note) => {
-  const row = db.prepare("SELECT * FROM shipment_milestones WHERE shipment_id=? AND milestone_key=?").get(shipmentId, milestoneKey);
+const autoCompleteMilestone = async (shipmentId, milestoneKey, note) => {
+  const [row] = await query("SELECT * FROM shipment_milestones WHERE shipment_id=$1 AND milestone_key=$2", [shipmentId, milestoneKey]);
   if (!row || row.completed_at) return;
   const now = new Date().toISOString();
-  db.prepare("UPDATE shipment_milestones SET completed_at=?, completed_by=?, note=? WHERE id=?")
-    .run(now, 'System (Auto)', note, row.id);
+  await query("UPDATE shipment_milestones SET completed_at=$1, completed_by=$2, note=$3 WHERE id=$4",
+    [now, 'System (Auto)', note, row.id]);
 };
 
 // ─── Carrier booking auto-creation ─────────────────────────────────────────────
@@ -4304,17 +2023,17 @@ const autoCompleteMilestone = (shipmentId, milestoneKey, note) => {
 // ensureBookingCreated's supersede branch below.
 const archiveBooking = async (booking, reason) => {
   const now = new Date().toISOString();
-  db.prepare(`INSERT INTO carrier_booking_archive
+  await query(`INSERT INTO carrier_booking_archive
     (id, shipment_id, carrier_code, status, last_response_status, booking_ref, correlation_id,
      is_mock, requested_at, requested_by, responded_at, confirmed_at, confirmed_by,
      cancelled_at, cancelled_by, cancel_reason, created_at, updated_at, archived_at, archived_reason)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-    .run(booking.id, booking.shipment_id, booking.carrier_code, booking.status,
-         booking.last_response_status, booking.booking_ref, booking.correlation_id,
-         booking.is_mock, booking.requested_at, booking.requested_by, booking.responded_at,
-         booking.confirmed_at, booking.confirmed_by, booking.cancelled_at, booking.cancelled_by,
-         booking.cancel_reason, booking.created_at, booking.updated_at, now, reason || '');
-  db.prepare("DELETE FROM carrier_bookings WHERE id=?").run(booking.id);
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
+    [booking.id, booking.shipment_id, booking.carrier_code, booking.status,
+     booking.last_response_status, booking.booking_ref, booking.correlation_id,
+     booking.is_mock, booking.requested_at, booking.requested_by, booking.responded_at,
+     booking.confirmed_at, booking.confirmed_by, booking.cancelled_at, booking.cancelled_by,
+     booking.cancel_reason, booking.created_at, booking.updated_at, now, reason || '']);
+  await query("DELETE FROM carrier_bookings WHERE id=$1", [booking.id]);
   await logEntityEvent('carrier_booking', booking.id, 'ARCHIVED', null, null, null,
     JSON.stringify({ shipmentId: booking.shipment_id, reason: reason || '' }));
 };
@@ -4353,44 +2072,45 @@ const supersedeIfCarrierChanged = async (shipment, existing) => {
     // its own carrier_code (who the request actually went to), not the shipment's new one.
     if (existing.correlation_id && await isEdiBookable(existing.carrier_code, shipment.emo_office_id)) {
       const cancelId = `EDI-${uid()}`;
-      db.prepare(`
+      await query(`
         INSERT INTO edi_messages (id, shipment_id, carrier_code, direction, message_type, format, raw_payload, status, correlation_id, is_mock, created_at)
-        VALUES (?,?,?,'out','booking_cancellation','JSON',?,'sent',?,0,?)
-      `).run(cancelId, shipment.id, existing.carrier_code, JSON.stringify({ reason }), existing.correlation_id, now);
+        VALUES ($1,$2,$3,'out','booking_cancellation','JSON',$4,'sent',$5,FALSE,$6)
+      `, [cancelId, shipment.id, existing.carrier_code, JSON.stringify({ reason }), existing.correlation_id, now]);
       const subs = shipmentSubs.get(shipment.id);
       if (subs) {
+        const [cancelRow] = await query("SELECT * FROM edi_messages WHERE id=$1", [cancelId]);
         const frame = JSON.stringify({
           type: "new_edi_message",
-          message: mapEdiMessage(db.prepare("SELECT * FROM edi_messages WHERE id=?").get(cancelId)),
+          message: mapEdiMessage(cancelRow),
         });
         for (const ws of subs) if (ws.readyState === ws.OPEN) ws.send(frame);
       }
     }
-    db.prepare(`UPDATE carrier_bookings SET status='Cancelled', cancelled_at=?, cancelled_by=?, cancel_reason=?, updated_at=? WHERE id=?`)
-      .run(now, 'System (Auto)', reason, now, existing.id);
-    existing = db.prepare("SELECT * FROM carrier_bookings WHERE id=?").get(existing.id);
+    await query(`UPDATE carrier_bookings SET status='Cancelled', cancelled_at=$1, cancelled_by=$2, cancel_reason=$3, updated_at=$4 WHERE id=$5`,
+      [now, 'System (Auto)', reason, now, existing.id]);
+    [existing] = await query("SELECT * FROM carrier_bookings WHERE id=$1", [existing.id]);
   }
   await archiveBooking(existing, `Superseded — ${reason}`);
   return null;
 };
 
 const ensureBookingCreated = async (shipmentId) => {
-  const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(shipmentId);
+  const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [shipmentId]);
   if (!shipment) return;
   if (!(shipment.contract_id || shipment.contract_ref)) return;
-  const hasSchedule = !!db.prepare(`
-    SELECT 1 FROM shipment_schedules WHERE shipment_id=?
+  const [hasScheduleRow] = await query(`
+    SELECT 1 FROM shipment_schedules WHERE shipment_id=$1
     UNION
-    SELECT 1 FROM shipment_legs WHERE shipment_id=? AND leg_type='SEA' AND etd IS NOT NULL AND etd != ''
-  `).get(shipmentId, shipmentId);
-  if (!hasSchedule) return;
-  let existing = db.prepare("SELECT * FROM carrier_bookings WHERE shipment_id=?").get(shipmentId);
+    SELECT 1 FROM shipment_legs WHERE shipment_id=$1 AND leg_type='SEA' AND etd IS NOT NULL AND etd != ''
+  `, [shipmentId]);
+  if (!hasScheduleRow) return;
+  let [existing] = await query("SELECT * FROM carrier_bookings WHERE shipment_id=$1", [shipmentId]);
   existing = await supersedeIfCarrierChanged(shipment, existing);
   if (existing) return;
   const now = new Date().toISOString();
   const id = `BKG-${uid()}`;
-  db.prepare(`INSERT INTO carrier_bookings (id, shipment_id, carrier_code, status, created_at, updated_at)
-    VALUES (?,?,?,'Created',?,?)`).run(id, shipmentId, shipment.carrier_code || '', now, now);
+  await query(`INSERT INTO carrier_bookings (id, shipment_id, carrier_code, status, created_at, updated_at)
+    VALUES ($1,$2,$3,'Created',$4,$5)`, [id, shipmentId, shipment.carrier_code || '', now, now]);
   await logEntityEvent('carrier_booking', id, 'CREATED', null, null, null,
     JSON.stringify({ shipmentId, actor: 'System (Auto)' }));
   // Live-push the new booking — matters much more now than when this was write-only-at-
@@ -4399,9 +2119,10 @@ const ensureBookingCreated = async (shipmentId) => {
   // already open. Same broadcast shape Send/Confirm/Cancel already use.
   const subs = shipmentSubs.get(shipmentId);
   if (subs) {
+    const [newBooking] = await query("SELECT * FROM carrier_bookings WHERE id=$1", [id]);
     const frame = JSON.stringify({
       type: "booking_status_changed",
-      booking: mapCarrierBooking(db.prepare("SELECT * FROM carrier_bookings WHERE id=?").get(id)),
+      booking: mapCarrierBooking(newBooking),
     });
     for (const ws of subs) if (ws.readyState === ws.OPEN) ws.send(frame);
   }
@@ -4412,19 +2133,21 @@ const ensureBookingCreated = async (shipmentId) => {
 // feature existed (or via a code path that doesn't call it, like SHP-VSB0Z2's hand-entered
 // legs) need a one-time sweep. Safe to re-run on every startup: ensureBookingCreated
 // itself no-ops for anything that already has a booking or doesn't qualify.
-(async function backfillCarrierBookings() {
-  const candidates = db.prepare(`
+async function backfillCarrierBookings() {
+  const candidates = await query(`
     SELECT id FROM shipments
     WHERE (contract_id IS NOT NULL AND contract_id != '') OR (contract_ref IS NOT NULL AND contract_ref != '')
-  `).all();
+  `);
   let created = 0;
   for (const { id } of candidates) {
-    const before = db.prepare("SELECT id FROM carrier_bookings WHERE shipment_id=?").get(id);
+    const [before] = await query("SELECT id FROM carrier_bookings WHERE shipment_id=$1", [id]);
     await ensureBookingCreated(id);
-    if (!before && db.prepare("SELECT id FROM carrier_bookings WHERE shipment_id=?").get(id)) created++;
+    const [after] = await query("SELECT id FROM carrier_bookings WHERE shipment_id=$1", [id]);
+    if (!before && after) created++;
   }
   if (created > 0) console.log(`  ✔ Backfilled ${created} carrier booking(s) for already-qualifying shipments`);
-})();
+}
+schemaReadyPromise = schemaReadyPromise.then(() => backfillCarrierBookings());
 
 // ─── Ops-automation sweep: auto-create Kanban tickets from stuck process signals ──────────────
 // Previously the app had zero automatic ticket creation anywhere — a stuck carrier booking, an
@@ -4445,12 +2168,12 @@ const STALE_BOOKING_HOURS = 48;
 // returns in remote mode (it owns no `users` table of its own) — same batch-IN pattern
 // routes/shipments.js's own resolveSeaPorts() already established for sea-port names. Mutates and
 // returns the same array; a cheap no-op when nothing has an assignee.
-function resolveAssigneeNames(rows) {
+async function resolveAssigneeNames(rows) {
   const ids = [...new Set(rows.map(r => r.assigneeId).filter(Boolean))];
   if (!ids.length) return rows;
   const names = {};
-  db.prepare(`SELECT id, name FROM users WHERE id IN (${ids.map(() => '?').join(',')})`)
-    .all(...ids).forEach(u => { names[u.id] = u.name; });
+  (await query(`SELECT id, name FROM users WHERE id IN (${ids.map((_, i) => `$${i + 1}`).join(',')})`, ids))
+    .forEach(u => { names[u.id] = u.name; });
   for (const r of rows) {
     const name = r.assigneeId ? names[r.assigneeId] : null;
     r.assigneeName = name || null;
@@ -4482,24 +2205,25 @@ const ensureOpsTicket = async (sourceType, sourceId, { shipmentId, title, descri
       return null;
     }
   }
-  const existing = db.prepare("SELECT id FROM tickets WHERE source_type=? AND source_id=?").get(sourceType, sourceId);
+  const [existing] = await query("SELECT id FROM tickets WHERE source_type=$1 AND source_id=$2", [sourceType, sourceId]);
   if (existing) return null;
   const id = `TKT-${uid()}`;
   const now = new Date().toISOString();
-  const pos = (db.prepare("SELECT MAX(position) AS m FROM tickets WHERE status='Ready'").get()?.m ?? -1) + 1;
-  db.prepare(`INSERT INTO tickets
+  const [maxRow] = await query("SELECT MAX(position) AS m FROM tickets WHERE status='Ready'");
+  const pos = (maxRow?.m ?? -1) + 1;
+  await query(`INSERT INTO tickets
     (id, title, description, priority, status, position, created_at, shipment_id, type, source_type, source_id)
-    VALUES (?,?,?,?,'Ready',?,?,?,'Task',?,?)`)
-    .run(id, title, description, priority, pos, now, shipmentId || null, sourceType, sourceId);
+    VALUES ($1,$2,$3,$4,'Ready',$5,$6,$7,'Task',$8,$9)`,
+    [id, title, description, priority, pos, now, shipmentId || null, sourceType, sourceId]);
   return id;
 };
 
 const runOpsAutomationSweep = async () => {
   const now = Date.now();
-  const staleBookings = db.prepare(`
+  const staleBookings = await query(`
     SELECT id, shipment_id, carrier_code, requested_at FROM carrier_bookings
     WHERE status='Pending' AND requested_at IS NOT NULL AND requested_at != ''
-  `).all();
+  `);
   for (const b of staleBookings) {
     const ageHours = (now - new Date(b.requested_at).getTime()) / 36e5;
     if (ageHours < STALE_BOOKING_HOURS) continue;
@@ -4511,12 +2235,12 @@ const runOpsAutomationSweep = async () => {
   }
 
   const today = new Date().toISOString().slice(0, 10);
-  const overdueMilestones = db.prepare(`
+  const overdueMilestones = await query(`
     SELECT m.id, m.shipment_id, m.label, m.estimated_date FROM shipment_milestones m
     JOIN shipments s ON s.id = m.shipment_id
-    WHERE (m.completed_at IS NULL OR m.completed_at='') AND m.estimated_date != '' AND m.estimated_date < ?
+    WHERE (m.completed_at IS NULL OR m.completed_at='') AND m.estimated_date != '' AND m.estimated_date < $1
       AND s.status NOT IN ('Completed', 'Cancelled')
-  `).all(today);
+  `, [today]);
   for (const m of overdueMilestones) {
     await ensureOpsTicket('milestone_overdue', m.id, {
       shipmentId: m.shipment_id, priority: 'Medium',
@@ -4525,11 +2249,11 @@ const runOpsAutomationSweep = async () => {
     });
   }
 
-  const complianceHits = db.prepare(`
+  const complianceHits = await query(`
     SELECT sc.id, sc.shipment_id FROM shipment_screenings sc
     JOIN shipments s ON s.id = sc.shipment_id
     WHERE sc.result='HIT' AND sc.overridden_at IS NULL AND s.status NOT IN ('Completed', 'Cancelled')
-  `).all();
+  `);
   for (const sc of complianceHits) {
     // Dedupe on shipment_id, not sc.id — shipment_screenings has UNIQUE(shipment_id), so a
     // re-screen (party change, customer rename, sanctions sync, this very sweep's own
@@ -4545,19 +2269,20 @@ const runOpsAutomationSweep = async () => {
     });
   }
 };
-runOpsAutomationSweep().catch(e => console.error('runOpsAutomationSweep failed:', e.message));
+schemaReadyPromise.then(() => runOpsAutomationSweep()).catch(e => console.error('runOpsAutomationSweep failed:', e.message));
 setInterval(() => runOpsAutomationSweep().catch(e => console.error('runOpsAutomationSweep failed:', e.message)),
   60 * 60 * 1000); // hourly, same cadence as expireStaleContracts
 
 // ─── Allocation conflict helpers ──────────────────────────────────────────────
 
-const checkOverlap = (carrierCode, effectiveDate, endDate, pol = '', pod = '', excludeId = null) => {
-  const rows = db.prepare(`
+const checkOverlap = async (carrierCode, effectiveDate, endDate, pol = '', pod = '', excludeId = null) => {
+  const params = [carrierCode, pol.toUpperCase(), pod.toUpperCase(), endDate, effectiveDate, ...(excludeId ? [excludeId] : [])];
+  const rows = await query(`
     SELECT id FROM allocations
-    WHERE carrier_code = ? AND pol = ? AND pod = ?
-      AND effective_date <= ? AND end_date >= ?
-      ${excludeId ? "AND id != ?" : ""}
-  `).all(...[carrierCode, pol.toUpperCase(), pod.toUpperCase(), endDate, effectiveDate, ...(excludeId ? [excludeId] : [])]);
+    WHERE carrier_code = $1 AND pol = $2 AND pod = $3
+      AND effective_date <= $4 AND end_date >= $5
+      ${excludeId ? "AND id != $6" : ""}
+  `, params);
   return rows.length > 0;
 };
 
@@ -4568,10 +2293,10 @@ const checkOverlap = (carrierCode, effectiveDate, endDate, pol = '', pod = '', e
 // endpoints quietly disagreeing. Deliberately separate from GET /api/contracts
 // (the #schedules search page), which has its own independent-EXISTS-clause
 // logic and is left untouched.
-const linkedPortCodes = code => db.prepare(`
-  SELECT CASE WHEN primary_unlocode=? THEN linked_unlocode ELSE primary_unlocode END AS code
-  FROM linked_ports WHERE primary_unlocode=? OR linked_unlocode=?
-`).all(code, code, code).map(r => r.code);
+const linkedPortCodes = async code => (await query(`
+  SELECT CASE WHEN primary_unlocode=$1 THEN linked_unlocode ELSE primary_unlocode END AS code
+  FROM linked_ports WHERE primary_unlocode=$1 OR linked_unlocode=$1
+`, [code])).map(r => r.code);
 
 // Carrier Line Agents — resolves the registered Line Agent for a carrier at a port, falling
 // back to any linked port (same linked-port-aware matching findMatchingContractLeg already
@@ -4602,37 +2327,38 @@ async function resolveCarrierAgentCandidates(carrierCode, portUnlocode) {
     try { rows = await callMdmService("GET", `/internal/carrier-agents/resolve?carrierCode=${encodeURIComponent(carrierCode)}&port=${encodeURIComponent(portUnlocode)}&all=1`); }
     catch { return []; }
     rows = Array.isArray(rows) ? rows : (rows ? [rows] : []);
-    return rows.map(row => {
-      const cust = db.prepare("SELECT company_name FROM customers WHERE id=?").get(row.agentCustomerId);
+    return Promise.all(rows.map(async row => {
+      const [cust] = await query("SELECT company_name FROM customers WHERE id=$1", [row.agentCustomerId]);
       return { id: row.id, carrier_code: row.carrierCode,
         agent_customer_id: row.agentCustomerId, agent_customer_name: cust?.company_name || '',
         note: row.note, created_at: row.createdAt, matched_via: row.matchedVia || portUnlocode };
-    });
+    }));
   }
-  const tryPort = p => {
-    const direct = db.prepare(`
+  const tryPort = async p => {
+    const [direct] = await query(`
       SELECT ca.*, c.company_name AS agent_customer_name
       FROM carrier_agents ca
       JOIN carrier_agent_locations cal ON cal.carrier_agent_id = ca.id
       JOIN customers c ON c.id = ca.agent_customer_id
-      WHERE ca.carrier_code=? AND cal.location_type='unlocode' AND cal.unlocode=?
-    `).get(carrierCode, p);
+      WHERE ca.carrier_code=$1 AND cal.location_type='unlocode' AND cal.unlocode=$2
+    `, [carrierCode, p]);
     if (direct) return direct;
-    const port = db.prepare("SELECT country_code FROM port_locations WHERE unlocode=?").get(p);
+    const [port] = await query("SELECT country_code FROM port_locations WHERE unlocode=$1", [p]);
     if (!port?.country_code) return null;
-    return db.prepare(`
+    const [row] = await query(`
       SELECT ca.*, c.company_name AS agent_customer_name
       FROM carrier_agents ca
       JOIN carrier_agent_locations cal ON cal.carrier_agent_id = ca.id
       JOIN customers c ON c.id = ca.agent_customer_id
-      WHERE ca.carrier_code=? AND cal.location_type='country' AND cal.country_iso2=?
-    `).get(carrierCode, port.country_code);
+      WHERE ca.carrier_code=$1 AND cal.location_type='country' AND cal.country_iso2=$2
+    `, [carrierCode, port.country_code]);
+    return row;
   };
-  const direct = tryPort(portUnlocode);
+  const direct = await tryPort(portUnlocode);
   if (direct) return [{ ...direct, matched_via: portUnlocode }];
-  return linkedPortCodes(portUnlocode)
-    .map(p => { const row = tryPort(p); return row ? { ...row, matched_via: p } : null; })
-    .filter(Boolean);
+  const linked = await linkedPortCodes(portUnlocode);
+  const candidates = await Promise.all(linked.map(async p => { const row = await tryPort(p); return row ? { ...row, matched_via: p } : null; }));
+  return candidates.filter(Boolean);
 }
 
 async function resolveCarrierAgent(carrierCode, portUnlocode) {
@@ -4660,13 +2386,23 @@ async function resolveCarrierAgent(carrierCode, portUnlocode) {
 // only attaches at the outer edges of a matched run: the first leg's POL haulage (pre-carriage into
 // the run's own first port) and the last leg's POD haulage (on-carriage out of its own last port)
 // — never the legs in between. A single-leg run is the simple case.
-const findMatchingContractLegs = (legs, { pol, pod, needsPolHaulage, needsPodHaulage, pkuLocation = '', delLocation = '' }) => {
+const findMatchingContractLegs = async (legs, { pol, pod, needsPolHaulage, needsPodHaulage, pkuLocation = '', delLocation = '' }) => {
   if (legs.length === 0) return [];
   const polU = pol.toUpperCase(), podU = pod.toUpperCase();
   const pkuU = pkuLocation.toUpperCase(), delU = delLocation.toUpperCase();
 
-  const polMatches = leg => (leg.pol_linked_allowed ? [leg.pol, ...linkedPortCodes(leg.pol)] : [leg.pol]).includes(polU);
-  const podMatches = leg => (leg.pod_linked_allowed ? [leg.pod, ...linkedPortCodes(leg.pod)] : [leg.pod]).includes(podU);
+  // linkedPortCodes is async (a real query) — pre-resolve every distinct linked-allowed leg
+  // port up front so the actual matching walk below can stay synchronous.
+  const linkedCache = new Map();
+  const distinctPorts = new Set();
+  for (const leg of legs) {
+    if (leg.pol_linked_allowed) distinctPorts.add(leg.pol);
+    if (leg.pod_linked_allowed) distinctPorts.add(leg.pod);
+  }
+  await Promise.all([...distinctPorts].map(async p => linkedCache.set(p, await linkedPortCodes(p))));
+
+  const polMatches = leg => (leg.pol_linked_allowed ? [leg.pol, ...(linkedCache.get(leg.pol) || [])] : [leg.pol]).includes(polU);
+  const podMatches = leg => (leg.pod_linked_allowed ? [leg.pod, ...(linkedCache.get(leg.pod) || [])] : [leg.pod]).includes(podU);
 
   const haulageOk = (first, last) => {
     if (needsPolHaulage) {
@@ -4743,27 +2479,28 @@ const broadcastEditLockChange = (shipmentId, payload) => {
   }
 };
 
-const recomputeSpaceBadge = shipmentId => {
+const recomputeSpaceBadge = async shipmentId => {
   try {
-    const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(shipmentId);
+    const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [shipmentId]);
     if (!shipment) return;
     let badge = '';
     if (shipment.allocation_id) {
-      const alloc = db.prepare("SELECT * FROM allocations WHERE id=?").get(shipment.allocation_id);
+      const [alloc] = await query("SELECT * FROM allocations WHERE id=$1", [shipment.allocation_id]);
       if (alloc) {
-        const { shipment_teu } = db.prepare(
-          "SELECT COALESCE(SUM(CASE WHEN size=20 THEN 1 WHEN size IN (40,45) THEN 2 ELSE 0 END),0) AS shipment_teu FROM containers WHERE shipment_id=?"
-        ).get(shipmentId);
-        const { other_teu } = db.prepare(
-          "SELECT COALESCE(SUM(CASE WHEN c.size=20 THEN 1 WHEN c.size IN (40,45) THEN 2 ELSE 0 END),0) AS other_teu FROM containers c JOIN shipments s ON s.id=c.shipment_id WHERE s.allocation_id=? AND s.id!=?"
-        ).get(shipment.allocation_id, shipmentId);
-        const remaining = Math.max(0, alloc.allocated_teu - other_teu);
-        if (shipment_teu > remaining)          badge = 'exceeded';
+        const [{ shipment_teu }] = await query(
+          "SELECT COALESCE(SUM(CASE WHEN size=20 THEN 1 WHEN size IN (40,45) THEN 2 ELSE 0 END),0) AS shipment_teu FROM containers WHERE shipment_id=$1", [shipmentId]
+        );
+        const [{ other_teu }] = await query(
+          "SELECT COALESCE(SUM(CASE WHEN c.size=20 THEN 1 WHEN c.size IN (40,45) THEN 2 ELSE 0 END),0) AS other_teu FROM containers c JOIN shipments s ON s.id=c.shipment_id WHERE s.allocation_id=$1 AND s.id!=$2",
+          [shipment.allocation_id, shipmentId]
+        );
+        const remaining = Math.max(0, alloc.allocated_teu - Number(other_teu));
+        if (Number(shipment_teu) > remaining)  badge = 'exceeded';
         else if (shipment.space_overage_reason) badge = 'warning';
       }
     }
     if (badge !== (shipment.space_badge || '')) {
-      db.prepare("UPDATE shipments SET space_badge=? WHERE id=?").run(badge, shipmentId);
+      await query("UPDATE shipments SET space_badge=$1 WHERE id=$2", [badge, shipmentId]);
       const subs = shipmentSubs.get(shipmentId);
       if (subs) {
         const frame = JSON.stringify({ type: "space_badge_update", badge });
@@ -4833,7 +2570,8 @@ async function createRateSnapshot(shipmentId, contractId, reason, generatedBy = 
   // predates named routings also has routing_id='' by column default, so this condition selects
   // every rate on the contract for that combination — identical to this function's pre-routing
   // behavior.
-  const routingId = db.prepare("SELECT contract_routing_id FROM shipments WHERE id=?").get(shipmentId)?.contract_routing_id || '';
+  const [routingRow] = await query("SELECT contract_routing_id FROM shipments WHERE id=$1", [shipmentId]);
+  const routingId = routingRow?.contract_routing_id || '';
   // A rate line's own valid_from/valid_to (blank on both ends = inherits the parent contract's
   // already-enforced window) — a mid-contract surcharge that hasn't started yet, or one that's
   // already lapsed, is excluded from a freshly-generated snapshot. Already-frozen snapshots on
@@ -4843,7 +2581,7 @@ async function createRateSnapshot(shipmentId, contractId, reason, generatedBy = 
     try { allRates = (await callContractService("GET", `/internal/contracts/${contractId}`)).rates.map(rateToRow); }
     catch { allRates = []; } // an unreachable/vanished remote contract yields no rates to snapshot, not a hard failure
   } else {
-    allRates = db.prepare("SELECT * FROM contract_rates WHERE contract_id=? AND (routing_id=? OR routing_id='') ORDER BY sort_order").all(contractId, routingId);
+    allRates = await query("SELECT * FROM contract_rates WHERE contract_id=$1 AND (routing_id=$2 OR routing_id='') ORDER BY sort_order", [contractId, routingId]);
   }
   const rates = allRates
     .filter(r => r.routing_id === routingId || !r.routing_id)
@@ -4851,14 +2589,14 @@ async function createRateSnapshot(shipmentId, contractId, reason, generatedBy = 
   if (!rates.length) return null;
   const snapshotId = `RATE-${uid()}`;
   const now = new Date().toISOString();
-  db.prepare("INSERT INTO shipment_rate_snapshots (id,shipment_id,contract_id,generated_at,generated_by,reason) VALUES (?,?,?,?,?,?)")
-    .run(snapshotId, shipmentId, contractId, now, generatedBy, reason);
+  await query("INSERT INTO shipment_rate_snapshots (id,shipment_id,contract_id,generated_at,generated_by,reason) VALUES ($1,$2,$3,$4,$5,$6)",
+    [snapshotId, shipmentId, contractId, now, generatedBy, reason]);
   for (const r of rates) {
-    db.prepare(`INSERT INTO shipment_rate_snapshot_lines
+    await query(`INSERT INTO shipment_rate_snapshot_lines
       (id,snapshot_id,service_code,description,amount,currency,amount_usd,unit,container_type,notes)
-      VALUES (?,?,?,?,?,?,?,?,?,?)`)
-      .run(`RSL-${uid()}`, snapshotId, r.service_code || '', r.description || '', r.amount,
-           r.currency || 'USD', r.amount_usd, r.unit || 'per_container', r.container_type || '', r.notes || '');
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      [`RSL-${uid()}`, snapshotId, r.service_code || '', r.description || '', r.amount,
+       r.currency || 'USD', r.amount_usd, r.unit || 'per_container', r.container_type || '', r.notes || '']);
   }
   await logEntityEvent('rate_snapshot', snapshotId, 'GENERATED', null, null, null,
     JSON.stringify({ shipmentId, contractId, reason, lineCount: rates.length }));
@@ -4869,9 +2607,9 @@ async function createRateSnapshot(shipmentId, contractId, reason, generatedBy = 
 // line-generation logic importContractRates always used — container matching, per-container
 // split, SERVICE_CODE_MAP lookup — just sourced from shipment_rate_snapshot_lines.
 async function generateCostLinesFromSnapshot(shipmentId, snapshotId, { splitPerContainer = false, includeSell = false } = {}) {
-  const lines = db.prepare("SELECT * FROM shipment_rate_snapshot_lines WHERE snapshot_id=?").all(snapshotId);
+  const lines = await query("SELECT * FROM shipment_rate_snapshot_lines WHERE snapshot_id=$1", [snapshotId]);
   if (!lines.length) return 0;
-  const ctrs = db.prepare("SELECT id, container_number, size, type FROM containers WHERE shipment_id=?").all(shipmentId);
+  const ctrs = await query("SELECT id, container_number, size, type FROM containers WHERE shipment_id=$1", [shipmentId]);
   const now = new Date().toISOString();
   let created = 0;
   for (const r of lines) {
@@ -4884,8 +2622,8 @@ async function generateCostLinesFromSnapshot(shipmentId, snapshotId, { splitPerC
     if (r.unit === 'per_container' && r.container_type && applicableCtrs.length === 0) continue;
     const insertLine = async (type, amount, notes, containerId) => {
       const lineId = `CL-${uid()}`;
-      db.prepare("INSERT INTO shipment_cost_lines (id,shipment_id,type,charge_code,currency,amount,exchange_rate,notes,container_id,created_at,source,rate_snapshot_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
-        .run(lineId, shipmentId, type, chargeCode, r.currency || 'USD', amount, exchangeRate, notes, containerId, now, 'contract', snapshotId);
+      await query("INSERT INTO shipment_cost_lines (id,shipment_id,type,charge_code,currency,amount,exchange_rate,notes,container_id,created_at,source,rate_snapshot_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)",
+        [lineId, shipmentId, type, chargeCode, r.currency || 'USD', amount, exchangeRate, notes, containerId, now, 'contract', snapshotId]);
       await logEntityEvent('cost_line', lineId, 'IMPORTED', null, null, null,
         JSON.stringify({ shipmentId, chargeCode, currency: r.currency || 'USD', amount, exchangeRate, containerId, snapshotId }));
       created++;
@@ -4916,9 +2654,9 @@ async function generateCostLinesFromSnapshot(shipmentId, snapshotId, { splitPerC
 // createRateSnapshot/generateCostLinesFromSnapshot directly since they need explicit control over
 // which snapshot is used.
 async function importContractRates(shipmentId, opts = {}) {
-  const shipment = db.prepare("SELECT * FROM shipments WHERE id=?").get(shipmentId);
+  const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [shipmentId]);
   if (!shipment || shipment.contract_type !== 'Central' || !shipment.contract_id) return 0;
-  const existing = db.prepare("SELECT id FROM shipment_rate_snapshots WHERE shipment_id=? ORDER BY generated_at DESC LIMIT 1").get(shipmentId);
+  const [existing] = await query("SELECT id FROM shipment_rate_snapshots WHERE shipment_id=$1 ORDER BY generated_at DESC LIMIT 1", [shipmentId]);
   const snapshotId = existing ? existing.id : await createRateSnapshot(shipmentId, shipment.contract_id, 'initial');
   if (!snapshotId) return 0;
   return await generateCostLinesFromSnapshot(shipmentId, snapshotId, opts);
@@ -4933,7 +2671,7 @@ setInterval(() => {
   for (const [k, v] of ssoNonces) if (v.ts < cutoff) ssoNonces.delete(k);
 }, 60_000);
 
-const auth = (allowed = []) => (req, res, next) => {
+const auth = (allowed = []) => async (req, res, next) => {
   const header = req.headers["authorization"];
   if (!header?.startsWith("Bearer ")) return err(res, "Unauthorized", 401);
   try {
@@ -4945,7 +2683,7 @@ const auth = (allowed = []) => (req, res, next) => {
       return err(res, "Forbidden", 403);
     // token_version check — invalidates tokens issued before a revoke
     if (payload.tv != null) {
-      const row = db.prepare("SELECT token_version, is_active FROM users WHERE id=?").get(payload.id);
+      const [row] = await query("SELECT token_version, is_active FROM users WHERE id=$1", [payload.id]);
       if (!row || !row.is_active) return err(res, "Account inactive", 401);
       if (row.token_version !== payload.tv) return err(res, "Session revoked — please sign in again", 401);
     }
@@ -4966,11 +2704,11 @@ app.use("/api", (req, res, next) =>
 // ─── Shared context passed to every route module ───────────────────────────────
 
 const aisListener = createAisListener({
-  db, getSettings, broadcastMessage, logEntityEvent, uid, syncShipmentFromLegs, callMdmService,
+  query, transaction, getSettings, broadcastMessage, logEntityEvent, uid, syncShipmentFromLegs, callMdmService,
 });
 
 const ctx = {
-  db, uid, ok, err, isUniqueViolation, validCoord,
+  query, transaction, uid, ok, err, isUniqueViolation, validCoord,
   auth, requireRole,
   portLanesMap, portCountryMap, rebuildPortLanesMap, longestLane,
   applyShipmentAccessFilter,
@@ -5163,9 +2901,17 @@ wss.on("connection", (ws, req) => {
 // Outbound AIS listener (TKT-ZFO2OM) — settings-gated (api_ais_enabled + a key), no-ops
 // cleanly if unconfigured. Wrapped defensively so a bad config can never take the HTTP
 // server down with it, same "fail soft" contract external integrations follow elsewhere.
-try { ctx.restartAisListener(); } catch (e) { console.error("AIS listener bootstrap failed:", e.message); }
+schemaReadyPromise
+  .then(() => ctx.restartAisListener())
+  .catch(e => console.error("AIS listener bootstrap failed:", e.message));
 
 // ─── Start ────────────────────────────────────────────────────────────────────
+// Every schema/seed/bootstrap step chained onto schemaReadyPromise throughout this file (initial
+// schema creation, account seeding, settings defaults, MDM backfills, carrier-booking backfill)
+// must complete before the server starts accepting traffic — a request landing mid-bootstrap
+// against a still-empty or partially-seeded database is worse than a slightly slower cold start.
 
 const PORT = 3001;
-httpServer.listen(PORT, () => console.log(`⚓  CargoDesk API + WS running on http://localhost:${PORT}`));
+schemaReadyPromise
+  .then(() => httpServer.listen(PORT, () => console.log(`⚓  CargoDesk API + WS running on http://localhost:${PORT}`)))
+  .catch(e => { console.error("Failed to initialize database:", e); process.exit(1); });
