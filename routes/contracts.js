@@ -1,7 +1,7 @@
 "use strict";
 
 module.exports = function contractsRoutes(app, ctx) {
-  const { db, ok, err, uid, requireRole, mapContract, mapLeg, mapRate, mapContractRouting, logEntityEvent, toUsd, findMatchingContractLegs,
+  const { query, transaction, ok, err, uid, requireRole, mapContract, mapLeg, mapRate, mapContractRouting, logEntityEvent, toUsd, findMatchingContractLegs,
           getSettings, callContractService, callMdmService } = ctx;
 
   // Contracts are full-CRUD for trade_manager alongside admin/operator — previously these
@@ -30,7 +30,7 @@ module.exports = function contractsRoutes(app, ctx) {
       try { return JSON.stringify(await callMdmService("GET", "/internal/linked-ports/all")); }
       catch { return "[]"; } // an unreachable MDM service degrades match to exact-port-only, not a hard failure
     }
-    const pairs = db.prepare("SELECT primary_unlocode, linked_unlocode FROM linked_ports").all()
+    const pairs = (await query("SELECT primary_unlocode, linked_unlocode FROM linked_ports"))
       .map(r => [r.primary_unlocode, r.linked_unlocode]);
     return JSON.stringify(pairs);
   }
@@ -40,10 +40,10 @@ module.exports = function contractsRoutes(app, ctx) {
   // allocations data, so those checks are replicated here, against the monolith's own local
   // tables, before ever calling the remote route. Mirrors the exact wording the local DELETE/
   // withdraw routes below already use.
-  function referencedByShipmentOrAllocation(contractId) {
-    const shipmentInUse = db.prepare("SELECT id FROM shipments WHERE contract_id=? LIMIT 1").get(contractId);
+  async function referencedByShipmentOrAllocation(contractId) {
+    const [shipmentInUse] = await query("SELECT id FROM shipments WHERE contract_id=$1 LIMIT 1", [contractId]);
     if (shipmentInUse) return "This contract is referenced by at least one shipment";
-    const allocInUse = db.prepare("SELECT id FROM allocations WHERE contract_id=? LIMIT 1").get(contractId);
+    const [allocInUse] = await query("SELECT id FROM allocations WHERE contract_id=$1 LIMIT 1", [contractId]);
     if (allocInUse) return "This contract has a linked space configuration";
     return null;
   }
@@ -93,34 +93,34 @@ module.exports = function contractsRoutes(app, ctx) {
   // helper covers both tables — same transactional shape as saveLegs/saveRoutings above, since
   // the frontend already always submits the complete array on every save, never an incremental
   // add/remove.
-  function saveContractArray(table, column, contractId, values) {
-    db.exec("BEGIN");
-    try {
-      db.prepare(`DELETE FROM ${table} WHERE contract_id=?`).run(contractId);
-      const ins = db.prepare(`INSERT INTO ${table} (id, contract_id, ${column}) VALUES (?,?,?)`);
-      for (const v of new Set((values || []).filter(Boolean))) ins.run(`${table === "contract_container_types" ? "CCT" : "CIC"}-${uid()}`, contractId, v);
-      db.exec("COMMIT");
-    } catch (e) { db.exec("ROLLBACK"); throw e; }
+  async function saveContractArray(table, column, contractId, values) {
+    await transaction(async (tx) => {
+      await tx.query(`DELETE FROM ${table} WHERE contract_id=$1`, [contractId]);
+      const prefix = table === "contract_container_types" ? "CCT" : "CIC";
+      for (const v of new Set((values || []).filter(Boolean))) {
+        await tx.query(`INSERT INTO ${table} (id, contract_id, ${column}) VALUES ($1,$2,$3)`, [`${prefix}-${uid()}`, contractId, v]);
+      }
+    });
   }
   const saveContractContainerTypes = (contractId, types) => saveContractArray("contract_container_types", "container_type", contractId, types);
   const saveContractImdgClasses    = (contractId, classes) => saveContractArray("contract_imdg_classes", "imdg_class", contractId, classes);
-  const getContractContainerTypes = contractId => db.prepare("SELECT container_type FROM contract_container_types WHERE contract_id=?").all(contractId).map(r => r.container_type);
-  const getContractImdgClasses    = contractId => db.prepare("SELECT imdg_class FROM contract_imdg_classes WHERE contract_id=?").all(contractId).map(r => r.imdg_class);
+  const getContractContainerTypes = async contractId => (await query("SELECT container_type FROM contract_container_types WHERE contract_id=$1", [contractId])).map(r => r.container_type);
+  const getContractImdgClasses    = async contractId => (await query("SELECT imdg_class FROM contract_imdg_classes WHERE contract_id=$1", [contractId])).map(r => r.imdg_class);
 
   // Attaches fresh containerTypes/imdgClasses onto one already-mapped contract object, or a whole
   // array of them (one bulk IN(...) query each, mirroring the legsMap/ratesMap pattern the list
   // endpoint already uses) — overrides whatever mapContract itself derived from the now-frozen
   // legacy JSON columns. Every response site below wraps its existing mapContract(...) output
   // with this instead of duplicating the junction-table query at each call site.
-  function withContractArrays(mappedOrList) {
+  async function withContractArrays(mappedOrList) {
     const list = Array.isArray(mappedOrList) ? mappedOrList : [mappedOrList];
     if (list.length === 0) return mappedOrList;
     const ids = [...new Set(list.map(c => c.id))];
-    const ph = ids.map(() => '?').join(',');
+    const ph = ids.map((_, i) => `$${i + 1}`).join(',');
     const typesByContract = {}, classesByContract = {};
-    db.prepare(`SELECT contract_id, container_type FROM contract_container_types WHERE contract_id IN (${ph})`).all(...ids)
+    (await query(`SELECT contract_id, container_type FROM contract_container_types WHERE contract_id IN (${ph})`, ids))
       .forEach(r => { (typesByContract[r.contract_id] ||= []).push(r.container_type); });
-    db.prepare(`SELECT contract_id, imdg_class FROM contract_imdg_classes WHERE contract_id IN (${ph})`).all(...ids)
+    (await query(`SELECT contract_id, imdg_class FROM contract_imdg_classes WHERE contract_id IN (${ph})`, ids))
       .forEach(r => { (classesByContract[r.contract_id] ||= []).push(r.imdg_class); });
     list.forEach(c => { c.containerTypes = typesByContract[c.id] || []; c.imdgClasses = classesByContract[c.id] || []; });
     return mappedOrList;
@@ -169,21 +169,19 @@ module.exports = function contractsRoutes(app, ctx) {
   // `routings` payload (a leg/rate's `routingIndex` field) — the same "index is the only
   // identity that survives a save" convention `leg_order`/`sort_order` already rely on. Returns
   // the freshly generated ids in input order so saveLegs/saveRates can resolve routingIndex -> id.
-  function saveRoutings(contractId, routings) {
-    db.exec("BEGIN");
-    try {
-      db.prepare("DELETE FROM contract_routings WHERE contract_id=?").run(contractId);
-      const ins = db.prepare(`INSERT INTO contract_routings (id,contract_id,name,sort_order,transit_days,notes,created_at)
-        VALUES (?,?,?,?,?,?,?)`);
-      const now = new Date().toISOString();
-      const ids = routings.map((r, i) => {
-        const id = `CRTG-${uid()}`;
-        ins.run(id, contractId, r.name || "", i, r.transitDays || 0, r.notes || "", now);
-        return id;
-      });
-      db.exec("COMMIT");
-      return ids;
-    } catch (e) { db.exec("ROLLBACK"); throw e; }
+  async function saveRoutings(contractId, routings) {
+    const now = new Date().toISOString();
+    const ids = routings.map(() => `CRTG-${uid()}`);
+    await transaction(async (tx) => {
+      await tx.query("DELETE FROM contract_routings WHERE contract_id=$1", [contractId]);
+      for (let i = 0; i < routings.length; i++) {
+        const r = routings[i];
+        await tx.query(`INSERT INTO contract_routings (id,contract_id,name,sort_order,transit_days,notes,created_at)
+          VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+          [ids[i], contractId, r.name || "", i, r.transitDays || 0, r.notes || "", now]);
+      }
+    });
+    return ids;
   }
 
   // Resolves a leg/rate's target routing to the real, freshly-generated contract_routings id.
@@ -208,21 +206,20 @@ module.exports = function contractsRoutes(app, ctx) {
   // disk error, the process dying) used to leave a contract with its legs fully deleted and
   // only partially replaced. Mirrors the BEGIN/COMMIT/ROLLBACK pattern already established in
   // routes/mdm.js's own trade-lane-replace routes.
-  function saveLegs(contractId, legs, routingIds = [], oldNameById = {}, newIndexByName = {}) {
-    db.exec("BEGIN");
-    try {
-      db.prepare("DELETE FROM contract_legs WHERE contract_id=?").run(contractId);
-      const ins = db.prepare(`INSERT INTO contract_legs (id,contract_id,leg_order,pol,pol_name,pod,pod_name,transit_days,vessel_service,pol_linked_allowed,pod_linked_allowed,pol_carrier_haulage,pod_carrier_haulage,pol_haulage_locations,pod_haulage_locations,pol_loc_type,pod_loc_type,routing_id)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
-      legs.forEach((l, i) => {
-        ins.run(`CLEG-${uid()}`, contractId, i, l.pol||"", l.polName||"", l.pod||"", l.podName||"", l.transitDays||0, l.vesselService||"",
-             l.polLinkedAllowed ? 1 : 0, l.podLinkedAllowed ? 1 : 0,
-             l.polCarrierHaulage ? 1 : 0, l.podCarrierHaulage ? 1 : 0,
-             l.polHaulageLocations || "", l.podHaulageLocations || "",
-             l.polLocType || 'Terminal', l.podLocType || 'Terminal', resolveRoutingId(l, routingIds, oldNameById, newIndexByName));
-      });
-      db.exec("COMMIT");
-    } catch (e) { db.exec("ROLLBACK"); throw e; }
+  async function saveLegs(contractId, legs, routingIds = [], oldNameById = {}, newIndexByName = {}) {
+    await transaction(async (tx) => {
+      await tx.query("DELETE FROM contract_legs WHERE contract_id=$1", [contractId]);
+      for (let i = 0; i < legs.length; i++) {
+        const l = legs[i];
+        await tx.query(`INSERT INTO contract_legs (id,contract_id,leg_order,pol,pol_name,pod,pod_name,transit_days,vessel_service,pol_linked_allowed,pod_linked_allowed,pol_carrier_haulage,pod_carrier_haulage,pol_haulage_locations,pod_haulage_locations,pol_loc_type,pod_loc_type,routing_id)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+          [`CLEG-${uid()}`, contractId, i, l.pol||"", l.polName||"", l.pod||"", l.podName||"", l.transitDays||0, l.vesselService||"",
+           !!l.polLinkedAllowed, !!l.podLinkedAllowed,
+           !!l.polCarrierHaulage, !!l.podCarrierHaulage,
+           l.polHaulageLocations || "", l.podHaulageLocations || "",
+           l.polLocType || 'Terminal', l.podLocType || 'Terminal', resolveRoutingId(l, routingIds, oldNameById, newIndexByName)]);
+      }
+    });
   }
 
   // usd conversion (toUsd, potentially a network-backed FX lookup) resolves BEFORE the
@@ -234,17 +231,16 @@ module.exports = function contractsRoutes(app, ctx) {
     for (const r of rates) {
       resolved.push({ ...r, usd: await toUsd(r.amount || 0, r.currency || "USD") });
     }
-    db.exec("BEGIN");
-    try {
-      db.prepare("DELETE FROM contract_rates WHERE contract_id=?").run(contractId);
-      const ins = db.prepare(`INSERT INTO contract_rates (id,contract_id,service_code,description,amount,currency,amount_usd,unit,container_type,sort_order,notes,valid_from,valid_to,routing_id)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
-      resolved.forEach((r, i) => {
-        ins.run(`RATE-${uid()}`, contractId, r.serviceCode||"", r.description||"", r.amount||0, r.currency||"USD", r.usd,
-             r.unit||"per_container", r.containerType||"", i, r.notes||"", r.validFrom||"", r.validTo||"", resolveRoutingId(r, routingIds, oldNameById, newIndexByName));
-      });
-      db.exec("COMMIT");
-    } catch (e) { db.exec("ROLLBACK"); throw e; }
+    await transaction(async (tx) => {
+      await tx.query("DELETE FROM contract_rates WHERE contract_id=$1", [contractId]);
+      for (let i = 0; i < resolved.length; i++) {
+        const r = resolved[i];
+        await tx.query(`INSERT INTO contract_rates (id,contract_id,service_code,description,amount,currency,amount_usd,unit,container_type,sort_order,notes,valid_from,valid_to,routing_id)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+          [`RATE-${uid()}`, contractId, r.serviceCode||"", r.description||"", r.amount||0, r.currency||"USD", r.usd,
+           r.unit||"per_container", r.containerType||"", i, r.notes||"", r.validFrom||"", r.validTo||"", resolveRoutingId(r, routingIds, oldNameById, newIndexByName)]);
+      }
+    });
   }
 
   // ─── Auto-expire ────────────────────────────────────────────────────────────
@@ -256,17 +252,16 @@ module.exports = function contractsRoutes(app, ctx) {
   // periodic sweep — contract expiry is date-only, so hourly is more than frequent enough.
   async function expireStaleContracts() {
     const today = new Date().toISOString().slice(0, 10);
-    const stale = db.prepare("SELECT id, contract_number, carrier_code FROM contracts WHERE status='Active' AND valid_to != '' AND valid_to < ?").all(today);
+    const stale = await query("SELECT id, contract_number, carrier_code FROM contracts WHERE status='Active' AND valid_to != '' AND valid_to < $1", [today]);
     if (stale.length === 0) return;
-    const update = db.prepare("UPDATE contracts SET status='Expired' WHERE id=?");
     for (const c of stale) {
-      update.run(c.id);
+      await query("UPDATE contracts SET status='Expired' WHERE id=$1", [c.id]);
       await logEntityEvent('contract', c.id, 'UPDATED', 'status', 'Active', 'Expired',
         JSON.stringify({ contractNumber: c.contract_number, carrierCode: c.carrier_code, reason: 'valid_to passed' }));
     }
   }
-  expireStaleContracts();
-  const expireSweep = setInterval(expireStaleContracts, 60 * 60 * 1000);
+  expireStaleContracts().catch(e => console.error("expireStaleContracts failed:", e));
+  const expireSweep = setInterval(() => expireStaleContracts().catch(e => console.error("expireStaleContracts failed:", e)), 60 * 60 * 1000);
   expireSweep.unref?.();
 
   // Upcoming/just-passed expiries for the Header notification bell — MUST be before
@@ -281,11 +276,11 @@ module.exports = function contractsRoutes(app, ctx) {
     const days = Math.max(1, parseInt(req.query.days, 10) || 14);
     const today = new Date().toISOString().slice(0, 10);
     const horizon = new Date(Date.now() + days * 86400000).toISOString().slice(0, 10);
-    const rows = db.prepare(`
+    const rows = await query(`
       SELECT id, contract_number, carrier_code, valid_to FROM contracts
-      WHERE status IN ('Active','Expired') AND valid_to != '' AND valid_to <= ?
+      WHERE status IN ('Active','Expired') AND valid_to != '' AND valid_to <= $1
       ORDER BY valid_to ASC LIMIT 20
-    `).all(horizon);
+    `, [horizon]);
     ok(res, rows.map(r => ({
       id: r.id, contractNumber: r.contract_number, carrierCode: r.carrier_code,
       validTo: r.valid_to, expired: r.valid_to < today,
@@ -300,13 +295,14 @@ module.exports = function contractsRoutes(app, ctx) {
     }
     const { q="", pol="", pod="", carrier="", asOf="" } = req.query;
     const clauses = [], params = [];
-    if (q.trim()) { clauses.push(`(c.contract_number LIKE ? OR c.contract_ref LIKE ? OR c.carrier_code LIKE ? OR c.named_account LIKE ?)`); const s=`%${q.trim()}%`; params.push(s,s,s,s); }
-    if (carrier.trim()) { clauses.push("c.carrier_code=?"); params.push(carrier.trim()); }
-    if (asOf.trim()) { clauses.push("c.valid_from<=? AND c.valid_to>=?"); params.push(asOf, asOf); }
+    const p = v => { params.push(v); return `$${params.length}`; };
+    if (q.trim()) { const s=`%${q.trim()}%`; clauses.push(`(c.contract_number ILIKE ${p(s)} OR c.contract_ref ILIKE ${p(s)} OR c.carrier_code ILIKE ${p(s)} OR c.named_account ILIKE ${p(s)})`); }
+    if (carrier.trim()) clauses.push(`c.carrier_code=${p(carrier.trim())}`);
+    if (asOf.trim()) clauses.push(`c.valid_from<=${p(asOf)} AND c.valid_to>=${p(asOf)}`);
     clauses.push("c.status='Active'");
     const where = "WHERE " + clauses.join(" AND ");
-    const rows = db.prepare(`SELECT c.* FROM contracts c ${where} ORDER BY c.contract_number LIMIT 10`).all(...params);
-    ok(res, withContractArrays(rows.map(mapContract)));
+    const rows = await query(`SELECT c.* FROM contracts c ${where} ORDER BY c.contract_number LIMIT 10`, params);
+    ok(res, await withContractArrays(rows.map(mapContract)));
   });
 
   // Contract route-match — MUST be before /api/contracts/:id
@@ -339,20 +335,21 @@ module.exports = function contractsRoutes(app, ctx) {
 
     const clauses = ["c.status='Active'"];
     const params  = [];
-    if (dateRef) { clauses.push("c.valid_from<=? AND c.valid_to>=?"); params.push(dateRef, dateRef); }
-    if (carrier.trim()) { clauses.push("c.carrier_code=?"); params.push(carrier.trim().toUpperCase()); }
+    const p = v => { params.push(v); return `$${params.length}`; };
+    if (dateRef) clauses.push(`c.valid_from<=${p(dateRef)} AND c.valid_to>=${p(dateRef)}`);
+    if (carrier.trim()) clauses.push(`c.carrier_code=${p(carrier.trim().toUpperCase())}`);
 
-    const candidates = db.prepare(
-      `SELECT c.* FROM contracts c WHERE ${clauses.join(" AND ")} ORDER BY c.valid_from DESC LIMIT 50`
-    ).all(...params);
+    const candidates = await query(
+      `SELECT c.* FROM contracts c WHERE ${clauses.join(" AND ")} ORDER BY c.valid_from DESC LIMIT 50`, params
+    );
 
     const results = [];
     for (const c of candidates) {
-      const legs = db.prepare("SELECT * FROM contract_legs WHERE contract_id=? ORDER BY leg_order").all(c.id);
-      const matches = findMatchingContractLegs(legs, { pol, pod, needsPolHaulage: needsPol, needsPodHaulage: needsPod, pkuLocation, delLocation });
+      const legs = await query("SELECT * FROM contract_legs WHERE contract_id=$1 ORDER BY leg_order", [c.id]);
+      const matches = await findMatchingContractLegs(legs, { pol, pod, needsPolHaulage: needsPol, needsPodHaulage: needsPod, pkuLocation, delLocation });
       if (matches.length === 0) continue;
       const routingsById = Object.fromEntries(
-        db.prepare("SELECT * FROM contract_routings WHERE contract_id=?").all(c.id).map(r => [r.id, mapContractRouting(r)])
+        (await query("SELECT * FROM contract_routings WHERE contract_id=$1", [c.id])).map(r => [r.id, mapContractRouting(r)])
       );
       for (const match of matches) {
         // matchedLegs is the specific contiguous run that satisfied the query — NOT the
@@ -378,7 +375,7 @@ module.exports = function contractsRoutes(app, ctx) {
     // this endpoint's pre-routing behavior.
     if (results.length > 0) {
       const ids = [...new Set(results.map(r => r.id))];
-      const allRates = db.prepare(`SELECT * FROM contract_rates WHERE contract_id IN (${ids.map(() => "?").join(",")}) ORDER BY sort_order`).all(...ids);
+      const allRates = await query(`SELECT * FROM contract_rates WHERE contract_id IN (${ids.map((_, i) => `$${i + 1}`).join(",")}) ORDER BY sort_order`, ids);
       const ratesByContract = {};
       for (const r of allRates) (ratesByContract[r.contract_id] = ratesByContract[r.contract_id] || []).push(r);
       for (const result of results) {
@@ -387,7 +384,7 @@ module.exports = function contractsRoutes(app, ctx) {
       }
     }
 
-    ok(res, withContractArrays(results));
+    ok(res, await withContractArrays(results));
   });
 
   app.get("/api/contracts", async (req, res) => {
@@ -400,55 +397,54 @@ module.exports = function contractsRoutes(app, ctx) {
             namedAccount="", limit="50", offset="0" } = req.query;
     const lim = Math.min(parseInt(limit)||50, 200), off = parseInt(offset)||0;
     const clauses = [], params = [];
+    const p = v => { params.push(v); return `$${params.length}`; };
     if (carrier.trim()) {
       const codes = carrier.split(",").map(c => c.trim().toUpperCase()).filter(Boolean);
-      if (codes.length === 1) { clauses.push("c.carrier_code LIKE ?"); params.push(`%${codes[0]}%`); }
-      else { clauses.push(`c.carrier_code IN (${codes.map(() => "?").join(",")})`); params.push(...codes); }
+      if (codes.length === 1) clauses.push(`c.carrier_code ILIKE ${p(`%${codes[0]}%`)}`);
+      else clauses.push(`c.carrier_code IN (${codes.map(v => p(v)).join(",")})`);
     }
-    if (status.trim())        { clauses.push("c.status=?");               params.push(status.trim()); }
-    if (dg !== "")            { clauses.push("c.dg_allowed=?");           params.push(dg === "1" ? 1 : 0); }
-    if (asOf.trim())          { clauses.push("c.valid_from<=? AND c.valid_to>=?"); params.push(asOf, asOf); }
-    if (containerType.trim()) { clauses.push("EXISTS(SELECT 1 FROM contract_container_types t WHERE t.contract_id=c.id AND t.container_type=?)"); params.push(containerType.trim()); }
-    if (namedAccount.trim())  { clauses.push("(c.named_account LIKE ? OR c.named_account_id LIKE ?)"); const n = `%${namedAccount.trim()}%`; params.push(n, n); }
-    if (pol.trim()) { clauses.push("EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND UPPER(l.pol)=UPPER(?))"); params.push(pol.trim()); }
-    if (pod.trim()) { clauses.push("EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND UPPER(l.pod)=UPPER(?))"); params.push(pod.trim()); }
+    if (status.trim())        clauses.push(`c.status=${p(status.trim())}`);
+    if (dg !== "")            clauses.push(`c.dg_allowed=${p(dg === "1")}`);
+    if (asOf.trim())          clauses.push(`c.valid_from<=${p(asOf)} AND c.valid_to>=${p(asOf)}`);
+    if (containerType.trim()) clauses.push(`EXISTS(SELECT 1 FROM contract_container_types t WHERE t.contract_id=c.id AND t.container_type=${p(containerType.trim())})`);
+    if (namedAccount.trim())  { const n = `%${namedAccount.trim()}%`; clauses.push(`(c.named_account ILIKE ${p(n)} OR c.named_account_id ILIKE ${p(n)})`); }
+    if (pol.trim()) clauses.push(`EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND UPPER(l.pol)=UPPER(${p(pol.trim())}))`);
+    if (pod.trim()) clauses.push(`EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND UPPER(l.pod)=UPPER(${p(pod.trim())}))`);
     if (polOrigin.trim()) {
       // Match legs where pol_carrier_haulage is enabled AND either no specific haulage locations
       // are listed (blank = accept any) OR the requested origin appears in the space-separated list.
-      clauses.push("EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND l.pol_carrier_haulage=1 AND (COALESCE(l.pol_haulage_locations,'')='' OR UPPER(' '||l.pol_haulage_locations||' ') LIKE UPPER('% '||?||' %')))");
-      params.push(polOrigin.trim());
+      clauses.push(`EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND l.pol_carrier_haulage=TRUE AND (COALESCE(l.pol_haulage_locations,'')='' OR UPPER(' '||l.pol_haulage_locations||' ') LIKE UPPER('% '||${p(polOrigin.trim())}||' %')))`);
     }
     if (podDestination.trim()) {
-      clauses.push("EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND l.pod_carrier_haulage=1 AND (COALESCE(l.pod_haulage_locations,'')='' OR UPPER(' '||l.pod_haulage_locations||' ') LIKE UPPER('% '||?||' %')))");
-      params.push(podDestination.trim());
+      clauses.push(`EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND l.pod_carrier_haulage=TRUE AND (COALESCE(l.pod_haulage_locations,'')='' OR UPPER(' '||l.pod_haulage_locations||' ') LIKE UPPER('% '||${p(podDestination.trim())}||' %')))`);
     }
     if (routingTerm.trim()) {
-      const hasPol = "EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND l.pol_carrier_haulage=1)";
-      const hasPod = "EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND l.pod_carrier_haulage=1)";
+      const hasPol = "EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND l.pol_carrier_haulage=TRUE)";
+      const hasPod = "EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND l.pod_carrier_haulage=TRUE)";
       if (routingTerm === "P2P")                                  clauses.push(`NOT ${hasPol} AND NOT ${hasPod}`);
       if (["D2P","CY2P"].includes(routingTerm))                   clauses.push(`${hasPol} AND NOT ${hasPod}`);
       if (["P2D","P2CY"].includes(routingTerm))                   clauses.push(`NOT ${hasPol} AND ${hasPod}`);
       if (["D2D","D2CY","CY2D","CY2CY"].includes(routingTerm))   clauses.push(`${hasPol} AND ${hasPod}`);
     }
     if (search.trim()) {
-      clauses.push(`(c.contract_number LIKE ? OR c.contract_ref LIKE ? OR c.named_account LIKE ? OR c.carrier_code LIKE ? OR EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND (l.pol LIKE ? OR l.pod LIKE ? OR l.pol_name LIKE ? OR l.pod_name LIKE ?)))`);
-      const s = `%${search.trim()}%`; params.push(s, s, s, s, s, s, s, s);
+      const s = `%${search.trim()}%`;
+      clauses.push(`(c.contract_number ILIKE ${p(s)} OR c.contract_ref ILIKE ${p(s)} OR c.named_account ILIKE ${p(s)} OR c.carrier_code ILIKE ${p(s)} OR EXISTS(SELECT 1 FROM contract_legs l WHERE l.contract_id=c.id AND (l.pol ILIKE ${p(s)} OR l.pod ILIKE ${p(s)} OR l.pol_name ILIKE ${p(s)} OR l.pod_name ILIKE ${p(s)})))`);
     }
     const where = clauses.length ? "WHERE " + clauses.join(" AND ") : "";
-    const total = db.prepare(`SELECT COUNT(*) AS n FROM contracts c ${where}`).get(...params).n;
-    const rows  = db.prepare(`SELECT c.* FROM contracts c ${where} ORDER BY c.valid_from DESC, c.created_at DESC LIMIT ? OFFSET ?`).all(...params, lim, off);
+    const [{ n: total }] = await query(`SELECT COUNT(*) AS n FROM contracts c ${where}`, params);
+    const rows  = await query(`SELECT c.* FROM contracts c ${where} ORDER BY c.valid_from DESC, c.created_at DESC LIMIT ${p(lim)} OFFSET ${p(off)}`, params);
     const ids = rows.map(r => r.id);
     let legsMap = {}, ratesMap = {}, routingsMap = {};
     if (ids.length > 0) {
-      const ph = ids.map(() => '?').join(',');
-      db.prepare(`SELECT * FROM contract_legs  WHERE contract_id IN (${ph}) ORDER BY leg_order`).all(...ids)
+      const ph = ids.map((_, i) => `$${i + 1}`).join(',');
+      (await query(`SELECT * FROM contract_legs  WHERE contract_id IN (${ph}) ORDER BY leg_order`, ids))
         .forEach(l => { (legsMap[l.contract_id]  = legsMap[l.contract_id]  || []).push(mapLeg(l)); });
-      db.prepare(`SELECT * FROM contract_rates WHERE contract_id IN (${ph}) ORDER BY sort_order`).all(...ids)
+      (await query(`SELECT * FROM contract_rates WHERE contract_id IN (${ph}) ORDER BY sort_order`, ids))
         .forEach(r => { (ratesMap[r.contract_id] = ratesMap[r.contract_id] || []).push(mapRate(r)); });
-      db.prepare(`SELECT * FROM contract_routings WHERE contract_id IN (${ph}) ORDER BY sort_order`).all(...ids)
+      (await query(`SELECT * FROM contract_routings WHERE contract_id IN (${ph}) ORDER BY sort_order`, ids))
         .forEach(rt => { (routingsMap[rt.contract_id] = routingsMap[rt.contract_id] || []).push(mapContractRouting(rt)); });
     }
-    ok(res, { results: withContractArrays(rows.map(r => ({ ...mapContract(r), legs: legsMap[r.id] || [], rates: ratesMap[r.id] || [], routings: routingsMap[r.id] || [] }))), total, limit: lim, offset: off });
+    ok(res, { results: await withContractArrays(rows.map(r => ({ ...mapContract(r), legs: legsMap[r.id] || [], rates: ratesMap[r.id] || [], routings: routingsMap[r.id] || [] }))), total: Number(total), limit: lim, offset: off });
   });
 
   // Pending-contract revalidation — MUST be before /api/contracts/:id
@@ -459,8 +455,8 @@ module.exports = function contractsRoutes(app, ctx) {
     }
     const { ref = "" } = req.query;
     if (!ref.trim()) return ok(res, []);
-    const rows = db.prepare("SELECT * FROM contracts WHERE LOWER(contract_number) = LOWER(?) AND status = 'Active' ORDER BY valid_from DESC").all(ref.trim());
-    ok(res, withContractArrays(rows.map(mapContract)));
+    const rows = await query("SELECT * FROM contracts WHERE LOWER(contract_number) = LOWER($1) AND status = 'Active' ORDER BY valid_from DESC", [ref.trim()]);
+    ok(res, await withContractArrays(rows.map(mapContract)));
   });
 
   // ─── Publish / Withdraw ─────────────────────────────────────────────────────
@@ -475,50 +471,50 @@ module.exports = function contractsRoutes(app, ctx) {
       try { return ok(res, await callContractService("POST", `/internal/contracts/${req.params.id}/publish`, {})); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
-    const c = db.prepare("SELECT * FROM contracts WHERE id=?").get(req.params.id);
+    const [c] = await query("SELECT * FROM contracts WHERE id=$1", [req.params.id]);
     if (!c) return err(res, "Not found", 404);
     if (c.status !== "Draft") return err(res, `Only a Draft contract can be published (this one is ${c.status})`);
-    const rateCount = db.prepare("SELECT COUNT(*) AS n FROM contract_rates WHERE contract_id=?").get(req.params.id).n;
-    const legCount   = db.prepare("SELECT COUNT(*) AS n FROM contract_legs  WHERE contract_id=?").get(req.params.id).n;
-    if (rateCount === 0) return err(res, "Add at least one rate before publishing");
-    if (legCount === 0) return err(res, "Add at least one route leg before publishing");
+    const [{ n: rateCount }] = await query("SELECT COUNT(*) AS n FROM contract_rates WHERE contract_id=$1", [req.params.id]);
+    const [{ n: legCount }]  = await query("SELECT COUNT(*) AS n FROM contract_legs  WHERE contract_id=$1", [req.params.id]);
+    if (Number(rateCount) === 0) return err(res, "Add at least one rate before publishing");
+    if (Number(legCount) === 0) return err(res, "Add at least one route leg before publishing");
     // Once this contract has any named routing, every leg must belong to one — an "orphan" leg
     // with no routing_id would never surface through GET /api/contracts/match (which groups
     // strictly by routing) once any routing exists, so it'd be silently unreachable dead data.
-    const routingCount = db.prepare("SELECT COUNT(*) AS n FROM contract_routings WHERE contract_id=?").get(req.params.id).n;
-    if (routingCount > 0) {
-      const orphanLegs = db.prepare("SELECT COUNT(*) AS n FROM contract_legs WHERE contract_id=? AND (routing_id IS NULL OR routing_id='')").get(req.params.id).n;
-      if (orphanLegs > 0) return err(res, "Every leg must belong to a named routing once this contract has named routings — assign or remove the ungrouped leg(s) first");
+    const [{ n: routingCount }] = await query("SELECT COUNT(*) AS n FROM contract_routings WHERE contract_id=$1", [req.params.id]);
+    if (Number(routingCount) > 0) {
+      const [{ n: orphanLegs }] = await query("SELECT COUNT(*) AS n FROM contract_legs WHERE contract_id=$1 AND (routing_id IS NULL OR routing_id='')", [req.params.id]);
+      if (Number(orphanLegs) > 0) return err(res, "Every leg must belong to a named routing once this contract has named routings — assign or remove the ungrouped leg(s) first");
     }
     if (!c.valid_from || !c.valid_to) return err(res, "Set both Valid From and Valid To before publishing");
     const today = new Date().toISOString().slice(0, 10);
     if (c.valid_to < today) return err(res, "Valid To is already in the past — update the validity window before publishing");
-    db.prepare("UPDATE contracts SET status='Active' WHERE id=?").run(req.params.id);
+    await query("UPDATE contracts SET status='Active' WHERE id=$1", [req.params.id]);
     await logEntityEvent('contract', req.params.id, 'PUBLISHED', 'status', 'Draft', 'Active',
-      JSON.stringify({ contractNumber: c.contract_number, carrierCode: c.carrier_code, rateCount, legCount }));
-    ok(res, withContractArrays(mapContract({ ...c, status: 'Active' })));
+      JSON.stringify({ contractNumber: c.contract_number, carrierCode: c.carrier_code, rateCount: Number(rateCount), legCount: Number(legCount) }));
+    ok(res, await withContractArrays(mapContract({ ...c, status: 'Active' })));
   });
 
   app.post("/api/contracts/:id/withdraw", write, async (req, res) => {
     if (await isRemote()) {
       // This service owns no shipments/allocations data — replicate the reference guard locally
       // (against the monolith's own tables) before ever calling the remote withdraw route.
-      const reason = referencedByShipmentOrAllocation(req.params.id);
+      const reason = await referencedByShipmentOrAllocation(req.params.id);
       if (reason) return err(res, `${reason} — use On Hold instead of withdrawing it to Draft`);
       try { return ok(res, await callContractService("POST", `/internal/contracts/${req.params.id}/withdraw`, {})); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
-    const c = db.prepare("SELECT * FROM contracts WHERE id=?").get(req.params.id);
+    const [c] = await query("SELECT * FROM contracts WHERE id=$1", [req.params.id]);
     if (!c) return err(res, "Not found", 404);
     if (c.status !== "Active") return err(res, `Only an Active contract can be withdrawn to Draft (this one is ${c.status})`);
-    const shipmentInUse = db.prepare("SELECT id FROM shipments WHERE contract_id=? LIMIT 1").get(req.params.id);
+    const [shipmentInUse] = await query("SELECT id FROM shipments WHERE contract_id=$1 LIMIT 1", [req.params.id]);
     if (shipmentInUse) return err(res, "This contract is referenced by at least one shipment — use On Hold instead of withdrawing it to Draft");
-    const allocInUse = db.prepare("SELECT id FROM allocations WHERE contract_id=? LIMIT 1").get(req.params.id);
+    const [allocInUse] = await query("SELECT id FROM allocations WHERE contract_id=$1 LIMIT 1", [req.params.id]);
     if (allocInUse) return err(res, "This contract has a linked space configuration — use On Hold instead of withdrawing it to Draft");
-    db.prepare("UPDATE contracts SET status='Draft' WHERE id=?").run(req.params.id);
+    await query("UPDATE contracts SET status='Draft' WHERE id=$1", [req.params.id]);
     await logEntityEvent('contract', req.params.id, 'WITHDRAWN', 'status', 'Active', 'Draft',
       JSON.stringify({ contractNumber: c.contract_number, carrierCode: c.carrier_code }));
-    ok(res, withContractArrays(mapContract({ ...c, status: 'Draft' })));
+    ok(res, await withContractArrays(mapContract({ ...c, status: 'Draft' })));
   });
 
   app.get("/api/contracts/:id", async (req, res) => {
@@ -526,12 +522,12 @@ module.exports = function contractsRoutes(app, ctx) {
       try { return ok(res, await callContractService("GET", `/internal/contracts/${req.params.id}`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
-    const c = db.prepare("SELECT * FROM contracts WHERE id=?").get(req.params.id);
+    const [c] = await query("SELECT * FROM contracts WHERE id=$1", [req.params.id]);
     if (!c) return err(res, "Not found", 404);
-    const legs     = db.prepare("SELECT * FROM contract_legs  WHERE contract_id=? ORDER BY leg_order").all(req.params.id);
-    const rates    = db.prepare("SELECT * FROM contract_rates WHERE contract_id=? ORDER BY sort_order").all(req.params.id);
-    const routings = db.prepare("SELECT * FROM contract_routings WHERE contract_id=? ORDER BY sort_order").all(req.params.id);
-    ok(res, withContractArrays({ ...mapContract(c), legs: legs.map(mapLeg), rates: rates.map(mapRate), routings: routings.map(mapContractRouting) }));
+    const legs     = await query("SELECT * FROM contract_legs  WHERE contract_id=$1 ORDER BY leg_order", [req.params.id]);
+    const rates    = await query("SELECT * FROM contract_rates WHERE contract_id=$1 ORDER BY sort_order", [req.params.id]);
+    const routings = await query("SELECT * FROM contract_routings WHERE contract_id=$1 ORDER BY sort_order", [req.params.id]);
+    ok(res, await withContractArrays({ ...mapContract(c), legs: legs.map(mapLeg), rates: rates.map(mapRate), routings: routings.map(mapContractRouting) }));
   });
 
   app.post("/api/contracts", write, async (req, res) => {
@@ -543,7 +539,7 @@ module.exports = function contractsRoutes(app, ctx) {
             movementType="FCL", containerTypes=[], dgAllowed=false, imdgClasses=[],
             validFrom="", validTo="", currency="USD", status="Active", notes="",
             legs=[], rates=[], routings=[] } = req.body;
-    const dup = db.prepare("SELECT id FROM contracts WHERE contract_number=? AND contract_ref=? AND named_account_id=?").get(contractNumber, contractRef, namedAccountId);
+    const [dup] = await query("SELECT id FROM contracts WHERE contract_number=$1 AND contract_ref=$2 AND named_account_id=$3", [contractNumber, contractRef, namedAccountId]);
     if (dup) return err(res, `A contract with this number${contractRef ? ", reference" : ""}${namedAccountId ? ", and account" : ""} already exists (${dup.id})`);
     if (!CONTRACT_STATUSES.includes(status)) return err(res, `status must be one of: ${CONTRACT_STATUSES.join(", ")}`);
     const id = `CNTR-${uid()}`;
@@ -551,22 +547,22 @@ module.exports = function contractsRoutes(app, ctx) {
     // container_types/imdg_classes no longer written here (TKT-5YYLNT) — saveContractContainerTypes/
     // saveContractImdgClasses below are the real write path now; the columns stay in the schema
     // (DEFAULT '[]', unused) rather than being dropped, matching this codebase's additive-only precedent.
-    db.prepare(`INSERT INTO contracts (id,contract_number,contract_ref,carrier_code,named_account_id,named_account,movement_type,dg_allowed,valid_from,valid_to,currency,status,notes,created_at)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
-      .run(id, contractNumber, contractRef, carrierCode, namedAccountId, namedAccount, movementType,
-           dgAllowed ? 1 : 0, validFrom, validTo, currency, status, notes, createdAt);
-    saveContractContainerTypes(id, containerTypes);
-    saveContractImdgClasses(id, imdgClasses);
-    const routingIds = saveRoutings(id, routings);
-    saveLegs(id, legs, routingIds);
+    await query(`INSERT INTO contracts (id,contract_number,contract_ref,carrier_code,named_account_id,named_account,movement_type,dg_allowed,valid_from,valid_to,currency,status,notes,created_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+      [id, contractNumber, contractRef, carrierCode, namedAccountId, namedAccount, movementType,
+           !!dgAllowed, validFrom, validTo, currency, status, notes, createdAt]);
+    await saveContractContainerTypes(id, containerTypes);
+    await saveContractImdgClasses(id, imdgClasses);
+    const routingIds = await saveRoutings(id, routings);
+    await saveLegs(id, legs, routingIds);
     await saveRates(id, rates, routingIds);
-    const c    = db.prepare("SELECT * FROM contracts WHERE id=?").get(id);
-    const lgs  = db.prepare("SELECT * FROM contract_legs  WHERE contract_id=? ORDER BY leg_order").all(id);
-    const rts  = db.prepare("SELECT * FROM contract_rates WHERE contract_id=? ORDER BY sort_order").all(id);
-    const rtgs = db.prepare("SELECT * FROM contract_routings WHERE contract_id=? ORDER BY sort_order").all(id);
+    const [c]  = await query("SELECT * FROM contracts WHERE id=$1", [id]);
+    const lgs  = await query("SELECT * FROM contract_legs  WHERE contract_id=$1 ORDER BY leg_order", [id]);
+    const rts  = await query("SELECT * FROM contract_rates WHERE contract_id=$1 ORDER BY sort_order", [id]);
+    const rtgs = await query("SELECT * FROM contract_routings WHERE contract_id=$1 ORDER BY sort_order", [id]);
     await logEntityEvent('contract', id, 'CREATED', null, null, null,
       JSON.stringify({ contractNumber, contractRef, carrierCode, validFrom, validTo, status }));
-    ok(res, withContractArrays({ ...mapContract(c), legs: lgs.map(mapLeg), rates: rts.map(mapRate), routings: rtgs.map(mapContractRouting) }), 201);
+    ok(res, await withContractArrays({ ...mapContract(c), legs: lgs.map(mapLeg), rates: rts.map(mapRate), routings: rtgs.map(mapContractRouting) }), 201);
   });
 
   app.put("/api/contracts/:id", write, async (req, res) => {
@@ -578,7 +574,7 @@ module.exports = function contractsRoutes(app, ctx) {
             movementType="FCL", containerTypes=[], dgAllowed=false, imdgClasses=[],
             validFrom="", validTo="", currency="USD", status="Active", notes="",
             legs=[], rates=[], routings=[] } = req.body;
-    const dup = db.prepare("SELECT id FROM contracts WHERE contract_number=? AND contract_ref=? AND named_account_id=? AND id!=?").get(contractNumber, contractRef, namedAccountId, req.params.id);
+    const [dup] = await query("SELECT id FROM contracts WHERE contract_number=$1 AND contract_ref=$2 AND named_account_id=$3 AND id!=$4", [contractNumber, contractRef, namedAccountId, req.params.id]);
     if (dup) return err(res, `A contract with this number${contractRef ? ", reference" : ""}${namedAccountId ? ", and account" : ""} already exists (${dup.id})`);
     if (!CONTRACT_STATUSES.includes(status)) return err(res, `status must be one of: ${CONTRACT_STATUSES.join(", ")}`);
     // expireStaleContracts() (below) only ever flips Active -> Expired as validTo passes — it
@@ -590,39 +586,39 @@ module.exports = function contractsRoutes(app, ctx) {
     // On Hold) made in the same edit is never overridden.
     const today = new Date().toISOString().slice(0, 10);
     const effStatus = (status === 'Expired' && (!validTo || validTo >= today)) ? 'Active' : status;
-    const oldRow   = db.prepare("SELECT * FROM contracts WHERE id=?").get(req.params.id);
-    const oldRates = db.prepare("SELECT * FROM contract_rates WHERE contract_id=?").all(req.params.id);
+    const [oldRow] = await query("SELECT * FROM contracts WHERE id=$1", [req.params.id]);
+    const oldRates = await query("SELECT * FROM contract_rates WHERE contract_id=$1", [req.params.id]);
     // Resolved BEFORE saveContractContainerTypes/saveContractImdgClasses delete/regenerate them
     // below — oldRow.container_types/imdg_classes are frozen (TKT-5YYLNT), no longer reliable.
-    const oldContainerTypes = getContractContainerTypes(req.params.id);
-    const oldImdgClasses = getContractImdgClasses(req.params.id);
+    const oldContainerTypes = await getContractContainerTypes(req.params.id);
+    const oldImdgClasses = await getContractImdgClasses(req.params.id);
     // Old routings' id -> name, resolved BEFORE saveRoutings deletes/regenerates them below —
     // needed to give oldRates a stable routingName for logRateDiffs' content key (see its own
     // comment: routing_id itself never survives a save, so name is the only comparable identity).
     const oldRoutingsById = Object.fromEntries(
-      db.prepare("SELECT id, name FROM contract_routings WHERE contract_id=?").all(req.params.id).map(r => [r.id, r.name])
+      (await query("SELECT id, name FROM contract_routings WHERE contract_id=$1", [req.params.id])).map(r => [r.id, r.name])
     );
-    const info = db.prepare(`UPDATE contracts SET contract_number=?,contract_ref=?,carrier_code=?,named_account_id=?,named_account=?,
-      movement_type=?,dg_allowed=?,valid_from=?,valid_to=?,currency=?,status=?,notes=?
-      WHERE id=?`)
-      .run(contractNumber, contractRef, carrierCode, namedAccountId, namedAccount, movementType,
-           dgAllowed ? 1 : 0, validFrom, validTo, currency, effStatus, notes, req.params.id);
-    if (info.changes === 0) return err(res, "Not found", 404);
-    saveContractContainerTypes(req.params.id, containerTypes);
-    saveContractImdgClasses(req.params.id, imdgClasses);
-    const routingIds = saveRoutings(req.params.id, routings);
+    const updated = await query(`UPDATE contracts SET contract_number=$1,contract_ref=$2,carrier_code=$3,named_account_id=$4,named_account=$5,
+      movement_type=$6,dg_allowed=$7,valid_from=$8,valid_to=$9,currency=$10,status=$11,notes=$12
+      WHERE id=$13 RETURNING id`,
+      [contractNumber, contractRef, carrierCode, namedAccountId, namedAccount, movementType,
+           !!dgAllowed, validFrom, validTo, currency, effStatus, notes, req.params.id]);
+    if (updated.length === 0) return err(res, "Not found", 404);
+    await saveContractContainerTypes(req.params.id, containerTypes);
+    await saveContractImdgClasses(req.params.id, imdgClasses);
+    const routingIds = await saveRoutings(req.params.id, routings);
     // Fallback correlation for a leg/rate that carries a stale routingId but no routingIndex
     // (see resolveRoutingId's own comment) — maps the OLD routing's name to its position in
     // THIS save's routings[] payload, so a leg/rate that was in "Via Rotterdam" before still
     // lands in "Via Rotterdam" after, even if the caller never touched the routings themselves.
     const newIndexByName = {};
     routings.forEach((r, i) => { if (r.name && !(r.name in newIndexByName)) newIndexByName[r.name] = i; });
-    saveLegs(req.params.id, legs, routingIds, oldRoutingsById, newIndexByName);
+    await saveLegs(req.params.id, legs, routingIds, oldRoutingsById, newIndexByName);
     await saveRates(req.params.id, rates, routingIds, oldRoutingsById, newIndexByName);
-    const c    = db.prepare("SELECT * FROM contracts WHERE id=?").get(req.params.id);
-    const lgs  = db.prepare("SELECT * FROM contract_legs  WHERE contract_id=? ORDER BY leg_order").all(req.params.id);
-    const rts  = db.prepare("SELECT * FROM contract_rates WHERE contract_id=? ORDER BY sort_order").all(req.params.id);
-    const rtgs = db.prepare("SELECT * FROM contract_routings WHERE contract_id=? ORDER BY sort_order").all(req.params.id);
+    const [c]  = await query("SELECT * FROM contracts WHERE id=$1", [req.params.id]);
+    const lgs  = await query("SELECT * FROM contract_legs  WHERE contract_id=$1 ORDER BY leg_order", [req.params.id]);
+    const rts  = await query("SELECT * FROM contract_rates WHERE contract_id=$1 ORDER BY sort_order", [req.params.id]);
+    const rtgs = await query("SELECT * FROM contract_routings WHERE contract_id=$1 ORDER BY sort_order", [req.params.id]);
     await logContractFieldDiffs(req.params.id, oldRow, { contractNumber, contractRef, carrierCode, namedAccountId, namedAccount, movementType, containerTypes, dgAllowed, imdgClasses, validFrom, validTo, currency, status: effStatus, notes }, oldContainerTypes, oldImdgClasses);
     const oldRatesWithRoutingName = oldRates.map(r => ({ ...r, routingName: oldRoutingsById[r.routing_id] || '' }));
     const newRatesWithRoutingName = rates.map(r => ({
@@ -630,17 +626,17 @@ module.exports = function contractsRoutes(app, ctx) {
       routingName: (Number.isInteger(r.routingIndex) && routings[r.routingIndex]) ? (routings[r.routingIndex].name || '') : '',
     }));
     await logRateDiffs(req.params.id, oldRatesWithRoutingName, newRatesWithRoutingName);
-    ok(res, withContractArrays({ ...mapContract(c), legs: lgs.map(mapLeg), rates: rts.map(mapRate), routings: rtgs.map(mapContractRouting) }));
+    ok(res, await withContractArrays({ ...mapContract(c), legs: lgs.map(mapLeg), rates: rts.map(mapRate), routings: rtgs.map(mapContractRouting) }));
   });
 
   app.delete("/api/contracts/:id", write, async (req, res) => {
     if (await isRemote()) {
-      const reason = referencedByShipmentOrAllocation(req.params.id);
+      const reason = await referencedByShipmentOrAllocation(req.params.id);
       if (reason) return err(res, `${reason} — set its status to Expired/On Hold instead of deleting`);
       try { return ok(res, await callContractService("DELETE", `/internal/contracts/${req.params.id}`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
-    const existing = db.prepare("SELECT * FROM contracts WHERE id=?").get(req.params.id);
+    const [existing] = await query("SELECT * FROM contracts WHERE id=$1", [req.params.id]);
     if (!existing) return err(res, "Not found", 404);
     // shipments.contract_id and allocations.contract_id both carry no FK constraint (SQLite
     // ADD COLUMN can't retrofit one onto live rows) — without this guard a delete here silently
@@ -648,20 +644,20 @@ module.exports = function contractsRoutes(app, ctx) {
     // route-matching endpoints nor the contract-mismatch checks were ever built to handle a
     // vanished contract, only an Active/Draft/Expired one. Same "referenced — deactivate instead"
     // pattern routes/offices.js already uses for the identical class of problem.
-    const shipmentInUse = db.prepare("SELECT id FROM shipments WHERE contract_id=? LIMIT 1").get(req.params.id);
+    const [shipmentInUse] = await query("SELECT id FROM shipments WHERE contract_id=$1 LIMIT 1", [req.params.id]);
     if (shipmentInUse) return err(res, "This contract is referenced by at least one shipment — set its status to Expired/On Hold instead of deleting");
-    const allocInUse = db.prepare("SELECT id FROM allocations WHERE contract_id=? LIMIT 1").get(req.params.id);
+    const [allocInUse] = await query("SELECT id FROM allocations WHERE contract_id=$1 LIMIT 1", [req.params.id]);
     if (allocInUse) return err(res, "This contract has a linked space configuration — remove or reassign that configuration first");
-    db.prepare("DELETE FROM contracts WHERE id=?").run(req.params.id);
+    await query("DELETE FROM contracts WHERE id=$1", [req.params.id]);
     await logEntityEvent('contract', req.params.id, 'DELETED', null, null, null,
       JSON.stringify({ contractNumber: existing.contract_number, carrierCode: existing.carrier_code }));
     ok(res, { deleted: req.params.id });
   });
 
   // Entity events (shared endpoint — serves shipments via their own table, everything else via entity_events)
-  app.get("/api/entity-events/:type/:id", (req, res) => {
+  app.get("/api/entity-events/:type/:id", async (req, res) => {
     if (req.params.type === 'shipment') {
-      const rows = db.prepare("SELECT * FROM shipment_events WHERE shipment_id=? ORDER BY occurred_at DESC").all(req.params.id);
+      const rows = await query("SELECT * FROM shipment_events WHERE shipment_id=$1 ORDER BY occurred_at DESC", [req.params.id]);
       return ok(res, rows.map(r => ({
         id: r.id, entityType: 'shipment', entityId: r.shipment_id,
         eventType: r.event_type, field: r.field,
@@ -670,7 +666,7 @@ module.exports = function contractsRoutes(app, ctx) {
         createdAt: r.occurred_at,
       })));
     }
-    const rows = db.prepare("SELECT * FROM entity_events WHERE entity_type=? AND entity_id=? ORDER BY created_at DESC").all(req.params.type, req.params.id);
+    const rows = await query("SELECT * FROM entity_events WHERE entity_type=$1 AND entity_id=$2 ORDER BY created_at DESC", [req.params.type, req.params.id]);
     ok(res, rows.map(r => ({
       id: r.id, entityType: r.entity_type, entityId: r.entity_id,
       eventType: r.event_type, field: r.field,
