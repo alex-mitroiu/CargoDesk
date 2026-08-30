@@ -1,7 +1,7 @@
 "use strict";
 
 module.exports = function testCasesRoutes(app, ctx) {
-  const { db, ok, err, uid, auth, requireRole, getSettings, callKanbanService, resolveAssigneeNames,
+  const { query, transaction, ok, err, uid, auth, requireRole, getSettings, callKanbanService, resolveAssigneeNames,
           mapTestItem, mapTestCaseLink } = ctx;
 
   const write = requireRole(["operator", "admin"]);
@@ -22,8 +22,8 @@ module.exports = function testCasesRoutes(app, ctx) {
   `;
 
   // Collect a test item's full descendant id set (folders/plans/runs/cases).
-  const collectDescendants = (rootId) => {
-    const all = db.prepare("SELECT id, parent_id FROM test_items").all();
+  const collectDescendants = async (rootId) => {
+    const all = await query("SELECT id, parent_id FROM test_items");
     const byParent = new Map();
     for (const r of all) {
       if (!byParent.has(r.parent_id)) byParent.set(r.parent_id, []);
@@ -46,15 +46,16 @@ module.exports = function testCasesRoutes(app, ctx) {
       const qs = new URLSearchParams();
       if (shipmentId) qs.set("shipmentId", shipmentId);
       if (projectId)  qs.set("projectId", projectId);
-      try { return ok(res, resolveAssigneeNames(await callKanbanService("GET", `/internal/test-items${qs.toString() ? `?${qs}` : ""}`))); }
+      try { return ok(res, await resolveAssigneeNames(await callKanbanService("GET", `/internal/test-items${qs.toString() ? `?${qs}` : ""}`))); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
-    let query  = `${TEST_ITEM_JOIN} WHERE 1=1`;
+    let sql  = `${TEST_ITEM_JOIN} WHERE 1=1`;
     const params = [];
-    if (shipmentId) { query += " AND t.shipment_id=?"; params.push(shipmentId); }
-    if (projectId)  { query += " AND (t.project_id=? OR t.project_id IS NULL)"; params.push(projectId); }
-    query += " ORDER BY t.status, t.position, t.created_at";
-    ok(res, db.prepare(query).all(...params).map(mapTestItem));
+    const p = v => { params.push(v); return `$${params.length}`; };
+    if (shipmentId) sql += ` AND t.shipment_id=${p(shipmentId)}`;
+    if (projectId)  sql += ` AND (t.project_id=${p(projectId)} OR t.project_id IS NULL)`;
+    sql += " ORDER BY t.status, t.position, t.created_at";
+    ok(res, (await query(sql, params)).map(mapTestItem));
   });
 
   app.post("/api/test-items", write, async (req, res) => {
@@ -71,30 +72,32 @@ module.exports = function testCasesRoutes(app, ctx) {
           title, type, description, priority, status, shipmentId, parentId, assigneeId,
           dueDate, testNotes, projectId, versionId,
         });
-        return ok(res, resolveAssigneeNames([created])[0], 201);
+        return ok(res, (await resolveAssigneeNames([created]))[0], 201);
       } catch (e) { return err(res, e.message, e.status || 502); }
     }
     const id  = `TST-${uid()}`;
-    const pos = (db.prepare("SELECT MAX(position) AS m FROM test_items WHERE status=?").get(status)?.m ?? -1) + 1;
-    db.prepare(`
+    const [maxRow] = await query("SELECT MAX(position) AS m FROM test_items WHERE status=$1", [status]);
+    const pos = (maxRow?.m ?? -1) + 1;
+    await query(`
       INSERT INTO test_items
         (id, type, title, description, priority, status, position, created_at,
          shipment_id, parent_id, assignee_id, due_date, test_notes, project_id, version_id)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-    `).run(id, type, title, description, priority, status, pos, new Date().toISOString(),
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+    `, [id, type, title, description, priority, status, pos, new Date().toISOString(),
            shipmentId || null, parentId || null, assigneeId || null, dueDate || null,
-           testNotes || null, projectId || null, versionId || null);
-    ok(res, mapTestItem(db.prepare(`${TEST_ITEM_JOIN} WHERE t.id=?`).get(id)), 201);
+           testNotes || null, projectId || null, versionId || null]);
+    const [created] = await query(`${TEST_ITEM_JOIN} WHERE t.id=$1`, [id]);
+    ok(res, mapTestItem(created), 201);
   });
 
   app.put("/api/test-items/:id", write, async (req, res) => {
     if (await isRemote()) {
       try {
         const updated = await callKanbanService("PUT", `/internal/test-items/${req.params.id}`, req.body);
-        return ok(res, resolveAssigneeNames([updated])[0]);
+        return ok(res, (await resolveAssigneeNames([updated]))[0]);
       } catch (e) { return err(res, e.message, e.status || 502); }
     }
-    const existing = db.prepare("SELECT * FROM test_items WHERE id=?").get(req.params.id);
+    const [existing] = await query("SELECT * FROM test_items WHERE id=$1", [req.params.id]);
     if (!existing) return err(res, "Not found", 404);
     const {
       title       = existing.title,
@@ -112,16 +115,17 @@ module.exports = function testCasesRoutes(app, ctx) {
       versionId   = existing.version_id,
     } = req.body || {};
     if (!TEST_TYPES.includes(type)) return err(res, `type must be one of: ${TEST_TYPES.join(", ")}`);
-    const info = db.prepare(`
+    const updated = await query(`
       UPDATE test_items
-      SET title=?, type=?, description=?, priority=?, status=?, position=?,
-          shipment_id=?, parent_id=?, assignee_id=?, due_date=?, test_notes=?, project_id=?, version_id=?
-      WHERE id=?
-    `).run(title, type, description, priority, status, position,
+      SET title=$1, type=$2, description=$3, priority=$4, status=$5, position=$6,
+          shipment_id=$7, parent_id=$8, assignee_id=$9, due_date=$10, test_notes=$11, project_id=$12, version_id=$13
+      WHERE id=$14 RETURNING id
+    `, [title, type, description, priority, status, position,
            shipmentId || null, parentId || null, assigneeId || null, dueDate || null,
-           testNotes || null, projectId || null, versionId || null, req.params.id);
-    if (info.changes === 0) return err(res, "Not found", 404);
-    ok(res, mapTestItem(db.prepare(`${TEST_ITEM_JOIN} WHERE t.id=?`).get(req.params.id)));
+           testNotes || null, projectId || null, versionId || null, req.params.id]);
+    if (updated.length === 0) return err(res, "Not found", 404);
+    const [fresh] = await query(`${TEST_ITEM_JOIN} WHERE t.id=$1`, [req.params.id]);
+    ok(res, mapTestItem(fresh));
   });
 
   app.delete("/api/test-items/:id", write, async (req, res) => {
@@ -129,17 +133,16 @@ module.exports = function testCasesRoutes(app, ctx) {
       try { return ok(res, await callKanbanService("DELETE", `/internal/test-items/${req.params.id}`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
-    const existing = db.prepare("SELECT id FROM test_items WHERE id=?").get(req.params.id);
+    const [existing] = await query("SELECT id FROM test_items WHERE id=$1", [req.params.id]);
     if (!existing) return err(res, "Not found", 404);
-    const ids = [req.params.id, ...collectDescendants(req.params.id)];
-    const placeholders = ids.map(() => "?").join(",");
-    db.exec("BEGIN");
+    const ids = [req.params.id, ...(await collectDescendants(req.params.id))];
+    const ph = ids.map((_, i) => `$${i + 1}`).join(",");
     try {
-      db.prepare(`DELETE FROM test_case_links WHERE case_id IN (${placeholders})`).run(...ids);
-      db.prepare(`DELETE FROM test_items WHERE id IN (${placeholders})`).run(...ids);
-      db.exec("COMMIT");
+      await transaction(async (tx) => {
+        await tx.query(`DELETE FROM test_case_links WHERE case_id IN (${ph})`, ids);
+        await tx.query(`DELETE FROM test_items WHERE id IN (${ph})`, ids);
+      });
     } catch (e) {
-      db.exec("ROLLBACK");
       return err(res, "Delete failed", 500);
     }
     ok(res, { deleted: req.params.id, cascaded: ids.length - 1 });
@@ -153,12 +156,12 @@ module.exports = function testCasesRoutes(app, ctx) {
       try { return ok(res, await callKanbanService("GET", `/internal/test-items/${req.params.id}/story-links`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
-    const rows = db.prepare("SELECT * FROM test_case_links WHERE case_id=?").all(req.params.id);
-    ok(res, rows.map(l => {
-      const ticket = db.prepare("SELECT id, title, status, type FROM tickets WHERE id=?").get(l.ticket_id);
+    const rows = await query("SELECT * FROM test_case_links WHERE case_id=$1", [req.params.id]);
+    ok(res, await Promise.all(rows.map(async l => {
+      const [ticket] = await query("SELECT id, title, status, type FROM tickets WHERE id=$1", [l.ticket_id]);
       return { ...mapTestCaseLink(l), displayType: "Tests",
         ticket: ticket || { id: l.ticket_id, title: l.ticket_id, status: "", type: "" } };
-    }));
+    })));
   });
 
   app.post("/api/test-items/:id/story-links", write, async (req, res) => {
@@ -168,14 +171,14 @@ module.exports = function testCasesRoutes(app, ctx) {
       try { return ok(res, await callKanbanService("POST", `/internal/test-items/${req.params.id}/story-links`, { ticketId }), 201); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
-    const testCase = db.prepare("SELECT id FROM test_items WHERE id=? AND type='Test Case'").get(req.params.id);
+    const [testCase] = await query("SELECT id FROM test_items WHERE id=$1 AND type='Test Case'", [req.params.id]);
     if (!testCase) return err(res, "Test case not found", 404);
-    if (!db.prepare("SELECT id FROM tickets WHERE id=?").get(ticketId)) return err(res, "Ticket not found", 404);
-    if (db.prepare("SELECT id FROM test_case_links WHERE case_id=? AND ticket_id=?").get(req.params.id, ticketId))
+    if (!(await query("SELECT id FROM tickets WHERE id=$1", [ticketId]))[0]) return err(res, "Ticket not found", 404);
+    if ((await query("SELECT id FROM test_case_links WHERE case_id=$1 AND ticket_id=$2", [req.params.id, ticketId]))[0])
       return err(res, "Link already exists");
     const id = `TCL-${uid()}`;
-    db.prepare("INSERT INTO test_case_links (id,case_id,ticket_id,created_at) VALUES (?,?,?,?)")
-      .run(id, req.params.id, ticketId, new Date().toISOString());
+    await query("INSERT INTO test_case_links (id,case_id,ticket_id,created_at) VALUES ($1,$2,$3,$4)",
+      [id, req.params.id, ticketId, new Date().toISOString()]);
     ok(res, { id, caseId: req.params.id, ticketId }, 201);
   });
 
@@ -184,8 +187,8 @@ module.exports = function testCasesRoutes(app, ctx) {
       try { await callKanbanService("DELETE", `/internal/test-case-links/${req.params.id}`); return ok(res, { deleted: req.params.id }); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
-    const info = db.prepare("DELETE FROM test_case_links WHERE id=?").run(req.params.id);
-    if (info.changes === 0) return err(res, "Not found", 404);
+    const deleted = await query("DELETE FROM test_case_links WHERE id=$1 RETURNING id", [req.params.id]);
+    if (deleted.length === 0) return err(res, "Not found", 404);
     ok(res, { deleted: req.params.id });
   });
 
@@ -196,11 +199,11 @@ module.exports = function testCasesRoutes(app, ctx) {
       try { return ok(res, await callKanbanService("GET", `/internal/tickets/${req.params.id}/tested-by`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
-    const rows = db.prepare("SELECT * FROM test_case_links WHERE ticket_id=?").all(req.params.id);
-    ok(res, rows.map(l => {
-      const testCase = db.prepare("SELECT id, title, status, type FROM test_items WHERE id=?").get(l.case_id);
+    const rows = await query("SELECT * FROM test_case_links WHERE ticket_id=$1", [req.params.id]);
+    ok(res, await Promise.all(rows.map(async l => {
+      const [testCase] = await query("SELECT id, title, status, type FROM test_items WHERE id=$1", [l.case_id]);
       return { ...mapTestCaseLink(l), displayType: "Is tested by",
         case: testCase || { id: l.case_id, title: l.case_id, status: "", type: "" } };
-    }));
+    })));
   });
 };
