@@ -107,7 +107,7 @@ const ScheduledReportsPanel = () => {
       ) : (
         <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, overflow: "hidden" }}>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 100px 1fr 150px 150px 90px", padding: "10px 16px", borderBottom: `1px solid ${T.border}` }}>
-            {["Report", "Frequency", "Recipients", "Office", "Last Run", ""].map((h, i) => (
+            {["Report", "Frequency", "Recipients", "Office", "Last Run", "Actions"].map((h, i) => (
               <div key={i} style={{ fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".07em" }}>{h}</div>
             ))}
           </div>
@@ -122,10 +122,12 @@ const ScheduledReportsPanel = () => {
               <div style={{ fontFamily: T.mono, fontSize: 11.5, color: T.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.recipients}</div>
               <div style={{ fontFamily: T.body, fontSize: 12.5, color: T.textMuted }}>{r.officeName || "—"}</div>
               <div style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>{fmtDate(r.lastRunAt)}</div>
-              <ActionMenu items={[
-                { icon: IconPencil, label: "Edit", onClick: () => setModal(r) },
-                { icon: IconClose, label: "Delete", variant: "danger", onClick: () => setConfirm(r) },
-              ]} />
+              <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                <ActionMenu items={[
+                  { icon: IconPencil, label: "Edit", onClick: () => setModal(r) },
+                  { icon: IconClose, label: "Delete", variant: "danger", onClick: () => setConfirm(r) },
+                ]} />
+              </div>
             </div>
           ))}
         </div>

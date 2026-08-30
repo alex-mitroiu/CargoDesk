@@ -94,7 +94,7 @@ const MdmInvoiceReasonCodesPage = () => {
 
       <div style={{ background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, overflow: "hidden" }}>
         <div style={{ display: "grid", gridTemplateColumns: "220px 1fr 100px 90px", padding: "10px 20px", borderBottom: `1px solid ${T.border}` }}>
-          {["Code", "Label", "Status", ""].map((h, i) => (
+          {["Code", "Label", "Status", "Actions"].map((h, i) => (
             <div key={i} style={{ fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>{h}</div>
           ))}
         </div>
@@ -111,10 +111,12 @@ const MdmInvoiceReasonCodesPage = () => {
             <span style={{ fontFamily: T.mono, fontSize: 13, color: T.accent, fontWeight: 700 }}>{d.code}</span>
             <span style={{ fontFamily: T.body, fontSize: 14, color: T.text }}>{d.label}</span>
             <Badge variant={d.isActive ? "success" : "default"}>{d.isActive ? "Active" : "Inactive"}</Badge>
-            <ActionMenu items={[
-              ...(canManageConfigs ? [{ icon: IconPencil, label: "Edit", onClick: () => setModal(d) }] : []),
-              ...(canManageConfigs ? [{ icon: IconClose, label: "Delete", variant: "danger", onClick: () => setConfirm(d) }] : []),
-            ]} />
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <ActionMenu items={[
+                ...(canManageConfigs ? [{ icon: IconPencil, label: "Edit", onClick: () => setModal(d) }] : []),
+                ...(canManageConfigs ? [{ icon: IconClose, label: "Delete", variant: "danger", onClick: () => setConfirm(d) }] : []),
+              ]} />
+            </div>
           </div>
         ))}
       </div>

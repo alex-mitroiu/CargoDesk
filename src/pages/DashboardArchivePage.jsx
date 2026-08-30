@@ -112,7 +112,7 @@ const DashboardArchive = ({ allocations = [], carriers = [], onRenew, onDelete, 
               </span>
             </div>
             {canEdit && (
-              <div>
+              <div style={{ display: "flex", justifyContent: "flex-end" }}>
                 <ActionMenu items={[
                   { icon: IconRefresh, label: "Renew",  onClick: () => onRenew(a) },
                   { icon: IconClose,   label: "Delete", variant: "danger", onClick: () => onDelete(a.id) },
@@ -231,7 +231,7 @@ const DashboardArchive = ({ allocations = [], carriers = [], onRenew, onDelete, 
                 </div>
 
                 {/* Actions */}
-                <div>
+                <div style={{ display: "flex", justifyContent: "flex-end" }}>
                   <ActionMenu items={[
                     { icon: IconRefresh, label: "Renew",  onClick: () => onRenew(a) },
                     { icon: IconClose,   label: "Delete", variant: "danger", onClick: () => onDelete(a.id) },

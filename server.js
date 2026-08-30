@@ -1511,10 +1511,18 @@ const migrations = [
     carrier_code       TEXT NOT NULL,
     agent_customer_id  TEXT NOT NULL REFERENCES customers(id),
     note               TEXT DEFAULT '',
+    capabilities       TEXT DEFAULT '[]',
     created_at         TEXT NOT NULL,
     UNIQUE(carrier_code, agent_customer_id)
   )`,
   "CREATE INDEX IF NOT EXISTS idx_carrier_agents_customer ON carrier_agents(agent_customer_id)",
+  // Additive for any DB whose carrier_agents predates this column (every DB that already went
+  // through the header+locations restructure above) — a JSON array of capability codes (e.g.
+  // ["warehousing","road_haulage"]), same "flat flag-set as JSON on the row" idiom contracts.
+  // imdg_classes already uses. Lets a shipment cross-check a Line Agent's own operational
+  // capabilities against what a leg's haulage actually needs before booking, instead of finding
+  // out only after the carrier rejects it or an operator has to rework the booking.
+  "ALTER TABLE carrier_agents ADD COLUMN capabilities TEXT DEFAULT '[]'",
 
   // One row per covered location under a carrier_agents header — either a specific UN/LOCODE or
   // a whole country, never both on the same row (enforced by the CHECK + app-level validation).
@@ -1535,6 +1543,24 @@ const migrations = [
   "CREATE INDEX IF NOT EXISTS idx_cal_agent ON carrier_agent_locations(carrier_agent_id)",
   "CREATE INDEX IF NOT EXISTS idx_cal_carrier_unlocode ON carrier_agent_locations(carrier_code, unlocode)",
   "CREATE INDEX IF NOT EXISTS idx_cal_carrier_country ON carrier_agent_locations(carrier_code, country_iso2)",
+
+  // One row per day-group + hour-range a Line Agent is reachable — e.g. "Mon,Tue 09:00-18:00" is
+  // one row, "Wed,Fri 09:00-13:00" a second, so an agent's real working pattern (different hours
+  // on different days) is captured directly rather than forcing one hour range across every open
+  // day. days is a JSON array of the 3-letter labels (["Mon","Tue"]) — always saved as a full
+  // replace of every row for a header (PUT .../schedule), not incrementally, since the "a day can
+  // only belong to one row" rule is naturally enforced by validating the whole proposed set at
+  // once rather than reconciling against whatever was already saved.
+  `CREATE TABLE IF NOT EXISTS carrier_agent_schedule_rows (
+    id                TEXT PRIMARY KEY,
+    carrier_agent_id  TEXT NOT NULL REFERENCES carrier_agents(id) ON DELETE CASCADE,
+    days              TEXT NOT NULL,
+    start_time        TEXT NOT NULL,
+    end_time          TEXT NOT NULL,
+    sort_order        INTEGER DEFAULT 0,
+    created_at        TEXT NOT NULL
+  )`,
+  "CREATE INDEX IF NOT EXISTS idx_casr_agent ON carrier_agent_schedule_rows(carrier_agent_id)",
 
   // Signed PDF Document Generation (Epic TKT-YOFYFZ) — deliberately its own table rather
   // than an app_settings row: GET /api/settings already returns the whole app_settings
@@ -3941,7 +3967,7 @@ const {
   mapShipment, mapShipmentLeg, mapCostLine, mapService, mapRateSnapshot, mapRateSnapshotLine,
   mapChargeCodeDefinition, mapContainer, mapContainerEvent, mapContainerPackage, mapShipmentParty, mapSideOffice,
   mapPackTypeDefinition, mapDutyRateChapter, mapScheduledReport, mapContainerTypeDefinition, mapAllocation, mapCarrier, mapVessel, mapPortLocation, mapLinkedPort,
-  mapCarrierAgent, mapTradeLane, mapScopeItem, mapAccessConfig, mapOffice, mapOfficeMailSettings,
+  mapCarrierAgent, mapCarrierAgentScheduleRow, mapTradeLane, mapScopeItem, mapAccessConfig, mapOffice, mapOfficeMailSettings,
   mapSystemEmailSettings,
   mapBranch, mapOrgCountry, mapRegion, mapCountry, mapTicketLink, mapTicket, mapTestItem,
   mapTestCaseLink, mapEdiMessage, mapCarrierBooking, mapCustomsFiling, mapKbProject, mapKbVersion,
@@ -4909,7 +4935,7 @@ const ctx = {
   mapShipment, mapShipmentLeg, mapCostLine, mapService, mapContainer, mapContainerEvent, mapContainerPackage, mapAllocation,
   mapShipmentParty, ADDITIONAL_PARTY_ROLES, mapSideOffice,
   mapRateSnapshot, mapRateSnapshotLine, mapChargeCodeDefinition, mapPackTypeDefinition, mapDutyRateChapter, mapScheduledReport, mapContainerTypeDefinition,
-  mapCarrier, mapVessel, mapPortLocation, mapLinkedPort, mapTradeLane, mapCarrierAgent,
+  mapCarrier, mapVessel, mapPortLocation, mapLinkedPort, mapTradeLane, mapCarrierAgent, mapCarrierAgentScheduleRow,
   mapScopeItem, mapAccessConfig, mapOffice, mapBranch, mapOrgCountry, mapRegion, mapCountry, mapTicketLink, mapTicket,
   mapTestItem, mapTestCaseLink,
   mapEdiMessage,

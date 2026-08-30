@@ -175,6 +175,10 @@ export const api = {
     remove: (id)         => req("DELETE", `/carrier-agents/${id}`),
     addLocation:    (id, data) => req("POST",   `/carrier-agents/${id}/locations`, data),
     removeLocation: (id)       => req("DELETE", `/carrier-agent-locations/${id}`),
+    schedule: {
+      get: (id)       => req("GET", `/carrier-agents/${id}/schedule`),
+      put: (id, rows) => req("PUT", `/carrier-agents/${id}/schedule`, { rows }),
+    },
   },
   regions: {
     list:   ()           => req("GET",    "/regions"),

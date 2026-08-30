@@ -3,6 +3,7 @@
 module.exports = function mdmRoutes(app, ctx) {
   const { db, ok, err, uid, isUniqueViolation, requireRole, getSettings, callMdmService, callCustomerService,
           mapCarrier, mapVessel, mapPortLocation, mapLinkedPort, mapTradeLane, mapCarrierAgent, mapCarrierAgentLocation,
+          mapCarrierAgentScheduleRow,
           mapCountry, mapRegion, mapCommodity,
           logEntityEvent, rebuildPortLanesMap, longestLane } = ctx;
 
@@ -291,6 +292,19 @@ module.exports = function mdmRoutes(app, ctx) {
   // `SELECT id, company_name FROM customers WHERE id IN (...)` to fill in agentCustomerName,
   // mirroring the batch-resolve idiom this codebase already uses for resolveSeaPorts.
 
+  // Operational capabilities a Line Agent can actually perform — lets a shipment cross-check the
+  // assigned agent against what a leg's own haulage/service actually needs (e.g. an export leg
+  // booked as Merchant's Haulage by road, but the assigned agent has no road_haulage capability)
+  // before sending the booking, instead of discovering the mismatch only after a carrier
+  // rejection or an operator rework. Codes only here (also mirrored in the MDM Service and in
+  // src/pages/mdm/MdmCarrierAgentsPage.jsx, same split-copy convention as ADDITIONAL_PARTY_ROLES)
+  // — validation only, no cross-check wired into booking yet (a separate, later pass).
+  const AGENT_CAPABILITY_CODES = [
+    "port_agency", "documentation", "customs_clearance",
+    "road_haulage", "rail_haulage", "barge_haulage",
+    "warehousing", "cy_storage", "fumigation", "empty_equipment",
+  ];
+
   const CARRIER_AGENT_JOIN = `
     SELECT ca.*, c.company_name AS agent_customer_name
     FROM carrier_agents ca
@@ -447,14 +461,16 @@ module.exports = function mdmRoutes(app, ctx) {
     ok(res, { results: mapped.slice(off, off + lim), total: mapped.length, limit: lim, offset: off });
   });
   app.post("/api/carrier-agents", write, async (req, res) => {
-    const { carrierCode, agentCustomerId, note = '', locationType, unlocode, countryIso2 } = req.body;
+    const { carrierCode, agentCustomerId, note = '', locationType, unlocode, countryIso2, capabilities = [] } = req.body;
     if (!carrierCode || !agentCustomerId) return err(res, "carrierCode and agentCustomerId required");
     if (locationType !== "unlocode" && locationType !== "country") return err(res, "locationType must be 'unlocode' or 'country'");
     if (locationType === "unlocode" && !unlocode) return err(res, "unlocode required");
     if (locationType === "country" && !countryIso2) return err(res, "countryIso2 required");
+    if (!Array.isArray(capabilities) || capabilities.some(c => !AGENT_CAPABILITY_CODES.includes(c)))
+      return err(res, "capabilities must be an array of known capability codes");
     if (isRemote()) {
       try {
-        const created = await callMdmService("POST", "/internal/carrier-agents", { carrierCode, agentCustomerId, note, locationType, unlocode, countryIso2 });
+        const created = await callMdmService("POST", "/internal/carrier-agents", { carrierCode, agentCustomerId, note, locationType, unlocode, countryIso2, capabilities });
         await attachAgentNames([created]);
         return ok(res, created, 201);
       } catch (e) { return err(res, e.message, e.status || 502); }
@@ -468,8 +484,8 @@ module.exports = function mdmRoutes(app, ctx) {
     // so a failure inserting the location must not leave an orphaned header behind.
     db.exec("BEGIN");
     try {
-      db.prepare("INSERT INTO carrier_agents (id,carrier_code,agent_customer_id,note,created_at) VALUES (?,?,?,?,?)")
-        .run(id, code, agentCustomerId, note.trim(), now);
+      db.prepare("INSERT INTO carrier_agents (id,carrier_code,agent_customer_id,note,capabilities,created_at) VALUES (?,?,?,?,?,?)")
+        .run(id, code, agentCustomerId, note.trim(), JSON.stringify(capabilities), now);
       insertLocation(id, code, locationType, unlocode?.toUpperCase().trim(), countryIso2?.toUpperCase().trim());
       db.exec("COMMIT");
     } catch (e) {
@@ -489,9 +505,13 @@ module.exports = function mdmRoutes(app, ctx) {
     }
     const existing = db.prepare("SELECT * FROM carrier_agents WHERE id=?").get(req.params.id);
     if (!existing) return err(res, "Not found", 404);
-    const { agentCustomerId = existing.agent_customer_id, note = existing.note } = req.body;
+    const { agentCustomerId = existing.agent_customer_id, note = existing.note,
+            capabilities = JSON.parse(existing.capabilities || '[]') } = req.body;
     if (!agentCustomerId) return err(res, "agentCustomerId required");
-    db.prepare("UPDATE carrier_agents SET agent_customer_id=?, note=? WHERE id=?").run(agentCustomerId, note.trim(), req.params.id);
+    if (!Array.isArray(capabilities) || capabilities.some(c => !AGENT_CAPABILITY_CODES.includes(c)))
+      return err(res, "capabilities must be an array of known capability codes");
+    db.prepare("UPDATE carrier_agents SET agent_customer_id=?, note=?, capabilities=? WHERE id=?")
+      .run(agentCustomerId, note.trim(), JSON.stringify(capabilities), req.params.id);
     const r = db.prepare(`${CARRIER_AGENT_JOIN} WHERE ca.id=?`).get(req.params.id);
     ok(res, mapHeadersWithLocations([r])[0]);
   });
@@ -539,6 +559,62 @@ module.exports = function mdmRoutes(app, ctx) {
     const info = db.prepare("DELETE FROM carrier_agent_locations WHERE id=?").run(req.params.id);
     if (info.changes === 0) return err(res, "Not found", 404);
     ok(res, { deleted: req.params.id });
+  });
+
+  // ─── Carrier Agent Working Schedule ───────────────────────────────────────────
+  // One row per day-group + hour-range (e.g. "Mon,Tue 09:00-18:00"). Always saved as a full
+  // replace of every row for a header, never an incremental add/remove like locations — the "a
+  // day can only belong to one row" rule is naturally enforced by validating the whole proposed
+  // set in one pass instead of reconciling against whatever was already saved.
+  const AGENT_SCHEDULE_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+  function validateScheduleRows(rows) {
+    if (!Array.isArray(rows)) return "rows must be an array";
+    const seenDays = new Set();
+    for (const row of rows) {
+      if (!Array.isArray(row.days) || row.days.length === 0) return "Each row needs at least one day";
+      for (const d of row.days) {
+        if (!AGENT_SCHEDULE_DAYS.includes(d)) return `Invalid day: ${d}`;
+        if (seenDays.has(d)) return `${d} appears in more than one row — a day can only belong to one row`;
+        seenDays.add(d);
+      }
+      if (!row.startTime || !row.endTime) return "Each row needs a start and end time";
+      if (row.startTime >= row.endTime) return "Start time must be before end time";
+    }
+    return null;
+  }
+
+  app.get("/api/carrier-agents/:id/schedule", async (req, res) => {
+    if (isRemote()) {
+      try { return ok(res, await callMdmService("GET", `/internal/carrier-agents/${req.params.id}/schedule`)); }
+      catch (e) { return err(res, e.message, e.status || 502); }
+    }
+    const rows = db.prepare("SELECT * FROM carrier_agent_schedule_rows WHERE carrier_agent_id=? ORDER BY sort_order").all(req.params.id);
+    ok(res, rows.map(mapCarrierAgentScheduleRow));
+  });
+  app.put("/api/carrier-agents/:id/schedule", write, async (req, res) => {
+    const { rows = [] } = req.body;
+    const invalid = validateScheduleRows(rows);
+    if (invalid) return err(res, invalid);
+    if (isRemote()) {
+      try { return ok(res, await callMdmService("PUT", `/internal/carrier-agents/${req.params.id}/schedule`, { rows })); }
+      catch (e) { return err(res, e.message, e.status || 502); }
+    }
+    const header = db.prepare("SELECT id FROM carrier_agents WHERE id=?").get(req.params.id);
+    if (!header) return err(res, "Not found", 404);
+    const now = new Date().toISOString();
+    db.exec("BEGIN");
+    try {
+      db.prepare("DELETE FROM carrier_agent_schedule_rows WHERE carrier_agent_id=?").run(req.params.id);
+      const ins = db.prepare(`INSERT INTO carrier_agent_schedule_rows
+        (id,carrier_agent_id,days,start_time,end_time,sort_order,created_at) VALUES (?,?,?,?,?,?,?)`);
+      rows.forEach((row, i) => ins.run(`CSR-${uid()}`, req.params.id, JSON.stringify(row.days), row.startTime, row.endTime, i, now));
+      db.exec("COMMIT");
+    } catch (e) {
+      db.exec("ROLLBACK");
+      return err(res, e.message);
+    }
+    const saved = db.prepare("SELECT * FROM carrier_agent_schedule_rows WHERE carrier_agent_id=? ORDER BY sort_order").all(req.params.id);
+    ok(res, saved.map(mapCarrierAgentScheduleRow));
   });
 
   // ─── Trade Lanes ──────────────────────────────────────────────────────────

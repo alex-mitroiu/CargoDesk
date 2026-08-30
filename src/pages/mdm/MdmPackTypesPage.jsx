@@ -102,7 +102,7 @@ const MdmPackTypesPage = () => {
 
       <div style={{ background: T.surface, borderRadius: 12, border: `1px solid ${T.border}`, overflow: "hidden" }}>
         <div style={{ display: "grid", gridTemplateColumns: "60px 110px 1fr 100px 90px 90px", padding: "10px 20px", borderBottom: `1px solid ${T.border}` }}>
-          {["Icon", "Code", "Label", "Order", "Status", ""].map((h, i) => (
+          {["Icon", "Code", "Label", "Order", "Status", "Actions"].map((h, i) => (
             <div key={i} style={{ fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>{h}</div>
           ))}
         </div>
@@ -121,10 +121,12 @@ const MdmPackTypesPage = () => {
             <span style={{ fontFamily: T.body, fontSize: 14, color: T.text }}>{d.label}</span>
             <span style={{ fontFamily: T.mono, fontSize: 13, color: T.textMuted }}>{d.sortOrder}</span>
             <Badge variant={d.isActive ? "success" : "default"}>{d.isActive ? "Active" : "Inactive"}</Badge>
-            <ActionMenu items={[
-              ...(canManageConfigs ? [{ icon: IconPencil, label: "Edit", onClick: () => setModal(d) }] : []),
-              ...(canManageConfigs ? [{ icon: IconClose, label: "Delete", variant: "danger", onClick: () => setConfirm(d) }] : []),
-            ]} />
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <ActionMenu items={[
+                ...(canManageConfigs ? [{ icon: IconPencil, label: "Edit", onClick: () => setModal(d) }] : []),
+                ...(canManageConfigs ? [{ icon: IconClose, label: "Delete", variant: "danger", onClick: () => setConfirm(d) }] : []),
+              ]} />
+            </div>
           </div>
         ))}
       </div>

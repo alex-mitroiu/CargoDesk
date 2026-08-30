@@ -352,11 +352,13 @@ const CarriersPage = ({ carriers, onAdd, onEdit, onDelete }) => {
                 <span style={{ fontFamily: T.body, fontSize: 11, color: T.border }}>—</span>
               )}
             </div>
-            <ActionMenu items={[
-              ...(canManageMdm ? [{ icon: IconPencil, label: "Edit", onClick: () => setModal(c) }] : []),
-              { icon: IconClipboard, label: "History", onClick: () => setHistoryCarrier(c) },
-              ...(canManageMdm ? [{ icon: IconClose, label: "Remove", variant: "danger", onClick: () => setConfirm(c.code) }] : []),
-            ]} />
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <ActionMenu items={[
+                ...(canManageMdm ? [{ icon: IconPencil, label: "Edit", onClick: () => setModal(c) }] : []),
+                { icon: IconClipboard, label: "History", onClick: () => setHistoryCarrier(c) },
+                ...(canManageMdm ? [{ icon: IconClose, label: "Remove", variant: "danger", onClick: () => setConfirm(c.code) }] : []),
+              ]} />
+            </div>
           </div>
         ))}
       </div>

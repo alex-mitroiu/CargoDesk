@@ -142,6 +142,7 @@ db.exec(`
     carrier_code       TEXT NOT NULL,
     agent_customer_id  TEXT NOT NULL,
     note               TEXT DEFAULT '',
+    capabilities       TEXT DEFAULT '[]',
     created_at         TEXT NOT NULL,
     UNIQUE(carrier_code, agent_customer_id)
   );
@@ -159,7 +160,22 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_cal_agent ON carrier_agent_locations(carrier_agent_id);
   CREATE INDEX IF NOT EXISTS idx_cal_carrier_unlocode ON carrier_agent_locations(carrier_code, unlocode);
   CREATE INDEX IF NOT EXISTS idx_cal_carrier_country ON carrier_agent_locations(carrier_code, country_iso2);
+
+  CREATE TABLE IF NOT EXISTS carrier_agent_schedule_rows (
+    id                TEXT PRIMARY KEY,
+    carrier_agent_id  TEXT NOT NULL REFERENCES carrier_agents(id) ON DELETE CASCADE,
+    days              TEXT NOT NULL,
+    start_time        TEXT NOT NULL,
+    end_time          TEXT NOT NULL,
+    sort_order        INTEGER DEFAULT 0,
+    created_at        TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_casr_agent ON carrier_agent_schedule_rows(carrier_agent_id);
 `);
+
+// Additive for any mdm.db whose carrier_agents predates this column — same idiom as the
+// monolith's own copy of this ALTER TABLE (see server.js).
+try { db.exec("ALTER TABLE carrier_agents ADD COLUMN capabilities TEXT DEFAULT '[]'"); } catch {}
 
 // One-time restructure, same shape and rationale as the monolith's own rebuildCarrierAgentsLocations
 // (server.js) — this service owns an independent copy of carrier_agents, so it needs the identical
@@ -229,7 +245,8 @@ const mapVessel       = r => ({ imo: r.imo, name: r.name, assetType: r.asset_typ
 const mapPortLocation = r => ({ unlocode: r.unlocode, name: r.name, latitude: r.latitude, longitude: r.longitude, countryCode: r.country_code, zoneCode: r.zone_code, timezone: r.timezone || null, lastSyncedAt: r.last_synced_at || null });
 const mapLinkedPort   = r => ({ id: r.id, primaryUnlocode: r.primary_unlocode, primaryName: r.primary_name || '', linkedUnlocode: r.linked_unlocode, linkedName: r.linked_name || '', note: r.note || '' });
 const mapCarrierAgentLocation = l => ({ id: l.id, type: l.location_type, unlocode: l.unlocode || '', portName: l.port_name || '', countryIso2: l.country_iso2 || '', countryName: l.country_name || '' });
-const mapCarrierAgent = (r, locations = []) => ({ id: r.id, carrierCode: r.carrier_code, agentCustomerId: r.agent_customer_id, note: r.note || '', createdAt: r.created_at, locations: locations.map(mapCarrierAgentLocation) });
+const mapCarrierAgentScheduleRow = r => ({ id: r.id, days: JSON.parse(r.days || '[]'), startTime: r.start_time, endTime: r.end_time });
+const mapCarrierAgent = (r, locations = []) => ({ id: r.id, carrierCode: r.carrier_code, agentCustomerId: r.agent_customer_id, note: r.note || '', createdAt: r.created_at, capabilities: JSON.parse(r.capabilities || '[]'), locations: locations.map(mapCarrierAgentLocation) });
 const mapTradeLane    = r => ({ code: r.code, name: r.name, description: r.description || '', countryCount: r.country_count ?? 0, transitDays: r.transit_days ?? 0 });
 const mapRegion       = r => ({ code: r.code, name: r.name, description: r.description || '' });
 const mapCountry      = r => ({ iso2: r.iso2, name: r.name, unMember: r.un_member === 1, regionCode: r.region_code || '', portCount: r.port_count ?? 0, invoiceAlertBusinessDays: r.invoice_alert_business_days ?? null, invoiceEscalationBusinessDays: r.invoice_escalation_business_days ?? null });
@@ -429,6 +446,13 @@ app.get("/internal/linked-ports/all", (req, res) => {
 // (...)` after calling this service, mirroring the same batch-resolve idiom used for
 // resolveSeaPorts/resolveAssigneeNames elsewhere in this codebase.
 
+// Same capability list as the monolith's own routes/mdm.js copy — see that file's comment.
+const AGENT_CAPABILITY_CODES = [
+  "port_agency", "documentation", "customs_clearance",
+  "road_haulage", "rail_haulage", "barge_haulage",
+  "warehousing", "cy_storage", "fumigation", "empty_equipment",
+];
+
 const CARRIER_AGENT_JOIN = `SELECT ca.* FROM carrier_agents ca`;
 const LOCATION_JOIN = `
   SELECT cal.*, pl.name AS port_name, co.name AS country_name
@@ -535,9 +559,11 @@ app.get("/internal/carrier-agents", (req, res) => {
   ok(res, { results: mapped.slice(off, off + lim), total: mapped.length, limit: lim, offset: off });
 });
 app.post("/internal/carrier-agents", (req, res) => {
-  const { carrierCode, agentCustomerId, note = '', locationType, unlocode, countryIso2 } = req.body;
+  const { carrierCode, agentCustomerId, note = '', locationType, unlocode, countryIso2, capabilities = [] } = req.body;
   if (!carrierCode || !agentCustomerId) return err(res, "carrierCode and agentCustomerId required");
   if (locationType !== "unlocode" && locationType !== "country") return err(res, "locationType must be 'unlocode' or 'country'");
+  if (!Array.isArray(capabilities) || capabilities.some(c => !AGENT_CAPABILITY_CODES.includes(c)))
+    return err(res, "capabilities must be an array of known capability codes");
   const code = carrierCode.toUpperCase().trim();
   const uc = unlocode?.toUpperCase().trim(), cc = countryIso2?.toUpperCase().trim();
   const conflict = checkLocationConflict({ carrierCode: code, headerId: '__new__', locationType, unlocode: uc, countryIso2: cc });
@@ -548,8 +574,8 @@ app.post("/internal/carrier-agents", (req, res) => {
   // this route for the full rationale (a header with zero locations is meaningless).
   db.exec("BEGIN");
   try {
-    db.prepare("INSERT INTO carrier_agents (id,carrier_code,agent_customer_id,note,created_at) VALUES (?,?,?,?,?)")
-      .run(id, code, agentCustomerId, note.trim(), now);
+    db.prepare("INSERT INTO carrier_agents (id,carrier_code,agent_customer_id,note,capabilities,created_at) VALUES (?,?,?,?,?,?)")
+      .run(id, code, agentCustomerId, note.trim(), JSON.stringify(capabilities), now);
     insertLocation(id, code, locationType, uc, cc);
     db.exec("COMMIT");
   } catch (e) {
@@ -562,9 +588,13 @@ app.post("/internal/carrier-agents", (req, res) => {
 app.put("/internal/carrier-agents/:id", (req, res) => {
   const existing = db.prepare("SELECT * FROM carrier_agents WHERE id=?").get(req.params.id);
   if (!existing) return err(res, "Not found", 404);
-  const { agentCustomerId = existing.agent_customer_id, note = existing.note } = req.body;
+  const { agentCustomerId = existing.agent_customer_id, note = existing.note,
+          capabilities = JSON.parse(existing.capabilities || '[]') } = req.body;
   if (!agentCustomerId) return err(res, "agentCustomerId required");
-  db.prepare("UPDATE carrier_agents SET agent_customer_id=?, note=? WHERE id=?").run(agentCustomerId, note.trim(), req.params.id);
+  if (!Array.isArray(capabilities) || capabilities.some(c => !AGENT_CAPABILITY_CODES.includes(c)))
+    return err(res, "capabilities must be an array of known capability codes");
+  db.prepare("UPDATE carrier_agents SET agent_customer_id=?, note=?, capabilities=? WHERE id=?")
+    .run(agentCustomerId, note.trim(), JSON.stringify(capabilities), req.params.id);
   const r = db.prepare(`${CARRIER_AGENT_JOIN} WHERE ca.id=?`).get(req.params.id);
   ok(res, mapHeadersWithLocations([r])[0]);
 });
@@ -590,6 +620,50 @@ app.delete("/internal/carrier-agent-locations/:id", (req, res) => {
   const info = db.prepare("DELETE FROM carrier_agent_locations WHERE id=?").run(req.params.id);
   if (info.changes === 0) return err(res, "Not found", 404);
   ok(res, { deleted: req.params.id });
+});
+
+// Same validate-the-whole-set-in-one-pass shape as the monolith's own copy of these two routes —
+// see routes/mdm.js for the full rationale.
+const AGENT_SCHEDULE_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+function validateScheduleRows(rows) {
+  if (!Array.isArray(rows)) return "rows must be an array";
+  const seenDays = new Set();
+  for (const row of rows) {
+    if (!Array.isArray(row.days) || row.days.length === 0) return "Each row needs at least one day";
+    for (const d of row.days) {
+      if (!AGENT_SCHEDULE_DAYS.includes(d)) return `Invalid day: ${d}`;
+      if (seenDays.has(d)) return `${d} appears in more than one row — a day can only belong to one row`;
+      seenDays.add(d);
+    }
+    if (!row.startTime || !row.endTime) return "Each row needs a start and end time";
+    if (row.startTime >= row.endTime) return "Start time must be before end time";
+  }
+  return null;
+}
+app.get("/internal/carrier-agents/:id/schedule", (req, res) => {
+  const rows = db.prepare("SELECT * FROM carrier_agent_schedule_rows WHERE carrier_agent_id=? ORDER BY sort_order").all(req.params.id);
+  ok(res, rows.map(mapCarrierAgentScheduleRow));
+});
+app.put("/internal/carrier-agents/:id/schedule", (req, res) => {
+  const { rows = [] } = req.body;
+  const invalid = validateScheduleRows(rows);
+  if (invalid) return err(res, invalid);
+  const header = db.prepare("SELECT id FROM carrier_agents WHERE id=?").get(req.params.id);
+  if (!header) return err(res, "Not found", 404);
+  const now = new Date().toISOString();
+  db.exec("BEGIN");
+  try {
+    db.prepare("DELETE FROM carrier_agent_schedule_rows WHERE carrier_agent_id=?").run(req.params.id);
+    const ins = db.prepare(`INSERT INTO carrier_agent_schedule_rows
+      (id,carrier_agent_id,days,start_time,end_time,sort_order,created_at) VALUES (?,?,?,?,?,?,?)`);
+    rows.forEach((row, i) => ins.run(`CSR-${uid()}`, req.params.id, JSON.stringify(row.days), row.startTime, row.endTime, i, now));
+    db.exec("COMMIT");
+  } catch (e) {
+    db.exec("ROLLBACK");
+    return err(res, e.message);
+  }
+  const saved = db.prepare("SELECT * FROM carrier_agent_schedule_rows WHERE carrier_agent_id=? ORDER BY sort_order").all(req.params.id);
+  ok(res, saved.map(mapCarrierAgentScheduleRow));
 });
 
 // Server-side resolveCarrierAgent, including the linked-port fallback — this service owns both
