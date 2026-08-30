@@ -2,9 +2,9 @@
 const crypto = require("crypto");
 
 module.exports = function authRoutes(app, ctx) {
-  const { db, ok, err, uid, auth, requireRole,
+  const { query, ok, err, uid, auth, requireRole,
           VALID_ROLES, ROLE_RANK_SV, primaryRoleSV, parseUserRoles,
-          mapScopeItem, mapAccessConfig, mapSystemEmailSettings,
+          mapScopeItem, mapAccessConfig, mapSystemEmailSettings, isUniqueViolation,
           bcrypt, jwt, JWT_SECRET,
           createTransporterFromSettings, buildMailOptions,
           logAdminEvent, getSettings, ssoNonces, createRateLimiter } = ctx;
@@ -89,9 +89,9 @@ module.exports = function authRoutes(app, ctx) {
     const { email, password } = req.body || {};
     if (!email || !password) return err(res, "Email and password required");
 
-    const user = db.prepare(
-      "SELECT * FROM users WHERE email = ? AND is_active = 1"
-    ).get(email.toLowerCase().trim());
+    const [user] = await query(
+      "SELECT * FROM users WHERE email = $1 AND is_active = TRUE", [email.toLowerCase().trim()]
+    );
 
     if (!user) return err(res, "Invalid email or password", 401);
 
@@ -107,19 +107,19 @@ module.exports = function authRoutes(app, ctx) {
       const attempts = (user.failed_attempts || 0) + 1;
       if (attempts >= maxAttempts) {
         const lockedUntil = new Date(Date.now() + lockoutMinutes * 60_000).toISOString();
-        db.prepare("UPDATE users SET failed_attempts=?, locked_until=? WHERE id=?")
-          .run(attempts, lockedUntil, user.id);
-        logAdminEvent({ id: '', email: email.toLowerCase().trim() },
+        await query("UPDATE users SET failed_attempts=$1, locked_until=$2 WHERE id=$3",
+          [attempts, lockedUntil, user.id]);
+        await logAdminEvent({ id: '', email: email.toLowerCase().trim() },
           'LOGIN_LOCKED', 'user', user.id, { attempts });
         return err(res, `Too many failed attempts. Account locked for ${lockoutMinutes} minutes.`, 423);
       }
-      db.prepare("UPDATE users SET failed_attempts=? WHERE id=?").run(attempts, user.id);
+      await query("UPDATE users SET failed_attempts=$1 WHERE id=$2", [attempts, user.id]);
       return err(res, "Invalid email or password", 401);
     }
 
     // Successful login — reset lockout state
-    db.prepare("UPDATE users SET failed_attempts=0, locked_until='', last_login=datetime('now') WHERE id=?")
-      .run(user.id);
+    await query("UPDATE users SET failed_attempts=0, locked_until='', last_login=$1 WHERE id=$2",
+      [new Date().toISOString(), user.id]);
 
     const { jwtHours, passwordExpiryDays } = await getSecuritySettings();
     const roles = JSON.parse(user.roles || JSON.stringify([user.role || 'viewer']));
@@ -127,12 +127,12 @@ module.exports = function authRoutes(app, ctx) {
     const passwordExpired = isPasswordExpired(user, passwordExpiryDays);
 
     // Fetch user's assigned offices for the picker
-    const userOfficesRows = db.prepare(
+    const userOfficesRows = await query(
       `SELECT o.*, uo.is_default FROM offices o
        JOIN user_offices uo ON uo.office_id = o.id
-       WHERE uo.user_id = ? AND o.is_active = 1
-       ORDER BY uo.is_default DESC, o.code`
-    ).all(user.id);
+       WHERE uo.user_id = $1 AND o.is_active = TRUE
+       ORDER BY uo.is_default DESC, o.code`, [user.id]
+    );
     const mapOffice = ctx.mapOffice;
     const offices = userOfficesRows.map(r => ({ ...mapOffice(r), isDefault: !!r.is_default }));
 
@@ -149,9 +149,9 @@ module.exports = function authRoutes(app, ctx) {
   });
 
   app.get("/api/auth/me", auth(), async (req, res) => {
-    const user = db.prepare(
-      "SELECT id, email, name, role, roles, is_active, created_at, password_changed_at, all_offices FROM users WHERE id = ?"
-    ).get(req.user.id);
+    const [user] = await query(
+      "SELECT id, email, name, role, roles, is_active, created_at, password_changed_at, all_offices FROM users WHERE id = $1", [req.user.id]
+    );
     if (!user || !user.is_active) return err(res, "User not found or inactive", 404);
     // Silent token-restore-on-mount (a still-valid JWT from a prior session) bypasses
     // the login endpoint entirely — without this, a user who never re-enters credentials
@@ -165,12 +165,12 @@ module.exports = function authRoutes(app, ctx) {
     // client-side mirror, ShipmentFormPage's EMO/IMO auto-default) silently stopped working
     // the moment the page was reloaded instead of freshly logged into. Mirrors login's own query.
     const allOffices = !!user.all_offices;
-    const userOfficesRows = db.prepare(
+    const userOfficesRows = await query(
       `SELECT o.*, uo.is_default FROM offices o
        JOIN user_offices uo ON uo.office_id = o.id
-       WHERE uo.user_id = ? AND o.is_active = 1
-       ORDER BY uo.is_default DESC, o.code`
-    ).all(user.id);
+       WHERE uo.user_id = $1 AND o.is_active = TRUE
+       ORDER BY uo.is_default DESC, o.code`, [user.id]
+    );
     const offices = userOfficesRows.map(r => ({ ...ctx.mapOffice(r), isDefault: !!r.is_default }));
     // Real bug fix: this returned user.roles as the raw JSON-text DB column (e.g. the literal
     // string '["admin","occ_bk"]'), never parsed like every other roles-emitting route already
@@ -191,7 +191,7 @@ module.exports = function authRoutes(app, ctx) {
     const { currentPassword, newPassword } = req.body || {};
     if (!currentPassword || !newPassword) return err(res, "Current and new password are required");
 
-    const user = db.prepare("SELECT * FROM users WHERE id=?").get(req.user.id);
+    const [user] = await query("SELECT * FROM users WHERE id=$1", [req.user.id]);
     if (!user) return err(res, "Not found", 404);
     // 400, not 401 — the caller IS authenticated (valid bearer token got them past
     // auth() above); this is a wrong-field rejection, not a session failure. api.js's
@@ -205,9 +205,9 @@ module.exports = function authRoutes(app, ctx) {
 
     const newTokenVersion = (user.token_version ?? 0) + 1;
     const now = new Date().toISOString();
-    db.prepare("UPDATE users SET password_hash=?, password_changed_at=?, token_version=? WHERE id=?")
-      .run(bcrypt.hashSync(newPassword, 10), now, newTokenVersion, user.id);
-    logAdminEvent(req.user, 'PASSWORD_CHANGED_SELF', 'user', user.id, {});
+    await query("UPDATE users SET password_hash=$1, password_changed_at=$2, token_version=$3 WHERE id=$4",
+      [bcrypt.hashSync(newPassword, 10), now, newTokenVersion, user.id]);
+    await logAdminEvent(req.user, 'PASSWORD_CHANGED_SELF', 'user', user.id, {});
 
     // token_version just bumped, invalidating the token this very request came in on —
     // issue a fresh one so the user isn't logged out by their own password change.
@@ -258,14 +258,14 @@ module.exports = function authRoutes(app, ctx) {
     const GENERIC_MSG = "If an account exists for that email, a password reset link has been sent.";
     if (!email.trim()) return err(res, "Email is required");
 
-    const user = db.prepare("SELECT * FROM users WHERE email = ? AND is_active = 1").get(email.toLowerCase().trim());
+    const [user] = await query("SELECT * FROM users WHERE email = $1 AND is_active = TRUE", [email.toLowerCase().trim()]);
     if (user) {
       const rawToken = crypto.randomBytes(32).toString("hex");
       const expires = new Date(Date.now() + RESET_TOKEN_TTL_MS).toISOString();
-      db.prepare("UPDATE users SET reset_token_hash=?, reset_token_expires=? WHERE id=?")
-        .run(hashResetToken(rawToken), expires, user.id);
+      await query("UPDATE users SET reset_token_hash=$1, reset_token_expires=$2 WHERE id=$3",
+        [hashResetToken(rawToken), expires, user.id]);
 
-      const settingsRow = db.prepare("SELECT * FROM system_email_settings WHERE id='system'").get();
+      const [settingsRow] = await query("SELECT * FROM system_email_settings WHERE id='system'");
       if (settingsRow && settingsRow.is_active && settingsRow.smtp_host) {
         try {
           const transporter = createTransporterFromSettings({
@@ -288,7 +288,7 @@ module.exports = function authRoutes(app, ctx) {
       } else {
         console.warn("forgot-password: system email is not configured (Settings → System Email) — no email sent, but the reset token was still generated.");
       }
-      logAdminEvent({ id: '', email: user.email }, 'PASSWORD_RESET_REQUESTED', 'user', user.id, {});
+      await logAdminEvent({ id: '', email: user.email }, 'PASSWORD_RESET_REQUESTED', 'user', user.id, {});
       // Dev/test-only: the raw token otherwise only ever exists inside the emailed link, with
       // no other retrieval path by design (same reasoning webhook_receiver's dev-only mock
       // endpoint follows for otherwise-hidden async state — see Test Tools' Webhook Simulator).
@@ -302,12 +302,12 @@ module.exports = function authRoutes(app, ctx) {
     ok(res, { message: GENERIC_MSG });
   });
 
-  app.post("/api/auth/reset-password", resetPasswordRateLimit, (req, res) => {
+  app.post("/api/auth/reset-password", resetPasswordRateLimit, async (req, res) => {
     const { token = "", newPassword = "" } = req.body || {};
     if (!token || !newPassword) return err(res, "Token and new password are required");
 
     const tokenHash = hashResetToken(token);
-    const user = db.prepare("SELECT * FROM users WHERE reset_token_hash = ? AND reset_token_hash != ''").get(tokenHash);
+    const [user] = await query("SELECT * FROM users WHERE reset_token_hash = $1 AND reset_token_hash != ''", [tokenHash]);
     if (!user) return err(res, "This reset link is invalid or has already been used", 400);
     if (!user.reset_token_expires || user.reset_token_expires < new Date().toISOString())
       return err(res, "This reset link has expired — request a new one", 400);
@@ -320,10 +320,10 @@ module.exports = function authRoutes(app, ctx) {
     // Clears the reset token (single-use) and any pre-existing lockout — a successful reset via
     // a link only the account owner's inbox could have received is itself proof of ownership,
     // the same bar an admin-issued unlock already clears.
-    db.prepare(`UPDATE users SET password_hash=?, password_changed_at=?, token_version=?,
-      reset_token_hash='', reset_token_expires='', failed_attempts=0, locked_until='' WHERE id=?`)
-      .run(bcrypt.hashSync(newPassword, 10), now, newTokenVersion, user.id);
-    logAdminEvent({ id: '', email: user.email }, 'PASSWORD_RESET_COMPLETED', 'user', user.id, {});
+    await query(`UPDATE users SET password_hash=$1, password_changed_at=$2, token_version=$3,
+      reset_token_hash='', reset_token_expires='', failed_attempts=0, locked_until='' WHERE id=$4`,
+      [bcrypt.hashSync(newPassword, 10), now, newTokenVersion, user.id]);
+    await logAdminEvent({ id: '', email: user.email }, 'PASSWORD_RESET_COMPLETED', 'user', user.id, {});
 
     // Deliberately does NOT return a token / log the user in automatically, unlike
     // change-password — that route's caller was already authenticated; this one's wasn't.
@@ -343,39 +343,39 @@ module.exports = function authRoutes(app, ctx) {
     fromAddress: "", fromName: "", isActive: true, createdAt: null, updatedAt: null,
   };
 
-  app.get("/api/settings/system-email", adminOnly, (req, res) => {
-    const row = db.prepare("SELECT * FROM system_email_settings WHERE id='system'").get();
+  app.get("/api/settings/system-email", adminOnly, async (req, res) => {
+    const [row] = await query("SELECT * FROM system_email_settings WHERE id='system'");
     ok(res, row ? mapSystemEmailSettings(row) : SYSTEM_EMAIL_DEFAULTS);
   });
 
-  app.put("/api/settings/system-email", adminOnly, (req, res) => {
+  app.put("/api/settings/system-email", adminOnly, async (req, res) => {
     const { smtpHost = '', smtpPort = 587, secureMode = 'starttls', smtpUsername = '',
             smtpPassword = '', fromAddress = '', fromName = '', isActive = true } = req.body || {};
     if (!smtpHost.trim()) return err(res, "SMTP host is required");
     if (!SECURE_MODES.includes(secureMode)) return err(res, "secureMode must be none, starttls, or tls");
     if (!fromAddress.trim()) return err(res, "From address is required");
 
-    const existing = db.prepare("SELECT * FROM system_email_settings WHERE id='system'").get();
+    const [existing] = await query("SELECT * FROM system_email_settings WHERE id='system'");
     // Blank/omitted password means "keep the existing one" — same password-field UX
     // office_mail_settings already established.
     const password = smtpPassword.trim() ? smtpPassword : (existing ? existing.smtp_password : '');
     const now = new Date().toISOString();
 
     if (existing) {
-      db.prepare(`UPDATE system_email_settings SET smtp_host=?, smtp_port=?, secure_mode=?,
-        smtp_username=?, smtp_password=?, from_address=?, from_name=?, is_active=?, updated_at=?
-        WHERE id='system'`)
-        .run(smtpHost, smtpPort, secureMode, smtpUsername, password, fromAddress, fromName,
-          isActive ? 1 : 0, now);
+      await query(`UPDATE system_email_settings SET smtp_host=$1, smtp_port=$2, secure_mode=$3,
+        smtp_username=$4, smtp_password=$5, from_address=$6, from_name=$7, is_active=$8, updated_at=$9
+        WHERE id='system'`,
+        [smtpHost, smtpPort, secureMode, smtpUsername, password, fromAddress, fromName,
+          !!isActive, now]);
     } else {
-      db.prepare(`INSERT INTO system_email_settings
+      await query(`INSERT INTO system_email_settings
         (id, smtp_host, smtp_port, secure_mode, smtp_username, smtp_password,
          from_address, from_name, is_active, created_at, updated_at)
-        VALUES ('system',?,?,?,?,?,?,?,?,?,?)`)
-        .run(smtpHost, smtpPort, secureMode, smtpUsername, password, fromAddress, fromName,
-          isActive ? 1 : 0, now, now);
+        VALUES ('system',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        [smtpHost, smtpPort, secureMode, smtpUsername, password, fromAddress, fromName,
+          !!isActive, now, now]);
     }
-    const row = db.prepare("SELECT * FROM system_email_settings WHERE id='system'").get();
+    const [row] = await query("SELECT * FROM system_email_settings WHERE id='system'");
     ok(res, mapSystemEmailSettings(row));
   });
 
@@ -387,7 +387,7 @@ module.exports = function authRoutes(app, ctx) {
     if (!to) return err(res, "A test-recipient address is required");
     if (!smtpHost.trim()) return err(res, "SMTP host is required");
 
-    const existing = db.prepare("SELECT smtp_password FROM system_email_settings WHERE id='system'").get();
+    const [existing] = await query("SELECT smtp_password FROM system_email_settings WHERE id='system'");
     const password = smtpPassword.trim() ? smtpPassword : (existing ? existing.smtp_password : '');
 
     try {
@@ -490,21 +490,21 @@ module.exports = function authRoutes(app, ctx) {
       if (!email) throw new Error("No email in SSO profile");
 
       // Find or create the local user
-      let user = db.prepare("SELECT * FROM users WHERE email=?").get(email);
+      let [user] = await query("SELECT * FROM users WHERE email=$1", [email]);
       if (!user) {
         const id    = `USR-${uid()}`;
         const roles = [VALID_ROLES.includes(defaultRole) ? defaultRole : 'operator'];
         const primary = primaryRoleSV(roles);
-        db.prepare(`INSERT INTO users (id,email,name,password_hash,role,roles,is_active,created_at)
-          VALUES (?,?,?,?,?,?,1,datetime('now'))`)
-          .run(id, email, name, '', primary, JSON.stringify(roles));
-        user = db.prepare("SELECT * FROM users WHERE id=?").get(id);
-        logAdminEvent({ id: '', email: 'sso' }, 'USER_CREATED_SSO', 'user', id, { email, provider: 'Azure AD' });
+        await query(`INSERT INTO users (id,email,name,password_hash,role,roles,is_active,created_at)
+          VALUES ($1,$2,$3,$4,$5,$6,TRUE,$7)`,
+          [id, email, name, '', primary, JSON.stringify(roles), new Date().toISOString()]);
+        [user] = await query("SELECT * FROM users WHERE id=$1", [id]);
+        await logAdminEvent({ id: '', email: 'sso' }, 'USER_CREATED_SSO', 'user', id, { email, provider: 'Azure AD' });
       }
 
       if (!user.is_active) return res.redirect(`${frontendUrl}?sso_error=Account+deactivated`);
 
-      db.prepare("UPDATE users SET last_login=datetime('now') WHERE id=?").run(user.id);
+      await query("UPDATE users SET last_login=$1 WHERE id=$2", [new Date().toISOString(), user.id]);
 
       const { jwtHours } = await getSecuritySettings();
       const roles = parseUserRoles(user);
@@ -524,40 +524,40 @@ module.exports = function authRoutes(app, ctx) {
 
   // ─── Users ─────────────────────────────────────────────────────────────────
 
-  app.get("/api/users", requireRole(["admin"]), (req, res) => {
-    const rows = db.prepare(
+  app.get("/api/users", requireRole(["admin"]), async (req, res) => {
+    const rows = await query(
       `SELECT id, email, name, role, roles, is_active, created_at, last_login,
               failed_attempts, locked_until, token_version, can_view_finance, all_offices FROM users ORDER BY created_at`
-    ).all();
+    );
     ok(res, rows.map(mapUser));
   });
 
-  app.post("/api/users", requireRole(["admin"]), (req, res) => {
+  app.post("/api/users", requireRole(["admin"]), async (req, res) => {
     const { email, name, roles = ["viewer"], password } = req.body || {};
     if (!email || !name || !password) return err(res, "email, name, and password are required");
     if (!roles.length || !roles.every(r => VALID_ROLES.includes(r))) return err(res, "Invalid roles");
     const primary = primaryRoleSV(roles);
     try {
       const id = `USR-${uid()}`;
-      db.prepare(
-        "INSERT INTO users (id, email, name, password_hash, role, roles, is_active, all_offices, created_at) VALUES (?, ?, ?, ?, ?, ?, 1, 0, datetime('now'))"
-      ).run(id, email.toLowerCase().trim(), name, bcrypt.hashSync(password, 10), primary, JSON.stringify(roles));
-      logAdminEvent(req.user, 'USER_CREATED', 'user', id, { email: email.toLowerCase().trim(), roles });
+      await query(
+        "INSERT INTO users (id, email, name, password_hash, role, roles, is_active, all_offices, created_at) VALUES ($1, $2, $3, $4, $5, $6, TRUE, FALSE, $7)",
+        [id, email.toLowerCase().trim(), name, bcrypt.hashSync(password, 10), primary, JSON.stringify(roles), new Date().toISOString()]);
+      await logAdminEvent(req.user, 'USER_CREATED', 'user', id, { email: email.toLowerCase().trim(), roles });
       ok(res, { ok: true });
     } catch (e) {
-      err(res, e.message?.includes("UNIQUE") ? "Email already exists" : e.message);
+      err(res, isUniqueViolation(e) ? "Email already exists" : e.message);
     }
   });
 
-  app.patch("/api/users/:id", requireRole(["admin"]), (req, res) => {
+  app.patch("/api/users/:id", requireRole(["admin"]), async (req, res) => {
     const { name, roles, password, isActive, unlock, canViewFinance, allOffices } = req.body || {};
-    const existing = db.prepare("SELECT * FROM users WHERE id=?").get(req.params.id);
+    const [existing] = await query("SELECT * FROM users WHERE id=$1", [req.params.id]);
     if (!existing) return err(res, "Not found", 404);
 
     const newRoles = roles || parseUserRoles(existing);
     if (!newRoles.every(r => VALID_ROLES.includes(r))) return err(res, "Invalid roles");
     const primary = primaryRoleSV(newRoles);
-    const active  = isActive !== undefined ? (isActive ? 1 : 0) : existing.is_active;
+    const active  = isActive !== undefined ? !!isActive : existing.is_active;
     const hash    = password ? bcrypt.hashSync(password, 10) : existing.password_hash;
 
     // Revoke sessions when deactivating, resetting the password, or changing roles —
@@ -570,13 +570,13 @@ module.exports = function authRoutes(app, ctx) {
     // Unlock clears lockout fields
     const failedAttempts = unlock ? 0 : (existing.failed_attempts ?? 0);
     const lockedUntil    = unlock ? '' : (existing.locked_until   ?? '');
-    const financeFlag    = canViewFinance !== undefined ? (canViewFinance ? 1 : 0) : (existing.can_view_finance ?? 0);
-    const allOfficesFlag = allOffices    !== undefined ? (allOffices    ? 1 : 0) : (existing.all_offices      ?? 1);
+    const financeFlag    = canViewFinance !== undefined ? !!canViewFinance : !!(existing.can_view_finance ?? false);
+    const allOfficesFlag = allOffices    !== undefined ? !!allOffices    : (existing.all_offices ?? true);
 
-    db.prepare(`UPDATE users SET name=?, role=?, roles=?, is_active=?, password_hash=?,
-                  token_version=?, failed_attempts=?, locked_until=?, can_view_finance=?, all_offices=? WHERE id=?`)
-      .run(name || existing.name, primary, JSON.stringify(newRoles),
-           active, hash, newTokenVersion, failedAttempts, lockedUntil, financeFlag, allOfficesFlag, req.params.id);
+    await query(`UPDATE users SET name=$1, role=$2, roles=$3, is_active=$4, password_hash=$5,
+                  token_version=$6, failed_attempts=$7, locked_until=$8, can_view_finance=$9, all_offices=$10 WHERE id=$11`,
+      [name || existing.name, primary, JSON.stringify(newRoles),
+           active, hash, newTokenVersion, failedAttempts, lockedUntil, financeFlag, allOfficesFlag, req.params.id]);
 
     // Log what changed
     const changes = {};
@@ -586,88 +586,92 @@ module.exports = function authRoutes(app, ctx) {
     if (password) changes.password = 'reset';
     if (unlock)   changes.unlock   = true;
     if (allOffices !== undefined) changes.allOffices = { from: !!existing.all_offices, to: !!allOfficesFlag };
-    logAdminEvent(req.user, 'USER_UPDATED', 'user', req.params.id, changes);
+    await logAdminEvent(req.user, 'USER_UPDATED', 'user', req.params.id, changes);
 
     ok(res, { ok: true });
   });
 
-  app.post("/api/users/:id/revoke-sessions", requireRole(["admin"]), (req, res) => {
-    const existing = db.prepare("SELECT id, token_version FROM users WHERE id=?").get(req.params.id);
+  app.post("/api/users/:id/revoke-sessions", requireRole(["admin"]), async (req, res) => {
+    const [existing] = await query("SELECT id, token_version FROM users WHERE id=$1", [req.params.id]);
     if (!existing) return err(res, "Not found", 404);
-    db.prepare("UPDATE users SET token_version=? WHERE id=?")
-      .run((existing.token_version ?? 0) + 1, req.params.id);
-    logAdminEvent(req.user, 'SESSIONS_REVOKED', 'user', req.params.id, {});
+    await query("UPDATE users SET token_version=$1 WHERE id=$2",
+      [(existing.token_version ?? 0) + 1, req.params.id]);
+    await logAdminEvent(req.user, 'SESSIONS_REVOKED', 'user', req.params.id, {});
     ok(res, { ok: true });
   });
 
-  app.delete("/api/users/:id", requireRole(["admin"]), (req, res) => {
-    const existing = db.prepare("SELECT id, email FROM users WHERE id=?").get(req.params.id);
+  app.delete("/api/users/:id", requireRole(["admin"]), async (req, res) => {
+    const [existing] = await query("SELECT id, email FROM users WHERE id=$1", [req.params.id]);
     if (!existing) return err(res, "Not found", 404);
-    db.prepare("DELETE FROM users WHERE id=?").run(req.params.id);
-    logAdminEvent(req.user, 'USER_DELETED', 'user', req.params.id, { email: existing.email });
+    await query("DELETE FROM users WHERE id=$1", [req.params.id]);
+    await logAdminEvent(req.user, 'USER_DELETED', 'user', req.params.id, { email: existing.email });
     ok(res, { deleted: req.params.id });
   });
 
   // ─── Admin Events ──────────────────────────────────────────────────────────
 
-  app.get("/api/admin/events", requireRole(["admin"]), (req, res) => {
+  app.get("/api/admin/events", requireRole(["admin"]), async (req, res) => {
     const { limit = 100, offset = 0, action, targetType } = req.query;
-    let sql  = "SELECT * FROM admin_events WHERE 1=1";
-    const params = [];
-    if (action)     { sql += " AND action=?";      params.push(action); }
-    if (targetType) { sql += " AND target_type=?"; params.push(targetType); }
-    sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?";
-    params.push(parseInt(limit, 10), parseInt(offset, 10));
-    const rows  = db.prepare(sql).all(...params);
-    const total = db.prepare(
-      `SELECT COUNT(*) AS n FROM admin_events WHERE 1=1${action ? " AND action=?" : ""}${targetType ? " AND target_type=?" : ""}`
-    ).get(...params.slice(0, -2)).n;
-    ok(res, { results: rows.map(r => ({ ...r, details: JSON.parse(r.details || '{}') })), total });
+    const filterParams = [];
+    const pf = v => { filterParams.push(v); return `$${filterParams.length}`; };
+    let filterSql = "";
+    if (action)     filterSql += ` AND action=${pf(action)}`;
+    if (targetType) filterSql += ` AND target_type=${pf(targetType)}`;
+    const listParams = [...filterParams];
+    const limPh = `$${listParams.push(parseInt(limit, 10))}`;
+    const offPh = `$${listParams.push(parseInt(offset, 10))}`;
+    const rows  = await query(`SELECT * FROM admin_events WHERE 1=1${filterSql} ORDER BY created_at DESC LIMIT ${limPh} OFFSET ${offPh}`, listParams);
+    const [{ n: total }] = await query(
+      `SELECT COUNT(*) AS n FROM admin_events WHERE 1=1${filterSql}`, filterParams
+    );
+    ok(res, { results: rows.map(r => ({ ...r, details: JSON.parse(r.details || '{}') })), total: Number(total) });
   });
 
   // ─── Access Configs ────────────────────────────────────────────────────────
 
-  app.get("/api/users/:id/access-configs", requireRole(["admin"]), (req, res) => {
-    const rows = db.prepare("SELECT * FROM user_access_configs WHERE user_id=?").all(req.params.id);
+  app.get("/api/users/:id/access-configs", requireRole(["admin"]), async (req, res) => {
+    const rows = await query("SELECT * FROM user_access_configs WHERE user_id=$1", [req.params.id]);
     ok(res, rows.map(mapAccessConfig));
   });
 
-  app.post("/api/users/:id/access-configs", requireRole(["admin"]), (req, res) => {
+  app.post("/api/users/:id/access-configs", requireRole(["admin"]), async (req, res) => {
     const { label='', originLane=null, destLane=null, polCodes=[], podCodes=[], carrierCodes=[] } = req.body || {};
     const id = `UAC-${uid()}`;
-    db.prepare(`INSERT INTO user_access_configs (id,user_id,label,origin_lane,dest_lane,pol_codes,pod_codes,carrier_codes,created_at)
-      VALUES (?,?,?,?,?,?,?,?,datetime('now'))`)
-      .run(id, req.params.id, label, originLane, destLane,
-        JSON.stringify(polCodes), JSON.stringify(podCodes), JSON.stringify(carrierCodes));
+    const now = new Date().toISOString();
+    await query(`INSERT INTO user_access_configs (id,user_id,label,origin_lane,dest_lane,pol_codes,pod_codes,carrier_codes,created_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [id, req.params.id, label, originLane, destLane,
+        JSON.stringify(polCodes), JSON.stringify(podCodes), JSON.stringify(carrierCodes), now]);
     ok(res, mapAccessConfig({ id, user_id: req.params.id, label, origin_lane: originLane,
       dest_lane: destLane, pol_codes: JSON.stringify(polCodes), pod_codes: JSON.stringify(podCodes),
-      carrier_codes: JSON.stringify(carrierCodes), created_at: new Date().toISOString() }), 201);
+      carrier_codes: JSON.stringify(carrierCodes), created_at: now }), 201);
   });
 
-  app.delete("/api/access-configs/:configId", requireRole(["admin"]), (req, res) => {
-    const info = db.prepare("DELETE FROM user_access_configs WHERE id=?").run(req.params.configId);
-    if (info.changes === 0) return err(res, "Not found", 404);
+  app.delete("/api/access-configs/:configId", requireRole(["admin"]), async (req, res) => {
+    const deleted = await query("DELETE FROM user_access_configs WHERE id=$1 RETURNING id", [req.params.configId]);
+    if (deleted.length === 0) return err(res, "Not found", 404);
     ok(res, { deleted: req.params.configId });
   });
 
   // ─── Scope Items ───────────────────────────────────────────────────────────
 
-  app.get("/api/users/:id/scope", requireRole(["admin"]), (req, res) => {
-    ok(res, db.prepare("SELECT * FROM user_scope_items WHERE user_id=? ORDER BY created_at").all(req.params.id).map(mapScopeItem));
+  app.get("/api/users/:id/scope", requireRole(["admin"]), async (req, res) => {
+    ok(res, (await query("SELECT * FROM user_scope_items WHERE user_id=$1 ORDER BY created_at", [req.params.id])).map(mapScopeItem));
   });
 
-  app.post("/api/users/:id/scope", requireRole(["admin"]), (req, res) => {
+  app.post("/api/users/:id/scope", requireRole(["admin"]), async (req, res) => {
     const { role='', itemType, value, label='' } = req.body || {};
     if (!itemType || !value) return err(res, "itemType and value required");
     const id = `USI-${uid()}`;
-    db.prepare("INSERT INTO user_scope_items (id,user_id,role,item_type,value,label) VALUES (?,?,?,?,?,?)")
-      .run(id, req.params.id, role, itemType, value, label);
-    ok(res, mapScopeItem({ id, user_id: req.params.id, role, item_type: itemType, value, label, created_at: new Date().toISOString() }), 201);
+    const now = new Date().toISOString();
+    await query("INSERT INTO user_scope_items (id,user_id,role,item_type,value,label,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)",
+      [id, req.params.id, role, itemType, value, label, now]);
+    ok(res, mapScopeItem({ id, user_id: req.params.id, role, item_type: itemType, value, label, created_at: now }), 201);
   });
 
-  app.delete("/api/scope-items/:itemId", requireRole(["admin"]), (req, res) => {
-    const info = db.prepare("DELETE FROM user_scope_items WHERE id=?").run(req.params.itemId);
-    if (info.changes === 0) return err(res, "Not found", 404);
+  app.delete("/api/scope-items/:itemId", requireRole(["admin"]), async (req, res) => {
+    const deleted = await query("DELETE FROM user_scope_items WHERE id=$1 RETURNING id", [req.params.itemId]);
+    if (deleted.length === 0) return err(res, "Not found", 404);
     ok(res, { deleted: req.params.itemId });
   });
 };
