@@ -17,7 +17,7 @@
 module.exports = function quotesRoutes(app, ctx) {
   const { query, ok, err, uid, requireRole, isUniqueViolation, mapQuote, mapQuoteLine, mapShipment,
           logEvent, logEntityEvent, toUsd, SERVICE_CODE_MAP, importContractRates,
-          resolveCarrierAgentCandidates, screenShipmentById } = ctx;
+          resolveCarrierAgentCandidates, screenShipmentById, schemaReady } = ctx;
 
   const quoteWrite = requireRole(["admin", "operator", "occ_bk"]);
 
@@ -36,7 +36,12 @@ module.exports = function quotesRoutes(app, ctx) {
         JSON.stringify({ customerName: q.customer_name, reason: 'valid_until passed' }));
     }
   }
-  expireStaleQuotes().catch(e => console.error("expireStaleQuotes failed:", e.message));
+  // This route file is required (and this call fires) synchronously at server startup, before
+  // httpServer.listen()'s own schemaReadyPromise gate — the initial sweep must wait on schema
+  // readiness itself, or it hits a real "relation quotes does not exist" on every fresh boot
+  // (same ordering bug the AIS listener's initial tracked-legs load hit). The hourly interval is
+  // left unguarded — 60 minutes comfortably outlasts schema creation either way.
+  schemaReady.then(() => expireStaleQuotes()).catch(e => console.error("expireStaleQuotes failed:", e.message));
   const expireSweep = setInterval(() => expireStaleQuotes().catch(e => console.error("expireStaleQuotes failed:", e.message)), 60 * 60 * 1000);
   expireSweep.unref?.();
 

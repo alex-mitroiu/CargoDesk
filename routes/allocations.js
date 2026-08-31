@@ -32,7 +32,7 @@ module.exports = function allocationsRoutes(app, ctx) {
   async function loadTeuBuckets() {
     const rows = await query(`
       SELECT s.allocation_id AS allocation_id, cb.status AS booking_status,
-             COALESCE(SUM(CASE WHEN c.size=20 THEN 1 WHEN c.size IN (40,45) THEN 2 ELSE 0 END), 0) AS teu
+             COALESCE(SUM(CASE WHEN c.size='20' THEN 1 WHEN c.size IN ('40','45') THEN 2 ELSE 0 END), 0) AS teu
       FROM containers c
       JOIN shipments s ON s.id = c.shipment_id
       LEFT JOIN carrier_bookings cb ON cb.shipment_id = s.id

@@ -95,40 +95,50 @@ async function importPorts() {
   let inserted = 0;
   let skipped  = 0;
 
-  await transaction(async (tx) => {
-    for (const line of dataLines) {
-      // Format: code;name;latitude;longitude;country_code;zone_code,,
-      const parts = line.split(";");
-      if (parts.length < 6) continue;
+  // Committed in batches (not one 14,000+-row transaction) — found live while validating the
+  // Postgres migration: pglite's embedded WASM engine gets progressively slower per statement as
+  // a single transaction grows, turning a ~1-minute job into a ~30-minute one at this table's real
+  // size. A real Postgres server wouldn't show this effect nearly as badly, but batching is cheap
+  // insurance either way and keeps a partial run's progress durable if it's ever interrupted.
+  const BATCH_SIZE = 500;
+  for (let i = 0; i < dataLines.length; i += BATCH_SIZE) {
+    const batch = dataLines.slice(i, i + BATCH_SIZE);
+    await transaction(async (tx) => {
+      for (const line of batch) {
+        // Format: code;name;latitude;longitude;country_code;zone_code,,
+        const parts = line.split(";");
+        if (parts.length < 6) continue;
 
-      const code    = parts[0].trim();
-      const name    = parts[1].trim();
-      const lat     = parseFloat(parts[2]) || null;
-      const lon     = parseFloat(parts[3]) || null;
-      const country = (parts[4] || '').trim().toUpperCase() || code.slice(0, 2);
-      // zone may have trailing ",," — strip it
-      const zone    = parts[5] ? parts[5].split(",")[0].trim() : '';
-      const tz      = COUNTRY_TZ[country] || null;
-      const now     = new Date().toISOString();
+        const code    = parts[0].trim();
+        const name    = parts[1].trim();
+        const lat     = parseFloat(parts[2]) || null;
+        const lon     = parseFloat(parts[3]) || null;
+        const country = (parts[4] || '').trim().toUpperCase() || code.slice(0, 2);
+        // zone may have trailing ",," — strip it
+        const zone    = parts[5] ? parts[5].split(",")[0].trim() : '';
+        const tz      = COUNTRY_TZ[country] || null;
+        const now     = new Date().toISOString();
 
-      if (!code || code.length !== 5 || !name) { skipped++; continue; }
+        if (!code || code.length !== 5 || !name) { skipped++; continue; }
 
-      const rows = await tx.query(`
-        INSERT INTO port_locations (unlocode, name, latitude, longitude, country_code, zone_code, timezone, last_synced_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-        ON CONFLICT (unlocode) DO NOTHING
-        RETURNING unlocode
-      `, [code, name, lat, lon, country, zone, tz, now]);
-      if (rows.length > 0) { inserted++; continue; }
-      // Delta-sync: update if name/coords changed, or country_code was empty
-      await tx.query(
-        "UPDATE port_locations SET name=$1, latitude=$2, longitude=$3, country_code=$4, last_synced_at=$5 " +
-        "WHERE unlocode=$6 AND (name!=$7 OR latitude!=$8 OR longitude!=$9 OR country_code='' OR country_code IS NULL)",
-        [name, lat, lon, country, now, code, name, lat, lon]
-      );
-      skipped++;
-    }
-  });
+        const rows = await tx.query(`
+          INSERT INTO port_locations (unlocode, name, latitude, longitude, country_code, zone_code, timezone, last_synced_at)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          ON CONFLICT (unlocode) DO NOTHING
+          RETURNING unlocode
+        `, [code, name, lat, lon, country, zone, tz, now]);
+        if (rows.length > 0) { inserted++; continue; }
+        // Delta-sync: update if name/coords changed, or country_code was empty
+        await tx.query(
+          "UPDATE port_locations SET name=$1, latitude=$2, longitude=$3, country_code=$4, last_synced_at=$5 " +
+          "WHERE unlocode=$6 AND (name!=$7 OR latitude!=$8 OR longitude!=$9 OR country_code='' OR country_code IS NULL)",
+          [name, lat, lon, country, now, code, name, lat, lon]
+        );
+        skipped++;
+      }
+    });
+    console.log(`  … ${Math.min(i + BATCH_SIZE, dataLines.length)}/${dataLines.length} port rows processed`);
+  }
 
   return { inserted, skipped };
 }
@@ -289,42 +299,38 @@ async function importTradeLanes() {
   return { tlInserted, tlUpdated };
 }
 
-// ─── Seed a minimal country → trade-lane assignment set ────────────────────────
-// country_trade_lanes (which countries fall in which lane, used by longestLane()/
-// GET /api/trade-lanes/transit-suggestion) had the exact same never-actually-seeded gap
-// as trade_lanes above — found the same way, via a genuinely fresh CI database. This app's
-// own Master Data pages expect an admin to configure the full set over time; this seeds
-// only the small, unambiguous set real test fixtures need (CN/SA for transit-suggestion; NL +
-// US for the NLRTM->USNYC route used by both tests/billing-performance.test.js's Story 4
-// lane-resolution assertion and tests/customer-credit-control.test.js's whole trade-lane-scoped
-// hold/override-approval mechanism, matchesScopeItem() in server.js — same
-// port_locations->countries->country_trade_lanes->trade_lanes chain as portLanesMap itself.
-// Both added after fresh-CI runs failed on exactly this gap, one country at a time: NL->EU-N
-// held on every long-lived dev DB either test was ever written/run against, and once that was
-// fixed CI got further and hit the exact same gap on the US->NAM half of the same route — not
-// an attempt at a full country/lane geography.
-// `countries` itself is a harder dependency here than it first looked: rebuildPortLanesMap()'s
-// own query JOINs port_locations -> countries -> country_trade_lanes -> trade_lanes, so a
-// country_trade_lanes row is silently useless without a matching `countries` row too — found
-// via a real CI failure even after this exact seeding was added, since `countries` is a whole
-// separate table `npm run seed` has never populated at all (no bundled country-name dataset
-// exists to seed it from in general — see the `smoke.cy.js` gate on that). Seed only the
-// countries these specific lane assignments need, not a general country registry.
-const COUNTRY_LANE_DEFAULTS = [
-  ["CN", "China",         "FE"],
-  ["SA", "Saudi Arabia",  "ME"],
-  ["NL", "Netherlands",   "EU-N"],
-  ["US", "United States", "NAM"],
-];
+// ─── Seed the full country + country→trade-lane registry ───────────────────────
+// `countries`/`country_trade_lanes` had the exact same never-actually-seeded gap as
+// trade_lanes above under Postgres — `initSchema()` only creates table STRUCTURE, it never
+// carries over any data. Under the old SQLite backend this wasn't a gap at all: `server.js`
+// auto-copied the committed `db/cargodesk.sample.db` to `cargodesk.db` on first boot with no
+// database yet, and that file already carried the real, accumulated 208-country/182-lane-
+// assignment data (built up through the admin UI over time — see CLAUDE.md's v0.79.0 entry).
+// That auto-copy is dead now (the app reads Postgres/pglite, never a raw `.db` file), but the
+// sample file itself is still a legitimate committed reference dataset — read directly here,
+// read-only, via `node:sqlite` (this script's only use of the old driver, and only ever
+// against this static file, never the live app database) rather than re-deriving/guessing a
+// country list from scratch. An earlier narrower version of this function hardcoded just the
+// 4 countries (CN/SA/NL/US) specific test fixtures needed — confirmed all 4 already carry the
+// exact same lane assignment in the full sample file, so nothing from that narrower set is lost.
+async function importFullCountries() {
+  const { DatabaseSync } = require("node:sqlite");
+  const samplePath = path.join(__dirname, "..", "db", "cargodesk.sample.db");
+  if (!fs.existsSync(samplePath)) return { countryInserted: 0, ctlInserted: 0 };
+  const sample = new DatabaseSync(samplePath, { readOnly: true });
+  const countries = sample.prepare("SELECT iso2, name FROM countries").all();
+  const lanes = sample.prepare("SELECT iso2, lane_code FROM country_trade_lanes").all();
+  sample.close();
 
-async function importCountryLaneDefaults() {
   let countryInserted = 0, ctlInserted = 0;
   await transaction(async (tx) => {
-    for (const [iso2, name, laneCode] of COUNTRY_LANE_DEFAULTS) {
-      const cRows = await tx.query("INSERT INTO countries (iso2, name) VALUES ($1, $2) ON CONFLICT (iso2) DO NOTHING RETURNING iso2", [iso2, name]);
-      if (cRows.length > 0) countryInserted++;
-      const lRows = await tx.query("INSERT INTO country_trade_lanes (iso2, lane_code) VALUES ($1, $2) ON CONFLICT (iso2, lane_code) DO NOTHING RETURNING iso2", [iso2, laneCode]);
-      if (lRows.length > 0) ctlInserted++;
+    for (const { iso2, name } of countries) {
+      const rows = await tx.query("INSERT INTO countries (iso2, name) VALUES ($1, $2) ON CONFLICT (iso2) DO NOTHING RETURNING iso2", [iso2, name]);
+      if (rows.length > 0) countryInserted++;
+    }
+    for (const { iso2, lane_code } of lanes) {
+      const rows = await tx.query("INSERT INTO country_trade_lanes (iso2, lane_code) VALUES ($1, $2) ON CONFLICT (iso2, lane_code) DO NOTHING RETURNING iso2", [iso2, lane_code]);
+      if (rows.length > 0) ctlInserted++;
     }
   });
   return { countryInserted, ctlInserted };
@@ -366,7 +372,7 @@ async function main() {
   const { tlInserted, tlUpdated } = await importTradeLanes();
   console.log(`  ✔ Trade lanes: ${tlInserted} inserted, ${tlUpdated} transit-days updated`);
 
-  const { countryInserted, ctlInserted } = await importCountryLaneDefaults();
+  const { countryInserted, ctlInserted } = await importFullCountries();
   console.log(`  ✔ Countries: ${countryInserted} inserted, Country trade-lane assignments: ${ctlInserted} inserted`);
 
   const [{ n: totalPorts }]      = await query("SELECT COUNT(*) AS n FROM port_locations");

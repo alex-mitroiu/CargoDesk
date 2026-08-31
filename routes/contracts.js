@@ -2,7 +2,7 @@
 
 module.exports = function contractsRoutes(app, ctx) {
   const { query, transaction, ok, err, uid, requireRole, mapContract, mapLeg, mapRate, mapContractRouting, logEntityEvent, toUsd, findMatchingContractLegs,
-          getSettings, callContractService, callMdmService } = ctx;
+          getSettings, callContractService, callMdmService, schemaReady } = ctx;
 
   // Contracts are full-CRUD for trade_manager alongside admin/operator — previously these
   // write routes had no role gate at all (any authenticated user, including viewer, could write).
@@ -260,7 +260,12 @@ module.exports = function contractsRoutes(app, ctx) {
         JSON.stringify({ contractNumber: c.contract_number, carrierCode: c.carrier_code, reason: 'valid_to passed' }));
     }
   }
-  expireStaleContracts().catch(e => console.error("expireStaleContracts failed:", e));
+  // This route file is required (and this call fires) synchronously at server startup, before
+  // httpServer.listen()'s own schemaReadyPromise gate — the initial sweep must wait on schema
+  // readiness itself, or it hits a real "relation contracts does not exist" on every fresh boot
+  // (same ordering bug the AIS listener's initial tracked-legs load hit). The hourly interval is
+  // left unguarded — 60 minutes comfortably outlasts schema creation either way.
+  schemaReady.then(() => expireStaleContracts()).catch(e => console.error("expireStaleContracts failed:", e));
   const expireSweep = setInterval(() => expireStaleContracts().catch(e => console.error("expireStaleContracts failed:", e)), 60 * 60 * 1000);
   expireSweep.unref?.();
 

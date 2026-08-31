@@ -154,7 +154,9 @@ services/customers/customers.db
 *.db-wal
 # Postgres migration (Phase 0+) — pgdata/ is a service's own local PGlite data directory, the
 # embedded-Postgres dev/test stand-in used when DATABASE_URL isn't set. Same "local runtime
-# state, never committed" reasoning as the SQLite *.db files above.
+# state, never committed" reasoning as the SQLite *.db files above. The monolith's own root-level
+# pgdata/ (added when the monolith itself migrated to Postgres) needs the identical rule.
+pgdata/
 services/*/pgdata/
 # db/cargodesk.sample.db is the one exception — a committed, pre-seeded copy carrying only
 # static MDM reference data (ports/carriers/vessels/commodities/regions/trade lanes/countries),

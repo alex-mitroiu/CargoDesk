@@ -294,6 +294,12 @@ let schemaReadyPromise = initSchema(query).catch(e => {
   process.exit(1);
 });
 
+// Always empty now — initSchema() either fully succeeds or crashes the boot via the catch
+// above, unlike the old migrations array's per-statement try/catch loop (which tolerated the
+// expected "duplicate column" case on every restart and collected only genuine failures here
+// for GET /api/health to surface). Kept so that route's response shape is unchanged.
+const migrationFailures = [];
+
 
 const UPLOADS_DIR = path.join(__dirname, "uploads", "documents");
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
@@ -529,6 +535,32 @@ const SETTING_DEFAULTS = {
   // above already makes for the identical reason; a real per-region target scheme is a
   // meaningfully bigger feature (needs its own table + management UI), not a v1 default.
   gp_target_pct: '',
+  // The following 21 keys existed in the old SQLite migrations array's own INSERT OR IGNORE
+  // defaults but were missed when SETTING_DEFAULTS was first ported over during the server.js
+  // core conversion — caught live via the full test-suite pass (container-packages.test.js's own
+  // "dg_compliance_* keys are seeded" assertion has nothing to find on a genuinely fresh
+  // database). Restored verbatim from that array rather than re-guessed.
+  login_max_attempts:     '5',
+  login_lockout_minutes:  '30',
+  jwt_lifetime_hours:     '8',
+  password_expiry_days:   '90',
+  sso_enabled:            '0',
+  sso_tenant_id:          '',
+  sso_client_id:          '',
+  sso_client_secret:      '',
+  sso_redirect_uri:       '',
+  sso_default_role:       'operator',
+  sso_frontend_url:       'http://localhost:5173',
+  shipment_sidebar_order: '[]',
+  dg_compliance_contact_name: '',
+  dg_compliance_phone:        '',
+  dg_compliance_email:        '',
+  dg_compliance_address:      '',
+  demo_schedules_enabled: 'true',
+  api_ais_enabled:        'false',
+  ais_provider:           'aisstream',
+  ais_api_key:            '',
+  api_eadapter_enabled:   'true',
 };
 async function seedSettingDefaults() {
   await transaction(async (tx) => {
@@ -537,6 +569,94 @@ async function seedSettingDefaults() {
   });
 }
 schemaReadyPromise = schemaReadyPromise.then(() => seedSettingDefaults());
+
+// Default rows for four admin-maintained registries — carried over from the old SQLite
+// migrations array's own hardcoded INSERT OR IGNORE statements (pack/container type defs,
+// duty-rate chapters, invoice status reason codes), which initSchema() deliberately doesn't
+// reproduce (it only ever creates table STRUCTURE, never seed DATA). Missed during the
+// server.js core conversion — caught live via the full test-suite pass, since
+// tests/container-packages.test.js's "seeded defaults present" assertion has nothing to find on
+// a genuinely fresh database. ON CONFLICT DO NOTHING — never overwrites an admin's own edits to
+// these same rows (id-conflict, matching the original's INSERT OR IGNORE semantics exactly).
+async function seedRegistryDefaults() {
+  await transaction(async (tx) => {
+    const packTypes = [
+      ['ptd-pallet', 'PALLET', 'Pallet', '🟫', 10],
+      ['ptd-carton', 'CARTON', 'Carton', '📦', 20],
+      ['ptd-case', 'CASE', 'Case', '🗄️', 30],
+      ['ptd-crate', 'CRATE', 'Crate', '🪵', 40],
+      ['ptd-drum', 'DRUM', 'Drum', '🛢️', 50],
+      ['ptd-box', 'BOX', 'Box', '📦', 60],
+      ['ptd-bag', 'BAG', 'Bag', '🛍️', 70],
+      ['ptd-bundle', 'BUNDLE', 'Bundle', '🎋', 80],
+      ['ptd-other', 'OTHER', 'Other', '📄', 90],
+    ];
+    const now = new Date().toISOString();
+    for (const [id, code, label, icon, sortOrder] of packTypes) {
+      await tx.query(
+        "INSERT INTO pack_type_definitions (id,code,label,icon,sort_order,is_active,created_at) VALUES ($1,$2,$3,$4,$5,TRUE,$6) ON CONFLICT (id) DO NOTHING",
+        [id, code, label, icon, sortOrder, now]
+      );
+    }
+
+    const containerTypes = [
+      ['ctd-20dc', '20DC', '20', 'DC', 1, '20ft Dry Container', 'Standard dry cargo — general goods, non-temperature-sensitive', 10],
+      ['ctd-40dc', '40DC', '40', 'DC', 2, '40ft Dry Container', 'Standard dry cargo — general goods, non-temperature-sensitive', 20],
+      ['ctd-40hc', '40HC', '40', 'HC', 2, '40ft High Cube', 'Extra interior height (9\'6") for voluminous or tall cargo', 30],
+      ['ctd-20rf', '20RF', '20', 'RF', 1, '20ft Reefer', 'Temperature-controlled — food, pharma, cold-chain cargo', 40],
+      ['ctd-40rf', '40RF', '40', 'RF', 2, '40ft Reefer', 'Temperature-controlled — food, pharma, cold-chain cargo', 50],
+      ['ctd-20ot', '20OT', '20', 'OT', 1, '20ft Open Top', 'Removable roof — machinery, lumber, crane-loaded cargo', 60],
+      ['ctd-40ot', '40OT', '40', 'OT', 2, '40ft Open Top', 'Removable roof — machinery, lumber, crane-loaded cargo', 70],
+      ['ctd-20fr', '20FR', '20', 'FR', 1, '20ft Flat Rack', 'Collapsible ends — heavy machinery, vehicles, oversized loads', 80],
+      ['ctd-40fr', '40FR', '40', 'FR', 2, '40ft Flat Rack', 'Collapsible ends — heavy machinery, vehicles, oversized loads', 90],
+      ['ctd-20tk', '20TK', '20', 'TK', 1, '20ft Tank', 'Liquid bulk — chemicals, food-grade liquids, petroleum products', 100],
+      ['ctd-40tk', '40TK', '40', 'TK', 2, '40ft Tank', 'Liquid bulk — chemicals, food-grade liquids, petroleum products', 110],
+    ];
+    for (const [id, code, size, type, teu, label, description, sortOrder] of containerTypes) {
+      await tx.query(
+        "INSERT INTO container_type_definitions (id,code,size,type,teu,label,description,sort_order,is_active,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,TRUE,$9) ON CONFLICT (id) DO NOTHING",
+        [id, code, size, type, teu, label, description, sortOrder, now]
+      );
+    }
+
+    const dutyChapters = [
+      ['84', 'Machinery & mechanical appliances', 2.5],
+      ['85', 'Electrical machinery & electronics', 2.6],
+      ['61', 'Apparel, knitted or crocheted', 16.0],
+      ['62', 'Apparel, not knitted or crocheted', 16.0],
+      ['64', 'Footwear', 11.0],
+      ['94', 'Furniture & lighting', 0.0],
+      ['39', 'Plastics & articles thereof', 5.0],
+      ['73', 'Articles of iron or steel', 3.0],
+      ['87', 'Vehicles & parts', 2.5],
+      ['95', 'Toys, games & sports equipment', 0.0],
+      ['22', 'Beverages & spirits', 3.0],
+      ['09', 'Coffee, tea, spices', 0.0],
+      ['42', 'Leather goods, bags & luggage', 8.0],
+    ];
+    for (const [hsChapter, label, ratePct] of dutyChapters) {
+      await tx.query(
+        "INSERT INTO duty_rate_chapters (hs_chapter,label,rate_pct,created_at) VALUES ($1,$2,$3,$4) ON CONFLICT (hs_chapter) DO NOTHING",
+        [hsChapter, label, ratePct, now]
+      );
+    }
+
+    const reasonCodes = [
+      ['IRC-END-OF-MONTH', 'END_OF_MONTH_TERMS', 'Customer pays on a fixed end-of-month cycle — expected once their cycle closes, not within standard terms'],
+      ['IRC-DISPUTE', 'DISPUTE', 'Customer disputes the invoice amount or line items'],
+      ['IRC-PENDING-DOCS', 'PENDING_DOCS', 'Awaiting supporting documentation before the customer will process payment'],
+      ['IRC-INTERNAL-DELAY', 'INTERNAL_DELAY', 'Payment confirmed by the customer, not yet reconciled internally'],
+      ['IRC-OTHER', 'OTHER', 'Other — see description'],
+    ];
+    for (const [id, code, label] of reasonCodes) {
+      await tx.query(
+        "INSERT INTO invoice_status_reason_codes (id,code,label,is_active,created_at) VALUES ($1,$2,$3,TRUE,$4) ON CONFLICT (id) DO NOTHING",
+        [id, code, label, now]
+      );
+    }
+  });
+}
+schemaReadyPromise = schemaReadyPromise.then(() => seedRegistryDefaults());
 
 // ─── Sanctions helpers ────────────────────────────────────────────────────────
 
@@ -627,7 +747,14 @@ async function syncOfacSdn() {
     await rescreenActiveShipments();
     return r;
   }
-  const resp = await httpsGetFollowRedirects("https://www.treasury.gov/ofac/downloads/sdn.xml");
+  // Treasury.gov's own WAF rejects a bare Node https.get with no User-Agent/Accept headers
+  // (`https.get` sends neither by default) as bot traffic — a real 403, not a CargoDesk
+  // permission gate (this route has none, see routes/sanctions.js's own comment). A plain
+  // browser-shaped header set is enough to pass.
+  const resp = await httpsGetFollowRedirects("https://www.treasury.gov/ofac/downloads/sdn.xml", 0, {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+    "Accept": "application/xml,text/xml,*/*",
+  });
   const xml = await new Promise((resolve, reject) => {
     const bufs = [];
     resp.on("data", c => bufs.push(c));
@@ -2488,10 +2615,10 @@ const recomputeSpaceBadge = async shipmentId => {
       const [alloc] = await query("SELECT * FROM allocations WHERE id=$1", [shipment.allocation_id]);
       if (alloc) {
         const [{ shipment_teu }] = await query(
-          "SELECT COALESCE(SUM(CASE WHEN size=20 THEN 1 WHEN size IN (40,45) THEN 2 ELSE 0 END),0) AS shipment_teu FROM containers WHERE shipment_id=$1", [shipmentId]
+          "SELECT COALESCE(SUM(CASE WHEN size='20' THEN 1 WHEN size IN ('40','45') THEN 2 ELSE 0 END),0) AS shipment_teu FROM containers WHERE shipment_id=$1", [shipmentId]
         );
         const [{ other_teu }] = await query(
-          "SELECT COALESCE(SUM(CASE WHEN c.size=20 THEN 1 WHEN c.size IN (40,45) THEN 2 ELSE 0 END),0) AS other_teu FROM containers c JOIN shipments s ON s.id=c.shipment_id WHERE s.allocation_id=$1 AND s.id!=$2",
+          "SELECT COALESCE(SUM(CASE WHEN c.size='20' THEN 1 WHEN c.size IN ('40','45') THEN 2 ELSE 0 END),0) AS other_teu FROM containers c JOIN shipments s ON s.id=c.shipment_id WHERE s.allocation_id=$1 AND s.id!=$2",
           [shipment.allocation_id, shipmentId]
         );
         const remaining = Math.max(0, alloc.allocated_teu - Number(other_teu));
@@ -2705,9 +2832,18 @@ app.use("/api", (req, res, next) =>
 
 const aisListener = createAisListener({
   query, transaction, getSettings, broadcastMessage, logEntityEvent, uid, syncShipmentFromLegs, callMdmService,
+  schemaReady: schemaReadyPromise,
 });
 
 const ctx = {
+  // Captured here (not re-read later) so a route file's own one-time startup sweep — anything
+  // that fires an un-awaited query the moment `require('./routes/x')(app, ctx)` runs, before
+  // httpServer.listen()'s own schemaReadyPromise gate — can defer its first run until the base
+  // schema actually exists, the same real ordering bug the AIS listener's initial cache load hit.
+  // Later schemaReadyPromise reassignments (chained seed/bootstrap steps further down this file)
+  // aren't needed for this — every route-level sweep only depends on tables existing, which this
+  // already guarantees.
+  schemaReady: schemaReadyPromise,
   query, transaction, uid, ok, err, isUniqueViolation, validCoord,
   auth, requireRole,
   portLanesMap, portCountryMap, rebuildPortLanesMap, longestLane,

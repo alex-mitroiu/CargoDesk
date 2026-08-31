@@ -106,7 +106,7 @@ module.exports = function exportRoutes(app, ctx) {
                  FROM shipment_cost_lines WHERE type='SELL' GROUP BY shipment_id) sell
              ON sell.shipment_id = s.id
       LEFT JOIN (SELECT shipment_id,
-                        SUM(CASE WHEN size=20 THEN 1 WHEN size IN (40,45) THEN 2 ELSE 0 END) AS teu,
+                        SUM(CASE WHEN size='20' THEN 1 WHEN size IN ('40','45') THEN 2 ELSE 0 END) AS teu,
                         COUNT(*) AS cnt
                  FROM containers GROUP BY shipment_id) ctr
              ON ctr.shipment_id = s.id
