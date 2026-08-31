@@ -1847,10 +1847,23 @@ const syncShipmentFromLegs = async (shipmentId) => {
   // A Central contract's carrier is the authoritative one once a contract is attached — a
   // leg's own carrier should never silently override it. Every other shipment (no Central
   // contract yet, or Central with the SAME carrier) keeps the exact prior roll-up behavior.
-  const [shipmentRow] = await query("SELECT carrier_code, contract_type, contract_id FROM shipments WHERE id=$1", [shipmentId]);
+  const [shipmentRow] = await query("SELECT * FROM shipments WHERE id=$1", [shipmentId]);
   const contractLocksCarrier = shipmentRow?.contract_type === 'Central' && !!shipmentRow?.contract_id;
   const legCarrier = seaLeg.carrier_code || '';
-  const newCarrierCode = contractLocksCarrier
+
+  // Real bug found live (SHP-PZ9IJI): the carrier-lock above stops a leg from silently
+  // overriding a Central contract's carrier, but nothing ever stopped Add Sailing/Schedule
+  // Generator from applying a genuinely DIFFERENT carrier's sailing on top of an already-locked
+  // contract in the first place — the contract (CMDU) and the actual schedule/legs (HLCU) just
+  // silently disagreed forever, with no warning anywhere and no cascade. Once the leg's own
+  // carrier genuinely diverges from a locked Central contract, that contract no longer describes
+  // what's actually being shipped — drop it (same field-reset shape the CRD-vs-ETD guard already
+  // uses in PUT /api/shipments/:id: contract_id/contract_ref/allocation_id/contract_routing_id
+  // cleared, contract_type deliberately left as-is so the UI lands on its existing "Central
+  // selected, no contract picked yet" state, status forced to Requires Review) rather than either
+  // silently ignoring the new carrier forever or silently keeping a contract that's no longer valid.
+  const contractDropped = contractLocksCarrier && !!legCarrier && legCarrier !== shipmentRow.carrier_code;
+  const newCarrierCode = (contractLocksCarrier && !contractDropped)
     ? (shipmentRow.carrier_code || '')
     : (legCarrier || shipmentRow?.carrier_code || '');
   // first.pol/last.pod fall back to the SEA leg's own port when the bookending Pick-up/Delivery
@@ -1861,16 +1874,34 @@ const syncShipmentFromLegs = async (shipmentId) => {
   // listener updates a SEA leg's etd/eta in place after a confirmed departure/arrival, this
   // existing rollup carries it up to the shipment the same way it always has, no separate
   // atd/ata bookend needed.
-  await query(`UPDATE shipments SET pol=$1, pod=$2, etd=$3, eta=$4, carrier_code=$5, vessel=$6, vessel_imo=$7, voyage=$8, routing_term=$9 WHERE id=$10`,
+  await query(`UPDATE shipments SET pol=$1, pod=$2, etd=$3, eta=$4, carrier_code=$5, vessel=$6, vessel_imo=$7, voyage=$8, routing_term=$9,
+    contract_id=$10, contract_ref=$11, allocation_id=$12, contract_routing_id=$13, status=$14 WHERE id=$15`,
     [first.pol || seaLeg.pol || '', last.pod || seaLeg.pod || '', first.etd || null, last.eta || null,
-     newCarrierCode, seaLeg.vessel || '', seaLeg.vessel_imo || '',
-     seaLeg.voyage || '', routingTerm, shipmentId]);
+     newCarrierCode, seaLeg.vessel || '', seaLeg.vessel_imo || '', seaLeg.voyage || '', routingTerm,
+     contractDropped ? '' : (shipmentRow.contract_id || ''), contractDropped ? '' : (shipmentRow.contract_ref || ''),
+     contractDropped ? '' : (shipmentRow.allocation_id || ''), contractDropped ? '' : (shipmentRow.contract_routing_id || ''),
+     contractDropped ? 'Requires Review' : shipmentRow.status, shipmentId]);
+  if (contractDropped) {
+    await logEvent(shipmentId, 'CONTRACT_DROPPED', 'contract_id', shipmentRow.contract_id, null,
+      JSON.stringify({ reason: 'Schedule carrier no longer matches the attached Central contract',
+        contractCarrier: shipmentRow.carrier_code, scheduleCarrier: legCarrier, seaLegId: seaLeg.id }));
+  }
   // Closes the "no audit trail" half of the bug above — any future roll-up that actually
-  // changes carrier_code (the legitimate blank-carrier/no-contract case) is now traceable the
-  // same way a manual edit already is, instead of only ever showing up as an unexplained diff.
+  // changes carrier_code (the legitimate blank-carrier/no-contract case, or the contract-drop
+  // case above) is now traceable the same way a manual edit already is, instead of only ever
+  // showing up as an unexplained diff.
   if (shipmentRow && newCarrierCode !== (shipmentRow.carrier_code || '')) {
     await logEvent(shipmentId, 'FIELD_UPDATED', 'carrier_code', shipmentRow.carrier_code || null, newCarrierCode || null,
       JSON.stringify({ source: 'syncShipmentFromLegs', legCarrier, seaLegId: seaLeg.id }));
+    // ensureBookingCreated (the usual trigger for supersedeIfCarrierChanged) no-ops the instant
+    // there's no contract — which is exactly the state the drop above just created — so a
+    // pending booking under the OLD carrier needs this called directly, or it would never get
+    // cancelled/archived at all once the contract that would have gated it is gone.
+    const [existingBooking] = await query("SELECT * FROM carrier_bookings WHERE shipment_id=$1", [shipmentId]);
+    if (existingBooking) {
+      const [freshShipment] = await query("SELECT * FROM shipments WHERE id=$1", [shipmentId]);
+      await supersedeIfCarrierChanged(freshShipment, existingBooking);
+    }
   }
 };
 
