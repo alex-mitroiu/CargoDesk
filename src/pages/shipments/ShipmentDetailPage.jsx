@@ -581,6 +581,11 @@ export const EVENT_CONFIG = {
   COST_LINE_ADDED:   { icon: "＋",  label: "Cost line added",          color: () => T.success  },
   COST_LINE_UPDATED: { icon: IconPencil,  label: "Cost line updated",        color: () => T.info     },
   COST_LINE_REMOVED: { icon: IconClose,   label: "Cost line removed",        color: () => T.danger   },
+  PARTY_ASSIGNED:      { icon: "＋",  label: "Party assigned",       color: () => T.success  },
+  PARTY_REASSIGNED:    { icon: IconPencil, label: "Party reassigned",     color: () => T.info     },
+  PARTY_REMOVED:       { icon: IconClose,  label: "Party removed",        color: () => T.danger   },
+  SIDE_OFFICE_ADDED:   { icon: "＋",  label: "Office added",         color: () => T.success  },
+  SIDE_OFFICE_REMOVED: { icon: IconClose,  label: "Office removed",       color: () => T.danger   },
 };
 
 export const FIELD_LABELS = {

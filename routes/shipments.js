@@ -1159,10 +1159,19 @@ module.exports = function shipmentsRoutes(app, ctx) {
     ok(res, result);
   });
 
+  // Line Agent (Export)/(Import) are the one pair of ADDITIONAL_PARTY_ROLES tied to a specific
+  // office side rather than open to any shipmentWrite user — the export side owns the carrier
+  // relationship at the load port, the import side owns it at the discharge port, and neither
+  // should be able to reassign the other's contact. Every other role stays gated by shipmentWrite
+  // alone, unchanged.
+  const LINE_AGENT_SIDE = { "Line Agent (Export)": "Export", "Line Agent (Import)": "Import" };
+
   app.post("/api/shipments/:id/parties", shipmentWrite, async (req, res) => {
     const { role, customerId, customerName } = req.body || {};
     if (!role || !ADDITIONAL_PARTY_ROLES.includes(role)) return err(res, "Invalid role");
     if (!customerId || !customerName) return err(res, "customerId and customerName required");
+    if (LINE_AGENT_SIDE[role] && !(await canEditOfficeSide(req, LINE_AGENT_SIDE[role])))
+      return err(res, `Only ${LINE_AGENT_SIDE[role].toLowerCase()}-side users can assign the ${role}`, 403);
     const [sh] = await query("SELECT id FROM shipments WHERE id=$1", [req.params.id]);
     if (!sh) return err(res, "Shipment not found", 404);
     const id = `PTY-${uid()}`;
@@ -1173,6 +1182,11 @@ module.exports = function shipmentsRoutes(app, ctx) {
     } catch (e) {
       return err(res, isUniqueViolation(e) ? "This role is already assigned on this shipment — edit or remove it instead." : e.message);
     }
+    // Real gap found live: assigning/reassigning/removing a party (Line Agent included) never
+    // showed up on the shipment's own History tab at all — every fixed shipment field logs
+    // through the TRACKED_FIELDS loop above, but this variable-length sibling table never wrote
+    // to shipment_events. Mirrors that same mechanism rather than inventing a second one.
+    await logEvent(req.params.id, 'PARTY_ASSIGNED', role, null, customerName);
     await maybeRescreen(req.params.id);
     const [row] = await query("SELECT * FROM shipment_parties WHERE id=$1", [id]);
     ok(res, mapShipmentParty(row), 201);
@@ -1183,9 +1197,13 @@ module.exports = function shipmentsRoutes(app, ctx) {
   app.put("/api/shipment-parties/:id", shipmentWrite, async (req, res) => {
     const [existing] = await query("SELECT * FROM shipment_parties WHERE id=$1", [req.params.id]);
     if (!existing) return err(res, "Not found", 404);
+    const side = LINE_AGENT_SIDE[existing.role];
+    if (side && !(await canEditOfficeSide(req, side)))
+      return err(res, `Only ${side.toLowerCase()}-side users can reassign the ${existing.role}`, 403);
     const { customerId, customerName } = req.body || {};
     if (!customerId || !customerName) return err(res, "customerId and customerName required");
     await query("UPDATE shipment_parties SET customer_id=$1, customer_name=$2 WHERE id=$3", [customerId, customerName, req.params.id]);
+    await logEvent(existing.shipment_id, 'PARTY_REASSIGNED', existing.role, existing.customer_name, customerName);
     await maybeRescreen(existing.shipment_id);
     ok(res, mapShipmentParty({ ...existing, customer_id: customerId, customer_name: customerName }));
   });
@@ -1193,7 +1211,11 @@ module.exports = function shipmentsRoutes(app, ctx) {
   app.delete("/api/shipment-parties/:id", shipmentWrite, async (req, res) => {
     const [existing] = await query("SELECT * FROM shipment_parties WHERE id=$1", [req.params.id]);
     if (!existing) return err(res, "Not found", 404);
+    const side = LINE_AGENT_SIDE[existing.role];
+    if (side && !(await canEditOfficeSide(req, side)))
+      return err(res, `Only ${side.toLowerCase()}-side users can remove the ${existing.role}`, 403);
     await query("DELETE FROM shipment_parties WHERE id=$1", [req.params.id]);
+    await logEvent(existing.shipment_id, 'PARTY_REMOVED', existing.role, existing.customer_name, null);
     await maybeRescreen(existing.shipment_id);
     ok(res, { deleted: req.params.id });
   });
@@ -1244,14 +1266,21 @@ module.exports = function shipmentsRoutes(app, ctx) {
       `SELECT so.*, o.code AS office_code, o.name AS office_name FROM shipment_side_offices so
        JOIN offices o ON o.id = so.office_id WHERE so.id=$1`, [id]
     );
+    // Same History-tab gap fixed for shipment_parties above — this sibling variable-length table
+    // had the identical never-logged-to-shipment_events omission.
+    await logEvent(req.params.id, 'SIDE_OFFICE_ADDED', `${side} Office`, null, `${row.office_code} — ${row.office_name}`);
     ok(res, mapSideOffice(row), 201);
   });
 
   app.delete("/api/shipment-side-offices/:id", shipmentWrite, async (req, res) => {
-    const [existing] = await query("SELECT * FROM shipment_side_offices WHERE id=$1", [req.params.id]);
+    const [existing] = await query(
+      `SELECT so.*, o.code AS office_code, o.name AS office_name FROM shipment_side_offices so
+       JOIN offices o ON o.id = so.office_id WHERE so.id=$1`, [req.params.id]
+    );
     if (!existing) return err(res, "Not found", 404);
     if (!(await canEditOfficeSide(req, existing.side))) return err(res, `You don't have permission to remove a ${existing.side} office`, 403);
     await query("DELETE FROM shipment_side_offices WHERE id=$1", [req.params.id]);
+    await logEvent(existing.shipment_id, 'SIDE_OFFICE_REMOVED', `${existing.side} Office`, `${existing.office_code} — ${existing.office_name}`, null);
     ok(res, { deleted: req.params.id });
   });
 

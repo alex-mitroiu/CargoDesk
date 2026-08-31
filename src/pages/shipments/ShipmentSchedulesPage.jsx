@@ -10,12 +10,14 @@ import { Inp } from "../../components/primitives/Form";
 import DatePicker from "../../components/primitives/DatePicker";
 import SailingPickerModal from "../../components/shared/SailingPickerModal";
 import ContractAssignModal from "../../components/shared/ContractAssignModal";
+import CustomerCombobox from "../../components/shared/CustomerCombobox";
 import { ScheduleHistoryPanel, PendingRevalidationModal } from "./ShipmentDetailPage";
 import { LegsTable } from "./ShipmentFormPage";
 import { IconWarning, IconPackage, IconAnchor } from "../../components/primitives/Icon";
 import { applySailingToLegs as applySailingToLegsShared } from "../../utils/applySailingToLegs";
 import useContractMismatch from "../../hooks/useContractMismatch";
 import ConsumptionBar from "../../components/shared/ConsumptionBar";
+import { deriveLoopCode } from "../../utils/scheduleLoop";
 
 // ─── Shipment Schedules Page ──────────────────────────────────────────────
 // Dedicated sub-page for carrier schedule/booking management, promoted out
@@ -30,8 +32,71 @@ const sectionLabel = { fontFamily: T.mono, fontSize: 10.5, fontWeight: 700, text
 
 const todayStr = new Date().toISOString().slice(0, 10);
 
+// Export/Import Line Agent — a compact assign/reassign/remove field, deliberately narrower than
+// AdditionalPartiesPanel's generic party editor (which handles all 9 ADDITIONAL_PARTY_ROLES with
+// one blanket canEditShipments gate): these two roles are each restricted to their own office
+// side, so this needs its own per-instance `canEdit` rather than one shared flag.
+const LineAgentField = ({ label, role, party, canEdit, onAssign, onRemove }) => {
+  const [editing, setEditing] = useState(false);
+  const [value,   setValue]   = useState({ id: "", name: "" });
+  const [saving,  setSaving]  = useState(false);
+
+  const startEdit = () => {
+    setValue(party ? { id: party.customerId, name: party.customerName } : { id: "", name: "" });
+    setEditing(true);
+  };
+  const save = async () => {
+    if (!value.id) return;
+    setSaving(true);
+    await onAssign(party?.id, value.id, value.name);
+    setSaving(false);
+    setEditing(false);
+  };
+
+  return (
+    <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 10, padding: "12px 16px" }}>
+      <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 700,
+        textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 6 }}>{label}</div>
+      {editing ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <CustomerCombobox label="Customer" value={value} onChange={setValue} roleFilter={role} />
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <Btn size="sm" variant="secondary" onClick={() => setEditing(false)}>Cancel</Btn>
+            <Btn size="sm" disabled={saving || !value.id} onClick={save}>{saving ? "Saving…" : "Save"}</Btn>
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ fontFamily: T.body, fontSize: 14, fontWeight: 700,
+            color: party ? T.text : T.textMuted, fontStyle: party ? "normal" : "italic" }}>
+            {party ? party.customerName : "Not assigned"}
+          </div>
+          {canEdit && (
+            <div style={{ display: "flex", gap: 10 }}>
+              <button type="button" title={party ? "Reassign" : "Assign"} onClick={startEdit}
+                style={{ background: "none", border: "none", cursor: "pointer", color: T.textMuted, fontSize: 13 }}
+                onMouseEnter={e => e.currentTarget.style.color = T.text}
+                onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>
+                {party ? "✎" : "＋"}
+              </button>
+              {party && (
+                <button type="button" title="Remove" onClick={() => onRemove(party.id)}
+                  style={{ background: "none", border: "none", cursor: "pointer", color: T.textMuted, fontSize: 15, lineHeight: 1 }}
+                  onMouseEnter={e => e.currentTarget.style.color = T.danger}
+                  onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>
+                  ×
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
-  const { canEditShipments: canEdit } = useAuth();
+  const { canEditShipments: canEdit, activeOffice, allOffices, isAdmin, activeRoles } = useAuth();
   // Bumped whenever a sailing is applied to the shipment's SEA leg(s), so LegsTable
   // (self-fetches once on mount) remounts and picks up the new vessel/voyage/dates
   // instead of showing stale data until navigating away and back.
@@ -67,6 +132,40 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
   useEffect(() => {
     api.schedules.list(shipment.id).then(setSchedules).catch(() => {});
   }, [shipment.id, historyVersion]);
+
+  // Export/Import Line Agent — surfaced here (not just on Parties & Offices) since schedule and
+  // contract selection are also an export-side-only action on this page; keeping both under the
+  // same office-side permission model in one place matches how the operator actually works.
+  // null (not []) until the fetch resolves, same "don't render a false empty state" convention
+  // this page already uses for `schedules` above.
+  const [parties, setParties] = useState(null);
+  const loadParties = () => api.shipmentParties.list(shipment.id).then(setParties).catch(() => setParties([]));
+  useEffect(() => { loadParties(); }, [shipment.id]);
+  const exportLineAgent = (parties || []).find(p => p.role === "Line Agent (Export)") || null;
+  const importLineAgent = (parties || []).find(p => p.role === "Line Agent (Import)") || null;
+
+  // Client-side mirror of the server's canEditOfficeSide (routes/shipments.js) — same pattern
+  // PartiesOfficesPanel (ShipmentDetailPage.jsx) already established for EMO/IMO office editing.
+  // The server re-checks this on every write; this only decides what to render as editable.
+  const roleBypass = isAdmin || (activeRoles || []).includes("operator");
+  const canEditSideDept = dept => canEdit && (roleBypass || allOffices || activeOffice?.department === dept);
+  const canEditExportLineAgent = canEditSideDept("SE");
+  const canEditImportLineAgent = canEditSideDept("SI");
+
+  const handleAssignLineAgent = async (role, existingId, customerId, customerName) => {
+    try {
+      if (existingId) await api.shipmentParties.update(existingId, { customerId, customerName });
+      else await api.shipmentParties.create(shipment.id, { role, customerId, customerName });
+      await loadParties();
+      toast.success(`${role} ${existingId ? "reassigned" : "assigned"}`);
+    } catch (e) { toast.error(e.message); }
+  };
+  const handleRemoveLineAgent = async id => {
+    try {
+      await api.shipmentParties.remove(id);
+      setParties(list => list.filter(p => p.id !== id));
+    } catch (e) { toast.error(e.message); }
+  };
 
   const openUpdateSchedule = (leg) => {
     const sched = schedules[0];
@@ -231,7 +330,7 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
 
   // Every hook above has already run this render regardless of this branch — only what gets
   // returned/rendered is gated, so this doesn't violate the Rules of Hooks.
-  if (schedules === null) {
+  if (schedules === null || parties === null) {
     return (
       <div id="shpsched-page" style={{ display: "flex", alignItems: "center", gap: 10, padding: "24px 0",
         fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
@@ -259,11 +358,23 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
 
   return (
     <div id="shpsched-page">
+      <div id="shpsched-line-agents-section" style={{ marginBottom: 22 }}>
+        <div style={sectionLabel}>Line Agents</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+          <LineAgentField label="Export Line Agent" role="Line Agent (Export)" party={exportLineAgent}
+            canEdit={canEditExportLineAgent} onAssign={(id, cid, cname) => handleAssignLineAgent("Line Agent (Export)", id, cid, cname)}
+            onRemove={handleRemoveLineAgent} />
+          <LineAgentField label="Import Line Agent" role="Line Agent (Import)" party={importLineAgent}
+            canEdit={canEditImportLineAgent} onAssign={(id, cid, cname) => handleAssignLineAgent("Line Agent (Import)", id, cid, cname)}
+            onRemove={handleRemoveLineAgent} />
+        </div>
+      </div>
+
       <div id="shpsched-legs-section">
         <div style={sectionLabel}>Route Legs</div>
         <LegsTable key={`legs-${legsVersion}`} shipmentId={shipment.id} canEdit={canEdit} showContractCols={false}
           extraAction={addSailingBtn} lockedSeaLegs={hasSchedule} onLegsChange={handleLegsChange}
-          loopCode={scheduleList[0]?.service || ""}
+          loopCode={deriveLoopCode(scheduleList[0])}
           onUpdateSchedule={canEdit ? openUpdateSchedule : null} />
       </div>
 

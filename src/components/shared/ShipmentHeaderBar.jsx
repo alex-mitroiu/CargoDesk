@@ -13,6 +13,7 @@ import { AnyIcon, IconClipboard, IconLink, IconRefresh, IconPencil, IconWarning,
   IconMail, IconMailUnread, IconLock, IconGroup } from "../primitives/Icon";
 import { fmtCurr } from "../../utils/invoiceGenerator";
 import { onCargoValueChanged } from "../../cargoValueBus";
+import { deriveLoopCode } from "../../utils/scheduleLoop";
 
 // ─── Persistent Shipment Header ────────────────────────────────────────────
 // Mounted once in App.jsx above the page switch for "detail" + every promoted
@@ -254,7 +255,7 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
   const teu = ctrs.reduce((n, c) => n + (c.size === "40" ? 2 : 1), 0);
   const dgClasses = [...new Set(ctrs.filter(c => c.isDg).map(c => c.dgClass).filter(Boolean))];
   const isDg = ctrs.some(c => c.isDg);
-  const loopCode = schedules[0]?.service || "";
+  const loopCode = deriveLoopCode(schedules[0]);
 
   // Cargo value rollup (Epic TKT-P3ASH1, Story TKT-NSTDKF) — sum of quantity x unitValueUsd
   // across every container's pack items, USD-normalized at write time (no live FX call here).
@@ -277,8 +278,6 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
   }, [ctrIds]);
   useEffect(() => { loadCargoValue(); }, [loadCargoValue]);
   useEffect(() => onCargoValueChanged(id => { if (id === shipment.id) loadCargoValue(); }), [shipment.id, loadCargoValue]);
-
-  const vesselVoyage = [shipment.vessel, shipment.voyage ? `Voy ${shipment.voyage}` : null].filter(Boolean).join(" · ");
 
   const copyId = () => {
     navigator.clipboard.writeText(shipment.id)
@@ -447,7 +446,8 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
         <Field first label="Incoterm" value={shipment.incoterm} />
         <Field label="Routing" value={shipment.routingTerm} />
         <Field label="Trade Lane" value={shipment.tradeLane} />
-        <Field label="Vessel" value={vesselVoyage} />
+        <Field label="Vessel" value={shipment.vessel} />
+        <Field label="Voyage" value={shipment.voyage} />
         <Field label="Shipper" value={shipment.shipperName} />
         <Field label="Consignee" value={shipment.consigneeName} />
         <Field label="Contract" value={shipment.contractRef} />
