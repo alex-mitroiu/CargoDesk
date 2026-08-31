@@ -2255,18 +2255,25 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
                       color: T.textMuted, fontSize: 14, padding: "0 2px", lineHeight: 1,
                       display: "inline-flex", alignItems: "center" }}><IconClose size={12} /></button>
                 </div>
-                {(draftLegs || []).some(l => l.legType === "SEA") && (
-                  <button type="button"
-                    onClick={() => applySailingToLegs(selectedSailing)}
-                    style={{ alignSelf: "flex-start", background: "none",
-                      border: `1px solid ${T.border}`, borderRadius: 5,
-                      padding: "4px 12px", cursor: "pointer",
-                      fontFamily: T.body, fontSize: 12, color: T.textMuted }}
-                    onMouseEnter={e => { e.currentTarget.style.borderColor = T.accent; e.currentTarget.style.color = T.accent; }}
-                    onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.textMuted; }}>
-                    ↳ Apply sailing to SEA leg{selectedSailing?.legs?.length > 1 ? `s (TSP · ${selectedSailing.legs.length} legs)` : ""}
-                  </button>
-                )}
+                {/* Real bug found live (SHP-NLWJFQ): this button used to only render when a SEA
+                    leg already existed in draftLegs — but applySailingToLegs itself has always
+                    correctly handled the "no SEA leg staged yet" case too (creating it/them from
+                    the sailing). Gating the button on the very condition its own target function
+                    already supports meant a shipment created by going straight to Add Sailing,
+                    with no leg added first, left the picked sailing permanently stuck in the
+                    chip above with no way to actually apply it — the schedule itself still saved
+                    correctly at creation (a separate step, untouched by this bug), but Route Legs
+                    stayed on whatever default blank leg the form started with. */}
+                <button type="button"
+                  onClick={() => applySailingToLegs(selectedSailing)}
+                  style={{ alignSelf: "flex-start", background: "none",
+                    border: `1px solid ${T.border}`, borderRadius: 5,
+                    padding: "4px 12px", cursor: "pointer",
+                    fontFamily: T.body, fontSize: 12, color: T.textMuted }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = T.accent; e.currentTarget.style.color = T.accent; }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.textMuted; }}>
+                  ↳ Apply sailing to SEA leg{selectedSailing?.legs?.length > 1 ? `s (TSP · ${selectedSailing.legs.length} legs)` : ""}
+                </button>
               </div>
             )}
 
