@@ -219,7 +219,7 @@ async function callCustomerService(method, urlPath, body) {
 // node:sqlite — MDM reference-data seeding for a fresh Postgres install goes through the same
 // `npm run seed` path as any subsequent reseed (scripts/import-mdm-data.js), not an automatic
 // file copy that no longer makes sense once the file isn't a SQLite database.
-const { query, transaction } = require("./lib/db");
+const { query, transaction, close: closeDb } = require("./lib/db");
 const { initSchema } = require("./lib/schema");
 
 const app = express();
@@ -261,6 +261,25 @@ process.on("unhandledRejection", (reason) => {
 process.on("uncaughtException", (e) => {
   console.error("⚠ Uncaught exception (process kept alive):", e);
 });
+
+// Graceful shutdown — closes the DB connection cleanly before exiting. Matters a great deal
+// under the embedded pglite backend specifically: a forceful kill (SIGKILL, or Windows
+// `taskkill /F` against a detached process — the only option it offers) can corrupt pglite's WAL
+// beyond its own crash-recovery ability ("PANIC: could not locate a valid checkpoint record",
+// confirmed directly — real Postgres's pg_resetwal can repair it after the fact, but there's no
+// equivalent tool bundled with pglite). SIGTERM is also how real deployments (Docker, systemd,
+// most orchestrators) actually stop this process, so this isn't just a local-dev nicety.
+let shuttingDown = false;
+async function gracefulShutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`\n⚓  ${signal} received, shutting down gracefully...`);
+  httpServer.close(() => {});
+  try { await closeDb(); } catch (e) { console.error("Error closing database:", e.message); }
+  process.exit(0);
+}
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 
 app.use(express.json({ limit: "25mb" }));
 

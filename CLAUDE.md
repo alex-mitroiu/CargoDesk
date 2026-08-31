@@ -63,7 +63,23 @@ routes/
   export.js          /api/export/shipments.csv, /api/export/dashboard/xlsx,
                      /api/export/dashboard/template
 scripts/
-  import-mdm-data.js               Seeds ports, carriers, vessels, commodities (npm run seed)
+  import-mdm-data.js               Seeds ports, carriers, vessels, commodities, and the full
+                                   208-country/182-country-trade-lane registry, read directly
+                                   from the committed db/cargodesk.sample.db (npm run seed)
+  export-sample-data.js            Dumps the live business tables (shipments/customers/contracts/
+                                   tickets/...) to the committed db/cargodesk.sample-data.json —
+                                   run to refresh the snapshot after adding more demo data (npm
+                                   run export:sample-data). Excludes/scrubs anything not safe to
+                                   publish: users and every user-keyed config table (no real
+                                   accounts or password hashes — a fresh clone gets its own
+                                   default-seeded admin instead), org_signing_certs (private key),
+                                   live API keys inside app_settings, SMTP passwords, and the
+                                   already-reference-seeded MDM tables (see import-mdm-data.js)
+  import-sample-data.js            Counterpart to export-sample-data.js — loads that committed
+                                   JSON into a fresh database so a new clone starts with populated
+                                   demo data instead of an empty shell (npm run seed:sample-data).
+                                   Idempotent (ON CONFLICT DO NOTHING), safe to run against a
+                                   database that already has its own real data
   seed-contracts.js                Seeds sample carrier contracts (npm run seed:contracts)
   checkdb.js                       Dev utility — inspects DB schema and row counts (npm run checkdb)
   create-export-template.js        Generates exports/dashboard-template.xlsx (npm run export:template)
@@ -98,8 +114,17 @@ exports/
 db/
   cargodesk.sample.db              Committed MDM reference DB (ports/carriers/vessels/commodities/
                                    regions/trade lanes/countries only — no shipments, contracts,
-                                   customers, or users). server.js copies it to cargodesk.db
-                                   automatically on first boot if none exists yet.
+                                   customers, or users). Read directly by `npm run seed`
+                                   (scripts/import-mdm-data.js) into the live Postgres/pglite
+                                   database — the older "auto-copied to cargodesk.db on first
+                                   boot" mechanism was a node:sqlite-era behavior, retired along
+                                   with node:sqlite itself once the app moved to Postgres.
+  cargodesk.sample-data.json       Committed demo business-data snapshot (shipments/customers/
+                                   contracts/tickets/...) — loaded via `npm run seed:sample-data`
+                                   (scripts/import-sample-data.js) so a fresh clone starts with
+                                   realistic pre-existing data instead of an empty shell. No real
+                                   user accounts/credentials/API keys/SMTP passwords — see
+                                   scripts/export-sample-data.js's own exclude/scrub list.
 src/
   App.jsx                          Root: routing, nav, state, theme toggle, auth guards, role switcher
                                    (2357 lines as of v0.87.0, down from 4678 — the document-action

@@ -20,6 +20,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "seed": "node scripts/import-mdm-data.js",
+    "seed:sample-data": "node scripts/import-sample-data.js",
+    "export:sample-data": "node scripts/export-sample-data.js",
     "seed:contracts": "node scripts/seed-contracts.js",
     "migrate:contracts-to-service": "node scripts/migrate-contracts-to-service.js",
     "migrate:mdm-to-service": "node scripts/migrate-mdm-to-service.js",
