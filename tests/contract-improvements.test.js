@@ -98,6 +98,26 @@ async function login() {
       contractId = r.body.id;
     }
 
+    console.log("\ncommodityTypes — free text, defaults to FAK when blank, capped at 32 chars");
+    {
+      const base = { contractNumber: `TESTCOMM-${Date.now()}`, carrierCode: "MAEU", status: "Active",
+        validFrom: "2026-01-01", validTo: "2027-01-01" };
+
+      const blank = await request("POST", "/api/contracts", { ...base, contractRef: "blank" }, token);
+      assert("blank commodityTypes defaults to FAK on create", blank.body.commodityTypes === "FAK", JSON.stringify(blank.body.commodityTypes));
+      await request("DELETE", `/api/contracts/${blank.body.id}`, null, token);
+
+      const explicit = await request("POST", "/api/contracts", { ...base, contractRef: "explicit", commodityTypes: "Electronics" }, token);
+      assert("explicit commodityTypes preserved on create", explicit.body.commodityTypes === "Electronics");
+      const putBack = await request("PUT", `/api/contracts/${explicit.body.id}`, { ...explicit.body, commodityTypes: "" }, token);
+      assert("blanking commodityTypes on update re-defaults to FAK", putBack.body.commodityTypes === "FAK");
+      await request("DELETE", `/api/contracts/${explicit.body.id}`, null, token);
+
+      const long = await request("POST", "/api/contracts", { ...base, contractRef: "long", commodityTypes: "A".repeat(50) }, token);
+      assert("commodityTypes capped at 32 chars", long.body.commodityTypes.length === 32, `got length ${long.body.commodityTypes.length}`);
+      await request("DELETE", `/api/contracts/${long.body.id}`, null, token);
+    }
+
     console.log("\nAmendment history — field diff + content-keyed rate diff");
     {
       const before = await request("GET", `/api/contracts/${contractId}`, null, token);

@@ -541,7 +541,7 @@ module.exports = function contractsRoutes(app, ctx) {
       catch (e) { return err(res, e.message, e.status || 502); }
     }
     const { contractNumber="", contractRef="", carrierCode="", namedAccountId="", namedAccount="",
-            movementType="FCL", containerTypes=[], dgAllowed=false, imdgClasses=[],
+            movementType="FCL", containerTypes=[], commodityTypes="", dgAllowed=false, imdgClasses=[],
             validFrom="", validTo="", currency="USD", status="Active", notes="",
             legs=[], rates=[], routings=[] } = req.body;
     const [dup] = await query("SELECT id FROM contracts WHERE contract_number=$1 AND contract_ref=$2 AND named_account_id=$3", [contractNumber, contractRef, namedAccountId]);
@@ -549,13 +549,17 @@ module.exports = function contractsRoutes(app, ctx) {
     if (!CONTRACT_STATUSES.includes(status)) return err(res, `status must be one of: ${CONTRACT_STATUSES.join(", ")}`);
     const id = `CNTR-${uid()}`;
     const createdAt = new Date().toISOString();
+    // Free text, no registry behind it — left blank means "no commodity restriction stated",
+    // which is exactly what FAK ("Freight All Kinds") already means in the industry, so an
+    // unfilled field defaults to it here rather than silently staying blank.
+    const effCommodityTypes = (commodityTypes.trim() || "FAK").slice(0, 32);
     // container_types/imdg_classes no longer written here (TKT-5YYLNT) — saveContractContainerTypes/
     // saveContractImdgClasses below are the real write path now; the columns stay in the schema
     // (DEFAULT '[]', unused) rather than being dropped, matching this codebase's additive-only precedent.
-    await query(`INSERT INTO contracts (id,contract_number,contract_ref,carrier_code,named_account_id,named_account,movement_type,dg_allowed,valid_from,valid_to,currency,status,notes,created_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+    await query(`INSERT INTO contracts (id,contract_number,contract_ref,carrier_code,named_account_id,named_account,movement_type,dg_allowed,valid_from,valid_to,currency,status,notes,created_at,commodity_types)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
       [id, contractNumber, contractRef, carrierCode, namedAccountId, namedAccount, movementType,
-           !!dgAllowed, validFrom, validTo, currency, status, notes, createdAt]);
+           !!dgAllowed, validFrom, validTo, currency, status, notes, createdAt, effCommodityTypes]);
     await saveContractContainerTypes(id, containerTypes);
     await saveContractImdgClasses(id, imdgClasses);
     const routingIds = await saveRoutings(id, routings);
@@ -576,9 +580,10 @@ module.exports = function contractsRoutes(app, ctx) {
       catch (e) { return err(res, e.message, e.status || 502); }
     }
     const { contractNumber="", contractRef="", carrierCode="", namedAccountId="", namedAccount="",
-            movementType="FCL", containerTypes=[], dgAllowed=false, imdgClasses=[],
+            movementType="FCL", containerTypes=[], commodityTypes="", dgAllowed=false, imdgClasses=[],
             validFrom="", validTo="", currency="USD", status="Active", notes="",
             legs=[], rates=[], routings=[] } = req.body;
+    const effCommodityTypes = (commodityTypes.trim() || "FAK").slice(0, 32);
     const [dup] = await query("SELECT id FROM contracts WHERE contract_number=$1 AND contract_ref=$2 AND named_account_id=$3 AND id!=$4", [contractNumber, contractRef, namedAccountId, req.params.id]);
     if (dup) return err(res, `A contract with this number${contractRef ? ", reference" : ""}${namedAccountId ? ", and account" : ""} already exists (${dup.id})`);
     if (!CONTRACT_STATUSES.includes(status)) return err(res, `status must be one of: ${CONTRACT_STATUSES.join(", ")}`);
@@ -604,10 +609,10 @@ module.exports = function contractsRoutes(app, ctx) {
       (await query("SELECT id, name FROM contract_routings WHERE contract_id=$1", [req.params.id])).map(r => [r.id, r.name])
     );
     const updated = await query(`UPDATE contracts SET contract_number=$1,contract_ref=$2,carrier_code=$3,named_account_id=$4,named_account=$5,
-      movement_type=$6,dg_allowed=$7,valid_from=$8,valid_to=$9,currency=$10,status=$11,notes=$12
-      WHERE id=$13 RETURNING id`,
+      movement_type=$6,dg_allowed=$7,valid_from=$8,valid_to=$9,currency=$10,status=$11,notes=$12,commodity_types=$13
+      WHERE id=$14 RETURNING id`,
       [contractNumber, contractRef, carrierCode, namedAccountId, namedAccount, movementType,
-           !!dgAllowed, validFrom, validTo, currency, effStatus, notes, req.params.id]);
+           !!dgAllowed, validFrom, validTo, currency, effStatus, notes, effCommodityTypes, req.params.id]);
     if (updated.length === 0) return err(res, "Not found", 404);
     await saveContractContainerTypes(req.params.id, containerTypes);
     await saveContractImdgClasses(req.params.id, imdgClasses);

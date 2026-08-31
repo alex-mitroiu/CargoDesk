@@ -51,7 +51,7 @@ const EMPTY_FILTERS = { search:"", carrier:"", status:"", dg:"", asOf:"", contai
 
 const EMPTY_FORM = {
   contractNumber: "", contractRef: "", carrierCode: "", namedAccountId: "", namedAccount: "",
-  movementType: "FCL", containerTypes: [], dgAllowed: false, imdgClasses: [],
+  movementType: "FCL", containerTypes: [], commodityTypes: "", dgAllowed: false, imdgClasses: [],
   validFrom: "", validTo: "", currency: "USD", status: "Active", notes: "",
   legs: [],
   rates: [],
@@ -282,6 +282,7 @@ const ContractModal = ({ editing, prefill, onSave, onClose }) => {
       namedAccount:   src.namedAccount   || "",
       movementType:   src.movementType   || "FCL",
       containerTypes: src.containerTypes || [],
+      commodityTypes: src.commodityTypes || "",
       dgAllowed:      src.dgAllowed      || false,
       imdgClasses:    src.imdgClasses    || [],
       validFrom:      src.validFrom      || "",
@@ -669,8 +670,30 @@ const ContractModal = ({ editing, prefill, onSave, onClose }) => {
               {ct}
             </button>
           ))}
+          <button type="button"
+            onClick={() => setF(p => ({
+              ...p,
+              containerTypes: p.containerTypes.length === CONTAINER_OPTIONS.length
+                ? []
+                : [...CONTAINER_OPTIONS],
+            }))}
+            style={chipStyle(f.containerTypes.length === CONTAINER_OPTIONS.length)}>
+            All
+          </button>
         </div>
       </Field>
+
+      <div style={{ marginTop: 12 }}>
+        <Field label="Commodity Types" hint="Free text, max 32 characters — carriers file contracts under their own commodity classifications, so this deliberately isn't tied to a shared registry. Left blank, it defaults to FAK (Freight All Kinds) on save.">
+          <input
+            value={f.commodityTypes}
+            onChange={e => setF(p => ({ ...p, commodityTypes: e.target.value }))}
+            placeholder="e.g. FAK, Electronics"
+            maxLength={32}
+            style={{ ...inputBase, fontFamily: T.mono, fontSize: 13 }}
+          />
+        </Field>
+      </div>
 
       <div style={{ marginTop: 12 }}>
         <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer",

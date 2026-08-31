@@ -67,9 +67,14 @@ async function initSchema() {
       currency         TEXT DEFAULT 'USD',
       status           TEXT DEFAULT 'Active',
       notes            TEXT DEFAULT '',
-      created_at       TEXT NOT NULL
+      created_at       TEXT NOT NULL,
+      commodity_types  TEXT DEFAULT ''
     )
   `);
+  // Incremental change, post-Postgres-migration — see the monolith's own lib/schema.js comment
+  // on the same pattern (Postgres's ADD COLUMN IF NOT EXISTS is natively idempotent, safe on
+  // every boot) for why this isn't folded into the CREATE TABLE above.
+  await query(`ALTER TABLE contracts ADD COLUMN IF NOT EXISTS commodity_types TEXT DEFAULT ''`);
   await query(`
     CREATE TABLE IF NOT EXISTS contract_legs (
       id                     TEXT PRIMARY KEY,
@@ -169,6 +174,7 @@ const mapContract = r => ({
   id: r.id, contractNumber: r.contract_number, contractRef: r.contract_ref || "",
   carrierCode: r.carrier_code, namedAccountId: r.named_account_id, namedAccount: r.named_account,
   movementType: r.movement_type, containerTypes: JSON.parse(r.container_types || "[]"),
+  commodityTypes: r.commodity_types || "",
   dgAllowed: r.dg_allowed, imdgClasses: JSON.parse(r.imdg_classes || "[]"),
   validFrom: r.valid_from, validTo: r.valid_to, currency: r.currency, status: r.status,
   notes: r.notes, createdAt: r.created_at,
@@ -576,7 +582,7 @@ app.get("/internal/contracts/:id", async (req, res) => {
 
 app.post("/internal/contracts", async (req, res) => {
   const { contractNumber = "", contractRef = "", carrierCode = "", namedAccountId = "", namedAccount = "",
-          movementType = "FCL", containerTypes = [], dgAllowed = false, imdgClasses = [],
+          movementType = "FCL", containerTypes = [], commodityTypes = "", dgAllowed = false, imdgClasses = [],
           validFrom = "", validTo = "", currency = "USD", status = "Active", notes = "",
           legs = [], rates = [], routings = [] } = req.body;
   const [dup] = await query("SELECT id FROM contracts WHERE contract_number=$1 AND contract_ref=$2 AND named_account_id=$3", [contractNumber, contractRef, namedAccountId]);
@@ -584,12 +590,13 @@ app.post("/internal/contracts", async (req, res) => {
   if (!CONTRACT_STATUSES.includes(status)) return err(res, `status must be one of: ${CONTRACT_STATUSES.join(", ")}`);
   const id = `CNTR-${uid()}`;
   const createdAt = new Date().toISOString();
+  const effCommodityTypes = (commodityTypes.trim() || "FAK").slice(0, 32);
   // container_types/imdg_classes no longer written here (TKT-5YYLNT) — saveContractContainerTypes/
   // saveContractImdgClasses below are the real write path now.
-  await query(`INSERT INTO contracts (id,contract_number,contract_ref,carrier_code,named_account_id,named_account,movement_type,dg_allowed,valid_from,valid_to,currency,status,notes,created_at)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+  await query(`INSERT INTO contracts (id,contract_number,contract_ref,carrier_code,named_account_id,named_account,movement_type,dg_allowed,valid_from,valid_to,currency,status,notes,created_at,commodity_types)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
     [id, contractNumber, contractRef, carrierCode, namedAccountId, namedAccount, movementType,
-     !!dgAllowed, validFrom, validTo, currency, status, notes, createdAt]);
+     !!dgAllowed, validFrom, validTo, currency, status, notes, createdAt, effCommodityTypes]);
   await saveContractContainerTypes(id, containerTypes);
   await saveContractImdgClasses(id, imdgClasses);
   const routingIds = await saveRoutings(id, routings);
@@ -604,19 +611,20 @@ app.post("/internal/contracts", async (req, res) => {
 
 app.put("/internal/contracts/:id", async (req, res) => {
   const { contractNumber = "", contractRef = "", carrierCode = "", namedAccountId = "", namedAccount = "",
-          movementType = "FCL", containerTypes = [], dgAllowed = false, imdgClasses = [],
+          movementType = "FCL", containerTypes = [], commodityTypes = "", dgAllowed = false, imdgClasses = [],
           validFrom = "", validTo = "", currency = "USD", status = "Active", notes = "",
           legs = [], rates = [], routings = [] } = req.body;
+  const effCommodityTypes = (commodityTypes.trim() || "FAK").slice(0, 32);
   const [dup] = await query("SELECT id FROM contracts WHERE contract_number=$1 AND contract_ref=$2 AND named_account_id=$3 AND id!=$4", [contractNumber, contractRef, namedAccountId, req.params.id]);
   if (dup) return err(res, `A contract with this number${contractRef ? ", reference" : ""}${namedAccountId ? ", and account" : ""} already exists (${dup.id})`);
   if (!CONTRACT_STATUSES.includes(status)) return err(res, `status must be one of: ${CONTRACT_STATUSES.join(", ")}`);
   const oldRoutingRows = await query("SELECT id, name FROM contract_routings WHERE contract_id=$1", [req.params.id]);
   const oldRoutingsById = Object.fromEntries(oldRoutingRows.map(r => [r.id, r.name]));
   const result = await query(`UPDATE contracts SET contract_number=$1,contract_ref=$2,carrier_code=$3,named_account_id=$4,named_account=$5,
-    movement_type=$6,dg_allowed=$7,valid_from=$8,valid_to=$9,currency=$10,status=$11,notes=$12
-    WHERE id=$13 RETURNING id`,
+    movement_type=$6,dg_allowed=$7,valid_from=$8,valid_to=$9,currency=$10,status=$11,notes=$12,commodity_types=$13
+    WHERE id=$14 RETURNING id`,
     [contractNumber, contractRef, carrierCode, namedAccountId, namedAccount, movementType,
-     !!dgAllowed, validFrom, validTo, currency, status, notes, req.params.id]);
+     !!dgAllowed, validFrom, validTo, currency, status, notes, effCommodityTypes, req.params.id]);
   if (result.length === 0) return err(res, "Not found", 404);
   await saveContractContainerTypes(req.params.id, containerTypes);
   await saveContractImdgClasses(req.params.id, imdgClasses);
