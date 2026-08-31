@@ -114,6 +114,11 @@ const ContractAssignModal = ({ shipment, legs, pol, pod, onUpdate, onDone, onClo
     }
     return (
       <ContractPickerModal pol={pol} pod={pod} matches={matches} allocs={allocs}
+        searchCriteria={{ pol, pod, crd: (shipment.cargoReadyDate || shipment.etd || "") || null,
+          // Deliberately no carrierCode here — this search is intentionally NOT carrier-filtered
+          // (see the comment above the match useEffect), so showing one would misrepresent what
+          // was actually searched for.
+          needsPolHaulage, needsPodHaulage, pkuLocation, delLocation }}
         onSelectContract={pickContract} onSelectAllocation={pickAllocation} onClose={onClose}
         onBack={() => setStep("type")} />
     );

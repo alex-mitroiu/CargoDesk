@@ -128,7 +128,18 @@ const OVERAGE_REASONS = [
   { value: "agreed_uplift",  label: "Agreed uplift" },
 ];
 
-export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0, onSelectContract, onSelectAllocation, onClose, onBack }) => {
+// One labeled pill per search criterion actually sent to GET /api/contracts/match — see
+// ContractPickerModal's own "Search Terms" section below for why this exists.
+const SearchTermChip = ({ label, value }) => !value ? null : (
+  <div style={{ display: "flex", alignItems: "center", gap: 5, background: T.bg,
+    border: `1px solid ${T.border}`, borderRadius: 5, padding: "3px 9px" }}>
+    <span style={{ fontFamily: T.body, fontSize: 9.5, color: T.textMuted, fontWeight: 700,
+      textTransform: "uppercase", letterSpacing: ".04em" }}>{label}</span>
+    <span style={{ fontFamily: T.mono, fontSize: 11.5, color: T.text, fontWeight: 700 }}>{value}</span>
+  </div>
+);
+
+export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0, searchCriteria = null, onSelectContract, onSelectAllocation, onClose, onBack }) => {
   const [expandedGroups, setExpandedGroups] = useState(new Set());
   const [skipMode,       setSkipMode]       = useState(false);
   const [skipReason,     setSkipReason]     = useState("");
@@ -281,6 +292,25 @@ export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0
             onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = T.text; }}>
             ← Change contract type (SPOT / Pending / Customer Own)
           </button>
+        )}
+        {/* Search Terms — direct request: show exactly what GET /api/contracts/match was called
+            with, both so the operator can see why a given contract is (or isn't) showing up, and
+            so a real mismatch is easy to diagnose later without re-deriving these from scratch.
+            Shown even while isLoading — the criteria are already known before the response is. */}
+        {searchCriteria && (
+          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8,
+            padding: "10px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
+            <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 700,
+              textTransform: "uppercase", letterSpacing: ".08em" }}>Search Terms</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+              <SearchTermChip label="POL" value={searchCriteria.pol} />
+              <SearchTermChip label="POD" value={searchCriteria.pod} />
+              <SearchTermChip label="Cargo Ready" value={searchCriteria.crd} />
+              <SearchTermChip label="Carrier" value={searchCriteria.carrierCode} />
+              <SearchTermChip label="POL Haulage" value={searchCriteria.needsPolHaulage ? (searchCriteria.pkuLocation || "Required") : null} />
+              <SearchTermChip label="POD Haulage" value={searchCriteria.needsPodHaulage ? (searchCriteria.delLocation || "Required") : null} />
+            </div>
+          </div>
         )}
         {isLoading && <div style={{ padding: 40, display: "flex", justifyContent: "center" }}><Spinner /></div>}
         {!isLoading && (
@@ -497,6 +527,8 @@ export const ContractField = ({ value, onChange, pol, pod, etd, crd, needsPolHau
       )}
       {pickerOpen && (
         <ContractPickerModal pol={pol} pod={pod} matches={matches} allocs={allocs}
+          searchCriteria={{ pol, pod, crd: dateRef || null, carrierCode: carrierCode || null,
+            needsPolHaulage, needsPodHaulage, pkuLocation, delLocation }}
           onSelectContract={pickContract} onSelectAllocation={pickAllocation}
           onClose={() => setPickerOpen(false)} />
       )}
