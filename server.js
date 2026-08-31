@@ -281,6 +281,24 @@ async function gracefulShutdown(signal) {
 process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 
+// Dev-only escape hatch for the same graceful shutdown above, reachable over HTTP instead of a
+// process signal. Needed because Windows has no way to deliver a real, catchable signal to a
+// detached/background process from another process — `taskkill` against one always reports
+// "can only be terminated forcefully," and Node's own cross-process `process.kill(pid, 'SIGINT')`
+// silently just force-kills on Windows too (confirmed directly) — so SIGINT/SIGTERM above can
+// only ever be exercised by Ctrl+C on a process's own attached console, never scripted. This
+// route gives local tooling a real way to stop the process cleanly either way. Inert outside
+// development (checked first, before the loopback check, so it fails the same way regardless of
+// which guard would have caught it) and only ever answers on the loopback interface.
+if (process.env.NODE_ENV !== "production") {
+  app.post("/internal/dev/shutdown", (req, res) => {
+    const ip = req.socket.remoteAddress || "";
+    if (!["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(ip)) return res.status(403).end();
+    res.json({ ok: true });
+    gracefulShutdown("HTTP /internal/dev/shutdown");
+  });
+}
+
 app.use(express.json({ limit: "25mb" }));
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
