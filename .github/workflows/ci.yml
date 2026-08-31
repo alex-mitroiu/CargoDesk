@@ -31,15 +31,14 @@ jobs:
 
   backend-tests-and-build:
     runs-on: ubuntu-latest
-    # Was 15 — too tight since the Postgres migration. The seed step alone (import-mdm-data.js)
-    # went from a near-instant synchronous node:sqlite call to real async query round-trips for
-    # ~15,000+ MDM rows (batched, but still real I/O — see importPorts()'s own comment on why),
-    # on top of npm ci, 4 services booting with sequential health-checks, a full server restart,
-    # the entire backend test chain (60+ files and growing), 4 more service-scoped suites, and a
-    # production build — all in one job. A real run hit this ceiling and got cancelled mid-job
-    # (not a test failure — GitHub Actions' own timeout cancellation). 25 gives real headroom;
-    # cypress's own job already runs at 20 for comparatively less aggregate work.
-    timeout-minutes: 25
+    # Briefly bumped to 25 while chasing a real CI cancellation — misdiagnosed at first as this
+    # job being genuinely too slow post-Postgres-migration. It wasn't: scripts/import-mdm-data.js's
+    # main() never called process.exit(0) on success, so its pglite connection kept the process
+    # alive indefinitely after printing its last line — the "Seed database" step's own script had
+    # already finished, the job just never got control back until the outer timeout fired. Fixed
+    # at the source (import-mdm-data.js now calls close()+process.exit(0)); reverted back to 15
+    # rather than leave padding around a bug that no longer exists.
+    timeout-minutes: 15
     env:
       NODE_ENV: test
       # 29 test files each log in once against one continuous server process — well past the
@@ -132,13 +131,10 @@ jobs:
 
   cypress:
     runs-on: ubuntu-latest
-    # Was 20 — same root cause as backend-tests-and-build's own bump (see that job's comment):
-    # confirmed via a real run that got cancelled at 20m15s, just past this ceiling. This job
-    # starts strictly more (`npm run dev` boots the monolith + all 6 microservices + Vite,
-    # vs. backend-tests-and-build's 4 background processes) on top of the same now-async seed
-    # step, then runs real browser-driven E2E specs, which were never the fast part to begin
-    # with. 30 gives real headroom instead of sitting right at the line.
-    timeout-minutes: 30
+    # Same misdiagnosis and revert as backend-tests-and-build (see that job's comment) — briefly
+    # 30, back to 20 now that the real bug (import-mdm-data.js's process never exiting) is fixed
+    # at the source rather than padded around.
+    timeout-minutes: 20
     env:
       NODE_ENV: test
       # Cypress logs in repeatedly across specs against one continuous server process — see

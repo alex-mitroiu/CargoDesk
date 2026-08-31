@@ -14,7 +14,7 @@
 
 const path = require("path");
 const fs   = require("fs");
-const { query, transaction } = require("../lib/db.js");
+const { query, transaction, close } = require("../lib/db.js");
 
 const PORTS_CSV    = path.join(__dirname, "..", "data", "seaports.csv");
 const CARRIERS_CSV = path.join(__dirname, "..", "data", "carriers.csv");
@@ -384,4 +384,15 @@ async function main() {
   console.log("\nDone. You can restart the server now.\n");
 }
 
-main().catch(e => { console.error(e); process.exit(1); });
+// The real cause of a CI hang traced to this file (2026-08-31): main() resolving with no
+// explicit process.exit(0) relies on Node's event loop draining naturally to exit — but
+// lib/db.js's pglite connection (the embedded dev/CI backend whenever DATABASE_URL is unset)
+// is a long-lived module-level singleton that's never closed on its own, so the process just
+// hung forever after printing its last line. The "Seed database" CI step's own script had
+// already finished successfully; the JOB just never got control back, until the outer job
+// timeout eventually killed it — see close()'s own doc comment in lib/db.js on why an explicit
+// close() (not just process.exit()) matters for pglite specifically.
+main()
+  .then(() => close())
+  .then(() => process.exit(0))
+  .catch(e => { console.error(e); close().finally(() => process.exit(1)); });
