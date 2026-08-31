@@ -133,6 +133,20 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
     api.schedules.list(shipment.id).then(setSchedules).catch(() => {});
   }, [shipment.id, historyVersion]);
 
+  // Contract rate lines — direct request for a facelift on the plain one-line contract summary
+  // below: once a Central contract is actually attached, fetch its full detail (rates included)
+  // so the rate table can show real type/rate id/container type/amount instead of just the
+  // contract number. Only fetched for a real Central contractId — SPOT/Pending/Customer Own have
+  // no contract_rates row to speak of, the table renders a dashed placeholder row for those
+  // instead of attempting a fetch that has nothing to return.
+  const [contractDetail, setContractDetail] = useState(null);
+  useEffect(() => {
+    if (shipment.contractType !== "Central" || !shipment.contractId) { setContractDetail(null); return; }
+    let live = true;
+    api.contracts.get(shipment.contractId).then(c => { if (live) setContractDetail(c); }).catch(() => { if (live) setContractDetail(null); });
+    return () => { live = false; };
+  }, [shipment.contractType, shipment.contractId]);
+
   // Export/Import Line Agent — surfaced here (not just on Parties & Offices) since schedule and
   // contract selection are also an export-side-only action on this page; keeping both under the
   // same office-side permission model in one place matches how the operator actually works.
@@ -427,6 +441,55 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
               </Btn>
             )}
           </div>
+
+          {/* Rate-line facelift, direct request — same table structure regardless of contract
+              type: a real Central contract's own rate lines populate it, everything else (SPOT/
+              Pending/Customer Own, or a Central contract whose rates just haven't loaded yet)
+              renders one dashed placeholder row rather than hiding the table outright. */}
+          {(() => {
+            const rateRows = contractDetail?.rates || [];
+            const cols = ["Type", "Rate ID", "Container Type", "Amount"];
+            return (
+              <div id="shpsched-contract-rates" style={{ marginTop: 12, maxWidth: hasSpaceConfig ? "none" : 480,
+                border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden" }}>
+                <div style={{ display: "flex", padding: "8px 0", borderBottom: `1px solid ${T.border}`, background: T.surface }}>
+                  {cols.map((label, i) => (
+                    <div key={label} style={{ flex: 1, paddingLeft: 14,
+                      fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted,
+                      textTransform: "uppercase", letterSpacing: ".08em",
+                      borderRight: i < cols.length - 1 ? `1px solid ${T.border}33` : "none" }}>
+                      {label}
+                    </div>
+                  ))}
+                </div>
+                {rateRows.length > 0 ? rateRows.map(r => (
+                  <div key={r.id} style={{ display: "flex", padding: "8px 0", borderBottom: `1px solid ${T.border}22` }}>
+                    <div style={{ flex: 1, paddingLeft: 14, minWidth: 0 }}>
+                      <div style={{ fontFamily: T.mono, fontSize: 12, color: T.text, fontWeight: 700,
+                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {r.description || r.serviceCode || "—"}
+                      </div>
+                      {r.description && r.serviceCode && (
+                        <div style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted }}>{r.serviceCode}</div>
+                      )}
+                    </div>
+                    <div style={{ flex: 1, paddingLeft: 14, fontFamily: T.mono, fontSize: 12, color: T.textMuted,
+                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.id}</div>
+                    <div style={{ flex: 1, paddingLeft: 14, fontFamily: T.mono, fontSize: 12, color: T.text }}>{r.containerType || "—"}</div>
+                    <div style={{ flex: 1, paddingLeft: 14, fontFamily: T.mono, fontSize: 12, color: T.text, fontWeight: 700 }}>
+                      {r.amount != null ? `${r.currency || "USD"} ${Number(r.amount).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${r.unit ? ` / ${r.unit}` : ""}` : "—"}
+                    </div>
+                  </div>
+                )) : (
+                  <div style={{ display: "flex", padding: "8px 0" }}>
+                    {cols.map((_, i) => (
+                      <div key={i} style={{ flex: 1, paddingLeft: 14, fontFamily: T.mono, fontSize: 12, color: T.textMuted, fontStyle: "italic" }}>—</div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </div>
 
         {hasSpaceConfig && (
