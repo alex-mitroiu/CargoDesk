@@ -50,7 +50,7 @@ module.exports = function quotesRoutes(app, ctx) {
   // directly-created one would, without new cross-file ctx plumbing for a 10-line helper. A side
   // with 2+ candidates (only possible via the linked-ports fallback) is left unassigned rather
   // than guessing — same rule as the shipments.js copy, see its own comment for the full rationale.
-  async function maybeAssignLineAgents(shipmentId, carrierCode, pol, pod) {
+  async function maybeAssignLineAgents(shipmentId, carrierCode, pol, pod, actorId = null) {
     for (const [port, role] of [[pol, "Line Agent (Export)"], [pod, "Line Agent (Import)"]]) {
       const candidates = await resolveCarrierAgentCandidates(carrierCode, port);
       if (candidates.length !== 1) continue;
@@ -59,6 +59,8 @@ module.exports = function quotesRoutes(app, ctx) {
         await query(`INSERT INTO shipment_parties (id, shipment_id, role, customer_id, customer_name, created_at)
           VALUES ($1,$2,$3,$4,$5,$6)`,
           [`PTY-${uid()}`, shipmentId, role, match.agent_customer_id, match.agent_customer_name, new Date().toISOString()]);
+        await logEvent(shipmentId, 'LINE_AGENT_AUTO_ASSIGNED', role, null, match.agent_customer_name,
+          JSON.stringify({ carrierCode, port, matchedVia: match.matched_via || null }), actorId);
       } catch (e) { if (!isUniqueViolation(e)) throw e; }
     }
   }
@@ -245,8 +247,8 @@ module.exports = function quotesRoutes(app, ctx) {
            q.contract_id, q.contract_ref, q.commodity_code, q.customer_id, q.customer_name,
            q.movement_type, q.service_type, q.incoterm, q.cargo_ready_date]);
     await logEvent(id, 'SHIPMENT_CREATED', null, null, null,
-      JSON.stringify({ pol: q.pol, pod: q.pod, carrier: q.carrier_code, status: 'Active', contractType, source: 'quote', quoteId: req.params.id }));
-    await maybeAssignLineAgents(id, q.carrier_code, q.pol, q.pod);
+      JSON.stringify({ pol: q.pol, pod: q.pod, carrier: q.carrier_code, status: 'Active', contractType, source: 'quote', quoteId: req.params.id }), req.user?.id);
+    await maybeAssignLineAgents(id, q.carrier_code, q.pol, q.pod, req.user?.id);
     if (contractType === 'Central' && q.contract_id) await importContractRates(id);
 
     for (const l of lines) {

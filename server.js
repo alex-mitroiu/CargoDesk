@@ -1817,7 +1817,7 @@ const CUSTOMS_FILING_TYPES = ["AES_EEI", "ISF_AMS"];
 const LEG_LOC_ABBR = { 'Door': 'DR', 'Terminal': 'PT', 'Container Yard': 'CY', 'CFS': 'CFS', 'GPS Coordinates': 'GPS' };
 const GPS_LOC_TYPE = 'GPS Coordinates';
 
-const syncShipmentFromLegs = async (shipmentId) => {
+const syncShipmentFromLegs = async (shipmentId, actorId = null) => {
   const legs = await query("SELECT * FROM shipment_legs WHERE shipment_id=$1 ORDER BY leg_order ASC", [shipmentId]);
   if (!legs.length) {
     // Every leg was just removed (e.g. unlinking a schedule) — the schedule-derived fields
@@ -1884,7 +1884,7 @@ const syncShipmentFromLegs = async (shipmentId) => {
   if (contractDropped) {
     await logEvent(shipmentId, 'CONTRACT_DROPPED', 'contract_id', shipmentRow.contract_id, null,
       JSON.stringify({ reason: 'Schedule carrier no longer matches the attached Central contract',
-        contractCarrier: shipmentRow.carrier_code, scheduleCarrier: legCarrier, seaLegId: seaLeg.id }));
+        contractCarrier: shipmentRow.carrier_code, scheduleCarrier: legCarrier, seaLegId: seaLeg.id }), actorId);
   }
   // Closes the "no audit trail" half of the bug above — any future roll-up that actually
   // changes carrier_code (the legitimate blank-carrier/no-contract case, or the contract-drop
@@ -1892,7 +1892,7 @@ const syncShipmentFromLegs = async (shipmentId) => {
   // showing up as an unexplained diff.
   if (shipmentRow && newCarrierCode !== (shipmentRow.carrier_code || '')) {
     await logEvent(shipmentId, 'FIELD_UPDATED', 'carrier_code', shipmentRow.carrier_code || null, newCarrierCode || null,
-      JSON.stringify({ source: 'syncShipmentFromLegs', legCarrier, seaLegId: seaLeg.id }));
+      JSON.stringify({ source: 'syncShipmentFromLegs', legCarrier, seaLegId: seaLeg.id }), actorId);
     // ensureBookingCreated (the usual trigger for supersedeIfCarrierChanged) no-ops the instant
     // there's no contract — which is exactly the state the drop above just created — so a
     // pending booking under the OLD carrier needs this called directly, or it would never get
@@ -2124,7 +2124,12 @@ const logAdminEvent = async (actor, action, targetType = '', targetId = '', deta
 };
 
 // ─── Shipment event logger ────────────────────────────────────────────────────
-const logEvent = async (shipmentId, type, field, oldVal, newVal, meta = '') => {
+// `actorId` is the real acting user's id (req.user?.id) — previously this always wrote the
+// literal string 'user' regardless of who actually made the change, making the History tab's
+// "actor" column permanently useless (every row read "user"). A call site with no live request
+// context (a background sweep, the AIS listener) passes nothing and the row is attributed to
+// 'system', which is accurate for those triggers.
+const logEvent = async (shipmentId, type, field, oldVal, newVal, meta = '', actorId = null) => {
   try {
     await query(
       "INSERT INTO shipment_events (id,shipment_id,event_type,field,old_value,new_value,actor,occurred_at,meta) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
@@ -2132,7 +2137,7 @@ const logEvent = async (shipmentId, type, field, oldVal, newVal, meta = '') => {
       field   ?? null,
       oldVal  != null ? String(oldVal) : null,
       newVal  != null ? String(newVal) : null,
-      'user', new Date().toISOString(), meta]);
+      actorId || 'system', new Date().toISOString(), meta]);
   } catch(e) { console.warn('logEvent failed:', e.message); }
 };
 

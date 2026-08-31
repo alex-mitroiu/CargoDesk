@@ -440,6 +440,10 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
            requestedDate, notes, now, createdBy]);
     await logEntityEvent('service', id, 'REQUESTED', null, null, null,
       JSON.stringify({ shipmentId: req.params.id, side, serviceType, vendorName }));
+    // Same History-tab gap as schedules/parties — the entity_events row above only ever
+    // surfaced on this service's own detail view, never on the shipment's unified History tab.
+    await logEvent(req.params.id, 'SERVICE_ORDERED', null, null, `${side} — ${serviceType}`,
+      JSON.stringify({ side, serviceType, vendorName }), req.user?.id);
     const [row] = await query(`${SERVICE_SELECT} WHERE ss.id=$1`, [id]);
     ok(res, mapService(row), 201);
   });
@@ -492,9 +496,12 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       ['office_id',    existing.office_id,      officeId],
       ['notes',        existing.notes || '',    notes || ''],
     ]) {
-      if (String(oldV || '') !== String(newV || ''))
+      if (String(oldV || '') !== String(newV || '')) {
         await logEntityEvent('service', req.params.id, 'UPDATED', field, oldV, newV,
           JSON.stringify({ shipmentId: existing.shipment_id, side, serviceType }));
+        await logEvent(existing.shipment_id, 'SERVICE_UPDATED', field, oldV, newV,
+          JSON.stringify({ side, serviceType }), req.user?.id);
+      }
     }
 
     const [row] = await query(`${SERVICE_SELECT} WHERE ss.id=$1`, [req.params.id]);
@@ -507,6 +514,8 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     await query("DELETE FROM shipment_services WHERE id=$1", [req.params.id]);
     await logEntityEvent('service', req.params.id, 'DELETED', null, null, null,
       JSON.stringify({ shipmentId: existing.shipment_id, side: existing.side, serviceType: existing.service_type }));
+    await logEvent(existing.shipment_id, 'SERVICE_REMOVED', null, `${existing.side} — ${existing.service_type}`, null,
+      '', req.user?.id);
     ok(res, { deleted: req.params.id });
   });
 
@@ -1029,7 +1038,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     // document-distribution service's own scope notes) — just a visible "this was attempted"
     // marker in the shipment's existing event history.
     await logEvent(req.params.id, 'DOCUMENT_GENERATION_ATTEMPTED', null, null, null,
-      JSON.stringify({ docType: docType || "OT", filename }));
+      JSON.stringify({ docType: docType || "OT", filename }), req.user?.id);
     try {
       const cert = await getActiveSigningCert(query);
       const rawPdf = await renderHtmlToPdf(html);
@@ -1052,6 +1061,8 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
              Array.isArray(sourceCostLineIds) ? JSON.stringify(sourceCostLineIds) : null, relatedDocId]);
       await logEntityEvent('document', id, 'GENERATED', null, null, null,
         JSON.stringify({ shipmentId: req.params.id, docType: docType || "OT", filename: pdfFilename, containerId, signed: true, certFingerprint: cert.fingerprint_sha256 }));
+      await logEvent(req.params.id, 'DOCUMENT_GENERATED', null, null, pdfFilename,
+        JSON.stringify({ docType: docType || "OT", containerId }), req.user?.id);
       if (consumeOverrideId) {
         await query("UPDATE credit_overrides SET consumed_at=$1 WHERE id=$2", [now, consumeOverrideId]);
       }
@@ -1059,7 +1070,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       ok(res, await mapDoc(row, req.params.id), 201);
     } catch (e) {
       await logEvent(req.params.id, 'DOCUMENT_GENERATION_FAILED', null, null, null,
-        JSON.stringify({ docType: docType || "OT", filename, error: e.message }));
+        JSON.stringify({ docType: docType || "OT", filename, error: e.message }), req.user?.id);
       err(res, e.message, e.status || 500);
     }
   });
@@ -1508,6 +1519,12 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     await logEntityEvent('schedule', id, 'SAVED', null, null, null,
       JSON.stringify({ shipmentId: req.params.id, carrier, vesselName, vesselImo, voyageNumber, service, pol, pod, etd, eta,
         transitDays: Number(transitDays), actor: savedBy }));
+    // Same History-tab gap as parties/side-offices (routes/shipments.js) — the Schedule History
+    // panel already showed this via entity_events, but the shipment's own unified History tab
+    // (GET /api/shipments/:id/events, shipment_events only) never heard about a schedule being
+    // picked at all.
+    await logEvent(req.params.id, 'SCHEDULE_ASSIGNED', null, null, `${carrier} ${vesselName} ${voyageNumber}`.trim(),
+      JSON.stringify({ carrier, vesselName, voyageNumber, pol, pod, etd, eta }), req.user?.id);
     await ensureBookingCreated(req.params.id);
     ok(res, await mapSchedule({ id, shipment_id: req.params.id, carrier, vessel_name: vesselName, vessel_imo: vesselImo,
       voyage_number: voyageNumber, service, pol, pod, etd, eta,
@@ -1542,6 +1559,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     for (const [field, oldVal, newVal] of changes) {
       await logEntityEvent('schedule', req.params.scheduleId, 'UPDATED', field, oldVal, newVal,
         JSON.stringify({ shipmentId: req.params.id, actor }));
+      await logEvent(req.params.id, 'SCHEDULE_UPDATED', field, oldVal, newVal, '', req.user?.id);
     }
 
     // Keep the canonical leg data (sailing_legs/schedule_leg_refs) in lockstep with this
@@ -1578,7 +1596,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       await query("UPDATE shipment_legs SET vessel=$1, voyage=$2, etd=$3, carrier_code=$4 WHERE id=$5",
         [vesselName, voyageNumber, etd, carrier, first.id]);
       await query("UPDATE shipment_legs SET eta=$1 WHERE id=$2", [eta, last.id]);
-      await syncShipmentFromLegs(req.params.id);
+      await syncShipmentFromLegs(req.params.id, req.user?.id);
     }
 
     const [fresh] = await query("SELECT * FROM shipment_schedules WHERE id=$1", [req.params.scheduleId]);
@@ -1594,6 +1612,8 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
         vesselImo: existing.vessel_imo, voyageNumber: existing.voyage_number, service: existing.service,
         pol: existing.pol, pod: existing.pod, etd: existing.etd, eta: existing.eta, transitDays: existing.transit_days,
         actor: req.user?.name || req.user?.email || "" }));
+    await logEvent(req.params.id, 'SCHEDULE_REMOVED', null, `${existing.carrier} ${existing.vessel_name} ${existing.voyage_number}`.trim(), null,
+      JSON.stringify({ carrier: existing.carrier, vesselName: existing.vessel_name, voyageNumber: existing.voyage_number }), req.user?.id);
     ok(res, { deleted: req.params.scheduleId });
   });
 

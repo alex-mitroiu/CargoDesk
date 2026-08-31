@@ -74,7 +74,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
   // (only possible via the linked-ports fallback — see resolveCarrierAgentCandidates) is
   // deliberately left unassigned rather than guessing which one — GET .../line-agent-candidates
   // below surfaces it for the operator to pick instead.
-  const maybeAssignLineAgents = async (shipmentId, carrierCode, pol, pod) => {
+  const maybeAssignLineAgents = async (shipmentId, carrierCode, pol, pod, actorId = null) => {
     for (const [port, role] of [[pol, "Line Agent (Export)"], [pod, "Line Agent (Import)"]]) {
       const candidates = await resolveCarrierAgentCandidates(carrierCode, port);
       if (candidates.length !== 1) continue;
@@ -83,6 +83,12 @@ module.exports = function shipmentsRoutes(app, ctx) {
         await query(`INSERT INTO shipment_parties (id, shipment_id, role, customer_id, customer_name, created_at)
           VALUES ($1,$2,$3,$4,$5,$6)`,
           [`PTY-${uid()}`, shipmentId, role, match.agent_customer_id, match.agent_customer_name, new Date().toISOString()]);
+        // Silent until now — a resolved Line Agent slot filled itself in with no trace in the
+        // shipment's own History tab, distinct from LOGGED PARTY_ASSIGNED (which only ever fired
+        // for the manual assign route). Own event type so the History tab reads "auto-resolved",
+        // not "someone assigned this" for a change nobody actually clicked.
+        await logEvent(shipmentId, 'LINE_AGENT_AUTO_ASSIGNED', role, null, match.agent_customer_name,
+          JSON.stringify({ carrierCode, port, matchedVia: match.matched_via || null }), actorId);
       } catch (e) { if (!isUniqueViolation(e)) throw e; }
     }
   };
@@ -400,8 +406,8 @@ module.exports = function shipmentsRoutes(app, ctx) {
     await query(`INSERT INTO shipments (id,pol,pod,carrier_code,contract_type,contract_notes,status,created_at,etd,eta,booking_ref,bl_number,bl_release_type,master_bl_number,master_bl_release_type,coload_tariff_reference,vessel,voyage,incoterm,vessel_imo,contract_id,contract_ref,commodity_code,shipper_id,shipper_name,consignee_id,consignee_name,principal_id,principal_name,allocation_id,space_skip_reason,space_overage_reason,freight_terms,movement_type,service_type,place_of_receipt,place_of_delivery,cargo_ready_date,notify_id,notify_name,declared_value,declared_value_currency,emo_office_id,imo_office_id,controlling_office_id,contract_routing_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46)`,
       [id, polU, podU, carrierCode, contractType, contractNotes, status, createdAt, etd, eta, bookingRef, blNumber, blReleaseType, masterBlNumber, masterBlReleaseType, coloadTariffReference, vessel, voyage, incoterm, vesselImo, contractId, contractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, allocationId, spaceSkipReason, spaceOverageReason, freightTerms, movementType, serviceType, placeOfReceipt, placeOfDelivery, cargoReadyDate || null, notifyId, notifyName, (declaredValue !== null && declaredValue !== undefined && String(declaredValue).trim() !== '') ? Number(declaredValue) : null, declaredValueCurrency || "USD", emoOfficeId || null, imoOfficeId || null, controllingOfficeId || null, contractRoutingId || ""]);
     await logEvent(id, 'SHIPMENT_CREATED', null, null, null,
-      JSON.stringify({ pol: polU, pod: podU, carrier: carrierCode, status, etd, contractType }));
-    await maybeAssignLineAgents(id, carrierCode, polU, podU);
+      JSON.stringify({ pol: polU, pod: podU, carrier: carrierCode, status, etd, contractType }), req.user?.id);
+    await maybeAssignLineAgents(id, carrierCode, polU, podU, req.user?.id);
     if (contractType === 'Central' && contractId) await importContractRates(id);
     const silentScreening = sanctionsMap.size > 0 ? await screenShipmentById(id) : null;
 
@@ -486,6 +492,8 @@ module.exports = function shipmentsRoutes(app, ctx) {
           JSON.stringify({ shipmentId: req.params.id, carrier: s.carrier, vesselName: s.vessel_name, vesselImo: s.vessel_imo,
             voyageNumber: s.voyage_number, service: s.service, pol: s.pol, pod: s.pod, etd: s.etd, eta: s.eta,
             transitDays: s.transit_days, actor, reason: 'CRD updated past ETD' }));
+        await logEvent(req.params.id, 'SCHEDULE_REMOVED', null, `${s.carrier} ${s.vessel_name} ${s.voyage_number}`.trim(), null,
+          JSON.stringify({ reason: 'Cargo Ready Date updated past ETD' }), req.user?.id);
       }
     }
 
@@ -505,7 +513,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     // partyOrRouteChanged flag (further below) doesn't check carrier_code, so this needs its
     // own condition rather than reusing that one.
     if (carrierCode !== existing.carrier_code || polU !== existing.pol || podU !== existing.pod)
-      await maybeAssignLineAgents(req.params.id, carrierCode, polU, podU);
+      await maybeAssignLineAgents(req.params.id, carrierCode, polU, podU, req.user?.id);
     // Contract assignment is one of the two triggers for auto-creating a carrier booking
     // (the other is a schedule save/link, in routes/shipment-ops.js) — only worth checking
     // when the contract fields actually changed, since ensureBookingCreated no-ops otherwise.
@@ -519,16 +527,16 @@ module.exports = function shipmentsRoutes(app, ctx) {
       const o = String(existing[col] || ''), n = String(newVals[col] || '');
       if (o !== n) {
         const type = col === 'status' ? 'STATUS_CHANGED' : 'FIELD_UPDATED';
-        await logEvent(req.params.id, type, col, o || null, n || null);
+        await logEvent(req.params.id, type, col, o || null, n || null, '', req.user?.id);
       }
     }
     if (!existing.space_skip_reason && spaceSkipReason) {
       await logEvent(req.params.id, 'SPACE_SKIPPED', 'space_skip_reason', null, spaceSkipReason,
-        JSON.stringify({ contractId, contractNumber: contractRef }));
+        JSON.stringify({ contractId, contractNumber: contractRef }), req.user?.id);
     }
     if (!existing.space_overage_reason && spaceOverageReason) {
       await logEvent(req.params.id, 'SPACE_OVERAGE', 'space_overage_reason', null, spaceOverageReason,
-        JSON.stringify({ allocationId }));
+        JSON.stringify({ allocationId }), req.user?.id);
     }
     if (existing.status !== effStatus) {
       await query("INSERT INTO status_log (id,shipment_id,from_status,to_status,changed_at,changed_by) VALUES ($1,$2,$3,$4,$5,$6)",
@@ -666,7 +674,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     // Brand-new container has no events yet — skip the query, free-time windows start 'not-started'.
     const addedCtr = { ...mapContainer(ctrRow), ...deriveFreeTime(ctrRow, {}, null) };
     await logEvent(shipmentId, 'CONTAINER_ADDED', null, null, cnU,
-      JSON.stringify({ size, type, hsCode, cargoDescription }));
+      JSON.stringify({ size, type, hsCode, cargoDescription }), req.user?.id);
     await recomputeSpaceBadge(shipmentId);
     ok(res, addedCtr, 201);
   });
@@ -704,7 +712,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     for (const [col] of Object.entries(TRACKED_CTR_FIELDS)) {
       const o = String(oldCtr[col] ?? ''), n = String(newVals[col] ?? '');
       if (o !== n && !(o === '' && n === '')) {
-        await logEvent(oldCtr.shipment_id, 'CONTAINER_UPDATED', col, o, n, meta);
+        await logEvent(oldCtr.shipment_id, 'CONTAINER_UPDATED', col, o, n, meta, req.user?.id);
       }
     }
     const [row] = await query("SELECT * FROM containers WHERE id=$1", [req.params.id]);
@@ -730,7 +738,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     if (!ctr) return err(res, "Not found", 404);
     await query("DELETE FROM containers WHERE id=$1", [req.params.id]);
     await logEvent(ctr.shipment_id, 'CONTAINER_REMOVED', null, ctr.container_number, null,
-      JSON.stringify({ size: ctr.size, type: ctr.type }));
+      JSON.stringify({ size: ctr.size, type: ctr.type }), req.user?.id);
     await recomputeSpaceBadge(ctr.shipment_id);
     ok(res, { deleted: req.params.id });
   });
@@ -960,7 +968,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     // reasoning) — the created containers are already durably committed at this point.
     for (const ev of eventsToLog) {
       await logEvent(req.params.id, 'CONTAINER_ADDED', null, null, ev.containerNumber,
-        JSON.stringify({ size: ev.size, type: ev.type, hsCode: ev.hsCode, cargoDescription: ev.cargoDescription, source: 'bulk_import' }));
+        JSON.stringify({ size: ev.size, type: ev.type, hsCode: ev.hsCode, cargoDescription: ev.cargoDescription, source: 'bulk_import' }), req.user?.id);
     }
     await recomputeSpaceBadge(req.params.id);
     ok(res, { created }, 201);
@@ -1008,7 +1016,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const [eventRow] = await query("SELECT * FROM container_events WHERE id=$1", [id]);
     const event = mapContainerEvent(eventRow);
     await logEvent(ctr.shipment_id, 'CONTAINER_EVENT_ADDED', null, null, `${eventType} — ${ctr.container_number}`,
-      JSON.stringify({ containerId: req.params.id, eventType, occurredAt }));
+      JSON.stringify({ containerId: req.params.id, eventType, occurredAt }), req.user?.id);
 
     // TKT-OZD4V8: once every container on the shipment has logged the same lifecycle
     // event, that's the real-world signal the corresponding milestone step represents —
@@ -1186,7 +1194,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     // showed up on the shipment's own History tab at all — every fixed shipment field logs
     // through the TRACKED_FIELDS loop above, but this variable-length sibling table never wrote
     // to shipment_events. Mirrors that same mechanism rather than inventing a second one.
-    await logEvent(req.params.id, 'PARTY_ASSIGNED', role, null, customerName);
+    await logEvent(req.params.id, 'PARTY_ASSIGNED', role, null, customerName, '', req.user?.id);
     await maybeRescreen(req.params.id);
     const [row] = await query("SELECT * FROM shipment_parties WHERE id=$1", [id]);
     ok(res, mapShipmentParty(row), 201);
@@ -1203,7 +1211,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const { customerId, customerName } = req.body || {};
     if (!customerId || !customerName) return err(res, "customerId and customerName required");
     await query("UPDATE shipment_parties SET customer_id=$1, customer_name=$2 WHERE id=$3", [customerId, customerName, req.params.id]);
-    await logEvent(existing.shipment_id, 'PARTY_REASSIGNED', existing.role, existing.customer_name, customerName);
+    await logEvent(existing.shipment_id, 'PARTY_REASSIGNED', existing.role, existing.customer_name, customerName, '', req.user?.id);
     await maybeRescreen(existing.shipment_id);
     ok(res, mapShipmentParty({ ...existing, customer_id: customerId, customer_name: customerName }));
   });
@@ -1215,7 +1223,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     if (side && !(await canEditOfficeSide(req, side)))
       return err(res, `Only ${side.toLowerCase()}-side users can remove the ${existing.role}`, 403);
     await query("DELETE FROM shipment_parties WHERE id=$1", [req.params.id]);
-    await logEvent(existing.shipment_id, 'PARTY_REMOVED', existing.role, existing.customer_name, null);
+    await logEvent(existing.shipment_id, 'PARTY_REMOVED', existing.role, existing.customer_name, null, '', req.user?.id);
     await maybeRescreen(existing.shipment_id);
     ok(res, { deleted: req.params.id });
   });
@@ -1268,7 +1276,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     );
     // Same History-tab gap fixed for shipment_parties above — this sibling variable-length table
     // had the identical never-logged-to-shipment_events omission.
-    await logEvent(req.params.id, 'SIDE_OFFICE_ADDED', `${side} Office`, null, `${row.office_code} — ${row.office_name}`);
+    await logEvent(req.params.id, 'SIDE_OFFICE_ADDED', `${side} Office`, null, `${row.office_code} — ${row.office_name}`, '', req.user?.id);
     ok(res, mapSideOffice(row), 201);
   });
 
@@ -1280,7 +1288,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     if (!existing) return err(res, "Not found", 404);
     if (!(await canEditOfficeSide(req, existing.side))) return err(res, `You don't have permission to remove a ${existing.side} office`, 403);
     await query("DELETE FROM shipment_side_offices WHERE id=$1", [req.params.id]);
-    await logEvent(existing.shipment_id, 'SIDE_OFFICE_REMOVED', `${existing.side} Office`, `${existing.office_code} — ${existing.office_name}`, null);
+    await logEvent(existing.shipment_id, 'SIDE_OFFICE_REMOVED', `${existing.side} Office`, `${existing.office_code} — ${existing.office_name}`, null, '', req.user?.id);
     ok(res, { deleted: req.params.id });
   });
 
@@ -1305,7 +1313,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     }
     const [oldOffice] = shipment[meta.column] ? await query("SELECT * FROM offices WHERE id=$1", [shipment[meta.column]]) : [null];
     await query(`UPDATE shipments SET ${meta.column}=$1 WHERE id=$2`, [officeId || null, req.params.id]);
-    await logEvent(req.params.id, "OFFICE_REASSIGNED", field, officeLabel(oldOffice), officeLabel(newOffice), reason.trim());
+    await logEvent(req.params.id, "OFFICE_REASSIGNED", field, officeLabel(oldOffice), officeLabel(newOffice), reason.trim(), req.user?.id);
 
     // A replaced office shouldn't keep quietly handling services on THIS shipment just because
     // nothing else pointed them elsewhere — direct bug report: reassigning EMO/IMO/Controlling
@@ -1411,7 +1419,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
            polPoint.lat, polPoint.lng, podPoint.lat, podPoint.lng,
            etd||null, eta||null, carrierCode, vessel, vesselImo, voyage, movementBy,
            contractType, contractRef, createdAt]);
-    await syncShipmentFromLegs(req.params.id);
+    await syncShipmentFromLegs(req.params.id, req.user?.id);
     // A hand-entered SEA leg with a real ETD counts as "has a schedule" for booking
     // auto-creation purposes too — see ensureBookingCreated's comment in server.js.
     await ensureBookingCreated(req.params.id);
@@ -1451,7 +1459,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
            carrierCode, vessel, vesselImo, voyage, movementBy,
            contractType, contractRef, legOrder ?? existing.leg_order,
            etdSource, etaSource, req.params.legId]);
-    await syncShipmentFromLegs(req.params.id);
+    await syncShipmentFromLegs(req.params.id, req.user?.id);
     await ensureBookingCreated(req.params.id);
     const [row] = await query("SELECT * FROM shipment_legs WHERE id=$1", [req.params.legId]);
     ok(res, ctx.mapShipmentLeg(row));
@@ -1460,7 +1468,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
   app.delete("/api/shipments/:id/legs/:legId", shipmentWrite, async (req, res) => {
     const deleted = await query("DELETE FROM shipment_legs WHERE id=$1 AND shipment_id=$2 RETURNING id", [req.params.legId, req.params.id]);
     if (deleted.length === 0) return err(res, "Not found", 404);
-    await syncShipmentFromLegs(req.params.id);
+    await syncShipmentFromLegs(req.params.id, req.user?.id);
     ok(res, { deleted: req.params.legId });
   });
 };

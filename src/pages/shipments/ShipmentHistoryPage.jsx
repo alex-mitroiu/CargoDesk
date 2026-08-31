@@ -16,11 +16,16 @@ import { AnyIcon, IconArrowDown, IconArrowUp } from "../../components/primitives
 // paged through.
 
 const TYPE_GROUPS = {
-  Shipment:     ["SHIPMENT_CREATED", "STATUS_CHANGED"],
+  Shipment:     ["SHIPMENT_CREATED", "STATUS_CHANGED", "CONTRACT_DROPPED", "SPACE_SKIPPED", "SPACE_OVERAGE"],
   Fields:       ["FIELD_UPDATED"],
-  Container:    ["CONTAINER_ADDED", "CONTAINER_REMOVED", "CONTAINER_UPDATED"],
+  Container:    ["CONTAINER_ADDED", "CONTAINER_REMOVED", "CONTAINER_UPDATED", "CONTAINER_EVENT_ADDED"],
   Compliance:   ["COMPLIANCE_HIT"],
   "Cost Lines": ["COST_LINE_ADDED", "COST_LINE_UPDATED", "COST_LINE_REMOVED"],
+  Parties:      ["PARTY_ASSIGNED", "PARTY_REASSIGNED", "PARTY_REMOVED", "SIDE_OFFICE_ADDED", "SIDE_OFFICE_REMOVED",
+                 "OFFICE_REASSIGNED", "LINE_AGENT_AUTO_ASSIGNED"],
+  Schedule:     ["SCHEDULE_ASSIGNED", "SCHEDULE_UPDATED", "SCHEDULE_REMOVED"],
+  Services:     ["SERVICE_ORDERED", "SERVICE_UPDATED", "SERVICE_REMOVED"],
+  Documents:    ["DOCUMENT_GENERATED", "DOCUMENT_GENERATION_ATTEMPTED", "DOCUMENT_GENERATION_FAILED"],
 };
 const GROUP_NAMES = Object.keys(TYPE_GROUPS);
 
@@ -49,7 +54,14 @@ const ShipmentHistoryPage = ({ shipment }) => {
 
   const load = useCallback((off = 0, lim = limit) => {
     setLoading(true);
-    const types = GROUP_NAMES.filter(g => activeGroups.has(g)).flatMap(g => TYPE_GROUPS[g]).join(",");
+    // Every group selected (the default) means "show everything" — sending an explicit types
+    // allowlist here would silently hide any event type not yet added to a TYPE_GROUPS entry
+    // above, which is exactly what happened before this fix: several real event types (contract
+    // drops, schedule/service/party changes) were being logged to shipment_events all along but
+    // never showed up on this tab because nobody remembered to list them here. Only narrow the
+    // query once the user has actually deselected a group.
+    const allSelected = activeGroups.size === GROUP_NAMES.length;
+    const types = allSelected ? "" : GROUP_NAMES.filter(g => activeGroups.has(g)).flatMap(g => TYPE_GROUPS[g]).join(",");
     api.shipmentEvents.list(shipment.id, {
       limit: lim, offset: off, types, sort: sortDir,
       ...(dateRange !== "all" && { dateRange }),
@@ -68,7 +80,7 @@ const ShipmentHistoryPage = ({ shipment }) => {
   const changeLimit = n => { setLimit(n); load(0, n); };
 
   const exportCSV = () => {
-    const rows = [["Event Type", "Summary", "Date/Time", "Actor"]];
+    const rows = [["Event Type", "Summary", "Date/Time", "User ID"]];
     results.forEach(ev => rows.push([
       EVENT_CONFIG[ev.eventType]?.label || ev.eventType,
       `"${getEventSummary(ev).replace(/"/g, '""')}"`,
@@ -139,7 +151,7 @@ const ShipmentHistoryPage = ({ shipment }) => {
             onClick={() => setSortDir(d => d === "desc" ? "asc" : "desc")}>
             Date / Time {sortDir === "desc" ? <IconArrowDown size={11} /> : <IconArrowUp size={11} />}
           </div>
-          <div style={{ ...th, width: 90, flexShrink: 0 }}>Actor</div>
+          <div style={{ ...th, width: 110, flexShrink: 0 }}>User ID</div>
         </div>
 
         {loading ? (
@@ -169,9 +181,9 @@ const ShipmentHistoryPage = ({ shipment }) => {
               <div style={{ width: 160, flexShrink: 0, fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
                 {fmtDateTime(ev.occurredAt)}
               </div>
-              <div style={{ width: 90, flexShrink: 0, fontFamily: T.body, fontSize: 11, color: T.textMuted,
-                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {ev.actor || "—"}
+              <div style={{ width: 110, flexShrink: 0, fontFamily: T.mono, fontSize: 11, color: T.textMuted,
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={ev.actor || ""}>
+                {ev.actor && ev.actor !== "system" ? ev.actor : "—"}
               </div>
             </div>
           );

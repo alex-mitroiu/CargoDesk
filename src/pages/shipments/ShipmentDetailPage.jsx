@@ -586,6 +586,20 @@ export const EVENT_CONFIG = {
   PARTY_REMOVED:       { icon: IconClose,  label: "Party removed",        color: () => T.danger   },
   SIDE_OFFICE_ADDED:   { icon: "＋",  label: "Office added",         color: () => T.success  },
   SIDE_OFFICE_REMOVED: { icon: IconClose,  label: "Office removed",       color: () => T.danger   },
+  OFFICE_REASSIGNED:   { icon: IconPencil, label: "Office reassigned",    color: () => T.info     },
+  LINE_AGENT_AUTO_ASSIGNED: { icon: "＋", label: "Line Agent auto-assigned", color: () => T.success },
+  CONTRACT_DROPPED:    { icon: IconWarning, label: "Contract dropped",    color: () => T.danger   },
+  SPACE_SKIPPED:       { icon: IconWarning, label: "Space match skipped", color: () => T.warning  },
+  SPACE_OVERAGE:       { icon: IconWarning, label: "Space overage",       color: () => T.warning  },
+  SCHEDULE_ASSIGNED:   { icon: IconAnchor,  label: "Schedule assigned",   color: () => T.success  },
+  SCHEDULE_UPDATED:    { icon: IconAnchor,  label: "Schedule updated",    color: () => T.info     },
+  SCHEDULE_REMOVED:    { icon: IconAnchor,  label: "Schedule removed",    color: () => T.danger   },
+  SERVICE_ORDERED:     { icon: "＋",  label: "Service ordered",      color: () => T.success  },
+  SERVICE_UPDATED:     { icon: IconPencil,  label: "Service updated",      color: () => T.info     },
+  SERVICE_REMOVED:     { icon: IconClose,   label: "Service removed",      color: () => T.danger   },
+  DOCUMENT_GENERATED:            { icon: IconFile, label: "Document generated",          color: () => T.success },
+  DOCUMENT_GENERATION_ATTEMPTED: { icon: IconFile, label: "Document generation attempted", color: () => T.info },
+  DOCUMENT_GENERATION_FAILED:    { icon: IconFile, label: "Document generation failed",   color: () => T.danger },
 };
 
 export const FIELD_LABELS = {
@@ -631,6 +645,13 @@ const EventRow = ({ ev }) => {
     const m = ev.meta || {};
     summary = [m.type, m.chargeCode].filter(Boolean).join("  ·  ");
     if (field) summary += `  —  ${field}: ${ev.oldValue} → ${ev.newValue}`;
+  } else if (ev.eventType === "SCHEDULE_ASSIGNED" || ev.eventType === "SCHEDULE_REMOVED") {
+    const m = ev.meta || {};
+    summary = [m.carrier, m.vesselName, m.voyageNumber].filter(Boolean).join("  ·  ");
+    if (m.pol || m.pod) summary += `  ·  ${[m.pol, m.pod].filter(Boolean).join(" → ")}`;
+  } else if (ev.eventType === "SERVICE_ORDERED" || ev.eventType === "SERVICE_REMOVED") {
+    const m = ev.meta || {};
+    summary = [m.side, m.serviceType, m.vendorName].filter(Boolean).join("  ·  ");
   } else {
     summary = field ? `${field}: ` : "";
     summary += ev.oldValue ? `${ev.oldValue} → ` : "";
@@ -731,6 +752,16 @@ export const getEventSummary = ev => {
     let s = [m.type, m.chargeCode].filter(Boolean).join("  ·  ");
     if (field) s += `  —  ${field}: ${ev.oldValue} → ${ev.newValue}`;
     return s;
+  }
+  if (ev.eventType === "SCHEDULE_ASSIGNED" || ev.eventType === "SCHEDULE_REMOVED") {
+    const m = ev.meta || {};
+    let s = [m.carrier, m.vesselName, m.voyageNumber].filter(Boolean).join("  ·  ");
+    if (m.pol || m.pod) s += `  ·  ${[m.pol, m.pod].filter(Boolean).join(" → ")}`;
+    return s;
+  }
+  if (ev.eventType === "SERVICE_ORDERED" || ev.eventType === "SERVICE_REMOVED") {
+    const m = ev.meta || {};
+    return [m.side, m.serviceType, m.vendorName].filter(Boolean).join("  ·  ");
   }
   if (ev.eventType === "COMPLIANCE_HIT") {
     const hits = Array.isArray(ev.meta?.hits) ? ev.meta.hits : [];
