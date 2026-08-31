@@ -132,7 +132,13 @@ jobs:
 
   cypress:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Was 20 — same root cause as backend-tests-and-build's own bump (see that job's comment):
+    # confirmed via a real run that got cancelled at 20m15s, just past this ceiling. This job
+    # starts strictly more (`npm run dev` boots the monolith + all 6 microservices + Vite,
+    # vs. backend-tests-and-build's 4 background processes) on top of the same now-async seed
+    # step, then runs real browser-driven E2E specs, which were never the fast part to begin
+    # with. 30 gives real headroom instead of sitting right at the line.
+    timeout-minutes: 30
     env:
       NODE_ENV: test
       # Cypress logs in repeatedly across specs against one continuous server process — see
