@@ -31,7 +31,15 @@ jobs:
 
   backend-tests-and-build:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Was 15 — too tight since the Postgres migration. The seed step alone (import-mdm-data.js)
+    # went from a near-instant synchronous node:sqlite call to real async query round-trips for
+    # ~15,000+ MDM rows (batched, but still real I/O — see importPorts()'s own comment on why),
+    # on top of npm ci, 4 services booting with sequential health-checks, a full server restart,
+    # the entire backend test chain (60+ files and growing), 4 more service-scoped suites, and a
+    # production build — all in one job. A real run hit this ceiling and got cancelled mid-job
+    # (not a test failure — GitHub Actions' own timeout cancellation). 25 gives real headroom;
+    # cypress's own job already runs at 20 for comparatively less aggregate work.
+    timeout-minutes: 25
     env:
       NODE_ENV: test
       # 29 test files each log in once against one continuous server process — well past the
