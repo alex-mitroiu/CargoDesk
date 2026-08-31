@@ -442,19 +442,26 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
             )}
           </div>
 
-          {/* Rate-line facelift, direct request — same table structure regardless of contract
-              type: a real Central contract's own rate lines populate it, everything else (SPOT/
-              Pending/Customer Own, or a Central contract whose rates just haven't loaded yet)
-              renders one dashed placeholder row rather than hiding the table outright. */}
+          {/* Contract details facelift, direct request — same 5-column structure regardless of
+              contract type. Contract Number/Named Account only exist on a real Central contract
+              record; SPOT/Pending/Customer Own (and a Central contract still loading) show a
+              dash for those two, falling back to the shipment's own contractRef/contractValidFrom/
+              contractValidTo for the fields that DO apply to a manual contract type. */}
           {(() => {
-            const rateRows = contractDetail?.rates || [];
-            const cols = ["Type", "Rate ID", "Container Type", "Amount"];
+            const isCentral = shipment.contractType === "Central";
+            const cols = [
+              ["Contract Number", isCentral ? (contractDetail?.contractNumber || "") : ""],
+              ["Contract Reference", shipment.contractRef || ""],
+              ["Named Account", isCentral ? (contractDetail?.namedAccount || "") : ""],
+              ["Valid From", isCentral ? (contractDetail?.validFrom || "") : (shipment.contractValidFrom || "")],
+              ["Valid To", isCentral ? (contractDetail?.validTo || "") : (shipment.contractValidTo || "")],
+            ];
             return (
-              <div id="shpsched-contract-rates" style={{ marginTop: 12, maxWidth: hasSpaceConfig ? "none" : 480,
+              <div id="shpsched-contract-details" style={{ marginTop: 12,
                 border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden" }}>
                 <div style={{ display: "flex", padding: "8px 0", borderBottom: `1px solid ${T.border}`, background: T.surface }}>
-                  {cols.map((label, i) => (
-                    <div key={label} style={{ flex: 1, paddingLeft: 14,
+                  {cols.map(([label], i) => (
+                    <div key={label} style={{ flex: 1, minWidth: 0, paddingLeft: 14, paddingRight: 10,
                       fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted,
                       textTransform: "uppercase", letterSpacing: ".08em",
                       borderRight: i < cols.length - 1 ? `1px solid ${T.border}33` : "none" }}>
@@ -462,31 +469,15 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
                     </div>
                   ))}
                 </div>
-                {rateRows.length > 0 ? rateRows.map(r => (
-                  <div key={r.id} style={{ display: "flex", padding: "8px 0", borderBottom: `1px solid ${T.border}22` }}>
-                    <div style={{ flex: 1, paddingLeft: 14, minWidth: 0 }}>
-                      <div style={{ fontFamily: T.mono, fontSize: 12, color: T.text, fontWeight: 700,
-                        overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                        {r.description || r.serviceCode || "—"}
-                      </div>
-                      {r.description && r.serviceCode && (
-                        <div style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted }}>{r.serviceCode}</div>
-                      )}
+                <div style={{ display: "flex", padding: "8px 0" }}>
+                  {cols.map(([label, value], i) => (
+                    <div key={label} style={{ flex: 1, minWidth: 0, paddingLeft: 14, paddingRight: 10, fontFamily: T.mono, fontSize: 12,
+                      color: value ? T.text : T.textMuted, fontWeight: value ? 700 : 400, fontStyle: value ? "normal" : "italic",
+                      wordBreak: "break-word" }}>
+                      {value || "—"}
                     </div>
-                    <div style={{ flex: 1, paddingLeft: 14, fontFamily: T.mono, fontSize: 12, color: T.textMuted,
-                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.id}</div>
-                    <div style={{ flex: 1, paddingLeft: 14, fontFamily: T.mono, fontSize: 12, color: T.text }}>{r.containerType || "—"}</div>
-                    <div style={{ flex: 1, paddingLeft: 14, fontFamily: T.mono, fontSize: 12, color: T.text, fontWeight: 700 }}>
-                      {r.amount != null ? `${r.currency || "USD"} ${Number(r.amount).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${r.unit ? ` / ${r.unit}` : ""}` : "—"}
-                    </div>
-                  </div>
-                )) : (
-                  <div style={{ display: "flex", padding: "8px 0" }}>
-                    {cols.map((_, i) => (
-                      <div key={i} style={{ flex: 1, paddingLeft: 14, fontFamily: T.mono, fontSize: 12, color: T.textMuted, fontStyle: "italic" }}>—</div>
-                    ))}
-                  </div>
-                )}
+                  ))}
+                </div>
               </div>
             );
           })()}
