@@ -399,7 +399,7 @@ async function confirmDoc(docId, token) {
     const gpAsScopedTm = await request("GET", "/api/reports/gp-by-geo?groupBy=carrier", null, tmBpLogin.body.token);
     assert("scoped trade_manager reaches GP by Trade Area (200, not 403)", gpAsScopedTm.status === 200, JSON.stringify(gpAsScopedTm.body));
     const gpLinesAsScopedTm = await request("GET", "/api/reports/gp-by-geo?groupBy=carrier&value=MAEU", null, tmBpLogin.body.token);
-    assert("the out-of-scope shipment's own cost line never appears in the scoped drill-down", !gpLinesAsScopedTm.body.some(l => l.amountUsd === 900 && l.chargeCode === "OFR"), JSON.stringify(gpLinesAsScopedTm.body));
+    assert("the out-of-scope shipment's own cost line never appears in the scoped drill-down", !gpLinesAsScopedTm.body.some(l => l.shipmentId === shipOutOfScope.body.id), JSON.stringify(gpLinesAsScopedTm.body));
 
     const icAsScopedTm = await request("GET", "/api/reports/invoice-collections", null, tmBpLogin.body.token);
     assert("scoped trade_manager reaches Invoice Collections (200, not 403)", icAsScopedTm.status === 200, JSON.stringify(icAsScopedTm.body));

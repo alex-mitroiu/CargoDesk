@@ -26,6 +26,16 @@ const OUT_PATH = path.join(__dirname, "..", "db", "cargodesk.sample-data.json");
 const SKIP_REFERENCE_DATA = new Set([
   "port_locations", "carriers", "commodities", "regions", "trade_lanes",
   "countries", "country_trade_lanes", "vessels",
+  // milestone_templates/kb_projects/kb_columns/kb_versions: server.js's own boot-time seeding
+  // (seedDefaultMilestoneTemplate/seedDefaultProject) already creates these with deterministic
+  // ids — a real bug found this session: including them here let an independently-seeded
+  // historical copy (each with its own random id from whenever it was originally created) merge
+  // in as a straight duplicate, since a plain INSERT...ON CONFLICT(id) only guards an exact id
+  // match, not a logical duplicate of the same milestone_key/project key. tickets.project_id has
+  // no enforced FK to kb_projects (plain TEXT), so excluding these is safe even though tickets
+  // themselves (elsewhere in this dump) may reference an id that won't exist in a fresh clone —
+  // cosmetic at worst (ticket grouping falls back to its own status field either way).
+  "milestone_templates", "kb_projects", "kb_columns", "kb_versions",
 ]);
 
 // Credentials / secrets — never safe to publish, regardless of how "dummy" the rest of the data

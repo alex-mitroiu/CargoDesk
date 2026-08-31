@@ -1687,11 +1687,18 @@ async function backfillPortTimezones() {
 // migrateContainersColumns (column renames) and the vessel-name cleanup UPDATE are both dropped —
 // schema-shape and legacy-data fixups with nothing to act on in a fresh Postgres install.
 
-// Seeds the default FCL milestone template if none exists.
+// Seeds the default FCL milestone template if none exists. Deterministic ids (not a random
+// uid() guarded only by a COUNT(*) check) — a real bug found this session: merging in an
+// independently-seeded historical copy of these same 9 rows (each with its own random id from
+// whenever IT was first seeded) produced 18 rows instead of 9, since ON CONFLICT DO NOTHING only
+// guards against an exact id collision, not a logical duplicate of the same milestone_key. Every
+// shipment created afterward got two shipment_milestones rows per key — autoCompleteMilestone()
+// only ever updates one of the two (SELECT with no ORDER BY, first match wins), so a real booking
+// confirmation could complete the "wrong" duplicate and leave the other looking permanently open.
 async function seedDefaultMilestoneTemplate() {
   try {
-    const [existing] = await query("SELECT COUNT(*) as n FROM milestone_templates WHERE template_key='FCL' AND carrier_code=''");
-    if (Number(existing.n) > 0) return;
+    const [existing] = await query("SELECT 1 AS x FROM milestone_templates WHERE template_key='FCL' AND carrier_code='' AND trade_lane='' LIMIT 1");
+    if (existing) return;
     const now = new Date().toISOString();
     const defaults = [
       { key: 'booking_confirmed', label: 'Booking Confirmed', seq: 1 },
@@ -1705,21 +1712,26 @@ async function seedDefaultMilestoneTemplate() {
       { key: 'delivered',         label: 'Delivered',          seq: 9 },
     ];
     for (const d of defaults) {
-      await query("INSERT INTO milestone_templates (id,template_key,carrier_code,trade_lane,milestone_key,label,sequence_order,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
-        [`MT-${uid()}`, 'FCL', '', '', d.key, d.label, d.seq, now]);
+      await query(
+        "INSERT INTO milestone_templates (id,template_key,carrier_code,trade_lane,milestone_key,label,sequence_order,created_at) VALUES ($1,'FCL','','',$2,$3,$4,$5) ON CONFLICT (id) DO NOTHING",
+        [`mt-fcl-${d.key}`, d.key, d.label, d.seq, now]);
     }
-    console.log('  ✔ Seeded default FCL milestone template (9 steps)');
   } catch (e) { console.warn('  ⚠ Could not seed milestone template:', e.message); }
 }
 
+// Deterministic ids for the same reason as seedDefaultMilestoneTemplate() above — a
+// COUNT(*)-guarded random uid() let a merged-in historical "Main Board" produce a second,
+// duplicate default project (and a duplicate set of 7 columns) the instant it existed alongside
+// a freshly-seeded one, confirmed live this session (two PRJ- rows, both key='MAIN').
 async function seedDefaultProject() {
   try {
-    const [existing] = await query("SELECT COUNT(*) as n FROM kb_projects");
-    if (Number(existing.n) > 0) return;
-    const projectId = `PRJ-${uid()}`;
+    const [existing] = await query("SELECT 1 AS x FROM kb_projects WHERE key='MAIN' LIMIT 1");
+    if (existing) return;
+    const projectId = 'prj-main-default';
     const now = new Date().toISOString();
-    await query("INSERT INTO kb_projects (id,name,key,color,description,created_at) VALUES ($1,$2,$3,$4,$5,$6)",
-      [projectId, 'Main Board', 'MAIN', '#6366f1', 'Default project board', now]);
+    await query(
+      "INSERT INTO kb_projects (id,name,key,color,description,created_at) VALUES ($1,'Main Board','MAIN','#6366f1','Default project board',$2) ON CONFLICT (id) DO NOTHING",
+      [projectId, now]);
     const DEFAULT_COLUMNS = [
       { name: 'Ready',           color: '#6366f1' },
       { name: 'In Progress',     color: '#f59e0b' },
@@ -1730,10 +1742,10 @@ async function seedDefaultProject() {
       { name: 'Released',        color: '#8b5cf6' },
     ];
     for (let i = 0; i < DEFAULT_COLUMNS.length; i++) {
-      await query("INSERT INTO kb_columns (id,project_id,name,position,color,created_at) VALUES ($1,$2,$3,$4,$5,$6)",
-        [`COL-${uid()}`, projectId, DEFAULT_COLUMNS[i].name, i, DEFAULT_COLUMNS[i].color, now]);
+      await query(
+        "INSERT INTO kb_columns (id,project_id,name,position,color,created_at) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (id) DO NOTHING",
+        [`col-main-default-${i}`, projectId, DEFAULT_COLUMNS[i].name, i, DEFAULT_COLUMNS[i].color, now]);
     }
-    console.log('  ✔ Seeded default project board with 7 columns');
   } catch (e) { console.warn('  ⚠ Could not seed default project:', e.message); }
 }
 
