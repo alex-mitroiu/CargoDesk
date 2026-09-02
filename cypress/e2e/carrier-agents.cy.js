@@ -158,7 +158,11 @@ describe("Carrier Agents Suite", () => {
         cy.contains("button", "ESBCN", { timeout: 8000 }).click();
         cy.contains("button", "＋ Add Location").click();
         cy.contains("button", "Add Carrier Agent").click();
-        cy.contains("already covered", { timeout: 8000 }).should("be.visible");
+        // The first test leaves TSTZ's ESBCN/ESVLC discarded in favor of a whole-country ES row
+        // (checkLocationConflict, routes/mdm.js), so this second header's ESBCN claim actually
+        // conflicts one level up, on the country, not the port — different real error text than
+        // a direct port-vs-port clash.
+        cy.contains("already assigned to a different Line Agent", { timeout: 8000 }).should("be.visible");
         cy.contains("button", "Cancel").click();
         api("DELETE", `/customers/${conflictCustomerId}`);
       });
