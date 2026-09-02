@@ -3,8 +3,15 @@ const ExcelJS = require("exceljs");
 const path    = require("path");
 const fs      = require("fs");
 
+// Same rule as lib/mappers.js's costLineEffectiveUsd() (2026-09-02 audit — the real, actualized/
+// posted amount once one exists, the accrual estimate only while still open), expressed as a raw
+// SQL CASE for the one query below that aggregates across shipments in the database rather than
+// in JS — the two must be kept in sync by hand since SQL can't call the JS helper directly.
+const COST_LINE_EFFECTIVE_USD_SQL = `CASE WHEN actual_amount IS NOT NULL
+  THEN actual_amount * COALESCE(actual_exchange_rate, exchange_rate) ELSE amount * exchange_rate END`;
+
 module.exports = function exportRoutes(app, ctx) {
-  const { query, auth, applyShipmentAccessFilter, mapShipment, roundCents, createRateLimiter } = ctx;
+  const { query, auth, applyShipmentAccessFilter, mapShipment, roundCents, costLineEffectiveUsd, createRateLimiter } = ctx;
 
   // Every route below does a full server-side multi-join build (CSV) or an in-memory ExcelJS
   // workbook build (XLSX) across every shipment the caller can see — cheap for one call, not
@@ -99,10 +106,10 @@ module.exports = function exportRoutes(app, ctx) {
       LEFT JOIN offices emo  ON emo.id  = s.emo_office_id
       LEFT JOIN offices imo  ON imo.id  = s.imo_office_id
       LEFT JOIN offices ctrl ON ctrl.id = s.controlling_office_id
-      LEFT JOIN (SELECT shipment_id, SUM(amount * exchange_rate) AS total
+      LEFT JOIN (SELECT shipment_id, SUM(${COST_LINE_EFFECTIVE_USD_SQL}) AS total
                  FROM shipment_cost_lines WHERE type='BUY' GROUP BY shipment_id) buy
              ON buy.shipment_id = s.id
-      LEFT JOIN (SELECT shipment_id, SUM(amount * exchange_rate) AS total
+      LEFT JOIN (SELECT shipment_id, SUM(${COST_LINE_EFFECTIVE_USD_SQL}) AS total
                  FROM shipment_cost_lines WHERE type='SELL' GROUP BY shipment_id) sell
              ON sell.shipment_id = s.id
       LEFT JOIN (SELECT shipment_id,
@@ -145,8 +152,8 @@ module.exports = function exportRoutes(app, ctx) {
     const lines = await queryCostLines();
 
     const aggregate = (rows) => {
-      const buy  = rows.filter(r => r.type === "BUY").reduce((s, r) => s + r.amount * r.exchange_rate, 0);
-      const sell = rows.filter(r => r.type === "SELL").reduce((s, r) => s + r.amount * r.exchange_rate, 0);
+      const buy  = rows.filter(r => r.type === "BUY").reduce((s, r) => s + costLineEffectiveUsd(r), 0);
+      const sell = rows.filter(r => r.type === "SELL").reduce((s, r) => s + costLineEffectiveUsd(r), 0);
       const gp   = sell - buy;
       const pct  = sell > 0 ? Math.round((gp / sell) * 1000) / 10 : null;
       return { buy: usd(buy), sell: usd(sell), gp: usd(gp), pct };

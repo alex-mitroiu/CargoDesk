@@ -1938,7 +1938,7 @@ const syncShipmentFromLegs = async (shipmentId, actorId = null) => {
 // in, matching the createAisListener({ query, ... }) factory pattern already used in this codebase.
 const CUTOFF_WARNING_DAYS = 3;
 const {
-  SVC_ABBR, longestLane, cutoffState, roundCents,
+  SVC_ABBR, longestLane, cutoffState, roundCents, costLineEffectiveUsd,
   mapShipment, mapShipmentLeg, mapCostLine, mapService, mapRateSnapshot, mapRateSnapshotLine,
   mapChargeCodeDefinition, mapContainer, mapContainerEvent, mapContainerPackage, mapShipmentParty, mapSideOffice,
   mapPackTypeDefinition, mapDutyRateChapter, mapScheduledReport, mapContainerTypeDefinition, mapDocumentTemplate, mapAllocation, mapCarrier, mapVessel, mapPortLocation, mapLinkedPort,
@@ -2960,7 +2960,7 @@ const ctx = {
   auth, requireRole,
   portLanesMap, portCountryMap, rebuildPortLanesMap, longestLane,
   applyShipmentAccessFilter,
-  fxCache, getFxRates, toUsd, roundCents,
+  fxCache, getFxRates, toUsd, roundCents, costLineEffectiveUsd,
   sanctionsMap, loadSanctionsIndex, syncOfacSdn, scheduleNextOfacSync,
   syncConsolidatedScreeningList, scheduleNextCslSync,
   normSanctionName, EMBARGOED_COUNTRIES,

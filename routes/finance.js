@@ -1,7 +1,7 @@
 "use strict";
 
 module.exports = function financeRoutes(app, ctx) {
-  const { query, ok, err, auth, resolveCustomerGroup, roundCents, getFxRates } = ctx;
+  const { query, ok, err, auth, resolveCustomerGroup, roundCents, costLineEffectiveUsd, getFxRates } = ctx;
 
   // Multi-Entity Accounting (TKT-EEV4I9) — mirrors canEditOfficeSide's (server.js) admin/
   // operator/allOffices bypass exactly, applied to READ visibility of the byEntity breakdown
@@ -62,8 +62,8 @@ module.exports = function financeRoutes(app, ctx) {
     });
 
     const aggregate = (rows) => {
-      const buy  = rows.filter(r => r.type === 'BUY').reduce((s, r) => s + r.amount * r.exchange_rate, 0);
-      const sell = rows.filter(r => r.type === 'SELL').reduce((s, r) => s + r.amount * r.exchange_rate, 0);
+      const buy  = rows.filter(r => r.type === 'BUY').reduce((s, r) => s + costLineEffectiveUsd(r), 0);
+      const sell = rows.filter(r => r.type === 'SELL').reduce((s, r) => s + costLineEffectiveUsd(r), 0);
       const gp   = sell - buy;
       const pct  = sell > 0 ? Math.round((gp / sell) * 1000) / 10 : null;
       return { totalBuyUsd: roundCents(buy), totalSellUsd: roundCents(sell), grossProfitUsd: roundCents(gp), grossMarginPct: pct };

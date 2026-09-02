@@ -155,9 +155,13 @@ module.exports = function reportsRoutes(app, ctx) {
       }
       prevMarginByKey = new Map();
       for (const [key, rowsForKey] of byKeyPrev) {
+        // actualAmountUsd ?? amountUsd — the actualized/posted real figure once one exists, the
+        // accrual estimate otherwise. Same rule as lib/mappers.js's costLineEffectiveUsd() (see
+        // its own comment, 2026-09-02 audit); applied here on mapCostLine's already-mapped shape
+        // rather than calling that raw-row helper, since `mapped` is what's already in hand.
         const mapped = rowsForKey.map(mapCostLine);
-        const sell = mapped.filter(l => l.type === 'SELL').reduce((s, l) => s + l.amountUsd, 0);
-        const buy  = mapped.filter(l => l.type === 'BUY').reduce((s, l) => s + l.amountUsd, 0);
+        const sell = mapped.filter(l => l.type === 'SELL').reduce((s, l) => s + (l.actualAmountUsd ?? l.amountUsd), 0);
+        const buy  = mapped.filter(l => l.type === 'BUY').reduce((s, l) => s + (l.actualAmountUsd ?? l.amountUsd), 0);
         const sellRounded = roundCents(sell), gpRounded = roundCents(sell - buy);
         prevMarginByKey.set(key, sellRounded > 0 ? Math.round((gpRounded / sellRounded) * 1000) / 10 : null);
       }
@@ -174,9 +178,10 @@ module.exports = function reportsRoutes(app, ctx) {
         bucket.shipmentIds.add(row.shipment_id);
       }
       let results = [...byKey.entries()].map(([key, bucket]) => {
+        // Same actual-preferred rule as the previous-period block above.
         const mapped = bucket.lines.map(mapCostLine);
-        const sell = mapped.filter(l => l.type === 'SELL').reduce((s, l) => s + l.amountUsd, 0);
-        const buy  = mapped.filter(l => l.type === 'BUY').reduce((s, l) => s + l.amountUsd, 0);
+        const sell = mapped.filter(l => l.type === 'SELL').reduce((s, l) => s + (l.actualAmountUsd ?? l.amountUsd), 0);
+        const buy  = mapped.filter(l => l.type === 'BUY').reduce((s, l) => s + (l.actualAmountUsd ?? l.amountUsd), 0);
         const totalSellUsd = roundCents(sell), totalBuyUsd = roundCents(buy), grossProfitUsd = roundCents(sell - buy);
         const grossMarginPct = totalSellUsd > 0 ? Math.round((grossProfitUsd / totalSellUsd) * 1000) / 10 : null;
         const prevMarginPct = prevMarginByKey ? (prevMarginByKey.has(key) ? prevMarginByKey.get(key) : null) : null;
