@@ -27,8 +27,8 @@ const CountryCombobox = ({ onSelect, placeholder = "Search countries…", exclud
     timer.current = setTimeout(async () => {
       setLoading(true);
       try {
-        const all = await api.countries.list({ search: q.trim() });
-        setResults(all.filter(c => !excludeIso2s.includes(c.iso2)));
+        const { results } = await api.countries.list({ search: q.trim() });
+        setResults(results.filter(c => !excludeIso2s.includes(c.iso2)));
         setOpen(true);
       } catch {}
       setLoading(false);
