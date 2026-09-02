@@ -639,13 +639,17 @@ removal. A separate check rejects any location (UN/LOCODE or country) already cl
 carrier. The header-create route wraps the header insert and its first location insert in one
 transaction — an earlier version left an orphaned, location-less header behind whenever the
 location insert failed, caught live during verification and fixed.
-**Named, accepted gap**: 11 secondary read sites beyond these (`routes/reports.js`,
+**Named, accepted gap**: 14 secondary read sites beyond these (the original 11 — `routes/reports.js`,
 `allocations.js`'s own linked-port matching, `shipment-ops.js`, `command-center.js`,
 `customers.js`, `export.js`, `organization.js`, `system.js`, `ais.js` (Simulator), plus
-`scripts/checkdb.js`) still read MDM tables directly from the monolith's local schema regardless
-of `mdm_source` — mostly read-only display JOINs where staleness post-cutover is cosmetic, not
-data loss, but flagged rather than silently chased in this pass. Don't flip `mdm_source=remote` in
-an environment exercising Reports/Export/Command Center/the AIS Simulator until this is closed.
+`scripts/checkdb.js` — plus 3 more found in a 2026-09-02 audit pass, see the Shipment-Domain Gap
+& Dead-Code Audit Log below: `resolveInvoiceThresholds()`/`linkedPortCodes()` in `server.js`, and
+`routes/shipments.js`'s own `resolveSeaPorts()`, the last of which backs the main
+`GET /api/shipments` list, the single highest-traffic read in this class) still read MDM tables
+directly from the monolith's local schema regardless of `mdm_source` — mostly read-only display
+JOINs where staleness post-cutover is cosmetic, not data loss, but flagged rather than silently
+chased in either pass. Don't flip `mdm_source=remote` in an environment exercising Reports/Export/
+Command Center/the AIS Simulator/the main Shipments list until this is closed.
 
 **Carrier Agents — Working Schedule and Capabilities added on top of the header+locations
 restructure above** (same session, direct follow-up feedback): a new child
