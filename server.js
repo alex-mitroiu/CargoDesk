@@ -1294,9 +1294,15 @@ async function computeArExposure(customerId, creditTermsDays) {
   if (shipmentIds.length) {
     const placeholders = shipmentIds.map((_, i) => `$${i + 1}`).join(',');
     const sellLines = await query(
-      `SELECT id, amount, exchange_rate FROM shipment_cost_lines WHERE shipment_id IN (${placeholders}) AND type='SELL'`,
+      `SELECT id, amount, exchange_rate, actual_amount, actual_exchange_rate FROM shipment_cost_lines WHERE shipment_id IN (${placeholders}) AND type='SELL'`,
       shipmentIds);
-    for (const l of sellLines) if (!coveredLineIds.has(l.id)) committedExposure += l.amount * l.exchange_rate;
+    // Unlike docTotal above (correctly frozen at whatever a line's amount was when an invoice
+    // already captured it), a still-uninvoiced SELL line has no reason to stay pinned to a stale
+    // accrual estimate — if it's since been actualized to a more accurate real figure, THAT's
+    // what's actually about to be billed, and the over-limit credit gate (findOverLimitBlock)
+    // should see it, not an outdated guess (2026-09-03 audit: this fed a real understated-
+    // exposure gap — an $8,500 actualization correction never reached committedExposure).
+    for (const l of sellLines) if (!coveredLineIds.has(l.id)) committedExposure += costLineEffectiveUsd(l);
   }
 
   return {
