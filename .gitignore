@@ -1,3 +1,9 @@
+# Cypress run output — regenerated on every local/CI run, never meant to be committed (a batch
+# of Cypress's own bundled example-scaffold screenshots slipped in previously with no gitignore
+# entry to catch them; this backfills the gap)
+cypress/screenshots
+cypress/videos
+
 # Logs
 logs
 *.log
