@@ -76,13 +76,13 @@ describe("Carrier Agents Suite", () => {
     // First location: ESBCN (UN/LOCODE is the default Coverage Type)
     cy.get('input[placeholder="Search UN/LOCODE…"]').type("ESBCN");
     cy.contains("button", "ESBCN", { timeout: 8000 }).click();
-    cy.contains("button", "＋ Add to List").click();
+    cy.contains("button", "＋ Add Location").click();
     cy.contains("ESBCN").should("be.visible");
 
     // Second location: ESVLC
     cy.get('input[placeholder="Search UN/LOCODE…"]').type("ESVLC");
     cy.contains("button", "ESVLC", { timeout: 8000 }).click();
-    cy.contains("button", "＋ Add to List").click();
+    cy.contains("button", "＋ Add Location").click();
     cy.contains("ESVLC").should("be.visible");
 
     // Capabilities tab
@@ -156,7 +156,7 @@ describe("Carrier Agents Suite", () => {
         cy.contains("button", res.body.companyName, { timeout: 8000 }).click();
         cy.get('input[placeholder="Search UN/LOCODE…"]').type("ESBCN");
         cy.contains("button", "ESBCN", { timeout: 8000 }).click();
-        cy.contains("button", "＋ Add to List").click();
+        cy.contains("button", "＋ Add Location").click();
         cy.contains("button", "Add Carrier Agent").click();
         cy.contains("already covered", { timeout: 8000 }).should("be.visible");
         cy.contains("button", "Cancel").click();
