@@ -789,10 +789,10 @@ const UserManualPage = () => {
           error when it isn't. The <Tag>System Health</Tag> link in the footer (bottom right of every
           page) lists it too, alongside every other internal and external service, as a quick
           pass/fail check.</P>
-        <Callout type="note">AIS confirmation updates a leg's own ETD/ETA and the Vessels registry
-          only. It doesn't yet automatically complete the <Tag>Vessel Departed</Tag> or{" "}
-          <Tag>Vessel Arrived</Tag> steps on a shipment's Milestones page — those two are still marked
-          complete by hand, even on a shipment whose dates were confirmed by AIS moments earlier.</Callout>
+        <Callout type="tip">AIS confirmation also completes the matching <Tag>Vessel Departed</Tag>{" "}
+          / <Tag>Vessel Arrived</Tag> step on the shipment's Milestones page automatically, the moment
+          the real departure or arrival is detected — no manual click needed, and it's noted there
+          as completed by "System (Auto)" so it's clear where the date came from.</Callout>
       </div>
     ),
     "document-templates": (

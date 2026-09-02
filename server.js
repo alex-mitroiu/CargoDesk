@@ -2944,7 +2944,7 @@ app.use("/api", (req, res, next) =>
 
 const aisListener = createAisListener({
   query, transaction, getSettings, broadcastMessage, logEntityEvent, uid, syncShipmentFromLegs, callMdmService,
-  schemaReady: schemaReadyPromise,
+  autoCompleteMilestone, schemaReady: schemaReadyPromise,
 });
 
 const ctx = {
