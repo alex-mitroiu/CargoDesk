@@ -555,7 +555,13 @@ module.exports = function authRoutes(app, ctx) {
     if (!existing) return err(res, "Not found", 404);
 
     const newRoles = roles || parseUserRoles(existing);
-    if (!newRoles.every(r => VALID_ROLES.includes(r))) return err(res, "Invalid roles");
+    // roles:[] is a truthy array (bypasses the || fallback above) that .every() vacuously
+    // accepts — POST /api/users already guards this with the same !roles.length check; PATCH
+    // was missing it, letting a caller silently leave a user with a stored roles:'[]' forever
+    // (parseUserRoles only falls back to [role] when the column is empty/null, not '[]' itself
+    // — a real, confirmed lockout bug, not privilege escalation: the primary `role` column still
+    // correctly fell back to 'viewer', but every roles.includes(...) check saw an empty array).
+    if (!newRoles.length || !newRoles.every(r => VALID_ROLES.includes(r))) return err(res, "Invalid roles");
     const primary = primaryRoleSV(newRoles);
     const active  = isActive !== undefined ? !!isActive : existing.is_active;
     const hash    = password ? bcrypt.hashSync(password, 10) : existing.password_hash;
