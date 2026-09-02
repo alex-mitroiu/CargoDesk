@@ -1950,7 +1950,7 @@ continues; don't rewrite history once an item's checked.
 
 | # | Opportunity | Status |
 |---|---|---|
-| L1 | Security headers (CSP, X-Frame-Options, Referrer-Policy) | Not re-verified this pass. |
+| ~~L1~~ | ~~Security headers (CSP, X-Frame-Options, Referrer-Policy)~~ | **RESOLVED 2026-09-02** — `server.js` now sets `Content-Security-Policy`, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin` on every response. `style-src` needed `'unsafe-inline'` (this app has zero CSS files, every component styles via a plain `style={{}}` attribute). `connect-src`/`style-src`/`font-src` allowlist exactly the real external calls this app's browser code makes — `fonts.googleapis.com`/`fonts.gstatic.com` (a Google Fonts `<link>` injected client-side via `document.createElement`, missed by an initial static grep) and both `open-meteo.com` API subdomains (the Dashboard weather widget) — found only by loading a real production build and watching the console for violations, not by reading source. Verified live via CDP against a real `NODE_ENV=production` build: zero CSP violations, zero console errors, navigated Dashboard + a styled MDM page. Only matters in production — the dev workflow serves the frontend from Vite's own `:5173` server, untouched by anything Express sets. |
 | L2 | WAL mode for SQLite | Not re-verified this pass. |
 | L3 | `crypto.randomUUID()` instead of manual `uid()` | Still using manual `uid()` — the 6-char ID format is now load-bearing in a lot of places (prefixes, display), so this is a bigger change than it looks. |
 | L4 | Extract `SERVICE_CODE_MAP`/`TRACKED_FIELDS` to shared config | Not re-verified this pass. |

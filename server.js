@@ -299,6 +299,33 @@ if (process.env.NODE_ENV !== "production") {
   });
 }
 
+// ─── Security headers (ARCHITECTURE.md §11 L1) ─────────────────────────────
+// Only meaningful in production — the dev workflow serves the frontend from Vite's own server
+// on :5173 (untouched by anything set here), Express here only serves API JSON responses plus,
+// in NODE_ENV=production, the built static bundle (app.use(express.static) below). style-src
+// needs 'unsafe-inline' since every component here styles via a plain `style={{}}` attribute
+// (no CSS files at all, see CLAUDE.md) rather than className/stylesheet rules. The three
+// external domains below are real, live dependencies this app actually calls from the browser
+// — found only by loading a real production build and watching the console, not by grepping
+// source (App.jsx injects the Google Fonts <link> via document.createElement, which a plain
+// text search missed the first time): fonts.googleapis.com (the stylesheet link itself),
+// fonts.gstatic.com (the font FILES that stylesheet references), and both open-meteo.com
+// subdomains (the Dashboard/Landing weather widget's geocoding + forecast calls). Nothing else
+// is allowlisted — every other external call in this app (FX rates via frankfurter.app, AIS via
+// aisstream.io) happens server-side, never from the browser, so CSP doesn't apply to them at all.
+app.use((req, res, next) => {
+  res.setHeader("Content-Security-Policy",
+    "default-src 'self'; script-src 'self'; " +
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
+    "img-src 'self' data:; font-src 'self' https://fonts.gstatic.com; " +
+    "connect-src 'self' ws: wss: https://api.open-meteo.com https://geocoding-api.open-meteo.com; " +
+    "object-src 'none'; base-uri 'self'; frame-ancestors 'none'");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+  next();
+});
+
 app.use(express.json({ limit: "25mb" }));
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
