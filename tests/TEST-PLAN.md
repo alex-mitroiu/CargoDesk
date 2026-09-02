@@ -46,7 +46,7 @@
 
 ### Existing Cypress Test Coverage (Reference Only)
 The following Cypress spec files exist and are **not** moved or modified by this test plan:
-- `cypress/e2e/login.cy.js` — UI login flow
+- `cypress/e2e/A_login.cy.js` — UI login flow
 - `cypress/e2e/transit-suggestion.cy.js` — sailing picker modal
 - `cypress/e2e/shipment-crud.cy.js` — full UI shipment CRUD
 - `cypress/e2e/pending-revalidation.cy.js` — contract revalidation UI
