@@ -1039,14 +1039,23 @@ async function rescreenShipmentsForCustomer(customerId) {
 // the sanctions-sync functions further down that need to call it — can reach it directly, the
 // same reason screenShipmentById already lives here rather than in routes/shipments.js.
 // routes/customers.js's own call sites are unaffected, now reached via ctx instead of a local
-// closure. NOTE (found while moving this, not caused by the move): every call unconditionally
-// clears overridden_at/override_reason regardless of whether a compliance officer's override
-// already exists — unlike rescreenShipmentsForCustomer above and rescreenActiveShipments below,
-// which both explicitly skip an overridden record. That's a real, broader gap (an unrelated
-// customer edit today already silently wipes a compliance override), deliberately NOT fixed as
-// part of this pass — flagged in ARCHITECTURE.md instead. rescreenAllCustomers() below works
-// around it locally by checking for an override itself before ever calling this function, exactly
-// mirroring the pattern already used for shipments.
+// closure.
+//
+// Override preservation (2026-09-03 audit fix): every call here used to unconditionally clear
+// overridden_at/override_reason regardless of whether a compliance officer's override already
+// existed — unlike rescreenShipmentsForCustomer above and rescreenActiveShipments below, which
+// both explicitly skip an overridden record. A routine edit to an unrelated field (phone number,
+// address) silently discarded a real compliance judgment call, from every call site: create,
+// any profile update, and even the manual "re-check" button. Fixed by comparing the freshly
+// computed `hits` against what's already stored — an override route only ever sets
+// result/overridden_at/override_reason, it never touches `hits`, so the stored value stays a
+// frozen snapshot of the match that was actually overridden. If a fresh computation produces the
+// identical hits, nothing about the real-world basis for that override has changed (same name,
+// same sanctions list) and it's preserved; the moment either genuinely changes — the name now
+// matches something different (or nothing), or the sanctions list itself moved — hits differs and
+// this correctly re-evaluates fresh, override included. Deliberately uniform across every call
+// site rather than special-casing the manual button: even an explicit re-check has no real
+// justification for discarding a still-valid judgment call when nothing it was judging changed.
 async function screenCustomer(customerId) {
   const c = await getCustomerRow(customerId);
   if (!c) return null;
@@ -1058,15 +1067,21 @@ async function screenCustomer(customerId) {
   if (((await getSettings()).customer_source || "local") === "remote") {
     screening = await callCustomerService("PUT", `/internal/customers/${customerId}/screening`, { result, hits, screenedAt: now });
   } else {
-    const id = `CSC-${uid()}`;
-    await query(`INSERT INTO customer_screenings (id,customer_id,screened_at,result,hits)
-      VALUES ($1,$2,$3,$4,$5)
-      ON CONFLICT(customer_id) DO UPDATE SET
-        screened_at=excluded.screened_at, result=excluded.result,
-        hits=excluded.hits, overridden_at=NULL, override_reason=NULL`,
-      [id, customerId, now, result, JSON.stringify(hits)]);
-    const [row] = await query("SELECT * FROM customer_screenings WHERE customer_id=$1", [customerId]);
-    screening = mapCustomerScreening(row);
+    const [existing] = await query("SELECT * FROM customer_screenings WHERE customer_id=$1", [customerId]);
+    const isOverridden = existing?.result === 'CLEAR' && existing?.overridden_at;
+    if (isOverridden && JSON.stringify(hits) === (existing.hits || '[]')) {
+      screening = mapCustomerScreening(existing);
+    } else {
+      const id = `CSC-${uid()}`;
+      await query(`INSERT INTO customer_screenings (id,customer_id,screened_at,result,hits)
+        VALUES ($1,$2,$3,$4,$5)
+        ON CONFLICT(customer_id) DO UPDATE SET
+          screened_at=excluded.screened_at, result=excluded.result,
+          hits=excluded.hits, overridden_at=NULL, override_reason=NULL`,
+        [id, customerId, now, result, JSON.stringify(hits)]);
+      const [row] = await query("SELECT * FROM customer_screenings WHERE customer_id=$1", [customerId]);
+      screening = mapCustomerScreening(row);
+    }
   }
   await rescreenShipmentsForCustomer(customerId);
   return screening;

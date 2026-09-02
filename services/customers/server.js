@@ -450,12 +450,27 @@ app.get("/internal/customers/:id/screening", async (req, res) => {
   ok(res, mapCustomerScreening(row));
 });
 
+// Override preservation (2026-09-03 audit fix, mirrors server.js's own screenCustomer() —
+// this route is that function's remote-mode write target, so both sides of the cut need the
+// identical rule). Used to unconditionally clear overridden_at/override_reason on every call,
+// silently discarding a compliance officer's override on a routine edit to an unrelated field.
+// The caller (screenCustomer) always sends the freshly-computed result/hits for the CURRENT
+// name — an override route only ever sets result/overridden_at/override_reason, never hits, so
+// the stored value stays a frozen snapshot of the match that was actually overridden. If the
+// incoming hits match what's already stored, nothing about the real basis for that override has
+// changed; preserve it. The moment hits differs (name now matches something different/nothing,
+// or the sanctions list moved), re-evaluate fresh, override included.
 app.put("/internal/customers/:id/screening", async (req, res) => {
   const [customer] = await query("SELECT id FROM customers WHERE id=$1", [req.params.id]);
   if (!customer) return err(res, "Not found", 404);
   const { result, hits = [], screenedAt } = req.body || {};
   if (result !== "HIT" && result !== "CLEAR") return err(res, "result must be HIT or CLEAR");
   const now = screenedAt || new Date().toISOString();
+  const [existing] = await query("SELECT * FROM customer_screenings WHERE customer_id=$1", [req.params.id]);
+  const isOverridden = existing?.result === 'CLEAR' && existing?.overridden_at;
+  if (isOverridden && JSON.stringify(hits) === (existing.hits || '[]')) {
+    return ok(res, mapCustomerScreening(existing));
+  }
   const id = `CSC-${uid()}`;
   await query(`INSERT INTO customer_screenings (id,customer_id,screened_at,result,hits)
     VALUES ($1,$2,$3,$4,$5)
