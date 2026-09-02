@@ -20,6 +20,9 @@ import imgDashboard from "../assets/manual/manual-dashboard.png";
 import imgCommandCenter from "../assets/manual/manual-command-center.png";
 import imgIntegrationBoard from "../assets/manual/manual-integration-board.png";
 import imgMdmVessels from "../assets/manual/manual-mdm-vessels.png";
+import imgDocTemplatesList from "../assets/manual/manual-doc-templates-list.png";
+import imgDocTemplatesEditor from "../assets/manual/manual-doc-templates-editor.png";
+import imgDocTemplatesPreview from "../assets/manual/manual-doc-templates-preview.png";
 
 // ─── User Manual Page ─────────────────────────────────────────────────────────
 // Two complementary halves, matching how the CargoDesk Field Guide itself frames the split
@@ -55,6 +58,8 @@ const UserManualPage = () => {
     { id: "integration-board", label: "Integration Board" },
     { id: "ai-agent",          label: "AI Agent" },
     { id: "mdm",               label: "Master Data" },
+    { id: "ais-integration",  label: "AIS Vessel Tracking" },
+    { id: "document-templates", label: "Document Templates" },
     { id: "concurrent-editing", label: "Concurrent Editing" },
     { id: "incoterms",         label: "Incoterms" },
     { id: "dg-classes",        label: "DG Classes ⚠" },
@@ -745,6 +750,123 @@ const UserManualPage = () => {
         <P><strong>Notes</strong> and <strong>Address &amp; Contact</strong> — a free-text notes box, and a read-only view of the agent company's own address and contact person (kept in sync with their Customer record — update it there, not here).</P>
         <H3>Automatic assignment on a new shipment</H3>
         <P>Whenever a shipment's carrier, origin, or destination is set, CargoDesk automatically checks whether a registered Line Agent covers each end and — if exactly one does — fills the "Line Agent (Export)"/"Line Agent (Import)" party for you, so nobody has to remember to do it by hand. If a location resolves through more than one linked port and each has its own registered agent, CargoDesk won't guess: the shipment's header shows a <Tag>Line Agent Picks Needed</Tag> badge, and opening Parties &amp; Offices shows a "pick one" list naming every real candidate and which linked port it matched through. Dismissing that list without picking leaves the party unassigned exactly as it already is — you can always assign one manually later.</P>
+      </div>
+    ),
+    "ais-integration": (
+      <div>
+        <H2>AIS Vessel Tracking</H2>
+        <P>CargoDesk can listen to a live feed of real ship movements — AIS (Automatic Identification
+          System) is the radio signal every ocean-going vessel broadcasts by international
+          requirement, reporting its identity and position. Connected, it does two things
+          automatically, with no manual data entry: keeps the Vessels registry accurate, and confirms
+          when a shipment's own vessel has actually sailed or arrived.</P>
+        <H3>Keeping the Vessels registry fresh</H3>
+        <P>When AIS reports a vessel CargoDesk doesn't recognize yet, it's added to Master Data →
+          Vessels automatically — no admin has to hand-enter its IMO number, name, or flag first. If a
+          known vessel's reported name ever changes (a real ship can be renamed or re-flagged over its
+          life), CargoDesk logs that as a <Tag>RENAMED</Tag> event on the vessel's own history rather
+          than silently overwriting it — and won't log the same event twice just because the same,
+          unchanged name is reported again on a later pass. A vessel confirmed this way shows a small{" "}
+          <Tag>AIS</Tag> badge in the Vessels list — hover it to see the date it was last seen live.</P>
+        <H3>Confirming a shipment's actual departure and arrival</H3>
+        <P>Every sea leg on a shipment carries an ETD/ETA that starts as an estimate. Once AIS reports
+          the assigned vessel has genuinely left the Port of Loading or reached the Port of
+          Discharge — a real change in navigational status near that port, not just a position update
+          in transit — CargoDesk updates that same ETD or ETA field <strong>in place</strong> with the
+          real date, rather than adding a second "actual" field alongside it. A small 🚢 ship icon
+          appears next to a confirmed value on the Route Legs table so you can tell an estimate from a
+          confirmed fact at a glance. This only ever fills in what's still an estimate — it never
+          overwrites a value you've already typed in yourself, and if you do edit a confirmed field by
+          hand afterward, that edit always wins and the confirmed marker clears.</P>
+        <H3>Turning it on</H3>
+        <P>Go to <Tag>Application Settings → API Controls → External APIs</Tag> and find the{" "}
+          <strong>AIS Vessel Tracking</strong> card. The default provider is aisstream.io — free,
+          no payment, no hardware required, just a signup for an API key. Paste the key in and save;
+          CargoDesk connects automatically and reconnects on its own if the connection ever drops.</P>
+        <H3>Checking it's connected</H3>
+        <P>On the same AIS Vessel Tracking card, click <Tag>Test</Tag> — it reports{" "}
+          <Tag>Connected · N vessel(s) tracked</Tag> when the feed is live, or the actual connection
+          error when it isn't. The <Tag>System Health</Tag> link in the footer (bottom right of every
+          page) lists it too, alongside every other internal and external service, as a quick
+          pass/fail check.</P>
+        <Callout type="note">AIS confirmation updates a leg's own ETD/ETA and the Vessels registry
+          only. It doesn't yet automatically complete the <Tag>Vessel Departed</Tag> or{" "}
+          <Tag>Vessel Arrived</Tag> steps on a shipment's Milestones page — those two are still marked
+          complete by hand, even on a shipment whose dates were confirmed by AIS moments earlier.</Callout>
+      </div>
+    ),
+    "document-templates": (
+      <div>
+        <H2>Document Templates (the Document Builder)</H2>
+        <P>By default, every generated document — Bill of Lading, Commercial Invoice, and the rest
+          — comes from a fixed layout built into CargoDesk. The Document Builder lets you design
+          your <strong>own</strong> layout instead, for a specific office, a specific carrier, or
+          both — with no code change and nothing for CargoDesk's engineers to ship. It's reached
+          from <Tag>Master Data → Document Templates</Tag>, and creating or editing a template
+          needs an admin, operator, or trade manager account.</P>
+        <Callout type="warn"><strong>House Bill of Lading (BL01) only, for now.</strong> Every
+          other document type — Commercial Invoice, Packing List, and the rest — still always
+          renders through its built-in layout. Support for more document types is planned, not a
+          permanent limit.</Callout>
+
+        <H3>Creating a template</H3>
+        <P>Click <Tag>+ New Template</Tag>. Give it a name you'll recognize later (e.g.{" "}
+          <em>"Rotterdam / Maersk House B/L"</em>), then choose how narrowly it should apply:</P>
+        <ul style={{ margin: "0 0 10px", paddingLeft: 20 }}>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>Office</strong> — leave blank to apply to every office, or pick one to scope it there only.</li>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><strong>Carrier</strong> — same idea: blank means every carrier, or pick one specific carrier.</li>
+        </ul>
+        <P><Tag>Create & Open Editor</Tag> saves the template (empty, to start) and takes you
+          straight into the canvas.</P>
+        <Screenshot src={imgDocTemplatesList} alt="The Document Templates list page showing two templates" caption="Document Templates — one row per template, showing exactly which office and carrier it's scoped to. A row scoped to 'Any office' or 'Any carrier' applies wherever nothing more specific matches." />
+
+        <H3>Designing the layout</H3>
+        <P>The canvas is a real page-sized surface (A4 by default) that starts blank — you build
+          up the layout by adding fields and arranging them wherever you want, like a simple
+          poster or PDF design tool:</P>
+        <ul style={{ margin: "0 0 10px", paddingLeft: 20 }}>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}>Pick a value from one of the <Tag>Shipment…</Tag> / <Tag>Shipper…</Tag> / <Tag>Consignee…</Tag> / <Tag>Document…</Tag> dropdowns to drop a field bound to real shipment data — B/L number, vessel, shipper's company name, and so on.</li>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><Tag>+ Free Text</Tag> adds a field with your own fixed wording instead — a heading like "BILL OF LADING," a label, boilerplate text — anything that doesn't come from the shipment.</li>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}><Tag>+ Table</Tag> adds a repeating region, one row per container on the shipment — pick which columns it shows and in what order from its own inspector.</li>
+        </ul>
+        <P>Click a field to select it, then drag it anywhere on the page. A small handle appears
+          in its bottom-right corner when selected — drag that to resize it instead of move it.</P>
+        <P>With a field selected, the panel on the right — the <strong>Inspector</strong> — is
+          where you fine-tune it: for a text field, switch its <Tag>Source</Tag> between a
+          Shipment Value and Free Text, adjust font size, alignment, and weight (Normal/Bold); for
+          a table, add or remove columns and change what each one is bound to. <Tag>Delete
+          Field</Tag> (or <Tag>Delete Table</Tag>) removes whatever's selected.</P>
+        <Screenshot src={imgDocTemplatesEditor} alt="The Document Template canvas editor with a heading, B/L number, shipper, consignee, and a container table placed on the page" caption="The canvas editor. The selected field (orange border, left) shows its properties in the Inspector on the right — this one's a Free Text heading, bold, size 16." />
+
+        <H3>Preview before you save</H3>
+        <P>Click <Tag>👁 Preview</Tag> at any time to see the layout rendered with realistic
+          sample data — instantly, with no server round-trip, since the whole thing renders in
+          your browser. <Tag>✎ Back to Editing</Tag> returns you to the canvas with everything
+          exactly as you left it.</P>
+        <Screenshot src={imgDocTemplatesPreview} alt="The live preview of the template rendered with sample shipment data" caption="Preview — the same layout, rendered with realistic sample data so you can check spacing and alignment before it's ever used on a real shipment." />
+        <P>When it looks right, click <Tag>Save</Tag>. There's no separate draft/published state
+          — a saved template is live immediately, the next time someone generates a House B/L that
+          matches its scope.</P>
+
+        <H3>Which template a shipment actually gets</H3>
+        <P>When someone generates a House B/L, CargoDesk looks for the most specific template that
+          matches the shipment's own Export Managing Office and carrier, checked in this order:</P>
+        <ol style={{ margin: "0 0 10px", paddingLeft: 20 }}>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}>A template scoped to <strong>this exact office and this exact carrier</strong>.</li>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}>A template scoped to <strong>this office, any carrier</strong>.</li>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}>A template scoped to <strong>any office, any carrier</strong> — a true fallback template.</li>
+          <li style={{ fontFamily: T.body, fontSize: 14, color: T.text, lineHeight: 1.8 }}>If nothing matches at all, the shipment's House B/L renders through CargoDesk's own <strong>built-in layout</strong>, exactly as it always did before you ever created a template.</li>
+        </ol>
+        <Callout type="tip">This is why a template scoped to "Any office / Any carrier" is worth
+          creating even if you also have office- or carrier-specific ones — it becomes the
+          catch-all for every combination that doesn't have its own dedicated layout.</Callout>
+
+        <H3>Editing or removing a template</H3>
+        <P>Open the <Tag>⚙</Tag> action menu on any row and choose <Tag>Edit</Tag> to go straight
+          back into the canvas, or <Tag>Delete</Tag> to remove it. Deleting is safe, not
+          destructive to past documents — any shipment that matched it simply falls back to
+          whichever template (or the built-in layout) matches next; nothing already generated
+          changes retroactively.</P>
       </div>
     ),
     "concurrent-editing": (
