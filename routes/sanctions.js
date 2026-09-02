@@ -14,7 +14,7 @@ module.exports = function sanctionsRoutes(app, ctx) {
   const { query, transaction, ok, err, getSettings, callScreeningService,
           sanctionsMap, normSanctionName, loadSanctionsIndex,
           syncOfacSdn, syncConsolidatedScreeningList, scheduleNextOfacSync, scheduleNextCslSync,
-          rescreenActiveShipments, createRateLimiter } = ctx;
+          rescreenActiveShipments, rescreenAllCustomers, createRateLimiter } = ctx;
 
   const isRemote = async () => ((await getSettings()).screening_source || "local") === "remote";
 
@@ -146,6 +146,7 @@ module.exports = function sanctionsRoutes(app, ctx) {
         await loadSanctionsIndex();
         scheduleNextOfacSync();
         await rescreenActiveShipments();
+        await rescreenAllCustomers();
         return ok(res, result);
       } catch (e) { return err(res, e.message, e.status || 502); }
     }
@@ -168,6 +169,7 @@ module.exports = function sanctionsRoutes(app, ctx) {
       await loadSanctionsIndex();
       scheduleNextOfacSync();
       await rescreenActiveShipments();
+      await rescreenAllCustomers();
       ok(res, { source: "OFAC-SDN", syncedAt: now, entries: entries.length });
     } catch (e) {
       err(res, e.message, 400);

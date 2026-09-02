@@ -809,6 +809,7 @@ async function syncOfacSdn() {
     const r = await callScreeningService("POST", "/internal/sanctions/sync");
     await loadSanctionsIndex();
     await rescreenActiveShipments();
+    await rescreenAllCustomers();
     return r;
   }
   // Treasury.gov's own WAF rejects a bare Node https.get with no User-Agent/Accept headers
@@ -864,6 +865,7 @@ async function syncOfacSdn() {
     [now, entries.length]);
   await loadSanctionsIndex();
   await rescreenActiveShipments();
+  await rescreenAllCustomers();
   return { source: "OFAC-SDN", syncedAt: now, entries: entries.length };
 }
 
@@ -888,6 +890,7 @@ async function syncConsolidatedScreeningList() {
     const result = await callScreeningService("POST", "/internal/sanctions/sync-csl");
     await loadSanctionsIndex();
     await rescreenActiveShipments();
+    await rescreenAllCustomers();
     return result;
   }
   const r = await fetch("https://data.trade.gov/downloadable_consolidated_screening_list/v1/consolidated.json");
@@ -915,6 +918,7 @@ async function syncConsolidatedScreeningList() {
     [now, entries.length]);
   await loadSanctionsIndex();
   await rescreenActiveShipments();
+  await rescreenAllCustomers();
   return { source: "CSL", syncedAt: now, entries: entries.length };
 }
 
@@ -993,9 +997,9 @@ async function getCustomerRow(id) {
 }
 
 // screenShipmentById's own read of a party's customer-level screening result — the match DECISION
-// (screenCustomer, routes/customers.js) can never move into the Customer Service, since it depends
-// on the monolith-owned sanctionsMap cache; only the already-decided result's WRITE and this READ
-// of it can. Local: direct query, unchanged. Remote: the service's own write-only screening record.
+// (screenCustomer, below) can never move into the Customer Service, since it depends on the
+// monolith-owned sanctionsMap cache; only the already-decided result's WRITE and this READ of it
+// can. Local: direct query, unchanged. Remote: the service's own write-only screening record.
 async function getCustomerScreeningResult(id) {
   if (!id) return null;
   if (((await getSettings()).customer_source || "local") === "remote") {
@@ -1004,6 +1008,107 @@ async function getCustomerScreeningResult(id) {
   }
   const [row] = await query("SELECT result FROM customer_screenings WHERE customer_id=$1", [id]);
   return row?.result || null;
+}
+
+// Organization Model Enhancement Epic 3 — customer-level and shipment-level screening previously
+// never cross-referenced: a customer flagged HIT here stayed invisible on any shipment
+// referencing it until that shipment was independently edited (which re-derives by name-match
+// anyway, just lazily). Now screenCustomer() immediately re-screens every shipment that
+// references this customer via any of its 13 possible party slots — the 4 fixed FK columns plus
+// shipment_parties — so a HIT propagates the moment it's discovered, not later. shipments/
+// shipment_parties are permanently monolith-owned regardless of customer_source, so this lookup
+// never needs a toggle branch of its own — only the screenShipmentById it drives.
+async function rescreenShipmentsForCustomer(customerId) {
+  const ids = new Set([
+    ...(await query("SELECT id FROM shipments WHERE shipper_id=$1 OR consignee_id=$1 OR principal_id=$1 OR notify_id=$1", [customerId])).map(r => r.id),
+    ...(await query("SELECT DISTINCT shipment_id AS id FROM shipment_parties WHERE customer_id=$1", [customerId])).map(r => r.id),
+  ]);
+  for (const shipmentId of ids) {
+    const [prev] = await query("SELECT result, overridden_at FROM shipment_screenings WHERE shipment_id=$1", [shipmentId]);
+    const isOverridden = prev?.result === 'CLEAR' && prev?.overridden_at;
+    if (!isOverridden) await screenShipmentById(shipmentId);
+  }
+}
+
+// Screen a customer against the loaded sanctions map and persist the result. The MATCH decision
+// itself can never move into the Customer Service (it depends on sanctionsMap, monolith-owned) —
+// but the customer row being matched against must come through getCustomerRow, same as every
+// other customer read in this cut, or a customer created after a remote cutover would never be
+// found here at all. Only the already-decided result's WRITE branches on customer_source.
+// Moved here from routes/customers.js (2026-09-03 audit) so rescreenAllCustomers() below — and
+// the sanctions-sync functions further down that need to call it — can reach it directly, the
+// same reason screenShipmentById already lives here rather than in routes/shipments.js.
+// routes/customers.js's own call sites are unaffected, now reached via ctx instead of a local
+// closure. NOTE (found while moving this, not caused by the move): every call unconditionally
+// clears overridden_at/override_reason regardless of whether a compliance officer's override
+// already exists — unlike rescreenShipmentsForCustomer above and rescreenActiveShipments below,
+// which both explicitly skip an overridden record. That's a real, broader gap (an unrelated
+// customer edit today already silently wipes a compliance override), deliberately NOT fixed as
+// part of this pass — flagged in ARCHITECTURE.md instead. rescreenAllCustomers() below works
+// around it locally by checking for an override itself before ever calling this function, exactly
+// mirroring the pattern already used for shipments.
+async function screenCustomer(customerId) {
+  const c = await getCustomerRow(customerId);
+  if (!c) return null;
+  const match  = sanctionsMap.get(normSanctionName(c.companyName || ''));
+  const result = match ? "HIT" : "CLEAR";
+  const hits   = match ? [{ entityName: match.entityName, program: match.program, source: match.source }] : [];
+  const now    = new Date().toISOString();
+  let screening;
+  if (((await getSettings()).customer_source || "local") === "remote") {
+    screening = await callCustomerService("PUT", `/internal/customers/${customerId}/screening`, { result, hits, screenedAt: now });
+  } else {
+    const id = `CSC-${uid()}`;
+    await query(`INSERT INTO customer_screenings (id,customer_id,screened_at,result,hits)
+      VALUES ($1,$2,$3,$4,$5)
+      ON CONFLICT(customer_id) DO UPDATE SET
+        screened_at=excluded.screened_at, result=excluded.result,
+        hits=excluded.hits, overridden_at=NULL, override_reason=NULL`,
+      [id, customerId, now, result, JSON.stringify(hits)]);
+    const [row] = await query("SELECT * FROM customer_screenings WHERE customer_id=$1", [customerId]);
+    screening = mapCustomerScreening(row);
+  }
+  await rescreenShipmentsForCustomer(customerId);
+  return screening;
+}
+
+// After any sanctions list update, shipment-level screening was already correctly re-swept
+// (rescreenActiveShipments below) — but a customer's own persisted customer_screenings record
+// had no equivalent sweep at all, so it could sit stale (still 'CLEAR') until that specific
+// customer was next individually touched (2026-09-03 audit). The primary shipment-blocking
+// mechanism was never actually at risk — screenShipmentById's direct name-match against the
+// fresh sanctionsMap always ran regardless — but a customer's own profile display could show a
+// stale, wrong badge. Mirrors rescreenActiveShipments's own override-respecting shape; the
+// customer-id list itself is customer_source-aware (paginates the remote service when needed)
+// since, unlike shipments, customers genuinely can live in the standalone Customer Service.
+async function rescreenAllCustomers() {
+  let ids;
+  if (((await getSettings()).customer_source || "local") === "remote") {
+    ids = [];
+    let offset = 0;
+    for (;;) {
+      const page = await callCustomerService("GET", `/internal/customers?limit=200&offset=${offset}`);
+      const rows = page?.results || [];
+      ids.push(...rows.map(r => r.id));
+      if (rows.length < 200) break;
+      offset += 200;
+    }
+  } else {
+    ids = (await query("SELECT id FROM customers")).map(r => r.id);
+  }
+  for (const customerId of ids) {
+    let overridden = false;
+    if (((await getSettings()).customer_source || "local") === "remote") {
+      try {
+        const s = await callCustomerService("GET", `/internal/customers/${customerId}/screening`);
+        overridden = s?.result === 'CLEAR' && !!s?.overriddenAt;
+      } catch { /* no screening record yet — not overridden */ }
+    } else {
+      const [prev] = await query("SELECT result, overridden_at FROM customer_screenings WHERE customer_id=$1", [customerId]);
+      overridden = prev?.result === 'CLEAR' && !!prev?.overridden_at;
+    }
+    if (!overridden) await screenCustomer(customerId);
+  }
 }
 
 // ─── OFAC auto-sync scheduler ─────────────────────────────────────────────────
@@ -3009,7 +3114,7 @@ const ctx = {
   ensureBookingCreated, supersedeIfCarrierChanged,
   runOpsAutomationSweep,
   linkedPortCodes, findMatchingContractLegs, resolveCarrierAgent, resolveCarrierAgentCandidates,
-  screenShipmentById, rescreenActiveShipments, resolveCustomerGroup,
+  screenShipmentById, rescreenActiveShipments, screenCustomer, rescreenShipmentsForCustomer, rescreenAllCustomers, resolveCustomerGroup,
   computeArExposure, docAmountUsd, runDunningSweep, runScheduledReportsSweep, matchesScopeItem, userOwnsLaneForShipment, userOwnsLaneForCustomer,
   canEditOfficeSide,
   OVERRIDE_GRACE_MS,

@@ -3,7 +3,7 @@
 module.exports = function customersRoutes(app, ctx) {
   const { query, ok, err, uid, auth, requireRole,
           mapCustomer, mapCustomerIdentifier, mapCustomerScreening, mapCustomerDoc, mapCustomerContact,
-          screenShipmentById,
+          screenShipmentById, screenCustomer, rescreenShipmentsForCustomer,
           sanctionsMap, normSanctionName,
           getFxRates, fxCache, getSettings, callCustomerService, getCustomerRow,
           validCoord, roundCents, toUsd, resolveCustomerGroup,
@@ -46,55 +46,10 @@ module.exports = function customersRoutes(app, ctx) {
   // screening-override route since that's the specific gap flagged, not a full-file audit.
   const customerWrite = requireRole(["admin", "operator", "trade_manager"]);
 
-  // Organization Model Enhancement Epic 3 — customer-level and shipment-level screening
-  // previously never cross-referenced: a customer flagged HIT here stayed invisible on any
-  // shipment referencing it until that shipment was independently edited (which re-derives by
-  // name-match anyway, just lazily). Now screenCustomer() immediately re-screens every shipment
-  // that references this customer via any of its 13 possible party slots — the 4 fixed FK
-  // columns plus shipment_parties — so a HIT propagates the moment it's discovered, not later.
-  // shipments/shipment_parties are permanently monolith-owned regardless of customer_source, so
-  // this lookup never needs a toggle branch of its own — only the screenShipmentById it drives.
-  async function rescreenShipmentsForCustomer(customerId) {
-    const ids = new Set([
-      ...(await query("SELECT id FROM shipments WHERE shipper_id=$1 OR consignee_id=$1 OR principal_id=$1 OR notify_id=$1", [customerId])).map(r => r.id),
-      ...(await query("SELECT DISTINCT shipment_id AS id FROM shipment_parties WHERE customer_id=$1", [customerId])).map(r => r.id),
-    ]);
-    for (const shipmentId of ids) {
-      const [prev] = await query("SELECT result, overridden_at FROM shipment_screenings WHERE shipment_id=$1", [shipmentId]);
-      const isOverridden = prev?.result === 'CLEAR' && prev?.overridden_at;
-      if (!isOverridden) await screenShipmentById(shipmentId);
-    }
-  }
-
-  // Screen a customer against the loaded sanctions map and persist the result. The MATCH decision
-  // itself can never move into the Customer Service (it depends on sanctionsMap, monolith-owned)
-  // — but the customer row being matched against must come through getCustomerRow, same as every
-  // other customer read in this cut, or a customer created after a remote cutover would never be
-  // found here at all. Only the already-decided result's WRITE branches on customer_source.
-  async function screenCustomer(customerId) {
-    const c = await getCustomerRow(customerId);
-    if (!c) return null;
-    const match  = sanctionsMap.get(normSanctionName(c.companyName || ''));
-    const result = match ? "HIT" : "CLEAR";
-    const hits   = match ? [{ entityName: match.entityName, program: match.program, source: match.source }] : [];
-    const now    = new Date().toISOString();
-    let screening;
-    if (await isRemote()) {
-      screening = await callCustomerService("PUT", `/internal/customers/${customerId}/screening`, { result, hits, screenedAt: now });
-    } else {
-      const id = `CSC-${uid()}`;
-      await query(`INSERT INTO customer_screenings (id,customer_id,screened_at,result,hits)
-        VALUES ($1,$2,$3,$4,$5)
-        ON CONFLICT(customer_id) DO UPDATE SET
-          screened_at=excluded.screened_at, result=excluded.result,
-          hits=excluded.hits, overridden_at=NULL, override_reason=NULL`,
-        [id, customerId, now, result, JSON.stringify(hits)]);
-      const [row] = await query("SELECT * FROM customer_screenings WHERE customer_id=$1", [customerId]);
-      screening = mapCustomerScreening(row);
-    }
-    await rescreenShipmentsForCustomer(customerId);
-    return screening;
-  }
+  // screenCustomer()/rescreenShipmentsForCustomer() moved to server.js (2026-09-03 audit) —
+  // alongside screenShipmentById, so the sanctions-sync/import functions there (also server.js-
+  // level) can call a customer-wide re-screen sweep the same way they already sweep shipments.
+  // Both still work exactly as before from every call site in this file.
 
   const CUST_JOIN = `SELECT c.*, cs.result AS screening_result, pc.company_name AS parent_customer_name
     FROM customers c
