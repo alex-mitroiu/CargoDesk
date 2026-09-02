@@ -9,7 +9,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
           broadcastMessage, broadcastEditLockChange, recomputeSpaceBadge, screenShipmentById, resolveCarrierAgent, resolveCarrierAgentCandidates,
           logEvent, logEntityEvent, TRACKED_FIELDS, TRACKED_CTR_FIELDS, FREE_TIME_WARNING_DAYS,
           sanctionsMap, autoCompleteMilestone, ensureBookingCreated, toUsd,
-          validCoord, GPS_LOC_TYPE, getSettings, callContractService, getCustomerRow,
+          validCoord, GPS_LOC_TYPE, getSettings, callContractService, callMdmService, getCustomerRow,
           COST_LINE_EFFECTIVE_USD_SQL } = ctx;
 
   // trade_manager and viewer are read-only on all shipment write operations
@@ -197,10 +197,21 @@ module.exports = function shipmentsRoutes(app, ctx) {
     }
     const codes = [...new Set(Object.values(bySeaShipment).flatMap(g => [g.seaPol, g.seaPod]).filter(Boolean))];
     const names = {};
+    // mdm_source branch added 2026-09-03 (audit-found bypass — this used to always read the
+    // local port_locations table regardless of the toggle, on the highest-traffic read in this
+    // class: the main shipments list). The MDM service's own /internal/port-locations gained an
+    // ids= bulk filter this pass specifically to back this call without an N+1 per port code.
     if (codes.length) {
-      const cph = codes.map((_, i) => `$${i + 1}`).join(',');
-      (await query(`SELECT unlocode, name FROM port_locations WHERE unlocode IN (${cph})`, codes))
-        .forEach(r => { names[r.unlocode] = r.name; });
+      if (((await getSettings()).mdm_source || "local") === "remote") {
+        try {
+          const rows = await callMdmService("GET", `/internal/port-locations?ids=${codes.map(encodeURIComponent).join(',')}`);
+          (rows || []).forEach(r => { names[r.unlocode] = r.name; });
+        } catch { /* leave names empty — same clean-degrade every other remote MDM lookup in this codebase uses on failure */ }
+      } else {
+        const cph = codes.map((_, i) => `$${i + 1}`).join(',');
+        (await query(`SELECT unlocode, name FROM port_locations WHERE unlocode IN (${cph})`, codes))
+          .forEach(r => { names[r.unlocode] = r.name; });
+      }
     }
     for (const g of Object.values(bySeaShipment)) {
       g.seaPolName = names[g.seaPol] || '';

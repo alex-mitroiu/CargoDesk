@@ -331,13 +331,29 @@ app.post("/internal/vessels/upsert", async (req, res) => {
 // ─── Port Locations ───────────────────────────────────────────────────────
 
 app.get("/internal/port-locations", async (req, res) => {
-  const { search = '', country = '', limit = '50', offset = '0' } = req.query;
-  const lim = Math.min(parseInt(limit) || 50, 200), off = parseInt(offset) || 0;
+  const { search = '', country = '', ids = '', limit = '50', offset = '0' } = req.query;
   const clauses = [], params = [];
   const p = (v) => { params.push(v); return `$${params.length}`; };
   if (search.trim()) { const s = `%${search.trim()}%`; clauses.push(`(unlocode ILIKE ${p(s)} OR name ILIKE ${p(s)})`); }
   if (country.trim()) { clauses.push(`country_code=${p(country.trim().toUpperCase())}`); }
+  // Batch code lookup (mirrors services/customers' own ids= precedent) — backs server.js's
+  // resolveSeaPorts() (2026-09-03 audit fix), which needs real names for a bounded, caller-
+  // specified set of unlocodes rather than a paginated browse. An explicit id set has no reason
+  // to be capped the way an open-ended search is (that cap exists to stop an accidental
+  // full-table dump, not to truncate a request that's already precisely bounded) — returns a
+  // bare array, same "explicit ids = no pagination envelope" convention the Customer Service uses.
+  const idList = ids.split(',').map(x => x.trim().toUpperCase()).filter(Boolean);
+  if (idList.length) {
+    const placeholders = idList.map((_, i) => `$${params.length + i + 1}`).join(',');
+    clauses.push(`unlocode IN (${placeholders})`);
+    params.push(...idList);
+  }
   const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+  if (idList.length) {
+    const rows = await query(`SELECT * FROM port_locations ${where} ORDER BY unlocode`, params);
+    return ok(res, rows.map(mapPortLocation));
+  }
+  const lim = Math.min(parseInt(limit) || 50, 200), off = parseInt(offset) || 0;
   const [{ n }] = await query(`SELECT COUNT(*) AS n FROM port_locations ${where}`, params);
   const total = Number(n);
   const limPh = p(lim), offPh = p(off);
@@ -826,7 +842,24 @@ app.delete("/internal/regions/:code", async (req, res) => { const result = await
 // ─── Countries ────────────────────────────────────────────────────────────
 
 app.get("/internal/countries", async (req, res) => {
-  const { search = '', limit = '50', offset = '0' } = req.query;
+  const { search = '', ids = '', limit = '50', offset = '0' } = req.query;
+  // Batch iso2 lookup, same shape/reasoning as the port-locations ids= filter above — an exact
+  // set of codes, not a substring search (search=NL would ILIKE-match plenty of country NAMES
+  // containing "nl" too, wrong for server.js's resolveInvoiceThresholds(), which needs one exact
+  // country by iso2). Bare array, no pagination envelope, when ids is used.
+  const idList = ids.split(',').map(x => x.trim().toUpperCase()).filter(Boolean);
+  if (idList.length) {
+    const placeholders = idList.map((_, i) => `$${i + 1}`).join(',');
+    const rows = await query(`
+      SELECT c.*, COUNT(pl.unlocode) AS port_count
+      FROM countries c
+      LEFT JOIN port_locations pl ON pl.country_code = c.iso2
+      WHERE c.iso2 IN (${placeholders})
+      GROUP BY c.iso2
+      ORDER BY c.name
+    `, idList);
+    return ok(res, rows.map(mapCountry));
+  }
   const lim = Math.min(parseInt(limit) || 50, 300), off = parseInt(offset) || 0;
   const where = search.trim() ? "WHERE c.iso2 ILIKE $1 OR c.name ILIKE $2" : "";
   const params = search.trim() ? [`%${search.trim()}%`, `%${search.trim()}%`] : [];

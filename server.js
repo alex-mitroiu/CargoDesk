@@ -1563,7 +1563,21 @@ async function resolveInvoiceThresholds(emoOfficeId) {
   if (office?.invoice_alert_business_days != null && office?.invoice_escalation_business_days != null) {
     return { alertBusinessDays: office.invoice_alert_business_days, escalationBusinessDays: office.invoice_escalation_business_days };
   }
-  const country = office?.country_code ? (await query("SELECT * FROM countries WHERE iso2=$1", [office.country_code]))[0] : null;
+  // mdm_source branch added 2026-09-03 (audit-found bypass — this used to always read the local
+  // countries table regardless of the toggle). ids= (not search=) since a substring search on a
+  // 2-letter code risks false-positive-matching an unrelated country's NAME (e.g. "US" inside
+  // "Mauritius") — the exact-set filter both MDM endpoints below were extended with this pass.
+  let country = null;
+  if (office?.country_code) {
+    if (((await getSettings()).mdm_source || "local") === "remote") {
+      try {
+        const [c] = await callMdmService("GET", `/internal/countries?ids=${encodeURIComponent(office.country_code)}`);
+        country = c ? { invoice_alert_business_days: c.invoiceAlertBusinessDays, invoice_escalation_business_days: c.invoiceEscalationBusinessDays } : null;
+      } catch { country = null; }
+    } else {
+      country = (await query("SELECT * FROM countries WHERE iso2=$1", [office.country_code]))[0];
+    }
+  }
   return {
     alertBusinessDays: office?.invoice_alert_business_days ?? country?.invoice_alert_business_days ?? DEFAULT_ALERT_DAYS,
     escalationBusinessDays: office?.invoice_escalation_business_days ?? country?.invoice_escalation_business_days ?? DEFAULT_ESCALATION_DAYS,
@@ -2669,10 +2683,20 @@ const checkOverlap = async (carrierCode, effectiveDate, endDate, pol = '', pod =
 // endpoints quietly disagreeing. Deliberately separate from GET /api/contracts
 // (the #schedules search page), which has its own independent-EXISTS-clause
 // logic and is left untouched.
-const linkedPortCodes = async code => (await query(`
-  SELECT CASE WHEN primary_unlocode=$1 THEN linked_unlocode ELSE primary_unlocode END AS code
-  FROM linked_ports WHERE primary_unlocode=$1 OR linked_unlocode=$1
-`, [code])).map(r => r.code);
+// mdm_source branch added 2026-09-03 (audit-found bypass — this used to always read the local
+// linked_ports table regardless of the toggle, unlike resolveCarrierAgentCandidates() above,
+// which already correctly branches for the exact same table). The MDM Service already exposes
+// exactly this per-code lookup (built for its own UI), so no service-side change was needed here.
+const linkedPortCodes = async code => {
+  if (((await getSettings()).mdm_source || "local") === "remote") {
+    try { return (await callMdmService("GET", `/internal/port-locations/${encodeURIComponent(code)}/links`)).map(r => r.unlocode); }
+    catch { return []; }
+  }
+  return (await query(`
+    SELECT CASE WHEN primary_unlocode=$1 THEN linked_unlocode ELSE primary_unlocode END AS code
+    FROM linked_ports WHERE primary_unlocode=$1 OR linked_unlocode=$1
+  `, [code])).map(r => r.code);
+};
 
 // Carrier Line Agents — resolves the registered Line Agent for a carrier at a port, falling
 // back to any linked port (same linked-port-aware matching findMatchingContractLeg already
