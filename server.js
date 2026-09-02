@@ -2143,6 +2143,34 @@ async function userOwnsLaneForCustomer(user, customerId) {
 // the same bypasses) may reassign it. Mirrors applyShipmentAccessFilter's own admin/operator
 // bypass and the X-Office-Id "active office" header ShipmentFormPage.jsx already reads department
 // off of for its own EMO/IMO auto-default.
+// Verifies the caller is actually assigned (via user_offices) to the office named in the
+// x-office-id header — never just trusts the client-supplied value at face value, the same
+// discipline applyShipmentAccessFilter's own inline check below already used. admin/operator/
+// allOffices bypass this (checked here too, defense-in-depth, even though every current caller
+// already checks it first). Returns the office row when genuinely valid, else null.
+//
+// 2026-09-03 audit: canEditOfficeSide and routes/finance.js's callerEntityScope both used to
+// trust the raw header with ZERO validation against user_offices — a real, live-confirmed
+// authorization bypass. Verified with a real scratch user (occ_bk role, allOffices:false,
+// assigned to exactly one Export office): setting x-office-id to a completely different Import
+// office they had no assignment to — trivially discoverable via the already-authenticated
+// GET /api/offices — let them successfully perform an Import-side-gated write (assigning a Line
+// Agent (Import) party, 201 Created) they should never have been able to reach. This helper
+// factors out applyShipmentAccessFilter's own already-correct validation so canEditOfficeSide and
+// callerEntityScope can reuse it instead of each trusting the header independently.
+async function resolveActiveOffice(req) {
+  const user = req?.user;
+  if (!user) return null;
+  const activeOfficeId = req.headers?.['x-office-id'];
+  if (!activeOfficeId) return null;
+  const jwtRoles = Array.isArray(user.roles) ? user.roles : (user.role ? [user.role] : ['viewer']);
+  const [office] = await query("SELECT * FROM offices WHERE id=$1", [activeOfficeId]);
+  if (!office) return null;
+  if (jwtRoles.includes('admin') || jwtRoles.includes('operator') || user.allOffices) return office;
+  const [assignment] = await query("SELECT 1 FROM user_offices WHERE user_id=$1 AND office_id=$2", [user.id, activeOfficeId]);
+  return assignment ? office : null;
+}
+
 async function canEditOfficeSide(req, side) {
   const user = req?.user;
   if (!user) return false;
@@ -2152,9 +2180,7 @@ async function canEditOfficeSide(req, side) {
   if (side === 'Controlling') return (await canEditOfficeSide(req, 'Export')) || (await canEditOfficeSide(req, 'Import'));
   const dept = side === 'Export' ? 'SE' : side === 'Import' ? 'SI' : null;
   if (!dept) return false;
-  const activeOfficeId = req.headers?.['x-office-id'];
-  if (!activeOfficeId) return false;
-  const [office] = await query("SELECT department FROM offices WHERE id=$1", [activeOfficeId]);
+  const office = await resolveActiveOffice(req);
   return !!office && office.department === dept;
 }
 
@@ -3116,7 +3142,7 @@ const ctx = {
   linkedPortCodes, findMatchingContractLegs, resolveCarrierAgent, resolveCarrierAgentCandidates,
   screenShipmentById, rescreenActiveShipments, screenCustomer, rescreenShipmentsForCustomer, rescreenAllCustomers, resolveCustomerGroup,
   computeArExposure, docAmountUsd, runDunningSweep, runScheduledReportsSweep, matchesScopeItem, userOwnsLaneForShipment, userOwnsLaneForCustomer,
-  canEditOfficeSide,
+  canEditOfficeSide, resolveActiveOffice,
   OVERRIDE_GRACE_MS,
   bcrypt, jwt, JWT_SECRET,
   DISTRIBUTION_SERVICE_URL, DISTRIBUTION_SERVICE_SECRET,

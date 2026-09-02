@@ -1,21 +1,28 @@
 "use strict";
 
 module.exports = function financeRoutes(app, ctx) {
-  const { query, ok, err, auth, resolveCustomerGroup, roundCents, costLineEffectiveUsd, getFxRates } = ctx;
+  const { query, ok, err, auth, resolveCustomerGroup, roundCents, costLineEffectiveUsd, getFxRates,
+          resolveActiveOffice } = ctx;
 
   // Multi-Entity Accounting (TKT-EEV4I9) — mirrors canEditOfficeSide's (server.js) admin/
   // operator/allOffices bypass exactly, applied to READ visibility of the byEntity breakdown
   // instead of write permission: a branch-scoped user should see their own entity's P&L, not the
   // whole company's, unless they're global. Returns null for "unrestricted" or a Set of branch
   // ids the caller may see (possibly empty, if they have no active office set).
+  //
+  // 2026-09-03 audit: this used to read x-office-id and look up its branch_id directly, with no
+  // check that the caller was actually assigned to that office — a real authorization bypass
+  // (any branch-scoped user could see a different branch's GP/margin breakdown just by setting
+  // this header to an office id they aren't assigned to, discoverable via GET /api/offices).
+  // resolveActiveOffice (server.js) now does that validation against user_offices before
+  // returning anything.
   const callerEntityScope = async req => {
     const user = req.user;
     const jwtRoles = Array.isArray(user.roles) ? user.roles : (user.role ? [user.role] : ['viewer']);
     if (jwtRoles.includes('admin') || jwtRoles.includes('operator')) return null;
     if (user.allOffices) return null;
-    const activeOfficeId = req.headers?.['x-office-id'];
-    if (!activeOfficeId) return new Set();
-    const [office] = await query("SELECT branch_id FROM offices WHERE id=$1", [activeOfficeId]);
+    if (!req.headers?.['x-office-id']) return new Set();
+    const office = await resolveActiveOffice(req);
     return new Set(office?.branch_id ? [office.branch_id] : []);
   };
 
