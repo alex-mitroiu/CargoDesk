@@ -102,9 +102,12 @@ describe("Carrier Agents Suite", () => {
     cy.get("button").contains(/^Mon$/).click();
     cy.get("button").contains(/^Tue$/).click();
 
-    // Save — creates the header with the first staged location, then the rest, then the schedule
+    // Save — creates the header with the first staged location, then the rest, then the schedule.
+    // Exact-match regex, not a plain string: "Add Carrier Agent" is a substring of the page's own
+    // "＋ Add Carrier Agent" trigger button (still in the DOM, now behind this modal) — a plain
+    // cy.contains match is ambiguous between the two and can resolve to the wrong (covered) one.
     cy.intercept("POST", "/api/carrier-agents").as("createAgent");
-    cy.contains("button", "Add Carrier Agent").click();
+    cy.contains("button", /^Add Carrier Agent$/).click();
     cy.wait("@createAgent").then(({ response }) => { headerId = response.body.id; });
 
     // Back on the list — the new row shows both locations as read-only badges
@@ -157,7 +160,8 @@ describe("Carrier Agents Suite", () => {
         cy.get('input[placeholder="Search UN/LOCODE…"]').type("ESBCN");
         cy.contains("button", "ESBCN", { timeout: 8000 }).click();
         cy.contains("button", "＋ Add Location").click();
-        cy.contains("button", "Add Carrier Agent").click();
+        // Same exact-match fix as the first test's Save click — see that comment above.
+        cy.contains("button", /^Add Carrier Agent$/).click();
         // The first test leaves TSTZ's ESBCN/ESVLC discarded in favor of a whole-country ES row
         // (checkLocationConflict, routes/mdm.js), so this second header's ESBCN claim actually
         // conflicts one level up, on the country, not the port — different real error text than
