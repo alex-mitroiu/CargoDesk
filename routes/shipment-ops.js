@@ -5,7 +5,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
           mapCostLine, mapService, mapMilestone, mapMilestoneTemplate,
           sanctionsMap, screenShipmentById,
           logEvent, logEntityEvent, importContractRates, createRateSnapshot, generateCostLinesFromSnapshot,
-          mapRateSnapshot, syncShipmentFromLegs, ensureBookingCreated,
+          mapRateSnapshot, syncShipmentFromLegs, ensureBookingCreated, autoCompleteMilestone,
           UPLOADS_DIR, fs, path,
           renderHtmlToPdf, getActiveSigningCert, signPdfBuffer,
           buildMailOptions, sendViaOffice,
@@ -55,6 +55,8 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       firstSentAt: r.first_sent_at || null,
       invoiceOwnerId: r.invoice_owner_id || null,
       collectionsAlertedAt: r.collections_alerted_at || null, collectionsEscalatedAt: r.collections_escalated_at || null,
+      blSurrenderedAt: r.bl_surrendered_at || null, blSurrenderedBy: r.bl_surrendered_by || '',
+      blReleasedAt: r.bl_released_at || null, blReleasedBy: r.bl_released_by || '',
     };
   };
 
@@ -1131,6 +1133,12 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       if (status === "confirmed" && doc.status !== "confirmed") {
         await logEntityEvent('document', req.params.docId, 'CONFIRMED', null, null, null,
           JSON.stringify({ shipmentId: doc.shipment_id, docType: doc.doc_type, filename: doc.filename, containerId: doc.container_id || '' }));
+        // House B/L Lifecycle — "confirmed" on a BL01 IS "issued": the milestone sequence has
+        // carried a bl_issued step since it was first seeded, but nothing has ever completed it.
+        // Same never-overwrite-a-manual-completion guard as every other autoCompleteMilestone call.
+        if (doc.doc_type === "BL01") {
+          await autoCompleteMilestone(doc.shipment_id, 'bl_issued', `House B/L confirmed (${doc.filename})`);
+        }
       }
       if (status === "voided" && doc.status !== "voided") {
         await logEntityEvent('document', req.params.docId, 'VOIDED', null, null, null,
@@ -1142,6 +1150,49 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     }
     const [updated] = await query("SELECT * FROM shipment_documents WHERE id = $1", [req.params.docId]);
     ok(res, await mapDoc(updated, updated.shipment_id));
+  });
+
+  // ─── House B/L Lifecycle — Surrendered / Released ──────────────────────────
+  // Document generation + print/email already exist (v0.51.0 signed PDF, v0.64.0 email
+  // distribution) — EDI/electronic-transfer to the counterparty is explicitly out of scope for
+  // this pass. These two actions just let an operator record the two real post-issuance facts
+  // this app previously had nowhere to put: has the shipper surrendered the originals at origin
+  // (only meaningful for a Telex Release/Surrendered/Seaway Bill release type — the UI surfaces
+  // it accordingly, but the backend stays permissive since an Original-release bill can go
+  // straight from Issued to Released), and has cargo actually been released at destination
+  // against this specific bill. Deliberately NOT ordered against each other server-side, and
+  // idempotent (a repeat call is a no-op, not an error) — same guard style autoCompleteMilestone
+  // already uses.
+  app.patch("/api/shipments/:shipmentId/documents/:docId/bl-surrender", shipmentWrite, async (req, res) => {
+    const [doc] = await query("SELECT * FROM shipment_documents WHERE id=$1 AND shipment_id=$2", [req.params.docId, req.params.shipmentId]);
+    if (!doc) return err(res, "Not found", 404);
+    if (doc.doc_type !== "BL01") return err(res, "Only a House Bill of Lading can be marked surrendered", 400);
+    if (doc.status !== "confirmed") return err(res, "Only an issued (confirmed) House B/L can be marked surrendered", 409);
+    if (!doc.bl_surrendered_at) {
+      const now = new Date().toISOString();
+      const actor = req.user?.name || req.user?.email || "";
+      await query("UPDATE shipment_documents SET bl_surrendered_at=$1, bl_surrendered_by=$2 WHERE id=$3", [now, actor, doc.id]);
+      await logEntityEvent('document', doc.id, 'BL_SURRENDERED', null, null, null,
+        JSON.stringify({ shipmentId: doc.shipment_id, docType: doc.doc_type, filename: doc.filename }));
+    }
+    const [row] = await query("SELECT * FROM shipment_documents WHERE id=$1", [doc.id]);
+    ok(res, await mapDoc(row, doc.shipment_id));
+  });
+
+  app.patch("/api/shipments/:shipmentId/documents/:docId/bl-release", shipmentWrite, async (req, res) => {
+    const [doc] = await query("SELECT * FROM shipment_documents WHERE id=$1 AND shipment_id=$2", [req.params.docId, req.params.shipmentId]);
+    if (!doc) return err(res, "Not found", 404);
+    if (doc.doc_type !== "BL01") return err(res, "Only a House Bill of Lading can be marked released", 400);
+    if (doc.status !== "confirmed") return err(res, "Only an issued (confirmed) House B/L can be marked released", 409);
+    if (!doc.bl_released_at) {
+      const now = new Date().toISOString();
+      const actor = req.user?.name || req.user?.email || "";
+      await query("UPDATE shipment_documents SET bl_released_at=$1, bl_released_by=$2 WHERE id=$3", [now, actor, doc.id]);
+      await logEntityEvent('document', doc.id, 'BL_RELEASED', null, null, null,
+        JSON.stringify({ shipmentId: doc.shipment_id, docType: doc.doc_type, filename: doc.filename }));
+    }
+    const [row] = await query("SELECT * FROM shipment_documents WHERE id=$1", [doc.id]);
+    ok(res, await mapDoc(row, doc.shipment_id));
   });
 
   // ─── Invoice Reversal / Credit-Debit Note (TKT-DUADU3) ─────────────────────

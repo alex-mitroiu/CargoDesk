@@ -5,6 +5,7 @@ import { toast } from "../../toast";
 import { Modal } from "../primitives/Modal";
 import Btn from "../primitives/Btn";
 import { DOC_TYPES, docTypeLabel, getMissingDocRequirements, dispatchDocBuilder } from "../../utils/documentBuilders";
+import { renderTemplateHtml } from "../../utils/templateRenderer";
 
 const GenerateDocumentModal = ({ shipment, onClose, onSaved, defaultCode }) => {
   const defaultNum = `${shipment.id}-${Date.now().toString(36).toUpperCase().slice(-6)}`;
@@ -57,15 +58,31 @@ const GenerateDocumentModal = ({ shipment, onClose, onSaved, defaultCode }) => {
         email:       orgSettings.dg_compliance_email         || "",
         address:     orgSettings.dg_compliance_address       || "",
       } : null;
-      const missing = getMissingDocRequirements(docCode, { shipment, containers, shipper, consignee, costLines, dgCompliance, parties });
-      if (missing.length > 0) {
-        toast.error(`Cannot generate ${docTypeLabel(docCode)} — missing:\n${missing.map(m => `• ${m}`).join("\n")}`);
-        setLoading(false);
-        return;
-      }
-      const html = dispatchDocBuilder(docCode, {
+      // Document Template Editor — an office+carrier-scoped custom layout, BL01 pilot only.
+      // A match renders through the saved template instead of the hardcoded builder and skips
+      // getMissingDocRequirements entirely (the template's own placed fields ARE the
+      // requirements — an unbound source just renders blank, no hard gate). No match falls
+      // through to today's exact behavior, unchanged.
+      const template = docCode === "BL01"
+        ? await api.documentTemplates.resolve(docCode, shipment.emoOfficeId || "", shipment.carrierCode || "").catch(() => null)
+        : null;
+
+      const dataBag = {
         shipment, invNumber: docNum, invDate: docDate, notes, containers, shipper, consignee, costLines, dgCompliance, parties, exportFilingItn, rateSnapshotId,
-      });
+      };
+
+      let html;
+      if (template) {
+        html = renderTemplateHtml(template, dataBag);
+      } else {
+        const missing = getMissingDocRequirements(docCode, { shipment, containers, shipper, consignee, costLines, dgCompliance, parties });
+        if (missing.length > 0) {
+          toast.error(`Cannot generate ${docTypeLabel(docCode)} — missing:\n${missing.map(m => `• ${m}`).join("\n")}`);
+          setLoading(false);
+          return;
+        }
+        html = dispatchDocBuilder(docCode, dataBag);
+      }
 
       // Save to shipment documents — server renders + signs the PDF, so the signing key
       // never has to leave the server.

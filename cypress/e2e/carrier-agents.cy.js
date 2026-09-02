@@ -57,7 +57,7 @@ describe("Carrier Agents Suite", () => {
   };
 
   it("adds a carrier agent, configures multiple locations, and auto-discards redundant ports on a country add", () => {
-    cy.contains("button", "+ Add Carrier Agent").click();
+    cy.contains("button", "＋ Add Carrier Agent").click();
     cy.contains("Add Carrier Agent", { timeout: 5000 }).should("be.visible");
 
     cy.get('input[placeholder="Search carrier code or name…"]').type(carrierCode);
@@ -137,10 +137,10 @@ describe("Carrier Agents Suite", () => {
   it("rejects a second header from claiming an already-covered location for the same carrier", () => {
     // headerId (TSTZ / ES) was created by the previous test — this one proves the cross-header
     // conflict guard is real from the UI, not just at the API layer.
-    cy.request("POST", "/api/customers", { companyName: `Cypress Conflict Agent ${Date.now()}` })
+    api("POST", "/customers", { companyName: `Cypress Conflict Agent ${Date.now()}` })
       .then(res => {
         const conflictCustomerId = res.body.id;
-        cy.contains("button", "+ Add Carrier Agent").click();
+        cy.contains("button", "＋ Add Carrier Agent").click();
         cy.get('input[placeholder="Search carrier code or name…"]').type(carrierCode);
         cy.contains("button", carrierCode, { timeout: 8000 }).click();
         cy.contains("label", "Agent (Customer)").parent().find("input").type(res.body.companyName);

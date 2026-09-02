@@ -88,7 +88,7 @@ const ResetPasswordPage = ({ token }) => {
               <p style={{ fontFamily: T.body, fontSize: 13.5, color: T.textMuted, lineHeight: 1.6, margin: "0 0 20px" }}>
                 Your password has been changed. Sign in with your new password below.
               </p>
-              <a href="#" onClick={e => { e.preventDefault(); window.location.hash = ""; }} style={{
+              <a href="#login" onClick={e => { e.preventDefault(); window.location.hash = "login"; }} style={{
                 display: "block", textAlign: "center", padding: "11px", borderRadius: 8,
                 background: T.accent, color: "#fff", fontFamily: T.body, fontSize: 14, fontWeight: 600,
                 textDecoration: "none",

@@ -123,6 +123,22 @@ const DocumentsModal = ({ shipment, canEdit, onClose, standalone = false }) => {
     } catch (ex) { toast.error(ex.message); }
   };
 
+  // House B/L Lifecycle — post-issuance facts on a confirmed BL01 (see routes/shipment-ops.js).
+  const handleBlSurrender = async id => {
+    try {
+      const updated = await api.documents.blSurrender(shipment.id, id);
+      setDocs(p => p.map(d => d.id === id ? updated : d));
+      toast.success("House B/L marked surrendered");
+    } catch (ex) { toast.error(ex.message); }
+  };
+  const handleBlRelease = async id => {
+    try {
+      const updated = await api.documents.blRelease(shipment.id, id);
+      setDocs(p => p.map(d => d.id === id ? updated : d));
+      toast.success("House B/L marked released");
+    } catch (ex) { toast.error(ex.message); }
+  };
+
   const statusBadge = doc => {
     if (doc.isStale) return (
       <span title="Shipment data changed after this document was generated — consider regenerating"
@@ -300,6 +316,16 @@ const DocumentsModal = ({ shipment, canEdit, onClose, standalone = false }) => {
                         confirmed by {doc.confirmedBy}
                       </span>
                     )}
+                    {doc.docType === "BL01" && doc.blSurrenderedAt && (
+                      <span style={{ fontFamily: T.body, fontSize: 11, color: T.success }}>
+                        surrendered {fmtDate(doc.blSurrenderedAt)}{doc.blSurrenderedBy && ` by ${doc.blSurrenderedBy}`}
+                      </span>
+                    )}
+                    {doc.docType === "BL01" && doc.blReleasedAt && (
+                      <span style={{ fontFamily: T.body, fontSize: 11, color: T.success }}>
+                        released {fmtDate(doc.blReleasedAt)}{doc.blReleasedBy && ` by ${doc.blReleasedBy}`}
+                      </span>
+                    )}
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: 5, flexShrink: 0, alignItems: "center", marginTop: 1 }}>
@@ -326,6 +352,17 @@ const DocumentsModal = ({ shipment, canEdit, onClose, standalone = false }) => {
                     <Btn size="sm" variant="secondary" onClick={() => handleConfirm(doc.id)}
                       style={{ color: T.success, borderColor: T.success + "66" }}>
                       ✓ Confirm
+                    </Btn>
+                  )}
+                  {canEdit && doc.docType === "BL01" && doc.status === "confirmed" && !doc.blSurrenderedAt
+                    && ["Telex Release", "Surrendered", "Seaway Bill"].includes(shipment.blReleaseType) && (
+                    <Btn size="sm" variant="secondary" onClick={() => handleBlSurrender(doc.id)}>
+                      Mark Surrendered
+                    </Btn>
+                  )}
+                  {canEdit && doc.docType === "BL01" && doc.status === "confirmed" && !doc.blReleasedAt && (
+                    <Btn size="sm" variant="secondary" onClick={() => handleBlRelease(doc.id)}>
+                      Mark Released
                     </Btn>
                   )}
                   {canEdit && (

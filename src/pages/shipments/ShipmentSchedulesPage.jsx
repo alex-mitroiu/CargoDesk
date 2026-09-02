@@ -442,17 +442,21 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
             )}
           </div>
 
-          {/* Contract details facelift, direct request — same 5-column structure regardless of
-              contract type. Contract Number/Named Account only exist on a real Central contract
-              record; SPOT/Pending/Customer Own (and a Central contract still loading) show a
-              dash for those two, falling back to the shipment's own contractRef/contractValidFrom/
-              contractValidTo for the fields that DO apply to a manual contract type. */}
+          {/* Contract details facelift, direct request — same column structure regardless of
+              contract type. Contract Number/Named Account/Commodity/Rate ID only exist on a real
+              Central contract record; SPOT/Pending/Customer Own (and a Central contract still
+              loading) show a dash for those, falling back to the shipment's own contractRef/
+              contractValidFrom/contractValidTo for the fields that DO apply to a manual contract
+              type. Rate ID joins every rate line's own id — a contract can carry more than one. */}
           {(() => {
             const isCentral = shipment.contractType === "Central";
+            const rateIds = (contractDetail?.rates || []).map(r => r.id).filter(Boolean);
             const cols = [
               ["Contract Number", isCentral ? (contractDetail?.contractNumber || "") : ""],
               ["Contract Reference", shipment.contractRef || ""],
               ["Named Account", isCentral ? (contractDetail?.namedAccount || "") : ""],
+              ["Commodity", isCentral ? (contractDetail?.commodityTypes || "") : ""],
+              ["Rate ID", isCentral ? rateIds.join(", ") : ""],
               ["Valid From", isCentral ? (contractDetail?.validFrom || "") : (shipment.contractValidFrom || "")],
               ["Valid To", isCentral ? (contractDetail?.validTo || "") : (shipment.contractValidTo || "")],
             ];

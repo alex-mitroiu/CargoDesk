@@ -73,7 +73,7 @@ const ForgotPasswordPage = () => {
               <p style={{ fontFamily: T.body, fontSize: 13.5, color: T.textMuted, lineHeight: 1.6, margin: "12px 0 24px" }}>
                 {sent}
               </p>
-              <a href="#" onClick={e => { e.preventDefault(); window.location.hash = ""; }} style={{
+              <a href="#login" onClick={e => { e.preventDefault(); window.location.hash = "login"; }} style={{
                 display: "block", textAlign: "center", fontFamily: T.body, fontSize: 13.5,
                 color: T.accent, textDecoration: "none",
               }}>
@@ -122,7 +122,7 @@ const ForgotPasswordPage = () => {
                   {loading ? "Sending…" : "Send reset link"}
                 </button>
               </form>
-              <a href="#" onClick={e => { e.preventDefault(); window.location.hash = ""; }} style={{
+              <a href="#login" onClick={e => { e.preventDefault(); window.location.hash = "login"; }} style={{
                 display: "block", textAlign: "center", fontFamily: T.body, fontSize: 13.5,
                 color: T.textMuted, textDecoration: "none",
               }}>

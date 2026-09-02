@@ -28,7 +28,7 @@ import Btn from "./components/primitives/Btn";
 import { Modal } from "./components/primitives/Modal";
 import { Field } from "./components/primitives/Form";
 import {
-  IconSailboat, IconDashboard, IconFlash, IconArchive, IconClipboard, IconTag,
+  IconSailboat, IconDashboard, IconFlash, IconArchive, IconClipboard, IconTag, IconFile,
   IconFlask, IconRefresh, IconCheck, IconCalendar, IconGroup, IconCircle,
   IconBuilding, IconShip, IconPackage, IconMapPin, IconLink, IconRoute,
   IconFlag, IconHashtag, IconEarth, IconGovernment, IconSettings, IconChartBar, AnyIcon,
@@ -91,6 +91,7 @@ import MdmChargeCodesPage     from "./pages/mdm/MdmChargeCodesPage";
 import MdmDutyRatesPage       from "./pages/mdm/MdmDutyRatesPage";
 import MdmPackTypesPage       from "./pages/mdm/MdmPackTypesPage";
 import MdmInvoiceReasonCodesPage from "./pages/mdm/MdmInvoiceReasonCodesPage";
+import DocumentTemplatesPage  from "./pages/mdm/DocumentTemplatesPage";
 import MdmContainerTypesPage  from "./pages/mdm/MdmContainerTypesPage";
 import MdmEquipmentPage       from "./pages/mdm/MdmEquipmentPage";
 import MdmFinancePage         from "./pages/mdm/MdmFinancePage";
@@ -636,8 +637,22 @@ function App() {
     return () => window.removeEventListener("hashchange", onHash);
   }, [page, selectedId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Give the login page a real, explicit address once we're actually sure there's no
+  // signed-in session — gated on authLoading the same way the render logic below is, so a
+  // page reload with a still-valid stored token never gets its real deep-link hash
+  // clobbered mid-restore. Direct report: the Forgot/Reset Password pages' own "Back to
+  // sign in" links used to just clear the hash to "" — onHash's own `if (!hash) return`
+  // guard above silently ignores an empty-hash change, so the link visibly did nothing.
+  // Landing here on a real #login hash gives those links (and any future one) something
+  // real to navigate back to.
+  useEffect(() => {
+    if (authLoading || user) return;
+    if (page === "track" || page === "forgot-password" || page === "reset-password") return;
+    if (window.location.hash.replace("#", "").trim() !== "login") window.location.hash = "login";
+  }, [authLoading, user, page]);
+
   // kanban is top-level, not MDM
-  const MDM_PAGES = ["mdm-carriers", "mdm-carrier-agents", "mdm-ports", "mdm-linked", "mdm-vessels", "mdm-commodities", "mdm-tradelanes", "mdm-countries", "mdm-unlocodes", "mdm-customers", "mdm-sanctioned-customers", "mdm-contracts", "rate-benchmark", "mdm-finance", "mdm-charge-codes", "mdm-duty-rates", "mdm-equipment", "mdm-pack-types", "mdm-container-types", "mdm-invoice-reason-codes", "mdm-locations"];
+  const MDM_PAGES = ["mdm-carriers", "mdm-carrier-agents", "mdm-ports", "mdm-linked", "mdm-vessels", "mdm-commodities", "mdm-tradelanes", "mdm-countries", "mdm-unlocodes", "mdm-customers", "mdm-sanctioned-customers", "mdm-contracts", "rate-benchmark", "mdm-finance", "mdm-charge-codes", "mdm-duty-rates", "mdm-equipment", "mdm-pack-types", "mdm-container-types", "mdm-invoice-reason-codes", "mdm-locations", "mdm-document-templates"];
   const ORG_PAGES = ["org-country", "org-branch", "org-office"];
   const ALL_PAGES = [...MDM_PAGES, ...ORG_PAGES, "manual"];
   const isMdmActive = MDM_PAGES.includes(page);
@@ -735,6 +750,7 @@ function App() {
     "mdm-duty-rates": "Master Data — Duty Rate Chapters",
     "mdm-equipment": "Master Data — Equipment",
     "mdm-pack-types": "Master Data — Pack Types",
+    "mdm-document-templates": "Master Data — Document Templates",
     "mdm-container-types": "Master Data — Container Types",
     "mdm-invoice-reason-codes": "Master Data — Invoice Reason Codes",
     "mdm-locations": "Master Data — Locations",
@@ -1711,6 +1727,7 @@ function App() {
                   )}
 
                   <NavBtn pageKey="mdm-equipment" icon={IconArchive} label="Equipment"      indent />
+                  <NavBtn pageKey="mdm-document-templates" icon={IconFile} label="Document Templates" indent />
 
                   {/* Finance sub-section — a real hub page (MdmFinancePage), not just a label,
                       per direct request; its children stay listed right here too for one-click
@@ -2143,6 +2160,7 @@ function App() {
         {page === "mdm-duty-rates"&&                                  <MdmDutyRatesPage />}
         {page === "mdm-equipment"&&                                   <MdmEquipmentPage navigate={navigate} />}
         {page === "mdm-pack-types"&&                                  <MdmPackTypesPage />}
+        {page === "mdm-document-templates"&&                          <DocumentTemplatesPage />}
         {page === "mdm-container-types"&&                             <MdmContainerTypesPage />}
         {page === "mdm-invoice-reason-codes"&&                        <MdmInvoiceReasonCodesPage />}
         {page === "mdm-customers"              && isEnabled("mdm-customers")             && <MdmCustomersPage />}

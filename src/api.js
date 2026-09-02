@@ -373,6 +373,17 @@ export const api = {
     update: (id, d) => req("PUT",    `/pack-type-definitions/${id}`, d),
     remove: (id)    => req("DELETE", `/pack-type-definitions/${id}`),
   },
+  documentTemplates: {
+    list:    ()      => req("GET",    "/document-templates"),
+    get:     (id)     => req("GET",    `/document-templates/${id}`),
+    create:  (d)      => req("POST",   "/document-templates", d),
+    update:  (id, d)  => req("PUT",    `/document-templates/${id}`, d),
+    remove:  (id)      => req("DELETE", `/document-templates/${id}`),
+    resolve: (docType, officeId, carrierCode) => req("GET",
+      `/document-templates/resolve?docType=${encodeURIComponent(docType)}` +
+      (officeId ? `&officeId=${encodeURIComponent(officeId)}` : "") +
+      (carrierCode ? `&carrierCode=${encodeURIComponent(carrierCode)}` : "")),
+  },
   eadapter: {
     configs: {
       list:   ()      => req("GET",    "/eadapter/configs"),
@@ -559,6 +570,11 @@ export const api = {
     sendWebhook: (shipmentId, docId)       => req("POST", `/shipments/${shipmentId}/documents/${docId}/send-webhook`),
     reverse:  (shipmentId, docId, data = {}) => req("POST", `/shipments/${shipmentId}/documents/${docId}/reverse`, data),
     markPaid: (shipmentId, docId, data)      => req("POST", `/shipments/${shipmentId}/documents/${docId}/mark-paid`, data),
+    // House B/L Lifecycle — post-issuance facts (Surrendered at origin, Released at destination),
+    // BL01 only. Document generation + print/email are the existing generate/download/sendEmail
+    // calls above; no separate wrappers needed for those.
+    blSurrender: (shipmentId, docId) => req("PATCH", `/shipments/${shipmentId}/documents/${docId}/bl-surrender`),
+    blRelease:   (shipmentId, docId) => req("PATCH", `/shipments/${shipmentId}/documents/${docId}/bl-release`),
     // Invoice Collections (Epic TKT-G11AHW) — status override (Trade Manager only, own trade
     // lane), its audit history, and reassigning "user responsible".
     statusOverride:  (shipmentId, docId, data) => req("POST", `/shipments/${shipmentId}/documents/${docId}/status-override`, data),

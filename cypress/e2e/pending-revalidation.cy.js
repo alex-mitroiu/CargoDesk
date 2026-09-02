@@ -114,7 +114,7 @@ describe("GET /api/contracts/revalidate", () => {
     api("GET", "/contracts/revalidate?ref=CMDU-CH-EUN-NAM").then(res => {
       const c = res.body[0];
       expect(c).to.have.all.keys("id", "contractNumber", "contractRef", "carrierCode",
-        "namedAccountId", "namedAccount", "movementType", "containerTypes",
+        "namedAccountId", "namedAccount", "movementType", "containerTypes", "commodityTypes",
         "dgAllowed", "imdgClasses", "validFrom", "validTo", "currency", "status",
         "notes", "createdAt");
     });

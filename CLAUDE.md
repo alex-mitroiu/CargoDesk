@@ -4,7 +4,7 @@
 Full-stack freight management app. React 18 + Vite frontend, Express + node:sqlite backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.89.0 "Arbiter"**
+- Version: **v0.90.0 "Blueprint"**
 - Run: `npm run dev` (runs the monolith on :3001 + Vite on :5173 + the Document Distribution Service on :3002 + the PDF Render Service on :3003 + the Contract Management Service on :3004 + the MDM Service on :3005 + the Screening Service on :3006 + the Kanban Service on :3007 + the Customer Service on :3008, concurrently) — zero-script onboarding: first boot with no `cargodesk.db` auto-copies the committed `db/cargodesk.sample.db` (MDM reference data only) into place
 - Re-seed: `npm run seed` (runs `scripts/import-mdm-data.js`) — only needed to refresh MDM data from `data/*.csv`/`.json`, not for a normal first run
 
@@ -62,6 +62,9 @@ routes/
   system.js          /api/health, /api/system-messages, /api/settings, /api/schedules/*
   export.js          /api/export/shipments.csv, /api/export/dashboard/xlsx,
                      /api/export/dashboard/template
+  document-templates.js /api/document-templates/* (CRUD) + /api/document-templates/resolve
+                     (cascading office+carrier lookup, mirrors milestone_templates' fallback
+                     shape) — Document Template Editor (v0.90.0), BL01 pilot only
 scripts/
   import-mdm-data.js               Seeds ports, carriers, vessels, commodities, and the full
                                    208-country/182-country-trade-lane registry, read directly
@@ -216,6 +219,12 @@ src/
       MdmCarriersPage.jsx          Carrier codes
       MdmRegionsPage.jsx           Regions
       MdmUNLocationCodesPage.jsx   UN location code browser
+      DocumentTemplatesPage.jsx   Document Template Editor (v0.90.0) — list + free-form canvas
+                                   editor for a per-office/carrier document layout, BL01 pilot
+                                   only. Canvas dragging/resizing uses raw onMouseDown/mousemove/
+                                   mouseup tracking (a genuinely new interaction for this
+                                   codebase — every prior drag-and-drop here is native HTML5 DnD
+                                   for list reordering, e.g. Kanban columns/admin sidebar order).
   components/
     primitives/
       ActionMenu.jsx   Btn.jsx Modal.jsx Form.jsx Badge.jsx Spinner.jsx
@@ -267,11 +276,20 @@ src/
                                    opened from LoadingServicePage.jsx's per-container row, only
                                    when the covering leg is Merchant's Haulage
 ```
-`src/utils/documentBuilders.js` — the 11 `buildXHtml` document template functions (BL01/MB01/CI01/
-CI02/PL01/CO01/CD01/IC01/DG01/AN01/DO01) + `DOC_TYPES`/`docTypeLabel`/`dispatchDocBuilder`/
+`src/utils/documentBuilders.js` — the 12 `buildXHtml` document template functions (BL01/MB01/BR01/
+CI01/CI02/PL01/CO01/CD01/IC01/DG01/AN01/DO01) + `DOC_TYPES`/`docTypeLabel`/`dispatchDocBuilder`/
 `getMissingDocRequirements`, extracted from App.jsx alongside the modals above (v0.87.0) — the same
 kind of pure HTML-string builder `src/utils/invoiceGenerator.js` already houses for FR01/FR02/
 LP01-family documents (which `dispatchDocBuilder` calls into for those codes).
+`src/utils/templateRenderer.js` — the Document Template Editor's own renderer (v0.90.0):
+`renderTemplateHtml(template, data)` walks a saved `document_templates` row's field array into a
+real HTML string, `resolvePath(data, path)` does the dot-path lookup into the exact same resolved
+data bag `GenerateDocumentModal.jsx` already assembles for `dispatchDocBuilder`. Deliberately
+bypasses `_invShell`/`INV_CSS` — a template author designs the whole page themselves on the
+canvas, so those would double-print a second header. `GenerateDocumentModal.jsx` resolves a
+matching template (via `GET /api/document-templates/resolve`) before its existing
+`dispatchDocBuilder` call — a match renders through `renderTemplateHtml` instead; no match falls
+through to `dispatchDocBuilder` completely unchanged. `BL01` only for now.
 
 ## Route factory pattern
 All route files use `module.exports = function domainRoutes(app, ctx) { ... }`.
@@ -340,7 +358,8 @@ are fully validated.
 | shipment_services | Dedicated Services (Export/Import): side, service_type, status lifecycle, vendor, office, dates — Epic TKT-A5LUPD |
 | shipment_loading_plan_lines | Per-container loading plan (planned date, sequence, notes) for a Loading service — Epic TKT-TBS7QD |
 | shipment_screenings | OFAC/SDN screening results and override records. Since v0.58.0 covers all 13 party-role slots (4 fixed + 9 `shipment_parties`), not just Shipper/Consignee/Principal — each hit's `field` corroborates by both name-match and `customer_id`-against-`customer_screenings` |
-| shipment_documents | Uploaded documents metadata (filename, type, label) |
+| shipment_documents | Uploaded documents metadata (filename, type, label). `bl_surrendered_at`/`_by`, `bl_released_at`/`_by` (v0.90.0, House B/L Lifecycle) — post-issuance facts on a confirmed `BL01` row, same sparse per-doc-type idiom `paid_at`/`paid_amount` (FR01/FR02-only) already established. Idempotent, set via `PATCH .../bl-surrender`/`.../bl-release`, logged through the existing `entity_events` mechanism |
+| document_templates | Document Template Editor (v0.90.0) — a free-form canvas layout scoped by `(doc_type, office_id?, carrier_code?)`, `BL01` pilot only. `fields` is a JSON array of absolutely-positioned boxes (bound to a shipment value or free text) or `type:"table"` repeating regions bound to `containers`. No DB-level `UNIQUE` on the scope triple (Postgres treats `NULL <> NULL`, so two generic rows wouldn't collide at the constraint level anyway) — the create route enforces it itself via `IS NOT DISTINCT FROM` |
 | status_log | Shipment status transitions (legacy, kept for compat) |
 | entity_events | Generic audit log for allocations, carriers, contracts |
 | commodities | 294 Maersk freight commodity codes (Grades M/K/E/S/Q) |
@@ -406,6 +425,60 @@ are fully validated.
 - **Document system**: `DOC_TYPES` in App.jsx (~line 56: BL01/MB01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — `MB01` (Master Bill of Lading, v0.71.0) is the vessel-operator-to-NVOCC document, a genuinely separate build from `BL01` (NVOCC-to-shipper House B/L), not a mode flag on it — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). (The earlier client-side-jsPDF `DocumentsMenu` component this note used to distinguish from was removed as dead code — it had zero references anywhere in the app.)
 - **Lifecycle-stage stepper precedent**: no dedicated stepper component exists yet; `MilestonePanel` (ShipmentDetailPage.jsx 1593-~1870) is the closest analog — linear progress bar (1734-1738, `width: ${progress}%`) plus per-step state coloring via `milestoneState()`/`stateColor()` (1666-1676: completed/overdue/current/upcoming) driven by `shipment_milestones` rows (`id, label, estimatedDate, note, completedAt, completedBy`, fixed step keys `booking_confirmed, si_submitted, cargo_gated_in, vessel_departed, bl_issued, vessel_arrived, customs_cleared, cargo_released, delivered`). Any new per-container lifecycle/stage UI should reuse this state-coloring pattern rather than inventing a new visual language
 - **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages, 📡 EDI). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
+
+## Recent changes (v0.90.0 "Blueprint")
+Two features plus a fix wave, bundled into one release rather than three incremental version
+bumps for what was really one continuous working session's output (same call as v0.85.0's own
+bundling).
+- **House B/L Lifecycle Status Tracking** — informed by sourced CargoWise research (Consol/
+  Shipment model, eHBL lifecycle language "create/issue → publish/distribute → update/amend"),
+  closing a real gap: CargoDesk had no way to record whether a generated House B/L had actually
+  been issued, surrendered at origin, or released at destination — `shipments.bl_release_type`
+  only ever classified WHAT KIND of release applies, never the real-world temporal state. Direct
+  scoping decision: EDI/electronic-transfer explicitly deferred, ships as document generation
+  plus the existing print/email distribution only.
+- "Issued" reuses the existing `draft→confirmed` transition on a `BL01` document — no new state
+  needed — and now also auto-completes the previously-dormant `bl_issued` milestone step (seeded
+  since the milestone sequence existed, never wired to any trigger before this). Two new manual
+  actions, Mark Surrendered and Mark Released (new `shipment_documents` columns, see table above),
+  idempotent, logged via the existing `entity_events` mechanism so they show up in the document's
+  existing history modal for free.
+- **Document Template Editor** — direct request: let staff define their own document layout per
+  office/carrier using a free-form visual drag-and-drop canvas (explicitly chosen over a simpler
+  reorderable-field-list alternative), so a layout change no longer means editing JS code. `BL01`
+  pilot only — see `document_templates` in the table above and `src/utils/templateRenderer.js` in
+  Key files. Canvas dragging/resizing needed a genuinely new interaction for this codebase (every
+  prior drag-and-drop here is native HTML5 DnD for list reordering) — plain `onMouseDown`/
+  `mousemove`/`mouseup` tracking instead, no new dependency.
+- A real Express route-ordering bug was caught by the feature's own test suite:
+  `/api/document-templates/:id` was registered before `/resolve`, so `:id` greedily captured the
+  literal string "resolve" — fixed by reordering the route registrations.
+- **Fix wave**: a real regression in the shipment Edit form — editing ANY field (even something
+  unrelated like Booking Reference) on a shipment with zero `shipment_legs` rows (e.g. one
+  created directly via API/import, never through the New Shipment form's own leg-creation flow)
+  silently cleared `pol`/`pod`, since the save payload always sent leg-derived values with no
+  fallback to the shipment's own already-correct current `pol`/`pod` when no legs exist to derive
+  from. Server-side validation correctly rejected the resulting empty `pol`/`pod` with a 400,
+  surfacing as an uncaught promise rejection in the UI. Fixed in `ShipmentFormPage.jsx`'s
+  `handleSave` to fall back to the shipment's existing values in edit mode.
+- Also fixed 3 failing/flaking Cypress specs found in CI: `carrier-agents.cy.js` (a
+  fullwidth-plus-vs-ASCII-plus button-text mismatch — every "add" button app-wide renders `＋`,
+  U+FF0B, not a plain `+`; and a raw `cy.request` missing its own auth header), and
+  `pending-revalidation.cy.js` (a stale expected-keys assertion that never accounted for the
+  already-shipped `commodityTypes` contract field).
+- New `tests/document-templates.test.js` (16 assertions) and `tests/house-bl-lifecycle.test.js`
+  (23 assertions), both green; full regression pass across `carrier-booking.test.js` (171),
+  `invoice-reversal.test.js` (20), `document-signing.test.js` (16),
+  `nvocc-carrier-identity.test.js` (21), `customs-filing.test.js` (39),
+  `pagination-standardization.test.js` (24) — all clean, clean build. Both features verified live
+  end-to-end via CDP; the `ShipmentFormPage.jsx` fix verified live by reproducing the exact
+  failing scenario and confirming the PUT now succeeds with `pol`/`pod` preserved. Cypress itself
+  couldn't be run locally to re-confirm the 3 spec fixes (the binary doesn't launch in this
+  sandbox, a known pre-existing environment limitation) — each fix was instead verified through
+  a direct equivalent (a live HTTP check for the key-shape fix, a live CDP reproduction of the
+  exact failing scenario for the regression fix, and direct source confirmation of the button-text
+  and missing-header fixes).
+- README gains a fifth screenshot (Contracts & Schedules page).
 
 ## Recent changes (v0.89.0 "Arbiter")
 - **Line Agent auto-resolve/ambiguity picker** — direct follow-up to this session's Carrier

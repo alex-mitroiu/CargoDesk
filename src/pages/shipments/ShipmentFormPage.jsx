@@ -1464,10 +1464,17 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
       }
     }
     onDirtyChange?.(false);
+    // Editing an existing shipment with no (or no longer any) legs must never clobber its
+    // already-saved pol/pod with an empty derived value — a real gap: create mode's own `valid`
+    // gate already requires derivedPol/derivedPod to be non-empty before Save is reachable at
+    // all, but edit mode's gate deliberately doesn't (a shipment with zero legs, e.g. created
+    // via direct API import, must still be editable for unrelated fields like Booking
+    // Reference) — this payload was still unconditionally sending the derived (here, blank)
+    // value regardless, which the server correctly rejects as "pol and pod are required".
     withSaving(() => onSave({
       ...f,
-      pol: derivedPol,
-      pod: derivedPod,
+      pol: derivedPol || (init.id ? init.pol : ""),
+      pod: derivedPod || (init.id ? init.pod : ""),
       etd: derivedEtd,
       eta: derivedEta,
       carrierCode: effectiveCarrierCode,

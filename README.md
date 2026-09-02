@@ -3,7 +3,7 @@
 > Freight management application for tracking ocean shipments, carrier space utilisation, contracts, and maritime master data.
 
 [![CI](https://github.com/alex-mitroiu/CargoDesk/actions/workflows/ci.yml/badge.svg)](https://github.com/alex-mitroiu/CargoDesk/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.89.0-blue)](.)
+[![Version](https://img.shields.io/badge/version-0.90.0-blue)](.)
 ![Node](https://img.shields.io/badge/node-22.5%2B-green)
 ![License](https://img.shields.io/badge/license-custom-lightgrey)
 
@@ -20,6 +20,7 @@ End-User License Agreement for full terms.
 |---|---|
 | ![Dashboard](.github/screenshots/01-dashboard.png) **Consumption Dashboard** — TEU allocation, active shipment health, and shipments in period | ![Shipments](.github/screenshots/02-shipments.png) **Shipments** — server-side filter, sort, and pagination across the fleet |
 | ![Billing Performance](.github/screenshots/03-billing-performance.png) **Billing Performance** — invoice status breakdown, filterable by office/customer/trade lane/carrier | ![Shipment Detail](.github/screenshots/04-shipment-detail.png) **Shipment Detail** — route, vessel, and party summary with a persistent header bar |
+| ![Contracts & Schedules](.github/screenshots/05-contracts-schedules.png) **Contracts & Schedules** — route legs, carrier line agents, and the linked contract for a shipment | |
 
 ---
 
