@@ -174,7 +174,12 @@ async function login() {
     // scripts/import-mdm-data.js's own comment). Own two scratch MDM countries instead of
     // assuming NL/DE are seeded, same fix already applied to organization.test.js for the
     // identical gap.
-    const laneCountryA = `Z${rand[1]}`, laneCountryB = `Z${rand[2]}`;
+    // Different leading letters (not two positions sliced from the same short random string) —
+    // structurally guarantees A !== B. rand[1]/rand[2] previously collided about 1 run in 36
+    // (whenever those two characters matched), silently deduping the PUT's ON CONFLICT DO
+    // NOTHING insert down to one row and failing the two-country comparison below — a genuine,
+    // rare, self-inflicted flake, not a bug in the trade-lane routes themselves.
+    const laneCountryA = `Z${rand[1]}`, laneCountryB = `Y${rand[2]}`;
     await request("POST", "/api/countries", { iso2: laneCountryA, name: "Zedland Lane A" }, token);
     await request("POST", "/api/countries", { iso2: laneCountryB, name: "Zedland Lane B" }, token);
 
