@@ -3,15 +3,9 @@ const ExcelJS = require("exceljs");
 const path    = require("path");
 const fs      = require("fs");
 
-// Same rule as lib/mappers.js's costLineEffectiveUsd() (2026-09-02 audit — the real, actualized/
-// posted amount once one exists, the accrual estimate only while still open), expressed as a raw
-// SQL CASE for the one query below that aggregates across shipments in the database rather than
-// in JS — the two must be kept in sync by hand since SQL can't call the JS helper directly.
-const COST_LINE_EFFECTIVE_USD_SQL = `CASE WHEN actual_amount IS NOT NULL
-  THEN actual_amount * COALESCE(actual_exchange_rate, exchange_rate) ELSE amount * exchange_rate END`;
-
 module.exports = function exportRoutes(app, ctx) {
-  const { query, auth, applyShipmentAccessFilter, mapShipment, roundCents, costLineEffectiveUsd, createRateLimiter } = ctx;
+  const { query, auth, applyShipmentAccessFilter, mapShipment, roundCents, costLineEffectiveUsd,
+          COST_LINE_EFFECTIVE_USD_SQL, createRateLimiter } = ctx;
 
   // Every route below does a full server-side multi-join build (CSV) or an in-memory ExcelJS
   // workbook build (XLSX) across every shipment the caller can see — cheap for one call, not

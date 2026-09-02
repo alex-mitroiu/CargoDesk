@@ -9,7 +9,8 @@ module.exports = function shipmentsRoutes(app, ctx) {
           broadcastMessage, broadcastEditLockChange, recomputeSpaceBadge, screenShipmentById, resolveCarrierAgent, resolveCarrierAgentCandidates,
           logEvent, logEntityEvent, TRACKED_FIELDS, TRACKED_CTR_FIELDS, FREE_TIME_WARNING_DAYS,
           sanctionsMap, autoCompleteMilestone, ensureBookingCreated, toUsd,
-          validCoord, GPS_LOC_TYPE, getSettings, callContractService, getCustomerRow } = ctx;
+          validCoord, GPS_LOC_TYPE, getSettings, callContractService, getCustomerRow,
+          COST_LINE_EFFECTIVE_USD_SQL } = ctx;
 
   // trade_manager and viewer are read-only on all shipment write operations
   const shipmentWrite = requireRole(["admin", "operator", "occ_bk"]);
@@ -228,10 +229,10 @@ module.exports = function shipmentsRoutes(app, ctx) {
       LEFT JOIN offices emo  ON emo.id  = s.emo_office_id
       LEFT JOIN offices imo  ON imo.id  = s.imo_office_id
       LEFT JOIN offices ctrl ON ctrl.id = s.controlling_office_id
-      LEFT JOIN (SELECT shipment_id, SUM(amount * exchange_rate) AS total
+      LEFT JOIN (SELECT shipment_id, SUM(${COST_LINE_EFFECTIVE_USD_SQL}) AS total
                  FROM shipment_cost_lines WHERE type='BUY' GROUP BY shipment_id) buy
              ON buy.shipment_id = s.id
-      LEFT JOIN (SELECT shipment_id, SUM(amount * exchange_rate) AS total
+      LEFT JOIN (SELECT shipment_id, SUM(${COST_LINE_EFFECTIVE_USD_SQL}) AS total
                  FROM shipment_cost_lines WHERE type='SELL' GROUP BY shipment_id) sell
              ON sell.shipment_id = s.id
       LEFT JOIN (SELECT shipment_id, COUNT(*) AS overdue_count
