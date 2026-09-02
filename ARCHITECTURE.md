@@ -1928,6 +1928,23 @@ Referential integrity is genuinely enforced at the SQLite level, not just by app
 | ~~M9~~ | ~~ShipmentDetailPage section nav has no shared source of truth~~ | **RESOLVED** — see §8.11, `shipmentSections.js`. |
 | ~~M10~~ | ~~Two unrelated "document" systems~~ | **RESOLVED v0.65.0** (unchanged from last review). |
 
+### Shipment-Domain Gap & Dead-Code Audit Log (ongoing, started 2026-09-02)
+
+A direct request to systematically hunt for dead ends and gaps, starting at the shipment level —
+distinct from the Critical/High/Medium/Low items above (which are architectural debt) and from
+the competitive gap analyses elsewhere (which compare against other platforms' features). This
+log is per-item: what was checked, the verdict, and the finding — kept dated so it doesn't go
+stale silently the way this whole document once did (see L10). Append rows as the audit
+continues; don't rewrite history once an item's checked.
+
+| Date | Area checked | Verdict | Finding |
+|---|---|---|---|
+| 2026-09-02 | Shipment sidebar nav wiring (`ShipmentDetailSidebar.jsx` ↔ `App.jsx` routing switch ↔ `shipmentSections.js`) | **No gap** | Fully traced end to end. The 6 flat promoted sections, Booking & Routing/Export-Import Services/Accounting groups, and the admin-reorderable sidebar all derive from single-source-of-truth configs (`SHIPMENT_SECTIONS`, `PROMOTED_ROUTES`, `blockRenderers`) — no orphaned page key, no link to a route that doesn't exist. |
+| 2026-09-02 | `server.js` inline route duplication (previously flagged and partially fixed v0.65.0/v0.51.0) | **Confirmed clean** | The specific dead duplicates called out in the v0.51.0 changelog (`GET /api/shipments/:id/events`/`/documents`, `GET /api/documents/:docId/download`) are gone. `server.js` now registers only 2 inline routes total: `/internal/dev/shutdown` and the production SPA fallback — both intentional, not dead code. |
+| 2026-09-02 | `PUT /api/shipments/:id` crash when `status` omitted from body ([[project_workflow_audit_fixes]] had this flagged as known-unfixed) | **Already fixed — memory was stale** | `routes/shipments.js` now guards `status` (and `pol`/`pod`/`carrierCode`/`contractType`) with an explicit `!== undefined` fallback to `existing.status`, with a comment describing the old crash. Verified live: PUT with no `status` field → 200, status preserved, server stays up. Memory file corrected in place. |
+| 2026-09-02 | Document Template Editor (`routes/document-templates.js`) — does it bypass `mdm_source=remote` the way 11 other known sites do (§8.1)? | **No gap** | `offices` was never extracted to any microservice — no `offices_source` toggle exists anywhere, so the route's direct `LEFT JOIN offices` is correct by construction, not a bypass. The carrier picker in `NewTemplateModal` calls the already-remote-aware `api.carriers.list()` rather than duplicating that logic. |
+| 2026-09-02 | Carrier/Line Agent **Capabilities checklist** (`MdmCarrierAgentsPage.jsx`'s Capabilities tab, `carrier_agents.capabilities`) — is it ever cross-checked against a shipment before a booking is sent? | **Real, confirmed gap — data collected, never read back** | Grepped every carrier-booking file (`routes/edi.js`, `routes/shipment-ops.js`, `ShipmentCarrierBookingDetailsPage.jsx`, `ShipmentCarrierBookingReviewPage.jsx`, `CarrierBookingGateModal.jsx`) for any reference to `capabilit*` — zero hits outside `routes/mdm.js`'s own CRUD. The feature's own code comment already named the intent ("used later to cross-check against a leg's own haulage/service before a booking is sent") — confirmed that check genuinely doesn't exist anywhere, not assumed from the comment. Logged as `TKT-FQFE33`, under new Epic `TKT-E25769` "Shipment Domain Gap & Dead-Code Audit" (see Kanban). |
+
 ### Low / Enhancement
 
 | # | Opportunity | Status |
