@@ -293,7 +293,23 @@ module.exports = function carrierInvoicesRoutes(app, ctx) {
 
     if (line.matched_cost_line_id) {
       const [costLine] = await query("SELECT * FROM shipment_cost_lines WHERE id=$1", [line.matched_cost_line_id]);
-      if (costLine && costLine.status !== "posted") {
+      // The cost line matchLine() found was accrued at match time, but nothing stops it from being
+      // independently actualized+posted before this invoice line gets approved — a realistic
+      // ordering (the carrier's own invoice routinely arrives after a shipment's costs are already
+      // closed out). Silently marking the invoice line "approved" here would drop the carrier's
+      // real amount on the floor with no trace, since the posted cost line is correctly never
+      // touched. Reject instead, matching this codebase's standing "posted lines are locked — add
+      // an adjusting line" convention: the operator adds a new accrued BUY cost line for the
+      // difference, hits Rematch (matchLine() only ever matches 'accrued' lines, so it picks up the
+      // new one), then approves against that.
+      if (costLine && costLine.status === "posted") {
+        // Deliberately doesn't prescribe "add a line for the difference" — approving always writes
+        // this invoice line's FULL amount as whatever cost line it ends up matched to, not an
+        // incremental delta, so a naively-sized adjusting line here would double-count against the
+        // already-posted actual. Left as a manual judgment call for whoever reconciles this.
+        return err(res, "The matched cost line has already been posted and locked. Resolve this manually — add a new adjusting BUY cost line reflecting the real total owed, use Rematch to point this invoice line at it, then approve — rather than through this action.", 409);
+      }
+      if (costLine) {
         await query(`UPDATE shipment_cost_lines SET status='actualized', actual_amount=$1, actual_exchange_rate=$2, actualized_at=$3, actualized_by=$4 WHERE id=$5`,
           [line.amount, exchangeRate, now, actor, costLine.id]);
         await logEntityEvent("cost_line", costLine.id, "ACTUALIZED", "status", costLine.status, "actualized",
