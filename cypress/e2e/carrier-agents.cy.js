@@ -35,6 +35,14 @@ describe("Carrier Agents Suite", () => {
   before(() => {
     cy.request("POST", "/api/auth/login", { email: ADMIN_EMAIL, password: ADMIN_PASSWORD })
       .then(res => { tok = res.body.token; })
+      // CarrierCombobox has no server-side search — it filters client-side against the real
+      // carriers registry (api.carriers.list()), so the fictional "TSTZ" code used throughout
+      // this spec must actually exist there or its dropdown option never renders. The API-only
+      // backend suite (tests/carrier-agents.test.js) doesn't hit this — carrier_code has no FK
+      // there, so any string round-trips fine — but this spec drives the real picker UI.
+      // failOnStatusCode:false means a leftover TSTZ from an earlier aborted run (already-exists)
+      // is silently tolerated rather than failing this hook.
+      .then(() => api("POST", "/carriers", { code: "TSTZ", name: "Cypress Test Carrier" }))
       .then(() => api("POST", "/customers", { companyName: `Cypress Iberia Agents ${Date.now()}` }))
       .then(res => { customerId = res.body.id; customerName = res.body.companyName; });
   });
@@ -42,6 +50,7 @@ describe("Carrier Agents Suite", () => {
   after(() => {
     if (headerId) api("DELETE", `/carrier-agents/${headerId}`);
     if (customerId) api("DELETE", `/customers/${customerId}`);
+    api("DELETE", "/carriers/TSTZ");
   });
 
   beforeEach(() => {

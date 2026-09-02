@@ -274,7 +274,7 @@ async function gracefulShutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`\n⚓  ${signal} received, shutting down gracefully...`);
-  httpServer.close(() => {});
+  await new Promise((resolve) => httpServer.close(resolve));
   try { await closeDb(); } catch (e) { console.error("Error closing database:", e.message); }
   process.exit(0);
 }

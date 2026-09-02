@@ -140,12 +140,19 @@ async function login() {
     assert("no duplicate AIS_DEPARTURE_CONFIRMED event", legEvents2.body.filter(e => e.eventType === "AIS_DEPARTURE_CONFIRMED").length === 1);
 
     console.log("\nA MANUAL correction always overwrites an AIS-confirmed value and resets the confirmed flag");
+    // The AIS-confirmed etd above is always today's date (applyActual's eventDate defaults to
+    // `new Date()` when no MetaData.time_utc is supplied — the simulator never supplies one).
+    // A manual correction must use a date guaranteed to differ from "today" the day this test
+    // runs, or the source-clearing comparison (etd !== existing.etd) sees no change and the
+    // very thing this test exercises never fires — computed relative to now rather than a
+    // hardcoded literal for exactly that reason.
+    const manualEtd = new Date(Date.now() - 3 * 86400000).toISOString().slice(0, 10);
     const manualCorrect = await request("PUT", `/api/shipments/${shipmentId}/legs/${legId}`, {
       legType: "SEA", movementType: "SEA", pol: "NLRTM", pod: "USNYC",
-      etd: "2026-09-02", eta: "2026-09-15", carrierCode: "MAEU",
+      etd: manualEtd, eta: "2026-09-15", carrierCode: "MAEU",
       vessel: "AIS TEST VESSEL RENAMED", vesselImo: imo,
     }, token);
-    assert("manual PUT can override a confirmed etd", manualCorrect.body.etd === "2026-09-02");
+    assert("manual PUT can override a confirmed etd", manualCorrect.body.etd === manualEtd);
     assert("etd_source clears back to '' on a manual change", manualCorrect.body.etdSource === "");
 
     console.log("\nATA confirmation mirrors ETD");
