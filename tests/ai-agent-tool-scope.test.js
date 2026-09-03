@@ -134,14 +134,24 @@ async function chatRequestingTool(token, userMessage, name, input) {
       ai_api_key: "test-fixture-key", ai_model: "mock-model",
     }, adminToken);
 
-    console.log("\nFind two real shipments with different POLs to build a scope restriction");
-    const listRes = await request("GET", "/api/shipments", null, adminToken);
-    const shipments = Array.isArray(listRes.body) ? listRes.body : listRes.body.results;
-    const distinctPols = [...new Set(shipments.map(s => s.pol).filter(Boolean))];
-    if (distinctPols.length < 2) throw new Error("Need 2+ distinct POLs in the dataset for this test");
-    const scopedPol = distinctPols[0];
-    const outOfScope = shipments.find(s => s.pol && s.pol !== scopedPol);
-    const inScope = shipments.find(s => s.pol === scopedPol);
+    console.log("\nCreate two scratch shipments with different POLs to build a scope restriction");
+    // Deliberately self-contained rather than picking two shipments off GET /api/shipments — CI
+    // seeds only MDM reference data (npm run seed), not sample shipments, so the 45-file chain
+    // builds up whatever shipments exist purely from each test's own fixtures; depending on
+    // ambient data left over from wherever this file happens to land in that chain is exactly
+    // the kind of ordering-fragile assumption that passes locally (a long-lived dev DB always has
+    // plenty of shipments) and fails in CI. Confirmed live: this was the actual cause of a real
+    // CI failure caught right after this file first shipped.
+    const scopedPol = "NLRTM";
+    const otherPol   = "DEHAM";
+    const inScopeShipRes = await request("POST", "/api/shipments", { pol: scopedPol, pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT" }, adminToken);
+    const outOfScopeShipRes = await request("POST", "/api/shipments", { pol: otherPol, pod: "USNYC", carrierCode: "MAEU", status: "Active", contractType: "SPOT" }, adminToken);
+    assert("in-scope scratch shipment created", inScopeShipRes.status === 200 || inScopeShipRes.status === 201);
+    assert("out-of-scope scratch shipment created", outOfScopeShipRes.status === 200 || outOfScopeShipRes.status === 201);
+    const inScope    = inScopeShipRes.body;
+    const outOfScope = outOfScopeShipRes.body;
+    cleanup.push(() => request("DELETE", `/api/shipments/${inScope.id}`, null, adminToken));
+    cleanup.push(() => request("DELETE", `/api/shipments/${outOfScope.id}`, null, adminToken));
 
     console.log("\nCreate a trade_manager test user restricted to one POL");
     const email = `scope-audit-${Date.now()}@test.local`;
