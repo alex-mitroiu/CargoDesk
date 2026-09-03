@@ -158,8 +158,14 @@ module.exports = function documentDistributionRoutes(app, ctx) {
 
   // ─── Test Tools Webhook Simulator — dev-only mock receiver ───────────────────────────────────
 
+  // Gated the same as this file's other write actions (2026-09-03 audit — a real gap: every other
+  // Test Tools simulator route in this codebase (kanban.js's ops-sweep trigger, edi.js's and
+  // customs-filing.js's own simulate-response routes) requires at least shipmentWrite; this one
+  // had no gate at all, verified live: a plain viewer-role user could freely POST/GET this shared,
+  // process-wide in-memory log. GET stays open to viewer (read-only role, matches this app's own
+  // hierarchy — nothing sensitive lives here beyond whatever a privileged user already sent).
   const webhookReceiverLog = [];
-  app.post("/api/test/webhook-receiver", (req, res) => {
+  app.post("/api/test/webhook-receiver", shipmentWrite, (req, res) => {
     webhookReceiverLog.unshift({
       receivedAt: new Date().toISOString(),
       signature: req.headers["x-cargodesk-signature"] || "",
@@ -169,5 +175,5 @@ module.exports = function documentDistributionRoutes(app, ctx) {
     ok(res, { received: true });
   });
   app.get("/api/test/webhook-receiver", (req, res) => ok(res, webhookReceiverLog));
-  app.delete("/api/test/webhook-receiver", (req, res) => { webhookReceiverLog.length = 0; ok(res, { cleared: true }); });
+  app.delete("/api/test/webhook-receiver", shipmentWrite, (req, res) => { webhookReceiverLog.length = 0; ok(res, { cleared: true }); });
 };
