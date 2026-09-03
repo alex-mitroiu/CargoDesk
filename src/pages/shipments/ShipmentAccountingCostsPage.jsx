@@ -3,7 +3,7 @@ import { T } from "../../tokens";
 import { useAuth } from "../../AuthContext";
 import Btn from "../../components/primitives/Btn";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
-import { CostLineForm, CostLineHistoryModal, CostLineRow, CostLineActualizeModal } from "./ShipmentDetailPage";
+import { CostLineForm, CostLineHistoryModal, CostLineRow, CostLineActualizeModal, CostLineAdjustModal } from "./ShipmentDetailPage";
 import { api } from "../../api";
 import { toast } from "../../toast";
 import { IconClipboard, IconArrowDown, IconArrowUp, IconRefresh } from "../../components/primitives/Icon";
@@ -33,6 +33,7 @@ const ShipmentAccountingCostsPage = ({ shipment, containers, onBack }) => {
   const [busy,        setBusy]        = useState(false);
   const [actualizeLine, setActualizeLine] = useState(null); // line pending actualization
   const [confirmPost,   setConfirmPost]   = useState(null); // line pending Post confirmation
+  const [adjustLine,    setAdjustLine]    = useState(null); // posted line pending an Adjust entry
 
   const isCentral = shipment.contractType === "Central" && !!shipment.contractId;
 
@@ -107,6 +108,15 @@ const ShipmentAccountingCostsPage = ({ shipment, containers, onBack }) => {
     try {
       await api.costLines.post(shipment.id, line.id);
       toast.success("Cost line posted — now locked");
+      load();
+    } catch (e) { toast.error(e.message); }
+  };
+
+  const handleAdjust = async data => {
+    try {
+      await api.costLines.adjust(shipment.id, adjustLine.id, data);
+      toast.success("Adjustment posted");
+      setAdjustLine(null);
       load();
     } catch (e) { toast.error(e.message); }
   };
@@ -203,7 +213,8 @@ const ShipmentAccountingCostsPage = ({ shipment, containers, onBack }) => {
           {buyLines.map(l => (
             <CostLineRow key={l.id} line={l} containers={ctrs} showActions
               onEdit={() => setLineModal(l)} onDelete={() => setConfirm(l.id)}
-              onActualize={() => setActualizeLine(l)} onPost={() => setConfirmPost(l)} />
+              onActualize={() => setActualizeLine(l)} onPost={() => setConfirmPost(l)}
+              onAdjust={() => setAdjustLine(l)} />
           ))}
         </div>
       )}
@@ -253,6 +264,10 @@ const ShipmentAccountingCostsPage = ({ shipment, containers, onBack }) => {
 
       {actualizeLine && (
         <CostLineActualizeModal line={actualizeLine} onClose={() => setActualizeLine(null)} onSave={handleActualize} />
+      )}
+
+      {adjustLine && (
+        <CostLineAdjustModal line={adjustLine} onClose={() => setAdjustLine(null)} onSave={handleAdjust} />
       )}
 
       {confirmPost && (

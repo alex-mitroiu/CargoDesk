@@ -356,10 +356,45 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     ok(res, rows.map(mapCostLine));
   });
 
+  // Adjust (2026-09-03 shipment-domain audit) — the real fix for a posted line that turns out to
+  // be wrong. A posted line stays locked (matches the SELL-side invariant — nothing here allows
+  // editing or deleting one), but this creates a NEW cost line explicitly linked back via
+  // adjusts_cost_line_id and immediately posts it, the same "this is already a final, recorded
+  // accounting event" reasoning the SELL-side Invoice Reversal (v0.53.0) uses for its own
+  // adjusting lines. `amount` is the DELTA (the difference), never a new total — the frontend
+  // modal is explicit about this, since actualize/post's own actual_amount write always replaces
+  // (not adds to) whatever a line already held, so entering a full corrected total here would
+  // double-count against the original line's own already-posted actual_amount.
+  app.post("/api/shipments/:shipmentId/cost-lines/:id/adjust", postGate, async (req, res) => {
+    const [existing] = await query("SELECT * FROM shipment_cost_lines WHERE id=$1 AND shipment_id=$2", [req.params.id, req.params.shipmentId]);
+    if (!existing) return err(res, "Not found", 404);
+    if (existing.type !== 'BUY') return err(res, "Adjust is for BUY-side lines — a confirmed SELL invoice has its own Invoice Reversal action instead", 409);
+    if (existing.status !== 'posted') return err(res, "Only a posted line can be adjusted — edit it directly instead", 409);
+    const { amount, exchangeRate = existing.exchange_rate, note = '' } = req.body || {};
+    if (amount == null || Number(amount) === 0) return err(res, "A non-zero adjustment amount is required");
+    const now = new Date().toISOString();
+    const actor = req.user?.name || req.user?.email || "";
+    const id = `CL-${uid()}`;
+    const amt = Number(amount), rate = Number(exchangeRate);
+    await query(`INSERT INTO shipment_cost_lines
+      (id, shipment_id, type, charge_code, currency, amount, exchange_rate, notes, created_at,
+       container_id, source, status, actual_amount, actual_exchange_rate, actualized_at, actualized_by,
+       posted_at, posted_by, adjusts_cost_line_id)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'adjustment','posted',$11,$12,$13,$14,$15,$16,$17)`,
+      [id, req.params.shipmentId, existing.type, existing.charge_code, existing.currency,
+        amt, rate, note, now, existing.container_id || '',
+        amt, rate, now, actor, now, actor, existing.id]);
+    await logEntityEvent('cost_line', id, 'ADJUSTED', null, null, null,
+      JSON.stringify({ shipmentId: req.params.shipmentId, chargeCode: existing.charge_code, type: existing.type,
+        adjustsCostLineId: existing.id, amount: amt, note }));
+    const [row] = await query("SELECT * FROM shipment_cost_lines WHERE id=$1", [id]);
+    ok(res, mapCostLine(row), 201);
+  });
+
   app.delete("/api/shipments/:shipmentId/cost-lines/:id", shipmentWrite, async (req, res) => {
     const [existing] = await query("SELECT * FROM shipment_cost_lines WHERE id=$1 AND shipment_id=$2", [req.params.id, req.params.shipmentId]);
     if (!existing) return err(res, "Not found", 404);
-    if (existing.status === 'posted') return err(res, "This line is posted and locked — add a new adjusting line instead of deleting it", 409);
+    if (existing.status === 'posted') return err(res, "This line is posted and locked — use Adjust to post an offsetting entry instead of deleting it", 409);
     await query("DELETE FROM shipment_cost_lines WHERE id=$1", [req.params.id]);
     await logEntityEvent('cost_line', req.params.id, 'DELETED', null, null, null,
       JSON.stringify({ shipmentId: existing.shipment_id, type: existing.type, chargeCode: existing.charge_code, amount: existing.amount, currency: existing.currency, source: existing.source || 'manual' }));

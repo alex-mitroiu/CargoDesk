@@ -2576,7 +2576,7 @@ export const CostLineHistoryModal = ({ shipmentId, onClose }) => {
   const [events,    setEvents]    = useState([]);
   const [lineIndex, setLineIndex] = useState({});
   const [loading,   setLoading]   = useState(true);
-  const [filter,    setFilter]    = useState(new Set(["CREATED","IMPORTED","UPDATED","DELETED","GENERATED","CONFIRMED","AUTO_REMOVED"]));
+  const [filter,    setFilter]    = useState(new Set(["CREATED","IMPORTED","UPDATED","DELETED","GENERATED","CONFIRMED","AUTO_REMOVED","ACTUALIZED","POSTED","ADJUSTED"]));
 
   useEffect(() => {
     Promise.all([api.costLines.events(shipmentId), api.costLines.list(shipmentId)])
@@ -2596,6 +2596,7 @@ export const CostLineHistoryModal = ({ shipmentId, onClose }) => {
   const evtColor = t => ({
     CREATED: T.success, IMPORTED: T.info, UPDATED: T.warning, DELETED: T.danger,
     GENERATED: T.info, CONFIRMED: T.success, AUTO_REMOVED: T.warning,
+    ACTUALIZED: T.info, POSTED: T.textMuted, ADJUSTED: T.warning,
   }[t] || T.textMuted);
 
   // Cost/invoice lines show their charge code; generated invoice documents (a different
@@ -2638,8 +2639,9 @@ export const CostLineHistoryModal = ({ shipmentId, onClose }) => {
   const TYPE_LABELS = {
     CREATED: "Created", IMPORTED: "Imported", UPDATED: "Updated", DELETED: "Deleted",
     GENERATED: "Generated", CONFIRMED: "Confirmed", AUTO_REMOVED: "Auto-removed",
+    ACTUALIZED: "Actualized", POSTED: "Posted", ADJUSTED: "Adjusted",
   };
-  const ALL_TYPES = ["CREATED","IMPORTED","UPDATED","DELETED","GENERATED","CONFIRMED","AUTO_REMOVED"];
+  const ALL_TYPES = ["CREATED","IMPORTED","UPDATED","DELETED","GENERATED","CONFIRMED","AUTO_REMOVED","ACTUALIZED","POSTED","ADJUSTED"];
 
   return (
     <Modal title={`Accounting History — ${shipmentId}`} onClose={onClose} width={860}>
@@ -2730,7 +2732,10 @@ export const CostLineHistoryModal = ({ shipmentId, onClose }) => {
                         ev.event_type === "DELETED"      ? "Removed" :
                         ev.event_type === "GENERATED"    ? "Invoice generated" :
                         ev.event_type === "CONFIRMED"    ? "Marked confirmed" :
-                        ev.event_type === "AUTO_REMOVED" ? "Orphaned, removed" : ""
+                        ev.event_type === "AUTO_REMOVED" ? "Orphaned, removed" :
+                        ev.event_type === "ACTUALIZED"   ? "Actual amount recorded" :
+                        ev.event_type === "POSTED"       ? "Posted — locked" :
+                        ev.event_type === "ADJUSTED"     ? "Adjustment posted" : ""
                       )}
                     </div>
                   </div>
@@ -2760,7 +2765,7 @@ const COST_LINE_STATUS_STYLE = {
   posted:     { label: "Posted",     color: T.textMuted },
 };
 
-export const CostLineRow = ({ line: l, containers = [], showActions = false, onEdit, onDelete, onActualize, onPost }) => {
+export const CostLineRow = ({ line: l, containers = [], showActions = false, onEdit, onDelete, onActualize, onPost, onAdjust }) => {
   const ctr = l.containerId ? containers.find(c => c.id === l.containerId) : null;
   const ctrLabel = ctr ? (ctr.containerNumber || `(${ctr.size || ""}${ctr.type || ""})`) : null;
   // Mirror direction is derived from the line's own type, not stored separately: a
@@ -2771,6 +2776,7 @@ export const CostLineRow = ({ line: l, containers = [], showActions = false, onE
     : l.source === "mirror" ? { label: l.type === "SELL" ? "Mirrored ← Cost Entry" : "Mirrored ← Invoice Entry", color: T.accent }
     : l.source === "automated" ? { label: "Automated", color: T.success }
     : l.source === "reversal" ? { label: "Reversal", color: T.danger }
+    : l.source === "adjustment" ? { label: "Adjustment", color: T.warning }
     : l.source === "merchant_haulage" ? { label: "Merchant's Haulage", color: T.accent }
     : { label: "Manual", color: T.textMuted };
   return (
@@ -2865,6 +2871,7 @@ export const CostLineRow = ({ line: l, containers = [], showActions = false, onE
             ] : []),
             ...(l.status === 'accrued' && onActualize ? [{ icon: "◐", label: "Actualize", onClick: onActualize }] : []),
             ...(l.status !== 'posted' && onPost ? [{ icon: IconLock, label: "Post", onClick: onPost }] : []),
+            ...(l.status === 'posted' && l.type === 'BUY' && onAdjust ? [{ icon: "±", label: "Adjust", onClick: onAdjust }] : []),
           ]} />
         </div>
       )}
@@ -2893,6 +2900,41 @@ export const CostLineActualizeModal = ({ line, onSave, onClose }) => {
           <Btn disabled={!valid || isSaving}
             onClick={() => withSaving(() => onSave({ actualAmount: parsed, actualExchangeRate: line.exchangeRate }))}>
             {isSaving ? "Saving…" : "Mark Actualized"}
+          </Btn>
+        </div>
+      </div>
+    </Modal>
+  );
+};
+
+// Posts an offsetting entry against an already-posted BUY line (e.g. a late carrier
+// credit/debit) instead of editing or deleting a locked line — the amount entered here
+// is the DELTA to apply, not the corrected total, so it can be added directly to the
+// original's own actual_amount without double-counting.
+export const CostLineAdjustModal = ({ line, onSave, onClose }) => {
+  const [amount, setAmount] = useState("");
+  const [note, setNote] = useState("");
+  const [isSaving, withSaving] = useSaving();
+  const parsed = parseFloat(amount);
+  const valid = !isNaN(parsed) && parsed !== 0;
+  return (
+    <Modal title={`Adjust — ${line.chargeCode}`} onClose={onClose} width={440}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, lineHeight: 1.5 }}>
+          Current posted amount: <strong style={{ color: T.text, fontFamily: T.mono }}>
+            {line.currency} {(line.actualAmount != null ? line.actualAmount : line.amount).toFixed(2)}
+          </strong>. Enter the <strong style={{ color: T.text }}>difference</strong> to apply — not the new
+          total — as a positive number to add a charge or a negative number to credit one back.
+          This posts a new adjusting line linked to the original; the original itself is never edited.
+        </div>
+        <Inp label={`Adjustment Amount (${line.currency})`} value={amount} onChange={setAmount} mono required
+          placeholder="e.g. 150 or -75" />
+        <Inp label="Reason (optional)" value={note} onChange={setNote} placeholder="e.g. Late carrier debit note DN-1029" />
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <Btn variant="secondary" onClick={onClose} disabled={isSaving}>Cancel</Btn>
+          <Btn disabled={!valid || isSaving}
+            onClick={() => withSaving(() => onSave({ amount: parsed, note }))}>
+            {isSaving ? "Posting…" : "Post Adjustment"}
           </Btn>
         </div>
       </div>

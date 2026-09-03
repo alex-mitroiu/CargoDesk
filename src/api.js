@@ -334,6 +334,7 @@ export const api = {
     actualize:      (shipmentId, lineId, d)    => req("PATCH",  `/shipments/${shipmentId}/cost-lines/${lineId}/actualize`, d),
     post:           (shipmentId, lineId)       => req("PATCH",  `/shipments/${shipmentId}/cost-lines/${lineId}/post`, {}),
     postBatch:      (shipmentId, ids)          => req("POST",   `/shipments/${shipmentId}/cost-lines/post-batch`, { ids }),
+    adjust:         (shipmentId, lineId, d)    => req("POST",   `/shipments/${shipmentId}/cost-lines/${lineId}/adjust`, d),
   },
   carrierInvoices: {
     list:      (p = {})    => req("GET",    `/carrier-invoices?${new URLSearchParams(p)}`),
