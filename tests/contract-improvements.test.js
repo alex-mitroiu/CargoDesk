@@ -63,7 +63,7 @@ async function login() {
 }
 
 (async () => {
-  let token, contractId, draftContractId, allocationId, shipmentId;
+  let token, contractId, draftContractId, allocationId, shipmentId, expireExplicitId, expireReviveId;
   try {
     console.log("Logging in...");
     token = await login();
@@ -218,6 +218,26 @@ async function login() {
       assert("a WITHDRAWN event was logged", events.body.some(e => e.eventType === "WITHDRAWN"));
     }
 
+    console.log("\nExpired-status auto-revive — respects an explicit choice, still fixes a stale sweep artifact");
+    {
+      // Case 1 (the bug, found 2026-09-03 live): a fresh Draft contract with no validTo, explicitly
+      // edited to status='Expired' — this is a real, deliberate choice (e.g. marking a superseded
+      // negotiation dead) and must be respected, not silently reverted to Active just because
+      // validTo happens to be blank.
+      const draft = await request("POST", "/api/contracts", { contractNumber: `TC-EXP-EXPLICIT-${Date.now()}`, carrierCode: "MAEU", status: "Draft" }, token);
+      expireExplicitId = draft.body.id;
+      const explicitExpire = await request("PUT", `/api/contracts/${expireExplicitId}`, { contractNumber: draft.body.contractNumber, carrierCode: "MAEU", status: "Expired" }, token);
+      assert("explicit Expired choice (blank validTo) is respected, not auto-revived", explicitExpire.body.status === "Expired", JSON.stringify(explicitExpire.body));
+
+      // Case 2 (the original fix, unaffected): a contract already Expired, edited with validTo
+      // pushed into the future while the form resubmits status='Expired' verbatim (its own
+      // untouched current value) — must still auto-revive to Active.
+      const stale = await request("POST", "/api/contracts", { contractNumber: `TC-EXP-REVIVE-${Date.now()}`, carrierCode: "MAEU", status: "Expired", validTo: "2020-01-01" }, token);
+      expireReviveId = stale.body.id;
+      const revived = await request("PUT", `/api/contracts/${expireReviveId}`, { contractNumber: stale.body.contractNumber, carrierCode: "MAEU", status: "Expired", validTo: "2030-01-01" }, token);
+      assert("a stale auto-expired contract still auto-revives once validTo moves into the future", revived.body.status === "Active", JSON.stringify(revived.body));
+    }
+
     console.log("\nAllocation MQC — minimumTEU can't exceed allocatedTEU");
     {
       // Re-publish the draft contract so an allocation can reference it (allocations require
@@ -250,6 +270,8 @@ async function login() {
     console.log("\nCleanup");
     if (allocationId)    { const d = await request("DELETE", `/api/allocations/${allocationId}`, null, token); assert("scratch allocation deleted", d.status === 200); }
     if (draftContractId) { const d = await request("DELETE", `/api/contracts/${draftContractId}`, null, token); assert("scratch draft contract deleted", d.status === 200, JSON.stringify(d.body)); }
+    if (expireExplicitId) await request("DELETE", `/api/contracts/${expireExplicitId}`, null, token).catch(() => {});
+    if (expireReviveId)   await request("DELETE", `/api/contracts/${expireReviveId}`, null, token).catch(() => {});
 
     console.log("\n──────────────────────────────────────────────────");
     console.log(`Results: ${passed} passed, ${failed} failed`);
@@ -261,6 +283,8 @@ async function login() {
       if (allocationId)    await request("DELETE", `/api/allocations/${allocationId}`, null, token).catch(() => {});
       if (contractId)      await request("DELETE", `/api/contracts/${contractId}`, null, token).catch(() => {});
       if (draftContractId) await request("DELETE", `/api/contracts/${draftContractId}`, null, token).catch(() => {});
+      if (expireExplicitId) await request("DELETE", `/api/contracts/${expireExplicitId}`, null, token).catch(() => {});
+      if (expireReviveId)   await request("DELETE", `/api/contracts/${expireReviveId}`, null, token).catch(() => {});
     }
     process.exit(1);
   }

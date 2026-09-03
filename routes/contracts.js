@@ -587,6 +587,7 @@ module.exports = function contractsRoutes(app, ctx) {
     const [dup] = await query("SELECT id FROM contracts WHERE contract_number=$1 AND contract_ref=$2 AND named_account_id=$3 AND id!=$4", [contractNumber, contractRef, namedAccountId, req.params.id]);
     if (dup) return err(res, `A contract with this number${contractRef ? ", reference" : ""}${namedAccountId ? ", and account" : ""} already exists (${dup.id})`);
     if (!CONTRACT_STATUSES.includes(status)) return err(res, `status must be one of: ${CONTRACT_STATUSES.join(", ")}`);
+    const [oldRow] = await query("SELECT * FROM contracts WHERE id=$1", [req.params.id]);
     // expireStaleContracts() (below) only ever flips Active -> Expired as validTo passes — it
     // never reverses that. Found live: a contract auto-expired that way stayed stuck showing
     // Expired forever even after its validTo was edited into the future, since the edit form
@@ -594,9 +595,16 @@ module.exports = function contractsRoutes(app, ctx) {
     // it verbatim. Mirrors the sweep's own condition, inverted — only auto-revives when the
     // caller is still submitting status='Expired' itself; an explicit different choice (Draft,
     // On Hold) made in the same edit is never overridden.
+    //
+    // Also requires oldRow.status was ALREADY 'Expired' before this edit — found live 2026-09-03:
+    // without this, an operator explicitly choosing "Expired" from the dropdown on a Draft/Active
+    // contract with no validTo set (a real, valid manual choice — e.g. marking a superseded
+    // negotiation dead) got silently reverted to 'Active' instead, since the condition alone
+    // can't distinguish "the sweep already set this and the edit form is just resubmitting it
+    // untouched" from "the user is choosing Expired right now" — only the row's own PRE-edit
+    // status can.
     const today = new Date().toISOString().slice(0, 10);
-    const effStatus = (status === 'Expired' && (!validTo || validTo >= today)) ? 'Active' : status;
-    const [oldRow] = await query("SELECT * FROM contracts WHERE id=$1", [req.params.id]);
+    const effStatus = (status === 'Expired' && oldRow?.status === 'Expired' && (!validTo || validTo >= today)) ? 'Active' : status;
     const oldRates = await query("SELECT * FROM contract_rates WHERE contract_id=$1", [req.params.id]);
     // Resolved BEFORE saveContractContainerTypes/saveContractImdgClasses delete/regenerate them
     // below — oldRow.container_types/imdg_classes are frozen (TKT-5YYLNT), no longer reliable.
