@@ -34,6 +34,12 @@ module.exports = function packTypeRoutes(app, ctx) {
   });
 
   app.delete("/api/pack-type-definitions/:id", write, async (req, res) => {
+    // container_packages.pack_type_id now has a real FK (RESTRICT, 2026-09-03 audit — this table
+    // previously had no FK at all, verified live to silently orphan real cargo package data).
+    // Same "deactivate instead" idiom as offices/branches — friendly guard first, DB constraint
+    // is the real backstop either way.
+    const [{ n: inUse }] = await query("SELECT COUNT(*) AS n FROM container_packages WHERE pack_type_id=$1", [req.params.id]);
+    if (Number(inUse) > 0) return err(res, `Cannot delete — ${inUse} cargo package(s) use this pack type. Deactivate it instead, or reassign them first.`);
     await query("DELETE FROM pack_type_definitions WHERE id = $1", [req.params.id]);
     ok(res, { ok: true });
   });
