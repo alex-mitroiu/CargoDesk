@@ -374,7 +374,13 @@ async function confirmDoc(docId, token) {
     const approveAsAdmin = await request("POST", `/api/shipments/${shipment2Id}/credit-override/approve`, { reason: "test" }, token);
     assert("admin CANNOT approve an over-limit override", approveAsAdmin.status === 403, JSON.stringify(approveAsAdmin.body));
     const approveOutOfLane = await request("POST", `/api/shipments/${shipment2Id}/credit-override/approve`, { reason: "test" }, outOfLaneToken);
-    assert("an out-of-lane trade_manager CANNOT approve it either", approveOutOfLane.status === 403, JSON.stringify(approveOutOfLane.body));
+    // Either 403 (this route's own dedicated lane check, reached) or 404 (blocked earlier, at the
+    // shipment-scope param guard added 2026-09-03 — this trade_manager's own trade_lane scope item
+    // is APAC->NAM, which genuinely doesn't cover this EU-N->NAM shipment, so applyShipmentAccessFilter
+    // now correctly excludes it before the route's own check ever runs) both correctly mean "this
+    // out-of-lane trade_manager cannot approve it" — which code path fires first isn't the thing
+    // under test here.
+    assert("an out-of-lane trade_manager CANNOT approve it either", [403, 404].includes(approveOutOfLane.status), JSON.stringify(approveOutOfLane.body));
     const approveNoReason = await request("POST", `/api/shipments/${shipment2Id}/credit-override/approve`, {}, inLaneToken);
     assert("a reason is required to approve", approveNoReason.status >= 400);
 

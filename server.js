@@ -2282,6 +2282,49 @@ async function applyShipmentAccessFilter(shipments, user, req) {
     return scopePass || legacyPass;
   });
 }
+
+// Shipment-scope param guard (2026-09-03 shipment-domain audit) — GET /api/shipments/:id has
+// always correctly gated a single shipment through applyShipmentAccessFilter, but that check was
+// never replicated on the 70+ per-shipment SUB-RESOURCE routes across routes/shipments.js,
+// shipment-ops.js, edi.js, customs-filing.js, customers.js, document-distribution.js, and share.js
+// (cost-lines, documents, milestones, services, customs-filings, EDI messages, legs, parties,
+// schedules, ...) — each would have needed its own author to remember to add the same check by
+// hand, and essentially none did. Verified live before this fix: a scoped occ_bk user correctly
+// blocked (404) from a shipment's own record could still read its full BUY cost-line data
+// (a planted amount) via GET /api/shipments/:id/cost-lines.
+//
+// A single app.param() callback closes this in one place instead of 70+ individual call sites,
+// so a future new route with a :id/:shipmentId param is covered automatically rather than
+// re-opening this exact gap by omission. It fires for EVERY :id/:shipmentId param app-wide
+// (offices, contracts, customers, allocations, ...), not just shipment ones, since app.param() is
+// always global in Express and this codebase has no per-file sub-routers to scope it to — the
+// leading "SHP-" check makes it an immediate no-op for any id that isn't a shipment's, so it's
+// safe to register once, globally, rather than needing per-router wiring. Applies to every HTTP
+// method (GET/POST/PUT/PATCH/DELETE), not just reads — a write to an out-of-scope shipment's
+// sub-resource is exactly as much a gap as a read of one.
+//
+// Deliberately a lightweight query (no port_locations/offices JOINs) — applyShipmentAccessFilter's
+// actual filtering logic only ever reads pol/pod/carrierCode and the 3 office-id columns
+// (confirmed by reading matchesScopeItem/shipmentMatchesAccessConfig above); every other field
+// mapShipment produces defaults safely to '' / null via its own `r.field || ...` guards, and this
+// mapped object is never returned to the client — it exists only to run through the same filter
+// GET /api/shipments/:id already trusts, on every shipment-scoped request instead of one route.
+async function shipmentScopeParamCheck(req, res, next, id) {
+  if (typeof id !== "string" || !id.startsWith("SHP-")) return next();
+  try {
+    const [row] = await query(
+      "SELECT id, pol, pod, carrier_code, emo_office_id, imo_office_id, controlling_office_id FROM shipments WHERE id=$1",
+      [id]
+    );
+    if (!row) return next(); // no such shipment — let the route's own 404 handling fire, unchanged
+    const allowed = await applyShipmentAccessFilter([mapShipment(row)], req.user, req);
+    if (!allowed.length) return err(res, "Not found", 404);
+    next();
+  } catch (e) { next(e); }
+}
+app.param("id", shipmentScopeParamCheck);
+app.param("shipmentId", shipmentScopeParamCheck);
+
 const INVERSE_LINK_LABEL = { "Blocks": "Is blocked by", "Duplicates": "Is duplicated by", "Implements": "Is implemented by", "Relates to": "Relates to" };
 const inverseLinkLabel = t => INVERSE_LINK_LABEL[t] || t;
 // ─── Entity event logger (generic: allocations, contracts, carriers) ─────────
