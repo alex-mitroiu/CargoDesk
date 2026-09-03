@@ -123,9 +123,16 @@ async function chatRequestingTool(token, userMessage, name, input) {
     console.log("Point AI settings at the in-process mock endpoint, save originals for restore");
     const before = (await request("GET", "/api/settings", null, adminToken)).body;
     const AI_KEYS = ["ai_agent_enabled", "ai_endpoint", "ai_model", "ai_api_key", "ai_system_prompt"];
+    // ai_api_key is masked by GET /api/settings (2026-09-03 audit fix) — before.ai_api_key is
+    // always "", which PUT now treats as "leave the stored secret untouched," so restoring it
+    // needs the explicit-clear signal (JSON null) when this environment's baseline is "no key
+    // configured" (see ai-document-extraction.test.js's docstring) — a real pre-existing key
+    // (not the case here) is left alone instead, since its true value was never observable.
     const restoreSettings = async () => {
       const patch = {};
       for (const k of AI_KEYS) patch[k] = before[k] ?? "";
+      if (before.ai_api_key_configured) delete patch.ai_api_key;
+      else patch.ai_api_key = null;
       await request("PUT", "/api/settings", patch, adminToken);
     };
     cleanup.push(restoreSettings);

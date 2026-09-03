@@ -107,14 +107,50 @@ module.exports = function systemRoutes(app, ctx) {
 
   // ─── Settings ─────────────────────────────────────────────────────────────
 
-  app.get("/api/settings", async (req, res) => ok(res, await getSettings()));
+  // 2026-09-03 audit — CRITICAL: GET /api/settings has only ever had the global "any
+  // authenticated user" gate (no role check), and getSettings() returns the app_settings table
+  // completely verbatim with zero filtering — every key, secrets included. sso_client_secret and
+  // ais_api_key rode along on that with no masking at all; ai_api_key already had its own
+  // separately-known instance of this exact gap (see v0.51.0's own comment on org_signing_certs,
+  // "GET /api/settings already returns [ai_api_key] in full plaintext to any authenticated user"
+  // — documented, never fixed). Verified live: a plain viewer-role account (the lowest tier in
+  // this app) could read all three real secret values back in full via a plain GET. SMTP
+  // passwords already avoid this — they were deliberately pulled out into their own masked
+  // GET/PUT/test routes (see SystemEmailSettingsPanel's/OfficeMailSettingsModal's own comments)
+  // — but that precedent was never applied to these three, which stayed on the generic,
+  // unfiltered blob. Masking them in place here (rather than also giving each its own dedicated
+  // route set) keeps every other already-correctly-shared setting on this same page/save flow
+  // untouched.
+  const SECRET_SETTING_KEYS = ["sso_client_secret", "ai_api_key", "ais_api_key"];
+  const maskSecrets = settings => {
+    const out = { ...settings };
+    for (const k of SECRET_SETTING_KEYS) {
+      out[`${k}_configured`] = !!out[k];
+      out[k] = "";
+    }
+    return out;
+  };
+
+  app.get("/api/settings", async (req, res) => ok(res, maskSecrets(await getSettings())));
 
   // Excludes trade_manager/viewer specifically, without changing behavior for admin/operator/
   // occ_bk who already have unrestricted settings access today.
   app.put("/api/settings", auth(), requireRole(["admin", "operator", "occ_bk"]), async (req, res) => {
-    const updates = req.body;
-    if (!updates || typeof updates !== "object" || Array.isArray(updates))
+    const updates = { ...(req.body || {}) };
+    if (!req.body || typeof req.body !== "object" || Array.isArray(req.body))
       return err(res, "Expected JSON object of { key: value } pairs");
+    // Same "blank means keep the existing value" idiom the SMTP password fields already use
+    // (routes/office-mail.js, routes/auth.js's system-email routes) — the frontend now never
+    // gets the real secret back from GET, so its input always renders blank; submitting that
+    // blank untouched must not overwrite a real stored secret with an empty string. A genuine,
+    // deliberate clear is still possible — send JSON `null` (distinct from `""`, since this is a
+    // parsed JSON body, not a raw form) rather than an empty string; ordinary UI typing never
+    // produces null, so this is purely an intentional-clear escape hatch, e.g. for a test's own
+    // cleanup or a future "Clear" button.
+    for (const k of SECRET_SETTING_KEYS) {
+      if (k in updates && updates[k] === "") delete updates[k];
+      else if (k in updates && updates[k] === null) updates[k] = "";
+    }
     try {
       await transaction(async (tx) => {
         for (const [k, v] of Object.entries(updates))
@@ -128,7 +164,7 @@ module.exports = function systemRoutes(app, ctx) {
       Object.entries(updates).filter(([k]) => !k.includes('secret') && !k.includes('password'))
     );
     if (Object.keys(safeKeys).length) await logAdminEvent(req.user, 'SETTINGS_UPDATED', 'settings', '', safeKeys);
-    ok(res, await getSettings());
+    ok(res, maskSecrets(await getSettings()));
   });
 
   // Admin-only: the Shipment Explorer sidebar's top-level nav order (ShipmentDetailSidebar,

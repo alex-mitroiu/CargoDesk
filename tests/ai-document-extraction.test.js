@@ -71,7 +71,12 @@ const TINY_PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42m
     const settingsBefore = await request("GET", "/api/settings", null, token);
     assert("settings GET returns 200", settingsBefore.status === 200, JSON.stringify(settingsBefore.body));
     savedAgentEnabled = settingsBefore.body.ai_agent_enabled;
-    savedApiKey       = settingsBefore.body.ai_api_key;
+    // ai_api_key itself is masked by GET /api/settings (2026-09-03 audit fix) — always "" in the
+    // response now, real value or not. Whether one is configured is read off the companion
+    // ai_api_key_configured boolean instead; savedApiKey stays "the truthy/falsy signal this
+    // file's own logic already branches on" (never the real secret, which was never meant to be
+    // observable this way to begin with).
+    savedApiKey       = settingsBefore.body.ai_api_key_configured ? "configured" : "";
     savedEndpoint = settingsBefore.body.ai_endpoint || "";
 
     console.log(`\nThis environment's real AI Agent config: enabled=${savedAgentEnabled === '1'}, hasKey=${!!savedApiKey}, endpoint=${savedEndpoint || "(none)"}`);
@@ -125,7 +130,10 @@ const TINY_PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42m
         { dataBase64: TINY_PNG_B64, mimeType: "application/pdf", instructions: "extract" }, token);
       assert("PDF rejected on a non-Anthropic endpoint", pdfBlocked.status === 400 && /Anthropic endpoint/i.test(pdfBlocked.body.error || ""), JSON.stringify(pdfBlocked.body));
 
-      await request("PUT", "/api/settings", { ai_agent_enabled: savedAgentEnabled, ai_api_key: savedApiKey || "", ai_endpoint: savedEndpoint }, token);
+      // savedApiKey is always falsy on this branch (the baseline was "no key") — send the
+      // explicit-clear signal (null) so PUT actually wipes the placeholder key just set above,
+      // rather than "" which now means "leave the stored secret untouched" (2026-09-03 audit fix).
+      await request("PUT", "/api/settings", { ai_agent_enabled: savedAgentEnabled, ai_api_key: null, ai_endpoint: savedEndpoint }, token);
     } else {
       console.log("\nA real API key is configured in this environment — skipping the placeholder-key validation block rather than overwriting it (its original value can't be reliably restored)");
     }
@@ -137,8 +145,14 @@ const TINY_PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42m
     process.exitCode = 1;
   } finally {
     if (token && savedAgentEnabled !== undefined) {
-      // Best-effort final restore in case an assertion threw mid-sequence before its own restore ran.
-      await request("PUT", "/api/settings", { ai_agent_enabled: savedAgentEnabled, ai_api_key: savedApiKey || "", ai_endpoint: savedEndpoint || "" }, token).catch(() => {});
+      // Best-effort final restore in case an assertion threw mid-sequence before its own restore
+      // ran. Only touch ai_api_key when the baseline truly had none (savedApiKey falsy) — send
+      // the explicit-clear signal (null) then, matching the fix above; when a real key was
+      // already configured, this test never touched it on that branch, so leave it alone rather
+      // than risk clobbering it with a value that was never observable to begin with.
+      const patch = { ai_agent_enabled: savedAgentEnabled, ai_endpoint: savedEndpoint || "" };
+      if (!savedApiKey) patch.ai_api_key = null;
+      await request("PUT", "/api/settings", patch, token).catch(() => {});
     }
   }
 })();

@@ -80,9 +80,18 @@ async function login() {
     console.log("\nSave the real settings so every mutation below is fully restored afterward");
     const before = (await request("GET", "/api/settings", null, token)).body;
     const AI_KEYS = ["ai_agent_enabled", "ai_endpoint", "ai_model", "ai_api_key", "ai_system_prompt"];
+    // ai_api_key is masked by GET /api/settings (2026-09-03 audit fix) — before.ai_api_key is
+    // always "", which PUT now treats as "leave the stored secret untouched" rather than "clear
+    // it", so restoring it needs the explicit-clear signal (JSON null) instead when this
+    // environment's own documented baseline is "no key configured" (see
+    // ai-document-extraction.test.js's docstring — hasKey:false here). A real key already
+    // present before this test ran (not the case in this environment) would need a different,
+    // out-of-band restore path, since its true value was never observable to begin with.
     const restore = async () => {
       const patch = {};
       for (const k of AI_KEYS) patch[k] = before[k] ?? "";
+      if (before.ai_api_key_configured) delete patch.ai_api_key; // was already set — leave untouched, can't restore an unobserved value
+      else patch.ai_api_key = null; // baseline was no key — genuinely clear whatever this test set
       await request("PUT", "/api/settings", patch, token);
     };
 

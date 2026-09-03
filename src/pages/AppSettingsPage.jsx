@@ -481,7 +481,7 @@ function SsoSettingsPanel({ settings, onChange }) {
         <label style={lbl}>Client Secret</label>
         <div style={{ display: "flex", gap: 8 }}>
           <input type={showSecret ? "text" : "password"} value={s.sso_client_secret || ''}
-            placeholder="Paste client secret…"
+            placeholder={s.sso_client_secret_configured ? "Leave blank to keep current" : "Paste client secret…"}
             onChange={e => onChange('sso_client_secret', e.target.value)}
             style={{ ...inp(), flex: 1 }} disabled={!enabled} />
           <button type="button" onClick={() => setShowSecret(x => !x)}
@@ -1101,7 +1101,8 @@ function AiAgentSettingsPanel({ settings, onChange }) {
       <div style={row}>
         <div style={lbl}>API Key</div>
         <div style={{ flex: 1, display: "flex", gap: 8 }}>
-          <input type={showKey ? "text" : "password"} value={s.ai_api_key || ''} placeholder="sk-…"
+          <input type={showKey ? "text" : "password"} value={s.ai_api_key || ''}
+            placeholder={s.ai_api_key_configured ? "Leave blank to keep current" : "sk-…"}
             onChange={e => onChange("ai_api_key", e.target.value)}
             style={{ ...inp(), flex: 1 }} autoComplete="new-password" />
           <button type="button" onClick={() => setShowKey(v => !v)}
@@ -1833,7 +1834,7 @@ export default function AppSettingsPage() {
               <input
                 type={showKey ? "text" : "password"}
                 value={settings[apiDef.settingKey] || ""}
-                placeholder="Paste API key…"
+                placeholder={settings[`${apiDef.settingKey}_configured`] ? "Leave blank to keep current" : "Paste API key…"}
                 onChange={e => {
                   const v = e.target.value;
                   setSettings(s => ({ ...s, [apiDef.settingKey]: v }));
@@ -1847,7 +1848,7 @@ export default function AppSettingsPage() {
                 {showKey ? "Hide" : "Show"}
               </button>
             </div>
-            {settings[apiDef.settingKey] ? (
+            {settings[`${apiDef.settingKey}_configured`] ? (
               <div style={{ fontFamily: T.mono, fontSize: 10.5, color: T.success, marginTop: 5 }}>
                 ● Key configured
               </div>
