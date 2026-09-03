@@ -122,6 +122,13 @@ module.exports = function organizationRoutes(app, ctx) {
     if (!existing) return err(res, "Not found", 404);
     const [{ n: officeCount }] = await query("SELECT COUNT(*) AS n FROM offices WHERE branch_id=$1", [req.params.id]);
     if (Number(officeCount) > 0) return err(res, `Cannot delete — ${officeCount} office(s) are assigned to this branch. Reassign or delete them first.`);
+    // org_countries.branch_id REFERENCES branches(id) with no ON DELETE clause (RESTRICT) — a
+    // branch with zero offices but still named as an org_country's "home branch" was previously
+    // uncaught here, surfacing as a raw, unhelpful 500 instead of a friendly guard (verified live,
+    // 2026-09-03 audit: constraint org_countries_branch_id_fkey). Same class of gap as the
+    // document_templates/shipment_side_offices fixes already made to routes/offices.js.
+    const [{ n: orgCountryCount }] = await query("SELECT COUNT(*) AS n FROM org_countries WHERE branch_id=$1", [req.params.id]);
+    if (Number(orgCountryCount) > 0) return err(res, `Cannot delete — ${orgCountryCount} operating countr${Number(orgCountryCount) === 1 ? 'y is' : 'ies are'} assigned to this branch. Reassign or remove them first.`);
     await query("DELETE FROM branches WHERE id=$1", [req.params.id]);
     ok(res, { deleted: req.params.id });
   });
