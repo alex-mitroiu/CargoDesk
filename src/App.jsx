@@ -2070,7 +2070,6 @@ function App() {
             carriers={carriers}
             onRenew={a => { setPendingRenew({ ...a, effectiveDate: "", endDate: "" }); navigate("space-configs"); }}
             onDelete={async id => { try { await api.allocations.remove(id); setAllocations(p => p.filter(x => x.id !== id)); toast.success("Configuration deleted"); } catch (e) { toast.error(e.message); } }}
-            standalone
           />
         )}
 
