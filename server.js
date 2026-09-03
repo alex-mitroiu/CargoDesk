@@ -2746,7 +2746,13 @@ async function resolveCarrierAgentCandidates(carrierCode, portUnlocode) {
       const [cust] = await query("SELECT company_name FROM customers WHERE id=$1", [row.agentCustomerId]);
       return { id: row.id, carrier_code: row.carrierCode,
         agent_customer_id: row.agentCustomerId, agent_customer_name: cust?.company_name || '',
-        note: row.note, created_at: row.createdAt, matched_via: row.matchedVia || portUnlocode };
+        note: row.note, created_at: row.createdAt, matched_via: row.matchedVia || portUnlocode,
+        // Re-stringified to match the local branch's own raw-column shape below (ca.* — every
+        // existing consumer already expects a JSON string here, not a parsed array) — the
+        // service's own mapCarrierAgent() already parses it server-side. Previously dropped
+        // entirely in remote mode (2026-09-03 audit — this is what let the Capabilities
+        // cross-check below silently no-op under mdm_source=remote).
+        capabilities: JSON.stringify(row.capabilities || []) };
     }));
   }
   const tryPort = async p => {
@@ -2779,6 +2785,81 @@ async function resolveCarrierAgentCandidates(carrierCode, portUnlocode) {
 async function resolveCarrierAgent(carrierCode, portUnlocode) {
   const candidates = await resolveCarrierAgentCandidates(carrierCode, portUnlocode);
   return candidates[0] || null;
+}
+
+// Line/Carrier Agent Capabilities cross-check (TKT-FQFE33, 2026-09-03 audit fix) — the
+// Capabilities checklist (carrier_agents.capabilities, routes/mdm.js's AGENT_CAPABILITY_CODES)
+// was recorded on every agent but never actually read back anywhere; grepped every carrier-
+// booking file and confirmed the feature's own code comment ("used later to cross-check against
+// a leg's own haulage/service before a booking is sent") was never implemented. This closes that
+// gap. Compares what a shipment's own Merchant's Haulage legs and ordered Dedicated Services
+// actually need, per side, against the capabilities of whichever real carrier_agents
+// registration backs that side's assigned Line Agent party. Deliberately non-blocking — an
+// awareness gap, matching the DG-cargo-awareness-chip precedent's own tone (routes/edi.js's
+// booking-request payload) rather than the credit-hold pattern's hard 409; nothing in this
+// feature's own scoping ever called for a hard block.
+const HAULAGE_MODE_TO_CAPABILITY = { Truck: "road_haulage", Rail: "rail_haulage", Barge: "barge_haulage" };
+const SERVICE_TYPE_TO_CAPABILITY = {
+  "Customs Clearance": "customs_clearance", Warehousing: "warehousing",
+  "CY Storage": "cy_storage", Fumigation: "fumigation",
+};
+const AGENT_CAPABILITY_LABELS = {
+  port_agency: "Port Agency", documentation: "Documentation", customs_clearance: "Customs Clearance",
+  road_haulage: "Road Haulage", rail_haulage: "Rail Haulage", barge_haulage: "Barge Haulage",
+  warehousing: "Warehousing", cy_storage: "CY Storage", fumigation: "Fumigation", empty_equipment: "Empty Equipment",
+};
+
+async function checkLineAgentCapabilityGaps(shipmentId) {
+  const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [shipmentId]);
+  if (!shipment) return [];
+  const legs = await query("SELECT leg_type, movement_type, movement_by FROM shipment_legs WHERE shipment_id=$1", [shipmentId]);
+  const services = await query("SELECT side, service_type FROM shipment_services WHERE shipment_id=$1 AND status != 'Cancelled'", [shipmentId]);
+  const parties = await query(
+    "SELECT role, customer_id, customer_name FROM shipment_parties WHERE shipment_id=$1 AND role IN ('Line Agent (Export)','Line Agent (Import)')",
+    [shipmentId]);
+
+  // What does each side actually need, and why (for the message)? Pick-up legs are the export
+  // side's own haulage (matches LINE_AGENT_SIDE's Export/Import convention elsewhere), Delivery
+  // legs the import side's.
+  const neededBySide = { Export: new Map(), Import: new Map() };
+  for (const l of legs) {
+    if (l.movement_type !== "Merchant's Haulage") continue;
+    const cap = HAULAGE_MODE_TO_CAPABILITY[l.movement_by];
+    if (!cap) continue;
+    const side = l.leg_type === "Pick-up" ? "Export" : l.leg_type === "Delivery" ? "Import" : null;
+    if (!side) continue;
+    if (!neededBySide[side].has(cap)) neededBySide[side].set(cap, `Merchant's Haulage by ${l.movement_by}`);
+  }
+  for (const s of services) {
+    const cap = SERVICE_TYPE_TO_CAPABILITY[s.service_type];
+    if (!cap) continue;
+    const side = s.side === "Export" || s.side === "Import" ? s.side : null;
+    if (!side) continue;
+    if (!neededBySide[side].has(cap)) neededBySide[side].set(cap, `${s.service_type} service ordered`);
+  }
+
+  const gaps = [];
+  for (const side of ["Export", "Import"]) {
+    const needed = neededBySide[side];
+    if (!needed.size) continue;
+    const party = parties.find(p => p.role === `Line Agent (${side})`);
+    if (!party || !party.customer_id) continue; // no agent assigned on this side — nothing to compare against
+    const port = side === "Export" ? shipment.pol : shipment.pod;
+    if (!port) continue;
+    const agent = await resolveCarrierAgent(shipment.carrier_code, port);
+    // Only compare against a REAL, matching MDM registration — a manually-assigned party with no
+    // backing carrier_agents row (or one backing a DIFFERENT customer than what's assigned) has
+    // no capabilities data to check against, so this stays silent rather than guessing.
+    if (!agent || agent.agent_customer_id !== party.customer_id) continue;
+    const capabilities = new Set(JSON.parse(agent.capabilities || '[]'));
+    for (const [cap, reason] of needed) {
+      if (!capabilities.has(cap)) {
+        gaps.push({ side, agentName: party.customer_name, capability: cap,
+          capabilityLabel: AGENT_CAPABILITY_LABELS[cap] || cap, reason });
+      }
+    }
+  }
+  return gaps;
 }
 
 // Finds every distinct run of legs covering pol->pod as one connected journey, one match per
@@ -3179,6 +3260,7 @@ const ctx = {
   ensureBookingCreated, supersedeIfCarrierChanged,
   runOpsAutomationSweep,
   linkedPortCodes, findMatchingContractLegs, resolveCarrierAgent, resolveCarrierAgentCandidates,
+  checkLineAgentCapabilityGaps,
   screenShipmentById, rescreenActiveShipments, screenCustomer, rescreenShipmentsForCustomer, rescreenAllCustomers, resolveCustomerGroup,
   computeArExposure, docAmountUsd, runDunningSweep, runScheduledReportsSweep, matchesScopeItem, userOwnsLaneForShipment, userOwnsLaneForCustomer,
   canEditOfficeSide, resolveActiveOffice,

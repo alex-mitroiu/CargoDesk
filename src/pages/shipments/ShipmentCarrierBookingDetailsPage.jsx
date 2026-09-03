@@ -29,6 +29,7 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
   const [contract,   setContract]   = useState(null);
   const [namedAccountParent, setNamedAccountParent] = useState(null); // Organization Model Enhancement Epic 4
   const [parties,    setParties]    = useState(null); // Carrier Line Agents
+  const [capabilityGaps, setCapabilityGaps] = useState([]); // TKT-FQFE33 — Line Agent Capabilities cross-check
   const [loading,    setLoading]    = useState(true);
   const [sending,    setSending]    = useState(false);
   const [savingFreightTerms, setSavingFreightTerms] = useState(false);
@@ -92,8 +93,9 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
       api.ediMessages.list(shipment.id).catch(() => []),
       api.containers.list({ shipmentId: shipment.id }).catch(() => []),
       api.shipmentParties.list(shipment.id).catch(() => []),
-    ]).then(([b, m, c, p]) => {
-      setBooking(b); setMessages(m); setContainers(c); setParties(p);
+      api.shipments.lineAgentCapabilityGaps(shipment.id).catch(() => []),
+    ]).then(([b, m, c, p, gaps]) => {
+      setBooking(b); setMessages(m); setContainers(c); setParties(p); setCapabilityGaps(gaps);
       // Pack-level DG flags (a pallet/carton can be flagged DG even when its container isn't)
       // also feed the outbound booking-request declaration (routes/edi.js) — fetched here too
       // so this awareness chip matches what's actually transmitted on Send.
@@ -365,6 +367,20 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
           {reeferGroups.map((g, i) => (
             <span key={i}>{i > 0 && ", "}{g.count} × {g.type} @ {g.setTemperatureC}°C</span>
           ))} will be declared to the carrier.
+        </div>
+      )}
+
+      {capabilityGaps.length > 0 && (
+        <div style={{ fontFamily: T.body, fontSize: 12.5, color: T.text, marginBottom: 16,
+          background: T.warning + "12", border: `1px solid ${T.warning}44`,
+          borderRadius: 8, padding: "10px 14px", display: "flex", flexDirection: "column", gap: 6 }}>
+          {capabilityGaps.map((g, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <IconWarning size={13} color={T.warning} />
+              <span>{g.side} Line Agent <strong>{g.agentName}</strong> has no <strong>{g.capabilityLabel}</strong> capability
+                on file, but this shipment has a {g.reason.toLowerCase()}.</span>
+            </div>
+          ))}
         </div>
       )}
 

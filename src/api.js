@@ -123,6 +123,7 @@ export const api = {
       release: (id) => req("DELETE", `/shipments/${id}/edit-lock`),
     },
     lineAgentCandidates: (id) => req("GET", `/shipments/${id}/line-agent-candidates`),
+    lineAgentCapabilityGaps: (id) => req("GET", `/shipments/${id}/line-agent-capability-gaps`),
   },
   creditOverridesQueue: () => req("GET", "/credit-overrides/queue"),
   invoiceDeadlinesOverdue: () => req("GET", "/invoice-deadlines/overdue"),

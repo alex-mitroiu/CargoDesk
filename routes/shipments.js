@@ -7,6 +7,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
           mapShipmentParty, ADDITIONAL_PARTY_ROLES, mapSideOffice, canEditOfficeSide,
           applyShipmentAccessFilter, syncShipmentFromLegs, importContractRates,
           broadcastMessage, broadcastEditLockChange, recomputeSpaceBadge, screenShipmentById, resolveCarrierAgent, resolveCarrierAgentCandidates,
+          checkLineAgentCapabilityGaps,
           logEvent, logEntityEvent, TRACKED_FIELDS, TRACKED_CTR_FIELDS, FREE_TIME_WARNING_DAYS,
           sanctionsMap, autoCompleteMilestone, ensureBookingCreated, toUsd,
           validCoord, GPS_LOC_TYPE, getSettings, callContractService, callMdmService, getCustomerRow,
@@ -1177,6 +1178,14 @@ module.exports = function shipmentsRoutes(app, ctx) {
       }
     }
     ok(res, result);
+  });
+
+  // Capabilities cross-check (TKT-FQFE33, 2026-09-03 audit fix) — read-only awareness endpoint,
+  // same non-blocking shape as line-agent-candidates above: nothing here forces a fix, it just
+  // surfaces "the assigned Line Agent on this side doesn't offer something this shipment
+  // actually needs" before a booking is sent, rather than after a carrier rejection.
+  app.get("/api/shipments/:id/line-agent-capability-gaps", auth(), async (req, res) => {
+    ok(res, await checkLineAgentCapabilityGaps(req.params.id));
   });
 
   // Line Agent (Export)/(Import) are the one pair of ADDITIONAL_PARTY_ROLES tied to a specific

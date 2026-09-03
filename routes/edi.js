@@ -4,7 +4,7 @@ module.exports = function ediRoutes(app, ctx) {
   const { query, ok, err, uid, auth, requireRole, shipmentSubs,
           mapEdiMessage, mapCarrierBooking, mapShipment, applyShipmentAccessFilter,
           autoCompleteMilestone, logEntityEvent, isEdiBookable, supersedeIfCarrierChanged,
-          getCustomerRow } = ctx;
+          getCustomerRow, checkLineAgentCapabilityGaps } = ctx;
 
   // occ_bk has canEditShipments:true on the frontend and already sees an enabled Send
   // button — this used to exclude occ_bk (a pre-existing 403-on-click gap), fixed here.
@@ -341,9 +341,16 @@ module.exports = function ediRoutes(app, ctx) {
     const booking = await upsertPendingBooking(shipment, correlationId, requestedBy);
     broadcast(shipment.id, { type: "booking_status_changed", booking: mapCarrierBooking(booking) });
 
+    // Capabilities cross-check (TKT-FQFE33) — surfaced here too, not just the pre-send GET
+    // endpoint (routes/shipments.js's line-agent-capability-gaps), matching the credit-hold
+    // check's own dual client+server visibility: the frontend already shows this before Send is
+    // even clicked, but the request itself carries it too so nothing is lost if this route is
+    // ever called directly. Non-blocking either way.
+    const capabilityGaps = await checkLineAgentCapabilityGaps(shipment.id);
+
     // Always pending — the real carrier response is simulated only, via Test Tools →
     // Message Simulator (see simulatedConfirmedResponse/simulatedRejectedResponse above).
-    ok(res, { sent: sentMsg, booking: mapCarrierBooking(booking), pending: true }, 201);
+    ok(res, { sent: sentMsg, booking: mapCarrierBooking(booking), pending: true, capabilityGaps }, 201);
   });
 
   // Test Tools → Message Simulator: emulate a carrier's response to a pending booking
