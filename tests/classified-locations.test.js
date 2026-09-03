@@ -168,6 +168,17 @@ async function scratchShipment(token) {
     assert("public leg does NOT include polLatitude", !("polLatitude" in (publicPkuLeg || {})), JSON.stringify(publicPkuLeg));
     assert("public leg does NOT include polLongitude", !("polLongitude" in (publicPkuLeg || {})), JSON.stringify(publicPkuLeg));
 
+    console.log("\nMalformed share tokens are rejected cleanly, not with a raw 500");
+    // A token with no "." at all short-circuits on verifyToken's own !data||!sig guard, before
+    // ever reaching timingSafeEqual — real coverage, but not the actual bug found in this pass.
+    const noDot = await request("GET", "/api/share/not-a-real-token", null, null);
+    assert("no-period token rejected with 400", noDot.status === 400, JSON.stringify(noDot.body));
+    // A well-formed "data.sig" shape whose signature is simply the WRONG LENGTH crashed with a raw
+    // 500 (crypto.timingSafeEqual throws, rather than returning false, on a buffer-length
+    // mismatch) instead of this same clean 400 — found and fixed 2026-09-03.
+    const wrongLength = await request("GET", "/api/share/abc.xyz", null, null);
+    assert("wrong-length signature rejected with 400, not a 500", wrongLength.status === 400, JSON.stringify(wrongLength.body));
+
     console.log("\nCleanup");
     await request("DELETE", `/api/shipments/${shipB}`, null, token);
     await request("DELETE", `/api/customers/${cust.body.id}`, null, token);
