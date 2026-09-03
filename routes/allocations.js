@@ -148,24 +148,32 @@ module.exports = function allocationsRoutes(app, ctx) {
     `, params);
     const buckets = await loadTeuBuckets();
     const remote = await isRemoteContractSource();
-    const legsCache = new Map(); // contractId -> legs (row-shaped), fetched at most once per request
+    const legsCache = new Map(); // contractId -> { legs, unreachable }, fetched at most once per request
     async function contractLegsFor(contractId) {
       if (legsCache.has(contractId)) return legsCache.get(contractId);
-      let legs;
+      let result;
       if (remote) {
-        try { legs = (await callContractService("GET", `/internal/contracts/${contractId}`)).legs.map(legToRow); }
-        catch { legs = []; } // an unreachable/vanished remote contract can't be verified either way
+        // An unreachable/vanished remote contract can't be verified either way — this must resolve
+        // the SAME as the no-contract-id case below (pass through, don't penalize), not fall through
+        // to "zero legs" (which findMatchingContractLegs would then always fail to match against,
+        // silently excluding every allocation with a linked contract during a real service outage —
+        // a real, live-reproduced regression, not just a theoretical one: confirmed the exact same
+        // allocation drops out of these results the moment contract_source flips to remote with the
+        // service down, even though the underlying contract genuinely has a matching leg).
+        try { result = { legs: (await callContractService("GET", `/internal/contracts/${contractId}`)).legs.map(legToRow), unreachable: false }; }
+        catch { result = { legs: [], unreachable: true }; }
       } else {
-        legs = await query("SELECT * FROM contract_legs WHERE contract_id=$1", [contractId]);
+        result = { legs: await query("SELECT * FROM contract_legs WHERE contract_id=$1", [contractId]), unreachable: false };
       }
-      legsCache.set(contractId, legs);
-      return legs;
+      legsCache.set(contractId, result);
+      return result;
     }
     const passed = [];
     for (const a of allocs) {
       if (!needsPol && !needsPod) { passed.push(a); continue; }
       if (!a.contract_id) { passed.push(a); continue; }
-      const legs = await contractLegsFor(a.contract_id);
+      const { legs, unreachable } = await contractLegsFor(a.contract_id);
+      if (unreachable) { passed.push(a); continue; }
       if ((await findMatchingContractLegs(legs, { pol: a.pol, pod: a.pod, needsPolHaulage: needsPol, needsPodHaulage: needsPod, pkuLocation, delLocation })).length > 0) passed.push(a);
     }
     const results = passed
