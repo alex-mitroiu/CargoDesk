@@ -17,7 +17,7 @@
 module.exports = function quotesRoutes(app, ctx) {
   const { query, ok, err, uid, requireRole, isUniqueViolation, mapQuote, mapQuoteLine, mapShipment,
           logEvent, logEntityEvent, toUsd, SERVICE_CODE_MAP, importContractRates,
-          resolveCarrierAgentCandidates, screenShipmentById, schemaReady } = ctx;
+          resolveCarrierAgentCandidates, screenShipmentById, schemaReady, getCustomerRow } = ctx;
 
   const quoteWrite = requireRole(["admin", "operator", "occ_bk"]);
 
@@ -263,6 +263,18 @@ module.exports = function quotesRoutes(app, ctx) {
     }
 
     const silentScreening = await screenShipmentById(id);
+
+    // Same earlier credit-check trigger point routes/shipments.js's own direct POST /api/shipments
+    // already added (v0.73.1) — soft/informational only, never blocking. A quote only ever carries
+    // one generic customer, which lands on the new shipment's Shipper slot (see the INSERT above),
+    // so there's no Consignee/Principal equivalent to check the way the direct route does for its
+    // 3 independent party fields.
+    const heldParties = [];
+    if (q.customer_id) {
+      const cust = await getCustomerRow(q.customer_id);
+      if (cust?.creditHold) heldParties.push({ customerId: q.customer_id, companyName: cust.companyName, role: 'Shipper', reason: cust.creditHoldReason || '' });
+    }
+
     await query("UPDATE quotes SET status='Converted', converted_shipment_id=$1, converted_at=$2 WHERE id=$3", [id, now, req.params.id]);
     await logEntityEvent("quote", req.params.id, "UPDATED", "status", "Accepted", "Converted",
       JSON.stringify({ customerName: q.customer_name, shipmentId: id }));
@@ -278,6 +290,7 @@ module.exports = function quotesRoutes(app, ctx) {
       shipmentId: id,
       shipment: mapShipment(shipment),
       screening: silentScreening || null,
+      creditWarning: heldParties.length ? { onHold: heldParties } : null,
     });
   });
 };

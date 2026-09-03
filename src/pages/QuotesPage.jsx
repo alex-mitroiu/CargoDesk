@@ -280,6 +280,14 @@ const QuoteDetailModal = ({ quoteId, navigate, onClose, onChanged, onShipmentCre
     try {
       const res = await api.quotes.convert(quoteId);
       toast.success(`Converted to shipment ${res.shipmentId}`);
+      if (res.screening?.result === "HIT") {
+        const parties = (res.screening.hits || []).map(h => `${h.field}: ${h.value}`).join(", ");
+        toast.warning(`Compliance review required — sanctioned party detected${parties ? ` (${parties})` : ""}`);
+      }
+      if (res.creditWarning?.onHold?.length) {
+        const names = res.creditWarning.onHold.map(h => `${h.companyName} (${h.role})`).join(", ");
+        toast.warning(`On credit hold: ${names} — this will block sending a carrier booking request and generating invoices until it's cleared`);
+      }
       onShipmentCreated?.(res.shipment);
       onClose();
       onChanged?.();
