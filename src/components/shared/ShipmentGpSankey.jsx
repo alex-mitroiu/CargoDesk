@@ -62,6 +62,21 @@ function buildSankey(lines, mode) {
   // GpBreakdownPanel's own "Sell VAT" stat card just above this diagram.
   const totalVat  = lines.filter(l => l.type === "SELL").reduce((s, l) => s + (l.vatAmountUsd || 0), 0);
   if (totalSell === 0 && totalBuy === 0 && totalVat === 0) return null;
+  // 2026-09-03 audit — CRITICAL, live-reproduced crash: revIdx/costIdx below only get created
+  // when totalSell/totalBuy > 0, but sellRows/buyRows.forEach unconditionally links every leaf
+  // to revIdx/costIdx regardless — a shipment whose SELL lines net to <= 0 (a fully or
+  // over-reversed invoice, v0.53.0) with zero BUY lines produces a link with target:null, which
+  // crashes Recharts' <Sankey> ("Cannot read properties of undefined (reading 'y')") with no
+  // error boundary above it — the whole GP Overview page (and the Reports GP-by-Trade-Area
+  // drilldown, which reuses this same component) goes blank. A Sankey diagram fundamentally
+  // can't represent a negative aggregate flow (money moving backward through the graph isn't a
+  // forward flow at all) — the individual line-level negative amounts a reversal produces are
+  // fine and render correctly (verified: a net-positive shipment with one negative leaf row
+  // renders cleanly), it's specifically the totalSell/totalBuy AGGREGATE going negative that has
+  // no honest diagram to draw. Bail out to the same "nothing to show" path the totals-are-zero
+  // case already uses — GpBreakdownPanel's own stat cards already show the correct signed
+  // Est/Actual/Variance figures independently of whether this diagram renders.
+  if (totalSell < 0 || totalBuy < 0) return null;
 
   const nodes = [];
   const links = [];
