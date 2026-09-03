@@ -77,6 +77,10 @@ module.exports = function officesRoutes(app, ctx) {
     if (inUse) return err(res, "Office is referenced by shipments — deactivate it instead of deleting");
     const [eadapterInUse] = await query("SELECT id FROM carrier_eadapter_configs WHERE office_id=$1 LIMIT 1", [req.params.id]);
     if (eadapterInUse) return err(res, "Office is referenced by an eAdapter carrier config — remove that config first, or deactivate the office instead of deleting");
+    const [templateInUse] = await query("SELECT id FROM document_templates WHERE office_id=$1 LIMIT 1", [req.params.id]);
+    if (templateInUse) return err(res, "Office is referenced by a document template — remove or reassign that template first, or deactivate the office instead of deleting");
+    const [sideOfficeInUse] = await query("SELECT id FROM shipment_side_offices WHERE office_id=$1 LIMIT 1", [req.params.id]);
+    if (sideOfficeInUse) return err(res, "Office is referenced by shipments — deactivate it instead of deleting");
     await query("DELETE FROM offices WHERE id=$1", [req.params.id]);
     ok(res, { deleted: req.params.id });
   });

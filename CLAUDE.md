@@ -383,6 +383,7 @@ are fully validated.
 | edi_messages | Per-shipment carrier EDI log (direction out/in, raw/parsed payload, `is_mock`) |
 | container_events | FCL container lifecycle log (event_type, location, occurred_at, recorded_by) — Epic TKT-A5LUPD |
 | shipment_parties | Additional party roles beyond the 4 fixed shipper/consignee/notify/principal columns (role, customerId, customerName, UNIQUE(shipmentId, role)) — Epic TKT-5XFCAP |
+| shipment_side_offices | Additional Export/Import offices beyond the primary `emo_office_id`/`imo_office_id` columns (`side` Export\|Import, `office_id`, `UNIQUE(shipmentId, side, officeId)`) — `GET`/`POST /api/shipments/:id/side-offices`, `DELETE /api/shipment-side-offices/:id` (`routes/shipments.js`), gated by the same `canEditOfficeSide` check the primary EMO/IMO reassignment uses. `office_id` references `offices(id)` (RESTRICT, no cascade) as of the 2026-09-03 audit — previously had no FK at all, letting a deleted office silently orphan a row here with no error and no visible trace (the list route's own `JOIN offices` hid it) |
 | customs_filings | Simulated AES/EEI (export) + ISF/AMS (import) regulatory filings, UNIQUE(shipmentId, filingType) so both coexist independently — Epic TKT-XW6TQK. `carrier_code`/`vessel_name`/`voyage_number`/`export_date`/`cargo_snapshot` (v0.72.0) — a snapshot of routing + priced cargo captured at Submit time, compared against the shipment's live values to flag a Filed/Accepted filing as stale if either has since changed |
 
 ## Key patterns
