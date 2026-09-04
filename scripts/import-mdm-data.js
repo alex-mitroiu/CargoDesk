@@ -2,8 +2,15 @@
  * CargoDesk — MDM Data Import
  * Reads data/carriers.csv and data/seaports.csv and bulk-loads into the DB.
  *
- * Run once (safe to re-run; uses ON CONFLICT DO NOTHING so duplicates are skipped):
+ * Run once the server has booted at least once (safe to re-run after that; uses ON CONFLICT DO
+ * NOTHING so duplicates are skipped) — but the SERVER MUST BE STOPPED FIRST:
  *   node scripts/import-mdm-data.js   (or: npm run seed)
+ *
+ * Do not run this while `npm run dev`/`npm run server` is still up in another terminal — with
+ * the embedded pglite fallback (no DATABASE_URL set), that silently corrupts the database with
+ * no error here; the corruption only shows up the next time the server restarts, as an opaque
+ * WASM abort out of lib/schema.js. This script refuses to run if it detects the server already
+ * listening on :3001, but stop it properly first regardless of that guard.
  *
  * Postgres migration note: the old --db=<path> flag (pointed this script at a second SQLite
  * file to seed services/mdm/mdm.sample.db without a second copy of this script) no longer
@@ -13,11 +20,28 @@
  */
 
 const path = require("path");
+const net  = require("net");
 const fs   = require("fs");
 const { query, transaction, close } = require("../lib/db.js");
 
 const PORTS_CSV    = path.join(__dirname, "..", "data", "seaports.csv");
 const CARRIERS_CSV = path.join(__dirname, "..", "data", "carriers.csv");
+
+// pglite (the embedded dev fallback lib/db.js uses whenever DATABASE_URL is unset) tolerates
+// exactly ONE connection to pgdata/ at a time — running this script while server.js is ALSO
+// live silently corrupts its WAL with no error here; the corruption only surfaces later, as a
+// generic WASM abort on the server's NEXT restart with no useful message pointing back to this
+// script (confirmed via a live repro: seed while the server's running, restart the server,
+// RuntimeError: Aborted() out of lib/schema.js's initSchema). A rough but reliable-enough
+// signal: the server always listens on :3001, so if something's already there, refuse rather
+// than risk it — real Postgres (DATABASE_URL set) has no such restriction and skips this check.
+function isPortInUse(port) {
+  return new Promise(resolve => {
+    const socket = net.createConnection({ port, host: "127.0.0.1" });
+    socket.once("connect", () => { socket.destroy(); resolve(true); });
+    socket.once("error", () => resolve(false));
+  });
+}
 
 // ─── Import Seaports ───────────────────────────────────────────────────────────
 
@@ -340,6 +364,15 @@ async function importFullCountries() {
 
 async function main() {
   console.log("\n⚓  CargoDesk MDM Data Import\n");
+
+  if (!process.env.DATABASE_URL && await isPortInUse(3001)) {
+    console.error("✗ The CargoDesk server appears to already be running on port 3001.");
+    console.error("  This script writes to the same embedded database file the server does —");
+    console.error("  running both at once will silently corrupt it, with no error shown here.");
+    console.error("  The corruption only shows up the NEXT time the server restarts.");
+    console.error("  Stop the server first (Ctrl+C, or Danger Zone → Shutdown Dev Server), then re-run this.");
+    process.exit(1);
+  }
 
   const [{ n: schemaReady }] = await query(
     "SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_name = 'carriers'"

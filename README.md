@@ -3,7 +3,7 @@
 > Freight management application for tracking ocean shipments, carrier space utilisation, contracts, and maritime master data.
 
 [![CI](https://github.com/alex-mitroiu/CargoDesk/actions/workflows/ci.yml/badge.svg)](https://github.com/alex-mitroiu/CargoDesk/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.90.1-blue)](.)
+[![Version](https://img.shields.io/badge/version-0.90.2-blue)](.)
 ![Node](https://img.shields.io/badge/node-22.5%2B-green)
 ![License](https://img.shields.io/badge/license-custom-lightgrey)
 
@@ -102,7 +102,9 @@ End-User License Agreement for full terms.
 
 ### Prerequisites
 
-- **Node.js 22.5 or later** — required for the built-in `node:sqlite` module (DatabaseSync). The app will not start on older versions.
+- **Node.js 22.5 or later.** The database itself is Postgres-compatible — a real `postgres://`
+  connection via `DATABASE_URL` in production, or an embedded `@electric-sql/pglite` instance
+  with zero setup for local dev when `DATABASE_URL` is unset.
 
   Check your version: `node --version`
 
@@ -116,17 +118,28 @@ cd CargoDesk
 npm install
 ```
 
+### First-Time Setup
+
+```bash
+npm run setup
+```
+
+This does the one-time dance in the right order so you don't have to: boots the server once to
+create its schema and a default admin account, shuts it down cleanly, then loads MDM reference
+data (ports, carriers, vessels, commodities, regions, trade lanes). That order matters — see
+[Troubleshooting](#troubleshooting) below for why running the seed step *while the server is
+still up* corrupts the database — `npm run setup` and `npm run seed` both refuse to do that.
+
+Optionally, `npm run seed:sample-data` also loads a committed snapshot of realistic demo business
+data (shipments, customers, contracts, tickets) instead of starting from an empty shell. Neither
+step carries any real user accounts — those are yours to create.
+
 ### Run
 
 ```bash
 # Start the API + WebSocket server (port 3001) and Vite dev server (port 5173) together
 npm run dev
 ```
-
-That's it — no seed step required. On first start, the server finds no `cargodesk.db` yet and
-copies the bundled `db/cargodesk.sample.db` into place automatically: real ports, carriers,
-vessels, commodities, regions, and trade lanes, ready to use. It carries no shipments,
-contracts, customers, or users — those are yours to create.
 
 Open [http://localhost:5173](http://localhost:5173)
 
@@ -159,12 +172,22 @@ terminal window, restarting after a code change, or killing a stuck port (see Tr
 below) — it's the same clean shutdown a signal handler runs, just reachable over HTTP so it
 works even for a detached or background process.
 
-Want to re-import master data from scratch instead (e.g. after editing `data/*.csv`), or add
-sample carrier contracts to poke around with?
+Want to re-import master data from scratch instead (e.g. after editing `data/*.csv`)? **Stop the
+server first** (see above) — `npm run seed` writes to the database directly, and with the
+embedded pglite database (no `DATABASE_URL` set), running it while the server is still up will
+silently corrupt it; the corruption only shows up the next time the server restarts. The script
+refuses to run if it detects the server still listening on :3001, but stop it properly regardless
+of that guard, then restart once seeding finishes:
 
 ```bash
 npm run seed             # re-imports ports, carriers, vessels, regions, commodities
-npm run seed:contracts   # seeds sample carrier contracts (optional)
+```
+
+Adding sample carrier contracts to poke around with is the opposite — `npm run seed:contracts`
+talks to the live API over HTTP, so it needs the server **running**, not stopped:
+
+```bash
+npm run seed:contracts   # seeds sample carrier contracts (optional) — server must be running
 ```
 
 ### Default Login
@@ -183,7 +206,8 @@ On first startup, if no users exist, the server seeds a default admin account:
 | Script | Description |
 |--------|-------------|
 | `npm run dev` | Start API server (port 3001) + Vite dev server (port 5173) concurrently |
-| `npm run seed` | Seed ports, carriers, vessels, regions, commodities |
+| `npm run setup` | First-time setup — boots the server once, shuts it down cleanly, then seeds MDM data, in the right order |
+| `npm run seed` | Seed ports, carriers, vessels, regions, commodities (server must be **stopped**) |
 | `npm run seed:contracts` | Seed sample carrier contracts |
 | `npm run checkdb` | Inspect DB schema and row counts |
 | `npm run export:template` | Regenerate `exports/dashboard-template.xlsx` |
@@ -192,12 +216,12 @@ On first startup, if no users exist, the server seeds a default admin account:
 
 ### Notes
 
-- `cargodesk.db` is created automatically on the first server start — seeded from the bundled
-  `db/cargodesk.sample.db` if no database exists yet (see above).
-- Schema changes are applied via safe `ALTER TABLE` migrations at startup — no manual DB intervention needed.
-- `cargodesk.db` itself is excluded from version control (see `.gitignore`) — only the reference
-  sample it's seeded from, `db/cargodesk.sample.db`, is committed.
-- Run `npm run seed` and `npm run seed:contracts` with the server already running so they write to the same `cargodesk.db` instance.
+- `pgdata/` (the embedded pglite database directory, used whenever `DATABASE_URL` is unset) is
+  created automatically on the first server start and excluded from version control (see
+  `.gitignore`) — only `db/cargodesk.sample.db`, the reference file `npm run seed` reads
+  countries/trade-lanes from, is committed.
+- Schema changes are applied via safe `ALTER TABLE`-style migrations at startup — no manual DB intervention needed.
+- `npm run seed` needs the server **stopped** first (see Troubleshooting); `npm run seed:contracts` is the opposite — it talks to the live API, so it needs the server **running**.
 - The FX converter and weather widget use free public APIs — no API keys required.
 - The WebSocket server shares port 3001 with the Express API (`/ws` path). The Vite dev server proxies WebSocket connections automatically.
 
@@ -261,12 +285,20 @@ npm install
 npm run dev
 ```
 
-**`TypeError: DatabaseSync is not a constructor` or `node:sqlite` errors**
-Your Node.js version is too old. The built-in `node:sqlite` module requires Node.js 22.5 or later.
-```bash
-node --version   # must be v22.5.0 or higher
-```
-Use nvm (`nvm install 22 && nvm use`) or download the latest LTS from [nodejs.org](https://nodejs.org).
+**`RuntimeError: Aborted(). Build with -sASSERTIONS for more info.` out of `@electric-sql/pglite`, usually inside `initSchema`**
+The embedded pglite database tolerates exactly **one** connection to `pgdata/` at a time.
+Running `npm run seed` (or any other direct-DB script) in a second terminal while the server is
+still up in the first will silently corrupt it — with no error at the time it happens. The
+corruption only surfaces later, on the server's *next* restart, as this exact opaque abort.
+`npm run seed` now refuses to run at all while it detects the server on :3001, specifically to
+prevent this — but if you already hit it: stop the server, delete `pgdata/` (there's no repair
+tool for pglite specifically — a real Postgres data directory can sometimes be recovered with
+`pg_resetwal`, pglite cannot), and restart the server to reinitialize a clean schema, then
+`npm run seed` again. If this happens on a **first ever** boot with no prior `pgdata/` at all
+(nothing to have raced against), you've likely hit a different, platform-specific pglite WASM
+bug (confirmed to occur on very new macOS/Apple Silicon builds as of writing) — try
+`npm install @electric-sql/pglite@<an older version>`, or set `DATABASE_URL` to a real local
+Postgres instance instead (`lib/db.js` supports both transparently).
 
 **`Error: listen EADDRINUSE :::3001` or `:::5173`**
 A previous server process is still running on that port. If it's port 3001 (the API server), try
@@ -455,8 +487,7 @@ CargoDesk/
 | `sanctions_syncs` | OFAC sync history (timestamp, source, record count) |
 | `app_settings` | Key-value store for server-side config (API keys, feature toggles, recurrence) |
 | `users` | Authenticated users: email, name, `password_hash`, role (admin/operator/viewer), `is_active`, `last_login` |
-| `user_scope_items` | Per-user shipment scope restrictions (carrier, POL, POD filters for viewer role) |
-| `user_access_configs` | Per-user access configuration records |
+| `user_scope_items` | Per-user shipment scope restrictions (carrier, POL, POD, trade_lane filters) |
 
 See the built-in **About** page (i in the sidebar) for the full interactive schema reference with column descriptions and migration history.
 

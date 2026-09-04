@@ -1,12 +1,19 @@
 # CargoDesk — Project Brief for Claude Code
 
 ## Project
-Full-stack freight management app. React 18 + Vite frontend, Express + node:sqlite backend.
+Full-stack freight management app. React 18 + Vite frontend, Express + dual-backend Postgres
+(`pg.Pool` when `DATABASE_URL` is set, an embedded `@electric-sql/pglite` instance otherwise —
+`lib/db.js`) backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.90.1 "Bulwark"**
-- Run: `npm run dev` (runs the monolith on :3001 + Vite on :5173 + the Document Distribution Service on :3002 + the PDF Render Service on :3003 + the Contract Management Service on :3004 + the MDM Service on :3005 + the Screening Service on :3006 + the Kanban Service on :3007 + the Customer Service on :3008, concurrently) — zero-script onboarding: first boot with no `cargodesk.db` auto-copies the committed `db/cargodesk.sample.db` (MDM reference data only) into place
-- Re-seed: `npm run seed` (runs `scripts/import-mdm-data.js`) — only needed to refresh MDM data from `data/*.csv`/`.json`, not for a normal first run
+- Version: **v0.90.2 "Ol' Scratch"**
+- First-time setup: `npm run setup` (`scripts/setup.js`) — boots the server once to create its
+  schema, shuts it down cleanly, then seeds MDM reference data, in the correct order. NOT
+  zero-script — a genuinely fresh `pgdata/` has no ports/carriers/vessels/commodities until this
+  runs (the old "auto-copies `db/cargodesk.sample.db` into a fresh `cargodesk.db`" mechanism was
+  `node:sqlite`-era and is gone, see `db/cargodesk.sample.db`'s own row in the table below).
+- Run: `npm run dev` (runs the monolith on :3001 + Vite on :5173 + the Document Distribution Service on :3002 + the PDF Render Service on :3003 + the Contract Management Service on :3004 + the MDM Service on :3005 + the Screening Service on :3006 + the Kanban Service on :3007 + the Customer Service on :3008, concurrently)
+- Re-seed: `npm run seed` (runs `scripts/import-mdm-data.js`) — refreshes MDM data from `data/*.csv`/`.json`. **Must run with the server stopped** — `lib/db.js` holds an exclusive lock on `pgdata/` (added 2026-09-04 after a real corrupted-database incident: running this concurrently with a live server silently corrupts the WAL, surfacing only on the server's next restart as an opaque pglite WASM abort) — a second process now gets an immediate, clear rejection instead.
 
 ## Stack
 - Frontend: React 18, Vite, JSX with inline styles (no CSS files, no Tailwind)
@@ -69,9 +76,16 @@ routes/
                      (?code=, returns null rather than 404 on a miss) — Loop Codes MDM registry
                      (v0.90.1), backs the shipment header's clickable Loop field
 scripts/
+  setup.js                         First-time setup (npm run setup) — boots the server once to
+                                   create its schema, shuts it down cleanly, then runs
+                                   import-mdm-data.js, in the order that avoids the pglite
+                                   concurrent-connection corruption bug below
   import-mdm-data.js               Seeds ports, carriers, vessels, commodities, and the full
                                    208-country/182-country-trade-lane registry, read directly
-                                   from the committed db/cargodesk.sample.db (npm run seed)
+                                   from the committed db/cargodesk.sample.db (npm run seed) — must
+                                   run with the server stopped (lib/db.js's pgdata/ lock refuses a
+                                   second concurrent connection rather than silently corrupting it,
+                                   2026-09-04)
   export-sample-data.js            Dumps the live business tables (shipments/customers/contracts/
                                    tickets/...) to the committed db/cargodesk.sample-data.json —
                                    run to refresh the snapshot after adding more demo data (npm
@@ -438,6 +452,43 @@ are fully validated.
 - **Document system**: `DOC_TYPES` in App.jsx (~line 56: BL01/MB01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — `MB01` (Master Bill of Lading, v0.71.0) is the vessel-operator-to-NVOCC document, a genuinely separate build from `BL01` (NVOCC-to-shipper House B/L), not a mode flag on it — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). (The earlier client-side-jsPDF `DocumentsMenu` component this note used to distinguish from was removed as dead code — it had zero references anywhere in the app.)
 - **Lifecycle-stage stepper precedent**: no dedicated stepper component exists yet; `MilestonePanel` (ShipmentDetailPage.jsx 1593-~1870) is the closest analog — linear progress bar (1734-1738, `width: ${progress}%`) plus per-step state coloring via `milestoneState()`/`stateColor()` (1666-1676: completed/overdue/current/upcoming) driven by `shipment_milestones` rows (`id, label, estimatedDate, note, completedAt, completedBy`, fixed step keys `booking_confirmed, si_submitted, cargo_gated_in, vessel_departed, bl_issued, vessel_arrived, customs_cleared, cargo_released, delivered`). Any new per-container lifecycle/stage UI should reuse this state-coloring pattern rather than inventing a new visual language
 - **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages, 📡 EDI). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
+
+## Recent changes (v0.90.2 "Ol' Scratch")
+Hotfix — a real, reproducible database-corruption bug, found and fixed the same day it was
+reported live against a customer's fresh clone.
+- **The bug**: pglite (the embedded WASM Postgres this app falls back to for local dev whenever
+  `DATABASE_URL` is unset) tolerates exactly ONE process holding `pgdata/` open at a time. Running
+  `npm run seed` in a second terminal while the server was still up in the first silently
+  corrupted the WAL — with no error at the time. The corruption only surfaced later, on the
+  server's NEXT restart, as an opaque `RuntimeError: Aborted(). Build with -sASSERTIONS for more
+  info.` out of `lib/schema.js`'s `initSchema`, with nothing in the error pointing back to the
+  actual cause. Two days of misdirected investigation (macOS 26/Apple Silicon WASM compatibility,
+  Node 26 vs Node 24, IT-governance-blocked workarounds) turned out to be chasing a coincidence —
+  confirmed only once the user described the exact repro sequence, which reproduced byte-for-byte
+  on an unrelated Windows machine on the first try.
+- **The fix, at the layer it actually belongs**: `lib/db.js` now acquires a real OS-level
+  exclusive lock (`pgdata/.cargodesk.lock`, PID-stamped) the moment it opens a pglite connection —
+  a second process now gets an immediate, loud, actionable error naming the conflicting PID,
+  instead of a silent corruption discovered days later. Stale locks from a crashed process are
+  detected automatically (`process.kill(pid, 0)` liveness check) and reclaimed rather than
+  permanently blocking future starts. Real Postgres (`DATABASE_URL` set) needs none of this — the
+  lock only ever engages on the pglite path. `scripts/import-mdm-data.js` also gained its own
+  upfront port-3001 check as a friendlier first line of defense before the deeper lock has to fire.
+- **New `npm run setup`** (`scripts/setup.js`) — automates the correct one-time sequence (boot →
+  wait for healthy → clean shutdown, releasing the lock → seed) so nobody has to get the ordering
+  right by hand; now the recommended first-run path.
+- **Also fixed**: README.md/CLAUDE.md were both still describing the pre-Postgres-migration
+  SQLite auto-copy mechanism (dead for months) in several places, including one README line that
+  told readers to do the exact opposite of what's safe ("run npm run seed with the server already
+  running") — the most direct plausible source of the incident. Rewrote every stale onboarding
+  reference in both files; added a real Troubleshooting entry for this exact crash signature.
+- Verified: the lock blocks a concurrent second connection (tested directly, bypassing every
+  script-level guard) and allows normal sequential use; `npm run setup` runs clean end-to-end; the
+  original bug was reproduced before the fix and confirmed clean after it, same machine, same
+  sequence. A full 71-file regression pass run twice — once under Node 24, once under a portable
+  Node 26.8.1 binary — confirmed zero Node-version-related regressions in this codebase; the one
+  failing file (`billing-performance.test.js`, pre-existing, unrelated) failed identically under
+  both versions.
 
 ## Recent changes (v0.90.1 "Bulwark")
 Two new features plus a bundled fix wave — a continuous session's output, same bundling call as
