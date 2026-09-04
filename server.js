@@ -615,6 +615,10 @@ const SETTING_DEFAULTS = {
   sso_redirect_uri:       '',
   sso_default_role:       'operator',
   sso_frontend_url:       'http://localhost:5173',
+  // Off by default — see BREAK_GLASS_EMAILS above. When on alongside sso_enabled, POST
+  // /api/auth/login rejects every account except the break-glass set, so Entra's own
+  // MFA/Conditional Access/group-assignment policy is the only real door in.
+  sso_enforce_exclusive:  '0',
   shipment_sidebar_order: '[]',
   dg_compliance_contact_name: '',
   dg_compliance_phone:        '',
@@ -1995,7 +1999,25 @@ const syncShipmentFromLegs = async (shipmentId, actorId = null) => {
     return;
   }
   const first = legs[0], last = legs[legs.length - 1];
-  const seaLeg = legs.find(l => l.leg_type === 'SEA' || l.mot === 'SEA') || first;
+  // leg_type is the authoritative field for this distinction; mot is the older, legacy column
+  // (still written alongside it, per LEG_TO_MOT) — only trust mot when leg_type is genuinely
+  // blank (pre-leg_type-era legacy data). Checking mot as an unconditional OR-alternative, as
+  // this used to, breaks the moment the two disagree: found live on SHP-WKX04E, whose Delivery
+  // leg has leg_type='Delivery' but a stale mot='SEA' — the OR-check matched it as a "sea leg"
+  // ahead of the real ones, and the fields resolved off it (a Delivery leg has no real etd/eta of
+  // its own) came out blank instead of raising the actual sailing's dates.
+  const isSeaLeg = l => l.leg_type ? l.leg_type === 'SEA' : l.mot === 'SEA';
+  const seaLeg = legs.find(isSeaLeg) || first;
+  // `last` is just the array's final row by leg_order — normally the journey's real endpoint,
+  // but a trailing Carrier's Haulage Delivery leg's own eta is essentially never filled in (the
+  // vessel's arrival at the discharge port, not the final-mile truck run, is what "ETA" means to
+  // an operator), so `last.eta` silently evaluates to blank the moment a Delivery leg exists.
+  // Falls back to the LAST sea leg's own eta — for a TSP journey that's the final segment's
+  // arrival, not the first one `seaLeg` above already resolves to for departure fields. Falls
+  // back to `last` (not `seaLeg`/`first`), same as the pre-fix code did, for the degenerate
+  // no-SEA-leg-at-all case (pure trucking, no ocean movement) — that edge case's behavior is
+  // deliberately left exactly as it was.
+  const lastSeaLeg = [...legs].reverse().find(isSeaLeg) || last;
   // Routing term: span from first carrier-arranged leg to last — Merchant's Haulage legs excluded
   const cLegs = legs.filter(l => !["Merchant's Haulage", "Customer Arranged"].includes(l.movement_type || l.mot));
   let routingTerm = null;
@@ -2037,13 +2059,19 @@ const syncShipmentFromLegs = async (shipmentId, actorId = null) => {
   // leg is a classified GPS site (pol/pod blanked there by design) — the shipment's overall
   // pol/pod must still resolve to a real UN/LOCODE, since it feeds B/L generation, exports, and
   // every list/header surface that expects a real port.
-  // etd/eta already double as the "confirmed once known" fields (AIS TKT-ZFO2OM) — when the AIS
-  // listener updates a SEA leg's etd/eta in place after a confirmed departure/arrival, this
-  // existing rollup carries it up to the shipment the same way it always has, no separate
-  // atd/ata bookend needed.
+  // etd/eta are strictly a sea-schedule concept — the first and last SEA leg's own dates, never
+  // whatever legs[0]/legs[-1] happen to be array-position-wise. `first.etd` used to feed etd
+  // directly, which only looked right on a plain shipment where the Pick-up leg's own etd
+  // happened to be set to the same date; `last.eta` used to feed eta directly, which broke the
+  // moment a Delivery leg existed (its own eta is essentially never filled in — the vessel's
+  // arrival at the discharge port is what "ETA" means, not the final-mile truck run). Found live
+  // on SHP-WKX04E. etd/eta already double as the "confirmed once known" fields (AIS TKT-ZFO2OM)
+  // — when the AIS listener updates a SEA leg's etd/eta in place after a confirmed departure/
+  // arrival, this existing rollup carries it up to the shipment the same way it always has, no
+  // separate atd/ata bookend needed.
   await query(`UPDATE shipments SET pol=$1, pod=$2, etd=$3, eta=$4, carrier_code=$5, vessel=$6, vessel_imo=$7, voyage=$8, routing_term=$9,
     contract_id=$10, contract_ref=$11, allocation_id=$12, contract_routing_id=$13, status=$14 WHERE id=$15`,
-    [first.pol || seaLeg.pol || '', last.pod || seaLeg.pod || '', first.etd || null, last.eta || null,
+    [first.pol || seaLeg.pol || '', last.pod || seaLeg.pod || '', seaLeg.etd || null, lastSeaLeg.eta || null,
      newCarrierCode, seaLeg.vessel || '', seaLeg.vessel_imo || '', seaLeg.voyage || '', routingTerm,
      contractDropped ? '' : (shipmentRow.contract_id || ''), contractDropped ? '' : (shipmentRow.contract_ref || ''),
      contractDropped ? '' : (shipmentRow.allocation_id || ''), contractDropped ? '' : (shipmentRow.contract_routing_id || ''),
@@ -2092,6 +2120,7 @@ const {
   mapQuote, mapQuoteLine, mapOpportunity,
   mapInvoiceReasonCode, mapInvoiceStatusOverride,
   mapEadapterConfig,
+  mapLoopCode, mapLoopCodePort,
 } = createMappers({ portLanesMap, CUTOFF_WARNING_DAYS });
 
 function shipmentMatchesAccessConfig(s, cfg) {
@@ -2119,7 +2148,10 @@ function matchesScopeItem(s, item) {
     } catch { return false; }
   }
   if (item.item_type === 'pol')     return item.value === s.pol;
-  if (item.item_type === 'country') return portCountryMap[s.pol] === item.value;
+  // A country scope means "shipments touching this country" — checking only the POL side
+  // (TKT-M7XHLA) let a shipment whose POD is in the scoped country slip through unseen, the
+  // exact gap 'trade_lane' above already avoids by checking both ends of the lane.
+  if (item.item_type === 'country') return portCountryMap[s.pol] === item.value || portCountryMap[s.pod] === item.value;
   return false;
 }
 
@@ -3210,6 +3242,18 @@ setInterval(() => {
   for (const [k, v] of ssoNonces) if (v.ts < cutoff) ssoNonces.delete(k);
 }, 60_000);
 
+// The exact set of accounts allowed to use POST /api/auth/login when sso_enforce_exclusive is
+// on (TKT-8P35S0) — every other account must sign in through Entra, where the org's own MFA/
+// Conditional Access/group-assignment policy actually applies. Same disclosed-default-with-env-
+// override tradeoff as ADMIN_EMAIL/JWT_SECRET: the two names below are this project's own
+// already-documented standing recovery accounts (fallback-admin@cargodesk.local,
+// claudeagent@localhost — see CLAUDE.md), not something meant to gate a real deployment's real
+// break-glass list, which is exactly what the env var override is for.
+const BREAK_GLASS_EMAILS = new Set(
+  (process.env.BREAK_GLASS_EMAILS || "fallback-admin@cargodesk.local,claudeagent@localhost")
+    .split(",").map(e => e.trim().toLowerCase()).filter(Boolean)
+);
+
 const auth = (allowed = []) => async (req, res, next) => {
   const header = req.headers["authorization"];
   if (!header?.startsWith("Bearer ")) return err(res, "Unauthorized", 401);
@@ -3257,6 +3301,7 @@ const ctx = {
   // already guarantees.
   schemaReady: schemaReadyPromise,
   query, transaction, uid, ok, err, isUniqueViolation, validCoord,
+  gracefulShutdown,
   auth, requireRole,
   portLanesMap, portCountryMap, rebuildPortLanesMap, longestLane,
   applyShipmentAccessFilter,
@@ -3288,11 +3333,12 @@ const ctx = {
   mapContract, mapLeg, mapRate, mapContractRouting, mapCarrierInvoice, mapCarrierInvoiceLine,
   mapQuote, mapQuoteLine, mapOpportunity,
   mapInvoiceReasonCode, mapInvoiceStatusOverride,
+  mapLoopCode, mapLoopCodePort,
   resolveInvoiceThresholds, runInvoiceCollectionsSweep, addBusinessDays, businessDaysBetween,
   logEvent, logEntityEvent, logAdminEvent, TRACKED_FIELDS, TRACKED_CTR_FIELDS,
   seedAdmin, seedTestFixtureAdmin, seedSigningCert,
   CUTOFF_WARNING_DAYS, FREE_TIME_WARNING_DAYS,
-  ssoNonces,
+  ssoNonces, BREAK_GLASS_EMAILS,
   syncShipmentFromLegs,
   restartAisListener: aisListener.applySettings,
   ingestAisMessage: aisListener.ingestMessage,
@@ -3354,6 +3400,7 @@ require('./routes/organization')(app, ctx);
 require('./routes/charge-codes')(app, ctx);
 require('./routes/pack-types')(app, ctx);
 require('./routes/document-templates')(app, ctx);
+require('./routes/loop-codes')(app, ctx);
 require('./routes/container-types')(app, ctx);
 require('./routes/duty-rates')(app, ctx);
 require('./routes/scheduled-reports')(app, ctx);

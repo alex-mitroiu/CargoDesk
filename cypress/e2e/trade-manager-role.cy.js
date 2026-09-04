@@ -20,7 +20,7 @@
 
 const ADMIN_EMAIL    = "claudeagent@localhost";
 const ADMIN_PASSWORD = "TestFixture!2026Zq";
-const PASSWORD       = "Cypress123!";
+const PASSWORD       = "Cypress1234!"; // TKT-JJMD2A: 12+ chars, needed since admin-created passwords now enforce the same policy self-service change-password already did
 const TM_EMAIL       = `cypress-tm-${Date.now()}@test.local`;
 const VIEWER_EMAIL   = `cypress-viewer-${Date.now()}@test.local`;
 

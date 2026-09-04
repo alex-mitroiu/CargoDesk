@@ -1413,7 +1413,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
 
   app.post("/api/shipments/:id/legs", shipmentWrite, async (req, res) => {
     const { legType='SEA', movementType='SEA', movementBy='',
-            mot: rawMot, pol='', pod='', etd=null, eta=null, carrierCode='',
+            mot: rawMot, pol='', pod='', polName='', podName='', etd=null, eta=null, carrierCode='',
             polLocType='Terminal', podLocType='Terminal',
             polLatitude=null, polLongitude=null, podLatitude=null, podLongitude=null,
             vessel='', vesselImo='', voyage='', contractType='', contractRef='' } = req.body;
@@ -1433,10 +1433,10 @@ module.exports = function shipmentsRoutes(app, ctx) {
     // etd_source/eta_source start blank (an estimate, not yet AIS-confirmed) — a leg created
     // through this route always carries a fresh, unconfirmed date, even if etd/eta happen to be
     // pre-filled from a picked sailing.
-    await query(`INSERT INTO shipment_legs (id,shipment_id,leg_order,mot,leg_type,movement_type,pol,pod,pol_loc_type,pod_loc_type,pol_latitude,pol_longitude,pod_latitude,pod_longitude,etd,eta,carrier_code,vessel,vessel_imo,voyage,movement_by,contract_type,contract_ref,created_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`,
+    await query(`INSERT INTO shipment_legs (id,shipment_id,leg_order,mot,leg_type,movement_type,pol,pod,pol_name,pod_name,pol_loc_type,pod_loc_type,pol_latitude,pol_longitude,pod_latitude,pod_longitude,etd,eta,carrier_code,vessel,vessel_imo,voyage,movement_by,contract_type,contract_ref,created_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)`,
       [id, req.params.id, legOrder, mot, legType, movementType,
-           polPoint.code, podPoint.code, polLocType, podLocType,
+           polPoint.code, podPoint.code, polPoint.code ? polName : '', podPoint.code ? podName : '', polLocType, podLocType,
            polPoint.lat, polPoint.lng, podPoint.lat, podPoint.lng,
            etd||null, eta||null, carrierCode, vessel, vesselImo, voyage, movementBy,
            contractType, contractRef, createdAt]);
@@ -1450,7 +1450,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
 
   app.put("/api/shipments/:id/legs/:legId", shipmentWrite, async (req, res) => {
     const { legType='SEA', movementType='SEA', movementBy='',
-            mot: rawMot, pol='', pod='', etd=null, eta=null, carrierCode='',
+            mot: rawMot, pol='', pod='', polName='', podName='', etd=null, eta=null, carrierCode='',
             polLocType='Terminal', podLocType='Terminal',
             polLatitude=null, polLongitude=null, podLatitude=null, podLongitude=null,
             vessel='', vesselImo='', voyage='', contractType='', contractRef='', legOrder } = req.body;
@@ -1473,8 +1473,9 @@ module.exports = function shipmentsRoutes(app, ctx) {
     // leg doesn't accidentally erase an existing confirmation.
     const etdSource = etd !== (existing.etd || null) ? '' : existing.etd_source;
     const etaSource = eta !== (existing.eta || null) ? '' : existing.eta_source;
-    await query(`UPDATE shipment_legs SET mot=$1,leg_type=$2,movement_type=$3,pol=$4,pod=$5,pol_loc_type=$6,pod_loc_type=$7,pol_latitude=$8,pol_longitude=$9,pod_latitude=$10,pod_longitude=$11,etd=$12,eta=$13,carrier_code=$14,vessel=$15,vessel_imo=$16,voyage=$17,movement_by=$18,contract_type=$19,contract_ref=$20,leg_order=$21,etd_source=$22,eta_source=$23 WHERE id=$24`,
+    await query(`UPDATE shipment_legs SET mot=$1,leg_type=$2,movement_type=$3,pol=$4,pod=$5,pol_name=$6,pod_name=$7,pol_loc_type=$8,pod_loc_type=$9,pol_latitude=$10,pol_longitude=$11,pod_latitude=$12,pod_longitude=$13,etd=$14,eta=$15,carrier_code=$16,vessel=$17,vessel_imo=$18,voyage=$19,movement_by=$20,contract_type=$21,contract_ref=$22,leg_order=$23,etd_source=$24,eta_source=$25 WHERE id=$26`,
       [mot, legType, movementType, polPoint.code, podPoint.code,
+           polPoint.code ? polName : '', podPoint.code ? podName : '',
            polLocType, podLocType, polPoint.lat, polPoint.lng, podPoint.lat, podPoint.lng,
            etd||null, eta||null,
            carrierCode, vessel, vesselImo, voyage, movementBy,

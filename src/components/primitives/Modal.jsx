@@ -24,12 +24,12 @@ const Modal = ({ title, onClose, children, width = 520, minHeight, hideClose = f
   </div>
 );
 
-const ConfirmModal = ({ message, onConfirm, onCancel }) => (
+const ConfirmModal = ({ message, onConfirm, onCancel, confirmLabel = "Confirm Delete" }) => (
   <Modal title="Confirm" onClose={onCancel} width={380}>
     <p style={{ fontFamily: T.body, fontSize: 14, color: T.text, margin: "0 0 20px", lineHeight: 1.6 }}>{message}</p>
     <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
       <Btn variant="secondary" onClick={onCancel}>Cancel</Btn>
-      <Btn variant="danger" onClick={onConfirm}>Confirm Delete</Btn>
+      <Btn variant="danger" onClick={onConfirm}>{confirmLabel}</Btn>
     </div>
   </Modal>
 );

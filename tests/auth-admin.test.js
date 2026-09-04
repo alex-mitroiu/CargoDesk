@@ -134,6 +134,13 @@ async function login(email = "claudeagent@localhost", password = "TestFixture!20
     const createMissing = await request("POST", "/api/users", { email: "" }, token);
     assert("missing required fields rejected", createMissing.status >= 400);
 
+    // TKT-JJMD2A — admin-set passwords now go through the same policy self-service
+    // change-password/reset-password already enforce; previously bypassed entirely.
+    const createWeak = await request("POST", "/api/users", { email: `weak-${rand}@example.com`, name: "Weak Pw", roles: ["viewer"], password: "short" }, token);
+    assert("weak password rejected on create", createWeak.status >= 400);
+    const weakList = await request("GET", "/api/users", null, token);
+    assert("no user was created for the rejected weak-password request", !weakList.body.some(u => u.email === `weak-${rand}@example.com`));
+
     const list = await request("GET", "/api/users", null, token);
     assert("user list returns 200", list.status === 200);
     const created = list.body.find(u => u.email === email);
@@ -161,6 +168,17 @@ async function login(email = "claudeagent@localhost", password = "TestFixture!20
     const afterFinance = (await request("GET", "/api/users", null, token)).body.find(u => u.id === userId);
     assert("canViewFinance flag set", afterFinance.canViewFinance === true);
     assert("allOffices flag cleared", afterFinance.allOffices === false);
+
+    // TKT-JJMD2A — same policy check on PATCH, but only when a password is actually
+    // submitted; blank stays "keep existing" and must remain completely unaffected.
+    const patchWeak = await request("PATCH", `/api/users/${userId}`, { password: "short" }, token);
+    assert("weak password rejected on patch", patchWeak.status >= 400);
+    const afterWeak = (await request("GET", "/api/users", null, token)).body.find(u => u.id === userId);
+    assert("token_version NOT bumped by a rejected weak-password patch", afterWeak.tokenVersion === afterFinance.tokenVersion);
+    const stillOldPassword = await login(email, "AuthTestFixture!2026Zq");
+    assert("original password still works after the rejected weak-password patch", stillOldPassword.status === 200);
+    const patchBlankPassword = await request("PATCH", `/api/users/${userId}`, { name: "Blank Password Patch" }, token);
+    assert("omitting password entirely still succeeds (blank = keep)", patchBlankPassword.status === 200);
 
     const patchDeactivate = await request("PATCH", `/api/users/${userId}`, { isActive: false }, token);
     assert("patch deactivate returns 200", patchDeactivate.status === 200);

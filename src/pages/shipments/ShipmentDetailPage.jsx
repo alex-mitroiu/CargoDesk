@@ -12,7 +12,9 @@ import OfficeCombobox from "../../components/shared/OfficeCombobox";
 import { SERVICE_TYPE_ICON } from "../../shipmentServicePages";
 import { api } from "../../api";
 import { toast } from "../../toast";
-import { formatLegPoint } from "../../utils/legLocation";
+import { formatLegPoint, isGpsLeg } from "../../utils/legLocation";
+import { countryCodeOf } from "../../utils/countryTag";
+import useResolvedPortName from "../../hooks/useResolvedPortName";
 import { dgPolicyConflict } from "../../utils/dgPolicy";
 import Btn from "../../components/primitives/Btn";
 import ActionMenu from "../../components/primitives/ActionMenu";
@@ -25,7 +27,8 @@ import SailingPickerModal from "../../components/shared/SailingPickerModal";
 import ContainerEventsPanel, { CONTAINER_EVENT_TYPES } from "../../components/shared/ContainerEventsPanel";
 import { AnyIcon, IconClose, IconWarning, IconPackage, IconPencil, IconCheck, IconClipboard,
   IconRefresh, IconShip, IconLock, IconUnlock, IconEye, IconArrowUp, IconArrowDown, IconForbid,
-  IconLink, IconAnchor, IconFile, IconFileCertificate, IconDoor, IconFlag } from "../../components/primitives/Icon";
+  IconLink, IconAnchor, IconFile, IconFileCertificate, IconDoor, IconFlag,
+  IconMapPin, IconCrane, IconWarehouseDoor } from "../../components/primitives/Icon";
 
 
 // ─── Section header with hover tooltip ───────────────────────────────────────
@@ -3070,14 +3073,61 @@ export const RouteSummaryBar = ({ shipment }) => {
   const tsps = seaLegs.length > 1
     ? seaLegs.slice(0, -1).map(l => ({ code: l.pod, name: l.podName })).filter(t => t.code)
     : [];
+  // Same missing-name gap as portPolName/portPodName below, but for however many hub ports
+  // exist — a fixed-count hook per leg doesn't fit a variable-length list, so this batch-
+  // resolves every nameless hub code in one pass instead. Keyed purely on the codes themselves,
+  // not the leg objects, so it doesn't refire on every unrelated leg-list re-render.
+  const [resolvedTspNames, setResolvedTspNames] = useState({});
+  const tspCodesKey = tsps.filter(t => !t.name).map(t => t.code).join(",");
+  useEffect(() => {
+    if (!tspCodesKey) return;
+    let live = true;
+    Promise.all(tspCodesKey.split(",").map(code =>
+      api.ports.get(code).then(r => [code, r?.name || ""]).catch(() => [code, ""])))
+      .then(pairs => { if (live) setResolvedTspNames(Object.fromEntries(pairs)); });
+    return () => { live = false; };
+  }, [tspCodesKey]);
   const firstSeaLeg = seaLegs[0];
   const lastSeaLeg = seaLegs[seaLegs.length - 1];
   const portPol = firstSeaLeg?.pol || shipment.pol;
-  const portPolName = firstSeaLeg ? firstSeaLeg.polName : shipment.polName;
+  const portPolNameRaw = firstSeaLeg ? firstSeaLeg.polName : shipment.polName;
   const portPod = lastSeaLeg?.pod || shipment.pod;
-  const portPodName = lastSeaLeg ? lastSeaLeg.podName : shipment.podName;
+  const portPodNameRaw = lastSeaLeg ? lastSeaLeg.podName : shipment.podName;
+  const pkuPoint = pkuLeg ? formatLegPoint(pkuLeg, "pol") : { code: "", name: "" };
+  const delPoint = delLeg ? formatLegPoint(delLeg, "pod") : { code: "", name: "" };
+  // A leg written via Apply Sailing/Schedule Generator never carries a resolved name of its own
+  // (the sailing/schedule data has none to give) — live-resolve whenever one hasn't already been
+  // stored, same fallback LegRow's own locked-row rendering already uses (src/hooks/
+  // useResolvedPortName.js), rather than the pill silently showing the bare code forever. Hooks
+  // always run (never behind the `||`, which would call them conditionally) — the hook itself
+  // already no-ops internally once a real name is passed in.
+  const resolvedPolName = useResolvedPortName(!!portPol, portPol, portPolNameRaw, "Terminal");
+  const resolvedPodName = useResolvedPortName(!!portPod, portPod, portPodNameRaw, "Terminal");
+  const resolvedPkuName = useResolvedPortName(!!pkuLeg, pkuPoint.code, pkuPoint.name, pkuLeg?.polLocType);
+  const resolvedDelName = useResolvedPortName(!!delLeg, delPoint.code, delPoint.name, delLeg?.podLocType);
+  const portPolName = portPolNameRaw || resolvedPolName;
+  const portPodName = portPodNameRaw || resolvedPodName;
   const gridCols = `${pkuLeg ? "auto " : ""}1fr auto 1fr${delLeg ? " auto" : ""}`;
   const doorCell = { padding: "12px 14px", display: "flex", flexDirection: "column", gap: 3, background: T.surface };
+  // Resolved name (+ country) leads, the UN/LOCODE is the secondary/reference line below it —
+  // e.g. "Rotterdam, NL" over "NLRTM". `country` is passed in already-blanked for a GPS leg
+  // (its code is "GPS"/a lat-lng string, not a real UN/LOCODE) rather than derived in here, so
+  // this component itself doesn't need to know about GPS legs at all. Falls back to just the
+  // bare code (today's original single-line look) when no name has resolved yet.
+  const LocationLines = ({ code, name, country, align = "left" }) => name ? (
+    <>
+      <span style={{ fontFamily: T.body, fontSize: 15, fontWeight: 700, color: T.text, textAlign: align }}>
+        {name}{country ? `, ${country}` : ""}
+      </span>
+      <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, textAlign: align }}>
+        {code || "—"}
+      </span>
+    </>
+  ) : (
+    <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: code ? T.text : T.border, textAlign: align }}>
+      {code || "—"}
+    </span>
+  );
 
   return (
     <div style={{ display: "grid", gridTemplateColumns: gridCols,
@@ -3088,13 +3138,15 @@ export const RouteSummaryBar = ({ shipment }) => {
       {pkuLeg && (
         <div style={{ ...doorCell, borderRight: `1px dashed ${T.border}` }}>
           <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
-            letterSpacing: "0.09em", color: T.accent }}>Pick-up</span>
-          <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text }}>
-            {formatLegPoint(pkuLeg, "pol").code || "—"}
-          </span>
-          {formatLegPoint(pkuLeg, "pol").name && (
-            <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{formatLegPoint(pkuLeg, "pol").name}</span>
-          )}
+            letterSpacing: "0.09em", color: T.accent, display: "inline-flex", alignItems: "center", gap: 4 }}>
+            <IconWarehouseDoor size={24} />Pick-up</span>
+          {(() => {
+            const name = pkuPoint.name || resolvedPkuName;
+            // A GPS-coordinates leg's own "code" is "GPS" or a lat/lng string, not a real
+            // UN/LOCODE — never derive a country from it.
+            const country = !isGpsLeg(pkuLeg, "pol") && pkuPoint.code ? countryCodeOf(pkuPoint.code) : "";
+            return <LocationLines code={pkuPoint.code} name={name} country={country} />;
+          })()}
           <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted, marginTop: 2 }}>
             Carrier's Haulage →
           </span>
@@ -3104,12 +3156,9 @@ export const RouteSummaryBar = ({ shipment }) => {
       {/* POL */}
       <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 3 }}>
         <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
-          letterSpacing: "0.09em", color: T.textMuted }}>Port of Loading</span>
-        <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700,
-          color: portPol ? T.text : T.border }}>{portPol || "—"}</span>
-        {portPolName && (
-          <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{portPolName}</span>
-        )}
+          letterSpacing: "0.09em", color: T.textMuted, display: "inline-flex", alignItems: "center", gap: 4 }}>
+          <IconCrane size={24} />Port of Loading</span>
+        <LocationLines code={portPol} name={portPolName} country={portPol ? countryCodeOf(portPol) : ""} />
       </div>
 
       {/* Centre: ETD / transit / ETA / carrier / routing term */}
@@ -3149,25 +3198,32 @@ export const RouteSummaryBar = ({ shipment }) => {
           </div>
         </div>
         {tsps.length > 0 && (
-          <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap", justifyContent: "center" }}>
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 4, flexWrap: "wrap", justifyContent: "center" }}>
             {tsps.map((tsp, i) => (
-              <span key={`${tsp.code}-${i}`} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
-                {i > 0 && <span style={{ color: T.textMuted, fontSize: 10 }}>›</span>}
-                <span title={tsp.name || tsp.code}
-                  style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text,
-                    background: T.bg, border: `1px solid ${T.border}`, borderRadius: 4,
-                    padding: "1px 7px" }}>
-                  {tsp.code}
-                </span>
-              </span>
+              <div key={`${tsp.code}-${i}`} style={{ display: "flex", alignItems: "flex-start", gap: 4 }}>
+                {i > 0 && <span style={{ color: T.textMuted, fontSize: 10, marginTop: 3 }}>›</span>}
+                {/* Name+country leads, code is secondary — same pattern POL/POD use now.
+                    Previously the name only reached a title tooltip, invisible on
+                    hover-less/touch use. */}
+                <div style={{ display: "flex", alignItems: "center", gap: 6,
+                  background: T.bg, border: `1px solid ${T.border}`, borderRadius: 4, padding: "4px 8px" }}>
+                  <IconMapPin size={16} style={{ color: T.textMuted, flexShrink: 0 }} />
+                  <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 1 }}>
+                    <LocationLines code={tsp.code} name={tsp.name || resolvedTspNames[tsp.code]}
+                      country={tsp.code ? countryCodeOf(tsp.code) : ""} align="center" />
+                  </div>
+                </div>
+              </div>
             ))}
           </div>
         )}
         {(() => {
           const displayCarrier = shipment.carrierCode || contractCarrierCode;
           return (
-            <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700,
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 4,
+              fontFamily: T.mono, fontSize: 12, fontWeight: 700,
               color: displayCarrier ? T.accent : T.border }}>
+              <IconShip size={24} />
               {displayCarrier || "—"}
             </span>
           );
@@ -3183,25 +3239,24 @@ export const RouteSummaryBar = ({ shipment }) => {
       {/* POD */}
       <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 3, textAlign: "right" }}>
         <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
-          letterSpacing: "0.09em", color: T.textMuted }}>Port of Discharge</span>
-        <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700,
-          color: portPod ? T.text : T.border }}>{portPod || "—"}</span>
-        {portPodName && (
-          <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{portPodName}</span>
-        )}
+          letterSpacing: "0.09em", color: T.textMuted, display: "inline-flex", alignItems: "center",
+          gap: 4, justifyContent: "flex-end" }}>
+          Port of Discharge<IconCrane size={24} style={{ transform: "scaleX(-1)" }} /></span>
+        <LocationLines code={portPod} name={portPodName} country={portPod ? countryCodeOf(portPod) : ""} align="right" />
       </div>
 
       {/* DEL door cell */}
       {delLeg && (
         <div style={{ ...doorCell, borderLeft: `1px dashed ${T.border}`, textAlign: "right" }}>
           <span style={{ fontFamily: T.body, fontSize: 9, fontWeight: 700, textTransform: "uppercase",
-            letterSpacing: "0.09em", color: T.accent }}>Delivery</span>
-          <span style={{ fontFamily: T.mono, fontSize: 15, fontWeight: 700, color: T.text }}>
-            {formatLegPoint(delLeg, "pod").code || "—"}
-          </span>
-          {formatLegPoint(delLeg, "pod").name && (
-            <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{formatLegPoint(delLeg, "pod").name}</span>
-          )}
+            letterSpacing: "0.09em", color: T.accent, display: "inline-flex", alignItems: "center",
+            gap: 4, justifyContent: "flex-end" }}>
+            Delivery<IconWarehouseDoor size={24} style={{ transform: "scaleX(-1)" }} /></span>
+          {(() => {
+            const name = delPoint.name || resolvedDelName;
+            const country = !isGpsLeg(delLeg, "pod") && delPoint.code ? countryCodeOf(delPoint.code) : "";
+            return <LocationLines code={delPoint.code} name={name} country={country} align="right" />;
+          })()}
           <span style={{ fontFamily: T.body, fontSize: 10, color: T.textMuted, marginTop: 2 }}>
             → Carrier's Haulage
           </span>

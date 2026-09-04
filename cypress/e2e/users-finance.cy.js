@@ -18,7 +18,7 @@ describe("Users & Finance Gating Suite", () => {
   let testUserTok;
 
   const FRESH_EMAIL    = `cypress-finance-${Date.now()}@test.local`;
-  const FRESH_PASSWORD = "Cypress123!";
+  const FRESH_PASSWORD = "Cypress1234!"; // TKT-JJMD2A: 12+ chars, needed since admin-created passwords now enforce the same policy self-service change-password already did
 
   const api = (method, path, body, token) =>
     cy.request({

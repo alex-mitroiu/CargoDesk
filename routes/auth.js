@@ -7,7 +7,7 @@ module.exports = function authRoutes(app, ctx) {
           mapScopeItem, mapAccessConfig, mapSystemEmailSettings, isUniqueViolation,
           bcrypt, jwt, JWT_SECRET,
           createTransporterFromSettings, buildMailOptions,
-          logAdminEvent, getSettings, ssoNonces, createRateLimiter } = ctx;
+          logAdminEvent, getSettings, ssoNonces, BREAK_GLASS_EMAILS, createRateLimiter } = ctx;
   const adminOnly = requireRole(["admin"]);
   const SECURE_MODES = ["none", "starttls", "tls"];
 
@@ -22,8 +22,10 @@ module.exports = function authRoutes(app, ctx) {
 
   // ─── Helpers ───────────────────────────────────────────────────────────────
 
-  const getSecuritySettings = async () => {
-    const s = await getSettings();
+  // Optional preloaded param lets a caller that already fetched getSettings() this request
+  // (e.g. the login route's sso_enforce_exclusive check) avoid a second identical DB round trip.
+  const getSecuritySettings = async (preloaded) => {
+    const s = preloaded || await getSettings();
     return {
       maxAttempts:      parseInt(s.login_max_attempts   || "5",  10),
       lockoutMinutes:   parseInt(s.login_lockout_minutes || "30", 10),
@@ -89,6 +91,16 @@ module.exports = function authRoutes(app, ctx) {
     const { email, password } = req.body || {};
     if (!email || !password) return err(res, "Email and password required");
 
+    // sso_enforce_exclusive (TKT-8P35S0) — checked before any DB lookup or password compare,
+    // so a non-break-glass account gets a clean "use SSO" message rather than a wrong-password
+    // response, and never touches the failed-attempts lockout counter for a rejection that has
+    // nothing to do with their password.
+    const s = await getSettings();
+    if (s.sso_enabled === '1' && s.sso_enforce_exclusive === '1'
+        && !BREAK_GLASS_EMAILS.has(email.toLowerCase().trim())) {
+      return err(res, "Local sign-in is disabled for this account — use \"Sign in with Microsoft\" instead.", 403);
+    }
+
     const [user] = await query(
       "SELECT * FROM users WHERE email = $1 AND is_active = TRUE", [email.toLowerCase().trim()]
     );
@@ -103,7 +115,7 @@ module.exports = function authRoutes(app, ctx) {
     }
 
     if (!bcrypt.compareSync(password, user.password_hash)) {
-      const { maxAttempts, lockoutMinutes } = await getSecuritySettings();
+      const { maxAttempts, lockoutMinutes } = await getSecuritySettings(s);
       const attempts = (user.failed_attempts || 0) + 1;
       if (attempts >= maxAttempts) {
         const lockedUntil = new Date(Date.now() + lockoutMinutes * 60_000).toISOString();
@@ -121,7 +133,7 @@ module.exports = function authRoutes(app, ctx) {
     await query("UPDATE users SET failed_attempts=0, locked_until='', last_login=$1 WHERE id=$2",
       [new Date().toISOString(), user.id]);
 
-    const { jwtHours, passwordExpiryDays } = await getSecuritySettings();
+    const { jwtHours, passwordExpiryDays } = await getSecuritySettings(s);
     const roles = JSON.parse(user.roles || JSON.stringify([user.role || 'viewer']));
     const allOffices = !!user.all_offices;
     const passwordExpired = isPasswordExpired(user, passwordExpiryDays);
@@ -420,6 +432,10 @@ module.exports = function authRoutes(app, ctx) {
       enabled:  s.sso_enabled === '1',
       tenantId: s.sso_tenant_id || '',
       clientId: s.sso_client_id || '',
+      // Public — just tells the login page whether to hide the password form by default.
+      // The break-glass path is still reachable through it (see LoginPage.jsx); this never
+      // exposes who's on the break-glass list, only whether the policy itself is active.
+      localLoginDisabled: s.sso_enabled === '1' && s.sso_enforce_exclusive === '1',
     });
   });
 
@@ -536,6 +552,9 @@ module.exports = function authRoutes(app, ctx) {
     const { email, name, roles = ["viewer"], password } = req.body || {};
     if (!email || !name || !password) return err(res, "email, name, and password are required");
     if (!roles.length || !roles.every(r => VALID_ROLES.includes(r))) return err(res, "Invalid roles");
+    // Self-service change-password/reset-password have always enforced this — an admin
+    // directly setting or resetting someone else's password bypassed it entirely (TKT-JJMD2A).
+    if (!passwordMeetsPolicy(password)) return err(res, "Password does not meet the minimum policy (12+ chars, 3 of 4 character classes)");
     const primary = primaryRoleSV(roles);
     try {
       const id = `USR-${uid()}`;
@@ -562,6 +581,9 @@ module.exports = function authRoutes(app, ctx) {
     // — a real, confirmed lockout bug, not privilege escalation: the primary `role` column still
     // correctly fell back to 'viewer', but every roles.includes(...) check saw an empty array).
     if (!newRoles.length || !newRoles.every(r => VALID_ROLES.includes(r))) return err(res, "Invalid roles");
+    // password is "blank/omitted = keep existing" on this route — only check policy when the
+    // admin is genuinely setting a new one (same gap POST /api/users had, TKT-JJMD2A).
+    if (password && !passwordMeetsPolicy(password)) return err(res, "Password does not meet the minimum policy (12+ chars, 3 of 4 character classes)");
     const primary = primaryRoleSV(newRoles);
     const active  = isActive !== undefined ? !!isActive : existing.is_active;
     const hash    = password ? bcrypt.hashSync(password, 10) : existing.password_hash;

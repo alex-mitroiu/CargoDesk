@@ -4,7 +4,7 @@
 Full-stack freight management app. React 18 + Vite frontend, Express + node:sqlite backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.90.0 "Blueprint"**
+- Version: **v0.90.1 "Bulwark"**
 - Run: `npm run dev` (runs the monolith on :3001 + Vite on :5173 + the Document Distribution Service on :3002 + the PDF Render Service on :3003 + the Contract Management Service on :3004 + the MDM Service on :3005 + the Screening Service on :3006 + the Kanban Service on :3007 + the Customer Service on :3008, concurrently) — zero-script onboarding: first boot with no `cargodesk.db` auto-copies the committed `db/cargodesk.sample.db` (MDM reference data only) into place
 - Re-seed: `npm run seed` (runs `scripts/import-mdm-data.js`) — only needed to refresh MDM data from `data/*.csv`/`.json`, not for a normal first run
 
@@ -65,6 +65,9 @@ routes/
   document-templates.js /api/document-templates/* (CRUD) + /api/document-templates/resolve
                      (cascading office+carrier lookup, mirrors milestone_templates' fallback
                      shape) — Document Template Editor (v0.90.0), BL01 pilot only
+  loop-codes.js      /api/loop-codes/* (CRUD, rotation full-replace) + /api/loop-codes/resolve
+                     (?code=, returns null rather than 404 on a miss) — Loop Codes MDM registry
+                     (v0.90.1), backs the shipment header's clickable Loop field
 scripts/
   import-mdm-data.js               Seeds ports, carriers, vessels, commodities, and the full
                                    208-country/182-country-trade-lane registry, read directly
@@ -218,6 +221,9 @@ src/
       MdmVesselsPage.jsx           349 IMO vessels
       MdmCarriersPage.jsx          Carrier codes
       MdmRegionsPage.jsx           Regions
+      MdmLoopCodesPage.jsx         Loop Codes registry (v0.90.1) — list + a drag-to-reorder
+                                   port-rotation editor per loop, referencing port_locations
+                                   directly rather than storing its own coordinates
       MdmUNLocationCodesPage.jsx   UN location code browser
       DocumentTemplatesPage.jsx   Document Template Editor (v0.90.0) — list + free-form canvas
                                    editor for a per-office/carrier document layout, BL01 pilot
@@ -248,6 +254,9 @@ src/
                                    Import, Trucker Pre/On-carriage, Also Notify, Bank, Insurance
                                    Provider, Agent) — self-fetching, rendered below PartiesOfficesPanel
                                    on ShipmentPartiesPage.jsx — Epic TKT-5XFCAP
+      LoopRouteModal.jsx           Opened by clicking a shipment header's Loop field (v0.90.1) — a
+                                   linear rotation timeline resolved via GET /api/loop-codes/resolve,
+                                   with the shipment's own matching POL/POD highlighted as a hub
       ShipmentHeaderBar.jsx        Persistent shipment header — mounted once in App.jsx, visible on
                                    Overview + every promoted sub-page (gated by SHIPMENT_SUBPAGE_LABELS[page]
                                    being truthy — the component itself has no page-awareness at all).
@@ -344,7 +353,7 @@ are fully validated.
 | ticket_links | Cross-ticket dependency relationships (blocks / is blocked by / etc.) |
 | shipment_events | Full audit log: FIELD_UPDATED, STATUS_CHANGED, CONTAINER_ADDED/REMOVED/UPDATED |
 | shipment_messages | Per-shipment threaded messages with author, role, timestamp |
-| shipment_legs | Multimodal legs: leg_type, movement_type, pol_loc_type, pod_loc_type, movement_by. `etd_source`/`eta_source` (v0.55.1, `'manual'\|'ais'\|''`) — AIS-confirmed departure/arrival updates `etd`/`eta` in place (an estimate becoming a known fact) rather than a separate ATD/ATA pair; idempotent-confirmation guard (`source==='ais'` means already-confirmed, don't re-fire), a manual edit always overwrites an AIS-confirmed value and clears the flag. Older `atd`/`ata`/`atd_source`/`ata_source` columns (v0.55.0's original, since-superseded design) are left in place, inert |
+| shipment_legs | Multimodal legs: leg_type, movement_type, pol_loc_type, pod_loc_type, movement_by. `etd_source`/`eta_source` (v0.55.1, `'manual'\|'ais'\|''`) — AIS-confirmed departure/arrival updates `etd`/`eta` in place (an estimate becoming a known fact) rather than a separate ATD/ATA pair; idempotent-confirmation guard (`source==='ais'` means already-confirmed, don't re-fire), a manual edit always overwrites an AIS-confirmed value and clears the flag. Older `atd`/`ata`/`atd_source`/`ata_source` columns (v0.55.0's original, since-superseded design) are left in place, inert. `pol_name`/`pod_name` (v0.90.1) — the resolved port/place name, mirroring `contract_legs`' own columns; the frontend (`PortCombobox`'s `onChange`) had always sent `polName`/`podName` on every leg save, this table just never had anywhere to put them. A leg saved before this shipped falls back to `useResolvedPortName`'s live `api.ports.get(code)` lookup client-side |
 | shipment_cost_lines | BUY/SELL cost lines per shipment with source tracking and FX. `adjusts_cost_line_id` — nullable, plain TEXT (same no-FK idiom as `shipment_documents.related_doc_id`), set only on a new `source:'adjustment'` posted line created via `POST .../cost-lines/:id/adjust`; the BUY-side equivalent of the SELL-side Invoice Reversal (v0.53.0). The entered amount is always the delta being applied, never a corrected total — the original posted line it points at is never edited |
 | carrier_invoices | Freight Audit & Payment (v0.69.0) — a carrier's own submitted invoice per shipment, header only (carrier, invoice number/date, currency, rolled-up status) |
 | carrier_invoice_lines | Per-invoice charge lines (v0.69.0) — amount vs. an independently-resolved `expected_amount` (from an accrued `shipment_cost_lines` row, a live `contract_rates` row, or a Detention/Demurrage pre-audit computed from `containers`' free-time fields + `container_events`), variance, and pending/matched/variance/approved/disputed status. Approving posts into the existing cost-line accrual/actualized lifecycle |
@@ -360,6 +369,8 @@ are fully validated.
 | shipment_screenings | OFAC/SDN screening results and override records. Since v0.58.0 covers all 13 party-role slots (4 fixed + 9 `shipment_parties`), not just Shipper/Consignee/Principal — each hit's `field` corroborates by both name-match and `customer_id`-against-`customer_screenings` |
 | shipment_documents | Uploaded documents metadata (filename, type, label). `bl_surrendered_at`/`_by`, `bl_released_at`/`_by` (v0.90.0, House B/L Lifecycle) — post-issuance facts on a confirmed `BL01` row, same sparse per-doc-type idiom `paid_at`/`paid_amount` (FR01/FR02-only) already established. Idempotent, set via `PATCH .../bl-surrender`/`.../bl-release`, logged through the existing `entity_events` mechanism |
 | document_templates | Document Template Editor (v0.90.0) — a free-form canvas layout scoped by `(doc_type, office_id?, carrier_code?)`, `BL01` pilot only. `fields` is a JSON array of absolutely-positioned boxes (bound to a shipment value or free text) or `type:"table"` repeating regions bound to `containers`. No DB-level `UNIQUE` on the scope triple (Postgres treats `NULL <> NULL`, so two generic rows wouldn't collide at the constraint level anyway) — the create route enforces it itself via `IS NOT DISTINCT FROM` |
+| loop_codes | Loop Codes MDM registry (v0.90.1) — a carrier's named service loop (e.g. "AL1") + frequency/round-trip metadata. Gives a shipment header's live-derived `loopCode` string (`deriveLoopCode`, still just `shipment_schedules[0].service`) somewhere real to resolve against via `GET /api/loop-codes/resolve?code=`; no FK from either side, a miss is the normal/expected case |
+| loop_code_ports | Ordered rotation for a `loop_codes` row (v0.90.1) — `port_unlocode` references `port_locations` directly rather than storing its own lat/lng (that table already has it for all 14,269 ports), `sequence_order` + optional `transit_day_offset` per stop. Full-replace on save (drag-to-reorder edits the whole list at once), not row-by-row CRUD |
 | status_log | Shipment status transitions (legacy, kept for compat) |
 | entity_events | Generic audit log for allocations, carriers, contracts |
 | commodities | 294 Maersk freight commodity codes (Grades M/K/E/S/Q) |
@@ -374,7 +385,7 @@ are fully validated.
 | system_messages | Operational notices with severity and active date range |
 | sanctions_entries | Denied-party entity records. `source` (already generic pre-v0.69.0, just never populated with anything but `'OFAC-SDN'` until now) also holds 11 more list names from the free US Consolidated Screening List (v0.69.0) — BIS Denied Persons/Entity/Unverified/Military End User Lists, State Dept ITAR Debarred + Nonproliferation Sanctions, 5 more OFAC-family lists. Every CSL-sourced row's `id` is prefixed `CSL-` so its own sync can safely scope a delete-then-reinsert without enumerating list names |
 | sanctions_syncs | Sync history (timestamp, source, count) — one row per sync JOB (`'OFAC-SDN'`, `'CSL'`), not per list; the CSL job populates many `sanctions_entries.source` values from one sync |
-| app_settings | Key-value store for server-side config (API keys, toggles, recurrence). `sso_client_secret`/`ai_api_key`/`ais_api_key` are masked on the way out — `GET`/`PUT /api/settings` (routes/system.js) never return their raw value to any caller, only a companion `<key>_configured` boolean; a submitted blank value for these 3 keys leaves the stored secret untouched (matches `smtp_password`'s own established pattern elsewhere), a genuine clear needs JSON `null` instead of `""`. Fixed 2026-09-03 audit — previously returned in full plaintext to any authenticated user, viewer role included. |
+| app_settings | Key-value store for server-side config (API keys, toggles, recurrence). `sso_client_secret`/`ai_api_key`/`ais_api_key` are masked on the way out — `GET`/`PUT /api/settings` (routes/system.js) never return their raw value to any caller, only a companion `<key>_configured` boolean; a submitted blank value for these 3 keys leaves the stored secret untouched (matches `smtp_password`'s own established pattern elsewhere), a genuine clear needs JSON `null` instead of `""`. Fixed 2026-09-03 audit — previously returned in full plaintext to any authenticated user, viewer role included. `sso_enforce_exclusive` (v0.90.1, TKT-8P35S0, default `'0'`) — when on alongside `sso_enabled`, `POST /api/auth/login` rejects every account except the `BREAK_GLASS_EMAILS` set before any password compare; its own dedicated admin-only route (`PUT /api/settings/sso-enforce-exclusive`) and the generic settings route both refuse to enable it while `BREAK_GLASS_EMAILS` is empty, the one way this flag could otherwise lock every admin out |
 | users | Authenticated users: id, email, name, password_hash, role, is_active, last_login |
 | user_scope_items | Per-user shipment scope restrictions (carrier, POL, POD filters) |
 | user_access_configs | Per-user access configuration records |
@@ -428,6 +439,53 @@ are fully validated.
 - **Document system**: `DOC_TYPES` in App.jsx (~line 56: BL01/MB01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — `MB01` (Master Bill of Lading, v0.71.0) is the vessel-operator-to-NVOCC document, a genuinely separate build from `BL01` (NVOCC-to-shipper House B/L), not a mode flag on it — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). (The earlier client-side-jsPDF `DocumentsMenu` component this note used to distinguish from was removed as dead code — it had zero references anywhere in the app.)
 - **Lifecycle-stage stepper precedent**: no dedicated stepper component exists yet; `MilestonePanel` (ShipmentDetailPage.jsx 1593-~1870) is the closest analog — linear progress bar (1734-1738, `width: ${progress}%`) plus per-step state coloring via `milestoneState()`/`stateColor()` (1666-1676: completed/overdue/current/upcoming) driven by `shipment_milestones` rows (`id, label, estimatedDate, note, completedAt, completedBy`, fixed step keys `booking_confirmed, si_submitted, cargo_gated_in, vessel_departed, bl_issued, vessel_arrived, customs_cleared, cargo_released, delivered`). Any new per-container lifecycle/stage UI should reuse this state-coloring pattern rather than inventing a new visual language
 - **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages, 📡 EDI). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
+
+## Recent changes (v0.90.1 "Bulwark")
+Two new features plus a bundled fix wave — a continuous session's output, same bundling call as
+v0.90.0/v0.85.0's own precedent.
+- **Loop Codes MDM registry** — a shipment header's Loop field has always been a bare derived
+  string (`deriveLoopCode`, `shipment_schedules[0].service`) with nothing behind it to click
+  into. New `loop_codes`/`loop_code_ports` tables back a new Master Data → Loop Codes page (list,
+  create/edit, a drag-to-reorder rotation editor) and a `GET /api/loop-codes/resolve?code=`
+  lookup returning `null` rather than 404 on a miss — a shipment's derived loop string has no FK
+  into this registry, so a miss is the expected, normal case. Clicking a Loop field (now only
+  clickable when a loop string actually exists) opens `LoopRouteModal` — a linear rotation
+  timeline with the shipment's own matching POL/POD highlighted as a hub, built from a real
+  carrier Service Explorer screenshot supplied mid-session, which favored exactly this
+  linear-timeline view over a full map for a single already-known loop. Verified live end-to-end
+  against a real shipment whose actual derived loop code matched a newly-registered loop.
+- **Danger Zone "Shutdown Dev Server" button** — direct follow-up to a recurring real question
+  ("if I ctrl+c this may trigger failures, any other way?"): Windows can't reliably deliver a
+  real, catchable signal to a background/detached process (`taskkill`, cross-process
+  `process.kill` both force-terminate rather than letting the shutdown handler close the database
+  connection first). New admin-gated, dev-only `POST /api/admin/dev-shutdown` (404s in
+  production) calls the same `gracefulShutdown()` the existing loopback-only
+  `/internal/dev/shutdown` route already uses; `GET /api/health` now reports `devMode` so the
+  button never renders against a production deployment. Caught live: the shared `ConfirmModal`
+  component's confirm button was hardcoded to "Confirm Delete" — fixed with a new optional
+  `confirmLabel` prop (defaults to the old text, every other caller unaffected). README gains a
+  "Stopping the Server" section and an updated `EADDRINUSE` entry that tries the graceful route
+  before a forced kill.
+- **Fix wave**: ETA/ETD were never sea-leg-only in `syncShipmentFromLegs` — `first.etd`/`last.eta`
+  used whatever legs sat at array position 0/-1, breaking once a Delivery leg (whose own eta is
+  essentially never filled in) existed; root cause on a real shipment (SHP-WKX04E) traced to a
+  Delivery leg's stale legacy `mot='SEA'` matching ahead of the real SEA legs. Fixed via a new
+  `isSeaLeg` helper trusting `leg_type` first. Sailing search (`catalogSailings`) could show the
+  same physical sailing 2-3x — deduped nothing before its own `LIMIT 20`; fixed by over-fetching
+  and deduping on `schedule_key` first. Admin-set passwords bypassed the password policy entirely
+  (TKT-JJMD2A) — self-service change-password always enforced it, admin-created/reset passwords
+  never did; both `POST`/`PATCH /api/users` now enforce it, frontend gained a live
+  `PasswordStrengthMeter`. New `sso_enforce_exclusive` (TKT-8P35S0, see `app_settings` above).
+  User country-scope only ever checked the POL side (TKT-M7XHLA) — fixed to match either end,
+  same as `trade_lane` scoping already did. A fresh login could render blank (the post-login
+  redirect never moved the hash off the literal `#login`) — now explicitly redirects to `#home`.
+  `shipment_legs` never persisted a resolved port name despite the frontend already sending one
+  (see `shipment_legs` above). Shipment header gained a foldable/minimized-by-default chip-row
+  summary and a location-name reformat (resolved name + country code primary, UN/LOCODE demoted
+  to a caption), plus a redesigned crane/warehouse-door pill icon set sized for 4K legibility.
+- 339 assertions re-confirmed green across every directly affected suite, plus a clean production
+  build. `document-templates.test.js`/`house-bl-lifecycle.test.js` (shipped in v0.90.0) were found
+  never wired into the `npm test` chain — added.
 
 ## Recent changes (v0.90.0 "Blueprint")
 Two features plus a fix wave, bundled into one release rather than three incremental version

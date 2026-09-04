@@ -148,6 +148,34 @@ export const IconRoute = (props) => (
   </Icon>
 );
 
+// Hand-drawn (no MingCute/Remix source has a container-crane glyph) — a single-tower quay crane
+// on a pier, a boom cantilevering out to one side with a container block hanging near its far
+// end. Deliberately bold/chunky proportions (thick mast+boom, no thin hoist-cable line) rather
+// than a literal trace of the reference — at the 12-15px this renders inline with a pill label,
+// thin strokes (a first attempt's 1-1.5 unit-wide mast/cable) anti-alias down to an indistinct
+// blob; a few thick solid shapes read as "crane" at a glance, which is what the icon needs to do
+// here. Faces right by default (boom extends right); mirror with
+// style={{ transform: "scaleX(-1)" }} for the opposite orientation rather than hand-drawing a
+// second icon — used for POL (loading) vs POD (discharge, mirrored) in ShipmentDetailPage.jsx's
+// RouteSummaryBar pill.
+export const IconCrane = (props) => (
+  <Icon {...props}>
+    <path fill="currentColor" d="M4 3H7V21H4Z M4 3H21V6.5H4Z M14 6.5H21V13H14Z M2 21H22V23H2Z" />
+  </Icon>
+);
+
+// Hand-drawn, same reference set — a warehouse/depot silhouette (peaked roof + walls) with a
+// rectangular roll-up-door cutout (evenodd hole) on the right side, and a separate solid arrow
+// glyph placed inside that transparent cutout so it reads as "visible through the open door."
+// Faces right by default (Pick-up); mirror with style={{ transform: "scaleX(-1)" }} for
+// Delivery — the same one-icon-mirrored idiom as IconCrane above.
+export const IconWarehouseDoor = (props) => (
+  <Icon {...props}>
+    <path fill="currentColor" fillRule="evenodd" d="M2 11L12 3L22 11L22 21L2 21Z M14 12H20V21H14Z" />
+    <path fill="currentColor" d="M15 13L19 16.5L15 20Z" />
+  </Icon>
+);
+
 export const IconFlag = (props) => (
   <Icon {...props}>
     <path fill="currentColor" d="M4 21a1 1 0 1 0 2 0v-4.204l11.45-2.643A2 2 0 0 0 19 12.204V3.63a1.5 1.5 0 0 0-1.837-1.462L5.55 4.847A2 2 0 0 0 4 6.796zM6 6.796l11-2.539v7.948L6 14.743z" />

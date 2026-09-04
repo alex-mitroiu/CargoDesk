@@ -10,11 +10,16 @@ const LoginPage = ({ onLogin, notice }) => {
   const [loading,     setLoading]     = useState(false);
   const [error,       setError]       = useState("");
   const [ssoEnabled,  setSsoEnabled]  = useState(false);
+  const [localLoginDisabled, setLocalLoginDisabled] = useState(false);
+  const [showLocalForm, setShowLocalForm] = useState(false);
 
   // Check for SSO availability and handle redirect params on mount
   useEffect(() => {
     api.auth.ssoConfig()
-      .then(({ enabled }) => setSsoEnabled(!!enabled))
+      .then(({ enabled, localLoginDisabled }) => {
+        setSsoEnabled(!!enabled);
+        setLocalLoginDisabled(!!localLoginDisabled);
+      })
       .catch(() => {});
 
     const params = new URLSearchParams(window.location.search);
@@ -58,6 +63,12 @@ const LoginPage = ({ onLogin, notice }) => {
       setLoading(false);
     }
   };
+
+  // Computed once rather than repeated inline at each of their 2 call sites below (the divider/
+  // form visibility, and the "Use a local account instead" reveal button) — kept them from
+  // silently drifting out of sync with each other as this file's SSO-exclusive states evolved.
+  const showForm = !localLoginDisabled || showLocalForm;
+  const showLocalToggle = ssoEnabled && localLoginDisabled && !showLocalForm;
 
   const inputStyle = {
     width: "100%", padding: "10px 14px", borderRadius: 8,
@@ -123,70 +134,104 @@ const LoginPage = ({ onLogin, notice }) => {
                 <MicrosoftIcon />
                 Sign in with Microsoft
               </a>
-              <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "20px 0" }}>
-                <div style={{ flex: 1, height: 1, background: T.border }} />
-                <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>or</span>
-                <div style={{ flex: 1, height: 1, background: T.border }} />
-              </div>
+              {showForm && (
+                <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "20px 0" }}>
+                  <div style={{ flex: 1, height: 1, background: T.border }} />
+                  <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>or</span>
+                  <div style={{ flex: 1, height: 1, background: T.border }} />
+                </div>
+              )}
             </>
           )}
 
-          <form onSubmit={handleSubmit}>
-            <div style={{ marginBottom: 16 }}>
-              <label style={{ display: "block", fontFamily: T.body, fontSize: 11, fontWeight: 600,
-                color: T.textMuted, textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 6 }}>
-                Email
-              </label>
-              <input
-                type="email" value={email} onChange={e => setEmail(e.target.value)}
-                required autoFocus autoComplete="email"
-                style={inputStyle}
-                onFocus={e => e.currentTarget.style.borderColor = T.accent}
-                onBlur={e  => e.currentTarget.style.borderColor = T.border}
-              />
-            </div>
-
-            <div style={{ marginBottom: 24 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-                <label style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600,
-                  color: T.textMuted, textTransform: "uppercase", letterSpacing: ".07em" }}>
-                  Password
-                </label>
-                <a href="#forgot-password" style={{ fontFamily: T.body, fontSize: 11.5, color: T.accent,
-                  textDecoration: "none" }}>
-                  Forgot password?
-                </a>
-              </div>
-              <input
-                type="password" value={password} onChange={e => setPassword(e.target.value)}
-                required autoComplete="current-password"
-                style={inputStyle}
-                onFocus={e => e.currentTarget.style.borderColor = T.accent}
-                onBlur={e  => e.currentTarget.style.borderColor = T.border}
-              />
-            </div>
-
-            {error && (
-              <div style={{
-                padding: "10px 14px", borderRadius: 8, marginBottom: 16,
-                background: T.danger + "18", border: `1px solid ${T.danger}44`,
-                fontFamily: T.body, fontSize: 13, color: T.danger,
-              }}>
-                {error}
-              </div>
-            )}
-
-            <button type="submit" disabled={loading} style={{
-              width: "100%", padding: "11px",
-              background: loading ? T.border : T.accent,
-              color: "#fff", border: "none", borderRadius: 8,
-              fontFamily: T.body, fontSize: 14, fontWeight: 600,
-              cursor: loading ? "default" : "pointer",
-              transition: "background .15s",
+          {/* SSO-redirect failures ("SSO sign-in failed", an sso_error query param) can land here
+              with the local form hidden (localLoginDisabled && !showLocalForm) — the only place
+              those can surface at all. Wrong-password/etc. errors from the form itself render
+              near the submit button below instead, restoring the original position (this used to
+              be the single, always-above-the-form spot for every error state, which regressed the
+              common case: a wrong-password error now appeared at the top of the card, away from
+              the button the user just clicked, for every login — not just the new SSO states). */}
+          {error && !showForm && (
+            <div style={{
+              // !showForm here only ever means localLoginDisabled && !showLocalForm (the SSO
+              // section above is always showing too in that state), so this margin always
+              // applies — no need to re-check ssoEnabled/localLoginDisabled a second time.
+              padding: "10px 14px", borderRadius: 8, marginBottom: 16, marginTop: 16,
+              background: T.danger + "18", border: `1px solid ${T.danger}44`,
+              fontFamily: T.body, fontSize: 13, color: T.danger,
             }}>
-              {loading ? "Signing in…" : "Sign in"}
+              {error}
+            </div>
+          )}
+
+          {showForm && (
+            <form onSubmit={handleSubmit}>
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ display: "block", fontFamily: T.body, fontSize: 11, fontWeight: 600,
+                  color: T.textMuted, textTransform: "uppercase", letterSpacing: ".07em", marginBottom: 6 }}>
+                  Email
+                </label>
+                <input
+                  type="email" value={email} onChange={e => setEmail(e.target.value)}
+                  required autoFocus autoComplete="email"
+                  style={inputStyle}
+                  onFocus={e => e.currentTarget.style.borderColor = T.accent}
+                  onBlur={e  => e.currentTarget.style.borderColor = T.border}
+                />
+              </div>
+
+              <div style={{ marginBottom: 24 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                  <label style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600,
+                    color: T.textMuted, textTransform: "uppercase", letterSpacing: ".07em" }}>
+                    Password
+                  </label>
+                  <a href="#forgot-password" style={{ fontFamily: T.body, fontSize: 11.5, color: T.accent,
+                    textDecoration: "none" }}>
+                    Forgot password?
+                  </a>
+                </div>
+                <input
+                  type="password" value={password} onChange={e => setPassword(e.target.value)}
+                  required autoComplete="current-password"
+                  style={inputStyle}
+                  onFocus={e => e.currentTarget.style.borderColor = T.accent}
+                  onBlur={e  => e.currentTarget.style.borderColor = T.border}
+                />
+              </div>
+
+              {error && (
+                <div style={{
+                  padding: "10px 14px", borderRadius: 8, marginBottom: 16,
+                  background: T.danger + "18", border: `1px solid ${T.danger}44`,
+                  fontFamily: T.body, fontSize: 13, color: T.danger,
+                }}>
+                  {error}
+                </div>
+              )}
+
+              <button type="submit" disabled={loading} style={{
+                width: "100%", padding: "11px",
+                background: loading ? T.border : T.accent,
+                color: "#fff", border: "none", borderRadius: 8,
+                fontFamily: T.body, fontSize: 14, fontWeight: 600,
+                cursor: loading ? "default" : "pointer",
+                transition: "background .15s",
+              }}>
+                {loading ? "Signing in…" : "Sign in"}
+              </button>
+            </form>
+          )}
+
+          {showLocalToggle && (
+            <button type="button" onClick={() => setShowLocalForm(true)} style={{
+              display: "block", width: "100%", textAlign: "center", marginTop: 4,
+              background: "none", border: "none", cursor: "pointer",
+              fontFamily: T.body, fontSize: 11.5, color: T.textMuted, textDecoration: "underline",
+            }}>
+              Use a local account instead
             </button>
-          </form>
+          )}
         </div>
 
         <div style={{ textAlign: "center", marginTop: 20,

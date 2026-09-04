@@ -10,10 +10,11 @@ import { deriveHaulageNeeds } from "../../pages/shipments/ShipmentFormPage";
 import useContractMismatch from "../../hooks/useContractMismatch";
 import ContractMismatchModal from "./ContractMismatchModal";
 import { AnyIcon, IconClipboard, IconLink, IconRefresh, IconPencil, IconWarning, IconCheck,
-  IconMail, IconMailUnread, IconLock, IconGroup } from "../primitives/Icon";
+  IconMail, IconMailUnread, IconLock, IconGroup, IconArrowUp, IconArrowDown } from "../primitives/Icon";
 import { fmtCurr } from "../../utils/invoiceGenerator";
 import { onCargoValueChanged } from "../../cargoValueBus";
 import { deriveLoopCode } from "../../utils/scheduleLoop";
+import LoopRouteModal from "./LoopRouteModal";
 
 // ─── Persistent Shipment Header ────────────────────────────────────────────
 // Mounted once in App.jsx above the page switch for "detail" + every promoted
@@ -29,15 +30,21 @@ import { deriveLoopCode } from "../../utils/scheduleLoop";
 // tile in v0.35.0 — it's now the dedicated Carrier Booking page (Explorer sidebar),
 // not a drawer.
 
-const Field = ({ label, value, first }) => (
-  <div id={`shphdr-field-${label.toLowerCase().replace(/\s+/g, "-")}`} style={{
-    display: "flex", alignItems: "baseline", gap: 6,
-    padding: "0 14px", margin: first ? "0 14px 0 0" : 0,
-    borderLeft: first ? "none" : `1px solid ${T.border}`,
-  }}>
+const Field = ({ label, value, first, onClick }) => (
+  <div id={`shphdr-field-${label.toLowerCase().replace(/\s+/g, "-")}`}
+    onClick={onClick}
+    title={onClick ? "Click to view route" : undefined}
+    style={{
+      display: "flex", alignItems: "baseline", gap: 6,
+      padding: "0 14px", margin: first ? "0 14px 0 0" : 0,
+      borderLeft: first ? "none" : `1px solid ${T.border}`,
+      cursor: onClick ? "pointer" : "default",
+    }}>
     <span style={{ fontFamily: T.mono, fontSize: 10, textTransform: "uppercase",
       letterSpacing: "0.08em", color: T.textMuted, flexShrink: 0 }}>{label}</span>
-    <span style={{ fontFamily: T.body, fontSize: 12.5, color: T.text, fontWeight: 500,
+    <span style={{ fontFamily: T.body, fontSize: 12.5, fontWeight: onClick ? 700 : 500,
+      color: onClick ? T.accent : T.text, textDecoration: onClick ? "underline" : "none",
+      textDecorationColor: onClick ? `${T.accent}66` : "transparent", textUnderlineOffset: 2,
       whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 220 }}>
       {value || "—"}
     </span>
@@ -100,7 +107,53 @@ const IconTile = ({ items }) => {
   );
 };
 
+// Minimized-state summary row (direct request) — a handful of chip-style values standing in
+// for the full Row 2 + route pill, so the header can default to a much shorter footprint without
+// losing the fields an operator scans for most. Containers collapse to "N×TYPE" when every
+// container on the shipment shares one size+type, or a plain "N containers" count otherwise —
+// a mixed manifest has no single code worth naming here.
+const ChipRow = ({ shipment, ctrs }) => {
+  const ctrTypeKeys = [...new Set(ctrs.map(c => `${c.size}${c.type}`))];
+  const containerSummary = ctrs.length === 0 ? null
+    : ctrTypeKeys.length === 1 ? `${ctrs.length}×${ctrTypeKeys[0]}`
+    : `${ctrs.length} container${ctrs.length !== 1 ? "s" : ""}`;
+  const chips = [
+    shipment.carrierCode && { label: "Carrier", value: shipment.carrierCode, accent: true },
+    shipment.vessel && { label: "Vessel", value: shipment.vessel },
+    containerSummary && { label: "Containers", value: containerSummary },
+    shipment.shipperName && { label: "Shipper", value: shipment.shipperName },
+    shipment.consigneeName && { label: "Consignee", value: shipment.consigneeName },
+  ].filter(Boolean);
+  if (!chips.length) return null;
+  return (
+    <div id="shphdr-chiprow" style={{ display: "flex", flexWrap: "wrap", gap: 8,
+      marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.border}` }}>
+      {chips.map(c => (
+        <span key={c.label} id={`shphdr-chip-${c.label.toLowerCase()}`} style={{
+          display: "inline-flex", alignItems: "center", gap: 6,
+          fontFamily: T.mono, fontSize: 12, fontWeight: c.accent ? 700 : 400,
+          color: c.accent ? T.accent : T.text,
+          background: T.bg, border: `1px solid ${T.border}`, borderRadius: 20,
+          padding: "5px 12px 5px 10px", whiteSpace: "nowrap", maxWidth: 260,
+          overflow: "hidden", textOverflow: "ellipsis" }}>
+          <span style={{ fontFamily: T.body, fontSize: 9.5, fontWeight: 700, textTransform: "uppercase",
+            letterSpacing: "0.05em", color: T.textMuted, flexShrink: 0 }}>{c.label}</span>
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{c.value}</span>
+        </span>
+      ))}
+    </div>
+  );
+};
+
 const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, onNavigateToParties, onUpdate, onRefresh, onEdit }) => {
+  // Minimized by default (direct request) — resets to minimized on every new shipment rather
+  // than persisting a preference, so "minimized by default" holds for every shipment visited,
+  // not just the first one. Stays whatever the operator leaves it at while navigating between
+  // this same shipment's own sub-pages, since this component is mounted once per shipment and
+  // never remounts on that kind of navigation (see the file-level comment above).
+  const [folded, setFolded] = useState(true);
+  const [loopModalOpen, setLoopModalOpen] = useState(false);
+  useEffect(() => { setFolded(true); }, [shipment.id]);
   const { canEditShipments: canEdit, shipmentLock } = useAuth();
   const [schedules, setSchedules] = useState([]);
   const [screening, setScreening] = useState(null);
@@ -384,6 +437,18 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
           ...(canEdit ? [{ key: "edit", icon: IconPencil, title: "Edit Shipment", onClick: () => onEdit?.() }] : []),
         ]} />
 
+        <button id="shphdr-fold-toggle" type="button" onClick={() => setFolded(f => !f)}
+          title={folded ? "Expand shipment info" : "Minimize shipment info"}
+          style={{ fontFamily: T.mono, fontSize: 10.5, fontWeight: 600, letterSpacing: "0.04em",
+            color: T.textMuted, background: "none", border: `1px solid ${T.border}`,
+            borderRadius: 6, padding: "5px 9px", cursor: "pointer",
+            display: "inline-flex", alignItems: "center", gap: 5 }}
+          onMouseEnter={e => { e.currentTarget.style.color = T.text; e.currentTarget.style.borderColor = T.accent; }}
+          onMouseLeave={e => { e.currentTarget.style.color = T.textMuted; e.currentTarget.style.borderColor = T.border; }}>
+          {folded ? <IconArrowDown size={11} /> : <IconArrowUp size={11} />}
+          {folded ? "Expand" : "Minimize"}
+        </button>
+
         {contractMismatch && (
           <button id="shphdr-contract-mismatch-badge" type="button" onClick={onNavigateToSchedules}
             title={`${shipment.contractRef || "The attached contract"} no longer covers ${matchPol} → ${matchPod} — click to resolve`}
@@ -440,28 +505,36 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
         )}
       </div>
 
-      {/* Row 2 — secondary facts */}
-      <div id="shphdr-row2" style={{ display: "flex", flexWrap: "wrap", rowGap: 6,
-        marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.border}` }}>
-        <Field first label="Incoterm" value={shipment.incoterm} />
-        <Field label="Routing" value={shipment.routingTerm} />
-        <Field label="Trade Lane" value={shipment.tradeLane} />
-        <Field label="Vessel" value={shipment.vessel} />
-        <Field label="Voyage" value={shipment.voyage} />
-        <Field label="Shipper" value={shipment.shipperName} />
-        <Field label="Consignee" value={shipment.consigneeName} />
-        <Field label="Contract" value={shipment.contractRef} />
-        <Field label="TEU" value={ctrs.length ? String(teu) : null} />
-        <Field label="Cargo Value" value={cargoValueUsd != null ? fmtCurr(cargoValueUsd, "USD") : null} />
-        <Field label="Loop" value={loopCode} />
-      </div>
+      {folded ? (
+        // Minimized (default) state — Row 1 above stays exactly as-is; everything below
+        // collapses to the one chip row instead of the full Row 2 + route pill.
+        <ChipRow shipment={shipment} ctrs={ctrs} />
+      ) : (
+        <>
+          {/* Row 2 — secondary facts */}
+          <div id="shphdr-row2" style={{ display: "flex", flexWrap: "wrap", rowGap: 6,
+            marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.border}` }}>
+            <Field first label="Incoterm" value={shipment.incoterm} />
+            <Field label="Routing" value={shipment.routingTerm} />
+            <Field label="Trade Lane" value={shipment.tradeLane} />
+            <Field label="Vessel" value={shipment.vessel} />
+            <Field label="Voyage" value={shipment.voyage} />
+            <Field label="Shipper" value={shipment.shipperName} />
+            <Field label="Consignee" value={shipment.consigneeName} />
+            <Field label="Contract" value={shipment.contractRef} />
+            <Field label="TEU" value={ctrs.length ? String(teu) : null} />
+            <Field label="Cargo Value" value={cargoValueUsd != null ? fmtCurr(cargoValueUsd, "USD") : null} />
+            <Field label="Loop" value={loopCode} onClick={loopCode ? () => setLoopModalOpen(true) : undefined} />
+          </div>
 
-      {/* Row 3 — the same route summary panel shown on the Schedules page (Pick-up/POL,
-          ETD/transit/ETA/carrier/routing-term, POD/Delivery) — one visual for one concept
-          instead of a second, different journey diagram. */}
-      <div id="shphdr-row3" style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.border}` }}>
-        <RouteSummaryBar shipment={shipment} />
-      </div>
+          {/* Row 3 — the same route summary panel shown on the Schedules page (Pick-up/POL,
+              ETD/transit/ETA/carrier/routing-term, POD/Delivery) — one visual for one concept
+              instead of a second, different journey diagram. */}
+          <div id="shphdr-row3" style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${T.border}` }}>
+            <RouteSummaryBar shipment={shipment} />
+          </div>
+        </>
+      )}
 
       {complianceOpen && (
         <ComplianceModal
@@ -505,6 +578,11 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
       />}
 
       {ticketsOpen && <TicketsDrawer shipment={shipment} onClose={() => setTicketsOpen(false)} />}
+
+      {loopModalOpen && (
+        <LoopRouteModal code={loopCode} polCode={shipment.pol} podCode={shipment.pod}
+          onClose={() => setLoopModalOpen(false)} />
+      )}
     </div>
   );
 };

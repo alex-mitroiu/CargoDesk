@@ -32,7 +32,7 @@ const PRESERVE_TABLES = new Set([
 ]);
 
 module.exports = function adminResetRoutes(app, ctx) {
-  const { query, transaction, ok, err, auth, requireRole, logAdminEvent, seedAdmin, seedTestFixtureAdmin, seedSigningCert } = ctx;
+  const { query, transaction, ok, err, auth, requireRole, logAdminEvent, seedAdmin, seedTestFixtureAdmin, seedSigningCert, gracefulShutdown } = ctx;
 
   const listTables = async () => (await query(
     "SELECT table_name AS name FROM information_schema.tables WHERE table_schema='public' AND table_type='BASE TABLE' ORDER BY table_name"
@@ -79,5 +79,19 @@ module.exports = function adminResetRoutes(app, ctx) {
     await logAdminEvent(req.user, "RESET_DEMO_DATA", "system", "", { tablesCleared: toReset.length });
 
     ok(res, { reset: true, tablesCleared: toReset.length });
+  });
+
+  // Authenticated, admin-gated sibling of the loopback-only `/internal/dev/shutdown` route
+  // (server.js) — that one exists for local scripts/tooling with no way to hold a login session;
+  // this one is what the in-app Danger Zone button calls, so it needs a real logged-in admin
+  // rather than trusting "the request came from 127.0.0.1" alone. Same underlying
+  // gracefulShutdown() either way — closes the DB connection before the process exits, avoiding
+  // the corruption risk of a forced kill (Task Manager, `taskkill /F`, closing a detached
+  // terminal). Dev-only: 404s in production, so the capability to stop a live server from the
+  // browser simply doesn't exist there.
+  app.post("/api/admin/dev-shutdown", auth(), requireRole(["admin"]), async (req, res) => {
+    if (process.env.NODE_ENV === "production") return err(res, "Not available in production", 404);
+    ok(res, { ok: true });
+    gracefulShutdown(`HTTP /api/admin/dev-shutdown (${req.user?.email || "admin"})`);
   });
 };

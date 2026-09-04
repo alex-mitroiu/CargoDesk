@@ -4,6 +4,8 @@ import { api } from "../api";
 import { toast } from "../toast";
 import { Modal } from "./primitives/Modal";
 import Btn from "./primitives/Btn";
+import PasswordStrengthMeter from "./primitives/PasswordStrengthMeter";
+import { scorePassword } from "../utils/passwordPolicy";
 import Pagination from "./primitives/Pagination";
 import PageSizeSelect, { getStoredPageSize } from "./primitives/PageSizeSelect";
 import ActionMenu from "./primitives/ActionMenu";
@@ -774,10 +776,21 @@ const UserFormModal = ({ user: existing, onSave, onClose }) => {
   const toggle = (role) =>
     setRoles(prev => prev.includes(role) ? prev.filter(r => r !== role) : [...prev, role]);
 
+  // A password is only actually being set on create (always) or on edit when the
+  // blank-to-keep field was typed into — matches the same "only check when a real
+  // value is submitted" rule the backend route enforces (TKT-JJMD2A). Edit mode trims
+  // before submitting (below), so the policy check runs against that same trimmed
+  // value — otherwise whitespace padding could pass client validation here and still
+  // get rejected server-side after the trim, with no warning shown.
+  const settingPassword = isNew ? true : !!password.trim();
+  const effectivePassword = isNew ? password : password.trim();
+  const passwordOk = !settingPassword || scorePassword(effectivePassword).meetsMinimum;
+
   const handleSave = async () => {
+    // Password policy is enforced by disabling Save itself (below) rather than a
+    // check here — passwordOk gates the button, so this can never run against a bad one.
     if (!name.trim()) return setError("Name is required");
     if (!email.trim()) return setError("Email is required");
-    if (isNew && !password.trim()) return setError("Password is required");
     if (!roles.length) return setError("At least one role must be selected");
     setError(""); setSaving(true);
     try {
@@ -817,10 +830,11 @@ const UserFormModal = ({ user: existing, onSave, onClose }) => {
           </div>
           <div>
             <FieldLabel required={isNew}>{isNew ? "Password" : "New Password (blank to keep)"}</FieldLabel>
-            <input type="password" value={password} onChange={e => setPassword(e.target.value)} style={inputStyle()}
+            <input type="password" autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} style={inputStyle()}
               placeholder={isNew ? "Set a password" : "Leave blank to keep"}
               onFocus={e => e.currentTarget.style.borderColor = T.accent}
               onBlur={e  => e.currentTarget.style.borderColor = T.border} />
+            {settingPassword && <PasswordStrengthMeter password={effectivePassword} />}
           </div>
           {!isNew && (
             <div style={{ display: "flex", alignItems: "center" }}>
@@ -856,7 +870,7 @@ const UserFormModal = ({ user: existing, onSave, onClose }) => {
         </div>
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 4 }}>
           <Btn variant="ghost" onClick={onClose} disabled={saving}>Cancel</Btn>
-          <Btn variant="primary" onClick={handleSave} disabled={saving}>
+          <Btn variant="primary" onClick={handleSave} disabled={saving || !passwordOk}>
             {saving ? "Saving…" : isNew ? "Create User" : "Save Changes"}
           </Btn>
         </div>

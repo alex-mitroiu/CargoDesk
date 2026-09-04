@@ -84,6 +84,7 @@ import MdmLinkedPortsPage     from "./pages/mdm/MdmLinkedPortsPage";
 import MdmCarrierAgentsPage   from "./pages/mdm/MdmCarrierAgentsPage";
 import MdmTradeLanesPage      from "./pages/mdm/MdmTradeLanesPage";
 import MdmRegionsPage         from "./pages/mdm/MdmRegionsPage";
+import MdmLoopCodesPage       from "./pages/mdm/MdmLoopCodesPage";
 import MdmCountriesPage       from "./pages/mdm/MdmCountriesPage";
 import MdmUNLocationCodesPage  from "./pages/mdm/MdmUNLocationCodesPage";
 import MdmCommoditiesPage     from "./pages/mdm/MdmCommoditiesPage";
@@ -416,6 +417,12 @@ function App() {
     if (returnHash) {
       sessionStorage.removeItem("cargodesk_return_hash");
       window.location.hash = returnHash;
+    } else if (window.location.hash.replace("#", "").trim() === "login") {
+      // A normal fresh login (not an idle-timeout tab restore) still has the hash forced to
+      // "login" by the logged-out effect above — nothing else ever moves it off that once
+      // `user` becomes truthy, so the app would otherwise render blank on hash="login" (no
+      // page block matches it) instead of landing on Home.
+      window.location.hash = "home";
     }
   };
   const handleLogout = ({ reason } = {}) => {
@@ -652,7 +659,7 @@ function App() {
   }, [authLoading, user, page]);
 
   // kanban is top-level, not MDM
-  const MDM_PAGES = ["mdm-carriers", "mdm-carrier-agents", "mdm-ports", "mdm-linked", "mdm-vessels", "mdm-commodities", "mdm-tradelanes", "mdm-countries", "mdm-unlocodes", "mdm-customers", "mdm-sanctioned-customers", "mdm-contracts", "rate-benchmark", "mdm-finance", "mdm-charge-codes", "mdm-duty-rates", "mdm-equipment", "mdm-pack-types", "mdm-container-types", "mdm-invoice-reason-codes", "mdm-locations", "mdm-document-templates"];
+  const MDM_PAGES = ["mdm-carriers", "mdm-carrier-agents", "mdm-ports", "mdm-linked", "mdm-vessels", "mdm-commodities", "mdm-loop-codes", "mdm-tradelanes", "mdm-countries", "mdm-unlocodes", "mdm-customers", "mdm-sanctioned-customers", "mdm-contracts", "rate-benchmark", "mdm-finance", "mdm-charge-codes", "mdm-duty-rates", "mdm-equipment", "mdm-pack-types", "mdm-container-types", "mdm-invoice-reason-codes", "mdm-locations", "mdm-document-templates"];
   const ORG_PAGES = ["org-country", "org-branch", "org-office"];
   const ALL_PAGES = [...MDM_PAGES, ...ORG_PAGES, "manual"];
   const isMdmActive = MDM_PAGES.includes(page);
@@ -737,6 +744,7 @@ function App() {
     "mdm-commodities":  "Master Data — Commodities",
     "mdm-ports":        "Master Data — Port Locations",
     "mdm-linked":       "Master Data — Linked Ports",
+    "mdm-loop-codes":   "Master Data — Loop Codes",
     "mdm-tradelanes":   "Master Data — Trade Lanes",
     "mdm-regions":      "Master Data — Regions",
     "mdm-countries":    "Master Data — Countries",
@@ -1719,6 +1727,7 @@ function App() {
                     <NavBtn pageKey="mdm-carrier-agents" icon={IconLink} label="Carrier Agents" subIndent />
                   )}
                   <NavBtn pageKey="mdm-vessels"      icon={IconShip} label="Vessels"         indent />
+                  <NavBtn pageKey="mdm-loop-codes" icon={IconRoute} label="Loop Codes"     indent />
                   <NavBtn pageKey="mdm-commodities" icon={IconPackage} label="Commodities"     indent />
                   <NavBtn pageKey="mdm-ports"    icon={IconMapPin} label="Port Locations" indent
                     foldable open={portsNavOpen} onToggleFold={() => setPortsNavOpen(o => !o)} />
@@ -2149,6 +2158,7 @@ function App() {
         {page === "mdm-vessels"    && isEnabled("mdm-vessels")    && <MdmVesselsPage />}
         {page === "mdm-ports"      && isEnabled("mdm-ports")      && <MdmPortLocationsPage />}
         {page === "mdm-linked"     && isEnabled("mdm-linked")     && <MdmLinkedPortsPage />}
+        {page === "mdm-loop-codes"&&                                  <MdmLoopCodesPage />}
         {page === "mdm-tradelanes" &&                                 <MdmTradeLanesPage />}
         {page === "mdm-countries"  &&                                 <MdmCountriesPage />}
         {page === "mdm-unlocodes"  &&                                 <MdmUNLocationCodesPage />}

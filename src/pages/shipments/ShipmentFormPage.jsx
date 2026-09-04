@@ -19,8 +19,11 @@ import InfoHint from "../../components/primitives/InfoHint";
 import { ContainerTypeField } from "../../components/shared/ContainerTypePickerModal";
 import SailingPickerModal from "../../components/shared/SailingPickerModal";
 import { IconClose, IconWarning, IconPackage, IconPencil, IconCheck, IconRefresh, IconLock, IconAnchor, IconShip } from "../../components/primitives/Icon";
-import { GPS_LOC_TYPE, formatLegPoint, LOC_TYPE_OPTIONS } from "../../utils/legLocation";
+import { GPS_LOC_TYPE, formatLegPoint, isGpsLeg, LOC_TYPE_OPTIONS } from "../../utils/legLocation";
+import { countryCodeOf } from "../../utils/countryTag";
+import useResolvedPortName from "../../hooks/useResolvedPortName";
 import ConsumptionBar from "../../components/shared/ConsumptionBar";
+import { applySailingToLegs as applySailingToLegsShared } from "../../utils/applySailingToLegs";
 
 // ─── Draft Container Manager ──────────────────────────────────────────────────
 
@@ -615,6 +618,15 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
     return () => clearTimeout(suggRef.current);
   }, [d.etd, d.pol, d.pod, d.legType, d.eta]);
 
+  // Locked (schedule-linked SEA) rows render read-only below, straight off the leg's own
+  // polName/podName — but a SEA leg written via Apply Sailing never carried a name at all (the
+  // sailing/schedule data itself has none to give), so it showed the bare code while an
+  // editable Pick-up/Delivery row right next to it looked correct — PortCombobox resolves a
+  // missing name live via api.ports.get() on its own. Mirror that same fallback here so a
+  // locked row is never worse than an editable one purely because of how its leg was created.
+  const resolvedPolName = useResolvedPortName(locked, d.pol, d.polName, d.polLocType);
+  const resolvedPodName = useResolvedPortName(locked, d.pod, d.podName, d.podLocType);
+
   const MONO_KEYS = new Set(["pol", "pod", "voyage", "carrierCode"]);
 
   const visibleCols = showContractCols ? LEG_COLS : LEG_COLS.slice(0, -2);
@@ -644,6 +656,8 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
           const isPort = c.key === "pol" || c.key === "pod";
           const portSide = c.key === "pol" ? "pol" : c.key === "pod" ? "pod" : null;
           const portPoint = isPort ? formatLegPoint(d, portSide) : null;
+          const portDisplayName = portSide === "pol" ? (portPoint?.name || resolvedPolName)
+            : portSide === "pod" ? (portPoint?.name || resolvedPodName) : null;
           const legIsTrucking = (d.legType === "Pick-up" || d.legType === "Delivery") && d.movementBy !== "Barge";
           const value = c.key === "contractType" ? (inheritedContractType || "—")
             : c.key === "contractRef" ? (inheritedContractRef || "—")
@@ -662,10 +676,20 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
                   <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.text, flexShrink: 0 }}>
                     {value}
                   </span>
-                  {portPoint.name && (
-                    <span style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted,
+                  {portDisplayName && (
+                    <span style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted, flex: 1,
                       overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {portPoint.name}
+                      {portDisplayName}
+                    </span>
+                  )}
+                  {/* Same country tag PortCombobox's own selected chip shows next to an editable
+                      Pick-up/Delivery leg's port — aligns a locked SEA row to match instead of
+                      looking like a lesser, code-only display. Skipped for a GPS-coordinates leg
+                      (portPoint.code is "GPS" or a lat/lng string there, not a UN/LOCODE — slicing
+                      it would render a nonsense 2-character tag next to "Classified location"). */}
+                  {!isGpsLeg(d, portSide) && (
+                    <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted, flexShrink: 0 }}>
+                      {countryCodeOf(portPoint.code)}
                     </span>
                   )}
                 </div>
@@ -2166,7 +2190,16 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
               await Promise.all(savedSchedules.map(s => api.schedules.remove(init.id, s.id)));
               const saved = await api.schedules.save(init.id, { ...sailing, templateId: sailing.scheduleId ?? null });
               setSavedSchedules([saved]);
-              applySailingToLegs(sailing);
+              // The local applySailingToLegs just above only ever stages draftLegs — LegsTable
+              // ignores that state once shipmentId is set (edit mode uses live api.legs.* CRUD
+              // instead), so calling it here never actually reached the real shipment_legs rows.
+              // Found live on SHP-WKX04E: the schedule saved correctly but vessel/ETA never
+              // showed up in Route Legs. Use the same live-API helper ShipmentSchedulesPage.jsx's
+              // own "Add Sailing" flow already uses, then bump draftLegs' reference to make
+              // LegsTable's fetch effect re-pull the now-actually-updated legs from the server.
+              await applySailingToLegsShared(init.id, sailing, { contractType: f.contractType, contractRef: f.contractRef, silent: true });
+              onDraftLegsChange([...(draftLegs || [])]);
+              toast.success("Sailing applied");
             } catch (e) { toast.error(e.message); }
           } else {
             setSelectedSailing(sailing);

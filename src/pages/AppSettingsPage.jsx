@@ -13,7 +13,7 @@ import UserManagementPanel from "../components/UserManagementPanel";
 import { AiOrb, ORB_STYLES } from "../components/shared/AiOrb";
 import { IconSettings } from "../components/primitives/Icon";
 import EadapterConfigModal from "../components/shared/EadapterConfigModal";
-import { Modal } from "../components/primitives/Modal";
+import { Modal, ConfirmModal } from "../components/primitives/Modal";
 
 // ─── External API definitions ─────────────────────────────────────────────────
 
@@ -440,10 +440,11 @@ function SecuritySettingsPanel({ settings, onChange }) {
 
 // ─── SSO Settings Panel ───────────────────────────────────────────────────────
 
-function SsoSettingsPanel({ settings, onChange }) {
+function SsoSettingsPanel({ settings, onChange, onToggleExclusive }) {
   const [showSecret, setShowSecret] = useState(false);
   const s = settings;
   const enabled = s.sso_enabled === '1';
+  const exclusive = s.sso_enforce_exclusive === '1';
   const fld = { marginBottom: 16 };
   const lbl = { display: "block", fontFamily: T.body, fontSize: 11, fontWeight: 600,
     color: T.textMuted, textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 5 };
@@ -459,7 +460,8 @@ function SsoSettingsPanel({ settings, onChange }) {
       {!enabled && (
         <div style={{ padding: "12px 16px", borderRadius: 8, background: T.border + "30",
           fontFamily: T.body, fontSize: 13, color: T.textMuted, marginBottom: 20 }}>
-          Enable the toggle above to activate SSO. Local login always remains available as fallback.
+          Enable the toggle above to activate SSO. Local login remains available for everyone
+          until "Require SSO for all sign-ins" below is also turned on.
         </div>
       )}
 
@@ -504,10 +506,34 @@ function SsoSettingsPanel({ settings, onChange }) {
 
       {enabled && (
         <div style={{ padding: "12px 16px", borderRadius: 8, border: `1px solid ${T.accent}44`,
-          background: T.accent + "0a", fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
+          background: T.accent + "0a", fontFamily: T.body, fontSize: 12, color: T.textMuted, marginBottom: 20 }}>
           <strong style={{ color: T.text }}>Login URL:</strong>{" "}
           <code style={{ fontFamily: T.mono, fontSize: 11 }}>/api/auth/sso/init</code>
           {"  "}— link this from your identity provider or share with users.
+        </div>
+      )}
+
+      {enabled && (
+        <div style={{ padding: "16px", borderRadius: 8, border: `1px solid ${exclusive ? T.danger + "55" : T.border}` }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: exclusive ? 10 : 0 }}>
+            <div>
+              <div style={{ fontFamily: T.body, fontSize: 13, fontWeight: 700, color: T.text }}>
+                Require SSO for all sign-ins
+              </div>
+              <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted, marginTop: 2, maxWidth: 380 }}>
+                Disables local email/password sign-in for everyone except the deployment's own
+                break-glass accounts. Whatever access control your org enforces on the Entra
+                side — MFA, group assignment, offboarding — becomes the only door in.
+              </div>
+            </div>
+            <Toggle on={exclusive} onChange={() => onToggleExclusive(!exclusive)} />
+          </div>
+          {exclusive && (
+            <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.danger }}>
+              Active — only the accounts in this deployment's BREAK_GLASS_EMAILS list can still
+              sign in with a local password. Everyone else must use "Sign in with Microsoft".
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -860,6 +886,9 @@ function DangerZonePanel() {
   const [confirmText, setConfirmText] = useState("");
   const [resetting,   setResetting]   = useState(false);
   const [result,      setResult]      = useState(null); // { tablesCleared } once done
+  const [devMode,         setDevMode]         = useState(false);
+  const [shutdownConfirm, setShutdownConfirm] = useState(false);
+  const [shuttingDown,    setShuttingDown]    = useState(false);
 
   useEffect(() => {
     api.admin.resetDemoDataPreview()
@@ -867,6 +896,21 @@ function DangerZonePanel() {
       .catch(() => toast.error("Failed to load the table preview"))
       .finally(() => setLoading(false));
   }, []);
+
+  // GET /api/health needs no token (see the API Controls tab's own note on that route) — the
+  // button only renders once we know the server actually reports devMode:true, so it never shows
+  // (rather than showing-then-404ing) against a production deployment.
+  useEffect(() => {
+    fetch("/api/health").then(r => r.json()).then(d => setDevMode(!!d.devMode)).catch(() => {});
+  }, []);
+
+  const doShutdown = async () => {
+    setShuttingDown(true);
+    try { await api.admin.devShutdown(); }
+    catch (e) { toast.error(e.message || "Shutdown request failed"); setShuttingDown(false); return; }
+    // No re-enable on success — the server process is exiting; leave the UI parked in its
+    // "shutting down" state rather than offering controls for a server that's now gone.
+  };
 
   const canReset = confirmText.trim() === "RESET" && !resetting;
 
@@ -957,6 +1001,46 @@ function DangerZonePanel() {
           </button>
         </div>
       </div>
+
+      {devMode && (
+        <div style={{ marginTop: 20, background: T.danger + "0d", border: `1px solid ${T.danger}44`,
+          borderRadius: 10, padding: "18px 20px" }}>
+          <div style={{ fontFamily: T.body, fontSize: 13, fontWeight: 700, color: T.danger, marginBottom: 8 }}>
+            ⏻ Shutdown Dev Server
+          </div>
+          <p style={{ fontFamily: T.body, fontSize: 12.5, color: T.text, lineHeight: 1.6, margin: "0 0 14px" }}>
+            Stops the API server cleanly — closes its database connection first, avoiding the
+            corruption risk of a forced kill (Task Manager, <code style={{ fontFamily: T.mono, fontSize: 11.5, color: T.textCode }}>taskkill /F</code>,
+            closing a detached terminal). Restart it with <code style={{ fontFamily: T.mono, fontSize: 11.5, color: T.textCode }}>npm run dev</code> when
+            you're ready to come back — every open tab loses its connection until then.
+          </p>
+          <button onClick={() => setShutdownConfirm(true)} disabled={shuttingDown}
+            style={{ fontFamily: T.body, fontSize: 12, fontWeight: 600, padding: "7px 16px",
+              borderRadius: 6, border: "none", color: "#fff",
+              background: shuttingDown ? T.border : T.danger,
+              cursor: shuttingDown ? "default" : "pointer" }}>
+            {shuttingDown ? "Shutting down…" : "Shutdown Server"}
+          </button>
+        </div>
+      )}
+
+      {shutdownConfirm && (
+        <ConfirmModal
+          message="Stop the API server now? Every open tab (yours and anyone else's) loses its connection until it's restarted."
+          confirmLabel="Shutdown Server"
+          onConfirm={() => { setShutdownConfirm(false); doShutdown(); }}
+          onCancel={() => setShutdownConfirm(false)}
+        />
+      )}
+
+      {shuttingDown && (
+        <Modal title="Server Shutting Down" onClose={() => {}} hideClose width={420}>
+          <p style={{ fontFamily: T.body, fontSize: 13, color: T.text, lineHeight: 1.6, margin: 0 }}>
+            The API server is stopping cleanly. Restart it with <code style={{ fontFamily: T.mono, color: T.textCode }}>npm run dev</code>,
+            then reload this page.
+          </p>
+        </Modal>
+      )}
 
       {result && (
         <Modal title="Demo Data Reset" onClose={finishAndLogout} hideClose width={420}>
@@ -2355,6 +2439,21 @@ export default function AppSettingsPage() {
             <SsoSettingsPanel settings={settings} onChange={(k, v) => {
               setSettings(s => ({ ...s, [k]: v }));
               saveSetting(k, v);
+            }} onToggleExclusive={(value) => {
+              const prev = settings.sso_enforce_exclusive;
+              setSettings(s => ({ ...s, sso_enforce_exclusive: value ? '1' : '0' }));
+              api.settings.updateSsoEnforceExclusive(value)
+                .then(() => toast.success(value
+                  ? "Local sign-in now restricted to break-glass accounts"
+                  : "Local sign-in re-enabled for everyone"))
+                .catch(e => {
+                  setSettings(s => ({ ...s, sso_enforce_exclusive: prev }));
+                  // e.message carries the real reason (e.g. "no break-glass accounts
+                  // configured") — a hardcoded "admin only" string here previously overwrote
+                  // that with a wrong explanation for an admin who legitimately has permission
+                  // but hit the empty-BREAK_GLASS_EMAILS safety check instead.
+                  toast.error(e.message || "Failed to update sso_enforce_exclusive");
+                });
             }} />
           )}
 

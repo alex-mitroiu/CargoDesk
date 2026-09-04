@@ -192,6 +192,15 @@ export const api = {
     update: (code, data) => req("PUT",    `/regions/${code}`, data),
     remove: (code)       => req("DELETE", `/regions/${code}`),
   },
+  loopCodes: {
+    list:         ()               => req("GET",    "/loop-codes"),
+    get:          (id)             => req("GET",    `/loop-codes/${id}`),
+    resolve:      (code)           => req("GET",    `/loop-codes/resolve?${new URLSearchParams({ code })}`),
+    create:       (data)           => req("POST",   "/loop-codes", data),
+    update:       (id, data)       => req("PUT",    `/loop-codes/${id}`, data),
+    remove:       (id)             => req("DELETE", `/loop-codes/${id}`),
+    saveRotation: (id, ports)      => req("PUT",    `/loop-codes/${id}/rotation`, { ports }),
+  },
   countries: {
     list:   (p = {})     => req("GET",    `/countries?${new URLSearchParams({ limit: 300, ...p })}`),
     create: (data)       => req("POST",   "/countries", data),
@@ -605,6 +614,7 @@ export const api = {
     update: (data)   => req("PUT", "/settings", data),
     updateSidebarOrder: (order) => req("PUT", "/settings/shipment-sidebar-order", { order }),
     updateContractSource: (value) => req("PUT", "/settings/contract-source", { value }),
+    updateSsoEnforceExclusive: (value) => req("PUT", "/settings/sso-enforce-exclusive", { value }),
     updateMdmSource: (value) => req("PUT", "/settings/mdm-source", { value }),
     updateScreeningSource: (value) => req("PUT", "/settings/screening-source", { value }),
     updateKanbanSource: (value) => req("PUT", "/settings/kanban-source", { value }),
@@ -732,6 +742,7 @@ export const api = {
   admin: {
     resetDemoDataPreview: () => req("GET",  "/admin/reset-demo-data/preview"),
     resetDemoData: (confirm) => req("POST", "/admin/reset-demo-data", { confirm }),
+    devShutdown: () => req("POST", "/admin/dev-shutdown"),
   },
   offices: {
     list:           ()               => req("GET",    "/offices"),

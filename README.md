@@ -3,7 +3,7 @@
 > Freight management application for tracking ocean shipments, carrier space utilisation, contracts, and maritime master data.
 
 [![CI](https://github.com/alex-mitroiu/CargoDesk/actions/workflows/ci.yml/badge.svg)](https://github.com/alex-mitroiu/CargoDesk/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-0.90.0-blue)](.)
+[![Version](https://img.shields.io/badge/version-0.90.1-blue)](.)
 ![Node](https://img.shields.io/badge/node-22.5%2B-green)
 ![License](https://img.shields.io/badge/license-custom-lightgrey)
 
@@ -130,6 +130,35 @@ contracts, customers, or users — those are yours to create.
 
 Open [http://localhost:5173](http://localhost:5173)
 
+### Stopping the Server
+
+> ⚠️ **Don't force-kill the server** — Task Manager, `taskkill /F`, or closing a detached
+> terminal can end the process before it closes its database connection, risking a corrupted
+> database that then needs manual recovery.
+
+`npm run dev` runs the API server, Vite, and every microservice as child processes under
+`concurrently`. Whether a plain Ctrl+C in that terminal cleanly reaches all of them (especially
+on Windows, where cross-process signal delivery is unreliable — a `taskkill` or a scripted
+`process.kill` against the API server commonly force-terminates it outright rather than letting
+its shutdown handler run) isn't guaranteed. The reliable way to stop the API server cleanly,
+regardless of how it was started, is its dev-only graceful-shutdown route — it closes the HTTP
+server and the database connection before exiting, then the process exits on its own:
+
+```bash
+# macOS / Linux
+curl -X POST http://localhost:3001/internal/dev/shutdown
+```
+
+```powershell
+# Windows PowerShell
+Invoke-WebRequest -Uri http://localhost:3001/internal/dev/shutdown -Method POST
+```
+
+It only answers on `localhost`, and only outside `NODE_ENV=production`. Use it before closing a
+terminal window, restarting after a code change, or killing a stuck port (see Troubleshooting
+below) — it's the same clean shutdown a signal handler runs, just reachable over HTTP so it
+works even for a detached or background process.
+
 Want to re-import master data from scratch instead (e.g. after editing `data/*.csv`), or add
 sample carrier contracts to poke around with?
 
@@ -240,7 +269,14 @@ node --version   # must be v22.5.0 or higher
 Use nvm (`nvm install 22 && nvm use`) or download the latest LTS from [nodejs.org](https://nodejs.org).
 
 **`Error: listen EADDRINUSE :::3001` or `:::5173`**
-A previous server process is still running on that port. Kill it and retry:
+A previous server process is still running on that port. If it's port 3001 (the API server), try
+the graceful shutdown route first — it closes the database connection cleanly instead of just
+ending the process (see [Stopping the Server](#stopping-the-server) above):
+```bash
+curl -X POST http://localhost:3001/internal/dev/shutdown
+```
+If that doesn't respond (a genuinely hung process) or it's port 5173 (Vite, which has no such
+route — just a dev static server, nothing to corrupt), fall back to killing it directly:
 ```bash
 # Windows
 netstat -ano | findstr :3001

@@ -6,7 +6,7 @@ module.exports = function systemRoutes(app, ctx) {
           logAdminEvent, migrationFailures, restartAisListener, rebuildPortLanesMap,
           getAisListenerStatus,
           DISTRIBUTION_SERVICE_URL, PDF_RENDER_SERVICE_URL, CONTRACT_SERVICE_URL, MDM_SERVICE_URL,
-          SCREENING_SERVICE_URL, KANBAN_SERVICE_URL, CUSTOMER_SERVICE_URL } = ctx;
+          SCREENING_SERVICE_URL, KANBAN_SERVICE_URL, CUSTOMER_SERVICE_URL, BREAK_GLASS_EMAILS } = ctx;
 
   // ─── Health ───────────────────────────────────────────────────────────────
 
@@ -55,6 +55,7 @@ module.exports = function systemRoutes(app, ctx) {
       ok(res, {
         status:        "ok",
         version:       require('../package.json').version,
+        devMode:       process.env.NODE_ENV !== "production",
         uptime:        Math.floor(process.uptime()),
         memoryMb:      Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
         fxCurrencies:  Object.keys(fxCache.rates).length,
@@ -139,6 +140,18 @@ module.exports = function systemRoutes(app, ctx) {
     const updates = { ...(req.body || {}) };
     if (!req.body || typeof req.body !== "object" || Array.isArray(req.body))
       return err(res, "Expected JSON object of { key: value } pairs");
+    // sso_enforce_exclusive has its own dedicated admin-only route (below) for exactly the
+    // reason contract_source/etc. do — but unlike those, letting operator/occ_bk set it through
+    // this generic route too would make that gate pure theater (whoever it's meant to keep out
+    // could just call this route instead), so it's explicitly refused here rather than silently
+    // accepted like the other dedicated-route keys currently are.
+    if ("sso_enforce_exclusive" in updates && !req.user.roles.includes("admin"))
+      return err(res, "sso_enforce_exclusive can only be changed by an admin — use PUT /api/settings/sso-enforce-exclusive", 403);
+    // Same empty-break-glass-set lockout guard as the dedicated route above — this generic route
+    // is still a valid way for an admin to set this key, so the safety check has to live here too,
+    // not just there.
+    if (updates.sso_enforce_exclusive === '1' && BREAK_GLASS_EMAILS.size === 0)
+      return err(res, "Cannot enable sso_enforce_exclusive — no break-glass accounts configured (BREAK_GLASS_EMAILS is empty), this would lock everyone out of local login");
     // Same "blank means keep the existing value" idiom the SMTP password fields already use
     // (routes/office-mail.js, routes/auth.js's system-email routes) — the frontend now never
     // gets the real secret back from GET, so its input always renders blank; submitting that
@@ -194,6 +207,24 @@ module.exports = function systemRoutes(app, ctx) {
     await query("INSERT INTO app_settings (key, value) VALUES ('contract_source', $1) ON CONFLICT (key) DO UPDATE SET value=$1", [value]);
     await logAdminEvent(req.user, 'SETTINGS_UPDATED', 'settings', 'contract_source', { value });
     ok(res, { contractSource: value });
+  });
+
+  // Admin-only, same rationale as contract-source above: this specific field decides whether
+  // Entra's own MFA/Conditional Access/group-assignment policy is actually the only door into
+  // the app, or just an optional one sitting next to a live local-password door (TKT-8P35S0) —
+  // a materially bigger blast radius than the operational settings the generic route otherwise
+  // handles, which also allows operator/occ_bk.
+  app.put("/api/settings/sso-enforce-exclusive", auth(), requireRole(["admin"]), async (req, res) => {
+    const { value } = req.body || {};
+    if (typeof value !== "boolean") return err(res, "value must be a boolean");
+    // A misconfigured/blank BREAK_GLASS_EMAILS env var would otherwise let this toggle lock out
+    // every account, admins included, with recovery possible only via Entra or a manual DB edit —
+    // refuse to enter that state rather than trust the deployment got the env var right.
+    if (value && BREAK_GLASS_EMAILS.size === 0)
+      return err(res, "Cannot enable — no break-glass accounts configured (BREAK_GLASS_EMAILS is empty), this would lock everyone out of local login", 500);
+    await query("INSERT INTO app_settings (key, value) VALUES ('sso_enforce_exclusive', $1) ON CONFLICT (key) DO UPDATE SET value=$1", [value ? '1' : '0']);
+    await logAdminEvent(req.user, 'SETTINGS_UPDATED', 'settings', 'sso_enforce_exclusive', { value });
+    ok(res, { ssoEnforceExclusive: value });
   });
 
   // Same admin-only cutover-lever shape as contract-source above, for the MDM Service
@@ -307,11 +338,26 @@ module.exports = function systemRoutes(app, ctx) {
     // happened to pick. Without this filter, those old rows resurface here mislabeled as real
     // curated matches — confirmed live (SHP-W942AJ returned 4 "DEMO DULCIMER"/"DEMO CADENZA" rows
     // tagged source:catalog, none of it real data).
+    // Over-fetch (100, not the 20 we actually want) so the dedupe pass below has real headroom —
+    // deduping AFTER a plain LIMIT 20 would let duplicate bookings of the same physical sailing
+    // (exactly the scenario this dedupe targets) silently shrink the effective result set below
+    // 20 distinct sailings even when more unique ones exist just past row 20.
     const rows = await query(`
       SELECT * FROM shipment_schedules
       WHERE pol=$1 AND pod=$2 AND etd != '' AND etd >= $3 AND etd <= $4 AND is_mock=FALSE
-      ORDER BY etd ASC LIMIT 20`, [pol, pod, today, windowEnd]);
-    return Promise.all(rows.map(async r => {
+      ORDER BY etd ASC LIMIT 100`, [pol, pod, today, windowEnd]);
+    // Several independently-saved shipment_schedules rows (one per shipment/generator run) can
+    // describe the exact same physical sailing — schedule_key (content-keyed, v0.62.0) is already
+    // the app's own mechanism for recognizing that; dedupe on it so a picker doesn't show the same
+    // sailing 2-3x just because it's been booked (or template-generated) more than once.
+    const seenKeys = new Set();
+    const dedupedRows = rows.filter(r => {
+      const key = r.schedule_key || `${r.carrier}|${r.vessel_imo}|${r.voyage_number}|${r.pol}|${r.pod}|${r.etd}`;
+      if (seenKeys.has(key)) return false;
+      seenKeys.add(key);
+      return true;
+    }).slice(0, 20);
+    return Promise.all(dedupedRows.map(async r => {
       // Content-Keyed Sailing Legs — leg detail now lives in sailing_legs, referenced (not owned)
       // via schedule_leg_refs; same join getScheduleLegRows (routes/shipment-ops.js) uses.
       const legRows = await query(`
