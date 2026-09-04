@@ -25,7 +25,7 @@ import GenericServicePage from "./pages/shipments/GenericServicePage";
 import VgmServicePage from "./pages/shipments/VgmServicePage";
 
 import Btn from "./components/primitives/Btn";
-import { Modal } from "./components/primitives/Modal";
+import { Modal, ConfirmModal } from "./components/primitives/Modal";
 import { Field } from "./components/primitives/Form";
 import {
   IconSailboat, IconDashboard, IconFlash, IconArchive, IconClipboard, IconTag, IconFile,
@@ -823,6 +823,25 @@ function App() {
     const [open, setOpen]   = useState(false);
     const menuRef           = useRef(null);
 
+    // Shutdown Dev Server shortcut (admin + devMode only) — same admin-gated, dev-only
+    // POST /api/admin/dev-shutdown the Danger Zone card in Application Settings calls; this is
+    // just a faster second entry point, same precedent as the Test Tools icon right next to it
+    // (a full settings-page/nav entry PLUS a header shortcut, not a replacement for either).
+    const [devMode,         setDevMode]         = useState(false);
+    const [shutdownConfirm, setShutdownConfirm] = useState(false);
+    const [shuttingDown,    setShuttingDown]    = useState(false);
+    const isAdminUser = effectiveRoles.includes('admin');
+
+    useEffect(() => {
+      fetch("/api/health").then(r => r.json()).then(d => setDevMode(!!d.devMode)).catch(() => {});
+    }, []);
+
+    const doShutdown = async () => {
+      setShuttingDown(true);
+      try { await api.admin.devShutdown(); }
+      catch (e) { toast.error(e.message || "Shutdown request failed"); setShuttingDown(false); }
+    };
+
     const [bellOpen, setBellOpen] = useState(false);
     const bellRef                 = useRef(null);
     const [activeSysMsgs, setActiveSysMsgs] = useState([]);
@@ -1417,6 +1436,35 @@ function App() {
             onMouseLeave={e => e.currentTarget.style.opacity = page === "home" ? 1 : 0.55}>
             🏠
           </button>
+
+          {devMode && isAdminUser && (
+            <button type="button" onClick={() => setShutdownConfirm(true)} title="Shutdown Dev Server"
+              style={{ background: "none", border: "none", cursor: "pointer",
+                fontSize: 15, padding: "4px 6px", lineHeight: 1,
+                opacity: 0.55, color: T.text, transition: "opacity .15s, color .15s" }}
+              onMouseEnter={e => { e.currentTarget.style.opacity = 1; e.currentTarget.style.color = T.danger; }}
+              onMouseLeave={e => { e.currentTarget.style.opacity = 0.55; e.currentTarget.style.color = T.text; }}>
+              ⏻
+            </button>
+          )}
+
+          {shutdownConfirm && (
+            <ConfirmModal
+              message="Stop the API server now? Every open tab (yours and anyone else's) loses its connection until it's restarted."
+              confirmLabel="Shutdown Server"
+              onConfirm={() => { setShutdownConfirm(false); doShutdown(); }}
+              onCancel={() => setShutdownConfirm(false)}
+            />
+          )}
+
+          {shuttingDown && (
+            <Modal title="Server Shutting Down" onClose={() => {}} hideClose width={420}>
+              <p style={{ fontFamily: T.body, fontSize: 13, color: T.text, lineHeight: 1.6, margin: 0 }}>
+                The API server is stopping cleanly. Restart it with <code style={{ fontFamily: T.mono, color: T.textCode }}>npm run dev</code>,
+                then reload this page.
+              </p>
+            </Modal>
+          )}
 
           {/* Test Tools shortcut — same IconBaseStation used for its sidebar entry under
               Integration Board, so it reads as the same destination from a second entry
