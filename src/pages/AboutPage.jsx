@@ -394,7 +394,7 @@ const DB_DOMAINS = [
   { name: "MDM Reference Data", color: "#a855f7", tables: "carriers · vessels · port_locations · linked_ports · trade_lanes · country_trade_lanes · regions · countries · commodities" },
   { name: "Kanban & Testing", color: "#4db3e8", tables: "tickets · ticket_links · test_items · test_case_links · kb_projects · kb_columns · kb_versions" },
   { name: "EDI Messaging", color: "#4db3e8", tables: "edi_messages" },
-  { name: "Auth & Organization", color: "#f5b84c", tables: "users · user_offices · user_scope_items · user_access_configs · offices · branches · org_countries" },
+  { name: "Auth & Organization", color: "#f5b84c", tables: "users · user_offices · user_scope_items · offices · branches · org_countries" },
   { name: "System & Admin", color: "#f5b84c", tables: "app_settings · system_messages · admin_events" },
 ];
 

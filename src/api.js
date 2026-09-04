@@ -562,11 +562,6 @@ export const api = {
   adminEvents: {
     list: (p = {}) => req("GET", `/admin/events?${new URLSearchParams(p)}`),
   },
-  userAccess: {
-    list:   (userId)       => req("GET",    `/users/${userId}/access-configs`),
-    create: (userId, data) => req("POST",   `/users/${userId}/access-configs`, data),
-    remove: (configId)     => req("DELETE", `/access-configs/${configId}`),
-  },
   userScope: {
     list:   (userId)       => req("GET",    `/users/${userId}/scope`),
     create: (userId, data) => req("POST",   `/users/${userId}/scope`, data),

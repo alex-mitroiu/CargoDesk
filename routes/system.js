@@ -152,6 +152,12 @@ module.exports = function systemRoutes(app, ctx) {
     // not just there.
     if (updates.sso_enforce_exclusive === '1' && BREAK_GLASS_EMAILS.size === 0)
       return err(res, "Cannot enable sso_enforce_exclusive — no break-glass accounts configured (BREAK_GLASS_EMAILS is empty), this would lock everyone out of local login");
+    // operator/occ_bk legitimately need this route for ordinary toggles/thresholds, but not for
+    // provider credentials — SECRET_SETTING_KEYS is already the one list both the masking-on-GET
+    // and the blank-means-keep logic below key off, so it's also the right list to gate writes
+    // on here: any future secret field added to that array is admin-only automatically (TKT-67EDF3).
+    if (!req.user.roles.includes("admin") && SECRET_SETTING_KEYS.some(k => k in updates))
+      return err(res, "Only an admin can change credential settings (" + SECRET_SETTING_KEYS.filter(k => k in updates).join(", ") + ")", 403);
     // Same "blank means keep the existing value" idiom the SMTP password fields already use
     // (routes/office-mail.js, routes/auth.js's system-email routes) — the frontend now never
     // gets the real secret back from GET, so its input always renders blank; submitting that

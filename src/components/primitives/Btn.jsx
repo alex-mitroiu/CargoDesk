@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { T } from "../../tokens";
 
-const Btn = ({ id, children, onClick, variant = "primary", size = "md", disabled, style: extra }) => {
+const Btn = ({ id, children, onClick, variant = "primary", size = "md", disabled, style: extra, "data-testid": testId }) => {
   const [hov, setHov] = useState(false);
   const styles = {
     primary: {
@@ -30,6 +30,7 @@ const Btn = ({ id, children, onClick, variant = "primary", size = "md", disabled
   return (
     <button
       id={id}
+      data-testid={testId}
       onClick={onClick}
       disabled={disabled}
       onMouseEnter={() => setHov(true)}

@@ -4,12 +4,17 @@ const crypto = require("crypto");
 module.exports = function authRoutes(app, ctx) {
   const { query, ok, err, uid, auth, requireRole,
           VALID_ROLES, ROLE_RANK_SV, primaryRoleSV, parseUserRoles,
-          mapScopeItem, mapAccessConfig, mapSystemEmailSettings, isUniqueViolation,
+          mapScopeItem, mapSystemEmailSettings, isUniqueViolation,
           bcrypt, jwt, JWT_SECRET,
           createTransporterFromSettings, buildMailOptions,
-          logAdminEvent, getSettings, ssoNonces, BREAK_GLASS_EMAILS, createRateLimiter } = ctx;
+          logAdminEvent, getSettings, ssoNonces, BREAK_GLASS_EMAILS, createRateLimiter,
+          broadcastEditLockChange } = ctx;
   const adminOnly = requireRole(["admin"]);
   const SECURE_MODES = ["none", "starttls", "tls"];
+  // Basic shape check, not full RFC 5322 — catches the real failure mode (a typo'd address that
+  // silently accepts, then only surfaces when that user's forgot-password email bounces),
+  // without trying to be a strict validator (TKT-9RSZ3U).
+  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
   // Admin-only, but still a real outbound SMTP send per call — keyed by user (not IP) since
   // every caller here is already authenticated, and the actor is the meaningful key, not
@@ -65,6 +70,7 @@ module.exports = function authRoutes(app, ctx) {
     tokenVersion:   r.token_version    ?? 0,
     canViewFinance: !!r.can_view_finance,
     allOffices:     !!r.all_offices,
+    passwordChangedAt: r.password_changed_at || r.created_at,
   });
 
   // ─── Rate limiting ───────────────────────────────────────────────────────────
@@ -258,6 +264,10 @@ module.exports = function authRoutes(app, ctx) {
   });
 
   const RESET_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour
+  // An invited user may not check their inbox within an hour — a real business invite routinely
+  // sits unread over a weekend — so POST /api/users' send-invite path (TKT-VZOM1L) reuses this
+  // exact token mechanism with a longer window instead of a 1-hour one.
+  const INVITE_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
   const hashResetToken = token => crypto.createHash("sha256").update(token).digest("hex");
 
   // Always the same generic response whether or not the email matches a real account — the
@@ -543,25 +553,71 @@ module.exports = function authRoutes(app, ctx) {
   app.get("/api/users", requireRole(["admin"]), async (req, res) => {
     const rows = await query(
       `SELECT id, email, name, role, roles, is_active, created_at, last_login,
-              failed_attempts, locked_until, token_version, can_view_finance, all_offices FROM users ORDER BY created_at`
+              failed_attempts, locked_until, token_version, can_view_finance, all_offices,
+              password_changed_at FROM users ORDER BY created_at`
     );
     ok(res, rows.map(mapUser));
   });
 
   app.post("/api/users", requireRole(["admin"]), async (req, res) => {
-    const { email, name, roles = ["viewer"], password } = req.body || {};
-    if (!email || !name || !password) return err(res, "email, name, and password are required");
+    const { email, name, roles = ["viewer"], password, sendInvite = false } = req.body || {};
+    if (!email || !name || (!password && !sendInvite)) return err(res, "email, name, and a password (or send-invite) are required");
+    if (!EMAIL_RE.test(email.trim())) return err(res, "Email is not a valid address");
     if (!roles.length || !roles.every(r => VALID_ROLES.includes(r))) return err(res, "Invalid roles");
-    // Self-service change-password/reset-password have always enforced this — an admin
-    // directly setting or resetting someone else's password bypassed it entirely (TKT-JJMD2A).
-    if (!passwordMeetsPolicy(password)) return err(res, "Password does not meet the minimum policy (12+ chars, 3 of 4 character classes)");
+
+    // send-invite (TKT-VZOM1L) is additive, not a replacement for the direct-password flow —
+    // it needs a real, working SMTP config to actually deliver the set-password link, so it's
+    // rejected server-side (not just hidden client-side) when one isn't configured, same as the
+    // forgot-password route's own soft-fail-if-unconfigured stance would otherwise silently
+    // strand a brand-new account with no usable password and no way to ever set one.
+    let emailSettingsRow = null;
+    if (sendInvite) {
+      [emailSettingsRow] = await query("SELECT * FROM system_email_settings WHERE id='system'");
+      if (!emailSettingsRow || !emailSettingsRow.is_active || !emailSettingsRow.smtp_host)
+        return err(res, "System email isn't configured (Settings → System Email) — set a password directly instead.");
+    } else {
+      // Self-service change-password/reset-password have always enforced this — an admin
+      // directly setting or resetting someone else's password bypassed it entirely (TKT-JJMD2A).
+      if (!passwordMeetsPolicy(password)) return err(res, "Password does not meet the minimum policy (12+ chars, 3 of 4 character classes)");
+    }
+
     const primary = primaryRoleSV(roles);
+    // An invited user's real password is a random value nobody — including this server, past
+    // this one statement — ever holds in plaintext; the account exists but is unusable until the
+    // emailed link below is used, same mechanism as a forgot-password completion.
+    const effectivePassword = sendInvite ? crypto.randomBytes(32).toString("hex") : password;
     try {
       const id = `USR-${uid()}`;
+      const now = new Date().toISOString();
       await query(
         "INSERT INTO users (id, email, name, password_hash, role, roles, is_active, all_offices, created_at) VALUES ($1, $2, $3, $4, $5, $6, TRUE, FALSE, $7)",
-        [id, email.toLowerCase().trim(), name, bcrypt.hashSync(password, 10), primary, JSON.stringify(roles), new Date().toISOString()]);
-      await logAdminEvent(req.user, 'USER_CREATED', 'user', id, { email: email.toLowerCase().trim(), roles });
+        [id, email.toLowerCase().trim(), name, bcrypt.hashSync(effectivePassword, 10), primary, JSON.stringify(roles), now]);
+
+      if (sendInvite) {
+        const rawToken = crypto.randomBytes(32).toString("hex");
+        const expires = new Date(Date.now() + INVITE_TOKEN_TTL_MS).toISOString();
+        await query("UPDATE users SET reset_token_hash=$1, reset_token_expires=$2 WHERE id=$3",
+          [hashResetToken(rawToken), expires, id]);
+        try {
+          const transporter = createTransporterFromSettings({
+            smtpHost: emailSettingsRow.smtp_host, smtpPort: emailSettingsRow.smtp_port,
+            secureMode: emailSettingsRow.secure_mode, smtpUsername: emailSettingsRow.smtp_username,
+            smtpPassword: emailSettingsRow.smtp_password,
+          });
+          const inviteUrl = `${req.protocol}://${req.get("host")}/#reset-password/${rawToken}`;
+          await transporter.sendMail(buildMailOptions({
+            from: emailSettingsRow.from_address, fromName: emailSettingsRow.from_name || "CargoDesk",
+            to: email.toLowerCase().trim(), subject: "You've been invited to CargoDesk",
+            message: `Hi ${name},\n\nAn admin has created a CargoDesk account for you. Click the link below to set your password and sign in — this link expires in 7 days and can only be used once:\n\n${inviteUrl}\n\nIf you weren't expecting this, you can ignore this email.`,
+          }));
+        } catch (e) {
+          // The account still exists either way — an admin can always fall back to Reset
+          // Password (TKT-7J92C4) if the invite email itself never arrives.
+          console.error("send-invite: failed to send invite email:", e.message);
+        }
+      }
+
+      await logAdminEvent(req.user, sendInvite ? 'USER_INVITED' : 'USER_CREATED', 'user', id, { email: email.toLowerCase().trim(), roles });
       ok(res, { ok: true });
     } catch (e) {
       err(res, isUniqueViolation(e) ? "Email already exists" : e.message);
@@ -587,6 +643,11 @@ module.exports = function authRoutes(app, ctx) {
     const primary = primaryRoleSV(newRoles);
     const active  = isActive !== undefined ? !!isActive : existing.is_active;
     const hash    = password ? bcrypt.hashSync(password, 10) : existing.password_hash;
+    // Real gap found while wiring up the Users table's expiry indicator (TKT-7J92C4): this
+    // route never stamped password_changed_at on a reset, so isPasswordExpired kept judging
+    // the OLD password's age (or created_at) even right after an admin reset it — a just-reset
+    // account could still show "expired".
+    const passwordChangedAt = password ? new Date().toISOString() : existing.password_changed_at;
 
     // Revoke sessions when deactivating, resetting the password, or changing roles —
     // otherwise a downgraded user's already-issued token keeps its old (higher)
@@ -602,9 +663,20 @@ module.exports = function authRoutes(app, ctx) {
     const allOfficesFlag = allOffices    !== undefined ? !!allOffices    : (existing.all_offices ?? true);
 
     await query(`UPDATE users SET name=$1, role=$2, roles=$3, is_active=$4, password_hash=$5,
-                  token_version=$6, failed_attempts=$7, locked_until=$8, can_view_finance=$9, all_offices=$10 WHERE id=$11`,
+                  token_version=$6, failed_attempts=$7, locked_until=$8, can_view_finance=$9, all_offices=$10,
+                  password_changed_at=$11 WHERE id=$12`,
       [name || existing.name, primary, JSON.stringify(newRoles),
-           active, hash, newTokenVersion, failedAttempts, lockedUntil, financeFlag, allOfficesFlag, req.params.id]);
+           active, hash, newTokenVersion, failedAttempts, lockedUntil, financeFlag, allOfficesFlag,
+           passwordChangedAt, req.params.id]);
+
+    // Deactivating a user shouldn't leave a shipment they were mid-edit on stuck read-only for
+    // everyone else until the lock's own 30-minute TTL expires (TKT-6MLBG2) — release every lock
+    // they currently hold immediately, same as the holder's own DELETE /edit-lock path, so any
+    // open tab picks it up live via the same broadcast.
+    if (!active && existing.is_active) {
+      const releasedLocks = await query("DELETE FROM shipment_edit_locks WHERE locked_by_id=$1 RETURNING shipment_id", [req.params.id]);
+      for (const { shipment_id } of releasedLocks) broadcastEditLockChange(shipment_id, { locked: false });
+    }
 
     // Log what changed
     const changes = {};
@@ -655,32 +727,6 @@ module.exports = function authRoutes(app, ctx) {
     ok(res, { results: rows.map(r => ({ ...r, details: JSON.parse(r.details || '{}') })), total: Number(total) });
   });
 
-  // ─── Access Configs ────────────────────────────────────────────────────────
-
-  app.get("/api/users/:id/access-configs", requireRole(["admin"]), async (req, res) => {
-    const rows = await query("SELECT * FROM user_access_configs WHERE user_id=$1", [req.params.id]);
-    ok(res, rows.map(mapAccessConfig));
-  });
-
-  app.post("/api/users/:id/access-configs", requireRole(["admin"]), async (req, res) => {
-    const { label='', originLane=null, destLane=null, polCodes=[], podCodes=[], carrierCodes=[] } = req.body || {};
-    const id = `UAC-${uid()}`;
-    const now = new Date().toISOString();
-    await query(`INSERT INTO user_access_configs (id,user_id,label,origin_lane,dest_lane,pol_codes,pod_codes,carrier_codes,created_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-      [id, req.params.id, label, originLane, destLane,
-        JSON.stringify(polCodes), JSON.stringify(podCodes), JSON.stringify(carrierCodes), now]);
-    ok(res, mapAccessConfig({ id, user_id: req.params.id, label, origin_lane: originLane,
-      dest_lane: destLane, pol_codes: JSON.stringify(polCodes), pod_codes: JSON.stringify(podCodes),
-      carrier_codes: JSON.stringify(carrierCodes), created_at: now }), 201);
-  });
-
-  app.delete("/api/access-configs/:configId", requireRole(["admin"]), async (req, res) => {
-    const deleted = await query("DELETE FROM user_access_configs WHERE id=$1 RETURNING id", [req.params.configId]);
-    if (deleted.length === 0) return err(res, "Not found", 404);
-    ok(res, { deleted: req.params.configId });
-  });
-
   // ─── Scope Items ───────────────────────────────────────────────────────────
 
   app.get("/api/users/:id/scope", requireRole(["admin"]), async (req, res) => {
@@ -694,12 +740,14 @@ module.exports = function authRoutes(app, ctx) {
     const now = new Date().toISOString();
     await query("INSERT INTO user_scope_items (id,user_id,role,item_type,value,label,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)",
       [id, req.params.id, role, itemType, value, label, now]);
+    await logAdminEvent(req.user, 'SCOPE_ITEM_CREATED', 'user', req.params.id, { itemId: id, role, itemType, value });
     ok(res, mapScopeItem({ id, user_id: req.params.id, role, item_type: itemType, value, label, created_at: now }), 201);
   });
 
   app.delete("/api/scope-items/:itemId", requireRole(["admin"]), async (req, res) => {
-    const deleted = await query("DELETE FROM user_scope_items WHERE id=$1 RETURNING id", [req.params.itemId]);
+    const deleted = await query("DELETE FROM user_scope_items WHERE id=$1 RETURNING id, user_id, item_type, value", [req.params.itemId]);
     if (deleted.length === 0) return err(res, "Not found", 404);
+    await logAdminEvent(req.user, 'SCOPE_ITEM_DELETED', 'user', deleted[0].user_id, { itemId: req.params.itemId, itemType: deleted[0].item_type, value: deleted[0].value });
     ok(res, { deleted: req.params.itemId });
   });
 };

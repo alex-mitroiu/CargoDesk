@@ -751,6 +751,7 @@ function DgComplianceSettingsPanel({ settings, onChange }) {
 const ACTION_LABELS = {
   USER_CREATED:     { label: "User created",         color: "success" },
   USER_CREATED_SSO: { label: "User created via SSO", color: "success" },
+  USER_INVITED:     { label: "User invited (set-password link sent)", color: "success" },
   USER_UPDATED:     { label: "User updated",         color: "info"    },
   USER_DELETED:     { label: "User deleted",         color: "danger"  },
   SESSIONS_REVOKED: { label: "Sessions revoked",     color: "warning" },
@@ -759,6 +760,13 @@ const ACTION_LABELS = {
   SYSMSG_DELETED:   { label: "System message deleted",color:"danger"  },
   SETTINGS_UPDATED: { label: "Settings changed",     color: "info"    },
   RESET_DEMO_DATA:  { label: "Demo data reset",      color: "danger"  },
+  SCOPE_ITEM_CREATED:   { label: "Scope restriction added",    color: "info"    },
+  SCOPE_ITEM_DELETED:   { label: "Scope restriction removed",  color: "warning" },
+  ACCESS_CONFIG_CREATED: { label: "Access config added",       color: "info"    },
+  ACCESS_CONFIG_DELETED: { label: "Access config removed",     color: "warning" },
+  PASSWORD_CHANGED_SELF:     { label: "Password changed (self)",       color: "info" },
+  PASSWORD_RESET_REQUESTED:  { label: "Password reset requested",      color: "info" },
+  PASSWORD_RESET_COMPLETED:  { label: "Password reset completed",      color: "success" },
 };
 
 function AdminActivityLog() {

@@ -387,8 +387,7 @@ are fully validated.
 | sanctions_syncs | Sync history (timestamp, source, count) — one row per sync JOB (`'OFAC-SDN'`, `'CSL'`), not per list; the CSL job populates many `sanctions_entries.source` values from one sync |
 | app_settings | Key-value store for server-side config (API keys, toggles, recurrence). `sso_client_secret`/`ai_api_key`/`ais_api_key` are masked on the way out — `GET`/`PUT /api/settings` (routes/system.js) never return their raw value to any caller, only a companion `<key>_configured` boolean; a submitted blank value for these 3 keys leaves the stored secret untouched (matches `smtp_password`'s own established pattern elsewhere), a genuine clear needs JSON `null` instead of `""`. Fixed 2026-09-03 audit — previously returned in full plaintext to any authenticated user, viewer role included. `sso_enforce_exclusive` (v0.90.1, TKT-8P35S0, default `'0'`) — when on alongside `sso_enabled`, `POST /api/auth/login` rejects every account except the `BREAK_GLASS_EMAILS` set before any password compare; its own dedicated admin-only route (`PUT /api/settings/sso-enforce-exclusive`) and the generic settings route both refuse to enable it while `BREAK_GLASS_EMAILS` is empty, the one way this flag could otherwise lock every admin out |
 | users | Authenticated users: id, email, name, password_hash, role, is_active, last_login |
-| user_scope_items | Per-user shipment scope restrictions (carrier, POL, POD filters) |
-| user_access_configs | Per-user access configuration records |
+| user_scope_items | Per-user shipment scope restrictions (carrier, POL, POD, trade_lane filters) |
 | test_items | Dedicated test-case repository (separate from `tickets`); optional `shipment_id` FK |
 | test_case_links | Test Case ↔ Story links ("tests" / "is tested by") |
 | edi_messages | Per-shipment carrier EDI log (direction out/in, raw/parsed payload, `is_mock`) |

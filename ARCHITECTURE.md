@@ -495,7 +495,7 @@ test_items ──── test_case_links      (dedicated test-case repository)
 PLATFORM
 ────────
 users · app_settings · system_messages · system_email_settings
-user_access_configs · user_scope_items · user_offices
+user_scope_items · user_offices
 admin_events
 ```
 

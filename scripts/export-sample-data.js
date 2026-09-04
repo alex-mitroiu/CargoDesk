@@ -47,7 +47,7 @@ const SKIP_CREDENTIALS = new Set(["org_signing_certs"]);
 // primarily around a specific user id is meaningless (and non-FK-safe) without the users table
 // itself, so it's excluded alongside it rather than shipped as orphaned references.
 const SKIP_USERS_AND_USER_KEYED = new Set([
-  "users", "user_scope_items", "user_access_configs", "user_offices",
+  "users", "user_scope_items", "user_offices",
 ]);
 
 // Transient runtime state — a "locked" edit-lock from whenever this snapshot was taken has no

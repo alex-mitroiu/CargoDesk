@@ -9,7 +9,7 @@ import { scorePassword } from "../utils/passwordPolicy";
 import Pagination from "./primitives/Pagination";
 import PageSizeSelect, { getStoredPageSize } from "./primitives/PageSizeSelect";
 import ActionMenu from "./primitives/ActionMenu";
-import { IconPencil, IconUnlock, IconLock, IconClose } from "./primitives/Icon";
+import { IconPencil, IconUnlock, IconLock, IconClose, IconRefresh } from "./primitives/Icon";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -32,7 +32,10 @@ const ROLE_DESCRIPTIONS = {
 };
 
 // Roles where data scoping applies (admin and viewer are always unrestricted)
-const SCOPED_ROLES = ["occ_bk", "operator"];
+// trade_manager also reads user_scope_items (trade_lane item_type, for the credit-hold/
+// over-limit override lane-ownership check shipped in v0.73.0/v0.74.0) — without this, a
+// scope row for that role could only ever be created via raw API calls (TKT-DF92V5).
+const SCOPED_ROLES = ["occ_bk", "operator", "trade_manager"];
 
 const primaryRole = (roles) =>
   [...(roles || [])].sort((a, b) => ROLE_RANK[b] - ROLE_RANK[a])[0] || "viewer";
@@ -773,6 +776,18 @@ const UserFormModal = ({ user: existing, onSave, onClose }) => {
   const [saving,   setSaving]   = useState(false);
   const [error,    setError]    = useState("");
 
+  // "Send set-password link" (TKT-VZOM1L) is create-only and needs a real, working SMTP config
+  // to actually deliver — self-checked here (not just trusted from a prop) so the option is
+  // hidden rather than offered-then-rejected when nobody's configured System Email yet.
+  const [emailConfigured, setEmailConfigured] = useState(false);
+  const [sendInvite,      setSendInvite]      = useState(false);
+  useEffect(() => {
+    if (!isNew) return;
+    api.systemEmail.get()
+      .then(s => setEmailConfigured(!!(s.isActive && s.smtpHost)))
+      .catch(() => {});
+  }, [isNew]);
+
   const toggle = (role) =>
     setRoles(prev => prev.includes(role) ? prev.filter(r => r !== role) : [...prev, role]);
 
@@ -782,7 +797,7 @@ const UserFormModal = ({ user: existing, onSave, onClose }) => {
   // before submitting (below), so the policy check runs against that same trimmed
   // value — otherwise whitespace padding could pass client validation here and still
   // get rejected server-side after the trim, with no warning shown.
-  const settingPassword = isNew ? true : !!password.trim();
+  const settingPassword = isNew ? !sendInvite : !!password.trim();
   const effectivePassword = isNew ? password : password.trim();
   const passwordOk = !settingPassword || scorePassword(effectivePassword).meetsMinimum;
 
@@ -795,7 +810,8 @@ const UserFormModal = ({ user: existing, onSave, onClose }) => {
     setError(""); setSaving(true);
     try {
       const payload = { name: name.trim(), email: email.trim(), roles, is_active: Number(active) };
-      if (isNew) payload.password = password;
+      if (isNew && sendInvite) payload.sendInvite = true;
+      else if (isNew) payload.password = password;
       else if (password.trim()) payload.password = password.trim();
       await onSave(payload);
       onClose();
@@ -829,13 +845,35 @@ const UserFormModal = ({ user: existing, onSave, onClose }) => {
               onBlur={e  => e.currentTarget.style.borderColor = T.border} />
           </div>
           <div>
-            <FieldLabel required={isNew}>{isNew ? "Password" : "New Password (blank to keep)"}</FieldLabel>
-            <input type="password" autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} style={inputStyle()}
-              placeholder={isNew ? "Set a password" : "Leave blank to keep"}
-              onFocus={e => e.currentTarget.style.borderColor = T.accent}
-              onBlur={e  => e.currentTarget.style.borderColor = T.border} />
-            {settingPassword && <PasswordStrengthMeter password={effectivePassword} />}
+            {isNew && sendInvite ? (
+              <>
+                <FieldLabel>Password</FieldLabel>
+                <div style={{ ...inputStyle(), display: "flex", alignItems: "center",
+                  color: T.textMuted, fontStyle: "italic" }}>
+                  Set via emailed link
+                </div>
+              </>
+            ) : (
+              <>
+                <FieldLabel required={isNew}>{isNew ? "Password" : "New Password (blank to keep)"}</FieldLabel>
+                <input type="password" autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} style={inputStyle()}
+                  placeholder={isNew ? "Set a password" : "Leave blank to keep"}
+                  onFocus={e => e.currentTarget.style.borderColor = T.accent}
+                  onBlur={e  => e.currentTarget.style.borderColor = T.border} />
+                {settingPassword && <PasswordStrengthMeter password={effectivePassword} />}
+              </>
+            )}
           </div>
+          {isNew && emailConfigured && (
+            <div style={{ display: "flex", alignItems: "center" }}>
+              <label style={{ fontFamily: T.body, fontSize: 12, color: T.text,
+                cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}>
+                <input type="checkbox" checked={sendInvite} onChange={e => setSendInvite(e.target.checked)}
+                  style={{ width: 14, height: 14, cursor: "pointer" }} />
+                Send set-password link by email
+              </label>
+            </div>
+          )}
           {!isNew && (
             <div style={{ display: "flex", alignItems: "center" }}>
               <label style={{ fontFamily: T.body, fontSize: 12, color: T.text,
@@ -893,6 +931,60 @@ const ConfirmModal = ({ user, onConfirm, onClose }) => (
   </Modal>
 );
 
+// ─── Reset Password ────────────────────────────────────────────────────────────
+// A distinct, focused action separate from Edit Profile's blank-to-keep password
+// field — same underlying PATCH /api/users/:id route (no new endpoint), just its
+// own modal so resetting someone's credentials is a deliberate act, not something
+// buried in a general form save (TKT-7J92C4).
+
+const ResetPasswordModal = ({ user, onSave, onClose }) => {
+  const [password, setPassword] = useState("");
+  const [saving,   setSaving]   = useState(false);
+  const [error,    setError]    = useState("");
+
+  const { meetsMinimum } = scorePassword(password);
+
+  const handleSave = async () => {
+    if (!meetsMinimum) return;
+    setSaving(true); setError("");
+    try {
+      await onSave(password);
+      onClose();
+    } catch (e) {
+      setError(e.message || "Failed to reset password");
+    } finally { setSaving(false); }
+  };
+
+  return (
+    <Modal title={`Reset Password — ${user.name}`} onClose={onClose} width={420}>
+      <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, marginBottom: 16, lineHeight: 1.5 }}>
+        Sets a new password for <strong>{user.email}</strong> immediately. Their existing sessions
+        will be signed out.
+      </div>
+      {error && (
+        <div style={{ padding: "9px 13px", borderRadius: 7, background: T.danger + "18",
+          border: `1px solid ${T.danger}44`, fontFamily: T.body, fontSize: 13, color: T.danger,
+          marginBottom: 14 }}>
+          {error}
+        </div>
+      )}
+      <FieldLabel required>New Password</FieldLabel>
+      <input type="password" autoComplete="new-password" value={password}
+        onChange={e => setPassword(e.target.value)} style={inputStyle()}
+        onFocus={e => e.currentTarget.style.borderColor = T.accent}
+        onBlur={e  => e.currentTarget.style.borderColor = T.border}
+        onKeyDown={e => e.key === "Enter" && handleSave()} />
+      <PasswordStrengthMeter password={password} />
+      <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 18 }}>
+        <Btn variant="ghost" onClick={onClose} disabled={saving}>Cancel</Btn>
+        <Btn variant="primary" onClick={handleSave} disabled={saving || !meetsMinimum}>
+          {saving ? "Resetting…" : "Reset Password"}
+        </Btn>
+      </div>
+    </Modal>
+  );
+};
+
 // ─── Panel ────────────────────────────────────────────────────────────────────
 
 export default function UserManagementPanel() {
@@ -904,8 +996,10 @@ export default function UserManagementPanel() {
   const [editTarget,    setEditTarget]    = useState(null);
   const [deleteTarget,  setDeleteTarget]  = useState(null);
   const [rolesTarget,   setRolesTarget]   = useState(null);
+  const [resetPwTarget, setResetPwTarget] = useState(null);
   const [offset,        setOffset]        = useState(0);
   const [limit,         setLimit]         = useState(getStoredPageSize);
+  const [expiryDays,    setExpiryDays]    = useState(90);
   const configPanelRef = useRef(null);
 
   const load = () => {
@@ -920,6 +1014,22 @@ export default function UserManagementPanel() {
       .finally(() => setLoading(false));
   };
   useEffect(load, []);
+  useEffect(() => {
+    api.settings.get()
+      .then(s => setExpiryDays(parseInt(s.password_expiry_days ?? "90", 10)))
+      .catch(() => {});
+  }, []);
+
+  // 0 = policy disabled (Security Settings), same convention as the server's own
+  // isPasswordExpired (TKT-7J92C4) — mirrors that computation so what an admin sees
+  // in this table always agrees with what actually locks the user out on login.
+  const passwordExpiryInfo = (u) => {
+    if (!expiryDays || !u.passwordChangedAt) return null;
+    const ageDays = (Date.now() - new Date(u.passwordChangedAt).getTime()) / 86_400_000;
+    const daysLeft = Math.ceil(expiryDays - ageDays);
+    if (daysLeft <= 0) return { expired: true,  label: `Expired ${Math.abs(daysLeft)}d ago` };
+    return { expired: false, soon: daysLeft <= 14, label: `Expires in ${daysLeft}d` };
+  };
 
   const handleCreate = async (data) => {
     await api.users.create(data);
@@ -965,6 +1075,12 @@ export default function UserManagementPanel() {
       await api.users.revokeSessions(u.id);
       toast.success(`Sessions revoked for ${u.name}`);
     } catch (e) { toast.error(e.message); }
+  };
+
+  const handleResetPassword = async (password) => {
+    await api.users.update(resetPwTarget.id, { password });
+    toast.success(`Password reset for ${resetPwTarget.name}`);
+    load();
   };
 
   const handleToggleFinance = async (u, e) => {
@@ -1038,6 +1154,7 @@ export default function UserManagementPanel() {
                 {colHd("Roles", 200)}
                 {colHd("Finance", 80)}
                 {colHd("Status", 90)}
+                {colHd("Password", 120)}
                 {colHd("Last Login", 140)}
                 {colHd("", 150)}
               </tr>
@@ -1112,6 +1229,23 @@ export default function UserManagementPanel() {
                         )}
                       </div>
                     </td>
+                    <td style={{ padding: "10px 14px" }}>
+                      {(() => {
+                        const pw = passwordExpiryInfo(u);
+                        if (!pw) return <span style={{ color: T.border, fontFamily: T.mono, fontSize: 11 }}>—</span>;
+                        const color = pw.expired ? T.danger : pw.soon ? T.warning : T.textMuted;
+                        return (
+                          <span title={new Date(u.passwordChangedAt).toLocaleString()} style={{
+                            display: "inline-block", padding: "2px 8px", borderRadius: 20,
+                            fontFamily: T.mono, fontSize: 10, fontWeight: 600,
+                            background: (pw.expired || pw.soon) ? color + "18" : "transparent",
+                            color, border: `1px solid ${(pw.expired || pw.soon) ? color + "44" : "transparent"}`,
+                          }}>
+                            {pw.label}
+                          </span>
+                        );
+                      })()}
+                    </td>
                     <td style={{ padding: "10px 14px", fontFamily: T.mono, fontSize: 11,
                       color: T.textMuted }}>
                       {u.last_login
@@ -1125,6 +1259,7 @@ export default function UserManagementPanel() {
                           ? [{ icon: IconUnlock, label: "Unlock Account", onClick: () => handleUnlock(u) }]
                           : []),
                         { icon: IconLock, label: "Revoke Sessions", onClick: () => handleRevoke(u) },
+                        { icon: IconRefresh, label: "Reset Password", onClick: () => setResetPwTarget(u) },
                         { icon: IconClose, label: "Delete", variant: "danger",
                           onClick: () => { setDeleteTarget(u); if (selectedUser?.id === u.id) setSelectedUser(null); } },
                       ]} />
@@ -1134,7 +1269,7 @@ export default function UserManagementPanel() {
               })}
               {filteredUsers.length === 0 && (
                 <tr>
-                  <td colSpan={6} style={{ padding: "32px", textAlign: "center",
+                  <td colSpan={8} style={{ padding: "32px", textAlign: "center",
                     fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
                     {search ? `No users matching "${search}"` : "No users found."}
                   </td>
@@ -1173,6 +1308,9 @@ export default function UserManagementPanel() {
     )}
     {rolesTarget && (
       <ConfigureRolesModal user={rolesTarget} onSave={handleRoles} onClose={() => setRolesTarget(null)} />
+    )}
+    {resetPwTarget && (
+      <ResetPasswordModal user={resetPwTarget} onSave={handleResetPassword} onClose={() => setResetPwTarget(null)} />
     )}
   </>
   );

@@ -2110,7 +2110,7 @@ const {
   mapShipment, mapShipmentLeg, mapCostLine, mapService, mapRateSnapshot, mapRateSnapshotLine,
   mapChargeCodeDefinition, mapContainer, mapContainerEvent, mapContainerPackage, mapShipmentParty, mapSideOffice,
   mapPackTypeDefinition, mapDutyRateChapter, mapScheduledReport, mapContainerTypeDefinition, mapDocumentTemplate, mapAllocation, mapCarrier, mapVessel, mapPortLocation, mapLinkedPort,
-  mapCarrierAgent, mapCarrierAgentScheduleRow, mapTradeLane, mapScopeItem, mapAccessConfig, mapOffice, mapOfficeMailSettings,
+  mapCarrierAgent, mapCarrierAgentScheduleRow, mapTradeLane, mapScopeItem, mapOffice, mapOfficeMailSettings,
   mapSystemEmailSettings,
   mapBranch, mapOrgCountry, mapRegion, mapCountry, mapTicketLink, mapTicket, mapTestItem,
   mapTestCaseLink, mapEdiMessage, mapCarrierBooking, mapCustomsFiling, mapKbProject, mapKbVersion,
@@ -2122,21 +2122,6 @@ const {
   mapEadapterConfig,
   mapLoopCode, mapLoopCodePort,
 } = createMappers({ portLanesMap, CUTOFF_WARNING_DAYS });
-
-function shipmentMatchesAccessConfig(s, cfg) {
-  if (cfg.originLane) {
-    const polLanes = portLanesMap[s.pol] || new Set();
-    if (!polLanes.has(cfg.originLane)) return false;
-  }
-  if (cfg.destLane) {
-    const podLanes = portLanesMap[s.pod] || new Set();
-    if (!podLanes.has(cfg.destLane)) return false;
-  }
-  if (cfg.polCodes.length     && !cfg.polCodes.includes(s.pol))              return false;
-  if (cfg.podCodes.length     && !cfg.podCodes.includes(s.pod))              return false;
-  if (cfg.carrierCodes.length && !cfg.carrierCodes.includes(s.carrierCode))  return false;
-  return true;
-}
 
 function matchesScopeItem(s, item) {
   if (item.item_type === 'trade_lane') {
@@ -2293,9 +2278,8 @@ async function applyShipmentAccessFilter(shipments, user, req) {
   }
 
   const scopeItems = await query("SELECT * FROM user_scope_items WHERE user_id=$1", [user.id]);
-  const legacyCfgs = (await query("SELECT * FROM user_access_configs WHERE user_id=$1", [user.id])).map(mapAccessConfig);
 
-  if (!scopeItems.length && !legacyCfgs.length) return shipments;
+  if (!scopeItems.length) return shipments;
 
   // Group scope items by type.
   // Within each type: OR (any of the configured values may match).
@@ -2307,12 +2291,9 @@ async function applyShipmentAccessFilter(shipments, user, req) {
   }
   const typeGroups = Object.values(byType);
 
-  return shipments.filter(s => {
-    const scopePass = typeGroups.length > 0 &&
-      typeGroups.every(group => group.some(item => matchesScopeItem(s, item)));
-    const legacyPass = legacyCfgs.some(c => shipmentMatchesAccessConfig(s, c));
-    return scopePass || legacyPass;
-  });
+  return shipments.filter(s =>
+    typeGroups.length > 0 && typeGroups.every(group => group.some(item => matchesScopeItem(s, item)))
+  );
 }
 
 // Shipment-scope param guard (2026-09-03 shipment-domain audit) — GET /api/shipments/:id has
@@ -3322,7 +3303,7 @@ const ctx = {
   mapShipmentParty, ADDITIONAL_PARTY_ROLES, mapSideOffice,
   mapRateSnapshot, mapRateSnapshotLine, mapChargeCodeDefinition, mapPackTypeDefinition, mapDutyRateChapter, mapScheduledReport, mapContainerTypeDefinition, mapDocumentTemplate,
   mapCarrier, mapVessel, mapPortLocation, mapLinkedPort, mapTradeLane, mapCarrierAgent, mapCarrierAgentScheduleRow,
-  mapScopeItem, mapAccessConfig, mapOffice, mapBranch, mapOrgCountry, mapRegion, mapCountry, mapTicketLink, mapTicket,
+  mapScopeItem, mapOffice, mapBranch, mapOrgCountry, mapRegion, mapCountry, mapTicketLink, mapTicket,
   mapTestItem, mapTestCaseLink,
   mapEdiMessage,
   mapCarrierBooking, BOOKABLE_CARRIERS, isEdiBookable, mapEadapterConfig,

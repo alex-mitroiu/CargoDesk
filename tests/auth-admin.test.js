@@ -202,20 +202,6 @@ async function login(email = "claudeagent@localhost", password = "TestFixture!20
     assert("user active again", afterUnlock.isActive === true);
     assert("lockedUntil cleared", afterUnlock.lockedUntil === "");
 
-    console.log("\nAccess Configs — create, list, delete");
-    const acCreate = await request("POST", `/api/users/${userId}/access-configs`, {
-      label: "EU lane", originLane: "FE", destLane: "NAM", polCodes: ["NLRTM"], podCodes: ["USNYC"], carrierCodes: ["MAEU"],
-    }, token);
-    assert("access config created", acCreate.status === 201, JSON.stringify(acCreate.body));
-    assert("access config label round-trips", acCreate.body.label === "EU lane");
-    const acList = await request("GET", `/api/users/${userId}/access-configs`, null, token);
-    assert("access config list returns 200", acList.status === 200);
-    assert("created config present", acList.body.some(c => c.id === acCreate.body.id));
-    const acDelete = await request("DELETE", `/api/access-configs/${acCreate.body.id}`, null, token);
-    assert("access config delete returns 200", acDelete.status === 200);
-    const acDelete404 = await request("DELETE", `/api/access-configs/${acCreate.body.id}`, null, token);
-    assert("access config delete 404 on second attempt", acDelete404.status === 404);
-
     console.log("\nScope Items — create, list, delete");
     const siCreate = await request("POST", `/api/users/${userId}/scope`, {
       role: "operator", itemType: "carrier", value: "MAEU", label: "Maersk only",
