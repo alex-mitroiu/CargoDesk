@@ -1,10 +1,46 @@
 // seed-contracts.js — dummy contracts for HLCU, CMDU, MSCU
 const BASE = "http://localhost:3001/api";
 
+// Real bug, reported by a customer: every one of the 6 contracts below failed — either
+// "fetch failed" (the API server wasn't reachable at all) or "Unauthorized" (it was reachable,
+// but this script never logged in). POST /api/contracts sits behind the same global /api/* auth
+// gate every other write route does — this script predates that, or was never updated for it.
+// Same ADMIN_EMAIL/ADMIN_PASSWORD override convention seedAdmin() already uses (server.js), so
+// this honors a customized default-admin login instead of only ever trying the documented one.
+const ADMIN_EMAIL    = process.env.ADMIN_EMAIL    || "admin@cargodesk.com";
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin123";
+
+let authToken = null;
+
+const login = async () => {
+  let res;
+  try {
+    res = await fetch(`${BASE}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: ADMIN_EMAIL, password: ADMIN_PASSWORD }),
+    });
+  } catch {
+    throw new Error(
+      `Cannot reach the API server at ${BASE} — is it running? Start it first with "npm run dev" ` +
+      `(or "npm run server" for just the API) in another terminal, then re-run this script.`
+    );
+  }
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(
+      `Login failed for ${ADMIN_EMAIL} (${body.error || res.status}). If the default admin ` +
+      `password has been changed, set ADMIN_EMAIL/ADMIN_PASSWORD env vars to a valid account ` +
+      `before running this script.`
+    );
+  }
+  authToken = body.token;
+};
+
 const post = async (path, body) => {
   const res = await fetch(`${BASE}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${authToken}` },
     body: JSON.stringify(body),
   });
   if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || res.status); }
@@ -175,6 +211,15 @@ const contracts = [
 ];
 
 async function seed() {
+  console.log(`Logging in as ${ADMIN_EMAIL}…`);
+  try {
+    await login();
+  } catch (e) {
+    console.error(`\n✗  ${e.message}`);
+    process.exit(1);
+  }
+  console.log("  ✓ Logged in\n");
+
   console.log("Seeding dummy contracts…\n");
   let ok = 0, fail = 0;
   for (const c of contracts) {
