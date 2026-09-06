@@ -181,6 +181,7 @@ module.exports = function kanbanRoutes(app, ctx) {
       try { return ok(res, await callKanbanService("POST", `/internal/tickets/${req.params.id}/links`, { toId, linkType }), 201); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
+    if (!(await query("SELECT id FROM tickets WHERE id=$1", [req.params.id]))[0]) return err(res, "Not found", 404);
     if (!(await query("SELECT id FROM tickets WHERE id=$1", [toId]))[0]) return err(res, "Target ticket not found", 404);
     if ((await query("SELECT id FROM ticket_links WHERE (from_id=$1 AND to_id=$2) OR (from_id=$2 AND to_id=$1)", [req.params.id, toId]))[0])
       return err(res, "Link already exists");
@@ -376,7 +377,15 @@ module.exports = function kanbanRoutes(app, ctx) {
     if (!existing) return err(res, "Not found", 404);
     const [{ n: count }] = await query("SELECT COUNT(*) AS n FROM kb_columns WHERE project_id=$1", [existing.project_id]);
     if (Number(count) <= 1) return err(res, "Cannot delete the last column");
-    const [{ n: ticketCount }] = await query("SELECT COUNT(*) AS n FROM tickets WHERE status=$1", [existing.name]);
+    // Scoped to this column's own project (plus legacy pre-migration tickets with no project_id
+    // at all, same inclusive rule GET /api/tickets already uses) — a bare `status=$1` alone
+    // matches any OTHER project's same-named column too (every project seeds identical default
+    // column names), which wrongly blocked deleting a genuinely empty column just because some
+    // unrelated project's tickets happened to share that status string. Confirmed live.
+    const [{ n: ticketCount }] = await query(
+      "SELECT COUNT(*) AS n FROM tickets WHERE status=$1 AND (project_id=$2 OR project_id IS NULL)",
+      [existing.name, existing.project_id]
+    );
     if (Number(ticketCount) > 0) return err(res, `Column has ${ticketCount} ticket(s) — move them first`);
     await query("DELETE FROM kb_columns WHERE id=$1", [req.params.id]);
     ok(res, { deleted: req.params.id });

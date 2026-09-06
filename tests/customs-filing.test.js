@@ -78,8 +78,8 @@ async function addBrokerParty(token, shipmentId, role, customerId, customerName)
   return request("POST", `/api/shipments/${shipmentId}/parties`, { role, customerId, customerName }, token);
 }
 
-async function addPricedPackage(token, containerId, unitValue = 1000, currency = "USD") {
-  return request("POST", `/api/containers/${containerId}/packages`,
+async function addPricedPackage(token, shipmentId, containerId, unitValue = 1000, currency = "USD") {
+  return request("POST", `/api/shipments/${shipmentId}/containers/${containerId}/packages`,
     { description: "Test cargo", quantity: 1, unitValue, currency }, token);
 }
 
@@ -97,7 +97,7 @@ async function addPricedPackage(token, containerId, unitValue = 1000, currency =
     const ctr = await request("POST", "/api/containers", { shipmentId, size: "40", type: "HC" }, token);
     const containerId = ctr.body.id;
     assert("container created", !!containerId);
-    const pkg = await addPricedPackage(token, containerId);
+    const pkg = await addPricedPackage(token, shipmentId, containerId);
     assert("priced cargo line created", pkg.status === 201 && pkg.body.unitValueUsd != null);
     const broker = await addBrokerParty(token, shipmentId, "Customs Broker (Export)", cust.body.id, cust.body.companyName);
     assert("Export broker party assigned", broker.status === 201);

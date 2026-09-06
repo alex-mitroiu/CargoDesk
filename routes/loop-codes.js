@@ -7,14 +7,19 @@
 // against when a user clicks it (LoopRouteModal.jsx), it doesn't replace the derivation itself.
 // A miss on /resolve is therefore expected/normal, not an error condition.
 module.exports = function loopCodeRoutes(app, ctx) {
-  const { query, transaction, ok, err, uid, isUniqueViolation, requireRole, mapLoopCode, mapLoopCodePort } = ctx;
+  const { query, transaction, ok, err, uid, isUniqueViolation, requireRole, getSettings, callMdmService, mapLoopCode, mapLoopCodePort } = ctx;
   const genId = () => `LOOP-${uid()}`;
   const write = requireRole(["admin", "operator"]);
+  const isRemote = async () => ((await getSettings()).mdm_source || "local") === "remote";
 
   const LOOP_JOIN = `
     SELECT lc.*, (SELECT COUNT(*) FROM loop_code_ports p WHERE p.loop_code_id = lc.id) AS port_count
     FROM loop_codes lc
   `;
+  // Local-mode join — kept exactly as it was. The remote branch below (added per the loop-integration
+  // audit, 2026-09-05 — this table postdates the 2026-09-02/03 mdm_source sweep, so it was never
+  // covered) can't join across two different databases, so it fetches the rotation rows plain, then
+  // batch-resolves names/coords through the MDM Service's own ids= filter and merges in JS instead.
   const ROTATION_SQL = `
     SELECT p.*, pl.name AS port_name, pl.country_code, pl.latitude, pl.longitude
     FROM loop_code_ports p
@@ -22,6 +27,43 @@ module.exports = function loopCodeRoutes(app, ctx) {
     WHERE p.loop_code_id = $1
     ORDER BY p.sequence_order
   `;
+
+  async function getRotation(loopCodeId) {
+    if (!(await isRemote())) return query(ROTATION_SQL, [loopCodeId]);
+    const plain = await query(
+      "SELECT * FROM loop_code_ports WHERE loop_code_id=$1 ORDER BY sequence_order", [loopCodeId]
+    );
+    if (!plain.length) return plain;
+    const codes = [...new Set(plain.map(p => p.port_unlocode))];
+    let byCode = {};
+    try {
+      const rows = await callMdmService("GET", `/internal/port-locations?ids=${codes.map(encodeURIComponent).join(',')}`);
+      byCode = Object.fromEntries((rows || []).map(r => [r.unlocode, r]));
+    } catch { /* leave byCode empty — same clean-degrade every other remote MDM lookup here uses on failure */ }
+    return plain.map(p => {
+      const pl = byCode[p.port_unlocode];
+      return { ...p, port_name: pl?.name || '', country_code: pl?.countryCode || null, latitude: pl?.latitude ?? null, longitude: pl?.longitude ?? null };
+    });
+  }
+
+  // Batched existence check for the rotation PUT route below — local mode does one query for the
+  // whole set (was previously one query per port); remote mode reuses the same ids= filter.
+  async function findUnknownPorts(codes) {
+    const unique = [...new Set(codes)];
+    if (!unique.length) return [];
+    let known;
+    if (await isRemote()) {
+      try {
+        const rows = await callMdmService("GET", `/internal/port-locations?ids=${unique.map(encodeURIComponent).join(',')}`);
+        known = new Set((rows || []).map(r => r.unlocode));
+      } catch { known = new Set(); } // clean-degrade: an unreachable service treats every code as unknown, matching a real validation failure rather than silently accepting anything
+    } else {
+      const ph = unique.map((_, i) => `$${i + 1}`).join(',');
+      const rows = await query(`SELECT unlocode FROM port_locations WHERE unlocode IN (${ph})`, unique);
+      known = new Set(rows.map(r => r.unlocode));
+    }
+    return unique.filter(c => !known.has(c));
+  }
 
   app.get("/api/loop-codes", async (req, res) => {
     const rows = await query(`${LOOP_JOIN} ORDER BY lc.code`);
@@ -36,14 +78,14 @@ module.exports = function loopCodeRoutes(app, ctx) {
     if (!code) return err(res, "code is required");
     const [row] = await query(`${LOOP_JOIN} WHERE lc.code = $1 AND lc.is_active = TRUE`, [code]);
     if (!row) return ok(res, null);
-    const ports = await query(ROTATION_SQL, [row.id]);
+    const ports = await getRotation(row.id);
     ok(res, { ...mapLoopCode(row), ports: ports.map(mapLoopCodePort) });
   });
 
   app.get("/api/loop-codes/:id", write, async (req, res) => {
     const [row] = await query(`${LOOP_JOIN} WHERE lc.id = $1`, [req.params.id]);
     if (!row) return err(res, "Loop code not found", 404);
-    const ports = await query(ROTATION_SQL, [row.id]);
+    const ports = await getRotation(row.id);
     ok(res, { ...mapLoopCode(row), ports: ports.map(mapLoopCodePort) });
   });
 
@@ -97,10 +139,8 @@ module.exports = function loopCodeRoutes(app, ctx) {
     if (!existing) return err(res, "Loop code not found", 404);
     const { ports = [] } = req.body || {};
     if (!Array.isArray(ports) || ports.length < 2) return err(res, "A rotation needs at least 2 ports");
-    for (const p of ports) {
-      const [pl] = await query("SELECT unlocode FROM port_locations WHERE unlocode=$1", [p.portUnlocode]);
-      if (!pl) return err(res, `Unknown port ${p.portUnlocode}`);
-    }
+    const unknown = await findUnknownPorts(ports.map(p => p.portUnlocode));
+    if (unknown.length) return err(res, `Unknown port ${unknown[0]}`);
     try {
       await transaction(async (tx) => {
         await tx.query("DELETE FROM loop_code_ports WHERE loop_code_id=$1", [req.params.id]);
@@ -112,7 +152,7 @@ module.exports = function loopCodeRoutes(app, ctx) {
         }
       });
     } catch (e) { return err(res, e.message); }
-    const rows = await query(ROTATION_SQL, [req.params.id]);
+    const rows = await getRotation(req.params.id);
     ok(res, rows.map(mapLoopCodePort));
   });
 };

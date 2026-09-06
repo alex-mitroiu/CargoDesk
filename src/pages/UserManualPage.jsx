@@ -501,7 +501,28 @@ const UserManualPage = () => {
           <P>Open <Tag>Accounting → Cost Entry</Tag>. This is the buy side — every charge you owe a
             carrier or vendor, one line per charge code.</P>
         </StepBody>
-        <Step n={2}>GP Overview — your margin, live</Step>
+        <Step n={2}>Update Carrier Costs — without losing your own corrections</Step>
+        <StepBody>
+          <P>A Central-contract shipment generates its BUY-side lines straight from the contract's
+            rates. When the carrier's own rate genuinely changes later — or you're re-importing after
+            fixing something — use <Tag>Import from Contract</Tag> or <Tag>Update Carrier Costs</Tag>.
+            Both open a <Tag>Reconcile Carrier Costs</Tag> comparison first, rather than overwriting
+            anything blind.</P>
+          <P>The comparison shows every charge as one of five things: <Badge variant="success">Match</Badge>{" "}
+            (nothing to do), <Badge variant="info">Contract rate changed</Badge> (the carrier's price
+            moved since your last import), <Badge variant="manual">Manual override</Badge> (you
+            corrected this line by hand), <Badge variant="info">New on contract</Badge> (a charge that
+            wasn't there before), or <Badge variant="danger">Removed from contract</Badge>. Pick one of
+            three outcomes: <Tag>Overwrite All</Tag> regenerates everything shown — including your own
+            manual corrections, deliberately; <Tag>Ignore &amp; Add Missing Only</Tag> touches nothing
+            that already exists and only creates the genuinely new charges; <Tag>Discard</Tag> closes
+            without changing anything.</P>
+        </StepBody>
+        <Callout type="tip"><strong>Editing a cost line by hand protects it automatically.</strong> The
+          moment you correct a contract-generated line yourself, it's marked Manual — a later Update
+          Carrier Costs can never silently overwrite it again unless you explicitly choose Overwrite
+          All.</Callout>
+        <Step n={3}>GP Overview — your margin, live</Step>
         <StepBody>
           <P><Tag>Accounting → GP Overview</Tag> puts buy and sell side by side and does the
             subtraction for you — no spreadsheet required. "Estimated" is what you've accrued so
@@ -509,7 +530,7 @@ const UserManualPage = () => {
             so the two only ever disagree when something genuinely changed.</P>
           <Screenshot src={imgGpOverview} alt="The GP Overview page showing estimated and actual figures matching, both at $260 gross profit" caption="GP Overview for one shipment — Estimated and Actual currently agree, since nothing's been revised since booking." />
         </StepBody>
-        <Step n={3}>Multiple entities? See profit broken out by branch</Step>
+        <Step n={4}>Multiple entities? See profit broken out by branch</Step>
         <StepBody>
           <P>Running more than one legal entity or branch through CargoDesk — say, a Rotterdam
             office invoicing in EUR and a New York office invoicing in USD? Open{" "}
@@ -523,7 +544,7 @@ const UserManualPage = () => {
             same office you assign back in Chapter 6. There's nothing extra to configure per
             shipment.</P>
         </StepBody>
-        <Step n={4}>Freight Audit & Payment — trust, but verify</Step>
+        <Step n={5}>Freight Audit & Payment — trust, but verify</Step>
         <StepBody>
           <P>When the carrier's actual invoice arrives, don't just pay what it says. Open{" "}
             <Tag>Dashboard → Freight Audit</Tag> and enter it — CargoDesk matches every line against

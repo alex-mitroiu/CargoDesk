@@ -78,8 +78,8 @@ async function generateInvoiceDoc(shipmentId, token, { sourceCostLineIds } = {})
   return res.body;
 }
 
-async function confirmDoc(docId, token) {
-  return request("PATCH", `/api/documents/${docId}`, { status: "confirmed" }, token);
+async function confirmDoc(shipmentId, docId, token) {
+  return request("PATCH", `/api/shipments/${shipmentId}/documents/${docId}`, { status: "confirmed" }, token);
 }
 
 (async () => {
@@ -99,7 +99,7 @@ async function confirmDoc(docId, token) {
     const doc = await generateInvoiceDoc(shipmentId, token, { sourceCostLineIds: [line1.id, line2.id] });
     assert("invoice generated", !!doc.id);
     assert("sourceCostLineIds persisted", Array.isArray(doc.sourceCostLineIds) && doc.sourceCostLineIds.length === 2, JSON.stringify(doc.sourceCostLineIds));
-    const confirmed = await confirmDoc(doc.id, token);
+    const confirmed = await confirmDoc(shipmentId, doc.id, token);
     assert("confirm returns 200", confirmed.status === 200);
     assert("status is confirmed", confirmed.body.status === "confirmed");
 
@@ -112,7 +112,7 @@ async function confirmDoc(docId, token) {
     const otherDoc = await request("POST", `/api/shipments/${shipmentId}/documents/generate`, {
       html: SAMPLE_HTML, filename: `PL01-${shipmentId}.html`, docType: "PL01",
     }, token);
-    await confirmDoc(otherDoc.body.id, token);
+    await confirmDoc(shipmentId, otherDoc.body.id, token);
     const otherReverse = await request("POST", `/api/shipments/${shipmentId}/documents/${otherDoc.body.id}/reverse`, {}, token);
     assert("reversing a non-FR01/FR02 doc 400s", otherReverse.status === 400, JSON.stringify(otherReverse.body));
 
@@ -151,7 +151,7 @@ async function confirmDoc(docId, token) {
       .filter(l => l.type === "SELL" && !l.containerId).reduce((s, l) => s + l.amount, 0);
     const legacyDoc = await generateInvoiceDoc(shipmentId, token); // no sourceCostLineIds
     assert("legacy doc has null sourceCostLineIds", legacyDoc.sourceCostLineIds === null);
-    await confirmDoc(legacyDoc.id, token);
+    await confirmDoc(shipmentId, legacyDoc.id, token);
     const legacyReverse = await request("POST", `/api/shipments/${shipmentId}/documents/${legacyDoc.id}/reverse`, {}, token);
     assert("fallback reverse returns 200", legacyReverse.status === 200, JSON.stringify(legacyReverse.body));
     const fallbackTotal = legacyReverse.body.reversalLines.reduce((s, l) => s + l.amount, 0);

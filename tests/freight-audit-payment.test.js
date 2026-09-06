@@ -108,8 +108,8 @@ async function login() {
     console.log("service code is checked against its own window, not silently reusing the DEM one");
     const now = Date.now();
     const daysAgo = n => new Date(now - n * 86400000).toISOString();
-    await request("POST", `/api/containers/${containerId}/events`, { eventType: "Gate Out", occurredAt: daysAgo(10) }, token);
-    await request("POST", `/api/containers/${containerId}/events`, { eventType: "Empty Return", occurredAt: daysAgo(0) }, token);
+    await request("POST", `/api/shipments/${shipmentId}/containers/${containerId}/events`, { eventType: "Gate Out", occurredAt: daysAgo(10) }, token);
+    await request("POST", `/api/shipments/${shipmentId}/containers/${containerId}/events`, { eventType: "Empty Return", occurredAt: daysAgo(0) }, token);
     // dest_detention_free_days=3, Gate Out 10 days ago, Empty Return today -> 10 - 3 = 7 days late
 
     console.log("\nCarrier invoice — OF line (matches the accrued cost line, within tolerance), DET line (D&D pre-audit), and an unmapped MISC line");

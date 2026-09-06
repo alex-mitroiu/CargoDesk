@@ -138,7 +138,7 @@ async function addLine(shipmentId, token, type, amount, chargeCode = "OFR") {
     assert("byCarrier is untouched/still present (existing breakdowns unaffected)", Array.isArray(asAdmin.body.byCarrier));
 
     console.log("\nbyEntity — branch-scoped user sees only their own entity");
-    const scopedEmail = `entity-test-scoped-${rand.toLowerCase()}@localhost`;
+    const scopedEmail = `entity-test-scoped-${rand.toLowerCase()}@test.local`;
     const scopedUser = await request("POST", "/api/users", {
       name: "Test Entity Scoped User", email: scopedEmail,
       password: "TestFixture!2026Zq", roles: ["occ_bk"], allOffices: false,

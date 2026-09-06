@@ -101,28 +101,28 @@ async function login() {
     assert("marksAndNumbers round-trips on create", ctr.body.marksAndNumbers === "IN DIAMOND / MADE IN NL / NO. 1-50");
 
     console.log("\nMarks & Nos. round-trips on update too");
-    const ctrUpdated = await request("PUT", `/api/containers/${containerId}`,
+    const ctrUpdated = await request("PUT", `/api/shipments/${shipmentId}/containers/${containerId}`,
       { containerNumber: ctr.body.containerNumber, size: "40", type: "HC", hsCode: "8471.30",
         cargoDescription: "Test cargo", marksAndNumbers: "UPDATED MARKS" }, token);
     assert("update returns 200", ctrUpdated.status === 200);
     assert("marksAndNumbers round-trips on update", ctrUpdated.body.marksAndNumbers === "UPDATED MARKS");
 
     console.log("\nTyped tree: root Pallet with a Carton child, Pallet flagged DG");
-    const pallet = await request("POST", `/api/containers/${containerId}/packages`,
+    const pallet = await request("POST", `/api/shipments/${shipmentId}/containers/${containerId}/packages`,
       { description: "Bottles of olive oil", quantity: 2, packTypeId: palletType.id, isDg: true, dgClass: "3" }, token);
     assert("pallet created (201)", pallet.status === 201);
     assert("pallet has packTypeId intact", pallet.body.packTypeId === palletType.id);
     assert("pallet has no parentId (root)", pallet.body.parentId === null);
     assert("pallet isDg/dgClass round-trip on create", pallet.body.isDg === true && pallet.body.dgClass === "3");
 
-    const carton = await request("POST", `/api/containers/${containerId}/packages`,
+    const carton = await request("POST", `/api/shipments/${shipmentId}/containers/${containerId}/packages`,
       { parentId: pallet.body.id, description: "Boxes on top", quantity: 5, packTypeId: cartonType.id }, token);
     assert("carton child created (201)", carton.status === 201);
     assert("carton has packTypeId intact", carton.body.packTypeId === cartonType.id);
     assert("carton parentId points at the pallet", carton.body.parentId === pallet.body.id);
     assert("carton defaults isDg to false", carton.body.isDg === false);
 
-    const tree = await request("GET", `/api/containers/${containerId}/packages`, null, token);
+    const tree = await request("GET", `/api/shipments/${shipmentId}/containers/${containerId}/packages`, null, token);
     assert("tree returns 200", tree.status === 200);
     assert("tree has both nodes", Array.isArray(tree.body) && tree.body.length === 2);
     const tPallet = tree.body.find(p => p.id === pallet.body.id);
@@ -132,14 +132,14 @@ async function login() {
     assert("tree carton keeps packTypeId + parentId nesting", tCarton?.packTypeId === cartonType.id && tCarton?.parentId === pallet.body.id);
 
     console.log("\nUpdating a node preserves/round-trips packTypeId and isDg/dgClass (including turning DG off)");
-    const updatedPallet = await request("PUT", `/api/container-packages/${pallet.body.id}`,
+    const updatedPallet = await request("PUT", `/api/shipments/${shipmentId}/container-packages/${pallet.body.id}`,
       { description: "Bottles of olive oil (relabeled)", quantity: 3, packTypeId: palletType.id, isDg: false, dgClass: "" }, token);
     assert("update returns 200", updatedPallet.status === 200);
     assert("update round-trips packTypeId", updatedPallet.body.packTypeId === palletType.id);
     assert("update round-trips isDg turned off", updatedPallet.body.isDg === false && updatedPallet.body.dgClass === "");
 
     console.log("\nStructured value/currency/HS override (TKT-PV5P5L)");
-    const priced = await request("POST", `/api/containers/${containerId}/packages`,
+    const priced = await request("POST", `/api/shipments/${shipmentId}/containers/${containerId}/packages`,
       { description: "Priced carton", quantity: 4, unitValue: 25.5, currency: "EUR", hsCode: "6203.42" }, token);
     assert("priced item created (201)", priced.status === 201);
     assert("unitValue round-trips", priced.body.unitValue === 25.5);
@@ -147,29 +147,29 @@ async function login() {
     assert("hsCode round-trips", priced.body.hsCode === "6203.42");
     assert("unitValueUsd computed (non-null)", priced.body.unitValueUsd != null);
 
-    const unpriced = await request("POST", `/api/containers/${containerId}/packages`,
+    const unpriced = await request("POST", `/api/shipments/${shipmentId}/containers/${containerId}/packages`,
       { description: "Unpriced carton", quantity: 1 }, token);
     assert("unpriced item defaults unitValue to null (not 0)", unpriced.body.unitValue === null);
     assert("unpriced item defaults currency to ''", unpriced.body.currency === "");
     assert("unpriced item defaults unitValueUsd to null", unpriced.body.unitValueUsd === null);
 
-    const clearedBack = await request("PUT", `/api/container-packages/${priced.body.id}`,
+    const clearedBack = await request("PUT", `/api/shipments/${shipmentId}/container-packages/${priced.body.id}`,
       { description: "Priced carton", quantity: 4 }, token); // omit unitValue/currency entirely
     assert("clearing value back to blank nulls unitValue", clearedBack.body.unitValue === null);
     assert("clearing value back to blank nulls unitValueUsd", clearedBack.body.unitValueUsd === null);
 
-    const negRejected = await request("POST", `/api/containers/${containerId}/packages`,
+    const negRejected = await request("POST", `/api/shipments/${shipmentId}/containers/${containerId}/packages`,
       { description: "Bad value", quantity: 1, unitValue: -5 }, token);
     assert("negative unitValue rejected", negRejected.status !== 201);
 
-    await request("DELETE", `/api/container-packages/${priced.body.id}`, null, token);
-    await request("DELETE", `/api/container-packages/${unpriced.body.id}`, null, token);
+    await request("DELETE", `/api/shipments/${shipmentId}/container-packages/${priced.body.id}`, null, token);
+    await request("DELETE", `/api/shipments/${shipmentId}/container-packages/${unpriced.body.id}`, null, token);
 
     console.log("\nDeleting the parent cascade-deletes the child");
-    const del = await request("DELETE", `/api/container-packages/${pallet.body.id}`, null, token);
+    const del = await request("DELETE", `/api/shipments/${shipmentId}/container-packages/${pallet.body.id}`, null, token);
     assert("delete returns 200", del.status === 200);
     assert("delete response lists both ids", del.body.deleted.includes(pallet.body.id) && del.body.deleted.includes(carton.body.id));
-    const afterDelete = await request("GET", `/api/containers/${containerId}/packages`, null, token);
+    const afterDelete = await request("GET", `/api/shipments/${shipmentId}/containers/${containerId}/packages`, null, token);
     assert("tree is empty after cascade delete", Array.isArray(afterDelete.body) && afterDelete.body.length === 0);
 
     console.log("\nDG Compliance Address settings (org-wide, TKT-DPLQTV)");

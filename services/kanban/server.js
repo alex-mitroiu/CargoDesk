@@ -318,6 +318,8 @@ app.get("/internal/tickets/:id/links", async (req, res) => {
 app.post("/internal/tickets/:id/links", async (req, res) => {
   const { toId, linkType } = req.body || {};
   if (!toId || !linkType) return err(res, "toId and linkType required");
+  const [source] = await query("SELECT id FROM tickets WHERE id=$1", [req.params.id]);
+  if (!source) return err(res, "Not found", 404);
   const [target] = await query("SELECT id FROM tickets WHERE id=$1", [toId]);
   if (!target) return err(res, "Target ticket not found", 404);
   const [existingLink] = await query("SELECT id FROM ticket_links WHERE (from_id=$1 AND to_id=$2) OR (from_id=$2 AND to_id=$1)", [req.params.id, toId]);
@@ -589,7 +591,13 @@ app.delete("/internal/kb/columns/:id", async (req, res) => {
   if (!existing) return err(res, "Not found", 404);
   const [countRow] = await query("SELECT COUNT(*) AS n FROM kb_columns WHERE project_id=$1", [existing.project_id]);
   if (Number(countRow.n) <= 1) return err(res, "Cannot delete the last column");
-  const [ticketCountRow] = await query("SELECT COUNT(*) AS n FROM tickets WHERE status=$1", [existing.name]);
+  // Scoped to this column's own project (plus legacy pre-migration tickets with no project_id),
+  // matching the monolith's own fix — a bare status=$1 alone matches any OTHER project's
+  // same-named column too, since every project seeds identical default column names.
+  const [ticketCountRow] = await query(
+    "SELECT COUNT(*) AS n FROM tickets WHERE status=$1 AND (project_id=$2 OR project_id IS NULL)",
+    [existing.name, existing.project_id]
+  );
   const ticketCount = Number(ticketCountRow.n);
   if (ticketCount > 0) return err(res, `Column has ${ticketCount} ticket(s) — move them first`);
   await query("DELETE FROM kb_columns WHERE id=$1", [req.params.id]);

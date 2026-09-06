@@ -1955,7 +1955,7 @@ export const PartiesOfficesPanel = ({ shipment, onUpdate, onShipmentPatched }) =
   };
   const handleRemoveSideOffice = async id => {
     try {
-      await api.sideOffices.remove(id);
+      await api.sideOffices.remove(shipment.id, id);
       setSideOfficesList(list => list.filter(so => so.id !== id));
     } catch (ex) { toast.error(ex.message); }
   };
@@ -2093,7 +2093,7 @@ export const MilestonePanel = ({ shipmentId, shipment, onProgress }) => {
     try {
       const completing = !m.completedAt;
       const completedBy = completing ? (user?.name || user?.email || 'User') : '';
-      await api.milestones.update(m.id, {
+      await api.milestones.update(shipmentId, m.id, {
         estimatedDate: m.estimatedDate,
         note: m.note,
         completedAt: completing ? new Date().toISOString() : '',
@@ -2110,7 +2110,7 @@ export const MilestonePanel = ({ shipmentId, shipment, onProgress }) => {
     setSaving(m.id);
     try {
       const f = fields[m.id] || {};
-      await api.milestones.update(m.id, {
+      await api.milestones.update(shipmentId, m.id, {
         estimatedDate: f.estimatedDate ?? m.estimatedDate,
         note:          f.note          ?? m.note,
         completedAt:   m.completedAt,
@@ -2344,7 +2344,7 @@ const ContainerEventsStepper = ({ container }) => {
   const [events, setEvents] = useState(null);
 
   useEffect(() => {
-    api.containers.events(container.id).then(setEvents).catch(() => setEvents([]));
+    api.containers.events(container.shipmentId, container.id).then(setEvents).catch(() => setEvents([]));
   }, [container.id]);
 
   const stateColor = st => ({ completed: T.success, current: T.accent, upcoming: T.border }[st]);
@@ -2939,6 +2939,135 @@ export const CostLineAdjustModal = ({ line, onSave, onClose }) => {
             onClick={() => withSaving(() => onSave({ amount: parsed, note }))}>
             {isSaving ? "Posting…" : "Post Adjustment"}
           </Btn>
+        </div>
+      </div>
+    </Modal>
+  );
+};
+
+// ─── Reconcile Carrier Costs modal (2026-09-06) ────────────────────────────────
+// Shared by both "Import from Contract" and "Update Carrier Costs" (ShipmentAccountingCostsPage) —
+// they compare against different rate sources (mode 'import' = the shipment's own already-issued
+// snapshot, mode 'update' = the contract's current live rates) but share the exact same
+// preview/decide/apply shape. Always shown, even when nothing conflicts, per direct decision —
+// consistency over skipping the modal on a "nothing to do" preview. Real finding behind this:
+// SHP-WKX04E had a contract-sourced cost line silently re-overwritten every time carrier costs
+// were refreshed, since a manual correction was never distinguishable from an untouched line.
+const RECONCILE_STATUS = {
+  match:   { label: "Match",                 variant: "success" },
+  changed: { label: "Contract rate changed", variant: "info" },
+  manual:  { label: "Manual override",       variant: "manual" },
+  new:     { label: "New on contract",       variant: "info" },
+  removed: { label: "Removed from contract", variant: "danger" },
+};
+
+export const ReconcileCarrierCostsModal = ({ shipmentId, mode, containerCount = 1, onClose, onApplied }) => {
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [rows, setRows] = useState([]);
+  const [splitPerContainer, setSplitPerContainer] = useState(containerCount > 1);
+  const [isSaving, withSaving] = useSaving();
+
+  useEffect(() => {
+    api.costLines.reconcilePreview(shipmentId, mode)
+      .then(d => setRows(d.rows || []))
+      .catch(e => setLoadError(e.message))
+      .finally(() => setLoading(false));
+  }, [shipmentId, mode]);
+
+  const counts = rows.reduce((acc, r) => ({ ...acc, [r.status]: (acc[r.status] || 0) + 1 }), {});
+  const summary = ["manual", "changed", "new", "removed"]
+    .filter(k => counts[k])
+    .map(k => `${counts[k]} ${RECONCILE_STATUS[k].label.toLowerCase()}${counts[k] !== 1 ? "s" : ""}`)
+    .join(" · ") || "Everything matches";
+
+  const apply = action => withSaving(async () => {
+    try {
+      const fn = mode === "update" ? api.costLines.updateCarrierCosts : api.costLines.importContract;
+      const result = await fn(shipmentId, { action, splitPerContainer });
+      toast.success(`${result.imported} line${result.imported !== 1 ? "s" : ""} ${action === "overwrite" ? "regenerated" : "added"}`);
+      onApplied();
+    } catch (e) { toast.error(e.message); }
+  });
+
+  const th = { fontFamily: T.body, fontSize: 10, fontWeight: 600, color: T.textMuted,
+    textTransform: "uppercase", letterSpacing: ".07em" };
+
+  return (
+    <Modal title="Reconcile Carrier Costs" onClose={onClose} width={640}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        <div style={{ fontFamily: T.body, fontSize: 12.5, color: T.textMuted, lineHeight: 1.5 }}>
+          {mode === "update"
+            ? "Comparing your current cost lines against the contract's CURRENT live rates."
+            : "Comparing your current cost lines against this shipment's own already-issued rate snapshot."}
+        </div>
+
+        {loading ? (
+          <div style={{ padding: 24, textAlign: "center" }}><Spinner /></div>
+        ) : loadError ? (
+          <div style={{ fontFamily: T.body, fontSize: 13, color: T.danger }}>{loadError}</div>
+        ) : rows.length === 0 ? (
+          <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, fontStyle: "italic" }}>
+            Nothing to compare — the contract has no rates.
+          </div>
+        ) : (
+          <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden", maxHeight: 320, overflowY: "auto" }}>
+            <div style={{ display: "flex", padding: "7px 12px", background: T.bg, borderBottom: `1px solid ${T.border}`, position: "sticky", top: 0 }}>
+              <div style={{ ...th, flex: 1 }}>Charge Code</div>
+              <div style={{ ...th, width: 100, textAlign: "right" }}>Current</div>
+              <div style={{ ...th, width: 100, textAlign: "right" }}>Contract</div>
+              <div style={{ ...th, width: 150, paddingLeft: 8 }}>Status</div>
+            </div>
+            {rows.map(r => (
+              <div key={r.chargeCode} style={{ display: "flex", alignItems: "center", padding: "8px 12px", borderBottom: `1px solid ${T.border}22` }}>
+                <div style={{ flex: 1, fontFamily: T.body, fontSize: 12.5, color: T.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.chargeCode}</div>
+                <div style={{ width: 100, textAlign: "right", fontFamily: T.mono, fontSize: 12,
+                  color: r.status === "manual" ? T.accent : T.text, fontWeight: r.status === "manual" ? 700 : 400 }}>
+                  {r.currentAmount != null ? `${r.currentAmount.toFixed(2)} ${r.currentCurrency}` : <span style={{ color: T.textMuted }}>—</span>}
+                </div>
+                <div style={{ width: 100, textAlign: "right", fontFamily: T.mono, fontSize: 12, color: T.text }}>
+                  {r.contractAmount != null ? `${r.contractAmount.toFixed(2)} ${r.contractCurrency}` : <span style={{ color: T.textMuted }}>—</span>}
+                </div>
+                <div style={{ width: 150, paddingLeft: 8 }}>
+                  <Badge variant={RECONCILE_STATUS[r.status].variant}>{RECONCILE_STATUS[r.status].label}</Badge>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {containerCount > 1 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ fontFamily: T.body, fontSize: 11, fontWeight: 700, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".06em" }}>
+              Per-container rate lines — {containerCount} containers
+            </div>
+            {[{ v: false, label: `Aggregate (1 line × ${containerCount})` },
+              { v: true,  label: `Split per container (${containerCount} lines per rate)` }].map(opt => (
+              <label key={String(opt.v)} style={{ display: "flex", gap: 8, alignItems: "center", cursor: "pointer" }}>
+                <input type="radio" checked={splitPerContainer === opt.v} onChange={() => setSplitPerContainer(opt.v)} />
+                <span style={{ fontFamily: T.body, fontSize: 12.5, color: T.text }}>{opt.label}</span>
+              </label>
+            ))}
+          </div>
+        )}
+
+        {!loading && !loadError && rows.length > 0 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: "10px 12px",
+            background: T.info + "12", border: `1px solid ${T.info}44`, borderRadius: 6,
+            fontFamily: T.body, fontSize: 11.5, color: T.text, lineHeight: 1.5 }}>
+            <div><strong style={{ color: T.danger }}>Overwrite All</strong> — regenerates every line above except "New on contract" from scratch, using the contract's current numbers. This includes <strong>Manual override</strong> lines — a human correction is discarded in favor of the contract's value.</div>
+            <div><strong style={{ color: T.text }}>Ignore &amp; Add Missing Only</strong> — touches nothing that already exists, whatever its status. Only "New on contract" charges are created; a stale "Contract rate changed" line is left exactly as it is.</div>
+            <div><strong style={{ color: T.textMuted }}>Discard</strong> — closes this without creating or changing anything, including no new rate snapshot.</div>
+          </div>
+        )}
+
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <span style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted }}>{loading ? "" : summary}</span>
+          <div style={{ display: "flex", gap: 8 }}>
+            <Btn variant="secondary" onClick={onClose} disabled={isSaving}>Discard</Btn>
+            <Btn variant="secondary" onClick={() => apply("ignore")} disabled={isSaving || loading}>Ignore &amp; Add Missing Only</Btn>
+            <Btn variant="danger" onClick={() => apply("overwrite")} disabled={isSaving || loading}>{isSaving ? "Working…" : "Overwrite All"}</Btn>
+          </div>
         </div>
       </div>
     </Modal>

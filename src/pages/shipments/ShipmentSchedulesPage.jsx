@@ -147,6 +147,20 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
     return () => { live = false; };
   }, [shipment.contractType, shipment.contractId]);
 
+  // "Rate ID" (below) used to join every rate line's own id on the assigned CONTRACT — a real
+  // contract legitimately carries several (one per charge type), so this always showed 2-3+ ids
+  // and read as duplication (2026-09-06 audit, SHP-WKX04E). What it's meant to represent is the
+  // shipment's OWN current governing rate — the latest shipment_rate_snapshots row, same
+  // ORDER BY generated_at DESC LIMIT 1 "latest wins" convention already used everywhere else this
+  // is resolved (routes/edi.js's booking-request payload, GenerateDocumentModal.jsx).
+  const [latestRateSnapshotId, setLatestRateSnapshotId] = useState(null);
+  useEffect(() => {
+    if (shipment.contractType !== "Central" || !shipment.contractId) { setLatestRateSnapshotId(null); return; }
+    let live = true;
+    api.costLines.rateSnapshots(shipment.id).then(rows => { if (live) setLatestRateSnapshotId(rows[0]?.id || ""); }).catch(() => { if (live) setLatestRateSnapshotId(""); });
+    return () => { live = false; };
+  }, [shipment.id, shipment.contractType, shipment.contractId]);
+
   // Export/Import Line Agent — surfaced here (not just on Parties & Offices) since schedule and
   // contract selection are also an export-side-only action on this page; keeping both under the
   // same office-side permission model in one place matches how the operator actually works.
@@ -168,7 +182,7 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
 
   const handleAssignLineAgent = async (role, existingId, customerId, customerName) => {
     try {
-      if (existingId) await api.shipmentParties.update(existingId, { customerId, customerName });
+      if (existingId) await api.shipmentParties.update(shipment.id, existingId, { customerId, customerName });
       else await api.shipmentParties.create(shipment.id, { role, customerId, customerName });
       await loadParties();
       toast.success(`${role} ${existingId ? "reassigned" : "assigned"}`);
@@ -176,7 +190,7 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
   };
   const handleRemoveLineAgent = async id => {
     try {
-      await api.shipmentParties.remove(id);
+      await api.shipmentParties.remove(shipment.id, id);
       setParties(list => list.filter(p => p.id !== id));
     } catch (e) { toast.error(e.message); }
   };
@@ -447,16 +461,18 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
               Central contract record; SPOT/Pending/Customer Own (and a Central contract still
               loading) show a dash for those, falling back to the shipment's own contractRef/
               contractValidFrom/contractValidTo for the fields that DO apply to a manual contract
-              type. Rate ID joins every rate line's own id — a contract can carry more than one. */}
+              type. Rate ID is the shipment's own latest rate snapshot (2026-09-06 fix) — it used
+              to join every rate line's own id on the assigned CONTRACT instead, which legitimately
+              carries several (one per charge type) and read as duplication; see
+              latestRateSnapshotId above for the full story. */}
           {(() => {
             const isCentral = shipment.contractType === "Central";
-            const rateIds = (contractDetail?.rates || []).map(r => r.id).filter(Boolean);
             const cols = [
               ["Contract Number", isCentral ? (contractDetail?.contractNumber || "") : ""],
               ["Contract Reference", shipment.contractRef || ""],
               ["Named Account", isCentral ? (contractDetail?.namedAccount || "") : ""],
               ["Commodity", isCentral ? (contractDetail?.commodityTypes || "") : ""],
-              ["Rate ID", isCentral ? rateIds.join(", ") : ""],
+              ["Rate ID", isCentral ? (latestRateSnapshotId || "") : ""],
               ["Valid From", isCentral ? (contractDetail?.validFrom || "") : (shipment.contractValidFrom || "")],
               ["Valid To", isCentral ? (contractDetail?.validTo || "") : (shipment.contractValidTo || "")],
             ];

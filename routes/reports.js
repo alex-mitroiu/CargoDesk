@@ -24,7 +24,7 @@
 // one would make "By Region" permanently empty.
 module.exports = function reportsRoutes(app, ctx) {
   const { query, ok, err, auth, requireRole, mapCostLine, mapShipment, roundCents, portCountryMap, getSettings, callCustomerService,
-          docAmountUsd, runDunningSweep, applyShipmentAccessFilter,
+          callMdmService, docAmountUsd, runDunningSweep, applyShipmentAccessFilter,
           resolveInvoiceThresholds, runInvoiceCollectionsSweep, businessDaysBetween, mapInvoiceStatusOverride } = ctx;
 
   // Both billing-performance and invoice-collections bulk-read every customer's own
@@ -39,6 +39,39 @@ module.exports = function reportsRoutes(app, ctx) {
       (await query("SELECT id, credit_terms_days, invoice_deadline_days FROM customers")).forEach(c => { custById[c.id] = c; });
     }
     return custById;
+  }
+
+  // Shared by gp-by-geo and billing-performance below (2026-09-05 audit — both used to read
+  // countries/country_trade_lanes/trade_lanes/carriers directly with zero mdm_source awareness,
+  // the same bypass class already found and fixed in loop-codes.js/command-center.js/
+  // shipment-ops.js). Field names line up identically local vs remote (mapCountry/mapTradeLane/
+  // mapCarrier all keep iso2/code/name as-is; /internal/country-trade-lanes returns raw
+  // snake_case rows, unmapped, on the service side too), so both branches build the exact same
+  // shape with no per-field translation needed. 208 real countries total — a single limit=300
+  // page is genuinely the whole table, not a truncated one.
+  async function loadMdmNameMaps() {
+    const countryNames = {}, countryLane = {}, laneNames = {}, carrierNames = {};
+    if (((await getSettings()).mdm_source || "local") === "remote") {
+      const [countriesPage, ctls, lanes, carriers] = await Promise.all([
+        callMdmService("GET", "/internal/countries?limit=300").catch(() => ({ results: [] })),
+        callMdmService("GET", "/internal/country-trade-lanes").catch(() => []),
+        callMdmService("GET", "/internal/trade-lanes").catch(() => []),
+        callMdmService("GET", "/internal/carriers").catch(() => []),
+      ]);
+      // /internal/countries with no ids= filter returns the paginated {results,total,...}
+      // envelope (limit=300 covers all 208 real rows in one page), not a bare array.
+      (countriesPage?.results || []).forEach(c => { countryNames[c.iso2] = c.name; });
+      (ctls || []).forEach(r => { if (!(r.iso2 in countryLane)) countryLane[r.iso2] = r.lane_code; });
+      (lanes || []).forEach(l => { laneNames[l.code] = l.name; });
+      (carriers || []).forEach(c => { carrierNames[c.code] = c.name; });
+    } else {
+      (await query("SELECT iso2, name FROM countries")).forEach(c => { countryNames[c.iso2] = c.name; });
+      (await query("SELECT iso2, lane_code FROM country_trade_lanes"))
+        .forEach(r => { if (!(r.iso2 in countryLane)) countryLane[r.iso2] = r.lane_code; });
+      (await query("SELECT code, name FROM trade_lanes")).forEach(l => { laneNames[l.code] = l.name; });
+      (await query("SELECT code, name FROM carriers")).forEach(c => { carrierNames[c.code] = c.name; });
+    }
+    return { countryNames, countryLane, laneNames, carrierNames };
   }
 
   // A trade_manager has a real, standing reason to be in Reports regardless of canViewFinance —
@@ -114,15 +147,7 @@ module.exports = function reportsRoutes(app, ctx) {
       });
     }
 
-    const countryNames = {};
-    (await query("SELECT iso2, name FROM countries")).forEach(c => { countryNames[c.iso2] = c.name; });
-    const countryLane = {};
-    (await query("SELECT iso2, lane_code FROM country_trade_lanes"))
-      .forEach(r => { if (!(r.iso2 in countryLane)) countryLane[r.iso2] = r.lane_code; });
-    const laneNames = {};
-    (await query("SELECT code, name FROM trade_lanes")).forEach(l => { laneNames[l.code] = l.name; });
-    const carrierNames = {};
-    (await query("SELECT code, name FROM carriers")).forEach(c => { carrierNames[c.code] = c.name; });
+    const { countryNames, countryLane, laneNames, carrierNames } = await loadMdmNameMaps();
 
     const keyOf = row => {
       if (groupBy === 'carrier') return row.carrier_code || '';
@@ -263,13 +288,7 @@ module.exports = function reportsRoutes(app, ctx) {
 
     const officeNames = {};
     (await query("SELECT id, code, name FROM offices")).forEach(o => { officeNames[o.id] = `${o.code} — ${o.name}`; });
-    const carrierNames = {};
-    (await query("SELECT code, name FROM carriers")).forEach(c => { carrierNames[c.code] = c.name; });
-    const countryLane = {};
-    (await query("SELECT iso2, lane_code FROM country_trade_lanes"))
-      .forEach(r => { if (!(r.iso2 in countryLane)) countryLane[r.iso2] = r.lane_code; });
-    const laneNames = {};
-    (await query("SELECT code, name FROM trade_lanes")).forEach(l => { laneNames[l.code] = l.name; });
+    const { countryLane, laneNames, carrierNames } = await loadMdmNameMaps();
     const custById = await getCustTermsMap();
 
     const todayMs = Date.now();

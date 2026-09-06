@@ -135,7 +135,7 @@ const AdditionalPartiesPanel = ({ shipmentId }) => {
     if (!editCustomer.id) return;
     setSaving(true);
     try {
-      await api.shipmentParties.update(id, { customerId: editCustomer.id, customerName: editCustomer.name });
+      await api.shipmentParties.update(shipmentId, id, { customerId: editCustomer.id, customerName: editCustomer.name });
       setEditingId(null);
       await load();
     } catch (e) { toast.error(e.message); }
@@ -144,7 +144,7 @@ const AdditionalPartiesPanel = ({ shipmentId }) => {
 
   const handleRemove = async id => {
     try {
-      await api.shipmentParties.remove(id);
+      await api.shipmentParties.remove(shipmentId, id);
       setParties(list => list.filter(p => p.id !== id));
     } catch (e) { toast.error(e.message); }
   };

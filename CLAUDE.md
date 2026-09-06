@@ -6,7 +6,7 @@ Full-stack freight management app. React 18 + Vite frontend, Express + dual-back
 `lib/db.js`) backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.90.2 "Ol' Scratch"**
+- Version: **v0.90.3 "Ledger's Edge"**
 - First-time setup: `npm run setup` (`scripts/setup.js`) — boots the server once to create its
   schema, shuts it down cleanly, then seeds MDM reference data, in the correct order. NOT
   zero-script — a genuinely fresh `pgdata/` has no ports/carriers/vessels/commodities until this
@@ -61,10 +61,15 @@ routes/
   command-center.js  /api/milestones/overdue-summary, /api/exceptions/queue,
                      /api/command-center/carrier-scorecard, /api/command-center/transit-time-trend
                      — Command Center Quality & Exception Management (v0.77.0, Epic TKT-IBHB0K)
-  shipment-ops.js    /api/shipments/:id/screening, cost-lines, milestones, documents,
-                     services, services/:serviceId/loading-plan, services/:serviceId/haulage
-                     (Merchant's Haulage — gate in/out, driver, instructions, cost-line
-                     auto-creation, /haulage/:containerId/waypoints), /haulage-waypoints/:id
+  shipment-ops.js    /api/shipments/:id/screening, cost-lines, milestones/:id, documents/:docId
+                     (+ /download), services, services/:serviceId/loading-plan,
+                     services/:serviceId/haulage (Merchant's Haulage — gate in/out, driver,
+                     instructions, cost-line auto-creation, /haulage/:containerId/waypoints,
+                     haulage-waypoints/:id) — milestones/documents/haulage-waypoints are all
+                     nested under the owning shipment's :id (never a bare /api/milestones/:id
+                     etc.) so every one of them inherits shipmentScopeParamCheck automatically;
+                     a 2026-09-05 audit found and fixed 7 routes that predated this convention
+                     (ARCHITECTURE.md audit log, TKT-19FU3B)
   finance.js         /api/margin/summary
   system.js          /api/health, /api/system-messages, /api/settings, /api/schedules/*
   export.js          /api/export/shipments.csv, /api/export/dashboard/xlsx,
@@ -238,6 +243,17 @@ src/
       MdmLoopCodesPage.jsx         Loop Codes registry (v0.90.1) — list + a drag-to-reorder
                                    port-rotation editor per loop, referencing port_locations
                                    directly rather than storing its own coordinates
+      LoopMapExplorerPage.jsx      World-spanning map browsing every registered carrier loop at
+                                   once (Master Data → Loop Codes → Loop Map Explorer) — multi-
+                                   select up to 5 loops at a time (readability cap, not a
+                                   performance one), each drawn in its own color with hover-only
+                                   port-name chips; selected loops also render inside a
+                                   draggable/resizable/minimizable overlay box, grouped by carrier
+                                   code, reusing LoopRouteModal.jsx's own Timeline component in
+                                   full for each loop's Westbound/Eastbound bars — hovering a loop
+                                   in the box cross-highlights it on the map. Shares its
+                                   projection/pan-zoom/label building blocks with
+                                   LoopRouteModal.jsx via mapCore.jsx
       MdmUNLocationCodesPage.jsx   UN location code browser
       DocumentTemplatesPage.jsx   Document Template Editor (v0.90.0) — list + free-form canvas
                                    editor for a per-office/carrier document layout, BL01 pilot
@@ -268,9 +284,21 @@ src/
                                    Import, Trucker Pre/On-carriage, Also Notify, Bank, Insurance
                                    Provider, Agent) — self-fetching, rendered below PartiesOfficesPanel
                                    on ShipmentPartiesPage.jsx — Epic TKT-5XFCAP
+      mapCore.jsx                  Shared map-drawing building blocks behind both LoopRouteModal.jsx's
+                                   per-shipment map and LoopMapExplorerPage.jsx's world map —
+                                   ringToPath (antimeridian-safe path segmentation, fixes a real
+                                   spurious-line-at-the-seam bug), PortHoverChip/stripPortPrefix
+                                   (hover-only white-on-blue port labels, "Port of" stripped),
+                                   RotatedLabel (nameOnly mode), usePanZoom/ZoomControls
+                                   (cursor-anchored zoom — fixed a real StrictMode double-invoke
+                                   drift bug, TKT-S5J5UP)
       LoopRouteModal.jsx           Opened by clicking a shipment header's Loop field (v0.90.1) — a
                                    linear rotation timeline resolved via GET /api/loop-codes/resolve,
-                                   with the shipment's own matching POL/POD highlighted as a hub
+                                   with the shipment's own matching POL/POD highlighted as a hub.
+                                   Exports Timeline (dual Westbound/Eastbound pill-labeled bars,
+                                   name-only port labels, direction-aware arrows — reused in full by
+                                   LoopMapExplorerPage.jsx's own overlay box) and LoopMap (hover-only
+                                   PortHoverChip labels via mapCore.jsx, replacing always-on ones)
       ShipmentHeaderBar.jsx        Persistent shipment header — mounted once in App.jsx, visible on
                                    Overview + every promoted sub-page (gated by SHIPMENT_SUBPAGE_LABELS[page]
                                    being truthy — the component itself has no page-awareness at all).
@@ -331,7 +359,7 @@ dependency: `db`, mapper functions, middleware factories, helpers, and state:
   shipmentSubs, broadcastMessage, recomputeSpaceBadge,
   UPLOADS_DIR, SVC_ABBR, LEG_LOC_ABBR,
   VALID_ROLES, ROLE_RANK_SV, primaryRoleSV, parseUserRoles,
-  SERVICE_CODE_MAP, importContractRates,
+  SERVICE_CODE_MAP, importContractRates, computeCostLineReconciliation, applyReconciliation,
   mapShipment, mapShipmentLeg, mapCostLine, mapService, mapContainer, mapAllocation,
   mapCarrier, mapVessel, mapPortLocation, mapLinkedPort, mapTradeLane,
   mapScopeItem, mapAccessConfig, mapRegion, mapCountry, mapTicketLink, mapTicket,
@@ -419,8 +447,9 @@ are fully validated.
 - **Migrations**: safe `try/catch` array in server.js startup — add new columns there
 - **Backfill**: `backfillPortCountryCodes()` IIFE runs on startup
 - **Toast**: `import { toast } from './toast'` → `toast.success/error/warning/info(msg)`
-- **Version**: update `src/version.js` + `CLAUDE.md` + `README.md` on every release
+- **Version**: update `src/version.js` + `CLAUDE.md` + `README.md` + `package.json` on every release — `GET /api/health`'s own `version` field reads `package.json` directly, not `src/version.js`, so the two can silently drift if only the frontend-facing file is bumped
 - **Before cutting a release** (version bump + CHANGELOG entry, before the batch push): ask the user whether they'd like a shipment-domain gap-and-dead-code audit pass first — see ARCHITECTURE.md's audit log for the ongoing practice and what it's already found (18 real bugs across the first extended pass, severity ranging from dead code to five CRITICAL findings — a systemic authorization bypass, a silent-orphan cascade-delete gap, an AI-agent tool-execution scope bypass, a live-reproduced Sankey-diagram crash on the GP Overview/Reports pages, and a plaintext-secret leak in Application Settings — sso_client_secret/ai_api_key/ais_api_key readable by any authenticated user, viewer role included). This is a real user decision each time, not something to decide silently either way.
+- **Before starting a genuinely open-ended or ambiguous idea** (a new feature, a workflow change, anything with more than one reasonable shape — not a scoped bug fix or a one-line tweak, which don't need this) — iron out the details together first: ask a real round of clarifying questions, define one concrete example together, agree on the resulting workflow, *then* implement. Established 2026-09-05, direct request, after this exact pattern (real example > more prose, ask rather than guess) repeatedly proved out on this project's own features — see the TMS Playbook artifact's own Section 4/5 for the fuller writeup of why. Applying it to *everything* including trivial asks was explicitly considered and rejected — that would trade a real problem for a slower one.
 - **Routing term**: computed in `syncShipmentFromLegs` from carrier-covered legs only — `legs.filter(l => l.movement_type !== "Merchant's Haulage" && l.movement_type !== "Customer Arranged")`; format `DR-CY`, `PT-PT`, `DR-DR`; `LEG_LOC_ABBR = { Door: DR, Terminal: PT, Container Yard: CY, CFS: CFS }`; stored as `routing_term` on shipments; `mapShipment` uses `r.routing_term || SVC_ABBR[r.service_type]`
 - **Leg schema (shipment_legs)**: `leg_type` (Pick-up/SEA/AIR/RAIL/Feeder/Delivery), `movement_type` (Carrier's Haulage/Merchant's Haulage/SEA/Air Freight/Rail/Feeder), `pol_loc_type`/`pod_loc_type` (Door/Terminal/Container Yard/CFS), `movement_by` (Barge/Rail/Truck/Vessel/Air); `LEG_TO_MOT` in routes/shipments.js derives `mot` from `legType` (Pick-up/Delivery → ROAD, SEA → SEA)
 - **Contract leg loc types**: `pol_loc_type` / `pod_loc_type` columns on `contract_legs` (Terminal default); selector in MdmContractsPage leg editor; persisted via `saveLegs` in routes/contracts.js
@@ -452,6 +481,40 @@ are fully validated.
 - **Document system**: `DOC_TYPES` in App.jsx (~line 56: BL01/MB01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — `MB01` (Master Bill of Lading, v0.71.0) is the vessel-operator-to-NVOCC document, a genuinely separate build from `BL01` (NVOCC-to-shipper House B/L), not a mode flag on it — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). (The earlier client-side-jsPDF `DocumentsMenu` component this note used to distinguish from was removed as dead code — it had zero references anywhere in the app.)
 - **Lifecycle-stage stepper precedent**: no dedicated stepper component exists yet; `MilestonePanel` (ShipmentDetailPage.jsx 1593-~1870) is the closest analog — linear progress bar (1734-1738, `width: ${progress}%`) plus per-step state coloring via `milestoneState()`/`stateColor()` (1666-1676: completed/overdue/current/upcoming) driven by `shipment_milestones` rows (`id, label, estimatedDate, note, completedAt, completedBy`, fixed step keys `booking_confirmed, si_submitted, cargo_gated_in, vessel_departed, bl_issued, vessel_arrived, customs_cleared, cargo_released, delivered`). Any new per-container lifecycle/stage UI should reuse this state-coloring pattern rather than inventing a new visual language
 - **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages, 📡 EDI). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
+
+## Recent changes (v0.90.3 "Ledger's Edge")
+Closes out the Shipment-Domain Gap & Dead-Code Audit (started 2026-09-02) — all 37 route files
+now have at least one dedicated, live-verified audit pass — plus one new feature (Rate
+Reconciliation) built off a direct bug report found while wrapping up the audit. See
+`src/version.js`'s own CHANGELOG entry for the full writeup; summary here:
+- **5 real audit findings, 2 CRITICAL**: `routes/shipments.js`'s second-order
+  `shipmentScopeParamCheck` bypass recurred across 12 more routes (containers/events/packages/
+  parties/side-offices, `TKT-YXKPCS`); `GET /api/containers` leaked the entire company's
+  container manifest to every logged-in user on every login — not dormant behind a toggle like
+  most other gaps this audit found (`TKT-TZ5PR9`); `routes/carrier-invoices.js` had **zero**
+  shipment-scope enforcement anywhere in the file — a scoped user could read/dispute/create
+  carrier invoices on any shipment company-wide (`TKT-Z6C81S`, the most severe finding of the
+  whole audit); `DELETE /api/offices/:id` and `DELETE /api/allocations/:id` were both missing
+  delete-guards, silently orphaning `shipment_services`/`scheduled_reports`/`shipments.allocationId`
+  references (`TKT-PQ89VW`, `TKT-V5ELDA`); `GET /api/allocations/conflicts` had the same
+  recurring `mdm_source` bypass already fixed 6+ times this audit (`TKT-8IYCMQ`).
+- **Rate Reconciliation** (`TKT-NU524E`) — `SERVICE_CODE_MAP`'s `DOC` no longer aliases to the
+  same `'B/L Fee'` label as `BL`/`BLF` (a real, distinct charge type was silently collapsing
+  into the wrong name). `PUT .../cost-lines/:id` now flips a line's `source` from `'contract'`
+  to `'manual'` on any real edit, so a dispatcher's own correction can no longer be silently
+  destroyed by a later "Update Carrier Costs"/"Import from Contract" refresh. Both of those
+  actions now open a shared "Reconcile Carrier Costs" modal (new `GET .../cost-lines/
+  reconcile-preview?mode=import|update`, new `computeCostLineReconciliation`/
+  `applyReconciliation` in `server.js`) showing a diff (Match / Contract rate changed / Manual
+  override / New on contract / Removed from contract) with three outcomes: Overwrite All
+  (deliberately reaches manual overrides too), Ignore & Add Missing Only (purely additive,
+  touches nothing existing), Discard (true no-op). The Contracts & Schedules page's "Rate ID"
+  field now shows the shipment's own single latest rate snapshot id instead of joining every
+  rate line on the assigned contract (which legitimately carries several).
+- Every fix live-reproduced before/after with scratch fixtures (SHP-WKX04E itself left
+  untouched, verified read-only). New `tests/rate-reconciliation.test.js` (27 assertions); every
+  test file touching a changed route re-run green, zero regressions. Clean `vite build`. Full
+  writeup in `ARCHITECTURE.md`'s audit log; a Kanban ticket per fix under Epic `TKT-E25769`.
 
 ## Recent changes (v0.90.2 "Ol' Scratch")
 Hotfix — a real, reproducible database-corruption bug, found and fixed the same day it was

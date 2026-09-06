@@ -97,7 +97,7 @@ async function login(email, password) {
 
     console.log("\nRole gate — admin-only");
     const stamp = Date.now();
-    const scratchEmail = `admin-reset-test-${stamp}@localhost`;
+    const scratchEmail = `admin-reset-test-${stamp}@test.local`;
     const createUser = await request("POST", "/api/users",
       { email: scratchEmail, name: "Admin Reset Test Viewer", roles: ["viewer"], password: "TestFixture!2026Zq" }, token);
     assert("scratch viewer created", createUser.status === 200, JSON.stringify(createUser.body));

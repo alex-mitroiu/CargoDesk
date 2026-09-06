@@ -47,7 +47,7 @@ const GenerateDocumentModal = ({ shipment, onClose, onSaved, defaultCode }) => {
       // since container_packages has no bulk "packages for a whole shipment" endpoint.
       const needsPackages = docCode === "CI01" || docCode === "CI02" || docCode === "PL01";
       const containers = needsPackages
-        ? await Promise.all(containersBase.map(async c => ({ ...c, packages: await api.containerPackages.list(c.id).catch(() => []) })))
+        ? await Promise.all(containersBase.map(async c => ({ ...c, packages: await api.containerPackages.list(shipment.id, c.id).catch(() => []) })))
         : containersBase;
       // Org-wide DG compliance address (TKT-DPLQTV) — pulled onto the DG01 declaration's
       // emergency-contact line in place of a hand-filled blank; falls back to the generic

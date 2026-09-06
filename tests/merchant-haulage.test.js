@@ -164,7 +164,7 @@ async function login() {
     const wpList = await request("GET", `/api/shipments/${shipmentId}/services/${serviceId}/haulage/${containerId}/waypoints`, null, token);
     assert("waypoints list returns both, in order", wpList.body.length === 2 && wpList.body[0].id === wp1.body.id);
 
-    const wpUpdate = await request("PUT", `/api/haulage-waypoints/${wp1.body.id}`, {
+    const wpUpdate = await request("PUT", `/api/shipments/${shipmentId}/haulage-waypoints/${wp1.body.id}`, {
       locType: "Door", location: "Shipper warehouse, Amsterdam (updated)", sequenceOrder: 1,
     }, token);
     assert("waypoint update returns 200", wpUpdate.status === 200);
@@ -189,7 +189,7 @@ async function login() {
     assert("out-of-range longitude rejected", wpBadLng.status >= 400);
 
     console.log("\nRemoving a waypoint");
-    const wpRemove = await request("DELETE", `/api/haulage-waypoints/${wp2.body.id}`, null, token);
+    const wpRemove = await request("DELETE", `/api/shipments/${shipmentId}/haulage-waypoints/${wp2.body.id}`, null, token);
     assert("waypoint removed", wpRemove.status === 200);
     const wpListAfterRemove = await request("GET", `/api/shipments/${shipmentId}/services/${serviceId}/haulage/${containerId}/waypoints`, null, token);
     assert("waypoint list reflects the removal", wpListAfterRemove.body.length === 2); // wp1 (updated) + the GPS one remain

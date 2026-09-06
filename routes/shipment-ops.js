@@ -5,15 +5,31 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
           mapCostLine, mapService, mapMilestone, mapMilestoneTemplate,
           sanctionsMap, screenShipmentById,
           logEvent, logEntityEvent, importContractRates, createRateSnapshot, generateCostLinesFromSnapshot,
+          computeCostLineReconciliation, applyReconciliation,
           mapRateSnapshot, syncShipmentFromLegs, ensureBookingCreated, autoCompleteMilestone,
           UPLOADS_DIR, fs, path,
           renderHtmlToPdf, getActiveSigningCert, signPdfBuffer,
           buildMailOptions, sendViaOffice,
-          createRateLimiter, getSettings, callContractService, getCustomerRow,
+          createRateLimiter, getSettings, callContractService, callMdmService, getCustomerRow,
           computeArExposure, toUsd, roundCents, OVERRIDE_GRACE_MS,
           userOwnsLaneForShipment, mapInvoiceStatusOverride, docAmountUsd, canEditOfficeSide } = ctx;
 
   const shipmentWrite = requireRole(["admin", "operator", "occ_bk"]);
+
+  const isRemoteMdm = async () => ((await getSettings()).mdm_source || "local") === "remote";
+  // Schedule-catalog validation (POST /api/schedules below) — carrier/vessel/port existence
+  // checks previously read the local carriers/vessels/port_locations tables unconditionally,
+  // the same mdm_source=remote bypass class already found and fixed in loop-codes.js/
+  // command-center.js. Single-code lookups (not a bulk ids= filter — at most 4 per request here).
+  const mdmCarrierExists = async code => (await isRemoteMdm())
+    ? !!(await callMdmService("GET", `/internal/carriers/${encodeURIComponent(code)}`).catch(() => null))
+    : !!(await query("SELECT 1 FROM carriers WHERE code=$1", [code]))[0];
+  const mdmVesselExists = async imo => (await isRemoteMdm())
+    ? !!(await callMdmService("GET", `/internal/vessels/${encodeURIComponent(imo)}`).catch(() => null))
+    : !!(await query("SELECT 1 FROM vessels WHERE imo=$1", [imo]))[0];
+  const mdmPortExists = async code => (await isRemoteMdm())
+    ? !!(await callMdmService("GET", `/internal/port-locations/${encodeURIComponent(code)}`).catch(() => null))
+    : !!(await query("SELECT 1 FROM port_locations WHERE unlocode=$1", [code]))[0];
 
   // Document generation renders through the Puppeteer-backed pdf-render service and signs the
   // result; sending emails a real signed PDF via SMTP — both real, per-call cost, keyed per-user.
@@ -164,35 +180,28 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
 
   // ─── Cost Lines ───────────────────────────────────────────────────────────
 
+  // ─── Rate Reconciliation (2026-09-06) ──────────────────────────────────────
+  // Read-only diff backing the "Reconcile Carrier Costs" modal — shared by both the
+  // Import-from-Contract and Update-Carrier-Costs buttons below (mode distinguishes which rate
+  // source they compare against). No side effects, so the modal's own Discard needs no backend
+  // call at all beyond this preview having already run.
+  app.get("/api/shipments/:id/cost-lines/reconcile-preview", shipmentWrite, async (req, res) => {
+    const mode = req.query.mode === 'update' ? 'update' : 'import';
+    const result = await computeCostLineReconciliation(req.params.id, mode);
+    if (result.error) return err(res, result.error, result.notFound ? 404 : 400);
+    ok(res, result);
+  });
+
+  // Both "overwrite"/"ignore" apply routes below share applyReconciliation() (server.js) — see its
+  // own comment for the exact Overwrite-reaches-manual-lines / Ignore-touches-nothing-existing
+  // semantics agreed for this feature.
   app.post("/api/shipments/:id/cost-lines/import-contract", shipmentWrite, async (req, res) => {
-    const { overwrite = false, splitPerContainer = false } = req.body || {};
-    const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
-    if (!shipment) return err(res, "Shipment not found", 404);
-    if (shipment.contract_type !== 'Central' || !shipment.contract_id)
-      return err(res, "Shipment is not linked to a Central contract");
-    // Resolving (and, if needed, creating) the rate snapshot happens BEFORE the write transaction
-    // below opens — in 'remote' contract-source mode this is a network call to the Contract
-    // Management Service, and holding a write transaction open across it would block other
-    // writers for no benefit (same reasoning as saveRates in routes/contracts.js). Mirrors
-    // importContractRates()'s own existing-snapshot-or-create logic exactly, just hoisted above
-    // the transaction rather than inside it.
-    const [existingSnap] = await query("SELECT id FROM shipment_rate_snapshots WHERE shipment_id=$1 ORDER BY generated_at DESC LIMIT 1", [req.params.id]);
-    const snapshotId = existingSnap ? existingSnap.id : await createRateSnapshot(req.params.id, shipment.contract_id, 'initial');
-    // Delete-then-regenerate wrapped in one transaction — without this, an interruption between
-    // the delete loop and regeneration could leave a shipment with NO cost lines at all.
+    const { action = 'overwrite', splitPerContainer = false } = req.body || {};
+    if (!['overwrite', 'ignore'].includes(action)) return err(res, "action must be overwrite or ignore");
     try {
-      let includeSell = false;
-      await transaction(async (tx) => {
-        if (overwrite) {
-          const existingBuy  = await tx.query("SELECT id FROM shipment_cost_lines WHERE shipment_id=$1 AND type='BUY'  AND source='contract'", [req.params.id]);
-          const existingSell = await tx.query("SELECT id FROM shipment_cost_lines WHERE shipment_id=$1 AND type='SELL' AND source='contract'", [req.params.id]);
-          includeSell = existingSell.length > 0;
-          for (const row of [...existingBuy, ...existingSell]) await tx.query("DELETE FROM shipment_cost_lines WHERE id=$1", [row.id]);
-        }
-      });
-      const count = snapshotId ? await generateCostLinesFromSnapshot(req.params.id, snapshotId, { splitPerContainer, includeSell }) : 0;
-      ok(res, { imported: count });
-    } catch (e) { err(res, e.message, 500); }
+      const result = await applyReconciliation(req.params.id, 'import', action, { splitPerContainer });
+      ok(res, result);
+    } catch (e) { err(res, e.message, e.message === "Shipment not found" ? 404 : 400); }
   });
 
   // Replays the shipment's existing frozen rate snapshot — does NOT read live contract_rates,
@@ -217,19 +226,12 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
   // from it — the only action that changes the committed rate (carrier rates can move; this is
   // how that gets picked up deliberately, with a record of when/why it happened).
   app.post("/api/shipments/:id/cost-lines/update-carrier-costs", shipmentWrite, async (req, res) => {
-    const { splitPerContainer = false } = req.body || {};
-    const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
-    if (!shipment) return err(res, "Shipment not found", 404);
-    if (shipment.contract_type !== 'Central' || !shipment.contract_id)
-      return err(res, "Shipment is not linked to a Central contract");
-    const snapshotId = await createRateSnapshot(req.params.id, shipment.contract_id, 'carrier_update', req.user?.email || '');
-    if (!snapshotId) return err(res, "Contract has no rates to snapshot");
-    const existingSell = await query("SELECT id FROM shipment_cost_lines WHERE shipment_id=$1 AND type='SELL' AND source='contract'", [req.params.id]);
-    const includeSell = existingSell.length > 0;
-    for (const row of await query("SELECT id FROM shipment_cost_lines WHERE shipment_id=$1 AND source='contract'", [req.params.id]))
-      await query("DELETE FROM shipment_cost_lines WHERE id=$1", [row.id]);
-    const count = await generateCostLinesFromSnapshot(req.params.id, snapshotId, { splitPerContainer, includeSell });
-    ok(res, { imported: count, snapshotId });
+    const { action = 'overwrite', splitPerContainer = false } = req.body || {};
+    if (!['overwrite', 'ignore'].includes(action)) return err(res, "action must be overwrite or ignore");
+    try {
+      const result = await applyReconciliation(req.params.id, 'update', action, { splitPerContainer });
+      ok(res, result);
+    } catch (e) { err(res, e.message, e.message === "Shipment not found" ? 404 : 400); }
   });
 
   app.get("/api/shipments/:id/rate-snapshots", costLineRead, async (req, res) => {
@@ -278,9 +280,7 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     const paymentIndicator = rawPI === 'Collect' ? 'Collect' : 'Prepaid';
     const vat = type === 'SELL' ? Number(vatRate) || 0 : 0;
     const now = new Date().toISOString();
-    await query("UPDATE shipment_cost_lines SET type=$1,charge_code=$2,currency=$3,amount=$4,exchange_rate=$5,vat_rate=$6,notes=$7,container_id=$8,payment_indicator=$9,modified_at=$10 WHERE id=$11",
-      [type, chargeCode, currency.toUpperCase(), Number(amount), Number(exchangeRate), vat, notes, containerId, paymentIndicator, now, req.params.id]);
-    for (const [field, oldV, newV] of [
+    const fieldDiffs = [
       ['type',          existing.type,          type],
       ['charge_code',   existing.charge_code,   chargeCode],
       ['currency',      existing.currency,      currency.toUpperCase()],
@@ -290,12 +290,28 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
       ['notes',         existing.notes || '',   notes],
       ['container_id',  existing.container_id || '', containerId],
       ['payment_indicator', existing.payment_indicator || 'Prepaid', paymentIndicator],
-    ]) {
+    ];
+    const anyChanged = fieldDiffs.some(([, oldV, newV]) => String(oldV) !== String(newV));
+    // Rate Reconciliation (2026-09-06): a line generated from the contract that a human then
+    // edits at all stops being "the contract's own number" — flip it to 'manual' so a later
+    // Update Carrier Costs/Import from Contract (Overwrite) can tell it apart from a line nobody
+    // ever touched, instead of silently destroying the correction on the next regeneration
+    // (the exact gap found live on SHP-WKX04E). Only fires on a genuine change and only ever
+    // moves contract -> manual, never back — an edit that happens to restore the original values
+    // isn't distinguishable from "never touched" anyway, and reverting a source automatically
+    // would just reopen the same silent-overwrite risk this exists to close.
+    const newSource = (anyChanged && existing.source === 'contract') ? 'manual' : existing.source;
+    await query("UPDATE shipment_cost_lines SET type=$1,charge_code=$2,currency=$3,amount=$4,exchange_rate=$5,vat_rate=$6,notes=$7,container_id=$8,payment_indicator=$9,modified_at=$10,source=$11 WHERE id=$12",
+      [type, chargeCode, currency.toUpperCase(), Number(amount), Number(exchangeRate), vat, notes, containerId, paymentIndicator, now, newSource, req.params.id]);
+    for (const [field, oldV, newV] of fieldDiffs) {
       if (String(oldV) !== String(newV))
         await logEntityEvent('cost_line', req.params.id, 'UPDATED', field, oldV, newV,
           JSON.stringify({ shipmentId: existing.shipment_id, chargeCode, type }));
     }
-    ok(res, mapCostLine({ id: req.params.id, shipment_id: existing.shipment_id, type, charge_code: chargeCode, currency: currency.toUpperCase(), amount: Number(amount), exchange_rate: Number(exchangeRate), vat_rate: vat, notes, container_id: containerId, source: existing.source || 'manual', payment_indicator: paymentIndicator, modified_at: now, created_at: existing.created_at }));
+    if (newSource !== existing.source)
+      await logEntityEvent('cost_line', req.params.id, 'UPDATED', 'source', existing.source, newSource,
+        JSON.stringify({ shipmentId: existing.shipment_id, chargeCode, type, reason: 'edited away from the contract-generated value' }));
+    ok(res, mapCostLine({ id: req.params.id, shipment_id: existing.shipment_id, type, charge_code: chargeCode, currency: currency.toUpperCase(), amount: Number(amount), exchange_rate: Number(exchangeRate), vat_rate: vat, notes, container_id: containerId, source: newSource, payment_indicator: paymentIndicator, modified_at: now, created_at: existing.created_at }));
   });
 
   // ─── Accrual / posting state machine (TKT-83O41G) ──────────────────────────
@@ -830,8 +846,19 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     ok(res, mapHaulageWaypoint(row), 201);
   });
 
-  app.put("/api/haulage-waypoints/:id", shipmentWrite, async (req, res) => {
-    const [existing] = await query("SELECT * FROM shipment_haulage_waypoints WHERE id=$1", [req.params.id]);
+  // shipment_haulage_waypoints carries no shipment_id column of its own — reaches one only via
+  // haulage_record_id -> shipment_haulage_records.container_id -> containers.shipment_id. Nested
+  // under /api/shipments/:shipmentId/... for the same reason the milestone routes above are
+  // (2026-09-05 audit, TKT-E25769) — this was a bare /api/haulage-waypoints/:id with zero
+  // shipment ownership check, invisible to the app-wide shipmentScopeParamCheck middleware since
+  // the waypoint's own id ("HWP-...") never matches its SHP- prefix check.
+  app.put("/api/shipments/:shipmentId/haulage-waypoints/:id", shipmentWrite, async (req, res) => {
+    const [existing] = await query(`
+      SELECT w.* FROM shipment_haulage_waypoints w
+      JOIN shipment_haulage_records hr ON hr.id = w.haulage_record_id
+      JOIN containers c ON c.id = hr.container_id
+      WHERE w.id=$1 AND c.shipment_id=$2
+    `, [req.params.id, req.params.shipmentId]);
     if (!existing) return err(res, "Not found", 404);
     const { locType = 'Door', location = '', latitude = null, longitude = null, notes = '', sequenceOrder = 1 } = req.body || {};
     const isGps = locType === GPS_LOC_TYPE;
@@ -851,8 +878,14 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     ok(res, mapHaulageWaypoint(row));
   });
 
-  app.delete("/api/haulage-waypoints/:id", shipmentWrite, async (req, res) => {
-    const [existing] = await query("SELECT * FROM shipment_haulage_waypoints WHERE id=$1", [req.params.id]);
+  // Same scope-bypass fix as the PUT above.
+  app.delete("/api/shipments/:shipmentId/haulage-waypoints/:id", shipmentWrite, async (req, res) => {
+    const [existing] = await query(`
+      SELECT w.* FROM shipment_haulage_waypoints w
+      JOIN shipment_haulage_records hr ON hr.id = w.haulage_record_id
+      JOIN containers c ON c.id = hr.container_id
+      WHERE w.id=$1 AND c.shipment_id=$2
+    `, [req.params.id, req.params.shipmentId]);
     if (!existing) return err(res, "Not found", 404);
     await query("DELETE FROM shipment_haulage_waypoints WHERE id=$1", [req.params.id]);
     await logEntityEvent('haulage_waypoint', req.params.id, 'DELETED', null, null, null, null);
@@ -915,9 +948,16 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     ok(res, created, 201);
   });
 
-  app.put("/api/milestones/:id", shipmentWrite, async (req, res) => {
+  // Nested under /api/shipments/:shipmentId/... (2026-09-05 audit, TKT-E25769) — this used to be
+  // a bare /api/milestones/:id with no shipment ownership check at all, meaning the app-wide
+  // shipmentScopeParamCheck middleware (server.js, keys off a param literally named id/shipmentId
+  // whose VALUE starts with "SHP-") never fired for it: the milestone's own id ("MS-...") doesn't
+  // match that prefix. Live-confirmed: a user correctly blocked from a shipment could still edit
+  // its milestones directly via this route. Nesting it gives shipmentScopeParamCheck a real
+  // SHP-prefixed :shipmentId to check, for free, with no separate guard to maintain here.
+  app.put("/api/shipments/:shipmentId/milestones/:id", shipmentWrite, async (req, res) => {
     const { estimatedDate = '', completedAt = '', completedBy = '', note = '' } = req.body || {};
-    const [existing] = await query("SELECT * FROM shipment_milestones WHERE id=$1", [req.params.id]);
+    const [existing] = await query("SELECT * FROM shipment_milestones WHERE id=$1 AND shipment_id=$2", [req.params.id, req.params.shipmentId]);
     if (!existing) return err(res, "Not found", 404);
     // shipment_milestones' sequence_order implies an intended step order, but real operations
     // routinely need to backfill a step noticed late (or a carrier confirms two events same-day
@@ -944,8 +984,9 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     ok(res, outOfOrder ? { ...updated, outOfOrder: true } : updated);
   });
 
-  app.delete("/api/milestones/:id", shipmentWrite, async (req, res) => {
-    const [existing] = await query("SELECT * FROM shipment_milestones WHERE id=$1", [req.params.id]);
+  // Same scope-bypass fix as the PUT above.
+  app.delete("/api/shipments/:shipmentId/milestones/:id", shipmentWrite, async (req, res) => {
+    const [existing] = await query("SELECT * FROM shipment_milestones WHERE id=$1 AND shipment_id=$2", [req.params.id, req.params.shipmentId]);
     if (!existing) return err(res, "Not found", 404);
     await query("DELETE FROM shipment_milestones WHERE id=$1", [req.params.id]);
     ok(res, { deleted: req.params.id });
@@ -1144,8 +1185,13 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     } catch (e) { err(res, e.message, 502); }
   });
 
-  app.patch("/api/documents/:docId", shipmentWrite, async (req, res) => {
-    const [doc] = await query("SELECT * FROM shipment_documents WHERE id = $1", [req.params.docId]);
+  // Nested under /api/shipments/:shipmentId/... (2026-09-05 audit, TKT-E25769) — was a bare
+  // /api/documents/:docId with zero shipment ownership check, invisible to the app-wide
+  // shipmentScopeParamCheck middleware since a document's own id ("DOC-...") never matches its
+  // SHP- prefix check. This one could confirm/void ANY document on ANY shipment, invoices
+  // included, for a caller with no visibility into that shipment at all.
+  app.patch("/api/shipments/:shipmentId/documents/:docId", shipmentWrite, async (req, res) => {
+    const [doc] = await query("SELECT * FROM shipment_documents WHERE id = $1 AND shipment_id = $2", [req.params.docId, req.params.shipmentId]);
     if (!doc) return err(res, "Not found", 404);
     const { status, relatedDocId } = req.body;
     if (status !== undefined) {
@@ -1384,8 +1430,11 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     ok(res, await mapDoc(row, doc.shipment_id));
   });
 
-  app.get("/api/documents/:docId/download", auth(), async (req, res) => {
-    const [doc] = await query("SELECT * FROM shipment_documents WHERE id = $1", [req.params.docId]);
+  // Same scope-bypass fix as PATCH .../documents/:docId above — this one was the most severe of
+  // the three, needing only plain auth() (no write role at all): any authenticated user could
+  // download any document from any shipment just by knowing/guessing a DOC-... id.
+  app.get("/api/shipments/:shipmentId/documents/:docId/download", auth(), async (req, res) => {
+    const [doc] = await query("SELECT * FROM shipment_documents WHERE id = $1 AND shipment_id = $2", [req.params.docId, req.params.shipmentId]);
     if (!doc) return err(res, "Not found", 404);
     const filePath = path.join(UPLOADS_DIR, doc.stored_name);
     if (!fs.existsSync(filePath)) return err(res, "File not found on disk", 404);
@@ -1395,8 +1444,9 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     fs.createReadStream(filePath).pipe(res);
   });
 
-  app.delete("/api/documents/:docId", shipmentWrite, async (req, res) => {
-    const [doc] = await query("SELECT * FROM shipment_documents WHERE id = $1", [req.params.docId]);
+  // Same scope-bypass fix as the two document routes above.
+  app.delete("/api/shipments/:shipmentId/documents/:docId", shipmentWrite, async (req, res) => {
+    const [doc] = await query("SELECT * FROM shipment_documents WHERE id = $1 AND shipment_id = $2", [req.params.docId, req.params.shipmentId]);
     if (!doc) return err(res, "Not found", 404);
     try { fs.unlinkSync(path.join(UPLOADS_DIR, doc.stored_name)); } catch {}
     await query("DELETE FROM shipment_documents WHERE id = $1", [req.params.docId]);
@@ -1714,13 +1764,13 @@ module.exports = function shipmentOpsRoutes(app, ctx) {
     const { carrier = "", vesselImo = "", vesselName = "", voyageNumber = "", service = "",
             pol = "", pod = "", etd = "", atd = "", eta = "", ata = "",
             legs = null } = req.body;
-    if (carrier && !(await query("SELECT 1 FROM carriers WHERE code=$1", [carrier]))[0])
+    if (carrier && !(await mdmCarrierExists(carrier)))
       return err(res, `Unknown carrier code: ${carrier}`, 400);
-    if (vesselImo && !(await query("SELECT 1 FROM vessels WHERE imo=$1", [vesselImo]))[0])
+    if (vesselImo && !(await mdmVesselExists(vesselImo)))
       return err(res, `Unknown vessel IMO: ${vesselImo}`, 400);
-    if (pol && !(await query("SELECT 1 FROM port_locations WHERE unlocode=$1", [pol]))[0])
+    if (pol && !(await mdmPortExists(pol)))
       return err(res, `Unknown POL: ${pol}`, 400);
-    if (pod && !(await query("SELECT 1 FROM port_locations WHERE unlocode=$1", [pod]))[0])
+    if (pod && !(await mdmPortExists(pod)))
       return err(res, `Unknown POD: ${pod}`, 400);
 
     // A real TSP schedule (2+ legs) derives its own summary fields from the leg chain — first

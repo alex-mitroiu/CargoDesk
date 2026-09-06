@@ -86,8 +86,8 @@ async function generateInvoiceDoc(shipmentId, token, sourceCostLineIds) {
   return res.body;
 }
 
-async function confirmDoc(docId, token) {
-  return request("PATCH", `/api/documents/${docId}`, { status: "confirmed" }, token);
+async function confirmDoc(shipmentId, docId, token) {
+  return request("PATCH", `/api/shipments/${shipmentId}/documents/${docId}`, { status: "confirmed" }, token);
 }
 
 (async () => {
@@ -156,7 +156,7 @@ async function confirmDoc(docId, token) {
     const line2 = await addSellLine(shipmentId, token, 200, "DOC");
     const doc1 = await generateInvoiceDoc(shipmentId, token, [line1.id, line2.id]);
     assert("invoice 1 generated", !!doc1.id);
-    const confirm1 = await confirmDoc(doc1.id, token);
+    const confirm1 = await confirmDoc(shipmentId, doc1.id, token);
     assert("invoice 1 confirmed", confirm1.body.status === "confirmed");
 
     const status1 = await request("GET", `/api/customers/${customerId}/credit-status`, null, token);
@@ -174,7 +174,7 @@ async function confirmDoc(docId, token) {
       { reason: "test fixture — proceeding despite the limit" }, inLaneToken);
     const doc2 = await generateInvoiceDoc(shipmentId, token, [line3.id]);
     assert("invoice 2 generated (over-limit override in place)", !!doc2.id, JSON.stringify(doc2));
-    const confirm2 = await confirmDoc(doc2.id, token);
+    const confirm2 = await confirmDoc(shipmentId, doc2.id, token);
     assert("invoice 2 confirmed", confirm2.body.status === "confirmed");
 
     const status2 = await request("GET", `/api/customers/${customerId}/credit-status`, null, token);
@@ -301,7 +301,7 @@ async function confirmDoc(docId, token) {
     }, token);
     const groupLine = await addSellLine(groupShip.body.id, token, 400, "OFR");
     const groupDoc = await generateInvoiceDoc(groupShip.body.id, token, [groupLine.id]);
-    await confirmDoc(groupDoc.id, token);
+    await confirmDoc(groupShip.body.id, groupDoc.id, token);
 
     const parentStatus = await request("GET", `/api/customers/${parentCust.body.id}/credit-status`, null, token);
     const childStatus  = await request("GET", `/api/customers/${childCust.body.id}/credit-status`, null, token);

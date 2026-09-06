@@ -168,7 +168,7 @@ module.exports = function authRoutes(app, ctx) {
 
   app.get("/api/auth/me", auth(), async (req, res) => {
     const [user] = await query(
-      "SELECT id, email, name, role, roles, is_active, created_at, password_changed_at, all_offices FROM users WHERE id = $1", [req.user.id]
+      "SELECT id, email, name, role, roles, is_active, created_at, password_changed_at, all_offices, can_view_finance FROM users WHERE id = $1", [req.user.id]
     );
     if (!user || !user.is_active) return err(res, "User not found or inactive", 404);
     // Silent token-restore-on-mount (a still-valid JWT from a prior session) bypasses
@@ -196,7 +196,12 @@ module.exports = function authRoutes(app, ctx) {
     // back to the single legacy `role` column — a multi-role account lost every role but its
     // primary one on any silent session restore (a page reload with an already-valid token),
     // which is the common case, not the fresh-login one.
-    ok(res, { ...user, roles: parseUserRoles(user), allOffices, offices,
+    // Real bug fix (2026-09-05 audit, TKT pending): can_view_finance was never selected here
+    // either — same silent-restore gap as allOffices above, just missed when that one was fixed.
+    // A user with real Finance access lost the Finance nav link/gated views on every page reload,
+    // App.jsx's setUser(u) replacing the whole user object with this response's undefined field.
+    const canViewFinance = !!user.can_view_finance;
+    ok(res, { ...user, roles: parseUserRoles(user), allOffices, offices, canViewFinance,
       passwordExpired: isPasswordExpired(user, passwordExpiryDays) });
   });
 
@@ -521,8 +526,14 @@ module.exports = function authRoutes(app, ctx) {
         const id    = `USR-${uid()}`;
         const roles = [VALID_ROLES.includes(defaultRole) ? defaultRole : 'operator'];
         const primary = primaryRoleSV(roles);
-        await query(`INSERT INTO users (id,email,name,password_hash,role,roles,is_active,created_at)
-          VALUES ($1,$2,$3,$4,$5,$6,TRUE,$7)`,
+        // all_offices explicitly FALSE (2026-09-05 audit) — this INSERT previously omitted the
+        // column entirely, silently inheriting the schema's own DEFAULT TRUE (lib/schema.js),
+        // while POST /api/users' admin-driven create path always sets it FALSE explicitly. An
+        // SSO-auto-provisioned first-time login was granted org-wide "sees every office"
+        // visibility with zero admin decision — an admin can still opt a user into it afterward
+        // via PATCH /api/users/:id, matching how every other account gets it.
+        await query(`INSERT INTO users (id,email,name,password_hash,role,roles,is_active,all_offices,created_at)
+          VALUES ($1,$2,$3,$4,$5,$6,TRUE,FALSE,$7)`,
           [id, email, name, '', primary, JSON.stringify(roles), new Date().toISOString()]);
         [user] = await query("SELECT * FROM users WHERE id=$1", [id]);
         await logAdminEvent({ id: '', email: 'sso' }, 'USER_CREATED_SSO', 'user', id, { email, provider: 'Azure AD' });
@@ -534,8 +545,13 @@ module.exports = function authRoutes(app, ctx) {
 
       const { jwtHours } = await getSecuritySettings();
       const roles = parseUserRoles(user);
+      // canViewFinance/allOffices added alongside the /api/auth/me fix above — local login's own
+      // token already carries both (see POST /api/auth/login); this one didn't, so an SSO user's
+      // very first render (before their next reload triggers /api/auth/me, now fixed) lost Finance
+      // access and the allOffices office-list behavior. LoginPage.jsx's JWT decode updated to match.
       const token = jwt.sign(
         { id: user.id, email: user.email, name: user.name, role: user.role, roles,
+          canViewFinance: !!user.can_view_finance, allOffices: !!user.all_offices,
           tv: user.token_version ?? 0, sso: true },
         JWT_SECRET,
         { expiresIn: `${jwtHours}h` }

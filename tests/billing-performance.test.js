@@ -110,8 +110,8 @@ async function generateInvoiceDoc(shipmentId, token, sourceCostLineIds) {
   return res.body;
 }
 
-async function confirmDoc(docId, token) {
-  return request("PATCH", `/api/documents/${docId}`, { status: "confirmed" }, token);
+async function confirmDoc(shipmentId, docId, token) {
+  return request("PATCH", `/api/shipments/${shipmentId}/documents/${docId}`, { status: "confirmed" }, token);
 }
 
 (async () => {
@@ -141,7 +141,7 @@ async function confirmDoc(docId, token) {
       { paidAt: "2026-08-22", paidAmount: 1000 }, token);
     assert("marking a DRAFT invoice paid is rejected", markDraft.status === 409, JSON.stringify(markDraft.body));
 
-    await confirmDoc(doc.id, token);
+    await confirmDoc(shipmentId, doc.id, token);
 
     const noDate = await request("POST", `/api/shipments/${shipmentId}/documents/${doc.id}/mark-paid`, { paidAmount: 1000 }, token);
     assert("missing paidAt rejected", noDate.status >= 400, JSON.stringify(noDate.body));
@@ -187,7 +187,7 @@ async function confirmDoc(docId, token) {
     console.log("\nMark as Paid — a voided invoice cannot be marked paid");
     const line3 = await addSellLine(shipmentId, token, 200, "THC");
     const doc2 = await generateInvoiceDoc(shipmentId, token, [line3.id]);
-    await confirmDoc(doc2.id, token);
+    await confirmDoc(shipmentId, doc2.id, token);
     await request("POST", `/api/shipments/${shipmentId}/documents/${doc2.id}/reverse`, { reason: "test" }, token);
     const markVoided = await request("POST", `/api/shipments/${shipmentId}/documents/${doc2.id}/mark-paid`,
       { paidAt: "2026-08-22", paidAmount: 200 }, token);
@@ -196,7 +196,7 @@ async function confirmDoc(docId, token) {
     console.log("\nfirst_sent_at — null before any send, set by a real successful EDI send");
     const line4 = await addSellLine(shipmentId, token, 300, "FUM");
     const doc3 = await generateInvoiceDoc(shipmentId, token, [line4.id]);
-    await confirmDoc(doc3.id, token);
+    await confirmDoc(shipmentId, doc3.id, token);
     assert("firstSentAt is null before any send", doc3.firstSentAt === null);
 
     const ediSend1 = await request("POST", `/api/shipments/${shipmentId}/documents/${doc3.id}/send-edi`,
@@ -243,7 +243,7 @@ async function confirmDoc(docId, token) {
 
     // 12 days ago, deadline is 5 days -> 7 days overdue
     const twelveDaysAgo = new Date(Date.now() - 12 * 86400000).toISOString();
-    await request("PUT", `/api/milestones/${deliveredMs.id}`, { completedAt: twelveDaysAgo }, token);
+    await request("PUT", `/api/shipments/${shipDlId}/milestones/${deliveredMs.id}`, { completedAt: twelveDaysAgo }, token);
 
     const afterComplete = await request("GET", "/api/invoice-deadlines/overdue", null, token);
     const queueRow = afterComplete.body.find(d => d.shipmentId === shipDlId);
@@ -254,7 +254,7 @@ async function confirmDoc(docId, token) {
     console.log("\nInvoice-deadline queue — disappears once a confirmed invoice exists");
     const lineDl = await addSellLine(shipDlId, token, 500, "OFR");
     const docDl = await generateInvoiceDoc(shipDlId, token, [lineDl.id]);
-    await confirmDoc(docDl.id, token);
+    await confirmDoc(shipDlId, docDl.id, token);
     const afterInvoice = await request("GET", "/api/invoice-deadlines/overdue", null, token);
     assert("no longer in the queue once invoiced", !afterInvoice.body.some(d => d.shipmentId === shipDlId), JSON.stringify(afterInvoice.body));
 
@@ -267,7 +267,7 @@ async function confirmDoc(docId, token) {
     await request("POST", `/api/shipments/${shipNoDl.body.id}/milestones/init`, {}, token);
     const milestonesNoDl = await request("GET", `/api/shipments/${shipNoDl.body.id}/milestones`, null, token);
     const deliveredNoDl = milestonesNoDl.body.find(m => m.milestoneKey === "delivered");
-    await request("PUT", `/api/milestones/${deliveredNoDl.id}`, { completedAt: twelveDaysAgo }, token);
+    await request("PUT", `/api/shipments/${shipNoDl.body.id}/milestones/${deliveredNoDl.id}`, { completedAt: twelveDaysAgo }, token);
     const queueNoDl = await request("GET", "/api/invoice-deadlines/overdue", null, token);
     assert("never appears without invoiceDeadlineDays configured", !queueNoDl.body.some(d => d.shipmentId === shipNoDl.body.id), JSON.stringify(queueNoDl.body));
 
@@ -297,7 +297,7 @@ async function confirmDoc(docId, token) {
     assert("customer/carrier/lane correctly resolved", row?.customerName === "Test Billing Report Co" && row?.carrierCode === "MAEU" && row?.laneCode === "EU-N", JSON.stringify(row));
     assert("paymentState leads with 'draft' before confirmation", row?.paymentState === "draft", JSON.stringify(row));
 
-    await confirmDoc(docBp.id, token);
+    await confirmDoc(shipBpId, docBp.id, token);
     row = await reportRow();
     assert("confirmed invoice shows paymentStatus unpaid, full amount outstanding", row?.status === "confirmed" && row?.paymentStatus === "unpaid" && row?.outstandingUsd === 1000, JSON.stringify(row));
     assert("paymentState mirrors paymentStatus once confirmed", row?.paymentState === "unpaid", JSON.stringify(row));
@@ -320,7 +320,7 @@ async function confirmDoc(docId, token) {
     console.log("\nBilling Performance report — a voided invoice carries no payment status (matches Draft, not Confirmed)");
     const lineBp2 = await addSellLine(shipBpId, token, 200, "DOC");
     const docBp2 = await generateInvoiceDoc(shipBpId, token, [lineBp2.id]);
-    await confirmDoc(docBp2.id, token);
+    await confirmDoc(shipBpId, docBp2.id, token);
     await request("POST", `/api/shipments/${shipBpId}/documents/${docBp2.id}/reverse`, { reason: "test" }, token);
     const rpt2 = await request("GET", "/api/reports/billing-performance", null, token);
     const rowVoided = rpt2.body.find(r => r.docId === docBp2.id);
@@ -340,7 +340,7 @@ async function confirmDoc(docId, token) {
     const msMiss = await request("GET", `/api/shipments/${shipMiss.body.id}/milestones`, null, token);
     const deliveredMiss = msMiss.body.find(m => m.milestoneKey === "delivered");
     const twelveDaysAgoBp = new Date(Date.now() - 12 * 86400000).toISOString();
-    await request("PUT", `/api/milestones/${deliveredMiss.id}`, { completedAt: twelveDaysAgoBp }, token);
+    await request("PUT", `/api/shipments/${shipMiss.body.id}/milestones/${deliveredMiss.id}`, { completedAt: twelveDaysAgoBp }, token);
 
     const rptAfterDelivery = await request("GET", "/api/reports/billing-performance", null, token);
     const missingRow = rptAfterDelivery.body.find(r => r.shipmentId === shipMiss.body.id);
@@ -353,7 +353,7 @@ async function confirmDoc(docId, token) {
 
     const lineMiss = await addSellLine(shipMiss.body.id, token, 300, "OFR");
     const docMiss = await generateInvoiceDoc(shipMiss.body.id, token, [lineMiss.id]);
-    await confirmDoc(docMiss.id, token);
+    await confirmDoc(shipMiss.body.id, docMiss.id, token);
     const rptAfterInvoiced = await request("GET", "/api/reports/billing-performance", null, token);
     assert("no longer 'missing' once a real invoice exists — it's a normal confirmed row instead",
       !rptAfterInvoiced.body.some(r => r.shipmentId === shipMiss.body.id && r.paymentState === "missing"), JSON.stringify(rptAfterInvoiced.body.filter(r => r.shipmentId === shipMiss.body.id)));
@@ -376,7 +376,7 @@ async function confirmDoc(docId, token) {
     }, token);
     const lineInScope = await addSellLine(shipInScope.body.id, token, 700, "OFR");
     const docInScope = await generateInvoiceDoc(shipInScope.body.id, token, [lineInScope.id]);
-    await confirmDoc(docInScope.id, token);
+    await confirmDoc(shipInScope.body.id, docInScope.id, token);
 
     const custOutOfScope = await request("POST", "/api/customers", { companyName: "Test Scope Out Co" }, token);
     const shipOutOfScope = await request("POST", "/api/shipments", {
@@ -385,7 +385,7 @@ async function confirmDoc(docId, token) {
     }, token);
     const lineOutOfScope = await addSellLine(shipOutOfScope.body.id, token, 900, "OFR");
     const docOutOfScope = await generateInvoiceDoc(shipOutOfScope.body.id, token, [lineOutOfScope.id]);
-    await confirmDoc(docOutOfScope.id, token);
+    await confirmDoc(shipOutOfScope.body.id, docOutOfScope.id, token);
 
     const rptAsScopedTm = await request("GET", "/api/reports/billing-performance", null, tmBpLogin.body.token);
     assert("scoped trade_manager reaches the report at all (200, not 403)", rptAsScopedTm.status === 200, JSON.stringify(rptAsScopedTm.body));
@@ -450,7 +450,7 @@ async function confirmDoc(docId, token) {
     const shipSweepId = shipSweep.body.id;
     const lineSweep = await addSellLine(shipSweepId, token, 500, "OFR");
     const docSweep = await generateInvoiceDoc(shipSweepId, token, [lineSweep.id]);
-    await confirmDoc(docSweep.id, token);
+    await confirmDoc(shipSweepId, docSweep.id, token);
 
     const sweep1 = await request("POST", "/api/billing/send-reminders", {}, token);
     assert("sweep run returns 200 (no crash walking the full eligible-invoice path)", sweep1.status === 200, JSON.stringify(sweep1.body));
@@ -465,7 +465,7 @@ async function confirmDoc(docId, token) {
     }, token);
     const lineDisabled = await addSellLine(shipDisabled.body.id, token, 500, "OFR");
     const docDisabled = await generateInvoiceDoc(shipDisabled.body.id, token, [lineDisabled.id]);
-    await confirmDoc(docDisabled.id, token);
+    await confirmDoc(shipDisabled.body.id, docDisabled.id, token);
     const sweep2 = await request("POST", "/api/billing/send-reminders", {}, token);
     assert("reminder-disabled customer never appears in the sweep results", !sweep2.body.sent.some(s => s.docId === docDisabled.id), JSON.stringify(sweep2.body));
 
@@ -477,7 +477,7 @@ async function confirmDoc(docId, token) {
     }, token);
     const lineFuture = await addSellLine(shipFuture.body.id, token, 500, "OFR");
     const docFuture = await generateInvoiceDoc(shipFuture.body.id, token, [lineFuture.id]);
-    await confirmDoc(docFuture.id, token);
+    await confirmDoc(shipFuture.body.id, docFuture.id, token);
     const sweep3 = await request("POST", "/api/billing/send-reminders", {}, token);
     assert("an invoice not yet past its credit terms is never picked up for a reminder", !sweep3.body.sent.some(s => s.docId === docFuture.id), JSON.stringify(sweep3.body));
 

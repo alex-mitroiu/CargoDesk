@@ -119,7 +119,7 @@ const today = new Date().toISOString().slice(0, 10);
     console.log("\nCompleting booking_confirmed removes shipment A from stalledMilestone (si_submitted becomes current)");
     const msListA = await request("GET", `/api/shipments/${shipAId}/milestones`, null, token);
     const bookingConfirmedMs = msListA.body.find(m => m.milestoneKey === "booking_confirmed");
-    const complete = await request("PUT", `/api/milestones/${bookingConfirmedMs.id}`,
+    const complete = await request("PUT", `/api/shipments/${shipAId}/milestones/${bookingConfirmedMs.id}`,
       { estimatedDate: bookingConfirmedMs.estimatedDate, completedAt: today, completedBy: "test" }, token);
     assert("booking_confirmed completed", complete.status === 200 && !!complete.body.completedAt);
     const excA2 = await request("GET", "/api/exceptions/queue", null, token);
@@ -162,7 +162,7 @@ const today = new Date().toISOString().slice(0, 10);
     // Correct vessel_departed's own estimate to TODAY (in-tolerance once confirmed — the
     // simulator always confirms "now") while leaving vessel_arrived several days in the past
     // (out-of-tolerance) — decouples the two so the scorecard shows a real mixed sample.
-    await request("PUT", `/api/milestones/${departedMs.id}`, { estimatedDate: today }, token);
+    await request("PUT", `/api/shipments/${shipBId}/milestones/${departedMs.id}`, { estimatedDate: today }, token);
 
     const dep = await request("POST", "/api/test-tools/ais/simulate-position", { legId: legBId, event: "departure" }, token);
     assert("departure confirmed via AIS simulator", dep.status === 200 && dep.body.etdSource === "ais");

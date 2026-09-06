@@ -186,7 +186,7 @@ function buildWorkbook(dataRows) {
     assert("malformed file returns a clean 4xx, not a crash", garbage.status >= 400 && garbage.status < 500, JSON.stringify(garbage.body));
 
     console.log("\nCleanup");
-    for (const id of createdContainerIds) await request("DELETE", `/api/containers/${id}`, null, token);
+    for (const id of createdContainerIds) await request("DELETE", `/api/shipments/${shipmentId}/containers/${id}`, null, token);
     await request("DELETE", `/api/shipments/${shipmentId}`, null, token);
 
     console.log("\n" + "─".repeat(50));
@@ -195,7 +195,7 @@ function buildWorkbook(dataRows) {
   } catch (e) {
     console.error("Fatal:", e.message);
     if (token && shipmentId) {
-      for (const id of createdContainerIds) await request("DELETE", `/api/containers/${id}`, null, token).catch(() => {});
+      for (const id of createdContainerIds) await request("DELETE", `/api/shipments/${shipmentId}/containers/${id}`, null, token).catch(() => {});
       await request("DELETE", `/api/shipments/${shipmentId}`, null, token).catch(() => {});
     }
     process.exit(1);

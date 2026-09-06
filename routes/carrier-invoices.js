@@ -13,12 +13,28 @@
 // creates a new accrued+actualized cost line in one step if nothing existing matched.
 module.exports = function carrierInvoicesRoutes(app, ctx) {
   const { query, ok, err, uid, requireRole, mapCarrierInvoice, mapCarrierInvoiceLine, mapCostLine,
-          logEntityEvent, toUsd, SERVICE_CODE_MAP, getSettings, callContractService } = ctx;
+          logEntityEvent, toUsd, SERVICE_CODE_MAP, getSettings, callContractService,
+          applyShipmentAccessFilter, mapShipment } = ctx;
 
   const invoiceWrite = requireRole(["admin", "operator", "occ_bk"]);
   // Same tier as routes/shipment-ops.js's postGate — approving a line writes/actualizes a real
   // cost line, the same class of action as posting one.
   const approveGate = requireRole(["admin", "operator"]);
+
+  // 2026-09-06 audit — CRITICAL: every route in this file operates on a shipment by its own
+  // CINV-/CINL- id (or a shipmentId in the request body/query), never through a URL
+  // :shipmentId param — the systemic 2026-09-03 shipmentScopeParamCheck fix (server.js's
+  // app.param guard) only fires on a literal :id/:shipmentId route param, so it never covered
+  // this file at all. Verified live before fixing: a scoped occ_bk user (restricted to one POL)
+  // could read every carrier invoice company-wide via the list/exceptions/detail routes below,
+  // dispute a line, and create a brand-new invoice, all on a shipment entirely outside their
+  // scope. This helper is the single choke point every route below now goes through.
+  async function loadScopedShipment(shipmentId, req) {
+    const [row] = await query("SELECT * FROM shipments WHERE id=$1", [shipmentId]);
+    if (!row) return null;
+    const [allowed] = await applyShipmentAccessFilter([mapShipment(row)], req.user, req);
+    return allowed ? row : null;
+  }
 
   const INVOICE_STATUSES = ["Pending", "Reconciled", "Approved", "Disputed"];
   const LINE_STATUSES = ["pending", "matched", "variance", "approved", "disputed"];
@@ -192,7 +208,12 @@ module.exports = function carrierInvoicesRoutes(app, ctx) {
       ORDER BY ABS(COALESCE(l.variance_usd, 0)) DESC
       LIMIT 200
     `);
-    ok(res, rows.map(r => ({
+    if (rows.length === 0) return ok(res, []);
+    const shipmentIds = [...new Set(rows.map(r => r.shipment_id))];
+    const ph = shipmentIds.map((_, i) => `$${i + 1}`).join(",");
+    const shipmentRows = await query(`SELECT * FROM shipments WHERE id IN (${ph})`, shipmentIds);
+    const allowedIds = new Set((await applyShipmentAccessFilter(shipmentRows.map(mapShipment), req.user, req)).map(s => s.id));
+    ok(res, rows.filter(r => allowedIds.has(r.shipment_id)).map(r => ({
       ...mapCarrierInvoiceLine(r),
       shipmentId: r.shipment_id, carrierCode: r.carrier_code || "",
       invoiceNumber: r.invoice_number || "", invoiceDate: r.invoice_date || "",
@@ -208,14 +229,27 @@ module.exports = function carrierInvoicesRoutes(app, ctx) {
     if (status.trim()) clauses.push(`status=${p(status.trim())}`);
     const where = clauses.length ? "WHERE " + clauses.join(" AND ") : "";
     const lim = Math.min(parseInt(limit) || 50, 200), off = parseInt(offset) || 0;
-    const [{ n: total }] = await query(`SELECT COUNT(*) AS n FROM carrier_invoices ${where}`, params);
-    const rows = await query(`SELECT * FROM carrier_invoices ${where} ORDER BY created_at DESC LIMIT ${p(lim)} OFFSET ${p(off)}`, params);
-    ok(res, { results: rows.map(mapCarrierInvoice), total: Number(total), limit: lim, offset: off });
+    // Scope-filter BEFORE paginating (2026-09-06 audit — same finding as /exceptions above) so
+    // both `total` and the returned page are correct for a scoped caller, not just safe — filters
+    // the full matching set in JS rather than in SQL since applyShipmentAccessFilter's scope
+    // rules (pol/trade_lane/country) aren't expressible as a WHERE clause against this table.
+    const allRows = await query(`SELECT * FROM carrier_invoices ${where} ORDER BY created_at DESC`, params);
+    let scopedRows = allRows;
+    if (allRows.length > 0) {
+      const shipmentIds = [...new Set(allRows.map(r => r.shipment_id))];
+      const ph = shipmentIds.map((_, i) => `$${i + 1}`).join(",");
+      const shipmentRows = await query(`SELECT * FROM shipments WHERE id IN (${ph})`, shipmentIds);
+      const allowedIds = new Set((await applyShipmentAccessFilter(shipmentRows.map(mapShipment), req.user, req)).map(s => s.id));
+      scopedRows = allRows.filter(r => allowedIds.has(r.shipment_id));
+    }
+    const rows = scopedRows.slice(off, off + lim);
+    ok(res, { results: rows.map(mapCarrierInvoice), total: scopedRows.length, limit: lim, offset: off });
   });
 
   app.get("/api/carrier-invoices/:id", async (req, res) => {
     const [inv] = await query("SELECT * FROM carrier_invoices WHERE id=$1", [req.params.id]);
     if (!inv) return err(res, "Not found", 404);
+    if (!(await loadScopedShipment(inv.shipment_id, req))) return err(res, "Not found", 404);
     const lines = await query("SELECT * FROM carrier_invoice_lines WHERE invoice_id=$1 ORDER BY sort_order", [req.params.id]);
     ok(res, { ...mapCarrierInvoice(inv), lines: lines.map(mapCarrierInvoiceLine) });
   });
@@ -223,7 +257,7 @@ module.exports = function carrierInvoicesRoutes(app, ctx) {
   app.post("/api/carrier-invoices", invoiceWrite, async (req, res) => {
     const { shipmentId, carrierCode = "", invoiceNumber = "", invoiceDate = "", currency = "USD", notes = "", lines = [] } = req.body;
     if (!shipmentId) return err(res, "shipmentId required");
-    const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [shipmentId]);
+    const shipment = await loadScopedShipment(shipmentId, req);
     if (!shipment) return err(res, "Shipment not found", 404);
     if (!lines.length) return err(res, "At least one invoice line is required");
     const id = `CINV-${uid()}`;
@@ -247,6 +281,7 @@ module.exports = function carrierInvoicesRoutes(app, ctx) {
   app.delete("/api/carrier-invoices/:id", invoiceWrite, async (req, res) => {
     const [inv] = await query("SELECT * FROM carrier_invoices WHERE id=$1", [req.params.id]);
     if (!inv) return err(res, "Not found", 404);
+    if (!(await loadScopedShipment(inv.shipment_id, req))) return err(res, "Not found", 404);
     const [{ n: approvedCount }] = await query("SELECT COUNT(*) AS n FROM carrier_invoice_lines WHERE invoice_id=$1 AND status='approved'", [req.params.id]);
     if (Number(approvedCount) > 0) return err(res, "This invoice has approved line(s) already posted to cost lines — dispute or leave it as a record instead of deleting");
     await query("DELETE FROM carrier_invoices WHERE id=$1", [req.params.id]);
@@ -260,7 +295,8 @@ module.exports = function carrierInvoicesRoutes(app, ctx) {
   app.post("/api/carrier-invoices/:id/rematch", invoiceWrite, async (req, res) => {
     const [inv] = await query("SELECT * FROM carrier_invoices WHERE id=$1", [req.params.id]);
     if (!inv) return err(res, "Not found", 404);
-    const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [inv.shipment_id]);
+    const shipment = await loadScopedShipment(inv.shipment_id, req);
+    if (!shipment) return err(res, "Not found", 404);
     const lines = await query("SELECT * FROM carrier_invoice_lines WHERE invoice_id=$1", [req.params.id]);
     for (const l of lines) {
       if (l.status === "approved" || l.status === "disputed") continue; // already resolved — don't silently reopen
@@ -285,8 +321,9 @@ module.exports = function carrierInvoicesRoutes(app, ctx) {
   app.post("/api/carrier-invoice-lines/:id/approve", approveGate, async (req, res) => {
     const [line] = await query("SELECT * FROM carrier_invoice_lines WHERE id=$1", [req.params.id]);
     if (!line) return err(res, "Not found", 404);
-    if (line.status === "approved" || line.status === "disputed") return err(res, `Line already ${line.status}`, 409);
     const [inv] = await query("SELECT * FROM carrier_invoices WHERE id=$1", [line.invoice_id]);
+    if (!inv || !(await loadScopedShipment(inv.shipment_id, req))) return err(res, "Not found", 404);
+    if (line.status === "approved" || line.status === "disputed") return err(res, `Line already ${line.status}`, 409);
     const now = new Date().toISOString();
     const actor = req.user?.name || req.user?.email || "";
     const exchangeRate = line.amount !== 0 ? line.amount_usd / line.amount : 1;
@@ -342,6 +379,8 @@ module.exports = function carrierInvoicesRoutes(app, ctx) {
     const { reason = "" } = req.body || {};
     const [line] = await query("SELECT * FROM carrier_invoice_lines WHERE id=$1", [req.params.id]);
     if (!line) return err(res, "Not found", 404);
+    const [inv] = await query("SELECT shipment_id FROM carrier_invoices WHERE id=$1", [line.invoice_id]);
+    if (!inv || !(await loadScopedShipment(inv.shipment_id, req))) return err(res, "Not found", 404);
     if (line.status === "approved" || line.status === "disputed") return err(res, `Line already ${line.status}`, 409);
     const now = new Date().toISOString();
     const actor = req.user?.name || req.user?.email || "";

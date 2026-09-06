@@ -12,7 +12,7 @@
 // writes sanctions_entries directly in local mode) need an explicit branch here.
 module.exports = function sanctionsRoutes(app, ctx) {
   const { query, transaction, ok, err, getSettings, callScreeningService,
-          sanctionsMap, normSanctionName, loadSanctionsIndex,
+          sanctionsMap, normSanctionName, loadSanctionsIndex, requireRole,
           syncOfacSdn, syncConsolidatedScreeningList, scheduleNextOfacSync, scheduleNextCslSync,
           rescreenActiveShipments, rescreenAllCustomers, createRateLimiter } = ctx;
 
@@ -20,10 +20,14 @@ module.exports = function sanctionsRoutes(app, ctx) {
 
   // Both sync-triggering routes below are heavy (a live external OFAC/CSL fetch + full re-index,
   // or a full delete-and-bulk-reimport of sanctions_entries followed by a shipment-wide
-  // re-screen) and reachable by any authenticated user — keyed per-user since the global gate
-  // already requires a valid token here. Note: neither route is role-restricted today (any
-  // viewer can trigger either); this limiter caps how often, not who — a pre-existing, disclosed
-  // gap carried over unchanged from routes/customers.js, not something this extraction fixes.
+  // re-screen), keyed per-user since the global gate already requires a valid token here.
+  // 2026-09-05 audit: this used to cap only how OFTEN, not WHO — confirmed live (and expensively:
+  // a "safe-looking" test payload sent as a scratch viewer-role account turned out to parse as 2
+  // real entries, silently wiping the entire real OFAC-SDN dataset down to those 2 rows before
+  // the gap was even reported) that a plain viewer could trigger a full destructive replace of
+  // the compliance screening dataset. adminOnly below closes it; the rate limiter still applies
+  // on top, unchanged.
+  const adminOnly = requireRole(["admin"]);
   const sanctionsRateLimit = createRateLimiter({
     windowMs: 60 * 60 * 1000, max: 5, maxEnvVar: "SANCTIONS_RATE_MAX",
     keyFn: req => req.user.id,
@@ -112,7 +116,7 @@ module.exports = function sanctionsRoutes(app, ctx) {
 
   // No isRemote() branch needed — syncOfacSdn() already branches internally (server.js) and
   // calls scheduleNextOfacSync() the same way it always has.
-  app.post("/api/sanctions/sync", sanctionsRateLimit, async (req, res) => {
+  app.post("/api/sanctions/sync", adminOnly, sanctionsRateLimit, async (req, res) => {
     try {
       ok(res, await syncOfacSdn());
       scheduleNextOfacSync();
@@ -126,7 +130,7 @@ module.exports = function sanctionsRoutes(app, ctx) {
   // Nonproliferation Sanctions, and 5 more OFAC-family lists). Additive to the OFAC sync above,
   // not a replacement — see syncConsolidatedScreeningList's own comment in server.js. No
   // isRemote() branch needed here either, same reasoning as /sync above.
-  app.post("/api/sanctions/sync-csl", sanctionsRateLimit, async (req, res) => {
+  app.post("/api/sanctions/sync-csl", adminOnly, sanctionsRateLimit, async (req, res) => {
     try {
       ok(res, await syncConsolidatedScreeningList());
       scheduleNextCslSync();
@@ -135,7 +139,7 @@ module.exports = function sanctionsRoutes(app, ctx) {
     }
   });
 
-  app.post("/api/sanctions/import-csv", sanctionsRateLimit, async (req, res) => {
+  app.post("/api/sanctions/import-csv", adminOnly, sanctionsRateLimit, async (req, res) => {
     const { csv } = req.body;
     if (!csv || typeof csv !== "string") return err(res, "csv string required");
     const entries = parseOfacCsv(csv);

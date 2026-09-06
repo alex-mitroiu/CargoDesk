@@ -101,11 +101,11 @@ async function login() {
     }, token);
     const ship1Id = ship1.body.id;
     const ctr1 = await request("POST", "/api/containers", { shipmentId: ship1Id, size: "40", type: "DC", hsCode: "8471.30" }, token);
-    const pkg1 = await request("POST", `/api/containers/${ctr1.body.id}/packages`, {
+    const pkg1 = await request("POST", `/api/shipments/${ship1Id}/containers/${ctr1.body.id}/packages`, {
       description: "Laptops", quantity: 2, unitValue: 500, currency: "USD",
     }, token);
     assert("pack item 1 created (inherits container HS -> chapter 84)", pkg1.status === 201, JSON.stringify(pkg1.body));
-    const pkg2 = await request("POST", `/api/containers/${ctr1.body.id}/packages`, {
+    const pkg2 = await request("POST", `/api/shipments/${ship1Id}/containers/${ctr1.body.id}/packages`, {
       description: "Knit sweaters", quantity: 1, unitValue: 2000, currency: "USD", hsCode: "611020",
     }, token);
     assert("pack item 2 created (own HS override -> chapter 61)", pkg2.status === 201, JSON.stringify(pkg2.body));
@@ -125,7 +125,7 @@ async function login() {
 
     console.log("\nLanded-cost estimate — an HS chapter with no seeded rate falls back to the default");
     const ctrUnseeded = await request("POST", "/api/containers", { shipmentId: ship1Id, size: "20", type: "DC", hsCode: "990000" }, token);
-    await request("POST", `/api/containers/${ctrUnseeded.body.id}/packages`, { description: "Unclassifiable widget", quantity: 1, unitValue: 1000, currency: "USD" }, token);
+    await request("POST", `/api/shipments/${ship1Id}/containers/${ctrUnseeded.body.id}/packages`, { description: "Unclassifiable widget", quantity: 1, unitValue: 1000, currency: "USD" }, token);
     const est1b = await request("GET", `/api/shipments/${ship1Id}/landed-cost-estimate`, null, token);
     const chapter99 = est1b.body?.byChapter.find(c => c.chapter === "99");
     assert("unseeded chapter 99 uses the default rate (5%)", chapter99?.ratePct === 5, JSON.stringify(chapter99));

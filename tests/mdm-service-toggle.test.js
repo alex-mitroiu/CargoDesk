@@ -77,7 +77,7 @@ async function setSource(token, value) {
     assert("mdm_source defaults to 'local'", (settings0.body.mdm_source || "local") === "local");
 
     console.log("\nToggle route is admin-only and validates its value");
-    const scratchEmail = `mdm-toggle-test-${stamp}@localhost`;
+    const scratchEmail = `mdm-toggle-test-${stamp}@test.local`;
     const createUser = await request("POST", "/api/users",
       { email: scratchEmail, name: "MDM Toggle Test Viewer", roles: ["viewer"], password: "TestFixture!2026Zq" }, token);
     assert("scratch viewer created", createUser.status === 200, JSON.stringify(createUser.body));

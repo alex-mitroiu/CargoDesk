@@ -46,9 +46,9 @@ function request(method, path, body, token) {
   });
 }
 
-function download(docId, token) {
+function download(shipmentId, docId, token) {
   return new Promise((resolve, reject) => {
-    http.get(`${BASE}/api/documents/${docId}/download`, {
+    http.get(`${BASE}/api/shipments/${shipmentId}/documents/${docId}/download`, {
       headers: { Authorization: `Bearer ${token}` },
     }, res => {
       const chunks = [];
@@ -121,7 +121,7 @@ const SAMPLE_HTML = `<html><head><style>
     assert("missing html/filename rejected", bad.status >= 400);
 
     console.log("\nDownload the generated file");
-    const dl = await download(docId, token);
+    const dl = await download(shipmentId, docId, token);
     assert("download returns 200", dl.status === 200);
     assert("downloaded bytes start with %PDF-", dl.buffer.slice(0, 5).toString() === "%PDF-");
 

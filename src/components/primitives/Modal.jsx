@@ -1,10 +1,10 @@
 import { T } from "../../tokens";
 import Btn from "./Btn";
 
-const Modal = ({ title, onClose, children, width = 520, minHeight, hideClose = false }) => (
+const Modal = ({ title, onClose, children, width = 520, minHeight, hideClose = false, "data-testid": testId }) => (
   <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.78)", display: "flex",
       alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20 }}>
-    <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12,
+    <div data-testid={testId} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12,
       width: "100%", maxWidth: width, maxHeight: "90vh", overflowY: "auto",
       minHeight: minHeight ?? undefined,
       boxShadow: "0 30px 70px rgba(0,0,0,.65)" }}>

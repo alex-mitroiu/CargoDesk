@@ -136,7 +136,7 @@ const SAMPLE_HTML = `<html><body><h1>Test fixture</h1></body></html>`;
       assert("rejected with broker but no priced cargo", noCargo.status === 400, `got ${noCargo.status}: ${JSON.stringify(noCargo.body)}`);
 
       const ctr = await request("POST", "/api/containers", { shipmentId, size: "40", type: "HC" }, adminToken);
-      await request("POST", `/api/containers/${ctr.body.id}/packages`,
+      await request("POST", `/api/shipments/${shipmentId}/containers/${ctr.body.id}/packages`,
         { description: "Test cargo", quantity: 1, unitValue: 500, currency: "USD" }, adminToken);
       const ok1 = await request("POST", `/api/shipments/${shipmentId}/customs-filings`, { filingType: "AES_EEI" }, adminToken);
       assert("succeeds once broker + priced cargo both present", ok1.status === 201, `got ${ok1.status}: ${JSON.stringify(ok1.body)}`);
@@ -218,7 +218,7 @@ const SAMPLE_HTML = `<html><body><h1>Test fixture</h1></body></html>`;
       assert("milestones initialized", Array.isArray(steps) && steps.length >= 2);
       // Complete the SECOND step first — the first is still incomplete, so this should be flagged.
       const second = steps[1];
-      const r = await request("PUT", `/api/milestones/${second.id}`, {
+      const r = await request("PUT", `/api/shipments/${shipmentId}/milestones/${second.id}`, {
         estimatedDate: second.estimatedDate, completedAt: new Date().toISOString(), completedBy: "Test",
       }, adminToken);
       assert("out-of-order completion still succeeds (not blocked)", r.status === 200, `got ${r.status}`);
@@ -241,7 +241,7 @@ const SAMPLE_HTML = `<html><body><h1>Test fixture</h1></body></html>`;
       const firstStep = list.body[0];
       // Backdate the estimate so the sweep sees it as overdue (no direct "set estimatedDate to the
       // past" route restriction — PUT accepts any date the same way the real UI's date field does).
-      await request("PUT", `/api/milestones/${firstStep.id}`, { estimatedDate: "2020-01-01" }, adminToken);
+      await request("PUT", `/api/shipments/${shipmentId}/milestones/${firstStep.id}`, { estimatedDate: "2020-01-01" }, adminToken);
 
       const sweep1 = await request("POST", "/api/test/run-ops-automation-sweep", {}, adminToken);
       assert("sweep runs", sweep1.status === 200, `got ${sweep1.status}: ${JSON.stringify(sweep1.body)}`);

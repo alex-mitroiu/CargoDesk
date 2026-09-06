@@ -211,6 +211,7 @@ async function testDeleteShipment(token, shipmentId) {
   console.log(`Server: ${BASE}\n`);
 
   let shipmentId;
+  let exitCode = 0;
 
   try {
     const token = await login();
@@ -225,7 +226,11 @@ async function testDeleteShipment(token, shipmentId) {
     shipmentId = null; // already deleted
   } catch (e) {
     console.error("\nFatal:", e.message);
-    process.exit(1);
+    // Recorded, not called here — process.exit() terminates immediately and synchronously,
+    // which would skip the finally block's own cleanup below entirely (confirmed as a real bug
+    // in this exact pattern elsewhere, 2026-09-04 — tests/eadapter.test.js was silently leaking
+    // scratch data on every run because of it).
+    exitCode = 1;
   } finally {
     if (shipmentId) {
       const t = await login().catch(() => null);
@@ -234,5 +239,5 @@ async function testDeleteShipment(token, shipmentId) {
   }
 
   console.log(`\n${passed + failed} tests — ${passed} passed, ${failed} failed`);
-  process.exit(failed > 0 ? 1 : 0);
+  process.exit(exitCode || (failed > 0 ? 1 : 0));
 })();

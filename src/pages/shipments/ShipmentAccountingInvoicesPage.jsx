@@ -276,7 +276,7 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
 
   const handleConfirmDoc = async docId => {
     try {
-      const updated = await api.documents.patch(docId, { status: "confirmed" });
+      const updated = await api.documents.patch(shipment.id, docId, { status: "confirmed" });
       setDocs(p => p.map(d => d.id === docId ? updated : d));
       setPreviewDoc(updated);
       toast.success("Invoice confirmed");
@@ -385,8 +385,8 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
       const newDoc = await api.documents.generate(shipment.id, {
         html, filename, docType: "CN01", containerId: doc.containerId, responsibleParty: doc.responsibleParty,
       });
-      await api.documents.patch(newDoc.id, { status: "confirmed", relatedDocId: doc.id });
-      await api.documents.patch(doc.id, { relatedDocId: newDoc.id });
+      await api.documents.patch(shipment.id, newDoc.id, { status: "confirmed", relatedDocId: doc.id });
+      await api.documents.patch(shipment.id, doc.id, { relatedDocId: newDoc.id });
       toast.success("Invoice reversed — Credit/Debit Note generated");
       setReverseDoc(null);
       load();
@@ -667,6 +667,7 @@ const ShipmentAccountingInvoicesPage = ({ shipment, containers, onBack }) => {
 
       {previewDoc && (
         <TrackedDocPreviewModal
+          shipmentId={shipment.id}
           doc={previewDoc}
           onClose={() => setPreviewDoc(null)}
           onConfirm={canEdit ? () => handleConfirmDoc(previewDoc.id) : null}

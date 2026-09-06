@@ -82,8 +82,8 @@ async function generateInvoiceDoc(shipmentId, token, sourceCostLineIds) {
   }, token);
   return res.body;
 }
-async function confirmDoc(docId, token) {
-  return request("PATCH", `/api/documents/${docId}`, { status: "confirmed" }, token);
+async function confirmDoc(shipmentId, docId, token) {
+  return request("PATCH", `/api/shipments/${shipmentId}/documents/${docId}`, { status: "confirmed" }, token);
 }
 
 (async () => {
@@ -111,6 +111,16 @@ async function confirmDoc(docId, token) {
     assert("create returns 201", newCode.status === 201, JSON.stringify(newCode.body));
     const updatedCode = await request("PUT", `/api/invoice-status-reason-codes/${newCode.body.id}`, { code: `TEST_${rand}`, label: "Updated", isActive: false }, token);
     assert("update round-trips isActive=false", updatedCode.body.isActive === false, JSON.stringify(updatedCode.body));
+
+    // 2026-09-05 audit regression — invoice_status_reason_codes.code had no uniqueness
+    // enforcement at all despite this route's own isUniqueViolation catch implying one existed
+    // (dead code until fixed — the catch could never actually fire).
+    const ircDup = await request("POST", "/api/invoice-status-reason-codes", { code: `TEST_${rand}`, label: "A different label" }, token);
+    assert("duplicate reason code rejected on create", ircDup.status >= 400 && /already exists/i.test(ircDup.body.error || ""), JSON.stringify(ircDup.body));
+    const ircOther = await request("POST", "/api/invoice-status-reason-codes", { code: `TEST_${rand}_B`, label: "Another reason" }, token);
+    const ircRenameDup = await request("PUT", `/api/invoice-status-reason-codes/${ircOther.body.id}`, { code: `TEST_${rand}`, label: "Another reason" }, token);
+    assert("duplicate reason code rejected on rename", ircRenameDup.status >= 400 && /already exists/i.test(ircRenameDup.body.error || ""), JSON.stringify(ircRenameDup.body));
+    await request("DELETE", `/api/invoice-status-reason-codes/${ircOther.body.id}`, null, token);
 
     console.log("\nReason codes — admin-only gating");
     const occEmail = `occ-ic-${rand}@example.com`;
@@ -158,7 +168,7 @@ async function confirmDoc(docId, token) {
     cleanup.shipments.push(shipmentId);
     const line1 = await addSellLine(shipmentId, token, 500, "OFR");
     const doc1 = await generateInvoiceDoc(shipmentId, token, [line1.id]);
-    await confirmDoc(doc1.id, token);
+    await confirmDoc(shipmentId, doc1.id, token);
 
     const reportCountryLevel = await request("GET", "/api/reports/invoice-collections", null, token);
     const rowCountryLevel = reportCountryLevel.body.find(r => r.shipmentId === shipmentId);
@@ -220,7 +230,7 @@ async function confirmDoc(docId, token) {
     const msMissing = await request("GET", `/api/shipments/${shipMissing.body.id}/milestones`, null, token);
     const deliveredMissing = msMissing.body.find(m => m.milestoneKey === "delivered");
     const twelveDaysAgo = new Date(Date.now() - 12 * 86400000).toISOString();
-    await request("PUT", `/api/milestones/${deliveredMissing.id}`, { completedAt: twelveDaysAgo }, token);
+    await request("PUT", `/api/shipments/${shipMissing.body.id}/milestones/${deliveredMissing.id}`, { completedAt: twelveDaysAgo }, token);
     const reportMissing = await request("GET", "/api/reports/invoice-collections", null, token);
     const rowMissing = reportMissing.body.find(r => r.shipmentId === shipMissing.body.id);
     assert("shows up as Missing", rowMissing?.status === "missing", JSON.stringify(rowMissing));
@@ -236,7 +246,7 @@ async function confirmDoc(docId, token) {
     cleanup.shipments.push(shipPaid.body.id);
     const linePaid = await addSellLine(shipPaid.body.id, token, 800, "OFR");
     const docPaid = await generateInvoiceDoc(shipPaid.body.id, token, [linePaid.id]);
-    await confirmDoc(docPaid.id, token);
+    await confirmDoc(shipPaid.body.id, docPaid.id, token);
     await request("POST", `/api/shipments/${shipPaid.body.id}/documents/${docPaid.id}/mark-paid`, { paidAt: "2026-08-24", paidAmount: 800 }, token);
     const reportPaid = await request("GET", "/api/reports/invoice-collections", null, token);
     const rowPaid = reportPaid.body.find(r => r.shipmentId === shipPaid.body.id);
@@ -252,7 +262,7 @@ async function confirmDoc(docId, token) {
     cleanup.shipments.push(shipCancel.body.id);
     const lineCancel = await addSellLine(shipCancel.body.id, token, 300, "OFR");
     const docCancel = await generateInvoiceDoc(shipCancel.body.id, token, [lineCancel.id]);
-    await confirmDoc(docCancel.id, token);
+    await confirmDoc(shipCancel.body.id, docCancel.id, token);
     const reverseRes = await request("POST", `/api/shipments/${shipCancel.body.id}/documents/${docCancel.id}/reverse`, { reason: "test" }, token);
     assert("reverse succeeds", reverseRes.status === 200, JSON.stringify(reverseRes.body));
     const reportCancel = await request("GET", "/api/reports/invoice-collections", null, token);

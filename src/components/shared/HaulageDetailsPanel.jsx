@@ -181,13 +181,13 @@ const HaulageDetailsPanel = ({ shipmentId, serviceId, record, canEdit, onRecordU
   };
 
   const handleSaveWaypoint = async (id, patch) => {
-    await api.haulage.waypoints.update(id, patch);
+    await api.haulage.waypoints.update(shipmentId, id, patch);
     await loadWaypoints();
   };
 
   const handleRemoveWaypoint = async id => {
     try {
-      await api.haulage.waypoints.remove(id);
+      await api.haulage.waypoints.remove(shipmentId, id);
       setWaypoints(list => list.filter(w => w.id !== id));
     } catch (e) { toast.error(e.message); }
   };

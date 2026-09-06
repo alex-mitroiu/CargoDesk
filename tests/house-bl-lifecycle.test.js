@@ -74,8 +74,8 @@ async function generateBl(shipmentId, token) {
   return res.body;
 }
 
-async function confirmDoc(docId, token) {
-  return request("PATCH", `/api/documents/${docId}`, { status: "confirmed" }, token);
+async function confirmDoc(shipmentId, docId, token) {
+  return request("PATCH", `/api/shipments/${shipmentId}/documents/${docId}`, { status: "confirmed" }, token);
 }
 
 async function getMilestone(shipmentId, key, token) {
@@ -111,7 +111,7 @@ async function getDocumentEvents(docId, token) {
     assert("bl_issued not yet completed", !beforeMilestone.completedAt);
 
     console.log("\nConfirming the BL01 auto-completes bl_issued");
-    const confirmed = await confirmDoc(doc.id, token);
+    const confirmed = await confirmDoc(shipmentId, doc.id, token);
     assert("confirm returns 200", confirmed.status === 200, JSON.stringify(confirmed.body));
     const afterMilestone = await getMilestone(shipmentId, "bl_issued", token);
     assert("bl_issued auto-completed on BL01 confirm", !!afterMilestone.completedAt, JSON.stringify(afterMilestone));
@@ -122,10 +122,10 @@ async function getDocumentEvents(docId, token) {
     const doc2 = await generateBl(shipment2Id, token);
     const blIssuedRow = await getMilestone(shipment2Id, "bl_issued", token);
     assert("bl_issued milestone row exists on shipment 2", !!blIssuedRow?.id);
-    const manualComplete = await request("PUT", `/api/milestones/${blIssuedRow.id}`,
+    const manualComplete = await request("PUT", `/api/shipments/${shipment2Id}/milestones/${blIssuedRow.id}`,
       { completedAt: "2026-08-01T00:00:00.000Z", completedBy: "Test Operator", note: "Completed by hand ahead of the system" }, token);
     assert("manual milestone completion succeeds", manualComplete.status === 200, JSON.stringify(manualComplete.body));
-    await confirmDoc(doc2.id, token);
+    await confirmDoc(shipment2Id, doc2.id, token);
     const stillManual = await getMilestone(shipment2Id, "bl_issued", token);
     assert("manual completion survives the auto-complete guard", stillManual.completedBy === "Test Operator", JSON.stringify(stillManual));
 
@@ -155,7 +155,7 @@ async function getDocumentEvents(docId, token) {
     const otherDoc = await request("POST", `/api/shipments/${shipmentId}/documents/generate`, {
       html: SAMPLE_HTML, filename: `PL01-${shipmentId}.html`, docType: "PL01",
     }, token);
-    await confirmDoc(otherDoc.body.id, token);
+    await confirmDoc(shipmentId, otherDoc.body.id, token);
     const otherSurrender = await request("PATCH", `/api/shipments/${shipmentId}/documents/${otherDoc.body.id}/bl-surrender`, null, token);
     assert("surrender on a non-BL01 doc 400s", otherSurrender.status === 400, JSON.stringify(otherSurrender.body));
 

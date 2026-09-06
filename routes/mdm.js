@@ -223,18 +223,31 @@ module.exports = function mdmRoutes(app, ctx) {
       try { return ok(res, await callMdmService("PUT", `/internal/port-locations/${req.params.unlocode.toUpperCase()}`, { name, latitude, longitude, countryCode, zoneCode })); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
-    const cc = countryCode.toUpperCase() || req.params.unlocode.slice(0, 2).toUpperCase();
+    const cc = countryCode.trim().toUpperCase() || req.params.unlocode.slice(0, 2).toUpperCase();
     const updated = await query("UPDATE port_locations SET name=$1, latitude=$2, longitude=$3, country_code=$4, zone_code=$5, last_synced_at=$6 WHERE unlocode=$7 RETURNING unlocode",
       [name, latitude, longitude, cc, zoneCode, new Date().toISOString(), req.params.unlocode.toUpperCase()]);
     if (updated.length===0) return err(res,"Not found",404);
-    ok(res, mapPortLocation({ unlocode: req.params.unlocode.toUpperCase(), name, latitude, longitude, country_code: countryCode.toUpperCase(), zone_code: zoneCode }));
+    // country_code: cc, not the raw countryCode.toUpperCase() — cc carries the same
+    // derive-from-unlocode-prefix fallback the UPDATE above actually persisted (2026-09-05
+    // audit: a blank/omitted countryCode had the response showing '' while the DB row was
+    // correctly saved with the derived 2-letter code, confirmed live).
+    ok(res, mapPortLocation({ unlocode: req.params.unlocode.toUpperCase(), name, latitude, longitude, country_code: cc, zone_code: zoneCode }));
   });
   app.delete("/api/port-locations/:unlocode", write, async (req, res) => {
     if (await isRemote()) {
       try { await callMdmService("DELETE", `/internal/port-locations/${req.params.unlocode.toUpperCase()}`); return ok(res, { deleted: req.params.unlocode }); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
-    const deleted = await query("DELETE FROM port_locations WHERE unlocode=$1 RETURNING unlocode", [req.params.unlocode.toUpperCase()]); if (deleted.length===0) return err(res,"Not found",404); ok(res,{deleted:req.params.unlocode});
+    const code = req.params.unlocode.toUpperCase();
+    // linked_ports references this table too but is ON DELETE CASCADE (a pair losing one of its
+    // ports has nothing left to conflict-detect) — only these two RESTRICT-by-default FKs can
+    // actually block the delete, so only they need an app-level guard for a clean 409 instead of
+    // a raw FK-violation 500.
+    const [agentLocInUse] = await query("SELECT id FROM carrier_agent_locations WHERE unlocode=$1 LIMIT 1", [code]);
+    if (agentLocInUse) return err(res, "Port is referenced by a carrier agent's coverage area — remove that assignment first");
+    const [loopInUse] = await query("SELECT id FROM loop_code_ports WHERE port_unlocode=$1 LIMIT 1", [code]);
+    if (loopInUse) return err(res, "Port is referenced by a loop code's rotation — remove it from that rotation first");
+    const deleted = await query("DELETE FROM port_locations WHERE unlocode=$1 RETURNING unlocode", [code]); if (deleted.length===0) return err(res,"Not found",404); ok(res,{deleted:code});
   });
 
   // ─── Linked Ports ─────────────────────────────────────────────────────────
@@ -922,7 +935,14 @@ module.exports = function mdmRoutes(app, ctx) {
       try { await callMdmService("DELETE", `/internal/countries/${req.params.iso2.toUpperCase()}`); return ok(res, { deleted: req.params.iso2 }); }
       catch (e) { return err(res, e.message, e.status || 502); }
     }
-    const deleted = await query("DELETE FROM countries WHERE iso2=$1 RETURNING iso2", [req.params.iso2.toUpperCase()]); if (deleted.length===0) return err(res,"Not found",404); ok(res,{deleted:req.params.iso2});
+    const code = req.params.iso2.toUpperCase();
+    // carrier_agent_locations.country_iso2 REFERENCES countries(iso2) with no ON DELETE clause
+    // (default RESTRICT) — country_trade_lanes' own FK to this table is ON DELETE CASCADE and
+    // needs no guard, but this one does. 2026-09-05 audit: verified live, this previously
+    // surfaced as a raw {"error":"Internal server error"} 500 instead of a clean, specific one.
+    const [agentLocInUse] = await query("SELECT id FROM carrier_agent_locations WHERE country_iso2=$1 LIMIT 1", [code]);
+    if (agentLocInUse) return err(res, "Country is referenced by a carrier agent's coverage area — remove that assignment first");
+    const deleted = await query("DELETE FROM countries WHERE iso2=$1 RETURNING iso2", [code]); if (deleted.length===0) return err(res,"Not found",404); ok(res,{deleted:code});
   });
   app.get("/api/countries/:iso2/locations", async (req, res) => {
     const iso2   = req.params.iso2.toUpperCase();

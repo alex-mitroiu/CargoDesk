@@ -114,6 +114,14 @@ module.exports = function allocationsRoutes(app, ctx) {
 
   app.delete("/api/allocations/:id", write, async (req, res) => {
     const [existing] = await query("SELECT * FROM allocations WHERE id=$1", [req.params.id]);
+    // 2026-09-06 audit: shipments.allocation_id has no FK at all — verified live, this delete
+    // previously succeeded silently (200) even while a real shipment was actively linked,
+    // leaving that shipment's allocationId permanently dangling. recomputeSpaceBadge() gracefully
+    // no-ops on a missing allocation (no crash), but the shipment silently and permanently loses
+    // its space-consumption tracking with zero indication why — same "silent orphan" class this
+    // audit already fixed for shipment_cost_lines/office_id. Same guard idiom as offices.js.
+    const [shipmentInUse] = await query("SELECT id FROM shipments WHERE allocation_id=$1 LIMIT 1", [req.params.id]);
+    if (shipmentInUse) return err(res, "Allocation is referenced by a shipment — reassign or unlink it first");
     const deleted = await query("DELETE FROM allocations WHERE id=$1 RETURNING id", [req.params.id]);
     if (deleted.length === 0) return err(res, "Not found", 404);
     if (existing) await logEntityEvent('allocation', req.params.id, 'DELETED', null, null, null,
@@ -193,7 +201,10 @@ module.exports = function allocationsRoutes(app, ctx) {
     const { carrierCode, pol, pod, effectiveDate, endDate, excludeId = '' } = req.query;
     if (!carrierCode || !pol || !pod || !effectiveDate || !endDate) return ok(res, { exact: [], linked: [] });
     const polU = pol.toUpperCase(), podU = pod.toUpperCase();
-    const isLinked = async (a, b) => !!(await query("SELECT 1 FROM linked_ports WHERE (primary_unlocode=$1 AND linked_unlocode=$2) OR (linked_unlocode=$1 AND primary_unlocode=$2)", [a, b]))[0];
+    // Both linked-port lookups below used to read `linked_ports` directly, bypassing
+    // `linkedPortCodes()` (mdm_source-aware, already used correctly by /match above) — the same
+    // recurring bypass class found and fixed several times this session (2026-09-06 audit).
+    const isLinked = async (a, b) => (await linkedPortCodes(a)).includes(b);
     const exactRows = await query("SELECT * FROM allocations WHERE carrier_code=$1 AND pol=$2 AND pod=$3 AND effective_date<=$4 AND end_date>=$5 AND id!=$6",
       [carrierCode, polU, podU, endDate, effectiveDate, excludeId]);
     const exact = await Promise.all(exactRows.map(async r => {
@@ -201,8 +212,8 @@ module.exports = function allocationsRoutes(app, ctx) {
       return { ...mapAllocation(r), carrierName: carrier?.name || '', conflictKind: 'exact', links: [] };
     }));
     const exactIds = exact.map(e => e.id);
-    const linkedCodes = (await query("SELECT primary_unlocode AS code FROM linked_ports WHERE linked_unlocode IN ($1,$2) UNION SELECT linked_unlocode AS code FROM linked_ports WHERE primary_unlocode IN ($1,$2)",
-      [polU, podU])).map(r => r.code).filter(c => c !== polU && c !== podU);
+    const linkedCodes = [...new Set([...(await linkedPortCodes(polU)), ...(await linkedPortCodes(podU))])]
+      .filter(c => c !== polU && c !== podU);
     let linked = [];
     if (linkedCodes.length > 0) {
       const params = [carrierCode, ...linkedCodes, ...linkedCodes, endDate, effectiveDate, excludeId, ...exactIds];

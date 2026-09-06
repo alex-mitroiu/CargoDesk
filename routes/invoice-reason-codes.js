@@ -33,9 +33,14 @@ module.exports = function invoiceReasonCodeRoutes(app, ctx) {
     if (!existing) return err(res, "Reason code not found", 404);
     const { code, label, isActive = true } = req.body || {};
     if (!code || !label) return err(res, "Code and label are required");
-    await query(`UPDATE invoice_status_reason_codes SET code=$1, label=$2, is_active=$3 WHERE id=$4`,
-      [code.trim().toUpperCase(), label.trim(), !!isActive, req.params.id]);
-    ok(res, mapInvoiceReasonCode({ ...existing, code: code.trim().toUpperCase(), label: label.trim(), is_active: !!isActive }));
+    try {
+      await query(`UPDATE invoice_status_reason_codes SET code=$1, label=$2, is_active=$3 WHERE id=$4`,
+        [code.trim().toUpperCase(), label.trim(), !!isActive, req.params.id]);
+      ok(res, mapInvoiceReasonCode({ ...existing, code: code.trim().toUpperCase(), label: label.trim(), is_active: !!isActive }));
+    } catch (e) {
+      if (isUniqueViolation(e)) return err(res, `Code ${code} already exists`);
+      err(res, e.message, 500);
+    }
   });
 
   app.delete("/api/invoice-status-reason-codes/:id", write, async (req, res) => {

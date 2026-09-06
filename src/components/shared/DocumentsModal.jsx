@@ -108,7 +108,7 @@ const DocumentsModal = ({ shipment, canEdit, onClose, standalone = false }) => {
   const handleDelete = async id => {
     if (!window.confirm("Remove this document?")) return;
     try {
-      await api.documents.remove(id);
+      await api.documents.remove(shipment.id, id);
       setDocs(p => p.filter(d => d.id !== id));
       toast.success("Document removed");
     } catch (ex) { toast.error(ex.message); }
@@ -116,7 +116,7 @@ const DocumentsModal = ({ shipment, canEdit, onClose, standalone = false }) => {
 
   const handleConfirm = async id => {
     try {
-      const updated = await api.documents.patch(id, { status: "confirmed" });
+      const updated = await api.documents.patch(shipment.id, id, { status: "confirmed" });
       setDocs(p => p.map(d => d.id === id ? updated : d));
       setPreviewDoc(p => p?.id === id ? updated : p);
       toast.success("Document confirmed");
@@ -333,7 +333,7 @@ const DocumentsModal = ({ shipment, canEdit, onClose, standalone = false }) => {
                     👁 Preview
                   </Btn>
                   <Btn size="sm" variant="secondary"
-                    onClick={() => api.documents.download(doc.id, doc.filename).catch(() => toast.error("Download failed"))}>
+                    onClick={() => api.documents.download(shipment.id, doc.id, doc.filename).catch(() => toast.error("Download failed"))}>
                     ↓
                   </Btn>
                   <Btn size="sm" variant="secondary" onClick={() => setSendDoc(doc)}>
@@ -391,6 +391,7 @@ const DocumentsModal = ({ shipment, canEdit, onClose, standalone = false }) => {
       )}
       {previewDoc && (
         <TrackedDocPreviewModal
+          shipmentId={shipment.id}
           doc={previewDoc}
           onClose={() => setPreviewDoc(null)}
           onConfirm={canEdit ? () => handleConfirm(previewDoc.id) : null}

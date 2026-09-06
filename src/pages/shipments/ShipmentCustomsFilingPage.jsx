@@ -32,7 +32,7 @@ const ShipmentCustomsFilingPage = ({ shipment, onBack, navigate, initialTab = "d
       api.containers.list({ shipmentId: shipment.id }).catch(() => []),
     ]).then(async ([partyRows, containerRows]) => {
       if (cancelled) return;
-      const lists = await Promise.all(containerRows.map(c => api.containerPackages.list(c.id).catch(() => [])));
+      const lists = await Promise.all(containerRows.map(c => api.containerPackages.list(shipment.id, c.id).catch(() => [])));
       if (cancelled) return;
       setParties(partyRows);
       setPackages(lists.flat());

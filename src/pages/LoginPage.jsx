@@ -33,7 +33,8 @@ const LoginPage = ({ onLogin, notice }) => {
       try {
         const payload = JSON.parse(atob(ssoToken.split(".")[1]));
         const user = { id: payload.id, email: payload.email, name: payload.name,
-          role: payload.role, roles: payload.roles };
+          role: payload.role, roles: payload.roles,
+          canViewFinance: !!payload.canViewFinance, allOffices: !!payload.allOffices };
         onLogin(ssoToken, user);
         return;
       } catch {

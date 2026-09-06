@@ -414,7 +414,7 @@ export async function generateInvoices(shipment, { containers = [], costLines, s
     .catch(() => []);
   const replaceDraftIfAny = async containerId => {
     const existing = existingDocs.find(d => (d.containerId || "") === containerId && d.status !== "confirmed");
-    if (existing) await api.documents.remove(existing.id).catch(() => {});
+    if (existing) await api.documents.remove(shipment.id, existing.id).catch(() => {});
   };
 
   const upload = (html, filename, containerId, sourceCostLineIds) =>

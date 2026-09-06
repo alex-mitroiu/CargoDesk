@@ -269,6 +269,22 @@ async function login() {
     // if rare (1/36), CI failure this exact way already confirmed it live.
     const cUpdate404 = await request("PUT", "/api/countries/XX", { name: "X" }, token);
     assert("country update 404 for unknown code", cUpdate404.status === 404);
+
+    // 2026-09-05 audit regression — DELETE /api/countries/:iso2 had no app-level guard for
+    // carrier_agent_locations.country_iso2 (a real RESTRICT FK, no ON DELETE clause), so deleting
+    // a still-referenced country surfaced as a raw {"error":"Internal server error"} 500 instead
+    // of a clean, specific message — the same bug class already fixed for offices/branches/
+    // port_locations elsewhere in this suite.
+    const guardCust = await request("POST", "/api/customers", { companyName: "Country Delete Guard Test Agent" }, token);
+    const guardAgent = await request("POST", "/api/carrier-agents",
+      { carrierCode: "TSTZ", agentCustomerId: guardCust.body.id, locationType: "country", countryIso2: countryCode }, token);
+    assert("scratch carrier-agent location created against our scratch country", guardAgent.status === 201, JSON.stringify(guardAgent.body));
+    const cDeleteBlocked = await request("DELETE", `/api/countries/${countryCode}`, null, token);
+    assert("country delete blocked with a clean 400 while referenced", cDeleteBlocked.status === 400, JSON.stringify(cDeleteBlocked.body));
+    assert("blocked message names the real cause", /carrier agent/i.test(cDeleteBlocked.body.error || ""), JSON.stringify(cDeleteBlocked.body));
+    await request("DELETE", `/api/carrier-agents/${guardAgent.body.id}`, null, token);
+    await request("DELETE", `/api/customers/${guardCust.body.id}`, null, token);
+
     const cDelete = await request("DELETE", `/api/countries/${countryCode}`, null, token);
     assert("country delete returns 200", cDelete.status === 200);
     const cDelete404 = await request("DELETE", `/api/countries/${countryCode}`, null, token);

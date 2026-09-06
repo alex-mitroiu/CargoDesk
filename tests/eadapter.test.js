@@ -68,11 +68,19 @@ async function login() {
 
 // Synthetic unlocode + explicit countryCode (offices.js accepts both independently) — a real
 // port code like NLRTM/USNYC already has a real office in this long-lived dev DB (`offices.code`
-// is UNIQUE), so reusing one here would 400 on creation. Deriving the unlocode from the stamp
-// keeps this collision-free across runs, matching this codebase's own "AF-XXXXX-SE" scratch-
-// office convention elsewhere.
-async function scratchOffice(token, countryCode, seed, name, stamp) {
-  const unlocode = `${countryCode}${seed}${stamp % 1000}`.slice(0, 5).toUpperCase().padEnd(5, "X");
+// is UNIQUE), so reusing one here would 400 on creation. A random (not stamp-derived) unlocode
+// suffix keeps this collision-free across runs, matching this codebase's own "AF-XXXXX-SE"
+// scratch-office convention elsewhere.
+async function scratchOffice(token, countryCode, name, stamp) {
+  // A real UN/LOCODE is exactly 5 chars, so the country prefix leaves only 3 free — `stamp % 1000`
+  // gave just 1000 possible values there, small enough that two runs close together in time (or,
+  // worse, any accumulated leftover offices from a past interrupted run) could collide on CREATE
+  // and silently fail this whole test with no useful error (confirmed live, 2026-09-04: 29
+  // leftover "eAdapter Test Office" rows had accumulated from past interrupted runs and were
+  // occupying a large fraction of that 1000-value space). Random base36 digits aren't tied to
+  // timing at all and give 36^3 = 46,656 possible values instead.
+  const rand = Math.random().toString(36).slice(2, 5).toUpperCase().padEnd(3, "X");
+  const unlocode = `${countryCode}${rand}`.slice(0, 5).toUpperCase();
   const res = await request("POST", "/api/offices", { unlocode, countryCode, department: "SE", name: `${name} ${stamp}` }, token);
   return res.body;
 }
@@ -232,7 +240,7 @@ async function testBookingRequestOfficeResolution(token, officeA, officeB) {
 
 async function testOfficeDeleteGuard(token, stamp) {
   console.log("\neAdapter — an office referenced by a config can't be deleted out from under it");
-  const office = await scratchOffice(token, "ZR", "C", "Guard Test Office", stamp);
+  const office = await scratchOffice(token, "ZR", "Guard Test Office", stamp);
   const create = await request("POST", "/api/eadapter/configs", { carrierCode: "EATV", officeId: office.id }, token);
   assert("config created for the guard-test office", create.status === 201, JSON.stringify(create.body));
 
@@ -278,13 +286,20 @@ async function testMasterToggleGatesEverything(token, officeA) {
 (async () => {
   const stamp = Date.now();
   let officeA = null, officeB = null;
+  // process.exit() terminates immediately and synchronously — calling it from inside try/catch
+  // (as this used to) means the finally block's own cleanup below never gets a chance to run, on
+  // EITHER the pass or the fail path. Every successful run was silently leaking officeA/officeB
+  // forever (confirmed live, 2026-09-04 — 28 leftover offices had accumulated in the dev DB from
+  // exactly this). Fixed by only ever recording the intended exit code here, then calling
+  // process.exit() once, as the very last statement, after finally has genuinely completed.
+  let exitCode = 0;
   try {
     console.log("Logging in...");
     const token = await login();
     console.log("  ✓ Logged in");
 
-    officeA = await scratchOffice(token, "ZM", "A", "eAdapter Test Office A", stamp);
-    officeB = await scratchOffice(token, "ZW", "B", "eAdapter Test Office B", stamp);
+    officeA = await scratchOffice(token, "ZM", "eAdapter Test Office A", stamp);
+    officeB = await scratchOffice(token, "ZW", "eAdapter Test Office B", stamp);
     if (!officeA?.id || !officeB?.id) throw new Error("Failed to create scratch offices for the test run");
 
     await testConfigCrud(token, officeA, officeB);
@@ -295,10 +310,10 @@ async function testMasterToggleGatesEverything(token, officeA) {
     await testMasterToggleGatesEverything(token, officeA);
 
     console.log(`\n${passed} passed, ${failed} failed`);
-    process.exit(failed > 0 ? 1 : 0);
+    exitCode = failed > 0 ? 1 : 0;
   } catch (e) {
     console.error("Fatal error:", e.message);
-    process.exit(1);
+    exitCode = 1;
   } finally {
     const token = await login().catch(() => null);
     if (token) {
@@ -306,4 +321,5 @@ async function testMasterToggleGatesEverything(token, officeA) {
       if (officeB?.id) await request("DELETE", `/api/offices/${officeB.id}`, null, token).catch(() => {});
     }
   }
+  process.exit(exitCode);
 })();

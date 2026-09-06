@@ -641,10 +641,24 @@ module.exports = function shipmentsRoutes(app, ctx) {
 
   // ─── Containers ────────────────────────────────────────────────────────────
 
-  app.get("/api/containers", async (req, res) => {
-    const rows = req.query.shipmentId
+  app.get("/api/containers", auth(), async (req, res) => {
+    const rawRows = req.query.shipmentId
       ? await query("SELECT * FROM containers WHERE shipment_id=$1", [req.query.shipmentId])
       : await query("SELECT * FROM containers");
+    if (rawRows.length === 0) return ok(res, []);
+    // Scope check (2026-09-06 audit) — this route previously returned every container
+    // company-wide with zero regard for applyShipmentAccessFilter, whether or not a shipmentId
+    // was given: a bare call leaked the entire company's cargo manifest (confirmed live via
+    // App.jsx's own unconditional top-level `api.containers.list()` load, which every logged-in
+    // user's browser makes on login regardless of role), and `?shipmentId=` was a second,
+    // targeted bypass since it's a query param, not a route param — shipmentScopeParamCheck only
+    // fires on Express route params. Mirrors GET /api/customs-filings' own established pattern:
+    // batch-fetch the distinct owning shipments and filter rows against applyShipmentAccessFilter.
+    const shipmentIds = [...new Set(rawRows.map(r => r.shipment_id))];
+    const ph = shipmentIds.map((_, i) => `$${i + 1}`).join(",");
+    const shipmentRows = await query(`SELECT * FROM shipments WHERE id IN (${ph})`, shipmentIds);
+    const allowedIds = new Set((await applyShipmentAccessFilter(shipmentRows.map(mapShipment), req.user, req)).map(s => s.id));
+    const rows = rawRows.filter(r => allowedIds.has(r.shipment_id));
     const ids = rows.map(r => r.id);
     const evRows = ids.length
       ? await query(`SELECT container_id, event_type, location, occurred_at FROM container_events
@@ -692,7 +706,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     ok(res, addedCtr, 201);
   });
 
-  app.put("/api/containers/:id", shipmentWrite, async (req, res) => {
+  app.put("/api/shipments/:shipmentId/containers/:id", shipmentWrite, async (req, res) => {
     const { containerNumber = "", sealNumber = "", size, type,
             hsCode = "", cargoDescription = "", marksAndNumbers = "", grossWeightKg = null, volumeCbm = null, isDg = false, dgClass = "",
             vgmWeightKg = null, vgmStatus = "Pending", vgmCutoff = "", cyCutoff = "",
@@ -700,7 +714,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
             originDetentionFreeDays = null, destDetentionFreeDays = null,
             setTemperatureC = null } = req.body;
     const cnU    = containerNumber.toUpperCase();
-    const [oldCtr] = await query("SELECT * FROM containers WHERE id=$1", [req.params.id]);
+    const [oldCtr] = await query("SELECT * FROM containers WHERE id=$1 AND shipment_id=$2", [req.params.id, req.params.shipmentId]);
     if (!oldCtr) return err(res, "Not found", 404);
     if (!size || !type) return err(res, "size, type required");
     if (!CONTAINER_SIZES.includes(size)) return err(res, `size must be one of: ${CONTAINER_SIZES.join(", ")}`);
@@ -746,8 +760,8 @@ module.exports = function shipmentsRoutes(app, ctx) {
     ok(res, { ...mapContainer(row), ...deriveFreeTime(row, g.byType, g.latest) });
   });
 
-  app.delete("/api/containers/:id", shipmentWrite, async (req, res) => {
-    const [ctr] = await query("SELECT * FROM containers WHERE id=$1", [req.params.id]);
+  app.delete("/api/shipments/:shipmentId/containers/:id", shipmentWrite, async (req, res) => {
+    const [ctr] = await query("SELECT * FROM containers WHERE id=$1 AND shipment_id=$2", [req.params.id, req.params.shipmentId]);
     if (!ctr) return err(res, "Not found", 404);
     await query("DELETE FROM containers WHERE id=$1", [req.params.id]);
     await logEvent(ctr.shipment_id, 'CONTAINER_REMOVED', null, ctr.container_number, null,
@@ -992,8 +1006,8 @@ module.exports = function shipmentsRoutes(app, ctx) {
 
   const CONTAINER_EVENT_TYPES = ["Empty Pickup", "Gate In", "Loaded", "Sailed", "Discharged", "Gate Out", "Empty Return"];
 
-  app.get("/api/containers/:id/events", auth(), async (req, res) => {
-    const rows = await query("SELECT * FROM container_events WHERE container_id=$1 ORDER BY occurred_at ASC, created_at ASC", [req.params.id]);
+  app.get("/api/shipments/:shipmentId/containers/:id/events", auth(), async (req, res) => {
+    const rows = await query("SELECT * FROM container_events WHERE container_id=$1 AND shipment_id=$2 ORDER BY occurred_at ASC, created_at ASC", [req.params.id, req.params.shipmentId]);
     const events = rows.map(mapContainerEvent);
     // Batch-attach any condition/damage photos uploaded against a specific event (EIR,
     // TKT-QSUTQ7) — one query for the whole list, matching the batched-not-N+1 idiom the
@@ -1011,12 +1025,12 @@ module.exports = function shipmentsRoutes(app, ctx) {
     ok(res, events);
   });
 
-  app.post("/api/containers/:id/events", shipmentWrite, async (req, res) => {
+  app.post("/api/shipments/:shipmentId/containers/:id/events", shipmentWrite, async (req, res) => {
     const { eventType, occurredAt, location = "", notes = "", conditionNotes = "", damageFlag = false, chassisProvider = "" } = req.body || {};
     if (!eventType || !CONTAINER_EVENT_TYPES.includes(eventType))
       return err(res, `eventType must be one of: ${CONTAINER_EVENT_TYPES.join(", ")}`);
     if (!occurredAt) return err(res, "occurredAt required");
-    const [ctr] = await query("SELECT * FROM containers WHERE id=$1", [req.params.id]);
+    const [ctr] = await query("SELECT * FROM containers WHERE id=$1 AND shipment_id=$2", [req.params.id, req.params.shipmentId]);
     if (!ctr) return err(res, "Container not found", 404);
     const id = `CEV-${uid()}`;
     const now = new Date().toISOString();
@@ -1047,8 +1061,8 @@ module.exports = function shipmentsRoutes(app, ctx) {
     ok(res, event, 201);
   });
 
-  app.delete("/api/container-events/:id", shipmentWrite, async (req, res) => {
-    const [ev] = await query("SELECT * FROM container_events WHERE id=$1", [req.params.id]);
+  app.delete("/api/shipments/:shipmentId/container-events/:id", shipmentWrite, async (req, res) => {
+    const [ev] = await query("SELECT * FROM container_events WHERE id=$1 AND shipment_id=$2", [req.params.id, req.params.shipmentId]);
     if (!ev) return err(res, "Not found", 404);
     await query("DELETE FROM container_events WHERE id=$1", [req.params.id]);
     ok(res, { deleted: req.params.id });
@@ -1059,7 +1073,9 @@ module.exports = function shipmentsRoutes(app, ctx) {
   // position — the client builds the tree from parentId itself (same idiom as
   // Kanban's parent_id ticket nesting).
 
-  app.get("/api/containers/:id/packages", auth(), async (req, res) => {
+  app.get("/api/shipments/:shipmentId/containers/:id/packages", auth(), async (req, res) => {
+    const [ctr] = await query("SELECT id FROM containers WHERE id=$1 AND shipment_id=$2", [req.params.id, req.params.shipmentId]);
+    if (!ctr) return err(res, "Container not found", 404);
     const rows = await query("SELECT * FROM container_packages WHERE container_id=$1 ORDER BY position ASC, created_at ASC", [req.params.id]);
     ok(res, rows.map(mapContainerPackage));
   });
@@ -1079,13 +1095,13 @@ module.exports = function shipmentsRoutes(app, ctx) {
     return { uv, curr, uvUsd };
   }
 
-  app.post("/api/containers/:id/packages", shipmentWrite, async (req, res) => {
+  app.post("/api/shipments/:shipmentId/containers/:id/packages", shipmentWrite, async (req, res) => {
     const { parentId = null, description, quantity = 1, packTypeId = null, isDg = false, dgClass = "",
             unitValue = null, currency = "", hsCode = "" } = req.body || {};
     if (!description || !description.trim()) return err(res, "description required");
     const qty = parseInt(quantity, 10);
     if (!Number.isFinite(qty) || qty < 1) return err(res, "quantity must be a positive integer");
-    const [ctr] = await query("SELECT id FROM containers WHERE id=$1", [req.params.id]);
+    const [ctr] = await query("SELECT id FROM containers WHERE id=$1 AND shipment_id=$2", [req.params.id, req.params.shipmentId]);
     if (!ctr) return err(res, "Container not found", 404);
     if (parentId) {
       const [parent] = await query("SELECT id FROM container_packages WHERE id=$1 AND container_id=$2", [parentId, req.params.id]);
@@ -1105,8 +1121,10 @@ module.exports = function shipmentsRoutes(app, ctx) {
     ok(res, mapContainerPackage(row), 201);
   });
 
-  app.put("/api/container-packages/:id", shipmentWrite, async (req, res) => {
-    const [existing] = await query("SELECT * FROM container_packages WHERE id=$1", [req.params.id]);
+  app.put("/api/shipments/:shipmentId/container-packages/:id", shipmentWrite, async (req, res) => {
+    const [existing] = await query(
+      `SELECT cp.* FROM container_packages cp JOIN containers c ON c.id = cp.container_id
+       WHERE cp.id=$1 AND c.shipment_id=$2`, [req.params.id, req.params.shipmentId]);
     if (!existing) return err(res, "Not found", 404);
     const { description, quantity, packTypeId = null, isDg = false, dgClass = "",
             unitValue = null, currency = "", hsCode = "" } = req.body || {};
@@ -1125,8 +1143,10 @@ module.exports = function shipmentsRoutes(app, ctx) {
 
   // Deletes the package and its entire sub-tree (a package with children removed on
   // its own would otherwise orphan them with a dangling parent_id).
-  app.delete("/api/container-packages/:id", shipmentWrite, async (req, res) => {
-    const [existing] = await query("SELECT * FROM container_packages WHERE id=$1", [req.params.id]);
+  app.delete("/api/shipments/:shipmentId/container-packages/:id", shipmentWrite, async (req, res) => {
+    const [existing] = await query(
+      `SELECT cp.* FROM container_packages cp JOIN containers c ON c.id = cp.container_id
+       WHERE cp.id=$1 AND c.shipment_id=$2`, [req.params.id, req.params.shipmentId]);
     if (!existing) return err(res, "Not found", 404);
     const toDelete = [req.params.id];
     for (let i = 0; i < toDelete.length; i++) {
@@ -1223,8 +1243,8 @@ module.exports = function shipmentsRoutes(app, ctx) {
 
   // Role is immutable once assigned (it's the row's conceptual identity, backed by the
   // UNIQUE constraint) — PUT only ever reassigns which customer fills that role.
-  app.put("/api/shipment-parties/:id", shipmentWrite, async (req, res) => {
-    const [existing] = await query("SELECT * FROM shipment_parties WHERE id=$1", [req.params.id]);
+  app.put("/api/shipments/:shipmentId/parties/:id", shipmentWrite, async (req, res) => {
+    const [existing] = await query("SELECT * FROM shipment_parties WHERE id=$1 AND shipment_id=$2", [req.params.id, req.params.shipmentId]);
     if (!existing) return err(res, "Not found", 404);
     const side = LINE_AGENT_SIDE[existing.role];
     if (side && !(await canEditOfficeSide(req, side)))
@@ -1237,8 +1257,8 @@ module.exports = function shipmentsRoutes(app, ctx) {
     ok(res, mapShipmentParty({ ...existing, customer_id: customerId, customer_name: customerName }));
   });
 
-  app.delete("/api/shipment-parties/:id", shipmentWrite, async (req, res) => {
-    const [existing] = await query("SELECT * FROM shipment_parties WHERE id=$1", [req.params.id]);
+  app.delete("/api/shipments/:shipmentId/parties/:id", shipmentWrite, async (req, res) => {
+    const [existing] = await query("SELECT * FROM shipment_parties WHERE id=$1 AND shipment_id=$2", [req.params.id, req.params.shipmentId]);
     if (!existing) return err(res, "Not found", 404);
     const side = LINE_AGENT_SIDE[existing.role];
     if (side && !(await canEditOfficeSide(req, side)))
@@ -1301,10 +1321,10 @@ module.exports = function shipmentsRoutes(app, ctx) {
     ok(res, mapSideOffice(row), 201);
   });
 
-  app.delete("/api/shipment-side-offices/:id", shipmentWrite, async (req, res) => {
+  app.delete("/api/shipments/:shipmentId/side-offices/:id", shipmentWrite, async (req, res) => {
     const [existing] = await query(
       `SELECT so.*, o.code AS office_code, o.name AS office_name FROM shipment_side_offices so
-       JOIN offices o ON o.id = so.office_id WHERE so.id=$1`, [req.params.id]
+       JOIN offices o ON o.id = so.office_id WHERE so.id=$1 AND so.shipment_id=$2`, [req.params.id, req.params.shipmentId]
     );
     if (!existing) return err(res, "Not found", 404);
     if (!(await canEditOfficeSide(req, existing.side))) return err(res, `You don't have permission to remove a ${existing.side} office`, 403);

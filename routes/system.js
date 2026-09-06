@@ -140,13 +140,24 @@ module.exports = function systemRoutes(app, ctx) {
     const updates = { ...(req.body || {}) };
     if (!req.body || typeof req.body !== "object" || Array.isArray(req.body))
       return err(res, "Expected JSON object of { key: value } pairs");
-    // sso_enforce_exclusive has its own dedicated admin-only route (below) for exactly the
-    // reason contract_source/etc. do — but unlike those, letting operator/occ_bk set it through
-    // this generic route too would make that gate pure theater (whoever it's meant to keep out
-    // could just call this route instead), so it's explicitly refused here rather than silently
-    // accepted like the other dedicated-route keys currently are.
-    if ("sso_enforce_exclusive" in updates && !req.user.roles.includes("admin"))
-      return err(res, "sso_enforce_exclusive can only be changed by an admin — use PUT /api/settings/sso-enforce-exclusive", 403);
+    // Every key below has its own dedicated admin-only route for exactly the reason each of
+    // their own comments already gives (a "genuine data-source cutover"/nav-reorder/exclusive-
+    // SSO-lockout lever, a different class of action than the operational settings this generic
+    // route otherwise handles for operator/occ_bk too) — but until this fix, none of them were
+    // actually excluded from this generic route, only sso_enforce_exclusive was. Confirmed live
+    // during the shipment-domain audit (TKT-E25769): an operator, correctly blocked (403) by the
+    // dedicated PUT /api/settings/mdm-source route, could flip mdm_source to 'remote' anyway by
+    // sending it through this route instead — the exact "whoever it's meant to keep out could
+    // just call this route instead" theater the sso_enforce_exclusive comment already warned
+    // about, just never applied to these. Same live-confirmed bypass for
+    // shipment_sidebar_order (overwrites the shared nav order for every user in the app).
+    const ADMIN_ONLY_DEDICATED_KEYS = [
+      "sso_enforce_exclusive", "mdm_source", "contract_source", "screening_source",
+      "kanban_source", "customer_source", "shipment_sidebar_order",
+    ];
+    const blockedKeys = ADMIN_ONLY_DEDICATED_KEYS.filter(k => k in updates);
+    if (blockedKeys.length && !req.user.roles.includes("admin"))
+      return err(res, `${blockedKeys.join(", ")} can only be changed by an admin — use the dedicated PUT /api/settings/... route instead`, 403);
     // Same empty-break-glass-set lockout guard as the dedicated route above — this generic route
     // is still a valid way for an admin to set this key, so the safety check has to live here too,
     // not just there.

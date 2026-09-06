@@ -85,6 +85,7 @@ import MdmCarrierAgentsPage   from "./pages/mdm/MdmCarrierAgentsPage";
 import MdmTradeLanesPage      from "./pages/mdm/MdmTradeLanesPage";
 import MdmRegionsPage         from "./pages/mdm/MdmRegionsPage";
 import MdmLoopCodesPage       from "./pages/mdm/MdmLoopCodesPage";
+import LoopMapExplorerPage    from "./pages/mdm/LoopMapExplorerPage";
 import MdmCountriesPage       from "./pages/mdm/MdmCountriesPage";
 import MdmUNLocationCodesPage  from "./pages/mdm/MdmUNLocationCodesPage";
 import MdmCommoditiesPage     from "./pages/mdm/MdmCommoditiesPage";
@@ -284,6 +285,7 @@ function App() {
   const [customersNavOpen, setCustomersNavOpen] = useFoldState("cd_navfold_mdm_customers");
   const [contractsNavOpen, setContractsNavOpen] = useFoldState("cd_navfold_mdm_contracts");
   const [carriersNavOpen,  setCarriersNavOpen]  = useFoldState("cd_navfold_mdm_carriers");
+  const [loopCodesNavOpen, setLoopCodesNavOpen] = useFoldState("cd_navfold_mdm_loop_codes");
   const [portsNavOpen,     setPortsNavOpen]     = useFoldState("cd_navfold_mdm_ports");
   const [detailAction, setDetailAction] = useState(null);
   const [user,         setUser]         = useState(null);
@@ -573,9 +575,13 @@ function App() {
   // back every created container in one response; this just merges them into the same shared
   // `containers` array handleAddContainer maintains, so both entry points stay in sync.
   const handleImportContainers = created => { setContainers(p => [...p, ...created]); };
+  // Both handlers only ever fire from within a shipment-detail context (ShipmentDetailPage/
+  // ShipmentContainersPage, neither renders without a selected shipment), so selectedId is
+  // reliably the right scope — matches handleAddContainer's own explicit shipmentId param
+  // in spirit without needing to thread a new prop through every child caller.
   const handleEditContainer = async (id, form, { silent = false } = {}) => {
     try {
-      const updated = await api.containers.update(id, form);
+      const updated = await api.containers.update(selectedId, id, form);
       setContainers(p => p.map(c => c.id === id ? { ...c, ...updated } : c));
       if (!silent) toast.success("Container updated");
       return updated;
@@ -583,7 +589,7 @@ function App() {
   };
   const handleDeleteContainer = async id => {
     try {
-      await api.containers.remove(id);
+      await api.containers.remove(selectedId, id);
       setContainers(p => p.filter(c => c.id !== id));
       toast.success("Container removed");
     } catch (e) { toast.error(e.message); }
@@ -659,7 +665,7 @@ function App() {
   }, [authLoading, user, page]);
 
   // kanban is top-level, not MDM
-  const MDM_PAGES = ["mdm-carriers", "mdm-carrier-agents", "mdm-ports", "mdm-linked", "mdm-vessels", "mdm-commodities", "mdm-loop-codes", "mdm-tradelanes", "mdm-countries", "mdm-unlocodes", "mdm-customers", "mdm-sanctioned-customers", "mdm-contracts", "rate-benchmark", "mdm-finance", "mdm-charge-codes", "mdm-duty-rates", "mdm-equipment", "mdm-pack-types", "mdm-container-types", "mdm-invoice-reason-codes", "mdm-locations", "mdm-document-templates"];
+  const MDM_PAGES = ["mdm-carriers", "mdm-carrier-agents", "mdm-ports", "mdm-linked", "mdm-vessels", "mdm-commodities", "mdm-loop-codes", "mdm-loop-map-explorer", "mdm-tradelanes", "mdm-countries", "mdm-unlocodes", "mdm-customers", "mdm-sanctioned-customers", "mdm-contracts", "rate-benchmark", "mdm-finance", "mdm-charge-codes", "mdm-duty-rates", "mdm-equipment", "mdm-pack-types", "mdm-container-types", "mdm-invoice-reason-codes", "mdm-locations", "mdm-document-templates"];
   const ORG_PAGES = ["org-country", "org-branch", "org-office"];
   const ALL_PAGES = [...MDM_PAGES, ...ORG_PAGES, "manual"];
   const isMdmActive = MDM_PAGES.includes(page);
@@ -745,6 +751,7 @@ function App() {
     "mdm-ports":        "Master Data — Port Locations",
     "mdm-linked":       "Master Data — Linked Ports",
     "mdm-loop-codes":   "Master Data — Loop Codes",
+    "mdm-loop-map-explorer": "Master Data — Loop Map Explorer",
     "mdm-tradelanes":   "Master Data — Trade Lanes",
     "mdm-regions":      "Master Data — Regions",
     "mdm-countries":    "Master Data — Countries",
@@ -1775,7 +1782,11 @@ function App() {
                     <NavBtn pageKey="mdm-carrier-agents" icon={IconLink} label="Carrier Agents" subIndent />
                   )}
                   <NavBtn pageKey="mdm-vessels"      icon={IconShip} label="Vessels"         indent />
-                  <NavBtn pageKey="mdm-loop-codes" icon={IconRoute} label="Loop Codes"     indent />
+                  <NavBtn pageKey="mdm-loop-codes" icon={IconRoute} label="Loop Codes"     indent
+                    foldable open={loopCodesNavOpen} onToggleFold={() => setLoopCodesNavOpen(o => !o)} />
+                  {loopCodesNavOpen && (
+                    <NavBtn pageKey="mdm-loop-map-explorer" icon={IconEarth} label="Loop Map Explorer" subIndent />
+                  )}
                   <NavBtn pageKey="mdm-commodities" icon={IconPackage} label="Commodities"     indent />
                   <NavBtn pageKey="mdm-ports"    icon={IconMapPin} label="Port Locations" indent
                     foldable open={portsNavOpen} onToggleFold={() => setPortsNavOpen(o => !o)} />
@@ -2207,6 +2218,7 @@ function App() {
         {page === "mdm-ports"      && isEnabled("mdm-ports")      && <MdmPortLocationsPage />}
         {page === "mdm-linked"     && isEnabled("mdm-linked")     && <MdmLinkedPortsPage />}
         {page === "mdm-loop-codes"&&                                  <MdmLoopCodesPage />}
+        {page === "mdm-loop-map-explorer" &&                          <LoopMapExplorerPage />}
         {page === "mdm-tradelanes" &&                                 <MdmTradeLanesPage />}
         {page === "mdm-countries"  &&                                 <MdmCountriesPage />}
         {page === "mdm-unlocodes"  &&                                 <MdmUNLocationCodesPage />}
@@ -2360,7 +2372,7 @@ function App() {
                         <Btn size="sm" variant="danger" onClick={async () => {
                           if (!window.confirm(`Remove container ${c.containerNumber || c.id}?`)) return;
                           try {
-                            await api.containers.remove(c.id);
+                            await api.containers.remove(selectedShipment.id, c.id);
                             setContainers(p => p.filter(x => x.id !== c.id));
                             toast.success("Container removed");
                           } catch (e) { toast.error(e.message); }
@@ -2386,7 +2398,7 @@ function App() {
                 setContainers(p => [...p, ctr]);
                 toast.success("Container added");
               } else {
-                const updated = await api.containers.update(formCtrModal.id, form);
+                const updated = await api.containers.update(selectedShipment.id, formCtrModal.id, form);
                 setContainers(p => p.map(c => c.id === formCtrModal.id ? { ...c, ...updated } : c));
                 toast.success("Container updated");
               }

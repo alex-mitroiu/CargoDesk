@@ -40,10 +40,17 @@ module.exports = function customersRoutes(app, ctx) {
 
   // Mirrors MdmContractsPage/MdmCustomersPage's own "full CRUD for trade_manager alongside
   // admin/operator" MDM-write tier (routes/contracts.js, routes/allocations.js) — customer
-  // master-data management, which this compliance override is part of, sits at that tier, not
-  // shipment operational writes. This file had NO role-gated route at all before this pass
-  // (grepped — zero requireRole usage anywhere in customers.js); scoped here to just the
-  // screening-override route since that's the specific gap flagged, not a full-file audit.
+  // master-data management sits at that tier, not shipment operational writes.
+  //
+  // 2026-09-05 audit: this was scoped to just the screening-override route (2026-09-03), per that
+  // pass's own note that a full-file audit was still pending — that pass now landed a real,
+  // live-confirmed gap. Every other mutating route in this file (create/update/delete a customer,
+  // identifiers CRUD, contacts CRUD, documents CRUD) had ONLY auth() — any authenticated viewer
+  // could create a real customer with an arbitrary credit limit, confirmed live with a scratch
+  // account (a $1B creditLimit customer record, created and cleaned up during verification).
+  // customerWrite now also gates all of those; the credit-hold/credit-override-approve routes keep
+  // their own separate, stricter lane-ownership check (userOwnsLaneForShipment/ForCustomer),
+  // unrelated to this tier and unchanged.
   const customerWrite = requireRole(["admin", "operator", "trade_manager"]);
 
   // screenCustomer()/rescreenShipmentsForCustomer() moved to server.js (2026-09-03 audit) —
@@ -430,7 +437,7 @@ module.exports = function customersRoutes(app, ctx) {
     return false;
   }
 
-  app.post("/api/customers", auth(), async (req, res) => {
+  app.post("/api/customers", auth(), customerWrite, async (req, res) => {
     if (await isRemote()) {
       try {
         const created = await callCustomerService("POST", "/internal/customers", req.body);
@@ -482,7 +489,7 @@ module.exports = function customersRoutes(app, ctx) {
     ok(res, mapCustomer(row), 201);
   });
 
-  app.put("/api/customers/:id", auth(), async (req, res) => {
+  app.put("/api/customers/:id", auth(), customerWrite, async (req, res) => {
     if (await isRemote()) {
       const { creditHold = false } = req.body;
       try {
@@ -552,7 +559,7 @@ module.exports = function customersRoutes(app, ctx) {
     ok(res, mapCustomer(row));
   });
 
-  app.delete("/api/customers/:id", auth(), async (req, res) => {
+  app.delete("/api/customers/:id", auth(), customerWrite, async (req, res) => {
     // Carrier Line Agents — agent_customer_id has no ON DELETE clause (deliberately: neither
     // CASCADE nor SET NULL fits a NOT NULL master-data pointer that IS the row's reason for
     // existing), so this app-level guard is the actual enforcement, mirroring offices.js's own
@@ -595,7 +602,7 @@ module.exports = function customersRoutes(app, ctx) {
     ok(res, rows.map(mapCustomerIdentifier));
   });
 
-  app.post("/api/customers/:id/identifiers", auth(), async (req, res) => {
+  app.post("/api/customers/:id/identifiers", auth(), customerWrite, async (req, res) => {
     if (await isRemote()) {
       try { return ok(res, await callCustomerService("POST", `/internal/customers/${req.params.id}/identifiers`, req.body), 201); }
       catch (e) { return err(res, e.message, e.status || 502); }
@@ -614,7 +621,7 @@ module.exports = function customersRoutes(app, ctx) {
     ok(res, mapCustomerIdentifier(row), 201);
   });
 
-  app.put("/api/customers/:id/identifiers/:iid", auth(), async (req, res) => {
+  app.put("/api/customers/:id/identifiers/:iid", auth(), customerWrite, async (req, res) => {
     if (await isRemote()) {
       try { return ok(res, await callCustomerService("PUT", `/internal/customers/${req.params.id}/identifiers/${req.params.iid}`, req.body)); }
       catch (e) { return err(res, e.message, e.status || 502); }
@@ -632,7 +639,7 @@ module.exports = function customersRoutes(app, ctx) {
     ok(res, mapCustomerIdentifier(row));
   });
 
-  app.delete("/api/customers/:id/identifiers/:iid", auth(), async (req, res) => {
+  app.delete("/api/customers/:id/identifiers/:iid", auth(), customerWrite, async (req, res) => {
     if (await isRemote()) {
       try { return ok(res, await callCustomerService("DELETE", `/internal/customers/${req.params.id}/identifiers/${req.params.iid}`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
@@ -655,7 +662,7 @@ module.exports = function customersRoutes(app, ctx) {
     ok(res, rows.map(mapCustomerContact));
   });
 
-  app.post("/api/customers/:id/contacts", auth(), async (req, res) => {
+  app.post("/api/customers/:id/contacts", auth(), customerWrite, async (req, res) => {
     if (await isRemote()) {
       try { return ok(res, await callCustomerService("POST", `/internal/customers/${req.params.id}/contacts`, req.body), 201); }
       catch (e) { return err(res, e.message, e.status || 502); }
@@ -674,7 +681,7 @@ module.exports = function customersRoutes(app, ctx) {
     ok(res, mapCustomerContact(row), 201);
   });
 
-  app.put("/api/customers/:id/contacts/:cid", auth(), async (req, res) => {
+  app.put("/api/customers/:id/contacts/:cid", auth(), customerWrite, async (req, res) => {
     if (await isRemote()) {
       try { return ok(res, await callCustomerService("PUT", `/internal/customers/${req.params.id}/contacts/${req.params.cid}`, req.body)); }
       catch (e) { return err(res, e.message, e.status || 502); }
@@ -692,7 +699,7 @@ module.exports = function customersRoutes(app, ctx) {
     ok(res, mapCustomerContact(row));
   });
 
-  app.delete("/api/customers/:id/contacts/:cid", auth(), async (req, res) => {
+  app.delete("/api/customers/:id/contacts/:cid", auth(), customerWrite, async (req, res) => {
     if (await isRemote()) {
       try { return ok(res, await callCustomerService("DELETE", `/internal/customers/${req.params.id}/contacts/${req.params.cid}`)); }
       catch (e) { return err(res, e.message, e.status || 502); }
@@ -758,7 +765,7 @@ module.exports = function customersRoutes(app, ctx) {
     ok(res, rows.map(mapCustomerDoc));
   });
 
-  app.post("/api/customers/:id/documents", auth(), async (req, res) => {
+  app.post("/api/customers/:id/documents", auth(), customerWrite, async (req, res) => {
     // customer_documents itself stays local-only regardless of customer_source (see the delete
     // guard's own note below and ARCHITECTURE.md §8.1) — only this existence check needs to be
     // remote-aware, or a customer created after a remote cutover would wrongly 404 an upload.
@@ -781,7 +788,7 @@ module.exports = function customersRoutes(app, ctx) {
     } catch (e) { err(res, e.message, 500); }
   });
 
-  app.delete("/api/customers/:id/documents/:did", auth(), async (req, res) => {
+  app.delete("/api/customers/:id/documents/:did", auth(), customerWrite, async (req, res) => {
     const [doc] = await query("SELECT * FROM customer_documents WHERE id=$1 AND customer_id=$2", [req.params.did, req.params.id]);
     if (!doc) return err(res, "Not found", 404);
     try { fs.unlinkSync(path.join(UPLOADS_DIR, doc.stored_name)); } catch {}

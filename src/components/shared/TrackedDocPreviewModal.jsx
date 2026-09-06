@@ -18,18 +18,18 @@ const fmtDate = s => s ? new Date(s).toLocaleDateString(undefined, { day: "2-dig
 // NOT the same component as the same-named DocumentPreviewModal in
 // ShipmentDetailPage.jsx, which belongs to the separate untracked jsPDF document
 // system (dataUri prop, no server round-trip) — see ARCHITECTURE.md M10.
-const TrackedDocPreviewModal = ({ doc, onClose, onConfirm, onSend }) => {
+const TrackedDocPreviewModal = ({ shipmentId, doc, onClose, onConfirm, onSend }) => {
   const [src,        setSrc]        = useState(null);
   const [confirming, setConfirming] = useState(false);
 
   useEffect(() => {
     const token = localStorage.getItem("cargodesk_token");
-    fetch(`/api/documents/${doc.id}/download`, { headers: { Authorization: `Bearer ${token}` } })
+    fetch(`/api/shipments/${shipmentId}/documents/${doc.id}/download`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.blob())
       .then(blob => setSrc(URL.createObjectURL(blob)))
       .catch(() => toast.error("Preview failed — try Download instead"));
     return () => { setSrc(s => { if (s) URL.revokeObjectURL(s); return null; }); };
-  }, [doc.id]);
+  }, [shipmentId, doc.id]);
 
   const handleConfirm = async () => {
     setConfirming(true);
@@ -65,7 +65,7 @@ const TrackedDocPreviewModal = ({ doc, onClose, onConfirm, onSend }) => {
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <Btn size="sm" variant="secondary"
-            onClick={() => api.documents.download(doc.id, doc.filename).catch(() => toast.error("Download failed"))}>
+            onClick={() => api.documents.download(shipmentId, doc.id, doc.filename).catch(() => toast.error("Download failed"))}>
             ↓ Download
           </Btn>
           {onSend && (

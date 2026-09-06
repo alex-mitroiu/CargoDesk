@@ -6,7 +6,8 @@
 // established (routes/customers.js): plain auth(), no reportsGate (Command Center itself has no
 // role gate at all — every authenticated role sees it on the Home page), scoped per-caller.
 module.exports = function commandCenterRoutes(app, ctx) {
-  const { query, ok, auth, applyShipmentAccessFilter, mapShipment } = ctx;
+  const { query, ok, auth, applyShipmentAccessFilter, mapShipment, getSettings, callMdmService } = ctx;
+  const isRemote = async () => ((await getSettings()).mdm_source || "local") === "remote";
 
   // Shared by all four routes below — every not-Cancelled shipment this caller can see (mirrors
   // CommandCenterView's own overdueShipments definition, which excludes Completed/Cancelled; the
@@ -195,7 +196,18 @@ module.exports = function commandCenterRoutes(app, ctx) {
       stats[code] ??= { carrierCode: code, onTime: 0, total: 0 };
       for (const onTime of samples) { stats[code].total++; if (onTime) stats[code].onTime++; }
     }
-    const carrierNames = Object.fromEntries((await query("SELECT code, name FROM carriers")).map(c => [c.code, c.name]));
+    // mdm_source branch added per the loop-integration audit's own recurring finding class
+    // (routes/loop-codes.js, resolveSeaPorts, linkedPortCodes, resolveInvoiceThresholds) — this
+    // read carriers straight from the local table with no remote-mode awareness at all.
+    let carrierNames = {};
+    if (await isRemote()) {
+      try {
+        const rows = await callMdmService("GET", "/internal/carriers");
+        carrierNames = Object.fromEntries((rows || []).map(c => [c.code, c.name]));
+      } catch { /* leave carrierNames empty — clean-degrade to showing the bare carrier code, same as every other remote MDM lookup here on failure */ }
+    } else {
+      carrierNames = Object.fromEntries((await query("SELECT code, name FROM carriers")).map(c => [c.code, c.name]));
+    }
     const results = Object.values(stats).map(c => ({
       carrierCode: c.carrierCode, carrierName: carrierNames[c.carrierCode] || c.carrierCode,
       sampleSize: c.total, onTimeCount: c.onTime,

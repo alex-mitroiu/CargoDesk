@@ -1994,7 +1994,7 @@ export default function AppSettingsPage() {
               cursor: isTesting ? "wait" : "pointer", opacity: isTesting ? 0.65 : 1 }}>
             {isTesting ? "Testing…" : "▶ Test"}
           </button>
-          {apiDef.id === 'ofac' && enabled && (
+          {apiDef.id === 'ofac' && enabled && isAdmin && (
             <>
               <input ref={fileInputRef} type="file" accept=".csv,text/csv"
                 onChange={handleCsvFile} style={{ display: "none" }} />
@@ -2012,7 +2012,7 @@ export default function AppSettingsPage() {
               </button>
             </>
           )}
-          {apiDef.id === 'csl' && enabled && (
+          {apiDef.id === 'csl' && enabled && isAdmin && (
             <button onClick={syncCslFromSource} disabled={syncing} type="button"
               style={{ padding: "5px 13px", borderRadius: 6, border: `1px solid ${T.border}`,
                 background: T.bg, color: T.text, fontFamily: T.mono, fontSize: 12,

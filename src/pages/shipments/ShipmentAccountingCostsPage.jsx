@@ -3,7 +3,7 @@ import { T } from "../../tokens";
 import { useAuth } from "../../AuthContext";
 import Btn from "../../components/primitives/Btn";
 import { Modal, ConfirmModal } from "../../components/primitives/Modal";
-import { CostLineForm, CostLineHistoryModal, CostLineRow, CostLineActualizeModal, CostLineAdjustModal } from "./ShipmentDetailPage";
+import { CostLineForm, CostLineHistoryModal, CostLineRow, CostLineActualizeModal, CostLineAdjustModal, ReconcileCarrierCostsModal } from "./ShipmentDetailPage";
 import { api } from "../../api";
 import { toast } from "../../toast";
 import { IconClipboard, IconArrowDown, IconArrowUp, IconRefresh } from "../../components/primitives/Icon";
@@ -28,7 +28,8 @@ const ShipmentAccountingCostsPage = ({ shipment, containers, onBack }) => {
   const [lineModal,  setLineModal]  = useState(null); // null | "add" | line object
   const [confirm,    setConfirm]    = useState(null);
   const [histOpen,   setHistOpen]   = useState(false);
-  const [actionModal, setActionModal] = useState(null); // null | "import" | "reset" | "update"
+  const [actionModal, setActionModal] = useState(null); // null | "reset" — "import"/"update" go through reconcileMode instead
+  const [reconcileMode, setReconcileMode] = useState(null); // null | "import" | "update"
   const [splitPerCtr, setSplitPerCtr] = useState(false);
   const [busy,        setBusy]        = useState(false);
   const [actualizeLine, setActualizeLine] = useState(null); // line pending actualization
@@ -129,15 +130,8 @@ const ShipmentAccountingCostsPage = ({ shipment, containers, onBack }) => {
   const runAction = async () => {
     setBusy(true);
     try {
-      const opts = { splitPerContainer: splitPerCtr };
-      const result = actionModal === "import" ? await api.costLines.importContract(shipment.id, opts)
-        : actionModal === "reset" ? await api.costLines.resetToContract(shipment.id, opts)
-        : await api.costLines.updateCarrierCosts(shipment.id, opts);
-      toast.success(
-        actionModal === "import" ? `${result.imported} BUY line${result.imported !== 1 ? "s" : ""} imported from contract`
-        : actionModal === "reset" ? `Reset to contract — ${result.imported} line${result.imported !== 1 ? "s" : ""} regenerated from the committed rate snapshot`
-        : `Carrier costs updated — ${result.imported} line${result.imported !== 1 ? "s" : ""} regenerated from a new rate snapshot`
-      );
+      const result = await api.costLines.resetToContract(shipment.id, { splitPerContainer: splitPerCtr });
+      toast.success(`Reset to contract — ${result.imported} line${result.imported !== 1 ? "s" : ""} regenerated from the committed rate snapshot`);
       setActionModal(null);
       await load();
       loadSnapshots();
@@ -145,13 +139,17 @@ const ShipmentAccountingCostsPage = ({ shipment, containers, onBack }) => {
     setBusy(false);
   };
 
+  const handleReconciled = () => {
+    setReconcileMode(null);
+    load();
+    loadSnapshots();
+  };
+
   const th = { fontFamily: T.body, fontSize: 10, fontWeight: 600, color: T.textMuted,
     textTransform: "uppercase", letterSpacing: ".07em" };
 
   const ACTION_COPY = {
-    import: { title: "Import from Contract", confirm: "Import", body: "Generate BUY lines from the assigned contract's rates. This creates the shipment's initial rate snapshot — a frozen copy of the rates at this point in time." },
-    reset:  { title: "Reset to Contract", confirm: "Reset", body: `Regenerate BUY lines from the rate snapshot already committed to this shipment${latestSnapshot ? ` (${latestSnapshot.reason}, ${new Date(latestSnapshot.generatedAt).toLocaleDateString()})` : ""}. This does NOT pull new rates — manually added lines are untouched.` },
-    update: { title: "Update Carrier Costs", confirm: "Update", body: "Pull the CURRENT contract rates into a new snapshot and regenerate BUY lines from it. Use this when the carrier's contract rates have changed and the shipment needs to reflect the new pricing." },
+    reset: { title: "Reset to Contract", confirm: "Reset", body: `Regenerate BUY lines from the rate snapshot already committed to this shipment${latestSnapshot ? ` (${latestSnapshot.reason}, ${new Date(latestSnapshot.generatedAt).toLocaleDateString()})` : ""}. This does NOT pull new rates — manually added lines are untouched.` },
   };
 
   return (
@@ -175,12 +173,12 @@ const ShipmentAccountingCostsPage = ({ shipment, containers, onBack }) => {
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <Btn id="shpacct-costs-history-btn" size="sm" variant="secondary" onClick={() => setHistOpen(true)}><IconClipboard size={12} />History</Btn>
             {isCentral && !hasContractLines && (
-              <Btn id="shpacct-costs-import-btn" size="sm" variant="secondary" onClick={() => openAction("import")}><IconArrowDown size={12} />Import from Contract</Btn>
+              <Btn id="shpacct-costs-import-btn" size="sm" variant="secondary" onClick={() => setReconcileMode("import")}><IconArrowDown size={12} />Import from Contract</Btn>
             )}
             {isCentral && hasContractLines && (
               <>
                 <Btn id="shpacct-costs-reset-btn" size="sm" variant="secondary" onClick={() => openAction("reset")}><IconRefresh size={12} />Reset to Contract</Btn>
-                <Btn id="shpacct-costs-update-btn" size="sm" variant="secondary" onClick={() => openAction("update")}><IconArrowUp size={12} />Update Carrier Costs</Btn>
+                <Btn id="shpacct-costs-update-btn" size="sm" variant="secondary" onClick={() => setReconcileMode("update")}><IconArrowUp size={12} />Update Carrier Costs</Btn>
               </>
             )}
             <Btn id="shpacct-costs-add-btn" size="sm" onClick={() => setLineModal("add")}>＋ Add Line</Btn>
@@ -234,30 +232,17 @@ const ShipmentAccountingCostsPage = ({ shipment, containers, onBack }) => {
             <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, lineHeight: 1.5 }}>
               {ACTION_COPY[actionModal].body}
             </div>
-            {actionModal !== "reset" && ctrs.length > 1 && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <div style={{ fontFamily: T.body, fontSize: 11, fontWeight: 700, color: T.textMuted,
-                  textTransform: "uppercase", letterSpacing: ".06em" }}>
-                  Per-container rate lines — {ctrs.length} containers
-                </div>
-                {[{ v: false, label: `Aggregate (1 line × ${ctrs.length})`, desc: "One combined line with the multiplied amount" },
-                  { v: true,  label: `Split per container (${ctrs.length} lines per rate)`, desc: "Individual line per container at the unit rate" }].map(opt => (
-                  <label key={String(opt.v)} style={{ display: "flex", gap: 8, alignItems: "flex-start", cursor: "pointer" }}>
-                    <input type="radio" checked={splitPerCtr === opt.v} onChange={() => setSplitPerCtr(opt.v)} style={{ marginTop: 3 }} />
-                    <div>
-                      <div style={{ fontFamily: T.body, fontSize: 13, color: T.text }}>{opt.label}</div>
-                      <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>{opt.desc}</div>
-                    </div>
-                  </label>
-                ))}
-              </div>
-            )}
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
               <Btn variant="secondary" onClick={() => setActionModal(null)} disabled={busy}>Cancel</Btn>
               <Btn onClick={runAction} disabled={busy}>{busy ? "Working…" : ACTION_COPY[actionModal].confirm}</Btn>
             </div>
           </div>
         </Modal>
+      )}
+
+      {reconcileMode && (
+        <ReconcileCarrierCostsModal shipmentId={shipment.id} mode={reconcileMode} containerCount={ctrs.length}
+          onClose={() => setReconcileMode(null)} onApplied={handleReconciled} />
       )}
 
       {histOpen && <CostLineHistoryModal shipmentId={shipment.id} onClose={() => setHistOpen(false)} />}

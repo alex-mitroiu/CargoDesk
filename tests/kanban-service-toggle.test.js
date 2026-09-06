@@ -78,7 +78,7 @@ async function setSource(token, value) {
     assert("kanban_source defaults to 'local'", (settings0.body.kanban_source || "local") === "local");
 
     console.log("\nToggle route is admin-only and validates its value");
-    const scratchEmail = `kanban-toggle-test-${stamp}@localhost`;
+    const scratchEmail = `kanban-toggle-test-${stamp}@test.local`;
     const createUser = await request("POST", "/api/users",
       { email: scratchEmail, name: "Kanban Toggle Test Assignee", roles: ["viewer"], password: "TestFixture!2026Zq" }, token);
     assert("scratch user created", createUser.status === 200, JSON.stringify(createUser.body));

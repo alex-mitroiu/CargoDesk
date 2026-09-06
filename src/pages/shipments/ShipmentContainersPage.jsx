@@ -133,7 +133,7 @@ const ShipmentContainersPage = ({ shipment, containers, onBack, onAddContainer, 
   const ctrFormRef = useRef(null);
 
   const loadPackages = useCallback(() => {
-    Promise.all(ctrs.map(c => api.containerPackages.list(c.id).then(pkgs => [c.id, pkgs]).catch(() => [c.id, []])))
+    Promise.all(ctrs.map(c => api.containerPackages.list(shipment.id, c.id).then(pkgs => [c.id, pkgs]).catch(() => [c.id, []])))
       .then(entries => setPackagesByCtr(Object.fromEntries(entries)));
   }, [ctrs.map(c => c.id).join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { loadPackages(); }, [loadPackages]);
@@ -198,12 +198,12 @@ const ShipmentContainersPage = ({ shipment, containers, onBack, onAddContainer, 
     setSaving(true);
     try {
       if (selection?.kind === "new-package") {
-        const created = await api.containerPackages.create(selection.containerId, { ...data, parentId: selection.parentId });
+        const created = await api.containerPackages.create(shipment.id, selection.containerId, { ...data, parentId: selection.parentId });
         loadPackages();
         setSelection({ kind: "package", containerId: selection.containerId, id: created.id });
         toast.success("Package added");
       } else if (selection?.kind === "package") {
-        await api.containerPackages.update(selection.id, data);
+        await api.containerPackages.update(shipment.id, selection.id, data);
         loadPackages();
         toast.success("Package updated");
       }
@@ -218,7 +218,7 @@ const ShipmentContainersPage = ({ shipment, containers, onBack, onAddContainer, 
   const handleDeletePackage = async () => {
     if (!selectedPkg) return;
     try {
-      await api.containerPackages.remove(selectedPkg.id);
+      await api.containerPackages.remove(shipment.id, selectedPkg.id);
       setSelection(null);
       loadPackages();
       toast.success("Package deleted");
@@ -449,7 +449,7 @@ const ShipmentContainersPage = ({ shipment, containers, onBack, onAddContainer, 
       {eventsCtr && (
         <Modal title={`Lifecycle Events — ${eventsCtr.containerNumber || eventsCtr.id}`}
           onClose={() => setEventsCtr(null)} width={480}>
-          <ContainerEventsPanel containerId={eventsCtr.id} containerNumber={eventsCtr.containerNumber} />
+          <ContainerEventsPanel shipmentId={shipment.id} containerId={eventsCtr.id} containerNumber={eventsCtr.containerNumber} />
         </Modal>
       )}
 

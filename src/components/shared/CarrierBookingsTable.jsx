@@ -133,7 +133,7 @@ const CarrierBookingsTable = ({ shipment }) => {
                         ["Cancel Reason", b.cancelReason || "—"],
                         ["Correlation ID", b.correlationId || "—"],
                         ["Linked B/L", linkedDoc
-                          ? <a href="#" onClick={e => { e.preventDefault(); api.documents.download(linkedDoc.id, linkedDoc.filename); }}
+                          ? <a href="#" onClick={e => { e.preventDefault(); api.documents.download(shipment.id, linkedDoc.id, linkedDoc.filename); }}
                               style={{ color: T.accent, textDecoration: "none" }}>{linkedDoc.filename}</a>
                           : (b.blDocumentId ? "Linked document" : "Not linked")],
                       ].map(([label, value]) => (

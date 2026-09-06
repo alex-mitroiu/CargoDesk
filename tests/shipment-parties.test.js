@@ -111,21 +111,21 @@ async function login() {
     assert("list has 1 row", Array.isArray(afterCreate.body) && afterCreate.body.length === 1);
 
     console.log("\nReassign to customer B (role stays the same)");
-    const reassigned = await request("PUT", `/api/shipment-parties/${partyId}`,
+    const reassigned = await request("PUT", `/api/shipments/${shipmentId}/parties/${partyId}`,
       { customerId: custB.body.id, customerName: custB.body.companyName }, token);
     assert("update returns 200", reassigned.status === 200);
     assert("customerName updated", reassigned.body.customerName === custB.body.companyName);
     assert("role unchanged", reassigned.body.role === "Insurance Provider");
 
     console.log("\nDelete frees the role slot");
-    const removed = await request("DELETE", `/api/shipment-parties/${partyId}`, null, token);
+    const removed = await request("DELETE", `/api/shipments/${shipmentId}/parties/${partyId}`, null, token);
     assert("delete returns 200", removed.status === 200);
     const reCreate = await request("POST", `/api/shipments/${shipmentId}/parties`,
       { role: "Insurance Provider", customerId: custA.body.id, customerName: custA.body.companyName }, token);
     assert("re-assigning the same role after delete succeeds", reCreate.status === 201);
 
     console.log("\n404s on a bogus id");
-    const badPut = await request("PUT", "/api/shipment-parties/PTY-DOESNOTEXIST", { customerId: "x", customerName: "y" }, token);
+    const badPut = await request("PUT", `/api/shipments/${shipmentId}/parties/PTY-DOESNOTEXIST`, { customerId: "x", customerName: "y" }, token);
     assert("PUT on bogus id returns 404", badPut.status === 404);
     const badDelete = await request("DELETE", "/api/shipment-parties/PTY-DOESNOTEXIST", null, token);
     assert("DELETE on bogus id returns 404", badDelete.status === 404);

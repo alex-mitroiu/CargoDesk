@@ -23,7 +23,7 @@ const fmtDate = iso => {
   catch { return iso; }
 };
 
-const ContainerEventsPanel = ({ containerId, containerNumber }) => {
+const ContainerEventsPanel = ({ shipmentId, containerId, containerNumber }) => {
   const { canEdit } = useAuth();
   const [events,          setEvents]          = useState(null); // null = loading
   const [adding,          setAdding]          = useState(false);
@@ -37,7 +37,7 @@ const ContainerEventsPanel = ({ containerId, containerNumber }) => {
   const [photoFile,       setPhotoFile]       = useState(null);
   const [saving,          setSaving]          = useState(false);
 
-  const load = () => api.containers.events(containerId).then(setEvents).catch(() => setEvents([]));
+  const load = () => api.containers.events(shipmentId, containerId).then(setEvents).catch(() => setEvents([]));
   useEffect(() => { load(); }, [containerId]);
 
   const usedTypes     = new Set((events || []).map(e => e.eventType));
@@ -71,7 +71,7 @@ const ContainerEventsPanel = ({ containerId, containerNumber }) => {
     if (!occurredAt) return;
     setSaving(true);
     try {
-      const created = await api.containers.addEvent(containerId, {
+      const created = await api.containers.addEvent(shipmentId, containerId, {
         eventType, occurredAt, location: location.trim(), notes: notes.trim(),
         damageFlag, conditionNotes: conditionNotes.trim(), chassisProvider: chassisProvider.trim(),
       });
@@ -87,7 +87,7 @@ const ContainerEventsPanel = ({ containerId, containerNumber }) => {
 
   const handleRemove = async id => {
     try {
-      await api.containers.removeEvent(id);
+      await api.containers.removeEvent(shipmentId, id);
       setEvents(list => list.filter(e => e.id !== id));
     } catch (e) { toast.error(e.message); }
   };
@@ -156,7 +156,7 @@ const ContainerEventsPanel = ({ containerId, containerNumber }) => {
                 {ev.photos?.length > 0 && (
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
                     {ev.photos.map(p => (
-                      <button key={p.id} type="button" onClick={() => api.documents.download(p.id, p.filename).catch(e => toast.error(e.message))}
+                      <button key={p.id} type="button" onClick={() => api.documents.download(shipmentId, p.id, p.filename).catch(e => toast.error(e.message))}
                         style={{ display: "inline-flex", alignItems: "center", gap: 4, fontFamily: T.body,
                         fontSize: 10.5, color: T.accent, background: "none", border: "none", cursor: "pointer", padding: 0 }}>
                         <AnyIcon icon={IconFile} size={11} /> {p.filename}

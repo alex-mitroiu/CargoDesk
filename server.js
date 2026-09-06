@@ -274,7 +274,17 @@ async function gracefulShutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`\n⚓  ${signal} received, shutting down gracefully...`);
-  await new Promise((resolve) => httpServer.close(resolve));
+  // httpServer.close() stops accepting NEW connections immediately, but its own callback only
+  // fires once every EXISTING connection ends — a WebSocket (or any open keep-alive) never ends on
+  // its own, so one browser tab left open can hang this indefinitely (found live, 2026-09-04: had
+  // to force-kill a hung shutdown for exactly this reason). Once shutdown has started, an already-
+  // open connection can't accomplish anything anyway — there's no server left to talk to — so race
+  // the close against a bounded timeout rather than let something that was never going to close
+  // itself hold up releasing the database, which is the part that actually matters here.
+  await Promise.race([
+    new Promise((resolve) => httpServer.close(resolve)),
+    new Promise((resolve) => setTimeout(resolve, 3000)),
+  ]);
   try { await closeDb(); } catch (e) { console.error("Error closing database:", e.message); }
   process.exit(0);
 }
@@ -3079,7 +3089,12 @@ const SERVICE_CODE_MAP = {
   EBS: 'Emergency Bunker Surcharge',
   'THC-O': 'Origin THC', THC: 'Origin THC', OTHC: 'Origin THC', ORI: 'Origin THC',
   'THC-D': 'Destination THC', DTHC: 'Destination THC', DEST: 'Destination THC',
-  BL: 'B/L Fee', BLF: 'B/L Fee', DOC: 'B/L Fee',
+  BL: 'B/L Fee', BLF: 'B/L Fee',
+  // DOC (Documentation Fee) used to alias to the same 'B/L Fee' label as BL/BLF above — a real,
+  // distinct charge type silently collapsed into the wrong name (2026-09-06 audit, SHP-WKX04E:
+  // a contract with both a DOC and a BL rate produced two cost lines both reading "B/L Fee" with
+  // different amounts, reading as duplication rather than two legitimately different charges).
+  DOC: 'Documentation Fee',
   AMS: 'Advance Manifest Surcharge',
   ENS: 'Entry Summary Declaration',
   IMO: 'IMO/DG Surcharge',
@@ -3113,7 +3128,11 @@ const rateToRow = r => ({
 // import-contract route, which resolves the snapshot BEFORE opening its own write transaction,
 // same reasoning as saveRates in routes/contracts.js: never hold a transaction open across a
 // network call).
-async function createRateSnapshot(shipmentId, contractId, reason, generatedBy = '') {
+// Extracted from createRateSnapshot (2026-09-06, Rate Reconciliation feature) so the reconcile
+// preview can compare against the SAME live-rate resolution "Update Carrier Costs" is about to
+// freeze, without actually freezing anything — the preview must be a pure read (Discard has to be
+// a true no-op), so this can never itself write a snapshot.
+async function resolveLiveContractRates(shipmentId, contractId) {
   const today = new Date().toISOString().slice(0, 10);
   // Scoped to the shipment's own stored contract_routing_id (which named routing was actually
   // assigned) plus contract-wide routing_id='' rows (e.g. a flat documentation fee that applies
@@ -3126,8 +3145,8 @@ async function createRateSnapshot(shipmentId, contractId, reason, generatedBy = 
   const routingId = routingRow?.contract_routing_id || '';
   // A rate line's own valid_from/valid_to (blank on both ends = inherits the parent contract's
   // already-enforced window) — a mid-contract surcharge that hasn't started yet, or one that's
-  // already lapsed, is excluded from a freshly-generated snapshot. Already-frozen snapshots on
-  // other shipments are unaffected — this only ever gates what goes INTO a new one.
+  // already lapsed, is excluded. Already-frozen snapshots on other shipments are unaffected —
+  // this only ever gates what a NEW snapshot (or a live preview) would include.
   let allRates;
   if (((await getSettings()).contract_source || 'local') === 'remote') {
     try { allRates = (await callContractService("GET", `/internal/contracts/${contractId}`)).rates.map(rateToRow); }
@@ -3135,9 +3154,13 @@ async function createRateSnapshot(shipmentId, contractId, reason, generatedBy = 
   } else {
     allRates = await query("SELECT * FROM contract_rates WHERE contract_id=$1 AND (routing_id=$2 OR routing_id='') ORDER BY sort_order", [contractId, routingId]);
   }
-  const rates = allRates
+  return allRates
     .filter(r => r.routing_id === routingId || !r.routing_id)
     .filter(r => (!r.valid_from || r.valid_from <= today) && (!r.valid_to || r.valid_to >= today));
+}
+
+async function createRateSnapshot(shipmentId, contractId, reason, generatedBy = '') {
+  const rates = await resolveLiveContractRates(shipmentId, contractId);
   if (!rates.length) return null;
   const snapshotId = `RATE-${uid()}`;
   const now = new Date().toISOString();
@@ -3158,7 +3181,7 @@ async function createRateSnapshot(shipmentId, contractId, reason, generatedBy = 
 // Generates shipment_cost_lines from a frozen rate snapshot (not live contract_rates). Same
 // line-generation logic importContractRates always used — container matching, per-container
 // split, SERVICE_CODE_MAP lookup — just sourced from shipment_rate_snapshot_lines.
-async function generateCostLinesFromSnapshot(shipmentId, snapshotId, { splitPerContainer = false, includeSell = false } = {}) {
+async function generateCostLinesFromSnapshot(shipmentId, snapshotId, { splitPerContainer = false, includeSell = false, onlyChargeCodes = null } = {}) {
   const lines = await query("SELECT * FROM shipment_rate_snapshot_lines WHERE snapshot_id=$1", [snapshotId]);
   if (!lines.length) return 0;
   const ctrs = await query("SELECT id, container_number, size, type FROM containers WHERE shipment_id=$1", [shipmentId]);
@@ -3166,6 +3189,10 @@ async function generateCostLinesFromSnapshot(shipmentId, snapshotId, { splitPerC
   let created = 0;
   for (const r of lines) {
     const chargeCode   = SERVICE_CODE_MAP[r.service_code?.toUpperCase()] || 'Other';
+    // onlyChargeCodes (Rate Reconciliation "Ignore & Add Missing Only", 2026-09-06) restricts a
+    // regeneration pass to specific charge codes instead of the whole snapshot — reuses this exact
+    // per-line/per-container math rather than a second, parallel insert implementation.
+    if (onlyChargeCodes && !onlyChargeCodes.has(chargeCode)) continue;
     const exchangeRate = (r.amount > 0 && r.amount_usd > 0) ? Math.round((r.amount_usd / r.amount) * 100000) / 100000 : 1;
     const baseNotes    = [r.service_code, r.description].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(' — ');
     const applicableCtrs = r.container_type
@@ -3212,6 +3239,149 @@ async function importContractRates(shipmentId, opts = {}) {
   const snapshotId = existing ? existing.id : await createRateSnapshot(shipmentId, shipment.contract_id, 'initial');
   if (!snapshotId) return 0;
   return await generateCostLinesFromSnapshot(shipmentId, snapshotId, opts);
+}
+
+// ─── Rate Reconciliation (2026-09-06, direct request off a real live finding on SHP-WKX04E)  ──
+// "Import from Contract" and "Update Carrier Costs" both used to delete-then-regenerate every
+// source='contract' BUY/SELL cost line unconditionally — silently destroying a dispatcher's own
+// manual correction the next time either ran (a real, confirmed gap: PUT .../cost-lines/:id never
+// changed a line's `source`, so a manually-corrected contract line stayed forever indistinguishable
+// from an untouched one). Both actions now open a shared reconcile preview/apply pair instead of
+// acting immediately — see the two routes in routes/shipment-ops.js for the "Import from Contract"
+// (compares against the shipment's own already-issued snapshot) vs. "Update Carrier Costs"
+// (compares against freshly-resolved live contract rates, freezing a NEW snapshot on apply)
+// distinction, a deliberate design decision, not an oversight — they pull from genuinely different
+// rate sources and stay two separate actions.
+
+// Same per-line/per-container total-amount math generateCostLinesFromSnapshot already uses when
+// NOT splitting per container — reused here so the diff table's "contract says" figure is exactly
+// what a real regeneration would produce, not a separate approximation that could silently drift
+// from it. rateRows accepts either raw contract_rates rows or shipment_rate_snapshot_lines rows —
+// both share the same service_code/amount/currency/unit/container_type shape.
+function aggregateRatesByChargeCode(rateRows, containers) {
+  const byCode = new Map(); // chargeCode label -> { amount, currency }
+  for (const r of rateRows) {
+    const chargeCode = SERVICE_CODE_MAP[(r.service_code || '').toUpperCase()] || 'Other';
+    const applicableCtrs = r.container_type
+      ? containers.filter(c => `${c.size || ''}${c.type || ''}`.toUpperCase() === r.container_type.toUpperCase())
+      : containers;
+    if (r.unit === 'per_container' && r.container_type && applicableCtrs.length === 0) continue;
+    const containerCount = r.unit === 'per_container' ? (applicableCtrs.length || 1) : 1;
+    const amount = r.unit === 'per_container' ? r.amount * containerCount : r.amount;
+    const existing = byCode.get(chargeCode);
+    // Two service codes intentionally collapsing to one real-world charge (e.g. THC/OTHC/ORI all
+    // meaning "Origin THC") sum together here, same as they would if generated as separate lines.
+    if (existing) existing.amount += amount;
+    else byCode.set(chargeCode, { amount, currency: r.currency || 'USD' });
+  }
+  return byCode;
+}
+
+// Pure read — computes the diff between what's currently on the shipment's cost lines and what
+// the comparison source (mode 'update' = live contract rates; mode 'import' = the shipment's own
+// already-issued rate snapshot, or live rates if none exists yet) would generate. Never writes
+// anything, so Discard in the frontend modal is a genuine no-op with zero backend call needed
+// beyond this preview. Diff granularity is per charge code (aggregated across containers/BUY
+// lines), not per individual cost line — a per-container-level diff was considered and deferred
+// as more UI than this pass needs; a charge with ANY manually-sourced line among its group is
+// treated as 'manual' for the whole group, matching the coarse per-charge-code decision the
+// Overwrite/Ignore actions themselves operate at.
+async function computeCostLineReconciliation(shipmentId, mode) {
+  const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [shipmentId]);
+  if (!shipment) return { error: "Shipment not found", notFound: true };
+  if (shipment.contract_type !== 'Central' || !shipment.contract_id)
+    return { error: "Shipment is not linked to a Central contract" };
+  const containers = await query("SELECT id, size, type FROM containers WHERE shipment_id=$1", [shipmentId]);
+
+  let contractRateRows;
+  if (mode === 'update') {
+    contractRateRows = await resolveLiveContractRates(shipmentId, shipment.contract_id);
+  } else {
+    const [snap] = await query("SELECT id FROM shipment_rate_snapshots WHERE shipment_id=$1 ORDER BY generated_at DESC LIMIT 1", [shipmentId]);
+    contractRateRows = snap
+      ? await query("SELECT * FROM shipment_rate_snapshot_lines WHERE snapshot_id=$1", [snap.id])
+      : await resolveLiveContractRates(shipmentId, shipment.contract_id); // no snapshot yet — same as a fresh initial import
+  }
+  const contractByCode = aggregateRatesByChargeCode(contractRateRows, containers);
+
+  const currentLines = await query("SELECT charge_code, amount, currency, source FROM shipment_cost_lines WHERE shipment_id=$1 AND type='BUY'", [shipmentId]);
+  const currentByCode = new Map();
+  for (const l of currentLines) {
+    const g = currentByCode.get(l.charge_code) || { amount: 0, currency: l.currency, hasManual: false };
+    g.amount += l.amount;
+    if (l.source === 'manual') g.hasManual = true;
+    currentByCode.set(l.charge_code, g);
+  }
+
+  const rows = [];
+  for (const chargeCode of new Set([...contractByCode.keys(), ...currentByCode.keys()])) {
+    const contract = contractByCode.get(chargeCode) || null;
+    const current = currentByCode.get(chargeCode) || null;
+    let status;
+    if (!current && contract) status = 'new';
+    else if (current && !contract) status = 'removed';
+    else if (current.hasManual) status = 'manual';
+    // Cents-rounded comparison (same reasoning as lib/mappers.js's roundCents) — avoids a false
+    // 'changed' flag from plain float drift on two numbers that are really equal.
+    else if (Math.round(current.amount * 100) !== Math.round(contract.amount * 100)) status = 'changed';
+    else status = 'match';
+    rows.push({
+      chargeCode,
+      currentAmount: current ? current.amount : null, currentCurrency: current ? current.currency : null,
+      currentSource: current ? (current.hasManual ? 'manual' : 'contract') : null,
+      contractAmount: contract ? contract.amount : null, contractCurrency: contract ? contract.currency : null,
+      status,
+    });
+  }
+  rows.sort((a, b) => a.chargeCode.localeCompare(b.chargeCode));
+  return { rows };
+}
+
+// Applies one of the two reconcile outcomes. 'overwrite' deletes every BUY line (and any SELL
+// line that's still source='contract' — a manually-added/edited SELL line with a coincidentally
+// matching charge code is never touched by this, since it was never shown in the diff either) for
+// every charge code the diff didn't call 'new', then regenerates fresh from the snapshot —
+// deliberately reaching 'manual' BUY lines too, since Overwrite is the explicitly risky option a
+// human chose. 'ignore' only inserts the charge codes the diff called 'new', touching nothing that
+// already exists (manual or not) — a plain, never-touched stale contract price is left stale
+// exactly like a genuine manual override would be; there is no in-between "smart refresh" mode.
+async function applyReconciliation(shipmentId, mode, action, { splitPerContainer = false } = {}) {
+  const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [shipmentId]);
+  if (!shipment) throw new Error("Shipment not found");
+  if (shipment.contract_type !== 'Central' || !shipment.contract_id)
+    throw new Error("Shipment is not linked to a Central contract");
+
+  let snapshotId;
+  if (mode === 'update') {
+    snapshotId = await createRateSnapshot(shipmentId, shipment.contract_id, 'carrier_update');
+  } else {
+    const [existing] = await query("SELECT id FROM shipment_rate_snapshots WHERE shipment_id=$1 ORDER BY generated_at DESC LIMIT 1", [shipmentId]);
+    snapshotId = existing ? existing.id : await createRateSnapshot(shipmentId, shipment.contract_id, 'initial');
+  }
+  if (!snapshotId) throw new Error("Contract has no rates to snapshot");
+
+  const { rows } = await computeCostLineReconciliation(shipmentId, mode);
+  const existingSell = await query("SELECT id FROM shipment_cost_lines WHERE shipment_id=$1 AND type='SELL' AND source='contract'", [shipmentId]);
+  const includeSell = existingSell.length > 0;
+
+  if (action === 'overwrite') {
+    const toDelete = rows.filter(r => r.status !== 'new').map(r => r.chargeCode);
+    if (toDelete.length) {
+      const ph = toDelete.map((_, i) => `$${i + 2}`).join(',');
+      await query(`DELETE FROM shipment_cost_lines WHERE shipment_id=$1 AND type='BUY' AND charge_code IN (${ph})`, [shipmentId, ...toDelete]);
+      if (includeSell) {
+        await query(`DELETE FROM shipment_cost_lines WHERE shipment_id=$1 AND type='SELL' AND source='contract' AND charge_code IN (${ph})`, [shipmentId, ...toDelete]);
+      }
+    }
+    const count = await generateCostLinesFromSnapshot(shipmentId, snapshotId, { splitPerContainer, includeSell });
+    return { snapshotId, imported: count };
+  }
+
+  const onlyChargeCodes = new Set(rows.filter(r => r.status === 'new').map(r => r.chargeCode));
+  const count = onlyChargeCodes.size
+    ? await generateCostLinesFromSnapshot(shipmentId, snapshotId, { splitPerContainer, includeSell, onlyChargeCodes })
+    : 0;
+  return { snapshotId, imported: count };
 }
 
 // ─── Auth middleware ──────────────────────────────────────────────────────────
@@ -3299,6 +3469,7 @@ const ctx = {
   SVC_ABBR, LEG_LOC_ABBR, GPS_LOC_TYPE,
   VALID_ROLES, ROLE_RANK_SV, primaryRoleSV, parseUserRoles,
   SERVICE_CODE_MAP, importContractRates, createRateSnapshot, generateCostLinesFromSnapshot,
+  computeCostLineReconciliation, applyReconciliation,
   mapShipment, mapShipmentLeg, mapCostLine, mapService, mapContainer, mapContainerEvent, mapContainerPackage, mapAllocation,
   mapShipmentParty, ADDITIONAL_PARTY_ROLES, mapSideOffice,
   mapRateSnapshot, mapRateSnapshotLine, mapChargeCodeDefinition, mapPackTypeDefinition, mapDutyRateChapter, mapScheduledReport, mapContainerTypeDefinition, mapDocumentTemplate,

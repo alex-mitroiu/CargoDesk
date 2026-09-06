@@ -124,7 +124,7 @@ const CLEAN_NAME = "Test Compliance Clean Co";
     const partyId = addParty.body.id;
 
     console.log("\nRemoving that party auto-re-screens back to CLEAR");
-    const removeParty = await request("DELETE", `/api/shipment-parties/${partyId}`, null, token);
+    const removeParty = await request("DELETE", `/api/shipments/${shipmentId}/parties/${partyId}`, null, token);
     assert("party removed", removeParty.status === 200);
     const afterRemove = await request("GET", `/api/shipments/${shipmentId}/screening`, null, token);
     assert("shipment reverts to CLEAR once the flagged party is removed", afterRemove.body.result === "CLEAR", JSON.stringify(afterRemove.body));

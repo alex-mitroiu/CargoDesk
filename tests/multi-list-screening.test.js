@@ -81,6 +81,26 @@ async function login() {
     const cslSynced = (status.body.cslEntryCount || 0) > 0;
     const ofacSynced = (status.body.ofacEntryCount || 0) > 0;
 
+    // 2026-09-05 audit regression — none of the 3 mutating sanctions routes (sync/sync-csl/
+    // import-csv) had ANY role gate, only a per-user rate limit; any authenticated viewer could
+    // trigger a full destructive replace of the compliance screening dataset. Confirmed live
+    // during the audit itself, expensively: a "safe-looking" test payload sent as a scratch
+    // viewer account turned out to parse as 2 real entries, silently wiping the real OFAC-SDN
+    // table down to those 2 rows. These 3 assertions are safe to run unconditionally — a 403
+    // from the role gate fires before the route handler body (and any real data touch) at all.
+    const rand = Math.random().toString(36).slice(2, 8);
+    const roleTestEmail = `sanctions-role-${rand}@example.com`;
+    await request("POST", "/api/users", { email: roleTestEmail, name: "Sanctions Role Test", roles: ["occ_bk"], password: "RoleFixture!2026Zq" }, token);
+    const roleTestToken = (await request("POST", "/api/auth/login", { email: roleTestEmail, password: "RoleFixture!2026Zq" })).body.token;
+    const syncAsNonAdmin = await request("POST", "/api/sanctions/sync", {}, roleTestToken);
+    assert("non-admin cannot trigger /sync", syncAsNonAdmin.status === 403, JSON.stringify(syncAsNonAdmin.body));
+    const syncCslAsNonAdmin = await request("POST", "/api/sanctions/sync-csl", {}, roleTestToken);
+    assert("non-admin cannot trigger /sync-csl", syncCslAsNonAdmin.status === 403, JSON.stringify(syncCslAsNonAdmin.body));
+    const importAsNonAdmin = await request("POST", "/api/sanctions/import-csv", { csv: "x,y" }, roleTestToken);
+    assert("non-admin cannot trigger /import-csv", importAsNonAdmin.status === 403, JSON.stringify(importAsNonAdmin.body));
+    const roleTestUserId = (await request("GET", "/api/users", null, token)).body.find(u => u.email === roleTestEmail)?.id;
+    if (roleTestUserId) await request("DELETE", `/api/users/${roleTestUserId}`, null, token);
+
     if (!cslSynced) {
       skip("CSL-dependent screening assertions", "no Consolidated Screening List sync has run yet in this environment — trigger one via Application Settings first to exercise this test fully");
     } else {

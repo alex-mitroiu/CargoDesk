@@ -169,6 +169,18 @@ async function login(email = "claudeagent@localhost", password = "TestFixture!20
     assert("canViewFinance flag set", afterFinance.canViewFinance === true);
     assert("allOffices flag cleared", afterFinance.allOffices === false);
 
+    // 2026-09-05 audit regression — GET /api/auth/me never selected can_view_finance at all,
+    // so App.jsx's silent token-restore-on-mount (any page reload) replaced the whole user
+    // object and silently dropped a real Finance-access flag until the next fresh login.
+    // GET /api/users (used above) already had the column selected — that's exactly why this
+    // sat undetected: nothing had exercised /api/auth/me's own return shape for this flag.
+    const financeLogin = await login(email, "AuthTestFixture!2026Zq");
+    assert("finance-flagged scratch user can log in", financeLogin.status === 200, JSON.stringify(financeLogin.body));
+    assert("login response carries canViewFinance", financeLogin.body.user.canViewFinance === true);
+    const meAfterFinance = await request("GET", "/api/auth/me", null, financeLogin.body.token);
+    assert("me returns 200 for the finance-flagged user", meAfterFinance.status === 200);
+    assert("me carries canViewFinance — the exact silent-restore gap that was found and fixed", meAfterFinance.body.canViewFinance === true, JSON.stringify(meAfterFinance.body));
+
     // TKT-JJMD2A — same policy check on PATCH, but only when a password is actually
     // submitted; blank stays "keep existing" and must remain completely unaffected.
     const patchWeak = await request("PATCH", `/api/users/${userId}`, { password: "short" }, token);

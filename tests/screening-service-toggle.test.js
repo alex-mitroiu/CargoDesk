@@ -74,7 +74,7 @@ async function setSource(token, value) {
     assert("screening_source defaults to 'local'", (settings0.body.screening_source || "local") === "local");
 
     console.log("\nToggle route is admin-only and validates its value");
-    const scratchEmail = `screening-toggle-test-${stamp}@localhost`;
+    const scratchEmail = `screening-toggle-test-${stamp}@test.local`;
     const createUser = await request("POST", "/api/users",
       { email: scratchEmail, name: "Screening Toggle Test Viewer", roles: ["viewer"], password: "TestFixture!2026Zq" }, token);
     assert("scratch viewer created", createUser.status === 200, JSON.stringify(createUser.body));

@@ -81,6 +81,16 @@ module.exports = function officesRoutes(app, ctx) {
     if (templateInUse) return err(res, "Office is referenced by a document template — remove or reassign that template first, or deactivate the office instead of deleting");
     const [sideOfficeInUse] = await query("SELECT id FROM shipment_side_offices WHERE office_id=$1 LIMIT 1", [req.params.id]);
     if (sideOfficeInUse) return err(res, "Office is referenced by shipments — deactivate it instead of deleting");
+    // 2026-09-06 audit: shipment_services.office_id and scheduled_reports.office_id both have no
+    // FK at all (unlike shipment_side_offices, which was retrofitted with one in 2026-09-03) — a
+    // delete here previously succeeded silently either way, verified live: a Dedicated Service's
+    // vendor office silently went blank (officeName/officeCode both empty, no error anywhere),
+    // and a scheduled report tied to the deleted office would permanently stop sending with zero
+    // indication why (runScheduledReportsSweep's own office_mail_settings lookup just no-ops).
+    const [serviceInUse] = await query("SELECT id FROM shipment_services WHERE office_id=$1 LIMIT 1", [req.params.id]);
+    if (serviceInUse) return err(res, "Office is referenced by a Dedicated Service — reassign or remove it first, or deactivate the office instead of deleting");
+    const [scheduledReportInUse] = await query("SELECT id FROM scheduled_reports WHERE office_id=$1 LIMIT 1", [req.params.id]);
+    if (scheduledReportInUse) return err(res, "Office is referenced by a scheduled report — reassign or remove it first, or deactivate the office instead of deleting");
     await query("DELETE FROM offices WHERE id=$1", [req.params.id]);
     ok(res, { deleted: req.params.id });
   });

@@ -323,7 +323,7 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
   const ctrIds = ctrs.map(c => c.id).join(",");
   const loadCargoValue = useCallback(() => {
     if (!ctrIds) { setCargoValueUsd(null); return; }
-    Promise.all(ctrIds.split(",").map(id => api.containerPackages.list(id).catch(() => [])))
+    Promise.all(ctrIds.split(",").map(id => api.containerPackages.list(shipment.id, id).catch(() => [])))
       .then(lists => {
         const priced = lists.flat().filter(p => p.unitValueUsd != null);
         setCargoValueUsd(priced.length ? priced.reduce((s, p) => s + p.unitValueUsd * p.quantity, 0) : null);

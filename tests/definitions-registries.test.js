@@ -62,9 +62,17 @@ async function login() {
     const token = await login();
     console.log("  ✓ Logged in");
 
+    // 2026-09-05 audit: charge_code_definitions.code gained a real UNIQUE constraint (was
+    // previously unenforced, a genuine double-charge bug) — this fixture's own hardcoded "ZTEST"
+    // collided with an orphaned row of the exact same value left behind by an earlier interrupted
+    // run of this very test, since duplicates could previously coexist silently. Randomized so a
+    // future interrupted run can never block this or any later run the same way.
+    const rand = Math.random().toString(36).slice(2, 8).toUpperCase();
+    const ccCode = `ZT${rand}`;
+
     console.log("\nCharge Code Definitions — create, list, update, validation, delete");
     const ccCreate = await request("POST", "/api/charge-code-definitions", {
-      code: "ZTEST", label: "Test Handling Fee", trigger: "per_container_split", amount: 15, currency: "usd",
+      code: ccCode, label: "Test Handling Fee", trigger: "per_container_split", amount: 15, currency: "usd",
     }, token);
     assert("charge code created", ccCreate.status === 200, JSON.stringify(ccCreate.body));
     assert("currency uppercased", ccCreate.body.currency === "USD");
@@ -82,7 +90,7 @@ async function login() {
     assert("our definition appears", ccList.body.some(c => c.id === ccId));
 
     const ccUpdate = await request("PUT", `/api/charge-code-definitions/${ccId}`, {
-      code: "ZTEST", label: "Renamed Handling Fee", amount: 20, currency: "eur", isActive: false,
+      code: ccCode, label: "Renamed Handling Fee", amount: 20, currency: "eur", isActive: false,
     }, token);
     assert("charge code update returns 200", ccUpdate.status === 200 && ccUpdate.body.label === "Renamed Handling Fee");
     assert("isActive false round-trips", ccUpdate.body.isActive === false);
@@ -90,6 +98,17 @@ async function login() {
     assert("update 404 for unknown id", ccUpdate404.status === 404);
     const ccUpdateBadAmount = await request("PUT", `/api/charge-code-definitions/${ccId}`, { code: "X", label: "X", amount: 0 }, token);
     assert("update with invalid amount rejected", ccUpdateBadAmount.status >= 400);
+
+    // 2026-09-05 audit regression — charge_code_definitions.code had no uniqueness enforcement
+    // at all despite being the identity a real customer-facing charge is keyed by; two active
+    // per_container_split definitions sharing a code (but not a label) both survived the
+    // frontend's own auto-inject dedup and silently double-charged every per-container split.
+    const ccDup = await request("POST", "/api/charge-code-definitions", { code: ccCode, label: "A different label entirely", amount: 1 }, token);
+    assert("duplicate charge code rejected on create", ccDup.status >= 400 && /already exists/i.test(ccDup.body.error || ""), JSON.stringify(ccDup.body));
+    const ccOther = await request("POST", "/api/charge-code-definitions", { code: `ZT${rand}B`, label: "Another Fee", amount: 1 }, token);
+    const ccRenameDup = await request("PUT", `/api/charge-code-definitions/${ccOther.body.id}`, { code: ccCode, label: "Another Fee", amount: 1 }, token);
+    assert("duplicate charge code rejected on rename", ccRenameDup.status >= 400 && /already exists/i.test(ccRenameDup.body.error || ""), JSON.stringify(ccRenameDup.body));
+    await request("DELETE", `/api/charge-code-definitions/${ccOther.body.id}`, null, token);
 
     const ccDelete = await request("DELETE", `/api/charge-code-definitions/${ccId}`, null, token);
     assert("charge code delete returns 200", ccDelete.status === 200);

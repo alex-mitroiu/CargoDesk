@@ -137,11 +137,11 @@ export const api = {
   containers: {
     list:   (p = {})  => req("GET",    `/containers?${new URLSearchParams(p)}`),
     create: (data)    => req("POST",   "/containers", data),
-    update: (id, data)=> req("PUT",    `/containers/${id}`, data),
-    remove: (id)      => req("DELETE", `/containers/${id}`),
-    events:      (id)       => req("GET",    `/containers/${id}/events`),
-    addEvent:    (id, data) => req("POST",   `/containers/${id}/events`, data),
-    removeEvent: (eventId)  => req("DELETE", `/container-events/${eventId}`),
+    update: (shipmentId, id, data) => req("PUT",    `/shipments/${shipmentId}/containers/${id}`, data),
+    remove: (shipmentId, id)       => req("DELETE", `/shipments/${shipmentId}/containers/${id}`),
+    events:      (shipmentId, id)       => req("GET",    `/shipments/${shipmentId}/containers/${id}/events`),
+    addEvent:    (shipmentId, id, data) => req("POST",   `/shipments/${shipmentId}/containers/${id}/events`, data),
+    removeEvent: (shipmentId, eventId)  => req("DELETE", `/shipments/${shipmentId}/container-events/${eventId}`),
   },
   commodities: {
     list:   (p = {}) => req("GET",    `/commodities?${new URLSearchParams(p)}`),
@@ -338,6 +338,7 @@ export const api = {
     importContract: (shipmentId, d = {})       => req("POST",   `/shipments/${shipmentId}/cost-lines/import-contract`, d),
     resetToContract:    (shipmentId, d = {})   => req("POST",   `/shipments/${shipmentId}/cost-lines/reset-to-contract`, d),
     updateCarrierCosts: (shipmentId, d = {})   => req("POST",   `/shipments/${shipmentId}/cost-lines/update-carrier-costs`, d),
+    reconcilePreview:   (shipmentId, mode)     => req("GET",    `/shipments/${shipmentId}/cost-lines/reconcile-preview?mode=${mode}`),
     rateSnapshots:      (shipmentId)           => req("GET",    `/shipments/${shipmentId}/rate-snapshots`),
     events:         (shipmentId)               => req("GET",    `/shipments/${shipmentId}/cost-line-events`),
     actualize:      (shipmentId, lineId, d)    => req("PATCH",  `/shipments/${shipmentId}/cost-lines/${lineId}/actualize`, d),
@@ -356,21 +357,21 @@ export const api = {
     disputeLine: (lineId, d) => req("POST", `/carrier-invoice-lines/${lineId}/dispute`, d),
   },
   containerPackages: {
-    list:   (containerId)     => req("GET",    `/containers/${containerId}/packages`),
-    create: (containerId, d) => req("POST",   `/containers/${containerId}/packages`, d),
-    update: (id, d)           => req("PUT",    `/container-packages/${id}`, d),
-    remove: (id)              => req("DELETE", `/container-packages/${id}`),
+    list:   (shipmentId, containerId)     => req("GET",    `/shipments/${shipmentId}/containers/${containerId}/packages`),
+    create: (shipmentId, containerId, d) => req("POST",   `/shipments/${shipmentId}/containers/${containerId}/packages`, d),
+    update: (shipmentId, id, d)           => req("PUT",    `/shipments/${shipmentId}/container-packages/${id}`, d),
+    remove: (shipmentId, id)              => req("DELETE", `/shipments/${shipmentId}/container-packages/${id}`),
   },
   shipmentParties: {
     list:   (shipmentId)     => req("GET",    `/shipments/${shipmentId}/parties`),
     create: (shipmentId, d) => req("POST",   `/shipments/${shipmentId}/parties`, d),
-    update: (id, d)          => req("PUT",    `/shipment-parties/${id}`, d),
-    remove: (id)             => req("DELETE", `/shipment-parties/${id}`),
+    update: (shipmentId, id, d) => req("PUT",    `/shipments/${shipmentId}/parties/${id}`, d),
+    remove: (shipmentId, id)    => req("DELETE", `/shipments/${shipmentId}/parties/${id}`),
   },
   sideOffices: {
     list:   (shipmentId)     => req("GET",    `/shipments/${shipmentId}/side-offices`),
     create: (shipmentId, d) => req("POST",   `/shipments/${shipmentId}/side-offices`, d),
-    remove: (id)             => req("DELETE", `/shipment-side-offices/${id}`),
+    remove: (shipmentId, id) => req("DELETE", `/shipments/${shipmentId}/side-offices/${id}`),
   },
   chargeCodes: {
     list:   ()      => req("GET",    "/charge-code-definitions"),
@@ -451,15 +452,15 @@ export const api = {
         req("GET",    `/shipments/${shipmentId}/services/${serviceId}/haulage/${containerId}/waypoints`),
       create: (shipmentId, serviceId, containerId, d) =>
         req("POST",   `/shipments/${shipmentId}/services/${serviceId}/haulage/${containerId}/waypoints`, d),
-      update: (id, d) => req("PUT",    `/haulage-waypoints/${id}`, d),
-      remove: (id)    => req("DELETE", `/haulage-waypoints/${id}`),
+      update: (shipmentId, id, d) => req("PUT",    `/shipments/${shipmentId}/haulage-waypoints/${id}`, d),
+      remove: (shipmentId, id)    => req("DELETE", `/shipments/${shipmentId}/haulage-waypoints/${id}`),
     },
   },
   milestones: {
     list:   (shipmentId)       => req("GET",    `/shipments/${shipmentId}/milestones`),
     init:   (shipmentId, d={}) => req("POST",   `/shipments/${shipmentId}/milestones/init`, d),
-    update: (id, d)            => req("PUT",    `/milestones/${id}`, d),
-    remove: (id)               => req("DELETE", `/milestones/${id}`),
+    update: (shipmentId, id, d) => req("PUT",    `/shipments/${shipmentId}/milestones/${id}`, d),
+    remove: (shipmentId, id)    => req("DELETE", `/shipments/${shipmentId}/milestones/${id}`),
   },
   milestoneTemplates: {
     list:   ()           => req("GET",    "/milestone-templates"),
@@ -586,11 +587,11 @@ export const api = {
     statusOverride:  (shipmentId, docId, data) => req("POST", `/shipments/${shipmentId}/documents/${docId}/status-override`, data),
     overrideHistory: (shipmentId, docId)       => req("GET",  `/shipments/${shipmentId}/documents/${docId}/status-overrides`),
     setInvoiceOwner: (shipmentId, docId, ownerId) => req("PATCH", `/shipments/${shipmentId}/documents/${docId}/invoice-owner`, { ownerId }),
-    patch:    (docId, data)      => req("PATCH",  `/documents/${docId}`, data),
-    remove:   (docId)            => req("DELETE", `/documents/${docId}`),
-    download: async (docId, filename) => {
+    patch:    (shipmentId, docId, data) => req("PATCH",  `/shipments/${shipmentId}/documents/${docId}`, data),
+    remove:   (shipmentId, docId)       => req("DELETE", `/shipments/${shipmentId}/documents/${docId}`),
+    download: async (shipmentId, docId, filename) => {
       const token = localStorage.getItem("cargodesk_token");
-      const res = await fetch(`/api/documents/${docId}/download`, {
+      const res = await fetch(`/api/shipments/${shipmentId}/documents/${docId}/download`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) throw new Error("Download failed");

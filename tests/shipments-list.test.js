@@ -79,7 +79,7 @@ async function login() {
     }
     const firstMilestone = milestones.body[0];
     if (firstMilestone) {
-      await request("PUT", `/api/milestones/${firstMilestone.id}`, { estimatedDate: "2020-01-01" }, token);
+      await request("PUT", `/api/shipments/${shipmentId}/milestones/${firstMilestone.id}`, { estimatedDate: "2020-01-01" }, token);
     }
 
     console.log("\nGET /api/shipments — bare list (no pagination params)");

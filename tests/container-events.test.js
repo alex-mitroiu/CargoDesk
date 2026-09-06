@@ -110,32 +110,32 @@ async function testAddContainerWithSeal(token, shipmentId) {
   return res.body.id;
 }
 
-async function testEventValidation(token, containerId) {
-  console.log("\nPOST /api/containers/:id/events — validation");
+async function testEventValidation(token, shipmentId, containerId) {
+  console.log("\nPOST /api/shipments/:shipmentId/containers/:id/events — validation");
 
-  const badType = await request("POST", `/api/containers/${containerId}/events`, {
+  const badType = await request("POST", `/api/shipments/${shipmentId}/containers/${containerId}/events`, {
     eventType: "Not A Real Type", occurredAt: "2026-09-05",
   }, token);
   assert("400 for invalid eventType", badType.status === 400);
 
-  const noDate = await request("POST", `/api/containers/${containerId}/events`, {
+  const noDate = await request("POST", `/api/shipments/${shipmentId}/containers/${containerId}/events`, {
     eventType: "Gate In",
   }, token);
   assert("400 for missing occurredAt", noDate.status === 400);
 
-  const badContainer = await request("POST", "/api/containers/DOESNOTEXIST-999/events", {
+  const badContainer = await request("POST", `/api/shipments/${shipmentId}/containers/DOESNOTEXIST-999/events`, {
     eventType: "Gate In", occurredAt: "2026-09-05",
   }, token);
   assert("404 for non-existent container", badContainer.status === 404);
 }
 
 async function testEventCrud(token, containerId, shipmentId) {
-  console.log("\nGET/POST/DELETE /api/containers/:id/events — lifecycle");
+  console.log("\nGET/POST/DELETE /api/shipments/:shipmentId/containers/:id/events — lifecycle");
 
-  const empty = await request("GET", `/api/containers/${containerId}/events`, null, token);
+  const empty = await request("GET", `/api/shipments/${shipmentId}/containers/${containerId}/events`, null, token);
   assert("initial list is empty", Array.isArray(empty.body) && empty.body.length === 0);
 
-  const ev1 = await request("POST", `/api/containers/${containerId}/events`, {
+  const ev1 = await request("POST", `/api/shipments/${shipmentId}/containers/${containerId}/events`, {
     eventType: "Empty Pickup", occurredAt: "2026-09-01", location: "Shanghai Depot",
   }, token);
   assert("Empty Pickup returns 201",  ev1.status === 201);
@@ -144,25 +144,25 @@ async function testEventCrud(token, containerId, shipmentId) {
   assert("shipmentId matches",        ev1.body?.shipmentId === shipmentId);
   assert("recordedBy present",        !!ev1.body?.recordedBy);
 
-  const ev2 = await request("POST", `/api/containers/${containerId}/events`, {
+  const ev2 = await request("POST", `/api/shipments/${shipmentId}/containers/${containerId}/events`, {
     eventType: "Gate In", occurredAt: "2026-09-03", location: "CNSHA Terminal",
   }, token);
   assert("Gate In returns 201", ev2.status === 201);
 
-  const list = await request("GET", `/api/containers/${containerId}/events`, null, token);
+  const list = await request("GET", `/api/shipments/${shipmentId}/containers/${containerId}/events`, null, token);
   assert("list returns 200",    list.status === 200);
   assert("has 2 events",        list.body?.length === 2);
   assert("ordered by occurredAt (Empty Pickup first)", list.body[0]?.eventType === "Empty Pickup");
   assert("ordered by occurredAt (Gate In second)",     list.body[1]?.eventType === "Gate In");
 
-  const del = await request("DELETE", `/api/container-events/${ev2.body.id}`, null, token);
+  const del = await request("DELETE", `/api/shipments/${shipmentId}/container-events/${ev2.body.id}`, null, token);
   assert("DELETE returns 200", del.status === 200);
 
-  const afterDel = await request("GET", `/api/containers/${containerId}/events`, null, token);
+  const afterDel = await request("GET", `/api/shipments/${shipmentId}/containers/${containerId}/events`, null, token);
   assert("1 event remains after delete", afterDel.body?.length === 1);
   assert("remaining event is Empty Pickup", afterDel.body?.[0]?.eventType === "Empty Pickup");
 
-  const notFound = await request("DELETE", "/api/container-events/DOESNOTEXIST-999", null, token);
+  const notFound = await request("DELETE", `/api/shipments/${shipmentId}/container-events/DOESNOTEXIST-999`, null, token);
   assert("404 for non-existent event", notFound.status === 404);
 
   return ev1.body.id;
@@ -185,7 +185,7 @@ async function testAuditLogCrossCheck(token, shipmentId) {
 async function testConditionCapture(token, containerId, shipmentId) {
   console.log("\nEquipment condition capture (EIR) — condition_notes/damage_flag/chassis_provider + photo evidence");
 
-  const ev = await request("POST", `/api/containers/${containerId}/events`, {
+  const ev = await request("POST", `/api/shipments/${shipmentId}/containers/${containerId}/events`, {
     eventType: "Discharged", occurredAt: "2026-09-06", location: "USNYC Terminal",
     damageFlag: true, conditionNotes: "Dented corner post, rear right", chassisProvider: "ABC Chassis Pool",
   }, token);
@@ -194,14 +194,14 @@ async function testConditionCapture(token, containerId, shipmentId) {
   assert("conditionNotes round-trips", ev.body?.conditionNotes === "Dented corner post, rear right");
   assert("chassisProvider round-trips", ev.body?.chassisProvider === "ABC Chassis Pool");
 
-  const evClean = await request("POST", `/api/containers/${containerId}/events`, {
+  const evClean = await request("POST", `/api/shipments/${shipmentId}/containers/${containerId}/events`, {
     eventType: "Gate Out", occurredAt: "2026-09-07",
   }, token);
   assert("damageFlag defaults false when omitted", evClean.body?.damageFlag === false, JSON.stringify(evClean.body));
   assert("conditionNotes defaults blank when omitted", evClean.body?.conditionNotes === "");
   assert("chassisProvider defaults blank when omitted", evClean.body?.chassisProvider === "");
 
-  const listBefore = await request("GET", `/api/containers/${containerId}/events`, null, token);
+  const listBefore = await request("GET", `/api/shipments/${shipmentId}/containers/${containerId}/events`, null, token);
   const rowBefore = listBefore.body.find(e => e.id === ev.body.id);
   assert("no photos before any upload", Array.isArray(rowBefore?.photos) && rowBefore.photos.length === 0, JSON.stringify(rowBefore));
 
@@ -212,7 +212,7 @@ async function testConditionCapture(token, containerId, shipmentId) {
   }, token);
   assert("photo upload returns 201", photo.status === 201, JSON.stringify(photo.body));
 
-  const listAfter = await request("GET", `/api/containers/${containerId}/events`, null, token);
+  const listAfter = await request("GET", `/api/shipments/${shipmentId}/containers/${containerId}/events`, null, token);
   const rowAfter = listAfter.body.find(e => e.id === ev.body.id);
   assert("photo now attached to the specific event it documents", rowAfter?.photos?.length === 1, JSON.stringify(rowAfter));
   assert("attached photo has the right filename", rowAfter?.photos?.[0]?.filename === "damage-photo.jpg");
@@ -220,9 +220,9 @@ async function testConditionCapture(token, containerId, shipmentId) {
   const otherRow = listAfter.body.find(e => e.id === evClean.body.id);
   assert("a different event on the same container carries no photos of its own", otherRow?.photos?.length === 0, JSON.stringify(otherRow));
 
-  await request("DELETE", `/api/documents/${photo.body.id}`, null, token);
-  await request("DELETE", `/api/container-events/${ev.body.id}`, null, token);
-  await request("DELETE", `/api/container-events/${evClean.body.id}`, null, token);
+  await request("DELETE", `/api/shipments/${shipmentId}/documents/${photo.body.id}`, null, token);
+  await request("DELETE", `/api/shipments/${shipmentId}/container-events/${ev.body.id}`, null, token);
+  await request("DELETE", `/api/shipments/${shipmentId}/container-events/${evClean.body.id}`, null, token);
 }
 
 // ─── Runner ───────────────────────────────────────────────────────────────────
@@ -234,6 +234,7 @@ async function testConditionCapture(token, containerId, shipmentId) {
   let shipmentId;
   let containerId;
   let remainingEventId;
+  let exitCode = 0;
 
   try {
     const token = await login();
@@ -241,22 +242,26 @@ async function testConditionCapture(token, containerId, shipmentId) {
 
     shipmentId  = await testCreateShipment(token);
     containerId = await testAddContainerWithSeal(token, shipmentId);
-    await testEventValidation(token, containerId);
+    await testEventValidation(token, shipmentId, containerId);
     remainingEventId = await testEventCrud(token, containerId, shipmentId);
     await testAuditLogCrossCheck(token, shipmentId);
     await testConditionCapture(token, containerId, shipmentId);
   } catch (e) {
     console.error("\nFatal:", e.message);
-    process.exit(1);
+    // Recorded, not called here — process.exit() terminates immediately and synchronously,
+    // which would skip the finally block's own cleanup below entirely (confirmed as a real bug
+    // in this exact pattern elsewhere, 2026-09-04 — tests/eadapter.test.js was silently leaking
+    // scratch data on every run because of it).
+    exitCode = 1;
   } finally {
     const t = await login().catch(() => null);
     if (t) {
-      if (remainingEventId) await request("DELETE", `/api/container-events/${remainingEventId}`, null, t);
-      if (containerId)      await request("DELETE", `/api/containers/${containerId}`, null, t);
+      if (remainingEventId) await request("DELETE", `/api/shipments/${shipmentId}/container-events/${remainingEventId}`, null, t);
+      if (containerId)      await request("DELETE", `/api/shipments/${shipmentId}/containers/${containerId}`, null, t);
       if (shipmentId)       await request("DELETE", `/api/shipments/${shipmentId}`, null, t);
     }
   }
 
   console.log(`\n${passed + failed} tests — ${passed} passed, ${failed} failed`);
-  process.exit(failed > 0 ? 1 : 0);
+  process.exit(exitCode || (failed > 0 ? 1 : 0));
 })();

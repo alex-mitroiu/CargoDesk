@@ -74,7 +74,7 @@ async function setSource(token, value) {
     assert("contract_source defaults to 'local'", (settings0.body.contract_source || "local") === "local");
 
     console.log("\nToggle route is admin-only and validates its value");
-    const scratchEmail = `toggle-test-${Date.now()}@localhost`;
+    const scratchEmail = `toggle-test-${Date.now()}@test.local`;
     const createUser = await request("POST", "/api/users",
       { email: scratchEmail, name: "Toggle Test Viewer", roles: ["viewer"], password: "TestFixture!2026Zq" }, token);
     assert("scratch viewer created", createUser.status === 200, JSON.stringify(createUser.body));

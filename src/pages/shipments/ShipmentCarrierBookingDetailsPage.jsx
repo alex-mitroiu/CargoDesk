@@ -99,7 +99,7 @@ const ShipmentCarrierBookingDetailsPage = ({ shipment, onBack, onRefresh }) => {
       // Pack-level DG flags (a pallet/carton can be flagged DG even when its container isn't)
       // also feed the outbound booking-request declaration (routes/edi.js) — fetched here too
       // so this awareness chip matches what's actually transmitted on Send.
-      Promise.all(c.map(ctr => api.containerPackages.list(ctr.id).catch(() => [])))
+      Promise.all(c.map(ctr => api.containerPackages.list(shipment.id, ctr.id).catch(() => [])))
         .then(lists => setPackDgContainerIds(new Set(
           c.filter((ctr, i) => lists[i].some(pk => pk.isDg)).map(ctr => ctr.id)
         )));
