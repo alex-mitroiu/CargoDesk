@@ -1,21 +1,22 @@
 /**
  * Schedule Leg-Removal Cascade Suite
  *
- * Covers three linked bugs found live on a real shipment (SHP-JFULNY) while a schedule
- * was already assigned to it:
+ * Originally covered three linked bugs found live on a real shipment (SHP-JFULNY) under the
+ * OLD immediate-commit model for the Contracts & Schedules page: a freshly-added leg wrongly
+ * locked while a schedule was assigned, removing that unconfigured leg wiping the entire real
+ * schedule by mistake, and — once genuinely unlinked — a stale header and an ungated Carrier
+ * Booking page.
  *
- *   1. A freshly-added leg ("+ Add leg") used to be immediately locked/uneditable —
- *      it defaults to legType SEA, which got caught by the "SEA legs are locked while
- *      a schedule exists" rule even though it was never actually part of that schedule,
- *      so its type could never be changed to Pick-up/Delivery.
- *   2. Removing that stuck, unconfigured leg cascaded into wiping the ENTIRE real
- *      schedule — the cascade compared raw SEA-leg COUNTS before/after, which can't
- *      tell a schedule-linked leg (real vessel/voyage data) from a brand new blank one.
- *   3. Once a schedule really is unlinked, the shipment header kept showing the stale
- *      vessel/ETD/routing forever (syncShipmentFromLegs bailed out early when 0 legs
- *      remained instead of clearing what it had written), and Carrier Booking stayed
- *      fully open even with no schedule attached (its gate only ever checked "does a
- *      booking row exist," never re-checked afterward).
+ * The page has since moved to a staged-draft model (a "💾 Save" button that validates before
+ * committing; navigating away with an invalid draft is blocked, a valid one auto-saves) —
+ * the original bug 1's own premise (a "locked" leg concept) is gone entirely, every leg is
+ * always directly editable now, so that regression can't recur and isn't retested here. This
+ * suite is rewritten around the equivalent NEW-model behaviors using the same real-world
+ * fixture: an unrelated new leg never touches the real scheduled leg (now decided by
+ * ShipmentSchedulesPage.jsx's handleDraftLegsChange, which still checks vessel/voyage
+ * presence, just locally rather than via a lock flag), and removing the schedule's own leg
+ * stages its removal — nothing reaches the server until Save, after which the header/vessel
+ * clear and Carrier Booking becomes correctly gated.
  *
  * Prerequisites:
  *   - npm run dev (Express :3001, Vite :5173)
@@ -86,7 +87,7 @@ describe("Schedule Leg-Removal Cascade Suite", () => {
     cy.visit("/");
   });
 
-  it("bug 1 — a freshly-added leg stays editable even while a schedule is already assigned", () => {
+  it("a freshly-added leg is always directly editable, and removing it never touches the real scheduled leg", () => {
     // Hash-only navigation, not a second cy.visit() — a genuine reload re-mounts the whole
     // app and has been observed losing the license-accepted flag from the cached session
     // (the auth token survives, so this isn't a full storage wipe — just this one flag),
@@ -97,25 +98,18 @@ describe("Schedule Leg-Removal Cascade Suite", () => {
     // The shipment header/breadcrumb (matched above) can resolve before the Route Legs
     // table's own separate fetch finishes — wait for the existing real leg to actually
     // render before interacting, or "+ Add leg" can race an empty table.
-    cy.get('[id^="leg-row-"]', { timeout: 10000 }).should("have.length.at.least", 1);
+    cy.get('[id^="leg-row-"]', { timeout: 10000 }).should("have.length", 1);
     cy.contains("button", "+ Add leg").click();
-    // The new row must render a real, enabled Leg Type <select> — not a locked read-only
-    // row (which would render plain text with no <select> at all).
+    // No "locked" concept exists on this page anymore — every leg, old or new, always
+    // renders a real, enabled Leg Type <select>, never a read-only row.
     cy.get('[id^="leg-row-"]', { timeout: 8000 }).should("have.length", 2);
     cy.get('[id^="leg-row-"]').last().find("select").first().should("be.enabled");
-    // And it must actually be changeable to Pick-up/Delivery, not just present.
     cy.get('[id^="leg-row-"]').last().find("select").first().select("Pick-up");
     cy.get('[id^="leg-row-"]').last().find("select").first().should("have.value", "Pick-up");
-  });
 
-  it("bug 2 — removing that unconfigured new leg does NOT wipe the real schedule/vessel", () => {
-    cy.window().then(win => { win.location.hash = `shipments/${shipmentId}/schedules`; });
-    cy.contains(shipmentId, { timeout: 15000 }).should("be.visible");
-    cy.get('[id^="leg-row-"]', { timeout: 10000 }).should("have.length", 2);
-    // Select the freshly-added (still-blank, no vessel/voyage) leg and remove it — NOT
-    // necessarily the last row: bug 1's own test converted this leg to Pick-up type, and
-    // LegsTable auto-reorders Pick-up-first/SEA-middle/Delivery-last on every save (v0.29.0),
-    // so the blank Pick-up leg now sorts BEFORE the real DEMO CADENZA SEA leg, not after it.
+    // Remove that same blank leg again — NOT necessarily the last row: LegsTable
+    // auto-reorders Pick-up-first/SEA-middle/Delivery-last on every save (v0.29.0), so the
+    // blank Pick-up leg now sorts BEFORE the real DEMO CADENZA SEA leg, not after it.
     cy.get('[id^="leg-row-"]').then($rows => {
       const blank = [...$rows].find(el => !el.textContent.includes("DEMO CADENZA"));
       cy.wrap(blank).click();
@@ -129,15 +123,14 @@ describe("Schedule Leg-Removal Cascade Suite", () => {
     // exact click) via CDP. Forcing past Cypress's own pre-click actionability check here,
     // rather than continuing to guess at an unreproducible root cause.
     cy.contains("button", "Remove leg").click({ force: true });
-    // Must NOT warn about cascading — this leg was never actually part of the schedule.
-    cy.contains("This is linked to an assigned schedule").should("not.exist");
     // Scoped to the modal itself, anchored on its own title — unscoped, "Remove" would also
     // substring-match the page's own "Remove leg" button (same pattern already established
     // elsewhere in this suite for this class of collision).
     cy.contains("h2", "Remove leg?", { timeout: 8000 }).parent().parent().within(() => {
       cy.contains("button", "Remove").click();
     });
-    // The real schedule leg + vessel data must still be there afterward.
+    // Removing an unrelated blank leg is a purely local, staged edit — the real leg is back
+    // to exactly its original state, so nothing was ever committed to the server for it.
     cy.contains("DEMO CADENZA", { timeout: 8000 }).should("exist");
     cy.get('[id^="leg-row-"]').should("have.length", 1);
     api("GET", `/shipments/${shipmentId}`).then(res => {
@@ -149,19 +142,27 @@ describe("Schedule Leg-Removal Cascade Suite", () => {
     });
   });
 
-  it("bug 3 — removing the REAL schedule leg still cascades correctly, clears the header, and blocks Carrier Booking", () => {
+  it("removing the REAL schedule leg stages its removal — Save then clears the header, schedule, and gates Carrier Booking", () => {
     cy.window().then(win => { win.location.hash = `shipments/${shipmentId}/schedules`; });
     cy.contains(shipmentId, { timeout: 15000 }).should("be.visible");
     cy.contains('[id^="leg-row-"]', "DEMO CADENZA", { timeout: 10000 }).click();
-    // {force: true} — see the identical comment on bug 2's own "Remove leg" click above.
+    // {force: true} — see the identical comment on the previous test's own "Remove leg" click.
     cy.contains("button", "Remove leg").click({ force: true });
-    // This one really is the schedule's own leg — the cascade warning SHOULD show.
-    cy.contains("This is linked to an assigned schedule").should("be.visible");
-    // Scoped to the modal itself — see the identical comment in bug 2 above.
     cy.contains("h2", "Remove leg?", { timeout: 8000 }).parent().parent().within(() => {
       cy.contains("button", "Remove").click();
     });
     cy.contains("No legs yet", { timeout: 8000 }).should("be.visible");
+    // Staged only — nothing has reached the server yet, the dirty bar is up.
+    cy.get("#shpsched-dirty-bar", { timeout: 8000 }).should("be.visible");
+    api("GET", `/shipments/${shipmentId}`).then(res => {
+      expect(res.body.vessel).to.eq("DEMO CADENZA");
+    });
+    api("GET", `/shipments/${shipmentId}/schedules`).then(res => {
+      expect(res.body).to.have.length(1);
+    });
+
+    cy.contains("button", "💾 Save").click();
+    cy.contains("Saved", { timeout: 8000 }).should("be.visible");
     // Header no longer shows the stale vessel/voyage.
     cy.contains("DEMO CADENZA").should("not.exist");
 
@@ -169,6 +170,8 @@ describe("Schedule Leg-Removal Cascade Suite", () => {
       expect(res.body.vessel).to.eq("");
       expect(res.body.voyage).to.eq("");
       expect(res.body.etd).to.eq("");
+      expect(res.body.pol).to.eq("");
+      expect(res.body.pod).to.eq("");
     });
     api("GET", `/shipments/${shipmentId}/schedules`).then(res => {
       expect(res.body).to.have.length(0);

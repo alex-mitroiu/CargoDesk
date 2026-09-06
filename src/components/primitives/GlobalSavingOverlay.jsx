@@ -12,8 +12,9 @@ if (!document.getElementById("cd-spinner-style")) {
 
 const GlobalSavingOverlay = () => {
   const [active, setActive] = useState(false);
+  const [message, setMessage] = useState("Processing…");
 
-  useEffect(() => subscribeSaving(setActive), []);
+  useEffect(() => subscribeSaving((isActive, msg) => { setActive(isActive); setMessage(msg); }), []);
 
   if (!active) return null;
 
@@ -37,7 +38,7 @@ const GlobalSavingOverlay = () => {
           animation: "cd-spin .7s linear infinite",
         }} />
         <span style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
-          Processing…
+          {message}
         </span>
       </div>
     </div>

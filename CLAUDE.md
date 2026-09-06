@@ -171,6 +171,11 @@ src/
                                    persistent ShipmentHeaderBar to refetch its Cargo Value rollup
                                    right after a pack item is priced/repriced/deleted, since the
                                    header never remounts on navigation — Epic TKT-P3ASH1
+  legsScheduleBus.js               Tiny pub-sub (same shape) — ShipmentSchedulesPage's staged-
+                                   draft Save commit signals ShipmentHeaderBar/RouteSummaryBar
+                                   (both self-fetch legs/schedules once per shipment.id) to
+                                   refetch immediately, since neither remounts on a same-page
+                                   commit — 2026-09-06 fix, found live on SHP-8C7JZW
   shipmentServicePages.js          SERVICE_TYPES catalog + per-service dedicated-page nav/routing
                                    config (side x type page keys/hashes/labels) — Epic TKT-TBS7QD
   version.js                       VERSION, CODENAME, CHANGELOG
@@ -201,9 +206,22 @@ src/
                                    (stacked VGM/CY/Free-Time badges, v0.30.0) and a dynamic 📋
                                    lifecycle-events tooltip.
     ShipmentPartiesPage.jsx        "Parties & Offices" nav page.
-    ShipmentSchedulesPage.jsx      "Contracts & Schedules" nav page — Route Legs (LegsTable), contract
-                                   attach/change, Space Configuration panel (Central + linked
-                                   allocationId only), Schedule History (button + Modal, v0.30.0).
+    ShipmentSchedulesPage.jsx      "Contracts & Schedules" nav page — staged-draft model (PoC,
+                                   2026-09-06): Route Legs (LegsTable in its draft mode, not live-
+                                   CRUD — every edit/Add Sailing/Remove Leg is local-only) plus a
+                                   "💾 Save" button that validates (POL/POD/carrier per sea leg,
+                                   contract-vs-route match) before an id-based diff commits
+                                   everything in one pass; failures open a bulleted error modal
+                                   with Discard as the only way past besides fixing them.
+                                   navigationGuard.js blocks leaving with an invalid draft and
+                                   auto-saves a valid one. Locking (read-only schedule-linked
+                                   legs) is gone entirely — legs are always directly editable,
+                                   Save's validation is the safety net instead. Change Contract
+                                   stays its own immediate-commit modal, disabled while dirty.
+                                   Removing any leg of a multi-leg (TSP) sailing cascades to
+                                   remove the whole staged sailing (handleDraftLegsChange).
+                                   Contract attach/change, Space Configuration panel (Central +
+                                   linked allocationId only), Schedule History (button + Modal).
     ShipmentMilestonesPage.jsx     "Milestones" nav page — MilestonePanel stepper.
     ShipmentAccountingCostsPage.jsx / ShipmentAccountingInvoicesPage.jsx / ShipmentAccountingGpPage.jsx
                                    "Accounting" nested nav (Cost Entry / Invoice Entry / GP Overview).

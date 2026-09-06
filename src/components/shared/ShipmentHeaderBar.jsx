@@ -13,6 +13,7 @@ import { AnyIcon, IconClipboard, IconLink, IconRefresh, IconPencil, IconWarning,
   IconMail, IconMailUnread, IconLock, IconGroup, IconArrowUp, IconArrowDown } from "../primitives/Icon";
 import { fmtCurr } from "../../utils/invoiceGenerator";
 import { onCargoValueChanged } from "../../cargoValueBus";
+import { onLegsScheduleChanged } from "../../legsScheduleBus";
 import { deriveLoopCode } from "../../utils/scheduleLoop";
 import LoopRouteModal from "./LoopRouteModal";
 
@@ -244,21 +245,28 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
     try { await onRefresh?.(); } catch {} finally { setTimeout(() => setRefreshing(false), 600); }
   };
 
-  useEffect(() => {
-    let live = true;
-    api.schedules.list(shipment.id).then(rows => { if (live) setSchedules(rows || []); }).catch(() => {});
-    return () => { live = false; };
+  // Extracted into callbacks (not just an inline effect) so the legsScheduleBus listener below
+  // can re-trigger the same fetch on demand — same shape as loadCargoValue/cargoValueBus.
+  const loadSchedules = useCallback(() => {
+    api.schedules.list(shipment.id).then(rows => setSchedules(rows || [])).catch(() => {});
   }, [shipment.id]);
+  const loadLegs = useCallback(() => {
+    api.legs.list(shipment.id).then(rows => setLegs(rows || [])).catch(() => {});
+  }, [shipment.id]);
+
+  useEffect(() => { loadSchedules(); }, [loadSchedules]);
+  useEffect(() => { loadLegs(); }, [loadLegs]);
+  // Without this, a schedule/leg removed elsewhere on the page (Contracts & Schedules' own
+  // "Remove leg" cascade) left this header showing the stale routing pill, loop code, and
+  // POL/POD forever — this component self-fetches legs/schedules once per shipment.id and had
+  // no way to notice a later mutation short of a full remount. Found live: SHP-8C7JZW.
+  useEffect(() => onLegsScheduleChanged(id => {
+    if (id === shipment.id) { loadSchedules(); loadLegs(); }
+  }), [shipment.id, loadSchedules, loadLegs]);
 
   useEffect(() => {
     let live = true;
     api.screening.get(shipment.id).then(s => { if (live) setScreening(s); }).catch(() => {});
-    return () => { live = false; };
-  }, [shipment.id]);
-
-  useEffect(() => {
-    let live = true;
-    api.legs.list(shipment.id).then(rows => { if (live) setLegs(rows || []); }).catch(() => {});
     return () => { live = false; };
   }, [shipment.id]);
 

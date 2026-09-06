@@ -585,11 +585,17 @@ const LEG_COLS = [
   { key: "contractRef",  label: "Contract No.",  w: 88  },
 ];
 
-const cellInput = {
+// A function, not a plain object — T.mono/T.text are read live on every call. A frozen object
+// literal here would capture whatever T held at module-import time (dark theme's own light
+// text color) and never update again on a later theme switch, since Object.assign(T, ...)
+// mutates the shared T object in place rather than replacing it — the exact same bug already
+// found and fixed for LEG_TYPE_COLOR in v0.55.1 (reported live: Route Legs' editable selects/
+// inputs render in a barely-readable light color on a white background in light theme).
+const cellInput = () => ({
   background: "transparent", border: "none", outline: "none",
   fontFamily: T.mono, fontSize: 12, color: T.text, width: "100%",
   padding: 0,
-};
+});
 
 const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inheritedContractRef, loopCode = "", showContractCols = true, locked = false, onUpdateSchedule = null }) => {
   const [d, setD] = useState(leg);
@@ -724,7 +730,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
           const lt = e.target.value;
           const newD = { ...d, legType: lt, movementType: LEG_TYPE_DEFAULT_MT[lt] || d.movementType };
           setD(newD); onSave(newD);
-        }} style={{ ...cellInput, cursor: "pointer", color: legTypeColor(d.legType) || T.textMuted, fontWeight: 700 }}>
+        }} style={{ ...cellInput(), cursor: "pointer", color: legTypeColor(d.legType) || T.textMuted, fontWeight: 700 }}>
           {LEG_TYPE_OPTIONS.map(m => <option key={m} value={m}>{m}</option>)}
         </select>
       </div>
@@ -735,7 +741,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
         {(d.legType || "SEA") === "SEA"
           ? <span style={{ fontFamily: T.body, fontSize: 12, color: T.border }}>—</span>
           : <select value={d.movementType || "Carrier's Haulage"} onChange={e => set("movementType")(e.target.value)} onBlur={flush}
-              style={{ ...cellInput, cursor: "pointer" }}>
+              style={{ ...cellInput(), cursor: "pointer" }}>
               {MOVEMENT_TYPE_OPTIONS.map(m => <option key={m} value={m}>{m}</option>)}
             </select>
         }
@@ -748,10 +754,10 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
           <div style={{ display: "flex", gap: 4, padding: "0 8px 0 0" }}>
             <input type="number" step="any" min={-90} max={90} placeholder="Lat" value={d.polLatitude ?? ""}
               onChange={e => setD(p => ({ ...p, polLatitude: e.target.value === "" ? null : e.target.value }))}
-              onBlur={flush} style={{ ...cellInput, fontFamily: T.mono, width: "50%" }} />
+              onBlur={flush} style={{ ...cellInput(), fontFamily: T.mono, width: "50%" }} />
             <input type="number" step="any" min={-180} max={180} placeholder="Lng" value={d.polLongitude ?? ""}
               onChange={e => setD(p => ({ ...p, polLongitude: e.target.value === "" ? null : e.target.value }))}
-              onBlur={flush} style={{ ...cellInput, fontFamily: T.mono, width: "50%" }} />
+              onBlur={flush} style={{ ...cellInput(), fontFamily: T.mono, width: "50%" }} />
           </div>
         ) : (
           <PortCombobox
@@ -776,7 +782,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
               : { ...d, polLocType: lt, polLatitude: null, polLongitude: null };
             setD(newD); onSave(newD);
           }}
-          style={{ ...cellInput, cursor: "pointer" }}>
+          style={{ ...cellInput(), cursor: "pointer" }}>
           {legLocTypeOptions(d.legType).map(t => <option key={t} value={t}>{t}</option>)}
         </select>
       </div>
@@ -794,7 +800,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
         )}
         <input type="date" value={d.etd || ""} max={d.eta || undefined}
           onChange={e => setD(p => ({ ...p, etd: e.target.value || null, etdSource: "" }))}
-          onBlur={flush} style={cellInput} />
+          onBlur={flush} style={cellInput()} />
       </div>
 
       {/* To (POD) — same GPS-mode swap as From (POL) above */}
@@ -803,10 +809,10 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
           <div style={{ display: "flex", gap: 4, padding: "0 8px 0 0" }}>
             <input type="number" step="any" min={-90} max={90} placeholder="Lat" value={d.podLatitude ?? ""}
               onChange={e => setD(p => ({ ...p, podLatitude: e.target.value === "" ? null : e.target.value }))}
-              onBlur={flush} style={{ ...cellInput, fontFamily: T.mono, width: "50%" }} />
+              onBlur={flush} style={{ ...cellInput(), fontFamily: T.mono, width: "50%" }} />
             <input type="number" step="any" min={-180} max={180} placeholder="Lng" value={d.podLongitude ?? ""}
               onChange={e => setD(p => ({ ...p, podLongitude: e.target.value === "" ? null : e.target.value }))}
-              onBlur={flush} style={{ ...cellInput, fontFamily: T.mono, width: "50%" }} />
+              onBlur={flush} style={{ ...cellInput(), fontFamily: T.mono, width: "50%" }} />
           </div>
         ) : (
           <PortCombobox
@@ -829,7 +835,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
               : { ...d, podLocType: lt, podLatitude: null, podLongitude: null };
             setD(newD); onSave(newD);
           }}
-          style={{ ...cellInput, cursor: "pointer" }}>
+          style={{ ...cellInput(), cursor: "pointer" }}>
           {legLocTypeOptions(d.legType).map(t => <option key={t} value={t}>{t}</option>)}
         </select>
       </div>
@@ -845,7 +851,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
           )}
           <input type="date" value={d.eta || ""} min={d.etd || undefined}
             onChange={e => setD(p => ({ ...p, eta: e.target.value || null, etaSource: "" }))}
-            onBlur={flush} style={cellInput} />
+            onBlur={flush} style={cellInput()} />
         </div>
         {suggEta && (
           <button type="button" title={`Based on ${suggEta.lane} average transit (${suggEta.days}d)`}
@@ -881,7 +887,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
         {(d.legType || "SEA") === "SEA"
           ? <span style={{ fontFamily: T.body, fontSize: 12, color: T.border }}>—</span>
           : <select value={d.movementBy || ""} onChange={e => set("movementBy")(e.target.value)} onBlur={flush}
-              style={{ ...cellInput, cursor: "pointer" }}>
+              style={{ ...cellInput(), cursor: "pointer" }}>
               {MOVEMENT_BY_OPTIONS.map(b => <option key={b} value={b}>{b || "—"}</option>)}
             </select>
         }
@@ -896,7 +902,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
             {vesselDisabled
               ? <span style={{ fontFamily: T.body, fontSize: 12, color: T.border }}>—</span>
               : <input value={d.vessel} onChange={e => set("vessel")(e.target.value)}
-                  onBlur={flush} placeholder="Name…" style={{ ...cellInput, fontFamily: T.body }} />}
+                  onBlur={flush} placeholder="Name…" style={{ ...cellInput(), fontFamily: T.body }} />}
           </div>
         );
       })()}
@@ -910,7 +916,7 @@ const LegRow = ({ leg, onSave, canEdit, widths, inheritedContractType, inherited
             {voyageDisabled
               ? <span style={{ fontFamily: T.body, fontSize: 12, color: T.border }}>—</span>
               : <input value={d.voyage} onChange={e => set("voyage")(e.target.value)}
-                  onBlur={flush} placeholder="423E" style={cellInput} />}
+                  onBlur={flush} placeholder="423E" style={cellInput()} />}
           </div>
         );
       })()}
@@ -960,7 +966,8 @@ const LEG_TYPE_RANK = { "Pick-up": 0, "Delivery": 2 };
 const orderLegs = legsArr => [...legsArr].sort((a, b) =>
   (LEG_TYPE_RANK[a.legType] ?? 1) - (LEG_TYPE_RANK[b.legType] ?? 1));
 
-export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChange, inheritedCarrier, inheritedContractType, inheritedContractRef, loopCode = "", canEdit, showContractCols = true, extraAction = null, lockedSeaLegs = false, onUpdateSchedule = null }) => {
+export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChange, inheritedCarrier, inheritedContractType, inheritedContractRef, loopCode = "", canEdit, showContractCols = true, extraAction = null, lockedSeaLegs = false, onUpdateSchedule = null,
+  draftBannerText = "Draft — legs will be saved when you create the shipment.", hideDraftBanner = false }) => {
   const [legs,          setLegs]          = useState([]);
   const [saving,        setSaving]        = useState(null);
   const [selectedLegId, setSelectedLegId] = useState(null);
@@ -1060,10 +1067,10 @@ export const LegsTable = ({ shipmentId, draftLegs, onDraftLegsChange, onLegsChan
 
   return (
     <div style={{ border: `1px solid ${T.border}`, borderRadius: 8, overflow: "hidden" }}>
-      {isDraft && (
+      {isDraft && !hideDraftBanner && (
         <div style={{ padding: "6px 14px", background: T.info + "12", borderBottom: `1px solid ${T.info}33`,
           fontFamily: T.body, fontSize: 11, color: T.info }}>
-          ℹ Draft — legs will be saved when you create the shipment.
+          ℹ {draftBannerText}
         </div>
       )}
       <div style={{ overflowX: "auto" }}>
@@ -2202,7 +2209,19 @@ const ShipmentForm = ({ init = {}, onSave, onBack, onDirtyChange, draftLegs, onD
               toast.success("Sailing applied");
             } catch (e) { toast.error(e.message); }
           } else {
+            // The create-mode counterpart of the SHP-WKX04E bug just above: picking a sailing
+            // used to only stage it as a chip (setSelectedSailing) — the actual SEA leg was left
+            // completely untouched until the user separately clicked "↳ Apply sailing to SEA
+            // leg" below. Since Create Shipment builds shipment_legs straight from draftLegs
+            // (App.jsx's onSave), a shipment created without that extra click got a real
+            // shipment_schedules row (schedules.save always ran regardless) but a SEA leg that
+            // never reflected it — found live on SHP-8C7JZW: Schedule History showed the correct
+            // sailing, Route Legs showed stale/default dates with no vessel at all. Apply
+            // immediately, matching how edit mode's own "Add Sailing" already needs no separate
+            // step. The button stays as an explicit re-apply/reset affordance, now redundant for
+            // the normal path rather than the only way to make picking a sailing actually count.
             setSelectedSailing(sailing);
+            applySailingToLegs(sailing);
           }
         };
 

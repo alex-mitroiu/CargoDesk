@@ -70,8 +70,19 @@ describe("Add Sailing — Catalog-First Search Suite", () => {
         cy.contains("CATALOG HAPPY PATH", { timeout: 15000 }).should("be.visible");
         cy.contains("Catalog", { timeout: 5000 }).should("be.visible");
 
+        // Picking a sailing only stages it now (Contracts & Schedules' staged-draft model) —
+        // it must be explicitly Saved before it reaches the server.
         cy.contains("button", /Select →|Add →|✓ Active/).first().click();
-        cy.contains(/Sailing.*saved|applied/, { timeout: 15000 }).should("exist");
+        cy.contains(/Sailing staged/, { timeout: 15000 }).should("exist");
+        cy.contains("button", "💾 Save").click();
+        cy.contains("Saved", { timeout: 15000 }).should("be.visible");
+
+        cy.then(() => api("GET", `/shipments/${shipmentId}/legs`)).then(res => {
+          const seaLeg = res.body.find(l => l.legType === "SEA");
+          expect(seaLeg, "a SEA leg was created from the picked sailing").to.exist;
+          expect(seaLeg.vessel).to.eq("CATALOG HAPPY PATH");
+          expect(seaLeg.voyage).to.eq("CHP1");
+        });
       });
     });
 
@@ -94,8 +105,12 @@ describe("Add Sailing — Catalog-First Search Suite", () => {
         cy.contains("TSP · 2 legs").should("be.visible");
         cy.contains("Will create 2 sea legs", { timeout: 5000 }).should("be.visible");
 
+        // Picking a sailing only stages it now (Contracts & Schedules' staged-draft model) —
+        // it must be explicitly Saved before either SEA leg reaches the server.
         cy.contains("button", /Select →|Add →|✓ Active/).first().click();
-        cy.contains(/Sailing.*saved|applied/, { timeout: 15000 }).should("exist");
+        cy.contains(/TSP sailing staged/, { timeout: 15000 }).should("exist");
+        cy.contains("button", "💾 Save").click();
+        cy.contains("Saved", { timeout: 15000 }).should("be.visible");
 
         cy.then(() => api("GET", `/shipments/${shipmentId}/legs`)).then(res => {
           const seaLegs = res.body.filter(l => l.legType === "SEA");

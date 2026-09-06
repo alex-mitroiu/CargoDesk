@@ -73,12 +73,20 @@ describe("Schedules Happy Path Suite", () => {
 
     cy.contains("button", "Add →", { timeout: 10000 }).first().click();
 
-    // "Add Sailing" stays in the toolbar (a second click now offers Replace instead of a
-    // straight assign) — assert on the real signal of success instead: the toast, and the
-    // leg row now carrying a real vessel/voyage from the sailing.
-    cy.contains("Sailing applied to SEA leg", { timeout: 8000 }).should("be.visible");
+    // Picking a sailing only stages it now (Contracts & Schedules' staged-draft model) — the
+    // leg row updates immediately client-side, but nothing reaches the server until Save.
+    cy.contains("Sailing staged — click Save to apply", { timeout: 8000 }).should("be.visible");
     cy.get("#shpsched-legs-section").should("not.contain.text", "No legs yet");
     cy.get('[id^="leg-row-"]').first().should("contain.text", "CNSHA");
+    cy.get("#shpsched-dirty-bar", { timeout: 8000 }).should("be.visible");
+
+    cy.contains("button", "💾 Save").click();
+    cy.contains("Saved", { timeout: 8000 }).should("be.visible");
+    cy.get("#shpsched-dirty-bar").should("not.exist");
+    cy.then(() => api("GET", `/shipments/${shipmentId}/legs`)).then(res => {
+      const seaLeg = res.body.find(l => l.legType === "SEA");
+      expect(seaLeg.vessel, "the staged sailing actually persisted").to.not.eq("");
+    });
   });
 
   it("assigns a SPOT contract reference to the schedule", () => {

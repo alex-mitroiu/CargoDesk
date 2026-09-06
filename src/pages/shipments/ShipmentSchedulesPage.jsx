@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { T } from "../../tokens";
 import { useAuth } from "../../AuthContext";
 import { api } from "../../api";
@@ -6,18 +6,18 @@ import { toast } from "../../toast";
 import Btn from "../../components/primitives/Btn";
 import Spinner from "../../components/primitives/Spinner";
 import { Modal } from "../../components/primitives/Modal";
-import { Inp } from "../../components/primitives/Form";
-import DatePicker from "../../components/primitives/DatePicker";
 import SailingPickerModal from "../../components/shared/SailingPickerModal";
 import ContractAssignModal from "../../components/shared/ContractAssignModal";
 import CustomerCombobox from "../../components/shared/CustomerCombobox";
 import { ScheduleHistoryPanel, PendingRevalidationModal } from "./ShipmentDetailPage";
-import { LegsTable } from "./ShipmentFormPage";
+import { LegsTable, deriveHaulageNeeds } from "./ShipmentFormPage";
 import { IconWarning, IconPackage, IconAnchor } from "../../components/primitives/Icon";
-import { applySailingToLegs as applySailingToLegsShared } from "../../utils/applySailingToLegs";
 import useContractMismatch from "../../hooks/useContractMismatch";
 import ConsumptionBar from "../../components/shared/ConsumptionBar";
 import { deriveLoopCode } from "../../utils/scheduleLoop";
+import { emitLegsScheduleChanged } from "../../legsScheduleBus";
+import useSaving from "../../hooks/useSaving";
+import { setNavigationGuard, clearNavigationGuard } from "../../navigationGuard";
 
 // ─── Shipment Schedules Page ──────────────────────────────────────────────
 // Dedicated sub-page for carrier schedule/booking management, promoted out
@@ -26,6 +26,25 @@ import { deriveLoopCode } from "../../utils/scheduleLoop";
 // "Add Sailing" lives here (next to Route Legs, the thing it actually updates)
 // rather than inside a separate Sailings box — the search/apply mechanics used
 // to live in SchedulesPanel, which is now the read-only ScheduleHistoryPanel.
+//
+// Staged-draft model (PoC, direct request): Route Legs + Add Sailing/Remove Leg no longer
+// commit to the server on every click — they mutate local `draftLegs`/`draftSailing` state
+// (LegsTable's own existing draft mode, the same mechanism the New Shipment form's create mode
+// already uses — see ShipmentFormPage.jsx's `isDraft = !shipmentId`) until an explicit "Save"
+// validates the whole picture and commits it in one pass. Concrete motivating example: removing
+// the existing schedule, adding a new one, and leaving POL/POD blank used to save that
+// incomplete state instantly — Save now catches this with a bulleted error modal before
+// anything is written, with an explicit Discard as the only way past it besides fixing the
+// issues (no silent "I'll fix it later"). Attempting to navigate away with a valid draft
+// auto-saves it via the existing `navigationGuard.js` mechanism (already used by
+// ShipmentContainersPage.jsx's ContainerForm for the same "validate before letting the user
+// leave" purpose); an invalid draft blocks navigation the same way Save does. Deliberately
+// scoped down, per direct confirmation: "Change Contract" keeps its own existing modal and
+// immediate commit (just disabled while a draft is pending, so the two commit paths never
+// interleave), and the old "locked schedule leg" concept (read-only until explicitly unlinked)
+// is dropped entirely — every leg is always directly editable once a draft is in progress,
+// exactly like the New Shipment form already behaves; Save's validation is the real safety net
+// now, not a separate lock/unlock mechanic.
 
 const sectionLabel = { fontFamily: T.mono, fontSize: 10.5, fontWeight: 700, textTransform: "uppercase",
   letterSpacing: "0.08em", color: T.textMuted, marginBottom: 10 };
@@ -97,9 +116,13 @@ const LineAgentField = ({ label, role, party, canEdit, onAssign, onRemove }) => 
 
 const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
   const { canEditShipments: canEdit, activeOffice, allOffices, isAdmin, activeRoles } = useAuth();
-  // Bumped whenever a sailing is applied to the shipment's SEA leg(s), so LegsTable
-  // (self-fetches once on mount) remounts and picks up the new vessel/voyage/dates
-  // instead of showing stale data until navigating away and back.
+  // Change Contract's own carrier-changed cascade (below) is the one remaining multi-step async
+  // operation on this page that still hits the server immediately — everything else route-leg/
+  // sailing-related is now a local draft mutation with no network call until Save.
+  const [isSaving, withSaving] = useSaving();
+  // Bumped on every successful commit so the initial-legs-fetch effect below re-seeds
+  // draftLegs/originalLegsSnapshot from the server's normalized post-save state (real ids for
+  // anything created this round, etc.) instead of trusting the client-side draft forever.
   const [legsVersion, setLegsVersion] = useState(0);
   const [historyVersion, setHistoryVersion] = useState(0);
 
@@ -123,15 +146,40 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
   // A plain "Add Sailing" click (no pending contract commit) can close freely, as before.
   const [chainedFromContract, setChainedFromContract] = useState(false);
   const [confirmCloseSailing, setConfirmCloseSailing] = useState(false);
-  // Lightweight correction for an already-saved sailing (e.g. a carrier-driven ETD/ETA shift) —
-  // replaces the previous only-option of removing the SEA leg entirely (which cascades to
-  // delete the schedule, unlock everything, and force a full re-search).
-  const [updateScheduleLeg, setUpdateScheduleLeg] = useState(null);
-  const [scheduleForm, setScheduleForm] = useState(null);
 
   useEffect(() => {
     api.schedules.list(shipment.id).then(setSchedules).catch(() => {});
   }, [shipment.id, historyVersion]);
+
+  // ── Staged draft: route legs + a freshly-picked sailing ────────────────────────────────
+  // draftLegs/originalLegsSnapshot are seeded together from the server on mount and after
+  // every successful commit (legsVersion bump) — LegsTable renders in its existing draft mode
+  // (shipmentId={null}) rather than its live-CRUD mode, so every edit/add/remove only mutates
+  // this local array; nothing reaches the server until commitDraft() runs (Save, or an
+  // auto-save on navigating away with a valid draft).
+  const [draftLegs, setDraftLegs] = useState(null);
+  const [originalLegsSnapshot, setOriginalLegsSnapshot] = useState(null);
+  // Set the moment a NEW sailing is picked (Add/Change Sailing) — remembered separately from
+  // draftLegs because a schedule row needs the sailing's own full shape (transitDays/isMock/
+  // scheduleId) that doesn't survive being flattened onto leg fields. Stays as picked even if
+  // the leg is hand-edited afterward, same decoupled relationship shipment_schedules already
+  // has with shipment_legs elsewhere in this app.
+  const [draftSailing, setDraftSailing] = useState(null);
+  const [validationErrors, setValidationErrors] = useState(null); // null = modal closed
+
+  useEffect(() => {
+    let live = true;
+    api.legs.list(shipment.id).then(rows => {
+      if (!live) return;
+      setDraftLegs(rows);
+      setOriginalLegsSnapshot(rows);
+      setDraftSailing(null);
+    }).catch(() => {});
+    return () => { live = false; };
+  }, [shipment.id, legsVersion]);
+
+  const isDirty = draftLegs !== null && originalLegsSnapshot !== null &&
+    (draftSailing !== null || JSON.stringify(draftLegs) !== JSON.stringify(originalLegsSnapshot));
 
   // Contract rate lines — direct request for a facelift on the plain one-line contract summary
   // below: once a Central contract is actually attached, fetch its full detail (rates included)
@@ -195,48 +243,108 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
     } catch (e) { toast.error(e.message); }
   };
 
-  const openUpdateSchedule = (leg) => {
-    const sched = schedules[0];
-    if (!sched) return;
-    setUpdateScheduleLeg(leg);
-    setScheduleForm({ vesselName: sched.vesselName, voyageNumber: sched.voyageNumber,
-      etd: sched.etd, eta: sched.eta, carrier: sched.carrier });
+  // ── Staging a picked sailing onto draftLegs — local-only, no API call ─────────────────────
+  // Adapted from ShipmentFormPage.jsx's own create-mode applySailingToLegs closure (the New
+  // Shipment form's exact equivalent for staging a sailing pick before Create) rather than
+  // applySailingToLegsShared, which is the *live*-mode variant that writes to the server
+  // immediately — that one stays in use only by src/utils/applySailingToLegs.js's other real
+  // caller (Test Tools' Schedule Generator, which does operate on an already-persisted leg).
+  const applySailingToDraft = (sailing) => {
+    const list = draftLegs || [];
+    const firstSeaIdx = list.findIndex(l => l.legType === "SEA");
+    const isTSPForCreate = sailing.legs && sailing.legs.length > 1;
+
+    if (firstSeaIdx === -1) {
+      const segments = isTSPForCreate ? sailing.legs : [{
+        pol: sailing.pol, pod: sailing.pod, etd: sailing.etd, eta: sailing.eta,
+        vesselName: sailing.vesselName, voyageNumber: sailing.voyageNumber,
+      }];
+      const newLegs = segments.map((leg, i) => ({
+        id:           `draft_${Date.now() + i}`,
+        legType:      "SEA",
+        movementType: "SEA",
+        movementBy:   "",
+        polLocType:   "Terminal",
+        podLocType:   "Terminal",
+        pol:          leg.pol,      polName: "",
+        pod:          leg.pod,      podName: "",
+        etd:          leg.etd,
+        eta:          leg.eta,
+        carrierCode:  sailing.carrier || "",
+        vessel:       leg.vesselName   || "",
+        vesselImo:    "",
+        voyage:       leg.voyageNumber || "",
+        contractType: shipment.contractType || "SPOT",
+        contractRef:  shipment.contractRef  || "",
+      }));
+      setDraftLegs([...list, ...newLegs]);
+      toast.success(isTSPForCreate
+        ? `TSP sailing staged — ${newLegs.length} sea legs created`
+        : "Sailing staged — SEA leg created");
+      return;
+    }
+    const firstSeaLeg = list[firstSeaIdx];
+    // Drop every SEA leg AFTER the first one — they belong to whatever routing was there
+    // before (a previous TSP pick), and would otherwise sit stale alongside this new sailing.
+    const base = list.filter((l, i) => i === firstSeaIdx || l.legType !== "SEA");
+    const baseFirstIdx = base.indexOf(firstSeaLeg);
+    const isTSP = sailing.legs && sailing.legs.length > 1;
+    if (isTSP) {
+      const updatedFirst = {
+        ...firstSeaLeg,
+        vessel:      sailing.legs[0].vesselName   || firstSeaLeg.vessel,
+        voyage:      sailing.legs[0].voyageNumber || firstSeaLeg.voyage,
+        etd:         sailing.legs[0].etd          || firstSeaLeg.etd,
+        eta:         sailing.legs[0].eta          || firstSeaLeg.eta,
+        pod:         sailing.legs[0].pod          || firstSeaLeg.pod,
+        podName:     sailing.legs[0].pod !== firstSeaLeg.pod ? "" : firstSeaLeg.podName,
+        carrierCode: sailing.carrier              || firstSeaLeg.carrierCode,
+      };
+      const extraLegs = sailing.legs.slice(1).map((leg, i) => ({
+        id:           `draft_${Date.now() + i + 1}`,
+        legType:      "SEA",
+        movementType: "SEA",
+        movementBy:   "",
+        polLocType:   "Terminal",
+        podLocType:   "Terminal",
+        pol:          leg.pol,      polName: "",
+        pod:          leg.pod,      podName: "",
+        etd:          leg.etd,
+        eta:          leg.eta,
+        carrierCode:  sailing.carrier || "",
+        vessel:       leg.vesselName   || "",
+        vesselImo:    "",
+        voyage:       leg.voyageNumber || "",
+        contractType: firstSeaLeg.contractType || shipment.contractType || "SPOT",
+        contractRef:  firstSeaLeg.contractRef  || shipment.contractRef  || "",
+      }));
+      const newLegs = [...base];
+      newLegs[baseFirstIdx] = updatedFirst;
+      newLegs.splice(baseFirstIdx + 1, 0, ...extraLegs);
+      setDraftLegs(newLegs);
+      toast.success(`TSP sailing staged — ${sailing.legs.length} sea legs updated`);
+    } else {
+      const updatedFirst = {
+        ...firstSeaLeg,
+        vessel:      sailing.vesselName   || firstSeaLeg.vessel,
+        voyage:      sailing.voyageNumber || firstSeaLeg.voyage,
+        etd:         sailing.etd          || firstSeaLeg.etd,
+        eta:         sailing.eta          || firstSeaLeg.eta,
+        carrierCode: sailing.carrier      || firstSeaLeg.carrierCode,
+        pol:         sailing.pol          || firstSeaLeg.pol,
+        pod:         sailing.pod          || firstSeaLeg.pod,
+        polName:     sailing.pol !== firstSeaLeg.pol ? "" : firstSeaLeg.polName,
+        podName:     sailing.pod !== firstSeaLeg.pod ? "" : firstSeaLeg.podName,
+      };
+      const updated = base.map((l, i) => i === baseFirstIdx ? updatedFirst : l);
+      setDraftLegs(updated);
+      toast.success("Sailing staged — click Save to apply");
+    }
   };
 
-  const saveScheduleUpdate = async () => {
-    const sched = schedules[0];
-    if (!sched || !scheduleForm) return;
-    try {
-      const updated = await api.schedules.update(shipment.id, sched.id, scheduleForm);
-      setSchedules([updated]);
-      setUpdateScheduleLeg(null);
-      setScheduleForm(null);
-      setLegsVersion(v => v + 1);
-      setHistoryVersion(v => v + 1);
-      await onRefresh?.();
-      toast.success("Schedule updated");
-    } catch (e) { toast.error(e.message); }
-  };
-
-  // Live-shipment leg-sync, shared with Test Tools' Schedule Generator (both operate on an
-  // EXISTING shipment's already-persisted legs) — see src/utils/applySailingToLegs.js.
-  const applySailingToLegs = sailing => applySailingToLegsShared(shipment.id, sailing,
-    { contractType: shipment.contractType, contractRef: shipment.contractRef });
-
-  const commitSailing = async (sailing) => {
-    try {
-      await Promise.all(schedules.map(s => api.schedules.remove(shipment.id, s.id)));
-      const saved = await api.schedules.save(shipment.id, { ...sailing, templateId: sailing.scheduleId ?? null });
-      setSchedules([saved]);
-      const appliedToLegs = await applySailingToLegs(sailing);
-      if (appliedToLegs) {
-        setLegsVersion(v => v + 1);
-        await onRefresh?.();
-      } else {
-        toast.success(`Sailing ${sailing.vesselName} saved`);
-      }
-      setHistoryVersion(v => v + 1);
-    } catch (e) { toast.error(e.message); }
+  const stageSailing = (sailing) => {
+    applySailingToDraft(sailing);
+    setDraftSailing(sailing);
   };
 
   const handleSelectSailing = (sailing) => {
@@ -244,55 +352,12 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
     setCarrierOverride(null);
     setRouteOverride(null);
     setChainedFromContract(false);
-    const existingVoy = scheduleList[0]?.voyageNumber;
-    if (scheduleList.length > 0 && existingVoy !== sailing.voyageNumber) {
+    const existingVoy = seaLegsForSearch[0]?.voyage || "";
+    if (hasSchedule && existingVoy && existingVoy !== sailing.voyageNumber) {
       setConfirmSailing(sailing);
     } else {
-      commitSailing(sailing);
+      stageSailing(sailing);
     }
-  };
-
-  // While a schedule is assigned, the schedule's own SEA leg (the one carrying real
-  // vessel/voyage data from applySailingToLegs — see lockedSeaLegs below) is locked; the
-  // only way to change it is to remove it, which this treats as "unlink the schedule":
-  // since a TSP schedule's legs are one connected journey, removing the schedule's SEA leg
-  // cascades to remove any other SEA legs too (rather than leaving a broken partial route),
-  // and the shipment_schedules row(s) are removed so a freshly added SEA leg starts out
-  // unlocked instead of immediately re-locking itself.
-  const [legs, setLegs] = useState([]);
-  // Tracks which leg ids actually belong to the assigned schedule (vessel/voyage populated),
-  // not just a raw SEA-leg count — a brand new, still-blank SEA leg (freshly added via
-  // "+ Add leg" while a schedule already exists) is NOT one of those, so adding one and then
-  // removing it again must never cascade into unlinking the real schedule. Comparing counts
-  // alone couldn't tell the two apart and cascaded on either.
-  const prevScheduledLegIdsRef = useRef(null);
-  const handleLegsChange = async (nextLegs) => {
-    setLegs(nextLegs);
-    const nextScheduledIds = new Set(
-      nextLegs.filter(l => l.legType === "SEA" && (l.vessel || l.voyage)).map(l => l.id)
-    );
-    const prevIds = prevScheduledLegIdsRef.current;
-    prevScheduledLegIdsRef.current = nextScheduledIds;
-    // Only react once a schedule's own leg has actually disappeared — the initial fetch on
-    // mount also fires this callback (prevIds === null), and adding/removing an unrelated
-    // blank leg shouldn't cascade.
-    if (prevIds === null || schedules.length === 0) return;
-    const removedScheduledLeg = [...prevIds].some(id => !nextLegs.some(l => l.id === id));
-    if (!removedScheduledLeg) return;
-    try {
-      const remainingSeaLegs = nextLegs.filter(l => l.legType === "SEA");
-      await Promise.all(remainingSeaLegs.map(l => api.legs.remove(shipment.id, l.id)));
-      await Promise.all(schedules.map(s => api.schedules.remove(shipment.id, s.id)));
-      setSchedules([]);
-      prevScheduledLegIdsRef.current = new Set();
-      setLegsVersion(v => v + 1);
-      setHistoryVersion(v => v + 1);
-      // The last SEA leg's removal already clears the shipment's stale etd/eta/vessel/voyage
-      // server-side (syncShipmentFromLegs) — without re-fetching here, the header stays on
-      // its cached shipment prop and keeps showing the old sailing until an unrelated reload.
-      await onRefresh?.();
-      toast.success("Schedule unlinked — SEA leg(s) removed, fields are editable again");
-    } catch (e) { toast.error(e.message); }
   };
 
   // shipment.pol/pod are the journey's overall door-to-door bookends — with a Door pickup
@@ -300,15 +365,16 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
   // pol/pod. Search on the real SEA leg(s) or the sailing picker offers routes that have
   // nothing to do with the shipment's actual ocean leg (and, since the mock/live sailing
   // search echoes the query back as the result's own pol/pod, picking one would silently
-  // overwrite the real SEA leg(s) with an unrelated route).
-  const seaLegsForSearch = legs.filter(l => l.legType === "SEA");
+  // overwrite the real SEA leg(s) with an unrelated route). Reads from draftLegs now — the
+  // page's own working set of legs, staged or not.
+  const seaLegsForSearch = (draftLegs || []).filter(l => l.legType === "SEA");
   const pol = seaLegsForSearch[0]?.pol || shipment.pol || "";
   const pod = seaLegsForSearch[seaLegsForSearch.length - 1]?.pod || shipment.pod || "";
   // Overridden right after a contract is confirmed, so the chained sailing search below
   // uses the just-picked carrier immediately instead of the stale shipment.carrierCode
   // prop (onUpdate's PUT hasn't round-tripped back into this component yet).
   const [carrierOverride, setCarrierOverride] = useState(null);
-  const carrier = carrierOverride ?? (shipment.carrierCode || "");
+  const carrier = carrierOverride ?? (seaLegsForSearch[0]?.carrierCode || shipment.carrierCode || "");
   // Set from ContractAssignModal's onDone (the specific route the just-picked contract/space
   // config actually covers) so the chained sailing search scopes to what the contract was
   // rated for, not the shipment's generic SEA-leg span — a multi-leg TSP contract or a space
@@ -317,15 +383,21 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
   const [routeOverride, setRouteOverride] = useState(null);
   const sailingPol = routeOverride?.pol || pol;
   const sailingPod = routeOverride?.pod || pod;
-  const hasSchedule = scheduleList.length > 0;
-  const canSearch = !!(pol && pod && carrier) && !hasSchedule;
+  // Whether the draft's SEA leg currently carries real sailing data — from the original
+  // committed schedule, untouched, or a freshly staged pick. No longer disables Add Sailing;
+  // it only decides the button's own label/tooltip and whether picking a different sailing
+  // needs the "Replace sailing?" confirmation, matching how the New Shipment form's own
+  // Search Sailings/Change Sailing button already behaves.
+  const hasSchedule = seaLegsForSearch.some(l => l.vessel || l.voyage);
+  const canSearch = !!(pol && pod && carrier);
 
   // Same silent revalidation as ShipmentHeaderBar's badge — shared via useContractMismatch so
   // the two can't drift on what counts as a mismatch (they used to be independently duplicated,
   // and neither passed a validity date to the match check — see the hook's own comment). Matches
   // against the real SEA leg pol/pod (above), not shipment.pol/pod, which are door-to-door
-  // bookends; a contract is always matched port-to-port against the actual ocean leg.
-  const contractMismatch = useContractMismatch(shipment, pol, pod, legs);
+  // bookends; a contract is always matched port-to-port against the actual ocean leg. Now reads
+  // draftLegs, so the banner below reacts live while editing, before Save even runs.
+  const contractMismatch = useContractMismatch(shipment, pol, pod, draftLegs || []);
 
   // Pending-contract revalidation — same check as ShipmentHeaderBar's badge (duplicated for
   // the same reason: cheap, and this is the page that renders the actual accept/dismiss UI).
@@ -356,9 +428,173 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
     return () => { live = false; };
   }, [shipment.contractType, shipment.allocationId, pol, pod, shipment.etd]);
 
+  // Wraps LegsTable's own onDraftLegsChange (add/edit/remove a leg) — a multi-leg (TSP) sailing's
+  // legs are one connected journey, so removing just ONE of them (whichever leg the user had
+  // selected) must cascade to remove every other leg that belongs to that same sailing too,
+  // exactly like the old live-mode handleLegsChange cascade did before this page moved to a
+  // staged draft. "Belongs to the sailing" is the same signal that cascade used: a SEA leg
+  // currently carrying real vessel/voyage data. Field edits and adding an unrelated new leg
+  // pass straight through unchanged — only an actual disappearance triggers this.
+  const handleDraftLegsChange = (nextLegs) => {
+    const prevLegs = draftLegs || [];
+    const scheduledIds = new Set(prevLegs.filter(l => l.legType === "SEA" && (l.vessel || l.voyage)).map(l => l.id));
+    const nextIds = new Set(nextLegs.map(l => l.id));
+    const aScheduledLegWasRemoved = [...scheduledIds].some(id => !nextIds.has(id));
+    if (aScheduledLegWasRemoved && scheduledIds.size > 0) {
+      const finalLegs = nextLegs.filter(l => !scheduledIds.has(l.id));
+      setDraftLegs(finalLegs);
+      setDraftSailing(null);
+      if (scheduledIds.size > 1) {
+        toast.info("A multi-leg sailing's legs are one connected journey — removing one removes the whole sailing.");
+      }
+    } else {
+      setDraftLegs(nextLegs);
+    }
+  };
+
+  // ── Validation — runs identically for the Save button and the nav-guard's auto-save ───────
+  const validateDraft = async () => {
+    const errors = [];
+    // Check every sea leg's OWN pol/pod/carrierCode directly here — NOT the page-level `pol`/
+    // `pod` variables above, which deliberately fall back to shipment.pol/pod (needed so the
+    // Add Sailing search box still has something sensible to search on before any leg data
+    // exists at all). That same fallback would silently mask a genuinely blank leg during
+    // validation — e.g. a second, freshly-added blank leg's empty POD hidden behind the
+    // shipment's own stale, still-populated top-level pod. Found live via CDP verification.
+    seaLegsForSearch.forEach((leg, i) => {
+      const label = seaLegsForSearch.length > 1 ? ` (leg ${i + 1})` : "";
+      if (!leg.pol) errors.push(`Port of Loading (POL) is required${label}.`);
+      if (!leg.pod) errors.push(`Port of Discharge (POD) is required${label}.`);
+      if (!leg.carrierCode) errors.push(`Carrier is required${label}.`);
+    });
+    // Only worth checking the contract against pol/pod once we know every leg actually has
+    // real values — otherwise this would be matching against the same masked/fallback data.
+    if (errors.length === 0 && shipment.contractType === "Central" && shipment.contractId && pol && pod) {
+      const { needsPolHaulage, needsPodHaulage, pkuLocation, delLocation } = deriveHaulageNeeds(draftLegs || []);
+      const dateRef = shipment.cargoReadyDate || shipment.etd || "";
+      try {
+        const matches = await api.contracts.match({ pol, pod, ...(dateRef && { crd: dateRef }),
+          ...(needsPolHaulage && { needsPolHaulage: "1" }), ...(needsPodHaulage && { needsPodHaulage: "1" }),
+          ...(pkuLocation && { pkuLocation }), ...(delLocation && { delLocation }) });
+        const stillMatches = matches.some(m => m.id === shipment.contractId && (m.routingId || "") === (shipment.contractRoutingId || ""));
+        if (!stillMatches) errors.push(`${shipment.contractRef || "This contract"} does not cover ${pol} → ${pod}.`);
+      } catch { /* a validation-check network hiccup shouldn't itself block Save */ }
+    }
+    return errors;
+  };
+
+  // ── Commit — id-based diff of draftLegs against originalLegsSnapshot, same reconciliation
+  // shape src/utils/applySailingToLegs.js already uses for the live sailing-pick case (match
+  // by real id: update in place / remove missing / create new) rather than a full delete-then-
+  // reinsert — shipment_legs ids are referenced elsewhere (AIS, Command Center). ─────────────
+  const commitDraft = async () => {
+    const originalById = new Map((originalLegsSnapshot || []).map(l => [l.id, l]));
+    const draftIds = new Set((draftLegs || []).map(l => l.id));
+
+    const removed = (originalLegsSnapshot || []).filter(l => !draftIds.has(l.id));
+    await Promise.all(removed.map(l => api.legs.remove(shipment.id, l.id)));
+
+    const created = (draftLegs || []).filter(l => !originalById.has(l.id));
+    for (const { id: _draftId, polName: _pn, podName: _ppn, ...payload } of created) {
+      await api.legs.create(shipment.id, payload);
+    }
+
+    const updated = (draftLegs || []).filter(l => {
+      const orig = originalById.get(l.id);
+      return orig && JSON.stringify(l) !== JSON.stringify(orig);
+    });
+    await Promise.all(updated.map(l => api.legs.update(shipment.id, l.id, l)));
+
+    // Schedule reconciliation: a freshly staged pick replaces whatever schedule row(s) exist;
+    // if the sea leg no longer carries vessel/voyage (removed without a new pick), any existing
+    // schedule row(s) no longer correspond to a real leg and are cleaned up too; otherwise, if
+    // the schedule's own leg had a field hand-edited directly (e.g. a carrier-driven ETD
+    // correction, with no new sailing picked), keep the schedule row's own vessel/voyage/dates
+    // in sync — the same correction api.schedules.update always performed via the old dedicated
+    // "Update Schedule" modal, which is gone now that every leg is directly editable, but the
+    // schedule row itself (read by Schedule History, re-keyed scheduleKey, etc.) still needs
+    // this same sync or it silently drifts from what the leg now actually shows.
+    const seaLegsNow = (draftLegs || []).filter(l => l.legType === "SEA");
+    const hasVesselNow = seaLegsNow.some(l => l.vessel || l.voyage);
+    const updatedSeaLegs = updated.filter(l => l.legType === "SEA");
+    if (draftSailing) {
+      await Promise.all(scheduleList.map(s => api.schedules.remove(shipment.id, s.id)));
+      await api.schedules.save(shipment.id, { ...draftSailing, templateId: draftSailing.scheduleId ?? null });
+    } else if (!hasVesselNow && scheduleList.length > 0) {
+      await Promise.all(scheduleList.map(s => api.schedules.remove(shipment.id, s.id)));
+    } else if (hasVesselNow && scheduleList.length > 0 && updatedSeaLegs.length > 0) {
+      const firstSea = seaLegsNow[0];
+      const lastSea = seaLegsNow[seaLegsNow.length - 1];
+      await api.schedules.update(shipment.id, scheduleList[0].id, {
+        vesselName: firstSea.vessel, voyageNumber: firstSea.voyage,
+        etd: firstSea.etd, eta: lastSea.eta, carrier: firstSea.carrierCode,
+      });
+    }
+
+    setLegsVersion(v => v + 1); // re-seeds draftLegs/originalLegsSnapshot from the fresh server state
+    setHistoryVersion(v => v + 1); // re-fetches schedules via the effect above
+    await onRefresh?.();
+    emitLegsScheduleChanged(shipment.id);
+    toast.success("Saved");
+  };
+
+  const handleSave = async () => {
+    const errors = await validateDraft();
+    if (errors.length) { setValidationErrors(errors); return; }
+    await withSaving(async () => {
+      try {
+        await commitDraft();
+      } catch (e) {
+        // commitDraft is a sequence of independent API calls, not one server-side transaction —
+        // a failure partway through (e.g. the leg diff succeeds but the schedule save doesn't)
+        // must never fail silently: without this, the exception would be an unhandled rejection
+        // with no toast at all, and the local draft would keep disagreeing with whatever
+        // actually landed on the server. Re-syncing from the server here at least prevents that
+        // second, worse failure mode — a real distributed-transaction rollback is out of scope.
+        toast.error(e.message || "Save failed — reloading the current state.");
+        setLegsVersion(v => v + 1);
+        setHistoryVersion(v => v + 1);
+      }
+    }, "Saving…");
+  };
+
+  const handleDiscard = () => {
+    setDraftLegs(originalLegsSnapshot);
+    setDraftSailing(null);
+    setValidationErrors(null);
+  };
+
+  // Blocks in-app navigation (sidebar, back arrow, breadcrumbs, tab switches — every path that
+  // goes through App.jsx's navigate(), which already calls runNavigationGuard() first) while a
+  // draft is dirty: a valid draft auto-saves silently and lets navigation proceed; an invalid
+  // one opens the same bulleted modal and aborts the navigation attempt. Real browser back/
+  // forward (App.jsx's separate onHash listener) is not covered — a pre-existing, documented
+  // limitation of navigationGuard.js itself (TKT-OJYO71), not extended here.
+  useEffect(() => {
+    if (!isDirty) { clearNavigationGuard(); return; }
+    setNavigationGuard({
+      trySave: async () => {
+        const errors = await validateDraft();
+        if (errors.length) { setValidationErrors(errors); return { ok: false, error: "Fix the issues before leaving this page" }; }
+        try {
+          await commitDraft();
+          return { ok: true };
+        } catch (e) {
+          // Same partial-failure concern as handleSave above — re-sync from the server so the
+          // draft never keeps disagreeing with whatever actually landed, even on failure.
+          setLegsVersion(v => v + 1);
+          setHistoryVersion(v => v + 1);
+          return { ok: false, error: e.message || "Failed to save before leaving this page" };
+        }
+      },
+    });
+    return () => clearNavigationGuard();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDirty, draftLegs, draftSailing]);
+
   // Every hook above has already run this render regardless of this branch — only what gets
   // returned/rendered is gated, so this doesn't violate the Rules of Hooks.
-  if (schedules === null || parties === null) {
+  if (schedules === null || parties === null || draftLegs === null) {
     return (
       <div id="shpsched-page" style={{ display: "flex", alignItems: "center", gap: 10, padding: "24px 0",
         fontFamily: T.body, fontSize: 13, color: T.textMuted }}>
@@ -377,8 +613,8 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
         opacity: canSearch ? 1 : 0.5, display: "inline-flex", alignItems: "center", gap: 5 }}
       onMouseEnter={e => { if (canSearch) { e.currentTarget.style.borderColor = T.accent; e.currentTarget.style.color = T.accent; }}}
       onMouseLeave={e => { e.currentTarget.style.borderColor = T.border; e.currentTarget.style.color = canSearch ? T.text : T.textMuted; }}
-      title={hasSchedule ? "A sailing is already assigned — remove the SEA leg to unlink and search again" : canSearch ? "Search and add a sailing" : "POL, POD and carrier must be set"}>
-      <IconAnchor size={12} />Add Sailing
+      title={canSearch ? "Search and stage a sailing" : "POL, POD and carrier must be set"}>
+      <IconAnchor size={12} />{hasSchedule ? "Change Sailing" : "Add Sailing"}
     </button>
   );
 
@@ -386,6 +622,18 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
 
   return (
     <div id="shpsched-page">
+      {isDirty && (
+        <div id="shpsched-dirty-bar" style={{ display: "flex", alignItems: "center", gap: 12,
+          background: T.accentBg, border: `1px solid ${T.accent}44`, borderRadius: 8,
+          padding: "10px 16px", marginBottom: 18 }}>
+          <span style={{ fontFamily: T.body, fontSize: 12.5, color: T.text, flex: 1 }}>
+            You have unsaved route/schedule changes on this page.
+          </span>
+          <Btn id="shpsched-discard-btn" size="sm" variant="secondary" disabled={isSaving} onClick={handleDiscard}>Discard</Btn>
+          <Btn id="shpsched-save-btn" size="sm" disabled={isSaving} onClick={handleSave}>💾 Save</Btn>
+        </div>
+      )}
+
       <div id="shpsched-line-agents-section" style={{ marginBottom: 22 }}>
         <div style={sectionLabel}>Line Agents</div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
@@ -400,10 +648,11 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
 
       <div id="shpsched-legs-section">
         <div style={sectionLabel}>Route Legs</div>
-        <LegsTable key={`legs-${legsVersion}`} shipmentId={shipment.id} canEdit={canEdit} showContractCols={false}
-          extraAction={addSailingBtn} lockedSeaLegs={hasSchedule} onLegsChange={handleLegsChange}
-          loopCode={deriveLoopCode(scheduleList[0])}
-          onUpdateSchedule={canEdit ? openUpdateSchedule : null} />
+        <LegsTable key={`legs-${legsVersion}`} shipmentId={null} draftLegs={draftLegs} onDraftLegsChange={handleDraftLegsChange}
+          canEdit={canEdit} showContractCols={false}
+          extraAction={addSailingBtn}
+          loopCode={deriveLoopCode(draftSailing || scheduleList[0])}
+          hideDraftBanner />
       </div>
 
       <div style={{ marginTop: 22, marginBottom: 22,
@@ -450,7 +699,9 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
               )}
             </div>
             {canEdit && (
-              <Btn id="shpsched-contract-btn" size="sm" variant="secondary" onClick={() => setContractModalOpen(true)}>
+              <Btn id="shpsched-contract-btn" size="sm" variant="secondary" disabled={isDirty}
+                title={isDirty ? "Save or discard your route changes first" : undefined}
+                onClick={() => setContractModalOpen(true)}>
                 {shipment.contractRef ? "Change Contract" : "+ Add Contract"}
               </Btn>
             )}
@@ -546,21 +797,38 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
         </Modal>
       )}
 
+      {validationErrors && (
+        <Modal title="Can't save yet" onClose={() => setValidationErrors(null)} width={460} hideClose>
+          <p style={{ fontFamily: T.body, fontSize: 14, color: T.text, margin: "0 0 10px", lineHeight: 1.5 }}>
+            Fix the following before saving:
+          </p>
+          <ul style={{ margin: "0 0 20px", paddingLeft: 20, display: "flex", flexDirection: "column", gap: 6 }}>
+            {validationErrors.map((e, i) => (
+              <li key={i} style={{ fontFamily: T.body, fontSize: 13, color: T.text, lineHeight: 1.5 }}>{e}</li>
+            ))}
+          </ul>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <Btn variant="danger" onClick={handleDiscard}>Discard changes</Btn>
+            <Btn onClick={() => setValidationErrors(null)}>Fix issues</Btn>
+          </div>
+        </Modal>
+      )}
+
       {confirmSailing && (
         <Modal title="Replace sailing?" onClose={() => setConfirmSailing(null)} width={420}>
           <p style={{ fontFamily: T.body, fontSize: 14, color: T.text, margin: "0 0 6px", lineHeight: 1.6 }}>
             This will replace{" "}
-            <strong style={{ fontFamily: T.mono }}>{scheduleList[0]?.vesselName || "the current sailing"}</strong>
+            <strong style={{ fontFamily: T.mono }}>{seaLegsForSearch[0]?.vessel || "the current sailing"}</strong>
             {" "}with{" "}
             <strong style={{ fontFamily: T.mono }}>{confirmSailing.vesselName}</strong>
             {" "}· Voy {confirmSailing.voyageNumber}.
           </p>
           <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, margin: "0 0 20px" }}>
-            The previous sailing record will be removed.
+            This won't be saved to the shipment until you click Save below.
           </p>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
             <Btn variant="secondary" onClick={() => setConfirmSailing(null)}>Cancel</Btn>
-            <Btn onClick={() => { commitSailing(confirmSailing); setConfirmSailing(null); }}>Replace</Btn>
+            <Btn onClick={() => { stageSailing(confirmSailing); setConfirmSailing(null); }}>Replace</Btn>
           </div>
         </Modal>
       )}
@@ -570,7 +838,7 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
           pol={sailingPol} pod={sailingPod} carrierCode={carrier}
           routingTerm={shipment.routingTerm}
           expectedHub={routeOverride?.hub || null} expectedService={routeOverride?.service || null}
-          activeSailing={scheduleList[0] || null}
+          activeSailing={draftSailing || scheduleList[0] || null}
           onSelect={handleSelectSailing}
           onClose={() => {
             // A contract was just committed as part of this chained flow — closing without
@@ -603,7 +871,7 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
 
       {contractModalOpen && (
         <ContractAssignModal
-          shipment={shipment} legs={legs} pol={pol} pod={pod} onUpdate={onUpdate}
+          shipment={shipment} legs={draftLegs} pol={pol} pod={pod} onUpdate={onUpdate}
           onClose={() => setContractModalOpen(false)}
           onDone={async ({ isCentral, contractPicked, carrierCode, matchedRoute }) => {
             setContractModalOpen(false);
@@ -614,22 +882,27 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
             // shipment's own (now-updated) carrier/contract, since nothing here reacted to
             // it. That schedule was booked with a specific carrier; relabeling the shipment
             // around it doesn't make the old sailing valid for the new one — same "archive,
-            // don't silently rewrite" principle as the carrier_bookings fix. Auto-unlink it
-            // (the exact same cascade handleLegsChange already runs for a manual SEA-leg
-            // removal — remove every SEA leg, then every shipment_schedules row) instead of
-            // requiring the operator to notice the mismatch and separately go delete the leg.
+            // don't silently rewrite" principle as the carrier_bookings fix. Auto-unlink it.
+            // Change Contract is only ever reachable while !isDirty (button disabled
+            // otherwise), so draftLegs === originalLegsSnapshot here — safe to treat as the
+            // real, currently-committed leg set.
             const carrierChanged = !!carrierCode && carrierCode !== shipment.carrierCode;
             if (carrierChanged && hasSchedule) {
-              try {
-                await Promise.all(legs.filter(l => l.legType === "SEA").map(l => api.legs.remove(shipment.id, l.id)));
-                await Promise.all(schedules.map(s => api.schedules.remove(shipment.id, s.id)));
-                setSchedules([]);
-                prevScheduledLegIdsRef.current = new Set();
-                setLegsVersion(v => v + 1);
-                setHistoryVersion(v => v + 1);
-                await onRefresh?.();
-                toast.info("Previous schedule unlinked — it was booked with a different carrier. Pick a new sailing below.");
-              } catch (e) { toast.error(e.message); }
+              await withSaving(async () => {
+                try {
+                  const remainingLegs = (draftLegs || []).filter(l => l.legType !== "SEA");
+                  await Promise.all((draftLegs || []).filter(l => l.legType === "SEA").map(l => api.legs.remove(shipment.id, l.id)));
+                  await Promise.all(scheduleList.map(s => api.schedules.remove(shipment.id, s.id)));
+                  setSchedules([]);
+                  setDraftLegs(remainingLegs);
+                  setOriginalLegsSnapshot(remainingLegs);
+                  setDraftSailing(null);
+                  setHistoryVersion(v => v + 1);
+                  await onRefresh?.();
+                  emitLegsScheduleChanged(shipment.id);
+                  toast.info("Previous schedule unlinked — it was booked with a different carrier. Pick a new sailing below.");
+                } catch (e) { toast.error(e.message); }
+              });
             }
             // Contract routing already matches the request params — chain straight into
             // the sailing search rather than making the user re-open "Add Sailing" and
@@ -663,36 +936,6 @@ const ShipmentSchedulesPage = ({ shipment, onBack, onUpdate, onRefresh }) => {
           }}
           onDismiss={() => setPendingMatches(null)}
         />
-      )}
-
-      {updateScheduleLeg && scheduleForm && (
-        <Modal title="Update Schedule" onClose={() => { setUpdateScheduleLeg(null); setScheduleForm(null); }} width={440}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, margin: 0, lineHeight: 1.5 }}>
-              Correct the vessel, voyage or dates for the currently assigned sailing — e.g. a
-              carrier-driven ETD/ETA shift. This updates the SEA leg in place without unlinking
-              the schedule, and logs the change in Schedule History.
-            </p>
-            <Inp id="shpsched-update-vessel" label="Vessel" value={scheduleForm.vesselName}
-              onChange={v => setScheduleForm(f => ({ ...f, vesselName: v }))} />
-            <Inp id="shpsched-update-voyage" label="Voyage" value={scheduleForm.voyageNumber} mono
-              onChange={v => setScheduleForm(f => ({ ...f, voyageNumber: v }))} />
-            <div style={{ display: "flex", gap: 12 }}>
-              <div style={{ flex: 1 }}>
-                <DatePicker id="shpsched-update-etd" label="ETD" value={scheduleForm.etd}
-                  onChange={v => setScheduleForm(f => ({ ...f, etd: v }))} />
-              </div>
-              <div style={{ flex: 1 }}>
-                <DatePicker id="shpsched-update-eta" label="ETA" value={scheduleForm.eta} minDate={scheduleForm.etd || undefined}
-                  onChange={v => setScheduleForm(f => ({ ...f, eta: v }))} />
-              </div>
-            </div>
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-              <Btn id="shpsched-update-cancel-btn" variant="secondary" onClick={() => { setUpdateScheduleLeg(null); setScheduleForm(null); }}>Cancel</Btn>
-              <Btn id="shpsched-update-save-btn" onClick={saveScheduleUpdate}>Save</Btn>
-            </div>
-          </div>
-        </Modal>
       )}
     </div>
   );

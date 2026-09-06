@@ -2003,9 +2003,13 @@ const syncShipmentFromLegs = async (shipmentId, actorId = null) => {
   if (!legs.length) {
     // Every leg was just removed (e.g. unlinking a schedule) — the schedule-derived fields
     // this function writes are now stale and must be cleared, not left showing the last-known
-    // sailing forever. pol/pod/carrier_code are shipment-level fields set independently at
-    // creation (not purely leg-derived), so they're left untouched here.
-    await query(`UPDATE shipments SET etd='', eta='', vessel='', vessel_imo='', voyage='', routing_term=NULL WHERE id=$1`, [shipmentId]);
+    // sailing forever. pol/pod were previously left untouched here on the theory that they're
+    // shipment-level fields set independently at creation, not purely leg-derived — reversed
+    // per direct request (found live: SHP-8C7JZW) once a shipment has zero legs there is no
+    // real routing left to describe, and pol/pod showing the old ports as if still valid is
+    // actively misleading everywhere they're read (the header, the routing pill, exports).
+    // carrier_code is left untouched — the user's own report only asked for POL/POD to reset.
+    await query(`UPDATE shipments SET pol='', pod='', etd='', eta='', vessel='', vessel_imo='', voyage='', routing_term=NULL WHERE id=$1`, [shipmentId]);
     return;
   }
   const first = legs[0], last = legs[legs.length - 1];

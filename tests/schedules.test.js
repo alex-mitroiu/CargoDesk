@@ -127,6 +127,47 @@ async function testShipmentSchedules(token) {
     listAfterShipDel.status === 404 || listAfterShipDel.body?.length === 0);
 }
 
+// ─── syncShipmentFromLegs — pol/pod clear once the last leg is removed ────────
+// Reversed decision (2026-09-06, direct request, found live on SHP-8C7JZW): pol/pod used to be
+// deliberately left untouched when a shipment's last leg was deleted ("shipment-level fields,
+// not purely leg-derived") — now cleared to '' along with the already-cleared etd/eta/vessel/
+// voyage/routingTerm, since a shipment with zero legs genuinely has no route left to describe.
+
+async function testPolPodClearOnLastLegRemoved(token) {
+  console.log("\nDELETE last leg — shipment.pol/pod reset (server.js syncShipmentFromLegs)");
+
+  const sRes = await request("POST", "/api/shipments", {
+    pol: "NLRTM", pod: "USNYC", carrierCode: "HLCU", status: "Active", contractType: "SPOT",
+  }, token);
+  assert("scratch shipment created (201)", sRes.status === 201);
+  const shipmentId = sRes.body.id;
+  if (!shipmentId) { assert("have shipmentId", false, "aborting pol/pod-clear test"); return; }
+
+  // A fresh shipment has no legs yet (npm run seed/POST /shipments doesn't auto-create one) —
+  // add a real SEA leg with vessel/voyage data, then confirm removing it clears everything.
+  const legRes = await request("POST", `/api/shipments/${shipmentId}/legs`, {
+    legType: "SEA", movementType: "SEA", pol: "NLRTM", pod: "USNYC", carrierCode: "HLCU",
+    vessel: "ATHENA", voyage: "V001W", etd: "2026-09-20", eta: "2026-10-05",
+  }, token);
+  assert("leg created (201)", legRes.status === 201);
+  const legId = legRes.body?.id;
+
+  const beforeDel = await request("GET", `/api/shipments/${shipmentId}`, null, token);
+  assert("pol set before removal", beforeDel.body?.pol === "NLRTM");
+  assert("pod set before removal", beforeDel.body?.pod === "USNYC");
+
+  const delRes = await request("DELETE", `/api/shipments/${shipmentId}/legs/${legId}`, null, token);
+  assert("DELETE leg returns 200", delRes.status === 200);
+
+  const afterDel = await request("GET", `/api/shipments/${shipmentId}`, null, token);
+  assert("pol cleared after last leg removed",  afterDel.body?.pol === "");
+  assert("pod cleared after last leg removed",  afterDel.body?.pod === "");
+  assert("etd still cleared (pre-existing behavior)", afterDel.body?.etd === "");
+  assert("vessel still cleared (pre-existing behavior)", afterDel.body?.vessel === "");
+
+  await request("DELETE", `/api/shipments/${shipmentId}`, null, token);
+}
+
 // ─── Schedules search (mock) ──────────────────────────────────────────────────
 
 async function testScheduleSearch(token) {
@@ -230,6 +271,7 @@ async function testHealthVersion(token) {
     console.log("  ✓ Logged in");
 
     await testShipmentSchedules(token);
+    await testPolPodClearOnLastLegRemoved(token);
     await testScheduleSearch(token);
     await testTicketsShipmentFilter(token);
     await testTransitDaysSeeded(token);

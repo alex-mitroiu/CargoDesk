@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle } from "react";
+import React, { useState, useEffect, useRef, useCallback, forwardRef, useImperativeHandle } from "react";
 import useSaving from "../../hooks/useSaving";
 import { T, INCOTERMS_2020, teuOf,
          statusVariant, contractVariant, IMDG_CLASSES,
@@ -16,6 +16,7 @@ import { formatLegPoint, isGpsLeg } from "../../utils/legLocation";
 import { countryCodeOf } from "../../utils/countryTag";
 import useResolvedPortName from "../../hooks/useResolvedPortName";
 import { dgPolicyConflict } from "../../utils/dgPolicy";
+import { onLegsScheduleChanged } from "../../legsScheduleBus";
 import Btn from "../../components/primitives/Btn";
 import ActionMenu from "../../components/primitives/ActionMenu";
 import Spinner from "../../components/primitives/Spinner";
@@ -3172,9 +3173,15 @@ export const RouteSummaryBar = ({ shipment }) => {
   const [legs, setLegs] = useState([]);
   const [contractCarrierCode, setContractCarrierCode] = useState("");
 
-  useEffect(() => {
+  // Extracted into a callback so the legsScheduleBus listener below can re-trigger it — this
+  // component self-fetches legs keyed only on shipment.id, so removing a schedule/leg
+  // elsewhere on the page (Contracts & Schedules' own cascade) never refetched, leaving the
+  // expanded routing pill showing the old POL/POD forever. Found live: SHP-8C7JZW.
+  const loadLegs = useCallback(() => {
     api.legs.list(shipment.id).then(setLegs).catch(() => {});
   }, [shipment.id]);
+  useEffect(() => { loadLegs(); }, [loadLegs]);
+  useEffect(() => onLegsScheduleChanged(id => { if (id === shipment.id) loadLegs(); }), [shipment.id, loadLegs]);
 
   useEffect(() => {
     if (!shipment.contractId) { setContractCarrierCode(""); return; }
