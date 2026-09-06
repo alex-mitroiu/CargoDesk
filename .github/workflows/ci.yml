@@ -87,8 +87,19 @@ jobs:
       - name: Wait for contract-management service (port 3004)
         run: npx wait-on http://localhost:3004/health --timeout 60000
 
-      # import-mdm-data.js requires cargodesk.db to already exist (created by the server on
-      # boot, above) — it exits early otherwise. Must run after the server is up, not before.
+      # import-mdm-data.js requires the schema to already exist (created by the server on boot,
+      # above) — it exits early otherwise. Must run after the server has booted at least once,
+      # but v0.90.2's pgdata/ exclusive-lock fix (real corruption incident) means the server
+      # itself must NOT still be holding that lock while this runs — import-mdm-data.js now
+      # refuses outright ("server appears to already be running on port 3001") rather than risk
+      # the exact corruption that fix exists to prevent. A real CI regression, not caught until
+      # the next push after v0.90.2 landed, since nothing else had run this workflow in between.
+      - name: Stop monolith before seeding (holds the pgdata/ lock the seed script also needs)
+        run: |
+          (fuser -k 3001/tcp || true) 2>/dev/null
+          (lsof -ti:3001 | xargs -r kill -9 || true) 2>/dev/null
+          npx wait-on --reverse http://localhost:3001/api/health --timeout 15000 || true
+
       - name: Seed database
         run: npm run seed
 
@@ -172,8 +183,15 @@ jobs:
       - name: Wait for Vite (port 5173)
         run: npx wait-on http://localhost:5173 --timeout 60000
 
-      # import-mdm-data.js requires cargodesk.db to already exist (created by the server on
-      # boot, above) — it exits early otherwise. Must run after the server is up, not before.
+      # import-mdm-data.js requires the schema to already exist (created by the server on boot,
+      # above) — it exits early otherwise. Same v0.90.2 pgdata/-lock regression as
+      # backend-tests-and-build's own identical step — see that job's comment for the full story.
+      - name: Stop monolith before seeding (holds the pgdata/ lock the seed script also needs)
+        run: |
+          (fuser -k 3001/tcp || true) 2>/dev/null
+          (lsof -ti:3001 | xargs -r kill -9 || true) 2>/dev/null
+          npx wait-on --reverse http://localhost:3001/api/health --timeout 15000 || true
+
       - name: Seed database
         run: npm run seed
 
