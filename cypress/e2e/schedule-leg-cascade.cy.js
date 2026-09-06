@@ -103,13 +103,25 @@ describe("Schedule Leg-Removal Cascade Suite", () => {
     // No "locked" concept exists on this page anymore — every leg, old or new, always
     // renders a real, enabled Leg Type <select>, never a read-only row.
     cy.get('[id^="leg-row-"]', { timeout: 8000 }).should("have.length", 2);
-    // Re-locate the new row by content, not position — a REAL bug found live in CI (never
-    // reproduced locally): LegsTable auto-reorders Pick-up-first/SEA-middle/Delivery-last on
-    // every save (v0.29.0), so the instant this row is switched to "Pick-up" it jumps to the
-    // FRONT of the list, ahead of the SEA DEMO CADENZA leg — a later `.last()` then silently
-    // re-targets DEMO CADENZA instead, asserting on the wrong row entirely.
+    // Re-locate the new row by its own vessel field being blank, not by position AND not by
+    // textContent — two compounding real bugs found live in CI (neither reproduced locally
+    // until walked through step by step with a live browser afterward). (1) LegsTable
+    // auto-reorders Pick-up-first/SEA-middle/Delivery-last on every save (v0.29.0), so the
+    // instant this row is switched to "Pick-up" it jumps to the FRONT of the list, ahead of the
+    // SEA DEMO CADENZA leg — a later `.last()` then silently re-targets DEMO CADENZA instead.
+    // (2) The vessel name is never a text node — with locking removed (staged-draft PoC), every
+    // row always renders Vessel as a real `<input placeholder="Name…">`, so
+    // `el.textContent.includes("DEMO CADENZA")` is false for BOTH rows (an input's value never
+    // appears in textContent) and `.find()` silently fell back to array order, i.e. whichever
+    // row happened to render first — the REAL leg, not the new one, the exact opposite of what
+    // was intended. That earlier version of this helper actually retyped the real DEMO CADENZA
+    // leg to "Pick-up" and removed IT, while this test's own assertions (an unscoped "DEMO
+    // CADENZA exists somewhere on the page", trivially true via the persistent header's own
+    // independent server-side fetch — see below) were too weak to catch it. Locating by the
+    // vessel input's own value being blank is correct regardless of DOM order, reordering, or
+    // whether the row is currently SEA (has the field) or Pick-up/Delivery (doesn't).
     const findNewLeg = () => cy.get('[id^="leg-row-"]').then($rows =>
-      cy.wrap([...$rows].find(el => !el.textContent.includes("DEMO CADENZA"))));
+      cy.wrap([...$rows].find(el => !el.querySelector('input[placeholder="Name…"]')?.value)));
     findNewLeg().find("select").first().should("be.enabled");
     findNewLeg().find("select").first().select("Pick-up");
     findNewLeg().find("select").first().should("have.value", "Pick-up");
@@ -132,9 +144,14 @@ describe("Schedule Leg-Removal Cascade Suite", () => {
       cy.contains("button", "Remove").click();
     });
     // Removing an unrelated blank leg is a purely local, staged edit — the real leg is back
-    // to exactly its original state, so nothing was ever committed to the server for it.
-    cy.contains("DEMO CADENZA", { timeout: 8000 }).should("exist");
+    // to exactly its original state, so nothing was ever committed to the server for it. Checked
+    // on the route-leg row's own vessel input, not an unscoped `cy.contains("DEMO CADENZA")` —
+    // that would trivially pass via the persistent header, which self-fetches the (untouched)
+    // server-side leg independently of this page's own draft state, and would say nothing about
+    // whether the draft itself actually still holds the right leg (see the real bug this masked,
+    // in the comment on findNewLeg above).
     cy.get('[id^="leg-row-"]').should("have.length", 1);
+    cy.get('input[placeholder="Name…"]').should("have.value", "DEMO CADENZA");
     api("GET", `/shipments/${shipmentId}`).then(res => {
       expect(res.body.vessel).to.eq("DEMO CADENZA");
       expect(res.body.voyage).to.eq("DM003W");
@@ -147,7 +164,12 @@ describe("Schedule Leg-Removal Cascade Suite", () => {
   it("removing the REAL schedule leg stages its removal — Save then clears the header, schedule, and gates Carrier Booking", () => {
     cy.window().then(win => { win.location.hash = `shipments/${shipmentId}/schedules`; });
     cy.contains(shipmentId, { timeout: 15000 }).should("be.visible");
-    cy.contains('[id^="leg-row-"]', "DEMO CADENZA", { timeout: 10000 }).click();
+    // Not `cy.contains('[id^="leg-row-"]', "DEMO CADENZA")` — the vessel name lives only in the
+    // row's `<input placeholder="Name…">` value, never as a text node, so that never actually
+    // matched anything (see the real bug this uncovered in the previous test's own comment).
+    // Wait on the input's value directly, then click its containing row.
+    cy.get('input[placeholder="Name…"]', { timeout: 10000 }).should("have.value", "DEMO CADENZA")
+      .closest('[id^="leg-row-"]').click();
     // {force: true} — see the identical comment on the previous test's own "Remove leg" click.
     cy.contains("button", "Remove leg").click({ force: true });
     cy.contains("h2", "Remove leg?", { timeout: 8000 }).parent().parent().within(() => {

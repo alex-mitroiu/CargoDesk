@@ -132,58 +132,69 @@ describe("Shipment Creation Form Suite", () => {
     });
     cy.contains("button", "MAEU", { timeout: 8000 }).click();
 
-    cy.intercept("GET", "/api/schedules/search*").as("sailingSearch");
     cy.contains("button", "Search Sailings", { timeout: 8000 }).click();
-    cy.wait("@sailingSearch").then(({ response }) => {
-      // Pick a direct (non-TSP) sailing specifically, not just index 0 — mockSailings() makes
-      // every 3rd entry (index 2, 5, ...) a TSP so index 0 is reliably direct there, but
-      // catalogSailings() (routes/system.js) matches shipment_schedules purely on pol/pod, with
-      // no carrier filter, so CI's shared database can serve a leftover TSP schedule from an
-      // earlier spec ahead of a direct one. A direct sailing always has `legs: null`; picking it
-      // explicitly keeps the single-leg ETD/vessel assertion below valid regardless of which
-      // source (catalog or mock) answered the search, or in what order.
-      const sailings = response.body.sailings || [];
-      const sailing = sailings.find(s => !s.legs) || sailings[0];
-      expect(sailing, "at least one sailing result").to.exist;
 
-      // Click that same direct sailing's own row — each result renders as one whole `<button>`
-      // (SailingPickerModal.jsx) whose text includes "Voy {voyageNumber}", unique per result,
-      // unlike vesselName which mockSailings() can repeat across entries. Not just "the first
-      // pick button": with a mixed direct/TSP result set the two can disagree once the search
-      // above no longer trusts index 0 by construction.
-      cy.contains("button", `Voy ${sailing.voyageNumber}`, { timeout: 10000 }).click();
+    // Read the picked sailing's own data straight off the rendered row we're about to click —
+    // never off an intercepted `/api/schedules/search` network response. A REAL bug found live
+    // in CI, verified by direct reproduction: SailingPickerModal's mount-once
+    // `useEffect(() => { search(weeks); }, [])` double-fires under React 18 StrictMode in dev
+    // (`npm run dev` — what this app's own CI Cypress job also runs; a production `vite build`
+    // has no StrictMode double-invoke, so real users never hit this), firing TWO independent
+    // `/api/schedules/search` calls per open, confirmed via a live network trace. mockSailings()
+    // computes ETD/vessel/voyage deterministically per index but rolls transit days (hence ETA)
+    // via `Math.random()` on every call — so the two responses agree on everything except ETA,
+    // and whichever call's `setSailings()` resolves last is what actually renders. A
+    // `cy.wait("@alias")`-captured response only ever reflects the FIRST of the two, which is
+    // not reliably the same data the click ends up applying — confirmed as the exact cause of
+    // a CI failure (`expected '2026-09-29' to equal '2026-09-28'`, only ever the ETA field).
+    // Scraping the values directly off the row that gets clicked sidesteps this: whatever is on
+    // screen at click time is, by construction, what gets applied — also filters out a TSP
+    // entry via its own "TSP · N legs" badge text, rather than trusting network-side `legs`.
+    cy.get("button").filter((i, el) => /Voy /.test(el.textContent) && !el.textContent.includes("TSP · "))
+      .should("have.length.greaterThan", 0)
+      .first()
+      .then($btn => {
+        const $cols = $btn.children("div").first().children("div");
+        const vesselName = $cols.eq(0).children("div").eq(0).contents()
+          .filter((_, n) => n.nodeType === 3).text().trim();
+        const voyageNumber = $cols.eq(0).children("div").eq(1).text().split("Voy ")[1].trim();
+        const etd = $cols.eq(1).children("div").eq(1).text().trim();
+        const eta = $cols.eq(2).children("div").eq(1).text().trim();
+        const sailing = { vesselName, voyageNumber, etd, eta };
 
-      // The regression check itself: before submitting, the SEA leg row must already reflect
-      // the picked sailing — not just the accent-colored "selected sailing" chip above the form.
-      cy.get('[id^="leg-row-"]').first().within(() => {
-        cy.get('input[type="date"]').first().should("have.value", sailing.etd);
-        cy.get('input[placeholder="Name…"]').should("have.value", sailing.vesselName);
-      });
+        cy.wrap($btn).click();
 
-      cy.contains("button", "Create Shipment").click();
-      cy.contains("Shipment created", { timeout: 10000 }).should("be.visible");
-      cy.url().should("match", /shipments\/SHP-/);
-
-      cy.url().then(url => {
-        sailingTestShipmentId = url.match(/shipments\/(SHP-[A-Z0-9]+)/)[1];
-
-        // Both halves of the reported bug, confirmed independently: the schedule record
-        // (Schedule History) AND the actual shipment_legs row the Route Legs table reads from.
-        api("GET", `/shipments/${sailingTestShipmentId}/legs`).then(legsRes => {
-          const seaLeg = legsRes.body.find(l => l.legType === "SEA");
-          expect(seaLeg, "a SEA leg exists").to.exist;
-          expect(seaLeg.vessel).to.eq(sailing.vesselName);
-          expect(seaLeg.voyage).to.eq(sailing.voyageNumber);
-          expect(seaLeg.etd).to.eq(sailing.etd);
-          expect(seaLeg.eta).to.eq(sailing.eta);
+        // The regression check itself: before submitting, the SEA leg row must already reflect
+        // the picked sailing — not just the accent-colored "selected sailing" chip above the form.
+        cy.get('[id^="leg-row-"]').first().within(() => {
+          cy.get('input[type="date"]').first().should("have.value", sailing.etd);
+          cy.get('input[placeholder="Name…"]').should("have.value", sailing.vesselName);
         });
-        api("GET", `/shipments/${sailingTestShipmentId}/schedules`).then(schedRes => {
-          expect(schedRes.body.length).to.be.greaterThan(0);
-          expect(schedRes.body[0].vesselName).to.eq(sailing.vesselName);
-          expect(schedRes.body[0].voyageNumber).to.eq(sailing.voyageNumber);
+
+        cy.contains("button", "Create Shipment").click();
+        cy.contains("Shipment created", { timeout: 10000 }).should("be.visible");
+        cy.url().should("match", /shipments\/SHP-/);
+
+        cy.url().then(url => {
+          sailingTestShipmentId = url.match(/shipments\/(SHP-[A-Z0-9]+)/)[1];
+
+          // Both halves of the reported bug, confirmed independently: the schedule record
+          // (Schedule History) AND the actual shipment_legs row the Route Legs table reads from.
+          api("GET", `/shipments/${sailingTestShipmentId}/legs`).then(legsRes => {
+            const seaLeg = legsRes.body.find(l => l.legType === "SEA");
+            expect(seaLeg, "a SEA leg exists").to.exist;
+            expect(seaLeg.vessel).to.eq(sailing.vesselName);
+            expect(seaLeg.voyage).to.eq(sailing.voyageNumber);
+            expect(seaLeg.etd).to.eq(sailing.etd);
+            expect(seaLeg.eta).to.eq(sailing.eta);
+          });
+          api("GET", `/shipments/${sailingTestShipmentId}/schedules`).then(schedRes => {
+            expect(schedRes.body.length).to.be.greaterThan(0);
+            expect(schedRes.body[0].vesselName).to.eq(sailing.vesselName);
+            expect(schedRes.body[0].voyageNumber).to.eq(sailing.voyageNumber);
+          });
         });
       });
-    });
   });
 
   it("blocks creation and shows a validation toast when required fields are missing", () => {
