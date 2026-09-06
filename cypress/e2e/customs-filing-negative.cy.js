@@ -133,7 +133,7 @@ describe("Customs Filing — Negative / Gated Paths Suite", () => {
         .then(() => api("POST", "/containers", { shipmentId, size: "40", type: "HC" }))
         .then(res => {
           containerId = res.body.id;
-          return api("POST", `/containers/${containerId}/packages`,
+          return api("POST", `/shipments/${shipmentId}/containers/${containerId}/packages`,
             { description: "Cypress cargo", quantity: 1, unitValue: 5000, currency: "USD" });
         })
         .then(res => expect(res.status).to.eq(201));
@@ -173,7 +173,7 @@ describe("Customs Filing — Negative / Gated Paths Suite", () => {
         .then(() => api("POST", "/containers", { shipmentId, size: "40", type: "HC" }))
         .then(res => {
           containerId = res.body.id;
-          return api("POST", `/containers/${containerId}/packages`,
+          return api("POST", `/shipments/${shipmentId}/containers/${containerId}/packages`,
             { description: "Cypress import cargo", quantity: 2, unitValue: 750, currency: "USD" });
         })
         .then(() => api("POST", `/shipments/${shipmentId}/customs-filings`, { filingType: "ISF_AMS" }))

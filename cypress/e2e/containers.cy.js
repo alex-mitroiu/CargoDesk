@@ -121,7 +121,7 @@ describe("Containers Suite", () => {
     });
 
     it("DELETE /api/containers/:id → 200", () => {
-      api("DELETE", `/containers/${containerId}`).then(res => {
+      api("DELETE", `/shipments/${spotShipmentId}/containers/${containerId}`).then(res => {
         expect(res.status).to.eq(200);
       });
     });
@@ -166,7 +166,7 @@ describe("Containers Suite", () => {
 
     it("deleting the container returns 200", () => {
       if (!ctrId) return;
-      api("DELETE", `/containers/${ctrId}`).then(res => {
+      api("DELETE", `/shipments/${centralShipmentId}/containers/${ctrId}`).then(res => {
         expect(res.status).to.eq(200);
         ctrId = null;
       });
@@ -232,29 +232,29 @@ describe("Containers Suite", () => {
     });
 
     after(() => {
-      if (evCtrId) api("DELETE", `/containers/${evCtrId}`);
+      if (evCtrId) api("DELETE", `/shipments/${spotShipmentId}/containers/${evCtrId}`);
     });
 
     it("POST with invalid eventType → 400", () => {
-      api("POST", `/containers/${evCtrId}/events`, {
+      api("POST", `/shipments/${spotShipmentId}/containers/${evCtrId}/events`, {
         eventType: "Not A Real Type", occurredAt: "2026-10-01",
       }).then(res => expect(res.status).to.eq(400));
     });
 
     it("POST without occurredAt → 400", () => {
-      api("POST", `/containers/${evCtrId}/events`, { eventType: "Gate In" })
+      api("POST", `/shipments/${spotShipmentId}/containers/${evCtrId}/events`, { eventType: "Gate In" })
         .then(res => expect(res.status).to.eq(400));
     });
 
     it("GET on a fresh container returns an empty array", () => {
-      api("GET", `/containers/${evCtrId}/events`).then(res => {
+      api("GET", `/shipments/${spotShipmentId}/containers/${evCtrId}/events`).then(res => {
         expect(res.status).to.eq(200);
         expect(res.body).to.be.an("array").that.is.empty;
       });
     });
 
     it("POST Empty Pickup → 201 with containerId/shipmentId/recordedBy", () => {
-      api("POST", `/containers/${evCtrId}/events`, {
+      api("POST", `/shipments/${spotShipmentId}/containers/${evCtrId}/events`, {
         eventType: "Empty Pickup", occurredAt: "2026-10-01", location: "Shanghai Depot",
       }).then(res => {
         expect(res.status).to.eq(201);
@@ -267,10 +267,10 @@ describe("Containers Suite", () => {
     });
 
     it("POST Gate In → 201, list returns both events ordered by occurredAt", () => {
-      api("POST", `/containers/${evCtrId}/events`, {
+      api("POST", `/shipments/${spotShipmentId}/containers/${evCtrId}/events`, {
         eventType: "Gate In", occurredAt: "2026-10-03", location: "CNSHA Terminal",
       }).then(() => {
-        api("GET", `/containers/${evCtrId}/events`).then(res => {
+        api("GET", `/shipments/${spotShipmentId}/containers/${evCtrId}/events`).then(res => {
           expect(res.status).to.eq(200);
           expect(res.body).to.have.length(2);
           expect(res.body[0].eventType).to.eq("Empty Pickup");
@@ -289,9 +289,9 @@ describe("Containers Suite", () => {
     });
 
     it("DELETE /api/container-events/:id → 200, one event remains", () => {
-      api("DELETE", `/container-events/${eventId}`).then(res => {
+      api("DELETE", `/shipments/${spotShipmentId}/container-events/${eventId}`).then(res => {
         expect(res.status).to.eq(200);
-        api("GET", `/containers/${evCtrId}/events`).then(list => {
+        api("GET", `/shipments/${spotShipmentId}/containers/${evCtrId}/events`).then(list => {
           expect(list.body).to.have.length(1);
           expect(list.body[0].eventType).to.eq("Gate In");
         });
@@ -299,7 +299,7 @@ describe("Containers Suite", () => {
     });
 
     it("DELETE non-existent event → 404", () => {
-      api("DELETE", "/container-events/DOESNOTEXIST-999").then(res => {
+      api("DELETE", `/shipments/${spotShipmentId}/container-events/DOESNOTEXIST-999`).then(res => {
         expect(res.status).to.eq(404);
       });
     });

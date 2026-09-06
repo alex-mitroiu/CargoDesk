@@ -70,14 +70,14 @@ describe("Customs Filing Lifecycle Suite", () => {
     api("POST", "/containers", { shipmentId, size: "40", type: "GP" })
       .then(res => {
         containerId = res.body.id;
-        return api("POST", `/containers/${containerId}/packages`, {
+        return api("POST", `/shipments/${shipmentId}/containers/${containerId}/packages`, {
           description: "Cypress test cargo", quantity: 1, unitValue: 1000, currency: "USD",
         });
       }).then(res => expect(res.status).to.eq(201));
   });
 
   after(() => {
-    if (containerId) api("DELETE", `/containers/${containerId}`);
+    if (containerId) api("DELETE", `/shipments/${shipmentId}/containers/${containerId}`);
     if (shipmentId)  api("DELETE", `/shipments/${shipmentId}`);
     if (scratchCustomerId) api("DELETE", `/customers/${scratchCustomerId}`);
   });

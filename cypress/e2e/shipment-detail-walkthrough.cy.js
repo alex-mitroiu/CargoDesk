@@ -76,7 +76,7 @@ describe("Shipment Detail Walkthrough Suite", () => {
   });
 
   after(() => {
-    if (containerId) api("DELETE", `/containers/${containerId}`);
+    if (containerId) api("DELETE", `/shipments/${shipmentId}/containers/${containerId}`);
     if (shipmentId)  api("DELETE", `/shipments/${shipmentId}`);
     createdCustomerIds.forEach(id => api("DELETE", `/customers/${id}`));
   });

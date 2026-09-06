@@ -53,14 +53,17 @@ async function login() {
   return body.token;
 }
 
-// Office `code` is server-generated from country+unlocode+department (routes/offices.js) —
-// creating a scratch one risks colliding with a real office already in the dev DB. Simpler and
-// collision-free to just reuse whatever real office already exists.
-async function anyOfficeId(token) {
-  const res = await request("GET", "/api/offices", null, token);
-  const offices = Array.isArray(res.body) ? res.body : (res.body?.results ?? []);
-  if (!offices.length) throw new Error("No offices exist in this dev DB to test against");
-  return offices[0].id;
+// Office `code` is server-generated from country+unlocode+department (routes/offices.js) — a
+// randomized unlocode avoids any collision risk, in any environment. Previously this reused
+// whatever real office already existed in the dev DB instead of creating one, on the theory that
+// a scratch office might collide with a real one — that assumption broke the first time this ran
+// against a genuinely fresh database (a real CI gap, masked for two days by an unrelated seed-step
+// failure: CI never got far enough into the suite to reach this file until that was fixed).
+async function scratchOfficeId(token) {
+  const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
+  const res = await request("POST", "/api/offices", { unlocode: `ZZ${rand}`, department: "SE", name: `Doc Template Test Office ${rand}`, countryCode: "ZZ" }, token);
+  if (res.status !== 201 || !res.body?.id) throw new Error(`Failed to create scratch office: ${JSON.stringify(res.body)}`);
+  return res.body.id;
 }
 
 (async () => {
@@ -69,9 +72,9 @@ async function anyOfficeId(token) {
     const token = await login();
     console.log("  ✓ Logged in");
 
-    console.log("\nReusing a real existing office for scoping (avoids code-collision risk)");
-    const officeId = await anyOfficeId(token);
-    assert("resolved a real office id", !!officeId);
+    console.log("\nCreate a scratch office for scoping (randomized code, zero collision risk)");
+    const officeId = await scratchOfficeId(token);
+    assert("scratch office created", !!officeId);
 
     console.log("\nCreate a generic (no office, no carrier) BL01 template");
     const generic = await request("POST", "/api/document-templates", {
@@ -135,6 +138,7 @@ async function anyOfficeId(token) {
     console.log("\nCleanup");
     await request("DELETE", `/api/document-templates/${generic.body.id}`, null, token);
     await request("DELETE", `/api/document-templates/${officeOnly.body.id}`, null, token);
+    await request("DELETE", `/api/offices/${officeId}`, null, token);
 
     console.log(`\n${"─".repeat(50)}`);
     console.log(`Results: ${passed} passed, ${failed} failed`);

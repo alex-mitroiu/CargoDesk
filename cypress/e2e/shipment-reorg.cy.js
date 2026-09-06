@@ -75,7 +75,7 @@ describe("Shipment Detail Reorg Suite", () => {
   });
 
   after(() => {
-    if (containerId) api("DELETE", `/containers/${containerId}`);
+    if (containerId) api("DELETE", `/shipments/${shipmentId}/containers/${containerId}`);
     if (shipmentId)  api("DELETE", `/shipments/${shipmentId}`);
     if (savedSidebarOrder) {
       try {
