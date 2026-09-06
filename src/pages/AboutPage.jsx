@@ -229,10 +229,16 @@ import { IconSettings, IconAnchor, IconBaseStation, AnyIcon } from "../component
           Database Schema
         </h2>
         <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, lineHeight: 1.7, margin: "0 0 20px" }}>
-          CargoDesk uses a single SQLite file (<code style={{ fontFamily: T.mono, fontSize: 12,
+          CargoDesk runs on Postgres (<code style={{ fontFamily: T.mono, fontSize: 12,
             color: T.textCode, background: T.bg, border: `1px solid ${T.border}`,
-            borderRadius: 4, padding: "1px 5px" }}>cargodesk.db</code>).
-          Schema changes are applied at startup via safe <code style={{ fontFamily: T.mono, fontSize: 12,
+            borderRadius: 4, padding: "1px 5px" }}>pg.Pool</code> when a real server is configured,
+          an embedded <code style={{ fontFamily: T.mono, fontSize: 12,
+            color: T.textCode, background: T.bg, border: `1px solid ${T.border}`,
+            borderRadius: 4, padding: "1px 5px" }}>pglite</code> instance otherwise, with no code
+          change either way). The tables below live in the monolith's own schema — several domains
+          (MDM, Screening, Kanban, Customers, Contracts) also exist as independently-deployed
+          services with their own copy of the same tables, reachable per-domain via a local/remote
+          toggle. Schema changes are applied at startup via safe <code style={{ fontFamily: T.mono, fontSize: 12,
             color: T.textCode, background: T.bg, border: `1px solid ${T.border}`,
             borderRadius: 4, padding: "1px 5px" }}>ALTER TABLE</code> migrations —
           no manual intervention or DB deletion required.
@@ -458,8 +464,9 @@ const ArchitecturalDetailsTab = () => {
             ["Browser", "React 18 + Vite, hash-based routing (App.jsx) — no React Router"],
             ["Transport", "fetch() for JSON requests; a WebSocket (shipmentSubs) for live updates"],
             ["Server", "server.js — schema, startup migrations, mapper functions, assembled into ctx"],
-            ["Routes", "17 route files, module.exports = (app, ctx) => {...}"],
-            ["Database", "SQLite via node:sqlite — 55 tables, no ORM, prepared statements only"],
+            ["Routes", "37 route files, module.exports = (app, ctx) => {...}"],
+            ["Database", "Postgres (pg.Pool, or an embedded pglite fallback with no DATABASE_URL) — 95 tables in the monolith's own schema, no ORM, prepared statements only"],
+            ["Services", "7 independently-deployed microservices (MDM, Screening, Customer, Contract Management, Kanban/Testing, PDF Render, Document Distribution), each Postgres-backed"],
           ].map(([label, val], i, arr) => (
             <div key={label} style={{ display: "grid", gridTemplateColumns: "120px 1fr",
               padding: "12px 16px", borderBottom: i < arr.length - 1 ? `1px solid ${T.border}22` : "none",
@@ -778,9 +785,11 @@ const AboutPage = () => {
 
   const stack = [
     { layer: "Frontend",  items: "React 18, Vite, custom dark design system (IBM Plex Mono / Syne / DM Sans)" },
-    { layer: "Backend",   items: "Node.js 22.5+, Express, node:sqlite (built-in, no ORM)" },
-    { layer: "Data",      items: "SQLite — single-file DB with safe ALTER TABLE migrations on startup" },
-    { layer: "Weather",   items: "Open-Meteo API — free, no API key, geocoding via Open-Meteo geocoding API" },
+    { layer: "Backend",   items: "Node.js, Express, Postgres (pg.Pool) — falls back to an embedded pglite (WASM Postgres) when no DATABASE_URL is set, no ORM either way" },
+    { layer: "Microservices", items: "7 independently-deployed services (MDM, Screening, Customer, Contract Management, Kanban/Testing, PDF Render, Document Distribution), each with its own Postgres-backed datastore, cut over per-domain via a local/remote toggle" },
+    { layer: "Documents", items: "Server-rendered via headless Chrome (Puppeteer), signed with genuine CAdES-detached CMS/PKCS#7 digital signatures (node-forge, @signpdf)" },
+    { layer: "Real-time & Auth", items: "WebSocket for live shipment messaging/notifications; JWT + bcrypt, with optional Microsoft Entra ID (Azure AD) single sign-on" },
+    { layer: "External data", items: "Open-Meteo (weather, geocoding), aisstream.io (live AIS vessel tracking), US Treasury OFAC SDN + Commerce Dept Consolidated Screening List (denied-party compliance), Frankfurter (FX rates), Anthropic/OpenAI-compatible endpoints (AI Assistant, document extraction)" },
     { layer: "Standards", items: "IMDG Code (IMO), Incoterms® 2020 (ICC), UN/LOCODE port registry" },
   ];
 
@@ -803,9 +812,12 @@ const AboutPage = () => {
           carriers, trade lanes, and countries.
         </P>
         <P>
-          Built as a full-stack single-user application — a React 18 frontend backed by an Express
-          API and a local SQLite database — CargoDesk is designed to work entirely offline, with no
-          cloud dependencies beyond the optional weather widget.
+          Built as a full-stack, role-based application — a React 18 frontend backed by an Express
+          API and Postgres (with a self-contained embedded fallback for local development, no
+          external database server required) — CargoDesk supports multiple concurrent users with
+          per-user office/lane scoping and whole-shipment edit-locking, and integrates a handful of
+          real external services beyond the optional weather widget: live AIS vessel tracking,
+          government denied-party sanctions lists, FX rates, and an AI assistant.
         </P>
       </div>
 

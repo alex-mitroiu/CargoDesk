@@ -78,7 +78,18 @@ function runToCompletion(command, args) {
 
   console.log("② Shutting the server down cleanly (releases its database lock)…");
   try {
-    await fetch(SHUTDOWN_URL, { method: "POST" });
+    // /internal/dev/shutdown only exists when NODE_ENV !== "production" (server.js) — fetch()
+    // resolving doesn't mean the shutdown actually happened, since a 404 here still resolves
+    // normally rather than throwing. Checking res.ok is what actually distinguishes "the server
+    // is now shutting down" from "that route doesn't exist" — without it, this step could report
+    // success while the server (and its exclusive pgdata/ lock) is still very much alive,
+    // confusing whatever comes next rather than failing clearly the way every other step here does.
+    const res = await fetch(SHUTDOWN_URL, { method: "POST" });
+    if (!res.ok) {
+      console.error(`✗ Shutdown route returned ${res.status} — is NODE_ENV set to "production"? That route is dev-only.`);
+      if (!serverExited) server.kill();
+      process.exit(1);
+    }
   } catch (e) {
     console.error(`✗ Couldn't reach the shutdown route: ${e.message}`);
     if (!serverExited) server.kill();

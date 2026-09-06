@@ -319,13 +319,18 @@ lsof -ti:3001 | xargs kill
 ```
 
 **App starts but the database is empty**
-This shouldn't happen on a normal first run — the server auto-copies `db/cargodesk.sample.db`
-(ports, carriers, vessels, commodities, regions, trade lanes) into place the first time it finds
-no `cargodesk.db`. If you're seeing an empty database anyway (e.g. `db/cargodesk.sample.db` was
-deleted, or you deliberately started from a blank file), re-import it directly:
+This is expected on a genuinely fresh `pgdata/` — unlike the old SQLite-era behavior, nothing is
+auto-copied into place on first boot. The server only creates its own schema; ports, carriers,
+vessels, commodities, regions, and trade lanes need the one-time setup script:
 ```bash
-npm run seed            # ports, carriers, vessels, commodities
-npm run seed:contracts  # sample carrier contracts (optional)
+npm run setup           # boots the server once, shuts it down cleanly, then seeds MDM data
+```
+If you've already run that and still see an empty database (or want to refresh MDM data after
+editing `data/*.csv`), stop the server first (see [Stopping the Server](#stopping-the-server)
+above), then:
+```bash
+npm run seed            # re-imports ports, carriers, vessels, commodities, regions, trade lanes
+npm run seed:contracts  # sample carrier contracts (optional, server must be running)
 ```
 
 **XLSX template export returns 404**
@@ -341,8 +346,8 @@ Then optionally open `exports/dashboard-template.xlsx` in Excel, add charts refe
 
 ```
 CargoDesk/
-├── server.js                  # Entry point: SQLite schema, startup migrations, shared helpers,
-│                              #   WebSocket server. HTTP routes live in routes/.
+├── server.js                  # Entry point: Postgres/pglite schema, startup migrations, shared
+│                              #   helpers, WebSocket server. HTTP routes live in routes/.
 ├── routes/
 │   ├── auth.js                # /api/auth/*, /api/users/*, /api/access-configs/*, /api/scope-items/*
 │   ├── shipments.js           # /api/shipments/* (CRUD, events, status-log, containers, messages, legs)
@@ -369,8 +374,10 @@ CargoDesk/
 │   ├── carriers.csv           # 68 carrier records
 │   └── vessels.json           # 349 vessels (IMO registry)
 ├── db/
-│   └── cargodesk.sample.db    # Committed MDM reference DB — server.js copies this to
-│                               #   cargodesk.db automatically on first start if none exists
+│   └── cargodesk.sample.db    # Committed MDM reference DB (ports/carriers/vessels/commodities/
+│                               #   regions/trade lanes/countries) — read directly by `npm run
+│                               #   seed`/`npm run setup` into the live Postgres/pglite database,
+│                               #   never auto-copied
 └── src/
     ├── api.js                 # All fetch wrappers (api.shipments, api.export, api.costLines…)
     ├── tokens.js              # Design tokens, theme system, route-matching helpers

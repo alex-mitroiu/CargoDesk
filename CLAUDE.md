@@ -17,7 +17,10 @@ Full-stack freight management app. React 18 + Vite frontend, Express + dual-back
 
 ## Stack
 - Frontend: React 18, Vite, JSX with inline styles (no CSS files, no Tailwind)
-- Backend: Express, `node:sqlite` (DatabaseSync — NOT better-sqlite3)
+- Backend: Express, dual-backend Postgres (`pg.Pool` when `DATABASE_URL` is set, an embedded
+  `@electric-sql/pglite` instance otherwise) — see the Project section above; this bullet used to
+  say `node:sqlite`, stale since the Postgres migration completed (see "Postgres migration
+  progress" — monolith + all 6 microservices fully Postgres-backed)
 - Design tokens: `src/tokens.js` exports mutable `T` object, `applyTheme(isDark)` for dark/light
 - All styling via `style={{ ... }}` using `T.surface`, `T.text`, `T.accent`, `T.border` etc.
 - `puppeteer-core` is a **root** `package.json` dependency even though no code in the monolith
@@ -28,7 +31,7 @@ Full-stack freight management app. React 18 + Vite frontend, Express + dual-back
 
 ## Key files
 ```
-server.js                          Express entry point: SQLite schema, startup migrations,
+server.js                          Express entry point: Postgres/pglite schema, startup migrations,
                                    shared helpers (mappers, auth middleware, broadcastMessage,
                                    syncShipmentFromLegs, etc.), WebSocket server.
                                    HTTP routes live in routes/ — server.js loads them via ctx.
@@ -36,8 +39,12 @@ routes/
   auth.js            /api/auth/*, /api/users/*, /api/access-configs/*, /api/scope-items/*
   shipments.js       /api/shipments/* (CRUD, events, status-log, containers, messages, legs,
                      container-events — FCL lifecycle: Empty Pickup/Gate In/Loaded/Sailed/
-                     Discharged/Gate Out/Empty Return, GET+POST /api/containers/:id/events,
-                     DELETE /api/container-events/:id)
+                     Discharged/Gate Out/Empty Return). Containers/events/packages/parties/
+                     side-offices are all nested under /api/shipments/:shipmentId/... (e.g.
+                     GET+POST .../containers/:id/events, DELETE .../container-events/:id) — a
+                     2026-09-05/06 audit found and fixed 12 routes still keyed by the
+                     sub-resource's own bare id, which silently skipped shipmentScopeParamCheck
+                     (ARCHITECTURE.md audit log, TKT-YXKPCS)
   allocations.js     /api/allocations/* (CRUD, match, conflicts)
   mdm.js             /api/carriers, /api/vessels, /api/port-locations, /api/linked-ports,
                      /api/trade-lanes, /api/country-trade-lanes, /api/regions, /api/countries,
