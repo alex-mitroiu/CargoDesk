@@ -103,17 +103,19 @@ describe("Schedule Leg-Removal Cascade Suite", () => {
     // No "locked" concept exists on this page anymore — every leg, old or new, always
     // renders a real, enabled Leg Type <select>, never a read-only row.
     cy.get('[id^="leg-row-"]', { timeout: 8000 }).should("have.length", 2);
-    cy.get('[id^="leg-row-"]').last().find("select").first().should("be.enabled");
-    cy.get('[id^="leg-row-"]').last().find("select").first().select("Pick-up");
-    cy.get('[id^="leg-row-"]').last().find("select").first().should("have.value", "Pick-up");
+    // Re-locate the new row by content, not position — a REAL bug found live in CI (never
+    // reproduced locally): LegsTable auto-reorders Pick-up-first/SEA-middle/Delivery-last on
+    // every save (v0.29.0), so the instant this row is switched to "Pick-up" it jumps to the
+    // FRONT of the list, ahead of the SEA DEMO CADENZA leg — a later `.last()` then silently
+    // re-targets DEMO CADENZA instead, asserting on the wrong row entirely.
+    const findNewLeg = () => cy.get('[id^="leg-row-"]').then($rows =>
+      cy.wrap([...$rows].find(el => !el.textContent.includes("DEMO CADENZA"))));
+    findNewLeg().find("select").first().should("be.enabled");
+    findNewLeg().find("select").first().select("Pick-up");
+    findNewLeg().find("select").first().should("have.value", "Pick-up");
 
-    // Remove that same blank leg again — NOT necessarily the last row: LegsTable
-    // auto-reorders Pick-up-first/SEA-middle/Delivery-last on every save (v0.29.0), so the
-    // blank Pick-up leg now sorts BEFORE the real DEMO CADENZA SEA leg, not after it.
-    cy.get('[id^="leg-row-"]').then($rows => {
-      const blank = [...$rows].find(el => !el.textContent.includes("DEMO CADENZA"));
-      cy.wrap(blank).click();
-    });
+    // Remove that same blank leg again — same content-based re-lookup as above, not position.
+    findNewLeg().click();
     // {force: true}: this specific click has been consistently failing in CI (and only CI —
     // never reproduced locally, including via a real, coordinate-based mouse click through
     // CDP across many runs) with "covered by another element" against a bare z-index:1000

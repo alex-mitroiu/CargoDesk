@@ -135,13 +135,23 @@ describe("Shipment Creation Form Suite", () => {
     cy.intercept("GET", "/api/schedules/search*").as("sailingSearch");
     cy.contains("button", "Search Sailings", { timeout: 8000 }).click();
     cy.wait("@sailingSearch").then(({ response }) => {
-      // The very first result is always a direct (non-TSP) sailing — mockSailings() only makes
-      // every 3rd entry (index 2, 5, ...) a TSP — so index 0 keeps this assertion simple and
-      // deterministic regardless of whether the catalog or the demo fallback served it.
-      const sailing = response.body.sailings[0];
+      // Pick a direct (non-TSP) sailing specifically, not just index 0 — mockSailings() makes
+      // every 3rd entry (index 2, 5, ...) a TSP so index 0 is reliably direct there, but
+      // catalogSailings() (routes/system.js) matches shipment_schedules purely on pol/pod, with
+      // no carrier filter, so CI's shared database can serve a leftover TSP schedule from an
+      // earlier spec ahead of a direct one. A direct sailing always has `legs: null`; picking it
+      // explicitly keeps the single-leg ETD/vessel assertion below valid regardless of which
+      // source (catalog or mock) answered the search, or in what order.
+      const sailings = response.body.sailings || [];
+      const sailing = sailings.find(s => !s.legs) || sailings[0];
       expect(sailing, "at least one sailing result").to.exist;
 
-      cy.contains("button", /Select →|Add →|✓ Active/, { timeout: 10000 }).first().click();
+      // Click that same direct sailing's own row — each result renders as one whole `<button>`
+      // (SailingPickerModal.jsx) whose text includes "Voy {voyageNumber}", unique per result,
+      // unlike vesselName which mockSailings() can repeat across entries. Not just "the first
+      // pick button": with a mixed direct/TSP result set the two can disagree once the search
+      // above no longer trusts index 0 by construction.
+      cy.contains("button", `Voy ${sailing.voyageNumber}`, { timeout: 10000 }).click();
 
       // The regression check itself: before submitting, the SEA leg row must already reflect
       // the picked sailing — not just the accent-colored "selected sailing" chip above the form.
