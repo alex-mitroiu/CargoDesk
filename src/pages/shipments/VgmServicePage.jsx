@@ -7,6 +7,7 @@ import Badge from "../../components/primitives/Badge";
 import DatePicker from "../../components/primitives/DatePicker";
 import { Textarea, inputBase } from "../../components/primitives/Form";
 import { IconFolder } from "../../components/primitives/Icon";
+import EdiMessageList from "../../components/shared/EdiMessageList";
 
 // ─── VGM Export Service page ────────────────────────────────────────────────
 // VGM's real compliance data (vgmWeightKg/vgmStatus/vgmCutoff) lives directly on
@@ -23,6 +24,7 @@ const VgmRow = ({ container, canEdit, saving, onSave }) => {
   const [weight, setWeight] = useState(container.vgmWeightKg != null ? String(container.vgmWeightKg) : "");
   const [status, setStatus] = useState(container.vgmStatus || "Pending");
   const [cutoff, setCutoff] = useState(container.vgmCutoff || "");
+  const [method, setMethod] = useState(container.vgmMethod || "");
 
   // Resyncs on the saved values themselves (not just container identity) — a save
   // round-trips async, so without this a corrected value could keep showing the
@@ -32,11 +34,25 @@ const VgmRow = ({ container, canEdit, saving, onSave }) => {
     setWeight(container.vgmWeightKg != null ? String(container.vgmWeightKg) : "");
     setStatus(container.vgmStatus || "Pending");
     setCutoff(container.vgmCutoff || "");
-  }, [container.id, container.vgmWeightKg, container.vgmStatus, container.vgmCutoff]);
+    setMethod(container.vgmMethod || "");
+  }, [container.id, container.vgmWeightKg, container.vgmStatus, container.vgmCutoff, container.vgmMethod]);
 
   const commitWeight = () => {
     const parsed = weight.trim() === "" ? null : parseFloat(weight);
     onSave({ vgmWeightKg: (parsed != null && !Number.isNaN(parsed)) ? parsed : null });
+  };
+
+  // SOLAS VI/2 requires a declared method (Method 1: weighing the packed container;
+  // Method 2: certified sum of cargo/dunnage weight + tare) — the server rejects a
+  // Submitted transition with no method set, so block it here too rather than let the
+  // user hit a save error with no context.
+  const handleStatusChange = next => {
+    if (next === "Submitted" && !method) {
+      toast.error("Set a VGM Method (Method 1 or Method 2) before marking VGM as Submitted");
+      return;
+    }
+    setStatus(next);
+    onSave({ vgmStatus: next, vgmMethod: method });
   };
 
   const state = container.vgmCutoffState;
@@ -58,13 +74,41 @@ const VgmRow = ({ container, canEdit, saving, onSave }) => {
           onBlur={commitWeight}
           style={{ ...inputBase, fontFamily: T.body, fontSize: 12, width: "100%" }} />
       </td>
-      <td style={{ padding: "8px 10px", width: 130 }}>
-        <select id={`svcvgm-row-${container.id}-status`} value={status} disabled={!canEdit}
-          onChange={e => { setStatus(e.target.value); onSave({ vgmStatus: e.target.value }); }}
+      <td style={{ padding: "8px 10px", width: 150 }}>
+        <select id={`svcvgm-row-${container.id}-method`} value={method} disabled={!canEdit}
+          onChange={e => { setMethod(e.target.value); onSave({ vgmMethod: e.target.value }); }}
           style={{ ...inputBase, fontFamily: T.body, fontSize: 12, width: "100%", cursor: "pointer" }}>
-          <option value="Pending">Pending</option>
-          <option value="Submitted">Submitted</option>
+          <option value="">Not declared</option>
+          <option value="Method 1">Method 1 — Weighing</option>
+          <option value="Method 2">Method 2 — Calculated</option>
         </select>
+      </td>
+      <td style={{ padding: "8px 10px", width: 150 }}>
+        {/* Accepted/Rejected only ever come from the VGM Simulator (Test Tools) — same
+            simulate-only invariant as customs filing/carrier booking's own Accepted/Rejected,
+            never a raw dropdown option here. */}
+        {status === "Accepted" ? (
+          <Badge variant="success">Accepted</Badge>
+        ) : status === "Rejected" ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span title={container.vgmRejectionReason || "Rejected"}><Badge variant="danger">Rejected</Badge></span>
+            {canEdit && (
+              <button id={`svcvgm-row-${container.id}-reset-btn`}
+                onClick={() => { setStatus("Pending"); onSave({ vgmStatus: "Pending" }); }}
+                style={{ background: "none", border: "none", cursor: "pointer", padding: 0,
+                  fontFamily: T.body, fontSize: 11, color: T.accent, textDecoration: "underline" }}>
+                Reset
+              </button>
+            )}
+          </div>
+        ) : (
+          <select id={`svcvgm-row-${container.id}-status`} value={status} disabled={!canEdit}
+            onChange={e => handleStatusChange(e.target.value)}
+            style={{ ...inputBase, fontFamily: T.body, fontSize: 12, width: "100%", cursor: "pointer" }}>
+            <option value="Pending">Pending</option>
+            <option value="Submitted">Submitted</option>
+          </select>
+        )}
       </td>
       <td style={{ padding: "8px 10px", width: 170 }}>
         <DatePicker id={`svcvgm-row-${container.id}-cutoff`} value={cutoff} disabled={!canEdit}
@@ -89,17 +133,23 @@ const VgmServicePage = ({ shipment, containers = [], side, canEdit, onEditContai
   const [notes,   setNotes]   = useState("");
   const [savingNotes, setSavingNotes] = useState(false);
   const [savingId,    setSavingId]    = useState(null);
+  const [messages,    setMessages]    = useState([]);
 
   const shipmentContainers = containers.filter(c => c.shipmentId === shipment.id);
+  // Every vgm_declaration/vgm_acceptance/vgm_rejection message across every container on this
+  // shipment — one shared thread rather than splitting per-container, since each message's own
+  // payload already names its containerNumber (EdiMessageList shows the raw payload).
+  const vgmMessages = messages.filter(m => m.messageType.startsWith("vgm_"));
 
   useEffect(() => {
     let cancelled = false;
-    api.services.list(shipment.id)
-      .then(list => {
+    Promise.all([api.services.list(shipment.id), api.ediMessages.list(shipment.id)])
+      .then(([list, msgs]) => {
         if (cancelled) return;
         const match = list.find(s => s.side === side && s.serviceType === "VGM" && s.status !== "Cancelled");
         setService(match || null);
         setNotes(match?.notes || "");
+        setMessages(msgs);
       })
       .catch(() => !cancelled && setService(null));
     return () => { cancelled = true; };
@@ -122,11 +172,18 @@ const VgmServicePage = ({ shipment, containers = [], side, canEdit, onEditContai
     setSavingId(containerId);
     try {
       await onEditContainer(containerId, { ...container, ...patch }, { silent: true });
+      // A Pending→Submitted transition writes a new vgm_declaration transmittal server-side —
+      // refetch so it shows up in the thread immediately rather than only after a reload.
+      if (patch.vgmStatus === "Submitted") {
+        api.ediMessages.list(shipment.id).then(setMessages).catch(() => {});
+      }
     } catch { /* already toasted by onEditContainer */ }
     setSavingId(null);
   };
 
-  const submittedCount = shipmentContainers.filter(c => c.vgmStatus === "Submitted").length;
+  const acceptedCount  = shipmentContainers.filter(c => c.vgmStatus === "Accepted").length;
+  const rejectedCount  = shipmentContainers.filter(c => c.vgmStatus === "Rejected").length;
+  const submittedCount = shipmentContainers.filter(c => c.vgmStatus === "Submitted" || c.vgmStatus === "Accepted").length;
   const overallState   = worstState(shipmentContainers.map(c => c.vgmCutoffState));
 
   if (service === undefined) {
@@ -171,7 +228,11 @@ const VgmServicePage = ({ shipment, containers = [], side, canEdit, onEditContai
           <div id="svcvgm-summary" style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
               {submittedCount}/{shipmentContainers.length} container{shipmentContainers.length !== 1 ? "s" : ""} submitted
+              {acceptedCount > 0 ? ` · ${acceptedCount} accepted` : ""}
             </span>
+            {rejectedCount > 0 && (
+              <Badge variant="danger">{rejectedCount} rejected</Badge>
+            )}
             {overallState && overallState !== "none" && (
               <Badge variant={CUTOFF_STATE_VARIANT[overallState]}>{COMPLIANCE_STATE_LABEL[overallState]}</Badge>
             )}
@@ -194,7 +255,7 @@ const VgmServicePage = ({ shipment, containers = [], side, canEdit, onEditContai
             <table id="svcvgm-table" style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead>
                 <tr style={{ borderBottom: `1px solid ${T.border}` }}>
-                  {["Container #", "Type", "VGM Weight (kg)", "VGM Status", "VGM Cutoff", "Compliance"].map(h => (
+                  {["Container #", "Type", "VGM Weight (kg)", "VGM Method", "VGM Status", "VGM Cutoff", "Compliance"].map(h => (
                     <th key={h} style={{ padding: "8px 10px", textAlign: "left", fontFamily: T.body,
                       fontSize: 10.5, fontWeight: 700, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".05em" }}>
                       {h}
@@ -227,6 +288,14 @@ const VgmServicePage = ({ shipment, containers = [], side, canEdit, onEditContai
             </Btn>
           </div>
         )}
+      </div>
+
+      {/* VGM declaration/response thread — Accepted/Rejected only ever arrive here via
+          Test Tools → VGM Simulator (no live SOLAS VGM EDI integration). */}
+      <div id="svcvgm-thread-section" style={{ marginTop: 18 }}>
+        <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
+          textTransform: "uppercase", letterSpacing: ".06em", marginBottom: 8 }}>Message Thread</div>
+        <EdiMessageList messages={vgmMessages} emptyText="No VGM declared yet." />
       </div>
     </div>
   );

@@ -146,6 +146,15 @@ const ShipmentCustomsFilingDetailsPage = ({ shipment, parties, packages, hasExpo
                 <div style={{ fontFamily: T.body, fontSize: 13, color: T.text }}>
                   {priced.length} priced line{priced.length !== 1 ? "s" : ""} · {fmtCurr(cargoTotalUsd, "USD")}
                 </div>
+                {/* Export-control classification coverage (2026-09 gap analysis finding #3) —
+                    AES/EEI (export) only; ISF/AMS is an import security filing with no ECCN/
+                    license concept. A soft awareness line, never a hard block — most goods are
+                    legitimately EAR99/no-license, so an unclassified line isn't necessarily wrong. */}
+                {type === "AES_EEI" && priced.length > 0 && (
+                  <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, marginTop: 3 }}>
+                    {priced.filter(p => p.licenseType).length} of {priced.length} export-classified (ECCN/license)
+                  </div>
+                )}
               </div>
               {/* Pickup cross-reference (TKT-6A7J45, stories 8/9) — AES/EEI (export) only, since
                   Pickup is an Export-side-only service with nothing to cross-reference on the

@@ -4,7 +4,7 @@ module.exports = function systemRoutes(app, ctx) {
   const { query, transaction, ok, err, auth, requireRole,
           mapSystemMessage, getSettings, scheduleNextOfacSync, scheduleNextCslSync, loadSanctionsIndex, fxCache,
           logAdminEvent, migrationFailures, restartAisListener, rebuildPortLanesMap,
-          getAisListenerStatus,
+          getAisListenerStatus, getCarrierAdapter,
           DISTRIBUTION_SERVICE_URL, PDF_RENDER_SERVICE_URL, CONTRACT_SERVICE_URL, MDM_SERVICE_URL,
           SCREENING_SERVICE_URL, KANBAN_SERVICE_URL, CUSTOMER_SERVICE_URL, BREAK_GLASS_EMAILS } = ctx;
 
@@ -402,6 +402,32 @@ module.exports = function systemRoutes(app, ctx) {
     const catalog = await catalogSailings(pol, pod, weeks);
 
     let sailings = [...catalog];
+
+    // Multi-Carrier Integration Framework (TKT-KG4E49, story 2) — only attempted when the
+    // catalog came up empty and a carrier was specified; an active carrier_integrations row
+    // with 'schedules' capability for it gets a real lookup before falling back to mock data.
+    // No active integration (or no result from it) → today's exact mock fallback, unchanged.
+    // Gated by the same api_carrier_integrations_enabled master toggle as the booking-request
+    // route (routes/edi.js) — a single safety-net switch for the whole framework.
+    const carrierIntegrationsEnabled = (await getSettings()).api_carrier_integrations_enabled !== 'false';
+    if (sailings.length === 0 && carrierCode && carrierIntegrationsEnabled) {
+      const [integrationRow] = await query(
+        "SELECT * FROM carrier_integrations WHERE carrier_code=$1 AND is_active=TRUE", [carrierCode]
+      );
+      if (integrationRow && JSON.parse(integrationRow.capabilities || "[]").includes("schedules")) {
+        const adapter = getCarrierAdapter(integrationRow.adapter_key);
+        if (adapter) {
+          const config = {
+            baseUrl: integrationRow.base_url, authHeaderName: integrationRow.auth_header_name,
+            credential: integrationRow.credential,
+          };
+          const result = await adapter.searchSchedules(config, { pol, pod, carrierCode });
+          if (result.ok && result.sailings.length > 0) sailings = result.sailings;
+          else if (!result.ok) console.error(`Carrier integration ${carrierCode}/${integrationRow.adapter_key}: searchSchedules failed:`, result.error);
+        }
+      }
+    }
+
     const demoEnabled = (await getSettings()).demo_schedules_enabled !== 'false'; // default on
     let usedDemo = false;
     if (sailings.length === 0 && demoEnabled) {

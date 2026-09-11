@@ -132,6 +132,9 @@ module.exports = function opportunitiesRoutes(app, ctx) {
   // are likewise left at the quote's own defaults. estimatedCloseDate is deliberately NOT written
   // into quotes.cargo_ready_date -- "when we expect to close this deal" and "when cargo is ready
   // to ship" are unrelated concepts that happen to both be dates near a quote's creation.
+  // source_opportunity_id and a pre-populated quote_lines row from estimated_value (2026-09
+  // gap-closing pass) — previously the opportunity's own value estimate was silently dropped and
+  // nothing on the quote pointed back to where it came from.
   app.post("/api/opportunities/:id/convert", opportunityWrite, async (req, res) => {
     const [o] = await query("SELECT * FROM opportunities WHERE id=$1", [req.params.id]);
     if (!o) return err(res, "Not found", 404);
@@ -142,10 +145,18 @@ module.exports = function opportunitiesRoutes(app, ctx) {
     const actor = req.user?.name || req.user?.email || "";
     await query(`INSERT INTO quotes
       (id, status, customer_id, customer_name, pol, pod, carrier_code, commodity_code,
-       movement_type, notes, currency, created_at, created_by)
-      VALUES ($1,'Draft',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+       movement_type, notes, currency, source_opportunity_id, created_at, created_by)
+      VALUES ($1,'Draft',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
       [quoteId, o.customer_id, o.customer_name, o.pol, o.pod, o.carrier_code, o.commodity_code,
-           o.movement_type, o.notes, o.currency, now, actor]);
+           o.movement_type, o.notes, o.currency, req.params.id, now, actor]);
+    if (Number(o.estimated_value) > 0) {
+      await query(`INSERT INTO quote_lines
+        (id, quote_id, service_code, description, quantity, unit, rate, currency, amount_usd, sort_order)
+        VALUES ($1,$2,'FRT',$3,1,'lump_sum',$4,$5,$6,0)`,
+        [`QTL-${uid()}`, quoteId, `Estimated value carried over from Opportunity ${req.params.id}`,
+             o.estimated_value, o.currency || 'USD', o.estimated_value_usd || 0]);
+      await query("UPDATE quotes SET total_amount_usd=$1 WHERE id=$2", [o.estimated_value_usd || 0, quoteId]);
+    }
     await logEntityEvent("quote", quoteId, "CREATED", null, null, null,
       JSON.stringify({ customerName: o.customer_name, pol: o.pol, pod: o.pod, source: "opportunity", opportunityId: req.params.id }));
 

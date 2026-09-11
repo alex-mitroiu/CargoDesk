@@ -99,6 +99,18 @@ export const api = {
     reset:            (shipmentId, filingId)    => req("PATCH", `/shipments/${shipmentId}/customs-filings/${filingId}/reset`, {}),
     listAll:          (params={})               => req("GET",   `/customs-filings?${new URLSearchParams(params)}`),
   },
+  shippingInstructions: {
+    get:              (shipmentId)       => req("GET",   `/shipments/${shipmentId}/shipping-instructions`),
+    save:             (shipmentId, data) => req("PUT",   `/shipments/${shipmentId}/shipping-instructions`, data),
+    submit:           (shipmentId)       => req("POST",  `/shipments/${shipmentId}/shipping-instructions/submit`, {}),
+    simulateResponse: (shipmentId, d)    => req("POST",  `/shipments/${shipmentId}/shipping-instructions/simulate-response`, d),
+    reset:            (shipmentId)       => req("PATCH", `/shipments/${shipmentId}/shipping-instructions/reset`, {}),
+    listAll:          (params={})        => req("GET",   `/shipping-instructions?${new URLSearchParams(params)}`),
+  },
+  vgm: {
+    simulateResponse: (shipmentId, containerId, d) => req("POST", `/shipments/${shipmentId}/containers/${containerId}/vgm/simulate-response`, d),
+    listSubmissions:  (params={})                  => req("GET",  `/vgm-submissions?${new URLSearchParams(params)}`),
+  },
   legs: {
     list:   (shipmentId)              => req("GET",    `/shipments/${shipmentId}/legs`),
     create: (shipmentId, data)        => req("POST",   `/shipments/${shipmentId}/legs`, data),
@@ -404,6 +416,13 @@ export const api = {
       remove: (id)    => req("DELETE", `/eadapter/configs/${id}`),
     },
     bookableCarriers: (officeId = "") => req("GET", `/eadapter/bookable-carriers${officeId ? `?officeId=${officeId}` : ""}`),
+  },
+  carrierIntegrations: {
+    list:     ()      => req("GET",    "/carrier-integrations"),
+    adapters: ()      => req("GET",    "/carrier-integrations/adapters"),
+    create:   (d)     => req("POST",   "/carrier-integrations", d),
+    update:   (id, d) => req("PUT",    `/carrier-integrations/${id}`, d),
+    remove:   (id)    => req("DELETE", `/carrier-integrations/${id}`),
   },
   containerTypes: {
     list:   ()      => req("GET",    "/container-type-definitions"),
@@ -724,6 +743,7 @@ export const api = {
     accept:  (id)        => req("POST",   `/quotes/${id}/accept`),
     decline: (id, data)  => req("POST",   `/quotes/${id}/decline`, data),
     convert: (id)        => req("POST",   `/quotes/${id}/convert`),
+    expiring: (days)     => req("GET",    `/quotes/expiring${days ? `?days=${days}` : ""}`),
   },
   opportunities: {
     list:    (p = {})    => req("GET",    `/opportunities?${new URLSearchParams(p)}`),

@@ -656,12 +656,15 @@ module.exports = function contractsRoutes(app, ctx) {
     }
     const [existing] = await query("SELECT * FROM contracts WHERE id=$1", [req.params.id]);
     if (!existing) return err(res, "Not found", 404);
-    // shipments.contract_id and allocations.contract_id both carry no FK constraint (SQLite
-    // ADD COLUMN can't retrofit one onto live rows) — without this guard a delete here silently
-    // orphans every shipment/space-config that still points at this id, and neither the contract
-    // route-matching endpoints nor the contract-mismatch checks were ever built to handle a
-    // vanished contract, only an Active/Draft/Expired one. Same "referenced — deactivate instead"
-    // pattern routes/offices.js already uses for the identical class of problem.
+    // shipments.contract_id still carries no FK constraint, and this app-level guard is checked
+    // first regardless (a clean, specific error beats a raw Postgres FK-violation on the
+    // allocations side) — without it a delete here would silently orphan every shipment/space-
+    // config that still points at this id, and neither the contract route-matching endpoints nor
+    // the contract-mismatch checks were ever built to handle a vanished contract, only an
+    // Active/Draft/Expired one. Same "referenced — deactivate instead" pattern routes/offices.js
+    // uses for the identical class of problem. allocations.contract_id itself gained a real FK
+    // (2026-09 Space Configuration spec, gap #3) as a second line of defense — this guard should
+    // still always fire first in practice.
     const [shipmentInUse] = await query("SELECT id FROM shipments WHERE contract_id=$1 LIMIT 1", [req.params.id]);
     if (shipmentInUse) return err(res, "This contract is referenced by at least one shipment — set its status to Expired/On Hold instead of deleting");
     const [allocInUse] = await query("SELECT id FROM allocations WHERE contract_id=$1 LIMIT 1", [req.params.id]);

@@ -507,6 +507,53 @@ are fully validated.
 - **Lifecycle-stage stepper precedent**: no dedicated stepper component exists yet; `MilestonePanel` (ShipmentDetailPage.jsx 1593-~1870) is the closest analog — linear progress bar (1734-1738, `width: ${progress}%`) plus per-step state coloring via `milestoneState()`/`stateColor()` (1666-1676: completed/overdue/current/upcoming) driven by `shipment_milestones` rows (`id, label, estimatedDate, note, completedAt, completedBy`, fixed step keys `booking_confirmed, si_submitted, cargo_gated_in, vessel_departed, bl_issued, vessel_arrived, customs_cleared, cargo_released, delivered`). Any new per-container lifecycle/stage UI should reuse this state-coloring pattern rather than inventing a new visual language
 - **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages, 📡 EDI). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
 
+## Recent changes (v0.91.0 "Interchange")
+Bundled release — several previously-uncommitted features plus a gap-closing audit wave, batched
+into one version per this project's own bundling precedent (v0.85.0/v0.90.0/v0.90.1/v0.90.3).
+- **DCSA Multi-Carrier Integration (Epic `TKT-KG4E49`, Stories 1-5)** — real per-carrier API
+  connectivity behind a registry pattern (`lib/carrier-integrations/registry.js`), so a second or
+  third carrier needs only a new `carrier_integrations` row, never new route code. One generic
+  adapter ships, `dcsa-bkg-v2.js` (DCSA Booking API v2.0.5) — builds a spec-shaped booking request,
+  verifies an inbound HMAC-signed webhook, maps CONFIRMED/REJECTED/anything-else to
+  confirmed/rejected/confirmed_with_changes (never silently confirms an unrecognized status). New
+  `routes/carrier-webhooks.js` is the single shared inbound entry point; needs the raw request
+  bytes ahead of the global JSON parser for signature verification. Credentials are write-only
+  (`hasCredential`/`hasWebhookSecret` booleans, mirroring `carrier_eadapter_configs`), deliberately
+  not the generic `app_settings` pattern (which already leaks `ai_api_key` in plaintext). Master
+  `api_carrier_integrations_enabled` kill switch falls back to the existing simulator byte-for-byte
+  when off. New `MdmCarrierIntegrationsPage.jsx`. 30 assertions in
+  `tests/carrier-integrations.test.js`. Story 6 (a real carrier sandbox signup) is a business/ops
+  task, left to the user.
+- **Shipping Instructions** (2026-09 FCL export gap analysis, finding #1) — one row per shipment,
+  mirroring `routes/customs-filing.js`'s Draft→Submitted→Confirmed/Rejected shape exactly
+  (simulated/mock only). New `ShipmentShippingInstructionsPage.jsx`; a new Test Tools tab exposes
+  the cross-shipment `GET /api/shipping-instructions` search endpoint, which existed with no UI
+  consumer until this pass. Same gap-analysis wave also closed VGM method/simulator, AES/EEI
+  fields, the BC01 document, and Sailed/Discharged milestones.
+- **Space Configuration & Allocation Consumption gap-closing wave** — closed all 9 gaps from a
+  dedicated spec (three independently-computed, sometimes-disagreeing TEU-consumption engines):
+  the per-shipment space badge (`recomputeSpaceBadge`) is now wired to a real "Space
+  Exceeded"/"Space Warning" chip on the shipment header + list row, firing on allocation
+  link/change/clear, sibling delete, and booking cancellation; the Consumption Dashboard now
+  matches shipments to allocations by the real `allocationId` (was a carrier+contract+lane
+  heuristic that could disagree with the real figures); cancelling a shipment now cascades to
+  cancel its linked carrier booking; `shipments.allocation_id`/`allocations.contract_id` are now
+  real FKs (previously `''`-defaulted text) with clean 400s on violation; retyping away from
+  Central auto-clears the allocation with a `SPACE_ALLOCATION_AUTO_CLEARED` audit event; the
+  originally-designed overage/skip auto-chat messages now actually post; dead `coverage_scope`
+  column removed; `container_type_definitions.teu` is now the real source of truth for TEU math
+  end-to-end (falls back to the standard 20ft=1/40ft=2 rule). Along the way, fixed a SQL
+  correlation bug in the new shared `TEU_EXPR` helper (an unqualified column inside a correlated
+  subquery resolved to the subquery's own table), FK violations leaking as raw 500s, and two
+  separate read-modify-write regressions that turned a genuine `NULL` allocation into `''` against
+  the new FK (`syncShipmentFromLegs`'s leg roll-up, and `routes/quotes.js`'s conversion insert —
+  the latter traced to the live database's own column `DEFAULT` still being `''`, since a
+  schema-string edit alone doesn't retroactively alter an already-created column). Verified via a
+  13-assertion live script plus the full 71-file suite, zero regressions, clean `vite build`.
+- **Also**: `KanbanPage.jsx` (3820 lines) split into 18 focused components under
+  `src/pages/kanban/`, no functional change. Full version history extracted from README.md into
+  `CHANGELOG.md`; README's Features section reorganized into named categories.
+
 ## Recent changes (v0.90.3 "Ledger's Edge")
 Closes out the Shipment-Domain Gap & Dead-Code Audit (started 2026-09-02) — all 37 route files
 now have at least one dedicated, live-verified audit pass — plus one new feature (Rate

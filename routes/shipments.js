@@ -2,11 +2,11 @@
 const ExcelJS = require("exceljs");
 
 module.exports = function shipmentsRoutes(app, ctx) {
-  const { query, transaction, ok, err, uid, auth, requireRole, isUniqueViolation,
-          mapShipment, mapShipmentLeg, mapContainer, mapContainerEvent, mapContainerPackage, mapAllocation,
+  const { query, transaction, ok, err, uid, auth, requireRole, isUniqueViolation, isForeignKeyViolation,
+          mapShipment, mapShipmentLeg, mapContainer, mapContainerEvent, mapContainerPackage, mapAllocation, mapEdiMessage,
           mapShipmentParty, ADDITIONAL_PARTY_ROLES, mapSideOffice, canEditOfficeSide,
           applyShipmentAccessFilter, syncShipmentFromLegs, importContractRates,
-          broadcastMessage, broadcastEditLockChange, recomputeSpaceBadge, screenShipmentById, resolveCarrierAgent, resolveCarrierAgentCandidates,
+          broadcastMessage, broadcastEditLockChange, recomputeSpaceBadge, recomputeSpaceBadgesForAllocation, TEU_EXPR, screenShipmentById, resolveCarrierAgent, resolveCarrierAgentCandidates,
           checkLineAgentCapabilityGaps,
           logEvent, logEntityEvent, TRACKED_FIELDS, TRACKED_CTR_FIELDS, FREE_TIME_WARNING_DAYS,
           sanctionsMap, autoCompleteMilestone, ensureBookingCreated, toUsd,
@@ -253,7 +253,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
                  GROUP BY shipment_id) ms
              ON ms.shipment_id = s.id
       LEFT JOIN carrier_bookings cb ON cb.shipment_id = s.id
-      LEFT JOIN (SELECT shipment_id, COALESCE(SUM(CASE WHEN size='40' THEN 2 ELSE 1 END),0) AS teu
+      LEFT JOIN (SELECT shipment_id, COALESCE(SUM(${TEU_EXPR()}),0) AS teu
                  FROM containers GROUP BY shipment_id) ctr_teu
              ON ctr_teu.shipment_id = s.id
       ORDER BY s.created_at DESC
@@ -416,11 +416,17 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const id = `SHP-${uid()}`;
     const polU = pol.toUpperCase(), podU = pod.toUpperCase();
     const createdAt = new Date().toISOString();
-    await query(`INSERT INTO shipments (id,pol,pod,carrier_code,contract_type,contract_notes,status,created_at,etd,eta,booking_ref,bl_number,bl_release_type,master_bl_number,master_bl_release_type,coload_tariff_reference,vessel,voyage,incoterm,vessel_imo,contract_id,contract_ref,commodity_code,shipper_id,shipper_name,consignee_id,consignee_name,principal_id,principal_name,allocation_id,space_skip_reason,space_overage_reason,freight_terms,movement_type,service_type,place_of_receipt,place_of_delivery,cargo_ready_date,notify_id,notify_name,declared_value,declared_value_currency,emo_office_id,imo_office_id,controlling_office_id,contract_routing_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46)`,
-      [id, polU, podU, carrierCode, contractType, contractNotes, status, createdAt, etd, eta, bookingRef, blNumber, blReleaseType, masterBlNumber, masterBlReleaseType, coloadTariffReference, vessel, voyage, incoterm, vesselImo, contractId, contractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, allocationId, spaceSkipReason, spaceOverageReason, freightTerms, movementType, serviceType, placeOfReceipt, placeOfDelivery, cargoReadyDate || null, notifyId, notifyName, (declaredValue !== null && declaredValue !== undefined && String(declaredValue).trim() !== '') ? Number(declaredValue) : null, declaredValueCurrency || "USD", emoOfficeId || null, imoOfficeId || null, controllingOfficeId || null, contractRoutingId || ""]);
+    try {
+      await query(`INSERT INTO shipments (id,pol,pod,carrier_code,contract_type,contract_notes,status,created_at,etd,eta,booking_ref,bl_number,bl_release_type,master_bl_number,master_bl_release_type,coload_tariff_reference,vessel,voyage,incoterm,vessel_imo,contract_id,contract_ref,commodity_code,shipper_id,shipper_name,consignee_id,consignee_name,principal_id,principal_name,allocation_id,space_skip_reason,space_overage_reason,freight_terms,movement_type,service_type,place_of_receipt,place_of_delivery,cargo_ready_date,notify_id,notify_name,declared_value,declared_value_currency,emo_office_id,imo_office_id,controlling_office_id,contract_routing_id) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46)`,
+        [id, polU, podU, carrierCode, contractType, contractNotes, status, createdAt, etd, eta, bookingRef, blNumber, blReleaseType, masterBlNumber, masterBlReleaseType, coloadTariffReference, vessel, voyage, incoterm, vesselImo, contractId, contractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, allocationId || null, spaceSkipReason, spaceOverageReason, freightTerms, movementType, serviceType, placeOfReceipt, placeOfDelivery, cargoReadyDate || null, notifyId, notifyName, (declaredValue !== null && declaredValue !== undefined && String(declaredValue).trim() !== '') ? Number(declaredValue) : null, declaredValueCurrency || "USD", emoOfficeId || null, imoOfficeId || null, controllingOfficeId || null, contractRoutingId || ""]);
+    } catch (e) {
+      // Gap #3 (2026-09 Space Configuration spec): allocation_id now carries a real FK.
+      if (isForeignKeyViolation(e)) return err(res, "allocationId does not match any existing space configuration", 400);
+      throw e;
+    }
     await logEvent(id, 'SHIPMENT_CREATED', null, null, null,
-      JSON.stringify({ pol: polU, pod: podU, carrier: carrierCode, status, etd, contractType }), req.user?.id);
-    await maybeAssignLineAgents(id, carrierCode, polU, podU, req.user?.id);
+      JSON.stringify({ pol: polU, pod: podU, carrier: carrierCode, status, etd, contractType }), req.user?.name || req.user?.email || "");
+    await maybeAssignLineAgents(id, carrierCode, polU, podU, req.user?.name || req.user?.email || "");
     if (contractType === 'Central' && contractId) await importContractRates(id);
     const silentScreening = sanctionsMap.size > 0 ? await screenShipmentById(id) : null;
 
@@ -493,6 +499,12 @@ module.exports = function shipmentsRoutes(app, ctx) {
     let effContractRoutingId = contractRoutingId;
     let effStatus = status;
     let scheduleDropped = false;
+    // Gap fix (2026-09 Space Configuration spec, gap #5): a space configuration only ever makes
+    // sense for a Central-type shipment (a SPOT/Customer Own/Pending shipment can't be linked to
+    // a carrier's committed capacity) — nothing server-side enforced this before, so a shipment
+    // retyped away from Central kept silently consuming that allocation's TEU forever.
+    const allocationAutoCleared = contractType !== "Central" && !!effAllocationId;
+    if (allocationAutoCleared) effAllocationId = "";
     const existingSchedules = await query("SELECT * FROM shipment_schedules WHERE shipment_id=$1", [req.params.id]);
     if (cargoReadyDate && etd && cargoReadyDate > etd && (contractId || existingSchedules.length > 0)) {
       effContractId = ""; effContractRef = ""; effAllocationId = ""; effContractRoutingId = "";
@@ -506,27 +518,35 @@ module.exports = function shipmentsRoutes(app, ctx) {
             voyageNumber: s.voyage_number, service: s.service, pol: s.pol, pod: s.pod, etd: s.etd, eta: s.eta,
             transitDays: s.transit_days, actor, reason: 'CRD updated past ETD' }));
         await logEvent(req.params.id, 'SCHEDULE_REMOVED', null, `${s.carrier} ${s.vessel_name} ${s.voyage_number}`.trim(), null,
-          JSON.stringify({ reason: 'Cargo Ready Date updated past ETD' }), req.user?.id);
+          JSON.stringify({ reason: 'Cargo Ready Date updated past ETD' }), req.user?.name || req.user?.email || "");
       }
     }
 
-    const updatedRows = await query(`
-      UPDATE shipments SET pol=$1, pod=$2, carrier_code=$3, contract_type=$4, contract_notes=$5, status=$6,
-      etd=$7, eta=$8, booking_ref=$9, bl_number=$10, bl_release_type=$11, master_bl_number=$12, master_bl_release_type=$13, coload_tariff_reference=$14, vessel=$15, voyage=$16, incoterm=$17, vessel_imo=$18, contract_id=$19, contract_ref=$20, commodity_code=$21,
-      shipper_id=$22, shipper_name=$23, consignee_id=$24, consignee_name=$25, principal_id=$26, principal_name=$27,
-      allocation_id=$28, space_skip_reason=$29, space_overage_reason=$30,
-      freight_terms=$31, movement_type=$32, service_type=$33, place_of_receipt=$34, place_of_delivery=$35,
-      cargo_ready_date=$36, notify_id=$37, notify_name=$38,
-      declared_value=$39, declared_value_currency=$40,
-      emo_office_id=$41, imo_office_id=$42, controlling_office_id=$43,
-      contract_valid_from=$44, contract_valid_to=$45, contract_routing_id=$46 WHERE id=$47 RETURNING id
-    `, [polU, podU, carrierCode, contractType, contractNotes, effStatus, etd, eta, bookingRef, blNumber, blReleaseType, masterBlNumber, masterBlReleaseType, coloadTariffReference, vessel, voyage, incoterm, vesselImo, effContractId, effContractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, effAllocationId, spaceSkipReason, spaceOverageReason, freightTerms, movementType, serviceType, placeOfReceipt, placeOfDelivery, cargoReadyDate || null, notifyId, notifyName, (declaredValue !== null && declaredValue !== undefined && String(declaredValue).trim() !== '') ? Number(declaredValue) : null, declaredValueCurrency || "USD", emoOfficeId || null, imoOfficeId || null, controllingOfficeId || null, contractValidFrom || null, contractValidTo || null, effContractRoutingId || "", req.params.id]);
+    let updatedRows;
+    try {
+      updatedRows = await query(`
+        UPDATE shipments SET pol=$1, pod=$2, carrier_code=$3, contract_type=$4, contract_notes=$5, status=$6,
+        etd=$7, eta=$8, booking_ref=$9, bl_number=$10, bl_release_type=$11, master_bl_number=$12, master_bl_release_type=$13, coload_tariff_reference=$14, vessel=$15, voyage=$16, incoterm=$17, vessel_imo=$18, contract_id=$19, contract_ref=$20, commodity_code=$21,
+        shipper_id=$22, shipper_name=$23, consignee_id=$24, consignee_name=$25, principal_id=$26, principal_name=$27,
+        allocation_id=$28, space_skip_reason=$29, space_overage_reason=$30,
+        freight_terms=$31, movement_type=$32, service_type=$33, place_of_receipt=$34, place_of_delivery=$35,
+        cargo_ready_date=$36, notify_id=$37, notify_name=$38,
+        declared_value=$39, declared_value_currency=$40,
+        emo_office_id=$41, imo_office_id=$42, controlling_office_id=$43,
+        contract_valid_from=$44, contract_valid_to=$45, contract_routing_id=$46 WHERE id=$47 RETURNING id
+      `, [polU, podU, carrierCode, contractType, contractNotes, effStatus, etd, eta, bookingRef, blNumber, blReleaseType, masterBlNumber, masterBlReleaseType, coloadTariffReference, vessel, voyage, incoterm, vesselImo, effContractId, effContractRef, commodityCode, shipperId, shipperName, consigneeId, consigneeName, principalId, principalName, effAllocationId || null, spaceSkipReason, spaceOverageReason, freightTerms, movementType, serviceType, placeOfReceipt, placeOfDelivery, cargoReadyDate || null, notifyId, notifyName, (declaredValue !== null && declaredValue !== undefined && String(declaredValue).trim() !== '') ? Number(declaredValue) : null, declaredValueCurrency || "USD", emoOfficeId || null, imoOfficeId || null, controllingOfficeId || null, contractValidFrom || null, contractValidTo || null, effContractRoutingId || "", req.params.id]);
+    } catch (e) {
+      // Gap #3 (2026-09 Space Configuration spec): allocation_id now carries a real FK — a
+      // garbage/stale id must surface as a clean 400, not a raw Postgres error leaking to the client.
+      if (isForeignKeyViolation(e)) return err(res, "allocationId does not match any existing space configuration", 400);
+      throw e;
+    }
     if (updatedRows.length === 0) return err(res, "Not found", 404);
     // Only re-attempt Line Agent resolution when carrier/route actually changed — the existing
     // partyOrRouteChanged flag (further below) doesn't check carrier_code, so this needs its
     // own condition rather than reusing that one.
     if (carrierCode !== existing.carrier_code || polU !== existing.pol || podU !== existing.pod)
-      await maybeAssignLineAgents(req.params.id, carrierCode, polU, podU, req.user?.id);
+      await maybeAssignLineAgents(req.params.id, carrierCode, polU, podU, req.user?.name || req.user?.email || "");
     // Contract assignment is one of the two triggers for auto-creating a carrier booking
     // (the other is a schedule save/link, in routes/shipment-ops.js) — only worth checking
     // when the contract fields actually changed, since ensureBookingCreated no-ops otherwise.
@@ -540,20 +560,75 @@ module.exports = function shipmentsRoutes(app, ctx) {
       const o = String(existing[col] || ''), n = String(newVals[col] || '');
       if (o !== n) {
         const type = col === 'status' ? 'STATUS_CHANGED' : 'FIELD_UPDATED';
-        await logEvent(req.params.id, type, col, o || null, n || null, '', req.user?.id);
+        await logEvent(req.params.id, type, col, o || null, n || null, '', req.user?.name || req.user?.email || "");
       }
+    }
+    if (allocationAutoCleared) {
+      await logEvent(req.params.id, 'SPACE_ALLOCATION_AUTO_CLEARED', 'allocation_id', existing.allocation_id, null,
+        JSON.stringify({ reason: `contract type changed to ${contractType}` }), req.user?.name || req.user?.email || "");
     }
     if (!existing.space_skip_reason && spaceSkipReason) {
       await logEvent(req.params.id, 'SPACE_SKIPPED', 'space_skip_reason', null, spaceSkipReason,
-        JSON.stringify({ contractId, contractNumber: contractRef }), req.user?.id);
+        JSON.stringify({ contractId, contractNumber: contractRef }), req.user?.name || req.user?.email || "");
+      // Auto-post message (server-side) — the smart-contract-picker.md design doc specified this
+      // and it was never implemented (2026-09 Space Configuration spec, gap #6). Same
+      // shipment_messages insert shape POST /api/shipments/:id/messages uses, just server-driven.
+      const skipBody = `ℹ Space configuration skipped — ${spaceSkipReason}. Contract ${contractRef || effContractRef || '—'} (${carrierCode}) selected instead.`;
+      const skipMsgId = `MSG-${uid()}`, skipMsgAt = new Date().toISOString();
+      await query("INSERT INTO shipment_messages (id,shipment_id,body,author,role,created_at) VALUES ($1,$2,$3,$4,$5,$6)",
+        [skipMsgId, req.params.id, skipBody.slice(0, 500), "System", "", skipMsgAt]);
+      broadcastMessage(req.params.id, { id: skipMsgId, shipmentId: req.params.id, body: skipBody, author: "System", role: "", createdAt: skipMsgAt });
     }
     if (!existing.space_overage_reason && spaceOverageReason) {
       await logEvent(req.params.id, 'SPACE_OVERAGE', 'space_overage_reason', null, spaceOverageReason,
-        JSON.stringify({ allocationId }), req.user?.id);
+        JSON.stringify({ allocationId }), req.user?.name || req.user?.email || "");
+      // Same auto-post-message gap fix as the skip branch above, with the overage-specific
+      // wording and numbers the design doc specified (shipment TEU / remaining / delta).
+      if (allocationId) {
+        const [alloc] = await query("SELECT * FROM allocations WHERE id=$1", [allocationId]);
+        if (alloc) {
+          const [{ shipment_teu }] = await query(
+            `SELECT COALESCE(SUM(${TEU_EXPR()}),0) AS shipment_teu FROM containers WHERE shipment_id=$1`, [req.params.id]);
+          const [{ other_teu }] = await query(
+            `SELECT COALESCE(SUM(${TEU_EXPR("c")}),0) AS other_teu FROM containers c JOIN shipments s ON s.id=c.shipment_id WHERE s.allocation_id=$1 AND s.id!=$2`,
+            [allocationId, req.params.id]);
+          const remaining = Math.max(0, alloc.allocated_teu - Number(other_teu));
+          const delta = Math.max(0, Number(shipment_teu) - remaining);
+          const overageBody = `⚠ Space overage on allocation ${allocationId} — ${spaceOverageReason}. Shipment TEU: ${shipment_teu} | Config remaining: ${remaining} | Delta: +${delta} TEU`;
+          const overageMsgId = `MSG-${uid()}`, overageMsgAt = new Date().toISOString();
+          await query("INSERT INTO shipment_messages (id,shipment_id,body,author,role,created_at) VALUES ($1,$2,$3,$4,$5,$6)",
+            [overageMsgId, req.params.id, overageBody.slice(0, 500), "System", "", overageMsgAt]);
+          broadcastMessage(req.params.id, { id: overageMsgId, shipmentId: req.params.id, body: overageBody, author: "System", role: "", createdAt: overageMsgAt });
+        }
+      }
     }
     if (existing.status !== effStatus) {
       await query("INSERT INTO status_log (id,shipment_id,from_status,to_status,changed_at,changed_by) VALUES ($1,$2,$3,$4,$5,$6)",
         [`SL-${uid()}`, req.params.id, existing.status, effStatus, new Date().toISOString(), "user"]);
+    }
+    // Gap fix (2026-09 Space Configuration spec, gap #9): recomputeSpaceBadge was never called
+    // from this route at all, even though this is the one place allocation_id is actually
+    // assigned/changed/cleared — badges went stale the instant a space configuration changed.
+    // Recompute both the old and new allocation pools when the link changed (the old pool just
+    // gained capacity back; the new pool has a fresh member).
+    if ((existing.allocation_id || '') !== (effAllocationId || '')) {
+      if (existing.allocation_id) await recomputeSpaceBadgesForAllocation(existing.allocation_id);
+      if (effAllocationId) await recomputeSpaceBadgesForAllocation(effAllocationId);
+    } else if (effAllocationId) {
+      await recomputeSpaceBadge(req.params.id);
+    }
+    // Gap fix (2026-09 Space Configuration spec, gap #4, direct product decision): cancelling a
+    // shipment previously left its carrier booking (and the space it was consuming) completely
+    // untouched — only an explicit, separate "Cancel Booking" action freed that space. Now
+    // cancelling the shipment cancels its live booking too, via the same cancelCarrierBooking
+    // logic the explicit PATCH .../carrier-booking/cancel route itself uses.
+    if (existing.status !== "Cancelled" && effStatus === "Cancelled") {
+      const [liveBooking] = await query("SELECT * FROM carrier_bookings WHERE shipment_id=$1", [req.params.id]);
+      if (liveBooking && liveBooking.status !== "Cancelled") {
+        const [freshShipment] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
+        await ctx.cancelCarrierBooking(freshShipment, "Shipment cancelled", req.user?.name || req.user?.email || "");
+        if (effAllocationId) await recomputeSpaceBadgesForAllocation(effAllocationId);
+      }
     }
     const [updated] = await query(`
       SELECT s.*, p1.name AS pol_name, p2.name AS pod_name,
@@ -586,8 +661,13 @@ module.exports = function shipmentsRoutes(app, ctx) {
   });
 
   app.delete("/api/shipments/:id", shipmentWrite, async (req, res) => {
+    // Gap fix (2026-09 Space Configuration spec, gap #9): deleting a shipment never recomputed
+    // its former allocation-mates' badges, even though real capacity just freed up — capture the
+    // link before it's gone (the row disappears with the DELETE), recompute after.
+    const [existing] = await query("SELECT allocation_id FROM shipments WHERE id=$1", [req.params.id]);
     const deleted = await query("DELETE FROM shipments WHERE id=$1 RETURNING id", [req.params.id]);
     if (deleted.length === 0) return err(res, "Not found", 404);
+    if (existing?.allocation_id) await recomputeSpaceBadgesForAllocation(existing.allocation_id);
     ok(res, { deleted: req.params.id });
   });
 
@@ -672,11 +752,15 @@ module.exports = function shipmentsRoutes(app, ctx) {
   });
 
   const CONTAINER_SIZES = ["20", "40"]; // matches the DB-level CHECK(size IN ('20','40')) on containers.size
+  // Accepted/Rejected are simulate-only (VGM Simulator, mirrors customs filing/carrier booking's
+  // own Accepted/Rejected — never settable through a generic write route) — the generic
+  // container create/update routes below only ever accept Pending/Submitted directly.
+  const DIRECT_VGM_STATUSES = ["Pending", "Submitted"];
 
   app.post("/api/containers", shipmentWrite, async (req, res) => {
     const { shipmentId, containerNumber = "", sealNumber = "", size, type,
             hsCode = "", cargoDescription = "", marksAndNumbers = "", grossWeightKg = null, volumeCbm = null, isDg = false, dgClass = "",
-            vgmWeightKg = null, vgmStatus = "Pending", vgmCutoff = "", cyCutoff = "",
+            vgmWeightKg = null, vgmStatus = "Pending", vgmCutoff = "", vgmMethod = "", cyCutoff = "",
             originFreeTimeDays = null, destFreeTimeDays = null,
             originDetentionFreeDays = null, destDetentionFreeDays = null,
             setTemperatureC = null } = req.body;
@@ -685,23 +769,25 @@ module.exports = function shipmentsRoutes(app, ctx) {
     if (!(await query("SELECT 1 FROM shipments WHERE id=$1", [shipmentId]))[0]) return err(res, "Shipment not found", 404);
     if (grossWeightKg !== null && grossWeightKg !== undefined && Number(grossWeightKg) < 0) return err(res, "grossWeightKg cannot be negative");
     if (volumeCbm !== null && volumeCbm !== undefined && Number(volumeCbm) < 0) return err(res, "volumeCbm cannot be negative");
+    if (!DIRECT_VGM_STATUSES.includes(vgmStatus)) return err(res, "vgmStatus must be Pending or Submitted — Accepted/Rejected only happen via the VGM Simulator");
+    if (vgmStatus === "Submitted" && !vgmMethod) return err(res, "A VGM method (Method 1 or Method 2) is required before marking VGM as Submitted");
     const dgErr = await checkDgPolicy(shipmentId, isDg, dgClass);
     if (dgErr) return err(res, dgErr, 422);
     const id  = `CTR-${uid()}`;
     const cnU = containerNumber.toUpperCase();
     await query(`INSERT INTO containers (id,shipment_id,container_number,seal_number,size,type,hs_code,cargo_description,marks_and_numbers,gross_weight_kg,volume_cbm,is_dg,dg_class,
-                vgm_weight_kg,vgm_status,vgm_cutoff,cy_cutoff,origin_free_time_days,dest_free_time_days,origin_detention_free_days,dest_detention_free_days,set_temperature_c) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
+                vgm_weight_kg,vgm_status,vgm_cutoff,vgm_method,cy_cutoff,origin_free_time_days,dest_free_time_days,origin_detention_free_days,dest_detention_free_days,set_temperature_c) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,
       [id, shipmentId, cnU, sealNumber, size, type, hsCode, cargoDescription, marksAndNumbers, grossWeightKg, volumeCbm, !!isDg, dgClass,
-           vgmWeightKg, vgmStatus, vgmCutoff || null, cyCutoff || null, originFreeTimeDays, destFreeTimeDays, originDetentionFreeDays, destDetentionFreeDays, setTemperatureC]);
+           vgmWeightKg, vgmStatus, vgmCutoff || null, vgmMethod || "", cyCutoff || null, originFreeTimeDays, destFreeTimeDays, originDetentionFreeDays, destDetentionFreeDays, setTemperatureC]);
     const ctrRow = { id, shipment_id: shipmentId, container_number: cnU, seal_number: sealNumber, size, type, hs_code: hsCode, cargo_description: cargoDescription, marks_and_numbers: marksAndNumbers, gross_weight_kg: grossWeightKg, volume_cbm: volumeCbm, is_dg: !!isDg, dg_class: dgClass,
-      vgm_weight_kg: vgmWeightKg, vgm_status: vgmStatus, vgm_cutoff: vgmCutoff || null, cy_cutoff: cyCutoff || null,
+      vgm_weight_kg: vgmWeightKg, vgm_status: vgmStatus, vgm_cutoff: vgmCutoff || null, vgm_method: vgmMethod || "", cy_cutoff: cyCutoff || null,
       origin_free_time_days: originFreeTimeDays, dest_free_time_days: destFreeTimeDays,
       origin_detention_free_days: originDetentionFreeDays, dest_detention_free_days: destDetentionFreeDays,
       set_temperature_c: setTemperatureC };
     // Brand-new container has no events yet — skip the query, free-time windows start 'not-started'.
     const addedCtr = { ...mapContainer(ctrRow), ...deriveFreeTime(ctrRow, {}, null) };
     await logEvent(shipmentId, 'CONTAINER_ADDED', null, null, cnU,
-      JSON.stringify({ size, type, hsCode, cargoDescription }), req.user?.id);
+      JSON.stringify({ size, type, hsCode, cargoDescription }), req.user?.name || req.user?.email || "");
     await recomputeSpaceBadge(shipmentId);
     ok(res, addedCtr, 201);
   });
@@ -709,7 +795,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
   app.put("/api/shipments/:shipmentId/containers/:id", shipmentWrite, async (req, res) => {
     const { containerNumber = "", sealNumber = "", size, type,
             hsCode = "", cargoDescription = "", marksAndNumbers = "", grossWeightKg = null, volumeCbm = null, isDg = false, dgClass = "",
-            vgmWeightKg = null, vgmStatus = "Pending", vgmCutoff = "", cyCutoff = "",
+            vgmWeightKg = null, vgmStatus = "Pending", vgmCutoff = "", vgmMethod = "", cyCutoff = "",
             originFreeTimeDays = null, destFreeTimeDays = null,
             originDetentionFreeDays = null, destDetentionFreeDays = null,
             setTemperatureC = null } = req.body;
@@ -720,18 +806,25 @@ module.exports = function shipmentsRoutes(app, ctx) {
     if (!CONTAINER_SIZES.includes(size)) return err(res, `size must be one of: ${CONTAINER_SIZES.join(", ")}`);
     if (grossWeightKg !== null && grossWeightKg !== undefined && Number(grossWeightKg) < 0) return err(res, "grossWeightKg cannot be negative");
     if (volumeCbm !== null && volumeCbm !== undefined && Number(volumeCbm) < 0) return err(res, "volumeCbm cannot be negative");
+    // Full-row-replace passthrough (ContainerForm's own buildPayload comment: VGM fields ride
+    // along unchanged on an unrelated save) means vgmStatus is frequently resent as whatever it
+    // already was — only reject an actual attempted TRANSITION into Accepted/Rejected, not an
+    // already-Accepted/Rejected container being saved for something else entirely.
+    if (vgmStatus !== oldCtr.vgm_status && !DIRECT_VGM_STATUSES.includes(vgmStatus))
+      return err(res, "vgmStatus must be Pending or Submitted — Accepted/Rejected only happen via the VGM Simulator");
+    if (vgmStatus === "Submitted" && !vgmMethod) return err(res, "A VGM method (Method 1 or Method 2) is required before marking VGM as Submitted");
     const dgErr = await checkDgPolicy(oldCtr.shipment_id, isDg, dgClass);
     if (dgErr) return err(res, dgErr, 422);
     const updated = await query(`UPDATE containers SET container_number=$1, seal_number=$2, size=$3, type=$4, hs_code=$5, cargo_description=$6, marks_and_numbers=$7, gross_weight_kg=$8, volume_cbm=$9, is_dg=$10, dg_class=$11,
-                vgm_weight_kg=$12, vgm_status=$13, vgm_cutoff=$14, cy_cutoff=$15, origin_free_time_days=$16, dest_free_time_days=$17, origin_detention_free_days=$18, dest_detention_free_days=$19, set_temperature_c=$20 WHERE id=$21 RETURNING id`,
+                vgm_weight_kg=$12, vgm_status=$13, vgm_cutoff=$14, vgm_method=$15, cy_cutoff=$16, origin_free_time_days=$17, dest_free_time_days=$18, origin_detention_free_days=$19, dest_detention_free_days=$20, set_temperature_c=$21 WHERE id=$22 RETURNING id`,
       [cnU, sealNumber, size, type, hsCode, cargoDescription, marksAndNumbers, grossWeightKg, volumeCbm, !!isDg, dgClass,
-           vgmWeightKg, vgmStatus, vgmCutoff || null, cyCutoff || null, originFreeTimeDays, destFreeTimeDays,
+           vgmWeightKg, vgmStatus, vgmCutoff || null, vgmMethod || "", cyCutoff || null, originFreeTimeDays, destFreeTimeDays,
            originDetentionFreeDays, destDetentionFreeDays, setTemperatureC, req.params.id]);
     if (updated.length === 0) return err(res, "Not found", 404);
     const newVals = { container_number: cnU, size, type, hs_code: hsCode,
       cargo_description: cargoDescription, marks_and_numbers: marksAndNumbers, gross_weight_kg: grossWeightKg,
       volume_cbm: volumeCbm, is_dg: !!isDg, dg_class: dgClass,
-      vgm_weight_kg: vgmWeightKg, vgm_status: vgmStatus, vgm_cutoff: vgmCutoff || null, cy_cutoff: cyCutoff || null,
+      vgm_weight_kg: vgmWeightKg, vgm_status: vgmStatus, vgm_cutoff: vgmCutoff || null, vgm_method: vgmMethod || "", cy_cutoff: cyCutoff || null,
       origin_free_time_days: originFreeTimeDays, dest_free_time_days: destFreeTimeDays,
       origin_detention_free_days: originDetentionFreeDays, dest_detention_free_days: destDetentionFreeDays,
       set_temperature_c: setTemperatureC };
@@ -739,7 +832,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     for (const [col] of Object.entries(TRACKED_CTR_FIELDS)) {
       const o = String(oldCtr[col] ?? ''), n = String(newVals[col] ?? '');
       if (o !== n && !(o === '' && n === '')) {
-        await logEvent(oldCtr.shipment_id, 'CONTAINER_UPDATED', col, o, n, meta, req.user?.id);
+        await logEvent(oldCtr.shipment_id, 'CONTAINER_UPDATED', col, o, n, meta, req.user?.name || req.user?.email || "");
       }
     }
     const [row] = await query("SELECT * FROM containers WHERE id=$1", [req.params.id]);
@@ -751,6 +844,25 @@ module.exports = function shipmentsRoutes(app, ctx) {
     // workflows — once every container on the shipment has VGM Submitted, treat that
     // as the si_submitted milestone step firing, rather than a separate untracked step.
     if (oldCtr.vgm_status !== 'Submitted' && vgmStatus === 'Submitted') {
+      // FCL export gap analysis finding #2 (2026-09): VGM previously had a weight/status/
+      // cutoff but never actually transmitted anything — every other regulatory-adjacent
+      // step (carrier booking, customs filing) leaves a real edi_messages record of what
+      // was sent; VGM left none. Mirrors customs-filing.js's insertMessage idiom, keyed by
+      // container id (there's no per-shipment "VGM filing" entity to correlate against —
+      // each container declares its own VGM independently).
+      const [shipForVgm] = await query("SELECT carrier_code FROM shipments WHERE id=$1", [oldCtr.shipment_id]);
+      const vgmMsgId = `EDI-${uid()}`, vgmNow = new Date().toISOString();
+      await query(`INSERT INTO edi_messages (id, shipment_id, carrier_code, direction, message_type,
+        format, raw_payload, status, correlation_id, is_mock, created_at, processed_at)
+        VALUES ($1,$2,$3,'out','vgm_declaration','JSON',$4,'sent',$5,false,$6,$6)`,
+        [vgmMsgId, oldCtr.shipment_id, shipForVgm?.carrier_code || "",
+             JSON.stringify({
+               containerNumber: cnU, vgmWeightKg, vgmMethod,
+               methodDescription: vgmMethod === "Method 2"
+                 ? "Method 2 — certified sum of cargo/dunnage weight plus tare weight"
+                 : "Method 1 — weighing the packed container",
+               note: "Simulated VGM declaration transmittal — no live SOLAS VGM EDI integration.",
+             }), oldCtr.id, vgmNow]);
       const allCtrs = await query("SELECT vgm_status FROM containers WHERE shipment_id=$1", [oldCtr.shipment_id]);
       if (allCtrs.length > 0 && allCtrs.every(c => c.vgm_status === 'Submitted')) {
         await autoCompleteMilestone(oldCtr.shipment_id, 'si_submitted',
@@ -760,12 +872,62 @@ module.exports = function shipmentsRoutes(app, ctx) {
     ok(res, { ...mapContainer(row), ...deriveFreeTime(row, g.byType, g.latest) });
   });
 
+  // ─── VGM Simulator (direct follow-up to the VGM declaration transmittal above) ─────────────
+  // A submitted VGM declaration previously had no response cycle at all — unlike carrier
+  // booking/customs filing/shipping instructions, which all let a Test Tools simulator
+  // accept/reject a pending submission. Same shape here, scoped to one container at a time
+  // (VGM is declared per-container, not per-shipment).
+  app.post("/api/shipments/:shipmentId/containers/:id/vgm/simulate-response", shipmentWrite, async (req, res) => {
+    const [ctr] = await query("SELECT * FROM containers WHERE id=$1 AND shipment_id=$2", [req.params.id, req.params.shipmentId]);
+    if (!ctr) return err(res, "Not found", 404);
+    const { outcome, reason } = req.body || {};
+    if (outcome !== "accepted" && outcome !== "rejected") return err(res, 'outcome must be "accepted" or "rejected"');
+    if (ctr.vgm_status !== "Submitted") return err(res, "This container's VGM has no pending submission to respond to", 409);
+    const now = new Date().toISOString();
+    const newStatus = outcome === "accepted" ? "Accepted" : "Rejected";
+    const rejReason = outcome === "rejected" ? (reason?.trim() || "VGM rejected — weight declaration did not pass terminal validation.") : "";
+    await query("UPDATE containers SET vgm_status=$1, vgm_rejection_reason=$2 WHERE id=$3", [newStatus, rejReason, ctr.id]);
+    const msgId = `EDI-${uid()}`;
+    await query(`INSERT INTO edi_messages (id, shipment_id, carrier_code, direction, message_type,
+      format, raw_payload, status, correlation_id, is_mock, created_at, processed_at)
+      VALUES ($1,$2,$3,'in',$4,'JSON',$5,$6,$7,true,$8,$8)`,
+      [msgId, ctr.shipment_id, "", outcome === "accepted" ? "vgm_acceptance" : "vgm_rejection",
+           JSON.stringify({
+             containerNumber: ctr.container_number,
+             ...(outcome === "rejected" ? { reason: rejReason } : {}),
+             note: "Simulated via Test Tools → VGM Simulator.",
+           }), outcome, ctr.id, now]);
+    await logEvent(ctr.shipment_id, 'CONTAINER_UPDATED', 'vgm_status', 'Submitted', newStatus,
+      JSON.stringify({ containerNumber: ctr.container_number, source: 'vgm_simulator' }), req.user?.name || req.user?.email || "");
+    const [row] = await query("SELECT * FROM containers WHERE id=$1", [ctr.id]);
+    const evRows = await query("SELECT container_id, event_type, location, occurred_at FROM container_events WHERE container_id=$1 ORDER BY occurred_at ASC", [ctr.id]);
+    const g = groupContainerEvents(evRows)[ctr.id] || { byType: {}, latest: null };
+    const [msgRow] = await query("SELECT * FROM edi_messages WHERE id=$1", [msgId]);
+    ok(res, { sent: mapEdiMessage(msgRow), container: { ...mapContainer(row), ...deriveFreeTime(row, g.byType, g.latest) } }, 201);
+  });
+
+  // Cross-shipment list for the Test Tools VGM Simulator picker — mirrors GET /api/customs-filings.
+  app.get("/api/vgm-submissions", auth(), async (req, res) => {
+    const { status } = req.query;
+    const rawRows = status
+      ? await query("SELECT * FROM containers WHERE vgm_status=$1 ORDER BY container_number ASC", [status])
+      : await query("SELECT * FROM containers WHERE vgm_status != 'Pending' ORDER BY container_number ASC");
+    if (rawRows.length === 0) return ok(res, []);
+    const shipmentIds = [...new Set(rawRows.map(r => r.shipment_id))];
+    const ph = shipmentIds.map((_, i) => `$${i + 1}`).join(",");
+    const shipmentRows = await query(`SELECT * FROM shipments WHERE id IN (${ph})`, shipmentIds);
+    const allowedShipments = await applyShipmentAccessFilter(shipmentRows.map(mapShipment), req.user, req);
+    const shipmentById = new Map(allowedShipments.map(s => [s.id, s]));
+    ok(res, rawRows.filter(r => shipmentById.has(r.shipment_id))
+      .map(r => ({ ...mapContainer(r), shipment: shipmentById.get(r.shipment_id) })));
+  });
+
   app.delete("/api/shipments/:shipmentId/containers/:id", shipmentWrite, async (req, res) => {
     const [ctr] = await query("SELECT * FROM containers WHERE id=$1 AND shipment_id=$2", [req.params.id, req.params.shipmentId]);
     if (!ctr) return err(res, "Not found", 404);
     await query("DELETE FROM containers WHERE id=$1", [req.params.id]);
     await logEvent(ctr.shipment_id, 'CONTAINER_REMOVED', null, ctr.container_number, null,
-      JSON.stringify({ size: ctr.size, type: ctr.type }), req.user?.id);
+      JSON.stringify({ size: ctr.size, type: ctr.type }), req.user?.name || req.user?.email || "");
     await recomputeSpaceBadge(ctr.shipment_id);
     ok(res, { deleted: req.params.id });
   });
@@ -995,7 +1157,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     // reasoning) — the created containers are already durably committed at this point.
     for (const ev of eventsToLog) {
       await logEvent(req.params.id, 'CONTAINER_ADDED', null, null, ev.containerNumber,
-        JSON.stringify({ size: ev.size, type: ev.type, hsCode: ev.hsCode, cargoDescription: ev.cargoDescription, source: 'bulk_import' }), req.user?.id);
+        JSON.stringify({ size: ev.size, type: ev.type, hsCode: ev.hsCode, cargoDescription: ev.cargoDescription, source: 'bulk_import' }), req.user?.name || req.user?.email || "");
     }
     await recomputeSpaceBadge(req.params.id);
     ok(res, { created }, 201);
@@ -1043,12 +1205,20 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const [eventRow] = await query("SELECT * FROM container_events WHERE id=$1", [id]);
     const event = mapContainerEvent(eventRow);
     await logEvent(ctr.shipment_id, 'CONTAINER_EVENT_ADDED', null, null, `${eventType} — ${ctr.container_number}`,
-      JSON.stringify({ containerId: req.params.id, eventType, occurredAt }), req.user?.id);
+      JSON.stringify({ containerId: req.params.id, eventType, occurredAt }), req.user?.name || req.user?.email || "");
 
     // TKT-OZD4V8: once every container on the shipment has logged the same lifecycle
     // event, that's the real-world signal the corresponding milestone step represents —
     // Gate In (origin) -> cargo_gated_in, Gate Out (destination) -> cargo_released.
-    const MILESTONE_BY_EVENT = { 'Gate In': 'cargo_gated_in', 'Gate Out': 'cargo_released' };
+    // Sailed/Discharged (2026-09, FCL export gap analysis finding #5) extend this the same
+    // way — vessel_departed/vessel_arrived were previously only auto-completed via AIS-
+    // confirmed ETD/ETA (lib/ais-listener.js), leaving a shipment on a non-AIS-tracked
+    // vessel with no automatic credit for the exact same events an operator is already
+    // logging here. Manual completion and AIS both remain working fallbacks either way.
+    const MILESTONE_BY_EVENT = {
+      'Gate In': 'cargo_gated_in', 'Gate Out': 'cargo_released',
+      'Sailed': 'vessel_departed', 'Discharged': 'vessel_arrived',
+    };
     const milestoneKey = MILESTONE_BY_EVENT[eventType];
     if (milestoneKey) {
       const allCtrs = await query("SELECT id FROM containers WHERE shipment_id=$1", [ctr.shipment_id]);
@@ -1095,12 +1265,20 @@ module.exports = function shipmentsRoutes(app, ctx) {
     return { uv, curr, uvUsd };
   }
 
+  // AES/EEI export-control fields (2026-09 FCL export gap analysis, finding #3) — declared by
+  // the user, never derived: NLR (No License Required, the common case for EAR99/non-controlled
+  // goods), License Required (a real license number in licenseValue), License Exception (the
+  // exception symbol, e.g. TMP/RPL/GOV, in licenseValue). '' means not yet classified.
+  const LICENSE_TYPES = ["", "NLR", "License Required", "License Exception"];
+
   app.post("/api/shipments/:shipmentId/containers/:id/packages", shipmentWrite, async (req, res) => {
     const { parentId = null, description, quantity = 1, packTypeId = null, isDg = false, dgClass = "",
-            unitValue = null, currency = "", hsCode = "" } = req.body || {};
+            unitValue = null, currency = "", hsCode = "",
+            scheduleBNumber = "", eccn = "", licenseType = "", licenseValue = "" } = req.body || {};
     if (!description || !description.trim()) return err(res, "description required");
     const qty = parseInt(quantity, 10);
     if (!Number.isFinite(qty) || qty < 1) return err(res, "quantity must be a positive integer");
+    if (!LICENSE_TYPES.includes(licenseType)) return err(res, `licenseType must be one of: ${LICENSE_TYPES.filter(Boolean).join(", ")}`);
     const [ctr] = await query("SELECT id FROM containers WHERE id=$1 AND shipment_id=$2", [req.params.id, req.params.shipmentId]);
     if (!ctr) return err(res, "Container not found", 404);
     if (parentId) {
@@ -1113,10 +1291,10 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const [{ n: siblingCount }] = await query("SELECT COUNT(*) AS n FROM container_packages WHERE container_id=$1 AND parent_id IS NOT DISTINCT FROM $2", [req.params.id, parentId]);
     const id = `PKG-${uid()}`;
     const now = new Date().toISOString();
-    await query(`INSERT INTO container_packages (id, container_id, parent_id, description, quantity, position, pack_type_id, is_dg, dg_class, unit_value, currency, hs_code, unit_value_usd, created_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+    await query(`INSERT INTO container_packages (id, container_id, parent_id, description, quantity, position, pack_type_id, is_dg, dg_class, unit_value, currency, hs_code, unit_value_usd, created_at, schedule_b_number, eccn, license_type, license_value)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
       [id, req.params.id, parentId, description.trim(), qty, Number(siblingCount), packTypeId || null, !!isDg, dgClass || "",
-           uv, curr, (hsCode || "").trim(), uvUsd, now]);
+           uv, curr, (hsCode || "").trim(), uvUsd, now, (scheduleBNumber || "").trim(), (eccn || "").trim().toUpperCase(), licenseType, (licenseValue || "").trim()]);
     const [row] = await query("SELECT * FROM container_packages WHERE id=$1", [id]);
     ok(res, mapContainerPackage(row), 201);
   });
@@ -1127,18 +1305,22 @@ module.exports = function shipmentsRoutes(app, ctx) {
        WHERE cp.id=$1 AND c.shipment_id=$2`, [req.params.id, req.params.shipmentId]);
     if (!existing) return err(res, "Not found", 404);
     const { description, quantity, packTypeId = null, isDg = false, dgClass = "",
-            unitValue = null, currency = "", hsCode = "" } = req.body || {};
+            unitValue = null, currency = "", hsCode = "",
+            scheduleBNumber = "", eccn = "", licenseType = "", licenseValue = "" } = req.body || {};
     if (!description || !description.trim()) return err(res, "description required");
     const qty = parseInt(quantity, 10);
     if (!Number.isFinite(qty) || qty < 1) return err(res, "quantity must be a positive integer");
+    if (!LICENSE_TYPES.includes(licenseType)) return err(res, `licenseType must be one of: ${LICENSE_TYPES.filter(Boolean).join(", ")}`);
     let uv, curr, uvUsd;
     try { ({ uv, curr, uvUsd } = await resolvePackageValue({ unitValue, currency })); }
     catch (e) { return err(res, e.message); }
     const hs = (hsCode || "").trim();
-    await query("UPDATE container_packages SET description=$1, quantity=$2, pack_type_id=$3, is_dg=$4, dg_class=$5, unit_value=$6, currency=$7, hs_code=$8, unit_value_usd=$9 WHERE id=$10",
-      [description.trim(), qty, packTypeId || null, !!isDg, dgClass || "", uv, curr, hs, uvUsd, req.params.id]);
+    const sbNum = (scheduleBNumber || "").trim(), eccnU = (eccn || "").trim().toUpperCase(), licVal = (licenseValue || "").trim();
+    await query("UPDATE container_packages SET description=$1, quantity=$2, pack_type_id=$3, is_dg=$4, dg_class=$5, unit_value=$6, currency=$7, hs_code=$8, unit_value_usd=$9, schedule_b_number=$10, eccn=$11, license_type=$12, license_value=$13 WHERE id=$14",
+      [description.trim(), qty, packTypeId || null, !!isDg, dgClass || "", uv, curr, hs, uvUsd, sbNum, eccnU, licenseType, licVal, req.params.id]);
     ok(res, mapContainerPackage({ ...existing, description: description.trim(), quantity: qty, pack_type_id: packTypeId || null,
-      is_dg: !!isDg, dg_class: dgClass || "", unit_value: uv, currency: curr, hs_code: hs, unit_value_usd: uvUsd }));
+      is_dg: !!isDg, dg_class: dgClass || "", unit_value: uv, currency: curr, hs_code: hs, unit_value_usd: uvUsd,
+      schedule_b_number: sbNum, eccn: eccnU, license_type: licenseType, license_value: licVal }));
   });
 
   // Deletes the package and its entire sub-tree (a package with children removed on
@@ -1235,7 +1417,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     // showed up on the shipment's own History tab at all — every fixed shipment field logs
     // through the TRACKED_FIELDS loop above, but this variable-length sibling table never wrote
     // to shipment_events. Mirrors that same mechanism rather than inventing a second one.
-    await logEvent(req.params.id, 'PARTY_ASSIGNED', role, null, customerName, '', req.user?.id);
+    await logEvent(req.params.id, 'PARTY_ASSIGNED', role, null, customerName, '', req.user?.name || req.user?.email || "");
     await maybeRescreen(req.params.id);
     const [row] = await query("SELECT * FROM shipment_parties WHERE id=$1", [id]);
     ok(res, mapShipmentParty(row), 201);
@@ -1252,7 +1434,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const { customerId, customerName } = req.body || {};
     if (!customerId || !customerName) return err(res, "customerId and customerName required");
     await query("UPDATE shipment_parties SET customer_id=$1, customer_name=$2 WHERE id=$3", [customerId, customerName, req.params.id]);
-    await logEvent(existing.shipment_id, 'PARTY_REASSIGNED', existing.role, existing.customer_name, customerName, '', req.user?.id);
+    await logEvent(existing.shipment_id, 'PARTY_REASSIGNED', existing.role, existing.customer_name, customerName, '', req.user?.name || req.user?.email || "");
     await maybeRescreen(existing.shipment_id);
     ok(res, mapShipmentParty({ ...existing, customer_id: customerId, customer_name: customerName }));
   });
@@ -1264,7 +1446,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     if (side && !(await canEditOfficeSide(req, side)))
       return err(res, `Only ${side.toLowerCase()}-side users can remove the ${existing.role}`, 403);
     await query("DELETE FROM shipment_parties WHERE id=$1", [req.params.id]);
-    await logEvent(existing.shipment_id, 'PARTY_REMOVED', existing.role, existing.customer_name, null, '', req.user?.id);
+    await logEvent(existing.shipment_id, 'PARTY_REMOVED', existing.role, existing.customer_name, null, '', req.user?.name || req.user?.email || "");
     await maybeRescreen(existing.shipment_id);
     ok(res, { deleted: req.params.id });
   });
@@ -1317,7 +1499,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     );
     // Same History-tab gap fixed for shipment_parties above — this sibling variable-length table
     // had the identical never-logged-to-shipment_events omission.
-    await logEvent(req.params.id, 'SIDE_OFFICE_ADDED', `${side} Office`, null, `${row.office_code} — ${row.office_name}`, '', req.user?.id);
+    await logEvent(req.params.id, 'SIDE_OFFICE_ADDED', `${side} Office`, null, `${row.office_code} — ${row.office_name}`, '', req.user?.name || req.user?.email || "");
     ok(res, mapSideOffice(row), 201);
   });
 
@@ -1329,7 +1511,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     if (!existing) return err(res, "Not found", 404);
     if (!(await canEditOfficeSide(req, existing.side))) return err(res, `You don't have permission to remove a ${existing.side} office`, 403);
     await query("DELETE FROM shipment_side_offices WHERE id=$1", [req.params.id]);
-    await logEvent(existing.shipment_id, 'SIDE_OFFICE_REMOVED', `${existing.side} Office`, `${existing.office_code} — ${existing.office_name}`, null, '', req.user?.id);
+    await logEvent(existing.shipment_id, 'SIDE_OFFICE_REMOVED', `${existing.side} Office`, `${existing.office_code} — ${existing.office_name}`, null, '', req.user?.name || req.user?.email || "");
     ok(res, { deleted: req.params.id });
   });
 
@@ -1354,7 +1536,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
     }
     const [oldOffice] = shipment[meta.column] ? await query("SELECT * FROM offices WHERE id=$1", [shipment[meta.column]]) : [null];
     await query(`UPDATE shipments SET ${meta.column}=$1 WHERE id=$2`, [officeId || null, req.params.id]);
-    await logEvent(req.params.id, "OFFICE_REASSIGNED", field, officeLabel(oldOffice), officeLabel(newOffice), reason.trim(), req.user?.id);
+    await logEvent(req.params.id, "OFFICE_REASSIGNED", field, officeLabel(oldOffice), officeLabel(newOffice), reason.trim(), req.user?.name || req.user?.email || "");
 
     // A replaced office shouldn't keep quietly handling services on THIS shipment just because
     // nothing else pointed them elsewhere — direct bug report: reassigning EMO/IMO/Controlling
@@ -1460,7 +1642,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
            polPoint.lat, polPoint.lng, podPoint.lat, podPoint.lng,
            etd||null, eta||null, carrierCode, vessel, vesselImo, voyage, movementBy,
            contractType, contractRef, createdAt]);
-    await syncShipmentFromLegs(req.params.id, req.user?.id);
+    await syncShipmentFromLegs(req.params.id, req.user?.name || req.user?.email || "");
     // A hand-entered SEA leg with a real ETD counts as "has a schedule" for booking
     // auto-creation purposes too — see ensureBookingCreated's comment in server.js.
     await ensureBookingCreated(req.params.id);
@@ -1501,7 +1683,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
            carrierCode, vessel, vesselImo, voyage, movementBy,
            contractType, contractRef, legOrder ?? existing.leg_order,
            etdSource, etaSource, req.params.legId]);
-    await syncShipmentFromLegs(req.params.id, req.user?.id);
+    await syncShipmentFromLegs(req.params.id, req.user?.name || req.user?.email || "");
     await ensureBookingCreated(req.params.id);
     const [row] = await query("SELECT * FROM shipment_legs WHERE id=$1", [req.params.legId]);
     ok(res, ctx.mapShipmentLeg(row));
@@ -1510,7 +1692,7 @@ module.exports = function shipmentsRoutes(app, ctx) {
   app.delete("/api/shipments/:id/legs/:legId", shipmentWrite, async (req, res) => {
     const deleted = await query("DELETE FROM shipment_legs WHERE id=$1 AND shipment_id=$2 RETURNING id", [req.params.legId, req.params.id]);
     if (deleted.length === 0) return err(res, "Not found", 404);
-    await syncShipmentFromLegs(req.params.id, req.user?.id);
+    await syncShipmentFromLegs(req.params.id, req.user?.name || req.user?.email || "");
     ok(res, { deleted: req.params.legId });
   });
 };

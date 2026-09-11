@@ -53,6 +53,7 @@ const UserManualPage = () => {
   ];
   const REFERENCE = [
     { id: "freight-basics",    label: "Ocean Freight Basics" },
+    { id: "si-vgm",            label: "Shipping Instructions & VGM" },
     { id: "dashboard",         label: "Dashboard" },
     { id: "command-center",    label: "Command Center" },
     { id: "integration-board", label: "Integration Board" },
@@ -181,7 +182,10 @@ const UserManualPage = () => {
         <Dek>Not every shipment starts here — if you already know exactly what you're booking, skip
           straight to Chapter 2. But if a customer has asked "how much to ship 2 containers to New
           York," a <strong>Quote</strong> is where you answer that without committing to a real,
-          numbered shipment yet.</Dek>
+          numbered shipment yet. (An even earlier, less-committed stage — <Tag>Opportunities</Tag> —
+          exists for tracking a lead before it's even worth pricing; converting a Qualified
+          Opportunity creates a Draft quote pre-filled with its customer/route and a starting price
+          line, with a link back to the Opportunity it came from.)</Dek>
         <Screenshot src={imgQuotes} alt="The Quotes list page" caption="The Quotes list — every quote you've priced, with its route, carrier, valid-until date, and status at a glance. '+ New Quote' is top right." />
         <Step n={1}>Open Quotes and start a new one</Step>
         <StepBody>
@@ -204,13 +208,26 @@ const UserManualPage = () => {
             still edit freely. Once it's ready, send it to the customer; it locks and moves to{" "}
             <Badge variant="warning">Sent</Badge>. When they get back to you, mark it{" "}
             <Badge variant="success">Accepted</Badge> or <Badge variant="danger">Declined</Badge> —
-            an accepted quote left untouched too long expires on its own.</P>
+            a <Badge variant="warning">Sent</Badge> quote left untouched past its Valid Until date
+            expires on its own, with a heads-up in the notification bell a few days ahead of time
+            so it doesn't catch you by surprise.</P>
         </StepBody>
-        <Step n={4}>Convert it to a real shipment</Step>
+        <Step n={4}>Fill in Consignee, Principal, and Notify Party too</Step>
+        <StepBody>
+          <P>If you already know them at quoting time, set the <Tag>Consignee</Tag>,{" "}
+            <Tag>Principal</Tag>, and <Tag>Notify Party</Tag> fields on the quote itself, alongside
+            Declared Value and Freight Terms — all of these carry straight through to the shipment
+            on conversion, the same way the customer already did.</P>
+        </StepBody>
+        <Step n={5}>Convert it to a real shipment</Step>
         <StepBody>
           <P>Once a quote is <Badge variant="success">Accepted</Badge>, click{" "}
             <Tag>Convert to Shipment</Tag>. CargoDesk creates a real, numbered shipment and carries
-            your quoted price straight in as the SELL side of its cost lines — you don't re-type
+            everything the quote captured straight in — your quoted price as the SELL side of its
+            cost lines, every party you set, Declared Value, Freight Terms, and even real{" "}
+            <Tag>Cargo</Tag> containers built from the quote's own per-container line items (e.g.
+            two <Tag>40HC</Tag> lines at the same type become two real containers, not four —
+            CargoDesk recognizes they're describing the same physical boxes). You don't re-type
             anything.</P>
         </StepBody>
         <Callout type="note">A quote's price doesn't have to match what you eventually pay the
@@ -340,6 +357,13 @@ const UserManualPage = () => {
             second step, so a carrier's confirmed response doesn't silently finalize anything
             without your own review.</P>
         </StepBody>
+        <Step n={4}>Generate a Booking Confirmation document</Step>
+        <StepBody>
+          <P>Once <Badge variant="success">Confirmed</Badge>, a <Tag>Generate Confirmation</Tag>
+            button appears on the Review tab — it produces a real <Tag>BC01</Tag> document
+            (equipment breakdown, DG/reefer detail, the carrier's own booking reference) you can
+            hand to whoever needs written proof the booking is locked in.</P>
+        </StepBody>
         <Callout type="note">If you change the carrier on a leg after a booking already exists,
           CargoDesk doesn't edit the old booking in place — it archives it as history and starts a
           fresh one under the new carrier, so you can always see what actually happened.</Callout>
@@ -442,6 +466,13 @@ const UserManualPage = () => {
             a confirmation number, or Rejected with a reason you can act on and resubmit.</P>
           <Screenshot src={imgCustoms} alt="The Customs Filing page showing an AES/EEI filing already filed and an ISF/AMS filing still blocked" caption="Customs Filing — AES/EEI (left) is already Filed with a confirmation reference. ISF/AMS (right) is still blocked because its own broker hasn't been assigned yet." />
         </StepBody>
+        <Callout type="tip"><strong>Export-controlled cargo?</strong> Each priced cargo line on the
+          Cargo page has its own <Tag>Export Control</Tag> fields — Schedule B number, ECCN, and
+          License Type (<Tag>NLR</Tag>, License Required, or License Exception). These are captured
+          into the AES/EEI filing the moment you submit it. Most goods are legitimately
+          <Tag>NLR</Tag>/EAR99, so leaving a line unclassified isn't blocked — the filing card just
+          shows how many of your priced lines have a classification on file, as a nudge rather than
+          a gate.</Callout>
       </div>
     ),
     documents: (
@@ -481,9 +512,12 @@ const UserManualPage = () => {
         <StepBody>
           <P>Open <Tag>Milestones & Events</Tag>. This is the shipment's overall timeline — booking
             confirmed, SI submitted, cargo gated in, vessel departed, and on through delivery. Several
-            steps complete themselves automatically as you do the real work elsewhere (confirming a
-            booking, logging a Gate In on every container) — you only need to touch the ones that
-            don't have an obvious trigger.</P>
+            steps complete themselves automatically as you do the real work elsewhere: confirming a
+            booking, logging a <Tag>Gate In</Tag>/<Tag>Gate Out</Tag> on every container, submitting
+            Shipping Instructions, or logging a <Tag>Sailed</Tag>/<Tag>Discharged</Tag> container
+            event (which auto-completes Vessel Departed/Arrived — the same credit AIS tracking would
+            give a monitored vessel, now available even without one) — you only need to touch the
+            ones that don't have an obvious trigger.</P>
           <Screenshot src={imgMilestones} alt="The Milestones & Events page showing a stepper with two of nine steps complete" caption="Milestones & Events — a straightforward progress stepper. Completed steps show who finished them and when; the current step is highlighted." />
         </StepBody>
         <Callout type="note"><strong>Completing things out of order won't block you.</strong> Real
@@ -604,6 +638,11 @@ const UserManualPage = () => {
         <H3>Space Configurations</H3>
         <P>Click <strong>＋ Add Configuration</strong> to set the awarded TEU for a specific carrier and contract type combination — e.g. MAEU / Customer Own = 80 TEU. Edit or remove configurations at any time. The utilisation bar turns amber above 70% and red above 90%.</P>
         <Screenshot src={imgDashboard} alt="The Consumption Dashboard Overview tab" caption="The Consumption Dashboard's Overview tab — allocated/confirmed/remaining TEU, an on-time health bar, and the shipments falling inside the selected week." />
+        <H3>Sales Pipeline</H3>
+        <P>Below the shipment health bar, a <Tag>Sales Pipeline</Tag> tile rolls up what's ahead of
+          a real shipment: open Opportunities, Draft and Sent Quotes, and the total USD value
+          currently sitting in Sent quotes. It only appears once there's actually something in the
+          pipeline to show.</P>
       </div>
     ),
     "command-center": (
@@ -739,6 +778,46 @@ const UserManualPage = () => {
               style={{ color: T.accent }}>Höegh Autoliners on Ro-Ro shipping</a>.
           </div>
         </div>
+      </div>
+    ),
+    "si-vgm": (
+      <div>
+        <H2>Shipping Instructions & VGM</H2>
+        <Dek>Two pre-departure compliance steps that sit alongside the booking, not inside it —
+          both live under <Tag>Booking & Routing</Tag> in a shipment's sidebar, and both are
+          simulated rather than connected to a live carrier/terminal system today.</Dek>
+
+        <H3>Shipping Instructions (SI)</H3>
+        <P>Shipping Instructions is the shipper's own submission of the final Bill of Lading
+          data — parties, container/seal numbers, marks & numbers, cargo description — to the
+          carrier ahead of the SI cutoff. Open <Tag>Booking & Routing → Shipping Instructions</Tag>,
+          fill in the SI cutoff and any special instructions, and <Tag>Save Draft</Tag>. A shipment
+          needs a Shipper and a Consignee set (Parties & Offices) plus at least one container
+          before <Tag>Submit</Tag> is available.</P>
+        <P>Once submitted, the record locks — a rejection (via the same simulated response cycle
+          Carrier Booking uses) is the only way back to an editable Draft, via{" "}
+          <Tag>Reset to Draft</Tag>. Confirmed or Submitted SI unlocks a formal{" "}
+          <Tag>SI01</Tag> document under Generate Document.</P>
+        <Callout type="tip">The Container/Seal Detail table on this page flags, in amber, any
+          container still missing a seal number, marks & numbers, or cargo description — worth a
+          glance before you submit, since those fields render blank on the generated document
+          otherwise.</Callout>
+
+        <H3>VGM (Verified Gross Mass)</H3>
+        <P>SOLAS requires a verified weight for every container before it can be loaded, declared
+          one of two ways: <strong>Method 1</strong> — weighing the fully packed container — or{" "}
+          <strong>Method 2</strong> — a certified sum of the cargo/dunnage weight plus the
+          container's own tare weight. Open the shipment's <Tag>VGM</Tag> Export Service page, set
+          each container's weight and Method, then move its status to{" "}
+          <Badge variant="info">Submitted</Badge> — CargoDesk won't let a container move past{" "}
+          <Badge variant="default">Pending</Badge> without a Method on file.</P>
+        <P>A submitted VGM can come back <Badge variant="success">Accepted</Badge> or{" "}
+          <Badge variant="danger">Rejected</Badge> (again, simulated) — a rejected container shows
+          its reason and a one-click <Tag>Reset</Tag> back to Pending for correction. The page's own
+          Message Thread shows every declaration and response for the shipment in one place.</P>
+        <Callout type="note">Once every container on a shipment has reached Submitted VGM (or, more
+          precisely now, once Shipping Instructions is actually submitted), the shipment's{" "}
+          <Tag>SI Submitted</Tag> milestone auto-completes — whichever of the two happens first.</Callout>
       </div>
     ),
     mdm: (

@@ -9,7 +9,8 @@ import EdiMessageList from "../components/shared/EdiMessageList";
 import { VesselField, VesselCombobox } from "../components/shared/VesselCombobox";
 import CarrierCombobox from "../components/shared/CarrierCombobox";
 import PortCombobox from "../components/shared/PortCombobox";
-import { IconBaseStation, IconCheck, IconClose, IconAnchor, IconFileCertificate, IconShip, IconLink, IconMail, IconClipboard, IconReceipt } from "../components/primitives/Icon";
+import { IconBaseStation, IconCheck, IconClose, IconAnchor, IconFileCertificate, IconShip, IconLink, IconMail, IconClipboard, IconReceipt, IconPackage } from "../components/primitives/Icon";
+import { servicePageKey } from "../shipmentServicePages";
 
 // ─── Test Tools ────────────────────────────────────────────────────────────────
 // Reached both from Integration Board's sidebar and a header shortcut icon (App.jsx).
@@ -40,6 +41,16 @@ const STATUS_COLOR = {
 // Draft/Filed/Accepted/Rejected, not Created/Pending/Confirmed/Cancelled) — not merged in.
 const FILING_STATUS_COLOR = {
   Draft: "#6b7280", Filed: "#3b82f6", Accepted: "#22c55e", Rejected: "#ef4444",
+};
+
+// containers.vgm_status vocabulary (Pending/Submitted/Accepted/Rejected) — distinct key set
+// from both maps above, not merged in.
+const VGM_STATUS_COLOR = {
+  Pending: "#6b7280", Submitted: "#3b82f6", Accepted: "#22c55e", Rejected: "#ef4444",
+};
+
+const SI_STATUS_COLOR = {
+  Draft: "#6b7280", Submitted: "#3b82f6", Confirmed: "#22c55e", Rejected: "#ef4444",
 };
 
 const inputStyle = {
@@ -287,6 +298,77 @@ const TestToolsPage = ({ navigate }) => {
 
   const FILING_TYPE_LABEL = { AES_EEI: "AES/EEI (Export)", ISF_AMS: "ISF/AMS (Import)" };
 
+  // ─── VGM Simulator (direct follow-up to the VGM declaration transmittal, 2026-09 gap
+  // analysis finding #2) — same "no live SOLAS VGM EDI, so simulate the outcome" precedent as
+  // the Filing Simulator above, scoped to one container's own VGM declaration rather than a
+  // shipment-level filing (VGM is declared per-container).
+  const [vgmSubs,        setVgmSubs]        = useState([]);
+  const [vgmSubsLoading, setVgmSubsLoading] = useState(true);
+  const [showAllVgm,     setShowAllVgm]     = useState(false); // false = Submitted only
+  const [selectedVgm,    setSelectedVgm]    = useState(null);  // container row, includes .shipment
+  const [vgmMessages,    setVgmMessages]    = useState([]);
+  const [vgmMsgLoading,  setVgmMsgLoading]  = useState(false);
+  const [vgmRejReason,   setVgmRejReason]   = useState("");
+  const [vgmBusy,        setVgmBusy]        = useState(false);
+
+  const loadVgmSubs = useCallback(() => {
+    setVgmSubsLoading(true);
+    return api.vgm.listSubmissions(showAllVgm ? {} : { status: "Submitted" })
+      .then(setVgmSubs).catch(() => setVgmSubs([])).finally(() => setVgmSubsLoading(false));
+  }, [showAllVgm]);
+
+  useEffect(() => { loadVgmSubs(); }, [loadVgmSubs]);
+
+  const loadVgmThread = shipmentId => {
+    setVgmMsgLoading(true);
+    return api.ediMessages.list(shipmentId)
+      .then(setVgmMessages).catch(() => setVgmMessages([])).finally(() => setVgmMsgLoading(false));
+  };
+
+  const selectVgm = row => {
+    setSelectedVgm(row);
+    setVgmRejReason("");
+    loadVgmThread(row.shipmentId);
+  };
+
+  const simulateVgm = async outcome => {
+    if (!selectedVgm || vgmBusy) return;
+    setVgmBusy(true);
+    try {
+      await api.vgm.simulateResponse(selectedVgm.shipmentId, selectedVgm.id, {
+        outcome, reason: outcome === "rejected" ? (vgmRejReason.trim() || undefined) : undefined,
+      });
+      toast.success(`Simulated ${outcome} response`);
+      await Promise.all([loadVgmSubs(), loadVgmThread(selectedVgm.shipmentId)]);
+      const fresh = await api.containers.list({ shipmentId: selectedVgm.shipmentId });
+      const freshCtr = (Array.isArray(fresh) ? fresh : fresh?.results ?? []).find(c => c.id === selectedVgm.id);
+      setSelectedVgm(prev => prev ? { ...prev, ...freshCtr } : prev);
+    } catch (e) {
+      toast.error(e.message || "Failed to simulate response");
+    } finally {
+      setVgmBusy(false);
+    }
+  };
+
+  // ─── Shipping Instructions search (2026-09 Space Configuration spec's companion gap) —
+  // GET /api/shipping-instructions already existed, access-scoped and working, with a code
+  // comment explicitly calling it out as built for this exact picker — but no tab was ever
+  // added. Read-only here (no simulate action, unlike the tabs above): SI's own Draft/Submit/
+  // Confirm/Reject cycle already has a real UI on the shipment's own Shipping Instructions page;
+  // this tab is purely the cross-shipment search that page never offered.
+  const [siList,        setSiList]        = useState([]);
+  const [siLoading,     setSiLoading]     = useState(true);
+  const [siStatusFilter, setSiStatusFilter] = useState("Submitted");
+  const [selectedSi,    setSelectedSi]    = useState(null);
+
+  const loadSiList = useCallback(() => {
+    setSiLoading(true);
+    return api.shippingInstructions.listAll(siStatusFilter === "All" ? {} : { status: siStatusFilter })
+      .then(setSiList).catch(() => setSiList([])).finally(() => setSiLoading(false));
+  }, [siStatusFilter]);
+
+  useEffect(() => { loadSiList(); }, [loadSiList]);
+
   // ─── AIS Simulator state (TKT-ZFO2OM) ──────────────────────────────────────
   // Both inject actions call the exact same ctx.ingestAisMessage the live aisstream.io
   // connection calls (routes/ais.js) — this tab has no logic of its own, it just constructs a
@@ -412,6 +494,8 @@ const TestToolsPage = ({ navigate }) => {
     { key: "simulator", label: "Message Simulator", icon: IconBaseStation },
     { key: "generator",  label: "Schedule Generator", icon: IconAnchor },
     { key: "filings",    label: "Filing Simulator", icon: IconFileCertificate },
+    { key: "vgm",        label: "VGM Simulator", icon: IconPackage },
+    { key: "si",         label: "Shipping Instructions", icon: IconClipboard },
     { key: "ais",        label: "AIS Simulator", icon: IconShip },
     { key: "webhook",    label: "Webhook Simulator", icon: IconLink },
     { key: "dunning",    label: "Reminder Sweep", icon: IconMail },
@@ -909,6 +993,218 @@ const TestToolsPage = ({ navigate }) => {
                   <EdiMessageList messages={filingMessages.filter(m => m.correlationId === selectedFiling.id)}
                     emptyText="No messages for this filing yet." />
                 )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {activeTab === "vgm" && (
+        <div style={{ display: "flex", gap: 24, height: "100%" }}>
+          {/* Left: container picker */}
+          <div style={{ width: 340, flexShrink: 0, display: "flex", flexDirection: "column" }}>
+            <h2 style={{ fontFamily: T.head, fontSize: 16, fontWeight: 800, color: T.text, margin: "0 0 14px" }}>
+              Simulate a terminal VGM response
+            </h2>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14,
+              fontFamily: T.body, fontSize: 12.5, color: T.textMuted, cursor: "pointer" }}>
+              <input type="checkbox" checked={showAllVgm} onChange={e => setShowAllVgm(e.target.checked)}
+                style={{ accentColor: T.accent }} />
+              Show all declared VGM, not just Submitted
+            </label>
+            {vgmSubsLoading ? <Spinner size="sm" /> : vgmSubs.length === 0 ? (
+              <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, fontStyle: "italic" }}>
+                {showAllVgm ? "No VGM declared yet." : "No submitted VGM awaiting a response right now."}
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, overflowY: "auto" }}>
+                {vgmSubs.map(c => {
+                  const color = VGM_STATUS_COLOR[c.vgmStatus] || T.textMuted;
+                  const active = selectedVgm?.id === c.id;
+                  return (
+                    <button key={c.id} onClick={() => selectVgm(c)}
+                      style={{ textAlign: "left", background: active ? T.accentBg : T.surface,
+                        border: `1px solid ${active ? T.accent : T.border}`, borderRadius: 8,
+                        padding: "10px 12px", cursor: "pointer" }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 3 }}>
+                        <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.text }}>
+                          {c.containerNumber || "TBC"}
+                        </span>
+                        <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color,
+                          textTransform: "uppercase" }}>{c.vgmStatus}</span>
+                      </div>
+                      <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted }}>
+                        {c.shipment?.id} · {c.vgmMethod || "no method"} · {c.vgmWeightKg != null ? `${c.vgmWeightKg} kg` : "no weight"}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Right: selected container's thread + simulate actions */}
+          <div style={{ flex: 1, overflowY: "auto" }}>
+            {!selectedVgm ? (
+              <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, fontStyle: "italic",
+                textAlign: "center", marginTop: 60 }}>
+                Select a container on the left to view its VGM message thread and simulate a response.
+              </div>
+            ) : (
+              <>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+                  <h3 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: 0 }}>
+                    {selectedVgm.shipment?.id} — {selectedVgm.containerNumber || "TBC"}
+                  </h3>
+                  <Btn variant="secondary" size="sm"
+                    onClick={() => navigate?.(servicePageKey("Export", "VGM"), selectedVgm.shipmentId)}>
+                    Open VGM Service Page
+                  </Btn>
+                </div>
+
+                {selectedVgm.vgmStatus === "Submitted" ? (
+                  <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
+                    padding: "16px 20px", marginBottom: 20, display: "flex", flexDirection: "column", gap: 14 }}>
+                    <div style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600, color: T.textMuted,
+                      textTransform: "uppercase", letterSpacing: ".06em" }}>Simulate Terminal Response</div>
+                    <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
+                      <div style={{ flex: 1, minWidth: 220 }}>
+                        <Btn size="sm" onClick={() => simulateVgm("accepted")} disabled={vgmBusy}>
+                          <IconCheck size={12} /> Simulate Accepted
+                        </Btn>
+                      </div>
+                      <div style={{ flex: 1, minWidth: 220 }}>
+                        <label style={label}>
+                          Rejection reason (optional)
+                        </label>
+                        <input value={vgmRejReason} onChange={e => setVgmRejReason(e.target.value)}
+                          placeholder="Weight declaration did not pass terminal validation…"
+                          style={{ ...inputStyle, marginBottom: 8 }} />
+                        <Btn size="sm" variant="danger" onClick={() => simulateVgm("rejected")} disabled={vgmBusy}>
+                          <IconClose size={12} /> Simulate Rejected
+                        </Btn>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ fontFamily: T.body, fontSize: 12.5, color: T.textMuted, marginBottom: 20,
+                    background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 14px" }}>
+                    This container's VGM is {selectedVgm.vgmStatus.toLowerCase()} — nothing pending to respond to.
+                  </div>
+                )}
+
+                <h4 style={{ fontFamily: T.head, fontSize: 13, fontWeight: 700, color: T.text, marginBottom: 10 }}>
+                  Message Thread
+                </h4>
+                {vgmMsgLoading ? <Spinner size="sm" /> : (
+                  <EdiMessageList messages={vgmMessages.filter(m => m.correlationId === selectedVgm.id)}
+                    emptyText="No messages for this container's VGM yet." />
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {activeTab === "si" && (
+        <div style={{ display: "flex", gap: 24, height: "100%" }}>
+          {/* Left: cross-shipment SI list, filterable by status */}
+          <div style={{ width: 340, flexShrink: 0, display: "flex", flexDirection: "column" }}>
+            <h2 style={{ fontFamily: T.head, fontSize: 16, fontWeight: 800, color: T.text, margin: "0 0 14px" }}>
+              Search Shipping Instructions
+            </h2>
+            <label style={label}>Status</label>
+            <select value={siStatusFilter} onChange={e => setSiStatusFilter(e.target.value)}
+              style={{ ...inputStyle, marginBottom: 14 }}>
+              {["Submitted", "Draft", "Confirmed", "Rejected", "All"].map(s => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+            {siLoading ? <Spinner size="sm" /> : siList.length === 0 ? (
+              <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, fontStyle: "italic" }}>
+                No Shipping Instructions{siStatusFilter !== "All" ? ` in ${siStatusFilter}` : ""} right now.
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 6, overflowY: "auto" }}>
+                {siList.map(si => {
+                  const active = selectedSi?.id === si.id;
+                  return (
+                    <button key={si.id} onClick={() => setSelectedSi(si)}
+                      style={{ textAlign: "left", background: active ? T.accentBg : T.surface,
+                        border: `1px solid ${active ? T.accent : T.border}`, borderRadius: 8,
+                        padding: "10px 12px", cursor: "pointer" }}>
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 3 }}>
+                        <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.text }}>
+                          {si.shipment?.id || si.shipmentId}
+                        </span>
+                        <span style={{ fontFamily: T.mono, fontSize: 10, fontWeight: 700, color: SI_STATUS_COLOR[si.status] || T.textMuted,
+                          textTransform: "uppercase" }}>{si.status}</span>
+                      </div>
+                      <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted }}>
+                        {si.shipment?.pol || "—"} → {si.shipment?.pod || "—"} · {si.siCutoff || "no cutoff set"}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Right: selected SI's key fields — the shipment's own Shipping Instructions page
+              already owns the full Draft/Submit/Confirm/Reject editor, so this stays read-only. */}
+          <div style={{ flex: 1, overflowY: "auto" }}>
+            {!selectedSi ? (
+              <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, fontStyle: "italic",
+                textAlign: "center", marginTop: 60 }}>
+                Select a Shipping Instructions record on the left to view its details.
+              </div>
+            ) : (
+              <>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+                  <h3 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: 0 }}>
+                    {selectedSi.shipment?.id || selectedSi.shipmentId}
+                  </h3>
+                  <Btn variant="secondary" size="sm"
+                    onClick={() => navigate?.("shipment-shipping-instructions", selectedSi.shipmentId)}>
+                    Open Shipping Instructions Page
+                  </Btn>
+                </div>
+                <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
+                  padding: "16px 20px", display: "flex", flexDirection: "column", gap: 12 }}>
+                  <div style={{ display: "flex", gap: 24 }}>
+                    <div>
+                      <div style={label}>Status</div>
+                      <div style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 700, color: SI_STATUS_COLOR[selectedSi.status] || T.text }}>
+                        {selectedSi.status}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={label}>SI Cutoff</div>
+                      <div style={{ fontFamily: T.mono, fontSize: 13, color: T.text }}>{selectedSi.siCutoff || "Not set"}</div>
+                    </div>
+                    {selectedSi.siReference && (
+                      <div>
+                        <div style={label}>SI Reference</div>
+                        <div style={{ fontFamily: T.mono, fontSize: 13, color: T.text }}>{selectedSi.siReference}</div>
+                      </div>
+                    )}
+                  </div>
+                  {selectedSi.specialInstructions && (
+                    <div>
+                      <div style={label}>Special Instructions</div>
+                      <div style={{ fontFamily: T.body, fontSize: 13, color: T.text }}>{selectedSi.specialInstructions}</div>
+                    </div>
+                  )}
+                  {selectedSi.status === "Rejected" && selectedSi.rejectionReason && (
+                    <div>
+                      <div style={label}>Rejection Reason</div>
+                      <div style={{ fontFamily: T.body, fontSize: 13, color: T.danger }}>{selectedSi.rejectionReason}</div>
+                    </div>
+                  )}
+                  <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.textMuted }}>
+                    {selectedSi.submittedAt ? `Submitted ${selectedSi.submittedAt} by ${selectedSi.submittedBy || "—"}` : "Not submitted yet"}
+                  </div>
+                </div>
               </>
             )}
           </div>

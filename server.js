@@ -16,6 +16,9 @@ const {
   invalidateTransporterCache, buildMailOptions, sendViaOffice,
 } = require("./lib/mailer");
 const { createAisListener } = require("./lib/ais-listener");
+const { registerCarrierAdapter, getCarrierAdapter, listRegisteredAdapterKeys } = require("./lib/carrier-integrations/registry");
+const dcsaBkgV2Adapter = require("./lib/carrier-integrations/dcsa-bkg-v2");
+registerCarrierAdapter(dcsaBkgV2Adapter.adapterKey, dcsaBkgV2Adapter);
 const { createMappers } = require("./lib/mappers");
 const { readSecret } = require("./lib/dockerSecret");
 const { createRateLimiter } = require("./lib/rateLimit");
@@ -336,6 +339,13 @@ app.use((req, res, next) => {
   next();
 });
 
+// Carrier webhook signature verification (routes/carrier-webhooks.js, TKT-KG4E49 story 4) needs
+// the exact raw request bytes an HMAC was computed over — the global express.json() below would
+// otherwise parse and re-serialize the body first, and a re-stringified JSON.stringify(req.body)
+// is not guaranteed byte-identical to what the carrier actually signed. Scoped to exactly this
+// one path, registered ahead of the global json() parser — Express only applies path-scoped
+// middleware to matching requests, so no other route is affected.
+app.use("/api/carrier-webhooks", express.raw({ type: "*/*" }));
 app.use(express.json({ limit: "25mb" }));
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -344,6 +354,7 @@ const uid = () => Math.random().toString(36).slice(2,8).toUpperCase();
 const ok  = (res, data, status = 200) => res.status(status).json(data);
 const err = (res, msg, status = 400) => res.status(status).json({ error: msg });
 const isUniqueViolation = e => e?.code === "23505";
+const isForeignKeyViolation = e => e?.code === "23503";
 // First place in the codebase validating a free-typed lat/lng pair — port_locations' own
 // latitude/longitude is trusted/curated import data, never user-typed, so nothing like this
 // existed before. Per-field, not both-or-neither: cell-level onBlur-flush editing can legitimately
@@ -2088,7 +2099,10 @@ const syncShipmentFromLegs = async (shipmentId, actorId = null) => {
     [first.pol || seaLeg.pol || '', last.pod || seaLeg.pod || '', seaLeg.etd || null, lastSeaLeg.eta || null,
      newCarrierCode, seaLeg.vessel || '', seaLeg.vessel_imo || '', seaLeg.voyage || '', routingTerm,
      contractDropped ? '' : (shipmentRow.contract_id || ''), contractDropped ? '' : (shipmentRow.contract_ref || ''),
-     contractDropped ? '' : (shipmentRow.allocation_id || ''), contractDropped ? '' : (shipmentRow.contract_routing_id || ''),
+     // allocation_id carries a real FK now (2026-09 Space Configuration spec, gap #3) — must
+     // stay/become NULL, never '', or this read-back-and-rewrite violates the constraint on
+     // every shipment with no allocation (the previously-silent '' sentinel is no longer valid).
+     contractDropped ? null : (shipmentRow.allocation_id || null), contractDropped ? '' : (shipmentRow.contract_routing_id || ''),
      contractDropped ? 'Requires Review' : shipmentRow.status, shipmentId]);
   if (contractDropped) {
     await logEvent(shipmentId, 'CONTRACT_DROPPED', 'contract_id', shipmentRow.contract_id, null,
@@ -2127,7 +2141,7 @@ const {
   mapCarrierAgent, mapCarrierAgentScheduleRow, mapTradeLane, mapScopeItem, mapOffice, mapOfficeMailSettings,
   mapSystemEmailSettings,
   mapBranch, mapOrgCountry, mapRegion, mapCountry, mapTicketLink, mapTicket, mapTestItem,
-  mapTestCaseLink, mapEdiMessage, mapCarrierBooking, mapCustomsFiling, mapKbProject, mapKbVersion,
+  mapTestCaseLink, mapEdiMessage, mapCarrierBooking, mapCarrierIntegration, mapCustomsFiling, mapShippingInstructions, mapKbProject, mapKbVersion,
   mapKbColumn, mapCustomer, mapCustomerIdentifier, mapCustomerScreening, mapCustomerDoc,
   mapCustomerContact, mapCommodity, mapSystemMessage, mapMilestone, mapMilestoneTemplate,
   mapContract, mapLeg, mapRate, mapContractRouting, mapCarrierInvoice, mapCarrierInvoiceLine,
@@ -2442,6 +2456,7 @@ const TRACKED_CTR_FIELDS = {
   vgm_weight_kg:        'VGM Weight (kg)',
   vgm_status:            'VGM Status',
   vgm_cutoff:            'VGM Cutoff',
+  vgm_method:            'VGM Method',
   cy_cutoff:             'CY Cutoff',
   origin_free_time_days: 'Origin Demurrage Free Time (days)',
   dest_free_time_days:   'Destination Demurrage Free Time (days)',
@@ -3045,6 +3060,26 @@ const broadcastEditLockChange = (shipmentId, payload) => {
   }
 };
 
+// Per-container TEU, admin-configurable (Master Data → Equipment) via container_type_definitions
+// keyed on (size, type) — falls back to the standard 20ft=1/40ft=2 rule for any type an admin
+// hasn't configured an override for (2026-09 Space Configuration spec, gap #8: this column
+// existed and was editable but nothing ever read it before this).
+// containersAlias defaults to the real table name "containers", never "" — the correlated
+// subquery's own FROM (container_type_definitions ctd) has its own size/type columns, so an
+// unqualified `size`/`type` on the right-hand side of `ctd.size=size` resolves to the subquery's
+// OWN ctd.size (innermost scope wins), not the outer container's row — always qualifying with
+// the real table name/alias is what actually correlates it correctly. (Found live: an unaliased
+// call silently always matched some arbitrary active definition row instead of the real
+// container, verified before this fix via the badge never firing on an intentionally-overcommitted
+// scratch shipment.)
+const TEU_EXPR = (containersAlias = "containers") => {
+  const c = `${containersAlias}.`;
+  return `COALESCE(
+    (SELECT ctd.teu FROM container_type_definitions ctd WHERE ctd.size=${c}size AND ctd.type=${c}type AND ctd.is_active=TRUE LIMIT 1),
+    CASE WHEN ${c}size='20' THEN 1 WHEN ${c}size='40' THEN 2 ELSE 0 END
+  )`;
+};
+
 const recomputeSpaceBadge = async shipmentId => {
   try {
     const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [shipmentId]);
@@ -3054,10 +3089,10 @@ const recomputeSpaceBadge = async shipmentId => {
       const [alloc] = await query("SELECT * FROM allocations WHERE id=$1", [shipment.allocation_id]);
       if (alloc) {
         const [{ shipment_teu }] = await query(
-          "SELECT COALESCE(SUM(CASE WHEN size='20' THEN 1 WHEN size IN ('40','45') THEN 2 ELSE 0 END),0) AS shipment_teu FROM containers WHERE shipment_id=$1", [shipmentId]
+          `SELECT COALESCE(SUM(${TEU_EXPR()}),0) AS shipment_teu FROM containers WHERE shipment_id=$1`, [shipmentId]
         );
         const [{ other_teu }] = await query(
-          "SELECT COALESCE(SUM(CASE WHEN c.size='20' THEN 1 WHEN c.size IN ('40','45') THEN 2 ELSE 0 END),0) AS other_teu FROM containers c JOIN shipments s ON s.id=c.shipment_id WHERE s.allocation_id=$1 AND s.id!=$2",
+          `SELECT COALESCE(SUM(${TEU_EXPR("c")}),0) AS other_teu FROM containers c JOIN shipments s ON s.id=c.shipment_id WHERE s.allocation_id=$1 AND s.id!=$2`,
           [shipment.allocation_id, shipmentId]
         );
         const remaining = Math.max(0, alloc.allocated_teu - Number(other_teu));
@@ -3073,6 +3108,20 @@ const recomputeSpaceBadge = async shipmentId => {
         for (const ws of subs) if (ws.readyState === ws.OPEN) ws.send(frame);
       }
     }
+  } catch { /* non-fatal */ }
+};
+
+// Recomputes every shipment sharing one allocation — a single container/allocation-link change
+// on shipment A can push shipment B's own "am I over" verdict either way, but recomputeSpaceBadge
+// only ever updates the one shipment it's called for. Used wherever a whole allocation's pool of
+// linked shipments needs to be refreshed at once: a shipment being deleted/unlinked/retyped away
+// (its former allocation-mates just gained capacity back), or a booking being cancelled (2026-09
+// Space Configuration spec, gap #9 — recomputeSpaceBadge's own trigger coverage was incomplete).
+const recomputeSpaceBadgesForAllocation = async allocationId => {
+  if (!allocationId) return;
+  try {
+    const rows = await query("SELECT id FROM shipments WHERE allocation_id=$1", [allocationId]);
+    for (const r of rows) await recomputeSpaceBadge(r.id);
   } catch { /* non-fatal */ }
 };
 
@@ -3434,9 +3483,12 @@ const auth = (allowed = []) => async (req, res, next) => {
 const requireRole = (allowed) => (req, res, next) =>
   req.user?.roles?.some(r => allowed.includes(r)) ? next() : err(res, "Forbidden", 403);
 
-// Require valid token on all /api/* except /api/auth/*, /api/health, and /api/share/* (public)
+// Require valid token on all /api/* except /api/auth/*, /api/health, /api/share/* (public), and
+// /api/carrier-webhooks/* — an inbound carrier callback carries no CargoDesk JWT; it's
+// authenticated by its own HMAC signature instead (routes/carrier-webhooks.js's verifyCallback).
 app.use("/api", (req, res, next) =>
-  req.path.startsWith("/auth/") || req.path === "/health" || req.path.startsWith("/share/") ? next() : auth()(req, res, next)
+  req.path.startsWith("/auth/") || req.path === "/health" || req.path.startsWith("/share/") ||
+  req.path.startsWith("/carrier-webhooks/") ? next() : auth()(req, res, next)
 );
 
 // ─── Shared context passed to every route module ───────────────────────────────
@@ -3455,7 +3507,7 @@ const ctx = {
   // aren't needed for this — every route-level sweep only depends on tables existing, which this
   // already guarantees.
   schemaReady: schemaReadyPromise,
-  query, transaction, uid, ok, err, isUniqueViolation, validCoord,
+  query, transaction, uid, ok, err, isUniqueViolation, isForeignKeyViolation, validCoord,
   gracefulShutdown,
   auth, requireRole,
   portLanesMap, portCountryMap, rebuildPortLanesMap, longestLane,
@@ -3466,6 +3518,7 @@ const ctx = {
   normSanctionName, EMBARGOED_COUNTRIES,
   getSettings,
   shipmentSubs, broadcastMessage, broadcastEditLockChange, recomputeSpaceBadge,
+  recomputeSpaceBadgesForAllocation, TEU_EXPR,
   UPLOADS_DIR,
   renderHtmlToPdf, getActiveSigningCert, signPdfBuffer,
   createTransporterFromSettings, getTransporterForOffice, invalidateTransporterCache,
@@ -3482,7 +3535,9 @@ const ctx = {
   mapTestItem, mapTestCaseLink,
   mapEdiMessage,
   mapCarrierBooking, BOOKABLE_CARRIERS, isEdiBookable, mapEadapterConfig,
+  mapCarrierIntegration, getCarrierAdapter, listRegisteredAdapterKeys,
   mapCustomsFiling, CUSTOMS_FILING_TYPES,
+  mapShippingInstructions,
   mapKbProject, mapKbVersion, mapKbColumn,
   mapCustomer, mapCustomerIdentifier, mapCustomerScreening, mapCustomerDoc, mapCustomerContact,
   mapCommodity, mapSystemMessage, mapMilestone, mapMilestoneTemplate,
@@ -3532,7 +3587,9 @@ require('./routes/sanctions')(app, ctx);
 require('./routes/kanban')(app, ctx);
 require('./routes/testcases')(app, ctx);
 require('./routes/edi')(app, ctx);
+require('./routes/carrier-webhooks')(app, ctx);
 require('./routes/customs-filing')(app, ctx);
+require('./routes/shipping-instructions')(app, ctx);
 require('./routes/customers')(app, ctx);
 require('./routes/contracts')(app, ctx);
 require('./routes/shipment-ops')(app, ctx);
@@ -3551,6 +3608,7 @@ require('./routes/share')(app, ctx);
 require('./routes/offices')(app, ctx);
 require('./routes/office-mail')(app, ctx);
 require('./routes/eadapter')(app, ctx);
+require('./routes/carrier-integrations')(app, ctx);
 require('./routes/document-distribution')(app, ctx);
 require('./routes/organization')(app, ctx);
 require('./routes/charge-codes')(app, ctx);

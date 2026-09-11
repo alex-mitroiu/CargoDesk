@@ -199,7 +199,7 @@ export const ContainerForm = forwardRef(({ init = {}, onSave, onCancel, onDirtyC
     // Service page) — passed through unchanged from the current container record so an
     // ordinary Cargo-page save never wipes them (PUT /api/containers/:id is a full-row
     // replace, not a merge).
-    vgmWeightKg: init.vgmWeightKg ?? null, vgmStatus: init.vgmStatus || "Pending", vgmCutoff: init.vgmCutoff || "",
+    vgmWeightKg: init.vgmWeightKg ?? null, vgmStatus: init.vgmStatus || "Pending", vgmCutoff: init.vgmCutoff || "", vgmMethod: init.vgmMethod || "",
     cyCutoff: f.cyCutoff,
     originFreeTimeDays: f.originFreeTimeDays ? parseInt(f.originFreeTimeDays, 10) : null,
     destFreeTimeDays:   f.destFreeTimeDays   ? parseInt(f.destFreeTimeDays, 10)   : null,

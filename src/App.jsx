@@ -54,6 +54,7 @@ import ShipmentAccountingInvoicesPage from "./pages/shipments/ShipmentAccounting
 import ShipmentAccountingGpPage from "./pages/shipments/ShipmentAccountingGpPage";
 import ShipmentCarrierBookingPage from "./pages/shipments/ShipmentCarrierBookingPage";
 import ShipmentCustomsFilingPage from "./pages/shipments/ShipmentCustomsFilingPage";
+import ShipmentShippingInstructionsPage from "./pages/shipments/ShipmentShippingInstructionsPage";
 import ShipmentHistoryPage from "./pages/shipments/ShipmentHistoryPage";
 import ShipmentHeaderBar from "./components/shared/ShipmentHeaderBar";
 import DashboardPage       from "./pages/DashboardPage";
@@ -82,6 +83,7 @@ import MdmVesselsPage         from "./pages/mdm/MdmVesselsPage";
 import MdmPortLocationsPage   from "./pages/mdm/MdmPortLocationsPage";
 import MdmLinkedPortsPage     from "./pages/mdm/MdmLinkedPortsPage";
 import MdmCarrierAgentsPage   from "./pages/mdm/MdmCarrierAgentsPage";
+import MdmCarrierIntegrationsPage from "./pages/mdm/MdmCarrierIntegrationsPage";
 import MdmTradeLanesPage      from "./pages/mdm/MdmTradeLanesPage";
 import MdmRegionsPage         from "./pages/mdm/MdmRegionsPage";
 import MdmLoopCodesPage       from "./pages/mdm/MdmLoopCodesPage";
@@ -131,6 +133,7 @@ function App() {
   const [shipments,   setShipments]   = useState([]);
   const [containers,  setContainers]  = useState([]);
   const [allocations, setAllocations] = useState([]);
+  const [containerTypeDefs, setContainerTypeDefs] = useState([]);
   const [ready,       setReady]       = useState(false);
   const [apiError,    setApiError]    = useState(null);
   const [appSettings, setAppSettings] = useState({});
@@ -481,12 +484,14 @@ function App() {
       api.shipments.list(),
       api.containers.list(),
       api.allocations.list(),
+      api.containerTypes.list().catch(() => []),
     ])
-      .then(([c, s, ct, a]) => {
+      .then(([c, s, ct, a, ctd]) => {
         setCarriers(c);
         setShipments(s);
         setContainers(ct);
         setAllocations(a);
+        setContainerTypeDefs(ctd);
         setReady(true);
       })
       .catch(e => setApiError(e.message));
@@ -665,7 +670,7 @@ function App() {
   }, [authLoading, user, page]);
 
   // kanban is top-level, not MDM
-  const MDM_PAGES = ["mdm-carriers", "mdm-carrier-agents", "mdm-ports", "mdm-linked", "mdm-vessels", "mdm-commodities", "mdm-loop-codes", "mdm-loop-map-explorer", "mdm-tradelanes", "mdm-countries", "mdm-unlocodes", "mdm-customers", "mdm-sanctioned-customers", "mdm-contracts", "rate-benchmark", "mdm-finance", "mdm-charge-codes", "mdm-duty-rates", "mdm-equipment", "mdm-pack-types", "mdm-container-types", "mdm-invoice-reason-codes", "mdm-locations", "mdm-document-templates"];
+  const MDM_PAGES = ["mdm-carriers", "mdm-carrier-agents", "mdm-carrier-integrations", "mdm-ports", "mdm-linked", "mdm-vessels", "mdm-commodities", "mdm-loop-codes", "mdm-loop-map-explorer", "mdm-tradelanes", "mdm-countries", "mdm-unlocodes", "mdm-customers", "mdm-sanctioned-customers", "mdm-contracts", "rate-benchmark", "mdm-finance", "mdm-charge-codes", "mdm-duty-rates", "mdm-equipment", "mdm-pack-types", "mdm-container-types", "mdm-invoice-reason-codes", "mdm-locations", "mdm-document-templates"];
   const ORG_PAGES = ["org-country", "org-branch", "org-office"];
   const ALL_PAGES = [...MDM_PAGES, ...ORG_PAGES, "manual"];
   const isMdmActive = MDM_PAGES.includes(page);
@@ -746,6 +751,7 @@ function App() {
     settings:           "Application Settings",
     "mdm-carriers":     "Master Data — Carriers",
     "mdm-carrier-agents": "Master Data — Carrier Agents",
+    "mdm-carrier-integrations": "Master Data — Carrier Integrations",
     "mdm-vessels":      "Master Data — Vessels",
     "mdm-commodities":  "Master Data — Commodities",
     "mdm-ports":        "Master Data — Port Locations",
@@ -853,6 +859,7 @@ function App() {
     const bellRef                 = useRef(null);
     const [activeSysMsgs, setActiveSysMsgs] = useState([]);
     const [expiringContracts, setExpiringContracts] = useState([]);
+    const [expiringQuotes, setExpiringQuotes] = useState([]);
 
     useEffect(() => {
       const load = () => api.systemMessages.list().then(setActiveSysMsgs).catch(() => {});
@@ -868,6 +875,17 @@ function App() {
     // cadence as system messages.
     useEffect(() => {
       const load = () => api.contracts.expiring(14).then(setExpiringContracts).catch(() => {});
+      load();
+      const t = setInterval(load, 60000);
+      return () => clearInterval(t);
+    }, []);
+
+    // Sent quotes within 7 days of (or already past) their own valid_until — same shape as
+    // expiring contracts above, shorter default window since a quote's natural shelf life is
+    // much shorter than a contract's (2026-09 Quoting/RFQ gap-closing pass: previously a Sent
+    // quote just silently flipped to Expired with zero warning to anyone).
+    useEffect(() => {
+      const load = () => api.quotes.expiring(7).then(setExpiringQuotes).catch(() => {});
       load();
       const t = setInterval(load, 60000);
       return () => clearInterval(t);
@@ -919,9 +937,10 @@ function App() {
       const remainingBell        = visibleBellItems.filter(a => a.id !== id);
       const remainingBookingBell = visibleBookingBellItems.filter(b => b.id !== id);
       const remainingExpiring    = visibleExpiringContracts.filter(c => c.id !== id);
+      const remainingExpiringQuotes = visibleExpiringQuotes.filter(qt => qt.id !== id);
       const remainingOverdueInv = visibleOverdueInvoiceDeadlines.filter(d => d.shipmentId !== id);
       const remainingMilestones = visibleMilestoneAlerts.filter(m => `${m.shipmentId}-${m.milestoneKey}` !== id);
-      if (remainingBell.length === 0 && remainingBookingBell.length === 0 && remainingExpiring.length === 0 && remainingOverdueInv.length === 0 && remainingMilestones.length === 0 && activeSysMsgs.length === 0) setBellOpen(false);
+      if (remainingBell.length === 0 && remainingBookingBell.length === 0 && remainingExpiring.length === 0 && remainingExpiringQuotes.length === 0 && remainingOverdueInv.length === 0 && remainingMilestones.length === 0 && activeSysMsgs.length === 0) setBellOpen(false);
     };
 
     // Active allocations above their alert threshold, sorted worst-first (max 5 shown)
@@ -967,10 +986,11 @@ function App() {
     })();
     const visibleBookingBellItems = bookingBellItems.filter(b => !dismissedBell[b.id]);
     const visibleExpiringContracts = expiringContracts.filter(c => !dismissedBell[c.id]);
+    const visibleExpiringQuotes = expiringQuotes.filter(q => !dismissedBell[q.id]);
     const visibleOverdueInvoiceDeadlines = overdueInvoiceDeadlines.filter(d => !dismissedBell[d.shipmentId]);
     const visibleMilestoneAlerts = milestoneAlerts.filter(m => !dismissedBell[`${m.shipmentId}-${m.milestoneKey}`]);
 
-    const bellCount = visibleBellItems.length + visibleBookingBellItems.length + visibleExpiringContracts.length + visibleOverdueInvoiceDeadlines.length + visibleMilestoneAlerts.length + activeSysMsgs.length;
+    const bellCount = visibleBellItems.length + visibleBookingBellItems.length + visibleExpiringContracts.length + visibleExpiringQuotes.length + visibleOverdueInvoiceDeadlines.length + visibleMilestoneAlerts.length + activeSysMsgs.length;
 
     useEffect(() => {
       const h = e => {
@@ -1244,6 +1264,69 @@ function App() {
                       onMouseEnter={e => { e.currentTarget.style.background = T.surfaceHover; e.currentTarget.style.color = T.text; }}
                       onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = T.textMuted; }}>
                       View all in Master Data →
+                    </button>
+                  </>
+                )}
+
+                {/* ── Quotes expiring soon (2026-09 Quoting/RFQ gap-closing pass) ── */}
+                {visibleExpiringQuotes.length > 0 && (
+                  <>
+                    <div style={{ padding: "10px 16px 8px",
+                      borderBottom: `1px solid ${T.border}`,
+                      display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                      <span style={{ fontFamily: T.body, fontSize: 12, fontWeight: 700, color: T.warning }}>
+                        📋 Quotes Expiring Soon
+                      </span>
+                      <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textMuted }}>
+                        {visibleExpiringQuotes.length} quote{visibleExpiringQuotes.length > 1 ? "s" : ""}
+                      </span>
+                    </div>
+                    {visibleExpiringQuotes.slice(0, 5).map(qt => (
+                      <div key={qt.id} style={{
+                          display: "flex", alignItems: "center",
+                          borderBottom: `1px solid ${T.border}22`,
+                        }}>
+                        <button type="button"
+                          onClick={() => { navigate("quotes"); setBellOpen(false); }}
+                          style={{
+                            display: "flex", alignItems: "center", justifyContent: "space-between",
+                            flex: 1, padding: "10px 12px 10px 16px", background: "none", border: "none",
+                            cursor: "pointer", textAlign: "left",
+                          }}
+                          onMouseEnter={e => e.currentTarget.style.background = T.surfaceHover}
+                          onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                            <span style={{ fontFamily: T.mono, fontSize: 12, fontWeight: 700, color: T.accent }}>
+                              {qt.id}
+                            </span>
+                            <span style={{ fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
+                              {qt.customerName || "—"}
+                            </span>
+                          </div>
+                          <span style={{ fontFamily: T.body, fontSize: 11, fontWeight: 600,
+                            color: qt.expired ? T.danger : T.warning }}>
+                            {qt.expired ? "Expired" : `Expires ${qt.validUntil}`}
+                          </span>
+                        </button>
+                        <button type="button"
+                          onClick={() => dismissBellItem(qt.id)}
+                          title="Dismiss until tomorrow"
+                          style={{ background: "none", border: "none", cursor: "pointer",
+                            color: T.textMuted, fontSize: 14, padding: "10px 12px", lineHeight: 1, flexShrink: 0 }}
+                          onMouseEnter={e => e.currentTarget.style.color = T.text}
+                          onMouseLeave={e => e.currentTarget.style.color = T.textMuted}>
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                    <button type="button"
+                      onClick={() => { navigate("quotes"); setBellOpen(false); }}
+                      style={{ width: "100%", padding: "9px 16px", background: "none",
+                        border: "none", cursor: "pointer",
+                        fontFamily: T.body, fontSize: 12, color: T.textMuted, textAlign: "center" }}
+                      onMouseEnter={e => { e.currentTarget.style.background = T.surfaceHover; e.currentTarget.style.color = T.text; }}
+                      onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = T.textMuted; }}>
+                      View all Quotes →
                     </button>
                   </>
                 )}
@@ -1779,7 +1862,10 @@ function App() {
                   <NavBtn pageKey="mdm-carriers" icon={IconBuilding} label="Carriers"       indent
                     foldable open={carriersNavOpen} onToggleFold={() => setCarriersNavOpen(o => !o)} />
                   {carriersNavOpen && (
-                    <NavBtn pageKey="mdm-carrier-agents" icon={IconLink} label="Carrier Agents" subIndent />
+                    <>
+                      <NavBtn pageKey="mdm-carrier-agents" icon={IconLink} label="Carrier Agents" subIndent />
+                      <NavBtn pageKey="mdm-carrier-integrations" icon={IconLink} label="Carrier Integrations" subIndent />
+                    </>
                   )}
                   <NavBtn pageKey="mdm-vessels"      icon={IconShip} label="Vessels"         indent />
                   <NavBtn pageKey="mdm-loop-codes" icon={IconRoute} label="Loop Codes"     indent
@@ -2120,6 +2206,10 @@ function App() {
             onBack={() => navigate("detail", selectedShipment.id)} />
         )}
 
+        {page === "shipment-shipping-instructions" && selectedShipment && (
+          <ShipmentShippingInstructionsPage shipment={selectedShipment} containers={containers} />
+        )}
+
         {page === "kanban"      && isEnabled("kanban")    && (
           <Suspense fallback={<FullPageSpinner />}>
             <KanbanPage shipments={shipments} />
@@ -2144,7 +2234,7 @@ function App() {
         {page === "dashboard" && (
           <DashboardPage
             shipments={shipments} containers={containers} carriers={carriers}
-            allocations={allocations}
+            allocations={allocations} containerTypeDefs={containerTypeDefs}
             financeEnabled={appSettings.finance_view_enabled !== 'false' && (effectiveRoles.includes('admin') || !!(user?.canViewFinance))} />
         )}
 
@@ -2156,6 +2246,7 @@ function App() {
             carriers={carriers}
             shipments={shipments}
             containers={containers}
+            containerTypeDefs={containerTypeDefs}
             pendingRenew={pendingRenew}
             onPendingRenewClear={() => setPendingRenew(null)}
             navigate={navigate}
@@ -2214,6 +2305,7 @@ function App() {
         )}
 
         {page === "mdm-carrier-agents" && isEnabled("mdm-carrier-agents") && <MdmCarrierAgentsPage />}
+        {page === "mdm-carrier-integrations" && <MdmCarrierIntegrationsPage />}
         {page === "mdm-vessels"    && isEnabled("mdm-vessels")    && <MdmVesselsPage />}
         {page === "mdm-ports"      && isEnabled("mdm-ports")      && <MdmPortLocationsPage />}
         {page === "mdm-linked"     && isEnabled("mdm-linked")     && <MdmLinkedPortsPage />}

@@ -2,7 +2,7 @@
 
 module.exports = function allocationsRoutes(app, ctx) {
   const { query, ok, err, uid, requireRole, mapAllocation, checkOverlap, logEntityEvent, linkedPortCodes, findMatchingContractLegs,
-          getSettings, callContractService } = ctx;
+          getSettings, callContractService, TEU_EXPR, isForeignKeyViolation } = ctx;
   const isRemoteContractSource = async () => ((await getSettings()).contract_source || "local") === "remote";
 
   // findMatchingContractLegs (server.js) expects raw contract_legs DB rows (snake_case) — the
@@ -32,7 +32,7 @@ module.exports = function allocationsRoutes(app, ctx) {
   async function loadTeuBuckets() {
     const rows = await query(`
       SELECT s.allocation_id AS allocation_id, cb.status AS booking_status,
-             COALESCE(SUM(CASE WHEN c.size='20' THEN 1 WHEN c.size IN ('40','45') THEN 2 ELSE 0 END), 0) AS teu
+             COALESCE(SUM(${TEU_EXPR("c")}), 0) AS teu
       FROM containers c
       JOIN shipments s ON s.id = c.shipment_id
       LEFT JOIN carrier_bookings cb ON cb.shipment_id = s.id
@@ -66,7 +66,7 @@ module.exports = function allocationsRoutes(app, ctx) {
 
   app.post("/api/allocations", write, async (req, res) => {
     const { carrierCode, allocatedTEU, effectiveDate, endDate, tradeLane = '', notes = '',
-            alertThreshold = 80, pol = '', pod = '', originLane = '', destLane = '', coverageScope = 'STRICT',
+            alertThreshold = 80, pol = '', pod = '', originLane = '', destLane = '',
             contractId = '', contractNumber = '', minimumTEU = null } = req.body;
     if (!carrierCode || allocatedTEU == null || !effectiveDate || !endDate || !pol || !pod)
       return err(res, "carrierCode, allocatedTEU, effectiveDate, endDate, pol, pod all required");
@@ -78,13 +78,20 @@ module.exports = function allocationsRoutes(app, ctx) {
       return err(res, `An allocation for ${carrierCode} on route ${pol.toUpperCase()} → ${pod.toUpperCase()} already covers that date range`);
     const id = `ALC-${uid()}`;
     const minTeuVal = minimumTEU != null && String(minimumTEU).trim() !== '' ? Number(minimumTEU) : null;
-    await query("INSERT INTO allocations (id,carrier_code,allocated_teu,effective_date,end_date,trade_lane,notes,alert_threshold,pol,pod,origin_lane,dest_lane,coverage_scope,contract_id,contract_number,minimum_teu) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)",
-      [id, carrierCode, allocatedTEU, effectiveDate, endDate, tradeLane, notes, alertThreshold, pol.toUpperCase(), pod.toUpperCase(), originLane, destLane, coverageScope, contractId, contractNumber, minTeuVal]);
+    try {
+      await query("INSERT INTO allocations (id,carrier_code,allocated_teu,effective_date,end_date,trade_lane,notes,alert_threshold,pol,pod,origin_lane,dest_lane,contract_id,contract_number,minimum_teu) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)",
+        [id, carrierCode, allocatedTEU, effectiveDate, endDate, tradeLane, notes, alertThreshold, pol.toUpperCase(), pod.toUpperCase(), originLane, destLane, contractId, contractNumber, minTeuVal]);
+    } catch (e) {
+      // Gap #3 (2026-09 Space Configuration spec): contractId was only ever checked for
+      // non-empty, never that it actually exists — allocations.contract_id now carries a real FK.
+      if (isForeignKeyViolation(e)) return err(res, "contractId does not match any existing contract", 400);
+      throw e;
+    }
     await logEntityEvent('allocation', id, 'CREATED', null, null, null,
       JSON.stringify({ carrierCode, pol: pol.toUpperCase(), pod: pod.toUpperCase(), allocatedTEU, effectiveDate, endDate, contractNumber, minimumTEU: minTeuVal }));
     // A brand-new allocation always starts at 0 in every bucket (no shipment could reference
     // this id yet) — included explicitly so the response shape matches GET's, not left undefined.
-    ok(res, { ...mapAllocation({ id, carrier_code: carrierCode, allocated_teu: allocatedTEU, effective_date: effectiveDate, end_date: endDate, trade_lane: tradeLane, notes, alert_threshold: alertThreshold, pol: pol.toUpperCase(), pod: pod.toUpperCase(), origin_lane: originLane, dest_lane: destLane, coverage_scope: coverageScope, contract_id: contractId, contract_number: contractNumber, minimum_teu: minTeuVal }), confirmedTEU: 0, pendingTEU: 0, rejectedTEU: 0, remainingTEU: allocatedTEU }, 201);
+    ok(res, { ...mapAllocation({ id, carrier_code: carrierCode, allocated_teu: allocatedTEU, effective_date: effectiveDate, end_date: endDate, trade_lane: tradeLane, notes, alert_threshold: alertThreshold, pol: pol.toUpperCase(), pod: pod.toUpperCase(), origin_lane: originLane, dest_lane: destLane, contract_id: contractId, contract_number: contractNumber, minimum_teu: minTeuVal }), confirmedTEU: 0, pendingTEU: 0, rejectedTEU: 0, remainingTEU: allocatedTEU }, 201);
   });
 
   app.put("/api/allocations/:id", write, async (req, res) => {
@@ -100,8 +107,14 @@ module.exports = function allocationsRoutes(app, ctx) {
     if (await checkOverlap(carrierCode, effectiveDate, endDate, pol, pod, req.params.id))
       return err(res, `Another allocation for ${carrierCode} on route ${pol.toUpperCase()} → ${pod.toUpperCase()} already covers that date range`);
     const minTeuVal = minimumTEU != null && String(minimumTEU).trim() !== '' ? Number(minimumTEU) : null;
-    const updated = await query("UPDATE allocations SET carrier_code=$1, allocated_teu=$2, effective_date=$3, end_date=$4, trade_lane=$5, notes=$6, alert_threshold=$7, pol=$8, pod=$9, origin_lane=$10, dest_lane=$11, contract_id=$12, contract_number=$13, minimum_teu=$14 WHERE id=$15 RETURNING id",
-      [carrierCode, allocatedTEU, effectiveDate, endDate, tradeLane, notes, alertThreshold, pol.toUpperCase(), pod.toUpperCase(), originLane, destLane, contractId, contractNumber, minTeuVal, req.params.id]);
+    let updated;
+    try {
+      updated = await query("UPDATE allocations SET carrier_code=$1, allocated_teu=$2, effective_date=$3, end_date=$4, trade_lane=$5, notes=$6, alert_threshold=$7, pol=$8, pod=$9, origin_lane=$10, dest_lane=$11, contract_id=$12, contract_number=$13, minimum_teu=$14 WHERE id=$15 RETURNING id",
+        [carrierCode, allocatedTEU, effectiveDate, endDate, tradeLane, notes, alertThreshold, pol.toUpperCase(), pod.toUpperCase(), originLane, destLane, contractId, contractNumber, minTeuVal, req.params.id]);
+    } catch (e) {
+      if (isForeignKeyViolation(e)) return err(res, "contractId does not match any existing contract", 400);
+      throw e;
+    }
     if (updated.length === 0) return err(res, "Not found", 404);
     await logEntityEvent('allocation', req.params.id, 'UPDATED', null, null, null,
       JSON.stringify({ carrierCode, pol: pol.toUpperCase(), pod: pod.toUpperCase(), allocatedTEU, effectiveDate, endDate, contractNumber, minimumTEU: minTeuVal }));

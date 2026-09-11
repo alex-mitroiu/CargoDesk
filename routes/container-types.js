@@ -1,7 +1,9 @@
 // Container-type registry (Equipment section) — admin-maintained reference list (20ft Dry,
-// 40ft High Cube, ...), seeded with defaults via migration. Same relationship
-// pack_type_definitions has to the cargo manifest pack-type dropdown: purely additive
-// reference data, nothing else in the app reads from this table yet.
+// 40ft High Cube, ...), seeded with defaults via migration. Its own `teu` column is the real
+// source of truth for every TEU calculation in the app (server.js's TEU_EXPR, joined on
+// size+type) — falls back to the standard 20ft=1/40ft=2 rule for any type with no matching,
+// active row here (2026-09 Space Configuration spec, gap #8 — this used to be pure display data
+// with zero effect on anything).
 module.exports = function containerTypeRoutes(app, ctx) {
   const { query, ok, err, uid, requireRole, mapContainerTypeDefinition } = ctx;
   const genId = () => `CTD-${uid()}`;

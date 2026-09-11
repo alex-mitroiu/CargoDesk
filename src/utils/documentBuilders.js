@@ -11,6 +11,8 @@ const DOC_TYPES = [
   { code: "BL01", label: "Bill of Lading" },
   { code: "MB01", label: "Master Bill of Lading" },
   { code: "BR01", label: "Carrier Booking Request" },
+  { code: "BC01", label: "Booking Confirmation" },
+  { code: "SI01", label: "Shipping Instructions" },
   { code: "CI01", label: "Commercial Invoice" },
   { code: "CI02", label: "Commercial Invoice (Amendment)" },
   { code: "FR01", label: "Freight Invoice" },
@@ -365,8 +367,10 @@ const buildMasterBillOfLadingHtml = ({ shipment: sh, invNumber, invDate, notes, 
 // the rate snapshot, one more conditional fetch added alongside it), same as every other
 // buildXHtml function in this file. Available for any carrier, not just non-bookable ones — a
 // paper record is harmless to also have for an EDI-bookable carrier.
-const buildCarrierBookingRequestHtml = ({ shipment: sh, invNumber, invDate, notes, containers, parties, exportFilingItn, rateSnapshotId }) => {
-  const nvocc = partyByRole(parties, "NVOCC");
+// Shared by buildCarrierBookingRequestHtml (BR01) and buildBookingConfirmationHtml (BC01) —
+// both documents describe the identical cargo/equipment/DG/reefer picture; the only real
+// difference between a request and its confirmation is what's said about the booking itself.
+const _equipmentBreakdown = containers => {
   const equipmentByType = {};
   const dgByType = {};
   const reeferByKey = {};
@@ -386,13 +390,37 @@ const buildCarrierBookingRequestHtml = ({ shipment: sh, invNumber, invDate, note
       rf.count += 1;
     }
   }
+  return { equipmentByType, dgByType, reeferByKey };
+};
 
+const _equipmentSectionsHtml = ({ equipmentByType, dgByType, reeferByKey }) => {
   const equipmentRows = Object.values(equipmentByType).map(e => `<tr>
         <td><span class="code">${_esc(e.type)}</span></td>
         <td class="num">${e.count}</td>
         <td class="num">${e.totalWeightKg > 0 ? e.totalWeightKg.toLocaleString() + " kg" : "—"}</td>
         <td class="num">${e.totalVolumeCbm > 0 ? e.totalVolumeCbm.toFixed(2) + " CBM" : "—"}</td>
       </tr>`).join("");
+  return `
+    <div class="section-label">Equipment</div>
+    <table><thead><tr>
+      <th>Type</th><th style="text-align:right">Count</th>
+      <th style="text-align:right">Total Weight</th><th style="text-align:right">Total Volume</th>
+    </tr></thead><tbody>${equipmentRows || `<tr><td colspan="4" style="text-align:center;color:#9ca3af;padding:16px">No containers recorded</td></tr>`}</tbody></table>
+    ${Object.values(dgByType).length > 0 ? `
+    <div class="section-label">Dangerous Goods Declaration</div>
+    <table><thead><tr><th>Type</th><th>IMDG Class</th><th style="text-align:right">Count</th></tr></thead><tbody>
+      ${Object.values(dgByType).map(d => `<tr><td><span class="code">${_esc(d.type)}</span></td><td>${_esc(d.dgClass || "—")}</td><td class="num">${d.count}</td></tr>`).join("")}
+    </tbody></table>` : ""}
+    ${Object.values(reeferByKey).length > 0 ? `
+    <div class="section-label">Reefer Set-Point Declaration</div>
+    <table><thead><tr><th>Type</th><th style="text-align:right">Set Temperature</th><th style="text-align:right">Count</th></tr></thead><tbody>
+      ${Object.values(reeferByKey).map(r => `<tr><td><span class="code">${_esc(r.type)}</span></td><td class="num">${r.setTemperatureC}°C</td><td class="num">${r.count}</td></tr>`).join("")}
+    </tbody></table>` : ""}`;
+};
+
+const buildCarrierBookingRequestHtml = ({ shipment: sh, invNumber, invDate, notes, containers, parties, exportFilingItn, rateSnapshotId }) => {
+  const nvocc = partyByRole(parties, "NVOCC");
+  const breakdown = _equipmentBreakdown(containers);
 
   const body = `
     <div class="parties" style="grid-template-columns:1fr 1fr 1fr">
@@ -423,24 +451,106 @@ const buildCarrierBookingRequestHtml = ({ shipment: sh, invNumber, invDate, note
         ...(exportFilingItn ? [["Export Filing ITN", _esc(exportFilingItn)]] : []),
       ])}</div>
     </div>
-    <div class="section-label">Equipment</div>
-    <table><thead><tr>
-      <th>Type</th><th style="text-align:right">Count</th>
-      <th style="text-align:right">Total Weight</th><th style="text-align:right">Total Volume</th>
-    </tr></thead><tbody>${equipmentRows || `<tr><td colspan="4" style="text-align:center;color:#9ca3af;padding:16px">No containers recorded</td></tr>`}</tbody></table>
-    ${Object.values(dgByType).length > 0 ? `
-    <div class="section-label">Dangerous Goods Declaration</div>
-    <table><thead><tr><th>Type</th><th>IMDG Class</th><th style="text-align:right">Count</th></tr></thead><tbody>
-      ${Object.values(dgByType).map(d => `<tr><td><span class="code">${_esc(d.type)}</span></td><td>${_esc(d.dgClass || "—")}</td><td class="num">${d.count}</td></tr>`).join("")}
-    </tbody></table>` : ""}
-    ${Object.values(reeferByKey).length > 0 ? `
-    <div class="section-label">Reefer Set-Point Declaration</div>
-    <table><thead><tr><th>Type</th><th style="text-align:right">Set Temperature</th><th style="text-align:right">Count</th></tr></thead><tbody>
-      ${Object.values(reeferByKey).map(r => `<tr><td><span class="code">${_esc(r.type)}</span></td><td class="num">${r.setTemperatureC}°C</td><td class="num">${r.count}</td></tr>`).join("")}
-    </tbody></table>` : ""}
+    ${_equipmentSectionsHtml(breakdown)}
     ${notes ? `<div class="notes"><div class="notes-label">Notes / Special Instructions</div><div class="notes-text">${_esc(notes)}</div></div>` : ""}`;
 
   return _invShell(`Carrier Booking Request — ${invNumber}`, "CARRIER BOOKING REQUEST", invNumber, invDate, body);
+};
+
+// Booking Confirmation (BC01) — direct sibling of the Carrier Booking Request (BR01): same
+// route/equipment/DG/reefer detail, but naming the carrier's own confirmed booking reference
+// and confirmation date instead of what was requested. Closes a real gap found by a sourced
+// FCL-export gap analysis (2026-09): every other regulatory/carrier milestone in this app
+// (AES/EEI acceptance, B/L issuance) produces a document artifact once confirmed — a confirmed
+// carrier booking had none, only the in-app status page. `booking` is the mapCarrierBooking
+// row (api.carrierBooking.get) — required, gated by getMissingDocRequirements below.
+const buildBookingConfirmationHtml = ({ shipment: sh, invNumber, invDate, notes, containers, parties, booking, exportFilingItn, rateSnapshotId }) => {
+  const nvocc = partyByRole(parties, "NVOCC");
+  const breakdown = _equipmentBreakdown(containers);
+
+  const body = `
+    <div class="parties" style="grid-template-columns:1fr 1fr 1fr">
+      <div class="party"><div class="party-label">Shipper</div>
+        <div class="party-name">${_esc(nvocc?.customerName || sh.shipperName || "—")}</div>
+      </div>
+      <div class="party"><div class="party-label">Consignee</div>
+        <div class="party-name">${_esc(sh.consigneeName || "—")}</div>
+      </div>
+      <div class="party"><div class="party-label">Notify Party</div>
+        <div class="party-name">${_esc(sh.notifyName || "—")}</div>
+      </div>
+    </div>
+    <div class="shp-block"><div class="block-label">Confirmed Booking Details</div>
+      <div class="details-grid">${_detailGrid([
+        ["Carrier's Booking Reference", `<span class="code">${_esc(booking?.bookingRef || "—")}</span>`],
+        ["Confirmed", booking?.confirmedAt ? new Date(booking.confirmedAt).toLocaleDateString("en-GB") : "—"],
+        ["Carrier", _esc(sh.carrierCode || "—")],
+        ["Port of Loading", `${_esc(sh.pol)}${sh.polName ? " · " + _esc(sh.polName) : ""}`],
+        ["Port of Discharge", `${_esc(sh.pod)}${sh.podName ? " · " + _esc(sh.podName) : ""}`],
+        ...(sh.placeOfReceipt ? [["Place of Receipt", _esc(sh.placeOfReceipt)]] : []),
+        ...(sh.placeOfDelivery ? [["Place of Delivery", _esc(sh.placeOfDelivery)]] : []),
+        ["ETD", sh.etd ? new Date(sh.etd).toLocaleDateString("en-GB") : "—"],
+        ["Vessel", _esc(sh.vessel || "—")], ["Voyage", _esc(sh.voyage || "—")],
+        ["Contract Type", _esc(sh.contractType || "—")],
+        ...(sh.contractRef ? [["Contract Reference", _esc(sh.contractRef)]] : []),
+        ...(rateSnapshotId ? [["Rate Snapshot", _esc(rateSnapshotId)]] : []),
+        ...(sh.commodityCode ? [["Commodity Code", _esc(sh.commodityCode)]] : []),
+        ...(exportFilingItn ? [["Export Filing ITN", _esc(exportFilingItn)]] : []),
+      ])}</div>
+    </div>
+    ${_equipmentSectionsHtml(breakdown)}
+    ${notes ? `<div class="notes"><div class="notes-label">Notes / Special Instructions</div><div class="notes-text">${_esc(notes)}</div></div>` : ""}`;
+
+  return _invShell(`Booking Confirmation — ${invNumber}`, "BOOKING CONFIRMATION", invNumber, invDate, body);
+};
+
+// Shipping Instructions (SI01) — the shipper/forwarder's own submission of final B/L data to
+// the carrier ahead of the SI cutoff (2026-09 FCL export gap analysis, finding #1). Gated on a
+// real Submitted/Confirmed `shippingInstructions` row below — `si` is `api.shippingInstructions.get`
+// (mapShippingInstructions), required and checked by getMissingDocRequirements.
+const buildShippingInstructionsHtml = ({ shipment: sh, invNumber, invDate, notes, containers, si }) => {
+  const rows = containers.length === 0
+    ? `<tr><td colspan="5" style="text-align:center;color:#9ca3af;padding:16px">No containers recorded</td></tr>`
+    : containers.map(c => `<tr>
+        <td><span class="code">${_esc(c.containerNumber || "TBC")}</span></td>
+        <td>${_esc(c.sealNumber || "—")}</td>
+        <td>${_esc(c.size)}ft ${_esc(c.type)}</td>
+        <td>${_esc(c.marksAndNumbers || "—")}</td>
+        <td>${_esc(c.cargoDescription || "—")}</td>
+      </tr>`).join("");
+
+  const body = `
+    <div class="parties" style="grid-template-columns:1fr 1fr 1fr">
+      <div class="party"><div class="party-label">Shipper</div>
+        <div class="party-name">${_esc(sh.shipperName || "—")}</div>
+      </div>
+      <div class="party"><div class="party-label">Consignee</div>
+        <div class="party-name">${_esc(sh.consigneeName || "—")}</div>
+      </div>
+      <div class="party"><div class="party-label">Notify Party</div>
+        <div class="party-name">${_esc(sh.notifyName || "—")}</div>
+      </div>
+    </div>
+    <div class="shp-block"><div class="block-label">Shipping Instructions</div>
+      <div class="details-grid">${_detailGrid([
+        ["SI Reference", `<span class="code">${_esc(si?.siReference || "—")}</span>`],
+        ["Submitted", si?.submittedAt ? new Date(si.submittedAt).toLocaleDateString("en-GB") : "—"],
+        ["SI Cutoff", si?.siCutoff ? new Date(si.siCutoff).toLocaleDateString("en-GB") : "—"],
+        ["Carrier", _esc(sh.carrierCode || "—")],
+        ["Port of Loading", `${_esc(sh.pol)}${sh.polName ? " · " + _esc(sh.polName) : ""}`],
+        ["Port of Discharge", `${_esc(sh.pod)}${sh.podName ? " · " + _esc(sh.podName) : ""}`],
+        ["Vessel", _esc(sh.vessel || "—")], ["Voyage", _esc(sh.voyage || "—")],
+        ["B/L Number", _esc(sh.blNumber || "—")], ["Booking Ref", _esc(sh.bookingRef || "—")],
+      ])}</div>
+    </div>
+    <div class="section-label">Container / Seal Detail</div>
+    <table><thead><tr>
+      <th>Container #</th><th>Seal #</th><th>Type</th><th>Marks &amp; Numbers</th><th>Cargo Description</th>
+    </tr></thead><tbody>${rows}</tbody></table>
+    ${si?.specialInstructions ? `<div class="notes"><div class="notes-label">Special Instructions</div><div class="notes-text">${_esc(si.specialInstructions)}</div></div>` : ""}
+    ${notes ? `<div class="notes"><div class="notes-label">Notes</div><div class="notes-text">${_esc(notes)}</div></div>` : ""}`;
+
+  return _invShell(`Shipping Instructions — ${invNumber}`, "SHIPPING INSTRUCTIONS", invNumber, invDate, body);
 };
 
 const buildPackingListHtml = ({ shipment: sh, invNumber, invDate, notes, containers, shipper, consignee }) => {
@@ -885,7 +995,7 @@ const buildGenericDocHtml = ({ shipment: sh, invNumber, invDate, notes }) => {
 // either free-text, backed by a dedicated page with its own validation (LoadingServicePage.jsx),
 // or (per dispatchDocBuilder's own comment above) intentionally allowed to render a
 // blank-template fallback from this generic modal.
-const getMissingDocRequirements = (docCode, { shipment: sh, containers, shipper, consignee, costLines, dgCompliance, parties }) => {
+const getMissingDocRequirements = (docCode, { shipment: sh, containers, shipper, consignee, costLines, dgCompliance, parties, booking, si }) => {
   const missing = [];
   const hasShipper   = !!(sh.shipperName || shipper?.companyName);
   const hasConsignee = !!(sh.consigneeName || consignee?.companyName);
@@ -911,6 +1021,16 @@ const getMissingDocRequirements = (docCode, { shipment: sh, containers, shipper,
     if (containers.length === 0) missing.push("At least one container");
     if (!sh.pol) missing.push("Port of Loading");
     if (!sh.pod) missing.push("Port of Discharge");
+  }
+  if (docCode === "BC01") {
+    if (!booking || booking.status !== "Confirmed") missing.push("A confirmed carrier booking (confirm it on Carrier Booking → Review first)");
+    if (containers.length === 0) missing.push("At least one container");
+    if (!sh.pol) missing.push("Port of Loading");
+    if (!sh.pod) missing.push("Port of Discharge");
+  }
+  if (docCode === "SI01") {
+    if (!si || (si.status !== "Submitted" && si.status !== "Confirmed")) missing.push("Submitted Shipping Instructions (submit them on Shipping Instructions first)");
+    if (containers.length === 0) missing.push("At least one container");
   }
   if (["AN01", "DO01"].includes(docCode)) {
     if (!hasConsignee) missing.push("Consignee");
@@ -942,6 +1062,8 @@ const dispatchDocBuilder = (code, data) => {
     case "BL01":             return buildBillOfLadingHtml(data);
     case "MB01":             return buildMasterBillOfLadingHtml(data);
     case "BR01":             return buildCarrierBookingRequestHtml(data);
+    case "BC01":             return buildBookingConfirmationHtml(data);
+    case "SI01":             return buildShippingInstructionsHtml(data);
     case "CI01": case "CI02": return buildCommercialInvoiceHtml(data);
     case "FR01": case "FR02": return buildFreightInvoiceHtml(data);
     case "PL01":             return buildPackingListHtml(data);

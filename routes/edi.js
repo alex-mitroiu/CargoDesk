@@ -4,7 +4,7 @@ module.exports = function ediRoutes(app, ctx) {
   const { query, ok, err, uid, auth, requireRole, shipmentSubs,
           mapEdiMessage, mapCarrierBooking, mapShipment, applyShipmentAccessFilter,
           autoCompleteMilestone, logEntityEvent, isEdiBookable, supersedeIfCarrierChanged,
-          getCustomerRow, checkLineAgentCapabilityGaps } = ctx;
+          getCustomerRow, checkLineAgentCapabilityGaps, getCarrierAdapter, getSettings } = ctx;
 
   // occ_bk has canEditShipments:true on the frontend and already sees an enabled Send
   // button — this used to exclude occ_bk (a pre-existing 403-on-click gap), fixed here.
@@ -118,6 +118,12 @@ module.exports = function ediRoutes(app, ctx) {
     broadcast(shipment.id, { type: "booking_status_changed", booking: updatedBooking });
     return { message, booking: updatedBooking };
   }
+  // Handed back onto ctx (not defined in server.js, since this closure needs getLastOutboundPayload/
+  // uid/query/broadcast, all local to this file) so routes/carrier-webhooks.js — required after this
+  // file in server.js — can call the exact same "apply the response" logic the Test Tools simulator
+  // above uses, rather than a second copy of it. Safe: route registration runs synchronously at
+  // boot, well before any real HTTP request could reach the webhook route.
+  ctx.applyBookingResponse = applyBookingResponse;
 
   async function upsertPendingBooking(shipment, correlationId, requestedBy) {
     const now = new Date().toISOString();
@@ -338,7 +344,42 @@ module.exports = function ediRoutes(app, ctx) {
     broadcast(shipment.id, { type: "new_edi_message", message: sentMsg });
 
     const requestedBy = req.user?.name || req.user?.email || "";
-    const booking = await upsertPendingBooking(shipment, correlationId, requestedBy);
+    let booking = await upsertPendingBooking(shipment, correlationId, requestedBy);
+
+    // Multi-Carrier Integration Framework (TKT-KG4E49, story 2) — an active carrier_integrations
+    // row with 'booking' capability for this carrier gets a real submission attempt; anything
+    // else (the overwhelming majority of carriers, today) falls through to exactly the prior
+    // behavior below, byte-for-byte — zero risk to any unconfigured carrier. Never surfaces a
+    // 500 to the caller on failure: a real carrier's own async flow means "not yet confirmed" is
+    // the normal case either way, identical to what this route has always returned.
+    // Master safety-net toggle (api_carrier_integrations_enabled, mirrors api_eadapter_enabled's
+    // own precedent) — off means every carrier falls back to the simulator regardless of any
+    // individual integration's own is_active flag, a single kill switch independent of having to
+    // find and deactivate each configured carrier one at a time.
+    const carrierIntegrationsEnabled = (await getSettings()).api_carrier_integrations_enabled !== 'false';
+    const [integrationRow] = carrierIntegrationsEnabled ? await query(
+      "SELECT * FROM carrier_integrations WHERE carrier_code=$1 AND is_active=TRUE", [shipment.carrier_code]
+    ) : [];
+    if (integrationRow) {
+      const capabilities = JSON.parse(integrationRow.capabilities || "[]");
+      const adapter = capabilities.includes("booking") ? getCarrierAdapter(integrationRow.adapter_key) : null;
+      if (adapter) {
+        const config = {
+          baseUrl: integrationRow.base_url, authHeaderName: integrationRow.auth_header_name,
+          credential: integrationRow.credential, webhookSecret: integrationRow.webhook_secret,
+        };
+        const dcsaPayload = adapter.buildBookingRequest(shipment, requestPayload, config);
+        const result = await adapter.createBooking(config, dcsaPayload);
+        if (result.ok) {
+          await query("UPDATE carrier_bookings SET carrier_booking_request_reference=$1 WHERE id=$2",
+            [result.carrierBookingRequestReference, booking.id]);
+          [booking] = await query("SELECT * FROM carrier_bookings WHERE id=$1", [booking.id]);
+        } else {
+          console.error(`Carrier integration ${integrationRow.carrier_code}/${integrationRow.adapter_key}: createBooking failed:`, result.error);
+        }
+      }
+    }
+
     broadcast(shipment.id, { type: "booking_status_changed", booking: mapCarrierBooking(booking) });
 
     // Capabilities cross-check (TKT-FQFE33) — surfaced here too, not just the pre-send GET
@@ -348,8 +389,10 @@ module.exports = function ediRoutes(app, ctx) {
     // ever called directly. Non-blocking either way.
     const capabilityGaps = await checkLineAgentCapabilityGaps(shipment.id);
 
-    // Always pending — the real carrier response is simulated only, via Test Tools →
-    // Message Simulator (see simulatedConfirmedResponse/simulatedRejectedResponse above).
+    // Always pending — a real carrier's booking is confirmed asynchronously (webhook or poll,
+    // see routes/carrier-webhooks.js); one with no active integration is still simulated only,
+    // via Test Tools → Message Simulator (see simulatedConfirmedResponse/simulatedRejectedResponse
+    // above).
     ok(res, { sent: sentMsg, booking: mapCarrierBooking(booking), pending: true, capabilityGaps }, 201);
   });
 
@@ -428,16 +471,18 @@ module.exports = function ediRoutes(app, ctx) {
     ok(res, mapped);
   });
 
-  app.patch("/api/shipments/:id/carrier-booking/cancel", write, async (req, res) => {
-    const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
-    if (!shipment) return err(res, "Shipment not found", 404);
-    const { reason } = req.body || {};
-
+  // Shared by the explicit PATCH route below and, since 2026-09 (Space Configuration spec, gap
+  // #4), by routes/shipments.js's own PUT handler when a shipment's status transitions to
+  // Cancelled — cancelling a shipment should cancel its live carrier booking too, not leave it
+  // silently still consuming allocation space. Returns the mapped booking, or null if there was
+  // nothing to cancel (no existing row — the PATCH route below still creates a pure "we're not
+  // booking this" record in that case, since that's a deliberate explicit user action; the
+  // auto-cancel-on-shipment-cancel call site checks for an existing row itself and skips this
+  // function entirely when there's nothing to cancel, rather than fabricating one).
+  async function cancelCarrierBooking(shipment, reason, cancelledBy) {
     const [existing] = await query("SELECT * FROM carrier_bookings WHERE shipment_id=$1", [shipment.id]);
-    if (existing && existing.status === "Cancelled") return err(res, "Booking is already cancelled", 409);
-
+    if (existing && existing.status === "Cancelled") return mapCarrierBooking(existing);
     const now = new Date().toISOString();
-    const cancelledBy = req.user?.name || req.user?.email || "";
 
     // Notify the carrier only if something was actually transmitted for this booking.
     if (existing?.correlation_id && await isEdiBookable(shipment.carrier_code, shipment.emo_office_id)) {
@@ -476,6 +521,25 @@ module.exports = function ediRoutes(app, ctx) {
 
     const mapped = mapCarrierBooking(booking);
     broadcast(shipment.id, { type: "booking_status_changed", booking: mapped });
+    return mapped;
+  }
+  // Exposed onto ctx (not defined in server.js, since this closure needs isEdiBookable/uid/query/
+  // broadcast, all local to this file) so routes/shipments.js — required before this file in
+  // server.js — can call it. Read via ctx.cancelCarrierBooking at request time there, never
+  // destructured at module-load time, since this assignment hasn't happened yet when
+  // routes/shipments.js's own module function first runs.
+  ctx.cancelCarrierBooking = cancelCarrierBooking;
+
+  app.patch("/api/shipments/:id/carrier-booking/cancel", write, async (req, res) => {
+    const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
+    if (!shipment) return err(res, "Shipment not found", 404);
+    const { reason } = req.body || {};
+
+    const [existing] = await query("SELECT * FROM carrier_bookings WHERE shipment_id=$1", [shipment.id]);
+    if (existing && existing.status === "Cancelled") return err(res, "Booking is already cancelled", 409);
+
+    const cancelledBy = req.user?.name || req.user?.email || "";
+    const mapped = await cancelCarrierBooking(shipment, reason, cancelledBy);
     ok(res, mapped);
   });
 

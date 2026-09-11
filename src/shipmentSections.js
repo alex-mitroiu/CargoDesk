@@ -11,12 +11,15 @@
 // → Schedules → Cargo → Milestones & Events → Documents, then Accounting (hardcoded
 // in App.jsx, not listed here), then History (SHIPMENT_SECTIONS_AFTER_ACCOUNTING).
 
-import { IconGroup, IconPackage, IconFlag, IconFileCertificate, IconFile, IconTime, IconAnchor } from "./components/primitives/Icon";
+import { IconGroup, IconPackage, IconFlag, IconFileCertificate, IconFile, IconTime, IconAnchor, IconClipboard } from "./components/primitives/Icon";
 
 export const SHIPMENT_SECTIONS = [
   { id: "shp-conditions", suffix: "conditions", pageKey: "shipment-conditions", icon: IconFileCertificate, label: "Conditions" },
   { id: "shp-parties",    suffix: "parties",    pageKey: "shipment-parties",    icon: IconGroup, label: "Parties & Offices" },
   { id: "shp-schedules",  suffix: "schedules",  pageKey: "shipment-schedules",  icon: IconAnchor, label: "Contracts & Schedules" },
+  // Nested under "Booking & Routing" (ShipmentDetailSidebar.jsx), same "filtered out of the
+  // flat list, placed manually as a child" idiom as shp-schedules above — not a top-level row.
+  { id: "shp-shipping-instructions", suffix: "shipping-instructions", pageKey: "shipment-shipping-instructions", icon: IconClipboard, label: "Shipping Instructions" },
   { id: "shp-cargo",      suffix: "containers", pageKey: "shipment-containers", icon: IconPackage, label: "Cargo" },
   { id: "shp-milestones", suffix: "milestones", pageKey: "shipment-milestones", icon: IconFlag,  label: "Milestones & Events" },
   { id: "shp-documents",  suffix: "documents",  pageKey: "shipment-documents",  icon: IconFile, label: "Documents" },

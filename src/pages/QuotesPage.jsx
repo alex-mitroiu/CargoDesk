@@ -59,6 +59,15 @@ const looksReefer = containerType => /RF/i.test(containerType || "");
 const QuoteFormModal = ({ quote, onClose, onSaved }) => {
   const isEdit = !!quote;
   const [customer, setCustomer] = useState({ id: quote?.customerId || "", name: quote?.customerName || "" });
+  // Consignee/Principal/Notify + Declared Value/Freight Terms (2026-09 gap-closing pass) — these
+  // previously only existed on a real shipment, so converting an Accepted quote always meant
+  // re-entering them by hand. Mirrors ShipmentFormPage.jsx's own Parties section field-for-field.
+  const [consignee, setConsignee] = useState({ id: quote?.consigneeId || "", name: quote?.consigneeName || "" });
+  const [principal, setPrincipal] = useState({ id: quote?.principalId || "", name: quote?.principalName || "" });
+  const [notify, setNotify] = useState({ id: quote?.notifyId || "", name: quote?.notifyName || "" });
+  const [declaredValue, setDeclaredValue] = useState(quote?.declaredValue != null ? String(quote.declaredValue) : "");
+  const [declaredValueCurrency, setDeclaredValueCurrency] = useState(quote?.declaredValueCurrency || "USD");
+  const [freightTerms, setFreightTerms] = useState(quote?.freightTerms || "Prepaid");
   const [pol, setPol] = useState(quote?.pol ? { unlocode: quote.pol, name: "" } : null);
   const [pod, setPod] = useState(quote?.pod ? { unlocode: quote.pod, name: "" } : null);
   const [carrierCode, setCarrierCode] = useState(quote?.carrierCode || "");
@@ -120,9 +129,13 @@ const QuoteFormModal = ({ quote, onClose, onSaved }) => {
     try {
       const payload = {
         customerId: customer.id, customerName: customer.name,
+        consigneeId: consignee.id, consigneeName: consignee.name,
+        principalId: principal.id, principalName: principal.name,
+        notifyId: notify.id, notifyName: notify.name,
         pol: pol.unlocode, pod: pod.unlocode, carrierCode,
         contractId, contractRef, commodityCode, movementType, serviceType, incoterm,
         cargoReadyDate, validUntil, notes, currency,
+        declaredValue: declaredValue.trim() !== "" ? Number(declaredValue) : null, declaredValueCurrency, freightTerms,
         lines: lines.filter(l => l.serviceCode.trim())
           .map(l => ({ ...l, quantity: Number(l.quantity) || 1, rate: Number(l.rate) || 0 })),
       };
@@ -137,6 +150,11 @@ const QuoteFormModal = ({ quote, onClose, onSaved }) => {
     <Modal title={isEdit ? `Edit Quote — ${quote.id}` : "New Quote"} onClose={onClose} width={820}>
       <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
         <CustomerCombobox label="Customer" value={customer} onChange={setCustomer} />
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+          <CustomerCombobox label="Consignee (optional)" value={consignee} onChange={setConsignee} />
+          <CustomerCombobox label="Principal (optional)" value={principal} onChange={setPrincipal} />
+          <CustomerCombobox label="Notify Party (optional)" value={notify} onChange={setNotify} />
+        </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 140px", gap: 12 }}>
           <PortField label="POL" value={pol} onChange={setPol} required />
@@ -163,6 +181,18 @@ const QuoteFormModal = ({ quote, onClose, onSaved }) => {
         <p style={{ fontFamily: T.body, fontSize: 10.5, color: T.border, lineHeight: 1.4, margin: "-6px 0 0" }}>
           After Valid Until passes, an un-actioned Sent quote auto-expires.
         </p>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 100px 1fr", gap: 12 }}>
+          <Field label="Declared Value (optional)"><input value={declaredValue} onChange={e => { if (e.target.value === "" || /^\d*\.?\d*$/.test(e.target.value)) setDeclaredValue(e.target.value); }}
+            inputMode="decimal" placeholder="e.g. 50000" style={{ ...inputBase, fontFamily: T.mono, fontSize: 13 }} /></Field>
+          <Sel label="Currency" value={declaredValueCurrency} onChange={setDeclaredValueCurrency} options={CURRENCIES.map(c => ({ value: c, label: c }))} />
+          <Sel label="Freight Terms" value={freightTerms} onChange={setFreightTerms}
+            options={[
+              { value: "Prepaid",                label: "Prepaid" },
+              { value: "Collect",                label: "Collect" },
+              { value: "Payable at Destination", label: "Payable at Destination" },
+            ]} />
+        </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px",
           background: T.bg, border: `1px dashed ${T.border}`, borderRadius: 8 }}>
@@ -323,6 +353,36 @@ const QuoteDetailModal = ({ quoteId, navigate, onClose, onChanged, onShipmentCre
             <div><div style={{ color: T.textMuted, fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".05em", marginBottom: 3 }}>Valid Until</div>
               <div style={{ color: T.text }}>{quote.validUntil || "—"}</div></div>
           </div>
+
+          {(quote.consigneeName || quote.principalName || quote.notifyName || quote.declaredValue != null) && (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, fontFamily: T.body, fontSize: 12.5 }}>
+              {quote.consigneeName && (
+                <div><div style={{ color: T.textMuted, fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".05em", marginBottom: 3 }}>Consignee</div>
+                  <div style={{ color: T.text }}>{quote.consigneeName}</div></div>
+              )}
+              {quote.principalName && (
+                <div><div style={{ color: T.textMuted, fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".05em", marginBottom: 3 }}>Principal</div>
+                  <div style={{ color: T.text }}>{quote.principalName}</div></div>
+              )}
+              {quote.notifyName && (
+                <div><div style={{ color: T.textMuted, fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".05em", marginBottom: 3 }}>Notify Party</div>
+                  <div style={{ color: T.text }}>{quote.notifyName}</div></div>
+              )}
+              {quote.declaredValue != null && (
+                <div><div style={{ color: T.textMuted, fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".05em", marginBottom: 3 }}>Declared Value</div>
+                  <div style={{ color: T.text }}>{quote.declaredValue.toLocaleString()} {quote.declaredValueCurrency}</div></div>
+              )}
+              <div><div style={{ color: T.textMuted, fontSize: 10.5, textTransform: "uppercase", letterSpacing: ".05em", marginBottom: 3 }}>Freight Terms</div>
+                <div style={{ color: T.text }}>{quote.freightTerms || "Prepaid"}</div></div>
+            </div>
+          )}
+
+          {quote.sourceOpportunityId && (
+            <button onClick={() => { onClose(); navigate("opportunities"); }}
+              style={{ background: "none", border: "none", color: T.accent, cursor: "pointer", fontFamily: T.mono, fontSize: 12.5, padding: 0, textAlign: "left" }}>
+              ← Originated from Opportunity {quote.sourceOpportunityId}
+            </button>
+          )}
 
           {quote.contractRef && (
             <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>

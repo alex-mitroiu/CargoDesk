@@ -11,7 +11,7 @@ import {
 } from "../../shipmentSections";
 import { SERVICE_TYPES, SERVICE_TYPE_ICON, servicePageKey } from "../../shipmentServicePages";
 import {
-  AnyIcon, IconAnchor, IconBaseStation, IconChartBar, IconCoin, IconDownload,
+  AnyIcon, IconAnchor, IconBaseStation, IconChartBar, IconClipboard, IconCoin, IconDownload,
   IconFileCertificate, IconMapPin, IconReceipt, IconRoute, IconUpload,
 } from "../primitives/Icon";
 
@@ -131,6 +131,19 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
     : filingStatuses.includes("Filed") ? { text: "Filed", color: T.accent }
     : null;
 
+  // Same self-fetch, no-WS idiom as bookingBadge/filingBadge above.
+  const [siStatus, setSiStatus] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    api.shippingInstructions.get(shipment.id)
+      .then(row => !cancelled && setSiStatus(row?.status || null))
+      .catch(() => !cancelled && setSiStatus(null));
+    return () => { cancelled = true; };
+  }, [shipment.id, currentPage]);
+  const siBadge = siStatus === "Rejected" ? { text: "Rejected", color: T.danger }
+    : siStatus === "Submitted" ? { text: "Submitted", color: T.accent }
+    : null;
+
   // One nav row per distinct, non-cancelled ordered type per side, in canonical
   // SERVICE_TYPES order (not order-ordered) for predictable placement.
   const orderedTypesFor = (side) => {
@@ -219,19 +232,23 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
   // below instead of as its own top-level row.
   const sections = [
     { id: "shp-overview", icon: "◎", label: "Overview" },
-    ...SHIPMENT_SECTIONS.filter(s => s.id !== "shp-schedules")
+    ...SHIPMENT_SECTIONS.filter(s => s.id !== "shp-schedules" && s.id !== "shp-shipping-instructions")
       .map(s => s.id === "shp-cargo" ? { ...s, badge: ctrCount || null } : s),
   ];
   const schedulesSection = SHIPMENT_SECTIONS.find(s => s.id === "shp-schedules");
+  const siSection = SHIPMENT_SECTIONS.find(s => s.id === "shp-shipping-instructions");
   // Groups the booking pipeline — what & when (Schedules) → booked with the carrier
-  // (Carrier Booking) → physically arranged (Pickup/Delivery, once ordered) — under one
-  // parent, same NavRow parent+children idiom as Accounting just below. Schedules/Carrier
-  // Booking are always-visible children; Pickup/Delivery only appear once actually ordered
-  // (mirrors Export/Import Services' own "only show if ordered" rule).
+  // (Carrier Booking) → Shipping Instructions/Customs Filing (pre-departure filings) →
+  // physically arranged (Pickup/Delivery, once ordered) — under one parent, same NavRow
+  // parent+children idiom as Accounting just below. Schedules/Carrier Booking/Shipping
+  // Instructions/Customs Filing are always-visible children; Pickup/Delivery only appear
+  // once actually ordered (mirrors Export/Import Services' own "only show if ordered" rule).
   const bookingRoutingChildren = [
     { id: schedulesSection.id, icon: schedulesSection.icon, label: schedulesSection.label },
     { id: "shp-carrier-booking", icon: IconBaseStation, label: "Carrier Booking",
       badge: bookingBadge?.text, badgeColor: bookingBadge?.color },
+    { id: siSection.id, icon: siSection.icon, label: siSection.label,
+      badge: siBadge?.text, badgeColor: siBadge?.color },
     { id: "shp-customs-filing", icon: IconFileCertificate, label: "Customs Filing",
       badge: filingBadge?.text, badgeColor: filingBadge?.color },
     ...(importTypes.includes("Delivery")
@@ -239,6 +256,7 @@ const ShipmentDetailSidebar = ({ shipment, ctrCount, navigate, onSectionClick, c
   ];
   const BOOKING_ROUTING_ROUTES = [
     "shipment-schedules", "shipment-carrier-booking-details", "shipment-carrier-booking-review",
+    "shipment-shipping-instructions",
     "shipment-customs-filing-details", "shipment-customs-filing-review",
     ...(importTypes.includes("Delivery") ? [servicePageKey("Import", "Delivery")] : []),
   ];

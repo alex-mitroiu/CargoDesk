@@ -1870,6 +1870,43 @@ export default function AppSettingsPage() {
     );
   };
 
+  // ── Carrier Integrations card — same master-toggle safety-net shape as eAdapter above
+  // (TKT-KG4E49 direct follow-up request): turning this off instantly disables every real
+  // carrier submission app-wide (routes/edi.js, routes/system.js, routes/carrier-webhooks.js),
+  // falling back to Test Tools' simulator regardless of what's configured on the Carrier
+  // Integrations MDM page — a single kill switch independent of each integration's own is_active
+  // flag, so a misbehaving carrier doesn't need to be found and deactivated one row at a time.
+  const CarrierIntegrationsCard = () => {
+    const enabled = settings?.api_carrier_integrations_enabled !== 'false';
+    return (
+      <div style={{ border: `1px solid ${T.border}`, borderRadius: 10, background: T.surface,
+        overflow: "hidden", opacity: enabled ? 1 : 0.65, transition: "opacity 0.2s" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", padding: "16px 20px 14px" }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 9, marginBottom: 5 }}>
+              <span style={{ fontFamily: T.body, fontSize: 15, fontWeight: 700, color: T.text }}>Multi-Carrier Integrations (DCSA)</span>
+              {!enabled && (
+                <span style={{ fontFamily: T.mono, fontSize: 10, color: T.warning,
+                  background: `${T.warning}18`, border: `1px solid ${T.warning}44`,
+                  borderRadius: 4, padding: "2px 8px" }}>DISABLED</span>
+              )}
+            </div>
+            <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, lineHeight: 1.5 }}>
+              Real carrier API adapters for booking, tracking, and schedules — configured on the
+              Carrier Integrations page under Master Data → Carriers.
+            </div>
+            {!enabled && (
+              <div style={{ fontFamily: T.body, fontSize: 11.5, color: T.warning, marginTop: 6, lineHeight: 1.5 }}>
+                Every configured carrier falls back to Test Tools' simulator while this is off, regardless of its own Active flag.
+              </div>
+            )}
+          </div>
+          <Toggle on={enabled} onChange={() => toggle({ name: "Carrier Integrations", settingKey: "api_carrier_integrations_enabled" })} />
+        </div>
+      </div>
+    );
+  };
+
   // ── External API card ──
   const ExternalCard = ({ apiDef }) => {
     const enabled       = settings[`api_${apiDef.id}_enabled`] !== 'false';
@@ -2208,6 +2245,7 @@ export default function AppSettingsPage() {
           {activeApiSub === "External APIs" && (
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               <EadapterCard />
+              <CarrierIntegrationsCard />
               {settings && (
                 <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
                   padding: "14px 16px" }}>

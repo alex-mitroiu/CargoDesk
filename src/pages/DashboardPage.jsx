@@ -2,7 +2,7 @@
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid,
          Tooltip, Legend, ResponsiveContainer, ReferenceLine } from "recharts";
 import { T, STATUSES, statusVariant, contractVariant, addDays, diffDays,
-         currentWeekStart, MAX_RANGE_DAYS, teuOf, todayIso, parseIso } from "../tokens";
+         currentWeekStart, MAX_RANGE_DAYS, teuOf, buildTeuLookup, todayIso, parseIso } from "../tokens";
 import { api } from "../api";
 import Btn from "../components/primitives/Btn";
 import Badge from "../components/primitives/Badge";
@@ -68,15 +68,15 @@ const DeltaBadge = ({ delta, prevTEU }) => {
 
 // ─── Matched Shipments Table (Overview tab) ───────────────────────────────────
 
-const MatchedShipmentsTable = ({ shipments, containers, carriers, activeAllocations }) => {
+const MatchedShipmentsTable = ({ shipments, containers, carriers, activeAllocations, teuDefs }) => {
   const rows = useMemo(() => shipments.map(s => {
-    const teu     = containers.filter(c => c.shipmentId === s.id).reduce((acc, c) => acc + teuOf(c.size), 0);
+    const teu     = containers.filter(c => c.shipmentId === s.id).reduce((acc, c) => acc + teuOf(c.size, c.type, teuDefs), 0);
     const carrier = carriers.find(c => c.code === s.carrierCode);
     const alloc   = activeAllocations.find(a =>
       a.carrierCode === s.carrierCode && (!a.pol || a.pol === s.pol) && (!a.pod || a.pod === s.pod)
     );
     return { ...s, teu, carrier, alloc };
-  }), [shipments, activeAllocations, containers, carriers]);
+  }), [shipments, activeAllocations, containers, carriers, teuDefs]);
 
   const [offset, setOffset] = useState(0);
   const [limit,  setLimit]  = useState(getStoredPageSize);
@@ -156,7 +156,7 @@ const MatchedShipmentsTable = ({ shipments, containers, carriers, activeAllocati
 
 // ─── Contract Consumption View (Contract tab) ─────────────────────────────────
 
-const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocations = [], contractTrendData }) => {
+const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocations = [], contractTrendData, teuDefs }) => {
   const [contractMap, setContractMap] = useState({});
   const [loading,     setLoading]     = useState(false);
 
@@ -190,20 +190,33 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocat
   // TEU per contract from shipments, bucketed by booking status — same rule as loadTeuBuckets()
   // (routes/allocations.js): only a Confirmed booking counts as real consumption; Pending covers
   // Created/Pending/no-booking-row-yet; Rejected is its own bucket; Cancelled is excluded
-  // entirely. Keyed by contract here (this view's own scope) rather than allocationId, matching
-  // the carrier/route heuristic this page has always used for date-ranged rollups.
+  // entirely. Matched to a contract via the shipment's own allocationId -> that allocation's
+  // contractId (exactly what loadTeuBuckets keys off), NOT the old carrier+contract+lane
+  // heuristic — this page used to be able to disagree with the Space Configurations page's own
+  // per-allocation figures for the same contract (2026-09 Space Configuration spec, gap #1: a
+  // shipment matching by attributes alone but never actually linked via allocationId would count
+  // here and not there, or vice versa). Date-range scoping (this view's own distinct value) is
+  // unchanged — only the matching key changed.
+  const allocationToContract = useMemo(() => {
+    const m = new Map();
+    allocations.forEach(a => { if (a.contractId) m.set(a.id, a.contractId); });
+    return m;
+  }, [allocations]);
+
   const consumedByContract = useMemo(() => {
     const m = {};
     centralShipments.forEach(s => {
-      const teu = containers.filter(c => c.shipmentId === s.id).reduce((acc, c) => acc + teuOf(c.size), 0);
-      const bucket = m[s.contractId] || (m[s.contractId] = { confirmed: 0, pending: 0, rejected: 0 });
+      if (!s.allocationId || !allocationToContract.has(s.allocationId)) return;
+      const contractId = allocationToContract.get(s.allocationId);
+      const teu = containers.filter(c => c.shipmentId === s.id).reduce((acc, c) => acc + teuOf(c.size, c.type, teuDefs), 0);
+      const bucket = m[contractId] || (m[contractId] = { confirmed: 0, pending: 0, rejected: 0 });
       if (s.bookingStatus === "Confirmed") bucket.confirmed += teu;
       else if (s.bookingStatus === "Rejected") bucket.rejected += teu;
       else if (s.bookingStatus === "Cancelled") { /* excluded — no live demand left */ }
       else bucket.pending += teu; // Created, Pending, or no carrier_bookings row yet
     });
     return m;
-  }, [centralShipments, containers]);
+  }, [centralShipments, containers, allocationToContract, teuDefs]);
 
   const emptyBucket = { confirmed: 0, pending: 0, rejected: 0 };
 
@@ -249,7 +262,7 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocat
       .finally(() => setLoading(false));
   }, [groups, allocByContract]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const teuFor = s => containers.filter(c => c.shipmentId === s.id).reduce((acc, c) => acc + teuOf(c.size), 0);
+  const teuFor = s => containers.filter(c => c.shipmentId === s.id).reduce((acc, c) => acc + teuOf(c.size, c.type, teuDefs), 0);
 
   const SHP_COL = "140px 130px 90px 48px 90px 90px";
   const SHP_HDR = ["Shipment ID", "POL → POD", "ETD", "TEU", "Status", "Booking"];
@@ -300,12 +313,12 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocat
                   Allocated vs Confirmed TEU
                 </h2>
                 <p style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, margin: 0 }}>
-                  Contract-level rollup for the selected date range — sums every Central shipment
-                  against this contract (any allocation) in range, not one specific space config's
-                  own real-time figure. Can differ from that config's own figures on the Space
-                  Configurations page, which is scoped to explicitly-linked shipments only, with
-                  no date-range filter. Only a Confirmed booking counts as consumed; Pending and
-                  Rejected are shown alongside, not folded in.
+                  Contract-level rollup for the selected date range — sums every one of this
+                  contract's space configurations, scoped to shipments actually linked to them
+                  (same allocationId match the Space Configurations page itself uses), just
+                  restricted to this date range and rolled up per contract instead of per config.
+                  Only a Confirmed booking counts as consumed; Pending and Rejected are shown
+                  alongside, not folded in.
                 </p>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 10,
@@ -1121,8 +1134,25 @@ const ComplianceReviewView = ({ compHits, custHits, loading, onRefresh }) => {
 // ─── Date range helpers ────────────────────────────────────────────────────────
 
 
-const DashboardPage = ({ shipments, containers, carriers, allocations, financeEnabled = true }) => {
+const DashboardPage = ({ shipments, containers, carriers, allocations, containerTypeDefs = [], financeEnabled = true }) => {
   const [view, setView] = useState("overview"); // "overview" | "contracts" | "compliance"
+  // Admin-configured TEU overrides (Master Data → Equipment) — same lookup the backend's
+  // TEU_EXPR reads, so this page's client-side figures agree with the server (2026-09 Space
+  // Configuration spec, gap #8).
+  const teuDefs = useMemo(() => buildTeuLookup(containerTypeDefs), [containerTypeDefs]);
+
+  // Sales Pipeline tile (2026-09 Quoting/RFQ gap-closing pass) — quotes/opportunities aren't part
+  // of App.jsx's shared top-level state (nothing else needs them there), so this page self-fetches
+  // its own small summary on mount, same precedent as CommandCenterView's TicketAlertCard self-
+  // fetching api.tickets.list() independently rather than receiving it as a prop.
+  // null (not []) while loading — this codebase has hit the "empty array reads as confirmed-zero"
+  // bug enough times (ServicesPanel, PartiesOfficesPanel, ...) that null-gating is the house rule.
+  const [pipelineQuotes, setPipelineQuotes] = useState(null);
+  const [pipelineOpportunities, setPipelineOpportunities] = useState(null);
+  useEffect(() => {
+    api.quotes.list({ limit: 200 }).then(r => setPipelineQuotes(r.results || [])).catch(() => setPipelineQuotes([]));
+    api.opportunities.list({ limit: 200 }).then(r => setPipelineOpportunities(r.results || r || [])).catch(() => setPipelineOpportunities([]));
+  }, []);
 
   // Compliance tab state — loaded on first open
   const [compHits,     setCompHits]     = useState(null);   // null = not yet loaded
@@ -1185,35 +1215,26 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, financeEn
   const rangeShipments = useMemo(() => shipments.filter(s => {
     const ref = s.etd || s.createdAt || "";
     if (!(ref >= rangeStart && ref <= rangeEnd)) return false;
-    return containers.filter(c => c.shipmentId === s.id).reduce((acc, c) => acc + teuOf(c.size), 0) > 0;
-  }), [shipments, rangeStart, rangeEnd, containers]);
+    return containers.filter(c => c.shipmentId === s.id).reduce((acc, c) => acc + teuOf(c.size, c.type, teuDefs), 0) > 0;
+  }), [shipments, rangeStart, rangeEnd, containers, teuDefs]);
 
   const today = todayIso();
 
   // Split allocations: current (not expired) vs archived (expired)
   const currentAllocations  = allocations.filter(a => a.endDate >= today);
 
-  const allocContractMatch = (s, a) => {
-    if (a.contractId)     return s.contractId === a.contractId;
-    if (a.contractNumber) return s.contractRef === a.contractNumber;
-    return s.contractType === "Central";
-  };
-
-  // TEU per carrier — filtered by contract + pol/pod to avoid overcounting, bucketed by booking
-  // status (only Confirmed actively counts as consumed space, matching loadTeuBuckets() in
-  // routes/allocations.js) — Pending covers Created/Pending/no-booking-row-yet, Rejected is its
-  // own bucket, Cancelled is excluded entirely.
+  // TEU per carrier, bucketed by booking status (only Confirmed actively counts as consumed
+  // space, matching loadTeuBuckets() in routes/allocations.js) — Pending covers Created/Pending/
+  // no-booking-row-yet, Rejected is its own bucket, Cancelled is excluded entirely. Matched by
+  // the shipment's own allocationId, not a carrier+contract+pol/pod heuristic (2026-09 Space
+  // Configuration spec, gap #1 — this used to be able to disagree with the Space Configurations
+  // page's own per-allocation figures; now it's the same join, just date-range-scoped).
   const consumedMap = useMemo(() => {
     const m = {};
     rangeShipments.forEach(s => {
-      const matched = activeAllocations.find(a =>
-        s.carrierCode === a.carrierCode &&
-        allocContractMatch(s, a) &&
-        (!a.pol || s.pol === a.pol) &&
-        (!a.pod || s.pod === a.pod)
-      );
+      const matched = s.allocationId && activeAllocations.find(a => a.id === s.allocationId);
       if (!matched) return;
-      const teu = containers.filter(c => c.shipmentId === s.id).reduce((acc, c) => acc + teuOf(c.size), 0);
+      const teu = containers.filter(c => c.shipmentId === s.id).reduce((acc, c) => acc + teuOf(c.size, c.type, teuDefs), 0);
       const bucket = m[s.carrierCode] || (m[s.carrierCode] = { confirmed: 0, pending: 0, rejected: 0 });
       if (s.bookingStatus === "Confirmed") bucket.confirmed += teu;
       else if (s.bookingStatus === "Rejected") bucket.rejected += teu;
@@ -1221,7 +1242,7 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, financeEn
       else bucket.pending += teu;
     });
     return m;
-  }, [rangeShipments, containers, activeAllocations]);
+  }, [rangeShipments, containers, activeAllocations, teuDefs]);
 
 
   // Trend data: delta vs previous equivalent period + 6-week sparkline — Confirmed only, matching
@@ -1241,14 +1262,14 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, financeEn
         .filter(s => s.carrierCode === code && s.bookingStatus === "Confirmed")
         .reduce((acc, s) =>
           acc + containers.filter(c => c.shipmentId === s.id)
-                          .reduce((a2, c) => a2 + teuOf(c.size), 0), 0);
+                          .reduce((a2, c) => a2 + teuOf(c.size, c.type, teuDefs), 0), 0);
 
       // Previous period TEU
       const prevTEU = shipments
         .filter(s => s.carrierCode === code && s.bookingStatus === "Confirmed" && s.etd >= prevStart && s.etd <= prevEnd)
         .reduce((acc, s) =>
           acc + containers.filter(c => c.shipmentId === s.id)
-                          .reduce((a2, c) => a2 + teuOf(c.size), 0), 0);
+                          .reduce((a2, c) => a2 + teuOf(c.size, c.type, teuDefs), 0), 0);
 
       // Delta %
       const delta = prevTEU > 0
@@ -1263,14 +1284,14 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, financeEn
           .filter(s => s.carrierCode === code && s.bookingStatus === "Confirmed" && s.etd >= wStart && s.etd <= wEnd)
           .reduce((acc, s) =>
             acc + containers.filter(c => c.shipmentId === s.id)
-                            .reduce((a2, c) => a2 + teuOf(c.size), 0), 0);
+                            .reduce((a2, c) => a2 + teuOf(c.size, c.type, teuDefs), 0), 0);
       });
 
       trends[code] = { delta, prevTEU, sparkData };
     });
 
     return trends;
-  }, [rangeShipments, shipments, containers, rangeStart, rangeEnd]);
+  }, [rangeShipments, shipments, containers, rangeStart, rangeEnd, teuDefs]);
 
   // Chart: group by carrier — consumption is total across all contract types
   const chartData = useMemo(() => {
@@ -1341,12 +1362,12 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, financeEn
         pt[id] = centralSh
           .filter(s => s.contractId === id && s.bookingStatus === "Confirmed" && s.etd >= wStart && s.etd <= wEnd)
           .reduce((acc, s) =>
-            acc + containers.filter(c => c.shipmentId === s.id).reduce((a2, c) => a2 + teuOf(c.size), 0), 0);
+            acc + containers.filter(c => c.shipmentId === s.id).reduce((a2, c) => a2 + teuOf(c.size, c.type, teuDefs), 0), 0);
       });
       return pt;
     });
     return { weeks, contractIds, refMap };
-  }, [shipments, containers, rangeStart]);
+  }, [shipments, containers, rangeStart, teuDefs]);
 
   const totalConfirmed = chartData.reduce((s, d) => s + d.confirmed, 0);
   const totalPending   = chartData.reduce((s, d) => s + d.pending, 0);
@@ -1520,6 +1541,51 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, financeEn
             );
           })()}
 
+          {/* Sales Pipeline: Opportunities + Quotes ahead of a real shipment (2026-09 gap-closing
+              pass) — same bare-metric tile shape as Active Shipment Health above, not a new
+              visual language. null while loading (still-fetching, not "confirmed zero"). */}
+          {pipelineQuotes !== null && pipelineOpportunities !== null && (() => {
+            const openOpportunities = pipelineOpportunities.filter(o => o.status === "New" || o.status === "Qualified").length;
+            const draftQuotes = pipelineQuotes.filter(q => q.status === "Draft").length;
+            const sentQuotes = pipelineQuotes.filter(q => q.status === "Sent");
+            const sentValueUsd = sentQuotes.reduce((sum, q) => sum + (q.totalAmountUsd || 0), 0);
+            if (openOpportunities === 0 && draftQuotes === 0 && sentQuotes.length === 0) return null;
+            return (
+              <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12,
+                padding: "16px 24px", marginBottom: 26, display: "flex", alignItems: "center", gap: 32 }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
+                    textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 8 }}>
+                    Sales Pipeline
+                  </div>
+                  <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
+                    Opportunities and quotes ahead of a real shipment
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 24, flexShrink: 0 }}>
+                  <div style={{ textAlign: "center" }}>
+                    <div style={{ fontFamily: T.mono, fontSize: 26, fontWeight: 700, color: T.text }}>{openOpportunities}</div>
+                    <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted }}>Open Opportunities</div>
+                  </div>
+                  <div style={{ textAlign: "center" }}>
+                    <div style={{ fontFamily: T.mono, fontSize: 26, fontWeight: 700, color: T.text }}>{draftQuotes}</div>
+                    <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted }}>Draft Quotes</div>
+                  </div>
+                  <div style={{ textAlign: "center" }}>
+                    <div style={{ fontFamily: T.mono, fontSize: 26, fontWeight: 700, color: T.accent }}>{sentQuotes.length}</div>
+                    <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted }}>Sent Quotes</div>
+                  </div>
+                  <div style={{ textAlign: "center" }}>
+                    <div style={{ fontFamily: T.mono, fontSize: 26, fontWeight: 700, color: T.success }}>
+                      ${sentValueUsd.toLocaleString("en-US", { maximumFractionDigits: 0 })}
+                    </div>
+                    <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted }}>Sent Value (USD)</div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Charts */}
           {chartData.length > 0 && (
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 22 }}>
@@ -1573,6 +1639,7 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, financeEn
             containers={containers}
             carriers={carriers}
             activeAllocations={activeAllocations}
+            teuDefs={teuDefs}
           />
         </>
       )}
@@ -1584,6 +1651,7 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, financeEn
           containers={containers}
           carriers={carriers}
           allocations={activeAllocations}
+          teuDefs={teuDefs}
           contractTrendData={contractTrendData}
         />
       )}

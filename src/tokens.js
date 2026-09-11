@@ -40,7 +40,25 @@ export const CONTACT_DEPARTMENTS  = ["Sales", "Operations", "Accounts", "Other"]
 // Currencies offered on cargo/commodity line items (Epic TKT-P3ASH1). MdmChargeCodesPage.jsx
 // keeps its own small pre-existing local copy — already working, no value in touching it here.
 export const CURRENCIES = ["USD", "EUR", "GBP", "CNY", "SGD", "JPY", "AED", "CHF"];
-export const teuOf = (size) => (size === "40" ? 2 : 1);
+// teuOf(size) alone keeps the standard 20ft=1/40ft=2 rule (unchanged default). Pass `type` +
+// `defsByKey` (see buildTeuLookup below) to honor an admin-configured override from Master Data
+// → Equipment (container_type_definitions.teu) — same source of truth the backend's TEU_EXPR
+// (server.js) reads, so client-side figures agree with the server (2026-09 Space Configuration
+// spec, gap #8: this column used to be pure display data with zero effect on any calculation).
+export const teuOf = (size, type, defsByKey) => {
+  if (type && defsByKey) {
+    const override = defsByKey.get(`${size}|${type}`);
+    if (override != null) return override;
+  }
+  return size === "40" ? 2 : 1;
+};
+// Built once from GET /api/container-type-definitions (fetched at App.jsx's top level alongside
+// carriers/shipments/containers/allocations) and passed down wherever teuOf needs the 3rd arg.
+export const buildTeuLookup = (defs = []) => {
+  const m = new Map();
+  for (const d of defs) if (d.isActive) m.set(`${d.size}|${d.type}`, d.teu);
+  return m;
+};
 
 export const CONTAINER_OPTIONS = [
   { code: "20DC", size: "20", type: "DC", teu: 1, label: "20ft Dry Container", desc: "Standard dry cargo — general goods, non-temperature-sensitive" },

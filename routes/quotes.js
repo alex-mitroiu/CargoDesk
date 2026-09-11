@@ -17,7 +17,8 @@
 module.exports = function quotesRoutes(app, ctx) {
   const { query, ok, err, uid, requireRole, isUniqueViolation, mapQuote, mapQuoteLine, mapShipment,
           logEvent, logEntityEvent, toUsd, SERVICE_CODE_MAP, importContractRates,
-          resolveCarrierAgentCandidates, screenShipmentById, schemaReady, getCustomerRow } = ctx;
+          resolveCarrierAgentCandidates, screenShipmentById, schemaReady, getCustomerRow,
+          recomputeSpaceBadge } = ctx;
 
   const quoteWrite = requireRole(["admin", "operator", "occ_bk"]);
 
@@ -106,6 +107,26 @@ module.exports = function quotesRoutes(app, ctx) {
     ok(res, { results: rows.map(mapQuote), total: Number(total), limit: lim, offset: off });
   });
 
+  // Upcoming/just-passed expiries for the Header notification bell — MUST be registered before
+  // /api/quotes/:id (Express matches route registration order; :id would otherwise swallow the
+  // literal "expiring" as an id). Copied from routes/contracts.js's own GET /api/contracts/expiring
+  // almost verbatim — only Sent quotes are actionable/warnable (Draft/Accepted/Declined/Expired/
+  // Converted have nothing pending), unlike contracts which check every Active/Expired row.
+  app.get("/api/quotes/expiring", async (req, res) => {
+    const days = Math.max(1, parseInt(req.query.days, 10) || 14);
+    const today = new Date().toISOString().slice(0, 10);
+    const horizon = new Date(Date.now() + days * 86400000).toISOString().slice(0, 10);
+    const rows = await query(`
+      SELECT id, customer_name, valid_until FROM quotes
+      WHERE status='Sent' AND valid_until != '' AND valid_until <= $1
+      ORDER BY valid_until ASC LIMIT 20
+    `, [horizon]);
+    ok(res, rows.map(r => ({
+      id: r.id, customerName: r.customer_name || '',
+      validUntil: r.valid_until, expired: r.valid_until < today,
+    })));
+  });
+
   app.get("/api/quotes/:id", async (req, res) => {
     const [q] = await query("SELECT * FROM quotes WHERE id=$1", [req.params.id]);
     if (!q) return err(res, "Not found", 404);
@@ -114,23 +135,30 @@ module.exports = function quotesRoutes(app, ctx) {
   });
 
   app.post("/api/quotes", quoteWrite, async (req, res) => {
-    const { customerId = "", customerName = "", pol = "", pod = "", carrierCode = "",
+    const { customerId = "", customerName = "",
+            consigneeId = "", consigneeName = "", principalId = "", principalName = "",
+            notifyId = "", notifyName = "", pol = "", pod = "", carrierCode = "",
             contractId = "", contractRef = "", commodityCode = "",
             movementType = "FCL", serviceType = "Port-to-Port", incoterm = "",
             cargoReadyDate = "", validUntil = "", notes = "", currency = "USD",
+            declaredValue = null, declaredValueCurrency = "USD", freightTerms = "Prepaid",
             lines = [] } = req.body || {};
     if (!pol || !pod) return err(res, "pol and pod are required");
     const id = `QT-${uid()}`;
     const now = new Date().toISOString();
     const actor = req.user?.name || req.user?.email || "";
     await query(`INSERT INTO quotes
-      (id, status, customer_id, customer_name, pol, pod, carrier_code, contract_id, contract_ref,
+      (id, status, customer_id, customer_name, consignee_id, consignee_name, principal_id, principal_name,
+       notify_id, notify_name, pol, pod, carrier_code, contract_id, contract_ref,
        commodity_code, movement_type, service_type, incoterm, cargo_ready_date, valid_until, notes,
-       currency, created_at, created_by)
-      VALUES ($1,'Draft',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
-      [id, customerId, customerName, pol.toUpperCase(), pod.toUpperCase(), carrierCode.toUpperCase(),
+       currency, declared_value, declared_value_currency, freight_terms, created_at, created_by)
+      VALUES ($1,'Draft',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)`,
+      [id, customerId, customerName, consigneeId, consigneeName, principalId, principalName,
+           notifyId, notifyName, pol.toUpperCase(), pod.toUpperCase(), carrierCode.toUpperCase(),
            contractId, contractRef, commodityCode, movementType, serviceType, incoterm, cargoReadyDate,
-           validUntil, notes, currency.toUpperCase(), now, actor]);
+           validUntil, notes, currency.toUpperCase(),
+           declaredValue !== null && declaredValue !== "" ? Number(declaredValue) : null,
+           declaredValueCurrency.toUpperCase(), freightTerms, now, actor]);
     await insertLines(id, lines);
     await recomputeQuoteTotal(id);
     await logEntityEvent("quote", id, "CREATED", null, null, null,
@@ -144,18 +172,26 @@ module.exports = function quotesRoutes(app, ctx) {
     const [existing] = await query("SELECT * FROM quotes WHERE id=$1", [req.params.id]);
     if (!existing) return err(res, "Not found", 404);
     if (existing.status !== "Draft") return err(res, `Only a Draft quote can be edited (current status: ${existing.status})`, 409);
-    const { customerId = "", customerName = "", pol = "", pod = "", carrierCode = "",
+    const { customerId = "", customerName = "",
+            consigneeId = "", consigneeName = "", principalId = "", principalName = "",
+            notifyId = "", notifyName = "", pol = "", pod = "", carrierCode = "",
             contractId = "", contractRef = "", commodityCode = "",
             movementType = "FCL", serviceType = "Port-to-Port", incoterm = "",
             cargoReadyDate = "", validUntil = "", notes = "", currency = "USD",
+            declaredValue = null, declaredValueCurrency = "USD", freightTerms = "Prepaid",
             lines = [] } = req.body || {};
     if (!pol || !pod) return err(res, "pol and pod are required");
-    await query(`UPDATE quotes SET customer_id=$1, customer_name=$2, pol=$3, pod=$4, carrier_code=$5,
-      contract_id=$6, contract_ref=$7, commodity_code=$8, movement_type=$9, service_type=$10, incoterm=$11,
-      cargo_ready_date=$12, valid_until=$13, notes=$14, currency=$15 WHERE id=$16`,
-      [customerId, customerName, pol.toUpperCase(), pod.toUpperCase(), carrierCode.toUpperCase(),
+    await query(`UPDATE quotes SET customer_id=$1, customer_name=$2, consignee_id=$3, consignee_name=$4,
+      principal_id=$5, principal_name=$6, notify_id=$7, notify_name=$8, pol=$9, pod=$10, carrier_code=$11,
+      contract_id=$12, contract_ref=$13, commodity_code=$14, movement_type=$15, service_type=$16, incoterm=$17,
+      cargo_ready_date=$18, valid_until=$19, notes=$20, currency=$21, declared_value=$22,
+      declared_value_currency=$23, freight_terms=$24 WHERE id=$25`,
+      [customerId, customerName, consigneeId, consigneeName, principalId, principalName,
+           notifyId, notifyName, pol.toUpperCase(), pod.toUpperCase(), carrierCode.toUpperCase(),
            contractId, contractRef, commodityCode, movementType, serviceType, incoterm, cargoReadyDate,
-           validUntil, notes, currency.toUpperCase(), req.params.id]);
+           validUntil, notes, currency.toUpperCase(),
+           declaredValue !== null && declaredValue !== "" ? Number(declaredValue) : null,
+           declaredValueCurrency.toUpperCase(), freightTerms, req.params.id]);
     await query("DELETE FROM quote_lines WHERE quote_id=$1", [req.params.id]);
     await insertLines(req.params.id, lines);
     await recomputeQuoteTotal(req.params.id);
@@ -237,18 +273,27 @@ module.exports = function quotesRoutes(app, ctx) {
     // Only the columns a quote actually has a value for are listed — every other shipments
     // column (etd, vessel, bookingRef, ...) is genuinely unknown at this point and correctly
     // falls back to its own table-level DEFAULT, exactly like an omitted field on the real
-    // POST /api/shipments already does.
+    // POST /api/shipments already does. Consignee/Principal/Notify/declared value/freight terms
+    // (2026-09 gap-closing pass) now carry over too — a quote captures these directly since this
+    // change, closing what used to be a real "re-enter everything by hand" gap on every
+    // conversion. source_quote_id is the reverse pointer completing the chain alongside
+    // quotes.converted_shipment_id (and, when this quote itself came from an Opportunity,
+    // source_opportunity_id on the quote — see routes/opportunities.js).
     await query(`INSERT INTO shipments
       (id, pol, pod, carrier_code, contract_type, status, created_at,
        contract_id, contract_ref, commodity_code, shipper_id, shipper_name,
-       movement_type, service_type, incoterm, cargo_ready_date)
-      VALUES ($1,$2,$3,$4,$5,'Active',$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+       consignee_id, consignee_name, principal_id, principal_name, notify_id, notify_name,
+       movement_type, service_type, incoterm, cargo_ready_date,
+       declared_value, declared_value_currency, freight_terms, source_quote_id)
+      VALUES ($1,$2,$3,$4,$5,'Active',$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)`,
       [id, q.pol, q.pod, q.carrier_code, contractType, now,
            q.contract_id, q.contract_ref, q.commodity_code, q.customer_id, q.customer_name,
-           q.movement_type, q.service_type, q.incoterm, q.cargo_ready_date]);
+           q.consignee_id, q.consignee_name, q.principal_id, q.principal_name, q.notify_id, q.notify_name,
+           q.movement_type, q.service_type, q.incoterm, q.cargo_ready_date,
+           q.declared_value, q.declared_value_currency, q.freight_terms, req.params.id]);
     await logEvent(id, 'SHIPMENT_CREATED', null, null, null,
-      JSON.stringify({ pol: q.pol, pod: q.pod, carrier: q.carrier_code, status: 'Active', contractType, source: 'quote', quoteId: req.params.id }), req.user?.id);
-    await maybeAssignLineAgents(id, q.carrier_code, q.pol, q.pod, req.user?.id);
+      JSON.stringify({ pol: q.pol, pod: q.pod, carrier: q.carrier_code, status: 'Active', contractType, source: 'quote', quoteId: req.params.id }), req.user?.name || req.user?.email || "");
+    await maybeAssignLineAgents(id, q.carrier_code, q.pol, q.pod, req.user?.name || req.user?.email || "");
     if (contractType === 'Central' && q.contract_id) await importContractRates(id);
 
     for (const l of lines) {
@@ -262,17 +307,61 @@ module.exports = function quotesRoutes(app, ctx) {
         JSON.stringify({ shipmentId: id, chargeCode, source: 'quote', quoteId: req.params.id }));
     }
 
+    // Real containers from the quote's own per-container line items (2026-09 gap-closing pass) —
+    // previously nothing here ever created a `containers` row, even though a quote line already
+    // carries a free-text container type + quantity. Grouped by type rather than one-row-per-line
+    // since several cost lines (Ocean Freight, THC, ...) routinely describe the SAME physical
+    // containers — summing their quantities would over-create; the max across the group is the
+    // real container count. QUOTE_CONTAINER_SIZES mirrors routes/shipments.js's own
+    // CONTAINER_SIZES check (not threaded through ctx for one small local constant, same call
+    // maybeAssignLineAgents's own duplication comment above already made).
+    const byType = new Map();
+    for (const l of lines) {
+      const t = (l.container_type || "").trim().toUpperCase();
+      if (!t || l.unit !== "per_container") continue;
+      byType.set(t, Math.max(byType.get(t) || 0, Number(l.quantity) || 1));
+    }
+    let containersCreated = 0;
+    for (const [containerType, qty] of byType) {
+      const sizeMatch = containerType.match(/^(20|40)/);
+      if (!sizeMatch) continue; // doesn't parse to a real container size — skip rather than block conversion
+      const size = sizeMatch[1];
+      const type = containerType.slice(size.length) || "GP";
+      const count = Math.max(1, Math.round(qty));
+      for (let i = 0; i < count; i++) {
+        // container_number has no DB default (NOT NULL, no DEFAULT) — every other creation path
+        // (ContainerForm, bulk import) always has a real typed number by the time it inserts;
+        // here there genuinely isn't one yet, so this is the one path that inserts blank on
+        // purpose, same as an operator would if adding a container before the number is known.
+        await query(`INSERT INTO containers (id, shipment_id, container_number, size, type) VALUES ($1,$2,'',$3,$4)`,
+          [`CTR-${uid()}`, id, size, type]);
+        containersCreated++;
+      }
+      // Same audit-trail idiom POST /api/containers already uses — a converted quote's
+      // containers previously left no CONTAINER_ADDED trace in shipment history (audit gap
+      // found in a post-implementation review pass, 2026-09-10).
+      await logEvent(id, 'CONTAINER_ADDED', null, null, null,
+        JSON.stringify({ size, type, source: 'quote', quoteId: req.params.id, count }), req.user?.name || req.user?.email || "");
+    }
+    // Same gap: nothing here ever recomputed the space/TEU consumption badge after adding
+    // containers, unlike POST /api/containers (which does this on every single create) — a
+    // Central-contract quote converting with an allocation already linked would show a stale
+    // (usually blank) space badge until some unrelated later container edit happened to
+    // trigger a recompute. One call after the whole batch, not per-container — recomputeSpaceBadge
+    // reads the full current container set fresh each time, so it's correct either way.
+    if (containersCreated > 0) await recomputeSpaceBadge(id);
+
     const silentScreening = await screenShipmentById(id);
 
     // Same earlier credit-check trigger point routes/shipments.js's own direct POST /api/shipments
-    // already added (v0.73.1) — soft/informational only, never blocking. A quote only ever carries
-    // one generic customer, which lands on the new shipment's Shipper slot (see the INSERT above),
-    // so there's no Consignee/Principal equivalent to check the way the direct route does for its
-    // 3 independent party fields.
+    // already added (v0.73.1) — soft/informational only, never blocking. Now checks all three
+    // parties a converted quote can actually carry (2026-09 gap-closing pass extended this beyond
+    // just the Shipper, once Consignee/Principal became real fields on a quote).
     const heldParties = [];
-    if (q.customer_id) {
-      const cust = await getCustomerRow(q.customer_id);
-      if (cust?.creditHold) heldParties.push({ customerId: q.customer_id, companyName: cust.companyName, role: 'Shipper', reason: cust.creditHoldReason || '' });
+    for (const [custId, role] of [[q.customer_id, 'Shipper'], [q.consignee_id, 'Consignee'], [q.principal_id, 'Principal']]) {
+      if (!custId) continue;
+      const cust = await getCustomerRow(custId);
+      if (cust?.creditHold) heldParties.push({ customerId: custId, companyName: cust.companyName, role, reason: cust.creditHoldReason || '' });
     }
 
     await query("UPDATE quotes SET status='Converted', converted_shipment_id=$1, converted_at=$2 WHERE id=$3", [id, now, req.params.id]);

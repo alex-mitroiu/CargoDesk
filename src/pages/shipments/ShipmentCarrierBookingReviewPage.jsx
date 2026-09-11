@@ -8,6 +8,7 @@ import Spinner from "../../components/primitives/Spinner";
 import { Modal } from "../../components/primitives/Modal";
 import EdiMessageList, { EDI_STATUS_COLOR } from "../../components/shared/EdiMessageList";
 import CarrierBookingsTable from "../../components/shared/CarrierBookingsTable";
+import GenerateDocumentModal from "../../components/shared/GenerateDocumentModal";
 import { IconCheck, IconClose, IconAnchor, IconFile } from "../../components/primitives/Icon";
 
 // Sent vs. Received comparison — same ordered field list the booking-request payload itself
@@ -93,6 +94,7 @@ const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
   const [confirmModal, setConfirmModal] = useState(null); // null | { bookingRef, note }
   const [cancelModal,  setCancelModal]  = useState(null); // null | { reason }
   const [linkModal,    setLinkModal]    = useState(false);
+  const [genDocOpen,   setGenDocOpen]   = useState(false);
   const [blDocs,       setBlDocs]       = useState([]);
   const [busy, setBusy] = useState(false);
   const [bookableCarriers, setBookableCarriers] = useState(null); // eAdapter — live effective bookable set, replaces the static BOOKABLE_CARRIERS Set
@@ -223,11 +225,22 @@ const ShipmentCarrierBookingReviewPage = ({ shipment, onBack, onRefresh }) => {
                 <IconFile size={13} /> {booking.blDocumentId ? "Change Linked B/L" : "Link B/L Document"}
               </Btn>
             )}
+            {status === "Confirmed" && (
+              <Btn variant="secondary" onClick={() => setGenDocOpen(true)}>
+                <IconFile size={13} /> Generate Confirmation
+              </Btn>
+            )}
             <Btn variant="secondary" onClick={openCancel} disabled={!canCancel}>Cancel Booking</Btn>
             <Btn onClick={openConfirm} disabled={!canConfirm}>Confirm Booking</Btn>
           </div>
         )}
       </div>
+
+      {genDocOpen && (
+        <GenerateDocumentModal shipment={shipment} defaultCode="BC01"
+          onClose={() => setGenDocOpen(false)}
+          onSaved={() => setGenDocOpen(false)} />
+      )}
 
       {/* Carrier Response card */}
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,

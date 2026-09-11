@@ -21,14 +21,23 @@ const GenerateDocumentModal = ({ shipment, onClose, onSaved, defaultCode }) => {
       const needsCostLines = docCode === "FR01" || docCode === "FR02";
       const needsDgSettings = docCode === "DG01";
       // ITN (TKT-6A7J45 story 1) — only House/Master B/L carry it, no reason to fetch
-      // customs filings for every other document type.
-      const needsExportFiling = docCode === "BL01" || docCode === "MB01" || docCode === "BR01";
-      // Rate snapshot reference — BR01 only, mirrors the same "latest snapshot for this
+      // customs filings for every other document type. BC01 (Booking Confirmation) is a
+      // direct sibling of BR01 and shows the same reference fields.
+      const needsExportFiling = docCode === "BL01" || docCode === "MB01" || docCode === "BR01" || docCode === "BC01";
+      // Rate snapshot reference — BR01/BC01 only, mirrors the same "latest snapshot for this
       // shipment" lookup the real EDI booking-request payload already does server-side.
       // costLineRead-gated on the backend (finance-visibility), so a viewer without that
       // access simply gets no rate reference on the document rather than a failed generation.
-      const needsRateSnapshot = docCode === "BR01";
-      const [ctrsRaw, shipper, consignee, costLines, orgSettings, parties, filings, rateSnapshots] = await Promise.all([
+      const needsRateSnapshot = docCode === "BR01" || docCode === "BC01";
+      // The carrier's own confirmed booking record — BC01 only, both to name the carrier's
+      // booking reference/confirmation date on the document and to gate generation until a
+      // real Confirm has actually happened (see getMissingDocRequirements below).
+      const needsBooking = docCode === "BC01";
+      // The shipper's own Shipping Instructions record — SI01 only, both to name the SI
+      // reference/cutoff on the document and to gate generation until a real Submit has
+      // actually happened (see getMissingDocRequirements below).
+      const needsSi = docCode === "SI01";
+      const [ctrsRaw, shipper, consignee, costLines, orgSettings, parties, filings, rateSnapshots, booking, si] = await Promise.all([
         api.containers.list(),
         shipment.shipperId   ? api.customers.get(shipment.shipperId).catch(() => null)   : Promise.resolve(null),
         shipment.consigneeId ? api.customers.get(shipment.consigneeId).catch(() => null) : Promise.resolve(null),
@@ -37,6 +46,8 @@ const GenerateDocumentModal = ({ shipment, onClose, onSaved, defaultCode }) => {
         api.shipmentParties.list(shipment.id).catch(() => []),
         needsExportFiling ? api.customsFilings.list(shipment.id).catch(() => []) : Promise.resolve([]),
         needsRateSnapshot ? api.costLines.rateSnapshots(shipment.id).catch(() => []) : Promise.resolve([]),
+        needsBooking ? api.carrierBooking.get(shipment.id).catch(() => null) : Promise.resolve(null),
+        needsSi ? api.shippingInstructions.get(shipment.id).catch(() => null) : Promise.resolve(null),
       ]);
       const rateSnapshotId = rateSnapshots[0]?.id || null;
       const exportFilingItn = filings.find(f => f.filingType === "AES_EEI" && f.status === "Accepted")?.confirmationNumber || null;
@@ -68,14 +79,14 @@ const GenerateDocumentModal = ({ shipment, onClose, onSaved, defaultCode }) => {
         : null;
 
       const dataBag = {
-        shipment, invNumber: docNum, invDate: docDate, notes, containers, shipper, consignee, costLines, dgCompliance, parties, exportFilingItn, rateSnapshotId,
+        shipment, invNumber: docNum, invDate: docDate, notes, containers, shipper, consignee, costLines, dgCompliance, parties, exportFilingItn, rateSnapshotId, booking, si,
       };
 
       let html;
       if (template) {
         html = renderTemplateHtml(template, dataBag);
       } else {
-        const missing = getMissingDocRequirements(docCode, { shipment, containers, shipper, consignee, costLines, dgCompliance, parties });
+        const missing = getMissingDocRequirements(docCode, { shipment, containers, shipper, consignee, costLines, dgCompliance, parties, booking, si });
         if (missing.length > 0) {
           toast.error(`Cannot generate ${docTypeLabel(docCode)} — missing:\n${missing.map(m => `• ${m}`).join("\n")}`);
           setLoading(false);

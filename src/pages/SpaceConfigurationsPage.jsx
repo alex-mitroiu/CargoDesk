@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import useSaving from "../hooks/useSaving";
-import { T, addDays, diffDays, teuOf, LANE_BADGE_VARIANT, todayIso, statusVariant, contractVariant,
+import { T, addDays, diffDays, teuOf, buildTeuLookup, LANE_BADGE_VARIANT, todayIso, statusVariant, contractVariant,
   buildLinkedPortIndex, matchedLegFor, allocationRouteMatch } from "../tokens";
 import { api } from "../api";
 import { useAuth } from "../AuthContext";
@@ -586,12 +586,15 @@ const AllocationForm = ({ init = {}, tradeLanes = [], onSave, onCancel }) => {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 const SpaceConfigurationsPage = ({
-  allocations, carriers, shipments, containers,
+  allocations, carriers, shipments, containers, containerTypeDefs = [],
   onAddAlloc, onEditAlloc, onDeleteAlloc,
   pendingRenew, onPendingRenewClear,
   navigate,
 }) => {
   const { canManageConfigs } = useAuth();
+  // Admin-configured TEU overrides (Master Data → Equipment) — same lookup the backend's
+  // TEU_EXPR reads (2026-09 Space Configuration spec, gap #8).
+  const teuDefs = useMemo(() => buildTeuLookup(containerTypeDefs), [containerTypeDefs]);
   const [allocModal,    setAllocModal]    = useState(null);
   const [confirmAlloc,  setConfirmAlloc]  = useState(null);
   const [renewInit,     setRenewInit]     = useState(null);
@@ -667,11 +670,11 @@ const SpaceConfigurationsPage = ({
         return shipments
           .filter(s => s.carrierCode === a.carrierCode && s.etd >= wSs && s.etd <= wEs)
           .reduce((sum, s) =>
-            sum + containers.filter(c => c.shipmentId === s.id).reduce((acc, c) => acc + teuOf(c.size), 0), 0);
+            sum + containers.filter(c => c.shipmentId === s.id).reduce((acc, c) => acc + teuOf(c.size, c.type, teuDefs), 0), 0);
       });
     });
     return m;
-  }, [allocations, shipments, containers]);
+  }, [allocations, shipments, containers, teuDefs]);
 
   const currentAllocs = allocations.filter(a => a.endDate >= today);
   const [allocOffset, setAllocOffset] = useState(0);
@@ -893,7 +896,7 @@ const SpaceConfigurationsPage = ({
           const leg = contract ? matchedLegFor(contract, linkedPortIdx, s.pol, s.pod) : null;
           return {
             ...s,
-            teu: containers.filter(c => c.shipmentId === s.id).reduce((acc, c) => acc + teuOf(c.size), 0),
+            teu: containers.filter(c => c.shipmentId === s.id).reduce((acc, c) => acc + teuOf(c.size, c.type, teuDefs), 0),
             viaLinkedPol: !!leg && leg.pol !== s.pol,
             viaLinkedPod: !!leg && leg.pod !== s.pod,
           };
@@ -910,7 +913,7 @@ const SpaceConfigurationsPage = ({
           contractMatch(s, a) &&
           allocationRouteMatch(s, a, contractsById, linkedPortIdx)
         ).map(s => ({
-          ...s, teu: containers.filter(c => c.shipmentId === s.id).reduce((acc, c) => acc + teuOf(c.size), 0),
+          ...s, teu: containers.filter(c => c.shipmentId === s.id).reduce((acc, c) => acc + teuOf(c.size, c.type, teuDefs), 0),
         })).filter(s => s.teu > 0);
 
         // Same bucket rule as loadTeuBuckets (routes/allocations.js) — bookingStatus is already

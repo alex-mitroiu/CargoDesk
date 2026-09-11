@@ -31,13 +31,18 @@ module.exports = function customsFilingRoutes(app, ctx) {
   // deliberately looser, check).
   async function cargoSnapshotFor(shipmentId) {
     const rows = await query(`
-      SELECT cp.description, cp.hs_code, cp.quantity, cp.unit_value, cp.currency, cp.unit_value_usd
+      SELECT cp.description, cp.hs_code, cp.quantity, cp.unit_value, cp.currency, cp.unit_value_usd,
+             cp.schedule_b_number, cp.eccn, cp.license_type, cp.license_value
       FROM container_packages cp JOIN containers c ON c.id = cp.container_id
       WHERE c.shipment_id=$1 AND cp.unit_value_usd IS NOT NULL
     `, [shipmentId]);
     return rows.map(r => ({
       description: r.description, hsCode: r.hs_code || '', quantity: r.quantity,
       unitValue: r.unit_value, currency: r.currency || '', unitValueUsd: r.unit_value_usd,
+      // AES/EEI export-control fields (2026-09 gap analysis finding #3) — declared, not derived;
+      // meaningful for AES_EEI (export) filings only, harmless-blank for an ISF_AMS snapshot.
+      scheduleBNumber: r.schedule_b_number || '', eccn: r.eccn || '',
+      licenseType: r.license_type || '', licenseValue: r.license_value || '',
     }));
   }
 

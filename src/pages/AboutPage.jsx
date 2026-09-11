@@ -65,7 +65,6 @@ import { IconSettings, IconAnchor, IconBaseStation, AnyIcon } from "../component
         { name: "end_date",         type: "TEXT",     note: "Config validity end — ISO date" },
         { name: "alert_threshold",  type: "INTEGER",  note: "Utilisation % that triggers warning (default 80). Added v0.7.0" },
         { name: "notes",            type: "TEXT",     note: "Contract caveats, rollover terms. Added v0.7.0" },
-        { name: "coverage_scope",   type: "TEXT",     note: "STRICT | LINKED | CONTRACT:id — reserved for Contract Management. Added v0.8.0" },
         { name: "contract_id",      type: "TEXT",     note: "FK → contracts. Mandatory from v0.14.0 — links the space config to a signed contract." },
         { name: "contract_number",  type: "TEXT",     note: "Denormalised contract number for display without a JOIN. Added v0.14.0" },
       ],

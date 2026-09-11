@@ -394,6 +394,14 @@ const ShipmentsPage = ({ shipments, carriers, onDelete, onNew, onRefresh, financ
                 {s.bookingStatus === "Rejected" && (
                   <Badge variant="danger" size={9.5}>Booking rejected</Badge>
                 )}
+                {/* 2026-09 Space Configuration spec, gap #1/#2 — fully computed and broadcast
+                    already, just never rendered anywhere before this. */}
+                {s.spaceBadge === "exceeded" && (
+                  <Badge variant="danger" size={9.5}>Space exceeded</Badge>
+                )}
+                {s.spaceBadge === "warning" && (
+                  <Badge variant="warning" size={9.5}>Space warning</Badge>
+                )}
               </div>
               <div>{(() => {
                 if (!financeEnabled) return null;

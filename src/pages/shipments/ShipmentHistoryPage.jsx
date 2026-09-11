@@ -80,7 +80,7 @@ const ShipmentHistoryPage = ({ shipment }) => {
   const changeLimit = n => { setLimit(n); load(0, n); };
 
   const exportCSV = () => {
-    const rows = [["Event Type", "Summary", "Date/Time", "User ID"]];
+    const rows = [["Event Type", "Summary", "Date/Time", "User"]];
     results.forEach(ev => rows.push([
       EVENT_CONFIG[ev.eventType]?.label || ev.eventType,
       `"${getEventSummary(ev).replace(/"/g, '""')}"`,
@@ -151,7 +151,7 @@ const ShipmentHistoryPage = ({ shipment }) => {
             onClick={() => setSortDir(d => d === "desc" ? "asc" : "desc")}>
             Date / Time {sortDir === "desc" ? <IconArrowDown size={11} /> : <IconArrowUp size={11} />}
           </div>
-          <div style={{ ...th, width: 110, flexShrink: 0 }}>User ID</div>
+          <div style={{ ...th, width: 110, flexShrink: 0 }}>User</div>
         </div>
 
         {loading ? (
@@ -181,9 +181,9 @@ const ShipmentHistoryPage = ({ shipment }) => {
               <div style={{ width: 160, flexShrink: 0, fontFamily: T.mono, fontSize: 11, color: T.textMuted }}>
                 {fmtDateTime(ev.occurredAt)}
               </div>
-              <div style={{ width: 110, flexShrink: 0, fontFamily: T.mono, fontSize: 11, color: T.textMuted,
+              <div style={{ width: 110, flexShrink: 0, fontFamily: T.body, fontSize: 11.5, color: T.textMuted,
                 overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={ev.actor || ""}>
-                {ev.actor && ev.actor !== "system" ? ev.actor : "—"}
+                {ev.actor && ev.actor !== "system" ? ev.actor : "System"}
               </div>
             </div>
           );

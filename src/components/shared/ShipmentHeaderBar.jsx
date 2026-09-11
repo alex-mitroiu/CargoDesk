@@ -468,6 +468,26 @@ const ShipmentHeaderBar = ({ shipment, containers = [], onNavigateToSchedules, o
           </button>
         )}
 
+        {/* Space consumption badge (2026-09 Space Configuration spec, gap #1/#2 — this was fully
+            computed and broadcast live over WebSocket already, just never rendered anywhere).
+            'exceeded' = this shipment's own TEU pushes its linked allocation over capacity;
+            'warning' = not over on its own, but an overage reason is already on file for it. */}
+        {(shipment.spaceBadge === "exceeded" || shipment.spaceBadge === "warning") && (
+          <button id="shphdr-space-badge" type="button" onClick={onNavigateToSchedules}
+            title={shipment.spaceBadge === "exceeded"
+              ? "This shipment's containers push its linked space configuration over its committed capacity — click to review"
+              : "This shipment was linked despite a space overage, with a reason already on file — click to review"}
+            style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 700, letterSpacing: "0.03em",
+              padding: "3px 9px", borderRadius: 5,
+              background: (shipment.spaceBadge === "exceeded" ? T.danger : T.warning) + "22",
+              color: shipment.spaceBadge === "exceeded" ? T.danger : T.warning,
+              border: `1px solid ${(shipment.spaceBadge === "exceeded" ? T.danger : T.warning)}66`,
+              whiteSpace: "nowrap", cursor: onNavigateToSchedules ? "pointer" : "default",
+              display: "inline-flex", alignItems: "center", gap: 4 }}>
+            <IconWarning size={11} />{shipment.spaceBadge === "exceeded" ? "Space Exceeded" : "Space Warning"}
+          </button>
+        )}
+
         {pendingMatches && (
           <button id="shphdr-contract-match-badge" type="button" onClick={onNavigateToSchedules}
             title={`${pendingMatches.length} active contract${pendingMatches.length !== 1 ? "s" : ""} match${pendingMatches.length === 1 ? "es" : ""} "${shipment.contractRef}" — click to review`}

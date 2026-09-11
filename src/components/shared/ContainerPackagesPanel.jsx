@@ -52,6 +52,15 @@ const PackageDetailForm = ({ init = {}, packTypes, isNew, canEdit, saving, conta
   const [unitValue,   setUnitValue]   = useState(init.unitValue != null ? String(init.unitValue) : "");
   const [currency,    setCurrency]    = useState(init.currency || "USD");
   const [hsCode,       setHsCode]      = useState(init.hsCode || "");
+  // AES/EEI export-control fields (2026-09 gap analysis finding #3) — declared by the user,
+  // never auto-derived (a real license-determination engine is a separate, much larger
+  // undertaking). Schedule B is the 10-digit US export classification (often but not always
+  // identical to HS Code); ECCN is the dual-use export-control classification (blank/EAR99 for
+  // most goods); License Type/Value records the export's license basis.
+  const [scheduleBNumber, setScheduleBNumber] = useState(init.scheduleBNumber || "");
+  const [eccn,            setEccn]            = useState(init.eccn || "");
+  const [licenseType,     setLicenseType]     = useState(init.licenseType || "");
+  const [licenseValue,    setLicenseValue]    = useState(init.licenseValue || "");
 
   useEffect(() => {
     setPackTypeId(init.packTypeId || "");
@@ -62,12 +71,19 @@ const PackageDetailForm = ({ init = {}, packTypes, isNew, canEdit, saving, conta
     setUnitValue(init.unitValue != null ? String(init.unitValue) : "");
     setCurrency(init.currency || "USD");
     setHsCode(init.hsCode || "");
-  }, [init.id, init.packTypeId, init.description, init.quantity, init.isDg, init.dgClass, init.unitValue, init.currency, init.hsCode]);
+    setScheduleBNumber(init.scheduleBNumber || "");
+    setEccn(init.eccn || "");
+    setLicenseType(init.licenseType || "");
+    setLicenseValue(init.licenseValue || "");
+  }, [init.id, init.packTypeId, init.description, init.quantity, init.isDg, init.dgClass, init.unitValue, init.currency, init.hsCode,
+      init.scheduleBNumber, init.eccn, init.licenseType, init.licenseValue]);
 
   const qty = parseInt(quantity, 10);
   const uv  = unitValue.trim() === "" ? null : parseFloat(unitValue);
   const validValue = uv == null || (Number.isFinite(uv) && uv >= 0);
-  const valid = description.trim().length > 0 && Number.isFinite(qty) && qty >= 1 && (!isDg || dgClass) && validValue;
+  const needsLicenseValue = licenseType === "License Required" || licenseType === "License Exception";
+  const valid = description.trim().length > 0 && Number.isFinite(qty) && qty >= 1 && (!isDg || dgClass) && validValue
+    && (!needsLicenseValue || licenseValue.trim().length > 0);
   const typeOptions = [{ value: "", label: "— No type —" }, ...packTypes.map(t => ({ value: t.id, label: `${t.icon} ${t.label}` }))];
 
   return (
@@ -90,6 +106,43 @@ const PackageDetailForm = ({ init = {}, packTypes, isNew, canEdit, saving, conta
       <Inp id="pkgform-hscode" label="HS Code" value={hsCode} onChange={setHsCode}
         placeholder={containerHsCode ? `Container default: ${containerHsCode}` : "e.g. 8471.30"}
         hint="Optional override — leave blank to use the container's own HS code" />
+
+      <div style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "10px 12px" }}>
+        <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
+          textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 10 }}>
+          Export Control (AES/EEI)
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ display: "flex", gap: 10 }}>
+            <div style={{ flex: 1 }}>
+              <Inp id="pkgform-scheduleb" label="Schedule B Number" value={scheduleBNumber} onChange={setScheduleBNumber}
+                placeholder="e.g. 8471.30.0100" hint="US export classification — often, not always, the same as HS Code" />
+            </div>
+            <div style={{ flex: 1 }}>
+              <Inp id="pkgform-eccn" label="ECCN" value={eccn} onChange={setEccn}
+                placeholder="e.g. EAR99" hint="Export control classification — leave blank if not yet determined" />
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 10 }}>
+            <div style={{ flex: 1 }}>
+              <Sel id="pkgform-licensetype" label="License Type" value={licenseType} onChange={setLicenseType}
+                options={[
+                  { value: "", label: "— Not classified —" },
+                  { value: "NLR", label: "NLR — No License Required" },
+                  { value: "License Required", label: "License Required" },
+                  { value: "License Exception", label: "License Exception" },
+                ]} />
+            </div>
+            {needsLicenseValue && (
+              <div style={{ flex: 1 }}>
+                <Inp id="pkgform-licensevalue" label={licenseType === "License Required" ? "License Number" : "Exception Symbol"}
+                  value={licenseValue} onChange={setLicenseValue}
+                  placeholder={licenseType === "License Required" ? "e.g. D1234567" : "e.g. TMP, RPL, GOV"} required />
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
 
       <div style={{ background: T.bg, border: `1px solid ${isDg ? T.danger + "55" : T.border}`,
         borderRadius: 8, padding: "10px 12px", transition: "border-color .15s" }}>
@@ -117,7 +170,9 @@ const PackageDetailForm = ({ init = {}, packTypes, isNew, canEdit, saving, conta
           {isNew && <Btn id="pkgform-cancel-btn" variant="secondary" onClick={onCancel}>Cancel</Btn>}
           <Btn id="pkgform-save-btn" disabled={!valid || saving}
             onClick={() => valid && onSave({ description: description.trim(), quantity: qty, packTypeId: packTypeId || null,
-              isDg, dgClass: isDg ? dgClass : "", unitValue: uv, currency: uv != null ? currency : "", hsCode: hsCode.trim() })}>
+              isDg, dgClass: isDg ? dgClass : "", unitValue: uv, currency: uv != null ? currency : "", hsCode: hsCode.trim(),
+              scheduleBNumber: scheduleBNumber.trim(), eccn: eccn.trim(), licenseType,
+              licenseValue: needsLicenseValue ? licenseValue.trim() : "" })}>
             {saving ? "Saving…" : isNew ? "Add Package" : "Save Changes"}
           </Btn>
         </div>
