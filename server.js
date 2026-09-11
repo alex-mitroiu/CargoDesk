@@ -3085,14 +3085,27 @@ const recomputeSpaceBadge = async shipmentId => {
     const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [shipmentId]);
     if (!shipment) return;
     let badge = '';
-    if (shipment.allocation_id) {
+    // 2026-09-11 audit (post space-config gap-fix pass): a Cancelled shipment has no live demand
+    // left — same principle loadTeuBuckets() already applies to a Cancelled booking — so it never
+    // gets a badge of its own, regardless of what its (still-present) containers add up to.
+    if (shipment.allocation_id && shipment.status !== "Cancelled") {
       const [alloc] = await query("SELECT * FROM allocations WHERE id=$1", [shipment.allocation_id]);
       if (alloc) {
         const [{ shipment_teu }] = await query(
           `SELECT COALESCE(SUM(${TEU_EXPR()}),0) AS shipment_teu FROM containers WHERE shipment_id=$1`, [shipmentId]
         );
+        // other_teu previously summed EVERY sibling shipment's containers regardless of its own
+        // booking status — disagreeing with loadTeuBuckets() (routes/allocations.js), the
+        // documented "authoritative, allocationId-scoped definition ... used everywhere it's
+        // shown," which only lets a Confirmed booking actually deduct from capacity. A sibling
+        // still Pending/Rejected/never-booked (or Cancelled) was incorrectly counted as consuming
+        // real space, capable of flagging this shipment 'exceeded' against capacity nothing had
+        // actually confirmed yet. Fixed to the same Confirmed-only rule.
         const [{ other_teu }] = await query(
-          `SELECT COALESCE(SUM(${TEU_EXPR("c")}),0) AS other_teu FROM containers c JOIN shipments s ON s.id=c.shipment_id WHERE s.allocation_id=$1 AND s.id!=$2`,
+          `SELECT COALESCE(SUM(${TEU_EXPR("c")}),0) AS other_teu FROM containers c
+           JOIN shipments s ON s.id=c.shipment_id
+           JOIN carrier_bookings cb ON cb.shipment_id=s.id
+           WHERE s.allocation_id=$1 AND s.id!=$2 AND cb.status='Confirmed'`,
           [shipment.allocation_id, shipmentId]
         );
         const remaining = Math.max(0, alloc.allocated_teu - Number(other_teu));

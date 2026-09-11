@@ -2,8 +2,24 @@
 
 module.exports = function allocationsRoutes(app, ctx) {
   const { query, ok, err, uid, requireRole, mapAllocation, checkOverlap, logEntityEvent, linkedPortCodes, findMatchingContractLegs,
-          getSettings, callContractService, TEU_EXPR, isForeignKeyViolation } = ctx;
+          getSettings, callContractService, TEU_EXPR } = ctx;
   const isRemoteContractSource = async () => ((await getSettings()).contract_source || "local") === "remote";
+
+  // contractId existence can't be enforced with a plain DB foreign key (tried, then reverted —
+  // see lib/schema.js's migration comment): in 'remote' mode a valid contractId only ever exists
+  // in the standalone Contract Management Service's own database, never this table's local
+  // `contracts`. Mode-aware instead, same split /match's own contractLegsFor() already uses. An
+  // unreachable remote service fails open (don't block a write on an infra hiccup) rather than
+  // rejecting a contractId that may well be valid — matching /match's own "can't disprove it,
+  // don't penalize" default for that same unreachable case.
+  async function contractExists(contractId) {
+    if (await isRemoteContractSource()) {
+      try { await callContractService("GET", `/internal/contracts/${contractId}`); return true; }
+      catch (e) { return e.status !== 404; }
+    }
+    const [row] = await query("SELECT 1 FROM contracts WHERE id=$1", [contractId]);
+    return !!row;
+  }
 
   // findMatchingContractLegs (server.js) expects raw contract_legs DB rows (snake_case) — the
   // Contract Management Service returns legs through its own mapLeg (camelCase, same field names
@@ -76,17 +92,13 @@ module.exports = function allocationsRoutes(app, ctx) {
       return err(res, "Minimum commitment can't exceed the allocated TEU");
     if (await checkOverlap(carrierCode, effectiveDate, endDate, pol, pod))
       return err(res, `An allocation for ${carrierCode} on route ${pol.toUpperCase()} → ${pod.toUpperCase()} already covers that date range`);
+    // Gap #3 (2026-09 Space Configuration spec): contractId was only ever checked for
+    // non-empty, never that it actually exists.
+    if (!(await contractExists(contractId))) return err(res, "contractId does not match any existing contract", 400);
     const id = `ALC-${uid()}`;
     const minTeuVal = minimumTEU != null && String(minimumTEU).trim() !== '' ? Number(minimumTEU) : null;
-    try {
-      await query("INSERT INTO allocations (id,carrier_code,allocated_teu,effective_date,end_date,trade_lane,notes,alert_threshold,pol,pod,origin_lane,dest_lane,contract_id,contract_number,minimum_teu) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)",
-        [id, carrierCode, allocatedTEU, effectiveDate, endDate, tradeLane, notes, alertThreshold, pol.toUpperCase(), pod.toUpperCase(), originLane, destLane, contractId, contractNumber, minTeuVal]);
-    } catch (e) {
-      // Gap #3 (2026-09 Space Configuration spec): contractId was only ever checked for
-      // non-empty, never that it actually exists — allocations.contract_id now carries a real FK.
-      if (isForeignKeyViolation(e)) return err(res, "contractId does not match any existing contract", 400);
-      throw e;
-    }
+    await query("INSERT INTO allocations (id,carrier_code,allocated_teu,effective_date,end_date,trade_lane,notes,alert_threshold,pol,pod,origin_lane,dest_lane,contract_id,contract_number,minimum_teu) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)",
+      [id, carrierCode, allocatedTEU, effectiveDate, endDate, tradeLane, notes, alertThreshold, pol.toUpperCase(), pod.toUpperCase(), originLane, destLane, contractId, contractNumber, minTeuVal]);
     await logEntityEvent('allocation', id, 'CREATED', null, null, null,
       JSON.stringify({ carrierCode, pol: pol.toUpperCase(), pod: pod.toUpperCase(), allocatedTEU, effectiveDate, endDate, contractNumber, minimumTEU: minTeuVal }));
     // A brand-new allocation always starts at 0 in every bucket (no shipment could reference
@@ -106,15 +118,10 @@ module.exports = function allocationsRoutes(app, ctx) {
       return err(res, "Minimum commitment can't exceed the allocated TEU");
     if (await checkOverlap(carrierCode, effectiveDate, endDate, pol, pod, req.params.id))
       return err(res, `Another allocation for ${carrierCode} on route ${pol.toUpperCase()} → ${pod.toUpperCase()} already covers that date range`);
+    if (!(await contractExists(contractId))) return err(res, "contractId does not match any existing contract", 400);
     const minTeuVal = minimumTEU != null && String(minimumTEU).trim() !== '' ? Number(minimumTEU) : null;
-    let updated;
-    try {
-      updated = await query("UPDATE allocations SET carrier_code=$1, allocated_teu=$2, effective_date=$3, end_date=$4, trade_lane=$5, notes=$6, alert_threshold=$7, pol=$8, pod=$9, origin_lane=$10, dest_lane=$11, contract_id=$12, contract_number=$13, minimum_teu=$14 WHERE id=$15 RETURNING id",
-        [carrierCode, allocatedTEU, effectiveDate, endDate, tradeLane, notes, alertThreshold, pol.toUpperCase(), pod.toUpperCase(), originLane, destLane, contractId, contractNumber, minTeuVal, req.params.id]);
-    } catch (e) {
-      if (isForeignKeyViolation(e)) return err(res, "contractId does not match any existing contract", 400);
-      throw e;
-    }
+    const updated = await query("UPDATE allocations SET carrier_code=$1, allocated_teu=$2, effective_date=$3, end_date=$4, trade_lane=$5, notes=$6, alert_threshold=$7, pol=$8, pod=$9, origin_lane=$10, dest_lane=$11, contract_id=$12, contract_number=$13, minimum_teu=$14 WHERE id=$15 RETURNING id",
+      [carrierCode, allocatedTEU, effectiveDate, endDate, tradeLane, notes, alertThreshold, pol.toUpperCase(), pod.toUpperCase(), originLane, destLane, contractId, contractNumber, minTeuVal, req.params.id]);
     if (updated.length === 0) return err(res, "Not found", 404);
     await logEntityEvent('allocation', req.params.id, 'UPDATED', null, null, null,
       JSON.stringify({ carrierCode, pol: pol.toUpperCase(), pod: pod.toUpperCase(), allocatedTEU, effectiveDate, endDate, contractNumber, minimumTEU: minTeuVal }));

@@ -16,6 +16,39 @@ module.exports = function shipmentsRoutes(app, ctx) {
   // trade_manager and viewer are read-only on all shipment write operations
   const shipmentWrite = requireRole(["admin", "operator", "occ_bk"]);
 
+  // Shared shipment-enrichment SELECT/JOIN fragment (bookingStatus, teu, overdueCount,
+  // marginBuyUsd/marginSellUsd) — every route that returns a shipment row must compute these the
+  // same way, or a route reading a narrower shape silently zeroes/nulls them instead of erroring.
+  // Found live: GET/PUT /api/shipments/:id used to omit these joins entirely (only the list query
+  // had them), and src/App.jsx merges that narrower response straight into shared app state
+  // ({...s, ...fresh}) at several onRefresh call sites — including right after confirming a
+  // carrier booking — silently flipping that shipment's in-memory bookingStatus to null (and
+  // zeroing its teu/overdueCount/margin) until a full page reload. One fragment, three call
+  // sites (list, GET/:id, PUT's re-select), instead of a third hand-copied version to drift again.
+  const SHIPMENT_ENRICHMENT_SELECT = `
+             COALESCE(buy.total, 0)  AS margin_buy_usd,
+             COALESCE(sell.total, 0) AS margin_sell_usd,
+             COALESCE(ms.overdue_count, 0) AS overdue_count,
+             cb.status AS booking_status,
+             cb.requested_at AS booking_requested_at,
+             COALESCE(ctr_teu.teu, 0) AS teu`;
+  const SHIPMENT_ENRICHMENT_JOINS = `
+      LEFT JOIN (SELECT shipment_id, SUM(${COST_LINE_EFFECTIVE_USD_SQL}) AS total
+                 FROM shipment_cost_lines WHERE type='BUY' GROUP BY shipment_id) buy
+             ON buy.shipment_id = s.id
+      LEFT JOIN (SELECT shipment_id, SUM(${COST_LINE_EFFECTIVE_USD_SQL}) AS total
+                 FROM shipment_cost_lines WHERE type='SELL' GROUP BY shipment_id) sell
+             ON sell.shipment_id = s.id
+      LEFT JOIN (SELECT shipment_id, COUNT(*) AS overdue_count
+                 FROM shipment_milestones
+                 WHERE estimated_date != '' AND estimated_date < CURRENT_DATE::text AND completed_at = ''
+                 GROUP BY shipment_id) ms
+             ON ms.shipment_id = s.id
+      LEFT JOIN carrier_bookings cb ON cb.shipment_id = s.id
+      LEFT JOIN (SELECT shipment_id, COALESCE(SUM(${TEU_EXPR()}),0) AS teu
+                 FROM containers GROUP BY shipment_id) ctr_teu
+             ON ctr_teu.shipment_id = s.id`;
+
   // Mirrors src/tokens.js's CONTRACT_PRESETS — frontend/backend don't share a module, same split
   // as ADDITIONAL_PARTY_ROLES/BOOKABLE_CARRIERS elsewhere in this app. Previously nothing
   // validated contractType server-side at all (only "non-empty string" was checked), so any
@@ -229,33 +262,14 @@ module.exports = function shipmentsRoutes(app, ctx) {
              emo.code AS emo_office_code, emo.name AS emo_office_name,
              imo.code AS imo_office_code, imo.name AS imo_office_name,
              ctrl.code AS controlling_office_code, ctrl.name AS controlling_office_name,
-             COALESCE(buy.total, 0)  AS margin_buy_usd,
-             COALESCE(sell.total, 0) AS margin_sell_usd,
-             COALESCE(ms.overdue_count, 0) AS overdue_count,
-             cb.status AS booking_status,
-             cb.requested_at AS booking_requested_at,
-             COALESCE(ctr_teu.teu, 0) AS teu
+             ${SHIPMENT_ENRICHMENT_SELECT}
       FROM shipments s
       LEFT JOIN port_locations p1 ON p1.unlocode = s.pol
       LEFT JOIN port_locations p2 ON p2.unlocode = s.pod
       LEFT JOIN offices emo  ON emo.id  = s.emo_office_id
       LEFT JOIN offices imo  ON imo.id  = s.imo_office_id
       LEFT JOIN offices ctrl ON ctrl.id = s.controlling_office_id
-      LEFT JOIN (SELECT shipment_id, SUM(${COST_LINE_EFFECTIVE_USD_SQL}) AS total
-                 FROM shipment_cost_lines WHERE type='BUY' GROUP BY shipment_id) buy
-             ON buy.shipment_id = s.id
-      LEFT JOIN (SELECT shipment_id, SUM(${COST_LINE_EFFECTIVE_USD_SQL}) AS total
-                 FROM shipment_cost_lines WHERE type='SELL' GROUP BY shipment_id) sell
-             ON sell.shipment_id = s.id
-      LEFT JOIN (SELECT shipment_id, COUNT(*) AS overdue_count
-                 FROM shipment_milestones
-                 WHERE estimated_date != '' AND estimated_date < CURRENT_DATE::text AND completed_at = ''
-                 GROUP BY shipment_id) ms
-             ON ms.shipment_id = s.id
-      LEFT JOIN carrier_bookings cb ON cb.shipment_id = s.id
-      LEFT JOIN (SELECT shipment_id, COALESCE(SUM(${TEU_EXPR()}),0) AS teu
-                 FROM containers GROUP BY shipment_id) ctr_teu
-             ON ctr_teu.shipment_id = s.id
+      ${SHIPMENT_ENRICHMENT_JOINS}
       ORDER BY s.created_at DESC
     `);
     const seaPorts = await resolveSeaPorts(rows.map(r => r.id));
@@ -329,13 +343,15 @@ module.exports = function shipmentsRoutes(app, ctx) {
       SELECT s.*, p1.name AS pol_name, p2.name AS pod_name,
              emo.code AS emo_office_code, emo.name AS emo_office_name,
              imo.code AS imo_office_code, imo.name AS imo_office_name,
-             ctrl.code AS controlling_office_code, ctrl.name AS controlling_office_name
+             ctrl.code AS controlling_office_code, ctrl.name AS controlling_office_name,
+             ${SHIPMENT_ENRICHMENT_SELECT}
       FROM shipments s
       LEFT JOIN port_locations p1 ON p1.unlocode = s.pol
       LEFT JOIN port_locations p2 ON p2.unlocode = s.pod
       LEFT JOIN offices emo  ON emo.id  = s.emo_office_id
       LEFT JOIN offices imo  ON imo.id  = s.imo_office_id
       LEFT JOIN offices ctrl ON ctrl.id = s.controlling_office_id
+      ${SHIPMENT_ENRICHMENT_JOINS}
       WHERE s.id = $1
     `, [req.params.id]);
     if (!row) return err(res, "Not found", 404);
@@ -634,13 +650,15 @@ module.exports = function shipmentsRoutes(app, ctx) {
       SELECT s.*, p1.name AS pol_name, p2.name AS pod_name,
              emo.code AS emo_office_code, emo.name AS emo_office_name,
              imo.code AS imo_office_code, imo.name AS imo_office_name,
-             ctrl.code AS controlling_office_code, ctrl.name AS controlling_office_name
+             ctrl.code AS controlling_office_code, ctrl.name AS controlling_office_name,
+             ${SHIPMENT_ENRICHMENT_SELECT}
       FROM shipments s
       LEFT JOIN port_locations p1 ON p1.unlocode = s.pol
       LEFT JOIN port_locations p2 ON p2.unlocode = s.pod
       LEFT JOIN offices emo  ON emo.id  = s.emo_office_id
       LEFT JOIN offices imo  ON imo.id  = s.imo_office_id
       LEFT JOIN offices ctrl ON ctrl.id = s.controlling_office_id
+      ${SHIPMENT_ENRICHMENT_JOINS}
       WHERE s.id = $1
     `, [req.params.id]);
     let silentScreening = null;
@@ -1567,17 +1585,21 @@ module.exports = function shipmentsRoutes(app, ctx) {
     // the frontend merges this response straight over its cached shipment object
     // ({...s, ...updated}), that blank would silently clobber the already-correct pol/pod names
     // everywhere else the shipment is shown, not just misrender the office that was reassigned.
+    // Same reasoning extends to SHIPMENT_ENRICHMENT_SELECT/JOINS (bookingStatus/teu/overdueCount/
+    // margin) — this route had the identical gap for those fields until this fix.
     const [updated] = await query(`
       SELECT s.*, p1.name AS pol_name, p2.name AS pod_name,
              emo.code AS emo_office_code, emo.name AS emo_office_name,
              imo.code AS imo_office_code, imo.name AS imo_office_name,
-             ctrl.code AS controlling_office_code, ctrl.name AS controlling_office_name
+             ctrl.code AS controlling_office_code, ctrl.name AS controlling_office_name,
+             ${SHIPMENT_ENRICHMENT_SELECT}
       FROM shipments s
       LEFT JOIN port_locations p1 ON p1.unlocode = s.pol
       LEFT JOIN port_locations p2 ON p2.unlocode = s.pod
       LEFT JOIN offices emo  ON emo.id  = s.emo_office_id
       LEFT JOIN offices imo  ON imo.id  = s.imo_office_id
       LEFT JOIN offices ctrl ON ctrl.id = s.controlling_office_id
+      ${SHIPMENT_ENRICHMENT_JOINS}
       WHERE s.id = $1
     `, [req.params.id]);
     ok(res, { ...mapShipment(updated), migratedServiceCount, oldOfficeId: oldOffice?.id || null });

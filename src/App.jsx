@@ -943,20 +943,24 @@ function App() {
       if (remainingBell.length === 0 && remainingBookingBell.length === 0 && remainingExpiring.length === 0 && remainingExpiringQuotes.length === 0 && remainingOverdueInv.length === 0 && remainingMilestones.length === 0 && activeSysMsgs.length === 0) setBellOpen(false);
     };
 
-    // Active allocations above their alert threshold, sorted worst-first (max 5 shown)
+    // Active allocations above their alert threshold, sorted worst-first (max 5 shown).
+    // 2026-09-11 audit (post space-config gap-fix pass): this used to hand-derive its own
+    // "consumed" figure from raw shipments/containers, grouped by carrierCode alone (not the
+    // real allocationId link) and with zero regard to booking status (Cancelled counted the
+    // same as Confirmed) or admin-configured container-type TEU overrides -- a 4th, disagreeing
+    // consumption calculation the original 2026-09 spec never even caught, since it lives here
+    // rather than on the Dashboard/Space Configurations pages. GET /api/allocations already
+    // returns each allocation's own server-computed confirmedTEU (loadTeuBuckets(), the same
+    // authoritative Confirmed-only, allocationId-scoped figure used everywhere else) -- just use
+    // that directly instead of re-deriving it, wrong, from the raw shipment list.
     const bellItems = (() => {
       if (!ready) return [];
-      const consumed = {};
-      shipments.forEach(s => {
-        const teu = containers.filter(c => c.shipmentId === s.id).reduce((a, c) => a + (c.size === '40' ? 2 : 1), 0);
-        consumed[s.carrierCode] = (consumed[s.carrierCode] || 0) + teu;
-      });
       return allocations
         .filter(a => a.endDate >= todayStr && a.allocatedTEU > 0)
-        .filter(a => (consumed[a.carrierCode] || 0) / a.allocatedTEU * 100 >= a.alertThreshold)
+        .filter(a => ((a.confirmedTEU || 0) / a.allocatedTEU) * 100 >= a.alertThreshold)
         .map(a => ({
           ...a,
-          pct: Math.round((consumed[a.carrierCode] || 0) / a.allocatedTEU * 100),
+          pct: Math.round(((a.confirmedTEU || 0) / a.allocatedTEU) * 100),
         }))
         .sort((a, b) => b.pct - a.pct)
         .slice(0, 5);

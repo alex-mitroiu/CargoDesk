@@ -68,13 +68,20 @@ const DeltaBadge = ({ delta, prevTEU }) => {
 
 // ─── Matched Shipments Table (Overview tab) ───────────────────────────────────
 
-const MatchedShipmentsTable = ({ shipments, containers, carriers, activeAllocations, teuDefs }) => {
+// Bug fix (found live via exploratory QA, 2026-09): this used to match a shipment to a space
+// config by carrier+pol/pod alone, the same heuristic already replaced everywhere else on this
+// page (consumedMap, chartData, carrierTrends, ContractConsumptionView — see their own "2026-09
+// Space Configuration spec, gap #1" comments) because it can both false-positive (a shipment that
+// merely resembles a match but was never actually linked, so it contributes 0 to that config's
+// real totals) and false-negative (a shipment linked via a linked-port equivalence the heuristic
+// doesn't understand shows "No config match" even though it genuinely is one). Verified live on
+// real shipments both ways. Now keyed off the same allocationId link everywhere else on this page
+// already uses.
+export const MatchedShipmentsTable = ({ shipments, containers, carriers, activeAllocations, teuDefs }) => {
   const rows = useMemo(() => shipments.map(s => {
     const teu     = containers.filter(c => c.shipmentId === s.id).reduce((acc, c) => acc + teuOf(c.size, c.type, teuDefs), 0);
     const carrier = carriers.find(c => c.code === s.carrierCode);
-    const alloc   = activeAllocations.find(a =>
-      a.carrierCode === s.carrierCode && (!a.pol || a.pol === s.pol) && (!a.pod || a.pod === s.pod)
-    );
+    const alloc   = s.allocationId ? activeAllocations.find(a => a.id === s.allocationId) : null;
     return { ...s, teu, carrier, alloc };
   }), [shipments, activeAllocations, containers, carriers, teuDefs]);
 
@@ -1248,6 +1255,18 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
   // Trend data: delta vs previous equivalent period + 6-week sparkline — Confirmed only, matching
   // what "consumption" means everywhere else post-v0.86.0 (raw all-status volume trend is still
   // available, unchanged, on the Carrier Volumes tab).
+  //
+  // Bug fix (found live, 2026-09): this used to count ANY Confirmed-booking shipment for the
+  // carrier code, with no allocationId check at all — unlike consumedMap/chartData just above,
+  // which correctly require a real allocationId link (2026-09 Space Configuration spec, gap #1).
+  // A SPOT shipment with no matching space config ("No config match" in the Shipments table)
+  // still has a Confirmed booking, so it silently inflated this trend line while correctly
+  // contributing 0 to the "TEU by Carrier" bar chart sitting right next to it — the exact kind of
+  // two-engines-disagreeing bug this session's gap-closing pass was supposed to eliminate.
+  // allocationId truthiness is trusted directly (shipments.allocation_id now carries a real FK,
+  // so a non-null value is guaranteed to reference a real allocation row) rather than
+  // cross-checking against activeAllocations, since history here spans weeks outside the
+  // currently-selected range where "active" wouldn't mean the same thing.
   const carrierTrends = useMemo(() => {
     const periodDays = diffDays(rangeStart, rangeEnd) + 1;
     const prevEnd    = addDays(rangeStart, -1);
@@ -1259,14 +1278,14 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
     allCodes.forEach(code => {
       // Current TEU — sum directly from range shipments for this carrier
       const currentTEU = rangeShipments
-        .filter(s => s.carrierCode === code && s.bookingStatus === "Confirmed")
+        .filter(s => s.carrierCode === code && s.bookingStatus === "Confirmed" && s.allocationId)
         .reduce((acc, s) =>
           acc + containers.filter(c => c.shipmentId === s.id)
                           .reduce((a2, c) => a2 + teuOf(c.size, c.type, teuDefs), 0), 0);
 
       // Previous period TEU
       const prevTEU = shipments
-        .filter(s => s.carrierCode === code && s.bookingStatus === "Confirmed" && s.etd >= prevStart && s.etd <= prevEnd)
+        .filter(s => s.carrierCode === code && s.bookingStatus === "Confirmed" && s.allocationId && s.etd >= prevStart && s.etd <= prevEnd)
         .reduce((acc, s) =>
           acc + containers.filter(c => c.shipmentId === s.id)
                           .reduce((a2, c) => a2 + teuOf(c.size, c.type, teuDefs), 0), 0);
@@ -1281,7 +1300,7 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
         const wStart = addDays(rangeStart, -(5 - i) * 7);
         const wEnd   = addDays(wStart, 6);
         return shipments
-          .filter(s => s.carrierCode === code && s.bookingStatus === "Confirmed" && s.etd >= wStart && s.etd <= wEnd)
+          .filter(s => s.carrierCode === code && s.bookingStatus === "Confirmed" && s.allocationId && s.etd >= wStart && s.etd <= wEnd)
           .reduce((acc, s) =>
             acc + containers.filter(c => c.shipmentId === s.id)
                             .reduce((a2, c) => a2 + teuOf(c.size, c.type, teuDefs), 0), 0);
@@ -1292,6 +1311,30 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
 
     return trends;
   }, [rangeShipments, shipments, containers, rangeStart, rangeEnd, teuDefs]);
+
+  // Carrier Volumes tab's own trend line needs a genuinely raw (all-status, no allocationId
+  // requirement) sparkline to actually match its own bar chart's philosophy — that tab is framed
+  // as "all shipments · by carrier code · TEU", not a space-consumption view. It used to borrow
+  // carrierTrends above directly, which was already Confirmed-only (undercutting the "raw"
+  // framing) and, after the allocationId fix, would have undercounted it further still. Same
+  // per-carrier sparkline shape, just with every status filter dropped.
+  const rawCarrierTrends = useMemo(() => {
+    const allCodes = [...new Set(rangeShipments.map(s => s.carrierCode).filter(Boolean))];
+    const trends = {};
+    allCodes.forEach(code => {
+      const sparkData = Array.from({ length: 6 }, (_, i) => {
+        const wStart = addDays(rangeStart, -(5 - i) * 7);
+        const wEnd   = addDays(wStart, 6);
+        return shipments
+          .filter(s => s.carrierCode === code && s.etd >= wStart && s.etd <= wEnd)
+          .reduce((acc, s) =>
+            acc + containers.filter(c => c.shipmentId === s.id)
+                            .reduce((a2, c) => a2 + teuOf(c.size, c.type, teuDefs), 0), 0);
+      });
+      trends[code] = { sparkData };
+    });
+    return trends;
+  }, [rangeShipments, shipments, containers, rangeStart, teuDefs]);
 
   // Chart: group by carrier — consumption is total across all contract types
   const chartData = useMemo(() => {
@@ -1662,7 +1705,7 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
           rangeShipments={rangeShipments}
           containers={containers}
           carriers={carriers}
-          carrierTrends={carrierTrends}
+          carrierTrends={rawCarrierTrends}
           rangeStart={rangeStart}
         />
       )}
