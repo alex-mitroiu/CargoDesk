@@ -383,8 +383,8 @@ function App() {
     }
   }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const ROLE_RANK   = { viewer: 0, occ_bk: 1, trade_manager: 1, operator: 2, admin: 3 };
-  const ROLE_LABELS = { admin: "Admin", operator: "Operator", occ_bk: "OCC Booking", trade_manager: "Trade Manager", viewer: "Viewer" };
+  const ROLE_RANK   = { viewer: 0, occ_bk: 1, trade_manager: 1, sales: 1, operator: 2, admin: 3 };
+  const ROLE_LABELS = { admin: "Admin", operator: "Operator", occ_bk: "OCC Booking", trade_manager: "Trade Manager", sales: "Sales", viewer: "Viewer" };
   const primaryRole    = (roles) => [...(roles || [])].sort((a, b) => ROLE_RANK[b] - ROLE_RANK[a])[0] || 'viewer';
   // Direct bug report: this used to offer every role in the whole system ranked at or below the
   // user's own primary role (an admin's own "impersonate any lower role" testing shortcut) —
@@ -1719,6 +1719,7 @@ function App() {
     isViewer:           effectiveRoles.every(r => r === 'viewer'),
     isOccBk:            effectiveRoles.includes('occ_bk'),
     isTradeManager:     effectiveRoles.includes('trade_manager'),
+    isSales:            effectiveRoles.includes('sales'),
     shipmentLock:       shipmentLock?.shipmentId === selectedId ? shipmentLock : null,
     activeOffice,
     userOffices,

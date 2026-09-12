@@ -48,6 +48,13 @@ module.exports = function shipmentsRoutes(app, ctx) {
       LEFT JOIN (SELECT shipment_id, COALESCE(SUM(${TEU_EXPR()}),0) AS teu
                  FROM containers GROUP BY shipment_id) ctr_teu
              ON ctr_teu.shipment_id = s.id`;
+  // Exposed via ctx (2026-09-12 QA finding) so routes/quotes.js's own shipment-returning route
+  // (POST .../convert) can reuse the identical enrichment instead of a 4th hand-copied bare
+  // SELECT * that would just recreate the same "one response quietly lags the others" bug this
+  // shared fragment already exists to prevent. Safe: routes/shipments.js is required before
+  // routes/quotes.js in server.js, so this is already set by the time quotes.js's factory runs.
+  ctx.SHIPMENT_ENRICHMENT_SELECT = SHIPMENT_ENRICHMENT_SELECT;
+  ctx.SHIPMENT_ENRICHMENT_JOINS = SHIPMENT_ENRICHMENT_JOINS;
 
   // Mirrors src/tokens.js's CONTRACT_PRESETS — frontend/backend don't share a module, same split
   // as ADDITIONAL_PARTY_ROLES/BOOKABLE_CARRIERS elsewhere in this app. Previously nothing
@@ -463,7 +470,28 @@ module.exports = function shipmentsRoutes(app, ctx) {
       if (cust?.creditHold) heldParties.push({ customerId: pid, companyName: cust.companyName, role, reason: cust.creditHoldReason || '' });
     }
 
-    const [baseRow] = await query("SELECT * FROM shipments WHERE id=$1", [id]);
+    // Enriched re-select (2026-09-12 QA finding) — this bare `SELECT *` was the one shipment
+    // response GET/PUT/reassign-office's own enrichment fix never reached: polName/podName/
+    // office names and SHIPMENT_ENRICHMENT_SELECT's margin/teu/bookingStatus/overdueCount all
+    // came back blank on a freshly-created shipment. Confirmed live to matter in practice, not
+    // just in principle — App.jsx's create handler pushes this exact response straight into
+    // shared state and navigates to the detail view, so a brand-new shipment showed blank
+    // port/office names immediately after creation, on the single most common creation path.
+    const [baseRow] = await query(`
+      SELECT s.*, p1.name AS pol_name, p2.name AS pod_name,
+             emo.code AS emo_office_code, emo.name AS emo_office_name,
+             imo.code AS imo_office_code, imo.name AS imo_office_name,
+             ctrl.code AS controlling_office_code, ctrl.name AS controlling_office_name,
+             ${SHIPMENT_ENRICHMENT_SELECT}
+      FROM shipments s
+      LEFT JOIN port_locations p1 ON p1.unlocode = s.pol
+      LEFT JOIN port_locations p2 ON p2.unlocode = s.pod
+      LEFT JOIN offices emo  ON emo.id  = s.emo_office_id
+      LEFT JOIN offices imo  ON imo.id  = s.imo_office_id
+      LEFT JOIN offices ctrl ON ctrl.id = s.controlling_office_id
+      ${SHIPMENT_ENRICHMENT_JOINS}
+      WHERE s.id = $1
+    `, [id]);
     const base = mapShipment(baseRow);
     const extra = {};
     if (silentScreening) extra.screening = silentScreening;
@@ -472,37 +500,103 @@ module.exports = function shipmentsRoutes(app, ctx) {
   });
 
   app.put("/api/shipments/:id", shipmentWrite, async (req, res) => {
-    const { pol: polIn, pod: podIn, carrierCode: carrierCodeIn, contractType: contractTypeIn,
-            contractNotes = "", status: statusIn,
-            etd = "", eta = "", bookingRef = "", blNumber = "", blReleaseType = "", masterBlNumber = "", masterBlReleaseType = "", coloadTariffReference = "", vessel = "", voyage = "",
-            incoterm = "", vesselImo = "", contractId = "", contractRef = "", commodityCode = "",
-            shipperId = "", shipperName = "", consigneeId = "", consigneeName = "",
-            principalId = "", principalName = "",
-            allocationId = "", spaceSkipReason = "", spaceOverageReason = "",
-            freightTerms = "Prepaid", movementType = "FCL", serviceType = "Port-to-Port",
-            placeOfReceipt = "", placeOfDelivery = "", cargoReadyDate = null,
-            notifyId = "", notifyName = "",
-            declaredValue = null, declaredValueCurrency = "USD",
-            emoOfficeId = null, imoOfficeId = null, controllingOfficeId = null,
-            contractValidFrom = "", contractValidTo = "", contractRoutingId = "" } = req.body;
     const [existing] = await query("SELECT * FROM shipments WHERE id=$1", [req.params.id]);
     if (!existing) return err(res, "Not found", 404);
-    // pol/pod/carrierCode/contractType/status have no destructuring default (unlike every sibling
-    // field above) because their fallback needs the existing row — omitting one from a partial
-    // update must preserve its current value, not silently bind `undefined` into the UPDATE below
-    // (which node:sqlite rejects with a raw TypeError, previously crashing the whole process
-    // instead of just failing the one request — see the crash-safety-net comments in server.js).
-    const status = statusIn !== undefined ? statusIn : existing.status;
-    const pol = polIn !== undefined ? polIn : existing.pol;
-    const pod = podIn !== undefined ? podIn : existing.pod;
-    const carrierCode = carrierCodeIn !== undefined ? carrierCodeIn : existing.carrier_code;
-    const contractType = contractTypeIn !== undefined ? contractTypeIn : existing.contract_type;
+    // True partial update (2026-09-12 QA finding) — every field below now preserves the existing
+    // row's value when omitted from the body, not just pol/pod/carrierCode/contractType/status
+    // (which already had this protection, originally only to avoid crashing on an `undefined`
+    // bind — see node:sqlite crash-safety-net comments in server.js). Before this fix, omitting
+    // ANY of the ~35 other fields silently blanked it, each logged as though the user had
+    // deliberately cleared it — confirmed live: a PUT sending only a handful of fields wiped
+    // vessel/voyage/bookingRef/blNumber/incoterm/commodityCode back to blank on a real shipment.
+    // An explicit "" or null IS still honored as a deliberate clear — this only protects a field
+    // that's missing from the body entirely, exactly matching how the 5 originally-protected
+    // fields already behaved.
+    const reqBody = req.body || {};
+    const field = (key, col) => reqBody[key] !== undefined ? reqBody[key] : existing[col];
+    const status = field('status', 'status');
+    const pol = field('pol', 'pol');
+    const pod = field('pod', 'pod');
+    const carrierCode = field('carrierCode', 'carrier_code');
+    const contractType = field('contractType', 'contract_type');
+    const contractNotes = field('contractNotes', 'contract_notes');
+    const etd = field('etd', 'etd');
+    const eta = field('eta', 'eta');
+    const bookingRef = field('bookingRef', 'booking_ref');
+    const blNumber = field('blNumber', 'bl_number');
+    const blReleaseType = field('blReleaseType', 'bl_release_type');
+    const masterBlNumber = field('masterBlNumber', 'master_bl_number');
+    const masterBlReleaseType = field('masterBlReleaseType', 'master_bl_release_type');
+    const coloadTariffReference = field('coloadTariffReference', 'coload_tariff_reference');
+    const vessel = field('vessel', 'vessel');
+    const voyage = field('voyage', 'voyage');
+    const incoterm = field('incoterm', 'incoterm');
+    const vesselImo = field('vesselImo', 'vessel_imo');
+    const contractId = field('contractId', 'contract_id');
+    const contractRef = field('contractRef', 'contract_ref');
+    const commodityCode = field('commodityCode', 'commodity_code');
+    const shipperId = field('shipperId', 'shipper_id');
+    const shipperName = field('shipperName', 'shipper_name');
+    const consigneeId = field('consigneeId', 'consignee_id');
+    const consigneeName = field('consigneeName', 'consignee_name');
+    const principalId = field('principalId', 'principal_id');
+    const principalName = field('principalName', 'principal_name');
+    const allocationId = field('allocationId', 'allocation_id') || '';
+    const spaceSkipReason = field('spaceSkipReason', 'space_skip_reason');
+    const spaceOverageReason = field('spaceOverageReason', 'space_overage_reason');
+    const freightTerms = field('freightTerms', 'freight_terms');
+    const movementType = field('movementType', 'movement_type');
+    const serviceType = field('serviceType', 'service_type');
+    const placeOfReceipt = field('placeOfReceipt', 'place_of_receipt');
+    const placeOfDelivery = field('placeOfDelivery', 'place_of_delivery');
+    const cargoReadyDate = field('cargoReadyDate', 'cargo_ready_date');
+    const notifyId = field('notifyId', 'notify_id');
+    const notifyName = field('notifyName', 'notify_name');
+    const declaredValue = field('declaredValue', 'declared_value');
+    const declaredValueCurrency = field('declaredValueCurrency', 'declared_value_currency');
+    const emoOfficeId = field('emoOfficeId', 'emo_office_id');
+    const imoOfficeId = field('imoOfficeId', 'imo_office_id');
+    const controllingOfficeId = field('controllingOfficeId', 'controlling_office_id');
+    const contractValidFrom = field('contractValidFrom', 'contract_valid_from');
+    const contractValidTo = field('contractValidTo', 'contract_valid_to');
+    const contractRoutingId = field('contractRoutingId', 'contract_routing_id');
     if (!pol || !pod) return err(res, "pol and pod are required");
     const polU = pol.toUpperCase(), podU = pod.toUpperCase();
     if (contractType && !CONTRACT_TYPES.includes(contractType)) return err(res, `contractType must be one of: ${CONTRACT_TYPES.join(", ")}`);
     if (status && !SHIPMENT_STATUSES.includes(status)) return err(res, `status must be one of: ${SHIPMENT_STATUSES.join(", ")}`);
     if (blReleaseType && !BL_RELEASE_TYPES.includes(blReleaseType)) return err(res, `blReleaseType must be one of: ${BL_RELEASE_TYPES.join(", ")}`);
     if (masterBlReleaseType && !BL_RELEASE_TYPES.includes(masterBlReleaseType)) return err(res, `masterBlReleaseType must be one of: ${BL_RELEASE_TYPES.join(", ")}`);
+
+    // Office-reassignment authorization (2026-09-12 QA finding, CRITICAL) — this generic PUT
+    // previously accepted emoOfficeId/imoOfficeId/controllingOfficeId with ZERO authorization
+    // check, no department-match validation, and no audit trail at all, while the dedicated
+    // POST .../reassign-office enforces canEditOfficeSide + a department match + logs
+    // OFFICE_REASSIGNED. Confirmed live: a scoped occ_bk user correctly 403'd by reassign-office
+    // could silently reassign the same office through this route instead — the exact path
+    // ShipmentFormPage.jsx's ordinary Edit Shipment Save button already uses. Only checked when
+    // a field is ACTUALLY changing (composes correctly with the partial-update fix above — an
+    // edit that never touches the Offices section triggers none of this, same as before).
+    // Deliberately does NOT require a typed "reason" the way reassign-office does — that's a
+    // fresh UX addition the ordinary edit form has no field for yet, out of scope for closing
+    // this authorization/audit gap; the audit event below still records the change (see
+    // OFFICE_REASSIGNED logging further down) even without one.
+    const officeChanges = [];
+    for (const [key, meta] of Object.entries(REASSIGN_FIELD_META)) {
+      const newVal = ({ emoOfficeId, imoOfficeId, controllingOfficeId })[key] || null;
+      const oldVal = existing[meta.column] || null;
+      if (newVal === oldVal) continue;
+      if (!(await canEditOfficeSide(req, meta.side))) return err(res, `You don't have permission to reassign the ${meta.label}`, 403);
+      let newOffice = null;
+      if (newVal) {
+        [newOffice] = await query("SELECT * FROM offices WHERE id=$1 AND is_active=TRUE", [newVal]);
+        if (!newOffice) return err(res, "Office not found or inactive");
+        if (meta.dept && newOffice.department !== meta.dept) return err(res, `Office must be a ${meta.dept} department office for ${meta.label}`);
+      } else if (meta.dept) {
+        return err(res, `${meta.label} is required and cannot be cleared`);
+      }
+      const [oldOffice] = oldVal ? await query("SELECT * FROM offices WHERE id=$1", [oldVal]) : [null];
+      officeChanges.push({ field: key, oldOffice, newOffice });
+    }
 
     // CRD-vs-ETD guard: cargo can't be ready after the vessel has already sailed, so a Cargo
     // Ready Date edit that now falls after ETD invalidates whatever schedule/contract was
@@ -577,6 +671,31 @@ module.exports = function shipmentsRoutes(app, ctx) {
       if (o !== n) {
         const type = col === 'status' ? 'STATUS_CHANGED' : 'FIELD_UPDATED';
         await logEvent(req.params.id, type, col, o || null, n || null, '', req.user?.name || req.user?.email || "");
+      }
+    }
+    // Audit trail for the office changes authorized above (2026-09-12 QA fix) — mirrors
+    // reassign-office's own OFFICE_REASSIGNED event exactly (same human-readable officeLabel
+    // shape), just without a mandatory typed reason (see the authorization block's own comment
+    // for why). emo_office_id/imo_office_id/controlling_office_id are deliberately NOT in
+    // TRACKED_FIELDS — this explicit, better-labeled event replaces a generic FIELD_UPDATED for
+    // these three columns rather than duplicating it.
+    for (const { field: officeField, oldOffice, newOffice } of officeChanges) {
+      await logEvent(req.params.id, "OFFICE_REASSIGNED", officeField, officeLabel(oldOffice), officeLabel(newOffice), '', req.user?.name || req.user?.email || "");
+      // Same lingering-service migration reassign-office already does — without this, changing
+      // an office through the ordinary edit form (now that it's properly authorized above)
+      // would behave inconsistently with the dedicated endpoint doing the identical logical
+      // action, recreating exactly the "two mechanisms quietly drift apart" bug class this
+      // project keeps finding.
+      if (oldOffice && oldOffice.id !== (newOffice?.id || null)) {
+        const lingering = await query(
+          "SELECT id, side, service_type FROM shipment_services WHERE shipment_id=$1 AND office_id=$2",
+          [req.params.id, oldOffice.id]
+        );
+        for (const svc of lingering) {
+          await query("UPDATE shipment_services SET office_id=$1 WHERE id=$2", [newOffice?.id || '', svc.id]);
+          await logEntityEvent('service', svc.id, 'UPDATED', 'office_id', oldOffice.id, newOffice?.id || '',
+            JSON.stringify({ shipmentId: req.params.id, side: svc.side, serviceType: svc.service_type, reason: 'office_reassignment' }));
+        }
       }
     }
     if (allocationAutoCleared) {

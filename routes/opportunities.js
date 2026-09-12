@@ -16,12 +16,15 @@
 // equivalent.
 module.exports = function opportunitiesRoutes(app, ctx) {
   const { query, ok, err, uid, requireRole, mapOpportunity, mapQuote, logEntityEvent, toUsd,
-          resolveAssigneeNames } = ctx;
+          resolveAssigneeNames, applyOfficeScopedAccessFilter } = ctx;
 
-  const opportunityWrite = requireRole(["admin", "operator", "occ_bk"]);
+  // sales (User Management redesign, 2026-09-12) owns the pipeline this file manages.
+  const opportunityWrite = requireRole(["admin", "operator", "occ_bk", "sales"]);
 
   // ─── CRUD ───────────────────────────────────────────────────────────────────
 
+  // Paginated in JS, after the office/scope access filter — see routes/quotes.js's own GET
+  // /api/quotes for the full rationale (matches routes/shipments.js's precedent).
   app.get("/api/opportunities", async (req, res) => {
     const { status = "", customerId = "", assigneeId = "", limit = "50", offset = "0" } = req.query;
     const clauses = [], params = [];
@@ -30,22 +33,23 @@ module.exports = function opportunitiesRoutes(app, ctx) {
     if (customerId.trim()) clauses.push(`customer_id=${p(customerId.trim())}`);
     if (assigneeId.trim()) clauses.push(`assignee_id=${p(assigneeId.trim())}`);
     const where = clauses.length ? "WHERE " + clauses.join(" AND ") : "";
+    const rows = await query(`SELECT * FROM opportunities ${where} ORDER BY created_at DESC`, params);
+    const filtered = await applyOfficeScopedAccessFilter(await resolveAssigneeNames(rows.map(mapOpportunity)), req.user, req);
     const lim = Math.min(parseInt(limit) || 50, 200), off = parseInt(offset) || 0;
-    const [{ n: total }] = await query(`SELECT COUNT(*) AS n FROM opportunities ${where}`, params);
-    const rows = await query(`SELECT * FROM opportunities ${where} ORDER BY created_at DESC LIMIT ${p(lim)} OFFSET ${p(off)}`, params);
-    ok(res, { results: await resolveAssigneeNames(rows.map(mapOpportunity)), total: Number(total), limit: lim, offset: off });
+    ok(res, { results: filtered.slice(off, off + lim), total: filtered.length, limit: lim, offset: off });
   });
 
   app.get("/api/opportunities/:id", async (req, res) => {
     const [o] = await query("SELECT * FROM opportunities WHERE id=$1", [req.params.id]);
     if (!o) return err(res, "Not found", 404);
+    if (!(await applyOfficeScopedAccessFilter([mapOpportunity(o)], req.user, req)).length) return err(res, "Not found", 404);
     ok(res, (await resolveAssigneeNames([mapOpportunity(o)]))[0]);
   });
 
   app.post("/api/opportunities", opportunityWrite, async (req, res) => {
     const { title = "", customerId = "", customerName = "", pol = "", pod = "", carrierCode = "",
             commodityCode = "", movementType = "FCL", estimatedValue = 0, currency = "USD",
-            estimatedCloseDate = "", leadSource = "", assigneeId = "", notes = "" } = req.body || {};
+            estimatedCloseDate = "", leadSource = "", assigneeId = "", officeId = "", notes = "" } = req.body || {};
     if (!title.trim()) return err(res, "title is required");
     const id = `OPP-${uid()}`;
     const now = new Date().toISOString();
@@ -55,11 +59,11 @@ module.exports = function opportunitiesRoutes(app, ctx) {
     await query(`INSERT INTO opportunities
       (id, status, title, customer_id, customer_name, pol, pod, carrier_code, commodity_code,
        movement_type, estimated_value, currency, estimated_value_usd, estimated_close_date,
-       lead_source, assignee_id, notes, created_at, created_by)
-      VALUES ($1,'New',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+       lead_source, assignee_id, office_id, notes, created_at, created_by)
+      VALUES ($1,'New',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
       [id, title.trim(), customerId, customerName, (pol || "").toUpperCase(), (pod || "").toUpperCase(),
            (carrierCode || "").toUpperCase(), commodityCode, movementType, Number(estimatedValue) || 0,
-           cur, estimatedValueUsd, estimatedCloseDate, leadSource, assigneeId || "", notes, now, actor]);
+           cur, estimatedValueUsd, estimatedCloseDate, leadSource, assigneeId || "", officeId || null, notes, now, actor]);
     await logEntityEvent("opportunity", id, "CREATED", null, null, null,
       JSON.stringify({ title: title.trim(), customerName, estimatedValue: Number(estimatedValue) || 0, currency: cur }));
     const [o] = await query("SELECT * FROM opportunities WHERE id=$1", [id]);
@@ -73,16 +77,16 @@ module.exports = function opportunitiesRoutes(app, ctx) {
       return err(res, `Only a New or Qualified opportunity can be edited (current status: ${existing.status})`, 409);
     const { title = "", customerId = "", customerName = "", pol = "", pod = "", carrierCode = "",
             commodityCode = "", movementType = "FCL", estimatedValue = 0, currency = "USD",
-            estimatedCloseDate = "", leadSource = "", assigneeId = "", notes = "" } = req.body || {};
+            estimatedCloseDate = "", leadSource = "", assigneeId = "", officeId = "", notes = "" } = req.body || {};
     if (!title.trim()) return err(res, "title is required");
     const cur = (currency || "USD").toUpperCase();
     const estimatedValueUsd = await toUsd(Number(estimatedValue) || 0, cur);
     await query(`UPDATE opportunities SET title=$1, customer_id=$2, customer_name=$3, pol=$4, pod=$5,
       carrier_code=$6, commodity_code=$7, movement_type=$8, estimated_value=$9, currency=$10,
-      estimated_value_usd=$11, estimated_close_date=$12, lead_source=$13, assignee_id=$14, notes=$15 WHERE id=$16`,
+      estimated_value_usd=$11, estimated_close_date=$12, lead_source=$13, assignee_id=$14, office_id=$15, notes=$16 WHERE id=$17`,
       [title.trim(), customerId, customerName, (pol || "").toUpperCase(), (pod || "").toUpperCase(),
            (carrierCode || "").toUpperCase(), commodityCode, movementType, Number(estimatedValue) || 0,
-           cur, estimatedValueUsd, estimatedCloseDate, leadSource, assigneeId || "", notes, req.params.id]);
+           cur, estimatedValueUsd, estimatedCloseDate, leadSource, assigneeId || "", officeId || null, notes, req.params.id]);
     await logEntityEvent("opportunity", req.params.id, "UPDATED", null, null, null,
       JSON.stringify({ title: title.trim(), customerName, estimatedValue: Number(estimatedValue) || 0, currency: cur }));
     const [o] = await query("SELECT * FROM opportunities WHERE id=$1", [req.params.id]);
@@ -145,10 +149,10 @@ module.exports = function opportunitiesRoutes(app, ctx) {
     const actor = req.user?.name || req.user?.email || "";
     await query(`INSERT INTO quotes
       (id, status, customer_id, customer_name, pol, pod, carrier_code, commodity_code,
-       movement_type, notes, currency, source_opportunity_id, created_at, created_by)
-      VALUES ($1,'Draft',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+       movement_type, notes, currency, source_opportunity_id, office_id, created_at, created_by)
+      VALUES ($1,'Draft',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
       [quoteId, o.customer_id, o.customer_name, o.pol, o.pod, o.carrier_code, o.commodity_code,
-           o.movement_type, o.notes, o.currency, req.params.id, now, actor]);
+           o.movement_type, o.notes, o.currency, req.params.id, o.office_id || null, now, actor]);
     if (Number(o.estimated_value) > 0) {
       await query(`INSERT INTO quote_lines
         (id, quote_id, service_code, description, quantity, unit, rate, currency, amount_usd, sort_order)

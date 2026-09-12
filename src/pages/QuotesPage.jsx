@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { T, CURRENCIES, INCOTERMS_2020 } from "../tokens";
 import { api } from "../api";
 import { toast } from "../toast";
+import { useAuth } from "../AuthContext";
 import Btn from "../components/primitives/Btn";
 import Badge from "../components/primitives/Badge";
 import { Modal, ConfirmModal } from "../components/primitives/Modal";
@@ -58,6 +59,18 @@ const looksReefer = containerType => /RF/i.test(containerType || "");
 // ─── Quote form modal (New + Edit-while-Draft) ──────────────────────────────
 const QuoteFormModal = ({ quote, onClose, onSaved }) => {
   const isEdit = !!quote;
+  const { activeOffice } = useAuth();
+  const [offices, setOffices] = useState([]);
+  const [officeId, setOfficeId] = useState(quote?.officeId || "");
+  useEffect(() => { api.offices.list().then(setOffices).catch(() => {}); }, []);
+  // Office visibility (User Management redesign, 2026-09-12) — same auto-default pattern
+  // ShipmentFormPage.jsx already uses for its own EMO/IMO offices, just a single field since a
+  // quote isn't Export/Import-sided the way a shipment is.
+  useEffect(() => {
+    if (isEdit) return;
+    if (!activeOffice) return;
+    setOfficeId(prev => prev || activeOffice.id);
+  }, [activeOffice?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const [customer, setCustomer] = useState({ id: quote?.customerId || "", name: quote?.customerName || "" });
   // Consignee/Principal/Notify + Declared Value/Freight Terms (2026-09 gap-closing pass) — these
   // previously only existed on a real shipment, so converting an Accepted quote always meant
@@ -132,7 +145,7 @@ const QuoteFormModal = ({ quote, onClose, onSaved }) => {
         consigneeId: consignee.id, consigneeName: consignee.name,
         principalId: principal.id, principalName: principal.name,
         notifyId: notify.id, notifyName: notify.name,
-        pol: pol.unlocode, pod: pod.unlocode, carrierCode,
+        pol: pol.unlocode, pod: pod.unlocode, carrierCode, officeId,
         contractId, contractRef, commodityCode, movementType, serviceType, incoterm,
         cargoReadyDate, validUntil, notes, currency,
         declaredValue: declaredValue.trim() !== "" ? Number(declaredValue) : null, declaredValueCurrency, freightTerms,
@@ -166,6 +179,10 @@ const QuoteFormModal = ({ quote, onClose, onSaved }) => {
           <Sel label="Movement Type" value={movementType} onChange={setMovementType} options={MOVEMENT_TYPE_OPTIONS} />
           <Sel label="Service Type" value={serviceType} onChange={setServiceType} options={SERVICE_TYPE_OPTIONS} />
         </div>
+
+        <Sel label="Office" value={officeId} onChange={setOfficeId}
+          options={[{ value: "", label: "— None —" }, ...offices.filter(o => o.isActive).map(o => ({ value: o.id, label: `${o.code} — ${o.name}` }))]}
+          hint="Which office owns this quote — controls who can see it" />
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
           <Field label="Commodity"><CommodityCombobox value={commodityCode} onChange={setCommodityCode} /></Field>

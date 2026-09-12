@@ -91,6 +91,13 @@ module.exports = function officesRoutes(app, ctx) {
     if (serviceInUse) return err(res, "Office is referenced by a Dedicated Service — reassign or remove it first, or deactivate the office instead of deleting");
     const [scheduledReportInUse] = await query("SELECT id FROM scheduled_reports WHERE office_id=$1 LIMIT 1", [req.params.id]);
     if (scheduledReportInUse) return err(res, "Office is referenced by a scheduled report — reassign or remove it first, or deactivate the office instead of deleting");
+    // quotes.office_id/opportunities.office_id (User Management redesign, 2026-09-12) have the
+    // exact same no-FK shape as shipment_services/scheduled_reports above — same guard needed for
+    // the same reason, or a delete here would silently orphan the reference.
+    const [quoteInUse] = await query("SELECT id FROM quotes WHERE office_id=$1 LIMIT 1", [req.params.id]);
+    if (quoteInUse) return err(res, "Office is referenced by a quote — reassign or remove it first, or deactivate the office instead of deleting");
+    const [oppInUse] = await query("SELECT id FROM opportunities WHERE office_id=$1 LIMIT 1", [req.params.id]);
+    if (oppInUse) return err(res, "Office is referenced by an opportunity — reassign or remove it first, or deactivate the office instead of deleting");
     await query("DELETE FROM offices WHERE id=$1", [req.params.id]);
     ok(res, { deleted: req.params.id });
   });

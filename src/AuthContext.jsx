@@ -13,6 +13,7 @@ export const AuthContext = createContext({
   isViewer:         true,
   isOccBk:          false,
   isTradeManager:   false,
+  isSales:          false,
   shipmentLock:     null,
   activeOffice:     null,
   userOffices:      [],

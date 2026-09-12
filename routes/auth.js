@@ -8,7 +8,36 @@ module.exports = function authRoutes(app, ctx) {
           bcrypt, jwt, JWT_SECRET,
           createTransporterFromSettings, buildMailOptions,
           logAdminEvent, getSettings, ssoNonces, BREAK_GLASS_EMAILS, createRateLimiter,
-          broadcastEditLockChange } = ctx;
+          broadcastEditLockChange, resolveEffectiveOfficeIds } = ctx;
+
+  // Branch/Country grants (User Management redesign, 2026-09-12) widen which offices a user can
+  // switch into beyond their direct user_offices rows — login/me's own office list must include
+  // them too, or a user whose ONLY access is a grant (no direct row, the exact scenario this
+  // feature exists to enable) gets an empty picker and activeOffice stuck null forever (QA
+  // finding: fails OPEN on shipments — no active-office header means no office filtering at all
+  // — and fails CLOSED on quotes/opportunities, permanently, with no way to self-correct).
+  // Grant-derived offices carry isDefault:false — "default" is only a meaningful concept for a
+  // direct assignment an admin explicitly picked one of.
+  async function officesForPicker(userId) {
+    const direct = await query(
+      `SELECT o.*, uo.is_default FROM offices o
+       JOIN user_offices uo ON uo.office_id = o.id
+       WHERE uo.user_id = $1 AND o.is_active = TRUE
+       ORDER BY uo.is_default DESC, o.code`, [userId]
+    );
+    const directIds = new Set(direct.map(r => r.id));
+    const effectiveIds = await resolveEffectiveOfficeIds(userId);
+    const grantOnlyIds = [...effectiveIds].filter(id => !directIds.has(id));
+    const offices = direct.map(r => ({ ...ctx.mapOffice(r), isDefault: !!r.is_default }));
+    if (grantOnlyIds.length) {
+      const grantRows = await query(
+        `SELECT * FROM offices WHERE is_active = TRUE AND id IN (${grantOnlyIds.map((_, i) => `$${i + 1}`).join(',')})`,
+        grantOnlyIds
+      );
+      offices.push(...grantRows.map(r => ({ ...ctx.mapOffice(r), isDefault: false })));
+    }
+    return offices;
+  }
   const adminOnly = requireRole(["admin"]);
   const SECURE_MODES = ["none", "starttls", "tls"];
   // Basic shape check, not full RFC 5322 — catches the real failure mode (a typo'd address that
@@ -144,15 +173,8 @@ module.exports = function authRoutes(app, ctx) {
     const allOffices = !!user.all_offices;
     const passwordExpired = isPasswordExpired(user, passwordExpiryDays);
 
-    // Fetch user's assigned offices for the picker
-    const userOfficesRows = await query(
-      `SELECT o.*, uo.is_default FROM offices o
-       JOIN user_offices uo ON uo.office_id = o.id
-       WHERE uo.user_id = $1 AND o.is_active = TRUE
-       ORDER BY uo.is_default DESC, o.code`, [user.id]
-    );
-    const mapOffice = ctx.mapOffice;
-    const offices = userOfficesRows.map(r => ({ ...mapOffice(r), isDefault: !!r.is_default }));
+    // Fetch user's assigned offices (direct + Branch/Country grants) for the picker
+    const offices = await officesForPicker(user.id);
 
     const token = jwt.sign(
       { id: user.id, email: user.email, name: user.name, role: user.role, roles,
@@ -183,13 +205,7 @@ module.exports = function authRoutes(app, ctx) {
     // client-side mirror, ShipmentFormPage's EMO/IMO auto-default) silently stopped working
     // the moment the page was reloaded instead of freshly logged into. Mirrors login's own query.
     const allOffices = !!user.all_offices;
-    const userOfficesRows = await query(
-      `SELECT o.*, uo.is_default FROM offices o
-       JOIN user_offices uo ON uo.office_id = o.id
-       WHERE uo.user_id = $1 AND o.is_active = TRUE
-       ORDER BY uo.is_default DESC, o.code`, [user.id]
-    );
-    const offices = userOfficesRows.map(r => ({ ...ctx.mapOffice(r), isDefault: !!r.is_default }));
+    const offices = await officesForPicker(user.id);
     // Real bug fix: this returned user.roles as the raw JSON-text DB column (e.g. the literal
     // string '["admin","occ_bk"]'), never parsed like every other roles-emitting route already
     // does via parseUserRoles. App.jsx's own Array.isArray(user.roles) check then silently fell
@@ -749,15 +765,23 @@ module.exports = function authRoutes(app, ctx) {
     ok(res, (await query("SELECT * FROM user_scope_items WHERE user_id=$1 ORDER BY created_at", [req.params.id])).map(mapScopeItem));
   });
 
+  // branch_office/country_office (User Management redesign, 2026-09-12) grant/exclude office
+  // visibility via server.js's resolveEffectiveOfficeIds, rather than matching a shipment/quote/
+  // opportunity's own pol/pod/lane the way trade_lane/pol/country do — no server-side whitelist
+  // existed here before this, any string was silently accepted (and silently matched nothing
+  // unless matchesScopeItem recognized it).
+  const VALID_SCOPE_ITEM_TYPES = ['trade_lane', 'pol', 'country', 'branch_office', 'country_office'];
+
   app.post("/api/users/:id/scope", requireRole(["admin"]), async (req, res) => {
-    const { role='', itemType, value, label='' } = req.body || {};
+    const { role='', itemType, value, label='', excluded=false } = req.body || {};
     if (!itemType || !value) return err(res, "itemType and value required");
+    if (!VALID_SCOPE_ITEM_TYPES.includes(itemType)) return err(res, "Invalid itemType");
     const id = `USI-${uid()}`;
     const now = new Date().toISOString();
-    await query("INSERT INTO user_scope_items (id,user_id,role,item_type,value,label,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)",
-      [id, req.params.id, role, itemType, value, label, now]);
-    await logAdminEvent(req.user, 'SCOPE_ITEM_CREATED', 'user', req.params.id, { itemId: id, role, itemType, value });
-    ok(res, mapScopeItem({ id, user_id: req.params.id, role, item_type: itemType, value, label, created_at: now }), 201);
+    await query("INSERT INTO user_scope_items (id,user_id,role,item_type,value,label,excluded,created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
+      [id, req.params.id, role, itemType, value, label, !!excluded, now]);
+    await logAdminEvent(req.user, 'SCOPE_ITEM_CREATED', 'user', req.params.id, { itemId: id, role, itemType, value, excluded: !!excluded });
+    ok(res, mapScopeItem({ id, user_id: req.params.id, role, item_type: itemType, value, label, excluded: !!excluded, created_at: now }), 201);
   });
 
   app.delete("/api/scope-items/:itemId", requireRole(["admin"]), async (req, res) => {

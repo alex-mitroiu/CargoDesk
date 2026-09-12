@@ -215,11 +215,15 @@ async function login(email = "claudeagent@localhost", password = "TestFixture!20
     assert("lockedUntil cleared", afterUnlock.lockedUntil === "");
 
     console.log("\nScope Items — create, list, delete");
+    // itemType "country" (not the old placeholder "carrier") — User Management redesign
+    // (2026-09-12) added a real server-side itemType whitelist, which "carrier" was never a
+    // member of (it was only ever an arbitrary example string, never a real scope dimension).
+    // This test's actual point — generic scope-item create/list/delete — is unaffected by the swap.
     const siCreate = await request("POST", `/api/users/${userId}/scope`, {
-      role: "operator", itemType: "carrier", value: "MAEU", label: "Maersk only",
+      role: "operator", itemType: "country", value: "US", label: "US only",
     }, token);
     assert("scope item created", siCreate.status === 201, JSON.stringify(siCreate.body));
-    const siMissing = await request("POST", `/api/users/${userId}/scope`, { itemType: "carrier" }, token);
+    const siMissing = await request("POST", `/api/users/${userId}/scope`, { itemType: "country" }, token);
     assert("scope item missing value rejected", siMissing.status >= 400);
     const siList = await request("GET", `/api/users/${userId}/scope`, null, token);
     assert("scope item list returns 200", siList.status === 200);

@@ -57,11 +57,18 @@ a single big-bang rewrite.
 | **operator** | Day-to-day operations staff | Full shipment/contract/booking read-write, no admin config |
 | **occ_bk** | Operations/booking desk | Shipment and booking read-write, narrower than operator on admin-adjacent actions |
 | **trade_manager** | Trade-lane owner | Read-write scoped to their trade lane/office; owns credit-hold override authority |
+| **sales** (v0.91.1) | Quoting/pipeline owner | Read-write on Quotes and Opportunities only; deliberately no booking authority (not granted on shipment/booking/EDI/customs-filing writes) |
 | **viewer** | Read-only stakeholder | Read access only, scope-limited the same way as other roles |
 
-A user can hold more than one role. Access is further scoped by office and/or trade lane
-(`allOffices`/`userOffices`, `scopeItems`) independent of role — two `operator`s can see disjoint
-sets of shipments. See ARCHITECTURE.md §8.9 for the full mechanics (JWT, idle-timeout, SSO).
+A user can hold more than one role; `occ_bk`/`trade_manager`/`sales` are co-equal, non-hierarchical
+specialty grants (same rank), not rungs on the admin/operator/viewer ladder. Access is further
+scoped by office and/or trade lane (`allOffices`/`userOffices`, `scopeItems`) independent of role —
+two `operator`s can see disjoint sets of shipments. Since v0.91.1, office scoping also supports a
+**Branch or Country grant** — a single admin action that cascades to every office under it
+(inheriting new offices added later), with an optional narrower exclusion carved back out —
+instead of only ever assigning one office at a time; this same office-scoping mechanism now also
+governs Quotes/Opportunities visibility, which had none before. See `USER-MANAGEMENT-REDESIGN.md`
+for the full model and ARCHITECTURE.md §8.9 for the underlying mechanics (JWT, idle-timeout, SSO).
 
 ## 4. Data Flow Diagrams
 
@@ -180,16 +187,21 @@ Each domain below: **Purpose**, **Key Functions**, **Roles**, **Primary Data**, 
 **Business Rules** worth knowing before touching it. Deep implementation detail lives in
 ARCHITECTURE.md §8 (cross-referenced per domain).
 
-### 5.1 Pre-Booking / Quoting (P2)
-**Purpose**: capture and price freight demand before a real shipment exists.
-**Key functions**: create a quote against a matched contract or spot rate; Draft → Sent →
-Accepted/Declined/Expired lifecycle; convert an accepted quote into a real shipment, carrying
-parties, containers, and cost lines across.
-**Roles**: operator, occ_bk, admin (write); all roles (read, scope-permitting).
-**Primary data**: `quotes`, `quote_lines`.
+### 5.1 Pre-Booking / Quoting & Pipeline (P2)
+**Purpose**: capture and price freight demand before a real shipment exists — a two-stage funnel,
+an `opportunity` (lead-tracking, pre-pricing) that converts into a `quote` (priced, customer-facing).
+**Key functions**: track a lead through New → Qualified → Converted (to Quote)/Lost; create a quote
+against a matched contract or spot rate; Draft → Sent → Accepted/Declined/Expired lifecycle;
+convert an accepted quote into a real shipment, carrying parties, containers, and cost lines across.
+**Roles**: operator, occ_bk, sales, admin (write); all roles (read, scope-permitting). `sales`
+(v0.91.1) is this domain's dedicated role — owns both objects, no booking authority elsewhere.
+**Primary data**: `opportunities`, `quotes`, `quote_lines`.
 **Business rules**: an expired quote cannot be accepted; conversion splits BUY (from the matched
 contract) and SELL (from the quote's own price) cost lines — they are independent figures, not
-derived from each other. See ARCHITECTURE.md §8.2.
+derived from each other. Since v0.91.1 both objects carry an `office_id` and are office-scoped the
+same way shipments are (previously neither had any access scoping at all) — the office and any
+trade-lane restriction on the acting user's scope both apply. See ARCHITECTURE.md §8.2 and
+`USER-MANAGEMENT-REDESIGN.md`.
 
 ### 5.2 Shipment & Cargo Management (P1)
 **Purpose**: the operational core — everything about moving one shipment from booking to delivery.

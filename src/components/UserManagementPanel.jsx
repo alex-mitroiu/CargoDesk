@@ -13,21 +13,23 @@ import { IconPencil, IconUnlock, IconLock, IconClose, IconRefresh } from "./prim
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const ALL_ROLES = ["admin", "operator", "occ_bk", "trade_manager", "viewer"];
-const ROLE_RANK = { viewer: 0, occ_bk: 1, trade_manager: 1, operator: 2, admin: 3 };
+const ALL_ROLES = ["admin", "operator", "occ_bk", "trade_manager", "sales", "viewer"];
+const ROLE_RANK = { viewer: 0, occ_bk: 1, trade_manager: 1, sales: 1, operator: 2, admin: 3 };
 const ROLE_COLORS = {
   admin:         { bg: "#3b82f618", text: "#3b82f6",  border: "#3b82f644" },
   operator:      { bg: "#10b98118", text: "#10b981",  border: "#10b98144" },
   occ_bk:        { bg: "#f59e0b18", text: "#f59e0b",  border: "#f59e0b44" },
   trade_manager: { bg: "#8b5cf618", text: "#8b5cf6",  border: "#8b5cf644" },
+  sales:         { bg: "#ec489918", text: "#ec4899",  border: "#ec489944" },
   viewer:        { bg: T.border + "30", text: T.textMuted, border: T.border },
 };
-const ROLE_LABELS = { admin: "Admin", operator: "Operator", occ_bk: "OCC Booking", trade_manager: "Trade Manager", viewer: "Viewer" };
+const ROLE_LABELS = { admin: "Admin", operator: "Operator", occ_bk: "OCC Booking", trade_manager: "Trade Manager", sales: "Sales", viewer: "Viewer" };
 const ROLE_DESCRIPTIONS = {
   admin:         "Full system access including user management",
   operator:      "Manage shipments, configs & MDM",
   occ_bk:        "Place bookings and manage customers",
   trade_manager: "Manage space configurations and contracts; read-only shipments",
+  sales:         "Owns the sales pipeline — Opportunities and Quotes; no booking authority",
   viewer:        "Read-only access to all data",
 };
 
@@ -35,7 +37,9 @@ const ROLE_DESCRIPTIONS = {
 // trade_manager also reads user_scope_items (trade_lane item_type, for the credit-hold/
 // over-limit override lane-ownership check shipped in v0.73.0/v0.74.0) — without this, a
 // scope row for that role could only ever be created via raw API calls (TKT-DF92V5).
-const SCOPED_ROLES = ["occ_bk", "operator", "trade_manager"];
+// sales (User Management redesign, 2026-09-12) gets the same Branch/Country office-visibility
+// grant sections as everyone else here — that's the whole point of giving it its own role.
+const SCOPED_ROLES = ["occ_bk", "operator", "trade_manager", "sales"];
 
 const primaryRole = (roles) =>
   [...(roles || [])].sort((a, b) => ROLE_RANK[b] - ROLE_RANK[a])[0] || "viewer";
@@ -501,6 +505,138 @@ const CountrySection = ({ countries, applied, onAdd, onRemove }) => {
   );
 };
 
+// ─── Office visibility grants (Branch / Country) ──────────────────────────────
+// User Management redesign, 2026-09-12 — grants a user every office under a Branch or Country
+// (server.js's resolveEffectiveOfficeIds), inheriting to new offices added later, instead of
+// hand-picking one office at a time via the direct Office Assignments block below. Shares one
+// generic section (unlike TradeLaneSection/PolSection/CountrySection above, which are each their
+// own small, independently-shaped component) because both need the SAME new interaction — a
+// Grant/Exclude toggle on add, and a distinct look for excluded rows in Applied — that doesn't
+// exist anywhere else in this file yet; two near-identical copies of that toggle logic would be
+// the real duplication, not this one shared component.
+const OfficeGrantSection = ({ title, testId, itemType, sourceItems, idKey, labelFor, applied, onAdd, onRemove }) => {
+  const [search,      setSearch]      = useState("");
+  const [availSel,    setAvailSel]    = useState(new Set());
+  const [appliedSel,  setAppliedSel]  = useState(new Set());
+
+  const appliedValues = new Set(applied.map(i => i.value));
+  const available = sourceItems.filter(it =>
+    !appliedValues.has(String(it[idKey])) &&
+    (!search.trim() || labelFor(it).toLowerCase().includes(search.toLowerCase()))
+  );
+
+  const toggleAvail   = id => setAvailSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const toggleApplied = id => setAppliedSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+  const doAdd = async (items, excluded) => {
+    for (const it of items) await onAdd({ itemType, value: String(it[idKey]), label: labelFor(it), excluded });
+    setAvailSel(new Set());
+  };
+  const doRemove = async (ids) => { for (const id of ids) await onRemove(id); setAppliedSel(new Set()); };
+
+  return (
+    <div data-testid={testId}
+      style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10, padding: 14 }}>
+      <div style={{ fontFamily: T.body, fontSize: 13, fontWeight: 700, color: T.text, marginBottom: 12 }}>{title}</div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 8 }}>
+        <div>
+          <ColHeader>Available</ColHeader>
+          <input value={search} onChange={e => setSearch(e.target.value)}
+            placeholder="Search…" style={{ ...inputStyle(), marginBottom: 6 }}
+            onFocus={e => e.currentTarget.style.borderColor = T.accent}
+            onBlur={e  => e.currentTarget.style.borderColor = T.border} />
+          <ScrollBox>
+            {available.length === 0
+              ? <EmptyHint>{search ? "No matches" : "All applied"}</EmptyHint>
+              : available.map(it => (
+                <div key={it[idKey]} style={{
+                  display: "flex", alignItems: "center", padding: "5px 8px", borderRadius: 6,
+                  marginBottom: 3, gap: 6, border: `1px solid ${availSel.has(it[idKey]) ? T.accent + "77" : T.border}`,
+                  background: availSel.has(it[idKey]) ? T.accent + "18" : T.bg,
+                }}>
+                  <input type="checkbox" checked={availSel.has(it[idKey])} readOnly
+                    onClick={() => toggleAvail(it[idKey])}
+                    style={{ width: 13, height: 13, cursor: "pointer", flexShrink: 0, accentColor: T.accent }} />
+                  <div style={{ flex: 1, minWidth: 0, fontFamily: T.mono, fontSize: 11, fontWeight: 600,
+                    color: T.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {labelFor(it)}
+                  </div>
+                  <button onClick={() => doAdd([it], true)} title="Exclude — carve this back out of a broader grant" style={{
+                    padding: "2px 7px", borderRadius: 5, border: `1px solid ${T.danger}44`,
+                    background: T.danger + "10", color: T.danger, fontFamily: T.body, fontSize: 10,
+                    cursor: "pointer", flexShrink: 0, whiteSpace: "nowrap", fontWeight: 700,
+                  }}>Exclude</button>
+                  <button onClick={() => doAdd([it], false)} title="Grant" style={{
+                    padding: "2px 9px", borderRadius: 5, border: `1px solid ${T.accent}44`,
+                    background: T.accent + "10", color: T.accent, fontFamily: T.body, fontSize: 11,
+                    cursor: "pointer", flexShrink: 0, fontWeight: 700,
+                  }}>Grant</button>
+                </div>
+              ))}
+          </ScrollBox>
+        </div>
+        <SectionControls
+          availCount={available.length}   availSelCount={availSel.size}
+          appliedCount={applied.length}   appliedSelCount={appliedSel.size}
+          onAddAll={()         => doAdd(available, false)}
+          onAddSelected={()    => doAdd(available.filter(it => availSel.has(it[idKey])), false)}
+          onRemoveAll={()      => doRemove(applied.map(i => i.id))}
+          onRemoveSelected={() => doRemove(applied.filter(i => appliedSel.has(i.id)).map(i => i.id))} />
+        <div>
+          <ColHeader count={applied.length}>Applied</ColHeader>
+          <ScrollBox>
+            {applied.length === 0
+              ? <EmptyHint>No grants — direct office assignment only</EmptyHint>
+              : applied.map(i => (
+                <div key={i.id} onClick={() => toggleApplied(i.id)} style={{
+                  display: "flex", alignItems: "center", padding: "5px 8px", borderRadius: 6,
+                  marginBottom: 3, gap: 6, cursor: "pointer",
+                  border: `1px solid ${i.excluded ? T.danger + "66" : T.accent + "66"}`,
+                  background: i.excluded ? T.danger + "10" : T.accent + "14",
+                }}>
+                  <input type="checkbox" checked={appliedSel.has(i.id)} readOnly
+                    onClick={e => e.stopPropagation()}
+                    style={{ width: 13, height: 13, cursor: "pointer", flexShrink: 0,
+                      accentColor: i.excluded ? T.danger : T.accent }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontFamily: T.mono, fontSize: 11, fontWeight: 600,
+                      color: i.excluded ? T.danger : T.accent, whiteSpace: "nowrap",
+                      overflow: "hidden", textOverflow: "ellipsis",
+                      textDecoration: i.excluded ? "line-through" : "none" }}>
+                      {i.label || i.value}
+                    </div>
+                  </div>
+                  <span style={{ fontFamily: T.mono, fontSize: 9, fontWeight: 700,
+                    color: i.excluded ? T.danger : T.accent, flexShrink: 0 }}>
+                    {i.excluded ? "EXCLUDED" : "GRANTED"}
+                  </span>
+                  <button onClick={e => { e.stopPropagation(); doRemove([i.id]); }} style={{
+                    padding: "2px 7px", borderRadius: 5, border: "none", background: "none",
+                    color: T.textMuted, fontFamily: T.body, fontSize: 11, cursor: "pointer", flexShrink: 0,
+                  }}>✕</button>
+                </div>
+              ))}
+          </ScrollBox>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const BranchOfficeSection = ({ branches, applied, onAdd, onRemove }) => (
+  <OfficeGrantSection
+    title="Branch (office visibility)" testId="branch-office-section" itemType="branch_office"
+    sourceItems={branches} idKey="id" labelFor={b => `${b.code} ${b.name}`}
+    applied={applied} onAdd={onAdd} onRemove={onRemove} />
+);
+
+const CountryOfficeSection = ({ countries, applied, onAdd, onRemove }) => (
+  <OfficeGrantSection
+    title="Country (office visibility)" testId="country-office-section" itemType="country_office"
+    sourceItems={countries} idKey="iso2" labelFor={c => `${c.iso2} ${c.name}`}
+    applied={applied} onAdd={onAdd} onRemove={onRemove} />
+);
+
 // ─── User Config Panel (below the table) ─────────────────────────────────────
 
 const UserConfigPanel = ({ user, onRolesConfigure }) => {
@@ -511,6 +647,7 @@ const UserConfigPanel = ({ user, onRolesConfigure }) => {
   const [scopeItems,  setScopeItems]  = useState([]);
   const [tradeLanes,  setTradeLanes]  = useState([]);
   const [countries,   setCountries]   = useState([]);
+  const [branches,    setBranches]    = useState([]);
   const [loading,     setLoading]     = useState(true);
 
   // Office assignment state
@@ -569,11 +706,13 @@ const UserConfigPanel = ({ user, onRolesConfigure }) => {
       api.userScope.list(user.id),
       api.tradeLanes.list(),
       api.countries.list(),
+      api.branches.list(),
     ])
-      .then(([items, lanes, ctries]) => {
+      .then(([items, lanes, ctries, brs]) => {
         setScopeItems(items);
         setTradeLanes(lanes);
         setCountries(ctries.results ?? ctries);
+        setBranches(brs);
       })
       .catch(() => toast.error("Failed to load scope data"))
       .finally(() => setLoading(false));
@@ -727,7 +866,7 @@ const UserConfigPanel = ({ user, onRolesConfigure }) => {
             fontFamily: T.body, fontSize: 13, color: T.text, lineHeight: 1.5,
           }}>
             <strong>{ROLE_LABELS[activeRole]}</strong> has unrestricted access — data scoping does not apply to this role.
-            The user can see all shipments.
+            The user can see all shipments, quotes, and opportunities.
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -737,7 +876,7 @@ const UserConfigPanel = ({ user, onRolesConfigure }) => {
                 background: T.warning + "12", border: `1px solid ${T.warning}44`,
                 fontFamily: T.body, fontSize: 12, color: T.text,
               }}>
-                No restrictions configured for <strong>{ROLE_LABELS[activeRole]}</strong> — this user can see <strong>all</strong> shipments. Add rules below to restrict access.
+                No restrictions configured for <strong>{ROLE_LABELS[activeRole]}</strong> — this user can see <strong>all</strong> shipments, quotes, and opportunities. Add rules below to restrict access.
               </div>
             )}
             <div data-testid="scope-sections-grid"
@@ -754,6 +893,16 @@ const UserConfigPanel = ({ user, onRolesConfigure }) => {
               <CountrySection
                 countries={countries}
                 applied={roleItems("country")}
+                onAdd={addItem}
+                onRemove={removeItem} />
+              <BranchOfficeSection
+                branches={branches}
+                applied={roleItems("branch_office")}
+                onAdd={addItem}
+                onRemove={removeItem} />
+              <CountryOfficeSection
+                countries={countries}
+                applied={roleItems("country_office")}
                 onAdd={addItem}
                 onRemove={removeItem} />
             </div>

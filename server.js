@@ -2258,54 +2258,118 @@ async function canEditOfficeSide(req, side) {
   return !!office && office.department === dept;
 }
 
-async function applyShipmentAccessFilter(shipments, user, req) {
-  if (!user) return shipments;
+// User-Management/Access-Scoping Redesign (2026-09-12) — Region/Branch/Country office grants +
+// Quotes/Opportunities scoping. Centralizes "what offices can this user see" into one place so
+// applyShipmentAccessFilter and the new quote/opportunity filter can't independently drift into
+// disagreement — this project has hit that "disagreeing engines" bug class repeatedly (carrierTrends
+// vs consumedMap, recomputeSpaceBadge vs loadTeuBuckets, MatchedShipmentsTable's own heuristic, ...).
 
-  // Derive the highest-ranked role from the JWT roles array (works with both
-  // old tokens that have no 'role' field and new ones that do).
-  const jwtRoles = Array.isArray(user.roles) ? user.roles : (user.role ? [user.role] : ['viewer']);
+// Legitimate role downgrade: X-Active-Role names a role the caller actually holds. Membership-
+// based, NOT rank-based — matches App.jsx's own availableRoles/effectiveRoles exactly (a prior
+// fix there restricted the impersonation switcher to strictly the roles an account actually has,
+// nothing rank-inferred: `effectiveRoles = activeRole ? [activeRole] : userRoles`, App.jsx:398).
+// A rank-based comparison (`< `, this function's original shape) silently failed to treat
+// switching between two CO-EQUAL roles as a real downgrade — sales/occ_bk/trade_manager are all
+// rank 1 by design (non-hierarchical specialty roles), so a sales+occ_bk user activating "sales"
+// was never ranked strictly below their tied "primary" and the switch was silently ignored.
+// Found live (2026-09-12 QA pass) as the reason the requireRole fix below didn't work on its
+// first pass: a sales+occ_bk user with X-Active-Role:sales still got 201 creating a shipment,
+// because the rank check treated occ_bk-vs-sales as "not a downgrade" and left the full JWT
+// roles array (including occ_bk) in effect. Membership can never be a privilege escalation
+// beyond what the token already allows, so no rank check is needed at all.
+function activeRoleDowngrade(user, req) {
+  const jwtRoles = Array.isArray(user?.roles) ? user.roles : (user?.role ? [user.role] : ['viewer']);
+  const requestedRole = req?.headers?.['x-active-role'] || null;
+  return (requestedRole && jwtRoles.includes(requestedRole)) ? requestedRole : null;
+}
+
+function deriveEffectiveRole(user, req) {
+  const jwtRoles = Array.isArray(user?.roles) ? user.roles : (user?.role ? [user.role] : ['viewer']);
   const primaryRole = jwtRoles.reduce(
     (best, r) => (ROLE_RANK_SV[r] ?? 0) > (ROLE_RANK_SV[best] ?? 0) ? r : best,
     'viewer'
   );
+  return activeRoleDowngrade(user, req) || primaryRole;
+}
 
-  // When the user has switched to a lower role in the UI the frontend sends
-  // X-Active-Role. Only trust it if it's actually lower than the primary role.
-  const requestedRole = req?.headers?.['x-active-role'] || null;
-  const effectiveRole = (requestedRole && (ROLE_RANK_SV[requestedRole] ?? 0) < (ROLE_RANK_SV[primaryRole] ?? 0))
-    ? requestedRole
-    : primaryRole;
+// Direct user_offices ∪ cascaded Branch/Country grants (user_scope_items item_type
+// 'branch_office'/'country_office') − exclusions. Role-blind by design (matches user_offices'
+// own role-blind nature — a grant configured under one of a user's roles applies no matter which
+// role is active, keeping the two office-visibility mechanisms consistent with each other).
+// Country matching is dual-path (an office's own country_code OR its branch's) — confirmed live
+// during design that 9 of 12 real offices have no branch_id set, so a branch-mediated-only join
+// would leave most current offices structurally unreachable by any Country grant.
+// Exclusions only ever remove a CASCADED grant's offices, never a direct user_offices row — a
+// direct, explicit per-office assignment is the strongest signal an admin can give and isn't
+// silently defeated by an unrelated exclusion rule (see the final `direct.forEach` re-add below).
+async function resolveEffectiveOfficeIds(userId) {
+  const direct = await query("SELECT office_id FROM user_offices WHERE user_id=$1", [userId]);
+  const included = new Set(direct.map(r => r.office_id));
 
+  const items = await query(
+    "SELECT * FROM user_scope_items WHERE user_id=$1 AND item_type IN ('branch_office','country_office')",
+    [userId]
+  );
+  const officesFor = item => item.item_type === 'branch_office'
+    ? query("SELECT id FROM offices WHERE branch_id=$1", [item.value])
+    : query(
+        "SELECT id FROM offices WHERE country_code=$1 OR branch_id IN (SELECT id FROM branches WHERE country_code=$1)",
+        [item.value]
+      );
+
+  for (const item of items.filter(i => !i.excluded)) (await officesFor(item)).forEach(r => included.add(r.id));
+  for (const item of items.filter(i => i.excluded))  (await officesFor(item)).forEach(r => included.delete(r.id));
+  direct.forEach(r => included.add(r.office_id));
+  return included;
+}
+
+// Orchestrates "am I unrestricted / what offices do I have / is my active office valid" into one
+// contract both applyShipmentAccessFilter and applyOfficeScopedAccessFilter consume, so neither
+// re-derives (and risks disagreeing about) the unrestricted/office-membership decision.
+async function resolveOfficeAccess(user, req) {
+  if (!user) return { unrestricted: true };
+  const effectiveRole = deriveEffectiveRole(user, req);
+  if (['admin', 'operator'].includes(effectiveRole)) return { unrestricted: true };
+  if (user.allOffices) return { unrestricted: true };
+  if ((await getSettings()).offices_allow_all === "1") return { unrestricted: true };
+
+  const officeIds = await resolveEffectiveOfficeIds(user.id);
+  const activeOfficeId = req?.headers?.['x-office-id'] || null;
+  if (!activeOfficeId) return { unrestricted: false, officeIds, activeOfficeId: null, denied: false };
+  return { unrestricted: false, officeIds, activeOfficeId, denied: !officeIds.has(activeOfficeId) };
+}
+
+async function applyShipmentAccessFilter(shipments, user, req) {
+  if (!user) return shipments;
+
+  const effectiveRole = deriveEffectiveRole(user, req);
   if (['admin', 'operator'].includes(effectiveRole)) return shipments;
 
-  // Office-based data segregation: filter by active office when the user is not global.
-  // Org-wide "offices_allow_all" setting bypasses this for all users.
-  const orgAllowAll = (await getSettings()).offices_allow_all === "1";
-  if (!user.allOffices && !orgAllowAll) {
-    const activeOfficeId = req?.headers?.['x-office-id'] || null;
-    if (activeOfficeId) {
-      // Validate that this office is actually assigned to the user
-      const [validOffice] = await query(
-        "SELECT id FROM user_offices WHERE user_id=$1 AND office_id=$2", [user.id, activeOfficeId]
-      );
-      if (!validOffice) return [];
-      // Additional (backup) offices — a shipment a disaster-recovery office was added to via
-      // shipment_side_offices should be visible to that office's staff too, not just the
-      // shipment's original EMO/IMO/Controlling.
-      const sideOfficeShipmentIds = new Set(
-        (await query("SELECT shipment_id FROM shipment_side_offices WHERE office_id=$1", [activeOfficeId]))
-          .map(r => r.shipment_id)
-      );
-      shipments = shipments.filter(s =>
-        s.emoOfficeId === activeOfficeId ||
-        s.imoOfficeId === activeOfficeId ||
-        s.controllingOfficeId === activeOfficeId ||
-        sideOfficeShipmentIds.has(s.id)
-      );
-    }
+  const access = await resolveOfficeAccess(user, req);
+  if (!access.unrestricted && access.activeOfficeId) {
+    if (access.denied) return [];
+    // Additional (backup) offices — a shipment a disaster-recovery office was added to via
+    // shipment_side_offices should be visible to that office's staff too, not just the
+    // shipment's original EMO/IMO/Controlling.
+    const sideOfficeShipmentIds = new Set(
+      (await query("SELECT shipment_id FROM shipment_side_offices WHERE office_id=$1", [access.activeOfficeId]))
+        .map(r => r.shipment_id)
+    );
+    shipments = shipments.filter(s =>
+      s.emoOfficeId === access.activeOfficeId ||
+      s.imoOfficeId === access.activeOfficeId ||
+      s.controllingOfficeId === access.activeOfficeId ||
+      sideOfficeShipmentIds.has(s.id)
+    );
   }
 
-  const scopeItems = await query("SELECT * FROM user_scope_items WHERE user_id=$1", [user.id]);
+  // Scoped to trade_lane/pol/country only — branch_office/country_office rows are resolved via
+  // resolveEffectiveOfficeIds above, not this loop. matchesScopeItem returns false for any
+  // unrecognized item_type, so leaving those rows in this query would silently make every
+  // shipment invisible to a user who's ever received a Branch/Country grant.
+  const scopeItems = await query(
+    "SELECT * FROM user_scope_items WHERE user_id=$1 AND item_type IN ('trade_lane','pol','country')", [user.id]
+  );
 
   if (!scopeItems.length) return shipments;
 
@@ -2322,6 +2386,29 @@ async function applyShipmentAccessFilter(shipments, user, req) {
   return shipments.filter(s =>
     typeGroups.length > 0 && typeGroups.every(group => group.some(item => matchesScopeItem(s, item)))
   );
+}
+
+// Quotes/Opportunities analog of applyShipmentAccessFilter — same office-access contract
+// (resolveOfficeAccess) applied to a single officeId column instead of the EMO/IMO/Controlling
+// triad + shipment_side_offices, plus the SAME trade_lane/pol/country scope-item loop (Regional
+// Trade Management's existing reach now also gates quotes/opportunities, not just the credit-hold
+// override action) — matchesScopeItem is reused unchanged since it only ever reads .pol/.pod off
+// whatever row it's given, and mapQuote/mapOpportunity already carry those fields.
+async function applyOfficeScopedAccessFilter(rows, user, req) {
+  if (!user) return rows;
+  const access = await resolveOfficeAccess(user, req);
+  if (!access.unrestricted) {
+    if (access.denied || !access.activeOfficeId) return [];
+    rows = rows.filter(r => r.officeId === access.activeOfficeId);
+  }
+  const scopeItems = await query(
+    "SELECT * FROM user_scope_items WHERE user_id=$1 AND item_type IN ('trade_lane','pol','country')", [user.id]
+  );
+  if (!scopeItems.length) return rows;
+  const byType = {};
+  for (const item of scopeItems) (byType[item.item_type] = byType[item.item_type] || []).push(item);
+  const typeGroups = Object.values(byType);
+  return rows.filter(r => typeGroups.every(group => group.some(item => matchesScopeItem(r, item))));
 }
 
 // Shipment-scope param guard (2026-09-03 shipment-domain audit) — GET /api/shipments/:id has
@@ -3035,8 +3122,10 @@ const findMatchingContractLegs = async (legs, { pol, pod, needsPolHaulage, needs
 
 // ─── Role helpers (hoisted from inline routes so ctx can include them) ────────
 
-const VALID_ROLES  = ["admin", "operator", "occ_bk", "trade_manager", "viewer"];
-const ROLE_RANK_SV = { viewer: 0, occ_bk: 1, trade_manager: 1, operator: 2, admin: 3 };
+const VALID_ROLES  = ["admin", "operator", "occ_bk", "trade_manager", "sales", "viewer"];
+// sales ranks alongside occ_bk/trade_manager — a non-hierarchical specialty role (pipeline
+// ownership, no booking authority), not a rung above/below either of them.
+const ROLE_RANK_SV = { viewer: 0, occ_bk: 1, trade_manager: 1, sales: 1, operator: 2, admin: 3 };
 const primaryRoleSV  = (roles) => [...roles].sort((a, b) => ROLE_RANK_SV[b] - ROLE_RANK_SV[a])[0] || 'viewer';
 const parseUserRoles = (u) => JSON.parse(u.roles || JSON.stringify([u.role || 'viewer']));
 
@@ -3492,9 +3581,27 @@ const auth = (allowed = []) => async (req, res, next) => {
   } catch { err(res, "Invalid or expired token", 401); }
 };
 
-// Role check only (token already verified by global middleware)
+// Role check only (token already verified by global middleware). Collapses to just the active
+// role when the caller has deliberately downgraded via X-Active-Role — mirrors
+// deriveEffectiveRole's read-side collapse (server.js, the office/scope-access engine) and
+// matches how the frontend's own effectiveRoles already treats a downgrade
+// (App.jsx: `activeRole ? [activeRole] : userRoles`). Before this fix, requireRole always
+// trusted the FULL JWT roles array regardless of any downgrade signal — a user who explicitly
+// switched to a lower role in the UI kept full write authority from every role they hold,
+// silently defeating the entire point of switching. Found live during the User Management
+// redesign's QA pass (2026-09-12): a sales+occ_bk user with X-Active-Role: sales could still
+// POST /api/shipments and get 201 — the sales role's whole "no booking authority" premise only
+// held for sales-ONLY accounts. This only ever NARROWS existing authority (a valid downgrade
+// restricts the roles checked to just the one requested; no downgrade, or an invalid/higher one,
+// falls through to the full JWT array exactly as before) — it can never grant more than before.
+function effectiveRolesFor(user, req) {
+  const jwtRoles = Array.isArray(user?.roles) ? user.roles : (user?.role ? [user.role] : ['viewer']);
+  const downgrade = activeRoleDowngrade(user, req);
+  return downgrade ? [downgrade] : jwtRoles;
+}
+
 const requireRole = (allowed) => (req, res, next) =>
-  req.user?.roles?.some(r => allowed.includes(r)) ? next() : err(res, "Forbidden", 403);
+  effectiveRolesFor(req.user, req).some(r => allowed.includes(r)) ? next() : err(res, "Forbidden", 403);
 
 // Require valid token on all /api/* except /api/auth/*, /api/health, /api/share/* (public), and
 // /api/carrier-webhooks/* — an inbound carrier callback carries no CargoDesk JWT; it's
@@ -3524,7 +3631,7 @@ const ctx = {
   gracefulShutdown,
   auth, requireRole,
   portLanesMap, portCountryMap, rebuildPortLanesMap, longestLane,
-  applyShipmentAccessFilter,
+  applyShipmentAccessFilter, applyOfficeScopedAccessFilter, resolveOfficeAccess, resolveEffectiveOfficeIds,
   fxCache, getFxRates, toUsd, roundCents, costLineEffectiveUsd, COST_LINE_EFFECTIVE_USD_SQL,
   sanctionsMap, loadSanctionsIndex, syncOfacSdn, scheduleNextOfacSync,
   syncConsolidatedScreeningList, scheduleNextCslSync,

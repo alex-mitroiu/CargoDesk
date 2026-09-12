@@ -85,7 +85,12 @@ async function login(email, password) {
     // batch (TKT-60HO4D — user_access_configs had 0 live rows, 0 frontend call sites, and was
     // OR'd into applyShipmentAccessFilter but never contributed anything) rather than kept
     // logging events for a route that no longer exists.
-    const scopeAdd = await request("POST", `/api/users/${userId}/scope`, { role: "operator", itemType: "carrier", value: "MAEU", label: "Test" }, adminToken);
+    // itemType "country" (not the old placeholder "carrier") — User Management redesign
+    // (2026-09-12) added a real server-side itemType whitelist to POST .../scope, which "carrier"
+    // was never a member of (it was only ever an arbitrary example string this test picked before
+    // that whitelist existed, not a real scope dimension anything reads). This test's actual point
+    // — audit logging on the generic scope-item create/delete flow — is unaffected by the swap.
+    const scopeAdd = await request("POST", `/api/users/${userId}/scope`, { role: "operator", itemType: "country", value: "US", label: "Test" }, adminToken);
     assert("scope item created", scopeAdd.status === 200 || scopeAdd.status === 201, JSON.stringify(scopeAdd.body));
     const scopeItemId = scopeAdd.body.id;
     const eventsAfterScopeAdd = await request("GET", "/api/admin/events?limit=5&action=SCOPE_ITEM_CREATED", null, adminToken);

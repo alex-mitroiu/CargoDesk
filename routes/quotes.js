@@ -18,9 +18,12 @@ module.exports = function quotesRoutes(app, ctx) {
   const { query, ok, err, uid, requireRole, isUniqueViolation, mapQuote, mapQuoteLine, mapShipment,
           logEvent, logEntityEvent, toUsd, SERVICE_CODE_MAP, importContractRates,
           resolveCarrierAgentCandidates, screenShipmentById, schemaReady, getCustomerRow,
-          recomputeSpaceBadge } = ctx;
+          recomputeSpaceBadge, applyOfficeScopedAccessFilter } = ctx;
 
-  const quoteWrite = requireRole(["admin", "operator", "occ_bk"]);
+  // sales (User Management redesign, 2026-09-12) owns the quoting pipeline — deliberately not
+  // added to shipments.js/shipment-ops.js/edi.js/etc.'s write guards, which stay booking-authority
+  // only.
+  const quoteWrite = requireRole(["admin", "operator", "occ_bk", "sales"]);
 
   // ─── Auto-expire ────────────────────────────────────────────────────────────
   // Mirrors routes/contracts.js's own expireStaleContracts exactly — a Sent quote whose
@@ -72,10 +75,25 @@ module.exports = function quotesRoutes(app, ctx) {
     return total;
   }
 
+  // 2026-09-12 QA finding: quantity had no validation at all — `0` was silently coerced to `1`
+  // via `|| 1` (the quote author's stated "0" was never actually saved, with no error), and a
+  // negative value passed straight through unchanged (only `0`/NaN are falsy, `-3` is not) into
+  // real negative SELL cost-line revenue once converted. Confirmed live: a line with
+  // quantity:-3 produced a genuine -$3000 cost line on the converted shipment, while the
+  // container-count derivation elsewhere still floored to exactly 1 physical container — money
+  // and container count silently disagreeing with each other and with what was entered.
+  function findInvalidLine(lines) {
+    for (const l of lines) {
+      const n = Number(l.quantity);
+      if (!Number.isFinite(n) || n <= 0) return l;
+    }
+    return null;
+  }
+
   async function insertLines(quoteId, lines) {
     let i = 0;
     for (const l of lines) {
-      const quantity = Number(l.quantity) || 1;
+      const quantity = Number(l.quantity);
       const rate = Number(l.rate) || 0;
       const currency = (l.currency || "USD").toUpperCase();
       const amountUsd = await toUsd(rate * quantity, currency);
@@ -94,6 +112,10 @@ module.exports = function quotesRoutes(app, ctx) {
 
   // ─── CRUD ───────────────────────────────────────────────────────────────────
 
+  // Paginated in JS, after the office/scope access filter, not in SQL — matching
+  // routes/shipments.js's own GET /api/shipments precedent exactly, for the same reason: the
+  // filter is header/JS-driven and can't safely run after a SQL LIMIT/OFFSET without risking a
+  // wrong or short page (User Management redesign, 2026-09-12 — quotes had no scoping before this).
   app.get("/api/quotes", async (req, res) => {
     const { status = "", customerId = "", limit = "50", offset = "0" } = req.query;
     const clauses = [], params = [];
@@ -101,10 +123,10 @@ module.exports = function quotesRoutes(app, ctx) {
     if (status.trim()) clauses.push(`status=${p(status.trim())}`);
     if (customerId.trim()) clauses.push(`customer_id=${p(customerId.trim())}`);
     const where = clauses.length ? "WHERE " + clauses.join(" AND ") : "";
+    const rows = await query(`SELECT * FROM quotes ${where} ORDER BY created_at DESC`, params);
+    const filtered = await applyOfficeScopedAccessFilter(rows.map(mapQuote), req.user, req);
     const lim = Math.min(parseInt(limit) || 50, 200), off = parseInt(offset) || 0;
-    const [{ n: total }] = await query(`SELECT COUNT(*) AS n FROM quotes ${where}`, params);
-    const rows = await query(`SELECT * FROM quotes ${where} ORDER BY created_at DESC LIMIT ${p(lim)} OFFSET ${p(off)}`, params);
-    ok(res, { results: rows.map(mapQuote), total: Number(total), limit: lim, offset: off });
+    ok(res, { results: filtered.slice(off, off + lim), total: filtered.length, limit: lim, offset: off });
   });
 
   // Upcoming/just-passed expiries for the Header notification bell — MUST be registered before
@@ -130,6 +152,8 @@ module.exports = function quotesRoutes(app, ctx) {
   app.get("/api/quotes/:id", async (req, res) => {
     const [q] = await query("SELECT * FROM quotes WHERE id=$1", [req.params.id]);
     if (!q) return err(res, "Not found", 404);
+    // 404, not 403 — info-hiding, matching every other office-scoped single-record route.
+    if (!(await applyOfficeScopedAccessFilter([mapQuote(q)], req.user, req)).length) return err(res, "Not found", 404);
     const lines = await query("SELECT * FROM quote_lines WHERE quote_id=$1 ORDER BY sort_order", [req.params.id]);
     ok(res, { ...mapQuote(q), lines: lines.map(mapQuoteLine) });
   });
@@ -142,8 +166,10 @@ module.exports = function quotesRoutes(app, ctx) {
             movementType = "FCL", serviceType = "Port-to-Port", incoterm = "",
             cargoReadyDate = "", validUntil = "", notes = "", currency = "USD",
             declaredValue = null, declaredValueCurrency = "USD", freightTerms = "Prepaid",
-            lines = [] } = req.body || {};
+            officeId = "", lines = [] } = req.body || {};
     if (!pol || !pod) return err(res, "pol and pod are required");
+    const invalidLine = findInvalidLine(lines);
+    if (invalidLine) return err(res, `Each line's quantity must be a positive number (got "${invalidLine.quantity}")`);
     const id = `QT-${uid()}`;
     const now = new Date().toISOString();
     const actor = req.user?.name || req.user?.email || "";
@@ -151,14 +177,14 @@ module.exports = function quotesRoutes(app, ctx) {
       (id, status, customer_id, customer_name, consignee_id, consignee_name, principal_id, principal_name,
        notify_id, notify_name, pol, pod, carrier_code, contract_id, contract_ref,
        commodity_code, movement_type, service_type, incoterm, cargo_ready_date, valid_until, notes,
-       currency, declared_value, declared_value_currency, freight_terms, created_at, created_by)
-      VALUES ($1,'Draft',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)`,
+       currency, declared_value, declared_value_currency, freight_terms, office_id, created_at, created_by)
+      VALUES ($1,'Draft',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)`,
       [id, customerId, customerName, consigneeId, consigneeName, principalId, principalName,
            notifyId, notifyName, pol.toUpperCase(), pod.toUpperCase(), carrierCode.toUpperCase(),
            contractId, contractRef, commodityCode, movementType, serviceType, incoterm, cargoReadyDate,
            validUntil, notes, currency.toUpperCase(),
            declaredValue !== null && declaredValue !== "" ? Number(declaredValue) : null,
-           declaredValueCurrency.toUpperCase(), freightTerms, now, actor]);
+           declaredValueCurrency.toUpperCase(), freightTerms, officeId || null, now, actor]);
     await insertLines(id, lines);
     await recomputeQuoteTotal(id);
     await logEntityEvent("quote", id, "CREATED", null, null, null,
@@ -179,19 +205,21 @@ module.exports = function quotesRoutes(app, ctx) {
             movementType = "FCL", serviceType = "Port-to-Port", incoterm = "",
             cargoReadyDate = "", validUntil = "", notes = "", currency = "USD",
             declaredValue = null, declaredValueCurrency = "USD", freightTerms = "Prepaid",
-            lines = [] } = req.body || {};
+            officeId = "", lines = [] } = req.body || {};
     if (!pol || !pod) return err(res, "pol and pod are required");
+    const invalidLine = findInvalidLine(lines);
+    if (invalidLine) return err(res, `Each line's quantity must be a positive number (got "${invalidLine.quantity}")`);
     await query(`UPDATE quotes SET customer_id=$1, customer_name=$2, consignee_id=$3, consignee_name=$4,
       principal_id=$5, principal_name=$6, notify_id=$7, notify_name=$8, pol=$9, pod=$10, carrier_code=$11,
       contract_id=$12, contract_ref=$13, commodity_code=$14, movement_type=$15, service_type=$16, incoterm=$17,
       cargo_ready_date=$18, valid_until=$19, notes=$20, currency=$21, declared_value=$22,
-      declared_value_currency=$23, freight_terms=$24 WHERE id=$25`,
+      declared_value_currency=$23, freight_terms=$24, office_id=$25 WHERE id=$26`,
       [customerId, customerName, consigneeId, consigneeName, principalId, principalName,
            notifyId, notifyName, pol.toUpperCase(), pod.toUpperCase(), carrierCode.toUpperCase(),
            contractId, contractRef, commodityCode, movementType, serviceType, incoterm, cargoReadyDate,
            validUntil, notes, currency.toUpperCase(),
            declaredValue !== null && declaredValue !== "" ? Number(declaredValue) : null,
-           declaredValueCurrency.toUpperCase(), freightTerms, req.params.id]);
+           declaredValueCurrency.toUpperCase(), freightTerms, officeId || null, req.params.id]);
     await query("DELETE FROM quote_lines WHERE quote_id=$1", [req.params.id]);
     await insertLines(req.params.id, lines);
     await recomputeQuoteTotal(req.params.id);
@@ -270,6 +298,18 @@ module.exports = function quotesRoutes(app, ctx) {
     const actor = req.user?.name || req.user?.email || "";
     const contractType = q.contract_id ? "Central" : "SPOT";
 
+    // Carry the quote's own office forward (User Management redesign, 2026-09-12) — a
+    // quote-converted shipment previously set none of emo/imo/controlling_office_id at all,
+    // leaving it invisible to office-scoped visibility until someone edited it by hand. A quote
+    // has one office (no Export/Import split, unlike a shipment), so it lands on whichever side
+    // matches that office's own department.
+    let quoteEmoOfficeId = null, quoteImoOfficeId = null;
+    if (q.office_id) {
+      const [qOffice] = await query("SELECT department FROM offices WHERE id=$1", [q.office_id]);
+      if (qOffice?.department === "SE") quoteEmoOfficeId = q.office_id;
+      else if (qOffice?.department === "SI") quoteImoOfficeId = q.office_id;
+    }
+
     // Only the columns a quote actually has a value for are listed — every other shipments
     // column (etd, vessel, bookingRef, ...) is genuinely unknown at this point and correctly
     // falls back to its own table-level DEFAULT, exactly like an omitted field on the real
@@ -284,13 +324,15 @@ module.exports = function quotesRoutes(app, ctx) {
        contract_id, contract_ref, commodity_code, shipper_id, shipper_name,
        consignee_id, consignee_name, principal_id, principal_name, notify_id, notify_name,
        movement_type, service_type, incoterm, cargo_ready_date,
-       declared_value, declared_value_currency, freight_terms, source_quote_id)
-      VALUES ($1,$2,$3,$4,$5,'Active',$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)`,
+       declared_value, declared_value_currency, freight_terms, source_quote_id,
+       emo_office_id, imo_office_id)
+      VALUES ($1,$2,$3,$4,$5,'Active',$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)`,
       [id, q.pol, q.pod, q.carrier_code, contractType, now,
            q.contract_id, q.contract_ref, q.commodity_code, q.customer_id, q.customer_name,
            q.consignee_id, q.consignee_name, q.principal_id, q.principal_name, q.notify_id, q.notify_name,
            q.movement_type, q.service_type, q.incoterm, q.cargo_ready_date,
-           q.declared_value, q.declared_value_currency, q.freight_terms, req.params.id]);
+           q.declared_value, q.declared_value_currency, q.freight_terms, req.params.id,
+           quoteEmoOfficeId, quoteImoOfficeId]);
     await logEvent(id, 'SHIPMENT_CREATED', null, null, null,
       JSON.stringify({ pol: q.pol, pod: q.pod, carrier: q.carrier_code, status: 'Active', contractType, source: 'quote', quoteId: req.params.id }), req.user?.name || req.user?.email || "");
     await maybeAssignLineAgents(id, q.carrier_code, q.pol, q.pod, req.user?.name || req.user?.email || "");
@@ -372,12 +414,31 @@ module.exports = function quotesRoutes(app, ctx) {
     // own local shipments list before navigating — the same thing a direct POST /api/shipments
     // create already returns, needed here for the exact same reason: the SPA's shipment detail
     // page only renders for a shipment it already has in local state.
-    const [shipment] = await query("SELECT * FROM shipments WHERE id=$1", [id]);
+    // Enriched (2026-09-12 QA finding) — this used to be a bare SELECT *, the identical gap
+    // POST /api/shipments' own create response had: teu/margin/bookingStatus/office names all
+    // came back blank here despite a real converted shipment already having containers and cost
+    // lines by this point. Confirmed live: a converted quote with 4 TEU of containers and $3,400
+    // of SELL cost lines still reported teu:0/marginSellUsd:null in this exact response.
+    const [shipmentRow] = await query(`
+      SELECT s.*, p1.name AS pol_name, p2.name AS pod_name,
+             emo.code AS emo_office_code, emo.name AS emo_office_name,
+             imo.code AS imo_office_code, imo.name AS imo_office_name,
+             ctrl.code AS controlling_office_code, ctrl.name AS controlling_office_name,
+             ${ctx.SHIPMENT_ENRICHMENT_SELECT}
+      FROM shipments s
+      LEFT JOIN port_locations p1 ON p1.unlocode = s.pol
+      LEFT JOIN port_locations p2 ON p2.unlocode = s.pod
+      LEFT JOIN offices emo  ON emo.id  = s.emo_office_id
+      LEFT JOIN offices imo  ON imo.id  = s.imo_office_id
+      LEFT JOIN offices ctrl ON ctrl.id = s.controlling_office_id
+      ${ctx.SHIPMENT_ENRICHMENT_JOINS}
+      WHERE s.id = $1
+    `, [id]);
     const [freshQuote] = await query("SELECT * FROM quotes WHERE id=$1", [req.params.id]);
     ok(res, {
       quote: mapQuote(freshQuote),
       shipmentId: id,
-      shipment: mapShipment(shipment),
+      shipment: mapShipment(shipmentRow),
       screening: silentScreening || null,
       creditWarning: heldParties.length ? { onHold: heldParties } : null,
     });

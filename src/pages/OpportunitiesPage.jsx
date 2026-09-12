@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { T, CURRENCIES } from "../tokens";
 import { api } from "../api";
 import { toast } from "../toast";
+import { useAuth } from "../AuthContext";
 import Btn from "../components/primitives/Btn";
 import Badge from "../components/primitives/Badge";
 import { Modal, ConfirmModal } from "../components/primitives/Modal";
@@ -42,6 +43,17 @@ const LEAD_SOURCE_OPTIONS = [
 // ─── Opportunity form modal (New + Edit-while-New/Qualified) ────────────────
 const OpportunityFormModal = ({ opportunity, onClose, onSaved }) => {
   const isEdit = !!opportunity;
+  const { activeOffice } = useAuth();
+  const [offices, setOffices] = useState([]);
+  const [officeId, setOfficeId] = useState(opportunity?.officeId || "");
+  useEffect(() => { api.offices.list().then(setOffices).catch(() => {}); }, []);
+  // Office visibility (User Management redesign, 2026-09-12) — same auto-default pattern
+  // ShipmentFormPage.jsx/QuotesPage.jsx already use.
+  useEffect(() => {
+    if (isEdit) return;
+    if (!activeOffice) return;
+    setOfficeId(prev => prev || activeOffice.id);
+  }, [activeOffice?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const [title, setTitle] = useState(opportunity?.title || "");
   const [customer, setCustomer] = useState({ id: opportunity?.customerId || "", name: opportunity?.customerName || "" });
   const [pol, setPol] = useState(opportunity?.pol ? { unlocode: opportunity.pol, name: "" } : null);
@@ -70,7 +82,7 @@ const OpportunityFormModal = ({ opportunity, onClose, onSaved }) => {
         title, customerId: customer.id, customerName: customer.name,
         pol: pol?.unlocode || "", pod: pod?.unlocode || "", carrierCode, commodityCode, movementType,
         estimatedValue: Number(estimatedValue) || 0, currency, estimatedCloseDate, leadSource,
-        assigneeId, notes,
+        assigneeId, officeId, notes,
       };
       const saved = isEdit ? await api.opportunities.update(opportunity.id, payload) : await api.opportunities.create(payload);
       toast.success(isEdit ? "Opportunity updated" : "Opportunity created");
@@ -115,6 +127,10 @@ const OpportunityFormModal = ({ opportunity, onClose, onSaved }) => {
           <Sel label="Assignee" value={assigneeId} onChange={setAssigneeId}
             options={[{ value: "", label: "— Unassigned —" }, ...users.filter(u => u.isActive !== false).map(u => ({ value: u.id, label: u.name }))]} />
         </div>
+
+        <Sel label="Office" value={officeId} onChange={setOfficeId}
+          options={[{ value: "", label: "— None —" }, ...offices.filter(o => o.isActive).map(o => ({ value: o.id, label: `${o.code} — ${o.name}` }))]}
+          hint="Which office owns this opportunity — controls who can see it" />
 
         <Field label="Notes"><textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3}
           style={{ ...inputBase, fontSize: 13, resize: "vertical" }} /></Field>
