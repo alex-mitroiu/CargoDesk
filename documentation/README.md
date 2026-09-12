@@ -15,6 +15,7 @@ than a rewrite since their whole purpose is documenting a past design proposal, 
 
 | File | Original title | Live artifact |
 |---|---|---|
+| `cargodesk-dfs.html` | CargoDesk DFS (Design & Functional Specification) — **current reference doc, not a design proposal**; see `DFS.md` at the repo root for the versioned Markdown source. Its two data-flow diagrams are baked in as static SVG (not the live Mermaid runtime) specifically so this copy renders correctly fully offline, with zero network dependency. | https://claude.ai/code/artifact/56b2fcbd-ca72-41a9-85fb-fc8487d3414c |
 | `invoice-lifecycle.html` | Invoice Lifecycle | https://claude.ai/code/artifact/2bc42301-f7a7-46ab-8a2a-4f846b69adba |
 | `invoice-lifecycle.drawio` | Invoice Lifecycle (draw.io export) | — |
 | `invoice-collections-flow.html` | Invoice Collections Flow | https://claude.ai/code/artifact/b615fe49-40ca-4c61-a85e-d322e6ceca3e |

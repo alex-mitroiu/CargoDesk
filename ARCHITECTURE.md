@@ -1,6 +1,9 @@
 # CargoDesk — Architecture Reference
 **Version:** 0.87.0 "Consortium" · **Date:** 2026-08-29
 **Audience:** Software architects, senior engineers, technical reviewers
+**See also:** [`DFS.md`](DFS.md) — the Design & Functional Specification (data flow diagrams,
+per-domain functional scope, roles) covers *what* the system does and *how data moves through it*;
+this document covers *how it's built*.
 
 > This document was fully refreshed from a direct pass against the live codebase on 2026-08-13
 > (v0.69.0), replacing a version that had gone stale since v0.30.0. The 2026-08-19 pass was
