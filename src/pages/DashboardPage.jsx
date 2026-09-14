@@ -10,8 +10,11 @@ import Pagination from "../components/primitives/Pagination";
 import PageSizeSelect, { getStoredPageSize } from "../components/primitives/PageSizeSelect";
 import DatePicker from "../components/primitives/DatePicker";
 import { useResizableColumns, ColResizer } from "../components/primitives/useResizableColumns.jsx";
-import { IconWarning, IconRefresh, IconArrowDown } from "../components/primitives/Icon";
+import { IconWarning, IconRefresh, IconArrowDown, IconDashboard, IconFileCertificate, IconShip, IconCoin } from "../components/primitives/Icon";
 import ConsumptionBar from "../components/shared/ConsumptionBar";
+import InfoHint from "../components/primitives/InfoHint";
+import { inputBase } from "../components/primitives/Form";
+import ColumnFilter from "../components/shared/ColumnFilter";
 
 // Booking-status badge — Confirmed is the only bucket that actively deducts from allocated
 // space (v0.86.0); shown next to a shipment's own lifecycle Status wherever this dashboard
@@ -21,10 +24,87 @@ const BOOKING_STATUS_VARIANT = {
   Confirmed: "success", Pending: "info", Created: "default", Rejected: "danger", Cancelled: "default",
 };
 
-const CHART_COLORS = [
-  "#6366f1","#22c55e","#f59e0b","#3b82f6",
-  "#ec4899","#8b5cf6","#06b6d4","#ef4444","#10b981","#f97316",
-];
+// ─── "Trade Horizon" visual language (2026-09-12, direct request) ─────────────
+// Page-scoped only, by direct decision — does NOT touch src/tokens.js's shared `T` object or
+// any shared primitive, so every other page keeps its existing look untouched. Ported from an
+// approved standalone mockup (dashboard-redesign session), itself inspired by a reference
+// screenshot the user shared. `HZ.chart*` are NOT the decorative gradients below — they're the
+// dataviz-skill-validated categorical/status steps (node scripts/validate_palette.js), kept
+// separate on purpose so real chart color-encoding never doubles as decoration.
+const HZ = {
+  bg: "#080b15", surface: "rgba(255,255,255,0.045)", surfaceStrong: "rgba(255,255,255,0.075)",
+  border: "rgba(255,255,255,0.09)", borderSoft: "rgba(255,255,255,0.055)",
+  ink: "#f3f5fc", inkMuted: "#8c93b5", inkFaint: "#4d5476",
+  fontDisplay: "'Sora', ui-sans-serif, system-ui, sans-serif",
+  fontBody: "'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif",
+  fontMono: "'IBM Plex Mono', ui-monospace, monospace",
+  gradCyan: ["#38d4e8", "#3987e5"], gradAmber: ["#fbc531", "#d9772a"], gradViolet: ["#9085e9", "#d5519f"],
+  good: "#22c55e", warning: "#fab219", critical: "#f0526b",
+  // dataviz-validated categorical order (node_modules-free hand check against the skill's own
+  // reference steps) — cycles past 5 carriers rather than inventing a 6th hue.
+  chartCategorical: ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181"],
+};
+
+// Trade Horizon's own token mapping for the shared ColumnFilter component (see
+// src/components/shared/ColumnFilter.jsx) — passed explicitly at every call site on this page so
+// its popover keeps this page's dark-glass look instead of falling back to the shared component's
+// default (the app's normal theme-aware T tokens, which every other page uses unmodified). A
+// solid "#0d1220", not HZ.surface's translucent glass fill — a translucent popover floating over
+// table rows read muddy in practice; every other Trade Horizon popover-style surface on this page
+// (chart tooltips) already made the same call.
+const HZ_FILTER_TOKENS = {
+  bg: "#0d1220", border: HZ.border, borderSoft: HZ.borderSoft,
+  ink: HZ.ink, inkMuted: HZ.inkMuted, accent: HZ.gradCyan[0],
+  fontMono: HZ.fontMono, fontBody: HZ.fontBody,
+};
+
+const hzGradientFor = code => {
+  const grads = [HZ.gradCyan, HZ.gradAmber, HZ.gradViolet];
+  let hash = 0;
+  for (let i = 0; i < (code || "").length; i++) hash = (hash * 31 + code.charCodeAt(i)) >>> 0;
+  return grads[hash % grads.length];
+};
+
+// One-time Google Fonts <link> injection — this app has no build-time font pipeline (CLAUDE.md's
+// own CSP note: fonts.googleapis.com/fonts.gstatic.com are already allowlisted for exactly this
+// pattern elsewhere). Guarded by id so remounting this page never duplicates the tag.
+const useHorizonFonts = () => {
+  useEffect(() => {
+    if (document.getElementById("hz-fonts")) return;
+    const link = document.createElement("link");
+    link.id = "hz-fonts"; link.rel = "stylesheet";
+    link.href = "https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap";
+    document.head.appendChild(link);
+  }, []);
+};
+
+// Decorative backdrop only (trade-route arcs + ambient glow + sparkle accents) — absolute,
+// anchored to a position:relative wrapper, never `position: fixed`. Fixed positioning both mis-
+// renders under this app's own confirmed full-page-screenshot artifact (App.jsx's footer bar hit
+// this exact issue) and is simply wrong for a scrollable in-page section — it would stay pinned
+// to the viewport instead of scrolling with the Dashboard's own content. Inert to pointer events
+// so it can never intercept a real click.
+const HorizonBackdrop = () => (
+  <div aria-hidden="true" style={{ position: "absolute", top: 0, left: 0, right: 0, height: 560, zIndex: 0, pointerEvents: "none", overflow: "hidden" }}>
+    <svg width="100%" height="560" viewBox="0 0 1440 560" preserveAspectRatio="xMidYMin slice" style={{ position: "absolute", opacity: 0.6 }}>
+      <path d="M -40 300 Q 320 150 640 230 T 1480 120" fill="none" stroke="url(#hzRoute)" strokeWidth="1.3" strokeDasharray="1 7" strokeLinecap="round" />
+      <path d="M -40 400 Q 420 280 820 340 T 1480 240" fill="none" stroke="url(#hzRoute)" strokeWidth="1.3" strokeDasharray="1 7" strokeLinecap="round" />
+      <defs>
+        <linearGradient id="hzRoute" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stopColor="#38d4e8" stopOpacity="0.6" />
+          <stop offset="50%" stopColor="#9085e9" stopOpacity="0.45" />
+          <stop offset="100%" stopColor="#fbc531" stopOpacity="0.55" />
+        </linearGradient>
+      </defs>
+    </svg>
+    <div style={{ position: "absolute", width: 600, height: 600, top: -240, left: -140, borderRadius: "50%", filter: "blur(80px)", background: "radial-gradient(circle, rgba(56,212,232,0.22), transparent 68%)" }} />
+    <div style={{ position: "absolute", width: 560, height: 560, top: 0, right: -200, borderRadius: "50%", filter: "blur(80px)", background: "radial-gradient(circle, rgba(213,81,159,0.18), transparent 68%)" }} />
+  </div>
+);
+
+const CHART_COLORS = HZ.chartCategorical.concat([
+  "#6366f1","#8b5cf6","#06b6d4","#ef4444","#10b981","#f97316",
+]);
 
 // ─── Sparkline ────────────────────────────────────────────────────────────────
 
@@ -66,6 +146,205 @@ const DeltaBadge = ({ delta, prevTEU }) => {
   );
 };
 
+// ─── KPI tile (shared: Overview 3-tile row + Margin 4-tile row) ───────────────
+// One shared shape instead of two bespoke ones (Overview's old plain-color number,
+// MarginView's old marginColor() background+border) — a tile only gets a tinted left
+// edge + soft corner glow when tintColor is actually passed (undefined/null renders
+// neither, matching "Total Allocated/Buy/Sell get no tint" — those aren't utilization
+// figures). zIndex:-1 on the glow is required, not optional: an absolutely-positioned
+// z-index:auto child paints ABOVE normal-flow siblings per CSS painting order, so
+// without it the glow would sit on top of the label/number instead of behind them.
+const KpiTile = ({ label, value, caption, tintColor, unit, breakdown }) => {
+  const display = typeof value === "number" ? value.toLocaleString("en-US") : value;
+  return (
+    <div style={{ position: "relative", overflow: "hidden", background: HZ.surface, backdropFilter: "blur(18px)",
+      border: `1px solid ${HZ.border}`, borderRadius: 16, padding: "18px 20px",
+      borderLeft: `3px solid ${tintColor || "transparent"}` }}>
+      {tintColor && (
+        <div style={{ position: "absolute", top: -46, right: -36, width: 130, height: 130,
+          borderRadius: "50%", zIndex: -1,
+          background: `radial-gradient(circle, ${tintColor}25 0%, transparent 72%)` }} />
+      )}
+      <div style={{ fontFamily: HZ.fontBody, fontSize: 10.5, color: HZ.inkMuted, fontWeight: 600,
+        textTransform: "uppercase", letterSpacing: ".08em" }}>{label}</div>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 6, margin: "9px 0 3px" }}>
+        <span style={{ fontFamily: HZ.fontDisplay, fontSize: 28, fontWeight: 700, color: HZ.ink }}>{display}</span>
+        {unit && <span style={{ fontFamily: HZ.fontMono, fontSize: 12, color: HZ.inkMuted }}>{unit}</span>}
+      </div>
+      <div style={{ fontFamily: HZ.fontBody, fontSize: 11.5, color: HZ.inkMuted }}>{caption}</div>
+      {breakdown && (breakdown.pending > 0 || breakdown.rejected > 0) && (
+        <div style={{ fontFamily: HZ.fontMono, fontSize: 10.5, marginTop: 5 }}>
+          {breakdown.pending > 0 && <span style={{ color: HZ.warning }}>+{breakdown.pending} pending</span>}
+          {breakdown.pending > 0 && breakdown.rejected > 0 && <span style={{ color: HZ.inkMuted }}> · </span>}
+          {breakdown.rejected > 0 && <span style={{ color: HZ.critical }}>+{breakdown.rejected} rejected</span>}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// ─── Consumption ring (Trade Horizon hero stat) ───────────────────────────────
+// Replaces the plain "Confirmed Consumption" KpiTile as the Overview tab's hero element — an SVG
+// circular progress ring is this direction's single most defining piece. Legend colors are the
+// real, reserved status palette (HZ.good/warning/critical), never the decorative ring gradient —
+// a status color must never double as this ring's cosmetic gradient (dataviz skill's own rule).
+const KpiRing = ({ pct, confirmed, pending, rejected, remaining }) => {
+  const r = 56, circ = 2 * Math.PI * r;
+  const offset = circ - (Math.min(100, pct) / 100) * circ;
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 24, flexWrap: "wrap" }}>
+      <div style={{ position: "relative", width: 132, height: 132, flexShrink: 0 }}>
+        <svg width="132" height="132" viewBox="0 0 132 132" style={{ transform: "rotate(-90deg)" }}>
+          <circle cx="66" cy="66" r={r} fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth="14" />
+          <circle cx="66" cy="66" r={r} fill="none" stroke="url(#hzRingGrad)" strokeWidth="14"
+            strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round" />
+          <defs>
+            <linearGradient id="hzRingGrad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor={HZ.gradCyan[0]} /><stop offset="100%" stopColor={HZ.gradCyan[1]} />
+            </linearGradient>
+          </defs>
+        </svg>
+        <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ fontFamily: HZ.fontDisplay, fontSize: 28, fontWeight: 700, color: HZ.ink }}>
+            {pct.toFixed(1)}<span style={{ fontSize: 14 }}>%</span>
+          </div>
+          <div style={{ fontFamily: HZ.fontMono, fontSize: 10, color: HZ.inkMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>utilized</div>
+        </div>
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 9, flex: 1, minWidth: 160 }}>
+        {[
+          ["Confirmed", confirmed, HZ.good], ["Pending", pending, HZ.warning],
+          ["Rejected", rejected, HZ.critical], ["Remaining", remaining, "rgba(255,255,255,0.2)"],
+        ].map(([label, val, color]) => (
+          <div key={label} style={{ display: "flex", alignItems: "center", gap: 9, fontSize: 12.5 }}>
+            <span style={{ width: 8, height: 8, borderRadius: 3, background: color, flexShrink: 0 }} />
+            <span style={{ color: HZ.inkMuted, flex: 1, fontFamily: HZ.fontBody }}>{label}</span>
+            <span style={{ fontFamily: HZ.fontMono, fontWeight: 600, color: HZ.ink }}>{val.toLocaleString("en-US")} TEU</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+// ─── Carrier badge grid (Trade Horizon) ────────────────────────────────────────
+// Gradient assigned deterministically per carrier code (hash → one of 3 decorative gradient
+// pairs) since real carrier lists are data-driven, unlike the mockup's 3 hardcoded examples.
+const CarrierBadgeGrid = ({ rows }) => (
+  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(84px, 1fr))", gap: 10 }}>
+    {rows.map(r => {
+      const [g1, g2] = hzGradientFor(r.carrier);
+      return (
+        <div key={r.carrier} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 7,
+          padding: "14px 8px", background: "rgba(255,255,255,0.03)", border: `1px solid ${HZ.borderSoft}`, borderRadius: 14 }}>
+          <div style={{ width: 40, height: 40, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center",
+            fontFamily: HZ.fontDisplay, fontWeight: 700, fontSize: 12, color: "#06111f",
+            background: `linear-gradient(145deg, ${g1}, ${g2})` }}>
+            {r.carrier.slice(0, 2)}
+          </div>
+          <div style={{ fontFamily: HZ.fontMono, fontSize: 11, fontWeight: 600, color: HZ.inkMuted }}>{r.carrier}</div>
+          <div style={{ fontFamily: HZ.fontDisplay, fontSize: 13, fontWeight: 700, color: HZ.ink }}>{r.total.toLocaleString("en-US")} TEU</div>
+        </div>
+      );
+    })}
+  </div>
+);
+
+// ─── Carrier filter empty state (Overview tab, carrierFilter explicitly cleared to []) ─────────
+// Shared by the main DashboardPage component (in place of the bento-grid hero) and
+// MatchedShipmentsTable (in place of its row list) — both need identical copy, defined once here
+// since they're separate components in this same module.
+const NO_CARRIERS_SELECTED_MESSAGE = "No information available, please select at least one value to showcase the data.";
+const NoCarriersSelected = ({ minHeight = 140 }) => (
+  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight,
+    fontFamily: HZ.fontBody, fontSize: 13, color: HZ.inkMuted, textAlign: "center", padding: 24 }}>
+    {NO_CARRIERS_SELECTED_MESSAGE}
+  </div>
+);
+
+// ─── Carrier performance row (Total Allocated card — confirmation-rate ranking) ────────────────
+const PerfRow = ({ rank, carrier, rate }) => (
+  <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12 }}>
+    {rank != null && <span style={{ fontFamily: HZ.fontMono, fontSize: 10, color: HZ.inkFaint, width: 10 }}>{rank}</span>}
+    <span style={{ fontFamily: HZ.fontMono, fontWeight: 600, color: HZ.ink, flex: 1 }}>{carrier}</span>
+    <span style={{ fontFamily: HZ.fontMono, fontWeight: 700,
+      color: rate >= 80 ? HZ.good : rate >= 50 ? HZ.warning : HZ.critical }}>
+      {rate.toFixed(0)}%
+    </span>
+  </div>
+);
+
+// ─── Tab button (Dashboard tab bar) ────────────────────────────────────────────
+const TAB_ICONS = {
+  overview: IconDashboard, contracts: IconFileCertificate, carriers: IconShip,
+  margin: IconCoin, compliance: IconWarning,
+};
+
+const TabButton = ({ tab, active, onClick }) => {
+  const [hov, setHov] = useState(false);
+  const TabIcon = TAB_ICONS[tab.key];
+  return (
+    <button type="button" onClick={onClick} data-testid={`dashboard-tab-${tab.key}`}
+      onMouseEnter={() => setHov(true)} onMouseLeave={() => setHov(false)}
+      style={{
+        padding: "10px 16px", background: active ? "rgba(56,212,232,0.12)" : hov ? "rgba(255,255,255,0.05)" : "none",
+        border: "none", borderRadius: "10px 10px 0 0",
+        borderBottom: active ? `2px solid ${HZ.gradCyan[0]}` : "2px solid transparent",
+        color: active ? HZ.gradCyan[0] : hov ? HZ.ink : HZ.inkMuted,
+        fontFamily: HZ.fontBody, fontSize: 13, fontWeight: 600,
+        cursor: "pointer", marginBottom: -1,
+        transition: "background .15s, color .15s, border-color .15s",
+        display: "flex", alignItems: "center", gap: 7,
+      }}>
+      {TabIcon && <TabIcon size={14} />}
+      {tab.label}
+      {tab.count != null && tab.count > 0 && (
+        <span style={{
+          background: HZ.critical, color: "#fff",
+          fontFamily: HZ.fontMono, fontSize: 10, fontWeight: 700,
+          borderRadius: 10, padding: "1px 6px", lineHeight: "16px",
+        }}>
+          {tab.count}
+        </span>
+      )}
+    </button>
+  );
+};
+
+// ─── Filter select (Status/Booking filter bars — Overview, Contract Consumption,
+// Compliance Review tabs) — a plain <select style={inputBase}> pairing, not the Sel
+// primitive (its own label block is too tall for an inline filter bar). Built as a
+// component (not a hoisted style object) so its inputBase spread re-resolves T's
+// live theme values on every render rather than freezing them at module load.
+const FilterSelect = ({ label, value, onChange, options }) => (
+  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+    <label style={{ fontFamily: T.body, fontSize: 9.5, fontWeight: 700, color: T.textMuted,
+      textTransform: "uppercase", letterSpacing: ".08em" }}>{label}</label>
+    <select value={value} onChange={e => onChange(e.target.value)}
+      style={{ ...inputBase, width: "auto", padding: "6px 10px", fontFamily: T.mono,
+        fontSize: 11.5, fontWeight: 600, cursor: "pointer" }}>
+      <option value="All">All</option>
+      {options.map(o => <option key={o} value={o}>{o}</option>)}
+    </select>
+  </div>
+);
+
+// Every column's filter definition in display order, including Carrier (isCarrier: true — its
+// state is owned by the parent DashboardPage, not local to this table, since it also drives the
+// ring/badges/charts above; see the Overview call site). The other seven are local-only display
+// filters, replacing what used to be two separate Status/Booking <select> dropdowns with the same
+// per-column mechanism applied uniformly.
+const TABLE_COLUMNS = [
+  { key: "id",       label: "Shipment ID",  getValue: r => r.id },
+  { key: "route",    label: "POL → POD",    getValue: r => `${r.pol} → ${r.pod}` },
+  { key: "carrier",  label: "Carrier",      isCarrier: true },
+  { key: "contract", label: "Contract",     getValue: r => r.contractType },
+  { key: "space",    label: "Space Config", getValue: r => (r.alloc ? `${r.alloc.pol} → ${r.alloc.pod}` : "No config match") },
+  { key: "teu",      label: "TEU",          getValue: r => String(r.teu) },
+  { key: "status",   label: "Status",       getValue: r => r.status },
+  { key: "booking",  label: "Booking",      getValue: r => r.bookingStatus || "—" },
+];
+
 // ─── Matched Shipments Table (Overview tab) ───────────────────────────────────
 
 // Bug fix (found live via exploratory QA, 2026-09): this used to match a shipment to a space
@@ -77,7 +356,14 @@ const DeltaBadge = ({ delta, prevTEU }) => {
 // doesn't understand shows "No config match" even though it genuinely is one). Verified live on
 // real shipments both ways. Now keyed off the same allocationId link everywhere else on this page
 // already uses.
-export const MatchedShipmentsTable = ({ shipments, containers, carriers, activeAllocations, teuDefs }) => {
+export const MatchedShipmentsTable = ({
+  shipments, containers, carriers, activeAllocations, teuDefs,
+  carrierFilter = null, availableCarriers = null, onCarrierFilterChange = () => {},
+}) => {
+  // Falls back to deriving its own candidate list from `shipments` when the caller doesn't pass
+  // one (e.g. the direct-render unit test) — the Overview call site passes the real one, computed
+  // from the UN-filtered row set so an excluded carrier stays selectable.
+  const carrierOptions = availableCarriers ?? [...new Set(shipments.map(s => s.carrierCode))].sort();
   const rows = useMemo(() => shipments.map(s => {
     const teu     = containers.filter(c => c.shipmentId === s.id).reduce((acc, c) => acc + teuOf(c.size, c.type, teuDefs), 0);
     const carrier = carriers.find(c => c.code === s.carrierCode);
@@ -85,19 +371,47 @@ export const MatchedShipmentsTable = ({ shipments, containers, carriers, activeA
     return { ...s, teu, carrier, alloc };
   }), [shipments, activeAllocations, containers, carriers, teuDefs]);
 
+  // Display-layer filters only — layered on top of the allocationId-matched `rows` above, never a
+  // substitute for that matching. Keyed by column key; a missing/null entry means "no filter" for
+  // that column, an array is the chosen subset (same convention as the Carrier filter above it —
+  // an empty array is a real, deliberate "show nothing", not the same as "no filter").
+  const [colFilters, setColFilters] = useState({});
+  const setColFilter = (key, value) => setColFilters(prev => ({ ...prev, [key]: value }));
+  const localColumns = TABLE_COLUMNS.filter(c => !c.isCarrier);
+
+  // Each column's own checklist is built from the full, un-filtered-by-any-column row set — same
+  // precedent as the Carrier filter's own available list — so unchecking a value never removes it
+  // from its own filter's future options.
+  const availableByColumn = useMemo(() => {
+    const out = {};
+    localColumns.forEach(col => {
+      out[col.key] = [...new Set(rows.map(col.getValue))].sort((a, b) => {
+        const na = Number(a), nb = Number(b);
+        return !Number.isNaN(na) && !Number.isNaN(nb) ? na - nb : a.localeCompare(b);
+      });
+    });
+    return out;
+  }, [rows]);
+
+  const filteredRows = useMemo(() => rows.filter(r =>
+    localColumns.every(col => {
+      const sel = colFilters[col.key];
+      return sel == null || sel.includes(col.getValue(r));
+    })
+  ), [rows, colFilters]);
+
   const [offset, setOffset] = useState(0);
   const [limit,  setLimit]  = useState(getStoredPageSize);
-  // A changed date range can shrink the result set below whatever page was showing.
-  useEffect(() => { setOffset(0); }, [rows]);
-  const pageRows = rows.slice(offset, offset + limit);
+  // A changed date range or filter can shrink the result set below whatever page was showing.
+  useEffect(() => { setOffset(0); }, [filteredRows]);
+  const pageRows = filteredRows.slice(offset, offset + limit);
 
-  const HDR = ["Shipment ID", "POL → POD", "Carrier", "Contract", "Space Config", "TEU", "Status", "Booking"];
   const { template: COL, startResize } = useResizableColumns("dashboard-matched-shipments", [130, 120, 120, 110, 140, 48, 90, 90]);
 
   return (
-    <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden" }}>
+    <div data-testid="matched-shipments-table" style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 16, backdropFilter: "blur(16px)", overflow: "hidden" }}>
       <div style={{ padding: "15px 20px", borderBottom: `1px solid ${T.border}` }}>
-        <h2 style={{ fontFamily: T.head, fontSize: 17, fontWeight: 700, color: T.text, margin: 0 }}>
+        <h2 style={{ fontFamily: HZ.fontDisplay, fontSize: 17, fontWeight: 600, color: HZ.ink, margin: 0 }}>
           Shipments in Period
         </h2>
         <p style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, margin: "2px 0 0" }}>
@@ -105,23 +419,46 @@ export const MatchedShipmentsTable = ({ shipments, containers, carriers, activeA
         </p>
       </div>
 
-      {shipments.length === 0 ? (
+      {/* The header row — and with it every column's filter trigger — always renders, independent
+          of whether there's any data below it. It's the only way back out of an empty-selection
+          state below (all-carriers-cleared or any other column filtered to nothing), so it can't
+          be part of a branch that state replaces (that was the earlier bug: Clear used to remove
+          the very control needed to undo it). Column filters used to be two separate Status/
+          Booking <select> dropdowns here; replaced by the same per-column mechanism every other
+          column now uses. */}
+      <div style={{ display: "grid", gridTemplateColumns: COL,
+        padding: "9px 20px", borderBottom: `1px solid ${T.border}` }}>
+        {TABLE_COLUMNS.map((col, i) => (
+          <div key={col.key} style={{ position: "relative", paddingLeft: 6, fontFamily: T.body, fontSize: 10.5,
+            fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
+            {col.isCarrier ? (
+              <ColumnFilter label="Carrier" available={carrierOptions} selected={carrierFilter}
+                onChange={onCarrierFilterChange} describe={code => carriers.find(c => c.code === code)?.name || ""}
+                tokens={HZ_FILTER_TOKENS} />
+            ) : (
+              <ColumnFilter label={col.label} available={availableByColumn[col.key]}
+                selected={colFilters[col.key] ?? null} onChange={v => setColFilter(col.key, v)}
+                tokens={HZ_FILTER_TOKENS} />
+            )}
+            {i < TABLE_COLUMNS.length - 1 && <ColResizer onStart={e => startResize(i, e)} />}
+          </div>
+        ))}
+      </div>
+
+      {Array.isArray(carrierFilter) && carrierFilter.length === 0 ? (
+        <NoCarriersSelected minHeight={120} />
+      ) : shipments.length === 0 ? (
         <div style={{ padding: 40, textAlign: "center", color: T.textMuted, fontFamily: T.body, fontSize: 13 }}>
           No shipments with ETD in this period. Adjust the date range or create new shipments.
         </div>
+      ) : filteredRows.length === 0 ? (
+        <div style={{ padding: 40, textAlign: "center", color: T.textMuted, fontFamily: T.body, fontSize: 13 }}>
+          No shipments match the selected filters.
+        </div>
       ) : (
         <>
-          <div style={{ display: "grid", gridTemplateColumns: COL,
-            padding: "9px 20px", borderBottom: `1px solid ${T.border}` }}>
-            {HDR.map((h, i) => (
-              <div key={h} style={{ position: "relative", paddingLeft: 6, fontFamily: T.body, fontSize: 10.5,
-                fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
-                {h}{i < HDR.length - 1 && <ColResizer onStart={e => startResize(i, e)} />}
-              </div>
-            ))}
-          </div>
           {pageRows.map(s => (
-            <div key={s.id}
+            <div key={s.id} data-testid={`shipment-row-${s.id}`}
               style={{ display: "grid", gridTemplateColumns: COL,
                 padding: "12px 20px", borderBottom: `1px solid ${T.border}22`,
                 alignItems: "center", transition: "background .1s" }}
@@ -153,7 +490,7 @@ export const MatchedShipmentsTable = ({ shipments, containers, carriers, activeA
           ))}
           <div style={{ padding: "10px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
             <PageSizeSelect value={limit} onChange={n => { setLimit(n); setOffset(0); }} />
-            <div style={{ flex: 1 }}><Pagination total={rows.length} offset={offset} limit={limit} onPage={setOffset} /></div>
+            <div style={{ flex: 1 }}><Pagination total={filteredRows.length} offset={offset} limit={limit} onPage={setOffset} /></div>
           </div>
         </>
       )}
@@ -166,6 +503,11 @@ export const MatchedShipmentsTable = ({ shipments, containers, carriers, activeA
 const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocations = [], contractTrendData, teuDefs }) => {
   const [contractMap, setContractMap] = useState({});
   const [loading,     setLoading]     = useState(false);
+  // Display-layer filter for "Shipments by Contract" below — applied once, per contract
+  // group's own shipment list, not duplicated per card. Does not touch allocByContract/
+  // consumedByContract/chartRows (the charts above stay date-range-scoped only, untouched).
+  const [statusFilter, setStatusFilter]   = useState("All");
+  const [bookingFilter, setBookingFilter] = useState("All");
 
   const centralShipments = useMemo(() =>
     rangeShipments.filter(s => s.contractType === "Central" && s.contractId),
@@ -278,12 +620,12 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocat
     return (
       <div>
         <div style={{ marginBottom: 16 }}>
-          <h2 style={{ fontFamily: T.head, fontSize: 19, fontWeight: 700, color: T.text, margin: 0 }}>Contract Consumption</h2>
+          <h2 style={{ fontFamily: HZ.fontDisplay, fontSize: 19, fontWeight: 600, color: HZ.ink, margin: 0 }}>Contract Consumption</h2>
           <p style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, margin: "3px 0 0" }}>
             Central shipments in the selected period, grouped by contract
           </p>
         </div>
-        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12,
+        <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 16, backdropFilter: "blur(16px)",
           padding: 48, textAlign: "center" }}>
           <div style={{ fontFamily: T.body, fontSize: 14, color: T.textMuted, marginBottom: 8 }}>
             No Central shipments in this period.
@@ -299,7 +641,7 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocat
   return (
     <div>
       <div style={{ marginBottom: 16 }}>
-        <h2 style={{ fontFamily: T.head, fontSize: 19, fontWeight: 700, color: T.text, margin: 0 }}>Contract Consumption</h2>
+        <h2 style={{ fontFamily: HZ.fontDisplay, fontSize: 19, fontWeight: 600, color: HZ.ink, margin: 0 }}>Contract Consumption</h2>
         <p style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted, margin: "3px 0 0" }}>
           {groups.length} contract{groups.length !== 1 ? "s" : ""} · {centralShipments.length} Central shipment{centralShipments.length !== 1 ? "s" : ""} in range
         </p>
@@ -313,10 +655,10 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocat
 
           {/* Left: allocated vs consumed bars */}
           {chartRows.length > 0 && (
-            <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12,
+            <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 16, backdropFilter: "blur(16px)",
               padding: "18px 20px" }}>
               <div style={{ marginBottom: 14 }}>
-                <h2 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: "0 0 3px" }}>
+                <h2 style={{ fontFamily: HZ.fontDisplay, fontSize: 15, fontWeight: 600, color: HZ.ink, margin: "0 0 3px" }}>
                   Allocated vs Confirmed TEU
                 </h2>
                 <p style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, margin: 0 }}>
@@ -383,10 +725,10 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocat
 
           {/* Right: 6-week trend by contract */}
           {contractTrendData?.contractIds?.length > 0 && (
-            <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12,
+            <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 16, backdropFilter: "blur(16px)",
               padding: "20px 20px 14px" }}>
               <div style={{ marginBottom: 16 }}>
-                <h2 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: "0 0 3px" }}>
+                <h2 style={{ fontFamily: HZ.fontDisplay, fontSize: 15, fontWeight: 600, color: HZ.ink, margin: "0 0 3px" }}>
                   6-Week TEU Trend
                 </h2>
                 <p style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, margin: 0 }}>
@@ -401,7 +743,7 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocat
                   <YAxis tick={{ fontFamily: T.body, fontSize: 10, fill: T.textMuted }}
                     axisLine={false} tickLine={false} allowDecimals={false} />
                   <Tooltip
-                    contentStyle={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, fontFamily: T.body, fontSize: 12 }}
+                    contentStyle={{ background: "#0d1220", border: `1px solid ${HZ.border}`, borderRadius: 12, fontFamily: HZ.fontBody, fontSize: 12 }}
                     labelStyle={{ color: T.text, fontWeight: 600, marginBottom: 4 }}
                     itemStyle={{ color: T.textMuted }}
                     formatter={(v, name) => [`${v} TEU`, contractTrendData.refMap[name] || name]}
@@ -421,10 +763,30 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocat
         </div>
       )}
 
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+        marginBottom: 12, flexWrap: "wrap", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, fontFamily: T.body, fontSize: 10.5,
+          fontWeight: 700, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
+          <span style={{ width: 3, height: 11, borderRadius: 2, background: T.accent, display: "inline-block" }} />
+          Shipments by Contract
+        </div>
+        <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+          <FilterSelect label="Status" value={statusFilter} onChange={setStatusFilter} options={STATUSES} />
+          <FilterSelect label="Booking" value={bookingFilter} onChange={setBookingFilter} options={Object.keys(BOOKING_STATUS_VARIANT)} />
+        </div>
+      </div>
+
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         {groups.map(g => {
           const contract = contractMap[g.contractId];
-          const groupBuckets = g.shipments.reduce((acc, s) => {
+          // Pure display-layer filter — applied to this group's own shipment list only,
+          // the contract-level totals/bars above (allocByContract/consumedByContract/
+          // chartRows) are untouched.
+          const filteredShipments = g.shipments.filter(s =>
+            (statusFilter === "All"  || s.status === statusFilter) &&
+            (bookingFilter === "All" || s.bookingStatus === bookingFilter)
+          );
+          const groupBuckets = filteredShipments.reduce((acc, s) => {
             const teu = teuFor(s);
             if (s.bookingStatus === "Confirmed") acc.confirmed += teu;
             else if (s.bookingStatus === "Rejected") acc.rejected += teu;
@@ -435,8 +797,8 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocat
           const carrier  = carriers.find(c => c.code === g.carrierCode);
 
           return (
-            <div key={g.contractId} style={{ background: T.surface, border: `1px solid ${T.border}`,
-              borderRadius: 12, overflow: "hidden" }}>
+            <div key={g.contractId} style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, backdropFilter: "blur(16px)",
+              borderRadius: 16, overflow: "hidden" }}>
 
               {/* Contract header */}
               <div style={{ padding: "14px 20px", borderBottom: `1px solid ${T.border}`,
@@ -480,7 +842,7 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocat
                     </div>
                   )}
                   <span style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
-                    {g.shipments.length} shipment{g.shipments.length !== 1 ? "s" : ""}
+                    {filteredShipments.length} shipment{filteredShipments.length !== 1 ? "s" : ""}
                   </span>
                 </div>
               </div>
@@ -493,7 +855,12 @@ const ContractConsumptionView = ({ rangeShipments, containers, carriers, allocat
                     color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>{h}</span>
                 ))}
               </div>
-              {g.shipments.map(s => (
+              {filteredShipments.length === 0 ? (
+                <div style={{ padding: 24, textAlign: "center", color: T.textMuted,
+                  fontFamily: T.body, fontSize: 12.5, fontStyle: "italic" }}>
+                  No shipments in this contract match the selected filters.
+                </div>
+              ) : filteredShipments.map(s => (
                 <div key={s.id}
                   style={{ display: "grid", gridTemplateColumns: SHP_COL,
                     padding: "10px 20px", borderBottom: `1px solid ${T.border}22`,
@@ -566,21 +933,13 @@ const MarginView = ({ financeEnabled }) => {
 
   const noData = !data || (data.byCarrier.length === 0 && data.byLane.length === 0);
 
-  const kpiStyle = { background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "20px 24px" };
-  const kpiLabel = { fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".08em" };
-  const kpiVal   = (v, col) => (
-    <div style={{ fontFamily: T.mono, fontSize: 28, fontWeight: 700, color: col, margin: "8px 0 2px" }}>
-      {financeEnabled ? v : "••••"}
-    </div>
-  );
-
   const pct  = data?.grossMarginPct ?? null;
   const col  = marginColor(pct);
 
   const TrendChart = ({ rows, dataKeys, title, subtitle }) => (
-    <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "20px 20px 14px" }}>
+    <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 16, backdropFilter: "blur(16px)", padding: "20px 20px 14px" }}>
       <div style={{ marginBottom: 14 }}>
-        <h3 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: "0 0 2px" }}>{title}</h3>
+        <h3 style={{ fontFamily: HZ.fontDisplay, fontSize: 15, fontWeight: 600, color: HZ.ink, margin: "0 0 2px" }}>{title}</h3>
         <p style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, margin: 0 }}>{subtitle}</p>
       </div>
       <ResponsiveContainer width="100%" height={220}>
@@ -590,7 +949,7 @@ const MarginView = ({ financeEnabled }) => {
           <YAxis tick={{ fontFamily: T.body, fontSize: 10, fill: T.textMuted }} axisLine={false} tickLine={false}
             tickFormatter={v => `${v}%`} domain={['auto', 'auto']} allowDecimals={false} />
           <ReferenceLine y={0} stroke={T.border} strokeDasharray="3 3" />
-          <Tooltip contentStyle={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, fontFamily: T.body, fontSize: 12 }}
+          <Tooltip contentStyle={{ background: "#0d1220", border: `1px solid ${HZ.border}`, borderRadius: 12, fontFamily: HZ.fontBody, fontSize: 12 }}
             labelStyle={{ color: T.text, fontWeight: 600, marginBottom: 4 }} itemStyle={{ color: T.textMuted }}
             formatter={(v, name) => [v != null ? `${v}%` : "—", name]} cursor={{ fill: `${T.accent}18` }} />
           <Legend wrapperStyle={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, paddingTop: 10 }} />
@@ -638,7 +997,7 @@ const MarginView = ({ financeEnabled }) => {
     <div>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 22, flexWrap: "wrap", gap: 10 }}>
         <div>
-          <h2 style={{ fontFamily: T.head, fontSize: 19, fontWeight: 700, color: T.text, margin: 0 }}>Margin Overview</h2>
+          <h2 style={{ fontFamily: HZ.fontDisplay, fontSize: 19, fontWeight: 600, color: HZ.ink, margin: 0 }}>Margin Overview</h2>
           <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>All time · base currency USD</span>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
@@ -664,30 +1023,17 @@ const MarginView = ({ financeEnabled }) => {
 
       {/* KPIs */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 24 }}>
-        <div style={kpiStyle}>
-          <div style={kpiLabel}>Total Buy</div>
-          {kpiVal(fmtUsd(data.totalBuyUsd), T.warning)}
-          <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>cost to carrier</div>
-        </div>
-        <div style={kpiStyle}>
-          <div style={kpiLabel}>Total Sell</div>
-          {kpiVal(fmtUsd(data.totalSellUsd), T.success)}
-          <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>revenue from customer</div>
-        </div>
-        <div style={kpiStyle}>
-          <div style={kpiLabel}>Gross Profit</div>
-          {kpiVal(fmtUsd(data.grossProfitUsd), data.grossProfitUsd >= 0 ? T.success : T.danger)}
-          <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>sell − buy</div>
-        </div>
-        <div style={{ ...kpiStyle, background: pct != null ? `${col}10` : T.surface, borderColor: pct != null ? `${col}44` : T.border }}>
-          <div style={kpiLabel}>Gross Margin</div>
-          <div style={{ fontFamily: T.mono, fontSize: 28, fontWeight: 700, color: pct != null ? col : T.textMuted, margin: "8px 0 2px" }}>
-            {pct != null ? `${pct}%` : "—"}
-          </div>
-          <div style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted }}>
-            {pct == null ? "no sell lines" : pct >= 20 ? "healthy" : pct >= 10 ? "watch" : "below target"}
-          </div>
-        </div>
+        <KpiTile label="Total Buy" caption="cost to carrier"
+          value={financeEnabled ? fmtUsd(data.totalBuyUsd) : "••••"} />
+        <KpiTile label="Total Sell" caption="revenue from customer"
+          value={financeEnabled ? fmtUsd(data.totalSellUsd) : "••••"} />
+        <KpiTile label="Gross Profit" caption="sell − buy"
+          value={financeEnabled ? fmtUsd(data.grossProfitUsd) : "••••"}
+          tintColor={data.grossProfitUsd >= 0 ? T.success : T.danger} />
+        <KpiTile label="Gross Margin"
+          value={pct != null ? `${pct}%` : "—"}
+          tintColor={pct != null ? col : undefined}
+          caption={pct == null ? "no sell lines" : pct >= 20 ? "healthy" : pct >= 10 ? "watch" : "below target"} />
       </div>
 
       {/* Trend charts */}
@@ -712,9 +1058,9 @@ const MarginView = ({ financeEnabled }) => {
 
       {/* Carrier breakdown table */}
       {data.byCarrier.length > 0 && (
-        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden", marginBottom: 16 }}>
+        <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 16, backdropFilter: "blur(16px)", overflow: "hidden", marginBottom: 16 }}>
           <div style={{ padding: "13px 20px", borderBottom: `1px solid ${T.border}` }}>
-            <h3 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: 0 }}>By Carrier</h3>
+            <h3 style={{ fontFamily: HZ.fontDisplay, fontSize: 15, fontWeight: 600, color: HZ.ink, margin: 0 }}>By Carrier</h3>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "100px 1fr 1fr 1fr 80px",
             padding: "8px 20px", borderBottom: `1px solid ${T.border}` }}>
@@ -750,10 +1096,10 @@ const MarginView = ({ financeEnabled }) => {
 
       {/* Customer breakdown table (Organization Model Enhancement Epic 4) */}
       {data.byCustomer?.length > 0 && (
-        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden", marginBottom: 16 }}>
+        <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 16, backdropFilter: "blur(16px)", overflow: "hidden", marginBottom: 16 }}>
           <div style={{ padding: "13px 20px", borderBottom: `1px solid ${T.border}`,
             display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-            <h3 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: 0 }}>By Customer</h3>
+            <h3 style={{ fontFamily: HZ.fontDisplay, fontSize: 15, fontWeight: 600, color: HZ.ink, margin: 0 }}>By Customer</h3>
             <label style={{ display: "flex", alignItems: "center", gap: 7, cursor: "pointer",
               fontFamily: T.body, fontSize: 12, color: T.textMuted, userSelect: "none" }}>
               <input type="checkbox" checked={groupByParent} onChange={e => setGroupByParent(e.target.checked)}
@@ -802,9 +1148,9 @@ const MarginView = ({ financeEnabled }) => {
           (every branch needs a country + an EMO/IMO office pointing at it) — a single-entity/
           single-branch deployment simply never sees this table, no configuration needed. */}
       {data.byEntity?.length > 0 && (
-        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden", marginBottom: 16 }}>
+        <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 16, backdropFilter: "blur(16px)", overflow: "hidden", marginBottom: 16 }}>
           <div style={{ padding: "13px 20px", borderBottom: `1px solid ${T.border}` }}>
-            <h3 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: 0 }}>By Entity</h3>
+            <h3 style={{ fontFamily: HZ.fontDisplay, fontSize: 15, fontWeight: 600, color: HZ.ink, margin: 0 }}>By Entity</h3>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr 1fr 80px",
             padding: "8px 20px", borderBottom: `1px solid ${T.border}` }}>
@@ -890,7 +1236,7 @@ const CarrierView = ({ rangeShipments, containers, carriers, carrierTrends, rang
   return (
     <div>
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 22 }}>
-        <h2 style={{ fontFamily: T.head, fontSize: 19, fontWeight: 700, color: T.text, margin: 0 }}>Carrier Volumes</h2>
+        <h2 style={{ fontFamily: HZ.fontDisplay, fontSize: 19, fontWeight: 600, color: HZ.ink, margin: 0 }}>Carrier Volumes</h2>
         <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>All shipments · by carrier code · TEU</span>
       </div>
 
@@ -898,9 +1244,9 @@ const CarrierView = ({ rangeShipments, containers, carriers, carrierTrends, rang
       <div style={{ display: "grid", gridTemplateColumns: barData.length > 0 ? "1fr 1fr" : "1fr", gap: 16, marginBottom: 20 }}>
 
         {/* Bar chart */}
-        <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "20px 20px 14px" }}>
+        <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 16, backdropFilter: "blur(16px)", padding: "20px 20px 14px" }}>
           <div style={{ marginBottom: 14 }}>
-            <h3 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: "0 0 2px" }}>TEU by Carrier — Selected Period</h3>
+            <h3 style={{ fontFamily: HZ.fontDisplay, fontSize: 15, fontWeight: 600, color: HZ.ink, margin: "0 0 2px" }}>TEU by Carrier — Selected Period</h3>
             <p style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, margin: 0 }}>Total: {totalTEU} TEU across {barData.length} carrier{barData.length !== 1 ? "s" : ""}</p>
           </div>
           <ResponsiveContainer width="100%" height={220}>
@@ -909,7 +1255,7 @@ const CarrierView = ({ rangeShipments, containers, carriers, carrierTrends, rang
               <XAxis dataKey="carrier" tick={{ fontFamily: T.mono, fontSize: 11, fill: T.textMuted }} axisLine={{ stroke: T.border }} tickLine={false} />
               <YAxis tick={{ fontFamily: T.body, fontSize: 10, fill: T.textMuted }} axisLine={false} tickLine={false} allowDecimals={false} />
               <Tooltip
-                contentStyle={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, fontFamily: T.body, fontSize: 12 }}
+                contentStyle={{ background: "#0d1220", border: `1px solid ${HZ.border}`, borderRadius: 12, fontFamily: HZ.fontBody, fontSize: 12 }}
                 labelStyle={{ color: T.text, fontWeight: 600, marginBottom: 4 }}
                 itemStyle={{ color: T.textMuted }}
                 formatter={(v, _name, props) => [`${v} TEU`, props.payload.name || props.payload.carrier]}
@@ -921,9 +1267,9 @@ const CarrierView = ({ rangeShipments, containers, carriers, carrierTrends, rang
 
         {/* 6-week trend line chart */}
         {barData.length > 0 && (
-          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "20px 20px 14px" }}>
+          <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 16, backdropFilter: "blur(16px)", padding: "20px 20px 14px" }}>
             <div style={{ marginBottom: 14 }}>
-              <h3 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: "0 0 2px" }}>6-Week Volume Trend</h3>
+              <h3 style={{ fontFamily: HZ.fontDisplay, fontSize: 15, fontWeight: 600, color: HZ.ink, margin: "0 0 2px" }}>6-Week Volume Trend</h3>
               <p style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, margin: 0 }}>TEU shipped per carrier, calendar-week aligned</p>
             </div>
             <ResponsiveContainer width="100%" height={220}>
@@ -932,7 +1278,7 @@ const CarrierView = ({ rangeShipments, containers, carriers, carrierTrends, rang
                 <XAxis dataKey="week" tick={{ fontFamily: T.mono, fontSize: 10, fill: T.textMuted }} axisLine={{ stroke: T.border }} tickLine={false} />
                 <YAxis tick={{ fontFamily: T.body, fontSize: 10, fill: T.textMuted }} axisLine={false} tickLine={false} allowDecimals={false} />
                 <Tooltip
-                  contentStyle={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, fontFamily: T.body, fontSize: 12 }}
+                  contentStyle={{ background: "#0d1220", border: `1px solid ${HZ.border}`, borderRadius: 12, fontFamily: HZ.fontBody, fontSize: 12 }}
                   labelStyle={{ color: T.text, fontWeight: 600, marginBottom: 4 }}
                   itemStyle={{ color: T.textMuted }}
                   formatter={(v, name) => [`${v} TEU`, name]}
@@ -951,9 +1297,9 @@ const CarrierView = ({ rangeShipments, containers, carriers, carrierTrends, rang
       </div>
 
       {/* Ranking table */}
-      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden" }}>
+      <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 16, backdropFilter: "blur(16px)", overflow: "hidden" }}>
         <div style={{ padding: "13px 20px", borderBottom: `1px solid ${T.border}` }}>
-          <h3 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: 0 }}>Carrier Rankings</h3>
+          <h3 style={{ fontFamily: HZ.fontDisplay, fontSize: 15, fontWeight: 600, color: HZ.ink, margin: 0 }}>Carrier Rankings</h3>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "40px 100px 1fr 120px 120px",
           padding: "8px 20px", borderBottom: `1px solid ${T.border}` }}>
@@ -1002,12 +1348,17 @@ const ComplianceReviewView = ({ compHits, custHits, loading, onRefresh }) => {
   const cHits    = custHits?.hits || [];
   const bothEnabled = custHits?.enabled !== false;
 
+  // Display-layer filter on the Shipments hit table only — the customer hits table below has
+  // no filter (matches the approved mockup). Doesn't touch compHits/custHits fetch logic.
+  const [statusFilter, setStatusFilter] = useState("All");
+  const filteredShipHits = shipHits.filter(s => statusFilter === "All" || s.status === statusFilter);
+
   return (
     <div>
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
         <div>
-          <h2 style={{ fontFamily: T.head, fontSize: 19, fontWeight: 700, color: T.text, margin: 0 }}>
+          <h2 style={{ fontFamily: HZ.fontDisplay, fontSize: 19, fontWeight: 600, color: HZ.ink, margin: 0 }}>
             Compliance Review
           </h2>
           <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, margin: "4px 0 0" }}>
@@ -1029,18 +1380,21 @@ const ComplianceReviewView = ({ compHits, custHits, loading, onRefresh }) => {
       ) : (
         <>
           {/* ── Shipment Hits ── */}
-          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden", marginBottom: 24 }}>
+          <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 16, backdropFilter: "blur(16px)", overflow: "hidden", marginBottom: 24 }}>
             <div style={{ padding: "14px 20px", borderBottom: `1px solid ${T.border}`,
-              display: "flex", alignItems: "center", gap: 10 }}>
-              <h3 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: 0 }}>
-                Shipments — Active Compliance Hits
-              </h3>
-              {shipHits.length > 0 && (
-                <span style={{ background: T.danger, color: "#fff", fontFamily: T.mono, fontSize: 10,
-                  fontWeight: 700, borderRadius: 10, padding: "1px 7px" }}>
-                  {shipHits.length}
-                </span>
-              )}
+              display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <h3 style={{ fontFamily: HZ.fontDisplay, fontSize: 15, fontWeight: 600, color: HZ.ink, margin: 0 }}>
+                  Shipments — Active Compliance Hits
+                </h3>
+                {shipHits.length > 0 && (
+                  <span style={{ background: T.danger, color: "#fff", fontFamily: T.mono, fontSize: 10,
+                    fontWeight: 700, borderRadius: 10, padding: "1px 7px" }}>
+                    {shipHits.length}
+                  </span>
+                )}
+              </div>
+              <FilterSelect label="Status" value={statusFilter} onChange={setStatusFilter} options={STATUSES} />
             </div>
             {/* Column headers */}
             <div style={{ display: "grid", gridTemplateColumns: "140px 130px 110px 1fr 120px 90px",
@@ -1054,7 +1408,12 @@ const ComplianceReviewView = ({ compHits, custHits, loading, onRefresh }) => {
                 fontFamily: T.body, fontSize: 14, fontStyle: "italic" }}>
                 No active compliance hits — all shipments are clear.
               </div>
-            ) : shipHits.map(s => {
+            ) : filteredShipHits.length === 0 ? (
+              <div style={{ padding: 32, textAlign: "center", color: T.textMuted,
+                fontFamily: T.body, fontSize: 14, fontStyle: "italic" }}>
+                No compliance hits match the selected Status filter.
+              </div>
+            ) : filteredShipHits.map(s => {
               const hitLabels = s.screening.hits.map(h => `${h.field}: ${h.value}`).join(" · ");
               return (
                 <div key={s.id}
@@ -1081,10 +1440,10 @@ const ComplianceReviewView = ({ compHits, custHits, loading, onRefresh }) => {
           </div>
 
           {/* ── Customer Hits ── */}
-          <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, overflow: "hidden" }}>
+          <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 16, backdropFilter: "blur(16px)", overflow: "hidden" }}>
             <div style={{ padding: "14px 20px", borderBottom: `1px solid ${T.border}`,
               display: "flex", alignItems: "center", gap: 10 }}>
-              <h3 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: 0 }}>
+              <h3 style={{ fontFamily: HZ.fontDisplay, fontSize: 15, fontWeight: 600, color: HZ.ink, margin: 0 }}>
                 Customer — SDN Matches
               </h3>
               {cHits.length > 0 && (
@@ -1209,6 +1568,20 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
     setRangeEnd(addDays(ws, 6));
   };
 
+  // Overview tab's carrier column filter (Shipments in Period table) — persisted the same
+  // try/catch-guarded JSON idiom PageSizeSelect/useResizableColumns already use elsewhere on
+  // this page. null = "no filter, show every carrier"; a non-null array is the selected subset.
+  const CARRIER_FILTER_KEY = "cd_dashboard_carrier_filter";
+  const [carrierFilter, setCarrierFilter] = useState(() => {
+    try {
+      const v = JSON.parse(localStorage.getItem(CARRIER_FILTER_KEY) || "null");
+      return Array.isArray(v) ? v : null;
+    } catch { return null; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(CARRIER_FILTER_KEY, JSON.stringify(carrierFilter)); } catch {}
+  }, [carrierFilter]);
+
   // Active allocations: those whose effective period overlaps the selected range
   const activeAllocations = useMemo(() =>
     allocations.filter(a => {
@@ -1225,6 +1598,48 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
     return containers.filter(c => c.shipmentId === s.id).reduce((acc, c) => acc + teuOf(c.size, c.type, teuDefs), 0) > 0;
   }), [shipments, rangeStart, rangeEnd, containers, teuDefs]);
 
+  // Overview tab's carrier filter — derived from rangeShipments/activeAllocations but never
+  // written back into them, since both are shared with Contract Consumption/Carrier Volumes
+  // (ContractConsumptionView/CarrierView props below) and must stay unfiltered for those tabs.
+  //
+  // The popover's own checklist is built from overviewCentralShipments (BEFORE the carrier
+  // filter is applied) so an unchecked carrier stays selectable instead of vanishing from the
+  // list the moment it's excluded — the same way a spreadsheet's own column filter behaves.
+  const overviewCentralShipments = useMemo(() =>
+    rangeShipments.filter(s => s.contractType === "Central"), [rangeShipments]);
+
+  const availableCarrierCodes = useMemo(() =>
+    [...new Set(overviewCentralShipments.map(s => s.carrierCode))].sort(),
+    [overviewCentralShipments]);
+
+  // Reconciled against carriers actually present this period — a filter selection saved while
+  // looking at a different date range shouldn't silently zero out this one just because none of
+  // those carriers shipped anything now.
+  const carrierFilterSet = useMemo(() => {
+    if (!carrierFilter) return null; // never customized — no filter
+    const reconciled = carrierFilter.filter(c => availableCarrierCodes.includes(c));
+    // A non-empty saved filter that no longer matches anything this period (e.g. saved while
+    // looking at a different date range) falls back to "no filter" rather than a confusingly
+    // empty tab. But an explicit Clear — carrierFilter was already [] — means "show nothing" and
+    // must stay that way: collapsing an empty result to "show all" here regardless of *why* it's
+    // empty was exactly the bug that made the Clear button look like it did nothing.
+    if (carrierFilter.length > 0 && reconciled.length === 0) return null;
+    return new Set(reconciled);
+  }, [carrierFilter, availableCarrierCodes]);
+
+  // Distinct from carrierFilterSet being null (no filter) or non-empty (a real subset) — this is
+  // specifically "the user unchecked everything," which every consumption widget on the tab
+  // needs to render as an explicit empty state rather than a bare 0/blank chart.
+  const carrierFilterIsEmpty = Array.isArray(carrierFilter) && carrierFilter.length === 0;
+
+  const filteredRangeShipments = useMemo(() =>
+    carrierFilterSet ? rangeShipments.filter(s => carrierFilterSet.has(s.carrierCode)) : rangeShipments,
+    [rangeShipments, carrierFilterSet]);
+
+  const filteredActiveAllocations = useMemo(() =>
+    carrierFilterSet ? activeAllocations.filter(a => carrierFilterSet.has(a.carrierCode)) : activeAllocations,
+    [activeAllocations, carrierFilterSet]);
+
   const today = todayIso();
 
   // Split allocations: current (not expired) vs archived (expired)
@@ -1238,7 +1653,7 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
   // page's own per-allocation figures; now it's the same join, just date-range-scoped).
   const consumedMap = useMemo(() => {
     const m = {};
-    rangeShipments.forEach(s => {
+    filteredRangeShipments.forEach(s => {
       const matched = s.allocationId && activeAllocations.find(a => a.id === s.allocationId);
       if (!matched) return;
       const teu = containers.filter(c => c.shipmentId === s.id).reduce((acc, c) => acc + teuOf(c.size, c.type, teuDefs), 0);
@@ -1249,7 +1664,7 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
       else bucket.pending += teu;
     });
     return m;
-  }, [rangeShipments, containers, activeAllocations, teuDefs]);
+  }, [filteredRangeShipments, containers, activeAllocations, teuDefs]);
 
 
   // Trend data: delta vs previous equivalent period + 6-week sparkline — Confirmed only, matching
@@ -1272,7 +1687,7 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
     const prevEnd    = addDays(rangeStart, -1);
     const prevStart  = addDays(prevEnd, -(periodDays - 1));
     // All carrier codes that appear in the selected range — not just allocated ones
-    const allCodes = [...new Set(rangeShipments.map(s => s.carrierCode).filter(Boolean))];
+    const allCodes = [...new Set(filteredRangeShipments.map(s => s.carrierCode).filter(Boolean))];
     const trends   = {};
 
     allCodes.forEach(code => {
@@ -1310,7 +1725,7 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
     });
 
     return trends;
-  }, [rangeShipments, shipments, containers, rangeStart, rangeEnd, teuDefs]);
+  }, [filteredRangeShipments, shipments, containers, rangeStart, rangeEnd, teuDefs]);
 
   // Carrier Volumes tab's own trend line needs a genuinely raw (all-status, no allocationId
   // requirement) sparkline to actually match its own bar chart's philosophy — that tab is framed
@@ -1339,7 +1754,7 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
   // Chart: group by carrier — consumption is total across all contract types
   const chartData = useMemo(() => {
     const byCarrier = {};
-    activeAllocations.forEach(a => {
+    filteredActiveAllocations.forEach(a => {
       if (!byCarrier[a.carrierCode]) byCarrier[a.carrierCode] = { allocated: 0 };
       byCarrier[a.carrierCode].allocated += a.allocatedTEU;
       byCarrier[a.carrierCode].bucket = consumedMap[a.carrierCode] || { confirmed: 0, pending: 0, rejected: 0 };
@@ -1353,13 +1768,33 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
       remaining: Math.max(0, d.allocated - d.bucket.confirmed),
       total: d.allocated,
     }));
-  }, [activeAllocations, consumedMap, carriers]);
+  }, [filteredActiveAllocations, consumedMap, carriers]);
 
-  const totalAlloc    = activeAllocations.reduce((s, a) => s + a.allocatedTEU, 0);
+  // Confirmation-rate ranking (Total Allocated card, Overview) — Confirmed ÷ (Confirmed+Pending+
+  // Rejected) per carrier, off the same chartData buckets the bar chart/badge grid already use.
+  // A minimum requested-TEU floor keeps one small shipment from swinging a carrier to a
+  // meaningless 100%/0%. With 6 or fewer qualifying carriers a real top-3/bottom-3 split would
+  // overlap (the same carrier landing in both groups), so that case renders one ranked list
+  // instead — the split only kicks in once there's enough carriers for the two groups to be
+  // genuinely disjoint.
+  const MIN_RANKED_TEU = 4;
+  const carrierPerformance = useMemo(() => {
+    const ranked = chartData
+      .map(d => {
+        const requested = d.confirmed + d.pending + d.rejected;
+        return { carrier: d.carrier, requested, rate: requested > 0 ? (d.confirmed / requested) * 100 : null };
+      })
+      .filter(d => d.rate !== null && d.requested >= MIN_RANKED_TEU)
+      .sort((a, b) => b.rate - a.rate);
+    if (ranked.length <= 6) return { mode: "all", rows: ranked };
+    return { mode: "split", top: ranked.slice(0, 3), bottom: ranked.slice(-3) };
+  }, [chartData]);
+
+  const totalAlloc    = filteredActiveAllocations.reduce((s, a) => s + a.allocatedTEU, 0);
 
   // Trend chart data: reshape sparkData arrays into recharts [{week, MAEU, HLCU, ...}]
   const trendChartData = useMemo(() => {
-    const activeCodesSet = new Set(activeAllocations.map(a => a.carrierCode));
+    const activeCodesSet = new Set(filteredActiveAllocations.map(a => a.carrierCode));
     const activeCodes  = [...activeCodesSet];
     return Array.from({ length: 6 }, (_, i) => {
       const wStart  = addDays(rangeStart, -(5 - i) * 7);
@@ -1371,9 +1806,9 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
       });
       return pt;
     });
-  }, [carrierTrends, activeAllocations, rangeStart]);
+  }, [carrierTrends, filteredActiveAllocations, rangeStart]);
 
-  const trendCarriers = [...new Set(activeAllocations.map(a => a.carrierCode))];
+  const trendCarriers = [...new Set(filteredActiveAllocations.map(a => a.carrierCode))];
 
   // 6-week TEU trend by contract (Central shipments only). 2026-09-03 audit: contractIds used to
   // be every Central contract that EVER had a shipment, all-time, unbounded — not scoped to this
@@ -1417,70 +1852,104 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
   const totalRejected  = chartData.reduce((s, d) => s + d.rejected, 0);
   const totalRemain    = Math.max(0, totalAlloc - totalConfirmed);
 
+  // KPI-tile utilization tint (Confirmed Consumption / Remaining Capacity share the same
+  // confirmed/allocated ratio, just two sides of it) — no tint under 80%, warning 80-99%,
+  // danger at 100%+. Total Allocated is the denominator, not a utilization figure, so it
+  // never gets a tint regardless of this value.
+  const utilPct  = totalAlloc > 0 ? (totalConfirmed / totalAlloc) * 100 : 0;
+  const utilTint = totalAlloc === 0 ? undefined : utilPct >= 100 ? T.danger : utilPct >= 80 ? T.warning : undefined;
+
   const TooltipContent = ({ active, payload, label }) => {
     if (!active || !payload?.length) return null;
     const d = chartData.find(x => x.carrier === label);
     return (
-      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, padding: "12px 16px" }}>
-        <div style={{ fontFamily: T.mono, fontWeight: 700, color: T.accent, marginBottom: 8, fontSize: 13 }}>{label} · {d?.name}</div>
-        <div style={{ fontFamily: T.body, fontSize: 13, color: T.success }}>Confirmed: {d?.confirmed} TEU</div>
-        {d?.pending > 0 && <div style={{ fontFamily: T.body, fontSize: 13, color: T.warning }}>Pending: {d.pending} TEU</div>}
-        {d?.rejected > 0 && <div style={{ fontFamily: T.body, fontSize: 13, color: T.danger }}>Rejected: {d.rejected} TEU</div>}
-        <div style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted }}>Remaining: {d?.remaining} TEU</div>
-        <div style={{ fontFamily: T.body, fontSize: 13, fontWeight: 700, color: T.text,
-          borderTop: `1px solid ${T.border}`, marginTop: 8, paddingTop: 8 }}>Total: {d?.total} TEU</div>
+      <div style={{ background: "#0d1220", border: `1px solid ${HZ.border}`, borderRadius: 12, padding: "12px 16px" }}>
+        <div style={{ fontFamily: HZ.fontMono, fontWeight: 700, color: HZ.gradCyan[0], marginBottom: 8, fontSize: 13 }}>{label} · {d?.name}</div>
+        <div style={{ fontFamily: HZ.fontBody, fontSize: 13, color: HZ.good }}>Confirmed: {d?.confirmed} TEU</div>
+        {d?.pending > 0 && <div style={{ fontFamily: HZ.fontBody, fontSize: 13, color: HZ.warning }}>Pending: {d.pending} TEU</div>}
+        {d?.rejected > 0 && <div style={{ fontFamily: HZ.fontBody, fontSize: 13, color: HZ.critical }}>Rejected: {d.rejected} TEU</div>}
+        <div style={{ fontFamily: HZ.fontBody, fontSize: 13, color: HZ.inkMuted }}>Remaining: {d?.remaining} TEU</div>
+        <div style={{ fontFamily: HZ.fontBody, fontSize: 13, fontWeight: 700, color: HZ.ink,
+          borderTop: `1px solid ${HZ.border}`, marginTop: 8, paddingTop: 8 }}>Total: {d?.total} TEU</div>
       </div>
     );
   };
 
+  useHorizonFonts();
+
   return (
-    <div>
+    <div style={{ position: "relative", background: HZ.bg, margin: -24, padding: 24, borderRadius: 16 }}>
+      <HorizonBackdrop />
+      <div style={{ position: "relative", zIndex: 1 }}>
       {/* ── Header ── */}
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 24 }}>
         <div>
-          <h1 style={{ fontFamily: T.head, fontSize: 26, fontWeight: 800, color: T.text, margin: 0 }}>Consumption Dashboard</h1>
-          <p style={{ fontFamily: T.body, fontSize: 13, color: T.textMuted, margin: "4px 0 0" }}>
-            TEU allocation &amp; consumption · 20ft = 1 TEU · 40ft = 2 TEU
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <div style={{ width: 34, height: 34, borderRadius: 10, flexShrink: 0,
+              background: `linear-gradient(135deg, ${HZ.gradCyan[0]}, ${HZ.gradCyan[1]})`,
+              boxShadow: "0 0 0 1px rgba(255,255,255,0.12) inset, 0 8px 20px -8px rgba(56,212,232,0.55)",
+              display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <IconDashboard size={17} color="#04121c" />
+            </div>
+            <h1 style={{ fontFamily: HZ.fontDisplay, fontSize: 26, fontWeight: 700, color: HZ.ink, margin: 0 }}>Trade Horizon</h1>
+          </div>
+          <p style={{ fontFamily: HZ.fontBody, fontSize: 13, color: HZ.inkMuted, margin: "4px 0 0",
+            display: "flex", alignItems: "center", gap: 6 }}>
+            TEU allocation and consumption across active space configurations
+            <InfoHint>20ft = 1 TEU · 40ft = 2 TEU</InfoHint>
           </p>
         </div>
       </div>
 
       {/* ── Date range picker (always visible) ── */}
-      <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 10,
-        padding: "16px 20px", marginBottom: 20 }}>
-        <div style={{ display: "flex", alignItems: "flex-end", gap: 12 }}>
-          <Btn variant="secondary" size="sm" onClick={() => shiftRange(-1)}>← Prev</Btn>
-          <div style={{ flex: 1, display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 10, alignItems: "end" }}>
-            <DatePicker label="From" value={rangeStart} onChange={handleStartChange} placeholder="Start date…" />
-            <div style={{ fontFamily: T.mono, fontSize: 18, color: T.textMuted, paddingBottom: 9, userSelect: "none" }}>—</div>
-            <DatePicker label="To" value={rangeEnd} onChange={handleEndChange}
-              minDate={rangeStart} maxDate={rangeStart ? addDays(rangeStart, MAX_RANGE_DAYS) : undefined}
-              placeholder="End date…" />
+      {/* The glass fill lives on an absolutely-positioned DECORATIVE layer behind the real content,
+          not on the content wrapper itself. backdropFilter (like filter/transform/perspective) on an
+          ancestor doesn't just trap paint order — it also redefines the CONTAINING BLOCK for any
+          position:fixed descendant, so the DatePicker's calendar popup (position:fixed internally)
+          stops resolving its coordinates against the viewport and resolves them against this card's
+          box instead, landing wildly misplaced (found live, 2026-09-12, after an earlier z-index-only
+          fix cured the paint-order symptom but not this positioning one). Keeping backdropFilter off
+          every real ancestor of the DatePicker sidesteps both problems at once — the content wrapper
+          below has only position:relative for plain DOM stacking, nothing from the filter family. */}
+      <div data-testid="dashboard-date-range" style={{ position: "relative", borderRadius: 16, marginBottom: 20 }}>
+        <div aria-hidden="true" style={{ position: "absolute", inset: 0, zIndex: 0, borderRadius: 16,
+          background: HZ.surface, border: `1px solid ${HZ.border}`, backdropFilter: "blur(18px)" }} />
+        <div style={{ position: "relative", zIndex: 1, padding: "16px 20px" }}>
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 12 }}>
+            <Btn variant="secondary" size="sm" onClick={() => shiftRange(-1)}>← Prev</Btn>
+            <div style={{ flex: 1, display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 10, alignItems: "end" }}>
+              <DatePicker id="dashboard-date-from" label="From" value={rangeStart} onChange={handleStartChange} placeholder="Start date…" />
+              <div style={{ fontFamily: HZ.fontMono, fontSize: 18, color: HZ.inkMuted, paddingBottom: 9, userSelect: "none" }}>—</div>
+              <DatePicker id="dashboard-date-to" label="To" value={rangeEnd} onChange={handleEndChange}
+                minDate={rangeStart} maxDate={rangeStart ? addDays(rangeStart, MAX_RANGE_DAYS) : undefined}
+                placeholder="End date…" />
+            </div>
+            <Btn variant="secondary" size="sm" onClick={() => shiftRange(1)}>Next →</Btn>
+            <Btn variant="ghost" size="sm" onClick={goToday}
+              style={{ borderLeft: `1px solid ${HZ.border}`, paddingLeft: 14 }}>
+              This Week
+            </Btn>
           </div>
-          <Btn variant="secondary" size="sm" onClick={() => shiftRange(1)}>Next →</Btn>
-          <Btn variant="ghost" size="sm" onClick={goToday}
-            style={{ borderLeft: `1px solid ${T.border}`, paddingLeft: 14 }}>
-            This Week
-          </Btn>
-        </div>
-        <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 14,
-          borderTop: `1px solid ${T.border}33`, paddingTop: 10 }}>
-          <span style={{ fontFamily: T.mono, fontSize: 12, color: T.textMuted }}>
-            {spanDays} day{spanDays !== 1 ? "s" : ""} · max {MAX_RANGE_DAYS}
-          </span>
-          <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
-            {rangeShipments.length} shipment{rangeShipments.length !== 1 ? "s" : ""} with ETD in range
-          </span>
-          {activeAllocations.length !== allocations.length && (
-            <span style={{ fontFamily: T.body, fontSize: 12, color: T.accent }}>
-              ↳ {activeAllocations.length} of {allocations.length} space configs active in this period
+          <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 14,
+            borderTop: `1px solid ${HZ.borderSoft}`, paddingTop: 10 }}>
+            <span style={{ fontFamily: HZ.fontMono, fontSize: 11, fontWeight: 700, color: HZ.gradCyan[0],
+              background: "rgba(56,212,232,0.12)", borderRadius: 20, padding: "3px 12px" }}>
+              {spanDays} day{spanDays !== 1 ? "s" : ""} · max {MAX_RANGE_DAYS}
             </span>
-          )}
+            <span style={{ fontFamily: HZ.fontBody, fontSize: 12, color: HZ.inkMuted }}>
+              {rangeShipments.length} shipment{rangeShipments.length !== 1 ? "s" : ""} with ETD in range
+            </span>
+            {activeAllocations.length !== allocations.length && (
+              <span style={{ fontFamily: HZ.fontBody, fontSize: 12, color: HZ.gradCyan[0] }}>
+                ↳ {activeAllocations.length} of {allocations.length} space configs active in this period
+              </span>
+            )}
+          </div>
         </div>
       </div>
 
       {/* ── Tab bar ── */}
-      <div style={{ display: "flex", borderBottom: `1px solid ${T.border}`, marginBottom: 24 }}>
+      <div data-testid="dashboard-tab-bar" style={{ display: "flex", borderBottom: `1px solid ${HZ.border}`, marginBottom: 24, gap: 2 }}>
         {[
           { key: "overview",   label: "Overview" },
           { key: "contracts",  label: "Contract Consumption" },
@@ -1488,59 +1957,81 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
           { key: "margin",     label: "Margin" },
           { key: "compliance", label: "Compliance Review", count: Array.isArray(compHits) ? compHits.length : null },
         ].map(tab => (
-          <button key={tab.key} type="button" onClick={() => handleTabChange(tab.key)}
-            style={{
-              padding: "10px 20px", background: "none", border: "none",
-              borderBottom: view === tab.key ? `2px solid ${T.accent}` : "2px solid transparent",
-              color: view === tab.key ? T.accent : T.textMuted,
-              fontFamily: T.body, fontSize: 13, fontWeight: 600,
-              cursor: "pointer", marginBottom: -1,
-              transition: "color .15s, border-color .15s",
-              display: "flex", alignItems: "center", gap: 7,
-            }}>
-            {tab.label}
-            {tab.count != null && tab.count > 0 && (
-              <span style={{
-                background: T.danger, color: "#fff",
-                fontFamily: T.mono, fontSize: 10, fontWeight: 700,
-                borderRadius: 10, padding: "1px 6px", lineHeight: "16px",
-              }}>
-                {tab.count}
-              </span>
-            )}
-          </button>
+          <TabButton key={tab.key} tab={tab} active={view === tab.key} onClick={() => handleTabChange(tab.key)} />
         ))}
       </div>
 
       {/* ── Overview tab ── */}
       {view === "overview" && (
-        <>
-          {/* KPIs */}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginBottom: 26 }}>
-            {[
-              { label: "Total Allocated",       value: totalAlloc,     color: T.text,    sub: `${activeAllocations.length} configuration${activeAllocations.length !== 1 ? "s" : ""}` },
-              { label: "Confirmed Consumption",  value: totalConfirmed, color: T.success, sub: `${totalAlloc > 0 ? ((totalConfirmed / totalAlloc) * 100).toFixed(1) : 0}% of total utilized`,
-                breakdown: (totalPending > 0 || totalRejected > 0) ? { pending: totalPending, rejected: totalRejected } : null },
-              { label: "Remaining Capacity",     value: totalRemain,    color: T.accent,  sub: "available to book" },
-            ].map((k, i) => (
-              <div key={i} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "20px 24px" }}>
-                <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".08em" }}>{k.label}</div>
-                <div style={{ display: "flex", alignItems: "baseline", gap: 6, margin: "8px 0 4px" }}>
-                  <span style={{ fontFamily: T.mono, fontSize: 36, fontWeight: 700, color: k.color }}>{k.value}</span>
-                  <span style={{ fontFamily: T.mono, fontSize: 14, color: T.textMuted }}>TEU</span>
-                </div>
-                <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>{k.sub}</div>
-                {k.breakdown && (
-                  <div style={{ fontFamily: T.mono, fontSize: 11, marginTop: 4 }}>
-                    {k.breakdown.pending > 0 && <span style={{ color: T.warning }}>+{k.breakdown.pending} pending</span>}
-                    {k.breakdown.pending > 0 && k.breakdown.rejected > 0 && <span style={{ color: T.textMuted }}> · </span>}
-                    {k.breakdown.rejected > 0 && <span style={{ color: T.danger }}>+{k.breakdown.rejected} rejected</span>}
-                  </div>
-                )}
+        <div data-testid="dashboard-panel-overview">
+          {/* Hero: consumption ring + carrier badges — bento grid, asymmetric spans. Replaced
+              entirely by a single empty-state panel when the carrier filter is explicitly
+              cleared to zero carriers — every figure in it would otherwise just read 0/blank,
+              which reads as broken rather than as "you asked for nothing." The charts section
+              below needs no equivalent branch: its own chartData.length > 0 gate already hides
+              it automatically once chartData comes back empty from the same filtered inputs. */}
+          {carrierFilterIsEmpty ? (
+            <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 20,
+              backdropFilter: "blur(18px)", marginBottom: 20 }}>
+              <NoCarriersSelected />
+            </div>
+          ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "5fr 3fr 4fr", gap: 16, marginBottom: 20 }}>
+            <div data-testid="space-consumption-card" style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 20, backdropFilter: "blur(18px)", padding: 22 }}>
+              <div style={{ fontFamily: HZ.fontDisplay, fontSize: 14.5, fontWeight: 600, color: HZ.ink, marginBottom: 2 }}>Space Consumption</div>
+              <div style={{ fontFamily: HZ.fontBody, fontSize: 12, color: HZ.inkMuted, marginBottom: 16 }}>
+                Across {filteredActiveAllocations.length} active allocation{filteredActiveAllocations.length !== 1 ? "s" : ""} · {totalAlloc.toLocaleString("en-US")} TEU committed
               </div>
-            ))}
+              <KpiRing pct={totalAlloc > 0 ? (totalConfirmed / totalAlloc) * 100 : 0}
+                confirmed={totalConfirmed} pending={totalPending} rejected={totalRejected} remaining={totalRemain} />
+            </div>
+            <div data-testid="active-carriers-card" style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 20, backdropFilter: "blur(18px)", padding: 22 }}>
+              <div style={{ fontFamily: HZ.fontDisplay, fontSize: 14.5, fontWeight: 600, color: HZ.ink, marginBottom: 2 }}>Active Carriers</div>
+              <div style={{ fontFamily: HZ.fontBody, fontSize: 12, color: HZ.inkMuted, marginBottom: 14 }}>By space commitment</div>
+              <CarrierBadgeGrid rows={chartData} />
+            </div>
+            <div data-testid="total-allocated-card" style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 20, backdropFilter: "blur(18px)", padding: 22, display: "flex", flexDirection: "column", gap: 16 }}>
+              <div>
+                <div style={{ fontFamily: HZ.fontDisplay, fontSize: 14.5, fontWeight: 600, color: HZ.ink }}>Total Allocated</div>
+                <div style={{ fontFamily: HZ.fontDisplay, fontSize: 25, fontWeight: 700, color: HZ.ink, marginTop: 6 }}>{totalAlloc.toLocaleString("en-US")} <span style={{ fontSize: 13, color: HZ.inkMuted, fontFamily: HZ.fontBody }}>TEU</span></div>
+                <div style={{ fontFamily: HZ.fontBody, fontSize: 12, color: HZ.inkMuted }}>{filteredActiveAllocations.length} configuration{filteredActiveAllocations.length !== 1 ? "s" : ""}</div>
+              </div>
+              {(carrierPerformance.mode === "all" ? carrierPerformance.rows.length > 0 : true) && (
+                <div data-testid="carrier-performance-table" style={{ borderTop: `1px solid ${HZ.borderSoft}`, paddingTop: 14,
+                  display: "flex", flexDirection: "column", gap: 12 }}>
+                  {carrierPerformance.mode === "all" ? (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                      <div style={{ fontFamily: HZ.fontBody, fontSize: 10, fontWeight: 600, color: HZ.inkMuted,
+                        textTransform: "uppercase", letterSpacing: ".08em" }}>
+                        Confirmation Rate
+                      </div>
+                      {carrierPerformance.rows.map((r, i) => <PerfRow key={r.carrier} rank={i + 1} carrier={r.carrier} rate={r.rate} />)}
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                        <div style={{ fontFamily: HZ.fontBody, fontSize: 10, fontWeight: 600, color: HZ.good,
+                          textTransform: "uppercase", letterSpacing: ".08em" }}>
+                          Top Performers
+                        </div>
+                        {carrierPerformance.top.map(r => <PerfRow key={r.carrier} carrier={r.carrier} rate={r.rate} />)}
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                        <div style={{ fontFamily: HZ.fontBody, fontSize: 10, fontWeight: 600, color: HZ.critical,
+                          textTransform: "uppercase", letterSpacing: ".08em" }}>
+                          Needs Attention
+                        </div>
+                        {carrierPerformance.bottom.map(r => <PerfRow key={r.carrier} carrier={r.carrier} rate={r.rate} />)}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
+          )}
 
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 26 }}>
           {/* Shipment health: on-time vs overdue */}
           {(() => {
             const active   = shipments.filter(s => s.status === "Active");
@@ -1550,33 +2041,33 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
             if (active.length === 0) return null;
             const barW = pct ?? 100;
             return (
-              <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12,
-                padding: "16px 24px", marginBottom: 26, display: "flex", alignItems: "center", gap: 32 }}>
+              <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 20, backdropFilter: "blur(18px)",
+                padding: "16px 24px", display: "flex", alignItems: "center", gap: 32 }}>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
+                  <div style={{ fontFamily: HZ.fontBody, fontSize: 10.5, color: HZ.inkMuted, fontWeight: 600,
                     textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 8 }}>
                     Active Shipment Health
                   </div>
-                  <div style={{ height: 8, background: T.bg, borderRadius: 4, overflow: "hidden" }}>
-                    <div style={{ height: "100%", width: `${barW}%`, background: overdue.length > 0 ? T.warning : T.success,
+                  <div style={{ height: 8, background: "rgba(255,255,255,0.06)", borderRadius: 4, overflow: "hidden" }}>
+                    <div style={{ height: "100%", width: `${barW}%`, background: overdue.length > 0 ? HZ.warning : HZ.good,
                       borderRadius: 4, transition: "width .4s" }} />
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: 24, flexShrink: 0 }}>
                   <div style={{ textAlign: "center" }}>
-                    <div style={{ fontFamily: T.mono, fontSize: 26, fontWeight: 700, color: T.success }}>{onTime}</div>
-                    <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted }}>On Time</div>
+                    <div style={{ fontFamily: HZ.fontDisplay, fontSize: 26, fontWeight: 700, color: HZ.good }}>{onTime}</div>
+                    <div style={{ fontFamily: HZ.fontBody, fontSize: 10.5, color: HZ.inkMuted }}>On Time</div>
                   </div>
                   <div style={{ textAlign: "center" }}>
-                    <div style={{ fontFamily: T.mono, fontSize: 26, fontWeight: 700,
-                      color: overdue.length > 0 ? T.danger : T.textMuted }}>{overdue.length}</div>
-                    <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted }}>Overdue</div>
+                    <div style={{ fontFamily: HZ.fontDisplay, fontSize: 26, fontWeight: 700,
+                      color: overdue.length > 0 ? HZ.critical : HZ.inkMuted }}>{overdue.length}</div>
+                    <div style={{ fontFamily: HZ.fontBody, fontSize: 10.5, color: HZ.inkMuted }}>Overdue</div>
                   </div>
                   {pct !== null && (
                     <div style={{ textAlign: "center" }}>
-                      <div style={{ fontFamily: T.mono, fontSize: 26, fontWeight: 700,
-                        color: pct === 100 ? T.success : pct >= 80 ? T.warning : T.danger }}>{pct}%</div>
-                      <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted }}>On-Time Rate</div>
+                      <div style={{ fontFamily: HZ.fontDisplay, fontSize: 26, fontWeight: 700,
+                        color: pct === 100 ? HZ.good : pct >= 80 ? HZ.warning : HZ.critical }}>{pct}%</div>
+                      <div style={{ fontFamily: HZ.fontBody, fontSize: 10.5, color: HZ.inkMuted }}>On-Time Rate</div>
                     </div>
                   )}
                 </div>
@@ -1594,77 +2085,78 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
             const sentValueUsd = sentQuotes.reduce((sum, q) => sum + (q.totalAmountUsd || 0), 0);
             if (openOpportunities === 0 && draftQuotes === 0 && sentQuotes.length === 0) return null;
             return (
-              <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12,
-                padding: "16px 24px", marginBottom: 26, display: "flex", alignItems: "center", gap: 32 }}>
+              <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 20, backdropFilter: "blur(18px)",
+                padding: "16px 24px", display: "flex", alignItems: "center", gap: 32 }}>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted, fontWeight: 600,
+                  <div style={{ fontFamily: HZ.fontBody, fontSize: 10.5, color: HZ.inkMuted, fontWeight: 600,
                     textTransform: "uppercase", letterSpacing: ".08em", marginBottom: 8 }}>
                     Sales Pipeline
                   </div>
-                  <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
+                  <div style={{ fontFamily: HZ.fontBody, fontSize: 12, color: HZ.inkMuted }}>
                     Opportunities and quotes ahead of a real shipment
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: 24, flexShrink: 0 }}>
                   <div style={{ textAlign: "center" }}>
-                    <div style={{ fontFamily: T.mono, fontSize: 26, fontWeight: 700, color: T.text }}>{openOpportunities}</div>
-                    <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted }}>Open Opportunities</div>
+                    <div style={{ fontFamily: HZ.fontDisplay, fontSize: 26, fontWeight: 700, color: HZ.ink }}>{openOpportunities}</div>
+                    <div style={{ fontFamily: HZ.fontBody, fontSize: 10.5, color: HZ.inkMuted }}>Open Opportunities</div>
                   </div>
                   <div style={{ textAlign: "center" }}>
-                    <div style={{ fontFamily: T.mono, fontSize: 26, fontWeight: 700, color: T.text }}>{draftQuotes}</div>
-                    <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted }}>Draft Quotes</div>
+                    <div style={{ fontFamily: HZ.fontDisplay, fontSize: 26, fontWeight: 700, color: HZ.ink }}>{draftQuotes}</div>
+                    <div style={{ fontFamily: HZ.fontBody, fontSize: 10.5, color: HZ.inkMuted }}>Draft Quotes</div>
                   </div>
                   <div style={{ textAlign: "center" }}>
-                    <div style={{ fontFamily: T.mono, fontSize: 26, fontWeight: 700, color: T.accent }}>{sentQuotes.length}</div>
-                    <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted }}>Sent Quotes</div>
+                    <div style={{ fontFamily: HZ.fontDisplay, fontSize: 26, fontWeight: 700, color: HZ.gradCyan[0] }}>{sentQuotes.length}</div>
+                    <div style={{ fontFamily: HZ.fontBody, fontSize: 10.5, color: HZ.inkMuted }}>Sent Quotes</div>
                   </div>
                   <div style={{ textAlign: "center" }}>
-                    <div style={{ fontFamily: T.mono, fontSize: 26, fontWeight: 700, color: T.success }}>
+                    <div style={{ fontFamily: HZ.fontDisplay, fontSize: 26, fontWeight: 700, color: HZ.good }}>
                       ${sentValueUsd.toLocaleString("en-US", { maximumFractionDigits: 0 })}
                     </div>
-                    <div style={{ fontFamily: T.body, fontSize: 10.5, color: T.textMuted }}>Sent Value (USD)</div>
+                    <div style={{ fontFamily: HZ.fontBody, fontSize: 10.5, color: HZ.inkMuted }}>Sent Value (USD)</div>
                   </div>
                 </div>
               </div>
             );
           })()}
+          </div>
 
           {/* Charts */}
           {chartData.length > 0 && (
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 22 }}>
-              <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "20px 20px 14px" }}>
+              <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 20, backdropFilter: "blur(18px)", padding: "20px 20px 14px" }}>
                 <div style={{ marginBottom: 16 }}>
-                  <h2 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: "0 0 3px" }}>TEU by Carrier</h2>
-                  <p style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, margin: 0 }}>Awarded vs Confirmed/Pending/Rejected for the selected period</p>
+                  <h2 style={{ fontFamily: HZ.fontDisplay, fontSize: 15, fontWeight: 600, color: HZ.ink, margin: "0 0 3px" }}>TEU by Carrier</h2>
+                  <p style={{ fontFamily: HZ.fontBody, fontSize: 11, color: HZ.inkMuted, margin: 0 }}>Awarded vs Confirmed/Pending/Rejected for the selected period</p>
                 </div>
                 <ResponsiveContainer width="100%" height={240}>
                   <BarChart data={chartData} margin={{ top: 4, right: 8, left: -8, bottom: 4 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke={T.border} vertical={false} />
-                    <XAxis dataKey="carrier" tick={{ fontFamily: T.mono, fontSize: 11, fill: T.textMuted }} axisLine={{ stroke: T.border }} tickLine={false} />
-                    <YAxis tick={{ fontFamily: T.body, fontSize: 10, fill: T.textMuted }} axisLine={false} tickLine={false} />
-                    <Tooltip content={<TooltipContent />} cursor={{ fill: T.border + "44" }} />
-                    <Legend wrapperStyle={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, paddingTop: 10 }} />
-                    <Bar dataKey="confirmed" name="Confirmed" stackId="s" fill={T.success} />
-                    <Bar dataKey="pending"   name="Pending"   stackId="s" fill={T.warning} />
-                    <Bar dataKey="rejected"  name="Rejected"  stackId="s" fill={T.danger} />
-                    <Bar dataKey="remaining" name="Remaining" stackId="s" fill={T.borderMid} radius={[4, 4, 0, 0]} />
+                    <CartesianGrid strokeDasharray="3 3" stroke={HZ.borderSoft} vertical={false} />
+                    <XAxis dataKey="carrier" tick={{ fontFamily: HZ.fontMono, fontSize: 11, fill: HZ.inkMuted }} axisLine={{ stroke: HZ.border }} tickLine={false} />
+                    <YAxis tick={{ fontFamily: HZ.fontBody, fontSize: 10, fill: HZ.inkMuted }} axisLine={false} tickLine={false} />
+                    <Tooltip content={<TooltipContent />} cursor={{ fill: "rgba(255,255,255,0.06)" }} />
+                    <Legend wrapperStyle={{ fontFamily: HZ.fontBody, fontSize: 11, color: HZ.inkMuted, paddingTop: 10 }} />
+                    <Bar dataKey="confirmed" name="Confirmed" stackId="s" fill={HZ.good} />
+                    <Bar dataKey="pending"   name="Pending"   stackId="s" fill={HZ.warning} />
+                    <Bar dataKey="rejected"  name="Rejected"  stackId="s" fill={HZ.critical} />
+                    <Bar dataKey="remaining" name="Remaining" stackId="s" fill="rgba(255,255,255,0.1)" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
-              <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: "20px 20px 14px" }}>
+              <div style={{ background: HZ.surface, border: `1px solid ${HZ.border}`, borderRadius: 20, backdropFilter: "blur(18px)", padding: "20px 20px 14px" }}>
                 <div style={{ marginBottom: 16 }}>
-                  <h2 style={{ fontFamily: T.head, fontSize: 15, fontWeight: 700, color: T.text, margin: "0 0 3px" }}>6-Week TEU Trend</h2>
-                  <p style={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, margin: 0 }}>Weekly Confirmed consumption per carrier — last 6 weeks</p>
+                  <h2 style={{ fontFamily: HZ.fontDisplay, fontSize: 15, fontWeight: 600, color: HZ.ink, margin: "0 0 3px" }}>6-Week TEU Trend</h2>
+                  <p style={{ fontFamily: HZ.fontBody, fontSize: 11, color: HZ.inkMuted, margin: 0 }}>Weekly Confirmed consumption per carrier — last 6 weeks</p>
                 </div>
                 <ResponsiveContainer width="100%" height={240}>
                   <LineChart data={trendChartData} margin={{ top: 4, right: 8, left: -8, bottom: 4 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke={T.border} vertical={false} />
-                    <XAxis dataKey="week" tick={{ fontFamily: T.mono, fontSize: 10, fill: T.textMuted }} axisLine={{ stroke: T.border }} tickLine={false} />
-                    <YAxis tick={{ fontFamily: T.body, fontSize: 10, fill: T.textMuted }} axisLine={false} tickLine={false} allowDecimals={false} />
-                    <Tooltip contentStyle={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, fontFamily: T.body, fontSize: 12 }}
-                      labelStyle={{ color: T.text, fontWeight: 600, marginBottom: 4 }} itemStyle={{ color: T.textMuted }}
-                      formatter={(v, name) => [`${v} TEU`, name]} cursor={{ stroke: T.border, strokeWidth: 1 }} />
-                    <Legend wrapperStyle={{ fontFamily: T.body, fontSize: 11, color: T.textMuted, paddingTop: 10 }} />
+                    <CartesianGrid strokeDasharray="3 3" stroke={HZ.borderSoft} vertical={false} />
+                    <XAxis dataKey="week" tick={{ fontFamily: HZ.fontMono, fontSize: 10, fill: HZ.inkMuted }} axisLine={{ stroke: HZ.border }} tickLine={false} />
+                    <YAxis tick={{ fontFamily: HZ.fontBody, fontSize: 10, fill: HZ.inkMuted }} axisLine={false} tickLine={false} allowDecimals={false} />
+                    <Tooltip contentStyle={{ background: "#0d1220", border: `1px solid ${HZ.border}`, borderRadius: 12, fontFamily: HZ.fontBody, fontSize: 12 }}
+                      labelStyle={{ color: HZ.ink, fontWeight: 600, marginBottom: 4 }} itemStyle={{ color: HZ.inkMuted }}
+                      formatter={(v, name) => [`${v} TEU`, name]} cursor={{ stroke: HZ.border, strokeWidth: 1 }} />
+                    <Legend wrapperStyle={{ fontFamily: HZ.fontBody, fontSize: 11, color: HZ.inkMuted, paddingTop: 10 }} />
                     {trendCarriers.map((code, i) => (
                       <Line key={code} type="monotone" dataKey={code}
                         stroke={CHART_COLORS[i % CHART_COLORS.length]} strokeWidth={2}
@@ -1676,53 +2168,69 @@ const DashboardPage = ({ shipments, containers, carriers, allocations, container
             </div>
           )}
 
-          {/* Matched shipments */}
+          {/* Matched shipments — Central only, same principle Contract Consumption's own table
+              already applies: a SPOT/Customer Own/Pending shipment never carries an allocationId,
+              so it never contributes to any of the consumption figures above it on this tab, and
+              listing it here just for it to say "No config match" only confuses the total against
+              what those figures actually count. */}
           <MatchedShipmentsTable
-            shipments={rangeShipments}
+            shipments={overviewCentralShipments.filter(s => !carrierFilterSet || carrierFilterSet.has(s.carrierCode))}
             containers={containers}
             carriers={carriers}
             activeAllocations={activeAllocations}
             teuDefs={teuDefs}
+            carrierFilter={carrierFilter}
+            availableCarriers={availableCarrierCodes}
+            onCarrierFilterChange={setCarrierFilter}
           />
-        </>
+        </div>
       )}
 
       {/* ── Contract Consumption tab ── */}
       {view === "contracts" && (
-        <ContractConsumptionView
-          rangeShipments={rangeShipments}
-          containers={containers}
-          carriers={carriers}
-          allocations={activeAllocations}
-          teuDefs={teuDefs}
-          contractTrendData={contractTrendData}
-        />
+        <div data-testid="dashboard-panel-contracts">
+          <ContractConsumptionView
+            rangeShipments={rangeShipments}
+            containers={containers}
+            carriers={carriers}
+            allocations={activeAllocations}
+            teuDefs={teuDefs}
+            contractTrendData={contractTrendData}
+          />
+        </div>
       )}
 
       {/* ── Carrier Volumes tab ── */}
       {view === "carriers" && (
-        <CarrierView
-          rangeShipments={rangeShipments}
-          containers={containers}
-          carriers={carriers}
-          carrierTrends={rawCarrierTrends}
-          rangeStart={rangeStart}
-        />
+        <div data-testid="dashboard-panel-carriers">
+          <CarrierView
+            rangeShipments={rangeShipments}
+            containers={containers}
+            carriers={carriers}
+            carrierTrends={rawCarrierTrends}
+            rangeStart={rangeStart}
+          />
+        </div>
       )}
 
       {/* ── Margin tab ── */}
-      {view === "margin" && <MarginView financeEnabled={financeEnabled} />}
+      {view === "margin" && (
+        <div data-testid="dashboard-panel-margin"><MarginView financeEnabled={financeEnabled} /></div>
+      )}
 
       {/* ── Compliance Review tab ── */}
       {view === "compliance" && (
-        <ComplianceReviewView
-          compHits={compHits}
-          custHits={custHits}
-          loading={compLoading}
-          onRefresh={loadCompliance}
-        />
+        <div data-testid="dashboard-panel-compliance">
+          <ComplianceReviewView
+            compHits={compHits}
+            custHits={custHits}
+            loading={compLoading}
+            onRefresh={loadCompliance}
+          />
+        </div>
       )}
 
+      </div>
     </div>
   );
 };

@@ -261,7 +261,11 @@ module.exports = function shipmentsRoutes(app, ctx) {
     return bySeaShipment;
   };
 
-  app.get("/api/shipments", async (req, res) => {
+  // Base enriched query + access filter shared by the list route and filter-options below —
+  // written once here so the two can't independently drift (the "two engines disagreeing" bug
+  // class this codebase has hit before). Returns the full, access-scoped, mapped shipment set;
+  // callers layer their own status/carrier/etc. filters, sort, and pagination on top.
+  const loadVisibleShipments = async (user, req) => {
     const rows = await query(`
       SELECT s.*,
              p1.name AS pol_name,
@@ -281,7 +285,63 @@ module.exports = function shipmentsRoutes(app, ctx) {
     `);
     const seaPorts = await resolveSeaPorts(rows.map(r => r.id));
     const mapped = rows.map(r => ({ ...mapShipment(r), ...(seaPorts[r.id] || { seaPol: r.pol, seaPod: r.pod, seaPolName: r.pol_name || '', seaPodName: r.pod_name || '' }) }));
-    let filtered = await applyShipmentAccessFilter(mapped, req.user, req);
+    return applyShipmentAccessFilter(mapped, user, req);
+  };
+
+  // Same rounding the frontend applies (ShipmentsPage.jsx's Margin column) — kept in one place so
+  // the filter-options checklist's values and the list route's own margin filter can never
+  // disagree with what's actually rendered. "—" covers both "no cost/revenue data at all" and
+  // "revenue is zero" (division would be undefined), matching the frontend's own two-case fallback.
+  const marginBucket = s => {
+    const buy = s.marginBuyUsd || 0, sell = s.marginSellUsd || 0;
+    if (buy === 0 && sell === 0) return '—';
+    const pct = sell > 0 ? Math.round(((sell - buy) / sell) * 1000) / 10 : null;
+    return pct != null ? String(pct) : '—';
+  };
+
+  // Comma-separated multi-value match, backward compatible with every existing single-value
+  // caller ("Active".split(',') is just ["Active"]) — replaces what used to be five independent
+  // single-value `===` filters (status, carrier) plus adds the same treatment to every other
+  // filterable column at once.
+  const multiFilter = (arr, param, getter) => {
+    if (!param) return arr;
+    const values = param.split(',');
+    return arr.filter(s => values.includes(String(getter(s))));
+  };
+
+  app.get("/api/shipments/filter-options", async (req, res) => {
+    const visible = await loadVisibleShipments(req.user, req);
+    const distinct = get => [...new Set(visible.map(get).filter(v => v !== null && v !== undefined && v !== ''))];
+
+    const polNames = {}, podNames = {};
+    visible.forEach(s => {
+      if (s.pol && !polNames[s.pol]) polNames[s.pol] = s.polName || '';
+      if (s.pod && !podNames[s.pod]) podNames[s.pod] = s.podName || '';
+    });
+
+    const MAX_ID_OPTIONS = 2000;
+    const allIds = distinct(s => s.id).sort();
+
+    ok(res, {
+      pol: distinct(s => s.pol).sort(), polNames,
+      pod: distinct(s => s.pod).sort(), podNames,
+      carrier: distinct(s => s.carrierCode).sort(),
+      contractType: distinct(s => s.contractType).sort(),
+      status: distinct(s => s.status).sort(),
+      routingTerm: distinct(s => s.routingTerm).sort(),
+      tradeLane: distinct(s => s.tradeLane).sort(),
+      teu: distinct(s => String(s.teu)).sort((a, b) => Number(a) - Number(b)),
+      margin: [...new Set(visible.map(marginBucket))].sort((a, b) => {
+        if (a === '—') return 1; if (b === '—') return -1; // "—" always last, not sorted as 0
+        return Number(a) - Number(b);
+      }),
+      id: allIds.slice(0, MAX_ID_OPTIONS),
+      idTruncated: allIds.length > MAX_ID_OPTIONS,
+    });
+  });
+
+  app.get("/api/shipments", async (req, res) => {
+    let filtered = await loadVisibleShipments(req.user, req);
     // Pagination is opt-in (TKT-UAJGR3) — every existing caller (App.jsx's own load-everything-
     // once-into-state model, Command Center, Dashboard, AI Assistant tools) omits limit/offset and
     // keeps getting today's exact bare-array response, so nothing breaks. Only a caller that
@@ -291,18 +351,26 @@ module.exports = function shipmentsRoutes(app, ctx) {
     if (req.query.limit === undefined && req.query.offset === undefined) {
       return ok(res, filtered);
     }
-    // status/carrier/search/sort are new — opt-in the same way limit/offset already are, applied
-    // only when the caller passes them (ShipmentsPage.jsx's real server-side pagination, TKT-none
-    // yet-ticketed pagination-standardization pass). Verbatim port of what was, until this pass,
-    // purely client-side filter/sort logic in ShipmentsPage.jsx, so behavior is unchanged from the
-    // caller's point of view — just computed here instead of over a fully-downloaded array.
+    // status/carrier/search/sort were the original pagination-standardization pass's filters
+    // (verbatim port of what used to be purely client-side logic in ShipmentsPage.jsx); every
+    // other column below was added for that page's Excel-style column-header filters — each
+    // accepts a comma-separated list of values (multiFilter), backward compatible with the single
+    // values these first two already sent.
     const today = new Date().toISOString().slice(0, 10);
     if (req.query.status === "_overdue") {
       filtered = filtered.filter(s => s.etd && s.etd < today && s.status !== "Completed" && s.status !== "Cancelled");
-    } else if (req.query.status) {
-      filtered = filtered.filter(s => s.status === req.query.status);
+    } else {
+      filtered = multiFilter(filtered, req.query.status, s => s.status);
     }
-    if (req.query.carrier) filtered = filtered.filter(s => s.carrierCode === req.query.carrier);
+    filtered = multiFilter(filtered, req.query.carrier,      s => s.carrierCode);
+    filtered = multiFilter(filtered, req.query.contractType, s => s.contractType);
+    filtered = multiFilter(filtered, req.query.pol,          s => s.pol);
+    filtered = multiFilter(filtered, req.query.pod,          s => s.pod);
+    filtered = multiFilter(filtered, req.query.routingTerm,  s => s.routingTerm);
+    filtered = multiFilter(filtered, req.query.tradeLane,    s => s.tradeLane);
+    filtered = multiFilter(filtered, req.query.teu,          s => String(s.teu));
+    filtered = multiFilter(filtered, req.query.margin,       marginBucket);
+    filtered = multiFilter(filtered, req.query.id,           s => s.id);
     if (req.query.search) {
       const q = req.query.search.toLowerCase();
       filtered = filtered.filter(s =>

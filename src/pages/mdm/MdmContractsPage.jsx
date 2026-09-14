@@ -1043,7 +1043,7 @@ const SchedulesModal = ({ contract, onClose }) => {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
-const MdmContractsPage = () => {
+const MdmContractsPage = ({ highlightContractId, onHighlightHandled } = {}) => {
   const { canManageConfigs } = useAuth();
   const [results, setResults] = useState([]);
   const [total,   setTotal]   = useState(0);
@@ -1078,6 +1078,23 @@ const MdmContractsPage = () => {
   }, [limit]);
 
   useEffect(() => { doLoad(EMPTY_FILTERS, 0); }, []);
+
+  // Deep-link from the notification bell's Contract Expiry section — open that specific
+  // contract's edit modal directly rather than landing on the plain filtered list, since the
+  // contract that expired may not even be on the first page of the default (unfiltered) sort.
+  useEffect(() => {
+    if (!highlightContractId) return;
+    (async () => {
+      try {
+        const full = await api.contracts.get(highlightContractId);
+        setModal(full);
+      } catch (e) {
+        toast.error(e.message || "Could not open that contract");
+      } finally {
+        onHighlightHandled?.();
+      }
+    })();
+  }, [highlightContractId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSearch = () => { setOffset(0); doLoad(filters, 0); };
   const handleClear  = () => { setFilters(EMPTY_FILTERS); setOffset(0); doLoad(EMPTY_FILTERS, 0); };

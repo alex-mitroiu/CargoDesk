@@ -258,6 +258,13 @@ function App() {
     return parseHash(hash).selectedId;
   });
   const [pendingRenew, setPendingRenew] = useState(null);
+  // Deep-link target for a notification-bell click on a specific expiring contract — kept
+  // separate from the shipment-oriented selectedId/hash routing above (declared here, in App()'s
+  // own scope, rather than inside the nested Header() closure below, since the page-render switch
+  // that consumes it also lives directly in App()). navigate("mdm-contracts") always resolves the
+  // "mdm-contracts" hash back to selectedId:null (no special-case for it in parseHash), which
+  // would silently clobber an id passed through that channel instead.
+  const [highlightContractId, setHighlightContractId] = useState(null);
   const [isDark,       setIsDark]       = useState(() => {
     const saved = localStorage.getItem("cd_theme");
     return saved !== "light"; // default dark
@@ -1228,7 +1235,7 @@ function App() {
                           borderBottom: `1px solid ${T.border}22`,
                         }}>
                         <button type="button"
-                          onClick={() => { navigate("mdm-contracts"); setBellOpen(false); }}
+                          onClick={() => { setHighlightContractId(c.id); navigate("mdm-contracts"); setBellOpen(false); }}
                           style={{
                             display: "flex", alignItems: "center", justifyContent: "space-between",
                             flex: 1, padding: "10px 12px 10px 16px", background: "none", border: "none",
@@ -2331,7 +2338,12 @@ function App() {
         {page === "mdm-invoice-reason-codes"&&                        <MdmInvoiceReasonCodesPage />}
         {page === "mdm-customers"              && isEnabled("mdm-customers")             && <MdmCustomersPage />}
         {page === "mdm-sanctioned-customers"   && isEnabled("mdm-sanctioned-customers")  && <MdmSanctionedCustomersPage />}
-        {page === "mdm-contracts"  && isEnabled("mdm-contracts")  && <MdmContractsPage />}
+        {page === "mdm-contracts"  && isEnabled("mdm-contracts")  && (
+          <MdmContractsPage
+            highlightContractId={highlightContractId}
+            onHighlightHandled={() => setHighlightContractId(null)}
+          />
+        )}
         {page === "rate-benchmark" && isEnabled("rate-benchmark") && <RateBenchmarkPage />}
         {page === "org-country"    && <CountryPage />}
         {page === "org-branch"     && <BranchPage />}

@@ -119,6 +119,7 @@ export const api = {
   },
   shipments: {
     list:   (p = {})  => req("GET",    `/shipments?${new URLSearchParams(p)}`),
+    filterOptions: () => req("GET",    "/shipments/filter-options"),
     get:    (id)      => req("GET",    `/shipments/${id}`),
     create: (data)    => req("POST",   "/shipments", data),
     update: (id, data)=> req("PUT",    `/shipments/${id}`, data),

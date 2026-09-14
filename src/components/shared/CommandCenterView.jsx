@@ -5,28 +5,80 @@ import { toast } from "../../toast";
 import { AiOrb } from "./AiOrb";
 import { IconSettings, IconAnchor, AnyIcon } from "../primitives/Icon";
 
+// ─── Trade Horizon (page-scoped) ────────────────────────────────────────────────
+// Same visual language as DashboardPage.jsx's own Overview redesign, duplicated here rather than
+// shared — both are deliberately page-scoped restyles (never touching src/tokens.js or
+// src/components/primitives/), so every other page keeps its current look regardless of what
+// either of these two do. HZ_VIOLET is new here (the Dashboard's own HZ object already has this
+// as gradCyan/gradViolet, but nothing in the Dashboard's port needed a bare mono violet — Command
+// Center's AI branding does, for the orb/chat's cyan→violet identity).
+const HZ_MONO    = "'IBM Plex Mono', ui-monospace, monospace";
+const HZ_BODY    = "'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif";
+const HZ_DISPLAY = "'Sora', ui-sans-serif, system-ui, sans-serif";
+const HZ_VIOLET  = "#9085e9";
+const HZ_VIOLET2 = "#d5519f";
+const useHorizonFonts = () => {
+  useEffect(() => {
+    if (document.getElementById("hz-fonts")) return;
+    const link = document.createElement("link");
+    link.id = "hz-fonts"; link.rel = "stylesheet";
+    link.href = "https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap";
+    document.head.appendChild(link);
+  }, []);
+};
+// Deterministic decorative gradient per carrier code, matching the Dashboard's own hzGradientFor —
+// duplicated for the same page-scoping reason as the constants above. Used only as a fallback for
+// a carrier code not in CARRIER_BRAND below.
+const hzGradientFor = code => {
+  const grads = [["#38d4e8", "#3987e5"], ["#fbc531", "#d9772a"], [HZ_VIOLET, HZ_VIOLET2]];
+  let hash = 0;
+  for (let i = 0; i < (code || "").length; i++) hash = (hash * 31 + code.charCodeAt(i)) >>> 0;
+  return grads[hash % grads.length];
+};
+
+// Real carrier livery colors, so the badge itself carries recognition value (HLCU's badge should
+// read as "Hapag-Lloyd" at a glance, not just "some cyan carrier") — a hashed gradient can also
+// collide two unrelated carriers onto the same color, which this sidesteps entirely for the
+// carriers actually present in this dataset. Anything not listed falls back to hzGradientFor.
+const CARRIER_BRAND = {
+  HLCU: { bg: "#e67300", text: "#0a2540" }, // Hapag-Lloyd — orange livery, navy wordmark
+  MAEU: { bg: "#42b0e6", text: "#04212e" }, // Maersk — sky blue, dark navy star mark
+  CMDU: { bg: "#0a2a53", text: "#ff6a39" }, // CMA CGM — navy hull, red-orange flourish
+  EGLV: { bg: "#0fae4b", text: "#052e14" }, // Evergreen — signature green hull
+  ONEY: { bg: "#e6007e", text: "#ffffff" }, // Ocean Network Express — magenta livery
+  MSCU: { bg: "#ffd200", text: "#0a1f44" }, // MSC — gold swoosh, navy wordmark
+  COSU: { bg: "#e2231a", text: "#ffffff" }, // COSCO — red hull
+  OOLU: { bg: "#004a99", text: "#ffffff" }, // OOCL — blue hull
+};
+const carrierBadgeColors = code => {
+  const brand = CARRIER_BRAND[code];
+  if (brand) return { background: brand.bg, color: brand.text };
+  const [g1, g2] = hzGradientFor(code);
+  return { background: `linear-gradient(145deg, ${g1}, ${g2})`, color: "#06111f" };
+};
+
 // Palette — mutable module vars so sub-components defined outside the main function see the
 // correct values. Updated at the start of each CommandCenterView render based on isDark prop.
-let BG    = "#030a14";
-let S1    = "#061020";
-let S2    = "#0a1828";
-let BD    = "#0e1f35";
-let CC    = "#f97316";
-let CC2   = "#fb923c";
-let MUTED = "#3a5a78";
-let TEXT  = "#c8d8e8";
-let CCON  = "#050e1a";  // text on top of CC-coloured background
+let BG    = "#080b15";
+let S1    = "#0d1220";
+let S2    = "rgba(255,255,255,0.06)";
+let BD    = "rgba(255,255,255,0.09)";
+let CC    = "#38d4e8";
+let CC2   = "#3987e5";
+let MUTED = "#8c93b5";
+let TEXT  = "#f3f5fc";
+let CCON  = "#04121c";  // text on top of CC-coloured background
 
-const DARK_PAL = { BG:"#030a14", S1:"#061020", S2:"#0a1828", BD:"#0e1f35",
-  CC:"#f97316", CC2:"#fb923c", MUTED:"#3a5a78", TEXT:"#c8d8e8", CCON:"#050e1a" };
+const DARK_PAL = { BG:"#080b15", S1:"#0d1220", S2:"rgba(255,255,255,0.06)", BD:"rgba(255,255,255,0.09)",
+  CC:"#38d4e8", CC2:"#3987e5", MUTED:"#8c93b5", TEXT:"#f3f5fc", CCON:"#04121c" };
 
 // ─── CSS keyframes (injected once) ───────────────────────────────────────────
 const CC_STYLES = `
 @keyframes cc-cw  { to { transform: rotate(360deg);  } }
 @keyframes cc-ccw { to { transform: rotate(-360deg); } }
 @keyframes cc-pulse {
-  0%,100% { box-shadow: 0 0 14px 6px rgba(249,115,22,.4), 0 0 36px 14px rgba(249,115,22,.15); }
-  50%     { box-shadow: 0 0 26px 12px rgba(249,115,22,.7), 0 0 60px 24px rgba(249,115,22,.28); }
+  0%,100% { box-shadow: 0 0 14px 6px rgba(56,212,232,.4), 0 0 36px 14px rgba(56,212,232,.15); }
+  50%     { box-shadow: 0 0 26px 12px rgba(56,212,232,.7), 0 0 60px 24px rgba(56,212,232,.28); }
 }
 @keyframes cc-blink { 0%,100%{opacity:1} 50%{opacity:.2} }
 @keyframes cc-cmd-in {
@@ -38,8 +90,8 @@ const CC_STYLES = `
   40%         { transform:scale(1);  opacity:1;   }
 }
 @keyframes cc-pulse-border {
-  0%,100% { box-shadow: 0 0 0 0 rgba(239,68,68,.15); }
-  50%     { box-shadow: 0 0 0 4px rgba(239,68,68,.35); }
+  0%,100% { box-shadow: 0 0 0 0 rgba(240,82,107,.15); }
+  50%     { box-shadow: 0 0 0 4px rgba(240,82,107,.35); }
 }
 `;
 let _injected = false;
@@ -114,7 +166,7 @@ function Bar({ pct, color, height = 5 }) {
   return (
     <div style={{ height, borderRadius: height / 2, background: BD, overflow: "hidden" }}>
       <div style={{ width: `${capped}%`, height: "100%", borderRadius: height / 2,
-        background: pct >= 100 ? "#ef4444" : pct >= 80 ? "#f59e0b" : color,
+        background: pct >= 100 ? "#f0526b" : pct >= 80 ? "#fab219" : color,
         transition: "width .4s ease" }} />
     </div>
   );
@@ -151,34 +203,34 @@ function CommandPalette({ onClose }) {
       background:"rgba(2,6,14,.82)", backdropFilter:"blur(6px)",
       display:"flex", alignItems:"flex-start", justifyContent:"center", paddingTop:"18vh" }}
       onClick={onClose}>
-      <div style={{ width:560, background:S1,
+      <div data-testid="cc-command-palette" style={{ width:560, background:S1, backdropFilter:"blur(18px)",
         border:`1px solid ${CC}55`, borderRadius:14, overflow:"hidden",
         boxShadow:`0 32px 80px rgba(0,0,0,.7)`, animation:"cc-cmd-in .14s ease" }}
         onClick={e => e.stopPropagation()}>
         <div style={{ padding:"13px 18px", borderBottom:`1px solid ${BD}`,
           display:"flex", alignItems:"center", gap:10 }}>
           <span style={{ color:CC, fontSize:11, fontWeight:700 }}>⌘</span>
-          <input ref={ref} value={q} onChange={e => setQ(e.target.value)} onKeyDown={onKey}
+          <input ref={ref} data-testid="cc-command-palette-input" value={q} onChange={e => setQ(e.target.value)} onKeyDown={onKey}
             placeholder="Search commands…"
             style={{ flex:1, background:"none", border:"none", outline:"none",
-              fontFamily:"sans-serif", fontSize:12, color:TEXT, caretColor:CC }} />
-          <kbd style={{ fontFamily:"monospace", fontSize:10, color:MUTED,
+              fontFamily:HZ_BODY, fontSize:12, color:TEXT, caretColor:CC }} />
+          <kbd style={{ fontFamily:HZ_MONO, fontSize:10, color:MUTED,
             border:`1px solid ${BD}`, borderRadius:4, padding:"2px 5px" }}>Esc</kbd>
         </div>
         <div style={{ maxHeight:330, overflowY:"auto" }}>
           {list.map((c,i) => (
-            <div key={c.key}
+            <div key={c.key} data-testid={`cc-command-item-${c.key}`}
               style={{ display:"flex", alignItems:"center", gap:12, padding:"11px 18px",
                 cursor:"pointer", background: i===idx ? `${CC}12` : "none",
                 borderLeft:`3px solid ${i===idx ? CC : "transparent"}` }}
               onMouseEnter={() => setIdx(i)} onClick={() => go(c)}>
               <span style={{ width:24, display:"flex", alignItems:"center", justifyContent:"center" }}><AnyIcon icon={c.icon} size={16} /></span>
-              <span style={{ fontFamily:"sans-serif", fontSize:11, color:TEXT, flex:1 }}>{c.label}</span>
+              <span style={{ fontFamily:HZ_BODY, fontSize:11, color:TEXT, flex:1 }}>{c.label}</span>
             </div>
           ))}
         </div>
         <div style={{ padding:"7px 18px", borderTop:`1px solid ${BD}`,
-          display:"flex", gap:16, fontFamily:"monospace", fontSize:10, color:MUTED }}>
+          display:"flex", gap:16, fontFamily:HZ_MONO, fontSize:10, color:MUTED }}>
           <span>↑↓ navigate</span><span>↵ open</span><span>Esc close</span>
         </div>
       </div>
@@ -231,14 +283,14 @@ function AiChatPanel() {
 
   if (enabled === null) return (
     <div style={{ flex:1, display:"flex", alignItems:"center", justifyContent:"center",
-      fontFamily:"sans-serif", fontSize:12, color:MUTED }}>Initialising…</div>
+      fontFamily:HZ_BODY, fontSize:12, color:MUTED }}>Initialising…</div>
   );
 
   if (!enabled) return (
     <div style={{ flex:1, display:"flex", flexDirection:"column",
       alignItems:"center", justifyContent:"center", gap:8, padding:20, textAlign:"center" }}>
       <div style={{ fontSize:22, opacity:.12 }}>✦</div>
-      <div style={{ fontFamily:"sans-serif", fontSize:11, color:MUTED, lineHeight:1.7 }}>
+      <div style={{ fontFamily:HZ_BODY, fontSize:11, color:MUTED, lineHeight:1.7 }}>
         AI Agent not configured.<br/>Enable in <strong style={{ color:TEXT }}>Settings → API Controls → AI Agent</strong>.
       </div>
     </div>
@@ -246,7 +298,7 @@ function AiChatPanel() {
 
   return (
     <>
-      <div style={{ flex:1, overflowY:"auto", padding:"10px 12px",
+      <div style={{ flex:1, overflowY:"auto",
         display:"flex", flexDirection:"column", minHeight:0 }}>
         {msgs.map((m,i) => {
           const isUser = m.role === "user";
@@ -257,14 +309,14 @@ function AiChatPanel() {
                 <div style={{ width:18, height:18, borderRadius:"50%", flexShrink:0,
                   marginRight:5, background:CC, alignSelf:"flex-end",
                   display:"flex", alignItems:"center", justifyContent:"center",
-                  fontFamily:"monospace", fontSize:8, fontWeight:700, color:CCON }}>✦</div>
+                  fontFamily:HZ_MONO, fontSize:8, fontWeight:700, color:CCON }}>✦</div>
               )}
               <div style={{ maxWidth:"84%",
                 background: isUser ? CC : S1,
                 color: isUser ? CCON : TEXT,
                 border: isUser ? "none" : `1px solid ${BD}`,
                 borderRadius: isUser ? "9px 9px 2px 9px" : "9px 9px 9px 2px",
-                padding:"7px 10px", fontFamily:"sans-serif", fontSize:11, lineHeight:1.55 }}>
+                padding:"7px 10px", fontFamily:HZ_BODY, fontSize:11, lineHeight:1.55 }}>
                 <div style={{ whiteSpace:"pre-wrap", wordBreak:"break-word" }}>{m.content}</div>
                 <div style={{ fontSize:9, marginTop:2,
                   color: isUser ? `${CCON}88` : MUTED,
@@ -277,8 +329,8 @@ function AiChatPanel() {
           <div style={{ display:"flex", alignItems:"center", gap:5, marginBottom:7 }}>
             <div style={{ width:18, height:18, borderRadius:"50%", background:CC, flexShrink:0,
               display:"flex", alignItems:"center", justifyContent:"center",
-              fontFamily:"monospace", fontSize:8, fontWeight:700, color:CCON }}>✦</div>
-            <div style={{ background:S1, border:`1px solid ${BD}`,
+              fontFamily:HZ_MONO, fontSize:8, fontWeight:700, color:CCON }}>✦</div>
+            <div style={{ background:S1, backdropFilter:"blur(18px)", border:`1px solid ${BD}`,
               borderRadius:"9px 9px 9px 2px", padding:"8px 11px",
               display:"flex", gap:3, alignItems:"center" }}>
               {[0,1,2].map(i => (
@@ -291,20 +343,20 @@ function AiChatPanel() {
         )}
         <div ref={bottomRef} />
       </div>
-      <div style={{ padding:"8px 10px", borderTop:`1px solid ${BD}`, flexShrink:0 }}>
+      <div style={{ paddingTop:10, marginTop:2, borderTop:`1px solid ${BD}`, flexShrink:0 }}>
         <div style={{ display:"flex", gap:6, alignItems:"flex-end" }}>
-          <textarea ref={inputRef} value={input}
+          <textarea ref={inputRef} data-testid="cc-ai-chat-input" value={input}
             onChange={e => setInput(e.target.value)} onKeyDown={onKey} rows={1}
             placeholder="Ask about shipments, carriers…"
-            style={{ flex:1, resize:"none", background:S1, border:`1px solid ${BD}`,
-              borderRadius:7, padding:"6px 9px", fontFamily:"sans-serif", fontSize:11,
+            style={{ flex:1, resize:"none", background:S1, backdropFilter:"blur(18px)", border:`1px solid ${BD}`,
+              borderRadius:7, padding:"6px 9px", fontFamily:HZ_BODY, fontSize:11,
               color:TEXT, outline:"none", lineHeight:1.4, maxHeight:72, overflowY:"auto" }} />
-          <button type="button" onClick={send} disabled={loading || !input.trim()}
+          <button type="button" data-testid="cc-ai-chat-send-btn" onClick={send} disabled={loading || !input.trim()}
             style={{ padding:"6px 11px", borderRadius:7, border:"none", flexShrink:0,
               background: (loading||!input.trim()) ? S2 : CC,
               color: (loading||!input.trim()) ? MUTED : CCON,
               cursor: (loading||!input.trim()) ? "default" : "pointer",
-              fontFamily:"monospace", fontSize:11, fontWeight:700, lineHeight:1 }}>↑</button>
+              fontFamily:HZ_MONO, fontSize:11, fontWeight:700, lineHeight:1 }}>↑</button>
         </div>
       </div>
     </>
@@ -319,12 +371,12 @@ function ShipmentPreviewModal({ shipment: s, containers, carriers, onClose }) {
 
   const row = (label, value) => value ? (
     <div style={{ display:"flex", gap:10, padding:"6px 0", borderBottom:`1px solid ${BD}` }}>
-      <span style={{ fontFamily:"monospace", fontSize:10, color:MUTED, minWidth:110, flexShrink:0 }}>{label}</span>
-      <span style={{ fontFamily:"monospace", fontSize:11, color:TEXT, wordBreak:"break-word" }}>{value}</span>
+      <span style={{ fontFamily:HZ_MONO, fontSize:10, color:MUTED, minWidth:110, flexShrink:0 }}>{label}</span>
+      <span style={{ fontFamily:HZ_MONO, fontSize:11, color:TEXT, wordBreak:"break-word" }}>{value}</span>
     </div>
   ) : null;
 
-  const STATUS_COLOR = { Active:"#22c55e", Pending:"#f59e0b", "Requires Review":"#ef4444",
+  const STATUS_COLOR = { Active:"#22c55e", Pending:"#fab219", "Requires Review":"#f0526b",
     Completed:"#3b82f6", Cancelled:"#475569" };
   const sc = STATUS_COLOR[s.status] || MUTED;
 
@@ -335,7 +387,7 @@ function ShipmentPreviewModal({ shipment: s, containers, carriers, onClose }) {
 
   const btnBase = {
     padding:"4px 10px", borderRadius:6, border:`1px solid ${BD}`,
-    background:"none", cursor:"pointer", fontFamily:"monospace", fontSize:12,
+    background:"none", cursor:"pointer", fontFamily:HZ_MONO, fontSize:12,
     color:MUTED, lineHeight:1, transition:"all .15s",
   };
 
@@ -348,7 +400,7 @@ function ShipmentPreviewModal({ shipment: s, containers, carriers, onClose }) {
       }} />
 
       {/* Panel */}
-      <div style={{
+      <div data-testid="cc-shipment-preview-modal" style={{
         position:"fixed", top:"50%", left:"50%",
         transform:"translate(-50%,-50%)",
         width:530, maxWidth:"calc(100vw - 32px)",
@@ -362,18 +414,18 @@ function ShipmentPreviewModal({ shipment: s, containers, carriers, onClose }) {
 
         {/* Header */}
         <div style={{ flexShrink:0, display:"flex", alignItems:"center", gap:10,
-          padding:"13px 16px", background:S1, borderBottom:`1px solid ${BD}` }}>
+          padding:"13px 16px", background:S1, backdropFilter:"blur(18px)", borderBottom:`1px solid ${BD}` }}>
           <div style={{ flex:1, minWidth:0 }}>
-            <div style={{ fontFamily:"monospace", fontSize:13, fontWeight:900,
+            <div style={{ fontFamily:HZ_MONO, fontSize:13, fontWeight:900,
               color:TEXT, letterSpacing:".04em", overflow:"hidden",
               textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{s.id}</div>
             {s.bookingRef && (
-              <div style={{ fontFamily:"monospace", fontSize:10, color:MUTED, marginTop:2 }}>
+              <div style={{ fontFamily:HZ_MONO, fontSize:10, color:MUTED, marginTop:2 }}>
                 Booking {s.bookingRef}
               </div>
             )}
           </div>
-          <span style={{ flexShrink:0, fontFamily:"monospace", fontSize:10, fontWeight:700,
+          <span style={{ flexShrink:0, fontFamily:HZ_MONO, fontSize:10, fontWeight:700,
             padding:"3px 9px", borderRadius:5,
             background:`${sc}18`, color:sc, border:`1px solid ${sc}44` }}>
             {s.status}
@@ -387,9 +439,9 @@ function ShipmentPreviewModal({ shipment: s, containers, carriers, onClose }) {
             ↗
           </button>
           {/* Close */}
-          <button type="button" onClick={onClose}
+          <button type="button" data-testid="cc-shipment-preview-close-btn" onClick={onClose}
             style={btnBase}
-            onMouseEnter={e => { e.currentTarget.style.borderColor="#ef4444"; e.currentTarget.style.color="#ef4444"; }}
+            onMouseEnter={e => { e.currentTarget.style.borderColor="#f0526b"; e.currentTarget.style.color="#f0526b"; }}
             onMouseLeave={e => { e.currentTarget.style.borderColor=BD; e.currentTarget.style.color=MUTED; }}>
             ✕
           </button>
@@ -408,25 +460,25 @@ function ShipmentPreviewModal({ shipment: s, containers, carriers, onClose }) {
             const Node = ({ code, sub, isDoor }) => (
               <div style={{ textAlign:"center", flexShrink:0 }}>
                 <div style={{
-                  fontFamily:"monospace", fontSize: isDoor ? 11 : 18,
+                  fontFamily:HZ_MONO, fontSize: isDoor ? 11 : 18,
                   fontWeight: isDoor ? 600 : 900,
                   color: isDoor ? MUTED : TEXT,
                   fontStyle: isDoor ? "italic" : "normal",
                 }}>{code}</div>
-                {sub && <div style={{ fontFamily:"sans-serif", fontSize:10, color:MUTED }}>{sub}</div>}
+                {sub && <div style={{ fontFamily:HZ_BODY, fontSize:10, color:MUTED }}>{sub}</div>}
               </div>
             );
             const Arrow = ({ label }) => (
               <div style={{ flex:1, textAlign:"center", minWidth:40 }}>
                 <div style={{ height:1, background:BD, position:"relative" }}>
                   {label && <span style={{ position:"absolute", top:-8, left:"50%", transform:"translateX(-50%)",
-                    fontFamily:"monospace", fontSize:9, color:CC, background:S1, padding:"0 6px",
+                    fontFamily:HZ_MONO, fontSize:9, color:CC, background:S1, backdropFilter:"blur(18px)", padding:"0 6px",
                     whiteSpace:"nowrap" }}>{label}</span>}
                 </div>
               </div>
             );
             return (
-              <div style={{ marginBottom:16, padding:"12px 16px", background:S1, borderRadius:9, border:`1px solid ${BD}` }}>
+              <div style={{ marginBottom:16, padding:"12px 16px", background:S1, backdropFilter:"blur(18px)", borderRadius:16, border:`1px solid ${BD}` }}>
                 <div style={{ display:"flex", alignItems:"center", gap:8 }}>
                   {pickupLabel && <><Node code={pickupLabel} isDoor /><Arrow /></>}
                   <Node code={s.pol || "—"} sub={s.polName} />
@@ -435,7 +487,7 @@ function ShipmentPreviewModal({ shipment: s, containers, carriers, onClose }) {
                   {deliveryLabel && <><Arrow /><Node code={deliveryLabel} isDoor /></>}
                 </div>
                 {(s.vessel || s.routingTerm) && (
-                  <div style={{ fontFamily:"monospace", fontSize:9, color:MUTED, marginTop:10,
+                  <div style={{ fontFamily:HZ_MONO, fontSize:9, color:MUTED, marginTop:10,
                     textAlign:"center", borderTop:`1px solid ${BD}`, paddingTop:8 }}>
                     {s.vessel ? `${s.vessel}${s.voyage ? ` / ${s.voyage}` : ""}` : ""}
                     {s.vessel && s.routingTerm ? "  ·  " : ""}
@@ -462,17 +514,17 @@ function ShipmentPreviewModal({ shipment: s, containers, carriers, onClose }) {
           {/* Containers */}
           {ctrs.length > 0 && (
             <div style={{ marginBottom:14 }}>
-              <div style={{ fontFamily:"monospace", fontSize:9, fontWeight:700, color:MUTED,
+              <div style={{ fontFamily:HZ_MONO, fontSize:9, fontWeight:700, color:MUTED,
                 textTransform:"uppercase", letterSpacing:".12em", marginBottom:8 }}>
                 Containers — {ctrs.length} unit{ctrs.length > 1 ? "s" : ""}, {teu} TEU
               </div>
               <div style={{ display:"flex", flexWrap:"wrap", gap:6 }}>
                 {ctrs.map(c => (
-                  <div key={c.id} style={{ fontFamily:"monospace", fontSize:10, padding:"4px 9px",
-                    borderRadius:6, background:S1, border:`1px solid ${BD}`, color:TEXT }}>
+                  <div key={c.id} style={{ fontFamily:HZ_MONO, fontSize:10, padding:"4px 9px",
+                    borderRadius:6, background:S1, backdropFilter:"blur(18px)", border:`1px solid ${BD}`, color:TEXT }}>
                     {c.size}ft {c.type}
                     {c.containerNumber ? <span style={{ color:MUTED }}> · {c.containerNumber}</span> : ""}
-                    {c.isDg ? <span style={{ color:"#ef4444", marginLeft:4 }}>DG</span> : ""}
+                    {c.isDg ? <span style={{ color:"#f0526b", marginLeft:4 }}>DG</span> : ""}
                   </div>
                 ))}
               </div>
@@ -483,7 +535,7 @@ function ShipmentPreviewModal({ shipment: s, containers, carriers, onClose }) {
           <div style={{ display:"flex", justifyContent:"flex-end", paddingTop:4 }}>
             <button type="button" onClick={openInNewTab}
               style={{ padding:"7px 16px", borderRadius:7, border:`1px solid ${CC}55`,
-                background:"none", cursor:"pointer", fontFamily:"monospace", fontSize:11,
+                background:"none", cursor:"pointer", fontFamily:HZ_MONO, fontSize:11,
                 color:CC, transition:"all .15s" }}
               onMouseEnter={e => { e.currentTarget.style.background=`${CC}14`; }}
               onMouseLeave={e => { e.currentTarget.style.background="none"; }}>
@@ -498,7 +550,7 @@ function ShipmentPreviewModal({ shipment: s, containers, carriers, onClose }) {
 
 // ─── Section label ────────────────────────────────────────────────────────────
 const SLabel = ({ children }) => (
-  <div style={{ fontFamily:"monospace", fontSize:11, fontWeight:700, color:MUTED,
+  <div style={{ fontFamily:HZ_MONO, fontSize:11, fontWeight:700, color:MUTED,
     textTransform:"uppercase", letterSpacing:".14em", marginBottom:8 }}>
     {children}
   </div>
@@ -537,7 +589,7 @@ async function fetchWeatherByCity(cityName, setter) {
 }
 
 const DONE_STATUSES = new Set(["Done", "Ready to Deploy", "Released"]);
-const PRIORITY_COLOR = { High:"#ef4444", Medium:"#f59e0b", Low:"#3b82f6" };
+const PRIORITY_COLOR = { High:"#f0526b", Medium:"#fab219", Low:"#3b82f6" };
 
 // ─── Integration board overdue card ──────────────────────────────────────────
 function TicketAlertCard({ overdueTickets, dueSoonTickets, today, onNavigate }) {
@@ -546,32 +598,32 @@ function TicketAlertCard({ overdueTickets, dueSoonTickets, today, onNavigate }) 
   const daysLate  = iso => Math.round((new Date(today) - new Date(iso)) / 86400000);
   const daysUntil = iso => Math.round((new Date(iso)   - new Date(today)) / 86400000);
   return (
-    <div style={{ marginBottom:20, background:S1, border:`1px solid ${BD}`,
-      borderTop:`2px solid #ef444488`, borderRadius:9, overflow:"hidden" }}>
+    <div data-testid="cc-ticket-alert-card" style={{ marginBottom:20, background:S1, backdropFilter:"blur(18px)", border:`1px solid ${BD}`,
+      borderTop:`2px solid #f0526b88`, borderRadius:16, overflow:"hidden" }}>
       {/* Header */}
       <div style={{ display:"flex", alignItems:"center", gap:10, padding:"12px 14px 8px" }}>
-        <span style={{ fontFamily:"monospace", fontSize:13, fontWeight:700,
-          color:"#ef4444", textTransform:"uppercase", letterSpacing:".12em" }}>
+        <span style={{ fontFamily:HZ_MONO, fontSize:13, fontWeight:700,
+          color:"#f0526b", textTransform:"uppercase", letterSpacing:".12em" }}>
           🎫 Integration Board
         </span>
         <div style={{ display:"flex", gap:6, marginLeft:4 }}>
           {[
-            { key:"overdue",   label:"Overdue",       count:overdueTickets.length,  color:"#ef4444" },
-            { key:"due-soon",  label:"Due this week", count:dueSoonTickets.length,  color:"#f59e0b" },
+            { key:"overdue",   label:"Overdue",       count:overdueTickets.length,  color:"#f0526b" },
+            { key:"due-soon",  label:"Due this week", count:dueSoonTickets.length,  color:"#fab219" },
           ].map(tab => {
             const active = ticketTab === tab.key;
             return (
-              <button key={tab.key} type="button" onClick={() => setTicketTab(tab.key)}
+              <button key={tab.key} type="button" data-testid={`cc-ticket-tab-${tab.key}`} onClick={() => setTicketTab(tab.key)}
                 style={{ display:"flex", alignItems:"center", gap:5,
                   padding:"3px 10px", borderRadius:10,
-                  fontFamily:"monospace", fontSize:11, fontWeight:700,
+                  fontFamily:HZ_MONO, fontSize:11, fontWeight:700,
                   cursor:"pointer", transition:"all .12s",
                   background: active ? `${tab.color}22` : "none",
                   color: active ? tab.color : MUTED,
                   border: active ? `1px solid ${tab.color}55` : `1px solid ${BD}` }}>
                 {tab.label}
                 {tab.count > 0 && (
-                  <span style={{ fontFamily:"monospace", fontSize:12,
+                  <span style={{ fontFamily:HZ_MONO, fontSize:12,
                     background: active ? tab.color : BD,
                     color: active ? CCON : MUTED,
                     borderRadius:8, padding:"1px 5px", minWidth:14, textAlign:"center" }}>
@@ -584,7 +636,7 @@ function TicketAlertCard({ overdueTickets, dueSoonTickets, today, onNavigate }) 
         </div>
         <button type="button"
           onClick={() => { if (onNavigate) onNavigate("kanban"); else window.location.hash = "kanban"; }}
-          style={{ marginLeft:"auto", fontFamily:"monospace", fontSize:11, color:MUTED,
+          style={{ marginLeft:"auto", fontFamily:HZ_MONO, fontSize:11, color:MUTED,
             background:"none", border:`1px solid ${BD}`, borderRadius:5,
             padding:"4px 10px", cursor:"pointer" }}
           onMouseEnter={e => { e.currentTarget.style.color=CC; e.currentTarget.style.borderColor=`${CC}55`; }}
@@ -596,7 +648,7 @@ function TicketAlertCard({ overdueTickets, dueSoonTickets, today, onNavigate }) 
       {/* Ticket rows */}
       <div style={{ maxHeight:200, overflowY:"auto" }}>
         {shown.length === 0 ? (
-          <div style={{ padding:"14px 14px 16px", fontFamily:"sans-serif",
+          <div style={{ padding:"14px 14px 16px", fontFamily:HZ_BODY,
             fontSize:11, color:MUTED, fontStyle:"italic" }}>
             {ticketTab === "overdue" ? "No overdue tickets." : "Nothing due in the next 7 days."}
           </div>
@@ -604,27 +656,27 @@ function TicketAlertCard({ overdueTickets, dueSoonTickets, today, onNavigate }) 
           const pColor = PRIORITY_COLOR[t.priority] || MUTED;
           const isOD   = ticketTab === "overdue";
           const dLabel = isOD ? `+${daysLate(t.dueDate)}d` : `${daysUntil(t.dueDate)}d`;
-          const dColor = isOD ? "#ef4444" : (daysUntil(t.dueDate) <= 2 ? "#f59e0b" : MUTED);
+          const dColor = isOD ? "#f0526b" : (daysUntil(t.dueDate) <= 2 ? "#fab219" : MUTED);
           return (
             <div key={t.id} style={{ display:"flex", alignItems:"center", gap:8,
               padding:"7px 14px", borderTop:`1px solid ${BD}` }}>
               <div style={{ width:8, height:8, borderRadius:"50%", flexShrink:0,
                 background:pColor, boxShadow:`0 0 4px ${pColor}88` }} />
-              <span style={{ fontFamily:"monospace", fontSize:11, color:MUTED,
+              <span style={{ fontFamily:HZ_MONO, fontSize:11, color:MUTED,
                 flexShrink:0, minWidth:90, overflow:"hidden",
                 textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
                 {t.id.length > 12 ? t.id.slice(-10) : t.id}
               </span>
-              <span style={{ fontFamily:"sans-serif", fontSize:12, color:TEXT, flex:1,
+              <span style={{ fontFamily:HZ_BODY, fontSize:12, color:TEXT, flex:1,
                 overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
                 {t.title}
               </span>
-              <span style={{ fontFamily:"monospace", fontSize:12, flexShrink:0,
+              <span style={{ fontFamily:HZ_MONO, fontSize:12, flexShrink:0,
                 padding:"2px 8px", borderRadius:4, background:S2,
                 border:`1px solid ${BD}`, color:MUTED }}>
                 {t.status}
               </span>
-              <span style={{ fontFamily:"monospace", fontSize:13, fontWeight:700,
+              <span style={{ fontFamily:HZ_MONO, fontSize:13, fontWeight:700,
                 color:dColor, flexShrink:0, minWidth:36, textAlign:"right" }}>
                 {dLabel}
               </span>
@@ -632,14 +684,14 @@ function TicketAlertCard({ overdueTickets, dueSoonTickets, today, onNavigate }) 
                 <div style={{ width:26, height:26, borderRadius:"50%", flexShrink:0,
                   background:`${CC}22`, border:`1px solid ${CC}44`,
                   display:"flex", alignItems:"center", justifyContent:"center",
-                  fontFamily:"monospace", fontSize:13, fontWeight:700, color:CC }}>
+                  fontFamily:HZ_MONO, fontSize:13, fontWeight:700, color:CC }}>
                   {t.assigneeInitial}
                 </div>
               ) : (
                 <div style={{ width:26, height:26, borderRadius:"50%", flexShrink:0,
                   background:BD, border:`1px solid ${BD}`,
                   display:"flex", alignItems:"center", justifyContent:"center",
-                  fontFamily:"monospace", fontSize:13, color:MUTED }}>
+                  fontFamily:HZ_MONO, fontSize:13, color:MUTED }}>
                   —
                 </div>
               )}
@@ -653,9 +705,9 @@ function TicketAlertCard({ overdueTickets, dueSoonTickets, today, onNavigate }) 
 
 // ─── Exception queue, classified by root cause (TKT-FKJPBO) ─────────────────
 const EXC_TABS = [
-  { key:"scheduleSlip",       label:"Schedule Slip",       color:"#f59e0b" },
-  { key:"unconfirmedBooking", label:"Unconfirmed Booking", color:"#ef4444" },
-  { key:"stalledMilestone",   label:"Stalled Milestone",   color:"#f59e0b" },
+  { key:"scheduleSlip",       label:"Schedule Slip",       color:"#fab219" },
+  { key:"unconfirmedBooking", label:"Unconfirmed Booking", color:"#f0526b" },
+  { key:"stalledMilestone",   label:"Stalled Milestone",   color:"#fab219" },
 ];
 function ExceptionQueueCard({ queue, onOpenShipment }) {
   const [tab, setTab] = useState("scheduleSlip");
@@ -670,11 +722,11 @@ function ExceptionQueueCard({ queue, onOpenShipment }) {
   const rowDays = row => tab === "scheduleSlip" ? row.daysSlipped : tab === "unconfirmedBooking" ? row.daysPastEtd : row.daysStalled;
 
   return (
-    <div style={{ marginBottom:20, background:S1, border:`1px solid ${BD}`,
-      borderTop:`2px solid #f59e0b88`, borderRadius:9, overflow:"hidden" }}>
+    <div data-testid="cc-exception-queue-card" style={{ marginBottom:20, background:S1, backdropFilter:"blur(18px)", border:`1px solid ${BD}`,
+      borderTop:`2px solid #fab21988`, borderRadius:16, overflow:"hidden" }}>
       <div style={{ display:"flex", alignItems:"center", gap:10, padding:"12px 14px 8px", flexWrap:"wrap" }}>
-        <span style={{ fontFamily:"monospace", fontSize:13, fontWeight:700,
-          color:"#f59e0b", textTransform:"uppercase", letterSpacing:".12em" }}>
+        <span style={{ fontFamily:HZ_MONO, fontSize:13, fontWeight:700,
+          color:"#fab219", textTransform:"uppercase", letterSpacing:".12em" }}>
           ⚠ Exceptions
         </span>
         <div style={{ display:"flex", gap:6, marginLeft:4, flexWrap:"wrap" }}>
@@ -682,17 +734,17 @@ function ExceptionQueueCard({ queue, onOpenShipment }) {
             const count = (queue[t.key] || []).length;
             const isActive = tab === t.key;
             return (
-              <button key={t.key} type="button" onClick={() => setTab(t.key)}
+              <button key={t.key} type="button" data-testid={`cc-exc-tab-${t.key}`} onClick={() => setTab(t.key)}
                 style={{ display:"flex", alignItems:"center", gap:5,
                   padding:"3px 10px", borderRadius:10,
-                  fontFamily:"monospace", fontSize:11, fontWeight:700,
+                  fontFamily:HZ_MONO, fontSize:11, fontWeight:700,
                   cursor:"pointer", transition:"all .12s",
                   background: isActive ? `${t.color}22` : "none",
                   color: isActive ? t.color : MUTED,
                   border: isActive ? `1px solid ${t.color}55` : `1px solid ${BD}` }}>
                 {t.label}
                 {count > 0 && (
-                  <span style={{ fontFamily:"monospace", fontSize:10,
+                  <span style={{ fontFamily:HZ_MONO, fontSize:10,
                     background: isActive ? t.color : BD,
                     color: isActive ? CCON : MUTED,
                     borderRadius:8, padding:"1px 5px", minWidth:14, textAlign:"center" }}>
@@ -706,7 +758,7 @@ function ExceptionQueueCard({ queue, onOpenShipment }) {
       </div>
       <div style={{ maxHeight:200, overflowY:"auto" }}>
         {shown.length === 0 ? (
-          <div style={{ padding:"14px 14px 16px", fontFamily:"sans-serif",
+          <div style={{ padding:"14px 14px 16px", fontFamily:HZ_BODY,
             fontSize:11, color:MUTED, fontStyle:"italic" }}>
             No {active.label.toLowerCase()} exceptions.
           </div>
@@ -717,15 +769,15 @@ function ExceptionQueueCard({ queue, onOpenShipment }) {
               padding:"7px 14px", borderTop:`1px solid ${BD}`, cursor:"pointer" }}
             onMouseEnter={e => e.currentTarget.style.background = S2}
             onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
-            <span style={{ fontFamily:"monospace", fontSize:11, fontWeight:700, color:TEXT,
+            <span style={{ fontFamily:HZ_MONO, fontSize:11, fontWeight:700, color:TEXT,
               flexShrink:0, minWidth:90 }}>
               {row.shipmentId}
             </span>
-            <span style={{ fontFamily:"sans-serif", fontSize:11, color:MUTED, flex:1,
+            <span style={{ fontFamily:HZ_BODY, fontSize:11, color:MUTED, flex:1,
               overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
               {rowDetail(row)}
             </span>
-            <span style={{ fontFamily:"monospace", fontSize:11, fontWeight:700,
+            <span style={{ fontFamily:HZ_MONO, fontSize:11, fontWeight:700,
               color: active.color, flexShrink:0 }}>
               +{rowDays(row)}d
             </span>
@@ -748,6 +800,7 @@ export default function CommandCenterView({ shipments=[], containers=[], allocat
   const [cmdOpen,         setCmdOpen]         = useState(false);
   const [previewShipment, setPreviewShipment] = useState(null);
   const [activeFilter,    setActiveFilter]    = useState(null);
+  const [showAllRecent,   setShowAllRecent]   = useState(false);
   const [tickets,         setTickets]         = useState([]);
 
   // Command Center — Quality & Exception Management (Epic TKT-IBHB0K)
@@ -845,8 +898,8 @@ export default function CommandCenterView({ shipments=[], containers=[], allocat
   shipments.forEach(s => { byStatus[s.status] = (byStatus[s.status] || 0) + 1; });
   const donutSegs = [
     { label:"Active",   value: byStatus["Active"]          || 0, color:"#22c55e" },
-    { label:"Pending",  value: byStatus["Pending"]         || 0, color:"#f59e0b" },
-    { label:"Review",   value: byStatus["Requires Review"] || 0, color:"#ef4444" },
+    { label:"Pending",  value: byStatus["Pending"]         || 0, color:"#fab219" },
+    { label:"Review",   value: byStatus["Requires Review"] || 0, color:"#f0526b" },
     { label:"Completed",value: byStatus["Completed"]       || 0, color:"#3b82f6" },
     { label:"Other",    value: shipments.length - (byStatus["Active"]||0) - (byStatus["Pending"]||0)
                                - (byStatus["Requires Review"]||0) - (byStatus["Completed"]||0), color:"#475569" },
@@ -958,50 +1011,76 @@ export default function CommandCenterView({ shipments=[], containers=[], allocat
     if (activeFilter.status) return s.status === activeFilter.status;
     return true; // empty filter = all
   });
+  // `shipments` is already the full in-memory list (used for the KPI aggregates above too), so
+  // there's no extra fetch involved in holding up to 50 ready — only 10 render by default, with
+  // the rest revealed by the expand toggle below.
   const recentShipments = filteredForList
     .sort((a, b) => {
       const aOD = a.etd && a.etd < today ? 0 : 1;
       const bOD = b.etd && b.etd < today ? 0 : 1;
       return aOD - bOD;
     })
-    .slice(0, activeFilter ? 50 : 10);
+    .slice(0, 50);
+  const visibleRecentShipments = showAllRecent ? recentShipments : recentShipments.slice(0, 10);
 
   // TEU helper per shipment
   const shipTEU = sid => containers
     .filter(c => c.shipmentId === sid)
     .reduce((n, c) => n + (c.size === "40" ? 2 : 1), 0);
 
-  const STATUS_DOT = { Active:"#22c55e", Pending:"#f59e0b", "Requires Review":"#ef4444" };
+  const STATUS_DOT = { Active:"#22c55e", Pending:"#fab219", "Requires Review":"#f0526b" };
+
+  useHorizonFonts();
 
   return (
     <div style={{
+      position:"relative",
       display:"flex", flexDirection:"column",
       // fills the fixed wrapper in LandingPage (top:46, bottom:36, left:240, right:0)
       height:"100%",
       background: BG,
       overflow:"hidden",
-      backgroundImage:`radial-gradient(circle, ${BD}40 1px, transparent 1px)`,
+      backgroundImage:`radial-gradient(circle, ${BD} 1px, transparent 1px)`,
       backgroundSize:"28px 28px",
       colorScheme: isDark ? "dark" : "light",
     }}>
 
+      {/* Ambient decorative glow — position:absolute anchored to the position:relative wrapper
+          above, never position:fixed (this component itself already lives inside a position:fixed
+          shell in LandingPage.jsx; a second nested fixed layer isn't needed and this codebase has
+          confirmed position:fixed content inside a scroll-captured region also mis-renders under
+          Puppeteer's fullPage screenshot stitching). pointerEvents:none so it can never intercept a
+          click; zIndex:0 with the top bar/body siblings below explicitly at zIndex:1. */}
+      <div aria-hidden="true" style={{ position:"absolute", inset:0, zIndex:0, pointerEvents:"none", overflow:"hidden" }}>
+        <div style={{ position:"absolute", width:560, height:560, top:-220, left:-140, borderRadius:"50%",
+          filter:"blur(90px)", background:"radial-gradient(circle, rgba(56,212,232,0.16), transparent 68%)" }} />
+        <div style={{ position:"absolute", width:520, height:520, top:-100, right:-180, borderRadius:"50%",
+          filter:"blur(90px)", background:"radial-gradient(circle, rgba(213,81,159,0.12), transparent 68%)" }} />
+      </div>
+
       {/* ── Top bar ── */}
-      <div style={{ flexShrink:0, display:"flex", alignItems:"center",
+      <div data-testid="cc-topbar" style={{ position:"relative", zIndex:1, flexShrink:0, display:"flex", alignItems:"center",
         justifyContent:"space-between", padding:"9px 22px",
-        background:S1, borderBottom:`1px solid ${BD}` }}>
-        <div style={{ display:"flex", alignItems:"center", gap:14 }}>
-          <span style={{ fontFamily:"monospace", fontSize:16, fontWeight:800, color:CC,
-            textTransform:"uppercase", letterSpacing:".18em",
-            textShadow:`0 0 12px ${CC}` }}>
+        background:S1, backdropFilter:"blur(18px)", borderBottom:`1px solid ${BD}` }}>
+        <div style={{ display:"flex", alignItems:"center", gap:12 }}>
+          <div style={{ width:30, height:30, borderRadius:9, flexShrink:0,
+            background:`linear-gradient(135deg, ${CC}, ${CC2})`,
+            boxShadow:`0 0 0 1px rgba(255,255,255,0.12) inset, 0 6px 16px -6px ${CC}88`,
+            display:"flex", alignItems:"center", justifyContent:"center" }}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none">
+              <path d="M3 17h18M5 17V9l4-4h6l4 4v8M9 17V11h6v6" stroke="#04121c" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </div>
+          <span style={{ fontFamily:HZ_DISPLAY, fontSize:19, fontWeight:700, color:TEXT }}>
             Command Center
           </span>
-          <div style={{ display:"flex", alignItems:"center", gap:5 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:5, marginLeft:4 }}>
             <div style={{ width:8, height:8, borderRadius:"50%", background:"#22c55e",
               boxShadow:"0 0 6px #22c55e", animation:"cc-blink 2.5s ease-in-out infinite" }} />
-            <span style={{ fontFamily:"monospace", fontSize:11, color:MUTED }}>LIVE</span>
+            <span style={{ fontFamily:HZ_MONO, fontSize:11, color:MUTED }}>LIVE</span>
           </div>
           {/* Live clock */}
-          <span style={{ fontFamily:"monospace", fontSize:14, color:MUTED,
+          <span style={{ fontFamily:HZ_MONO, fontSize:14, color:MUTED,
             fontVariantNumeric:"tabular-nums", letterSpacing:".04em" }}>
             {now.toLocaleTimeString([], { hour:"2-digit", minute:"2-digit", second:"2-digit" })}
             <span style={{ fontSize:10, marginLeft:5, opacity:.5 }}>
@@ -1010,21 +1089,21 @@ export default function CommandCenterView({ shipments=[], containers=[], allocat
           </span>
         </div>
         <div style={{ display:"flex", gap:8 }}>
-          <button type="button" onClick={() => setCmdOpen(true)}
+          <button type="button" data-testid="cc-commands-btn" onClick={() => setCmdOpen(true)}
             style={{ padding:"5px 12px", borderRadius:6,
               border:`1px solid ${BD}`, background:"none",
-              cursor:"pointer", fontFamily:"monospace", fontSize:11, color:MUTED,
+              cursor:"pointer", fontFamily:HZ_MONO, fontSize:11, color:MUTED,
               transition:"all .15s" }}
             onMouseEnter={e=>{ e.currentTarget.style.borderColor=CC; e.currentTarget.style.color=CC; }}
             onMouseLeave={e=>{ e.currentTarget.style.borderColor=BD; e.currentTarget.style.color=MUTED; }}>
             ⌘K Commands
           </button>
-          <button type="button" onClick={onExit}
+          <button type="button" data-testid="cc-exit-btn" onClick={onExit}
             style={{ padding:"5px 12px", borderRadius:6,
               border:`1px solid ${BD}`, background:"none",
-              cursor:"pointer", fontFamily:"sans-serif", fontSize:11, color:MUTED,
+              cursor:"pointer", fontFamily:HZ_BODY, fontSize:11, color:MUTED,
               transition:"all .15s" }}
-            onMouseEnter={e=>{ e.currentTarget.style.borderColor="#ef4444"; e.currentTarget.style.color="#ef4444"; }}
+            onMouseEnter={e=>{ e.currentTarget.style.borderColor="#f0526b"; e.currentTarget.style.color="#f0526b"; }}
             onMouseLeave={e=>{ e.currentTarget.style.borderColor=BD; e.currentTarget.style.color=MUTED; }}>
             Exit ✕
           </button>
@@ -1032,86 +1111,128 @@ export default function CommandCenterView({ shipments=[], containers=[], allocat
       </div>
 
       {/* ── Body: left (flex:1 min-width:0) + right (fixed 300px) ── */}
-      <div style={{ flex:1, display:"flex", overflow:"hidden", minHeight:0 }}>
+      <div style={{ position:"relative", zIndex:1, flex:1, display:"flex", overflow:"hidden", minHeight:0 }}>
 
         {/* ══ LEFT ══════════════════════════════════════════════════════════ */}
         <div style={{ flex:1, minWidth:0, overflowY:"auto", padding:"18px 22px",
           borderRight:`1px solid ${BD}` }}>
 
-          {/* Row 1: KPI cards */}
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(6,1fr)", gap:10, marginBottom:20 }}>
-            {[
-              { label:"Active",    value: byStatus["Active"]||0,   sub:`${shipments.length} total`,       color:"#22c55e", icon:"📦", filter:{ status:"Active" } },
-              { label:"Pending",   value: byStatus["Pending"]||0,  sub:"awaiting confirmation",           color:"#f59e0b", icon:"⏳", filter:{ status:"Pending" } },
-              { label:"Review",    value: byStatus["Requires Review"]||0, sub:"action required",         color:"#ef4444", icon:"⚠",  filter:{ status:"Requires Review" } },
-              { label:"TEU Booked",value: totalTEU,                sub:`${containers.length} containers`, color:CC,        icon:"⬛", filter:{} },
-              { label:"Overdue",   value: overdueShipments.length, sub:"ETD passed, not closed",        color:"#ef4444", icon:"🚨",
-                pulse: overdueShipments.length > 0, filter:{ status:"_overdue" } },
-              // TKT-550J25 — fleet-wide milestone on-time KPI. Value is the breach COUNT (matches
-              // this row's own "raw count" convention, e.g. Overdue) rather than the %, since the
-              // sub-line already carries the % and a scanning eye reads the big number as "how
-              // many need attention" consistently across every card here.
-              { label:"Milestones", value: msOverdueSummary?.shipmentsWithBreach ?? "—",
-                sub: msOverdueSummary ? `${msOverdueSummary.onTimePct}% on-time` : "loading…",
-                color:"#f59e0b", icon:"🎯",
-                pulse: !!msOverdueSummary?.shipmentsWithBreach, filter:{ milestoneBreach:true } },
-            ].map(k => {
-              const filterKey = f => f.status ? `status:${f.status}` : f.milestoneBreach ? "msBreach" : "all";
-              const isActive = activeFilter && filterKey(activeFilter) === filterKey(k.filter);
-              return (
-              <button key={k.label} type="button"
-                onClick={() => setActiveFilter(af =>
-                  af && filterKey(af) === filterKey(k.filter) ? null : k.filter
-                )}
-                style={{ background: isActive ? `${k.color}14` : S1, textAlign:"left",
-                  border:`1px solid ${isActive ? k.color + "88" : k.pulse ? k.color + "55" : k.color+"18"}`,
-                  borderTop:`2px solid ${k.color}${isActive ? "" : k.pulse ? "cc" : "44"}`,
-                  borderRadius:9, padding:"13px 15px", cursor:"pointer",
-                  animation: k.pulse && !isActive ? "cc-pulse-border 2s ease-in-out infinite" : "none",
-                  transition:"border-color .15s, background .15s" }}
-                onMouseEnter={e => { e.currentTarget.style.background = `${k.color}1a`; }}
-                onMouseLeave={e => { e.currentTarget.style.background = isActive ? `${k.color}14` : S1; }}>
-                <div style={{ display:"flex", alignItems:"center", gap:5, marginBottom:5 }}>
-                  <span style={{ fontSize:16 }}>{k.icon}</span>
-                  <span style={{ fontFamily:"monospace", fontSize:11, color:`${k.color}${isActive ? "dd" : "88"}`,
-                    textTransform:"uppercase", letterSpacing:".12em", fontWeight:700 }}>
-                    {k.label}
-                  </span>
-                  {isActive && <span style={{ marginLeft:"auto", fontFamily:"monospace", fontSize:10,
-                    color:k.color, letterSpacing:".08em" }}>✓</span>}
-                </div>
-                <div style={{ fontFamily:"monospace", fontSize:22, fontWeight:900,
-                  color:k.color, lineHeight:1, fontVariantNumeric:"tabular-nums",
-                  textShadow:`0 0 16px ${k.color}55` }}>{k.value}</div>
-                <div style={{ fontFamily:"sans-serif", fontSize:11, color:MUTED, marginTop:4 }}>{k.sub}</div>
-              </button>
-              );
-            })}
-          </div>
-
-          {/* Row 2: Status donut + Monthly trend + Expiring allocs */}
-          <div style={{ display:"grid", gridTemplateColumns:"auto 1fr auto auto", gap:14, marginBottom:20,
-            alignItems:"stretch" }}>
-
-            {/* Status donut */}
-            <div style={{ background:S1, border:`1px solid ${BD}`, borderRadius:9, padding:"14px 16px" }}>
-              <SLabel>Status Breakdown</SLabel>
-              <div style={{ display:"flex", alignItems:"center", gap:14 }}>
-                <StatusDonut segments={donutSegs} size={90} />
-                <div style={{ display:"flex", flexDirection:"column", gap:5 }}>
-                  {donutSegs.map(s => (
-                    <div key={s.label} style={{ display:"flex", alignItems:"center", gap:6 }}>
-                      <div style={{ width:10, height:10, borderRadius:"50%", background:s.color, flexShrink:0 }} />
-                      <span style={{ fontFamily:"sans-serif", fontSize:11, color:MUTED }}>{s.label}</span>
-                      <span style={{ fontFamily:"monospace", fontSize:13, fontWeight:700, color:TEXT, marginLeft:"auto" }}>{s.value}</span>
-                    </div>
-                  ))}
+          {/* Hero: fleet status ring + alert tile + TEU summary — bento, asymmetric spans.
+              Consolidates the original 6 flat KPI tiles into 3 richer cards; every original
+              click-to-filter interaction is preserved exactly (same setActiveFilter/filterKey
+              logic), just redistributed — Active/Pending/Review now live as clickable legend
+              rows on the Fleet Status ring, Overdue/Milestones as the two Needs Attention
+              alert-stat rows, and the TEU headline keeps its own original filter:{{}} (explicit
+              "show all") click behavior. Completed has no filter equivalent, same as before —
+              it was never a clickable KPI tile, only ever a ring segment. */}
+          {(() => {
+            const filterKey = f => f.status ? `status:${f.status}` : f.milestoneBreach ? "msBreach" : "all";
+            const isActiveFor = f => activeFilter && filterKey(activeFilter) === filterKey(f);
+            const toggle = f => { setActiveFilter(af => af && filterKey(af) === filterKey(f) ? null : f); setShowAllRecent(false); };
+            const legendItems = [
+              { label:"Active", value: byStatus["Active"]||0, color:"#22c55e", filter:{ status:"Active" } },
+              { label:"Pending", value: byStatus["Pending"]||0, color:"#fab219", filter:{ status:"Pending" } },
+              { label:"Requires Review", value: byStatus["Requires Review"]||0, color:"#f0526b", filter:{ status:"Requires Review" } },
+              { label:"Completed", value: byStatus["Completed"]||0, color:"#3987e5", filter:null },
+            ];
+            return (
+          <div data-testid="cc-kpi-hero" style={{ display:"grid", gridTemplateColumns:"5fr 4fr 3fr", gap:16, marginBottom:20 }}>
+            <div data-testid="cc-fleet-status-card" style={{ background:S1, backdropFilter:"blur(18px)", border:`1px solid ${BD}`, borderRadius:20, padding:22 }}>
+              <div style={{ fontFamily:HZ_DISPLAY, fontSize:14.5, fontWeight:600, color:TEXT, marginBottom:2 }}>Fleet Status</div>
+              <div style={{ fontFamily:HZ_BODY, fontSize:12, color:MUTED, marginBottom:16 }}>{shipments.length} shipments across every active lane</div>
+              <div style={{ display:"flex", alignItems:"center", gap:22, flexWrap:"wrap" }}>
+                <StatusDonut segments={donutSegs} size={116} />
+                <div style={{ display:"flex", flexDirection:"column", gap:7, flex:1, minWidth:160 }}>
+                  {legendItems.map(s => {
+                    const clickable = !!s.filter;
+                    const active = clickable && isActiveFor(s.filter);
+                    return (
+                      <button key={s.label} type="button" disabled={!clickable}
+                        data-testid={`cc-legend-${s.label.toLowerCase().replace(/\s+/g,"-")}`}
+                        onClick={() => clickable && toggle(s.filter)}
+                        style={{ display:"flex", alignItems:"center", gap:9, fontSize:12.5, background:"none",
+                          border:"none", padding:active ? "3px 6px" : "3px 0", margin:0, textAlign:"left",
+                          borderRadius:7, cursor:clickable ? "pointer" : "default",
+                          backgroundColor: active ? `${s.color}18` : "transparent" }}>
+                        <span style={{ width:8, height:8, borderRadius:3, background:s.color, flexShrink:0 }} />
+                        <span style={{ color:MUTED, flex:1, fontFamily:HZ_BODY }}>{s.label}</span>
+                        <span style={{ fontFamily:HZ_MONO, fontWeight:600, color:TEXT }}>{s.value}</span>
+                        {active && <span style={{ fontFamily:HZ_MONO, fontSize:10, color:s.color }}>✓</span>}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             </div>
 
+            <div data-testid="cc-needs-attention-card" style={{ background:S1, backdropFilter:"blur(18px)", border:`1px solid ${BD}`, borderRadius:20, padding:22,
+              display:"flex", flexDirection:"column", gap:14 }}>
+              <div>
+                <div style={{ fontFamily:HZ_DISPLAY, fontSize:14.5, fontWeight:600, color:TEXT }}>Needs Attention</div>
+                <div style={{ fontFamily:HZ_BODY, fontSize:12, color:MUTED, marginTop:2 }}>Click a card to filter the list below</div>
+              </div>
+              {(() => {
+                const overdueActive = isActiveFor({ status:"_overdue" });
+                const msActive = isActiveFor({ milestoneBreach:true });
+                return (<>
+              <button type="button" data-testid="cc-overdue-btn" onClick={() => toggle({ status:"_overdue" })}
+                style={{ display:"flex", alignItems:"center", gap:14, padding:"12px 14px", borderRadius:14, textAlign:"left",
+                  background: overdueActive ? "rgba(240,82,107,.12)" : "rgba(255,255,255,.03)",
+                  border:`1px solid ${overdueActive ? "rgba(240,82,107,.5)" : "rgba(240,82,107,.3)"}`,
+                  cursor:"pointer", animation: overdueShipments.length > 0 && !overdueActive ? "cc-pulse-border 2s ease-in-out infinite" : "none" }}>
+                <div style={{ fontFamily:HZ_DISPLAY, fontSize:26, fontWeight:700, lineHeight:1, color:"#f0526b" }}>{overdueShipments.length}</div>
+                <div>
+                  <div style={{ fontFamily:HZ_BODY, fontSize:12, fontWeight:600, color:TEXT }}>Overdue Shipments</div>
+                  <div style={{ fontFamily:HZ_BODY, fontSize:11.5, color:MUTED }}>ETD passed, not closed</div>
+                </div>
+              </button>
+              <button type="button" data-testid="cc-milestone-breach-btn" onClick={() => toggle({ milestoneBreach:true })}
+                style={{ display:"flex", alignItems:"center", gap:14, padding:"12px 14px", borderRadius:14, textAlign:"left",
+                  background: msActive ? "rgba(250,178,25,.14)" : "rgba(250,178,25,.06)",
+                  border:`1px solid ${msActive ? "rgba(250,178,25,.5)" : "rgba(250,178,25,.3)"}`,
+                  cursor:"pointer", animation: msOverdueSummary?.shipmentsWithBreach && !msActive ? "cc-pulse-border 2s ease-in-out infinite" : "none" }}>
+                <div style={{ fontFamily:HZ_DISPLAY, fontSize:26, fontWeight:700, lineHeight:1, color:"#fab219" }}>{msOverdueSummary?.shipmentsWithBreach ?? "—"}</div>
+                <div>
+                  <div style={{ fontFamily:HZ_BODY, fontSize:12, fontWeight:600, color:TEXT }}>Milestone Breaches</div>
+                  <div style={{ fontFamily:HZ_BODY, fontSize:11.5, color:MUTED }}>{msOverdueSummary ? `${msOverdueSummary.onTimePct}% fleet-wide on-time` : "loading…"}</div>
+                </div>
+              </button>
+                </>);
+              })()}
+            </div>
+
+            <button type="button" data-testid="cc-teu-card" onClick={() => toggle({})}
+              style={{ background:S1, backdropFilter:"blur(18px)", border:`1px solid ${BD}`, borderRadius:20, padding:22,
+                textAlign:"left", cursor:"pointer", display:"block", width:"100%" }}>
+              <div style={{ fontFamily:HZ_DISPLAY, fontSize:14.5, fontWeight:600, color:TEXT }}>TEU Booked</div>
+              <div style={{ fontFamily:HZ_DISPLAY, fontSize:30, fontWeight:700, color:TEXT, marginTop:4 }}>
+                {totalTEU} <span style={{ fontSize:13, color:MUTED, fontFamily:HZ_BODY, fontWeight:500 }}>TEU</span>
+              </div>
+              <div style={{ fontFamily:HZ_BODY, fontSize:12, color:MUTED, marginTop:4 }}>{containers.length} containers · {carrierStats.length} active carriers</div>
+              <div style={{ display:"flex", gap:8, marginTop:16, flexWrap:"wrap" }}>
+                <div style={{ flex:1, minWidth:60, textAlign:"center", background:"rgba(255,255,255,.03)", border:`1px solid ${BD}`, borderRadius:10, padding:"8px 4px" }}>
+                  <div style={{ fontFamily:HZ_MONO, fontSize:15, fontWeight:600, color:"#22c55e" }}>{byStatus["Active"]||0}</div>
+                  <div style={{ fontFamily:HZ_BODY, fontSize:9.5, color:MUTED, textTransform:"uppercase", letterSpacing:".06em", marginTop:2 }}>Active</div>
+                </div>
+                <div style={{ flex:1, minWidth:60, textAlign:"center", background:"rgba(255,255,255,.03)", border:`1px solid ${BD}`, borderRadius:10, padding:"8px 4px" }}>
+                  <div style={{ fontFamily:HZ_MONO, fontSize:15, fontWeight:600, color:"#fab219" }}>{byStatus["Pending"]||0}</div>
+                  <div style={{ fontFamily:HZ_BODY, fontSize:9.5, color:MUTED, textTransform:"uppercase", letterSpacing:".06em", marginTop:2 }}>Pending</div>
+                </div>
+                <div style={{ flex:1, minWidth:60, textAlign:"center", background:"rgba(255,255,255,.03)", border:`1px solid ${BD}`, borderRadius:10, padding:"8px 4px" }}>
+                  <div style={{ fontFamily:HZ_MONO, fontSize:15, fontWeight:600, color:"#f0526b" }}>{byStatus["Requires Review"]||0}</div>
+                  <div style={{ fontFamily:HZ_BODY, fontSize:9.5, color:MUTED, textTransform:"uppercase", letterSpacing:".06em", marginTop:2 }}>Review</div>
+                </div>
+              </div>
+            </button>
+          </div>
+            );
+          })()}
+
+          {/* Row 2: Monthly trend + Expiring allocs + Milestone alerts (status donut folded into the hero above) */}
+          <div style={{ display:"grid", gridTemplateColumns:"1.3fr 1fr 1fr", gap:16, marginBottom:20 }}>
+
             {/* Monthly booking trend */}
-            <div style={{ background:S1, border:`1px solid ${BD}`, borderRadius:9, padding:"14px 16px",
+            <div data-testid="cc-monthly-bookings-card" style={{ background:S1, backdropFilter:"blur(18px)", border:`1px solid ${BD}`, borderRadius:16, padding:"14px 16px",
               display:"flex", flexDirection:"column" }}>
               <SLabel>Monthly Bookings — last 6 months</SLabel>
               <div style={{ display:"flex", alignItems:"flex-end", gap:6, flex:1, minHeight:44 }}>
@@ -1125,12 +1246,12 @@ export default function CommandCenterView({ shipments=[], containers=[], allocat
                   return (
                     <div key={i} style={{ flex:1, display:"flex", flexDirection:"column",
                       alignItems:"center", justifyContent:"flex-end", gap:3 }}>
-                      <span style={{ fontFamily:"monospace", fontSize:11, color: isLast ? CC : MUTED,
+                      <span style={{ fontFamily:HZ_MONO, fontSize:11, color: isLast ? CC : MUTED,
                         fontWeight: isLast ? 700 : 400 }}>{v}</span>
                       <div style={{ width:"100%", height:h,
-                        background: isLast ? CC : `${CC}33`,
-                        borderRadius:"3px 3px 0 0", transition:"height .4s ease" }} />
-                      <span style={{ fontFamily:"sans-serif", fontSize:10, color:MUTED }}>{lbl}</span>
+                        background: isLast ? `linear-gradient(180deg, ${CC}, ${CC2})` : `${CC}33`,
+                        borderRadius:"5px 5px 0 0", transition:"height .4s ease" }} />
+                      <span style={{ fontFamily:HZ_BODY, fontSize:10, color:MUTED }}>{lbl}</span>
                     </div>
                   );
                 })}
@@ -1138,11 +1259,11 @@ export default function CommandCenterView({ shipments=[], containers=[], allocat
             </div>
 
             {/* Expiring allocations */}
-            <div style={{ background:S1, border:`1px solid ${BD}`, borderRadius:9, padding:"14px 16px",
+            <div data-testid="cc-expiring-configs-card" style={{ background:S1, backdropFilter:"blur(18px)", border:`1px solid ${BD}`, borderRadius:16, padding:"14px 16px",
               minWidth:180 }}>
               <SLabel>Expiring configs (30d)</SLabel>
               {expiringAllocs.length === 0 ? (
-                <div style={{ fontFamily:"sans-serif", fontSize:11, color:MUTED, padding:"8px 0" }}>
+                <div style={{ fontFamily:HZ_BODY, fontSize:11, color:MUTED, padding:"8px 0" }}>
                   None expiring soon ✓
                 </div>
               ) : expiringAllocs.slice(0,5).map(a => {
@@ -1150,13 +1271,13 @@ export default function CommandCenterView({ shipments=[], containers=[], allocat
                 return (
                   <div key={a.id} style={{ display:"flex", alignItems:"center", gap:8,
                     padding:"5px 0", borderBottom:`1px solid ${BD}` }}>
-                    <span style={{ fontFamily:"monospace", fontSize:13, fontWeight:700,
+                    <span style={{ fontFamily:HZ_MONO, fontSize:13, fontWeight:700,
                       color:CC, minWidth:60 }}>{a.carrierCode}</span>
-                    <span style={{ fontFamily:"sans-serif", fontSize:11, color:MUTED, flex:1 }}>
+                    <span style={{ fontFamily:HZ_BODY, fontSize:11, color:MUTED, flex:1 }}>
                       {a.pol}›{a.pod}
                     </span>
-                    <span style={{ fontFamily:"monospace", fontSize:13, fontWeight:700,
-                      color: daysLeft <= 7 ? "#ef4444" : "#f59e0b" }}>
+                    <span style={{ fontFamily:HZ_MONO, fontSize:13, fontWeight:700,
+                      color: daysLeft <= 7 ? "#f0526b" : "#fab219" }}>
                       {daysLeft}d
                     </span>
                   </div>
@@ -1167,23 +1288,23 @@ export default function CommandCenterView({ shipments=[], containers=[], allocat
             {/* Milestone alerts breakdown (TKT-550J25 / TKT-Q09G0T) — same visual language as
                 "Expiring configs" alongside it; also the Command Center's always-on surfacing of
                 the same feed the notification bell's Milestone Alerts section pulls from. */}
-            <div style={{ background:S1, border:`1px solid ${BD}`, borderRadius:9, padding:"14px 16px",
+            <div data-testid="cc-milestone-alerts-card" style={{ background:S1, backdropFilter:"blur(18px)", border:`1px solid ${BD}`, borderRadius:16, padding:"14px 16px",
               minWidth:190 }}>
               <SLabel>Milestone Alerts</SLabel>
               {!msOverdueSummary ? (
-                <div style={{ fontFamily:"sans-serif", fontSize:11, color:MUTED, padding:"8px 0" }}>Loading…</div>
+                <div style={{ fontFamily:HZ_BODY, fontSize:11, color:MUTED, padding:"8px 0" }}>Loading…</div>
               ) : msOverdueSummary.byMilestoneKey.length === 0 ? (
-                <div style={{ fontFamily:"sans-serif", fontSize:11, color:MUTED, padding:"8px 0" }}>
+                <div style={{ fontFamily:HZ_BODY, fontSize:11, color:MUTED, padding:"8px 0" }}>
                   Nothing overdue ✓
                 </div>
               ) : msOverdueSummary.byMilestoneKey.slice(0, 5).map(m => (
                 <div key={m.milestoneKey} style={{ display:"flex", alignItems:"center", gap:8,
                   padding:"5px 0", borderBottom:`1px solid ${BD}` }}>
-                  <span style={{ fontFamily:"sans-serif", fontSize:11, color:MUTED, flex:1,
+                  <span style={{ fontFamily:HZ_BODY, fontSize:11, color:MUTED, flex:1,
                     overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
                     {m.label}
                   </span>
-                  <span style={{ fontFamily:"monospace", fontSize:13, fontWeight:700, color:"#f59e0b" }}>
+                  <span style={{ fontFamily:HZ_MONO, fontSize:13, fontWeight:700, color:"#fab219" }}>
                     {m.count}
                   </span>
                 </div>
@@ -1195,48 +1316,54 @@ export default function CommandCenterView({ shipments=[], containers=[], allocat
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:14, marginBottom:20 }}>
 
             {/* Carrier consumption ranking */}
-            <div style={{ background:S1, border:`1px solid ${BD}`, borderRadius:9, padding:"14px 16px" }}>
+            <div data-testid="cc-carrier-consumption-card" style={{ background:S1, backdropFilter:"blur(18px)", border:`1px solid ${BD}`, borderRadius:16, padding:"14px 16px" }}>
               <SLabel>Carrier Consumption (TEU)</SLabel>
               {carrierStats.length === 0 ? (
-                <div style={{ fontFamily:"sans-serif", fontSize:12, color:MUTED, padding:"8px 0" }}>No data</div>
+                <div style={{ fontFamily:HZ_BODY, fontSize:12, color:MUTED, padding:"8px 0" }}>No data</div>
               ) : carrierStats.map((c, i) => {
                 // TKT-LI5KYW — on-time % as an added column on this same ranking, so a
                 // chronically-late carrier doesn't look identical to an always-on-time one just
                 // because both move the same TEU. Only rendered once real AIS-confirmed samples
                 // exist for that carrier — a carrier with zero samples isn't "bad," just unproven.
                 const otp = carrierScorecardByCode[c.code];
+                const badge = carrierBadgeColors(c.code);
                 return (
-                <div key={c.code} style={{ marginBottom:11 }}>
-                  <div style={{ display:"flex", alignItems:"baseline", gap:6, marginBottom:4 }}>
-                    <span style={{ fontFamily:"monospace", fontSize:14, fontWeight:700,
+                <div key={c.code} style={{ marginBottom:11 }} data-testid={`cc-carrier-row-${c.code}`}>
+                  <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:5 }}>
+                    <div style={{ width:24, height:24, borderRadius:7, flexShrink:0, display:"flex",
+                      alignItems:"center", justifyContent:"center", fontFamily:HZ_DISPLAY, fontWeight:700,
+                      fontSize:9.5, color:badge.color, background:badge.background }}>
+                      {c.code.slice(0,2)}
+                    </div>
+                    <span style={{ fontFamily:HZ_MONO, fontSize:14, fontWeight:700,
                       color: i===0 ? CC : TEXT }}>{c.code}</span>
-                    <span style={{ fontFamily:"sans-serif", fontSize:11, color:MUTED, flex:1,
+                    <span style={{ fontFamily:HZ_BODY, fontSize:11, color:MUTED, flex:1,
                       overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
                       {c.name !== c.code ? c.name : ""}
                     </span>
                     {otp && (
                       <span title={`${otp.onTimeCount}/${otp.sampleSize} AIS-confirmed legs on time`}
-                        style={{ fontFamily:"monospace", fontSize:10, fontWeight:700, padding:"1px 6px",
-                          borderRadius:4, color: otp.onTimePct >= 80 ? "#22c55e" : otp.onTimePct >= 50 ? "#f59e0b" : "#ef4444",
-                          background: `${otp.onTimePct >= 80 ? "#22c55e" : otp.onTimePct >= 50 ? "#f59e0b" : "#ef4444"}18`,
-                          border:`1px solid ${otp.onTimePct >= 80 ? "#22c55e" : otp.onTimePct >= 50 ? "#f59e0b" : "#ef4444"}44` }}>
+                        style={{ fontFamily:HZ_MONO, fontSize:10, fontWeight:700, padding:"1px 6px",
+                          borderRadius:4, color: otp.onTimePct >= 80 ? "#22c55e" : otp.onTimePct >= 50 ? "#fab219" : "#f0526b",
+                          background: `${otp.onTimePct >= 80 ? "#22c55e" : otp.onTimePct >= 50 ? "#fab219" : "#f0526b"}18`,
+                          border:`1px solid ${otp.onTimePct >= 80 ? "#22c55e" : otp.onTimePct >= 50 ? "#fab219" : "#f0526b"}44` }}>
                         {otp.onTimePct}% on-time
                       </span>
                     )}
-                    <span style={{ fontFamily:"monospace", fontSize:13, fontWeight:700,
+                    <span style={{ fontFamily:HZ_MONO, fontSize:13, fontWeight:700,
                       color: i===0 ? CC : TEXT }}>
                       {c.consumed} TEU
                     </span>
                     {c.pct !== null && (
-                      <span style={{ fontFamily:"monospace", fontSize:12,
-                        color: c.pct >= 100 ? "#ef4444" : c.pct >= 80 ? "#f59e0b" : MUTED }}>
+                      <span style={{ fontFamily:HZ_MONO, fontSize:12,
+                        color: c.pct >= 100 ? "#f0526b" : c.pct >= 80 ? "#fab219" : MUTED }}>
                         {c.pct}%
                       </span>
                     )}
                   </div>
                   <Bar pct={Math.round(c.consumed / maxConsumed * 100)} color={i===0 ? CC : "#3b82f6"} />
                   {c.allocated > 0 && (
-                    <div style={{ fontFamily:"sans-serif", fontSize:10, color:MUTED, marginTop:2 }}>
+                    <div style={{ fontFamily:HZ_BODY, fontSize:10, color:MUTED, marginTop:2 }}>
                       {c.consumed} / {c.allocated} allocated
                     </div>
                   )}
@@ -1246,22 +1373,22 @@ export default function CommandCenterView({ shipments=[], containers=[], allocat
             </div>
 
             {/* Top routes */}
-            <div style={{ background:S1, border:`1px solid ${BD}`, borderRadius:9, padding:"14px 16px" }}>
+            <div data-testid="cc-top-routes-card" style={{ background:S1, backdropFilter:"blur(18px)", border:`1px solid ${BD}`, borderRadius:16, padding:"14px 16px" }}>
               <SLabel>Top Routes by Volume</SLabel>
               {topRoutes.length === 0 ? (
-                <div style={{ fontFamily:"sans-serif", fontSize:12, color:MUTED, padding:"8px 0" }}>No data</div>
+                <div style={{ fontFamily:HZ_BODY, fontSize:12, color:MUTED, padding:"8px 0" }}>No data</div>
               ) : topRoutes.map(([route, count], i) => (
                 <div key={route} style={{ marginBottom:11 }}>
                   <div style={{ display:"flex", alignItems:"baseline", gap:6, marginBottom:4 }}>
-                    <span style={{ fontFamily:"monospace", fontSize:13, fontWeight:700,
+                    <span style={{ fontFamily:HZ_MONO, fontSize:13, fontWeight:700,
                       color: i===0 ? "#22c55e" : TEXT, flex:1 }}>
                       {route}
                     </span>
-                    <span style={{ fontFamily:"monospace", fontSize:14, fontWeight:700,
+                    <span style={{ fontFamily:HZ_MONO, fontSize:14, fontWeight:700,
                       color: i===0 ? "#22c55e" : TEXT }}>
                       {count}
                     </span>
-                    <span style={{ fontFamily:"sans-serif", fontSize:11, color:MUTED }}>shipments</span>
+                    <span style={{ fontFamily:HZ_BODY, fontSize:11, color:MUTED }}>shipments</span>
                   </div>
                   <Bar pct={Math.round(count / maxRoute * 100)} color="#22c55e" height={4} />
                 </div>
@@ -1272,30 +1399,30 @@ export default function CommandCenterView({ shipments=[], containers=[], allocat
           {/* Row 3a: Transit-time variance by lane (TKT-PZ3JS2) — planned vs the AIS-confirmed
               actual ETD->ETA span, worst-variance lane first. */}
           {laneVariance.length > 0 && (
-            <div style={{ background:S1, border:`1px solid ${BD}`, borderRadius:9,
+            <div data-testid="cc-transit-variance-card" style={{ background:S1, backdropFilter:"blur(18px)", border:`1px solid ${BD}`, borderRadius:16,
               padding:"14px 16px", marginBottom:20 }}>
               <SLabel>Transit-Time Variance by Lane</SLabel>
               {laneVariance.map(l => {
                 const over = l.varianceDays != null && l.varianceDays > 0;
-                const vColor = l.varianceDays == null ? MUTED : over ? "#ef4444" : "#22c55e";
+                const vColor = l.varianceDays == null ? MUTED : over ? "#f0526b" : "#22c55e";
                 return (
                   <div key={l.tradeLane} style={{ display:"flex", alignItems:"center", gap:12,
                     padding:"7px 0", borderBottom:`1px solid ${BD}` }}>
-                    <span style={{ fontFamily:"monospace", fontSize:12, fontWeight:700, color:TEXT,
+                    <span style={{ fontFamily:HZ_MONO, fontSize:12, fontWeight:700, color:TEXT,
                       minWidth:150, flexShrink:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
                       {l.tradeLane}
                     </span>
-                    <span style={{ fontFamily:"sans-serif", fontSize:10, color:MUTED, flexShrink:0, minWidth:110 }}>
+                    <span style={{ fontFamily:HZ_BODY, fontSize:10, color:MUTED, flexShrink:0, minWidth:110 }}>
                       planned {l.plannedAvgDays ?? "—"}d · actual {l.actualAvgDays}d
                     </span>
                     <span style={{ flexShrink:0 }}>
                       <Sparkline values={l.trend} color={vColor} width={80} height={22} />
                     </span>
-                    <span style={{ fontFamily:"monospace", fontSize:12, fontWeight:700, color:vColor,
+                    <span style={{ fontFamily:HZ_MONO, fontSize:12, fontWeight:700, color:vColor,
                       marginLeft:"auto", flexShrink:0 }}>
                       {l.varianceDays == null ? "no plan" : `${over ? "+" : ""}${l.varianceDays}d`}
                     </span>
-                    <span style={{ fontFamily:"sans-serif", fontSize:10, color:MUTED, flexShrink:0 }}>
+                    <span style={{ fontFamily:HZ_BODY, fontSize:10, color:MUTED, flexShrink:0 }}>
                       n={l.sampleSize}
                     </span>
                   </div>
@@ -1324,7 +1451,7 @@ export default function CommandCenterView({ shipments=[], containers=[], allocat
 
           {/* Row 5: Recent / filtered shipments */}
           <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:8 }}>
-            <div style={{ fontFamily:"monospace", fontSize:13, fontWeight:700, color:MUTED,
+            <div style={{ fontFamily:HZ_MONO, fontSize:13, fontWeight:700, color:MUTED,
               textTransform:"uppercase", letterSpacing:".14em" }}>
               {activeFilter
                 ? activeFilter.status === "_overdue" ? "Overdue Shipments"
@@ -1332,61 +1459,61 @@ export default function CommandCenterView({ shipments=[], containers=[], allocat
                   : "All Shipments"
                 : "Recent Active Shipments"}
             </div>
-            <span style={{ fontFamily:"monospace", fontSize:11, color:MUTED }}>
-              {recentShipments.length} shown
+            <span style={{ fontFamily:HZ_MONO, fontSize:11, color:MUTED }} data-testid="cc-recent-shipments-count">
+              {visibleRecentShipments.length} of {recentShipments.length} shown
             </span>
             {activeFilter && (
-              <button type="button" onClick={() => setActiveFilter(null)}
-                style={{ marginLeft:"auto", fontFamily:"monospace", fontSize:11, color:MUTED,
+              <button type="button" data-testid="cc-clear-filter-btn" onClick={() => setActiveFilter(null)}
+                style={{ marginLeft:"auto", fontFamily:HZ_MONO, fontSize:11, color:MUTED,
                   background:"none", border:`1px solid ${BD}`, borderRadius:4,
                   padding:"4px 10px", cursor:"pointer", lineHeight:1 }}
-                onMouseEnter={e => { e.currentTarget.style.color="#ef4444"; e.currentTarget.style.borderColor="#ef444455"; }}
+                onMouseEnter={e => { e.currentTarget.style.color="#f0526b"; e.currentTarget.style.borderColor="#f0526b55"; }}
                 onMouseLeave={e => { e.currentTarget.style.color=MUTED; e.currentTarget.style.borderColor=BD; }}>
                 ✕ clear
               </button>
             )}
           </div>
-          <div style={{ display:"flex", flexDirection:"column", gap:3 }}>
+          <div data-testid="cc-recent-shipments" style={{ display:"flex", flexDirection:"column", gap:3 }}>
             {recentShipments.length === 0 ? (
-              <div style={{ fontFamily:"sans-serif", fontSize:12, color:MUTED, padding:"16px 0" }}>
+              <div style={{ fontFamily:HZ_BODY, fontSize:12, color:MUTED, padding:"16px 0" }}>
                 No active shipments.
               </div>
-            ) : recentShipments.map(s => {
+            ) : visibleRecentShipments.map(s => {
               const dot      = STATUS_DOT[s.status] || MUTED;
               const teu      = shipTEU(s.id);
               const isOD     = s.etd && s.etd < today;
               const daysLate = isOD ? Math.round((new Date(today) - new Date(s.etd)) / 86400000) : 0;
               return (
-                <div key={s.id}
+                <div key={s.id} data-testid={`cc-shipment-row-${s.id}`}
                   onClick={() => setPreviewShipment(s)}
                   style={{ display:"flex", alignItems:"center", gap:10,
                     padding:"9px 14px", borderRadius:7,
                     background: isOD ? `${S2}` : S2,
-                    border:`1px solid ${isOD ? "#ef444433" : BD}`,
+                    border:`1px solid ${isOD ? "#f0526b33" : BD}`,
                     cursor:"pointer", transition:"border-color .12s" }}
-                  onMouseEnter={e => e.currentTarget.style.borderColor=isOD ? "#ef4444aa" : `${CC}55`}
-                  onMouseLeave={e => e.currentTarget.style.borderColor=isOD ? "#ef444433" : BD}>
-                  <div style={{ fontFamily:"monospace", fontSize:13, fontWeight:700,
+                  onMouseEnter={e => e.currentTarget.style.borderColor=isOD ? "#f0526baa" : `${CC}55`}
+                  onMouseLeave={e => e.currentTarget.style.borderColor=isOD ? "#f0526b33" : BD}>
+                  <div style={{ fontFamily:HZ_MONO, fontSize:13, fontWeight:700,
                     color:TEXT, minWidth:110, flexShrink:0 }}>{s.id}</div>
-                  <div style={{ flex:1, fontFamily:"sans-serif", fontSize:11, color:MUTED,
+                  <div style={{ flex:1, fontFamily:HZ_BODY, fontSize:11, color:MUTED,
                     overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
                     {s.pol && s.pod ? `${s.pol} → ${s.pod}` : "—"}
                   </div>
                   {s.carrierCode && (
-                    <div style={{ fontFamily:"monospace", fontSize:11, padding:"2px 8px",
+                    <div style={{ fontFamily:HZ_MONO, fontSize:11, padding:"2px 8px",
                       borderRadius:4, background:BG, border:`1px solid ${BD}`,
                       color:MUTED, flexShrink:0 }}>{s.carrierCode}</div>
                   )}
                   {teu > 0 && (
-                    <div style={{ fontFamily:"monospace", fontSize:11, padding:"2px 8px",
+                    <div style={{ fontFamily:HZ_MONO, fontSize:11, padding:"2px 8px",
                       borderRadius:4, background:`${CC}14`, border:`1px solid ${CC}33`,
                       color:CC2, flexShrink:0 }}>{teu} TEU</div>
                   )}
                   {isOD ? (
-                    <div style={{ fontFamily:"monospace", fontSize:11, fontWeight:700,
-                      color:"#ef4444", flexShrink:0 }}>+{daysLate}d late</div>
+                    <div style={{ fontFamily:HZ_MONO, fontSize:11, fontWeight:700,
+                      color:"#f0526b", flexShrink:0 }}>+{daysLate}d late</div>
                   ) : s.etd ? (
-                    <div style={{ fontFamily:"monospace", fontSize:11, color:MUTED, flexShrink:0 }}>
+                    <div style={{ fontFamily:HZ_MONO, fontSize:11, color:MUTED, flexShrink:0 }}>
                       {s.etd}
                     </div>
                   ) : null}
@@ -1396,156 +1523,183 @@ export default function CommandCenterView({ shipments=[], containers=[], allocat
               );
             })}
           </div>
+          {recentShipments.length > 10 && (
+            <button type="button" data-testid="cc-recent-shipments-toggle"
+              onClick={() => setShowAllRecent(v => !v)}
+              style={{ width:"100%", marginTop:6, padding:"7px 0", borderRadius:7,
+                border:`1px solid ${BD}`, background:"none", cursor:"pointer",
+                display:"flex", alignItems:"center", justifyContent:"center", gap:6,
+                fontFamily:HZ_MONO, fontSize:11, color:MUTED, transition:"all .12s" }}
+              onMouseEnter={e => { e.currentTarget.style.color=CC; e.currentTarget.style.borderColor=`${CC}55`; }}
+              onMouseLeave={e => { e.currentTarget.style.color=MUTED; e.currentTarget.style.borderColor=BD; }}>
+              {showAllRecent
+                ? <>▲▲ Show fewer</>
+                : <>▼▼ Show all {recentShipments.length}</>}
+            </button>
+          )}
         </div>
 
-        {/* ══ RIGHT (fixed width, never squeezed) ══════════════════════════ */}
+        {/* ══ RIGHT (fixed width, never squeezed) ══════════════════════════
+            Plain flex column with a gap, no shared background/border-left — matches the
+            approved mockup's `.rail` treatment, where every section below is its own
+            independent floating "glass" card (bordered, rounded, blurred), not one
+            continuous bordered strip. */}
         <div style={{ flexShrink:0, width:300,
-          display:"flex", flexDirection:"column",
-          background:S1,
-          borderLeft:`1px solid ${CC}22`,
-          minHeight:0, overflow:"hidden" }}>
+          display:"flex", flexDirection:"column", gap:16,
+          padding:"18px 16px", minHeight:0, overflowY:"auto" }}>
 
           {/* Orb + brand */}
-          <div style={{ flexShrink:0, padding:"16px 16px 12px",
-            borderBottom:`1px solid ${BD}`,
-            display:"flex", flexDirection:"column", alignItems:"center", gap:8,
-            background:`radial-gradient(ellipse at 50% 65%, ${CC}08 0%, transparent 70%)` }}>
-            <AiOrb size={100} orbStyle={orbStyle} />
-            <div style={{ textAlign:"center" }}>
-              <div style={{ fontFamily:"monospace", fontSize:18, fontWeight:900,
-                color:CC, letterSpacing:".22em", textTransform:"uppercase",
-                textShadow:`0 0 18px ${CC}cc, 0 0 44px ${CC}44` }}>
-                CARGODESK AI
+          <div data-testid="cc-ai-brand" style={{ flexShrink:0, position:"relative", overflow:"hidden",
+            background:S1, backdropFilter:"blur(18px)", border:`1px solid ${BD}`, borderRadius:20,
+            padding:"24px 20px 20px",
+            display:"flex", flexDirection:"column", alignItems:"center", gap:10, textAlign:"center" }}>
+            <div aria-hidden="true" style={{ position:"absolute", inset:0, pointerEvents:"none",
+              background:"radial-gradient(ellipse at 50% 30%, rgba(144,133,233,.16), transparent 70%)" }} />
+            {/* AiOrb is a genuinely shared component (also used by AppSettingsPage.jsx's orb-style
+                picker) — its own CC/CC2 are hardcoded orange, module-local to that file, not
+                sourced from this page's palette. Recoloring it directly would leak this
+                page-scoped restyle into Settings too. A hue-rotate wrapper gets the same visual
+                result (orange -> cyan/violet) without touching shared code, same principle as
+                every other "page-scoped, never touch shared primitives" call this restyle makes. */}
+            <div style={{ position:"relative", filter:"hue-rotate(165deg) saturate(1.15)" }}>
+              <AiOrb size={92} orbStyle={orbStyle} />
+            </div>
+            <div style={{ position:"relative" }}>
+              <div style={{ fontFamily:HZ_DISPLAY, fontSize:15, fontWeight:700,
+                letterSpacing:".08em", textTransform:"uppercase",
+                background:`linear-gradient(90deg, ${CC}, ${HZ_VIOLET})`,
+                WebkitBackgroundClip:"text", backgroundClip:"text", color:"transparent" }}>
+                CargoDesk AI
               </div>
-              <div style={{ fontFamily:"sans-serif", fontSize:10, color:MUTED,
-                letterSpacing:".08em", marginTop:4, textTransform:"uppercase" }}>
+              <div style={{ fontFamily:HZ_BODY, fontSize:10.5, color:MUTED,
+                letterSpacing:".06em", marginTop:4, textTransform:"uppercase" }}>
                 Intelligent freight assistant
               </div>
             </div>
           </div>
 
           {/* Allocation utilization mini-summary */}
-          <div style={{ flexShrink:0, padding:"12px 14px", borderBottom:`1px solid ${BD}` }}>
+          <div data-testid="cc-allocation-utilization" style={{ flexShrink:0,
+            background:S1, backdropFilter:"blur(18px)", border:`1px solid ${BD}`, borderRadius:20,
+            padding:"18px 20px" }}>
             <SLabel>Allocation Utilization</SLabel>
             {allocations.filter(a => a.endDate >= today).slice(0, 4).map(a => {
               const consumed = teuByCarrier[a.carrierCode] || 0;
               const pct = a.allocatedTEU > 0 ? Math.round(consumed / a.allocatedTEU * 100) : 0;
               return (
-                <div key={a.id} style={{ marginBottom:8 }}>
+                <div key={a.id} style={{ marginBottom:11 }}>
                   <div style={{ display:"flex", justifyContent:"space-between",
-                    fontFamily:"monospace", fontSize:11, marginBottom:3 }}>
+                    fontFamily:HZ_MONO, fontSize:11.5, marginBottom:4 }}>
                     <span style={{ color:TEXT }}>{a.carrierCode}</span>
-                    <span style={{ color: pct>=100 ? "#ef4444" : pct>=80 ? "#f59e0b" : MUTED }}>
+                    <span style={{ fontWeight:600, color: pct>=100 ? "#f0526b" : pct>=80 ? "#fab219" : MUTED }}>
                       {pct}%
                     </span>
                   </div>
-                  <Bar pct={pct} color={CC} height={4} />
+                  <Bar pct={pct} color={CC} height={6} />
                 </div>
               );
             })}
             {allocations.filter(a => a.endDate >= today).length === 0 && (
-              <div style={{ fontFamily:"sans-serif", fontSize:11, color:MUTED }}>
+              <div style={{ fontFamily:HZ_BODY, fontSize:11, color:MUTED }}>
                 No active allocations
               </div>
             )}
           </div>
 
-          {/* Weather + FX strip */}
-          <div style={{ flexShrink:0, borderBottom:`1px solid ${BD}` }}>
-            {/* Weather row */}
-            <div style={{ padding:"10px 14px 8px", borderBottom:`1px solid ${BD}22` }}>
-              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between",
-                marginBottom:6 }}>
-                <div style={{ fontFamily:"monospace", fontSize:10, color:MUTED,
-                  textTransform:"uppercase", letterSpacing:".14em" }}>
-                  Weather
-                </div>
-                <button type="button"
-                  onClick={() => setWxInput(v => !v)}
-                  style={{ fontFamily:"monospace", fontSize:12, color:MUTED, background:"none",
-                    border:"none", cursor:"pointer", padding:0 }}>
-                  {wxInput ? "✕" : "✎"}
-                </button>
-              </div>
-              {wxInput ? (
-                <form onSubmit={e => {
-                  e.preventDefault();
-                  const city = e.target.city.value.trim();
-                  if (city) {
-                    localStorage.setItem("cc_wx_city", city);
-                    setWxCity(city);
-                    setWeather(null);
-                    fetchWeatherByCity(city, setWeather);
-                  }
-                  setWxInput(false);
-                }}>
-                  <input name="city" defaultValue={wxCity} autoFocus
-                    style={{ width:"100%", background:BG, border:`1px solid ${CC}44`,
-                      borderRadius:5, padding:"4px 8px", fontFamily:"monospace",
-                      fontSize:12, color:TEXT, outline:"none", boxSizing:"border-box" }} />
-                </form>
-              ) : weather ? (
-                <div style={{ display:"flex", alignItems:"center", gap:8 }}>
-                  <span style={{ fontSize:16 }}>{weatherIcon(weather.code)}</span>
-                  <span style={{ fontFamily:"monospace", fontSize:14, fontWeight:900,
-                    color:TEXT, fontVariantNumeric:"tabular-nums" }}>{weather.temp}°C</span>
-                  <div style={{ flex:1, minWidth:0 }}>
-                    <div style={{ fontFamily:"sans-serif", fontSize:10, color:MUTED,
-                      overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
-                      {weather.city}{weather.country ? `, ${weather.country}` : ""}
-                    </div>
+          {/* Weather + FX card */}
+          <div data-testid="cc-weather-widget" style={{ flexShrink:0,
+            background:S1, backdropFilter:"blur(18px)", border:`1px solid ${BD}`, borderRadius:20,
+            padding:"18px 20px" }}>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between",
+              marginBottom:8 }}>
+              <SLabel>Weather</SLabel>
+              <button type="button" data-testid="cc-weather-edit-btn"
+                onClick={() => setWxInput(v => !v)}
+                style={{ fontFamily:HZ_MONO, fontSize:12, color:MUTED, background:"none",
+                  border:"none", cursor:"pointer", padding:0, marginTop:-10 }}>
+                {wxInput ? "✕" : "✎"}
+              </button>
+            </div>
+            {wxInput ? (
+              <form onSubmit={e => {
+                e.preventDefault();
+                const city = e.target.city.value.trim();
+                if (city) {
+                  localStorage.setItem("cc_wx_city", city);
+                  setWxCity(city);
+                  setWeather(null);
+                  fetchWeatherByCity(city, setWeather);
+                }
+                setWxInput(false);
+              }}>
+                <input name="city" data-testid="cc-weather-city-input" defaultValue={wxCity} autoFocus
+                  style={{ width:"100%", background:BG, border:`1px solid ${CC}44`,
+                    borderRadius:5, padding:"4px 8px", fontFamily:HZ_MONO,
+                    fontSize:12, color:TEXT, outline:"none", boxSizing:"border-box" }} />
+              </form>
+            ) : weather ? (
+              <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                <span style={{ fontSize:18 }}>{weatherIcon(weather.code)}</span>
+                <span style={{ fontFamily:HZ_MONO, fontSize:17, fontWeight:700,
+                  color:TEXT, fontVariantNumeric:"tabular-nums" }}>{weather.temp}°C</span>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ fontFamily:HZ_BODY, fontSize:11, color:MUTED,
+                    overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                    {weather.city}{weather.country ? `, ${weather.country}` : ""}
                   </div>
                 </div>
-              ) : (
-                <div style={{ fontFamily:"sans-serif", fontSize:11, color:MUTED }}>
-                  Loading…
-                </div>
-              )}
-            </div>
-
-            {/* FX row */}
-            <div style={{ padding:"8px 14px 10px" }}>
-              <div style={{ fontFamily:"monospace", fontSize:10, color:MUTED,
-                textTransform:"uppercase", letterSpacing:".14em", marginBottom:6 }}>
-                FX Converter
               </div>
-              <div style={{ display:"flex", alignItems:"center", gap:5, marginBottom:6 }}>
-                <input value={fxAmt} onChange={e => setFxAmt(e.target.value)}
-                  style={{ width:68, background:BG, border:`1px solid ${BD}`, borderRadius:5,
-                    padding:"4px 6px", fontFamily:"monospace", fontSize:12, color:TEXT,
+            ) : (
+              <div style={{ fontFamily:HZ_BODY, fontSize:11, color:MUTED }}>
+                Loading…
+              </div>
+            )}
+
+            <div style={{ height:1, background:BD, margin:"14px 0" }} />
+
+            <div data-testid="cc-fx-converter">
+              <SLabel>FX Converter</SLabel>
+              <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:8 }}>
+                <input data-testid="cc-fx-amount-input" value={fxAmt} onChange={e => setFxAmt(e.target.value)}
+                  style={{ width:68, background:"rgba(255,255,255,.04)", border:`1px solid ${BD}`, borderRadius:7,
+                    padding:"6px 9px", fontFamily:HZ_MONO, fontSize:11.5, color:TEXT,
                     outline:"none", textAlign:"right" }} />
-                <select value={fxFrom}
+                <select value={fxFrom} data-testid="cc-fx-from-select"
                   onChange={e => { setFxFrom(e.target.value); localStorage.setItem("cc_fx_from", e.target.value); }}
-                  style={{ background:BG, border:`1px solid ${BD}`, borderRadius:5,
-                    padding:"4px 4px", fontFamily:"monospace", fontSize:12, color:TEXT,
+                  style={{ background:"rgba(255,255,255,.04)", border:`1px solid ${BD}`, borderRadius:7,
+                    padding:"6px 4px", fontFamily:HZ_MONO, fontSize:11.5, color:TEXT,
                     outline:"none", cursor:"pointer", flex:1 }}>
                   {FX_CCYS.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
-                <button type="button" onClick={swapFx}
-                  style={{ padding:"4px 6px", borderRadius:5, border:`1px solid ${BD}`,
+                <button type="button" data-testid="cc-fx-swap-btn" onClick={swapFx}
+                  style={{ padding:"5px 6px", borderRadius:7, border:`1px solid ${BD}`,
                     background:"none", cursor:"pointer", color:CC, fontSize:12,
-                    fontFamily:"monospace", flexShrink:0 }}>⇄</button>
-                <select value={fxTo}
+                    fontFamily:HZ_MONO, flexShrink:0 }}>⇄</button>
+                <select value={fxTo} data-testid="cc-fx-to-select"
                   onChange={e => { setFxTo(e.target.value); localStorage.setItem("cc_fx_to", e.target.value); }}
-                  style={{ background:BG, border:`1px solid ${BD}`, borderRadius:5,
-                    padding:"4px 4px", fontFamily:"monospace", fontSize:12, color:TEXT,
+                  style={{ background:"rgba(255,255,255,.04)", border:`1px solid ${BD}`, borderRadius:7,
+                    padding:"6px 4px", fontFamily:HZ_MONO, fontSize:11.5, color:TEXT,
                     outline:"none", cursor:"pointer", flex:1 }}>
                   {FX_CCYS.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
               </div>
               {fxResult !== null && (
-                <div style={{ fontFamily:"monospace", fontSize:15, fontWeight:700,
-                  color:CC, textShadow:`0 0 10px ${CC}55` }}>
+                <div style={{ fontFamily:HZ_MONO, fontSize:16, fontWeight:700, color:CC }}>
                   {fxResult.toLocaleString("en-US", { minimumFractionDigits:2, maximumFractionDigits:2 })}
-                  <span style={{ fontFamily:"sans-serif", fontSize:10, color:MUTED,
-                    fontWeight:400, marginLeft:5 }}>{fxTo}</span>
+                  <span style={{ fontFamily:HZ_BODY, fontSize:10.5, color:MUTED,
+                    fontWeight:500, marginLeft:5 }}>{fxTo}</span>
                 </div>
               )}
             </div>
           </div>
 
-          {/* AI Chat */}
-          <AiChatPanel />
+          {/* AI Assistant / chat card */}
+          <div data-testid="cc-ai-chat-panel" style={{ flex:1, minHeight:120, display:"flex", flexDirection:"column",
+            background:S1, backdropFilter:"blur(18px)", border:`1px solid ${BD}`, borderRadius:20,
+            padding:"16px 16px 14px", overflow:"hidden" }}>
+            <SLabel>AI Assistant</SLabel>
+            <AiChatPanel />
+          </div>
         </div>
       </div>
 

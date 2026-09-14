@@ -9,12 +9,13 @@ import { ConfirmModal } from "../../components/primitives/Modal";
 import { inputBase } from "../../components/primitives/Form";
 import { useResizableColumns, ColResizer } from "../../components/primitives/useResizableColumns";
 import ActionMenu from "../../components/primitives/ActionMenu";
+import ColumnFilter from "../../components/shared/ColumnFilter";
 import EntityHistoryModal from "../../components/shared/EntityHistoryModal";
 import ExportFieldsModal, { ALL_EXPORT_FIELDS } from "../../components/shared/ExportFieldsModal";
 import Pagination from "../../components/primitives/Pagination";
 import PageSizeSelect, { getStoredPageSize } from "../../components/primitives/PageSizeSelect";
 import { PageSpinner } from "../../components/primitives/Spinner";
-import { IconRefresh, IconDownload, IconClose, IconWarning, IconTime, IconEye, IconClipboard }
+import { IconRefresh, IconDownload, IconClose, IconWarning, IconEye, IconClipboard }
   from "../../components/primitives/Icon";
 
 const SORT_OPTIONS = [
@@ -26,14 +27,32 @@ const SORT_OPTIONS = [
   { value: "status",   label: "Status A–Z" },
 ];
 
-const STATUS_CHIPS = ["Active", "Pending", "Requires Review", "Completed", "Cancelled"];
+// Every column filterable via its header-click checklist (Actions is excluded — it's a row of
+// action buttons, not a data column). Order matches `shipHeaders` below exactly, minus Actions.
+const FILTER_COLUMNS = [
+  { key: "id",           header: "Shipment ID"  },
+  { key: "pol",          header: "POL"          },
+  { key: "pod",          header: "POD"          },
+  { key: "routingTerm",  header: "Routing Term" },
+  { key: "tradeLane",    header: "Trade Lane"   },
+  { key: "carrier",      header: "Carrier"      },
+  { key: "contractType", header: "Contract"     },
+  { key: "teu",          header: "TEU"          },
+  { key: "status",       header: "Status"       },
+  { key: "margin",       header: "Margin"       },
+];
+const EMPTY_COL_FILTERS = Object.fromEntries(FILTER_COLUMNS.map(c => [c.key, null]));
+const EMPTY_FILTER_OPTIONS = {
+  pol: [], polNames: {}, pod: [], podNames: {}, carrier: [], contractType: [],
+  status: [], routingTerm: [], tradeLane: [], teu: [], margin: [], id: [], idTruncated: false,
+};
 
 // Real server-side pagination (TKT-none — pagination-standardization pass). `shipments` (the
 // full, unbounded App.jsx-shared array) is kept ONLY for app-wide totals that must reflect
-// everything regardless of this page's own filters — the header subtitle, the status-chip
-// counts, and the CSV-export-disabled check. The actual table rows come from this page's own
-// self-fetched, server-filtered/sorted/paginated slice, so the browser never has to hold or
-// render more than one page's worth of shipments at a time — the thing this pass exists to fix.
+// everything regardless of this page's own filters — the header subtitle and the CSV-export-
+// disabled check. The actual table rows come from this page's own self-fetched, server-filtered/
+// sorted/paginated slice, so the browser never has to hold or render more than one page's worth
+// of shipments at a time — the thing this pass exists to fix.
 const ShipmentsPage = ({ shipments, carriers, onDelete, onNew, onRefresh, financeEnabled = true }) => {
   const { canEditShipments: canEdit } = useAuth();
   const [confirm,         setConfirm]         = useState(null);
@@ -41,10 +60,24 @@ const ShipmentsPage = ({ shipments, carriers, onDelete, onNew, onRefresh, financ
   const [filters,         setFilters]         = useState(() => {
     try {
       const pending = sessionStorage.getItem("cc_filter");
-      if (pending) { sessionStorage.removeItem("cc_filter"); return { search: '', carrier: '', ...JSON.parse(pending) }; }
+      if (pending) {
+        sessionStorage.removeItem("cc_filter");
+        // Normalizes a legacy single-value payload (e.g. {carrier: "MAEU"}) into this page's
+        // current array-or-null column-filter shape, in case anything upstream still hands off a
+        // bare string — no current producer does (checked), but this handoff crosses a
+        // sessionStorage boundary a type change can't statically catch.
+        const parsed = JSON.parse(pending);
+        const normalized = {};
+        Object.keys(parsed).forEach(k => {
+          const v = parsed[k];
+          normalized[k] = (v == null || v === '') ? null : (Array.isArray(v) ? v : [v]);
+        });
+        return { search: '', ...EMPTY_COL_FILTERS, ...normalized };
+      }
     } catch { /* ignore */ }
-    return { search: '', status: '', carrier: '' };
+    return { search: '', ...EMPTY_COL_FILTERS };
   });
+  const [filterOptions,   setFilterOptions]    = useState(EMPTY_FILTER_OPTIONS);
   const [sort,            setSort]            = useState("");
   const [exporting,       setExporting]       = useState(false);
   const [exportModalOpen, setExportModalOpen] = useState(false);
@@ -76,8 +109,10 @@ const ShipmentsPage = ({ shipments, carriers, onDelete, onNew, onRefresh, financ
     setPageLoading(true);
     try {
       const params = { limit: lim, offset: off };
-      if (f.status)  params.status  = f.status;
-      if (f.carrier) params.carrier = f.carrier;
+      // Each column filter is an array-or-null; joined into the comma-separated multi-value form
+      // the backend's multiFilter() accepts (a single-item array round-trips as one plain value,
+      // same wire shape this route already used before it supported more than one).
+      FILTER_COLUMNS.forEach(({ key }) => { if (Array.isArray(f[key])) params[key] = f[key].join(','); });
       if (f.search)  params.search  = f.search;
       if (s)         params.sort    = s;
       const r = await api.shipments.list(params);
@@ -93,6 +128,12 @@ const ShipmentsPage = ({ shipments, carriers, onDelete, onNew, onRefresh, financ
   };
 
   useEffect(() => { loadPage({ offset: 0 }); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fetched once on mount, same "small, complete, non-paginated" precedent as the `carriers` prop
+  // (App.jsx fetches that once too) — this is the checklist source for every column's popover, so
+  // it must reflect the whole dataset regardless of this page's own filters/pagination, not just
+  // whatever page of results is currently loaded.
+  useEffect(() => { api.shipments.filterOptions().then(setFilterOptions).catch(() => {}); }, []);
 
   // Sync known IDs when the parent's shared array changes (after a create/delete elsewhere, or
   // a role switch) — feeds the stale-shipment poll below, unrelated to this page's own fetch.
@@ -134,13 +175,10 @@ const ShipmentsPage = ({ shipments, carriers, onDelete, onNew, onRefresh, financ
     clearTimeout(searchTimer.current);
     searchTimer.current = setTimeout(() => loadPage({ filters: { ...filters, search: v }, offset: 0 }), 300);
   };
-  const handleCarrierChange = v => {
-    const nf = { ...filters, carrier: v };
-    setFilters(nf); setOffset(0);
-    loadPage({ filters: nf, offset: 0 });
-  };
-  const handleStatusChip = v => {
-    const nf = { ...filters, status: v };
+  // One handler for every column's checklist — `value` is array-or-null (ColumnFilter's own
+  // convention: null = no filter, [] = a real, deliberate "show nothing").
+  const handleColumnFilterChange = (key, value) => {
+    const nf = { ...filters, [key]: value };
     setFilters(nf); setOffset(0);
     loadPage({ filters: nf, offset: 0 });
   };
@@ -149,7 +187,7 @@ const ShipmentsPage = ({ shipments, carriers, onDelete, onNew, onRefresh, financ
     loadPage({ sort: v, offset: 0 });
   };
   const handleClear = () => {
-    const nf = { search: '', status: '', carrier: '' };
+    const nf = { search: '', ...EMPTY_COL_FILTERS };
     setFilters(nf); setSort(""); setOffset(0);
     loadPage({ filters: nf, sort: "", offset: 0 });
   };
@@ -185,7 +223,7 @@ const ShipmentsPage = ({ shipments, carriers, onDelete, onNew, onRefresh, financ
   const { template: shipTemplate, startResize: shipStartResize } = useResizableColumns("shipments", [140,70,70,80,100,150,165,46,60,80,90]);
   const shipHeaders = ["Shipment ID","POL","POD","Routing Term","Trade Lane","Carrier","Contract","TEU","Status","Margin","Actions"];
 
-  const hasFilters = !!(filters.search || filters.status || filters.carrier);
+  const hasFilters = !!(filters.search || FILTER_COLUMNS.some(({ key }) => filters[key] != null));
 
   const confirmDelete = async () => {
     const id = confirm;
@@ -238,22 +276,19 @@ const ShipmentsPage = ({ shipments, carriers, onDelete, onNew, onRefresh, financ
         </div>
       </div>
 
-      {/* Filter bar */}
-      <div style={{ display: "flex", gap: 10, marginBottom: 8, flexWrap: "wrap", alignItems: "center" }}>
+      {/* Filter bar — Carrier/Status used to also have a <select>/quick-chip row here; both are
+          now redundant with (and would drift out of sync against) the same columns' own
+          header-click checklists below, so they're gone rather than kept as a second,
+          possibly-disagreeing way to filter the same thing. Search (spans multiple columns at
+          once) and sort (not a filter at all) don't overlap with a per-column checklist, so both
+          stay as-is. */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
         <input
           value={filters.search}
           onChange={e => handleSearchChange(e.target.value)}
           placeholder="Search ID, POL, POD, booking ref…"
           style={{ ...inputBase, flex: "1 1 200px", minWidth: 160 }}
         />
-        <select
-          value={filters.carrier}
-          onChange={e => handleCarrierChange(e.target.value)}
-          style={{ ...inputBase, width: 180, cursor: "pointer" }}
-        >
-          <option value="">All carriers</option>
-          {carriers.map(c => <option key={c.code} value={c.code}>{c.code} – {c.name}</option>)}
-        </select>
         <select
           value={sort}
           onChange={e => handleSortChange(e.target.value)}
@@ -273,39 +308,6 @@ const ShipmentsPage = ({ shipments, carriers, onDelete, onNew, onRefresh, financ
         )}
       </div>
 
-      {/* Quick-status chips */}
-      <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap" }}>
-        {["", ...STATUS_CHIPS, "_overdue"].map(s => {
-          const active = filters.status === s;
-          const colors = { Active:"#22c55e", Pending:"#f59e0b", "Requires Review":"#ef4444",
-                           Completed:"#3b82f6", Cancelled:"#64748b", _overdue:"#ef4444" };
-          const label = s === "_overdue" ? <><IconTime size={11} />Overdue</> : (s || "All");
-          const col = s ? colors[s] || T.accent : T.textMuted;
-          return (
-            <button key={s || "all"} type="button"
-              onClick={() => handleStatusChip(s)}
-              style={{ padding:"3px 11px", borderRadius:20,
-                border:`1px solid ${active ? col : T.border}`,
-                background: active ? `${col}18` : "none",
-                cursor:"pointer", fontFamily: T.body, fontSize: 11.5,
-                color: active ? col : T.textMuted, fontWeight: active ? 600 : 400,
-                transition:"all .12s", whiteSpace:"nowrap",
-                display: "inline-flex", alignItems: "center", gap: 4 }}>
-              {label}
-              {s && s !== "_overdue" && (() => {
-                const cnt = shipments.filter(x => x.status === s).length;
-                return cnt > 0 ? (
-                  <span style={{ marginLeft:5, fontFamily: T.mono, fontSize:10,
-                    color: active ? col : T.border }}>
-                    {cnt}
-                  </span>
-                ) : null;
-              })()}
-            </button>
-          );
-        })}
-      </div>
-
       {carriers.length === 0 && (
         <div style={{ background: T.warningBg, border: `1px solid ${T.warning}55`, borderRadius: 8,
           padding: "12px 18px", fontFamily: T.body, fontSize: 13, color: T.warning, marginBottom: 18,
@@ -323,9 +325,19 @@ const ShipmentsPage = ({ shipments, carriers, onDelete, onNew, onRefresh, financ
             // the row cell below) — the header needs to match, or the label sits at the left
             // edge of a column whose actual content is centered underneath it.
             const centered = h === "Contract" || h === "Status";
+            const col = FILTER_COLUMNS[i]; // undefined for Actions (last header) — no filter control
+            const describe = col?.key === "carrier"
+              ? code => carriers.find(c => c.code === code)?.name || ""
+              : col?.key === "pol" ? code => filterOptions.polNames[code] || ""
+              : col?.key === "pod" ? code => filterOptions.podNames[code] || ""
+              : undefined;
             return (
               <div key={i} style={{ position: "relative", paddingLeft: centered ? 0 : 6, textAlign: centered ? "center" : "left", fontFamily: T.body, fontSize: 10.5, fontWeight: 600, color: T.textMuted, textTransform: "uppercase", letterSpacing: ".08em" }}>
-                {h}{i < shipHeaders.length - 1 && <ColResizer onStart={e => shipStartResize(i, e)} />}
+                {col ? (
+                  <ColumnFilter label={h} available={filterOptions[col.key] || []} selected={filters[col.key] ?? null}
+                    onChange={v => handleColumnFilterChange(col.key, v)} describe={describe} />
+                ) : h}
+                {i < shipHeaders.length - 1 && <ColResizer onStart={e => shipStartResize(i, e)} />}
               </div>
             );
           })}
