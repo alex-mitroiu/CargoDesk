@@ -121,6 +121,13 @@ const ContractAssignModal = ({ shipment, legs, pol, pod, onUpdate, onDone, onClo
           // (see the comment above the match useEffect), so showing one would misrepresent what
           // was actually searched for.
           needsPolHaulage, needsPodHaulage, pkuLocation, delLocation }}
+        // The shipment's own already-assigned Central contract/space-config, if any — lets the
+        // picker mark that exact card as already selected and block re-picking it, instead of
+        // silently re-running finish()/onDone() (which chains into a fresh sailing search on the
+        // Schedules page) for a selection that hasn't actually changed.
+        currentSelection={shipment.contractType === "Central" && shipment.contractId
+          ? { contractId: shipment.contractId, routingId: shipment.contractRoutingId || "", allocationId: shipment.allocationId || "" }
+          : null}
         onSelectContract={pickContract} onSelectAllocation={pickAllocation} onClose={onClose}
         onBack={() => setStep("type")} />
     );

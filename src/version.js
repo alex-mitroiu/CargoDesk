@@ -2,12 +2,18 @@
 // Increment MAJOR.MINOR.PATCH manually before each release.
 // Add an entry to CHANGELOG with a short summary of changes.
 
-export const VERSION   = "0.91.3";
+export const VERSION   = "0.91.4";
 export const BUILD     = "2026-09-16";
-export const CODENAME  = "Horizon";
-export const BUILD_FINGERPRINT = "7c204e91";
+export const CODENAME  = "Ratify";
+export const BUILD_FINGERPRINT = "e819a4d2";
 
 export const CHANGELOG = [
+  {
+    version:  "0.91.4",
+    date:     "2026-09-16",
+    codename: "Ratify",
+    summary:  "Fix wave — three real bugs found via direct user testing of the Contract Picker (Shipments > Schedules > Change Contract), plus one they led to: a data-corruption-style bug that could silently and permanently block a shipment from ever having a contract set again.\n\n**Contract Picker UX fixes** — reopening \"Change Contract\" used to show the shipment's own already-assigned Central contract as a plain, still-clickable card indistinguishable from any other match; clicking it re-ran the full pick flow (including the Schedules page's chained sailing search) for a selection that hadn't actually changed. `ContractPickerModal` (`ShipmentFormPage.jsx`) now accepts a `currentSelection` prop (wired from `ContractAssignModal.jsx`) and renders that exact card with a \"Currently selected\" badge, disabled from being re-picked; a grouped-routing card containing it now auto-expands so it isn't hidden. Separately, a card click no longer commits immediately at all — it now stages the pick (a \"Selected — confirm below\" badge) behind an explicit Confirm Selection / Cancel bar, so a single misclick can no longer fire the real onSelectContract/onSelectAllocation side effects by accident; Cancel discards the staged pick without closing the modal.\n\n**Background scroll leak, app-wide** — the shared `Modal` primitive had no scroll lock at all, so a mouse-wheel scroll with the pointer over any open modal (its backdrop, or content too short to need its own scroll) fell through to the actual page behind it (`App.jsx`'s own `<main id=\"app-scroll-main\">`, not `document.body`). Fixed with a reference-counted lock so stacked modals don't unlock prematurely.\n\n**CRD-vs-ETD guard silently and permanently blocking a shipment's contract (found live on SHP-S0Z326)** — the guard that auto-clears a shipment's contract when Cargo Ready Date falls after ETD (`routes/shipments.js`) read both dates through a partial-update helper that falls back to the already-stored value whenever a request doesn't send one. Once a shipment ever drifted into a stale `cargoReadyDate > etd` state, EVERY later, unrelated save — including a plain \"pick a new Central contract\" PUT that never touches either date — re-evaluated that same stale mismatch and wiped `contractId` back to blank again, forever, with no way to ever set a contract on that shipment again through this route. Fixed by gating the guard on the request actually sending `cargoReadyDate` or `etd`. Also wired up the backend's own `scheduleDropped: true` response flag to an actual frontend warning toast (`App.jsx`, both the general shipment-update handler and the Edit Shipment form's save handler) — it had carried this flag since v0.90.1 specifically for that purpose but was never connected to one, so a genuine trigger of this guard gave zero indication a contract/schedule had just been cleared.\n\nNew regression coverage in `tests/contract-carrier-mismatch.test.js` (13 new assertions, 33/33 total): confirms a contract-only save on an already-mismatched shipment now survives, and that a genuine CRD edit creating a fresh mismatch still correctly clears the contract and flags the shipment. Re-ran `shipment-crud`, `shipment-detail-consistency`, `shipment-edit-lock`, `workflow-improvements`, and `shipment-parties` — all green. Clean `vite build` throughout.",
+  },
   {
     version:  "0.91.3",
     date:     "2026-09-16",

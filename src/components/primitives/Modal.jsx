@@ -1,7 +1,30 @@
+import { useEffect } from "react";
 import { T } from "../../tokens";
 import Btn from "./Btn";
 
-const Modal = ({ title, onClose, children, width = 520, minHeight, hideClose = false, "data-testid": testId }) => (
+// Reference-counted body-scroll lock — a wheel/trackpad scroll with the pointer over a modal
+// (its backdrop, or content too short to need its own scroll) would otherwise fall through to
+// whatever ancestor IS scrollable. That's NOT document.body in this app — App.jsx's own <main
+// id="app-scroll-main"> is the element that actually scrolls the page behind every modal, with
+// body itself never overflowing — so this locks that element (falling back to body when it's
+// absent, e.g. a component test rendering a Modal outside the full App shell). Counted rather
+// than a flat on/off so two modals stacked at once (e.g. a picker opened from within another
+// modal) don't have the first one's close prematurely re-enable page scroll while the second is
+// still up.
+let lockCount = 0;
+let previousOverflow = "";
+const useBodyScrollLock = () => {
+  useEffect(() => {
+    const el = document.getElementById("app-scroll-main") || document.body;
+    if (lockCount === 0) { previousOverflow = el.style.overflow; el.style.overflow = "hidden"; }
+    lockCount++;
+    return () => { lockCount--; if (lockCount === 0) el.style.overflow = previousOverflow; };
+  }, []);
+};
+
+const Modal = ({ title, onClose, children, width = 520, minHeight, hideClose = false, "data-testid": testId }) => {
+  useBodyScrollLock();
+  return (
   <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.78)", display: "flex",
       alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 20 }}>
     <div data-testid={testId} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12,
@@ -22,7 +45,8 @@ const Modal = ({ title, onClose, children, width = 520, minHeight, hideClose = f
       <div style={{ padding: "22px 24px" }}>{children}</div>
     </div>
   </div>
-);
+  );
+};
 
 const ConfirmModal = ({ message, onConfirm, onCancel, confirmLabel = "Confirm Delete" }) => (
   <Modal title="Confirm" onClose={onCancel} width={380}>

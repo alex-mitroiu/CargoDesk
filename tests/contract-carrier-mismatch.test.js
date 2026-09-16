@@ -10,6 +10,11 @@
  * uses), the correct carrier rolls up, a CONTRACT_DROPPED event is logged, and any pending
  * carrier booking under the old carrier is cancelled + archived.
  *
+ * Also covers a second, unrelated real bug found live on SHP-S0Z326: the CRD-vs-ETD guard itself
+ * (routes/shipments.js) used to re-fire on ANY save to a shipment already sitting in a stale
+ * cargoReadyDate > etd state, silently wiping a freshly-picked contract on every attempt — see
+ * the "CRD-vs-ETD guard" section below.
+ *
  * Usage:
  *   node tests/contract-carrier-mismatch.test.js
  *
@@ -163,6 +168,56 @@ async function login() {
     console.log("\nCleanup");
     await request("DELETE", `/api/shipments/${shipmentId}`, null, token);
     await request("DELETE", `/api/contracts/${contractId}`, null, token);
+
+    // ── CRD-vs-ETD guard: must not re-fire on every unrelated save ──────────────
+    // Real bug found live on SHP-S0Z326: the guard (routes/shipments.js) reads cargoReadyDate/
+    // etd via field(), which falls back to the already-stored value whenever a request doesn't
+    // send one. A shipment that was ever left with cargoReadyDate > etd re-evaluated that same
+    // stale mismatch on every LATER, unrelated PUT (e.g. picking a new Central contract, which
+    // never touches either date) and wiped contractId again each time — permanently blocking
+    // that shipment from ever having a contract set again. Fixed by gating the guard on the
+    // request actually sending cargoReadyDate or etd.
+    console.log("\nCRD-vs-ETD guard must not misfire on a PUT that never touches either date");
+    const crdContract = await request("POST", "/api/contracts", {
+      contractNumber: `TC-CRDGUARD-${Date.now()}`, carrierCode: "HLCU", status: "Active",
+      validFrom: "2026-01-01", validTo: "2027-01-01",
+      legs: [{ pol: "NLRTM", pod: "USNYC" }],
+      rates: [{ serviceCode: "OF", amount: 500, currency: "USD", unit: "per_container" }],
+    }, token);
+    assert("CRD-guard scratch contract created", crdContract.status === 201, JSON.stringify(crdContract.body));
+    const crdContractId = crdContract.body.id;
+
+    // Created already in the "bad" state (cargoReadyDate after etd) — mirrors a shipment that
+    // drifted into this state from some earlier, unrelated edit, not something this test itself
+    // is trying to change right now.
+    const crdShip = await request("POST", "/api/shipments", {
+      pol: "NLRTM", pod: "USNYC", carrierCode: "HLCU", status: "Active", contractType: "Central",
+      etd: "2026-06-22", cargoReadyDate: "2026-09-16",
+      emoOfficeId: defaultEmoOfficeId, imoOfficeId: defaultImoOfficeId,
+    }, token);
+    assert("CRD-guard scratch shipment created", crdShip.status === 201, JSON.stringify(crdShip.body));
+    const crdShipmentId = crdShip.body.id;
+
+    const contractOnlyPut = await request("PUT", `/api/shipments/${crdShipmentId}`, {
+      contractType: "Central", contractId: crdContractId, contractRef: crdContract.body.contractNumber,
+    }, token);
+    assert("contract-only PUT returns 200", contractOnlyPut.status === 200, JSON.stringify(contractOnlyPut.body));
+    assert("contractId survives a PUT that never mentions cargoReadyDate/etd",
+      contractOnlyPut.body?.contractId === crdContractId, JSON.stringify(contractOnlyPut.body));
+    assert("status stays Active, not force-flipped to Requires Review", contractOnlyPut.body?.status === "Active");
+    assert("scheduleDropped not set on an unrelated save", !contractOnlyPut.body?.scheduleDropped);
+
+    console.log("\nCRD-vs-ETD guard must still fire on a genuine CRD edit that creates a new mismatch");
+    const realCrdEdit = await request("PUT", `/api/shipments/${crdShipmentId}`, {
+      cargoReadyDate: "2026-06-25", // now after this shipment's own etd (2026-06-22)
+    }, token);
+    assert("contractId cleared by a genuine CRD-past-ETD edit", realCrdEdit.body?.contractId === "", JSON.stringify(realCrdEdit.body));
+    assert("status forced to Requires Review", realCrdEdit.body?.status === "Requires Review");
+    assert("scheduleDropped:true carried for the frontend warning toast", realCrdEdit.body?.scheduleDropped === true);
+
+    console.log("\nCleanup");
+    await request("DELETE", `/api/shipments/${crdShipmentId}`, null, token);
+    await request("DELETE", `/api/contracts/${crdContractId}`, null, token);
 
     console.log(`\n${"─".repeat(50)}`);
     console.log(`Results: ${passed} passed, ${failed} failed`);

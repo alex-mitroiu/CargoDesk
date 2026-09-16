@@ -676,6 +676,14 @@ module.exports = function shipmentsRoutes(app, ctx) {
     // concern. contractType is deliberately left as-is (see CLAUDE.md-adjacent plan notes) —
     // this lands on the same "contract type set, no ref yet" empty state already handled by
     // ShipmentSchedulesPage.jsx for a fresh shipment.
+    // Gated on THIS request actually touching cargoReadyDate/etd (real bug found live: since
+    // both are read via field(), which falls back to the already-stored value when a request
+    // doesn't send one, a shipment that once got flagged — say, ETD dragged earlier than an
+    // already-set CRD — re-evaluated the same stale mismatch on every later, unrelated PUT and
+    // wiped contractId again each time, permanently blocking that shipment from ever having a
+    // contract set again through this route. Confirmed live on SHP-S0Z326: a plain "pick a new
+    // Central contract" save (no CRD/ETD in the payload) silently reset contractId to "" and
+    // flipped status to Requires Review, over and over, for exactly this reason.
     let effContractId = contractId, effContractRef = contractRef, effAllocationId = allocationId;
     let effContractRoutingId = contractRoutingId;
     let effStatus = status;
@@ -687,7 +695,8 @@ module.exports = function shipmentsRoutes(app, ctx) {
     const allocationAutoCleared = contractType !== "Central" && !!effAllocationId;
     if (allocationAutoCleared) effAllocationId = "";
     const existingSchedules = await query("SELECT * FROM shipment_schedules WHERE shipment_id=$1", [req.params.id]);
-    if (cargoReadyDate && etd && cargoReadyDate > etd && (contractId || existingSchedules.length > 0)) {
+    const crdOrEtdChanging = reqBody.cargoReadyDate !== undefined || reqBody.etd !== undefined;
+    if (crdOrEtdChanging && cargoReadyDate && etd && cargoReadyDate > etd && (contractId || existingSchedules.length > 0)) {
       effContractId = ""; effContractRef = ""; effAllocationId = ""; effContractRoutingId = "";
       effStatus = "Requires Review";
       scheduleDropped = true;

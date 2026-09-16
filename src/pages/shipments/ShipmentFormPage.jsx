@@ -149,15 +149,39 @@ const SearchTermChip = ({ label, value }) => !value ? null : (
   </div>
 );
 
-export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0, searchCriteria = null, onSelectContract, onSelectAllocation, onClose, onBack }) => {
+export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0, searchCriteria = null, currentSelection = null, onSelectContract, onSelectAllocation, onClose, onBack }) => {
   const [expandedGroups, setExpandedGroups] = useState(new Set());
   const [skipMode,       setSkipMode]       = useState(false);
   const [skipReason,     setSkipReason]     = useState("");
   const [overageReasons, setOverageReasons] = useState({});
+  // Clicking a card no longer commits immediately — it stages a pick, shown highlighted with a
+  // Confirm Selection / Cancel bar, so a single click can't fire the real onSelectContract/
+  // onSelectAllocation side effects (which, from the Schedules page, chain straight into a
+  // sailing search) by accident.
+  const [stagedPick, setStagedPick] = useState(null); // { type: "contract", c } | { type: "alloc", alloc, reason }
 
   const isLoading      = matches === null || allocs === null;
   const hasAllocs      = allocs && allocs.length > 0;
   const contractsLocked = hasAllocs && !skipReason;
+
+  // currentSelection identifies what's already assigned to the shipment (contractId+routingId,
+  // or allocationId when linked to a space config) so the matching card can be shown as already
+  // picked instead of a plain, still-clickable option — re-clicking it would otherwise re-run
+  // the whole "contract just picked" flow (including the Schedules page's chained sailing
+  // search) for a selection that hasn't actually changed.
+  const isCurrentContract = c => !!currentSelection && !currentSelection.allocationId &&
+    currentSelection.contractId === c.id && (currentSelection.routingId || "") === (c.routingId || "");
+  const isCurrentAlloc = alloc => !!currentSelection && !!currentSelection.allocationId &&
+    currentSelection.allocationId === alloc.id;
+
+  // Auto-expand the grouped-routing card containing the current selection once real data
+  // arrives, so it's visible without an extra click — seeds expandedGroups once rather than
+  // forcing it open forever, so the user's own collapse/expand toggle still works afterward.
+  useEffect(() => {
+    if (!currentSelection?.contractId || !matches) return;
+    const num = matches.find(c => c.id === currentSelection.contractId)?.contractNumber;
+    if (num) setExpandedGroups(prev => prev.has(num) ? prev : new Set(prev).add(num));
+  }, [matches, currentSelection?.contractId]);
 
   const kindBadge = kind => kind === "exact"
     ? { label: "Exact match",     bg: T.success + "22", color: T.success }
@@ -169,15 +193,25 @@ export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0
   const renderAllocCard = alloc => {
     const overage = shipmentTEU > 0 && shipmentTEU > alloc.remainingTEU;
     const reason  = overageReasons[alloc.id] || "";
-    const canSelect = !overage || !!reason;
+    const isCurrent = isCurrentAlloc(alloc);
+    const isStaged = stagedPick?.type === "alloc" && stagedPick.alloc.id === alloc.id;
+    const canSelect = !isCurrent && (!overage || !!reason);
     const k       = kindBadge(alloc.matchKind);
     return (
       <div key={alloc.id} data-testid={`shipment-form-contract-picker-alloc-${alloc.id}`}
-        style={{ background: T.bg, border: `1px solid ${T.border}`, borderRadius: 8, padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
+        style={{ background: T.bg, border: `1px solid ${isCurrent || isStaged ? T.accent : T.border}`, borderRadius: 8, padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <span style={{ fontFamily: T.mono, fontSize: 13, color: T.accent, fontWeight: 700 }}>{alloc.carrierCode}</span>
           <span style={{ fontFamily: T.mono, fontSize: 12, color: T.text }}>{alloc.pol} → {alloc.pod}</span>
           <span style={{ background: k.bg, color: k.color, padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700 }}>{k.label}</span>
+          {isCurrent && (
+            <span style={{ background: T.accent + "22", color: T.accent, padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700,
+              display: "inline-flex", alignItems: "center", gap: 3 }}><IconCheck size={10} />Currently selected</span>
+          )}
+          {isStaged && (
+            <span style={{ background: T.success + "22", color: T.success, padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700,
+              display: "inline-flex", alignItems: "center", gap: 3 }}><IconCheck size={10} />Selected — confirm below</span>
+          )}
         </div>
         <div style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>
           {alloc.contractNumber ? <>Contract <span style={{ fontFamily: T.mono, color: T.text }}>{alloc.contractNumber}</span>{" · "}</> : null}
@@ -208,10 +242,10 @@ export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0
             </select>
           </div>
         )}
-        <Btn disabled={!canSelect} onClick={() => canSelect && onSelectAllocation(alloc, reason)}
+        <Btn disabled={!canSelect} onClick={() => canSelect && setStagedPick({ type: "alloc", alloc, reason })}
           data-testid={`shipment-form-contract-picker-alloc-${alloc.id}-select-btn`}
           style={{ alignSelf: "flex-start" }}>
-          Select this configuration
+          {isCurrent ? "Currently selected" : isStaged ? "Selected — confirm below" : "Select this configuration"}
         </Btn>
       </div>
     );
@@ -244,20 +278,24 @@ export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0
     const rates = c.rates || [];
     const total = totalUsd(rates);
     const isBest = !contractsLocked && lowestTotal !== null && total === lowestTotal && sorted.length > 1;
+    const isCurrent = isCurrentContract(c);
+    const isStaged = stagedPick?.type === "contract" && stagedPick.c.id === c.id && (stagedPick.c.routingId || "") === (c.routingId || "");
+    const disabled = contractsLocked || isCurrent;
+    const borderColor = isStaged ? T.success : isCurrent ? T.accent : (isBest ? T.success + "88" : T.border);
     return (
       <button key={c.id} type="button" data-testid={`shipment-form-contract-picker-contract-${c.id}`}
-        onClick={() => !contractsLocked && onSelectContract(c, skipReason)}
-        disabled={contractsLocked}
+        onClick={() => !disabled && setStagedPick({ type: "contract", c })}
+        disabled={disabled}
         style={{
           display: "flex", alignItems: "center", gap: 14, width: "100%",
           padding: "12px 14px", background: T.bg, textAlign: "left",
-          border: `1px solid ${isBest ? T.success + "88" : T.border}`,
-          borderRadius: 8, cursor: contractsLocked ? "not-allowed" : "pointer",
+          border: `1px solid ${borderColor}`,
+          borderRadius: 8, cursor: disabled ? "not-allowed" : "pointer",
           opacity: contractsLocked ? 0.45 : 1,
           ...(indented && { marginLeft: 16, width: "calc(100% - 16px)", borderLeft: `3px solid ${T.accent}22` }),
         }}
-        onMouseEnter={e => { if (!contractsLocked) e.currentTarget.style.borderColor = T.accent; }}
-        onMouseLeave={e => { e.currentTarget.style.borderColor = isBest ? T.success + "88" : T.border; }}>
+        onMouseEnter={e => { if (!disabled) e.currentTarget.style.borderColor = T.accent; }}
+        onMouseLeave={e => { e.currentTarget.style.borderColor = borderColor; }}>
         <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 8, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             {!indented && <span style={{ fontFamily: T.mono, fontSize: 14, color: T.accent, fontWeight: 700 }}>{c.contractNumber}</span>}
@@ -274,6 +312,14 @@ export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0
             )}
             {c.namedAccount && <span style={{ fontFamily: T.body, fontSize: 12, color: T.textMuted }}>{c.namedAccount}</span>}
             <span style={{ background: k.bg, color: k.color, padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700 }}>{k.label}</span>
+            {isCurrent && (
+              <span style={{ background: T.accent + "22", color: T.accent, padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700,
+                display: "inline-flex", alignItems: "center", gap: 3 }}><IconCheck size={10} />Currently selected</span>
+            )}
+            {isStaged && (
+              <span style={{ background: T.success + "22", color: T.success, padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700,
+                display: "inline-flex", alignItems: "center", gap: 3 }}><IconCheck size={10} />Selected — confirm below</span>
+            )}
             {isBest && <span style={{ background: T.success + "22", color: T.success, padding: "2px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700 }}>Best rate</span>}
           </div>
           <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
@@ -424,6 +470,28 @@ export const ContractPickerModal = ({ pol, pod, matches, allocs, shipmentTEU = 0
               </>
             )}
           </>
+        )}
+        {/* Confirm bar — a card click only stages a pick; it commits (running onSelectContract/
+            onSelectAllocation, which the Schedules page chains straight into a sailing search)
+            only on an explicit Confirm, so one misclick can't fire that whole chain by accident.
+            Cancel discards the staged pick and returns to plain browsing, without closing the
+            modal itself — onClose above remains the only way to exit without picking anything. */}
+        {stagedPick && (
+          <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px",
+            background: T.success + "12", border: `1px solid ${T.success}44`, borderRadius: 8 }}>
+            <div style={{ flex: 1, fontFamily: T.body, fontSize: 13, color: T.text }}>
+              Selected: <strong>
+                {stagedPick.type === "contract"
+                  ? `${stagedPick.c.contractNumber}${stagedPick.c.contractRef ? ` (${stagedPick.c.contractRef})` : ""} — ${stagedPick.c.carrierCode}`
+                  : `${stagedPick.alloc.carrierCode} ${stagedPick.alloc.pol} → ${stagedPick.alloc.pod} space configuration`}
+              </strong>
+            </div>
+            <Btn variant="secondary" onClick={() => setStagedPick(null)} data-testid="shipment-form-contract-picker-cancel-btn">Cancel</Btn>
+            <Btn onClick={() => stagedPick.type === "contract"
+                ? onSelectContract(stagedPick.c, skipReason)
+                : onSelectAllocation(stagedPick.alloc, stagedPick.reason)}
+              data-testid="shipment-form-contract-picker-confirm-btn">Confirm Selection</Btn>
+          </div>
         )}
       </div>
     </Modal>

@@ -6,7 +6,7 @@ Full-stack freight management app. React 18 + Vite frontend, Express + dual-back
 `lib/db.js`) backend.
 - Path: `C:\Users\alexm\Desktop\Git-CargoDesk\CargoDesk\`
 - GitHub: github.com/alex-mitroiu/CargoDesk (public)
-- Version: **v0.91.3 "Horizon"**
+- Version: **v0.91.4 "Ratify"**
 - First-time setup: `npm run setup` (`scripts/setup.js`) — boots the server once to create its
   schema, shuts it down cleanly, then seeds MDM reference data, in the correct order. NOT
   zero-script — a genuinely fresh `pgdata/` has no ports/carriers/vessels/commodities until this
@@ -506,6 +506,35 @@ are fully validated.
 - **Document system**: `DOC_TYPES` in App.jsx (~line 56: BL01/MB01/CI01/CI02/FR01/FR02/PL01/CO01/CD01/IC01/DG01/OT) — `MB01` (Master Bill of Lading, v0.71.0) is the vessel-operator-to-NVOCC document, a genuinely separate build from `BL01` (NVOCC-to-shipper House B/L), not a mode flag on it — a full document-tracking system with draft/confirmed status per doc type, opened via the "📄 Documents" sidebar button (App.jsx:1484/2382) → `docsOpen` modal, generates HTML docs server-uploaded through `api.documents.upload` (base64 JSON, `shipment_documents` table). (The earlier client-side-jsPDF `DocumentsMenu` component this note used to distinguish from was removed as dead code — it had zero references anywhere in the app.)
 - **Lifecycle-stage stepper precedent**: no dedicated stepper component exists yet; `MilestonePanel` (ShipmentDetailPage.jsx 1593-~1870) is the closest analog — linear progress bar (1734-1738, `width: ${progress}%`) plus per-step state coloring via `milestoneState()`/`stateColor()` (1666-1676: completed/overdue/current/upcoming) driven by `shipment_milestones` rows (`id, label, estimatedDate, note, completedAt, completedBy`, fixed step keys `booking_confirmed, si_submitted, cargo_gated_in, vessel_departed, bl_issued, vessel_arrived, customs_cleared, cargo_released, delivered`). Any new per-container lifecycle/stage UI should reuse this state-coloring pattern rather than inventing a new visual language
 - **Drawer pattern** (MessagesDrawer/EdiMessagesDrawer, ShipmentDetailPage.jsx 954-1578): fixed backdrop + fixed right panel (width 420) with header/close/list/composer; WS-subscribe-while-open with 10s polling fallback (`ws.onerror` → `setInterval(loadRef.current, 10_000)`, cleared on `ws.onclose`/unmount); trigger buttons are adjacent icon buttons in the page header (✉️/📩 messages, 📡 EDI). Reuse this exact shape for any new slide-out panel (e.g. a Tickets drawer)
+
+## Recent changes (v0.91.4 "Ratify")
+Fix wave — three real bugs found via direct user testing of the Contract Picker (Shipments >
+Schedules > Change Contract), plus one they led to: a data-corruption-style bug that could
+silently and permanently block a shipment from ever having a contract set again.
+- **Contract Picker UX fixes** — reopening "Change Contract" showed the shipment's own
+  already-assigned Central contract as a plain, still-clickable card; clicking it re-ran the
+  full pick flow (including the Schedules page's chained sailing search) for a no-op reselection.
+  `ContractPickerModal` now accepts a `currentSelection` prop (from `ContractAssignModal.jsx`)
+  and renders that card with a "Currently selected" badge, disabled from being re-picked; its
+  grouped-routing card auto-expands so it isn't hidden. A card click also no longer commits
+  immediately — it stages the pick ("Selected — confirm below") behind an explicit Confirm
+  Selection / Cancel bar, so a misclick can't fire onSelectContract/onSelectAllocation by
+  accident; Cancel discards the staged pick without closing the modal.
+- **Background scroll leak, app-wide** — the shared `Modal` primitive had no scroll lock, so a
+  wheel-scroll over any open modal fell through to `App.jsx`'s own `<main id="app-scroll-main">`
+  (not `document.body`) behind it. Fixed with a reference-counted lock so stacked modals don't
+  unlock prematurely.
+- **CRD-vs-ETD guard silently and permanently blocking a shipment's contract** (found live on
+  SHP-S0Z326) — the guard that auto-clears a shipment's contract when Cargo Ready Date falls
+  after ETD (`routes/shipments.js`) read both dates through a partial-update helper that falls
+  back to the already-stored value whenever a request doesn't send one — so once a shipment ever
+  drifted into a stale `cargoReadyDate > etd` state, EVERY later, unrelated save (including a
+  plain contract pick) re-wiped `contractId` back to blank forever. Fixed by gating the guard on
+  the request actually sending `cargoReadyDate` or `etd`. Also wired the backend's own
+  `scheduleDropped: true` response flag — carried since v0.90.1 specifically for this — to an
+  actual frontend warning toast, which had never been connected to one.
+- New regression coverage in `tests/contract-carrier-mismatch.test.js` (13 new assertions, 33/33
+  total). Clean `vite build` throughout.
 
 ## Recent changes (v0.91.3 "Horizon")
 Bundled release — the Trade Horizon visual language (first shipped on the Dashboard) now covers

@@ -571,6 +571,14 @@ function App() {
         const parties = (updated.screening.hits || []).map(h => `${h.field}: ${h.value}`).join(", ");
         toast.warning(`Compliance review required — sanctioned party detected${parties ? ` (${parties})` : ""}`);
       }
+      // The backend's own CRD-vs-ETD guard clears contractId/contractRef/allocationId and drops
+      // any schedule when a Cargo Ready Date edit lands after ETD (routes/shipments.js) — it's
+      // already carried scheduleDropped:true in its response for exactly this toast, just never
+      // wired up until now, so this fired silently with no explanation of why a contract/schedule
+      // had just vanished.
+      if (updated.scheduleDropped) {
+        toast.warning("Cargo Ready Date is now after ETD — the linked contract and schedule no longer apply and were cleared; shipment flagged Requires Review.");
+      }
       return updated;
     } catch (e) { toast.error(e.message); throw e; }
   };
@@ -1954,7 +1962,7 @@ function App() {
       {/* ── Main ── */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
         <Header />
-        <main style={{ flex: 1, padding: "28px 36px 60px", overflow: "auto" }}>
+        <main id="app-scroll-main" style={{ flex: 1, padding: "28px 36px 60px", overflow: "auto" }}>
 
         {(page === "detail" || SHIPMENT_SUBPAGE_LABELS[page]) && selectedShipment && isEnabled(page) && (
           <ShipmentHeaderBar shipment={selectedShipment} containers={containers}
@@ -2073,6 +2081,12 @@ function App() {
                   if (updated.screening?.result === "HIT") {
                     const parties = (updated.screening.hits || []).map(h => `${h.field}: ${h.value}`).join(", ");
                     toast.warning(`Compliance review required — sanctioned party detected${parties ? ` (${parties})` : ""}`);
+                  }
+                  // Same CRD-vs-ETD guard as handleUpdateShipment above — this form is the one
+                  // place a user actually edits Cargo Ready Date/ETD directly, so it's the most
+                  // likely path to genuinely trigger this.
+                  if (updated.scheduleDropped) {
+                    toast.warning("Cargo Ready Date is now after ETD — the linked contract and schedule no longer apply and were cleared; shipment flagged Requires Review.");
                   }
                   navigate("detail", shp.id);
                 } catch (e) { toast.error(e.message); throw e; }
